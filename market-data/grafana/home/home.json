@@ -1,0 +1,41 @@
+{
+  "editable": false,
+  "graphTooltip": 0,
+  "links": [],
+  "panels": [
+    {
+      "description": "Every dashboard in this instance, by name. The landing page is a list rather than one of the dashboards because Grafana renders a path-provisioned home as just 'Home', with nothing on screen saying which dashboard it is.",
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "includeVars": false,
+        "keepTime": false,
+        "maxItems": 10,
+        "query": "",
+        "showFolderNames": false,
+        "showHeadings": false,
+        "showRecentlyViewed": false,
+        "showSearch": true,
+        "showStarred": false,
+        "tags": []
+      },
+      "title": "Dashboards",
+      "type": "dashlist"
+    }
+  ],
+  "schemaVersion": 41,
+  "tags": [],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {
+    "hidden": true
+  },
+  "title": "Home"
+}

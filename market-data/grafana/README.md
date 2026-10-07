@@ -18,9 +18,12 @@ make collectors-up  # every collector + Grafana together
 make grafana-down   # stop it; leaves postgres and the data alone
 ```
 
-It serves on **<http://localhost:3200>** and opens on the `market-data`
-dashboard. Append `?kiosk` to the URL for a chrome-free view — no nav,
-no side menu — which is what you want on a screenshare or a screenshot.
+It serves on **<http://localhost:3200>** and opens on a list of the
+dashboards by name (`home/home.json`). All three dashboards sit at the
+top level of the dashboard list, with no folder and no tags; at three
+dashboards neither earns its click. Append `?kiosk` to the URL for a
+chrome-free view — no nav, no side menu — which is what you want on a
+screenshare or a screenshot.
 
 The dashboard is deliberately named just `market-data`, not something
 narrower: its panels are ingestion-focused, and maker telemetry now

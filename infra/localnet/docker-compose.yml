@@ -356,10 +356,12 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: 'Editor'
       GF_AUTH_BASIC_ENABLED: 'false'
       GF_AUTH_DISABLE_LOGIN_FORM: 'true'
-      # Land on the market-data dashboard rather than an empty home page, so
-      # `make grafana` opens straight onto the data.
+      # Land on a list of the dashboards by name. Pointing this at a real
+      # dashboard renders it as just "Home", with nothing saying which one
+      # it is; the setting that would redirect to its own URL is an org
+      # preference, which only an admin API call can set.
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: >-
-        /var/lib/grafana/dashboards/market-data.json
+        /etc/grafana/home/home.json
       GF_USERS_DEFAULT_THEME: 'dark'
     image: 'grafana/grafana-oss:11.6.0'
     # Loopback only, like the explorer. Host port 3200 keeps clear of the
@@ -383,11 +385,17 @@ services:
     #
     # Long-form syntax because the short `src:dst:ro` form of the two
     # provisioning paths exceeds the repo's 80-column yamllint limit; the
-    # dashboards mount would fit, and uses it too so the three read alike.
+    # dashboards and home mounts would fit, and use it too so all read alike.
     volumes:
     - read_only: true
       source: '../../market-data/grafana/dashboards'
       target: '/var/lib/grafana/dashboards'
+      type: 'bind'
+    # The landing page, outside the dashboards mount so the provider does
+    # not also list it as a fourth dashboard.
+    - read_only: true
+      source: '../../market-data/grafana/home'
+      target: '/etc/grafana/home'
       type: 'bind'
     - read_only: true
       source: '../../market-data/grafana/provisioning/dashboards'

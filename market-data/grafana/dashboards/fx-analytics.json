@@ -585,9 +585,7 @@
   "preload": false,
   "refresh": "",
   "schemaVersion": 39,
-  "tags": [
-    "market-data"
-  ],
+  "tags": [],
   "templating": {
     "list": [
       {
