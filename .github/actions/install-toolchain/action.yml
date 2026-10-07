@@ -80,13 +80,22 @@ runs:
   # incomplete and was then purged. Keys are immutable, so the probe never
   # re-saves over an entry it did not first delete.
   #
+  # And only on a push to main, for the scoping reason PURGE_ALLOWED gives: a
+  # merge-queue save lands in a scope never read again and a PR save in one
+  # only that PR's re-runs read, while its ~0.7 GB counts against the repo's
+  # 10 GB cache limit alongside the main-scoped entry other runs restore. A
+  # miss off main reinstalls and waits for the next push to republish.
+  #
   # Expect benign noise here on any run that installs. All the toolchain jobs
   # reach this save at roughly the same moment, where the post-step saves this
   # replaced staggered by job runtime instead, so two of them will log `unable
   # to reserve cache` / already-exists. That cannot fail the step: the cache
   # action wraps its whole save body in try/catch and logs a warning, then
   # exits 0. It is not the self-heal misbehaving.
-  - if: 'steps.probe.outputs.save == ''true'''
+  - if: >-
+      steps.probe.outputs.save == 'true'
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
     name: 'Save toolchain components'
     uses: 'actions/cache/save@v5'
     with:
