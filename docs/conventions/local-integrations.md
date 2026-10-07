@@ -398,8 +398,11 @@ over-read:**
   would have to enumerate every executor that runs its unquoted argv
   (`ssh`, `timeout`, `xargs`, `find -exec`) and fails open on a missed
   one, while a missed prose command only fails closed. Anything that
-  hands text back to a shell disables the gate: a separator, `sh`,
-  `eval`, `$(…)` in double quotes, a heredoc, or `$'…'`.
+  hands text back to a shell disables the gate entirely: a separator,
+  `eval`, `xargs`, `source`, `sh` / `bash` / `zsh`, an unquoted command
+  or process substitution (`$(…)`, a backtick, `<(…)`), a heredoc, or
+  `$'…'`. A double-quoted argument holding `$(…)` or a backtick is never
+  prose.
 
 Two implementation notes worth keeping, because both were found by the
 script's own self-test rather than in review:

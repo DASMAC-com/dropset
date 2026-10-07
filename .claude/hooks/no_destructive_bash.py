@@ -616,7 +616,16 @@ _LIVE_IN_DOUBLE_QUOTES = ("$(", "`")
 # The sibling compound guard blocks every one of them on the separator alone,
 # but each guard is wired independently and that one has an escape marker, so
 # this guard must not lean on it.
-_RE_EVALUATES = re.compile(r"(?:[|;&]|\beval\b|\bxargs\b|\b(?:ba|z)?sh\b|\bsource\b)")
+#
+# An UNQUOTED command or process substitution — `$(…)`, a backtick, `<(…)`,
+# `>(…)` — is a second command too, and any executor can run inside it without
+# naming a shell this list knows: `grep x $(ssh host '…')` and
+# `echo $(dash -c '…')` run the quoted text while the line's first word is a
+# search tool or `echo`. Found by adversarial review of the prose gate below,
+# which inherited the gap from this check.
+_RE_EVALUATES = re.compile(
+    r"(?:[|;&]|\beval\b|\bxargs\b|\b(?:ba|z)?sh\b|\bsource\b|\$\(|`|[<>]\()"
+)
 
 
 def quoted_spans(line):
@@ -869,8 +878,9 @@ def prose_spans(cmd):
     span at all:
 
     - nothing outside the quotes hands text back to a shell — a separator,
-      `eval`, `xargs`, `sh` (`_RE_EVALUATES`) — and nothing defeats the span
-      tracking itself (`_RE_DEFEATS_SPANS`);
+      `eval`, `xargs`, `sh`, a command or process substitution
+      (`_RE_EVALUATES`) — and nothing defeats the span tracking itself
+      (`_RE_DEFEATS_SPANS`);
     - a double-quoted span holds no command substitution
       (`_LIVE_IN_DOUBLE_QUOTES`), which runs inside double quotes;
     - the command it is an argument of is a prose command (`_PROSE_COMMAND`) or
@@ -920,7 +930,10 @@ def classify(cmd):
     Each **line** is classified independently. Newline is a command separator
     in shell, so a multi-line payload is several commands — and classifying the
     whole blob as one string would let the deny patterns' end-anchors
-    (``…\\s*$``) be defeated simply by appending another line.
+    (``…\\s*$``) be defeated simply by appending another line. The exception
+    is the force-push patterns (``_PROSE_GATED``), matched over the whole
+    command so a multi-line message's quotes are tracked; their ``.*`` does not
+    cross a newline, so the end-anchor concern does not arise for them.
 
     **A trailing backslash is the exception, so it is collapsed first.** There
     the newline is *not* a separator, and splitting on it split one command in
@@ -1345,6 +1358,16 @@ def _self_test():
         ("git rebase --exec 'git push --force origin main' main", "deny"),
         ("git -c alias.x='!git push -f origin main' x", "deny"),
         ("ssh host 'git push --force origin main'", "deny"),
+        # An UNQUOTED substitution is a second command, whatever runs inside
+        # it. Each of these classified clean in the gate's first draft.
+        ("echo $(ssh host 'git push --force origin main')", "deny"),
+        ("git commit -m x `dash -c 'git push --force origin main'`", "deny"),
+        ("printf %s <(ssh h 'git push -f origin eng-942')", "ask"),
+        ("grep x $(ssh host 'git push --force origin main')", "deny"),
+        # A suppressed prose match must not hide a real push after it, and a
+        # span's command start skips newlines that sit inside earlier quotes.
+        ("echo 'git push --force origin main'\ngit push --force origin main", "deny"),
+        ('git commit -m "Subject\n\nbody" -m "git push -f origin eng-942"', None),
         # Constructs that would throw off whole-command quote tracking disable
         # the gate, so an apostrophe in them cannot hide the push after them.
         ("git commit -F - <<EOF\nit's\nEOF\ngit push --force origin main 'x'", "deny"),
