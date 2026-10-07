@@ -31,9 +31,9 @@ would fail every frozen exception on enable day; the two behaviors it
 describes need the greater.) ``--write`` only ever *lowers* a ceiling (to the
 current size) or drops an entry whose subject is under its cap or gone; it
 never raises one and never adds one. Admitting a new exception is a separate,
-explicit act (``--admit``) that must name its retiring issue — and a raised or
-added ceiling is a blocking review finding, since no tool can see the history
-that would prove it.
+explicit act (``--admit``) that must name its retiring issue, and a review
+surfaces each one; a *raised* ceiling is a blocking review finding, since only a
+hand edit can produce one.
 
 Stdlib only. This is a Python skill-tool under ``.claude/tools/`` — deliberately
 **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
@@ -139,7 +139,10 @@ def load_baseline(path: Path) -> tuple[dict[str, dict], list[str]]:
     """
     if not path.is_file():
         return {}, []
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        return {}, [f"{path.name}: not readable as JSON ({error})"]
     raw = data.get("exceptions", {}) if isinstance(data, dict) else None
     if not isinstance(raw, dict):
         return {}, [f"{path.name}: expected an object with an `exceptions` object"]
@@ -267,7 +270,11 @@ def admit(
         elif subject is None:
             errors.append(f"{key}: no such subject")
         elif key in admitted:
-            errors.append(f"{key}: already in the baseline; ceilings are never raised")
+            errors.append(
+                f"{key}: already in the baseline; ceilings are never raised"
+                if key in exceptions
+                else f"{key}: named twice in one --admit run"
+            )
         elif subject.size <= subject.cap:
             errors.append(
                 f"{key}: {subject.size:,} bytes is within its cap; nothing to admit"

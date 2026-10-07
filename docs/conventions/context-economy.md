@@ -243,8 +243,10 @@ Files already over a cap are **frozen** in `cfg/skill-size-baseline.json`
 at their size on admission, each naming the issue that retires it. A
 frozen file may not grow by a byte; `--write` only lowers a ceiling or
 drops a retired entry, and admitting a new exception (`--admit`) must name
-an issue. **A raised or newly added ceiling is a blocking review
-finding** — no tool can see the history that would prove it justified.
+an issue. **A raised ceiling is a blocking review finding** — `--write`
+cannot raise one, so a raise was hand-edited. A newly admitted ceiling
+is a warning the review surfaces with its retiring issue, so the
+operator sees every new exception.
 
 Two rules keep the cap from turning into deletion:
 

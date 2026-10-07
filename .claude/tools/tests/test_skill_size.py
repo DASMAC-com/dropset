@@ -200,7 +200,7 @@ class Check(Fixture):
                 self.assertIn(f"{self.big_key()}: {ss.ENTRY_CAP + 500:,} bytes", err)
 
     def test_a_non_object_baseline_fails_without_a_traceback(self):
-        for body in ("[]", '{"exceptions": ["ab"]}', '{"exceptions": {"k": 1}}'):
+        for body in ("{", "[]", '{"exceptions": ["ab"]}', '{"exceptions": {"k": 1}}'):
             with self.subTest(body=body):
                 self.baseline.write_text(body, encoding="utf-8")
                 code, _, err = self.run_tool("--check")
@@ -307,7 +307,7 @@ class Admit(Fixture):
             f"{self.big_key()}=ENG-8",
         )
         self.assertEqual(code, 2)
-        self.assertIn("never raised", err)
+        self.assertIn("named twice", err)
         self.assertFalse(self.baseline.exists())
 
     def test_admit_refuses_an_unknown_subject(self):

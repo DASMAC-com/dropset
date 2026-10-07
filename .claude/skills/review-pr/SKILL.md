@@ -1381,9 +1381,9 @@ already being asked to start the review.
    **When the branch diff is dominated by generated output, the
    completeness lens and the cross-check get the HAND-WRITTEN
    slices — not `diff_path` by default.** Regenerated output is
-   not part of the "everything" the cross-check should see: on a
-   conformance-vectors PR the two lenses handed the full diff cost
-   2.6–2.9x the cheapest (record: `history.md`).
+   not part of what the cross-check should see: on a
+   conformance-vectors PR the full-diff lenses cost 2.6–2.9x
+   the cheapest (`history.md`).
    `sdk/conformance` is in `DIFF_EXCLUDES` now; the rule is for
    the next generated family that is not.
 
@@ -3442,8 +3442,9 @@ already being asked to start the review.
      judgment calls, from the diff plus one read of each
      touched file. **Blocking**: a rule removed from
      `CLAUDE.md` or a skill entry file that points to neither
-     its ledger entry nor its new home, and any raised or
-     added ceiling in `cfg/skill-size-baseline.json`.
+     its ledger entry nor its new home, and any raised
+     ceiling in `cfg/skill-size-baseline.json`; an added
+     one is a warning.
 
    - **`CLAUDE.md` + `docs/conventions/` freshness**
      (conditional — spawn only when the surface gate above
