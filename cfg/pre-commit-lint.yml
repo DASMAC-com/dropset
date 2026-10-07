@@ -190,6 +190,22 @@ repos:
     name: 'Rust images inherit the pinned-toolchain layer'
     pass_filenames: false
   repo: 'local'
+# Resident-size gate: skill entry files, skill descriptions and CLAUDE.md are
+# loaded into every session that reaches them, so each carries a hard byte cap,
+# with today's over-cap files frozen at their size in
+# cfg/skill-size-baseline.json. `review-pr` alone grew 60k to 292k bytes over
+# July to October with nothing pushing back. `always_run` with
+# `pass_filenames: false` because the check is over the whole skill set and a
+# baseline edit alone must re-run it; it reads only committed files, so CI's
+# lint workflow enforces it too.
+- hooks:
+  - always_run: true
+    entry: 'python3 .claude/tools/skill_size.py --check'
+    id: 'skill-size'
+    language: 'system'
+    name: 'Skill entry files and descriptions stay under their byte caps'
+    pass_filenames: false
+  repo: 'local'
 # hadolint-py wraps the hadolint binary so the hook needs neither Docker nor
 # a manual install. `files` matches `Dockerfile` and `*.Dockerfile` (identify
 # doesn't tag the latter as the `dockerfile` type), so `types: file`.

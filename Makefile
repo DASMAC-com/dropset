@@ -1046,6 +1046,15 @@ docker-context:
 dockerfile-stages:
 	python3 .claude/tools/dockerfile_stages.py $(ARGS)
 
+# Hard byte caps on what every session carries: skill entry files, skill
+# descriptions and CLAUDE.md, with over-cap subjects frozen in
+# cfg/skill-size-baseline.json. Run by the `skill-size` pre-commit hook too, so
+# `make lint` (and CI) covers it. `ARGS=--report` ranks the skills, siblings
+# included; `ARGS=--write` tightens the baseline after a file shrinks.
+.PHONY: skill-size
+skill-size:
+	python3 .claude/tools/skill_size.py $(ARGS)
+
 # Report committed guard hooks that no settings file wires. A script under
 # .claude/hooks/ does nothing until a PreToolUse entry points at it, and the
 # wiring is deliberately uncommitted (both settings files are git-ignored), so

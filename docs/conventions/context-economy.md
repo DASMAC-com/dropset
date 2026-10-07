@@ -221,6 +221,41 @@ not re-litigated per session:
 - **The Bedrock auto-mode classifier's ~7% overhead is accepted burn.**
   It buys the substrate routing and is not a target for trimming.
 
+## Resident size has a hard cap
+
+Some text is paid for before any tool runs. Three residency classes:
+
+- **A — every turn of every session:** `CLAUDE.md` and every skill's
+  `description`.
+- **B — invocation to session end:** a skill's entry file,
+  `.claude/skills/<name>/SKILL.md`.
+- **C — read at a trigger:** sibling files, convention docs, tool
+  results. `session-metrics` already ranks these.
+
+`.claude/tools/skill_size.py` caps A and B in bytes as `wc -c` reports
+them: **32,000** per entry file (frontmatter and rendered regions
+included), **1,024** per description, **32,000** for `CLAUDE.md`. It runs
+as the `skill-size` lint hook, so CI enforces it.
+`make skill-size ARGS=--report` ranks the skills with their siblings,
+which are reported but never capped.
+
+Files already over a cap are **frozen** in `cfg/skill-size-baseline.json`
+at their size on admission, each naming the issue that retires it. A
+frozen file may not grow by a byte; `--write` only lowers a ceiling or
+drops a retired entry, and admitting a new exception (`--admit`) must name
+an issue. **A hand-raised ceiling is a review finding.**
+
+Two rules keep the cap from turning into deletion:
+
+- **Siblings are read at their trigger, never at invocation.** Moving
+  text out of an entry file is a saving only if the entry file names the
+  moment the sibling is needed. A sibling read on invocation is class B
+  again.
+- **Compress, don't erase.** Keep the rule once plus one provenance line.
+  The measurements and incident narrative move to the skill's
+  `history.md` ledger. A removed rule points to its ledger entry or its
+  new home.
+
 ## The levers
 
 - **Ask for the narrowest thing that answers the question.** Use the

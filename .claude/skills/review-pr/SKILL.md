@@ -1380,20 +1380,13 @@ already being asked to start the review.
 
    **When the branch diff is dominated by generated output, the
    completeness lens and the cross-check get the HAND-WRITTEN
-   slices — not `diff_path` by default.** The step elsewhere says
-   the cross-check "should see everything"; regenerated output is
-   not part of everything. Measured on a conformance-vectors PR
-   before `sdk/conformance` joined `DIFF_EXCLUDES`: a 5783-line
-   diff of which ~3460 lines were vector JSON, so even the tests
-   slice came out at 4872 lines and the category split could not
-   isolate the 1532 hand-written lines either. The two lenses
-   handed the full diff were that review's two most expensive, at
-   2.6–2.9x the cheapest, and the ordering tracked handed-in size
-   almost monotonically. Both had been told to "skim past" the
-   JSON — prompt discipline standing in for a slice that should
-   not have contained it. `sdk/conformance` is excluded now, so
-   the common case is handled; the rule is for the next
-   generated family that is not.
+   slices — not `diff_path` by default.** Regenerated output is
+   not part of the "everything" the cross-check should see.
+   Measured on a conformance-vectors PR (~3460 of 5783 diff lines
+   vector JSON): the two lenses handed the full diff cost
+   2.6–2.9x the cheapest, despite being told to "skim past" it.
+   `sdk/conformance` is in `DIFF_EXCLUDES` now; the rule is for
+   the next generated family that is not.
 
    **Each brief must NAME the slice it is handed**, and a
    lens scoped to one tree gets that tree's `--only` diff
@@ -3448,7 +3441,10 @@ already being asked to start the review.
      (see the lint-gate block above, and name the hook that
      covers this diff's language); this lens adjudicates
      judgment calls, from the diff plus one read of each
-     touched file.
+     touched file. Two resident-size findings are **blocking**:
+     a rule removed from a skill entry file that points to
+     neither its `history.md` ledger entry nor its new home,
+     and any raised ceiling in `cfg/skill-size-baseline.json`.
 
    - **`CLAUDE.md` + `docs/conventions/` freshness**
      (conditional — spawn only when the surface gate above

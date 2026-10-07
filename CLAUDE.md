@@ -444,9 +444,8 @@ detail: `docs/conventions/skill-tooling.md`.
 ## Context economy
 
 Every tool result is fetched once but **replayed as input on every
-later turn**, so a fat early payload is paid many times over (and it's
-transport-agnostic — a big `git diff`, whole-file `Read`, or verbose
-log behaves like a fat MCP result).
+later turn**, whatever its transport, so a fat early payload is paid
+many times over.
 
 **Session length is therefore itself a cost lever, and the largest
 one** — cost is roughly **quadratic in session length**, since a
@@ -457,15 +456,17 @@ at 1,000) and prefer an occasional **rebase** to a serial chain. This
 binds at *breakdown* time, the only place it can. **Smaller is not
 monotonically cheaper** — a per-PR overhead floor means a tiny PR costs
 far more per line — but the upper bound is **absolute**, not per-line.
-Lines are a **proxy** for turns; where the findings rule and the line
-band disagree, coherence and the findings count win at the floor and the
-line band wins at the ceiling. The metric is **dollars**, not tokens or
-turns, and **every session states its own cost at close**. Two standing
-rulings: **Sonnet-tier task workers are rejected**, and the Bedrock
-auto-mode classifier's ~7% overhead is **accepted burn**. The
-measurements, the per-row cost table and the tie-break detail:
-`docs/conventions/context-economy.md` → "Session length is itself a cost
-lever".
+Lines are a **proxy** for turns. The metric is **dollars**, and **every
+session states its own cost at close**. Two standing rulings:
+**Sonnet-tier task workers are rejected**, and the Bedrock auto-mode
+classifier's ~7% overhead is **accepted burn**. Measurements and the
+findings-vs-lines tie-break: `docs/conventions/context-economy.md` →
+"Session length is itself a cost lever".
+
+**Resident size is capped**: the `skill-size` lint hook caps skill entry
+files and this file at 32,000 bytes, descriptions at 1,024. Over-cap
+files are frozen in `cfg/skill-size-baseline.json`; never raise a
+ceiling by hand. Same doc → "Resident size has a hard cap".
 
 Per call, request the narrowest thing that
 answers the question, read large files by slice (Grep then `Read` with
