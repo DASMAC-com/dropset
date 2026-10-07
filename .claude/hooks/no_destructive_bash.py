@@ -265,6 +265,22 @@ def _rm_any_operand(position, tail):
 # a denylist would have to enumerate, and missing one fails open.
 SHELL_PROGRAMS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash", "fish"})
 
+# The force-push patterns, which `classify` matches over the whole command with
+# PROSE quoting honored (see `prose_spans`) rather than line by line. Without
+# that gate a commit message that merely QUOTES a push was classified as one:
+# the measured instance was a commit whose body described this guard's fix and
+# quoted a force-push example, and quoting a push to `main` reached the deny
+# tier, which no marker lifts — the only way through was to reword the message.
+_PROSE_GATED = set()
+
+
+def _force_push(tail):
+    """A `git push` pattern ending in ``tail``, registered for the prose gate."""
+    pattern = re.compile(_GIT + r"push\b" + tail)
+    _PROSE_GATED.add(pattern)
+    return pattern
+
+
 # Denies that apply on EVERY line, whatever the program.
 DENY_PATTERNS = (
     (
@@ -284,8 +300,7 @@ DENY_PATTERNS = (
         # prefix covers both a qualified refname and a `src:dst` pair; the
         # trailing lookahead keeps `+main-thing:x` (a differently-named branch)
         # out of a tier no marker can lift.
-        re.compile(
-            _GIT + r"push\b"
+        _force_push(
             r"(?=.*(?:--force\b|--force-with-lease\b|(?<!\w)-f(?!\w)"
             r"|\+(?:[\w./-]*[:/])?(?:main|master)(?=[:\s]|$)))"
             r"(?=.*\b(?:main|master)\b)"
@@ -382,8 +397,8 @@ ASK_PATTERNS = (
         # branch on every push. The lookahead is what does the work, and it
         # tolerates the `=<refname>` argument because `\b` sits before the `=`
         # too.
-        re.compile(
-            _GIT + r"push\b.*(?:--force(?!-with-lease\b)\b"
+        _force_push(
+            r".*(?:--force(?!-with-lease\b)\b"
             r"|(?<![\w-])-(?!-)[A-Za-z]*f[A-Za-z]*(?![\w-])"
             r"|\+[\w./-]+:)"
         ),
@@ -813,6 +828,92 @@ def _matches(pattern, line, allow_quoted=True):
     return False
 
 
+# Commands whose quoted arguments are PROSE — stored or printed, never run: a
+# commit, tag or note message, a PR / issue / release body, an `echo`. The
+# read-only searches in `READ_ONLY_PROGRAMS` join them in `prose_spans`.
+#
+# An ALLOWLIST of prose commands, deliberately not a test of "is `git` at
+# command position". A position test has to enumerate every executor that runs
+# its unquoted argv — `ssh host git push …`, `timeout`, `xargs`, `find -exec`,
+# `watch` — and missing one fails open, the same argument `SHELL_PROGRAMS`
+# makes. Missing a prose command here fails CLOSED, into the false positive this
+# gate exists to remove.
+#
+# Matched by SUBCOMMAND, because the program alone is too broad: `git rebase
+# --exec '…'`, `git submodule foreach '…'` and a `!`-alias under `git -c` all
+# run their quoted argument, and `gh codespace ssh` runs one remotely.
+_PROSE_COMMAND = re.compile(
+    r"\s*(?:"
+    + _GIT
+    + r"(?:commit|tag|notes)\b"
+    + r"|gh\s+(?:pr|issue|release|api)\b"
+    + r"|(?:echo|printf)\b)"
+)
+
+# Constructs that defeat whole-command quote tracking, so their presence
+# disables the prose gate. A HEREDOC body is unquoted text whose apostrophes
+# `quoted_spans` would read as opening a quote, and an ANSI-C `$'…'` string
+# takes `\'` as an escape where `quoted_spans` sees a closing quote — either
+# can shift every span after it, hiding a real command inside a "quote".
+_RE_DEFEATS_SPANS = re.compile(r"<<|\$'")
+
+
+def prose_spans(cmd):
+    """Absolute ``(lo, hi)`` ranges of ``cmd`` that are inert prose arguments.
+
+    Quotes are tracked over the WHOLE command, not per line, because the case
+    this exists for is a multi-line commit message: its body lines begin inside
+    a quote, and per line they read as commands of their own.
+
+    A span qualifies only when all of these hold, and anything else returns no
+    span at all:
+
+    - nothing outside the quotes hands text back to a shell — a separator,
+      `eval`, `xargs`, `sh` (`_RE_EVALUATES`) — and nothing defeats the span
+      tracking itself (`_RE_DEFEATS_SPANS`);
+    - a double-quoted span holds no command substitution
+      (`_LIVE_IN_DOUBLE_QUOTES`), which runs inside double quotes;
+    - the command it is an argument of is a prose command (`_PROSE_COMMAND`) or
+      a read-only search (`READ_ONLY_PROGRAMS`). With no separator allowed, a
+      command starts at the last unquoted newline before the span.
+    """
+    spans = quoted_spans(cmd)
+
+    def quoted(index):
+        return any(lo <= index < hi for lo, hi, _ in spans)
+
+    for regex in (_RE_EVALUATES, _RE_DEFEATS_SPANS):
+        for match in regex.finditer(cmd):
+            if not quoted(match.start()):
+                return []
+
+    result = []
+    for lo, hi, quote in spans:
+        if quote == '"' and any(t in cmd[lo:hi] for t in _LIVE_IN_DOUBLE_QUOTES):
+            continue
+        newline = cmd.rfind("\n", 0, lo)
+        while newline != -1 and quoted(newline):
+            newline = cmd.rfind("\n", 0, newline)
+        command = cmd[newline + 1 : lo]
+        if _PROSE_COMMAND.match(command) or program_of(command) in READ_ONLY_PROGRAMS:
+            result.append((lo, hi))
+    return result
+
+
+def _fires_outside(pattern, cmd, spans):
+    """Whether ``pattern`` matches ``cmd`` starting outside every span.
+
+    Searched from each match's start + 1 rather than with `finditer`, so a
+    match suppressed inside a span cannot consume an unsuppressed one after it.
+    """
+    match = pattern.search(cmd)
+    while match:
+        if not any(lo <= match.start() < hi for lo, hi in spans):
+            return True
+        match = pattern.search(cmd, match.start() + 1)
+    return False
+
+
 def classify(cmd):
     """``("deny"|"ask"|None, reason)`` for one command string.
 
@@ -853,10 +954,17 @@ def classify(cmd):
     # a pattern, never less" — false, because splitting a token puts less.
     cmd = _CONTINUATION_RE.sub("", cmd)
     lines = [line for line in cmd.splitlines() if line.strip()]
+    prose = prose_spans(cmd)
+
+    def fires(pattern):
+        if pattern in _PROSE_GATED:
+            return _fires_outside(pattern, cmd, prose)
+        return any(_matches(pattern, line) for line in lines)
+
     for pattern, reason in DENY_PATTERNS:
         # The read-only carve-out applies here too — see `_matches`. It has to,
         # now that a trailing quote no longer defeats the end anchor.
-        if any(_matches(pattern, line) for line in lines):
+        if fires(pattern):
             return "deny", reason
     # Then the shell-only denies, on shell lines only. A closing quote after
     # the target is evidence a shell was handed the string — but only when a
@@ -876,7 +984,7 @@ def classify(cmd):
                 if not any(lo <= start < hi for lo, hi, _ in spans):
                     return "deny", reason
     for pattern, reason in ASK_PATTERNS:
-        if any(_matches(pattern, line) for line in lines):
+        if fires(pattern):
             return "ask", reason
     return None, ""
 
@@ -1220,6 +1328,27 @@ def _self_test():
         # exponentially (thirty took 1.5s) before option values were barred
         # from starting with a dash, so a regression shows up as a hang here.
         ("git" + " -c" * 60 + " x", None),
+        # A force-push QUOTED in a prose argument is prose. The measured false
+        # positive was a commit message quoting one; to `main` it denied.
+        ('git commit -S -m "Never git push --force origin main"', None),
+        ("git commit -S -m 'Quote git push -fu origin eng-942 here'", None),
+        ('git commit -m "Subject\n\ngit push --force origin main\nbody"', None),
+        ('git -C /x commit -m "git push -f origin eng-942"', None),
+        ('gh pr create --title t --body "Run git push -f origin eng-942"', None),
+        ("echo 'git push --force origin main'", None),
+        # ...but only an INERT prose argument, and the real command still fires.
+        ('git commit -m "$(git push --force origin main)"', "deny"),
+        ("git commit -m 'x'\ngit push --force origin main", "deny"),
+        ('git commit -m "a\nb"\ngit push -f origin eng-942', "ask"),
+        ("echo 'git push -f origin eng-942' | sh", "ask"),
+        # A quoted argument that RUNS is not prose: the gate is by subcommand.
+        ("git rebase --exec 'git push --force origin main' main", "deny"),
+        ("git -c alias.x='!git push -f origin main' x", "deny"),
+        ("ssh host 'git push --force origin main'", "deny"),
+        # Constructs that would throw off whole-command quote tracking disable
+        # the gate, so an apostrophe in them cannot hide the push after them.
+        ("git commit -F - <<EOF\nit's\nEOF\ngit push --force origin main 'x'", "deny"),
+        ("echo $'it\\'s'\ngit push --force origin main 'x'", "deny"),
     ]
     # The absolute spelling of the home directory, which agents are told to
     # prefer. Built from the real HOME so the case holds on any machine.

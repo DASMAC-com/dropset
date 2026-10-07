@@ -75,8 +75,14 @@ def _read_marker(path: Path) -> dict | None:
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError, RecursionError):
         # A corrupt marker is treated as absent — the gate just re-scans.
+        #
+        # `ValueError`, not `json.JSONDecodeError`, which is a strict SUBSET of
+        # it: `read_text(encoding="utf-8")` raises `UnicodeDecodeError` (also a
+        # `ValueError`) on one invalid byte, and deeply nested JSON raises
+        # `RecursionError`. Neither is a `JSONDecodeError`, so both escaped the
+        # narrower clause and crashed the command. Same fix as `allowlist.py`.
         return None
     return data if isinstance(data, dict) else None
 

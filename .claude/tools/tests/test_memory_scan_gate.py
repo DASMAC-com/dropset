@@ -1,8 +1,8 @@
 """Stdlib ``unittest`` tests for the memory-scan cadence gate.
 
 Covers the content signature over the ``*.md`` store and the pure ``decide``
-rule (no-marker, changed-store, within-interval, elapsed, bad-timestamp), plus
-argument parsing. Run via the repo's ``make tools-tests``.
+rule (no-marker, changed-store, within-interval, elapsed, bad-timestamp), the
+corrupt-marker read, plus argument parsing. Run via the repo's ``make tools-tests``.
 """
 
 import tempfile
@@ -13,6 +13,7 @@ from pathlib import Path
 from memory_scan_gate import (
     MemoryScanGateError,
     _parse_args,
+    _read_marker,
     decide,
     store_signature,
 )
@@ -84,6 +85,23 @@ class DecideTests(unittest.TestCase):
         scan, reason = decide("sig", {"signature": "sig", "last_scan": "nonsense"}, NOW)
         self.assertTrue(scan)
         self.assertIn("timestamp", reason)
+
+
+class ReadMarkerTests(unittest.TestCase):
+    def test_corrupt_marker_reads_as_absent(self):
+        # Each payload raises something other than `JSONDecodeError`: an
+        # invalid UTF-8 byte fails the text decode before JSON ever runs, and
+        # deep nesting exhausts the parser's recursion.
+        payloads = {
+            "invalid-byte": b'{"signature": "\xff"}',
+            "deep-nesting": b"[" * 100_000,
+        }
+        with tempfile.TemporaryDirectory() as d:
+            for name, payload in payloads.items():
+                with self.subTest(name):
+                    marker = Path(d) / f"{name}.json"
+                    marker.write_bytes(payload)
+                    self.assertIsNone(_read_marker(marker))
 
 
 class ParseArgsTests(unittest.TestCase):

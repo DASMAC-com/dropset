@@ -388,6 +388,19 @@ over-read:**
   filter can only ever suppress, so a stray quote must not become a way
   to hide a command behind it.
 
+  **The force-push patterns widen that allowlist to prose commands** —
+  `git commit` / `tag` / `notes`, `gh pr` / `issue` / `release` / `api`,
+  `echo`, `printf`. A commit message that merely quoted a push to `main`
+  hit the deny tier, so the only way through was rewording it. Quotes are
+  tracked over the whole command, so a multi-line message's body lines
+  are covered too. The gate is an allowlist of prose **subcommands**, not
+  a test of whether `git` sits at command position. A position test
+  would have to enumerate every executor that runs its unquoted argv
+  (`ssh`, `timeout`, `xargs`, `find -exec`) and fails open on a missed
+  one, while a missed prose command only fails closed. Anything that
+  hands text back to a shell disables the gate: a separator, `sh`,
+  `eval`, `$(…)` in double quotes, a heredoc, or `$'…'`.
+
 Two implementation notes worth keeping, because both were found by the
 script's own self-test rather than in review:
 
