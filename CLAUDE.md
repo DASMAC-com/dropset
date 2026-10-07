@@ -437,8 +437,7 @@ refuses a shape with no measured recurrence. **Repeated skill *prose*
 gets the same treatment**: one source under `.claude/shared/`, filled
 into marked regions by `make render-skills` and gated by
 `make render-check`, which also fails on a dangling marker. Extract
-only genuinely verbatim repetition — `plan`'s and `init-pr`'s model
-guards point opposite ways and are a pair, not a duplicate. Full
+only genuinely verbatim repetition; no block is extracted today. Full
 detail: `docs/conventions/skill-tooling.md`.
 
 ## Context economy
@@ -582,23 +581,30 @@ wiring, the helper family, and the iTerm setup:
 A session runs on **Bedrock** unless it needs something Bedrock lacks —
 web search, web fetch, deep research — or it is a **seat session by
 role** (`plan`, `architect`, `housekeeping`, `explore`). Sub-agents are
-not a differentiator. `task <n>` is Bedrock, `task local <n>` is the
-seat escape for work needing web research, and `housekeeping` stays on
+not a differentiator. `task <n>` is Bedrock, `task anthropic <n>` is
+the escape for work needing web research, and `housekeeping` stays on
 the seat deliberately because the operator uses it to open the 5-hour
 subscription window.
 
+**Models are named by role, in three tiers**: **judgment** (`plan`,
+`architect`, `explore`), **worker** (`task`, `housekeeping`) and
+**background** (Claude Code's small-model slot). Each tier's model and
+substrate live in the untracked runtime config (`DS_MODEL_<TIER>` and
+`DS_MODEL_<TIER>_SUBSTRATE`), and every verb pins its tier's model at
+launch, refusing to start when the config does not resolve — so no
+skill spends a turn checking which model it is on. The one substrate
+override worth reaching for is `plan bedrock` / `architect <topic>
+bedrock` in a credit pinch.
+
 A launch **records its substrate** in an untracked marker, and the
-resume verbs re-export it, because the slip is silent in both
-directions — a Bedrock session resumed onto the seat eats the
-subscription window; the reverse spends credits on attended work. An
-absent marker reads as **seat**. The seat pin IS the absence of
-`CLAUDE_CODE_USE_BEDROCK`, so a seat verb **clears** inherited Bedrock
-exports rather than only warning about them: these helpers export into
-the calling shell, so a tab that ran `task` stays a Bedrock tab. The
-model string lives in the untracked runtime config
-(`DS_BEDROCK_MODEL`); the launcher's fallback appends the **`[1m]`**
-window suffix, whose absence costs four fifths of the context and is
-never reported. Detail, and the verb table:
+resume verbs re-export it and re-pin the tier, because the slip is
+silent in both directions — a Bedrock session resumed onto the seat
+eats the subscription window; the reverse spends credits on attended
+work. An absent marker reads as **anthropic**. The seat pin IS the
+absence of `CLAUDE_CODE_USE_BEDROCK`, so an anthropic launch
+**clears** inherited Bedrock exports rather than only warning about
+them: these helpers export into the calling shell, so a tab that ran
+`task` stays a Bedrock tab. Detail, and the verb table:
 `docs/conventions/local-integrations.md`.
 
 A planning session may **dispatch** a ready task — `session_dispatch.py`

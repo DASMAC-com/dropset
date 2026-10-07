@@ -11,9 +11,9 @@ search-shape rule in three separate files, and the same cspell rule in two.
 This makes a repeated block have **one source**. A skill marks the region it
 wants filled, and this tool fills it:
 
-    <!-- render:begin fable-model-guard verb=plan -->
+    <!-- render:begin some-block verb=plan -->
     ...generated content, do not edit by hand...
-    <!-- render:end fable-model-guard -->
+    <!-- render:end some-block -->
 
 ``--check`` re-renders in memory and fails on any difference, so a hand-edited
 generated region is caught rather than silently kept. It also fails on a
@@ -27,11 +27,11 @@ there is no logic, no inheritance and no partials. If a block needs a
 conditional it is not a shared block — it is two blocks.
 
 **On what actually repeats.** Less than expected, and that is worth recording
-so the next pass does not over-build: the `plan` and `init-pr` model guards
-point in *opposite* directions and are a complementary pair rather than a
-duplicate, and the several "runs in the base repo" mentions each say something
-different about why. Extract a block only when the prose is genuinely
-verbatim in two or more places.
+so the next pass does not over-build: the one block ever extracted (a model
+guard shared by two skills) was retired once the launcher pinned the model,
+and the several "runs in the base repo" mentions each say something different
+about why. No block is extracted today; the gate stays so the next genuinely
+verbatim repetition has a home. Extract only on that.
 
 Usage::
 

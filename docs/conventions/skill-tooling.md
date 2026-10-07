@@ -292,8 +292,8 @@ So a block that is genuinely repeated gets **one source** under
 `.claude/shared/`, and each skill marks the region it wants filled:
 
 ```markdown
-<!-- render:begin fable-model-guard verb=plan -->
-<!-- render:end fable-model-guard -->
+<!-- render:begin some-block verb=plan -->
+<!-- render:end some-block -->
 ```
 
 `make render-skills` fills every region; `make render-check` fails on
@@ -312,10 +312,10 @@ would be read by an agent as instruction text.
 
 **Extract sparingly, and only on verbatim repetition.** The
 duplication here is thinner than it looks, which is worth recording so
-the next pass does not over-build: `plan`'s and `init-pr`'s model
-guards point in **opposite** directions — one catches a planning-tier
-model burning an implementation run, the other an implementation-tier
-model doing board work — so they are a complementary pair, not a
-duplicate. Several "runs in the base repo" mentions likewise each say
-something different about why. Extract when the prose is genuinely the
-same in two or more places; otherwise leave it written out.
+the next pass does not over-build. The one block ever extracted — a
+model guard shared by `plan` and `architect` — was **retired** once
+the launcher pinned the model and refused an unresolved tier, so no
+block is extracted today; the gate stays as the home for the next one.
+Several "runs in the base repo" mentions each say something different
+about why. Extract when the prose is genuinely the same in two or more
+places; otherwise leave it written out.

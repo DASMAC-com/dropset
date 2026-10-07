@@ -67,55 +67,27 @@ new-vs-resume split to remember. It names the session
 `plan-<day-of-month>` (run on the 14th → `plan-14`), and:
 
 - if today's `plan-<day>` session does not exist, it creates
-  it — in the base repo, with `--model claude-fable-5`, and
+  it — in the base repo, on the **judgment** tier's model, with
   `/plan` as the initial prompt so this skill bootstraps
   immediately;
-- if it already exists, it **resumes** it.
+- if it already exists, it **resumes** it, re-pinning the
+  same model.
 
-It is a **seat** verb: planning runs the top tier, and a
-seat launch is what a Fable pin means. If the shell arrived
-carrying Bedrock exports from an earlier `task` in the same
-tab, `plan` clears them and says so.
+The judgment tier runs on the Anthropic subscription unless the
+runtime config says otherwise; `plan bedrock` is the one-word
+credit-pinch override. If the shell arrived carrying Bedrock
+exports from an earlier `task` in the same tab, an anthropic
+launch clears them and says so.
 
 That supersedes hand-naming a base-repo session
 `planning-<day>`. `plan`, its worktree counterpart `task`,
 and the general-purpose `explore` are documented in
 `docs/conventions/local-integrations.md`.
 
-### Check the model before doing anything else
-
-<!-- render:begin fable-model-guard verb=plan -->
-
-Sessions of this kind deliberately run the most capable model —
-**fidelity is the point**, and a session that has quietly landed on
-the default implementation model will still *work*, which is exactly
-why the slip goes unnoticed.
-
-So on invocation, **before the bootstrap read**, check the model this
-session is running as. The system prompt states it. If it is **not** a
-Fable/Mythos-tier model, say so and offer the fix via
-`AskUserQuestion`, recommended option first:
-
-1. *"Run `/model fable` now and continue"* — recommended; it switches
-   the running session in place.
-1. *"Relaunch via `plan`"* — the deterministic path, at the cost of
-   restarting the session.
-1. *"Continue on this model anyway"* — proceed, and don't ask again
-   this session.
-
-This is the mirror of `init-pr`'s guard, pointing the other way: that
-one catches a planning-tier model about to burn a long implementation
-run, this one catches an implementation-tier model about to do work
-that needs the top tier.
-
-The `model:` frontmatter on this skill is **belt-and-braces, not the
-mechanism**. Whether it switches the session going forward or applies
-only to this invocation's execution is not specified, so it is not
-relied on — `plan` passing `--model claude-fable-5` at launch is the
-deterministic path, and the check above is what catches every other
-route in.
-
-<!-- render:end fable-model-guard -->
+**There is no in-session model check.** The launcher pins the
+model and refuses to start when the tier does not resolve, so a
+turn spent asking which model is running buys nothing. A session
+started by hand with bare `claude` is unmanaged by design.
 
 For a planning session specifically, fidelity is a hard
 constraint on what may be *proposed* — see step 7.

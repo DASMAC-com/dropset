@@ -396,9 +396,14 @@ class GatedVerbSurface(unittest.TestCase):
     def test_the_gate_runs_after_the_seat_guard(self):
         # Ordering matters: the seat guard clears an `AWS_REGION` inherited from a
         # previous `task` in the same tab, and the AWS CLI reads that variable, so
-        # probing first would probe the Bedrock launcher's environment.
-        for verb in ("plan", "housekeeping"):
-            guard = self.source.index("_ds_seat_guard '%s'" % verb)
+        # probing first would probe the Bedrock launcher's environment. `plan`
+        # reaches the guard through `_ds_substrate_enter`, which also carries
+        # its `bedrock` override.
+        for verb, call in (
+            ("plan", "_ds_substrate_enter \"$substrate\" 'plan'"),
+            ("housekeeping", "_ds_seat_guard 'housekeeping'"),
+        ):
+            guard = self.source.index(call)
             gate = self.source.index("_ds_aws_login '%s'" % verb)
             self.assertLess(guard, gate, "%s probes before clearing the env" % verb)
 
