@@ -463,16 +463,15 @@ _ds_daily_sid() {
 # on-disk transcript as the existence check.
 #
 #   $1 kind (seeds the id, e.g. `plan`)   $2 display name   $3 initial prompt
-#   $4 model to pin, or "" for the saved default
+#   $4 model to pin, resolved by `_ds_tier`
 #
 # The model rides BOTH branches; the name and the initial prompt ride only the
 # create path. That split is the point, and getting it wrong is silent: `-n`
 # sets a display name and the prompt bootstraps a skill, so re-passing either
-# on a resume is meaningless — but `--model` is a per-session flag, and a
-# planning session is reopened many times a day. Passing it only on create
-# would honor the pin on the day's FIRST launch and quietly drop to the saved
-# default on every reopen after it, which is exactly the "still works, so
-# nobody notices" slip `plan` exists to remove.
+# on a resume is meaningless — but the model is per-launch, and a planning
+# session is reopened many times a day. Pinning it only on create would honor
+# the pin on the day's FIRST launch and quietly drop to the saved default on
+# every reopen after it — the "still works, so nobody notices" slip.
 _ds_daily_session() {
   _ds_session "$(_ds_daily_sid "$1")" "$2" "$3" "$4"
 }
@@ -488,8 +487,15 @@ _ds_daily_session() {
 # briefing.
 #
 #   $1 session id   $2 display name   $3 initial prompt
-#   $4 model to pin, or "" for the saved default
+#   $4 model to pin, resolved by `_ds_tier` — required
 #   $5 worktree tag, or "" to run in the base checkout
+#
+# THE MODEL TRAVELS AS `ANTHROPIC_MODEL`, SCOPED TO THE ONE `claude` COMMAND —
+# not as a `--model` flag, and not exported. The environment is the delivery
+# the Bedrock path already used, so both substrates now pin the same way; and a
+# command-scoped assignment cannot outlive the session into the tab, so a bare
+# `claude` typed there afterwards is unmanaged rather than silently pinned.
+# The caller has already put the shell on its substrate (`_ds_substrate_enter`).
 #
 # THE WORKTREE FLAG RIDES THE CREATE BRANCH ONLY. `-w` *creates* a worktree, so
 # passing it on the resume branch would ask for a second one every time a
@@ -506,9 +512,13 @@ _ds_daily_session() {
 _ds_session() {
   local sid="$1" name="$2" prompt="$3" model="$4" worktree="$5"
 
+  if [[ -z "$model" ]]; then
+    print -u2 'dropset: no model resolved for this session — refusing to launch.'
+    return 1
+  fi
+
   local slug transcript
-  local -a model_flag worktree_flag prompt_arg
-  [[ -n "$model" ]] && model_flag=(--model "$model")
+  local -a worktree_flag prompt_arg
   [[ -n "$worktree" ]] && worktree_flag=(-w "$worktree")
   # An ARRAY rather than a bare "$prompt", so a verb with no bootstrap skill to
   # run passes no positional at all. Spelled directly, an empty prompt reaches
@@ -538,10 +548,10 @@ _ds_session() {
         "checkout. Re-creating it restores TRACKED files only; an untracked" \
         "spec file written there is not recoverable, so work from Linear."
     fi
-    claude --resume "$sid" --permission-mode auto "${model_flag[@]}"
+    ANTHROPIC_MODEL="$model" claude --resume "$sid" --permission-mode auto
   else
-    claude --session-id "$sid" -n "$name" --permission-mode auto \
-      "${model_flag[@]}" "${worktree_flag[@]}" "${prompt_arg[@]}"
+    ANTHROPIC_MODEL="$model" claude --session-id "$sid" -n "$name" \
+      --permission-mode auto "${worktree_flag[@]}" "${prompt_arg[@]}"
   fi
 }
 
@@ -578,26 +588,48 @@ _ds_topic_sid() {
 # needs, and the verbs that actually broke on Bedrock broke on capability.
 # ---------------------------------------------------------------------------
 
-# The profile id to fall back on when `DS_BEDROCK_MODEL` is unset.
+# ---------------------------------------------------------------------------
+# Model tiers: which model a verb launches, named by ROLE, never by model.
 #
-# This MIRRORS the `AgentModelId` default published by `infra/aws/bedrock-agent.yml`
-# as the `dropset-bedrock-agent-profile-id` export, rather than reading that
-# export. Reading it would cost a CloudFormation round trip on every single
-# session launch, for a value that changes about once a year — so the mirror is
-# the deliberate trade, and the stack remains the source of truth. If the two
-# ever disagree the stack wins, and the symptom is a session on last year's
-# model rather than a failure.
-_DS_BEDROCK_PROFILE_FALLBACK='us.anthropic.claude-opus-5-5'
+#   JUDGMENT     plan, architect, explore        default substrate: anthropic
+#   WORKER       task, housekeeping              default substrate: bedrock
+#   BACKGROUND   Claude Code's small-model slot  follows the session's substrate
+#
+# The names are capability-per-role on purpose. A family name (opus, haiku)
+# drifts the first time the role changes family, and Claude Code owns those as
+# its own alias slots; a substrate name ("seat") breaks the first time the top
+# model leaves the subscription. The verb → tier table is the code below, and
+# the tier → model + substrate table is the operator's untracked runtime config:
+#
+#   DS_MODEL_JUDGMENT, DS_MODEL_JUDGMENT_SUBSTRATE
+#   DS_MODEL_WORKER,   DS_MODEL_WORKER_SUBSTRATE
+#   DS_MODEL_BACKGROUND                (applied on Bedrock launches only)
+#
+# ONE MODEL ID SERVES BOTH SUBSTRATES. Claude Code maps a first-party id to the
+# `us.` cross-region profile when it runs on Bedrock (measured: `claude-opus-5-5`
+# went out as `us.anthropic.claude-opus-5-5`), so a substrate override flips
+# the provider without the operator having to know a second spelling. A
+# Bedrock-form id still works on Bedrock; it just stops being portable.
+#
+# The fallbacks are FULL ids rather than aliases, because a full id is what was
+# verified on both substrates; a new model is a one-line runtime-config edit.
+#
+# The classifier that reviews auto-mode actions is deliberately absent: Claude
+# Code runs it on Sonnet whatever is configured, so it has no tier of ours.
+# ---------------------------------------------------------------------------
+_DS_MODEL_JUDGMENT_FALLBACK='claude-fable-5-1[1m]'
+_DS_MODEL_WORKER_FALLBACK='claude-opus-5-5[1m]'
 
-# The fast tier, pinned so background sub-turns (session titles, the auto-mode
-# classifier) bill to Bedrock credits alongside the primary model instead of
-# silently falling back to the subscription.
+# The background slot — session titles, summaries and similar auxiliary calls
+# Claude Code makes on its own, exported as `ANTHROPIC_DEFAULT_HAIKU_MODEL`. A
+# failure there degrades those niceties, never task output. On the subscription
+# Claude Code's own default is right, so it is pinned on Bedrock only, where it
+# would otherwise fall back to an id the account does not route.
 #
 # The `-v1:0` suffix is required: Claude Code passes this id through verbatim,
 # and Bedrock rejects the bare form with `400 The provided model identifier is
-# invalid` — measured, so background sub-turns failed on every launch that used
-# it. Unlike the primary model, this id is not composed with a window suffix.
-_DS_BEDROCK_FAST_FALLBACK='us.anthropic.claude-haiku-4-5-20251001-v1:0'
+# invalid` — measured. Unlike the other tiers, this id takes no window suffix.
+_DS_MODEL_BACKGROUND_FALLBACK='us.anthropic.claude-haiku-4-5-20251001-v1:0'
 
 # Where a session's substrate choice is recorded. See `_ds_substrate_write`.
 _DS_SUBSTRATE_DIR="$_DS_REPO/.claude/session-substrate"
@@ -619,35 +651,77 @@ _ds_tag_of() {
   print -r -- "$tag"
 }
 
-# Compose the model string a Bedrock launch exports as `ANTHROPIC_MODEL`.
+# Resolve a tier to the model and substrate a launch uses. Prints two lines,
+# model then substrate. NON-ZERO MEANS DO NOT LAUNCH.
 #
-# `DS_BEDROCK_MODEL` in the untracked runtime config wins and is used VERBATIM,
-# suffix included — so switching model or context window is a one-line personal
-# config edit with no repo change. Unset, this composes the fallback profile id
-# above with the `[1m]` suffix.
+#   $1 tier (`judgment` | `worker`)   $2 substrate override, or "" for the config
 #
-# **The suffix is the whole reason this is a function.** The stack exports a
-# bare profile id, Bedrock defaults a model with no suffix to the 200k window, and
-# nothing anywhere reports the difference — so the failure is a session running
-# at one fifth of its intended context, indistinguishable from a session that
-# simply filled up. Appending it here rather than in the export keeps the
-# stack's value honest (it really is just the profile id) and puts the
-# composition somewhere a test can assert on.
+# This is the deterministic, pre-session half of fail-fast: a tier whose config
+# does not resolve refuses here, offline and free, rather than starting a
+# session that fails on its first turn. Measured, that is what the CLI does
+# with an unknown id — it starts, then the first request returns `400 The
+# provided model identifier is invalid`. Whether an id names a real model is a
+# network question and is NOT asked per launch; `models check` asks it for free.
 #
-# A configured string carrying no window suffix WARNS and is still used. The
-# override is the operator's to make — refusing it would make the escape hatch
-# unusable for exactly the deliberate case it exists for.
-_ds_bedrock_model() {
-  local model="$DS_BEDROCK_MODEL"
-  if [[ -n "$model" ]]; then
-    if [[ "$model" != *'[1m]' && "$model" != *'[200k]' ]]; then
-      print -u2 "dropset: DS_BEDROCK_MODEL ('$model') has no context-window" \
-        "suffix — Bedrock will use 200k, not 1M, and will not say so."
-    fi
-    print -r -- "$model"
-    return 0
+# A configured model on Bedrock carrying no window suffix WARNS and is still
+# used: the override is the operator's to make, and Bedrock defaults an
+# unsuffixed id to 200k without saying so.
+_ds_tier() {
+  local tier="$1" override="$2" model substrate var
+  case "$tier" in
+    judgment)
+      var=DS_MODEL_JUDGMENT
+      model="${DS_MODEL_JUDGMENT:-$_DS_MODEL_JUDGMENT_FALLBACK}"
+      substrate="${override:-${DS_MODEL_JUDGMENT_SUBSTRATE:-anthropic}}"
+      ;;
+    worker)
+      var=DS_MODEL_WORKER
+      model="${DS_MODEL_WORKER:-$_DS_MODEL_WORKER_FALLBACK}"
+      substrate="${override:-${DS_MODEL_WORKER_SUBSTRATE:-bedrock}}"
+      ;;
+    *)
+      print -u2 "dropset: unknown model tier '$tier'"
+      return 1
+      ;;
+  esac
+
+  # The retired spelling is named rather than silently ignored: a config still
+  # carrying it would otherwise launch on the fallback with no hint why.
+  if [[ "$tier" == worker && -n "$DS_BEDROCK_MODEL" && -z "$DS_MODEL_WORKER" ]]; then
+    print -u2 'dropset: DS_BEDROCK_MODEL is retired and ignored — rename it' \
+      'to DS_MODEL_WORKER in the runtime config.'
   fi
-  print -r -- "${_DS_BEDROCK_PROFILE_FALLBACK}[1m]"
+
+  if [[ "$substrate" != (anthropic|bedrock) ]]; then
+    print -u2 "dropset: ${var}_SUBSTRATE ('$substrate') must be anthropic or" \
+      'bedrock — refusing to launch.'
+    return 1
+  fi
+  if [[ "$model" == *[[:space:]]* ]]; then
+    print -u2 "dropset: $var ('$model') is not a model id — refusing to launch."
+    return 1
+  fi
+  if [[ "$substrate" == bedrock && -n "${(P)var}" \
+    && "$model" != *'[1m]' && "$model" != *'[200k]' ]]; then
+    print -u2 "dropset: $var ('$model') has no context-window suffix —" \
+      'Bedrock will use 200k, not 1M, and will not say so.'
+  fi
+  print -r -- "$model"
+  print -r -- "$substrate"
+}
+
+# Internal: put the calling shell on a tier's substrate. $1 substrate, $2 verb
+# name for messages. Non-zero means DO NOT LAUNCH.
+#
+# THE ORDER IS THE SEAT PIN. An anthropic launch clears whatever an earlier
+# Bedrock launch in this tab left behind FIRST, and only then does the verb hand
+# its own model to `claude` — so an inherited pin can never win.
+_ds_substrate_enter() {
+  if [[ "$1" == bedrock ]]; then
+    _ds_bedrock_env
+  else
+    _ds_seat_guard "$2"
+  fi
 }
 
 # Record the substrate a session launched on, keyed by worktree tag.
@@ -675,19 +749,35 @@ _ds_substrate_write() {
   return 0
 }
 
-# Read back a recorded substrate. Prints `bedrock` or `seat`.
+# Read back a recorded substrate. Prints `bedrock` or `anthropic`.
 #
-# **Absent means seat**, deliberately: every session that existed before markers
-# did was a seat session, and the conservative error is spending the
+# **Absent means anthropic**, deliberately: every session that existed before
+# markers did was a seat session, and the conservative error is spending the
 # subscription window rather than spending credits on something unintended. A
-# garbage value reads as seat for the same reason.
+# garbage value — and the retired `seat` spelling — reads as anthropic for the
+# same reason.
 _ds_substrate_read() {
   local marker="$_DS_SUBSTRATE_DIR/$1" recorded=''
   [[ -f "$marker" ]] && recorded="$(cat "$marker" 2>/dev/null)"
   if [[ "$recorded" == 'bedrock' ]]; then
     print -r -- 'bedrock'
   else
-    print -r -- 'seat'
+    print -r -- 'anthropic'
+  fi
+}
+
+# Which tier a `task resume <n>` re-pins. Prints `worker` or `judgment`.
+#
+# Only `task` writes a marker, so a marker's PRESENCE is the tier record:
+# present means a worker session, absent means the issue-keyed `explore` that
+# shares the `eng-<n>` tag and writes none (see that verb for why it must not).
+# This is what lets a resume restore the model and not just the substrate,
+# without a second marker that could disagree with the first.
+_ds_resume_tier() {
+  if [[ -f "$_DS_SUBSTRATE_DIR/$1" ]]; then
+    print -r -- 'worker'
+  else
+    print -r -- 'judgment'
   fi
 }
 
@@ -703,9 +793,14 @@ _ds_substrate_read() {
 # answers for free, so the ratified "provider answering" half is served by
 # making that first failure legible rather than by pre-flighting it. Set
 # `DS_BEDROCK_PROBE=1` to pay for the pre-flight when diagnosing a launch.
+#
+# The MODEL is not exported here: the launching verb hands it to `claude` for
+# that one command, the same way on both substrates (see `_ds_session`).
 _ds_bedrock_env() {
-  local model
-  model="$(_ds_bedrock_model)"
+  if [[ -n "$DS_BEDROCK_FAST_MODEL" && -z "$DS_MODEL_BACKGROUND" ]]; then
+    print -u2 'dropset: DS_BEDROCK_FAST_MODEL is retired and ignored — rename' \
+      'it to DS_MODEL_BACKGROUND in the runtime config.'
+  fi
 
   # Two of the variables below — `AWS_REGION` and the bearer token — are SHARED
   # with the operator's own environment rather than owned by this launcher, so
@@ -724,8 +819,7 @@ _ds_bedrock_env() {
 
   export CLAUDE_CODE_USE_BEDROCK=1
   export AWS_REGION="${DS_BEDROCK_REGION:-us-west-2}"
-  export ANTHROPIC_MODEL="$model"
-  export ANTHROPIC_DEFAULT_HAIKU_MODEL="${DS_BEDROCK_FAST_MODEL:-$_DS_BEDROCK_FAST_FALLBACK}"
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL="${DS_MODEL_BACKGROUND:-$_DS_MODEL_BACKGROUND_FALLBACK}"
   export ENABLE_PROMPT_CACHING_1H=1
 
   # Resolved at launch, never held in a long-lived shell — the same lazy shape
@@ -744,7 +838,7 @@ _ds_bedrock_env() {
   if [[ -z "$AWS_BEARER_TOKEN_BEDROCK" ]]; then
     print -u2 'dropset: no Bedrock bearer token — cannot start a Bedrock session.'
     print -u2 '         Set DS_OP_ACCOUNT and DS_OP_BEDROCK_REF in the runtime'
-    print -u2 '         config, or run `task local <n>` for a seat session.'
+    print -u2 '         config, or launch on the anthropic substrate instead.'
     _ds_substrate_unset
     return 1
   fi
@@ -767,9 +861,12 @@ _ds_bedrock_env() {
 # CALLING shell — they have to, since a child process could not set the
 # environment `claude` inherits — so the variables outlive the session that set
 # them. Run `task 1234`, quit it, and that tab is still a Bedrock tab: the next
-# `plan` in it would silently run against credits with the Fable pin dropped.
-# The absence of `CLAUDE_CODE_USE_BEDROCK` IS how a seat launch is expressed, so
-# a seat verb has to make that absence true rather than merely assert it.
+# `plan` in it would silently run against credits on the worker's model.
+# The absence of `CLAUDE_CODE_USE_BEDROCK` IS how an anthropic launch is
+# expressed, so such a launch has to make that absence true rather than merely
+# assert it. `ANTHROPIC_MODEL` is cleared with the rest, and the verb then
+# passes its own tier's model to `claude` for that one command only — so an
+# anthropic launch leaves no model pin behind in the tab either.
 #
 # TWO CLASSES OF VARIABLE, and conflating them is what made earlier versions of
 # this wrong in both directions.
@@ -828,8 +925,9 @@ _ds_substrate_unset() {
   unset _DS_LAUNCHER_REGION _DS_LAUNCHER_TOKEN
 }
 
-# Seat verbs call this: warn if the shell arrived carrying Bedrock exports, then
-# clear them. $1 is the verb name, for the message.
+# Anthropic-substrate launches call this: warn if the shell arrived carrying
+# Bedrock exports, then clear them — the model pin included, so the verb's own
+# tier model is the one that reaches `claude`. $1 is the verb name.
 #
 # Warning alone was the ratified behavior and is not sufficient on its own — it
 # tells the operator about a slip it then allows to happen. The warning is kept
@@ -844,12 +942,18 @@ _ds_seat_guard() {
 
 # Start a WORKTREE session on one Linear task. THE implementation entry point.
 #
-#   task <n>          on Bedrock (the default substrate for implementation work)
-#   task local <n>    on the seat, for work that needs web research
-#   task resume <n>   resume by number, on the substrate it launched with
+#   task <n>             the worker tier on its configured substrate (Bedrock)
+#   task anthropic <n>   the worker tier on the Anthropic subscription
+#   task bedrock <n>     the worker tier on Bedrock, whatever the config says
+#   task resume <n>      resume by number, on the substrate and tier it had
 #
-# `local` is a literal first word rather than a flag: these helpers do no flag
-# parsing today, and the word reads better at the call site than `-l` would.
+# THE OVERRIDE VOCABULARY IS THE TWO SUBSTRATE NAMES AND NOTHING ELSE, the same
+# literal first word on every verb that takes one. Putting a worker on
+# `anthropic` exists for ONE capability reason — web search and web fetch are
+# unavailable on Bedrock — so reach for it when the task needs live web
+# research, not by habit. `local` was the old spelling; it never meant local
+# inference, only the subscription, so it is retired and kept briefly as an
+# alias that says so.
 #
 # Creates the `eng-###` worktree directory whose branch arrives named
 # `worktree-eng-###` — there is no CLI flag to drop the prefix, so `init-pr`
@@ -887,50 +991,56 @@ _ds_seat_guard() {
 task() {
   case "$1" in
     local)
+      print -u2 'task: `local` is retired — use `task anthropic <n>`.'
       shift
-      _ds_task_start "$1" seat
+      _ds_task_start "$1" anthropic
+      ;;
+    anthropic|bedrock)
+      local substrate="$1"
+      shift
+      _ds_task_start "$1" "$substrate"
       ;;
     resume)
       shift
       _ds_task_resume "$1"
       ;;
     '')
-      print -u2 'Usage: task <n> | task local <n> | task resume [n]'
+      print -u2 'Usage: task <n> | task anthropic|bedrock <n> | task resume [n]'
       return 1
       ;;
     *)
-      _ds_task_start "$1" bedrock
+      _ds_task_start "$1" ''
       ;;
   esac
 }
 
-# Internal: the worktree launch itself. $1 tag-or-number, $2 substrate.
+# Internal: the worktree launch itself. $1 tag-or-number, $2 substrate override
+# or "" for the worker tier's configured one.
 _ds_task_start() {
-  local tag="$1" substrate="$2"
+  local tag="$1" override="$2" model substrate
 
   if [[ -z "$tag" ]]; then
-    print -u2 'Usage: task <n> | task local <n>'
+    print -u2 'Usage: task <n> | task anthropic|bedrock <n>'
     return 1
   fi
 
   # Shared with the resume side, which is the whole point — see `_ds_tag_of`.
   tag="$(_ds_tag_of "$tag")"
 
+  { read -r model; read -r substrate; } <<< "$(_ds_tier worker "$override")"
+  [[ -n "$substrate" ]] || return 1
+
   _ds_base || return 1
   _ds_secrets
-
-  if [[ "$substrate" == 'bedrock' ]]; then
-    _ds_bedrock_env || return 1
-  else
-    _ds_seat_guard 'task local'
-  fi
+  _ds_substrate_enter "$substrate" 'task' || return 1
 
   # Recorded BEFORE the launch, not after: `claude` blocks for the life of the
   # session, so an after-the-fact write would land whenever the operator
   # happened to quit — and never at all if the terminal were closed instead.
   _ds_substrate_write "$tag" "$substrate"
 
-  claude -w "$tag" -n "$tag" --permission-mode auto /init-pr
+  ANTHROPIC_MODEL="$model" claude -w "$tag" -n "$tag" --permission-mode auto \
+    /init-pr
 }
 
 # Resume a worktree session by number: `task resume 814` resolves to the
@@ -972,19 +1082,22 @@ _ds_task_resume() {
     return
   fi
 
-  local tag
+  local tag model substrate
   tag="$(_ds_tag_of "$1")"
 
-  # Re-export whatever this session launched with, BEFORE moving the shell.
-  # Absent marker = seat, so a session predating markers resumes as it always
-  # did. Order matters: `_ds_bedrock_env` can fail (no token), and resolving
+  # Re-pin the MODEL from the tier table as well as re-exporting the substrate,
+  # BEFORE moving the shell. The tier comes from the marker's presence (see
+  # `_ds_resume_tier`), so an issue-keyed explore session comes back on the
+  # judgment model rather than the saved default; the substrate is the one the
+  # session recorded, not today's config, so a resume never switches provider
+  # mid-conversation. Order matters: either step can refuse, and resolving
   # after the `cd` below would leave the operator relocated into the worktree
   # with no session and no explanation of the move.
-  if [[ "$(_ds_substrate_read "$tag")" == 'bedrock' ]]; then
-    _ds_bedrock_env || return 1
-  else
-    _ds_seat_guard 'task resume'
-  fi
+  substrate="$(_ds_substrate_read "$tag")"
+  { read -r model; read -r substrate; } <<< \
+    "$(_ds_tier "$(_ds_resume_tier "$tag")" "$substrate")"
+  [[ -n "$substrate" ]] || return 1
+  _ds_substrate_enter "$substrate" 'task resume' || return 1
 
   local mode sid run_from
   {
@@ -1007,19 +1120,19 @@ _ds_task_resume() {
     continue)
       # The worktree has its own transcript, so per-directory addressing works
       # and this is the original fast path.
-      claude --continue
+      ANTHROPIC_MODEL="$model" claude --continue
       ;;
     resume)
       # The `-w` case: resume by id from the base repo. This is the form that
       # was missing, and the only one that reaches such a session.
-      claude --resume "$sid"
+      ANTHROPIC_MODEL="$model" claude --resume "$sid"
       ;;
     *)
       # Nothing resolved — the worktree was pruned, or the session never
       # started. `--resume <tag>` filters the picker rather than resuming, which
       # is a pick rather than a resume, but it is the last form that can reach
       # anything.
-      claude --resume "$tag"
+      ANTHROPIC_MODEL="$model" claude --resume "$tag"
       ;;
   esac
 }
@@ -1054,20 +1167,12 @@ _ds_task_resume() {
 # implementers, `plan-*`, `ceo-*` architecture, `exp-*` research.
 #
 # THE COST OF SHARING THE TAG: `eng-<n>` now names a worktree that two session
-# kinds can claim, with different substrates and different model pins, while the
+# kinds can claim, with different substrates and different tiers, while the
 # substrate marker keys on the tag alone. That is why nothing is written to it
-# below, and it is the root the model-pin gap shares — see ENG-1402.
-#
-# ONE CAVEAT, stated because an earlier draft of this comment claimed the
-# benefit without it: `fleet` and `task resume <n>` do REACH such a session, but
-# they resume it through `_ds_task_resume`, which restores the substrate and
-# NOT the model — so it comes back on the saved default rather than the Fable
-# pin. The substrate half is right (an explicit `seat` marker, and an absent one
-# would also read as seat), and only the pin is lost. **`explore <n>` is the
-# resume verb for an explore session**; it is idempotent precisely so there is a
-# path that restores the pin. Teaching `task resume` to re-pin a model is real
-# new machinery — a per-worktree model marker beside the substrate one — and is
-# deliberately left to its own change rather than smuggled in here.
+# below — and the marker's resulting ABSENCE is what tells `task resume <n>`
+# (and `fleet`, which types it) to re-pin the judgment tier on the anthropic
+# substrate. See `_ds_resume_tier`. `explore <n>` remains the natural resume
+# verb; the other two now land on the same model.
 #
 # THE `resume` TWIN IS GONE, and dropping it removes a wart rather than a
 # feature. `explore <name>` now creates the session if absent and resumes it if
@@ -1082,22 +1187,16 @@ _ds_task_resume() {
 # separate launchers with identical bodies bar one flag. The idempotency above
 # folds in the third.
 #
-# **SEAT-ONLY, and Fable-pinned.** Both halves are ratified and they are the
-# same decision. Explore work is thinking-heavy, so it runs the top tier like
-# `plan` and `architect` do — and a Fable-class model on Bedrock falls under
-# the account's standing AWS human-review retention opt-in, which the seat is
-# free of. There is deliberately no `explore local`: seat is the only
-# substrate, so the word would be a no-op. The worktree home changed where this
-# verb runs; it did not change the substrate, which is a capability call.
+# **The judgment tier, and no substrate override.** Explore work is
+# thinking-heavy, so it runs the top tier like `plan` and `architect` do. It
+# takes no `bedrock` word because the one override the operator ratified is the
+# credit-pinch case for `plan` and `architect`; explore carries no such pinch.
+# It still follows `DS_MODEL_JUDGMENT_SUBSTRATE`, so a deliberate config change
+# moves it with the other judgment verbs — see `plan` for what that costs.
 #
-# The model pin, the permission mode and the start-or-resume probe all now come
-# from `_ds_session`, which gets each right by construction. The old hand-rolled
-# resume branch had to remember the pin itself — `--model` and
-# `--permission-mode` are per-session flags, so honoring them only on the create
-# path silently drops to the saved default on every reopen, and an explore
-# session is reopened often. That slip is exactly what `_ds_daily_session`
-# documents above ("still works, so nobody notices"), and this verb reproduced
-# it until review caught it. Sharing the core retires the whole class.
+# The model pin, the permission mode and the start-or-resume probe all come
+# from `_ds_session`, which gets each right on both branches by construction —
+# the old hand-rolled resume branch here dropped the pin on every reopen.
 explore() {
   local raw="$1" tag name
 
@@ -1179,7 +1278,10 @@ explore() {
   fi
   name="exp-$raw"
 
-  _ds_seat_guard 'explore'
+  local model substrate
+  { read -r model; read -r substrate; } <<< "$(_ds_tier judgment '')"
+  [[ -n "$substrate" ]] || return 1
+  _ds_substrate_enter "$substrate" 'explore' || return 1
   # NO SUBSTRATE MARKER IS WRITTEN HERE, DELIBERATELY, and the reason is the
   # whole hazard of keying this worktree to `eng-<n>`: the marker is keyed on the
   # WORKTREE TAG ALONE, and `_ds_task_start` writes that same key. So
@@ -1194,23 +1296,29 @@ explore() {
   # a comment's "the substrate marker records it" claim true; the honest fix was
   # to correct the claim instead.
   _ds_session "$(_ds_topic_sid explore "$raw")" "$name" "$prompt" \
-    claude-fable-5 "$tag"
+    "$model" "$tag"
 }
 
-# Start OR resume today's PLANNING session. Takes no argument: the name is
-# derived from the date.
+# Start OR resume today's PLANNING session. The name is derived from the date.
+#
+#   plan             the judgment tier on its configured substrate (anthropic)
+#   plan bedrock     the judgment tier on Bedrock — the credit-pinch override
+#   plan anthropic   the judgment tier on the subscription, whatever the config
+#
+# Retention: on Bedrock a Fable-class model falls under the account's standing
+# AWS human-review opt-in (Opus does not); the operator accepts that in a pinch.
 #
 # Idempotent by design — a planning session is opened and reopened many times
 # in a day, and having to remember which state it is in is the friction this
 # removes. An `rpaps` twin was considered and rejected for that reason.
 #
-# Three things it makes deterministic, each of which used to be a manual step
-# the operator could forget:
+# Things it makes deterministic, each of which used to be a manual step the
+# operator could forget:
 #
-#   * The model. Planning sessions run the most capable model deliberately —
-#     fidelity over tokens — and `--model` at launch is the only session-wide
-#     mechanism. The `plan` skill's frontmatter is belt-and-braces for a
-#     mid-session `/plan`, not a substitute.
+#   * The model. Planning sessions run the judgment tier deliberately —
+#     fidelity over tokens — resolved from the runtime config and refused
+#     before launch when it does not resolve, on create and resume alike. The
+#     skill's `model:` frontmatter covers a mid-session `/plan` only.
 #   * The directory. A planning session touches the board, not a branch, so it
 #     runs in the base repo.
 #   * The bootstrap. Passing `/plan` as the initial prompt means the skill's
@@ -1221,33 +1329,38 @@ explore() {
 #     Deliberately not called a "hard" gate: it has two documented
 #     warn-and-launch escapes (no `aws` at all, and an `aws` too old for
 #     `login`), so it is hard only when AWS is present and current. It runs
-#     AFTER `_ds_seat_guard` on
-#     purpose: the guard clears an `AWS_REGION` inherited from a previous `task`
-#     in the same tab, and the AWS CLI reads that variable, so probing first
-#     would probe under the Bedrock launcher's environment rather than the
-#     operator's own.
+#     AFTER the seat guard on purpose: the guard clears an `AWS_REGION`
+#     inherited from a previous `task` in the same tab, and the AWS CLI reads
+#     that variable, so probing first would probe under the Bedrock launcher's
+#     environment rather than the operator's own. On `plan bedrock` the probe
+#     runs under the launcher's region, which is the region the session uses.
 #
 # `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not `plan-05`.
 plan() {
-  if [[ -n "$1" ]]; then
-    print -u2 'Usage: plan   (no arguments; the name is derived from the date)'
+  local model substrate
+  if [[ -n "$2" || ( -n "$1" && "$1" != (anthropic|bedrock) ) ]]; then
+    print -u2 'Usage: plan [anthropic|bedrock]   (the name is derived from the date)'
     return 1
   fi
-  _ds_seat_guard 'plan'
+  { read -r model; read -r substrate; } <<< "$(_ds_tier judgment "$1")"
+  [[ -n "$substrate" ]] || return 1
+  _ds_substrate_enter "$substrate" 'plan' || return 1
   _ds_aws_login 'plan' || return 1
-  _ds_daily_session plan "plan-$(date +%-d)" /plan claude-fable-5
+  _ds_daily_session plan "plan-$(date +%-d)" /plan "$model"
 }
 
 # Start OR resume today's HOUSEKEEPING session — the same contract as `plan`,
 # so a day's upkeep is one verb rather than a hand-started session.
 #
-# No model pin, deliberately: housekeeping is upkeep, not board decisions, so
-# it does not inherit the planning tier. It runs on the saved default.
+# The WORKER tier's model: housekeeping is upkeep, not board decisions, so it
+# does not inherit the judgment tier — but every managed verb pins through the
+# config, so it no longer floats on the saved default either.
 #
-# **Seat, deliberately, and this one is not a capability call.** Housekeeping
-# could run on Bedrock perfectly well; the operator uses it to OPEN the 5-hour
-# subscription window at the start of a day, which only a seat session does.
-# Moving it to Bedrock would silently retire that.
+# **The anthropic substrate, always, and this one is not a capability call.**
+# Housekeeping could run on Bedrock perfectly well; the operator uses it to OPEN
+# the 5-hour subscription window at the start of a day, which only a
+# subscription session does. So it takes the worker MODEL but never the worker
+# tier's substrate, and takes no override.
 #
 # It carries the same `_ds_aws_login` gate as `plan`, with the same two
 # warn-and-launch escapes, and for the same reason: this pass reports spend and
@@ -1261,9 +1374,13 @@ housekeeping() {
     print -u2 'Usage: housekeeping   (no arguments; name derived from the date)'
     return 1
   fi
+  local model substrate
+  { read -r model; read -r substrate; } <<< "$(_ds_tier worker anthropic)"
+  [[ -n "$substrate" ]] || return 1
   _ds_seat_guard 'housekeeping'
   _ds_aws_login 'housekeeping' || return 1
-  _ds_daily_session housekeeping "housekeeping-$(date +%-d)" /housekeeping ''
+  _ds_daily_session housekeeping "housekeeping-$(date +%-d)" /housekeeping \
+    "$model"
 }
 
 # Start OR resume an ARCHITECT session on one topic — the CEO hat. Same seat
@@ -1277,8 +1394,10 @@ housekeeping() {
 # The name is `ceo-<topic>`, which makes the fleet listing read by role —
 # `eng-*` implementers, `plan-*` planning, `ceo-*` architecture.
 #
-# Model-pinned like `plan` for the same reason: this session argues strategy,
-# and fidelity beats tokens. It writes nothing to the board — see the skill.
+# The judgment tier like `plan`, for the same reason: this session argues
+# strategy, and fidelity beats tokens. It writes nothing to the board — see the
+# skill. It takes the same optional substrate word after the topic
+# (`architect <topic> bedrock`), with the same retention line as `plan`.
 #
 # **It runs in its own worktree, named `ceo-<topic>`, and that worktree is
 # TEMPORARY WORKING STATE** — somewhere to iterate a spec or plan file with the
@@ -1302,9 +1421,11 @@ housekeeping() {
 # issue of its own, and the `ceo-` prefix keeps the fleet listing readable by
 # role.
 architect() {
-  local topic="$1"
-  if [[ -z "$topic" || -n "$2" ]]; then
-    print -u2 'Usage: architect <topic>   (e.g. architect volatility-telemetry)'
+  local topic="$1" model substrate
+  if [[ -z "$topic" || -n "$3" || ( -n "$2" && "$2" != (anthropic|bedrock) ) ]]
+  then
+    print -u2 'Usage: architect <topic> [anthropic|bedrock]' \
+      '  (e.g. architect volatility-telemetry)'
     return 1
   fi
   # A topic reaches a session name, a WORKTREE name, a branch and a filename, so
@@ -1315,9 +1436,11 @@ architect() {
     print -u2 'architect: topic must be lowercase letters, digits and dashes'
     return 1
   fi
-  _ds_seat_guard 'architect'
+  { read -r model; read -r substrate; } <<< "$(_ds_tier judgment "$2")"
+  [[ -n "$substrate" ]] || return 1
+  _ds_substrate_enter "$substrate" 'architect' || return 1
   _ds_session "$(_ds_topic_sid architect "$topic")" \
-    "ceo-$topic" /architect claude-fable-5 "ceo-$topic"
+    "ceo-$topic" /architect "$model" "ceo-$topic"
 }
 
 # Resume the whole FLEET: one iTerm tab per in-flight Linear issue, each with
@@ -1348,4 +1471,56 @@ fleet() {
     print -u2 'Usage: fleet [go]   (no argument = show the plan; `go` = open the tabs)'
     return 1
   fi
+}
+
+# Show the model-tier table as this shell resolves it, or check it.
+#
+#   models         print tier, model and substrate — offline, no network
+#   models check   also ask Bedrock whether each tier's model exists
+#
+# THE CHECK IS FREE, AND THAT IS WHY IT IS A SEPARATE STEP. Proving an id
+# names a real model by CALLING the model costs real money per launch
+# (measured: about eight cents for one minimal Fable turn), while
+# `get-inference-profile` is a control-plane read that costs nothing. It needs
+# the admin login rather than the agent key, so the bearer token is stripped —
+# with it set, the call silently runs as the agent user and reads as
+# AccessDenied. One limit, stated so a pass is not over-read: an `ACTIVE`
+# profile does not prove the ACCOUNT may invoke it (a model whose use-case
+# form was never submitted still reads `ACTIVE`).
+#
+# An alias (`fable`, `opus`) cannot be checked: Claude Code resolves it, not
+# Bedrock, so it is reported rather than failed.
+models() {
+  if [[ -n "$1" && "$1" != check ]]; then
+    print -u2 'Usage: models [check]'
+    return 1
+  fi
+  local tier model substrate profile rc=0
+  for tier in judgment worker; do
+    { read -r model; read -r substrate; } <<< "$(_ds_tier "$tier" '')"
+    [[ -n "$substrate" ]] || return 1
+    print -r -- "$tier  $model  ($substrate)"
+  done
+  print -r -- "background  ${DS_MODEL_BACKGROUND:-$_DS_MODEL_BACKGROUND_FALLBACK}  (Bedrock launches only)"
+  [[ "$1" == check ]] || return 0
+
+  for model in "${DS_MODEL_JUDGMENT:-$_DS_MODEL_JUDGMENT_FALLBACK}" \
+    "${DS_MODEL_WORKER:-$_DS_MODEL_WORKER_FALLBACK}" \
+    "${DS_MODEL_BACKGROUND:-$_DS_MODEL_BACKGROUND_FALLBACK}"; do
+    profile="${model%%\[*}"
+    if [[ "$profile" != claude-* && "$profile" != *.anthropic.* ]]; then
+      print -r -- "skip   $model — an alias; Claude Code resolves it, not Bedrock"
+      continue
+    fi
+    [[ "$profile" == claude-* ]] && profile="us.anthropic.$profile"
+    if env -u AWS_BEARER_TOKEN_BEDROCK aws bedrock get-inference-profile \
+      --region "${DS_BEDROCK_REGION:-us-west-2}" \
+      --inference-profile-identifier "$profile" >/dev/null 2>&1; then
+      print -r -- "ok     $profile"
+    else
+      print -r -- "FAIL   $profile — not found, or the admin login has expired"
+      rc=1
+    fi
+  done
+  return $rc
 }
