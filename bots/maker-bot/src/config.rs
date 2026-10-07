@@ -342,6 +342,24 @@ pub const MARKETS: [MarketConfig; 9] = [
     },
 ];
 
+/// The product id the fair-price estimator publishes for the market with this
+/// base `symbol`, or `None` if it publishes nothing for it.
+///
+/// **This is the whole selection rule** for where a market's fair value comes
+/// from: a published market quotes off the estimator's row, every other market
+/// composes inline from the feeds this bot polls. It is derived from the
+/// estimator's own roster rather than from a flag here, so rostering a market
+/// in the estimator switches this bot over with no edit on this side — the
+/// roster is expected to move, and a second list would be a second place to
+/// forget. Joined on the base symbol, the same join
+/// `market-data/tests/estimator_roster_agreement.rs` uses.
+pub fn published_product(symbol: &str) -> Option<&'static str> {
+    dropset_market_data::estimator::MVP_MARKETS
+        .iter()
+        .map(|m| m.product_id)
+        .find(|p| p.split_once('-').map(|(base, _)| base) == Some(symbol))
+}
+
 /// One rung of the quote ladder: a ppm offset from the reference price, a
 /// fraction of the inventory leg in bps, and a per-level expiry in each
 /// of the two domains the engine gates on.
@@ -472,6 +490,16 @@ pub struct FeedConfig {
     /// [`crate::fx_store::MAX_STORE_SILENCE`] so one slow round trip cannot
     /// stop every market quoting.
     pub fx_store_poll: Duration,
+    /// Published fair-price poll interval — the estimator's output, which a
+    /// published market quotes off instead of composing inline.
+    ///
+    /// Polled at the bot's own tick rather than at the store's minute cadence,
+    /// because this is a *price* rather than a candle: the estimator writes a
+    /// row every tick of its own, and the poll interval adds directly to the
+    /// age a row has when it is quoted. It also bounds how quickly a stalled
+    /// estimator is noticed against
+    /// [`crate::fair_price::MAX_PUBLISHED_FAIR_AGE`].
+    pub fair_price_poll: Duration,
     /// Pyth Hermes FX-anchor poll interval — the primary anchor tier. Hermes
     /// republishes on the order of a second, so this is the cadence at which
     /// the anchor actually moves and is polled far harder than the daily ECB
@@ -636,6 +664,7 @@ impl Default for FeedConfig {
             coinmarketcap_poll: Duration::from_secs(60),
             fx_poll: Duration::from_secs(300),
             fx_store_poll: Duration::from_secs(30),
+            fair_price_poll: Duration::from_secs(5),
             // The primaries are keyless but not rate-limit-free, and one poll
             // covers the whole roster in each case. A 5 s Hermes cadence tracks
             // the anchor at the bot's own tick rate; the CEX basis legs move
@@ -932,6 +961,27 @@ mod tests {
             if let Some(b) = m.pinned_basis {
                 assert!(b > 0.0 && b.is_finite(), "{} pinned basis", m.symbol);
             }
+        }
+    }
+
+    /// A market requires a live tape exactly when the estimator publishes it.
+    ///
+    /// The two sets are one policy stated twice: a published market is a
+    /// mainnet-bound one, quoted off the estimator, and its tape guard now reads
+    /// the estimator's `fx_tape_live` rather than a leg this bot composed. A
+    /// market in one set and not the other is either a mainnet-bound pair
+    /// composing inline with no recorded fair value, or a published one allowed
+    /// to quote off a daily fix — and either is the drift this pins shut.
+    #[test]
+    fn a_market_requires_a_live_tape_exactly_when_it_is_published() {
+        for m in MARKETS {
+            assert_eq!(
+                m.requires_live_tape,
+                published_product(m.symbol).is_some(),
+                "{}: requires_live_tape must hold exactly when the fair-price \
+                 estimator publishes this market",
+                m.symbol
+            );
         }
     }
 

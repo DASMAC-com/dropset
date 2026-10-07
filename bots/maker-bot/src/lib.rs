@@ -57,3 +57,6 @@ pub mod telemetry;
 // consumer. Re-exported under the name it had here so the paths that
 // reference it — including this crate's own doc links — keep resolving.
 pub use dropset_market_data::fx_store;
+// The published fair price: its reader sits beside the estimator that writes
+// it, sharing one wire vocabulary.
+pub use dropset_market_data::fair_price;
