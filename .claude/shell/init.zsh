@@ -587,12 +587,17 @@ _ds_topic_sid() {
 # the deliberate trade, and the stack remains the source of truth. If the two
 # ever disagree the stack wins, and the symptom is a session on last year's
 # model rather than a failure.
-_DS_BEDROCK_PROFILE_FALLBACK='us.anthropic.claude-opus-5'
+_DS_BEDROCK_PROFILE_FALLBACK='us.anthropic.claude-opus-5-5'
 
 # The fast tier, pinned so background sub-turns (session titles, the auto-mode
 # classifier) bill to Bedrock credits alongside the primary model instead of
 # silently falling back to the subscription.
-_DS_BEDROCK_FAST_FALLBACK='us.anthropic.claude-haiku-4-5-20251001'
+#
+# The `-v1:0` suffix is required: Claude Code passes this id through verbatim,
+# and Bedrock rejects the bare form with `400 The provided model identifier is
+# invalid` — measured, so background sub-turns failed on every launch that used
+# it. Unlike the primary model, this id is not composed with a window suffix.
+_DS_BEDROCK_FAST_FALLBACK='us.anthropic.claude-haiku-4-5-20251001-v1:0'
 
 # Where a session's substrate choice is recorded. See `_ds_substrate_write`.
 _DS_SUBSTRATE_DIR="$_DS_REPO/.claude/session-substrate"

@@ -37,7 +37,7 @@ Outputs:
     Value: !Ref 'BedrockAgentUser'
 Parameters:
   AgentModelId:
-    Default: 'anthropic.claude-opus-5'
+    Default: 'anthropic.claude-opus-5-5'
     Description: >-
       Default foundation model for agent sessions, published as the profile
       id other tooling reads. It does not gate the invoke policy, which
@@ -46,9 +46,9 @@ Parameters:
       cross-region inference profile, never by bare model id.
       RETENTION TRAP - pointing this at a Fable-class model silently places
       agent transcripts under the account standing AWS human-review opt-in,
-      which the ratified posture keeps for seat sessions only. Opus traffic
-      is NOT retained under that opt-in. Changing this parameter is
-      therefore a retention decision as well as a cost one.
+      which the ratified posture keeps for seat sessions only. Opus traffic,
+      Opus 5.5 included, is NOT retained under that opt-in. Changing this
+      parameter is therefore a retention decision as well as a cost one.
     Type: 'String'
   BudgetAlertEmail:
     Default: ''

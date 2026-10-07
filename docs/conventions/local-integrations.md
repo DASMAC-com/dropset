@@ -1070,17 +1070,17 @@ clean cut with **no aliases** — the family is small and every launcher
 is the operator's own muscle memory, so a half-migration leaving both
 names alive was the outcome to avoid.
 
-| Verb                | Job                                        | Substrate   | Model          |
-| ------------------- | ------------------------------------------ | ----------- | -------------- |
-| `task <n>`          | worktree session on Linear task n          | Bedrock     | Opus 5, 1M, 1h |
-| `task local <n>`    | same, when the work needs web research     | seat        | saved default  |
-| `task resume [n]`   | resume by number (bare = the picker)       | as recorded | as launched    |
-| `explore <n\|name>` | research / audit, read-only, temp worktree | seat only   | Fable pin      |
-| `plan`              | daily planning session                     | seat        | Fable pin      |
-| `housekeeping`      | upkeep; also the 5-hour-window opener      | seat        | saved default  |
-| `architect <topic>` | design thread, read-only, temp worktree    | seat        | Fable pin      |
-| `fleet [go]`        | batch resume                               | per-window  | as launched    |
-| `cdds [n]`          | not a session verb — navigation            | —           | —              |
+| Verb                | Job                                        | Substrate   | Model            |
+| ------------------- | ------------------------------------------ | ----------- | ---------------- |
+| `task <n>`          | worktree session on Linear task n          | Bedrock     | Opus 5.5, 1M, 1h |
+| `task local <n>`    | same, when the work needs web research     | seat        | saved default    |
+| `task resume [n]`   | resume by number (bare = the picker)       | as recorded | as launched      |
+| `explore <n\|name>` | research / audit, read-only, temp worktree | seat only   | Fable pin        |
+| `plan`              | daily planning session                     | seat        | Fable pin        |
+| `housekeeping`      | upkeep; also the 5-hour-window opener      | seat        | saved default    |
+| `architect <topic>` | design thread, read-only, temp worktree    | seat        | Fable pin        |
+| `fleet [go]`        | batch resume                               | per-window  | as launched      |
+| `cdds [n]`          | not a session verb — navigation            | —           | —                |
 
 **`explore resume` is gone**, and `explore` now requires a name.
 Both follow from the worktree home below: `explore <n|name>` is

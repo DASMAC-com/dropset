@@ -87,6 +87,18 @@ bounds**, not as one curve:
 
 † derived from the total, not measured per-line.
 
+The rows are priced at the **Opus 5** Bedrock rates verified that day.
+The fleet now runs Opus 5.5, whose rate is **projected** at 1.10x the
+first-party list price and unverified until the first Opus 5.5 fleet
+day is reconciled in Cost Explorer by usage type — the public Price
+List API carries no current Anthropic model, so it cannot be read
+programmatically. Against Opus 5 that is about 0.8x on input, output and
+cache writes but **0.4x on cache reads**, which dominate these sessions,
+so a session's blended ratio sits well below 0.8x. Each model's rate and
+its verified-or-projected standing live in one place,
+`session_metrics.py`'s `RATES_BY_MODEL`; read the line band as a shape,
+not as current dollars.
+
 **The LOWER bound is per-line, and it is what "smaller is not
 monotonically cheaper" means.** There is a per-PR overhead floor of
 roughly **\$40** — bootstrap, the review fan-out, CI, the closing
