@@ -42,6 +42,7 @@ const sampleEvent = (): FillEventArgs => ({
   pad: new Uint8Array(7),
   sectorIdx: 3,
   levelIdx: 5,
+  vaultSeq: 17n,
   fillBase: 1_000_000n,
   fillQuote: 1_100_000n,
   fillPrice: 0x0001_0000,

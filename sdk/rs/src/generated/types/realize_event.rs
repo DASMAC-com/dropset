@@ -18,6 +18,9 @@ pub struct RealizeEvent {
     )]
     pub market: Pubkey,
     pub sector_idx: u32,
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
+    pub vault_seq: u64,
     pub shares_minted: u64,
     pub leader_shares_after: u64,
     pub total_shares_after: u64,

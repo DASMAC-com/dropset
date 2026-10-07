@@ -151,6 +151,7 @@ impl Deposit {
             _quote_atoms,
             min_leader_share,
             ref_price_bits,
+            vault_seq,
         ) = {
             let v = self.market.read_vault(vault_idx)?;
             require!(v.is_occupied(), DropsetError::VaultEmpty);
@@ -166,6 +167,7 @@ impl Deposit {
                 v.quote_atoms.get(),
                 v.min_leader_share.get(),
                 v.reference_price.price.as_u32(),
+                v.seq.get(),
             )
         };
         require!(!frozen, DropsetError::VaultFrozen);
@@ -351,12 +353,14 @@ impl Deposit {
             &realize_outcome,
             market_addr,
             vault_idx,
+            vault_seq,
             new_leader_shares,
             new_total,
         );
         let deposit_event = DepositEvent {
             market: market_addr,
             sector_idx: vault_idx,
+            vault_seq,
             depositor: signer_addr,
             is_leader: false,
             is_seeding: false,

@@ -140,12 +140,16 @@ impl ForceWithdrawDepositor {
         // `require_registry_admin` (`lib.rs`), so the caller is already a
         // known admin here.
         let owner_addr = *self.owner.address();
-        let (total_shares, ref_price_bits) = {
+        let (total_shares, ref_price_bits, vault_seq) = {
             let v = self.market.read_vault(vault_idx)?;
             // Reclaimed (free-list) sectors carry no depositors by the
             // teardown invariant — reject as defense-in-depth.
             require!(v.is_occupied(), DropsetError::VaultEmpty);
-            (v.total_shares.get(), v.reference_price.price.as_u32())
+            (
+                v.total_shares.get(),
+                v.reference_price.price.as_u32(),
+                v.seq.get(),
+            )
         };
         require!(total_shares > 0, DropsetError::InsufficientShares);
 
@@ -252,12 +256,14 @@ impl ForceWithdrawDepositor {
             &realize_outcome,
             market_addr,
             vault_idx,
+            vault_seq,
             leader_shares,
             new_total,
         );
         let withdraw_event = WithdrawEvent {
             market: market_addr,
             sector_idx: vault_idx,
+            vault_seq,
             depositor: owner_addr,
             is_leader: false,
             shares_in,
@@ -347,11 +353,11 @@ impl ForceWithdrawLeader {
         // `require_registry_admin` (`lib.rs`), so the caller is already a
         // known admin here.
         let leader_addr = *self.leader.address();
-        let (leader, total_shares) = {
+        let (leader, total_shares, vault_seq) = {
             let v = self.market.read_vault(vault_idx)?;
             // Reclaimed sectors have a zeroed leader — reject.
             require!(v.is_occupied(), DropsetError::VaultEmpty);
-            (v.leader, v.total_shares.get())
+            (v.leader, v.total_shares.get(), v.seq.get())
         };
         // The passed payout account must be the actual leader, so funds
         // can never be redirected to the calling admin.
@@ -374,6 +380,7 @@ impl ForceWithdrawLeader {
             let withdraw_event = WithdrawEvent {
                 market: market_addr,
                 sector_idx: vault_idx,
+                vault_seq,
                 depositor: leader_addr,
                 is_leader: true,
                 shares_in: 0,
@@ -464,12 +471,14 @@ impl ForceWithdrawLeader {
             &realize_outcome,
             market_addr,
             vault_idx,
+            vault_seq,
             new_leader,
             new_total,
         );
         let withdraw_event = WithdrawEvent {
             market: market_addr,
             sector_idx: vault_idx,
+            vault_seq,
             depositor: leader_addr,
             is_leader: true,
             shares_in,

@@ -40,12 +40,12 @@ impl CloseVault {
     #[inline(always)]
     pub fn close_vault(&mut self, vault_idx: u32) -> Result<CloseVaultEvent> {
         let signer_addr = *self.signer.address();
-        let leader = {
+        let (leader, vault_seq) = {
             let v = self.market.read_vault(vault_idx)?;
             // Free-list sectors carry the default leader — reject before
             // the leader check so the error is specific.
             require!(v.is_occupied(), DropsetError::VaultEmpty);
-            v.leader
+            (v.leader, v.seq.get())
         };
         require!(
             address_eq(&leader, &signer_addr),
@@ -73,6 +73,7 @@ impl CloseVault {
         Ok(CloseVaultEvent {
             market: *self.market.address(),
             sector_idx: vault_idx,
+            vault_seq,
             leader,
             active_count_after,
         })

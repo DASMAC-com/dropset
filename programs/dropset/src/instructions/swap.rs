@@ -961,9 +961,9 @@ impl Swap {
             filled_legs = filled_legs.saturating_add(1);
 
             // Emit one event per matched (vault, level) leg.
-            let (leader, quote_authority) = {
+            let (leader, quote_authority, vault_seq) = {
                 let v = self.market.read_vault(sector_idx)?;
-                (v.leader, v.quote_authority)
+                (v.leader, v.quote_authority, v.seq.get())
             };
             fill_events.push(FillEvent {
                 market: market_addr,
@@ -974,6 +974,7 @@ impl Swap {
                 _pad: [0; 7],
                 sector_idx,
                 level_idx,
+                vault_seq,
                 fill_base,
                 fill_quote,
                 fill_price: price,

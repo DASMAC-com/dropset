@@ -125,13 +125,14 @@ impl Withdraw {
         // doesn't enforce the floor (the depositor isn't the leader)
         // and doesn't observe `frozen` (the deposit-side gate
         // already rejected outside flows on a frozen vault).
-        let (leader, total_shares, ref_price_bits) = {
+        let (leader, total_shares, ref_price_bits, vault_seq) = {
             let v = self.market.read_vault(vault_idx)?;
             require!(v.is_occupied(), DropsetError::VaultEmpty);
             (
                 v.leader,
                 v.total_shares.get(),
                 v.reference_price.price.as_u32(),
+                v.seq.get(),
             )
         };
         require!(total_shares > 0, DropsetError::InsufficientShares);
@@ -280,12 +281,14 @@ impl Withdraw {
             &realize_outcome,
             market_addr,
             vault_idx,
+            vault_seq,
             new_leader_shares,
             new_total,
         );
         let withdraw_event = WithdrawEvent {
             market: market_addr,
             sector_idx: vault_idx,
+            vault_seq,
             depositor: signer_addr,
             is_leader: false,
             shares_in,

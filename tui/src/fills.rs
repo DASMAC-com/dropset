@@ -241,6 +241,7 @@ mod tests {
             pad: [0; 7],
             sector_idx: 0,
             level_idx: 0,
+            vault_seq: 1,
             fill_base: 1_000_000,
             fill_quote: 1_140_000,
             fill_price: 0x1234_5678,

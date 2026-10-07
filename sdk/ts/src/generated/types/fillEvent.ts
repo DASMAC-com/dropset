@@ -16,7 +16,12 @@ side: number;
  * Padding so subsequent fields are aligned-1-friendly without
  * implicit struct padding the bytemuck check would reject.
  */
-pad: ReadonlyUint8Array; sectorIdx: number; levelIdx: number; fillBase: bigint; fillQuote: bigint; fillPrice: Price; 
+pad: ReadonlyUint8Array; sectorIdx: number; levelIdx: number; 
+/**
+ * The filled vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
+vaultSeq: bigint; fillBase: bigint; fillQuote: bigint; fillPrice: Price; 
 /**
  * Padding to keep the next `u64` at an 8-byte boundary in the
  * fixed-size repr-C layout. `Price` is `u32`, so 4 bytes of pad
@@ -31,7 +36,12 @@ side: number;
  * Padding so subsequent fields are aligned-1-friendly without
  * implicit struct padding the bytemuck check would reject.
  */
-pad: ReadonlyUint8Array; sectorIdx: number; levelIdx: number; fillBase: number | bigint; fillQuote: number | bigint; fillPrice: PriceArgs; 
+pad: ReadonlyUint8Array; sectorIdx: number; levelIdx: number; 
+/**
+ * The filled vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
+vaultSeq: number | bigint; fillBase: number | bigint; fillQuote: number | bigint; fillPrice: PriceArgs; 
 /**
  * Padding to keep the next `u64` at an 8-byte boundary in the
  * fixed-size repr-C layout. `Price` is `u32`, so 4 bytes of pad
@@ -40,11 +50,11 @@ pad: ReadonlyUint8Array; sectorIdx: number; levelIdx: number; fillBase: number |
 pad2: ReadonlyUint8Array; baseAtomsAfter: number | bigint; quoteAtomsAfter: number | bigint; nonceAfter: number | bigint; takerFeeAtoms: number | bigint;  };
 
 export function getFillEventEncoder(): FixedSizeEncoder<FillEventArgs> {
-    return getStructEncoder([['market', getAddressEncoder()], ['taker', getAddressEncoder()], ['leader', getAddressEncoder()], ['quoteAuthority', getAddressEncoder()], ['side', getU8Encoder()], ['pad', fixEncoderSize(getBytesEncoder(), 7)], ['sectorIdx', getU32Encoder()], ['levelIdx', getU32Encoder()], ['fillBase', getU64Encoder()], ['fillQuote', getU64Encoder()], ['fillPrice', getPriceEncoder()], ['pad2', fixEncoderSize(getBytesEncoder(), 4)], ['baseAtomsAfter', getU64Encoder()], ['quoteAtomsAfter', getU64Encoder()], ['nonceAfter', getU64Encoder()], ['takerFeeAtoms', getU64Encoder()]]);
+    return getStructEncoder([['market', getAddressEncoder()], ['taker', getAddressEncoder()], ['leader', getAddressEncoder()], ['quoteAuthority', getAddressEncoder()], ['side', getU8Encoder()], ['pad', fixEncoderSize(getBytesEncoder(), 7)], ['sectorIdx', getU32Encoder()], ['levelIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['fillBase', getU64Encoder()], ['fillQuote', getU64Encoder()], ['fillPrice', getPriceEncoder()], ['pad2', fixEncoderSize(getBytesEncoder(), 4)], ['baseAtomsAfter', getU64Encoder()], ['quoteAtomsAfter', getU64Encoder()], ['nonceAfter', getU64Encoder()], ['takerFeeAtoms', getU64Encoder()]]);
 }
 
 export function getFillEventDecoder(): FixedSizeDecoder<FillEvent> {
-    return getStructDecoder([['market', getAddressDecoder()], ['taker', getAddressDecoder()], ['leader', getAddressDecoder()], ['quoteAuthority', getAddressDecoder()], ['side', getU8Decoder()], ['pad', fixDecoderSize(getBytesDecoder(), 7)], ['sectorIdx', getU32Decoder()], ['levelIdx', getU32Decoder()], ['fillBase', getU64Decoder()], ['fillQuote', getU64Decoder()], ['fillPrice', getPriceDecoder()], ['pad2', fixDecoderSize(getBytesDecoder(), 4)], ['baseAtomsAfter', getU64Decoder()], ['quoteAtomsAfter', getU64Decoder()], ['nonceAfter', getU64Decoder()], ['takerFeeAtoms', getU64Decoder()]]);
+    return getStructDecoder([['market', getAddressDecoder()], ['taker', getAddressDecoder()], ['leader', getAddressDecoder()], ['quoteAuthority', getAddressDecoder()], ['side', getU8Decoder()], ['pad', fixDecoderSize(getBytesDecoder(), 7)], ['sectorIdx', getU32Decoder()], ['levelIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['fillBase', getU64Decoder()], ['fillQuote', getU64Decoder()], ['fillPrice', getPriceDecoder()], ['pad2', fixDecoderSize(getBytesDecoder(), 4)], ['baseAtomsAfter', getU64Decoder()], ['quoteAtomsAfter', getU64Decoder()], ['nonceAfter', getU64Decoder()], ['takerFeeAtoms', getU64Decoder()]]);
 }
 
 export function getFillEventCodec(): FixedSizeCodec<FillEventArgs, FillEvent> {

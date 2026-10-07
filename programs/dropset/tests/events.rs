@@ -52,6 +52,7 @@ fn create_vault_emits_create_vault_event() {
     let ev = events::create_vault(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
     assert_eq!(ev.sector_idx, 0);
+    assert_eq!(ev.vault_seq, f.vault(0).seq.get());
     assert_eq!(ev.leader, leader.pubkey().to_bytes());
     assert_eq!(ev.quote_authority, quote_authority.to_bytes());
     assert_eq!(ev.perf_fee_rate, 50_000);
@@ -80,6 +81,7 @@ fn deposit_leader_seed_emits_deposit_event() {
     let ev = events::deposit(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
     assert_eq!(ev.sector_idx, 0);
+    assert_eq!(ev.vault_seq, f.vault(0).seq.get());
     assert_eq!(ev.depositor, leader.pubkey().to_bytes());
     assert!(ev.is_leader, "leader path");
     assert!(ev.is_seeding, "first deposit is the seed");
@@ -111,6 +113,7 @@ fn outside_deposit_emits_deposit_event() {
     let ev = events::deposit(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
     assert_eq!(ev.sector_idx, 0);
+    assert_eq!(ev.vault_seq, f.vault(0).seq.get());
     assert_eq!(ev.depositor, alice.pubkey().to_bytes());
     assert!(!ev.is_leader, "outside path");
     assert!(!ev.is_seeding, "not the seed");
@@ -141,6 +144,7 @@ fn outside_withdraw_emits_withdraw_event() {
     let ev = events::withdraw(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
     assert_eq!(ev.sector_idx, 0);
+    assert_eq!(ev.vault_seq, f.vault(0).seq.get());
     assert_eq!(ev.depositor, alice.pubkey().to_bytes());
     assert!(!ev.is_leader, "outside path");
     assert_eq!(ev.shares_in, shares);
@@ -164,6 +168,7 @@ fn leader_withdraw_emits_withdraw_event() {
     let ev = events::withdraw(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
     assert_eq!(ev.sector_idx, 0);
+    assert_eq!(ev.vault_seq, f.vault(0).seq.get());
     assert_eq!(ev.depositor, leader.pubkey().to_bytes());
     assert!(ev.is_leader, "leader path");
     assert_eq!(ev.shares_in, half);
@@ -192,6 +197,7 @@ fn swap_emits_fill_events() {
         assert_eq!(fill.taker, taker.pubkey().to_bytes().into());
         assert_eq!(fill.side, 0, "taker Buy fills the ask side");
         assert_eq!(fill.sector_idx, 0);
+        assert_eq!(fill.vault_seq, f.vault(0).seq.get());
         assert!(fill.fill_base > 0 && fill.fill_quote > 0, "non-zero fill");
     }
 }
@@ -231,6 +237,7 @@ fn deposit_realizes_perf_fee_and_emits_realize_event() {
     let ev = events::realize(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
     assert_eq!(ev.sector_idx, 0);
+    assert_eq!(ev.vault_seq, f.vault(0).seq.get());
     assert!(ev.shares_minted > 0, "perf fee minted shares");
     assert!(
         ev.leader_shares_after > leader_shares_before,
@@ -251,6 +258,7 @@ fn close_vault_emits_close_vault_event() {
     let ev = events::close_vault(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
     assert_eq!(ev.sector_idx, 0);
+    assert_eq!(ev.vault_seq, f.vault(0).seq.get());
     assert_eq!(ev.leader, leader.pubkey().to_bytes());
     assert_eq!(
         ev.active_count_after, 0,
@@ -267,6 +275,67 @@ fn freeze_vault_emits_freeze_vault_event() {
     let ev = events::freeze_vault(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
     assert_eq!(ev.sector_idx, 0);
+    assert_eq!(ev.vault_seq, f.vault(0).seq.get());
     // Seeded vault: the leader is the admin/authority.
     assert_eq!(ev.leader, admin.pubkey().to_bytes());
+}
+
+/// The reason events carry `vault_seq`: a reclaimed sector is reused by
+/// the next `create_vault`, so `sector_idx` alone cannot tell the old
+/// occupant's events from the new one's. The outgoing vault's events
+/// report seq 1 up to and including the draining exit; the new occupant
+/// of the same sector reports seq 2 on its create, seed, and fills. Every
+/// other event test runs on a market's first vault (seq 1), so this is
+/// the one place a value that merely equals 1 on sector 0 would fail.
+#[test]
+fn sector_reuse_is_disambiguated_by_vault_seq() {
+    let mut f = Fixture::seeded(1_000_000, 1_085_000);
+    let leader = f.authority.insecure_clone();
+
+    let close = f.close_vault_meta(&leader, 0).expect("close_vault");
+    assert_eq!(events::close_vault(&close).vault_seq, 1);
+
+    let shares = f.vault(0).leader_shares.get();
+    let exit = f
+        .withdraw_leader_as_meta(&leader, 0, shares, 0, 0)
+        .expect("full exit reclaims");
+    assert_eq!(f.market_header().free_head.get(), 0, "sector 0 is free");
+    let ev = events::withdraw(&exit);
+    assert_eq!(ev.sector_idx, 0);
+    assert_eq!(ev.vault_seq, 1, "the reclaiming exit names the old vault");
+
+    // Distinct perf so the txn differs from `seeded`'s create.
+    let reopen = f
+        .create_vault_meta(1, f.authority.pubkey(), false, Pubkey::default())
+        .expect("re-create on the freed sector");
+    let ev = events::create_vault(&reopen);
+    assert_eq!(ev.sector_idx, 0, "same sector");
+    assert_eq!(ev.vault_seq, 2, "new occupant, new identity");
+
+    // Bring the new occupant live and trade against it. Expire the
+    // blockhash first: these calls mirror `seeded`'s byte for byte, and
+    // LiteSVM would otherwise reject them as already processed.
+    f.svm.expire_blockhash();
+    let px = Price::encode(10_850_000, 0).unwrap();
+    f.set_reference_price(&leader, 0, px.as_u32(), 0)
+        .expect("set_reference_price");
+    f.set_liquidity_profile(&leader, 0, simple_profile(5_000, 10_000, u32::MAX))
+        .expect("set_liquidity_profile");
+    let seed = f
+        .deposit_leader_as_meta(&leader, 0, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
+        .expect("seed the new occupant");
+    let ev = events::deposit(&seed);
+    assert!(ev.is_seeding, "the new occupant's first deposit is a seed");
+    assert_eq!(ev.vault_seq, 2);
+
+    let taker = f.funded_depositor(0, 200_000);
+    let swap = f
+        .swap_meta(&taker, 0, 100_000, Price::INFINITY.as_u32(), 1)
+        .expect("swap Buy");
+    let fills = events::fills(&swap);
+    assert!(!fills.is_empty(), "the new occupant fills");
+    for fill in &fills {
+        assert_eq!(fill.sector_idx, 0);
+        assert_eq!(fill.vault_seq, 2, "fills attribute to the new occupant");
+    }
 }

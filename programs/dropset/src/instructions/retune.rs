@@ -90,15 +90,17 @@ impl SetMinLeaderShare {
         // taking the mutable one — the house pattern shared with the
         // other vault setters (`set_outside_deposits_approved`,
         // `freeze_vault`). `is_occupied` is the free-list marker check.
-        require!(
-            self.market.read_vault(vault_idx)?.is_occupied(),
-            DropsetError::VaultEmpty
-        );
+        let vault_seq = {
+            let v = self.market.read_vault(vault_idx)?;
+            require!(v.is_occupied(), DropsetError::VaultEmpty);
+            v.seq.get()
+        };
         self.market.mutate_vault(vault_idx)?.min_leader_share = min_leader_share.into();
 
         Ok(SetMinLeaderShareEvent {
             market: market_addr,
             sector_idx: vault_idx,
+            vault_seq,
             min_leader_share,
         })
     }

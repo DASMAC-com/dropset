@@ -3915,6 +3915,14 @@
             "type": "u32"
           },
           {
+            "name": "vault_seq",
+            "docs": [
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
+            ],
+            "type": "u64"
+          },
+          {
             "name": "leader",
             "type": "pubkey"
           },
@@ -3943,6 +3951,14 @@
           {
             "name": "sector_idx",
             "type": "u32"
+          },
+          {
+            "name": "vault_seq",
+            "docs": [
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
+            ],
+            "type": "u64"
           },
           {
             "name": "leader",
@@ -3982,6 +3998,14 @@
           {
             "name": "sector_idx",
             "type": "u32"
+          },
+          {
+            "name": "vault_seq",
+            "docs": [
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
+            ],
+            "type": "u64"
           },
           {
             "name": "depositor",
@@ -4126,6 +4150,14 @@
             "type": "u32"
           },
           {
+            "name": "vault_seq",
+            "docs": [
+              "The filled vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
+            ],
+            "type": "u64"
+          },
+          {
             "name": "fill_base",
             "type": "u64"
           },
@@ -4191,6 +4223,14 @@
           {
             "name": "sector_idx",
             "type": "u32"
+          },
+          {
+            "name": "vault_seq",
+            "docs": [
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
+            ],
+            "type": "u64"
           },
           {
             "name": "leader",
@@ -4507,6 +4547,14 @@
             "type": "u32"
           },
           {
+            "name": "vault_seq",
+            "docs": [
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
+            ],
+            "type": "u64"
+          },
+          {
             "name": "shares_minted",
             "type": "u64"
           },
@@ -4709,6 +4757,14 @@
           {
             "name": "sector_idx",
             "type": "u32"
+          },
+          {
+            "name": "vault_seq",
+            "docs": [
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
+            ],
+            "type": "u64"
           },
           {
             "name": "min_leader_share",
@@ -4993,6 +5049,14 @@
           {
             "name": "sector_idx",
             "type": "u32"
+          },
+          {
+            "name": "vault_seq",
+            "docs": [
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
+            ],
+            "type": "u64"
           },
           {
             "name": "depositor",

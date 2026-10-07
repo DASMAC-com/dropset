@@ -8,16 +8,26 @@
 
 import { combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
 
-export type RealizeEvent = { market: Address; sectorIdx: number; sharesMinted: bigint; leaderSharesAfter: bigint; totalSharesAfter: bigint; hwmAfter: bigint;  };
+export type RealizeEvent = { market: Address; sectorIdx: number; 
+/**
+ * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
+vaultSeq: bigint; sharesMinted: bigint; leaderSharesAfter: bigint; totalSharesAfter: bigint; hwmAfter: bigint;  };
 
-export type RealizeEventArgs = { market: Address; sectorIdx: number; sharesMinted: number | bigint; leaderSharesAfter: number | bigint; totalSharesAfter: number | bigint; hwmAfter: number | bigint;  };
+export type RealizeEventArgs = { market: Address; sectorIdx: number; 
+/**
+ * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
+vaultSeq: number | bigint; sharesMinted: number | bigint; leaderSharesAfter: number | bigint; totalSharesAfter: number | bigint; hwmAfter: number | bigint;  };
 
 export function getRealizeEventEncoder(): FixedSizeEncoder<RealizeEventArgs> {
-    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['sharesMinted', getU64Encoder()], ['leaderSharesAfter', getU64Encoder()], ['totalSharesAfter', getU64Encoder()], ['hwmAfter', getU64Encoder()]]);
+    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['sharesMinted', getU64Encoder()], ['leaderSharesAfter', getU64Encoder()], ['totalSharesAfter', getU64Encoder()], ['hwmAfter', getU64Encoder()]]);
 }
 
 export function getRealizeEventDecoder(): FixedSizeDecoder<RealizeEvent> {
-    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['sharesMinted', getU64Decoder()], ['leaderSharesAfter', getU64Decoder()], ['totalSharesAfter', getU64Decoder()], ['hwmAfter', getU64Decoder()]]);
+    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['sharesMinted', getU64Decoder()], ['leaderSharesAfter', getU64Decoder()], ['totalSharesAfter', getU64Decoder()], ['hwmAfter', getU64Decoder()]]);
 }
 
 export function getRealizeEventCodec(): FixedSizeCodec<RealizeEventArgs, RealizeEvent> {

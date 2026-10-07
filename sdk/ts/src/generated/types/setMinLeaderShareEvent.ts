@@ -6,18 +6,28 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
+import { combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
 
-export type SetMinLeaderShareEvent = { market: Address; sectorIdx: number; minLeaderShare: number;  };
+export type SetMinLeaderShareEvent = { market: Address; sectorIdx: number; 
+/**
+ * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
+vaultSeq: bigint; minLeaderShare: number;  };
 
-export type SetMinLeaderShareEventArgs = SetMinLeaderShareEvent;
+export type SetMinLeaderShareEventArgs = { market: Address; sectorIdx: number; 
+/**
+ * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
+vaultSeq: number | bigint; minLeaderShare: number;  };
 
 export function getSetMinLeaderShareEventEncoder(): FixedSizeEncoder<SetMinLeaderShareEventArgs> {
-    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['minLeaderShare', getU32Encoder()]]);
+    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['minLeaderShare', getU32Encoder()]]);
 }
 
 export function getSetMinLeaderShareEventDecoder(): FixedSizeDecoder<SetMinLeaderShareEvent> {
-    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['minLeaderShare', getU32Decoder()]]);
+    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['minLeaderShare', getU32Decoder()]]);
 }
 
 export function getSetMinLeaderShareEventCodec(): FixedSizeCodec<SetMinLeaderShareEventArgs, SetMinLeaderShareEvent> {

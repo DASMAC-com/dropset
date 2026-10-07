@@ -18,5 +18,8 @@ pub struct SetMinLeaderShareEvent {
     )]
     pub market: Pubkey,
     pub sector_idx: u32,
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
+    pub vault_seq: u64,
     pub min_leader_share: u32,
 }

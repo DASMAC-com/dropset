@@ -87,7 +87,7 @@ impl WithdrawLeader {
         require!(shares_in > 0, DropsetError::InsufficientShares);
 
         let signer_addr = *self.signer.address();
-        let (leader, frozen, tombstoned, total_shares, min_leader_share) = {
+        let (leader, frozen, tombstoned, total_shares, min_leader_share, vault_seq) = {
             let v = self.market.read_vault(vault_idx)?;
             require!(v.is_occupied(), DropsetError::VaultEmpty);
             (
@@ -96,6 +96,7 @@ impl WithdrawLeader {
                 v.tombstoned.get(),
                 v.total_shares.get(),
                 v.min_leader_share.get(),
+                v.seq.get(),
             )
         };
         require!(total_shares > 0, DropsetError::InsufficientShares);
@@ -200,12 +201,14 @@ impl WithdrawLeader {
             &realize_outcome,
             market_addr,
             vault_idx,
+            vault_seq,
             new_leader,
             new_total,
         );
         let withdraw_event = WithdrawEvent {
             market: market_addr,
             sector_idx: vault_idx,
+            vault_seq,
             depositor: signer_addr,
             is_leader: true,
             shares_in,

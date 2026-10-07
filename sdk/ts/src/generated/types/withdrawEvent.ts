@@ -8,20 +8,30 @@
 
 import { combineCodec, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getI64Decoder, getI64Encoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
 
-export type WithdrawEvent = { market: Address; sectorIdx: number; depositor: Address; isLeader: boolean; sharesIn: bigint; baseOut: bigint; quoteOut: bigint; totalSharesAfter: bigint; leaderSharesAfter: bigint; baseAtomsAfter: bigint; quoteAtomsAfter: bigint; 
+export type WithdrawEvent = { market: Address; sectorIdx: number; 
+/**
+ * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
+vaultSeq: bigint; depositor: Address; isLeader: boolean; sharesIn: bigint; baseOut: bigint; quoteOut: bigint; totalSharesAfter: bigint; leaderSharesAfter: bigint; baseAtomsAfter: bigint; quoteAtomsAfter: bigint; 
 /** Signed PnL delta crystallized on this withdrawal (outside path). */
 realizedPnlDelta: bigint;  };
 
-export type WithdrawEventArgs = { market: Address; sectorIdx: number; depositor: Address; isLeader: boolean; sharesIn: number | bigint; baseOut: number | bigint; quoteOut: number | bigint; totalSharesAfter: number | bigint; leaderSharesAfter: number | bigint; baseAtomsAfter: number | bigint; quoteAtomsAfter: number | bigint; 
+export type WithdrawEventArgs = { market: Address; sectorIdx: number; 
+/**
+ * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+ * identifies a vault across sector reuse; `sector_idx` alone does not.
+ */
+vaultSeq: number | bigint; depositor: Address; isLeader: boolean; sharesIn: number | bigint; baseOut: number | bigint; quoteOut: number | bigint; totalSharesAfter: number | bigint; leaderSharesAfter: number | bigint; baseAtomsAfter: number | bigint; quoteAtomsAfter: number | bigint; 
 /** Signed PnL delta crystallized on this withdrawal (outside path). */
 realizedPnlDelta: number | bigint;  };
 
 export function getWithdrawEventEncoder(): FixedSizeEncoder<WithdrawEventArgs> {
-    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['depositor', getAddressEncoder()], ['isLeader', getBooleanEncoder()], ['sharesIn', getU64Encoder()], ['baseOut', getU64Encoder()], ['quoteOut', getU64Encoder()], ['totalSharesAfter', getU64Encoder()], ['leaderSharesAfter', getU64Encoder()], ['baseAtomsAfter', getU64Encoder()], ['quoteAtomsAfter', getU64Encoder()], ['realizedPnlDelta', getI64Encoder()]]);
+    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['depositor', getAddressEncoder()], ['isLeader', getBooleanEncoder()], ['sharesIn', getU64Encoder()], ['baseOut', getU64Encoder()], ['quoteOut', getU64Encoder()], ['totalSharesAfter', getU64Encoder()], ['leaderSharesAfter', getU64Encoder()], ['baseAtomsAfter', getU64Encoder()], ['quoteAtomsAfter', getU64Encoder()], ['realizedPnlDelta', getI64Encoder()]]);
 }
 
 export function getWithdrawEventDecoder(): FixedSizeDecoder<WithdrawEvent> {
-    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['depositor', getAddressDecoder()], ['isLeader', getBooleanDecoder()], ['sharesIn', getU64Decoder()], ['baseOut', getU64Decoder()], ['quoteOut', getU64Decoder()], ['totalSharesAfter', getU64Decoder()], ['leaderSharesAfter', getU64Decoder()], ['baseAtomsAfter', getU64Decoder()], ['quoteAtomsAfter', getU64Decoder()], ['realizedPnlDelta', getI64Decoder()]]);
+    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['depositor', getAddressDecoder()], ['isLeader', getBooleanDecoder()], ['sharesIn', getU64Decoder()], ['baseOut', getU64Decoder()], ['quoteOut', getU64Decoder()], ['totalSharesAfter', getU64Decoder()], ['leaderSharesAfter', getU64Decoder()], ['baseAtomsAfter', getU64Decoder()], ['quoteAtomsAfter', getU64Decoder()], ['realizedPnlDelta', getI64Decoder()]]);
 }
 
 export function getWithdrawEventCodec(): FixedSizeCodec<WithdrawEventArgs, WithdrawEvent> {
