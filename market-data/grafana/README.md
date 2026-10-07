@@ -21,7 +21,7 @@ make grafana-down   # stop it; leaves postgres and the data alone
 It serves on **<http://localhost:3200>** and opens on a list of the
 dashboards by name (`home/home.json`). All three dashboards sit at the
 top level of the dashboard list, with no folder and no tags; at three
-dashboards neither earns its click. The `Dropset` folder beside them
+dashboards neither earns its keep. The `Dropset` folder beside them
 holds only the alert rules, which Grafana requires to live in a folder;
 read those from the Alerting page. Append `?kiosk` to the URL for a
 chrome-free view — no nav, no side menu — which is what you want on a
