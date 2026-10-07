@@ -16,11 +16,18 @@
 //! operator ends up waiting for a step that is never coming.
 //!
 //! Bootstrapping is a sequence of discrete gated steps (deploy → init →
-//! create-market → create-vault) so each account and its rent can be watched
-//! appearing one at a time; "Bootstrap all" chains the whole sequence —
+//! create-market → create-vault → deposit) so each account and its rent can be
+//! watched appearing one at a time; "Bootstrap all" chains the whole sequence —
 //! deploying the program first when it isn't yet on-chain — for convenience.
+//!
+//! Both gates above read a poll that can be most of a second old, so neither
+//! is what stops a double-create: a stale poll plus a keypress would pass
+//! them. That job belongs to a **third** check, inside each ceremony function,
+//! which reads the chain fresh at execution time and refuses — nothing sent —
+//! when the thing it would create is already there (see `Outcome`). A failed
+//! read refuses too, rather than reading as "absent".
 
-use crate::accounts::{self, ChainState, Phase};
+use crate::accounts::{self, ChainState, Phase, VaultSeat};
 use crate::chain;
 use crate::cluster::Cluster;
 use crate::deploy;
@@ -64,6 +71,9 @@ pub enum Action {
     InitRegistry,
     CreateMarket,
     CreateVault,
+    /// The one-shot seed deposit into each roster vault: shape the ladder,
+    /// then `deposit_leader` the opening inventory.
+    Deposit,
     OpenExplorer,
     BootstrapAll,
     ProbeSwap,
@@ -103,35 +113,40 @@ const THIN_DEPTH_SCALE: f64 = 0.3;
 const NEVER_EXPIRES: WallSpan = WallSpan::UNBOUNDED;
 
 /// The numbered setup menu in display order — the bootstrap lifecycle plus the
-/// explorer / teardown / wipe utilities. Indices map to the `1..=8` number
+/// explorer / teardown / wipe utilities. Indices map to the `1..=9` number
 /// keys. The swap is deliberately absent: it is a runtime control, reached only
 /// via `s` (and listed in the "runtime" pane), so it appears in exactly one
 /// place rather than doubling as a numbered step.
-pub const MENU: [Action; 8] = [
+pub const MENU: [Action; 9] = [
     Action::Deploy,
     Action::InitRegistry,
     Action::CreateMarket,
     Action::CreateVault,
+    Action::Deposit,
     Action::OpenExplorer,
     Action::BootstrapAll,
     Action::Teardown,
     Action::Wipe,
 ];
 
-/// The mainnet menu — every entry that is meaningful against real funds
-/// *today*.
+/// The mainnet menu — every entry that is meaningful against real funds.
 ///
-/// Deliberately read-only. Mainnet mode currently plumbs the cluster, verifies
-/// the chain's identity and shows live state; the ceremony writes are gated
-/// off until they are existence-checked, because as written they mint their own
-/// mock mints and airdrop SOL (see [`Action::available_on`] for the per-action
-/// reasoning). Shipping the mode with the write paths reachable would put a
-/// counterfeit-mint keystroke one number key away.
+/// The four ceremony steps and the explorer. Each step is one-shot and
+/// existence-checked at execution time, references the real roster mints
+/// rather than minting any (see [`market::MAINNET_PAIRS`]), and signs vault
+/// steps with the operator-supplied leader; nothing here airdrops, deploys or
+/// discards a ledger.
 ///
 /// Kept in sync with [`Action::available_on`] by a test rather than by care —
 /// two hand-maintained lists of the same fact drift, and the direction it
 /// would drift here is toward exposing a write.
-pub const MAINNET_MENU: [Action; 1] = [Action::OpenExplorer];
+pub const MAINNET_MENU: [Action; 5] = [
+    Action::InitRegistry,
+    Action::CreateMarket,
+    Action::CreateVault,
+    Action::Deposit,
+    Action::OpenExplorer,
+];
 
 /// The menu for `cluster`, in display order.
 pub fn menu_for(cluster: Cluster) -> &'static [Action] {
@@ -142,11 +157,12 @@ pub fn menu_for(cluster: Cluster) -> &'static [Action] {
 }
 
 /// The ordered bootstrap steps, used to pick the recommended next step.
-const BOOTSTRAP: [Action; 4] = [
+const BOOTSTRAP: [Action; 5] = [
     Action::Deploy,
     Action::InitRegistry,
     Action::CreateMarket,
     Action::CreateVault,
+    Action::Deposit,
 ];
 
 impl Action {
@@ -157,6 +173,7 @@ impl Action {
             Action::InitRegistry => "Init registry",
             Action::CreateMarket => "Create market",
             Action::CreateVault => "Create vault",
+            Action::Deposit => "Seed deposit",
             Action::OpenExplorer => "Open explorer",
             Action::BootstrapAll => "Bootstrap all",
             Action::ProbeSwap => "Probe swap (CU)",
@@ -172,14 +189,20 @@ impl Action {
         }
     }
 
-    /// Whether the action can run in `phase`.
-    pub fn enabled(self, phase: Phase) -> bool {
+    /// Whether the action can run in `phase` on `cluster`.
+    ///
+    /// The cluster enters for one entry only, and it is the one the operator
+    /// sees first on mainnet: the hosted explorer needs no validator, so a
+    /// throttled endpoint (which polls as [`Phase::NoValidator`]) must not grey
+    /// it out. Everything else turns purely on the phase.
+    pub fn enabled(self, phase: Phase, cluster: Cluster) -> bool {
         match self {
             Action::Deploy => phase == Phase::ProgramAbsent,
             Action::InitRegistry => phase == Phase::RegistryAbsent,
             Action::CreateMarket => phase == Phase::MarketAbsent,
             Action::CreateVault => phase == Phase::VaultAbsent,
-            Action::OpenExplorer => phase != Phase::NoValidator,
+            Action::Deposit => phase == Phase::VaultUnseeded,
+            Action::OpenExplorer => cluster.is_mainnet() || phase != Phase::NoValidator,
             // Self-deploys when the program is absent, so it's available the
             // moment a validator is up and runs until everything exists.
             Action::BootstrapAll => matches!(
@@ -188,6 +211,7 @@ impl Action {
                     | Phase::RegistryAbsent
                     | Phase::MarketAbsent
                     | Phase::VaultAbsent
+                    | Phase::VaultUnseeded
             ),
             // A take needs a live, seeded vault to match against.
             Action::ProbeSwap => phase == Phase::Ready,
@@ -195,7 +219,11 @@ impl Action {
             // rent, the registry + fee vault, and the market if present.
             Action::Teardown => matches!(
                 phase,
-                Phase::RegistryAbsent | Phase::MarketAbsent | Phase::VaultAbsent | Phase::Ready
+                Phase::RegistryAbsent
+                    | Phase::MarketAbsent
+                    | Phase::VaultAbsent
+                    | Phase::VaultUnseeded
+                    | Phase::Ready
             ),
             Action::Wipe => true,
             // The demo controls quote against a live vault.
@@ -226,13 +254,17 @@ impl Action {
             // through `anchor build`, airdrop the payer, or discard a ledger
             // that exists only on this machine. On mainnet the program is
             // published out of band and there is nothing to throw away.
+            // "Bootstrap all" belongs here too: it mints mock pairs and funds
+            // the committed taker, and on mainnet each step is worth watching.
             Action::Deploy | Action::BootstrapAll | Action::Wipe => false,
-            // Mainnet-bound, but not yet mainnet-SAFE. Each of these mints its
-            // own mock pair and airdrops the payer, so on mainnet they would
-            // create counterfeit tokens rather than reference the real mints,
-            // and their existence check is menu greying off a stale poll
-            // rather than a refusal at send time.
-            Action::InitRegistry | Action::CreateMarket | Action::CreateVault => false,
+            // The ceremony. Mainnet-safe because each step re-reads the chain
+            // and refuses when its account already exists, references the
+            // real roster mints and never creates one, airdrops nothing, and
+            // signs vault steps with the operator's leader rather than a
+            // committed role key.
+            Action::InitRegistry | Action::CreateMarket | Action::CreateVault | Action::Deposit => {
+                true
+            }
             // Spends real money, signed by a committed taker role key that has
             // no mainnet counterpart.
             Action::ProbeSwap => false,
@@ -252,6 +284,15 @@ impl Action {
         }
     }
 
+    /// Whether the action must wait for a verified chain identity (see
+    /// [`crate::cluster::Identity`]). Everything that writes does. The two
+    /// exceptions are the explorer, which only reads, and the wipe, which
+    /// discards only this process's own ledger — the operator's way out when
+    /// the identity check has refused everything else.
+    pub fn needs_verified_chain(self) -> bool {
+        !matches!(self, Action::OpenExplorer | Action::Wipe)
+    }
+
     /// One-line reason the action is absent on `cluster` (only meaningful when
     /// [`Action::available_on`] is false).
     pub fn unavailable_reason(self, cluster: Cluster) -> &'static str {
@@ -259,9 +300,6 @@ impl Action {
         match self {
             Action::Deploy | Action::BootstrapAll | Action::Wipe => {
                 "localnet only — no validator or ledger to drive on mainnet"
-            }
-            Action::InitRegistry | Action::CreateMarket | Action::CreateVault => {
-                "the mainnet ceremony lands with the existence-checked commands"
             }
             Action::ProbeSwap => "spends real funds — no mainnet taker key",
             Action::Teardown => "use the headless teardown binary on a real cluster",
@@ -281,26 +319,44 @@ impl Action {
             | Action::ResetAllLadders => "localnet demo control",
             // Available on mainnet, so only reachable by a misuse the debug
             // assertion above catches in test builds.
-            Action::OpenExplorer => "",
+            Action::OpenExplorer
+            | Action::InitRegistry
+            | Action::CreateMarket
+            | Action::CreateVault
+            | Action::Deposit => "",
         }
     }
 
-    /// One-line reason the action is greyed out in `phase` (only meaningful
-    /// when [`Action::enabled`] is false).
-    pub fn disabled_reason(self, phase: Phase) -> &'static str {
+    /// One-line reason the action is greyed out in `phase` on `cluster` (only
+    /// meaningful when [`Action::enabled`] is false).
+    ///
+    /// Cluster-aware because the localnet wording is false on mainnet: there
+    /// is no validator there by design, so "waiting for validator" would send
+    /// the operator to wait for something that never arrives, and "deploy the
+    /// program first" names an action mainnet does not offer.
+    pub fn disabled_reason(self, phase: Phase, cluster: Cluster) -> &'static str {
         if phase == Phase::NoValidator {
-            return "waiting for validator";
+            return if cluster.is_mainnet() {
+                "endpoint not answering — check the RPC endpoint"
+            } else {
+                "waiting for validator"
+            };
         }
         match self {
             Action::Deploy => "program already deployed",
+            Action::InitRegistry if phase == Phase::ProgramAbsent && cluster.is_mainnet() => {
+                "the program is not published on this cluster"
+            }
             Action::InitRegistry if phase == Phase::ProgramAbsent => "deploy the program first",
             Action::InitRegistry => "registry already initialized",
             Action::CreateMarket if below(phase, Phase::MarketAbsent) => {
                 "initialize the registry first"
             }
-            Action::CreateMarket => "market already exists",
-            Action::CreateVault if below(phase, Phase::VaultAbsent) => "create the market first",
-            Action::CreateVault => "vault already exists",
+            Action::CreateMarket => "every roster market exists",
+            Action::CreateVault if below(phase, Phase::VaultAbsent) => "create the markets first",
+            Action::CreateVault => "every roster market has a vault",
+            Action::Deposit if below(phase, Phase::VaultUnseeded) => "create the vaults first",
+            Action::Deposit => "every vault is seeded",
             Action::BootstrapAll => "already bootstrapped",
             Action::ProbeSwap => "needs a live, seeded vault",
             Action::Teardown => "deploy the program first",
@@ -325,15 +381,19 @@ fn below(a: Phase, b: Phase) -> bool {
             Phase::RegistryAbsent => 2,
             Phase::MarketAbsent => 3,
             Phase::VaultAbsent => 4,
-            Phase::Ready => 5,
+            Phase::VaultUnseeded => 5,
+            Phase::Ready => 6,
         }
     }
     rank(a) < rank(b)
 }
 
-/// The recommended next bootstrap step in `phase` — the first enabled one.
-pub fn recommended_next(phase: Phase) -> Option<Action> {
-    BOOTSTRAP.into_iter().find(|a| a.enabled(phase))
+/// The recommended next bootstrap step in `phase` on `cluster` — the first one
+/// that is both enabled and offered there (mainnet never recommends a deploy).
+pub fn recommended_next(phase: Phase, cluster: Cluster) -> Option<Action> {
+    BOOTSTRAP
+        .into_iter()
+        .find(|a| a.available_on(cluster) && a.enabled(phase, cluster))
 }
 
 /// Owned context a background job needs. Cloned per dispatch so the job
@@ -348,6 +408,10 @@ pub struct JobContext {
     pub repo_root: PathBuf,
     pub wallet_path: String,
     pub wallet: Keypair,
+    /// The operator-supplied vault leader (`--leader`), for a roster whose
+    /// pairs name no leader file ([`market::LeaderKey::Operator`] — mainnet).
+    /// `None` on localnet, whose pairs use the committed role keys.
+    pub leader: Option<Keypair>,
     /// Lifecycle of the managed explorer container (an `explorer::state::*`
     /// value). The background starter and the "Open explorer" job both update
     /// it; the UI reads it; `App`'s `Drop` tears the container down unless it
@@ -385,6 +449,8 @@ pub fn dispatch(
     let repo_root = ctx.repo_root.clone();
     let wallet_path = ctx.wallet_path.clone();
     let wallet = ctx.wallet();
+    let cluster = ctx.cluster;
+    let operator_leader = ctx.leader.as_ref().map(Keypair::insecure_clone);
     let explorer_state = ctx.explorer_state.clone();
     let explorer_lock = ctx.explorer_lock.clone();
     // The market the market-scoped jobs target — resolved now, on the event
@@ -407,28 +473,43 @@ pub fn dispatch(
         Action::InitRegistry => {
             job::spawn(tx, "Init registry", move |log| {
                 let client = chain::rpc(&rpc_url);
-                do_init(&client, &wallet, log)
+                do_init(&client, &wallet, cluster, log)?.one_shot()
             });
         }
         Action::CreateMarket => {
             job::spawn(tx, "Create markets", move |log| {
                 let client = chain::rpc(&rpc_url);
-                for config in market::PAIRS {
-                    do_create_market(&client, &wallet, &repo_root, config, log)?;
-                }
-                Ok(format!("Created {} markets", market::PAIRS.len()))
+                over_roster(cluster, "market", log, |config| {
+                    do_create_market(&client, &wallet, &repo_root, cluster, config, log)
+                })
             });
         }
         Action::CreateVault => {
             job::spawn(tx, "Create vaults", move |log| {
                 let client = chain::rpc(&rpc_url);
-                // Sequential, so the per-market quote top-up in `seed_vault` is
-                // safe (no concurrent identical mints) — pass `prefunded_quote:
-                // false` and let each market fund its own quote leg.
-                for config in market::PAIRS {
-                    do_create_vault(&client, &wallet, &repo_root, config, false, log)?;
-                }
-                Ok(format!("Created {} vaults", market::PAIRS.len()))
+                over_roster(cluster, "vault", log, |config| {
+                    let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
+                    do_create_vault(&client, &wallet, &repo_root, cluster, config, &leader, log)
+                })
+            });
+        }
+        Action::Deposit => {
+            job::spawn(tx, "Seed deposits", move |log| {
+                let client = chain::rpc(&rpc_url);
+                // Sequential, so localnet's per-market quote top-up is safe (no
+                // concurrent identical mints) — `MintBoth` lets each market
+                // fund its own quote leg. Mainnet mints nothing.
+                let funding = if cluster.is_mainnet() {
+                    market::Funding::LeaderHeld
+                } else {
+                    market::Funding::MintBoth
+                };
+                over_roster(cluster, "deposit", log, |config| {
+                    let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
+                    do_deposit(
+                        &client, &wallet, &repo_root, cluster, config, &leader, funding, log,
+                    )
+                })
             });
         }
         Action::BootstrapAll => {
@@ -441,6 +522,12 @@ pub fn dispatch(
                     deploy::deploy_program(log, &repo_root, &rpc_url, &wallet_path, &pubkey)?;
                 }
                 let client = chain::rpc(&rpc_url);
+                // Localnet only, and the code below relies on it: it iterates
+                // the localnet `market::PAIRS` (every mint keypair-backed) and
+                // mints both legs. The cluster gate keeps it off mainnet;
+                // `seed_vault` would refuse a minting mode on a real mint
+                // anyway.
+                //
                 // Sequential prelude — everything the parallel phase must not
                 // race on. The registry and the shared USDC quote mint are
                 // created once here (both create-once accounts). The shared
@@ -450,15 +537,21 @@ pub fn dispatch(
                 // markets and would collide on transaction signature if run
                 // concurrently (and the pool would underflow as dedup drops
                 // all but one). See `market::prefund_leader_quotes`.
-                do_init(&client, &wallet, log)?;
+                //
+                // Each step is existence-checked, so a bootstrap resumed after a
+                // partial run skips what already exists rather than failing on
+                // it. (A resumed run does re-mint the prelude's quote pool; on a
+                // throwaway ledger the surplus is harmless.)
+                do_init(&client, &wallet, cluster, log)?.log_skip(log);
                 market::ensure_quote_mints(&client, &wallet, &repo_root, log)?;
                 market::prefund_leader_quotes(&client, &wallet, &repo_root, log)?;
-                // Parallel phase: each pair's create_market → create_vault is an
-                // independent chain against its own market PDA, unique base mint,
-                // and unique amounts, so every market pipelines against the
-                // one validator with no colliding transactions (the shared quote
-                // leg was handled by the prelude). `prefunded_quote: true` tells
-                // `seed_vault` to skip that shared top-up.
+                // Parallel phase: each pair's create_market → create_vault →
+                // deposit is an independent chain against its own market PDA,
+                // unique base mint, and unique amounts, so every market
+                // pipelines against the one validator with no colliding
+                // transactions (the shared quote leg was handled by the
+                // prelude). `MintBaseOnly` tells `seed_vault` to skip that
+                // shared top-up.
                 //
                 // Deliberately not a count: this said "the seven markets" and
                 // went stale the moment the roster grew to nine. The roster
@@ -475,8 +568,26 @@ pub fn dispatch(
                             scope.spawn(move || -> Result<()> {
                                 let client = chain::rpc(&rpc_url);
                                 log.log(format!("— {} —", config.base.symbol));
-                                do_create_market(&client, &wallet, repo_root, config, &log)?;
-                                do_create_vault(&client, &wallet, repo_root, config, true, &log)?;
+                                let leader = market::leader(repo_root, config, None)?;
+                                do_create_market(
+                                    &client, &wallet, repo_root, cluster, config, &log,
+                                )?
+                                .log_skip(&log);
+                                do_create_vault(
+                                    &client, &wallet, repo_root, cluster, config, &leader, &log,
+                                )?
+                                .log_skip(&log);
+                                do_deposit(
+                                    &client,
+                                    &wallet,
+                                    repo_root,
+                                    cluster,
+                                    config,
+                                    &leader,
+                                    market::Funding::MintBaseOnly,
+                                    &log,
+                                )?
+                                .log_skip(&log);
                                 Ok(())
                             })
                         })
@@ -518,7 +629,6 @@ pub fn dispatch(
         }
         Action::OpenExplorer => {
             let targets = explorer_targets(state, selected);
-            let cluster = ctx.cluster;
             job::spawn(tx, "Open explorer", move |log| {
                 // Mainnet short-circuits before the Docker block, and both
                 // halves of that matter. The managed container indexes the
@@ -725,7 +835,7 @@ fn do_repeg(
     // Report the concrete new reference (human quote-per-base) so the green
     // success line makes the repeg's effect obvious — the atoms-ratio scales
     // back by the pair's decimal gap.
-    let human = market::config_for(repo_root, &base_mint)
+    let human = market::config_for(repo_root, Cluster::Localnet, &base_mint)
         .map(|c| atoms_ratio_to_human(bumped, c.base.decimals, c.quote.decimals));
     Ok(match human {
         Some(p) => format!(
@@ -757,9 +867,11 @@ fn do_reshape(
     log: &Logger,
 ) -> Result<String> {
     let (market, base_mint, vault_idx) = eclob_target(market, base_mint, vault_idx)?;
-    let config =
-        market::config_for(repo_root, &base_mint).context("market not in the bootstrap roster")?;
-    let leader = market::leader(repo_root, config)?;
+    // Localnet only — the cluster gate keeps the eCLOB controls off mainnet,
+    // so the committed roster and its role keys are the right ones here.
+    let config = market::config_for(repo_root, Cluster::Localnet, &base_mint)
+        .context("market not in the bootstrap roster")?;
+    let leader = market::leader(repo_root, config, None)?;
     // Widen / tighten step the spread by ±5 bps (the caller adjusts `spread_bps`
     // before dispatch); the ladder is rebuilt at that spread, keeping all four
     // levels. Thin-far-side keeps the full bid ladder over a depth-scaled ask
@@ -843,9 +955,36 @@ fn open_targets(
     Ok(())
 }
 
-/// Airdrop a working balance to the wallet if it is running low — admin
-/// paths waive fees, but mint creation and tx fees still cost lamports.
-fn ensure_funded(client: &solana_client::rpc_client::RpcClient, wallet: &Pubkey, log: &Logger) {
+/// The least SOL the mainnet payer must hold before a ceremony step sends. A
+/// floor that catches an empty or wrong wallet before the first send, not a
+/// cost estimate: a step that needs more still fails cleanly at the send.
+const MAINNET_MIN_PAYER_LAMPORTS: u64 = LAMPORTS_PER_SOL / 10;
+
+/// Make sure `wallet` can pay for what follows — admin paths waive the
+/// program's fees, but rent and transaction fees still cost lamports.
+///
+/// On localnet that means airdropping a working balance when it runs low. On
+/// mainnet there is no faucet, so it checks the balance against
+/// [`MAINNET_MIN_PAYER_LAMPORTS`] and refuses below it; a failed balance read
+/// refuses too, rather than reading as zero or as plenty.
+fn ensure_funded(
+    client: &solana_client::rpc_client::RpcClient,
+    wallet: &Pubkey,
+    cluster: Cluster,
+    log: &Logger,
+) -> Result<()> {
+    if cluster.is_mainnet() {
+        let balance = client
+            .get_balance(wallet)
+            .map_err(|_| anyhow::anyhow!("could not read the payer's balance — refusing"))?;
+        if balance < MAINNET_MIN_PAYER_LAMPORTS {
+            anyhow::bail!(
+                "payer {wallet} holds {balance} lamports, below the {MAINNET_MIN_PAYER_LAMPORTS} \
+                 floor — fund it first; nothing was sent"
+            );
+        }
+        return Ok(());
+    }
     let balance = client.get_balance(wallet).unwrap_or(0);
     if balance < LAMPORTS_PER_SOL {
         log.log("Airdropping working balance to the wallet…");
@@ -853,6 +992,7 @@ fn ensure_funded(client: &solana_client::rpc_client::RpcClient, wallet: &Pubkey,
             log.log(format!("airdrop warning: {e:#}"));
         }
     }
+    Ok(())
 }
 
 /// Fund the taker (`FFFF`) at bootstrap so importing it into a browser wallet
@@ -869,7 +1009,7 @@ fn fund_taker(
     log: &Logger,
 ) -> Result<()> {
     let taker = market::taker(repo_root)?.pubkey();
-    ensure_funded(client, &taker, log);
+    ensure_funded(client, &taker, Cluster::Localnet, log)?;
     log.log(format!("Funding taker {taker} for wallet swaps…"));
     // Base leg per market; accumulate the shared quote to mint once at the end.
     let mut total_quote: u64 = 0;
@@ -893,16 +1033,107 @@ fn fund_taker(
     Ok(())
 }
 
-/// Create the registry: mint a mock fee mint, then send `init` (genesis
+/// What a ceremony step found when it read the chain fresh.
+///
+/// The step itself only reports; what an existing account *means* is the
+/// caller's call. A numbered menu step is one-shot, so for it an existing
+/// account is a refusal (see [`Outcome::one_shot`]) — the operator asked to
+/// create something that is already there, and a red line says so. The
+/// roster loops and "Bootstrap all" are resumable, so for them it is a skip.
+#[derive(Debug, PartialEq, Eq)]
+enum Outcome {
+    /// The step sent its transaction(s); the summary says what landed.
+    Done(String),
+    /// The account the step would create already exists, so nothing was sent.
+    AlreadyThere(String),
+}
+
+impl Outcome {
+    /// A one-shot command's reading: `AlreadyThere` is a refusal, so the job
+    /// ends red and names what exists, rather than reporting success for a
+    /// command that did nothing.
+    fn one_shot(self) -> Result<String> {
+        match self {
+            Outcome::Done(summary) => Ok(summary),
+            Outcome::AlreadyThere(what) => {
+                anyhow::bail!("refused — {what}; nothing was sent")
+            }
+        }
+    }
+
+    /// A resumable caller's reading: log an `AlreadyThere` and carry on.
+    fn log_skip(self, log: &Logger) {
+        if let Outcome::AlreadyThere(what) = self {
+            log.log(format!("skip — {what}"));
+        }
+    }
+}
+
+/// Run `step` over every `cluster` roster pair, in order, and summarize.
+///
+/// Resumable by construction: a pair whose account already exists is skipped
+/// and logged, so re-running after a partial failure finishes the job rather
+/// than tripping over the part that landed. The first real error stops the
+/// loop. If **every** pair was already there, the command as a whole did
+/// nothing, and that is reported as the one-shot refusal it is.
+fn over_roster(
+    cluster: Cluster,
+    noun: &str,
+    log: &Logger,
+    mut step: impl FnMut(&PairConfig) -> Result<Outcome>,
+) -> Result<String> {
+    let roster = market::roster(cluster);
+    let mut created = 0usize;
+    for config in roster {
+        log.log(format!("— {} —", config.base.symbol));
+        match step(config).with_context(|| format!("{} {noun}", config.base.symbol))? {
+            Outcome::Done(summary) => {
+                log.log(summary);
+                created += 1;
+            }
+            skipped @ Outcome::AlreadyThere(_) => skipped.log_skip(log),
+        }
+    }
+    let total = roster.len();
+    if created == 0 {
+        return Outcome::AlreadyThere(format!("every roster {noun} ({total}) already exists"))
+            .one_shot();
+    }
+    Ok(format!(
+        "{created} {noun}(s) done, {} already on-chain",
+        total - created
+    ))
+}
+
+/// Create the registry: resolve the fee mint, then send `init` (genesis
 /// admin = wallet, which must equal the program's upgrade authority).
+///
+/// Refuses (`AlreadyThere`) when the registry exists. The program's own `init`
+/// constraint would reject a second registry too, but only after the mock fee
+/// mint below had been created and paid for — so the check is here, first.
+///
+/// The fee mint is per cluster. Localnet mints a throwaway mock (its address
+/// is read back from the registry, so it never needs to be stable). Mainnet
+/// charges the per-vault fee in real USDC, verified to exist and never created.
 fn do_init(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
+    cluster: Cluster,
     log: &Logger,
-) -> Result<String> {
-    ensure_funded(client, &wallet.pubkey(), log);
-    log.log("Creating mock fee mint…");
-    let fee_mint = chain::create_spl_mint(client, wallet).context("create fee mint")?;
+) -> Result<Outcome> {
+    if accounts::registry_fresh(client)?.is_some() {
+        return Ok(Outcome::AlreadyThere(
+            "the registry is already initialized".into(),
+        ));
+    }
+    ensure_funded(client, &wallet.pubkey(), cluster, log)?;
+    let fee_mint = if cluster.is_mainnet() {
+        chain::verify_mint(client, &market::MAINNET_USDC, 6).context("verify the USDC fee mint")?;
+        market::MAINNET_USDC
+    } else {
+        log.log("Creating mock fee mint…");
+        chain::create_spl_mint(client, wallet).context("create fee mint")?
+    };
     log.log(format!("fee mint: {fee_mint}"));
     let ix = chain::build_init_ix(&wallet.pubkey(), &fee_mint);
     // Trailing rent top-up for the registry PDA — see RENT_TOPUP_LAMPORTS.
@@ -914,27 +1145,35 @@ fn do_init(
     chain::send_logged(client, wallet, &[wallet], &[ix, topup], "init", log)
         .context("send init")?;
     log.accounts_changed();
-    Ok("Registry initialized".into())
+    Ok(Outcome::Done("Registry initialized".into()))
 }
 
-/// Create the market: mint `config`'s fixed base/quote pair, then
-/// `create_market` charged (and waived, admin) against the registry's
-/// stamped fee mint.
+/// Create `config`'s market: make its mints usable, then `create_market`
+/// charged (and waived, admin) against the registry's stamped fee mint.
+///
+/// Refuses (`AlreadyThere`) when the market PDA exists, checked **before**
+/// anything else so a repeat creates no mints either. On mainnet the mints are
+/// only verified, never created (see [`market::ensure_pair_mints`]).
 fn do_create_market(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
     repo_root: &Path,
+    cluster: Cluster,
     config: &PairConfig,
     log: &Logger,
-) -> Result<String> {
-    ensure_funded(client, &wallet.pubkey(), log);
-    // No symbol map: only `registry` is read, so the markets' order does not
-    // matter here (see the sibling call below).
-    let registry = accounts::poll(client, &wallet.pubkey(), None, 0, &[])
-        .registry
-        .context("registry not found — init first")?;
+) -> Result<Outcome> {
+    let registry = accounts::registry_fresh(client)?.context("registry not found — init first")?;
+    let (base_mint, quote_mint) = market::pair_mints(repo_root, config)?;
+    let market_address = chain::market_pda(&base_mint, &quote_mint);
+    if chain::fetch_fresh(client, &market_address, "market")?.is_some() {
+        return Ok(Outcome::AlreadyThere(format!(
+            "the {} market already exists ({market_address})",
+            config.base.symbol
+        )));
+    }
+    ensure_funded(client, &wallet.pubkey(), cluster, log)?;
     let (base_mint, quote_mint) =
-        market::create_pair_mints(client, wallet, repo_root, config, log)?;
+        market::ensure_pair_mints(client, wallet, repo_root, config, log)?;
     // A distinct (never-read, admin path) fee source — must not alias the
     // payer, or anchor-v2 rejects it as a duplicate mutable account.
     let fee_source = Keypair::new().pubkey();
@@ -962,52 +1201,65 @@ fn do_create_market(
     )
     .context("send create_market")?;
     log.accounts_changed();
-    Ok("Market created".into())
+    Ok(Outcome::Done(format!(
+        "{} market created",
+        config.base.symbol
+    )))
 }
 
-/// Create the leader vault on the market via the admin path, then bring it
-/// up — set `config`'s quote ladder and seed it with the leader's opening
-/// deposit (see [`market::seed_vault`]). The market stays **dark** until a
-/// maker bot quotes it: no reference price is stamped, so nothing matches
-/// yet — `seed_vault` documents why that is the correct opening state.
+/// Open `leader`'s vault on `config`'s market via the admin path. The vault is
+/// left empty; [`do_deposit`] seeds it.
 ///
-/// `prefunded_quote` is forwarded to `seed_vault`: the parallel `BootstrapAll`
-/// path pre-funds the shared leader quote balance up front and passes `true` so
-/// the per-market quote top-up (which would collide across concurrent workers)
-/// is skipped; the sequential `CreateVault` path passes `false` and funds it
-/// per market.
+/// **Never opens a second vault for the same leader.** The leader's vaults are
+/// read fresh from the market slab first, and any at all is `AlreadyThere` —
+/// on a retry, after a crash, or against a stale poll alike. The program does
+/// not enforce one-vault-per-leader today, so this check is the only thing
+/// standing between a double keypress and a second vault; when a program-side
+/// guard lands, the two agree by construction (both key on the leader).
+///
+/// The leader must differ from the admin `wallet`: anchor-v2 rejects the same
+/// key in the admin and leader slots, and admin teardown's
+/// `force_withdraw_leader` would alias them. The fee source likewise must
+/// differ from the payer.
+#[allow(clippy::too_many_arguments)]
 fn do_create_vault(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
     repo_root: &Path,
+    cluster: Cluster,
     config: &PairConfig,
-    prefunded_quote: bool,
+    leader: &Keypair,
     log: &Logger,
-) -> Result<String> {
-    ensure_funded(client, &wallet.pubkey(), log);
-    // No symbol map: only `registry` is read below, so the markets' order is
-    // immaterial here. With an empty map the sort degrades to address order,
-    // which is still total — never the arbitrary scan order.
-    let state = accounts::poll(client, &wallet.pubkey(), None, 0, &[]);
-    let registry = state.registry.context("registry not found")?;
-    // Address this config's own market by its PDA — the bootstrap brings up
-    // many markets, so the first-found one in `ChainState` isn't necessarily
-    // this pair's.
+) -> Result<Outcome> {
+    if leader.pubkey() == wallet.pubkey() {
+        anyhow::bail!(
+            "the leader must not be the admin wallet ({})",
+            wallet.pubkey()
+        );
+    }
+    let registry = accounts::registry_fresh(client)?.context("registry not found — init first")?;
+    // Address this config's own market by its PDA — the roster brings up many
+    // markets, so the first-found one in `ChainState` isn't necessarily this
+    // pair's.
     let (base_mint, quote_mint) = market::pair_mints(repo_root, config)?;
-    let market = accounts::read_market_at(client, chain::market_pda(&base_mint, &quote_mint))
-        .context("market not found — create market first")?;
-    // The vault is opened for `config`'s leader (a distinct role key, not
-    // the admin), so admin teardown's force_withdraw_leader doesn't alias
-    // the admin signer; the fee source likewise must differ from the payer.
-    // The leader also quotes and seeds the vault, so unlike before it must
-    // be a real signer with a known key — not a throwaway pubkey.
-    let leader = market::leader(repo_root, config)?;
+    let market_address = chain::market_pda(&base_mint, &quote_mint);
+    let seats = accounts::vault_seats_fresh(client, &market_address)?
+        .context("market not found — create the market first")?;
+    if let Some(seat) = existing_seat(&seats, &leader.pubkey()) {
+        return Ok(Outcome::AlreadyThere(format!(
+            "leader {} already leads vault #{} on the {} market — never opening a second",
+            leader.pubkey(),
+            seat.seq,
+            config.base.symbol
+        )));
+    }
+    ensure_funded(client, &wallet.pubkey(), cluster, log)?;
     let fee_source = Keypair::new().pubkey();
     log.log(format!("vault leader: {}", leader.pubkey()));
     let ix = chain::build_create_vault_ix(
         &wallet.pubkey(),
         &fee_source,
-        &market.address,
+        &market_address,
         &registry.fee_mint,
         &registry.fee_token_program,
         &leader.pubkey(),
@@ -1016,24 +1268,109 @@ fn do_create_vault(
     // see RENT_TOPUP_LAMPORTS.
     let topup = chain::system_transfer_ix(
         &wallet.pubkey(),
-        &market.address,
+        &market_address,
         chain::RENT_TOPUP_LAMPORTS,
     );
     chain::send_logged(client, wallet, &[wallet], &[ix, topup], "create_vault", log)
         .context("send create_vault")?;
     log.accounts_changed();
-    // Bring the vault up shaped + seeded — dark until a maker bot quotes it.
+    Ok(Outcome::Done(format!(
+        "{} vault created — empty until seeded",
+        config.base.symbol
+    )))
+}
+
+/// The leader's existing vault among `seats`, if any — what makes
+/// [`do_create_vault`] refuse. Any vault at all counts: one is the most a
+/// leader may lead.
+fn existing_seat(seats: &[VaultSeat], leader: &Pubkey) -> Option<VaultSeat> {
+    accounts::seats_led_by(seats, leader).first().copied()
+}
+
+/// What [`do_deposit`] found for the leader among a market's vaults.
+#[derive(Debug, PartialEq, Eq)]
+enum DepositSeat {
+    /// Exactly one vault, empty — the one to seed.
+    Fund(VaultSeat),
+    /// Exactly one vault, already holding a deposit — nothing to do.
+    Seeded(VaultSeat),
+    /// No vault for this leader — create it first.
+    NoVault,
+    /// More than one — ambiguous, and guessing which to fund is not this
+    /// step's call.
+    Ambiguous(usize),
+}
+
+/// Classify the leader's vaults on a market for the deposit step.
+fn deposit_seat(seats: &[VaultSeat], leader: &Pubkey) -> DepositSeat {
+    match accounts::seats_led_by(seats, leader)[..] {
+        [] => DepositSeat::NoVault,
+        [seat] if seat.seeded => DepositSeat::Seeded(seat),
+        [seat] => DepositSeat::Fund(seat),
+        ref many => DepositSeat::Ambiguous(many.len()),
+    }
+}
+
+/// Seed `leader`'s vault on `config`'s market: set the quote ladder and make
+/// the opening deposit (see [`market::seed_vault`]). The market stays **dark**
+/// until a maker bot quotes it — `seed_vault` documents why that is the correct
+/// opening state.
+///
+/// Read fresh, and classified by [`deposit_seat`]: the leader's vault is
+/// located in the market slab **by leader**, never by an assumed sector index,
+/// and a vault that already holds a deposit is `AlreadyThere`, so a retry never
+/// deposits on top of a deposit. Note the bound: "holds a deposit" is read off
+/// the vault's shares and inventory, so a vault later drained back to empty
+/// reads as unseeded and may be seeded again — deliberately, since it is then
+/// an empty vault like any other. A leader with no vault, or with more than
+/// one, is refused outright.
+#[allow(clippy::too_many_arguments)]
+fn do_deposit(
+    client: &solana_client::rpc_client::RpcClient,
+    wallet: &Keypair,
+    repo_root: &Path,
+    cluster: Cluster,
+    config: &PairConfig,
+    leader: &Keypair,
+    funding: market::Funding,
+    log: &Logger,
+) -> Result<Outcome> {
+    let (base_mint, quote_mint) = market::pair_mints(repo_root, config)?;
+    let market_address = chain::market_pda(&base_mint, &quote_mint);
+    let seats = accounts::vault_seats_fresh(client, &market_address)?
+        .context("market not found — create the market first")?;
+    let seat = match deposit_seat(&seats, &leader.pubkey()) {
+        DepositSeat::Fund(seat) => seat,
+        DepositSeat::Seeded(seat) => {
+            return Ok(Outcome::AlreadyThere(format!(
+                "the {} vault #{} already holds a deposit",
+                config.base.symbol, seat.seq
+            )))
+        }
+        DepositSeat::NoVault => anyhow::bail!(
+            "leader {} leads no vault on the {} market — create the vault first",
+            leader.pubkey(),
+            config.base.symbol
+        ),
+        DepositSeat::Ambiguous(n) => anyhow::bail!(
+            "leader {} leads {n} vaults on the {} market — refusing to guess which to seed",
+            leader.pubkey(),
+            config.base.symbol
+        ),
+    };
+    ensure_funded(client, &wallet.pubkey(), cluster, log)?;
+    // The treasuries and decimals `seed_vault` needs. A failed read here is
+    // after the existence check, so it can only abort, never double-send.
+    let market = accounts::read_market_at(client, market_address)
+        .context("could not read the market back — refusing")?;
     market::seed_vault(
-        client,
-        wallet,
-        &leader,
-        config,
-        &market,
-        prefunded_quote,
-        log,
+        client, wallet, leader, config, &market, seat.idx, funding, log,
     )?;
     log.accounts_changed();
-    Ok("Vault created and seeded — dark until a maker bot quotes it".into())
+    Ok(Outcome::Done(format!(
+        "{} vault seeded — dark until a maker bot quotes it",
+        config.base.symbol
+    )))
 }
 
 /// Whole units of the input token a swap probe spends by default — scaled to
@@ -1060,7 +1397,7 @@ fn do_probe_swap(
     side: SwapSide,
     log: &Logger,
 ) -> Result<String> {
-    ensure_funded(client, &wallet.pubkey(), log);
+    ensure_funded(client, &wallet.pubkey(), Cluster::Localnet, log)?;
     // Swap against the selected market when one is set. The TUI always has a
     // selection, so the fallback is for a caller that supplies none.
     //
@@ -1097,7 +1434,7 @@ fn do_probe_swap(
     // other receives the leg it gets. Which is which flips with the side.
     let taker = market::taker(repo_root)?;
     let taker_pk = taker.pubkey();
-    ensure_funded(client, &taker_pk, log);
+    ensure_funded(client, &taker_pk, Cluster::Localnet, log)?;
     let quote_ata = chain::create_ata_idempotent(client, wallet, &taker_pk, &market.quote_mint)
         .context("taker quote ATA")?;
     let base_ata = chain::create_ata_idempotent(client, wallet, &taker_pk, &market.base_mint)
@@ -1151,14 +1488,18 @@ fn do_probe_swap(
 mod tests {
     use super::*;
 
-    const PHASES: [Phase; 6] = [
+    const PHASES: [Phase; 7] = [
         Phase::NoValidator,
         Phase::ProgramAbsent,
         Phase::RegistryAbsent,
         Phase::MarketAbsent,
         Phase::VaultAbsent,
+        Phase::VaultUnseeded,
         Phase::Ready,
     ];
+
+    const L: Cluster = Cluster::Localnet;
+    const M: Cluster = Cluster::Mainnet;
 
     /// Every `Action`, so a cluster-gate test covers the demo controls too —
     /// those are reachable only by keybinds, never appear in `MENU`, and so
@@ -1170,13 +1511,14 @@ mod tests {
     /// of this comment claimed the wider scope and was wrong.
     ///
     /// Kept complete by [`all_actions_lists_every_variant`], not by care — the
-    /// `[Action; 16]` length annotation does not change when a variant is
+    /// `[Action; 17]` length annotation does not change when a variant is
     /// added, so nothing else would notice the list going stale.
-    const ALL_ACTIONS: [Action; 16] = [
+    const ALL_ACTIONS: [Action; 17] = [
         Action::Deploy,
         Action::InitRegistry,
         Action::CreateMarket,
         Action::CreateVault,
+        Action::Deposit,
         Action::OpenExplorer,
         Action::BootstrapAll,
         Action::ProbeSwap,
@@ -1201,21 +1543,186 @@ mod tests {
     }
 
     #[test]
-    fn mainnet_exposes_no_write_action() {
+    fn mainnet_exposes_only_the_existence_checked_ceremony() {
         // The load-bearing assertion of the whole mode: on mainnet the only
-        // reachable action writes nothing. If a later change flips a ceremony
-        // action available before it is existence-checked, this fails.
+        // reachable writes are the four one-shot ceremony steps. A later
+        // change that exposes anything else — a mock-minting bootstrap, a
+        // committed-key demo control — fails here.
+        let ceremony = [
+            Action::InitRegistry,
+            Action::CreateMarket,
+            Action::CreateVault,
+            Action::Deposit,
+        ];
         for a in ALL_ACTIONS {
-            if a == Action::OpenExplorer {
-                assert!(a.available_on(Cluster::Mainnet));
-            } else {
-                assert!(
-                    !a.available_on(Cluster::Mainnet),
-                    "{:?} must not be reachable on mainnet yet",
-                    a.label()
-                );
-            }
+            let expected = a == Action::OpenExplorer || ceremony.contains(&a);
+            assert_eq!(
+                a.available_on(M),
+                expected,
+                "{:?} mainnet availability",
+                a.label()
+            );
         }
+    }
+
+    #[test]
+    fn mainnet_explorer_survives_an_unresponsive_endpoint() {
+        // A throttled endpoint polls as NoValidator. The hosted explorer needs
+        // no validator, so it must stay usable — on localnet it still waits.
+        assert!(Action::OpenExplorer.enabled(Phase::NoValidator, M));
+        assert!(!Action::OpenExplorer.enabled(Phase::NoValidator, L));
+    }
+
+    #[test]
+    fn disabled_reasons_name_the_cluster_truthfully() {
+        // "waiting for validator" is false on mainnet, where there is none.
+        assert_eq!(
+            Action::InitRegistry.disabled_reason(Phase::NoValidator, L),
+            "waiting for validator"
+        );
+        let mainnet = Action::InitRegistry.disabled_reason(Phase::NoValidator, M);
+        assert!(!mainnet.contains("validator"), "{mainnet}");
+        // And mainnet never tells the operator to deploy.
+        let absent = Action::InitRegistry.disabled_reason(Phase::ProgramAbsent, M);
+        assert!(!absent.contains("deploy"), "{absent}");
+        assert_eq!(
+            Action::InitRegistry.disabled_reason(Phase::ProgramAbsent, L),
+            "deploy the program first"
+        );
+    }
+
+    #[test]
+    fn mainnet_never_recommends_a_localnet_step() {
+        assert_eq!(recommended_next(Phase::ProgramAbsent, M), None);
+        assert_eq!(
+            recommended_next(Phase::RegistryAbsent, M),
+            Some(Action::InitRegistry)
+        );
+        assert_eq!(
+            recommended_next(Phase::VaultUnseeded, M),
+            Some(Action::Deposit)
+        );
+    }
+
+    fn seat(idx: u32, leader: Pubkey, seeded: bool) -> VaultSeat {
+        VaultSeat {
+            idx,
+            seq: u64::from(idx) + 1,
+            leader,
+            seeded,
+        }
+    }
+
+    #[test]
+    fn create_vault_refuses_when_the_leader_already_leads_one() {
+        // The one guard against a second vault for a leader: the program does
+        // not enforce one-vault-per-leader, so this is it.
+        let me = Pubkey::new_unique();
+        let stranger = Pubkey::new_unique();
+        // A stranger's vault on the market does not block ours.
+        assert_eq!(existing_seat(&[seat(0, stranger, true)], &me), None);
+        // Ours, seeded or not, does.
+        let seats = [seat(0, stranger, true), seat(4, me, false)];
+        assert_eq!(existing_seat(&seats, &me), Some(seats[1]));
+    }
+
+    #[test]
+    fn deposit_seeds_only_the_leaders_single_empty_vault() {
+        let me = Pubkey::new_unique();
+        let stranger = Pubkey::new_unique();
+        assert_eq!(
+            deposit_seat(&[seat(0, stranger, false)], &me),
+            DepositSeat::NoVault
+        );
+        assert_eq!(
+            deposit_seat(&[seat(0, stranger, false), seat(2, me, false)], &me),
+            DepositSeat::Fund(seat(2, me, false))
+        );
+        // Never on top of a deposit — the retry case.
+        assert_eq!(
+            deposit_seat(&[seat(2, me, true)], &me),
+            DepositSeat::Seeded(seat(2, me, true))
+        );
+        // Two under one leader is ambiguous, not "pick the first".
+        assert_eq!(
+            deposit_seat(&[seat(2, me, false), seat(5, me, false)], &me),
+            DepositSeat::Ambiguous(2)
+        );
+    }
+
+    #[test]
+    fn over_roster_resumes_skips_and_refuses_when_nothing_was_left() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let log = Logger::new(tx);
+        // Every pair already there: the command did nothing, so it refuses.
+        let err = over_roster(L, "market", &log, |c| {
+            Ok(Outcome::AlreadyThere(c.base.symbol.into()))
+        })
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("refused"), "{err:#}");
+        // A partial run: the already-present pairs are skipped, the rest done.
+        let mut first = true;
+        let summary = over_roster(L, "market", &log, |c| {
+            Ok(if std::mem::take(&mut first) {
+                Outcome::AlreadyThere(c.base.symbol.into())
+            } else {
+                Outcome::Done(c.base.symbol.into())
+            })
+        })
+        .unwrap();
+        let total = market::roster(L).len();
+        assert_eq!(
+            summary,
+            format!("{} market(s) done, 1 already on-chain", total - 1)
+        );
+        // The first real error stops the loop: nothing after it runs.
+        let mut calls = 0;
+        assert!(over_roster(L, "market", &log, |_| {
+            calls += 1;
+            anyhow::bail!("send failed")
+        })
+        .is_err());
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn every_write_waits_for_a_verified_chain() {
+        for a in ALL_ACTIONS {
+            let exempt = matches!(a, Action::OpenExplorer | Action::Wipe);
+            assert_eq!(a.needs_verified_chain(), !exempt, "{:?}", a.label());
+        }
+    }
+
+    #[test]
+    fn bootstrap_order_is_the_five_ceremony_steps() {
+        // Pinned here because `each_bootstrap_step_is_enabled_in_exactly_one_
+        // phase` iterates this constant, so it cannot notice a step missing.
+        assert_eq!(
+            BOOTSTRAP,
+            [
+                Action::Deploy,
+                Action::InitRegistry,
+                Action::CreateMarket,
+                Action::CreateVault,
+                Action::Deposit,
+            ]
+        );
+    }
+
+    #[test]
+    fn one_shot_refuses_when_the_account_already_exists() {
+        assert_eq!(
+            Outcome::Done("made it".into()).one_shot().unwrap(),
+            "made it"
+        );
+        let err = Outcome::AlreadyThere("the registry is already initialized".into())
+            .one_shot()
+            .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("refused") && msg.contains("nothing was sent"),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -1257,8 +1764,8 @@ mod tests {
 
     #[test]
     fn all_actions_lists_every_variant() {
-        // The completeness guard the MENU check above cannot be: MENU holds 8
-        // of the 16 variants, so a new shortcut-only action would be absent from
+        // The completeness guard the MENU check above cannot be: MENU holds 9
+        // of the 17 variants, so a new shortcut-only action would be absent from
         // both MENU and ALL_ACTIONS and silently escape all four cluster-gate
         // tests — a variant reachable only by a shortcut. PR 2 and PR 3 of this
         // series add exactly that shape.
@@ -1266,14 +1773,16 @@ mod tests {
         // Three assertions together are a complete proof. The match below has
         // one arm and no wildcard, so adding a variant fails to compile here
         // until someone edits this test; the count pins the fixture's size at
-        // the enum's size; and the pairwise check rules out duplicates. Sixteen
-        // distinct variants drawn from a sixteen-variant enum is all of them.
+        // the enum's size; and the pairwise check rules out duplicates.
+        // Seventeen distinct variants drawn from a seventeen-variant enum is
+        // all of them.
         fn is_known(a: Action) -> bool {
             match a {
                 Action::Deploy
                 | Action::InitRegistry
                 | Action::CreateMarket
                 | Action::CreateVault
+                | Action::Deposit
                 | Action::OpenExplorer
                 | Action::BootstrapAll
                 | Action::ProbeSwap
@@ -1290,7 +1799,7 @@ mod tests {
         }
         assert_eq!(
             ALL_ACTIONS.len(),
-            16,
+            17,
             "ALL_ACTIONS must list every Action variant"
         );
         for (i, a) in ALL_ACTIONS.iter().enumerate() {
@@ -1303,52 +1812,60 @@ mod tests {
 
     #[test]
     fn recommended_next_follows_the_bootstrap_order() {
-        assert_eq!(recommended_next(Phase::NoValidator), None);
-        assert_eq!(recommended_next(Phase::ProgramAbsent), Some(Action::Deploy));
+        assert_eq!(recommended_next(Phase::NoValidator, L), None);
         assert_eq!(
-            recommended_next(Phase::RegistryAbsent),
+            recommended_next(Phase::ProgramAbsent, L),
+            Some(Action::Deploy)
+        );
+        assert_eq!(
+            recommended_next(Phase::RegistryAbsent, L),
             Some(Action::InitRegistry)
         );
         assert_eq!(
-            recommended_next(Phase::MarketAbsent),
+            recommended_next(Phase::MarketAbsent, L),
             Some(Action::CreateMarket)
         );
         assert_eq!(
-            recommended_next(Phase::VaultAbsent),
+            recommended_next(Phase::VaultAbsent, L),
             Some(Action::CreateVault)
         );
-        assert_eq!(recommended_next(Phase::Ready), None);
+        assert_eq!(
+            recommended_next(Phase::VaultUnseeded, L),
+            Some(Action::Deposit)
+        );
+        assert_eq!(recommended_next(Phase::Ready, L), None);
     }
 
     #[test]
     fn each_bootstrap_step_is_enabled_in_exactly_one_phase() {
-        for step in [
-            Action::Deploy,
-            Action::InitRegistry,
-            Action::CreateMarket,
-            Action::CreateVault,
-        ] {
-            let count = PHASES.iter().filter(|p| step.enabled(**p)).count();
-            assert_eq!(count, 1, "{step:?} should be enabled in exactly one phase");
+        for cluster in [L, M] {
+            for step in BOOTSTRAP {
+                let count = PHASES.iter().filter(|p| step.enabled(**p, cluster)).count();
+                assert_eq!(count, 1, "{step:?} should be enabled in exactly one phase");
+            }
         }
     }
 
     #[test]
     fn teardown_enabled_once_the_program_is_deployed() {
-        assert!(!Action::Teardown.enabled(Phase::NoValidator));
-        assert!(!Action::Teardown.enabled(Phase::ProgramAbsent));
+        assert!(!Action::Teardown.enabled(Phase::NoValidator, L));
+        assert!(!Action::Teardown.enabled(Phase::ProgramAbsent, L));
         for p in [
             Phase::RegistryAbsent,
             Phase::MarketAbsent,
             Phase::VaultAbsent,
+            Phase::VaultUnseeded,
             Phase::Ready,
         ] {
-            assert!(Action::Teardown.enabled(p), "teardown should run in {p:?}");
+            assert!(
+                Action::Teardown.enabled(p, L),
+                "teardown should run in {p:?}"
+            );
         }
     }
 
     #[test]
-    fn bootstrap_all_spans_deploy_through_vault() {
+    fn bootstrap_all_spans_deploy_through_deposit() {
         // "Bootstrap all" self-deploys, so it's enabled from the moment a
         // validator is up (program still absent) until everything exists.
         for p in [
@@ -1356,21 +1873,22 @@ mod tests {
             Phase::RegistryAbsent,
             Phase::MarketAbsent,
             Phase::VaultAbsent,
+            Phase::VaultUnseeded,
         ] {
             assert!(
-                Action::BootstrapAll.enabled(p),
+                Action::BootstrapAll.enabled(p, L),
                 "bootstrap all should run in {p:?}"
             );
         }
-        assert!(!Action::BootstrapAll.enabled(Phase::NoValidator));
-        assert!(!Action::BootstrapAll.enabled(Phase::Ready));
+        assert!(!Action::BootstrapAll.enabled(Phase::NoValidator, L));
+        assert!(!Action::BootstrapAll.enabled(Phase::Ready, L));
         // Once everything exists, it really is already bootstrapped.
         assert_eq!(
-            Action::BootstrapAll.disabled_reason(Phase::Ready),
+            Action::BootstrapAll.disabled_reason(Phase::Ready, L),
             "already bootstrapped"
         );
         assert_eq!(
-            Action::BootstrapAll.disabled_reason(Phase::NoValidator),
+            Action::BootstrapAll.disabled_reason(Phase::NoValidator, L),
             "waiting for validator"
         );
     }
@@ -1392,13 +1910,13 @@ mod tests {
         for c in controls {
             for p in PHASES {
                 assert_eq!(
-                    c.enabled(p),
+                    c.enabled(p, L),
                     p == Phase::Ready,
                     "{c:?} should be enabled only in Ready, not {p:?}"
                 );
             }
             assert_eq!(
-                c.disabled_reason(Phase::VaultAbsent),
+                c.disabled_reason(Phase::VaultAbsent, L),
                 "needs a live, seeded vault"
             );
         }
@@ -1407,8 +1925,8 @@ mod tests {
     #[test]
     fn wipe_always_enabled_and_explorer_needs_a_validator() {
         for p in PHASES {
-            assert!(Action::Wipe.enabled(p));
-            assert_eq!(Action::OpenExplorer.enabled(p), p != Phase::NoValidator);
+            assert!(Action::Wipe.enabled(p, L));
+            assert_eq!(Action::OpenExplorer.enabled(p, L), p != Phase::NoValidator);
         }
     }
 }

@@ -532,6 +532,132 @@ pub fn create_mint(
     Ok(mint.pubkey())
 }
 
+// ── Fresh existence reads ────────────────────────────────────────────
+
+/// One account as a pre-flight check sees it: its owner program and data.
+pub struct FreshAccount {
+    pub owner: Pubkey,
+    pub data: Vec<u8>,
+}
+
+/// Read `address` now, distinguishing an **absent** account (`Ok(None)`) from
+/// a **failed read** (`Err`). `what` names the account in the error.
+///
+/// That distinction is the whole point. This crate's display readers fold a
+/// failed RPC call into "not found", which is harmless for a pane that
+/// re-polls in a second and exactly backwards for a pre-flight check: a
+/// throttled endpoint would read as "nothing here yet" and green-light a
+/// second create. A ceremony therefore refuses on `Err` rather than guessing.
+///
+/// The source error is dropped rather than chained, for the reason
+/// [`crate::cluster::Cluster::verify_genesis`] gives: the RPC client's error
+/// can carry the request URL, and a mainnet endpoint commonly embeds an API
+/// key. A job's failure is printed to the log pane and the log file.
+///
+/// One residual this does not close: "fresh" means read at the client's
+/// commitment *now*, with no minimum context slot. Within a job every check
+/// runs on the same client right after the previous send confirmed, but behind
+/// a load-balanced mainnet endpoint a **later** job's read can land on a node
+/// that has not yet seen the earlier job's confirmed write, and read a vault
+/// that exists as absent. The window is one node's lag between two operator
+/// key presses; pinning `min_context_slot` to the last send's slot would close
+/// it.
+pub fn fetch_fresh(
+    client: &RpcClient,
+    address: &Pubkey,
+    what: &str,
+) -> Result<Option<FreshAccount>> {
+    let response = client
+        .get_account_with_commitment(address, client.commitment())
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "could not read the {what} ({address}) — refusing rather than treating \
+                 a failed read as absent (the RPC error is withheld: it can carry the \
+                 endpoint URL)"
+            )
+        })?;
+    Ok(response.value.map(|a| FreshAccount {
+        owner: a.owner,
+        data: a.data,
+    }))
+}
+
+/// Byte offset of `decimals` in an SPL Token `Mint`.
+const MINT_DECIMALS_OFFSET: usize = 44;
+/// Byte offset of `is_initialized` in an SPL Token `Mint`.
+const MINT_IS_INITIALIZED_OFFSET: usize = 45;
+/// Byte range of `amount` in an SPL Token `Account` (after `mint`, `owner`).
+const TOKEN_AMOUNT_RANGE: std::ops::Range<usize> = 64..72;
+/// Byte offset of `state` in an SPL Token `Account` (0 uninitialized,
+/// 1 initialized, 2 frozen).
+const TOKEN_STATE_OFFSET: usize = 108;
+/// The `state` value of a usable (initialized, not frozen) token account.
+const TOKEN_STATE_INITIALIZED: u8 = 1;
+
+/// Confirm a real mint exists at `mint` as an initialized classic SPL Token
+/// mint with `decimals`. Never creates anything — the mainnet ceremony's only
+/// contact with a mint it does not own.
+///
+/// Classic SPL Token only, because the market path builds every instruction
+/// against it (see `build_create_market_ix`); a Token-2022 mint here would fail
+/// later and less clearly.
+pub fn verify_mint(client: &RpcClient, mint: &Pubkey, decimals: u8) -> Result<()> {
+    let account = fetch_fresh(client, mint, "mint")?.with_context(|| {
+        format!("no account at {mint} — the mint does not exist on this cluster")
+    })?;
+    check_mint(&account, decimals).with_context(|| format!("mint {mint}"))
+}
+
+/// [`verify_mint`]'s decode, separated so it is testable without a chain.
+fn check_mint(account: &FreshAccount, decimals: u8) -> Result<()> {
+    if account.owner != SPL_TOKEN_PROGRAM_ID {
+        anyhow::bail!("owned by {}, not the SPL Token program", account.owner);
+    }
+    if account.data.len() < MINT_LEN {
+        anyhow::bail!("{} bytes, too short for a mint", account.data.len());
+    }
+    if account.data[MINT_IS_INITIALIZED_OFFSET] != 1 {
+        anyhow::bail!("not initialized");
+    }
+    let seen = account.data[MINT_DECIMALS_OFFSET];
+    if seen != decimals {
+        anyhow::bail!("has {seen} decimals, the pair expects {decimals}");
+    }
+    Ok(())
+}
+
+/// `owner`'s spendable balance of `mint`, in atoms, from its classic SPL
+/// associated token account — `0` when that account does not exist. A failed
+/// read is an error, never a zero, and so is a **frozen** account: its balance
+/// is real but cannot move, so counting it would pass a pre-check the transfer
+/// then fails.
+pub fn token_balance(client: &RpcClient, owner: &Pubkey, mint: &Pubkey) -> Result<u64> {
+    let ata = associated_token_address(owner, mint, &SPL_TOKEN_PROGRAM_ID);
+    match fetch_fresh(client, &ata, "token account")? {
+        None => Ok(0),
+        Some(account) => token_amount(&account).with_context(|| format!("token account {ata}")),
+    }
+}
+
+/// [`token_balance`]'s decode, separated so it is testable without a chain.
+fn token_amount(account: &FreshAccount) -> Result<u64> {
+    if account.owner != SPL_TOKEN_PROGRAM_ID {
+        anyhow::bail!("owned by {}, not the SPL Token program", account.owner);
+    }
+    let Some(bytes) = account.data.get(TOKEN_AMOUNT_RANGE) else {
+        anyhow::bail!(
+            "{} bytes, too short for a token account",
+            account.data.len()
+        );
+    };
+    match account.data.get(TOKEN_STATE_OFFSET) {
+        Some(&TOKEN_STATE_INITIALIZED) => {}
+        Some(2) => anyhow::bail!("frozen — its balance cannot move"),
+        _ => anyhow::bail!("not an initialized token account"),
+    }
+    Ok(u64::from_le_bytes(bytes.try_into()?))
+}
+
 /// Mint `amount` atoms of `mint` to `ata` under the SPL Token program;
 /// `authority` must be the mint authority. Used to fund the leader's ATAs
 /// before the bootstrap's seed `deposit_leader`.
@@ -652,7 +778,9 @@ pub fn send(
     signers: &[&Keypair],
     ixs: &[Instruction],
 ) -> Result<String> {
-    let blockhash = client.get_latest_blockhash().context("blockhash")?;
+    let blockhash = client
+        .get_latest_blockhash()
+        .map_err(|e| anyhow::anyhow!("blockhash: {}", describe_rpc_error(&e)))?;
     let tx = Transaction::new_signed_with_payer(ixs, Some(&payer.pubkey()), signers, blockhash);
     match client.send_and_confirm_transaction(&tx) {
         Ok(sig) => Ok(sig.to_string()),
@@ -664,8 +792,27 @@ pub fn send(
                 .filter(|l| !l.is_empty())
                 .map(|l| format!("\n{}", l.join("\n")))
                 .unwrap_or_default();
-            Err(anyhow::anyhow!("{err}{logs}"))
+            Err(anyhow::anyhow!("{}{logs}", describe_rpc_error(&err)))
         }
+    }
+}
+
+/// A failed RPC call, described without the endpoint.
+///
+/// A transport-level failure (`Reqwest`, `Io`, `Middleware`) formats the
+/// underlying HTTP error, whose text appends the full request URL — and a
+/// mainnet endpoint commonly embeds an API key in it. Every send's error
+/// reaches the log pane and the log file, so those kinds are reduced to a
+/// fixed message, for the reason [`fetch_fresh`] gives. Errors the node itself
+/// returned (an RPC error, a transaction or signing error) carry no URL and
+/// are the diagnostic an operator needs, so they pass through.
+pub fn describe_rpc_error(err: &solana_client::client_error::ClientError) -> String {
+    use solana_client::client_error::ClientErrorKind as Kind;
+    match err.kind() {
+        Kind::RpcError(_) | Kind::TransactionError(_) | Kind::SigningError(_) => err.to_string(),
+        _ => "RPC transport error (detail withheld: it can carry the endpoint URL, which \
+              commonly embeds a key)"
+            .to_string(),
     }
 }
 
@@ -721,6 +868,83 @@ fn measure_cu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mint_account(owner: Pubkey, decimals: u8, initialized: bool) -> FreshAccount {
+        let mut data = vec![0u8; MINT_LEN];
+        data[MINT_DECIMALS_OFFSET] = decimals;
+        data[MINT_IS_INITIALIZED_OFFSET] = u8::from(initialized);
+        FreshAccount { owner, data }
+    }
+
+    #[test]
+    fn check_mint_accepts_only_an_initialized_spl_mint_with_the_expected_decimals() {
+        assert!(check_mint(&mint_account(SPL_TOKEN_PROGRAM_ID, 6, true), 6).is_ok());
+        // Wrong decimals: the mis-scaling a typo'd roster entry would cause.
+        assert!(check_mint(&mint_account(SPL_TOKEN_PROGRAM_ID, 9, true), 6).is_err());
+        assert!(check_mint(&mint_account(SPL_TOKEN_PROGRAM_ID, 6, false), 6).is_err());
+        // Any other owner — a Token-2022 mint, or not a mint at all.
+        assert!(check_mint(&mint_account(Pubkey::new_unique(), 6, true), 6).is_err());
+        let short = FreshAccount {
+            owner: SPL_TOKEN_PROGRAM_ID,
+            data: vec![0; 10],
+        };
+        assert!(check_mint(&short, 6).is_err());
+    }
+
+    #[test]
+    fn token_amount_reads_the_amount_field_of_an_spl_token_account() {
+        let mut data = vec![0u8; 165];
+        data[TOKEN_AMOUNT_RANGE].copy_from_slice(&123_456u64.to_le_bytes());
+        data[TOKEN_STATE_OFFSET] = TOKEN_STATE_INITIALIZED;
+        let account = FreshAccount {
+            owner: SPL_TOKEN_PROGRAM_ID,
+            data,
+        };
+        assert_eq!(token_amount(&account).unwrap(), 123_456);
+        let foreign = FreshAccount {
+            owner: Pubkey::new_unique(),
+            data: account.data.clone(),
+        };
+        assert!(token_amount(&foreign).is_err());
+        // A frozen account's balance is real but cannot move — refused, so a
+        // deposit pre-check never passes on funds the transfer then rejects.
+        let mut frozen = account.data.clone();
+        frozen[TOKEN_STATE_OFFSET] = 2;
+        let frozen = FreshAccount {
+            owner: SPL_TOKEN_PROGRAM_ID,
+            data: frozen,
+        };
+        let msg = format!("{:#}", token_amount(&frozen).unwrap_err());
+        assert!(msg.contains("frozen"), "{msg}");
+    }
+
+    #[test]
+    fn a_failed_send_never_carries_the_endpoint_url() {
+        // The key-bearing shape a paid mainnet provider hands out. A transport
+        // failure's raw text appends the request URL, so the query string —
+        // the key — would reach the log pane on every failed ceremony send.
+        let client = rpc("http://127.0.0.1:1/?api-key=LeakedToken");
+        let payer = Keypair::new();
+        let err = send(&client, &payer, &[&payer], &[])
+            .expect_err("an unreachable endpoint fails the send");
+        let msg = format!("{err:#}");
+        assert!(!msg.contains("LeakedToken"), "{msg}");
+        assert!(!msg.contains("127.0.0.1"), "{msg}");
+    }
+
+    #[test]
+    fn fetch_fresh_reports_an_unreachable_endpoint_as_an_error_not_an_absence() {
+        // The property every pre-flight refusal rests on: a dead endpoint must
+        // not read as "nothing here", or a retry would create a second account.
+        let client = rpc("http://127.0.0.1:1");
+        let err = fetch_fresh(&client, &Pubkey::new_unique(), "registry")
+            .err()
+            .expect("an unreachable endpoint is an error");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("refusing"), "{msg}");
+        // And the URL never leaks into the message.
+        assert!(!msg.contains("127.0.0.1"), "{msg}");
+    }
 
     /// `(is_signer, is_writable)` tuples for an instruction's metas, paired
     /// with the pubkey — the shape the fixture's `AccountMeta` lists encode.

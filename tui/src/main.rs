@@ -14,12 +14,15 @@
 //! must actually be mainnet-beta's, and the operator must type `yes` to a
 //! real-funds banner.
 //!
-//! Mainnet mode is **read-only** today: it verifies the chain and shows live
-//! state, while the ceremony writes stay gated off until they are
-//! existence-checked (see [`action::Action::available_on`]).
+//! On mainnet the menu offers the one-shot ceremony — init, create-market,
+//! create-vault, deposit — and nothing else (see
+//! [`action::Action::available_on`]). Each step re-checks the chain and
+//! refuses when its account already exists, and references the real roster
+//! mints rather than minting any. The vault steps sign with the leader the
+//! operator names with `--leader`; the admin is `--wallet`.
 //!
 //! ```text
-//! dropset-tui [--cluster <localnet|mainnet>] [--wallet <path>] [--bootstrap]
+//! dropset-tui [--cluster <localnet|mainnet>] [--wallet <path>] [--leader <path>] [--bootstrap]
 //! ```
 
 use anyhow::{anyhow, bail, Result};
@@ -57,10 +60,43 @@ fn main() -> Result<()> {
     // named explicitly, and is then held to the genesis hash before the
     // operator is asked to confirm anything — so the banner describes a chain
     // that has already been identified, not one that is merely configured.
+    // The operator's vault leader. Mainnet-only, and refused on localnet for
+    // the same reason as `--bootstrap`: the localnet roster leads with its
+    // committed role key, so a supplied one would be silently ignored.
+    let leader = match &args.leader {
+        None => None,
+        Some(_) if !args.cluster.is_mainnet() => bail!(
+            "--leader is mainnet-only — the localnet roster leads with its committed role key"
+        ),
+        Some(path) => {
+            let kp = wallet::load_leader(path)?;
+            if kp.pubkey() == wallet.pubkey() {
+                bail!("--leader must differ from --wallet: the program rejects one key as both admin and leader");
+            }
+            Some(kp)
+        }
+    };
+
+    // A committed keypair's secret is public, so on mainnet neither role may
+    // be one. This also makes `--wallet` mandatory there: the default is the
+    // committed localnet admin.
+    if args.cluster.is_mainnet() {
+        let committed = wallet::committed_pubkeys(&repo_root);
+        wallet::refuse_committed(&wallet.pubkey(), "--wallet", &committed)?;
+        if let Some(leader) = &leader {
+            wallet::refuse_committed(&leader.pubkey(), "--leader", &committed)?;
+        }
+    }
+
     let rpc_url = args.cluster.rpc_url()?;
     if args.cluster.is_mainnet() {
         args.cluster.verify_genesis(&chain::rpc(&rpc_url))?;
-        cluster::confirm_mainnet_entry(&rpc_url, &wallet.pubkey().to_string())?;
+        let leader_label = leader.as_ref().map(|k| k.pubkey().to_string());
+        cluster::confirm_mainnet_entry(
+            &rpc_url,
+            &wallet.pubkey().to_string(),
+            leader_label.as_deref(),
+        )?;
     }
 
     let ctx = action::JobContext {
@@ -69,6 +105,7 @@ fn main() -> Result<()> {
         repo_root,
         wallet_path,
         wallet,
+        leader,
         // Mainnet never starts the managed container — it indexes the localnet.
         // The distinction is load-bearing (it stops `App`'s `Drop` tearing down
         // a container this session never brought up), so it lives in a tested
@@ -83,10 +120,11 @@ fn print_help() {
     println!(
         "dropset-tui — control-plane TUI for the Dropset eCLOB\n\n\
          USAGE:\n    \
-         dropset-tui [--cluster <localnet|mainnet>] [--wallet <path>] [--bootstrap]\n\n\
+         dropset-tui [--cluster <localnet|mainnet>] [--wallet <path>] [--leader <path>] [--bootstrap]\n\n\
          OPTIONS:\n        \
          --cluster <name>    localnet (default) or mainnet\n    \
          -w, --wallet <path>     admin keypair (default: keys/BBBB.json)\n        \
+         --leader <path>     mainnet only: vault leader keypair for create-vault / deposit\n        \
          --bootstrap         localnet only: run \"Bootstrap all\" once at launch\n    \
          -h, --help              show this help\n\n\
          MAINNET:\n    \
@@ -118,6 +156,7 @@ fn value(it: &mut impl Iterator<Item = String>, flag: &str) -> Result<String> {
 struct Args {
     cluster: Cluster,
     wallet: Option<String>,
+    leader: Option<String>,
     bootstrap: bool,
     help: bool,
 }
@@ -127,6 +166,7 @@ impl Args {
         let mut a = Args {
             cluster: Cluster::Localnet,
             wallet: None,
+            leader: None,
             bootstrap: false,
             help: false,
         };
@@ -134,6 +174,7 @@ impl Args {
             match arg.as_str() {
                 "--cluster" => a.cluster = Cluster::parse(&value(&mut it, "--cluster")?)?,
                 "--wallet" | "-w" => a.wallet = Some(value(&mut it, "--wallet")?),
+                "--leader" => a.leader = Some(value(&mut it, "--leader")?),
                 "--bootstrap" => a.bootstrap = true,
                 "--help" | "-h" => a.help = true,
                 // A bare path stays supported as the wallet, which is how the
@@ -152,6 +193,24 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Args> {
         Args::parse(args.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn leader_takes_a_value_and_defaults_to_none() {
+        assert!(parse(&[]).unwrap().leader.is_none());
+        let a = parse(&[
+            "--cluster",
+            "mainnet",
+            "--leader",
+            "/l.json",
+            "-w",
+            "/w.json",
+        ])
+        .unwrap();
+        assert_eq!(a.leader.as_deref(), Some("/l.json"));
+        assert_eq!(a.wallet.as_deref(), Some("/w.json"));
+        assert!(parse(&["--leader"]).is_err());
+        assert!(parse(&["--leader", "--bootstrap"]).is_err());
     }
 
     #[test]
