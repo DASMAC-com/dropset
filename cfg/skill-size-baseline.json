@@ -1,0 +1,28 @@
+{
+  "exceptions": {
+    ".claude/skills/audit/SKILL.md": {
+      "ceiling": 38648,
+      "issue": "ENG-1394"
+    },
+    ".claude/skills/housekeeping/SKILL.md": {
+      "ceiling": 52944,
+      "issue": "ENG-1509"
+    },
+    ".claude/skills/plan/SKILL.md": {
+      "ceiling": 51887,
+      "issue": "ENG-1606"
+    },
+    ".claude/skills/review-pr/SKILL.md": {
+      "ceiling": 292086,
+      "issue": "ENG-1604"
+    },
+    ".claude/skills/trim-context/SKILL.md": {
+      "ceiling": 32278,
+      "issue": "ENG-1391"
+    },
+    "CLAUDE.md": {
+      "ceiling": 37497,
+      "issue": "ENG-1392"
+    }
+  }
+}
