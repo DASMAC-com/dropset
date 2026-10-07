@@ -1,56 +1,24 @@
 {
   "exceptions": {
-    ".claude/skills/architect/SKILL.md#description": {
-      "ceiling": 1226,
-      "issue": "ENG-1595"
-    },
-    ".claude/skills/audit-scope/SKILL.md#description": {
-      "ceiling": 1028,
-      "issue": "ENG-1595"
-    },
     ".claude/skills/audit/SKILL.md": {
-      "ceiling": 39710,
+      "ceiling": 38648,
       "issue": "ENG-1394"
     },
-    ".claude/skills/audit/SKILL.md#description": {
-      "ceiling": 1757,
-      "issue": "ENG-1595"
-    },
     ".claude/skills/housekeeping/SKILL.md": {
-      "ceiling": 54398,
+      "ceiling": 52944,
       "issue": "ENG-1509"
     },
-    ".claude/skills/housekeeping/SKILL.md#description": {
-      "ceiling": 2191,
-      "issue": "ENG-1595"
-    },
-    ".claude/skills/init-pr/SKILL.md": {
-      "ceiling": 83817,
-      "issue": "ENG-1595"
-    },
     ".claude/skills/plan/SKILL.md": {
-      "ceiling": 53271,
+      "ceiling": 51887,
       "issue": "ENG-1606"
-    },
-    ".claude/skills/plan/SKILL.md#description": {
-      "ceiling": 2177,
-      "issue": "ENG-1595"
     },
     ".claude/skills/review-pr/SKILL.md": {
       "ceiling": 292185,
       "issue": "ENG-1604"
     },
-    ".claude/skills/session-metrics/SKILL.md#description": {
-      "ceiling": 1192,
-      "issue": "ENG-1595"
-    },
     ".claude/skills/trim-context/SKILL.md": {
-      "ceiling": 32747,
+      "ceiling": 32278,
       "issue": "ENG-1391"
-    },
-    ".claude/skills/trim-context/SKILL.md#description": {
-      "ceiling": 1029,
-      "issue": "ENG-1595"
     },
     "CLAUDE.md": {
       "ceiling": 37497,
