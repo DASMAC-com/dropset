@@ -14,605 +14,218 @@ user-invocable: true
 
 # `review-pr`
 
-Act as an adversarial reviewer before the human
-looks at the PR. Run lint, audit the diff,
-catalogue every issue, fix what can be fixed
-mechanically, and mark the PR ready only when
-it's clean. Then wait for the real GitHub CI to go
-green and print the review summary. Invoking this skill
-moves the Linear issue to **In Progress** at the start
-(reclaiming it even from In Review if a prior run
-advanced it), and it stays In Progress through all of
-this. It moves to In Review
-only at the merge-queue handoff, the point at which
-it's the human's turn to look at the ready, CI-green PR
-and approve enqueueing it — so when this skill prompts,
-the human can merge (or let "Merge when ready" land it)
-with nothing left to check.
+Act as an adversarial reviewer before the human looks at the PR: lint,
+audit the diff, catalogue every issue, fix what is mechanical, and mark
+the PR ready only when it is clean; then wait for GitHub CI to go green
+and print the review summary. Invoking the skill moves the Linear issue
+to **In Progress** (reclaiming it from In Review if a prior run advanced
+it). It moves to **In Review** only at the merge-queue handoff, when the
+ready, CI-green PR is the human's to approve for enqueueing.
 
-Run this after autonomous work is complete and
-all changes are committed and pushed.
+Run it once autonomous work is complete, committed and pushed.
 
-GitHub reads and writes go through the **GitHub MCP**, with
-the deliberate `gh` exceptions in `CLAUDE.md` → "GitHub via
-MCP": the merge-queue **enqueue** (a `gh pr merge --auto`
-write) and **dequeue probe** (a `gh api graphql` read) at
-the handoff, because the MCP exposes no merge-queue tool and
-its `pull_request_read` omits `mergeQueueEntry`; plus the
-**one-shot and watched reads** this skill makes with the
-compact `gh pr checks` (the CI wait — step 18 runs it under
-`--watch`, so gh blocks until the checks settle rather than
-this skill polling) and field-selected `gh pr view --json`
-(the PR lookup in step 1 and the merge-clean check) — chosen
-because those reads repeat, and a full-object MCP payload
-would be replayed into context on every later turn
-(`CLAUDE.md` → "Context economy"). The
-PR-authoring **writes** (`create_pull_request`,
-`update_pull_request`) stay on the MCP. This repo is
-`DASMAC-com/dropset`, so every MCP call takes
-`owner: "DASMAC-com"`, `repo: "dropset"`.
+**Transport.** GitHub goes through the MCP (`owner: "DASMAC-com"`,
+`repo: "dropset"`) with the `gh` exceptions in
+`docs/conventions/github-mcp.md`: the merge-queue enqueue and dequeue
+probe, and the repeated reads — `gh pr checks` (step 18 runs it under
+`--watch`) and field-selected `gh pr view --json` — since a full MCP
+object would replay on every later turn. PR-authoring writes stay on
+the MCP.
 
 ## The entry gate: one question, tier and spawn together
 
-**Step 0, and it is the only interactive gate before the
-merge-queue handoff.** One `AskUserQuestion` approves *both*
-"run `/review-pr` now" and **at which tier** — and that tier
-choice **is** the authorization for the adversarial sub-agent
-fan-out. No separate spawn question is ever asked mid-flight
-(step 5 says the same from the other side).
+Step 0, and the only interactive gate before the merge-queue handoff:
+one `AskUserQuestion` approves running the review **and** its tier, and
+that tier **is** the authorization for step 5's sub-agent fan-out — no
+spawn question is asked later. Reached through `init-pr`'s handoff,
+that question is this gate; invoked directly, ask it here.
 
-Where it is asked depends on how the skill was reached:
+Scope the tier from `review_diff.py`'s verdict, not vibes: files
+changed, total lines, whether it touches program code, the SDK surface,
+migrations or generation inputs, and whether it spans crates.
 
-- **Via `init-pr`'s handoff** — that handoff question *is* this
-  gate. `init-pr` computes the signals and offers the tiers in
-  the same question it uses to ask whether to run the review.
-- **Invoked directly** — ask it here, before step 1.
+- **The default is the full adversarial suite**, offered first and
+  labeled recommended — never inline, never silently reduced.
+- **Offer a reduced tier only under the small-diff threshold**: ≤ 5
+  files, ≤ 60 changed lines, none of those four surfaces, one crate. It
+  is a starting calibration (drawn from a four-line single-file fix
+  whose full suite the operator had to talk down), so state the signals
+  in the question.
+- A reduced tier still runs an independent cross-check; zero-agent
+  inline is a stop condition (step 5), not a tier.
+- Tier scoping changes how many lenses run on a trivially small diff.
+  It never trims the cross-check's depth or turn cap on an ordinary one
+  — a proposal to trim that cap was rejected (closed record under the
+  `Trim levers` milestone).
 
-Either way: exactly one interaction, and it carries the tier.
-
-**Scope the tier from objective signals, not from vibes.**
-Run `review_diff.py` first so the numbers are real, and read
-from its verdict: files changed, total line count, and whether
-the diff touches program code, the SDK surface, migrations, or
-generation inputs, and whether it spans crates.
-
-**The default is the full adversarial suite.** Assume the PR
-carries a lot of context. The default is never inline and never
-silently reduced — put the full suite first and label it
-recommended.
-
-**Propose a reduced tier only when the signals sit under a
-small-diff threshold**: **≤ 5 files and ≤ 60 changed lines,
-and** the diff touches none of program code, the SDK surface,
-migrations, or generation inputs, **and** it does not span
-crates. Those numbers are a starting calibration, not a law —
-the case they are drawn from is a **four-line single-file
-fix** whose full suite the operator had to talk down by hand.
-State the signals in the question so the choice is informed.
-
-A reduced tier still includes an **independent cross-check**.
-Zero-agent inline is not a tier — it remains a stop condition
-(step 5).
-
-**This does not trim the cross-check on a normal diff.** Tier
-scoping changes **how many lenses run on a trivially small
-diff, on explicit approval**; it never reduces the
-cross-check's depth or turn cap on an ordinary one. (A
-separate proposal to trim that cap was considered and
-**rejected** — see the closed record under the `Trim levers`
-milestone. The two are not in tension, and this note exists so
-the rejection is not read as superseded.)
-
-**Why `review-pr` asks and `audit` does not.** Invoking
-`audit` / `audit-scope` / `housekeeping` *is* the
-authorization for their fan-out, with no question at all —
-because the fan-out is their entire deliverable, and there is
-no earlier gate for it to ride. `review-pr` does many things
-and the fan-out is one step of them, so an operator could
-reasonably want the lint-and-CI half without authorizing eight
-agents and ~2.9M of sub-agent input. The asymmetry is
-deliberate, and it costs nothing extra: the question was
-already being asked to start the review.
+`audit` / `audit-scope` ask no such question because invoking them is
+the authorization (`docs/conventions/decision-classification.md`).
+Here the fan-out is one step of many, and an operator may want the
+lint-and-CI half without ~2.9M of sub-agent input.
 
 ## Steps
 
-1. **Locate the PR.** Identify the current branch
-   (`git branch --show-current`), then look it up with a
-   **field-selected** `gh pr view` — passing only the fields
-   the later steps need, so the lookup doesn't drag the full
-   PR object into context (per `CLAUDE.md` → "Context
-   economy" / "GitHub via MCP"):
+1. **Locate the PR.**
+
+   ```sh
+   git branch --show-current
+   ```
 
    ```sh
    gh pr view <branch> --json number,title,state,isDraft,baseRefName
    ```
 
-   That returns just `number`, `title`, `state`, `isDraft`,
-   and `baseRefName`. **`baseRefName` is the branch this PR
-   actually merges into** — `main` in the common case, but
-   another PR's branch on a *stacked* PR. Every base-relative
-   step below (the step-2 rebase, the step-5 review diff, the
-   step-9/10 gates) is written against **`origin/<base>`**,
-   which means `origin/` + this `baseRefName` — substitute it
-   once here rather than assuming `main` and hand-correcting
-   at each call site. If the branch has no PR, `gh` exits
-   non-zero
-   ("no pull requests found") — treat that as "no PR" and
-   stop, telling the user to run `/init-pr` first. (This is a
-   read; the routine PR-authoring **writes** in later steps
-   stay on the MCP.)
+   No PR (`gh` exits non-zero, "no pull requests found") → stop and
+   tell the user to run `/init-pr`. **`baseRefName` is `<base>`** in
+   every base-relative step below (`origin/<base>`): `main` normally,
+   another PR's branch when stacked.
 
-   **If `baseRefName` is not `main`, check whether that base
-   has already merged — before anything expensive.** One
-   field-selected read answers it:
+   **If `<base>` is not `main`, check whether it already merged —
+   before anything expensive:**
 
    ```sh
    gh pr view <baseRefName> --json number,state,mergedAt
    ```
 
-   A `state` of `MERGED` means the stacked base landed on
-   `main`, almost certainly **squashed** — so the base branch
-   and `main` no longer share the commits this branch was
-   rebased onto, and every base-relative step below would run
-   against a branch that is no longer the merge target. When
-   that is the case, retarget **now**:
+   On `MERGED` (almost certainly squashed, so it no longer shares this
+   branch's ancestry), retarget now: `mcp__github__update_pull_request`
+   with `base: "main"`, `git rebase --onto origin/main <old-base>`, and
+   `main` as `<base>` from here on. Neither step 2's rebase nor step 5's
+   `base_fresh` gate catches this — both compare against a perfectly
+   fresh `origin/<base>`; it is the base itself that is stale. (A review
+   that missed it went green and turned `CONFLICTING` only at step 15,
+   costing ≈25 min of rebase and full re-runs; `history.md` → "Merged
+   stacked base".)
 
-   - `mcp__github__update_pull_request` with `base: "main"`,
-   - `git rebase --onto origin/main <old-base>` to move this
-     branch's own commits across,
-   - and use `main` as `<base>` for every step below.
-
-   This costs one cheap read and is deliberately placed
-   before step 4, because the failure it prevents is
-   expensive and silent: a review once ran end-to-end against
-   a merged base, went green on CI, and only turned
-   `CONFLICTING` at the step-15 merge-clean check — after
-   which recovery cost a `git rebase --onto` **plus** a full
-   re-run of `make lint`, `make test`, and
-   `make test-no-teardown` (~25 minutes). Neither the step-2
-   rebase nor step 5's `base_fresh` gate catches it: both
-   compare against `origin/<base>`, which is perfectly fresh
-   — it is the *base itself* that is stale.
-
-1. **Clean tree, then rebase onto the PR's base.** First run
-   `git status` — if there are uncommitted changes,
-   stop and tell the user to commit first (or run
-   `/commit-changes`). Then rebase onto the latest
-   **`origin/<base>`** — the `baseRefName` step 1 read, not a
-   hard-coded `main` — so the review runs on the state the
-   branch will actually merge as, instead of a base that has
-   drifted while the work was in flight; this is what
-   minimizes file conflicts at merge time. Pass the base
-   literally (it's `main` on an ordinary PR, another PR's
-   branch on a stacked one):
-
-   ```sh
-   git fetch origin <base>
-   git rebase origin/<base>
-   ```
-
-   Reading the base rather than assuming `main` is what keeps
-   a **stacked** review from needing hand-substitution at
-   every base-relative step — and, when the base PR merges
-   mid-review, the fix is to retarget the PR base and re-read
-   `baseRefName`, not to patch each command.
-
-   - If the rebase **conflicts**, abort it
-     (`git rebase --abort`), catalogue the conflict as
-     a **blocking** issue (step 7), and tell the user
-     to rebase and resolve manually, then re-run — this
-     skill does not auto-resolve conflicts.
-
-     **The rule is absolute on purpose, and the obvious
-     carve-out does not hold.** It keys on "a conflict
-     occurred" rather than "the conflict has semantic
-     content", so it fires on an adjacent insertion into a
-     sorted list, which genuinely has none — the tempting
-     safeguard is "resolve it and let the linter verify".
-     That gives no protection: **a linter verifies
-     sortedness, not completeness.** A sorted list that
-     silently lost one side's entry lints perfectly clean,
-     and dropping a side is exactly the outcome this rule
-     exists to prevent. If a carve-out is ever added, its
-     verification must be completeness against **both merge
-     parents** — every line added by either parent appears
-     in the resolution, checked mechanically — not "the
-     linter passed".
-
-     **That check now exists, and the rule is still
-     absolute.** `.claude/tools/merge_completeness.py` takes
-     the lines each parent added relative to the merge base,
-     whitespace-normalized, and reports per-side survival
-     plus every apparent loss itemized:
-
-     ```sh
-     python3 .claude/tools/merge_completeness.py --path <file>
-     ```
-
-     Use it **while resolving by hand** — it is the tool that
-     makes a manual resolution auditable, and it is what
-     caught a doc comment reading "all four kinds" that merged
-     cleanly when the true post-merge answer was five.
-
-     It does **not** license auto-resolution, and the reason
-     is in the same evidence. Its value is the check
-     *failing* and forcing each loss to be explained one at a
-     time — never a green light. In that same resolution both
-     branches added a variant to one enum and an arm to one
-     match: every line from both sides survived, completeness
-     passed trivially, and the result was still wrong in a way
-     only reading revealed. A carve-out keyed on "the tool
-     passed" would have shipped it. So the tool raises the
-     floor on manual resolution rather than moving this rule.
-
-     The better lever is removing the collision class at
-     the source, because it fixes every session at once
-     rather than one conflict at a time: the Makefile
-     declares each target's `.PHONY` beside its own rule
-     instead of in one sorted block, and `.gitattributes`
-     gives the cspell dictionary a `merge=union` driver so
-     git takes both sides itself. The Makefile half needs no
-     agent judgment at all; the dictionary half leaves one
-     accepted residual, since union merge resurrects a
-     deleted word (see `docs/conventions/docs-and-style.md`
-     → "Spelling (cspell)").
-     Reach for that before reconsidering this rule.
-
-     **But that lever does not exist everywhere, and this is
-     the case the rule is really for.** A single ordered file
-     has no structural escape — yamllint's alphabetical keys
-     (`cfg/**`, `infra/aws/**`) were examined and left as they
-     are, because there is no layout that removes the shared
-     insertion point. So when the conflict is an adjacent
-     insertion into *those*, there is nothing to fix at the
-     source and the answer is still a manual rebase, not an
-     auto-resolve. Don't spend a round rediscovering that.
-
-     **Enumerate the conflicted files with git, not a
-     search.** The question is "which files conflict",
-     and git already knows exactly:
-
-     ```sh
-     git diff --name-only --diff-filter=U
-     ```
-
-     Don't reach for a repo-wide `grep '<<<<<<<'`
-     instead. It answers a different question, it is
-     gitignore-blind, and one such sweep over
-     `programs sdk bots frontend docs` walked
-     `frontend/.next/` and returned a **79.2KB** blob
-     for what is a short file list.
-
-     **And read the hunk itself with the Read tool, not
-     with a context-flagged grep.** Enumerating conflicts
-     is a search; *inspecting* one is a read of a known
-     region, and this step used to say the first and
-     nothing about the second. In one session 14 bare
-     `grep` calls cost **2.5k** inspecting a `Makefile`
-     conflict and checking hook wiring — `grep -A/-B`
-     around the markers prints overlapping windows and
-     buys the region several times over. The
-     `--diff-filter=U` call above names the file; `Read`
-     it with `offset`/`limit` around the markers.
-
-     (Those calls were once recorded as unfirmable prompt
-     churn. They are not — `Bash(grep:*)` is already
-     granted here. The context cost is the whole finding.)
-
-   - If it **succeeds but integrated new commits from
-     the base**, the diff now reflects that integration.
-     A clean *textual* rebase can still leave a
-     *semantic* conflict (the base renamed or changed
-     something this branch still calls), so flag those
-     for the adversarial review (step 5) and the test
-     run (step 11) to catch. The rebase rewrote history,
-     so the branch must be force-pushed — step 12 does
-     this with `--force-with-lease`.
-
-   **Triage what the base actually gained.** Capture the
-   base this branch is *currently on* — its **merge-base** —
-   **before** the fetch and rebase above, then hand both ends
-   to the committed reporter:
+1. **Clean tree, then rebase onto the PR's base.** If `git status`
+   shows uncommitted changes, stop and tell the user to commit (or
+   `/commit-changes`). Capture the merge-base **before** fetching —
+   the triage below needs it — then rebase:
 
    ```sh
    git merge-base HEAD origin/<base>
    ```
 
    ```sh
+   git fetch origin <base>
+   ```
+
+   ```sh
+   git rebase origin/<base>
+   ```
+
+   - **On conflict: `git rebase --abort`, catalogue it as blocking
+     (step 7), and tell the user to resolve and re-run. Never
+     auto-resolve** — not even an adjacent insertion into a sorted
+     list: a linter verifies sortedness, not completeness, and a list
+     that silently lost one side lints clean. `merge_completeness.py`
+     makes a *manual* resolution auditable (per-side survival of each
+     parent's added lines); it never licenses an automatic one, since a
+     resolution can keep every line and still be wrong (`history.md` →
+     "Merge-completeness evidence"):
+
+     ```sh
+     python3 .claude/tools/merge_completeness.py --path <file>
+     ```
+
+     Collision classes are removed at the source where a layout allows
+     it (per-target `.PHONY`, the dictionary's `merge=union`); a single
+     ordered file such as yamllint's alphabetical keys has no such
+     layout, so it stays a manual rebase. List the conflicted files with
+     `git diff --name-only --diff-filter=U` — never a repo-wide
+     `grep '<<<<<<<'`, which is gitignore-blind — and inspect each hunk
+     with `Read` `offset` / `limit`, not a context-flagged `grep`
+     (`history.md` → "Conflict inspection").
+
+   - **A clean rebase that integrated base commits** can still hide a
+     *semantic* conflict (the base renamed something this branch
+     calls): flag it for steps 5 and 11. History was rewritten, so step
+     12 force-pushes with `--force-with-lease`.
+
+   **Triage what the base gained**, from the merge-base captured above
+   — never `git rev-parse origin/<base>`, a shared ref another session's
+   fetch may already have advanced, which reports a false 0-commit
+   all-clear:
+
+   ```sh
    python3 .claude/tools/rebase_overlap.py --from <mb> --to origin/<base>
    ```
 
-   **The merge-base, not `git rev-parse origin/<base>`.**
-   That distinction is the whole point and it is easy to get
-   wrong — this step got it wrong on its own first run.
-   `origin/<base>` is a **shared** ref: worktrees have one
-   `.git`, so a sibling session's fetch (or this session's
-   own `init-pr` fetch, hours earlier) can advance it long
-   before this step executes. Reading it "before the fetch"
-   therefore captures a tip the branch may never have been
-   based on, and the tool then reports a **0-commit delta for
-   a base that demonstrably moved** — a false all-clear, in
-   the exact place a false all-clear licenses skipping the
-   gates. The merge-base is what the branch is actually
-   sitting on, and it is correct regardless of who fetched
-   what when.
+   It prints the base delta's commits and `base_files`, this branch's
+   own files, their **overlap**, and the `runs_artifact_gates` /
+   `runs_rust_suites` predicates steps 9 and 11 use to decide what a
+   rebase-forced re-run may skip (`history.md` → "Hand-rolled rebase
+   triage"). Then:
 
-   It prints the commits the base gained, the files they
-   touched, the files this branch's own commits touch
-   (measured from the merge base, so the base's movement
-   isn't folded in), their **overlap**, and the two
-   predicates that decide whether a gate can be skipped —
-   `runs_artifact_gates` and `runs_rust_suites`, computed
-   over the *base delta* and delegating to
-   `review_diff.py`'s lists so there is one owner.
+   - **Empty overlap → assert, don't re-run.** `review_diff.py` and
+     `make lint` provably cannot change their answer on files the delta
+     did not touch. Note "base moved to `<sha>`; overlap empty; lint
+     and suite results from `<sha>` still stand" and move on. Any
+     non-empty overlap re-runs everything (`history.md` →
+     "Empty-overlap re-runs").
+   - **Unless `base_files` includes `cfg/pre-commit-lint.yml` or
+     `.pre-commit-config.yaml`** — the base changed *which checks run*,
+     so re-run `make lint` whatever the overlap (`history.md` →
+     "Lint-config base delta").
+   - **`base_files` touches `programs/**`** → run
+     `python3 .claude/tools/run_quiet.py -- make program` before any
+     suite, or a scoped `cargo test` runs the stale `.so` and its
+     failures read as your own regressions — the mirror of step 11's
+     `test-no-teardown` trap (`history.md` → "Stale program after
+     rebase").
+   - **`base_files` includes `pnpm-lock.yaml` or a
+     `frontend/package*.json`** → run
+     `python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install`
+     before any typecheck or lint. An install earlier in the session
+     does not count (`history.md` → "Stale node_modules after rebase").
+   - **A hot surface** — overlap with several open PRs, which
+     `review_diff.py --overlap` computes — predicts repeated rebases and
+     re-runs in the tail. Advisory: it argues for a narrower *next* PR,
+     and the signal is overlap on a hot surface (agent-infra is one),
+     not size (`history.md` → "Hot-surface tails").
 
-   The overlap set is the honest input to the semantic-
-   conflict flag above: an empty overlap means the base
-   moved somewhere this branch never touches. The two
-   predicates feed steps 9 and 11, which say what a re-run
-   forced by a rebase may skip.
-
-   **An EMPTY overlap discharges the re-run, and you assert
-   the prior result instead of paying for it again.** The
-   rebase itself stays unconditional — skipping it produces
-   phantom hunks, which is a separate and worse failure — but
-   when the freshness re-check shows the base moved *and* the
-   overlap is empty, a re-run of `review_diff.py` and a full
-   `make lint` **provably cannot change their answer**: they
-   examine files the base delta did not touch. Measured on one
-   docs-only PR: the base moved **four** times, the overlap
-   was empty on all four, and the session still paid three
-   `review_diff` re-runs and two full lints.
-
-   So on an empty overlap, write one line into the review
-   notes — "base moved to `<sha>`; overlap empty; lint and
-   suite results from `<sha>` still stand" — and move on. Any
-   **non-empty** overlap re-runs everything as before.
-
-   **An empty overlap does NOT license the skip when the base
-   delta touched the lint configuration.** The premise above is
-   that the two commands examine files the base delta did not
-   touch — and that premise fails for exactly one kind of
-   delta: one that changes *which checks run*. `make lint`
-   executes whatever `cfg/pre-commit-lint.yml` declares, so a
-   base commit that adds a hook changes the check set applied
-   to **this branch's** files, and the prior green becomes
-   evidence about a different hook set however empty the file
-   overlap is.
-
-   So if `base_files` includes `cfg/pre-commit-lint.yml` (or
-   `.pre-commit-config.yaml`), re-run `make lint` regardless of
-   overlap. The trigger is free — `rebase_overlap.py` already
-   prints `base_files`.
-
-   Hit live: a mid-review rebase pulled in a 42-file delta that
-   added a **rustdoc** hook to the lint config, while the
-   branch touched only `decks/**` — so the overlap was empty
-   and the rule as written said assert. That run re-ran lint on
-   judgement and passed; had it not, the PR would have gone to
-   CI red with a local green in hand. This is a **correctness**
-   carve-out to a rule whose whole purpose is to skip work
-   (re-running lint costs wall-clock, not tokens), which is
-   exactly the kind of rule whose exceptions have to be written
-   down rather than re-derived under time pressure — and it has
-   the same shape as the `programs/**` and lockfile carve-outs
-   below: the base delta invalidated something the file overlap
-   cannot see.
-
-   This is deliberately **not** a loosening of the freshness
-   gate itself, which caught a real defect in that same
-   session. The gate still runs every round; what changes is
-   only what an empty answer entitles you to skip.
-
-   **A HOT-SURFACE diff should expect re-verification in the
-   tail — and that is knowable here, before any of it is
-   spent.** When the diff overlaps a subsystem with several
-   open PRs (which `review_diff.py --overlap` already
-   computes, and which nothing currently consumes for scoping
-   advice), expect repeated rebases, conflict resolutions and
-   re-runs in the review tail, and read it as a signal that a
-   **narrower first PR** would have been cheaper.
-
-   Advisory, not gating: by step 2 the current branch is
-   already written, so this informs scoping on the *next* one.
-   Measured: one review saw `main` gain four issues, three
-   touching the same subsystem, forcing three conflict
-   resolutions — one **semantic**, where a trait the branch
-   referenced had been deleted upstream — plus three full test
-   runs and repeated lints. The freshness machinery worked
-   exactly as documented, including correctly refusing to fan
-   out on a 3,783-line phantom-deletion diff; the cost was
-   structural. Another review saw `main` move four times, three
-   with an empty overlap and cheap, the fourth overlapping on
-   `cfg/dictionary.txt` and forcing a full re-lint — so this is
-   not specific to one subsystem, and the **agent-infra surface
-   is now one of the hot ones**.
-
-   **The bound, so this is not overstated:** it does not argue
-   for splitting every large PR. The second case was 37 files
-   and only one of its four rebases cost anything. The signal
-   is *overlap with open PRs on a hot surface*, not size.
-
-   **Bind the assertion to a content fingerprint, so it is
-   checkable rather than remembered.** "The prior result still
-   stands" is a claim about *content*, and a commit SHA is the
-   wrong key for it — a commit, an amend, a squash and a
-   no-overlap rebase all change the SHA while changing no
-   bytes, which is exactly why re-runs keep firing. Record the
-   result against the tree's content instead:
-
-   ```sh
-   python3 .claude/tools/run_quiet.py -- make lint
-   ```
+   **Key a skip to content, not to a SHA** — an amend or a no-overlap
+   rebase changes the SHA but not the bytes. After a green
+   `make lint`, record; before any later re-run, check:
 
    ```sh
    python3 .claude/tools/tree_fingerprint.py record --check lint
    ```
 
-   and before any later stage that would re-run it:
-
    ```sh
    python3 .claude/tools/tree_fingerprint.py check --check lint
    ```
 
-   It grades three ways and exits 0 only on the first:
+   `fresh` (exit 0) → assert and skip; `stale` → re-run; `missing` →
+   run and record. Use it for `tools-tests` and the artifact gates too,
+   any check that is a function of tree content alone; it says nothing
+   about CI, the queue or a live service.
 
-   - **`fresh`** — recorded against this exact content. Assert
-     it, note the assertion, skip the re-run.
-   - **`stale`** — the content moved. Re-run.
-   - **`missing`** — never recorded. Run it, and record it.
+1. **Check the Linear task, mark it In Progress, and tick what's
+   done.** Autonomous runs tend to ship part of a checklist, so confirm
+   the diff delivers all of it before reviewing anything else.
 
-   The three-way answer is why this is not a boolean: a
-   binary check would have to call "never recorded" stale and
-   re-run, which is the behavior being replaced. Do the same
-   for `tools-tests` and the artifact gates — any check whose
-   answer is a function of the tree's content and nothing
-   else.
+   - **Resolve the tag** from the PR title scope (`type(ENG-###): …`),
+     falling back to the branch name (the two share one number). If
+     neither yields one, skip this step and say so in the report.
 
-   **What it does not cover:** anything depending on state
-   outside the tree — CI, the merge queue, a live service. A
-   green fingerprint says the content is unchanged, not that
-   the world is.
+   - **Hold the body once per session.** If `init-pr` bootstrapped this
+     session, work from the body it already has. Invoked cold, call
+     `mcp__claude_ai_Linear__get_issue` once, plus `list_comments`
+     (criteria sometimes live in an anchored comment). The echo budget
+     is per issue, per session, across skills
+     (`docs/conventions/linear-automation.md`; `history.md` →
+     "Cross-skill echo budget").
 
-   **If the base delta touched `programs/**`, run
-   `make program` before any suite.** The rebase just pulled
-   new program source into this worktree, and a scoped
-   `cargo test` will happily run against the **stale** `.so`
-   left from before it. The failure is maximally confusing:
-   one run got 8 failures in tests it had never touched
-   (`Custom(6037)` where `Custom(6048)` was expected), which
-   read exactly like regressions from its own edits, and
-   diagnosing them plus rebuilding plus re-running was that
-   session's single biggest wall-clock detour.
+   - **Grade every requirement** — checkboxes (an `[x]` is a claim to
+     verify) and requirement-phrased scope bullets — from
+     `git diff origin/<base>..HEAD` and the commits, as **addressed**,
+     **partial** or **missing**. A deferral is addressed only if it is
+     recorded (a commit, a PR-body note, a `/linear-task` follow-up);
+     a silent omission is missing.
 
-   ```sh
-   python3 .claude/tools/run_quiet.py -- make program
-   ```
-
-   This is the same hazard as the `test-no-teardown` ordering
-   trap in step 11, arriving from the other direction — there
-   a suite leaves a feature-off `.so` behind, here a rebase
-   leaves a stale one. The trigger is already free: the tool
-   printed the base delta's touched files just above, so this
-   costs one bare command and no extra reads.
-
-   **And if the base delta touched a lockfile or a package
-   manifest, reinstall before any typecheck or lint.** The
-   symmetric hazard, and it was unstated — a stale
-   `node_modules` from before the base added a dependency:
-
-   ```sh
-   python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install
-   ```
-
-   Fires when `base_files` includes `pnpm-lock.yaml` or a
-   `frontend/package*.json`. Three sessions hit this. The
-   failure does not look like a stale install: `tsc` reported
-   three `TS2307: Cannot find module 'vitest'` errors, which
-   read as code faults, and the actual cause was a base commit
-   that had added a test runner. **"Already installed" is not a
-   safe inference** — one session hit it after a *successful
-   install earlier in the same session*, because the rebase
-   moved the lockfile underneath it.
-
-   The same reasoning as the `programs/**` case above: the tool
-   has already printed the base delta's file list, so the
-   condition is free to check and the whole cost is one bare
-   command.
-
-   This replaces hand-rolling the sequence. One session ran
-   the identical `fetch` → `log` → two `diff --name-only`
-   → intersect-by-eye chain **three times** as `main` moved
-   15 commits (≈10k of deterministic git output), and
-   re-ran the full suite each time — twice provably
-   redundantly.
-
-1. **Check the Linear task, mark it In Progress, and
-   tick what's done.** The PR exists to satisfy a
-   Linear issue, and autonomous runs have a habit of
-   shipping a diff that covers only *some* of the
-   task's checklist. Establish what the task asked
-   for, record progress on the issue, and confirm the
-   diff delivers all of it before reviewing anything
-   else.
-
-   - Resolve the tag. The branch and its Linear issue
-     **share one `ENG-###` number** by convention
-     (branch `eng-499` ↔ issue `ENG-499`; see
-     `CLAUDE.md`), so take the `ENG-###` from the PR
-     title scope (`type(ENG-###): …`), falling back to
-     the branch name. If neither yields an `ENG-###`,
-     skip this step and note in the report that no
-     Linear task was checked.
-
-   - Fetch the issue with `mcp__claude_ai_Linear__get_issue`
-     (id = the uppercase tag, e.g. `"ENG-490"`). Read
-     the description, and also pull
-     `mcp__claude_ai_Linear__list_comments` — checklist
-     items and acceptance criteria sometimes live in an
-     inline (anchored) comment, not the body.
-
-     **Unless this session already has the body.** When
-     `init-pr` bootstrapped this same session it already
-     read the issue, so re-fetching buys a second full-body
-     echo for nothing. The echo budget is **per issue, per
-     session**, not per skill (see
-     `docs/conventions/linear-automation.md`) — one
-     measured session paid **24.5k across three calls on
-     one issue** for three state transitions, with every
-     skill individually compliant and nothing budgeting the
-     handoff. Work from what the session holds; fetch only
-     when this skill was invoked cold.
-
-   - Plan to move the issue to **In Progress** to reflect
-     that review work is underway — invoking `review-pr`
-     always moves it there, **including reclaiming it from
-     In Review** if a prior `review-pr` run advanced it. In
-     Review now belongs to the merge-queue handoff (the
-     final steps), so a re-run should pull the issue back
-     to In Progress rather than leave it sitting In Review
-     while the review is actively redone. The one thing
-     not to regress is a **Done** / **Canceled** issue —
-     leave those as-is. **Do not issue this state change
-     as its own `save_issue`**: fold it into the single
-     box-tick write below (see "Minimize Linear echoes"),
-     so the In-Progress move and the ticked checklist land
-     in **one** call rather than two full-body echoes. (In
-     Review can't be folded the same way — it's gated on
-     CI-green at the merge-queue handoff, a different point
-     in the flow, so it stays its own write at step 20.)
-
-   - Extract every actionable requirement: markdown
-     checkboxes (`- [ ]` open, `- [x]` already done),
-     plus any acceptance-criteria or scope bullets
-     phrased as requirements even if not checkbox
-     syntax. Treat an already-`[x]`-checked box as a
-     claim to verify, not a given — confirm the diff
-     actually contains it.
-
-   - For each requirement, decide from the diff
-     (`git diff origin/<base>..HEAD`) and the branch's commits
-     whether it is **addressed**, **partial**, or
-     **missing**. A requirement that is out of scope
-     for this PR by design (e.g. explicitly deferred,
-     or split into a follow-up issue) counts as
-     addressed *only if* the deferral is recorded —
-     a commit, a PR-body note, or a linked follow-up
-     filed via `/linear-task`. Silent omission is
-     **missing**.
-
-   - **Tick the addressed items in the same write that
-     moves the issue to In Progress.** For every
-     requirement the diff genuinely delivers, check its
-     box (`- [ ]` → `- [x]`), then write the ticks **and**
-     `state: "In Progress"` back in a **single**
-     `save_issue`. Express the ticks as a **`patch`** — one
-     `replace` op per box, flipping just that line — rather
-     than re-sending the whole edited `description` (per
-     `docs/conventions/linear-automation.md` → "Partial edits
-     — the `patch` argument"). Leave **partial** and
-     **missing** boxes unchecked, and don't invent boxes for
-     non-checkbox requirements.
+   - **At most one write**: the addressed ticks together with
+     `state: "In Progress"`, ticks as one `replace` op per box:
 
      ```txt
      mcp__claude_ai_Linear__save_issue(
@@ -626,641 +239,156 @@ already being asked to start the review.
      )
      ```
 
-     Each `old_string` must match the body you fetched
-     **exactly once**, which is also what keeps this from
-     clobbering a box the author already ticked or an edit
-     made since — a line that moved or changed fails the save
-     loudly instead. Three cautions:
+     Set In Progress even when reclaiming from In Review; never regress
+     Done / Canceled. Nothing to tick and already In Progress → write
+     nothing. Every call echoes the full body whatever it sends, so no
+     separate state write, no write per box; if a state echo comes back
+     unchanged, verify once and report rather than retry.
 
-     - A box whose text is not unique needs more of its
-       surrounding line to disambiguate.
-     - A box whose text contains an `ENG-###` **won't match at
-       all** (Linear stores that as a mention node). `patch`
-       and `description` are mutually exclusive in one call,
-       so this isn't a per-box fallback: if **any** box you
-       need to tick is tag-bearing, express the **whole** call
-       as a full-body `description` + `state` write instead.
-       The fetched body is already in context, so that costs
-       nothing extra.
-     - Because the save is **atomic**, one stale anchor aborts
-       the **whole** call — the In-Progress move included —
-       and the error names only the *first* failing op. Don't
-       move on as though the state landed. But do **not**
-       recover by rebuilding the body from the snapshot you
-       fetched: the abort means the live body has **diverged**
-       from that snapshot, so a full-body write from it would
-       silently overwrite whatever changed — turning a loud,
-       safe failure into data loss. Instead re-`get_issue`
-       **once** (the one licensed exception to "fetch the issue
-       once"), rebuild the ops against the body it returns, and
-       write once more. If that write aborts too, report the
-       discrepancy and leave the issue alone rather than
-       writing a third time.
+   - **Patch cautions.** Each `old_string` must match exactly once —
+     extend a non-unique box with surrounding text. A box holding an
+     `ENG-###` never matches (Linear stores a mention node), and `patch`
+     excludes `description`, so if any box is tag-bearing send the whole
+     call as full-body `description` + `state`. The save is atomic: one
+     stale anchor aborts the state move too, and the error names only
+     the first failing op. Then re-`get_issue` once (the one licensed
+     re-fetch), rebuild the ops, and write once more — never rebuild
+     from the stale snapshot, which would overwrite whatever diverged.
+     A second abort → report it and leave the issue alone.
 
-     If there are **no** boxes to tick (no checklist, or
-     none newly delivered), **and** the `get_issue` above
-     already shows the issue **In Progress** (which `init-pr`
-     set at bootstrap), there is **nothing to write** —
-     skip the `save_issue` entirely. Only when the state
-     actually needs to change (it's not yet In Progress, or
-     it's being reclaimed from In Review) does a
-     description-less `state: "In Progress"` write fire.
-     Either way it is **at most one** write.
+   - **Ticks that must wait for the fan-out ride step 20's In Review
+     write**, in its `patch` — never a save of their own (`history.md`
+     → "Deferred-tick echoes").
 
-     **Minimize Linear echoes** (per `CLAUDE.md` →
-     "Context economy"): each `save_issue` / `get_issue`
-     **echoes the full issue body** back into context, and
-     that echo is then replayed every later turn — worst on
-     a large consolidated-spec body. The echo is a **fixed
-     cost per call** — it comes back in full even on a
-     state-only write that sends no body at all, and a
-     `patch` does **not** shrink it — so the only lever on it
-     is **fewer calls**. So fetch the issue **once** (the
-     `get_issue` above), don't re-`get_issue` it — bar the
-     single aborted-patch recovery licensed above — and collapse
-     the In-Progress move and **all** the box-ticks into the
-     **one** `save_issue` above — never a separate state
-     write, and never one write per box. (`patch` is the lever
-     on the *write payload*, not the echo: it keeps the ticks
-     from re-sending the body as input. Both levers apply to
-     that one call.) On a **re-run / rework**, don't re-flip
-     the state unless it genuinely changed (the fetched state
-     tells you), and if a state-change echo comes back not
-     reflecting the change, **verify once and report the
-     discrepancy** — do not retry, since each retry re-echoes
-     the whole body.
+   - Catalogue every **partial** or **missing** requirement as
+     **blocking** (step 7), quoting the checklist text and the deciding
+     `file:line` or absence.
 
-     **A tick legitimately deferred past the fan-out RIDES the
-     In-Review write — it never gets its own save.** Some
-     boxes cannot honestly be ticked here, because the
-     adversarial pass has not run and may yet invalidate the
-     work. Deferring those is correct. What is not correct is
-     what then happened: they fired their own `save_issue`
-     **beside** the In-Review transition, two full-body echoes
-     (~1.2k per review) where one write served both. The
-     In-Review transition at the merge-queue handoff is a write
-     you are making anyway — carry the deferred ticks in its
-     `patch` array.
-
-     **And the budget spans skills.** Everything above is
-     within-skill discipline, which one measured session
-     followed exactly and still paid 24.5k on one issue —
-     because `init-pr` had already spent a `get_issue` plus
-     the In-Progress write before this skill ever ran. Count
-     the budget **per issue, per session**
-     (`docs/conventions/linear-automation.md`): don't
-     re-fetch a body the session already holds, and skip a
-     write whose state is already correct. The bigger the
-     consolidated body a `/merge-tasks` produced, the more
-     each avoided call is worth.
-
-   - Catalogue every **partial** or **missing**
-     requirement as a **blocking** issue (step 7),
-     quoting the checklist text and the `file:line`
-     (or absence) that decides it.
-
-1. **Run lint.** `make lint` runs the full pre-commit hook
-   set, and on a failure its cspell hook alone dumps a
-   ~450-line per-file cascade — pure noise that, once it's
-   in context, is replayed every later turn. So run it
-   **through the quiet runner** (per `CLAUDE.md` → "Context
-   economy") — it captures the hook output to a temp log and
-   prints only a one-line summary on success, or the failing
-   tail + log path on failure:
+1. **Run lint**, always through the quiet runner — the cspell hook alone
+   dumps a ~450-line cascade on failure:
 
    ```sh
    python3 .claude/tools/run_quiet.py -- make lint
    ```
 
-   **On a prose-heavy diff, run the spelling pre-flight
-   first.** One bare command, no arguments:
-
-   ```sh
-   python3 .claude/tools/run_quiet.py -- \
-     python3 .claude/tools/lint_paths.py --prose
-   ```
-
-   It runs only the cspell hook over the changed files. The
-   point is **fewer failed rounds**: one session's `make lint`
-   failed on spelling in two separate rounds, each surfacing
-   three more British `-our` / `-ise` variants, because the
-   dictionary is US-spelling by construction and a variant
-   fails by construction. Finding them all at once is the only
-   thing that helps — the scoped form fails identically on an
-   unknown word, so this is not the same lever as "scope the
-   lint".
-
-   **The trigger is the SHAPE of what the diff adds, not the
-   file extension.** "When the change authors prose" reads as
-   being about `.md`, so a Rust change skips the pre-flight —
-   including a Rust change that is, in substance, prose. Run it
-   whenever the diff adds substantial natural-language text,
-   **doc comments in source included**. The concrete tell: a
-   diff that adds module headers, item docs, or long
-   explanatory comments is prose-authoring even when every
-   changed file is `.rs`.
-
-   Measured (session a252a9d3, PR #391): five Rust crates plus
-   one doc, adding several hundred lines of doc comments — a
-   rewritten module header, seventeen newly-documented public
-   constants, a new public error enum with per-variant docs,
-   and long comments on two failure modes. It tripped cspell on
-   **two separate full-lint runs** — three unknown words in the
-   first and two more in the second, one of them a British
-   variant — with two of that session's five `make lint` calls
-   being spelling alone. The
-   pre-flight exists to collapse those into one pass and was
-   skipped because the diff did not *look* like a prose change.
-
-   **The `Lint` WORKFLOW is not `make lint`.** It also runs,
-   as separate steps before the hooks:
-
-   - `make tools-tests`
-   - `make decks-build`
-
-   So a green local lint bounds only what the *hooks* cover,
-   and the hook set is not the CI job. **When the diff touches
-   anything a `.claude/tools/` checker validates — today
-   `.claude/tools/**` itself and `market-data/grafana/**` via
-   `grafana_check.py` — run the suite before pushing:**
-
-   ```sh
-   python3 .claude/tools/run_quiet.py -- make tools-tests
-   ```
-
-   It is fast and wrapped, so the cost is one line.
-
-   Two measured instances, and note they fail in *opposite*
-   directions, which is why the rule is the workflow rather
-   than any one checker. A diff added a sixth Grafana alert
-   rule and left two stale counts in the file's own comments;
-   `make lint` passed, CI came back 8 pass / 1 fail on a
-   `tools-tests` checker that had landed on `main` while the
-   branch was in flight. And a branch adding two shell-driving
-   test files passed locally on macOS and failed CI with **14
-   errors and 3 failures** — no `zsh` on the Linux runner, and
-   BSD `stat -f %m` meaning something else entirely under GNU
-   coreutils. In both cases the skill's own advice for a failed
-   `Lint` job ("reproduce the failing hook locally") does not
-   apply, because **the failure was not a hook**.
-
-   The second also names the trap for a new test: that suite
-   runs on **Linux with a much newer Python** (3.14 at the time
-   of writing, against 3.9 locally), so a test that shells out
-   to `zsh`, to BSD `stat`, or to any macOS-only integration
-   needs an explicit `unittest.skipUnless` guard rather than a
-   local green run.
-
-   **When you go into the captured log, filter it — never
-   `Read` it whole.** A whole-file read of a captured lint log
-   is how a 500-line per-file cspell dump became the single
-   largest result of a run (PR #207). Two ways to filter, and
-   both keep the log out of the result:
-
-   ```sh
-   python3 .claude/tools/run_quiet.py inspect <log> --grep 'Failed|error\['
-   ```
-
-   The runner's own `inspect` subcommand does the filtering in
-   its own process and reduces to the same
-   `Bash(python3 .claude/tools/:*)` allow-rule every other tool
-   here uses. With no flags it reprints the failure summary —
-   the failed-hook index, the spelling index and the tail —
-   which is what you want when the original summary has
-   scrolled away. The **Grep tool** is equally good and is the
-   right reach when it is offered; `inspect` is what makes this
-   step work in a session where it is not, which is the case
-   that once cost 58 shell `grep` calls (≈8.7k) reading these
-   very logs.
-
-   **Never a shell `grep`, `tail`, or `head` on the log — and
-   the reason is context cost, not permissions.** A shell filter
-   prints its matched region *into the tool result*, where
-   `inspect` and the Grep tool return only the answer. That
-   difference is the whole argument. To read a region rather
-   than search for one, use the **Read tool's `offset` /
-   `limit`** on the log path: it reads an out-of-workspace
-   absolute path directly, and a line range is exactly what
-   `offset`/`limit` express.
-
-   **Do not argue this from "unfirmable prompt churn" — that
-   claim is false and has been checked.**
-   `firm_core.NO_BARE_WILDCARD` is a deny-list of *hazardous
-   programs*; `grep`, `tail` and `head` were never members. So
-   `is_bareverb_wildcard("Bash(grep:*)")` is `False`, the fast
-   firm would happily write that rule, and `Bash(grep:*)` is in
-   fact **already granted** on this machine and prompts for
-   nothing. Both halves of the permission floor agree; there is
-   no permission-churn objection to lean on.
-
-   (This paragraph twice carried the opposite claim. The first
-   version argued it for `grep` and then, two sentences later,
-   said "or read only its tail" — inviting the identical shape
-   it had just ruled out, which a perms sweep then harvested.
-   The second version fixed the tail half but kept the false
-   rationale. Stating it once, correctly, is the fix.)
-
-   **Run the formatting-class hooks scoped in ONE invocation
-   after edits — don't discover them serially.** Each
-   `pre-commit run --files …` surfaces one violation class at
-   a time, so a fix→lint→fix→lint loop walks cspell, then
-   line-length, then cspell again: one run spent **6
-   invocations** on what was a single class of problem. Run
-   the formatting hooks together over the changed paths, take
-   the whole list, and fix it in one pass.
-
-   **A markdown edit costs two runs by construction.** The
-   `markdownlint-fix` and `mdformat` hooks *modify files and
-   then fail*, so any `.md` change needs a second full run to
-   go green. That is the design, not a failure — one session
-   read it as one and spent 12 invocations (≈4.4k) on a spec
-   edit. Either run the two markdown hooks scoped to the
-   changed `.md` files first and let the full run come back
-   clean, or simply expect the second run.
-
-   **Answer "which hooks cover this file type?" with a grep,
-   not a read.** `cfg/pre-commit-lint.yml` is ~190 lines and
-   was once read whole (≈1.7k) to learn which hooks cover
-   `.sh` and `.github/**`. Grep it for `id:` / `files:` /
-   `types_or:` instead.
-
-   **That rule is about a CLASS of file, not that one
-   filename — a CI workflow is a config index too.** It kept
-   being read as advice about `pre-commit-lint.yml`
-   specifically, so the workflow files stayed exempt: one
-   session read the lint workflow whole (~770 tokens, 40% of
-   its entire Read cost) to learn **one line**, which then sent
-   it to grep the hook config anyway. Answer
-   "how does CI run X?" by grepping the workflow **and** the
-   hook config for the invocation — never by reading either
-   whole. Neither is prose; both are indexes.
-
-   **After a fix, the scoped re-run is the default — a full
-   `make lint` is the exception.** This is already prescribed
-   above and is still the most-missed instruction in the step:
-   one run paid ten full sweeps across ~5 fix-and-retry cycles
-   (≈5.3k) where a scoped per-hook re-run was the stated rule,
-   and a later one paid **thirteen (≈5.8k)** while editing this
-   very rule.
-
-   **The scoped form is one bare command — use it.** Restating
-   the rule is not the lever; thirteen sweeps happened *while
-   the rule was being read*. What made `make lint` the reflex
-   is that it needs no arguments, while the scoped form needed
-   a changed-file list assembled by hand. It doesn't any more:
+   **The full sweep runs twice: at the start and at the end.** Every
+   check in between is scoped, through one bare command:
 
    ```sh
    python3 .claude/tools/run_quiet.py -- \
      python3 .claude/tools/lint_paths.py --changed
    ```
 
-   That lints exactly this branch's files — everything
-   differing from the merge-base with `origin/main`, plus
-   untracked-not-ignored paths. Append `-- <hook-id>` to
-   narrow to the hook that failed. There is no longer a
-   convenience argument for the full sweep, so treat one
-   outside the two checkpoints as a mistake.
+   That runs every hook over this branch's files (the merge-base diff
+   plus untracked paths); append `-- <hook-id>` to narrow it. For paths
+   narrower than the branch, wrap
+   `pre-commit run [<hook-id>] --config cfg/pre-commit-lint.yml --files <paths>`
+   — `--config` is mandatory, since the default name fails with
+   `InvalidConfigError`. A full sweep in between is a mistake unless a
+   hook is repo-global or the change is too broad for a scoped run to be
+   representative. The cost being avoided is failure tails, so wrapping
+   harder buys nothing; this is the most-missed rule in the step
+   (`history.md` → "Full-sweep loops").
 
-   The by-hand form still works and is what to reach for when
-   the paths you want are narrower than the branch:
-
-   ```sh
-   python3 .claude/tools/run_quiet.py -- pre-commit run <hook> --files <paths>
-   ```
-
-   Note the cost here is **context in failure tails**, not
-   verbosity — every one of those sweeps was already wrapped
-   in `run_quiet`, so wrapping harder buys nothing. The only
-   lever is *fewer full sweeps*.
-
-   **Scoping one HOOK is not enough when the violations span
-   hooks — scope the whole SET instead.** This is the failure
-   the per-hook advice above leaves open, and it is the
-   expensive one: 15 full `make lint` sweeps, each surfacing a
-   single violation class, three cspell words discovered on
-   three separate sweeps. The working form runs **every** hook
-   over **only** the changed files — a hook id is what you
-   append to narrow further, not what makes it scoped:
+   **Spelling pre-flight before the first full run** whenever the diff
+   adds any comment, doc comment or markdown — the shape of the
+   addition, not the file extension, so a doc-heavy `.rs` change
+   counts:
 
    ```sh
    python3 .claude/tools/run_quiet.py -- \
-     pre-commit run --config cfg/pre-commit-lint.yml --files <paths>
+     python3 .claude/tools/lint_paths.py --prose
    ```
 
-   `lint_paths.py --changed` above is this same shape with the
-   file list resolved for you, so prefer it; reach for the
-   explicit form only when the paths are narrower than the
-   branch.
+   Take the whole unknown-word list in one pass (`history.md` →
+   "Serial spelling rounds"), then:
 
-   **The dictionary sorter fails-then-fixes by design.** Like
-   the markdown hooks, `cfg/dictionary.txt`'s `--unique` sorter
-   rewrites the file and reports failure, so adding a word
-   costs a second run. Expect it; it is not a defect, and a
-   rebase that leaves the merge-union dictionary unsorted
-   produces exactly the same benign one-round fail-then-fix.
+   - The dictionary is **US spelling**: write the US form of an `-our`
+     / `-ise` variant, never add the variant.
+   - A word you **coined** → reword once, to plain English with no
+     coined morphology; a neighboring coinage re-enters the loop.
+   - Place a real term per `docs/conventions/docs-and-style.md` →
+     "Spelling (cspell)": ≥ 2 files → `cfg/dictionary.txt`; one file →
+     a top-of-file `cspell:word` escape.
 
-   **Run cspell over the changed files FIRST whenever the diff
-   adds ANY comment, doc-comment or markdown** — which in this
-   repo is nearly every diff, since the migrations and tests
-   carry the explanatory prose the house style asks for. Do
-   **not** reserve this for changes that look like
-   documentation: the trigger is the condition, not the diff's
-   perceived category. Stated as "when the change authors prose"
-   it read as a docs-diff rule and was skipped by a session that
-   then paid the documented cost twice, in two separate rounds —
-   four unknown words, then two more. All six were authored by
-   that session and knowable up front, and **three of the first
-   four were British spellings** (an `-our` ending, an `-ise`
-   verb), which fail by construction against a US dictionary and
-   are the most predictable category there is.
+   **Fail-then-fix hooks are design, not findings.** `mdformat`,
+   `markdownlint-fix`, `ruff format`, `biome` and the dictionary's
+   `--unique` sorter rewrite the file and then fail: stage, re-run
+   **once** scoped, and treat only a second failure as real (e.g. an
+   MD013 overlong line `mdformat` made by collapsing a wrap inside a
+   code span). So an `.md` edit costs two scoped runs, never two full
+   sweeps.
 
-   New technical terms are known to the author
-   in advance, so discovering them one per round is pure
-   waste — measured at three serial rounds for three words, and
-   at **26 `make lint` runs (~12.8k of failure tails)** on a
-   prose-heavy change where several cycles each bought a single
-   unknown word. Run the spelling hook alone over the changed
-   paths as a pre-flight, take the whole list of unknown words
-   in one go, and only then run the full set:
+   **A formatter invalidates every line you hold for that file.** Order
+   edits before it runs; after it, take one bounded read covering every
+   remaining region. The read budget is session-cumulative and an
+   autofix does not reset it; to edit a markdown table, change every row
+   in one `Edit`; `cat -n` is a whole-file read too
+   (`docs/conventions/context-economy.md` → "The levers"; `history.md`
+   → "Formatter re-read loop"). To see what a formatter changed, read
+   the step-5 slice files, never `git diff` the file.
 
-   ```sh
-   python3 .claude/tools/run_quiet.py -- \
-     pre-commit run cspell --config cfg/pre-commit-lint.yml --files <paths>
-   ```
+   **The `Lint` workflow is more than `make lint`**: it also runs
+   `make tools-tests` and `make decks-build`. When the diff touches
+   anything a `.claude/tools/` checker validates (`.claude/tools/**`
+   itself, `market-data/grafana/**` via `grafana_check.py`), run
+   `python3 .claude/tools/run_quiet.py -- make tools-tests` before
+   pushing. That suite runs on Linux with a much newer Python, so a
+   test shelling out to `zsh`, BSD `stat` or any macOS-only integration
+   needs a `unittest.skipUnless` guard (`history.md` → "Lint workflow
+   beyond the hooks"). A fast suite runs whole, never per module
+   (`docs/conventions/context-economy.md` → "When a suite is fast
+   enough to run whole").
 
-   **When the unknown word is one you COINED, reword — and
-   reword to plain English, not to another coinage.** This is
-   the complementary case, and the pre-flight above cannot
-   catch it: the rule assumes the author knows the vocabulary up
-   front, but a coinage does not exist until it is typed, so a
-   sweep at the start of the change finds nothing. Measured:
-   four separate lint rounds on one prose-heavy change, every
-   word a self-inflicted verb form rather than a domain term,
-   and each reword producing the next round's word — one
-   invented participle gave way to another before the plain
-   phrasing finally passed.
+   **Reading lint output and config:**
 
-   So pick the phrasing with **no coined morphology at all**,
-   once. Rewording to a near neighbor just re-enters the loop,
-   because the neighbor is equally unknown. It also keeps words
-   with no domain meaning out of both the dictionary and the
-   file's escape block, which the spelling-hygiene convention
-   would otherwise have to clean up later. (The cost here is
-   round trips and wall-clock rather than context — `make lint`
-   is wrapped, so each round was a short failure tail.)
+   - Filter a captured log, never `Read` it whole:
+     `python3 .claude/tools/run_quiet.py inspect <log> --grep 'Failed|error\['`
+     (with no flags it reprints the failure summary), or the Grep tool;
+     a region by `Read` `offset` / `limit`. Never a shell `grep` /
+     `tail` / `head` on it — the objection is context cost, since the
+     shell prints the region into the result; `Bash(grep:*)` is already
+     granted, so permissions are no argument (`history.md` → "Log
+     filtering").
+   - "Which hooks cover this file?" / "how does CI run X?" → grep
+     `cfg/pre-commit-lint.yml` and the workflow (`id:`, `files:`,
+     `types_or:`, the invocation). Both are indexes; never read either
+     whole (`history.md` → "Config-index reads").
+   - Never hand-verify what the gate owns — least of all with
+     `awk 'length($0)>80'`, which counts bytes (an em-dash is three).
 
-   Then place each word by the rule in
-   `docs/conventions/docs-and-style.md`: a word used in **two
-   or more** files goes in `cfg/dictionary.txt`; a word used in
-   exactly one gets a top-of-file `cspell:word` escape in that
-   file, one word per directive. Worked example: a term you
-   introduce in a tool *and* its test is two files, so it goes
-   in the dictionary; a term appearing only in one module's
-   docstring gets the inline escape. And note the dictionary is
-   **US spelling**, so a British variant — an `-our` ending, an
-   `-ise` verb — fails by construction. Write the US form
-   rather than adding the variant to the dictionary; three such
-   words tripped this hook while this very rule was being
-   written.
+   **Verify at checkpoints, matched to the edit.** An unchanged tree
+   since the last lint → assert, don't re-run. A copy- or comment-only
+   change needs lint, not a build or typecheck. `tsc --noEmit` is
+   whole-project, so its lever is frequency: once, after the TypeScript
+   edits are done (`history.md` → "Inner-loop checks").
 
-   **The markdown two-step applies to the SCOPED invocation,
-   not to the full sweep.** "Two runs by construction" is true
-   and is stated above; what it must not license is two *full*
-   sweeps per fix. One markdown-only PR ran `make lint` **eight
-   times** on exactly that reading. Take the full sweep once at
-   the start and once at the end, and let the fix-verify loop
-   in between be the scoped run.
+   **On failure, separate three cases:**
 
-   **Don't hand-verify a formatting fact the gate already
-   owns — and never with a byte-length tool.** Five hand-rolled
-   `awk 'length($0)>80'` width checks in one session were both
-   redundant with the lint run happening anyway *and wrong*:
-   `awk` counts bytes, an em-dash is three, so compliant lines
-   in this repo's em-dash-heavy prose flagged LONG and the
-   false signal then had to be refuted. The MD013 hook reports
-   every real violation with its line number.
+   - **An autofix** — above.
 
-   **A fast suite runs whole, through the wrapper — not per
-   module.** The same discipline on the other axis. For an
-   edit under `.claude/tools/`, the post-edit check is
-   `python3 .claude/tools/run_quiet.py -- make tools-tests`,
-   never a `-p test_X.py` discover run: measured, the narrow
-   form cost **32 calls / ≈7.1k** against **15 calls / 516
-   tokens** for the whole suite, and it missed two sibling
-   tests the edits had just broken. See
-   `docs/conventions/context-economy.md` → "When a suite is
-   fast enough to run whole".
+   - **A missing binary** (`biome` / `tsc` report "Command … not found"
+     without frontend `node_modules`) → run
+     `python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install`
+     and re-run. If the install fails, the hook is unverifiable locally,
+     like an absent Solana toolchain (steps 9–10): when the diff touches
+     none of its files, note that CI runs it. Never gate the PR on a
+     hook that couldn't run.
 
-   Take the full sweep once at the start, and once at the end
-   to confirm green. Two corollaries:
-
-   - **Assert, don't re-run, on an unchanged tree.** If no
-     file changed since the last lint, the result cannot have
-     changed either — one run re-ran `make lint` on a
-     byte-identical tree. Say it's unchanged and move on.
-   - **`tsc --noEmit` is the exception that proves it.** It is
-     whole-project by nature, so scoping the *file list* buys
-     nothing — which means the lever there is **frequency**,
-     not scope. One session fired `tsc --noEmit` four times
-     and `biome check` five, several after single-file edits
-     that could not change a type. Run it once after the
-     TypeScript edits are done, not after each one.
-
-   If lint fails, first separate **environmental**
-   failures and **autofixes** from **real violations** —
-   they are three different problems:
-
-   - **A formatter's "files were modified by this hook" is
-     an autofix, not a finding.** `mdformat`,
-     `markdownlint-fix`, `ruff format`, and `biome` rewrite
-     the file and *then* report failure; the correct
-     response is to stage the reformat and **re-run once**,
-     treating only a **second** failure as a real
-     violation. Don't read it as a violation to diagnose,
-     and don't re-run more than once — if the same hook
-     fails twice, the second failure is the real one (a
-     line the formatter can't fix, e.g. an MD013 overlong
-     line that `mdformat` created by collapsing a wrap
-     inside an inline code span). In one run both the full
-     `make lint` and the scoped re-run each failed once
-     purely because `biome` reformatted, and those
-     immediate identical re-runs were a meaningful share of
-     that session's 3.6k / 10 scoped-lint and 900 / 5
-     `make lint` totals.
-
-     **A formatter has also invalidated every line you hold
-     for that file — so plan the remaining edits and take ONE
-     bounded read covering all their regions.** The autofix
-     framing above is about the *hook result*; this is its
-     context consequence, and it is what makes the
-     "before the third slice, sum what you have read" rule
-     fail to fire: each re-read feels individually licensed,
-     because a formatter just invalidated the previous one, so
-     it reads as a fresh **first** read rather than a third
-     slice.
-
-     Measured (PR #396): one source file was slice-read **five
-     times** in a session — offsets 210, 160, 418, 226, 486 —
-     and a second file twice, which together were that
-     session's five largest single results and the whole of its
-     Read cost (5.8k). The pattern is a round trip per edit.
-
-     Cheaper still where it is possible: **order the edits
-     before the formatter runs** — batch them, then let the
-     hook reformat once at the end.
-
-     **The count is SESSION-CUMULATIVE, not since the last
-     format.** Track total lines read of a file for the whole
-     run, and once that passes roughly half the file take one
-     bounded read of the remaining regions instead of another
-     slice — *regardless* of how many formatter runs intervened.
-     An autofix invalidates offsets; it does **not** reset the
-     budget. Counting from the last format makes every autofix a
-     laundering step.
-
-     **A markdown TABLE is the sharp case, because an autofix
-     realigns every row.** So collect every row you intend to
-     change and apply them in **one** edit pass before linting;
-     where several rows must change, rewrite the whole table body
-     in a single `Edit` rather than one `Edit` per row. This
-     composes with the plan-the-remaining-edits rule rather than
-     replacing it — the addition is the **trigger**, which is
-     *editing a markdown table at all*, not the file's size.
-
-     And name `cat -n <file>` as a whole-file read subject to the
-     same four licensing conditions as `Read`. It does not read
-     as one at the call site, which is how a 99-line file got
-     bought whole for a one-region edit.
-
-     **To SEE what a formatter changed, read the slice
-     files — never `git diff` the file.** A formatter that
-     rewrote a file has already had its output captured in
-     `review-diff-docs.txt` / `-source.txt`. The general
-     "don't re-derive a diff" rule is stated twice already —
-     in `commit-changes` and in step 5's prose — but both sit
-     where the diff is *produced*, thousands of lines before
-     the point where you actually want to look at a reflow,
-     and by then the operative question feels like "what did
-     `mdformat` change?", which does not read as re-deriving
-     anything. Measured: `git diff` appears in one session's
-     hardening table at ≈1.0k over 2 calls, flagged
-     `cost: context` and the only `context`-labelled shape in
-     it — both calls made **after** the slices existed. One
-     was `git diff --stat` to size the change, which the
-     tool's verdict already reported as a per-file `changes`
-     count; the other was `git diff docs/market-making.md` to
-     see a reflow that `review-diff-docs.txt` already
-     contained in 67 lines. Small in absolute terms, and worth
-     naming because it is a documented anti-pattern being
-     reproduced by the skill that owns the tool.
-
-   - A hook that fails because its binary isn't
-     installed is **not** a diff problem. The
-     frontend hooks — `biome`, `tsc` — report
-     "Command … not found" whenever this worktree has
-     no frontend `node_modules` (each worktree is a
-     fresh checkout, so deps aren't installed until you
-     ask). Install them once and re-run, so the hooks
-     actually evaluate the diff:
-
-     ```sh
-     pnpm --dir frontend install
-     ```
-
-     If the deps still can't be installed, treat those
-     hooks as **unverifiable locally** — exactly like an
-     absent Solana toolchain (steps 9–10), not as a
-     blocking failure. When the diff touches none of the
-     files such a stalled hook covers (e.g. a docs-only
-     change vs. `biome` / `tsc`, which only target
-     JS / TS / CSS), note in the report that they'll
-     pass in CI and move on. **Never gate the PR on a
-     hook that couldn't run.**
-
-   - For genuine violations, parse the failing tail (and
-     the log by slice) and fix
-     every issue that can be fixed mechanically
-     (formatting, import order, trailing whitespace,
-     spelling, etc.).
-
-   - Stage the fixes by explicit path and commit as a
-     single signed commit:
+   - **A real violation** → fix everything mechanical (formatting,
+     imports, whitespace, spelling), stage by explicit path and commit
+     signed, then confirm with the scoped run:
 
      ```sh
      git add <fixed files...>
+     ```
+
+     ```sh
      git commit -S -m "Fix lint violations"
      ```
 
-   - **Re-run one hook, scoped to the diff's changed files** —
-     not the whole `make lint` / `--all-files` cascade. This
-     applies to **both** the failure case (confirming a fix)
-     **and** the ordinary post-edit confirmation later in the
-     review: one run made six full `--all-files` sweeps after
-     edits confined to a single crate, because only the
-     failure case read as in-scope here. The full run
-     re-checks every file in the repo (the cspell hook's
-     ~450-line cascade is the worst of it); your edit touched
-     the diff's files, so confirm against just those:
-
-     ```sh
-     python3 .claude/tools/run_quiet.py -- \
-       pre-commit run <hook-id> --config cfg/pre-commit-lint.yml \
-       --files <changed files...>
-     ```
-
-     **Wrap the scoped run too**, exactly as the full
-     `make lint` above is wrapped. A scoped `pre-commit run`
-     still prints **all 24 hook lines** — about 20 of them
-     "Skipped" / "no files to check" — roughly 675 tokens
-     for a one-bit answer; four such runs in one review is
-     ~2k bought for nothing. The wrapper loses no signal:
-     a failure still prints the failing tail and the log
-     path.
-
-     **`--config` is mandatory, not decorative.** This repo
-     keeps its hook config at `cfg/pre-commit-lint.yml`, not
-     the default `.pre-commit-config.yaml`, so omitting the
-     flag fails outright with
-     `InvalidConfigError: .pre-commit-config.yaml is not a file`.
-     One run hit exactly that, read it as "the scoped path
-     doesn't work here", and fell back to **seven** full
-     `make lint` runs.
-
-     Take `<changed files...>` from
-     `git diff --name-only origin/<base>..HEAD`. Only fall back to a
-     full `python3 .claude/tools/run_quiet.py -- make lint`
-     when a hook is repo-global (it has no per-file scope) or
-     when you've changed enough that a scoped re-run wouldn't
-     be representative.
-
-   - **Batch verification to checkpoints, and match the
-     check to the edit.** Verify once per logical
-     checkpoint — not once per edit. Two rules fall out,
-     both measured on visual PRs where they were violated
-     while the docs already said otherwise:
-
-     - **A copy-only or comment-only change needs lint,
-       not a build or a typecheck.** A string literal in a
-       `.tsx`, or a reworded comment, cannot change a type
-       or an artifact — so the optimizing build proves
-       nothing the running dev server didn't already show.
-       One run fired `make decks-build` **×11** as an
-       inner-loop check (`decks/README.md` explicitly
-       calls it a *pre-commit* check), most of them after
-       copy-only edits. Another ran `pnpm -C decks check`
-       **×19** across ~15 rounds, including after
-       comment-only changes.
-     - **Per-call cost is small; the repetition is the
-       cost.** After grep, this is the top repeated shape
-       in both of those sessions. Batching it to
-       checkpoints costs nothing in signal, because the
-       checkpoint is where a real regression would be
-       caught anyway.
-
-   - If real violations still fail after the fix
-     attempt, catalogue the remaining failures as
-     **blocking** issues (step 7) and do **not** mark
-     the PR ready.
+     Whatever still fails is **blocking** (step 7); don't mark the PR
+     ready.
 
 1. **Adversarial diff review.** Collect the diff and log —
    but write the **diff to a single file** rather than into
