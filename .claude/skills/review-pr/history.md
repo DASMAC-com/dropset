@@ -150,7 +150,7 @@ the resident-size gate (`docs/conventions/context-economy.md` →
   harvested; the second fixed the tail and kept the false rationale.
 - **Config-index reads.** `cfg/pre-commit-lint.yml` (~190 lines) was
   read whole (≈1.7k) to learn which hooks cover `.sh` and
-  `.github/**`. The lint workflow was read whole (~770 tokens, 40% of
+  the `.github/` tree. The lint workflow was read whole (~770 tokens, 40% of
   that session's Read cost) to learn one line, which then sent the
   session to grep the hook config anyway.
 - **Formatter re-read loop.** PR #396: one source file slice-read five

@@ -175,16 +175,20 @@ def anchors(text: str) -> set[str]:
     return found
 
 
-def resolve_target(repo: Path, cited: str) -> Path | None:
+def resolve_target(repo: Path, cited: str, citer: Path | None = None) -> Path | None:
     """The file a citation names, or None when nothing matches.
 
     A citation may spell the path from the repo root (``docs/conventions/x.md``,
-    ``CLAUDE.md``) or by bare name (``x.md``), and both appear in the tree.
+    ``CLAUDE.md``) or by bare name (``x.md``), and both appear in the tree. A
+    bare name is tried beside the citer first — a skill's ``history.md`` ledger
+    is cited that way — and then in the conventions directory.
     """
     direct = repo / cited
     if direct.is_file():
         return direct
     if "/" not in cited:
+        if citer is not None and (citer.parent / cited).is_file():
+            return citer.parent / cited
         bare = repo / CONVENTION_DIR / cited
         if bare.is_file():
             return bare
@@ -269,7 +273,7 @@ def scan(repo: Path) -> dict:
 
         for cited, anchor in citations(text):
             checked += 1
-            target = resolve_target(repo, cited)
+            target = resolve_target(repo, cited, citer)
             rel = str(citer.relative_to(repo))
             if target is None:
                 dangling.append(
