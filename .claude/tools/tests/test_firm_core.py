@@ -213,6 +213,11 @@ class DeadGlob(unittest.TestCase):
     def test_file_access_globs_are_real(self):
         self.assertFalse(fc.is_dead_glob("Read(/r/.claude/worktrees/*/src/**)"))
 
+    def test_a_non_string_is_not_dead(self):
+        for entry in (None, 1, {"x": 1}):
+            with self.subTest(entry=entry):
+                self.assertFalse(fc.is_dead_glob(entry))
+
 
 class BareVerbWildcard(unittest.TestCase):
     def test_flags_dangerous_bare_verbs(self):

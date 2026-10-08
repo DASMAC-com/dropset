@@ -769,9 +769,9 @@ It prints `{count, flagged: [{index, rule, category, reason}]}`
   bare-verb wildcard that subsumes many narrower rules;
 
 - **dead globs** (`category: dead-glob`) — a Bash `*` left of
-  the trailing `:*`, read literally, so the rule never matches.
-  It grants nothing, so remove these **ungated**, first, with
-  the same command's `prune-dead` subcommand;
+  the trailing `:*`, read literally. Removal adds a prompt at
+  worst, so run the command above as `prune-dead` **ungated**,
+  first;
 
 - **dangerous one-offs** (`category: dangerous`) — `rm -rf`,
   `curl … | sh`, `git push --force`;
@@ -832,7 +832,8 @@ the tool result, so preferring the Grep tool or
 `run_quiet.py inspect` is a **context-economy** rule, never a
 permissions one. Do not restate the churn framing.
 
-**Autonomy bound: propose, never auto-delete.** Dropping a
+**Autonomy bound: propose, never auto-delete** (`dead-glob`
+excepted, above). Dropping a
 permission is low-blast-radius, but silently editing the
 allowlist unattended is surprising. In an **attended** pass,
 surface the shortlist via **`AskUserQuestion`** and remove
@@ -1129,7 +1130,8 @@ more useful than skipping the step and calling it deferred.
   reported here; that is the `plan` skill's output.
 - Permission allowlist: the `settings.local.json`
   entries flagged as cruft and, for an attended pass, which
-  the human approved removing — or that it was clean.
+  the human approved removing — or that it was clean — plus
+  the rules `prune-dead` removed ungated.
 - Permission refresh: whether the monthly gate was **due**, and
   if it ran, how many candidates the mining proposed and how
   many were granted — or one line saying it is not due yet and

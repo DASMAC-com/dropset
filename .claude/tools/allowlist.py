@@ -79,8 +79,9 @@ deliberately without reading it first — that is the whole point).
   load-bearing worktree and skill-tooling rules. The response carries
   ``machine_local_settings`` so a reader knows which rule was in force.
 * ``prune-dead`` — delete every ``dead-glob`` rule and print
-  ``{removed, count}``. The one category removed without a gate: a rule that
-  never matches grants nothing, so dropping it cannot change what runs.
+  ``{removed, count}``. The one category removed without a gate: such a rule
+  matches only a command carrying its literal ``*``, so dropping it can only
+  add a prompt, never grant anything.
 
 Defaults ``--settings`` to ``.claude/settings.local.json`` in the cwd, and
 **resolves that default through a worktree to the main checkout** when the cwd
@@ -466,8 +467,8 @@ def classify(
     over_broad = _over_broad_reason(rule)
     if over_broad is not None:
         return "over-broad", over_broad
-    # Before every grant-shaped verdict: a rule that never matches grants
-    # nothing, so whether it *would* be dangerous or guard-blocked is moot.
+    # Before every grant-shaped verdict: a rule that matches no real command
+    # grants nothing, so whether it *would* be dangerous or guard-blocked is moot.
     if firm_core.is_dead_glob(rule):
         return "dead-glob", DEAD_GLOB_REASON
     for reason, pattern in _DANGEROUS_RES:
@@ -518,13 +519,15 @@ def cruft(allow: list[str], settings_path: Path | None = None) -> dict:
 def prune_dead(path: Path) -> dict:
     """Delete every ``dead-glob`` rule from ``path``, in one atomic write.
 
-    The one cruft category safe to remove **unattended**: a rule that never
-    matches grants nothing, so dropping it cannot change what runs. Every
-    other category is a judgment call and stays propose-only. No write at all
+    The one cruft category safe to remove **unattended**: its inner ``*`` is
+    literal, so it matches only a command carrying that star, and dropping it
+    can only add a prompt, never grant anything. Every other category is a
+    judgment call and stays propose-only. Only ``permissions.allow`` is
+    rewritten; ``deny``, ``ask`` and every other key round-trip untouched. No write at all
     when nothing is dead, so a clean file's mtime is left alone.
     """
     settings, allow = firm_core.load_settings(path)
-    removed = [r for r in allow if isinstance(r, str) and firm_core.is_dead_glob(r)]
+    removed = [r for r in allow if firm_core.is_dead_glob(r)]
     if removed:
         kept = [r for r in allow if r not in removed]
         firm_core.write_settings(path, settings, kept)

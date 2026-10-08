@@ -410,10 +410,13 @@ def is_dead_glob(rule: str) -> bool:
 
     The harness treats ``*`` as a glob only in that trailing position; anywhere
     further left it is a literal character, so a rule like
-    ``Bash(git -C /r/.claude/worktrees/* status:*)`` never matches a real
-    command (Claude Code warns about each one at startup). File-access rules are
-    unaffected: their ``*`` / ``**`` really are globs.
+    ``Bash(git -C /r/.claude/worktrees/* status:*)`` matches only a command
+    carrying that literal star — in practice, none (Claude Code warns about
+    each one at startup). File-access rules are unaffected: their ``*`` /
+    ``**`` really are globs. A non-string entry is not a rule and is not dead.
     """
+    if not isinstance(rule, str):
+        return False
     parsed = _split_rule(rule)
     if parsed is None or parsed[0] != "Bash":
         return False
@@ -431,7 +434,7 @@ def is_covered(rule: str, allow_rules: list[str]) -> bool:
     verbatim rule kinds (WebFetch / mcp / Skill).
 
     A stored :func:`is_dead_glob` rule covers **nothing**, not even its exact
-    twin: it grants nothing at run time, so reporting it as coverage was a false
+    twin: it matches no real command, so reporting it as coverage was a false
     answer that kept the live rule from ever being firmed.
     """
     allow_rules = [r for r in allow_rules if not is_dead_glob(r)]

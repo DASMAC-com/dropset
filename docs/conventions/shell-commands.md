@@ -264,8 +264,8 @@ Concrete rules:
   they never prompt again.
 
 - Operate on a *sibling worktree* by its real path. **In a Bash
-  rule the only glob is the trailing `:*`** — a `*` anywhere further
-  left is a literal character, so
+  rule ending in the `:*` prefix form, any earlier `*` is a literal
+  character**, so
   `Bash(git -C <base-repo-path>/.claude/worktrees/* status:*)` never
   matches a real command (Claude Code warns about each such rule at
   startup). The rule worth firming names the exact worktree path,
