@@ -372,7 +372,7 @@ class ModelsVerb(SubstrateHarness):
         self.assertNotIn("executor  ", out)
         self.assertIn("RC=1", out)
 
-    def test_check_maps_first_party_ids_but_not_background(self):
+    def test_check_maps_first_party_ids_in_every_tier(self):
         result, out = self._models(
             "check",
             env={
@@ -384,8 +384,10 @@ class ModelsVerb(SubstrateHarness):
         )
         self.assertIn("ok     advisor us.anthropic.claude-known-judge", out)
         self.assertIn("ok     executor us.anthropic.known-work", out)
-        # Background is checked verbatim, the way Claude Code passes it.
-        self.assertIn("--inference-profile-identifier claude-known-bg", out)
+        # Background is mapped too, the way Claude Code maps it.
+        self.assertIn(
+            "--inference-profile-identifier us.anthropic.claude-known-bg", out
+        )
         self.assertIn("--profile admin", out)
         self.assertIn("RC=0", out)
 
@@ -672,8 +674,8 @@ class BedrockEnvGate(SubstrateHarness):
         self.assertIn("REGION=us-west-2", result.stdout)
         self.assertIn("CACHE=1", result.stdout)
         # The background tier is pinned so background sub-turns bill to credits
-        # too, rather than quietly falling back to the subscription. Verbatim
-        # and newline-anchored: Claude Code passes it through untouched.
+        # too, rather than quietly falling back to the subscription. Exported
+        # as configured and newline-anchored: the mapping is Claude Code's.
         self.assertIn("FAST=bg-profile-id\n", result.stdout)
 
     def test_an_unset_background_tier_warns_and_pins_nothing(self):
