@@ -149,17 +149,30 @@ _CATASTROPHIC_CORE = (
 # how they arrive inside a shell invocation string. The quoted `$HOME` forms
 # used to be enumerated by hand, which closed exactly the cases someone thought
 # to list: `rm -rf "$HOME"` was denied while `rm -rf "/"` was not classified at
-# any tier. Deriving the wrap from one core list makes that uniform. A quoted
-# target may also continue past its closing quote with `/` or `/*`:
-# `rm -r "$HOME"/*` empties the home directory, and was unclassified.
+# any tier. Deriving the wrap from one core list makes that uniform.
 _CATASTROPHIC_TARGET = (
+    r"(?:"
+    + _CATASTROPHIC_CORE
+    + r"|\""
+    + _CATASTROPHIC_CORE
+    + r"\"|'"
+    + _CATASTROPHIC_CORE
+    + r"')"
+)
+
+# At COMMAND POSITION a quoted target may also continue past its closing quote
+# with `/`, `/*` or `*`: `rm -r "$HOME"/*` and `rm -rf "$HOME/"*` empty the
+# home directory, and were unclassified or asked. Only there, because the
+# flags-only shape runs on every line, prose included: a message line reading
+# `rm -r "$HOME"/*` must not become an un-overridable deny.
+_CATASTROPHIC_COMMAND_TARGET = (
     r"(?:"
     + _CATASTROPHIC_CORE
     + r"|(?:\""
     + _CATASTROPHIC_CORE
     + r"\"|'"
     + _CATASTROPHIC_CORE
-    + r"')(?:/+\*|/+)?)"
+    + r"')(?:/+\*|/+|\*)?)"
 )
 
 # What may follow the target at end of line without making the command any less
@@ -248,15 +261,22 @@ _RM_TAIL_COMMAND = r"(?:\s+" + _RM_OPERAND + r")*" + _RM_COMMAND_END
 # Every token here has exactly ONE reading, which is what keeps a long run of
 # them linear: an option starts with `-`, an assignment holds `=`, and a value
 # holds neither and is never a wrapper word. Let a token be read two ways and a
-# run of thirty fails in exponential time, as `_GIT_OPTION_VALUE` once did.
+# run of thirty fails in exponential time, as `_GIT_OPTION_VALUE` once did. A
+# value or an assignment may carry a quoted segment (`sudo -u "$USER"`,
+# `env FOO="a b"`); a quote inside it does not count as its `=`.
 _RM_WRAPPER_WORDS = (
     r"(?:sudo|doas|env|command|exec|nohup|nice|time|xargs|ionice|stdbuf)"
 )
-_RM_ASSIGNMENT = r"[A-Za-z_]\w*=" + _RM_WORD + r"*"
+_RM_QUOTED_SEGMENT = r"\"[^\"\n]*\"|'[^'\n]*'"
+_RM_ASSIGNMENT = r"[A-Za-z_]\w*=(?:" + _RM_WORD + r"|" + _RM_QUOTED_SEGMENT + r")*"
 _RM_WRAPPER_VALUE = (
     r"(?!(?:"
     + _RM_WRAPPER_WORDS
-    + r"|timeout|rm)\s)[^\s\"';&|<>()`=-][^\s\"';&|<>()`=]*"
+    + r"|timeout|rm)\s)(?:[^\s\"';&|<>()`=-]|"
+    + _RM_QUOTED_SEGMENT
+    + r")(?:[^\s\"';&|<>()`=]|"
+    + _RM_QUOTED_SEGMENT
+    + r")*"
 )
 _RM_WRAPPER_OPTION = r"-" + _RM_WORD + r"+(?:\s+" + _RM_WRAPPER_VALUE + r")?"
 _RM_WRAPPERS = (
@@ -273,13 +293,14 @@ _RM_WRAPPERS = (
     + r")*)\s+)*"
 )
 
-# Command position: a line start, a control operator, or an opening `(`,
-# `$(` or backtick, then any of `{`, `!` and the compound keywords — so the
-# `rm` in `if true; then rm …`, `{ rm …; }`, `(rm …)` and `x=$(rm …)` is
-# recognized. A keyword counts only right after one of those anchors: an
-# `echo then rm -r / x` is not a compound statement.
+# Command position: a line start, a control operator, an opening `(`, `$(` or
+# backtick, or the `)` closing a `case` pattern or a function's `f()`, then any
+# of `{`, `!` and the keywords `if then do else elif while until` — so the `rm`
+# in `if true; then rm …`, `{ rm …; }`, `(rm …)`, `x=$(rm …)`, `case … *) rm`
+# and `f() { rm …; }` is recognized. A keyword counts only right after one of
+# those anchors: an `echo then rm -r / x` is not a compound statement.
 _RM_POSITION = (
-    r"(?:^|[;&|(`])(?:\s*(?:[{!]|(?:if|then|do|else|elif|while|until)(?=\s)))*\s*"
+    r"(?:^|[;&|()`])(?:\s*(?:[{!]|(?:if|then|do|else|elif|while|until)(?=\s)))*\s*"
     + _RM_WRAPPERS
 )
 
@@ -288,8 +309,8 @@ def _rm_any_operand(position, tail):
     """The any-operand catastrophic delete, after ``position``.
 
     The `rm` word is captured as group ``rm`` so `classify` can check that it
-    sits outside every quoted span — an `rm` after a `;` inside a quoted
-    message is prose, not a command.
+    sits outside every INERT quoted span (`inert_command_spans`) — an `rm`
+    after a `;` inside a quoted message is prose, not a command.
     """
     return re.compile(
         position
@@ -297,7 +318,7 @@ def _rm_any_operand(position, tail):
         + _RM_RECURSIVE
         + r")"
         + _RM_HEAD
-        + _CATASTROPHIC_TARGET
+        + _CATASTROPHIC_COMMAND_TARGET
         + tail
     )
 
@@ -1016,9 +1037,77 @@ _SHELL_C = re.compile(
     + "|".join(sorted(SHELL_PROGRAMS))
     + r")(?:\s+"
     + _RM_WORD
-    + r"+)*?\s+-[A-Za-z]*c\s*\Z",
+    + r"+)*?\s+-[A-Za-z]*c(?:\s+-"
+    + _RM_WORD
+    + r"*)*\s*\$?\Z",
     re.MULTILINE,
 )
+
+
+def _live_regions(text, lo, hi):
+    """``[(start, end)]`` of the command substitutions in ``text[lo:hi]``.
+
+    The body of a double-quoted span: an unescaped `$(…)`, matched by paren
+    depth, or an unescaped backtick pair. A backslash-escaped backtick or `\\$`
+    is a literal character inside double quotes, so it opens nothing.
+    """
+    regions = []
+    i = lo
+    while i < hi:
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == "$" and text.startswith("$(", i):
+            depth = 0
+            j = i + 1
+            while j < hi:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == "(":
+                    depth += 1
+                elif text[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            regions.append((i, min(j + 1, hi)))
+            i = j + 1
+            continue
+        if c == "`":
+            j = i + 1
+            while j < hi and text[j] != "`":
+                j += 2 if text[j] == "\\" else 1
+            regions.append((i, min(j + 1, hi)))
+            i = j + 1
+            continue
+        i += 1
+    return regions
+
+
+def inert_command_spans(line):
+    """``[(lo, hi)]`` ranges of ``line`` quoted as data rather than run.
+
+    A single-quoted span is inert whole. A double-quoted span is inert except
+    for its command substitutions (`_live_regions`), which RUN: in
+    `git commit -m "$(rm -r / x)"` the delete happens. Treating the whole span
+    as live instead denied prose that merely sits beside a substitution —
+    `"Bump $(git describe) (rm -r ~ x is closed)"` — and every message whose
+    escaped backticks quote a command, at the tier no marker lifts.
+    """
+    result = []
+    for lo, hi, quote in quoted_spans(line):
+        if quote == "'":
+            result.append((lo, hi))
+            continue
+        cursor = lo
+        for start, end in _live_regions(line, lo, hi):
+            result.append((cursor, start))
+            cursor = end
+        result.append((cursor, hi))
+    return result
+
 
 # Nested `sh -c` levels `classify` follows before it stops looking deeper.
 _MAX_SHELL_DEPTH = 4
@@ -1033,15 +1122,28 @@ def shell_payloads(cmd):
     multi-line payload's later lines both reached only the ask tier. A payload
     sitting inside another quote is an argument, not a payload, so only spans
     at the top level of ``cmd`` qualify — and none in a prose heredoc body.
+
+    The shell and its `-c` are searched for only on the payload's own line:
+    continuations are already collapsed, so they cannot sit on an earlier one,
+    and searching the whole prefix once per span was quadratic in the length
+    of the command. An ANSI-C `$'…'` payload has its `\\n` / `\\t` escapes
+    decoded, since `bash -c $'cd x\\nrm …'` runs two lines.
     """
     cmd = without_heredoc_bodies(cmd)
     payloads = []
     for lo, hi, quote in quoted_spans(cmd):
-        if not _SHELL_C.search(cmd, 0, lo - 1):
+        start = cmd.rfind("\n", 0, lo) + 1
+        if not _SHELL_C.search(cmd, start, lo - 1):
             continue
         body = cmd[lo:hi]
         if quote == '"':
             body = re.sub(r"\\([\\\"$`])", r"\1", body)
+        elif cmd[lo - 2 : lo - 1] == "$":
+            body = re.sub(
+                r"\\([nt\\'])",
+                lambda m: {"n": "\n", "t": "\t"}.get(m.group(1), m.group(1)),
+                body,
+            )
         payloads.append(body)
     return payloads
 
@@ -1130,14 +1232,10 @@ def classify(cmd, _depth=0):
                 return tier, reason
     # Then the command-position denies, on lines a shell would read as
     # commands: not a continuation of a quoted message, and with the `rm` word
-    # itself outside every inert quote. A double-quoted span holding a `$(` or
-    # a backtick is not inert — its substitution runs.
+    # itself outside every inert quote — a substitution inside double quotes
+    # runs, so it is not inert (`inert_command_spans`).
     for line in unquoted_start_lines(cmd):
-        spans = [
-            (lo, hi)
-            for lo, hi, quote in quoted_spans(line)
-            if quote == "'" or not any(t in line[lo:hi] for t in _LIVE_IN_DOUBLE_QUOTES)
-        ]
+        spans = inert_command_spans(line)
         for pattern, reason in COMMAND_DENY_PATTERNS:
             for match in pattern.finditer(line):
                 start = match.start("rm")
@@ -1531,6 +1629,47 @@ def _self_test():
         # ...but a stray closing quote never extends an operand into prose.
         ('git commit -m "Subject\n\nrm -r ~ x then"', None),
         ("git commit -m 'Subject\n\nkeep rm -rf \"a b\" / out'", "ask"),
+        ("cat <<'EOF'\nrm -rf \"a b\" /\nEOF", "ask"),
+        # The wrapper widening is for an `rm` being run, too.
+        ("git commit -m 'Subject\n\nsudo -u root rm -r / x\n'", None),
+        ('git commit -m "Subject\n\nFOO=1 rm -r / x\n"', None),
+        ("cat <<'EOF'\nsudo -u root rm -r / x\nEOF", None),
+        ("cat <<'EOF'\nfind . | xargs rm -r / x\nEOF", None),
+        # Quoted wrapper values and assignments, and the remaining wrappers.
+        ('sudo -u "$USER" rm -r ~ x', "deny"),
+        ('env FOO="a b" rm -r / x', "deny"),
+        ('FOO="a b" rm -r ~ x', "deny"),
+        ("ionice -c 3 rm -r / x", "deny"),
+        ("stdbuf -oL rm -r / x", "deny"),
+        # A `case` pattern's `)` and a function body are command positions.
+        ("case $x in *) rm -r / x;; esac", "deny"),
+        ("f() { rm -r / x; }; f", "deny"),
+        # The quoted-target suffix is command-position only: on a prose line
+        # the flags-only shape must not deny it.
+        ('rm -rf "$HOME/"*', "deny"),
+        ("cat <<'EOF'\nrm -r \"$HOME\"/*\nEOF", None),
+        ("git commit -m 'Subject\n\nrm -r \"$HOME\"/*\n'", None),
+        ("git commit -m 'Subject\n\nrm -r \"/\"/\n'", None),
+        # Only a substitution's INTERIOR runs inside double quotes. An escaped
+        # backtick or `\$(` is literal, and prose beside a real substitution
+        # is still prose — each of these denied, with no override.
+        ('git commit -m "Deny \\`rm -r ~ x\\` in payloads"', None),
+        ('git commit -m "Deny \\`rm -rf ~ build\\` in payloads"', "ask"),
+        ('git commit -m "Document the \\$(rm -r / x) form"', None),
+        ('gh pr create --title "t" --body "Close \\`rm -r / x\\` gap"', None),
+        ('echo "keep \\`rm -r ~ x\\` out"', None),
+        ('git commit -m "Bump $(git describe) (rm -r ~ x is closed)"', None),
+        ('git commit -m "Close (rm -r / x was asking) in $(git rev-parse HEAD)"', None),
+        ('gh pr comment 1 --body "Let (rm -r ~ x) through; see $(cat ref)"', None),
+        ("cat <<'EOF'\necho \"$(rm -r / x)\"\nEOF", None),
+        ('echo "a $(rm -r / x) b"', "deny"),
+        # More `-c` spellings a shell accepts.
+        ("sh -c -- 'cd x; rm -r / y'", "deny"),
+        ("bash -c -e 'cd x; rm -r / y'", "deny"),
+        ("bash -c $'cd x\\nrm -r / y'", "deny"),
+        ("FOO=1 bash -c 'cd x; rm -r ~ y'", "deny"),
+        # Payload extraction stays linear in the command's length.
+        ("echo 'a'; " * 4000, None),
         # Long options: `--recursive` still counts, and the `r` inside
         # `--no-preserve-root` does not.
         ("rm --recursive --force build", "ask"),
