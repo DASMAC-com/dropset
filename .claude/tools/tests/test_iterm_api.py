@@ -181,13 +181,13 @@ class CallContract(DriverStub, unittest.TestCase):
 
     def test_open_tabs_sends_a_lone_command_verbatim(self):
         # The substrate word has to survive the wire intact: a dispatched
-        # `task local` that arrived as a bare `task` would silently move the
+        # `task anthropic` that arrived as a bare `task` would silently move the
         # session onto Bedrock.
         self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/a"]}))
-        iterm_api.open_tabs(["task local 1234"])
+        iterm_api.open_tabs(["task anthropic 1234"])
         self.assertEqual(
             self.sent_request(),
-            {"op": "open_tabs", "commands": ["task local 1234"]},
+            {"op": "open_tabs", "commands": ["task anthropic 1234"]},
         )
 
     def test_open_tabs_sends_every_command_in_order(self):

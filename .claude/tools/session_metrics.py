@@ -133,6 +133,10 @@ class Rates:
 RATES_BY_MODEL: dict[str, Rates] = {
     "claude-opus-5": Rates(5.50, 27.50, 0.55, 11.00, verified="2026-09-11"),
     "claude-opus-5-5": Rates(4.40, 22.00, 0.22, 8.80, verified=None),
+    # The background tier. Same derivation as the Opus 5.5 row from the
+    # first-party list price ($0.10 / $0.50, cache read 0.1x and 1h write 2x
+    # input), at the up-to-100K-prompt tier, which background calls stay in.
+    "claude-haiku-5-5": Rates(0.11, 0.55, 0.011, 0.22, verified=None),
 }
 
 # The key a message with no recorded model is accumulated under. It is never
@@ -150,6 +154,9 @@ WORKTREE_SEGMENT = "/.claude/worktrees/"
 
 SUBSTRATE_BEDROCK = "bedrock"
 SUBSTRATE_SEAT = "seat"
+# What a launch now writes for the subscription substrate. `seat` is the retired
+# spelling, still on disk in older markers, so both read as the seat branch.
+SUBSTRATE_ANTHROPIC = "anthropic"
 
 
 # --------------------------------------------------------------------------- #
@@ -1384,7 +1391,7 @@ def resolve_substrate(cwd: str | None) -> tuple[str, str]:
     recorded = read_substrate_marker(cwd)
     if recorded == SUBSTRATE_BEDROCK:
         return SUBSTRATE_BEDROCK, "recorded by the launch verb"
-    if recorded == SUBSTRATE_SEAT:
+    if recorded in (SUBSTRATE_SEAT, SUBSTRATE_ANTHROPIC):
         return SUBSTRATE_SEAT, "recorded by the launch verb"
     if recorded is None:
         if tag_from_cwd(cwd) is None:

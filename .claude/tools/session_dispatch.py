@@ -7,7 +7,7 @@ the authorization, the same class as `fleet go` — this tool adds no gate of it
 own.
 
     python3 .claude/tools/session_dispatch.py task 1234
-    python3 .claude/tools/session_dispatch.py task local 1234
+    python3 .claude/tools/session_dispatch.py task anthropic 1234
     python3 .claude/tools/session_dispatch.py task 1234 + plan + housekeeping
     python3 .claude/tools/session_dispatch.py --dry-run plan
 
@@ -54,7 +54,7 @@ import iterm_api
 #:
 #: THIS IS INPUT VALIDATION, NOT POLICY. The ratified design says the dispatcher
 #: takes the verb and its arguments verbatim and adds no policy of its own —
-#: which it does: `local` passes straight through, so the substrate choice stays
+#: which it does: a substrate word passes straight through, so the choice stays
 #: at the call site where it belongs. What this table refuses is not a *choice*
 #: but a *shape*: the tool types its argument into an interactive shell, so
 #: anything that is not one of these forms would be arbitrary command execution
@@ -67,6 +67,9 @@ import iterm_api
 #: from being exploitable; the point of this table is to refuse the shape.
 _TAG = re.compile(r"\A(?:eng-)?\d+\Z", re.ASCII)
 _NAME = re.compile(r"\A[a-z0-9][a-z0-9-]*\Z", re.ASCII)
+
+#: The substrate override words, the same on every verb that takes one.
+_SUBSTRATES = ("anthropic", "bedrock")
 
 
 def validate(argv: list[str]) -> list[str]:
@@ -85,11 +88,15 @@ def validate(argv: list[str]) -> list[str]:
     verb, args = argv[0], argv[1:]
 
     if verb == "task":
-        if args and args[0] in ("local", "resume"):
+        if args and args[0] == "local":
+            # The shell still takes it, with a deprecation line; a dispatch is
+            # generated text, so it should already speak the new word.
+            raise ValueError("`task local` is retired — dispatch `task anthropic <n>`")
+        if args and args[0] in (*_SUBSTRATES, "resume"):
             sub, rest = args[0], args[1:]
             # `task resume` alone is the picker, which is a legitimate thing to
-            # dispatch; `task local` alone is not, since there is no worktree to
-            # open. The shell says the same.
+            # dispatch; `task anthropic` alone is not, since there is no
+            # worktree to open. The shell says the same.
             if sub == "resume" and not rest:
                 return ["task", "resume"]
             if len(rest) != 1 or not _TAG.match(rest[0]):
@@ -122,9 +129,13 @@ def validate(argv: list[str]) -> list[str]:
         return ["explore", args[0]]
 
     if verb == "architect":
-        if len(args) != 1 or not _NAME.match(args[0]):
+        if not 1 <= len(args) <= 2 or not _NAME.match(args[0]):
             raise ValueError("`architect` takes one lowercase topic")
-        return ["architect", args[0]]
+        if len(args) == 2 and args[1] not in _SUBSTRATES:
+            raise ValueError(
+                "`architect <topic>` takes only anthropic or bedrock after it"
+            )
+        return ["architect", *args]
 
     if verb == "fleet":
         if not args:
@@ -133,9 +144,14 @@ def validate(argv: list[str]) -> list[str]:
             return ["fleet", "go"]
         raise ValueError("`fleet` takes nothing or `go`")
 
-    if verb in ("plan", "housekeeping"):
+    if verb == "plan":
+        if len(args) > 1 or (args and args[0] not in _SUBSTRATES):
+            raise ValueError("`plan` takes nothing, or anthropic or bedrock")
+        return ["plan", *args]
+
+    if verb == "housekeeping":
         if args:
-            raise ValueError(f"`{verb}` takes no arguments")
+            raise ValueError("`housekeeping` takes no arguments")
         return [verb]
 
     raise ValueError(f"unknown verb {verb!r}")

@@ -437,8 +437,7 @@ refuses a shape with no measured recurrence. **Repeated skill *prose*
 gets the same treatment**: one source under `.claude/shared/`, filled
 into marked regions by `make render-skills` and gated by
 `make render-check`, which also fails on a dangling marker. Extract
-only genuinely verbatim repetition — `plan`'s and `init-pr`'s model
-guards point opposite ways and are a pair, not a duplicate. Full
+only genuinely verbatim repetition; no block is extracted today. Full
 detail: `docs/conventions/skill-tooling.md`.
 
 ## Context economy
@@ -582,23 +581,22 @@ wiring, the helper family, and the iTerm setup:
 A session runs on **Bedrock** unless it needs something Bedrock lacks —
 web search, web fetch, deep research — or it is a **seat session by
 role** (`plan`, `architect`, `housekeeping`, `explore`). Sub-agents are
-not a differentiator. `task <n>` is Bedrock, `task local <n>` is the
-seat escape for work needing web research, and `housekeeping` stays on
+not a differentiator. `task <n>` is Bedrock, `task anthropic <n>` is
+the escape for work needing web research, and `housekeeping` stays on
 the seat deliberately because the operator uses it to open the 5-hour
 subscription window.
 
-A launch **records its substrate** in an untracked marker, and the
-resume verbs re-export it, because the slip is silent in both
-directions — a Bedrock session resumed onto the seat eats the
-subscription window; the reverse spends credits on attended work. An
-absent marker reads as **seat**. The seat pin IS the absence of
-`CLAUDE_CODE_USE_BEDROCK`, so a seat verb **clears** inherited Bedrock
-exports rather than only warning about them: these helpers export into
-the calling shell, so a tab that ran `task` stays a Bedrock tab. The
-model string lives in the untracked runtime config
-(`DS_BEDROCK_MODEL`); the launcher's fallback appends the **`[1m]`**
-window suffix, whose absence costs four fifths of the context and is
-never reported. Detail, and the verb table:
+Models are named by **role tier** — advisor (`plan`, `architect`,
+`explore`), executor (`task`, `housekeeping`), background — each set in
+the untracked runtime config (`DS_MODEL_<TIER>[_SUBSTRATE]`). Each verb
+pins its tier at launch and refuses an unresolved one, so no skill
+checks its own model; `plan bedrock` is the credit-pinch override.
+
+A launch **records its substrate** in an untracked marker; resume
+verbs re-export it and re-pin the tier, since the slip is silent both
+ways. An absent marker reads as **anthropic**, and an anthropic launch
+**clears** inherited Bedrock exports, since these helpers export into
+the calling shell. Detail and the verb table:
 `docs/conventions/local-integrations.md`.
 
 A planning session may **dispatch** a ready task — `session_dispatch.py`

@@ -35,13 +35,31 @@ class Grammar(unittest.TestCase):
             session_dispatch.validate(["task", "eng-1234"]), ["task", "eng-1234"]
         )
 
-    def test_task_local_passes_the_word_through(self):
+    def test_a_task_substrate_word_passes_through(self):
         # The substrate choice stays at the call site; the dispatcher adds no
         # policy of its own, which is exactly what this asserts.
+        for word in ("anthropic", "bedrock"):
+            with self.subTest(word=word):
+                self.assertEqual(
+                    session_dispatch.validate(["task", word, "1234"]),
+                    ["task", word, "1234"],
+                )
+
+    def test_the_retired_task_local_is_refused_with_its_replacement(self):
+        with self.assertRaisesRegex(ValueError, "task anthropic"):
+            session_dispatch.validate(["task", "local", "1234"])
+
+    def test_plan_and_architect_take_the_pinch_override(self):
         self.assertEqual(
-            session_dispatch.validate(["task", "local", "1234"]),
-            ["task", "local", "1234"],
+            session_dispatch.validate(["plan", "bedrock"]), ["plan", "bedrock"]
         )
+        self.assertEqual(
+            session_dispatch.validate(["architect", "fx", "bedrock"]),
+            ["architect", "fx", "bedrock"],
+        )
+        for argv in (["plan", "local"], ["architect", "fx", "local"]):
+            with self.subTest(argv=argv), self.assertRaises(ValueError):
+                session_dispatch.validate(argv)
 
     def test_task_resume_with_a_number(self):
         self.assertEqual(
@@ -54,10 +72,10 @@ class Grammar(unittest.TestCase):
             session_dispatch.validate(["task", "resume"]), ["task", "resume"]
         )
 
-    def test_task_local_alone_is_refused(self):
+    def test_task_anthropic_alone_is_refused(self):
         # No worktree to open, and the shell says the same.
         with self.assertRaises(ValueError):
-            session_dispatch.validate(["task", "local"])
+            session_dispatch.validate(["task", "anthropic"])
 
     def test_task_needs_an_argument(self):
         with self.assertRaises(ValueError):
@@ -154,7 +172,7 @@ class Grammar(unittest.TestCase):
             ["task", "$(whoami)"],
             ["explore", "a`id`"],
             ["architect", "x && echo pwned"],
-            ["task", "local", "1|sh"],
+            ["task", "anthropic", "1|sh"],
             ["explore", "../../etc/passwd"],
         ):
             with self.subTest(argv=hostile):
@@ -165,8 +183,8 @@ class Grammar(unittest.TestCase):
 class CommandLine(unittest.TestCase):
     def test_plain_words_are_not_mangled(self):
         self.assertEqual(
-            session_dispatch.command_line(["task", "local", "1234"]),
-            "task local 1234",
+            session_dispatch.command_line(["task", "anthropic", "1234"]),
+            "task anthropic 1234",
         )
 
     def test_quoting_is_a_property_of_the_function(self):
@@ -184,9 +202,9 @@ class DryRun(unittest.TestCase):
     def test_dry_run_prints_the_line_and_touches_nothing(self):
         out = io.StringIO()
         with redirect_stdout(out):
-            rc = session_dispatch.run(["--dry-run", "task", "local", "1234"])
+            rc = session_dispatch.run(["--dry-run", "task", "anthropic", "1234"])
         self.assertEqual(rc, 0)
-        self.assertEqual(out.getvalue().strip(), "task local 1234")
+        self.assertEqual(out.getvalue().strip(), "task anthropic 1234")
 
     def test_dry_run_prints_one_line_per_verb(self):
         out = io.StringIO()
@@ -214,9 +232,9 @@ class SplitVerbs(unittest.TestCase):
     def test_several_verbs_split_on_the_separator(self):
         self.assertEqual(
             session_dispatch.split_verbs(
-                ["task", "local", "1234", "+", "plan", "+", "housekeeping"]
+                ["task", "anthropic", "1234", "+", "plan", "+", "housekeeping"]
             ),
-            [["task", "local", "1234"], ["plan"], ["housekeeping"]],
+            [["task", "anthropic", "1234"], ["plan"], ["housekeeping"]],
         )
 
     def test_nothing_at_all_is_one_empty_group(self):
@@ -293,13 +311,13 @@ class Dispatch(unittest.TestCase):
         out = io.StringIO()
         with redirect_stdout(out):
             rc = session_dispatch.run(
-                ["task", "local", "1234", "+", "plan", "+", "architect", "fx"]
+                ["task", "anthropic", "1234", "+", "plan", "+", "architect", "fx"]
             )
 
         self.assertEqual(rc, 0)
-        self.assertEqual(seen, [["task local 1234", "plan", "architect fx"]])
+        self.assertEqual(seen, [["task anthropic 1234", "plan", "architect fx"]])
         text = out.getvalue()
-        self.assertIn("task local 1234 -> /dev/a", text)
+        self.assertIn("task anthropic 1234 -> /dev/a", text)
         self.assertIn("plan -> /dev/b", text)
         self.assertIn("architect fx -> /dev/c", text)
 
@@ -365,15 +383,15 @@ class BlockedDispatch(unittest.TestCase):
         self.assertIn("run this by hand", text)
         self.assertIn("task 1234", text)
 
-    def test_the_printed_verb_is_the_full_line_including_local(self):
-        # A `task local` dispatch that falls back must hand over the SUBSTRATE
+    def test_the_printed_verb_is_the_full_line_including_the_substrate(self):
+        # A `task anthropic` dispatch that falls back must hand over the SUBSTRATE
         # too — printing a bare `task 1234` would send the operator to Bedrock
         # for work that was deliberately routed to the seat.
         self._fail_with("nope")
         err = io.StringIO()
         with redirect_stderr(err):
-            session_dispatch.run(["task", "local", "1234"])
-        self.assertIn("task local 1234", err.getvalue())
+            session_dispatch.run(["task", "anthropic", "1234"])
+        self.assertIn("task anthropic 1234", err.getvalue())
 
     def test_a_blocked_batch_names_every_verb_not_just_the_first(self):
         # The operator has to hand-run the whole batch, so naming only the head

@@ -343,6 +343,10 @@ class TheGateActuallyGates(unittest.TestCase):
                 "STS_RC": str(sts_rc),
                 "LOGIN_RC": str(login_rc),
                 "POST_LOGIN_STS_RC": str(post_login_sts_rc),
+                # The verbs refuse an unset model tier before this gate is
+                # reached, so a placeholder tier keeps the case on the gate.
+                "DS_MODEL_ADVISOR": "judge-model[1m]",
+                "DS_MODEL_EXECUTOR": "work-model[1m]",
                 # The verb-level cases never exercise the old-CLI branch, so the
                 # subcommand-exists probe always succeeds here.
                 "LOGIN_HELP_RC": "0",
@@ -386,19 +390,25 @@ class GatedVerbSurface(unittest.TestCase):
         self.source = INIT.read_text(encoding="utf-8")
 
     def test_plan_and_housekeeping_are_gated(self):
-        for verb in ("plan", "housekeeping"):
-            self.assertIn(
-                "_ds_aws_login '%s' || return 1" % verb,
-                self.source,
-                "%s lost its AWS login gate" % verb,
-            )
+        # `plan` spells the refusal as an `if !` so it can undo a `plan bedrock`'s
+        # exports first; both forms refuse the launch.
+        for gate in (
+            "if ! _ds_aws_login 'plan'; then",
+            "_ds_aws_login 'housekeeping' || return 1",
+        ):
+            self.assertIn(gate, self.source, "lost its AWS login gate: %s" % gate)
 
     def test_the_gate_runs_after_the_seat_guard(self):
         # Ordering matters: the seat guard clears an `AWS_REGION` inherited from a
         # previous `task` in the same tab, and the AWS CLI reads that variable, so
-        # probing first would probe the Bedrock launcher's environment.
-        for verb in ("plan", "housekeeping"):
-            guard = self.source.index("_ds_seat_guard '%s'" % verb)
+        # probing first would probe the Bedrock launcher's environment. `plan`
+        # reaches the guard through `_ds_substrate_enter`, which also carries
+        # its `bedrock` override.
+        for verb, call in (
+            ("plan", "_ds_substrate_enter \"$substrate\" 'plan'"),
+            ("housekeeping", "_ds_seat_guard 'housekeeping'"),
+        ):
+            guard = self.source.index(call)
             gate = self.source.index("_ds_aws_login '%s'" % verb)
             self.assertLess(guard, gate, "%s probes before clearing the env" % verb)
 

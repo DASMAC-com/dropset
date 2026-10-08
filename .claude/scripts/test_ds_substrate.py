@@ -5,12 +5,13 @@ Three ratified properties are asserted here, each of which fails silently in
 production if it regresses — which is the whole reason they are tested rather
 than reviewed:
 
-  * The `[1m]` suffix survives the fallback composition. Bedrock defaults an
-    model with no suffix to the 200k window and reports nothing, so the symptom of
-    losing it is a session with four fifths of its context gone that looks
-    exactly like a session that filled up.
-  * An absent marker reads as `seat`. Every session predating markers is a
-    seat session, and the conservative error is spending the subscription
+  * Each verb launches its tier's model, delivered as a command-scoped
+    `ANTHROPIC_MODEL`, and a config that does not resolve launches nothing.
+    The fallbacks keep the `[1m]` suffix: Bedrock defaults an unsuffixed id to
+    the 200k window and reports nothing, so losing it looks exactly like a
+    session that filled up.
+  * An absent marker reads as `anthropic`. Every session predating markers is
+    a seat session, and the conservative error is spending the subscription
     window rather than spending credits on something unintended.
   * A seat verb CLEARS inherited Bedrock exports. The helpers export into the
     calling shell (they must — a child process could not set what `claude`
@@ -49,9 +50,15 @@ _SUITE_OWNED_ENV = (
     "AWS_BEARER_TOKEN_BEDROCK",
     "AWS_REGION",
     "CLAUDE_CODE_USE_BEDROCK",
+    "DS_BEDROCK_FAST_MODEL",
     "DS_BEDROCK_MODEL",
     "DS_BEDROCK_PROBE",
     "DS_BEDROCK_REGION",
+    "DS_MODEL_BACKGROUND",
+    "DS_MODEL_ADVISOR",
+    "DS_MODEL_ADVISOR_SUBSTRATE",
+    "DS_MODEL_EXECUTOR",
+    "DS_MODEL_EXECUTOR_SUBSTRATE",
     "DS_OP_ACCOUNT",
     "DS_OP_BEDROCK_REF",
     "ENABLE_PROMPT_CACHING_1H",
@@ -88,69 +95,329 @@ class SubstrateHarness(unittest.TestCase):
         )
 
 
-class ModelComposition(SubstrateHarness):
-    """`_ds_bedrock_model` — the `[1m]` suffix is the point."""
+#: A runtime config with every tier set. Placeholder ids, never real ones: the
+#: repo pins no model, and a test that did would need editing every release.
+_CONFIG = {
+    "DS_MODEL_ADVISOR": "judge-model[1m]",
+    "DS_MODEL_EXECUTOR": "work-model[1m]",
+    "DS_MODEL_BACKGROUND": "bg-profile-id",
+}
 
-    def test_fallback_composition_ends_in_the_1m_suffix(self):
-        # The ratified assertion, stated exactly as the spec states it: the
-        # stack exports a BARE profile id, and the launcher is what appends the
-        # window. If this ever regresses, nothing at runtime says so.
-        result = self._zsh("_ds_bedrock_model")
+
+class TierResolution(SubstrateHarness):
+    """`_ds_tier` — the role → model + substrate table, and its refusals."""
+
+    def _tier(self, tier, override="", env=None):
+        result = self._zsh(
+            f"_ds_tier {tier} '{override}'", env={**_CONFIG, **(env or {})}
+        )
+        return result, result.stdout.splitlines()
+
+    def test_the_default_substrates(self):
+        # Advisor defaults to the subscription, executor to Bedrock — the
+        # ratified role mapping.
+        result, lines = self._tier("advisor")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(
-            result.stdout.strip().endswith("[1m]"),
-            f"fallback model lost its window suffix: {result.stdout!r}",
-        )
+        self.assertEqual(lines, ["judge-model[1m]", "anthropic"])
+        result, lines = self._tier("executor")
+        self.assertEqual(lines, ["work-model[1m]", "bedrock"])
 
-    def test_fallback_is_the_us_cross_region_profile(self):
-        # `us.` rather than `global.`: the global profile routes to a
-        # region-less ARN that no IAM policy can pin, so residency could only be
-        # asserted. See infra/aws/README.md.
-        result = self._zsh("_ds_bedrock_model")
-        self.assertTrue(
-            result.stdout.strip().startswith("us."),
-            f"fallback model is not a us. profile: {result.stdout!r}",
-        )
+    def test_an_unset_model_refuses_and_names_the_variable(self):
+        # No committed fallback: an unset tier must not launch on some id the
+        # repo carried, which is the generation-stale slip the tiers retire.
+        for tier, var in (
+            ("advisor", "DS_MODEL_ADVISOR"),
+            ("executor", "DS_MODEL_EXECUTOR"),
+        ):
+            with self.subTest(tier=tier):
+                result, lines = self._tier(tier, env={var: ""})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(lines, [])
+                self.assertIn(f"{var} is unset", result.stderr)
 
-    def test_configured_model_is_used_verbatim(self):
-        # The override exists so a model or window change is a one-line personal
-        # config edit. Rewriting it here would defeat that.
-        result = self._zsh(
-            "_ds_bedrock_model",
-            env={"DS_BEDROCK_MODEL": "us.anthropic.claude-fable-5-1[1m]"},
+    def test_the_configured_model_and_substrate_win_verbatim(self):
+        # The runtime config is the one place a new model lands, so a
+        # configured string must reach the launch untouched.
+        result, lines = self._tier(
+            "executor",
+            env={
+                "DS_MODEL_EXECUTOR": "next-model[1m]",
+                "DS_MODEL_EXECUTOR_SUBSTRATE": "anthropic",
+            },
         )
-        self.assertEqual(result.stdout.strip(), "us.anthropic.claude-fable-5-1[1m]")
+        self.assertEqual(lines, ["next-model[1m]", "anthropic"])
 
-    def test_configured_model_without_a_suffix_warns_but_is_honored(self):
-        # Warn, never refuse: the override is the operator's to make, and a
-        # refusal would make the escape hatch unusable for the deliberate case.
-        result = self._zsh(
-            "_ds_bedrock_model",
-            env={"DS_BEDROCK_MODEL": "us.anthropic.claude-opus-5"},
+    def test_the_override_beats_the_configured_substrate(self):
+        # `plan bedrock` in a credit pinch: one word, no config edit.
+        result, lines = self._tier(
+            "advisor", "bedrock", env={"DS_MODEL_ADVISOR_SUBSTRATE": "anthropic"}
         )
-        self.assertEqual(result.stdout.strip(), "us.anthropic.claude-opus-5")
+        self.assertEqual(lines, ["judge-model[1m]", "bedrock"])
+
+    def test_an_unknown_substrate_refuses_to_launch(self):
+        # The pre-session half of fail-fast: refuse offline, before a session
+        # starts and fails on its first turn.
+        result, lines = self._tier(
+            "advisor", env={"DS_MODEL_ADVISOR_SUBSTRATE": "local"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(lines, [])
+        self.assertIn("must be anthropic or bedrock", result.stderr)
+
+    def test_a_model_with_whitespace_refuses_to_launch(self):
+        result, lines = self._tier("executor", env={"DS_MODEL_EXECUTOR": "claude opus"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(lines, [])
+        # The reason, so an undefined function or a syntax error cannot pass.
+        self.assertIn("is not a model id", result.stderr)
+
+    def test_an_unknown_tier_refuses(self):
+        result, lines = self._tier("frontier")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(lines, [])
+        self.assertIn("unknown model tier", result.stderr)
+
+    def test_config_escapes_are_echoed_literally(self):
+        # The refusal echoes operator config, so `print -r`: no escape expands.
+        result, _ = self._tier(
+            "executor", env={"DS_MODEL_EXECUTOR_SUBSTRATE": "x\\tbad"}
+        )
+        self.assertIn("x\\tbad", result.stderr)
+
+    def test_an_unsuffixed_model_on_bedrock_warns_but_is_honored(self):
+        # Warn, never refuse: the override is the operator's to make.
+        result, lines = self._tier(
+            "executor", env={"DS_MODEL_EXECUTOR": "us.anthropic.some-model"}
+        )
+        self.assertEqual(lines, ["us.anthropic.some-model", "bedrock"])
         self.assertIn("no context-window", result.stderr)
 
-    def test_a_suffixed_configured_model_is_silent(self):
-        result = self._zsh(
-            "_ds_bedrock_model",
-            env={"DS_BEDROCK_MODEL": "us.anthropic.claude-opus-5[200k]"},
+    def test_a_suffixed_model_is_silent(self):
+        # The positive assertion keeps the `assertNotIn` from passing
+        # vacuously when the function emits nothing at all.
+        result, lines = self._tier(
+            "executor", env={"DS_MODEL_EXECUTOR": "work-model[200k]"}
         )
-        # The positive assertion is not decoration. On its own the
-        # `assertNotIn` below passes vacuously — if the function emitted
-        # nothing, exited non-zero, or did not exist at all, stderr is still
-        # silent and the case still goes green.
-        self.assertEqual(result.stdout.strip(), "us.anthropic.claude-opus-5[200k]")
+        self.assertEqual(lines, ["work-model[200k]", "bedrock"])
         self.assertNotIn("no context-window", result.stderr)
+
+    def test_the_retired_bedrock_spelling_is_named(self):
+        # A config still on the old name gets told the new one.
+        result, lines = self._tier(
+            "executor", env={"DS_MODEL_EXECUTOR": "", "DS_BEDROCK_MODEL": "x[1m]"}
+        )
+        self.assertEqual(lines, [])
+        self.assertIn("DS_BEDROCK_MODEL is retired", result.stderr)
+
+
+class VerbLaunch(SubstrateHarness):
+    """End-to-end through each verb, with `claude` stubbed to report its env.
+
+    The model is delivered as a command-scoped `ANTHROPIC_MODEL`, so the stub
+    sees it and the shell afterwards must not — that is the no-leak property.
+    """
+
+    _STUBS = (
+        'claude() { print -r -- "MODEL=${ANTHROPIC_MODEL-unset}'
+        ' USE=${CLAUDE_CODE_USE_BEDROCK-unset} ARGS=$*"; }; '
+        "_ds_base() { :; }; _ds_secrets() { :; }; _ds_aws_login() { :; }; "
+        "_ds_pull() { :; }; "
+    )
+    _AFTER = '; print -r -- "RC=$?"; print -r -- "AFTER=${ANTHROPIC_MODEL-unset}"'
+    _TOKEN = {"AWS_BEARER_TOKEN_BEDROCK": "placeholder-key"}
+
+    def _launch(self, verb, env=None):
+        result = self._zsh(
+            self._STUBS + verb + self._AFTER, env={**_CONFIG, **(env or {})}
+        )
+        return result, result.stdout
+
+    def test_plan_launches_the_advisor_tier_on_anthropic(self):
+        result, out = self._launch("plan")
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+        # No `--model` flag: the environment is the one delivery mechanism.
+        self.assertNotIn("--model", out)
+        self.assertIn("AFTER=unset", out)
+
+    def test_plan_bedrock_is_the_pinch_override(self):
+        result, out = self._launch("plan bedrock", env=self._TOKEN)
+        self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
+
+    def test_plan_rejects_any_other_word(self):
+        result, out = self._launch("plan local")
+        self.assertIn("RC=1", out)
+        self.assertNotIn("MODEL=", out)
+
+    def test_a_plan_after_a_task_in_the_same_tab_is_not_on_bedrock(self):
+        # The inherited Bedrock pin must lose to the verb's own tier.
+        result, out = self._launch("task 7; plan", env=self._TOKEN)
+        lines = [ln for ln in out.splitlines() if ln.startswith("MODEL=")]
+        self.assertEqual(len(lines), 2, out)
+        self.assertTrue(lines[0].startswith("MODEL=work-model[1m] USE=1"))
+        self.assertTrue(lines[1].startswith("MODEL=judge-model[1m] USE=unset"))
+
+    def test_task_launches_the_executor_tier_on_bedrock(self):
+        result, out = self._launch("task 7", env=self._TOKEN)
+        self.assertIn("MODEL=work-model[1m] USE=1", out, result.stderr)
+        self.assertIn("-w eng-7", out)
+
+    def test_task_anthropic_and_the_retired_local_alias(self):
+        # The marker the launch writes is read raw: `_ds_substrate_read` would
+        # map a stale `seat` to anthropic too, so it cannot tell them apart.
+        marker = 'print -r -- "MARK=$(<$_DS_SUBSTRATE_DIR/eng-7)"'
+        result, out = self._launch(f"task anthropic 7; {marker}")
+        self.assertIn("MODEL=work-model[1m] USE=unset", out, result.stderr)
+        self.assertIn("MARK=anthropic", out)
+        result, out = self._launch("task local 7")
+        self.assertIn("MODEL=work-model[1m] USE=unset", out)
+        self.assertIn("`local` is retired", result.stderr)
+
+    def test_task_bedrock_overrides_an_anthropic_executor_config(self):
+        result, out = self._launch(
+            "task bedrock 7",
+            env={**self._TOKEN, "DS_MODEL_EXECUTOR_SUBSTRATE": "anthropic"},
+        )
+        self.assertIn("MODEL=work-model[1m] USE=1", out, result.stderr)
+
+    def test_a_bad_config_launches_nothing(self):
+        # With a token, so a missing-token refusal cannot satisfy it instead.
+        result, out = self._launch(
+            "task 7", env={**self._TOKEN, "DS_MODEL_EXECUTOR_SUBSTRATE": "seat"}
+        )
+        self.assertIn("RC=1", out)
+        self.assertNotIn("MODEL=", out)
+        self.assertIn("must be anthropic or bedrock", result.stderr)
+
+    def test_explore_is_pinned_to_anthropic_whatever_the_advisor_config(self):
+        # It writes no marker, so a resume always lands on anthropic; launching
+        # it anywhere else would make that resume switch provider.
+        result, out = self._launch(
+            "explore 12",
+            env={**self._TOKEN, "DS_MODEL_ADVISOR_SUBSTRATE": "bedrock"},
+        )
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+        self.assertIn("-w eng-12", out)
+
+    def test_a_refused_plan_bedrock_login_leaves_no_bedrock_env(self):
+        result, out = self._launch(
+            "_ds_aws_login() { return 1; }; plan bedrock; "
+            'print -r -- "USE=${CLAUDE_CODE_USE_BEDROCK-unset}"',
+            env=self._TOKEN,
+        )
+        self.assertNotIn("MODEL=", out)
+        self.assertIn("USE=unset", out)
+
+    def test_housekeeping_runs_the_executor_model_on_anthropic_always(self):
+        result, out = self._launch(
+            "housekeeping", env={"DS_MODEL_EXECUTOR_SUBSTRATE": "bedrock"}
+        )
+        self.assertIn("MODEL=work-model[1m] USE=unset", out, result.stderr)
+
+    def test_architect_takes_the_override_after_the_topic(self):
+        result, out = self._launch("architect pricing bedrock", env=self._TOKEN)
+        self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
+        result, out = self._launch("architect pricing")
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+        result, out = self._launch("architect pricing local")
+        self.assertIn("RC=1", out)
+        self.assertNotIn("MODEL=", out)
+
+    def test_resume_re_pins_a_task_session_on_its_recorded_substrate(self):
+        result, out = self._launch(
+            "_ds_substrate_write eng-8 bedrock; task resume 8", env=self._TOKEN
+        )
+        self.assertIn("MODEL=work-model[1m] USE=1", out, result.stderr)
+
+    def test_resume_of_an_unmarked_tag_re_pins_the_advisor_tier(self):
+        # The issue-keyed explore case: no marker, so advisor on anthropic,
+        # rather than the saved default the old resume path fell back to.
+        result, out = self._launch("task resume 9")
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+
+
+class ModelsVerb(SubstrateHarness):
+    """`models` — the offline table, and `check` against a stubbed `aws`."""
+
+    #: Logs each `aws` argv to a file (`models` discards the call's own output)
+    #: and answers ACTIVE only for `known-*` profiles. `env -u VAR` is stubbed
+    #: to drop its two arguments and run the rest.
+    _AWS = (
+        'aws() { print -r -- "AWS $*" >> "$_DS_REPO/aws.log"; '
+        '[[ "$*" == *known-* ]]; }; '
+        # Refuses unless the call really strips the bearer token, so dropping
+        # `env -u AWS_BEARER_TOKEN_BEDROCK` from `models` fails the suite.
+        'env() { [[ "$1 $2" == "-u AWS_BEARER_TOKEN_BEDROCK" ]] || return 9; '
+        'shift 2; "$@"; }; '
+    )
+
+    def _models(self, args, env=None):
+        result = self._zsh(
+            self._AWS + f'models {args}; print -r -- "RC=$?"; '
+            '[[ -f "$_DS_REPO/aws.log" ]] && print -r -- "$(<$_DS_REPO/aws.log)"',
+            env={**_CONFIG, **(env or {})},
+        )
+        return result, result.stdout
+
+    def test_the_table_is_offline_and_complete(self):
+        result, out = self._models("")
+        self.assertIn("advisor  judge-model[1m]  (anthropic)", out, result.stderr)
+        self.assertIn("executor  work-model[1m]  (bedrock)", out)
+        self.assertIn("background  bg-profile-id", out)
+        self.assertNotIn("AWS ", out)
+        self.assertIn("RC=0", out)
+
+    def test_an_unset_tier_makes_the_table_fail(self):
+        result, out = self._models("", env={"DS_MODEL_EXECUTOR": ""})
+        self.assertIn("advisor  judge-model[1m]", out)
+        self.assertNotIn("executor  ", out)
+        self.assertIn("RC=1", out)
+
+    def test_check_maps_first_party_ids_but_not_background(self):
+        result, out = self._models(
+            "check",
+            env={
+                "DS_MODEL_ADVISOR": "claude-known-judge[1m]",
+                "DS_MODEL_EXECUTOR": "us.anthropic.known-work",
+                "DS_MODEL_BACKGROUND": "claude-known-bg",
+                "DS_AWS_PROFILE": "admin",
+            },
+        )
+        self.assertIn("ok     advisor us.anthropic.claude-known-judge", out)
+        self.assertIn("ok     executor us.anthropic.known-work", out)
+        # Background is checked verbatim, the way Claude Code passes it.
+        self.assertIn("--inference-profile-identifier claude-known-bg", out)
+        self.assertIn("--profile admin", out)
+        self.assertIn("RC=0", out)
+
+    def test_check_fails_on_an_unknown_profile(self):
+        result, out = self._models(
+            "check", env={"DS_MODEL_ADVISOR": "claude-missing[1m]"}
+        )
+        self.assertIn("FAIL   advisor us.anthropic.claude-missing", out)
+        # A non-`claude-*`, non-Bedrock id is an alias, reported not failed.
+        self.assertIn("skip   executor work-model[1m]", out)
+        self.assertIn("RC=1", out)
 
 
 class MarkerRoundTrip(SubstrateHarness):
     """`_ds_substrate_write` / `_ds_substrate_read`."""
 
-    def test_absent_marker_reads_as_seat(self):
+    def test_absent_marker_reads_as_anthropic(self):
         # The conservative default, and the one every pre-marker session gets.
         result = self._zsh("_ds_substrate_read eng-999")
-        self.assertEqual(result.stdout.strip(), "seat")
+        self.assertEqual(result.stdout.strip(), "anthropic")
+
+    def test_the_retired_seat_spelling_reads_as_anthropic(self):
+        # Markers written before the vocabulary change must resume unchanged.
+        result = self._zsh("_ds_substrate_write eng-5 seat; _ds_substrate_read eng-5")
+        self.assertEqual(result.stdout.strip(), "anthropic")
+
+    def test_marker_presence_is_the_resume_tier(self):
+        result = self._zsh(
+            "_ds_substrate_write eng-6 anthropic; _ds_resume_tier eng-6; "
+            "_ds_resume_tier eng-998"
+        )
+        self.assertEqual(result.stdout.split(), ["executor", "advisor"])
 
     def test_bedrock_round_trips(self):
         result = self._zsh(
@@ -158,15 +425,17 @@ class MarkerRoundTrip(SubstrateHarness):
         )
         self.assertEqual(result.stdout.strip(), "bedrock")
 
-    def test_seat_round_trips(self):
-        result = self._zsh("_ds_substrate_write eng-2 seat; _ds_substrate_read eng-2")
-        self.assertEqual(result.stdout.strip(), "seat")
+    def test_anthropic_round_trips(self):
+        result = self._zsh(
+            "_ds_substrate_write eng-2 anthropic; _ds_substrate_read eng-2"
+        )
+        self.assertEqual(result.stdout.strip(), "anthropic")
 
-    def test_a_garbage_marker_reads_as_seat(self):
+    def test_a_garbage_marker_reads_as_anthropic(self):
         # Same reasoning as the absent case: an unparseable value must not be
         # taken as license to spend credits.
         result = self._zsh("_ds_substrate_write eng-3 wat; _ds_substrate_read eng-3")
-        self.assertEqual(result.stdout.strip(), "seat")
+        self.assertEqual(result.stdout.strip(), "anthropic")
 
     def test_write_survives_an_unwritable_state_directory(self):
         # Best-effort by design: a marker is an optimization over the seat
@@ -394,19 +663,33 @@ class BedrockEnvGate(SubstrateHarness):
             'print -r -- "REGION=$AWS_REGION"; '
             'print -r -- "FAST=$ANTHROPIC_DEFAULT_HAIKU_MODEL"; '
             'print -r -- "CACHE=$ENABLE_PROMPT_CACHING_1H"',
-            env={"AWS_BEARER_TOKEN_BEDROCK": "placeholder-key"},
+            env={**_CONFIG, "AWS_BEARER_TOKEN_BEDROCK": "placeholder-key"},
         )
         self.assertIn("rc=0", result.stdout)
-        self.assertIn("MODEL=us.anthropic.claude-opus-5-5[1m]", result.stdout)
+        # The model is NOT exported: the verb scopes it to its one `claude`
+        # command, so it cannot linger in the tab.
+        self.assertIn("MODEL=\n", result.stdout)
         self.assertIn("REGION=us-west-2", result.stdout)
         self.assertIn("CACHE=1", result.stdout)
-        # The fast tier is pinned so background sub-turns bill to credits too,
-        # rather than quietly falling back to the subscription.
-        # The full id, suffix included: Bedrock rejects the bare form as an
-        # invalid identifier, so a prefix check would let that revert ship.
-        self.assertIn(
-            "FAST=us.anthropic.claude-haiku-4-5-20251001-v1:0\n", result.stdout
+        # The background tier is pinned so background sub-turns bill to credits
+        # too, rather than quietly falling back to the subscription. Verbatim
+        # and newline-anchored: Claude Code passes it through untouched.
+        self.assertIn("FAST=bg-profile-id\n", result.stdout)
+
+    def test_an_unset_background_tier_warns_and_pins_nothing(self):
+        # Background failures degrade niceties only, so this warns rather than
+        # refusing — and must not leave a stale pin from an earlier launch.
+        result = self._zsh(
+            '_ds_bedrock_env; print -r -- "rc=$?"; '
+            'print -r -- "FAST=${ANTHROPIC_DEFAULT_HAIKU_MODEL-unset}"',
+            env={
+                "AWS_BEARER_TOKEN_BEDROCK": "placeholder-key",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "stale-id",
+            },
         )
+        self.assertIn("rc=0", result.stdout)
+        self.assertIn("FAST=unset", result.stdout)
+        self.assertIn("DS_MODEL_BACKGROUND is unset", result.stderr)
 
     def test_the_region_is_overridable(self):
         result = self._zsh(
@@ -446,6 +729,7 @@ class VerbSurface(unittest.TestCase):
             "architect",
             "fleet",
             "cdds",
+            "models",
         ):
             with self.subTest(verb=verb):
                 self.assertTrue(self._defined(verb), f"{verb} is not defined")

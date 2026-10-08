@@ -1,6 +1,6 @@
 ---
 name: init-pr
-description: Bootstrap a worktree — pre-check the session's model tier and the gh credential first, then fetch main, set up the branch, push a draft PR, and warm CI caches.
+description: Bootstrap a worktree — pre-check the gh credential and signing first, then fetch main, set up the branch, push a draft PR, and warm CI caches.
 disable-model-invocation: true
 user-invocable: true
 ---
@@ -11,32 +11,19 @@ Bootstrap the current worktree: fetch main, set up the branch, push a
 draft PR so CI caches start warming while work continues. This is the
 first skill an agent runs after `claude --worktree <tag>` starts.
 
-Three cheap pre-checks come **first**, before anything that mutates the
-worktree: the model tier, the `gh` credential (with commit signing),
-and whether the issue already has a merged PR. Each catches a failure
-that is otherwise discovered late and expensively.
+Two cheap pre-checks come **first**, before anything that mutates the
+worktree: the `gh` credential (with commit signing), and whether the
+issue already has a merged PR. Each catches a failure that is
+otherwise discovered late and expensively.
+
+There is **no model check**: `task` pins the executor tier's model at
+launch and refuses to start when it does not resolve (see
+`docs/conventions/local-integrations.md`), so a turn spent asking
+which model is running buys nothing.
 
 The measured incidents behind the rules below live in
 [`history.md`](history.md) — one provenance line here, the figures
 there.
-
-## Step 0: check which model this session is running as
-
-Before any other work, read the model from the system prompt.
-Planning sessions run on a Fable/Mythos-tier model; implementation
-sessions (`init-pr` → run-to-completion → `review-pr`) run on the saved
-default. If this session is **Fable/Mythos-tier**, stop and ask via
-`AskUserQuestion`:
-
-1. *"Restart this session on the default model and re-run /init-pr"*
-   — recommended. Stop; the user restarts.
-1. *"Continue on this model anyway"* — proceed, and don't ask again.
-
-Gate on that **named tier list**, never on "is not Opus": a Haiku or
-Sonnet session is a deliberate cheap-run experiment. A skill cannot
-switch models, so detect-and-stop is the whole mechanism. `review-pr`
-gets no such guard — it runs inside the session this one already
-vetted.
 
 ## Step 0b: pre-check the GitHub credential and signing
 

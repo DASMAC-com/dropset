@@ -430,12 +430,21 @@ curl https://bedrock-mantle.us-east-1.api.aws/v1/data_retention \
 
 Models whose `allowed_modes` include `none` are unaffected by the
 account setting — a more permissive account mode does not cause their
-content to be retained. **That includes the Opus family this stack now
-defaults to.** The opt-in was made when Fable 5.1 was the ratified
-agent model, and it is kept because the model is a parameter: a
-Fable-class model has to keep working without an infrastructure change.
-So read the opt-in as removing a constraint on which models are
-selectable, not as a statement about what happens to Opus traffic.
+content to be retained, which is what keeps executor-tier traffic out of
+review while its model allows `none`. The opt-in dates from when
+Fable 5.1 was the ratified agent model, and it is kept because a
+Fable-class model has to keep working without an infrastructure
+change — `plan bedrock`, the advisor tier's credit-pinch override,
+depends on it. So read the opt-in as removing a
+constraint on which models are selectable, not as a statement about
+what happens to executor-tier traffic.
+
+**It cannot be narrowed to spare Fable traffic.** The opt-in is a
+condition of Fable access, not a dial on it: a region whose mode is
+not `aws_review` refuses Fable outright (the `400` above), and the
+mode is per-region rather than per-model or per-identity. So a Bedrock
+Fable session is a retained session, and the operator has accepted that
+for the pinch case.
 
 ### Why the `us.` inference profile, not `global.`
 
@@ -461,7 +470,8 @@ if throughput headroom ever justifies it.
 ### Launching an agent session
 
 **The `task` verb does this for you** — `.claude/shell/init.zsh` exports
-the whole set below and resolves the key from 1Password at launch. See
+the set below, resolves the key from 1Password at launch, and hands the
+model to `claude` for that one command rather than exporting it. See
 `docs/conventions/local-integrations.md` → "Session helpers" for the
 verb table and the substrate rule that decides which verbs get these
 exports at all. What follows is the equivalent by hand, for debugging a
@@ -470,12 +480,11 @@ launch that misbehaves:
 ```sh
 export CLAUDE_CODE_USE_BEDROCK=1
 export AWS_REGION=us-west-2
-export ANTHROPIC_MODEL='us.anthropic.claude-opus-5-5[1m]'
-export ANTHROPIC_DEFAULT_HAIKU_MODEL=\
-'us.anthropic.claude-haiku-4-5-20251001-v1:0'
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="$DS_MODEL_BACKGROUND"  # if set
 export ENABLE_PROMPT_CACHING_1H=1
 export AWS_BEARER_TOKEN_BEDROCK="$(op read \
   --account "$DS_OP_ACCOUNT" "$DS_OP_BEDROCK_REF")"
+ANTHROPIC_MODEL="$DS_MODEL_EXECUTOR" claude
 ```
 
 `DS_OP_BEDROCK_REF` is the `op://` coordinate, defined alongside the
@@ -485,27 +494,29 @@ carries placeholder shapes only. Resolving it at launch rather than
 exporting the key into a long-lived shell keeps the value out of every
 process that does not need it.
 
-**The model string is runtime config, not code.** `DS_BEDROCK_MODEL` in
-that same untracked file carries the full string, context-window suffix
-included, and the launcher uses it verbatim — so changing model or
-window is a one-line personal-config edit with no repo change. Unset,
-the launcher falls back to this stack's exported profile id **with
-`[1m]` appended**, because the export is the bare profile id and the
-suffix's absence is silent: it costs four fifths of the context window
-and nothing reports it. A shell test asserts that composition ends in
-the suffix, and a configured string carrying no suffix draws a
-launch-time warning rather than a refusal — the override is the
-operator's to make.
+**The model string is runtime config, not code, and not a stack
+value.** The launcher reads a role-named tier from that same untracked
+file (`DS_MODEL_EXECUTOR` for `task`; the full table is in the
+local-integrations convention) and uses it verbatim, window suffix
+included; **no model id is pinned anywhere in the repo**, so a new
+model is a runtime-config edit only. A first-party id
+(`claude-<family>-<version>`) is portable: Claude Code maps it to the
+`us.anthropic.` profile on Bedrock (measured), so the same string
+serves both substrates. Give it a `[1m]` suffix: Bedrock defaults an
+unsuffixed id to the 200k window and nothing reports it, so a string
+without one draws a launch-time warning. This stack used to publish a
+default model id as an export; nothing read it, so it was retired —
+the identity here is model-agnostic.
 
-`ANTHROPIC_DEFAULT_HAIKU_MODEL` pins the fast tier at Bedrock Haiku so
-background sub-turns bill to credits alongside the primary model,
-rather than falling back to the subscription. The id needs its `-v1:0`
-suffix: Claude Code passes it through verbatim, and Bedrock rejects the
-bare `…-20251001` form as an invalid model identifier. A
-`ResourceNotFoundException` on the suffixed id saying model use case
-details have not been submitted means the account has not filed
-Anthropic's use-case form for that model yet — the id is right, and the
-form is an operator step.
+`ANTHROPIC_DEFAULT_HAIKU_MODEL` pins the background tier
+(`DS_MODEL_BACKGROUND`) so background sub-turns bill to credits
+alongside the primary model, rather than falling back to the
+subscription. Claude Code passes the id through verbatim, so it must be
+the exact Bedrock profile id — some carry a dated `-v1:0` suffix and
+some do not, and Bedrock rejects the wrong form as an invalid model
+identifier. A `ResourceNotFoundException` saying model use case details
+have not been submitted means the account has not filed Anthropic's
+use-case form for that model — an operator step.
 
 Setting `ANTHROPIC_MODEL` does more than pick the primary model: on
 Bedrock it also routes background tasks (session titles and the like) to
@@ -514,8 +525,7 @@ that same model. That matters for cost attribution, not for permissions
 nothing fails for want of a grant. The Sonnet auto-mode classifier is
 the case in point: Claude Code invokes it regardless of the model
 selected here, and the policy covers it. Switching models needs no
-template edit and no redeploy; `AgentModelId` only steers the default
-this stack publishes.
+template edit and no redeploy.
 
 `ENABLE_PROMPT_CACHING_1H` requests the 1-hour cache TTL in place of the
 5-minute default, billed at a higher write rate. If cache token counts

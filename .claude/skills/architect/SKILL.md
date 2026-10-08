@@ -73,11 +73,10 @@ says anything about an `ENG-###` scope.
 architect topic has no issue of its own, and the `ceo-` prefix
 is what keeps the fleet listing readable by role.
 
-It is a **seat** verb, like `plan`: this session argues
-strategy, so it runs the top tier, and a seat launch is what
-a Fable pin means. If the shell arrived carrying Bedrock
-exports from an earlier `task` in the same tab, `architect`
-clears them and says so.
+It runs the **advisor** tier, like `plan`: this session
+argues strategy, so it runs the top tier. If the shell arrived
+carrying Bedrock exports from an earlier `task` in the same
+tab, an anthropic launch clears them and says so.
 
 The session is named `ceo-<topic>`, so the fleet listing reads
 by role: `eng-*` implementers, `plan-*` planning, `ceo-*`
@@ -86,44 +85,14 @@ each long-horizon design thread gets its **own resumable
 session**, so parallel threads never share context and a
 volatility conversation cannot drift into a custody one.
 
-### Check the model before doing anything else
-
-<!-- render:begin fable-model-guard verb=architect -->
-
-Sessions of this kind deliberately run the most capable model —
-**fidelity is the point**, and a session that has quietly landed on
-the default implementation model will still *work*, which is exactly
-why the slip goes unnoticed.
-
-So on invocation, **before the bootstrap read**, check the model this
-session is running as. The system prompt states it. If it is **not** a
-Fable/Mythos-tier model, say so and offer the fix via
-`AskUserQuestion`, recommended option first:
-
-1. *"Run `/model fable` now and continue"* — recommended; it switches
-   the running session in place.
-1. *"Relaunch via `architect`"* — the deterministic path, at the cost of
-   restarting the session.
-1. *"Continue on this model anyway"* — proceed, and don't ask again
-   this session.
-
-This is the mirror of `init-pr`'s guard, pointing the other way: that
-one catches a planning-tier model about to burn a long implementation
-run, this one catches an implementation-tier model about to do work
-that needs the top tier.
-
-The `model:` frontmatter on this skill is **belt-and-braces, not the
-mechanism**. Whether it switches the session going forward or applies
-only to this invocation's execution is not specified, so it is not
-relied on — `architect` passing `--model claude-fable-5` at launch is the
-deterministic path, and the check above is what catches every other
-route in.
-
-<!-- render:end fable-model-guard -->
+**There is no in-session model check.** `architect` pins the
+advisor tier at launch and refuses to start when it does not
+resolve; `architect <topic> bedrock` is the credit-pinch
+override, as for `plan`.
 
 For an architect session specifically: doing long-horizon
-design on the implementation tier is the cheap-tier slip this
-catches.
+design on the executor tier is the cheap-tier slip that
+pin prevents.
 
 ## Bootstrap: minimal, deliberately
 
@@ -430,7 +399,7 @@ nobody filed is one that will not happen.
 ## A note on the shared substrate
 
 `plan` and this skill share most of their machinery — the model
-guard, the document conventions, the write-mangle rules,
+tier, the document conventions, the write-mangle rules,
 context economy — and differ in the **briefing**: the duty
 list, and what each is allowed to write.
 
