@@ -573,12 +573,13 @@ Both directions of drift are real, so both checks are worth running.
    Two honest limits on that. The order was venue-first: it went quiet,
    *then* we de-rostered, so the original silence was not ours — what
    was ours is that it became invisible rather than dark (item 6).
-   And re-rostering is verified on the **ticker** leg only, which
-   returned a print at 0.71805; the **candle** leg is asserted, not
-   measured, because candles come from trades and the pair is thinly
-   traded. Expect its `cex_prices` series to stay empty until it trades
-   again — a true-and-expected blank, which §4 still cannot render
-   distinctly (item 10).
+   And the pair is thin, not dead. Re-rostering was first verified on
+   the **ticker** leg only (a print at 0.71805); the **candle** leg was
+   measured on 2026-10-08, when the venue's hourly endpoint returned a
+   bucket for most hours of the preceding ~19 days but not every one.
+   Candles come from trades, so an hour without a trade is a
+   true-and-expected blank, which §4 still cannot render distinctly
+   (item 10).
 
 1. **A de-rostered product is invisible, not dark.** The registry is
    written at collector start, so dropping a product from the roster

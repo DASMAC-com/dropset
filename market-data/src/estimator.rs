@@ -44,9 +44,10 @@
 //! Only EURC composes on an **observed** basis. AUDD and CADC quote off the FX
 //! anchor times a pinned 1:1 redemption peg, because the re-scope for the first
 //! fills says the FX composite alone is enough for them — and because neither
-//! has a `*-USDC` candle series to compose from: CADC was never listed, and
-//! `AUDD-USDC` stopped producing. Pinning is honest where composing off a book
-//! that has gone quiet would *corroborate* the leg with a number nobody traded.
+//! has a candle series fit to compose from: CADC was never listed, and
+//! `AUDD-USDC` trades too thinly, printing most hours but not every one.
+//! Pinning is honest where composing off a book that goes quiet between trades
+//! would *corroborate* the leg with a number nobody traded recently.
 //!
 //! Note the leg this concerns is the **candle** series in `cex_prices`, not the
 //! ticker — see [`SOURCE_COINBASE`] — which is why the ticker's habit of
@@ -140,8 +141,8 @@ pub struct EstimatorMarket {
     /// Exactly one of this and [`Self::pinned_basis`] is `Some` — see the test
     /// that enforces it, and the module docs for why two markets are pinned.
     pub crypto_product: Option<&'static str>,
-    /// Basis to pin because the market has no `*-USDC` candle series to compose
-    /// from: CADC was never listed, and `AUDD-USDC` stopped producing. The
+    /// Basis to pin because the market has no candle series fit to compose
+    /// from: CADC was never listed, and `AUDD-USDC` trades too thinly. The
     /// module docs carry the argument.
     pub pinned_basis: Option<f64>,
     /// Last-resort static USD-per-token peg, used only when every live leg is
@@ -189,8 +190,8 @@ pub const MVP_MARKETS: [EstimatorMarket; 3] = [
         currency: "EUR",
         // The one market whose CEX basis is liquid enough to observe: Coinbase
         // lists `EURC-USDC` and the candle collector rosters it. That collector
-        // rosters `AUDD-USDC` too, but that book stopped producing — which is
-        // why AUDD is pinned rather than unwired.
+        // rosters `AUDD-USDC` too, but that book is too thin to compose from —
+        // which is why AUDD is pinned rather than unwired.
         crypto_product: Some("EURC-USDC"),
         pinned_basis: None,
         static_usd: 1.14,
