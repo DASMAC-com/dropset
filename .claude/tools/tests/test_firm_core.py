@@ -27,12 +27,17 @@ class GeneralizeBash(unittest.TestCase):
             "Bash(git commit:*)",
         )
 
-    def test_git_dash_c_path_kept_and_worktree_collapsed(self):
+    def test_git_dash_c_worktree_path_kept_verbatim(self):
+        # Collapsing the tag to `*` minted a rule the harness never matches.
         cmd = "git -C /repo/.claude/worktrees/eng-1 status --short"
         self.assertEqual(
             fc.generalize("Bash", {"command": cmd}),
-            "Bash(git -C /repo/.claude/worktrees/* status:*)",
+            "Bash(git -C /repo/.claude/worktrees/eng-1 status:*)",
         )
+
+    def test_a_literal_star_in_the_prefix_yields_no_rule(self):
+        cmd = "pnpm --dir * lint"
+        self.assertIsNone(fc.generalize("Bash", {"command": cmd}))
 
     def test_value_flag_dir_kept(self):
         self.assertEqual(
@@ -115,11 +120,16 @@ class GeneralizeBash(unittest.TestCase):
             "Bash(cargo test -p dropset:*)",
         )
 
-    def test_exact_mode_collapses_worktree(self):
+    def test_exact_mode_keeps_the_worktree_path(self):
         cmd = "git -C /r/.claude/worktrees/eng-9 diff"
         self.assertEqual(
             fc.generalize("Bash", {"command": cmd}, exact=True),
-            "Bash(git -C /r/.claude/worktrees/* diff:*)",
+            "Bash(git -C /r/.claude/worktrees/eng-9 diff:*)",
+        )
+
+    def test_exact_mode_refuses_a_literal_star(self):
+        self.assertIsNone(
+            fc.generalize("Bash", {"command": "gh api /r/issues/*/x"}, exact=True)
         )
 
 
@@ -172,6 +182,41 @@ class IsCovered(unittest.TestCase):
 
     def test_not_covered_when_absent(self):
         self.assertFalse(fc.is_covered("Bash(cargo test:*)", ["Bash(git add:*)"]))
+
+    def test_a_dead_glob_covers_nothing(self):
+        dead = "Bash(git -C /r/.claude/worktrees/* status:*)"
+        live = "Bash(git -C /r/.claude/worktrees/eng-1 status:*)"
+        self.assertFalse(fc.is_covered(live, [dead]))
+        # Not even its exact twin: it grants nothing at run time.
+        self.assertFalse(fc.is_covered(dead, [dead]))
+
+
+# The three real shapes that reached the allowlist and warned at every startup.
+_DEAD_GLOB_FIXTURE = [
+    "Bash(git -C /Users/me/repos/dropset/.claude/worktrees/* status:*)",
+    "Bash(pnpm --dir * lint:*)",
+    "Bash(gh api repos/o/r/issues/*/subscription:*)",
+]
+
+
+class DeadGlob(unittest.TestCase):
+    def test_flags_the_real_shapes(self):
+        for rule in _DEAD_GLOB_FIXTURE:
+            with self.subTest(rule=rule):
+                self.assertTrue(fc.is_dead_glob(rule))
+
+    def test_a_trailing_glob_alone_is_live(self):
+        for rule in ["Bash(git status:*)", "Bash(git *)", "Bash(ls)"]:
+            with self.subTest(rule=rule):
+                self.assertFalse(fc.is_dead_glob(rule))
+
+    def test_file_access_globs_are_real(self):
+        self.assertFalse(fc.is_dead_glob("Read(/r/.claude/worktrees/*/src/**)"))
+
+    def test_a_non_string_is_not_dead(self):
+        for entry in (None, 1, {"x": 1}):
+            with self.subTest(entry=entry):
+                self.assertFalse(fc.is_dead_glob(entry))
 
 
 class BareVerbWildcard(unittest.TestCase):

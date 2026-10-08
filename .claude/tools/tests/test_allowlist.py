@@ -28,6 +28,7 @@ from allowlist import (
     covers,
     cruft,
     load_allow,
+    prune_dead,
     refresh_decide,
     refresh_due,
     refresh_marker_path,
@@ -39,6 +40,15 @@ from allowlist import (
 
 def _settings(allow):
     return {"permissions": {"allow": allow}, "additionalDirectories": ["/some/dir"]}
+
+
+# The three real dead shapes that warned at every startup: a worktree-wildcard
+# `git -C`, a `pnpm --dir *`, and a `gh api` with a mid-path issue number star.
+_DEAD_GLOBS = [
+    "Bash(git -C /Users/me/repos/dropset/.claude/worktrees/* status:*)",
+    "Bash(pnpm --dir * lint:*)",
+    "Bash(gh api repos/o/r/issues/*/subscription:*)",
+]
 
 
 class LoadTests(unittest.TestCase):
@@ -200,6 +210,23 @@ class CoversTests(unittest.TestCase):
         self.assertEqual(out["insertion_index"], 2)
         self.assertEqual(out["would_subsume"], [0, 1])
 
+    def test_a_stored_dead_glob_covers_nothing_not_even_its_twin(self):
+        # The live sibling was already uncovered (Bash coverage is a literal
+        # prefix compare); the twin is what the dead-glob filter changes.
+        for rule in _DEAD_GLOBS:
+            with self.subTest(rule=rule):
+                out = covers(rule, _DEAD_GLOBS)
+                self.assertFalse(out["covered"])
+                # Uncovered but not firmable: a mining pass must not propose it.
+                self.assertTrue(out["dead"])
+
+    def test_a_live_rule_is_not_reported_dead(self):
+        self.assertFalse(covers("Bash(git status:*)", [])["dead"])
+
+    def test_a_non_string_entry_does_not_crash_the_dead_glob_filter(self):
+        allow = [None, 1, "WebFetch(domain:x.com)"]
+        self.assertTrue(firm_core.is_covered("WebFetch(domain:x.com)", allow))
+
 
 class ClassifyTests(unittest.TestCase):
     def _solo(self, rule):
@@ -211,6 +238,23 @@ class ClassifyTests(unittest.TestCase):
 
     def test_bare_bash_wildcard_is_over_broad(self):
         self.assertEqual(self._solo("Bash(:*)")[0], "over-broad")
+
+    def test_mid_pattern_glob_is_dead(self):
+        for rule in _DEAD_GLOBS:
+            with self.subTest(rule=rule):
+                self.assertEqual(
+                    self._solo(rule), ("dead-glob", "mid-pattern glob never matches")
+                )
+
+    def test_dead_glob_wins_over_a_stale_path_in_a_local_file(self):
+        rule = _DEAD_GLOBS[0]
+        verdict = classify(rule, 0, [rule], machine_local=True)
+        self.assertEqual(verdict[0], "dead-glob")
+
+    def test_dead_glob_wins_over_a_guard_conflict(self):
+        # The shape the live entry once had: dead first, so its grep is moot.
+        rule = "Bash(git -C /Users/me/repo/.claude/worktrees/* grep:*)"
+        self.assertEqual(self._solo(rule)[0], "dead-glob")
 
     def test_unscoped_file_root_is_over_broad(self):
         self.assertEqual(self._solo("Read(/**)")[0], "over-broad")
@@ -237,7 +281,7 @@ class ClassifyTests(unittest.TestCase):
         clean case; one that doesn't is `machine-path-stale`, tested below.
         """
         home = Path.home()
-        rule = f"Bash(git -C {home}/* status:*)"
+        rule = f"Bash(git -C {home} status:*)"
         self.assertIsNone(classify(rule, 0, [rule], machine_local=True))
 
     def test_a_malformed_path_is_flagged_even_when_machine_local(self):
@@ -321,7 +365,7 @@ class ClassifyTests(unittest.TestCase):
 class CruftFileAwarenessTests(unittest.TestCase):
     def test_a_local_settings_path_suppresses_absolute_path_flags(self):
         allow = [
-            "Bash(git -C /Users/me/repo/.claude/worktrees/*/ status:*)",
+            "Bash(git -C /Users/me/repo/.claude/worktrees/eng-1 status:*)",
             "Read(/Users/me/.zshrc)",
         ]
         out = cruft(allow, Path("/Users/me/repo/.claude/settings.local.json"))
@@ -353,8 +397,10 @@ class GuardConflictTests(unittest.TestCase):
         return classify(rule, 0, [rule], machine_local=True)
 
     def test_the_live_worktree_git_grep_grant_is_flagged(self):
-        # The real entry that motivated this, verbatim in shape.
-        rule = "Bash(git -C /Users/me/repo/.claude/worktrees/* grep:*)"
+        # The real entry that motivated this, with the dead `worktrees/*`
+        # wildcard it carried replaced by one worktree (that form is
+        # `dead-glob`, which outranks this — it grants nothing at all).
+        rule = "Bash(git -C /Users/me/repo/.claude/worktrees/eng-1 grep:*)"
         category, reason = self._solo(rule)
         self.assertEqual(category, "guard-conflict")
         self.assertIn("git grep", reason)
@@ -402,7 +448,7 @@ class GuardConflictTests(unittest.TestCase):
     def test_it_precedes_the_path_verdict(self):
         # The live entry carries an absolute worktree path, so a
         # machine-path/stale verdict would otherwise mask the real finding.
-        rule = "Bash(git -C /Users/nobody/definitely-not-here/* grep:*)"
+        rule = "Bash(git -C /Users/nobody/definitely-not-here grep:*)"
         self.assertEqual(self._solo(rule)[0], "guard-conflict")
 
     def test_a_missing_guard_degrades_to_no_finding(self):
@@ -544,6 +590,16 @@ class AddTests(unittest.TestCase):
                 self.assertFalse(out["added"], rule)
                 self.assertEqual(load_allow(p), [], rule)
 
+    def test_refuses_a_dead_glob_with_a_hint(self):
+        for rule in _DEAD_GLOBS:
+            with tempfile.TemporaryDirectory() as d:
+                p = self._path(d, [])
+                out = add(rule, p)
+                self.assertFalse(out["added"], rule)
+                self.assertIn("mid-pattern glob never matches", out["refused"])
+                self.assertIn("exact path", out["refused"])
+                self.assertEqual(load_allow(p), [], rule)
+
     def test_refusal_never_writes_even_a_scaffold(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "settings.local.json"
@@ -582,6 +638,58 @@ class AddTests(unittest.TestCase):
             self.assertEqual(
                 sorted(x.name for x in Path(d).iterdir()), ["settings.local.json"]
             )
+
+
+class PruneDeadTests(unittest.TestCase):
+    def _path(self, d, allow):
+        p = Path(d) / "settings.local.json"
+        p.write_text(json.dumps(_settings(allow)), encoding="utf-8")
+        return p
+
+    def test_removes_only_the_dead_rules(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._path(d, ["Bash(git status:*)", *_DEAD_GLOBS, "Read(/x/*/y)"])
+            out = prune_dead(p)
+            self.assertEqual(out["removed"], _DEAD_GLOBS)
+            self.assertEqual(out["count"], 2)
+            self.assertEqual(load_allow(p), ["Bash(git status:*)", "Read(/x/*/y)"])
+            settings = json.loads(p.read_text(encoding="utf-8"))
+            self.assertEqual(settings["additionalDirectories"], ["/some/dir"])
+
+    def test_only_the_allow_array_changes(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "settings.local.json"
+            settings = {
+                "permissions": {
+                    "allow": [None, _DEAD_GLOBS[0], "Bash(git status:*)"],
+                    "deny": [_DEAD_GLOBS[1]],
+                    "ask": ["Bash(git push:*)"],
+                },
+                "env": {"X": "1"},
+            }
+            p.write_text(json.dumps(settings), encoding="utf-8")
+            prune_dead(p)
+            after = json.loads(p.read_text(encoding="utf-8"))
+            self.assertEqual(
+                after["permissions"]["allow"], [None, "Bash(git status:*)"]
+            )
+            self.assertEqual(after["permissions"]["deny"], [_DEAD_GLOBS[1]])
+            self.assertEqual(after["permissions"]["ask"], ["Bash(git push:*)"])
+            self.assertEqual(after["env"], {"X": "1"})
+
+    def test_a_clean_file_is_not_rewritten(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._path(d, ["Bash(git status:*)"])
+            before = p.read_text(encoding="utf-8")
+            out = prune_dead(p)
+            self.assertEqual(out, {"removed": [], "count": 1})
+            self.assertEqual(p.read_text(encoding="utf-8"), before)
+
+    def test_a_missing_file_is_a_no_op(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "settings.local.json"
+            self.assertEqual(prune_dead(p), {"removed": [], "count": 0})
+            self.assertFalse(p.exists())
 
 
 class RefreshDecideTests(unittest.TestCase):
@@ -871,6 +979,24 @@ class CliTests(unittest.TestCase):
             )
             self.assertEqual(rc, 0)
             self.assertTrue(out["added"])
+
+    def test_add_dispatch_exits_non_zero_on_a_dead_glob(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._write(d, ["Bash(git status:*)"])
+            rc, out = self._run_capture(
+                ["allowlist.py", "--settings", p, "add", _DEAD_GLOBS[1]]
+            )
+            self.assertEqual(rc, 1)
+            self.assertIn("mid-pattern glob", out["refused"])
+            self.assertEqual(load_allow(Path(p)), ["Bash(git status:*)"])
+
+    def test_prune_dead_dispatch(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._write(d, ["Bash(git status:*)", _DEAD_GLOBS[1]])
+            rc, out = self._run_capture(["allowlist.py", "--settings", p, "prune-dead"])
+            self.assertEqual(rc, 0)
+            self.assertEqual(out["removed"], [_DEAD_GLOBS[1]])
+            self.assertEqual(load_allow(Path(p)), ["Bash(git status:*)"])
 
     def test_add_dispatch_exits_non_zero_when_the_floor_refuses(self):
         with tempfile.TemporaryDirectory() as d:

@@ -768,6 +768,11 @@ It prints `{count, flagged: [{index, rule, category, reason}]}`
   `Bash(:*)`, an unscoped `Read(…)` / `Edit(…)` root, or a
   bare-verb wildcard that subsumes many narrower rules;
 
+- **dead globs** (`category: dead-glob`) — a Bash `*` left of
+  the trailing `:*`, read literally. Removal adds a prompt at
+  worst, so run the command above as `prune-dead` **ungated**
+  before the rest;
+
 - **dangerous one-offs** (`category: dangerous`) — `rm -rf`,
   `curl … | sh`, `git push --force`;
 
@@ -803,17 +808,11 @@ It prints `{count, flagged: [{index, rule, category, reason}]}`
   the guard is ever unwired (which 7b checks).
 
 **Don't expect `machine-path` on this repo's own allowlist.**
-The audited file is `settings.local.json` — git-ignored and
-machine-local by design — so an absolute `/Users/<name>/…` is
-the *correct* form there, and the check knows it (the response
-carries `machine_local_settings: true`). It used to flag them
-regardless, which returned **40 entries of which 39 were false
-positives**, nearly all load-bearing: the
-`git -C <base>/.claude/worktrees/*` rules the worktree flow
-needs, the `~/.zshrc` reads `local-integrations.md` prescribes,
-and the `python3 <base>/.claude/tools/*` entry point. If you
-see a wall of `machine-path` here, suspect the check before the
-allowlist.
+In the machine-local `settings.local.json` an absolute
+`/Users/<name>/…` is the *correct* form, and the check knows it
+(`machine_local_settings: true`); flagging them regardless once
+returned 39 false positives of 40. A wall of `machine-path`
+here means suspect the check before the allowlist.
 
 The helper is deterministic and pattern-based, so also skim
 its `flagged` list for a **secret** that leaked into a rule
@@ -833,7 +832,8 @@ the tool result, so preferring the Grep tool or
 `run_quiet.py inspect` is a **context-economy** rule, never a
 permissions one. Do not restate the churn framing.
 
-**Autonomy bound: propose, never auto-delete.** Dropping a
+**Autonomy bound: propose, never auto-delete** (bar
+`dead-glob`). Dropping a
 permission is low-blast-radius, but silently editing the
 allowlist unattended is surprising. In an **attended** pass,
 surface the shortlist via **`AskUserQuestion`** and remove
@@ -909,7 +909,8 @@ skill's mining — scan recent transcripts for repeated
 read-only shapes, test each candidate with
 `allowlist.py covers` (the existing check, so nothing already
 granted is re-proposed), and carry the survivors to the
-closing gate. Then stamp it, whatever the yield:
+closing gate, dropping any `covers` calls `dead`. Then
+stamp it, whatever the yield:
 
 ```sh
 python3 .claude/tools/allowlist.py \
@@ -1119,7 +1120,8 @@ more useful than skipping the step and calling it deferred.
   reported here; that is the `plan` skill's output.
 - Permission allowlist: the `settings.local.json`
   entries flagged as cruft and, for an attended pass, which
-  the human approved removing — or that it was clean.
+  the human approved removing — or that it was clean — plus
+  the rules `prune-dead` removed ungated.
 - Permission refresh: whether the monthly gate was **due**, and
   if it ran, how many candidates the mining proposed and how
   many were granted — or one line saying it is not due yet and
