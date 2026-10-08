@@ -215,7 +215,13 @@ class CoversTests(unittest.TestCase):
         # prefix compare); the twin is what the dead-glob filter changes.
         for rule in _DEAD_GLOBS:
             with self.subTest(rule=rule):
-                self.assertFalse(covers(rule, _DEAD_GLOBS)["covered"])
+                out = covers(rule, _DEAD_GLOBS)
+                self.assertFalse(out["covered"])
+                # Uncovered but not firmable: a mining pass must not propose it.
+                self.assertTrue(out["dead"])
+
+    def test_a_live_rule_is_not_reported_dead(self):
+        self.assertFalse(covers("Bash(git status:*)", [])["dead"])
 
     def test_a_non_string_entry_does_not_crash_the_dead_glob_filter(self):
         allow = [None, 1, "WebFetch(domain:x.com)"]

@@ -6,8 +6,8 @@ read or extend the ``permissions.allow`` array without whole-reading the
 
 This is now the **whole** firming interface: the ``firm-perms`` skill that used to
 wrap it was retired on 2026-09-10, measured unused as a verb while the tool itself
-stayed in daily use. ``housekeeping`` step 7a drives ``cruft``; anything else
-firms a rule with ``add``.
+stayed in daily use. ``housekeeping`` step 7a drives ``prune-dead`` and
+``cruft``; anything else firms a rule with ``add``.
 
 The allowlist subcommands below (plus the ``refresh-due`` / ``refresh-record``
 cadence pair) all print JSON to stdout; ``covers`` and ``cruft`` only read the
@@ -18,7 +18,9 @@ deliberately without reading it first — that is the whole point).
 
 * ``covers RULE`` — is ``RULE`` already granted by the
   allowlist (exactly, or subsumed by a broader existing rule)? Prints
-  ``{covered, insertion_index, would_subsume, count}`` — ``insertion_index`` is
+  ``{covered, dead, insertion_index, would_subsume, count}`` — ``dead`` says
+  the candidate is itself a ``dead-glob`` (uncovered, but not firmable, so a
+  mining pass drops it rather than proposing it), ``insertion_index`` is
   where an uncovered rule would append (end of the array), and
   ``would_subsume`` lists the indices of existing narrower entries the new rule
   would make redundant. The membership + subsumption logic is ``firm_core``'s,
@@ -36,14 +38,15 @@ deliberately without reading it first — that is the whole point).
   and it enforces the **safety floor**, refusing any rule
   ``_over_broad_reason`` would flag (a bare wildcard, a bare-verb wildcard, an
   unscoped file-access root) with a non-zero exit rather than granting it. It
-  refuses a ``dead-glob`` rule the same way, since granting one grants nothing.
+  refuses a ``dead-glob`` rule the same way, since it would match no real
+  command.
 * ``cruft`` — return only the **suspicious** entries
   (``{index, rule, category, reason}``) plus the total ``count``, so the audit
   reasons over a short shortlist instead of the whole array. Categories mirror
   ``housekeeping`` step 7: ``over-broad`` (a bare-verb wildcard or an unscoped
   file-access root), ``dead-glob`` (a Bash rule with a ``*`` left of its
-  trailing ``:*``, which the harness reads as a literal star, so the rule never
-  matches), ``subsumed`` (a narrower rule an earlier one already
+  trailing ``:*``, which the harness reads as a literal star, so the rule
+  matches only a command carrying that star), ``subsumed`` (a narrower rule an earlier one already
   covers — the dead weight ``add`` never prunes), ``dangerous`` (an
   ``rm -rf`` / force-push / pipe-to-shell one-off), ``machine-path`` (a
   malformed path, or an absolute home path in a settings file where one does
@@ -169,8 +172,8 @@ _RULE_RE = re.compile(r"^([A-Za-z_]\w*)\((.*)\)$", re.DOTALL)
 # A Bash rule with a `*` left of its trailing `:*` (see `firm_core.is_dead_glob`).
 DEAD_GLOB_REASON = "mid-pattern glob never matches"
 DEAD_GLOB_HINT = (
-    "only the trailing :* is a glob; name the exact path (e.g. the one "
-    "worktree), or leave it to the auto permission mode"
+    "in a :* rule only the trailing :* is a glob; name the exact path "
+    "(e.g. the one worktree), or leave it to the auto permission mode"
 )
 
 
@@ -250,6 +253,7 @@ def covers(rule: str, allow: list[str]) -> dict:
     return {
         "rule": rule,
         "covered": covered,
+        "dead": firm_core.is_dead_glob(rule),
         "insertion_index": len(allow),
         "would_subsume": would_subsume,
         "count": len(allow),
@@ -716,7 +720,7 @@ def run(argv: list[str]) -> int:
     p_add.add_argument("rule", help="the allow-rule to add")
 
     sub.add_parser("cruft", help="return only the suspicious entries")
-    sub.add_parser("prune-dead", help="delete the rules that can never match")
+    sub.add_parser("prune-dead", help="delete the rules with a literal mid-pattern *")
 
     p_due = sub.add_parser("refresh-due", help="is a permission refresh due?")
     p_due.add_argument(

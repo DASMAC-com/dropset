@@ -293,10 +293,10 @@ def generalize_bash(command: str) -> str | None:
 
 
 def _live_bash_rule(literal: str) -> str | None:
-    """``Bash(<literal>:*)``, or ``None`` if that rule could never match.
+    """``Bash(<literal>:*)``, or ``None`` if that rule would be a dead glob.
 
     Worktree tags are **not** collapsed here, unlike a file-access rule: in a
-    Bash rule only the trailing ``:*`` is a glob, so a collapsed
+    ``:*`` rule only the trailing ``:*`` is a glob, so a collapsed
     ``.claude/worktrees/*`` segment is a literal star that no command carries.
     Every worktree rule this used to mint was dead on arrival (31 of them
     reached the allowlist, each warned about at every startup). The exact path

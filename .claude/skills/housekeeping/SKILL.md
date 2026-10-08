@@ -770,8 +770,8 @@ It prints `{count, flagged: [{index, rule, category, reason}]}`
 
 - **dead globs** (`category: dead-glob`) — a Bash `*` left of
   the trailing `:*`, read literally. Removal adds a prompt at
-  worst, so run the command above as `prune-dead` **ungated**,
-  first;
+  worst, so run the command above as `prune-dead` **ungated**
+  before the rest;
 
 - **dangerous one-offs** (`category: dangerous`) — `rm -rf`,
   `curl … | sh`, `git push --force`;
@@ -832,8 +832,8 @@ the tool result, so preferring the Grep tool or
 `run_quiet.py inspect` is a **context-economy** rule, never a
 permissions one. Do not restate the churn framing.
 
-**Autonomy bound: propose, never auto-delete** (`dead-glob`
-excepted, above). Dropping a
+**Autonomy bound: propose, never auto-delete** (bar
+`dead-glob`). Dropping a
 permission is low-blast-radius, but silently editing the
 allowlist unattended is surprising. In an **attended** pass,
 surface the shortlist via **`AskUserQuestion`** and remove
@@ -909,7 +909,7 @@ skill's mining — scan recent transcripts for repeated
 read-only shapes, test each candidate with
 `allowlist.py covers` (the existing check, so nothing already
 granted is re-proposed), and carry the survivors to the
-closing gate — never a dead glob, which `add` refuses. Then
+closing gate, dropping any `covers` calls `dead`. Then
 stamp it, whatever the yield:
 
 ```sh
