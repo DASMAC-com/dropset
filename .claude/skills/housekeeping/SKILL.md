@@ -948,9 +948,8 @@ harness-side, so the durable fix stays upstream; what the repo
 does check is the bound, in the local tier (CI has no home
 directory): `memory_audit.py` below reports any line past 160
 characters and the whole index past **12,000 bytes**
-(`index-over-cap`). Either finding is trimmed in this pass —
-shorten hooks, purge what no longer earns its slot — rather
-than listed for later.
+(`index-over-cap`). Shorten hooks in this pass; deleting a
+memory still goes through the purge bound below.
 
 **Read the memory BEFORE re-verifying the fact it records.**
 The asymmetry is the same one as slice-before-whole-read, and

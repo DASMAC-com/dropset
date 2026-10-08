@@ -20,8 +20,8 @@ never on invocation.
   needed a count.
 - **Whole-index byte cap.** The index is resident every turn of
   every session, Bedrock workers included, and the per-line width
-  bound alone did not stop it growing one line per memory. The cap
-  was proposed at 19,404 bytes; at pickup it measured 13,577, and
+  bound alone did not stop it growing one line per memory. The issue
+  reported the index at 19,404 bytes; at pickup it measured 13,577, and
   one purge to name-plus-hook lines took it to 9,542 with all 112
   pointers kept — under the 12,000 cap in one pass, so no frozen
   exception was built.
