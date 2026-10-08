@@ -894,22 +894,25 @@ fn log_tick(market: &EstimatorMarket, fair: &FairValue, stale: LegStaleness) {
 /// through to the runtime's `SIGKILL` grace period, abandoning the tick in
 /// flight with nothing said about it.
 ///
-/// **One listener for the whole run, registered before the first tick.** A
+/// **Listeners held for the whole run, registered before the first tick.** A
 /// tokio signal stream sees only deliveries made after it was created, and
 /// holds one that arrives while it is not being polled. So a stop arriving
 /// mid-tick is kept here and answered at the next sleep: the in-flight tick
 /// finishes — its transaction commits or rolls back whole — and the loop exits
-/// instead of starting another. A stream rebuilt per sleep had no listener
-/// while the tick body ran, and dropped exactly that stop through to `SIGKILL`.
+/// instead of starting another. A stream built per sleep would have no
+/// listener while the tick body runs, and would drop exactly that stop through
+/// to `SIGKILL`.
 ///
 /// Finishing the tick rather than racing it against the signal is deliberate:
 /// the publish is atomic either way, so cancelling buys only a faster exit
-/// from a tick that is seconds long, at the cost of a lost one.
+/// from a tick that is seconds long, at the cost of a lost one. The price is
+/// that a tick stuck on an unreachable database — the first one included —
+/// holds the stop until its own timeout, or until the orchestrator's `SIGKILL`.
 struct Shutdown {
     #[cfg(unix)]
-    term: Option<tokio::signal::unix::Signal>,
+    sigterm: Option<tokio::signal::unix::Signal>,
     #[cfg(unix)]
-    int: Option<tokio::signal::unix::Signal>,
+    sigint: Option<tokio::signal::unix::Signal>,
 }
 
 impl Shutdown {
@@ -920,8 +923,10 @@ impl Shutdown {
         #[cfg(unix)]
         {
             use tokio::signal::unix::{signal, SignalKind};
-            // Registration can only fail on a broken runtime; listening for the
-            // other signal alone is better than refusing to run.
+            // Registration fails only on a runtime without a signal driver or
+            // an OS refusal, and tokio installs no handler when it does: that
+            // signal keeps its default action, which terminates. Listening for
+            // the other alone is better than refusing to run.
             let register = |kind: SignalKind, name: &str| match signal(kind) {
                 Ok(s) => Some(s),
                 Err(err) => {
@@ -930,8 +935,8 @@ impl Shutdown {
                 }
             };
             Self {
-                term: register(SignalKind::terminate(), "SIGTERM"),
-                int: register(SignalKind::interrupt(), "SIGINT"),
+                sigterm: register(SignalKind::terminate(), "SIGTERM"),
+                sigint: register(SignalKind::interrupt(), "SIGINT"),
             }
         }
         #[cfg(not(unix))]
@@ -954,8 +959,8 @@ impl Shutdown {
                 }
             }
             tokio::select! {
-                _ = on(&mut self.term) => {}
-                _ = on(&mut self.int) => {}
+                _ = on(&mut self.sigterm) => {}
+                _ = on(&mut self.sigint) => {}
             }
         }
         // Not a deployed target, so it keeps the per-call listener and the
@@ -1334,11 +1339,18 @@ mod tests {
     ///
     /// Signals this test process itself. Once `listen` has registered, tokio's
     /// handler replaces the default action process-wide, so the delivery
-    /// cannot kill the test binary; it can only be seen, or lost.
+    /// cannot kill the test binary; it can only be seen, or lost. A listener
+    /// registered lazily, on first poll, would leave the default action in
+    /// place and the binary would die — which holds only while no other test
+    /// in this binary registers `SIGTERM` first.
     #[cfg(unix)]
     #[tokio::test]
     async fn a_stop_delivered_mid_tick_is_held_for_the_next_sleep() {
         let mut shutdown = Shutdown::listen();
+        assert!(
+            shutdown.sigterm.is_some(),
+            "the SIGTERM listener must register"
+        );
         let status = std::process::Command::new("kill")
             .args(["-TERM", &std::process::id().to_string()])
             .status()
