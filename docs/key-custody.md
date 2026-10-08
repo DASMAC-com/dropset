@@ -79,7 +79,9 @@ it live.
 
 **Superseded in part by mainnet mode.** The maker now has an explicit
 `--cluster mainnet` mode (`bots/maker-bot/src/cluster.rs`), so the
-paragraph above describes the localnet default only. Mainnet mode
+paragraph above describes the localnet default only. **There is now a
+mainnet signing path**, so in mainnet mode the risks below are live, not
+latent, and §3 is the bar that path is held to. Mainnet mode
 replaces the denylist with an exact match on mainnet-beta's genesis,
 and localnet mode keeps the denylist — the assertion now runs in both
 directions (`chain::assert_cluster`). The guard still runs before the
@@ -88,7 +90,7 @@ key is loaded. Mainnet mode takes its key from the secrets chain only;
 
 ### 1.2 The signing key is a committed localnet file
 
-The default leader key is `keys/EEEE.json`, one of fourteen keypairs
+The default leader key is `keys/EEEE.json`, one of sixteen keypairs
 committed to the repository. This is deliberate and already documented
 — `keys/README.md` carries an explicit warning that the secrets are in
 plain text, that anyone can sign for them, and that they must never be
@@ -294,7 +296,10 @@ exist.
 - The key is resolved from the secrets chain as `dropset/maker-leader`
   (the environment first, then 1Password; `feeds::secrets`), into
   memory only.
-- The decoded copies are scrubbed once the keypair holds the bytes.
+- The parser's two buffers are zeroed once the keypair holds the bytes.
+  That is best-effort hygiene, not a guarantee: the provider's
+  intermediate strings and the `DROPSET_MAKER_LEADER` value in the
+  process environment are not reached.
 - A key whose pubkey is on the committed `keys/` roster is refused even
   when it arrives through that chain. The roster is embedded as public
   keys, so the refusal does not depend on the working directory.

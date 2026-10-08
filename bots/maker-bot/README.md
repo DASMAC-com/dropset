@@ -98,13 +98,16 @@ mints) with the leader key from the secrets chain. Nothing is airdropped;
 fund the leader first:
 
 ```sh
-cargo run -p dropset-maker-bot -- --cluster mainnet --rpc <mainnet-rpc-url>
+cargo run -p dropset-maker-bot -- --cluster mainnet \
+  --rpc <mainnet-rpc-url> --ws <mainnet-ws-url>
 ```
 
-Stopping the bot (SIGINT / SIGTERM) **pulls its liquidity**: each market
-gets the kill stamp and then a zeroed profile, the same pair a
-kill-switch halt sends, before the process exits. A second signal exits
-at once without finishing.
+Stopping the bot (SIGINT / SIGTERM) **pulls its liquidity** before the
+process exits, with the same pair a kill-switch halt sends. A market
+whose book is still live gets the kill stamp. A market whose profile is
+not already zeroed then gets a zeroed profile. A failed send is logged
+and the other markets still go down; the process then exits non-zero. A
+second signal exits at once without finishing.
 
 ### Flags
 
@@ -115,7 +118,9 @@ at once without finishing.
   required in mainnet mode).
 - `--ws <url>` — PubSub websocket for the fill-event subscription
   (default: derived from `--rpc`, swapping the scheme and using the RPC
-  port + 1, so `8899` → `8900`).
+  port + 1, so `8899` → `8900`). Required in mainnet mode: the
+  derivation keeps only the host, dropping any API key a provider carries
+  in the URL path or query.
 - `--leader-key <path>` — localnet only: leader / quote-authority
   keypair (default `keys/EEEE.json`, the role key the bootstrap seeds
   every vault with). **Refused in mainnet mode**, where the key is the
@@ -126,8 +131,8 @@ at once without finishing.
 
 ### Environment
 
-Nothing to set: every feed in the cascade is keyless, so the bot prices
-its whole roster with no secret configured.
+Localnet mode needs nothing set: every feed in the cascade is keyless,
+so the bot prices its whole roster with no secret configured.
 
 Mainnet mode needs the leader key, resolved once at startup as the
 canonical secret `dropset/maker-leader` (`feeds::secrets`): the
@@ -148,8 +153,8 @@ committed `keys/` roster is refused.
   any address still passes while a port-forward to a public cluster is
   caught.
 
-- **One supervisor, one leader.** This localnet plumbing runs all
-  markets from one process under one quote-authority. The delegated
+- **One supervisor, one leader.** Both modes run all markets from one
+  process under one quote-authority. The delegated
   per-market `quote_authority` model (one hot key per market) is the
   devnet/mainnet promotion's concern.
 

@@ -1966,3 +1966,66 @@ async fn the_fx_session_fence_brackets_the_weekend() {
          bound satisfies every other assertion in this test"
     );
 }
+
+/// The quote-burn rollups are what the dashboard reads, and the existence probe
+/// only proves the two views are there. So assert what they compute: per-UTC
+/// hour and per-UTC day buckets, one row per market and kind, with the writes
+/// counted and each fee column summed. Two writes in one hour and one in the
+/// next pin both the grouping and the bucket boundary.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn the_quote_burn_views_bucket_and_sum_per_utc_hour_and_day() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    // 10:00:05 and 10:01:40 UTC on day zero, then 11:00:01.
+    for (ts, kind, sig, base, priority) in [
+        (36_005_i64, "reference", "sig-a", 5_000_i64, 0_i64),
+        (36_100, "reference", "sig-b", 5_000, 0),
+        (39_601, "kill", "sig-c", 5_000, 20_300),
+    ] {
+        sqlx::query(
+            "INSERT INTO maker_quote_writes
+                 (ts, market, kind, signature, base_fee_lamports, priority_fee_lamports)
+             VALUES ($1, 'EURC', $2, $3, $4, $5)",
+        )
+        .bind(ts)
+        .bind(kind)
+        .bind(sig)
+        .bind(base)
+        .bind(priority)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("insert {sig}: {e}"));
+    }
+
+    let rollup = |view: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (i64, String, i64, i64, i64, i64)>(&format!(
+                "SELECT extract(epoch FROM bucket)::bigint, kind, writes, \
+                        base_fee_lamports::bigint, priority_fee_lamports::bigint, \
+                        total_fee_lamports::bigint \
+                 FROM {view} WHERE market = 'EURC' ORDER BY 1, 2"
+            ))
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("read {view}: {e}"))
+        }
+    };
+
+    assert_eq!(
+        rollup("maker_quote_burn_hourly").await,
+        [
+            (36_000, "reference".to_string(), 2, 10_000, 0, 10_000),
+            (39_600, "kill".to_string(), 1, 5_000, 20_300, 25_300),
+        ]
+    );
+    assert_eq!(
+        rollup("maker_quote_burn_daily").await,
+        [
+            (0, "kill".to_string(), 1, 5_000, 20_300, 25_300),
+            (0, "reference".to_string(), 2, 10_000, 0, 10_000),
+        ]
+    );
+}

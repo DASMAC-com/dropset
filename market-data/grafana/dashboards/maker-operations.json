@@ -1753,9 +1753,9 @@
           "refId": "A"
         }
       ],
+      "timeFrom": "7d",
       "title": "Quote burn per day (all markets)",
-      "type": "table",
-      "timeFrom": "7d"
+      "type": "table"
     }
   ],
   "preload": false,

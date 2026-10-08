@@ -951,9 +951,21 @@ silently redirect those references.
   `maker_quote_burn_daily` views. Per **send**, not per tick, so the
   rollups count writes at the cadence the bot actually sent them — the
   measured side of the rung-TIF-versus-restamp tradeoff, and what a
-  mainnet leader has to be funded for. The fees are computed from the fee
-  schedule at send time rather than read back; the migration says why the
-  two agree.
+  mainnet leader has to be funded for. `kind` is `reference`, `kill` or
+  `profile`.
+
+  The fees are **computed from the fee schedule at send time**, not read
+  back with `getTransaction`, which would cost an RPC round trip on every
+  write (`chain::fee_burn`). `base_fee_lamports` is 5,000 per signature.
+  `priority_fee_lamports` is the compute-unit price times the requested
+  limit, rounded up. It is non-zero only on the kill stamp, the one write
+  sent with a price. No write requests a limit, so it is the runtime
+  default: 200,000 units per program instruction plus 3,000 per builtin
+  one, the price instruction included (SIMD-0170), capped at 1.4M.
+  Because the runtime charges on the requested limit rather than the units
+  consumed, the computed figure is what the chain charged — until the fee
+  schedule changes. This has not yet been checked against a `meta.fee`
+  read back on mainnet.
 
 - **`feed_health`** — current liveness per registered **polled** feed
   source, upserted in place.

@@ -1287,7 +1287,10 @@ mod tests {
         assert_eq!(leader_funding(Cluster::Localnet, low), Funding::Airdrop);
         assert_eq!(leader_funding(Cluster::Mainnet, low), Funding::WarnLow);
         for cluster in [Cluster::Localnet, Cluster::Mainnet] {
-            assert_eq!(leader_funding(cluster, MIN_LEADER_LAMPORTS), Funding::Enough);
+            assert_eq!(
+                leader_funding(cluster, MIN_LEADER_LAMPORTS),
+                Funding::Enough
+            );
         }
     }
 

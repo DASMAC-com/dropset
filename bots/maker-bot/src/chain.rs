@@ -366,8 +366,12 @@ fn send(
     let tx = Transaction::new_signed_with_payer(&all, Some(&leader.pubkey()), &[leader], blockhash);
     match client.send_and_confirm_transaction(&tx) {
         Ok(sig) => {
-            let (base_fee_lamports, priority_fee_lamports) =
-                fee_burn(tx.signatures.len(), ixs.len(), all.len() - ixs.len(), micro_lamports);
+            let (base_fee_lamports, priority_fee_lamports) = fee_burn(
+                tx.signatures.len(),
+                ixs.len(),
+                all.len() - ixs.len(),
+                micro_lamports,
+            );
             Ok(Sent {
                 signature: sig.to_string(),
                 base_fee_lamports,
