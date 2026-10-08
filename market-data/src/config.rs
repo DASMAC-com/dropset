@@ -28,8 +28,8 @@ const DEFAULT_POLL_INTERVAL_SECS: u64 = 15;
 /// `AUDD-USDC` is re-rostered alongside the ticker leg — see that collector's
 /// `DEFAULT_PRODUCTS` for why the listing, not the recent volume, is what
 /// justifies it. Candles come from trades, so unlike the ticker this leg
-/// genuinely produces nothing until the pair trades again; an empty window here
-/// is expected rather than faulted, and is the same shape as the documented
+/// produces nothing for a window in which the thin pair did not trade; such a
+/// gap is expected rather than faulted, and is the same shape as the documented
 /// weekend gap on the FX venues.
 ///
 /// A named constant rather than a literal in the call below because

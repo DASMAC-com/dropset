@@ -36,17 +36,19 @@ const SOURCE: &str = "coinbase";
 
 /// The two demo-roster tokens Coinbase lists against USDC.
 ///
-/// `AUDD-USDC` stopped producing on 2026-08-17 and was then de-rostered by
-/// config. Note the order: the venue went quiet **first** and the de-rostering
-/// followed, so the original silence was not ours — what was ours is that the
-/// product then became invisible rather than merely dark, which is the defect
-/// §6 of docs/dashboards.md describes.
-///
-/// It is back because the listing never went away: re-checked 2026-09-08, the
-/// product is `online` with `trading_disabled: false`. That is a weaker claim
-/// than "it will produce" — it is thinly traded, and a ticker poll returns the
-/// last print whether or not one happened recently. `limit_only` constrains
+/// Both are rostered and both produce. `AUDD-USDC` is thinly traded: re-checked
+/// 2026-10-08, it traded in fewer than half the hours of the preceding four
+/// weeks. A ticker poll returns the last print whether or not one happened
+/// recently, so a fresh row here is not a fresh trade. `limit_only` constrains
 /// trading on the venue, not this collector.
+///
+/// History, because it explains the pair's gap in the stored series: it went
+/// quiet on 2026-08-17 and was then de-rostered by config. The venue went quiet
+/// **first**, so the original silence was not ours — what was ours is that the
+/// product then became invisible rather than merely dark, which is the defect
+/// item 6 of §8 of docs/dashboards.md describes. It was re-rostered on
+/// 2026-09-08 because the listing never went away (`online`,
+/// `trading_disabled: false`).
 ///
 /// Worth distinguishing from the NGN decision in the sibling Frankfurter
 /// collector, which refuses to roster a currency for fear of a permanently
