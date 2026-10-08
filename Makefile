@@ -1067,6 +1067,15 @@ skill-size:
 hook-wiring:
 	python3 .claude/tools/hook_wiring.py $(ARGS)
 
+# The model-free morning upkeep pass, from the base repo root: fast-forward,
+# CLI upgrade, board-gated worktree/branch/notification cleanup, the settings
+# and memory checks, and the purge dry-run. Destructive steps dry-run until
+# DS_UPKEEP_ARMED=1; the report replaces one heading of the Planning document.
+# ARGS=--no-doc skips that write, ARGS=--json prints the structured result.
+.PHONY: upkeep
+upkeep:
+	python3 .claude/tools/upkeep.py run $(ARGS)
+
 # Check that every rendered region in a skill file still matches its single
 # source under .claude/shared/. Changing a shared convention otherwise means
 # editing every skill that restates it and remembering to look — a hand-sync

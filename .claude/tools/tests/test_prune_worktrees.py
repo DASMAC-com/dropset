@@ -61,18 +61,34 @@ class FakeGit:
     the pre-flight.
     """
 
-    def __init__(self, porcelain, dirty=(), modified=(), unpushed=(), no_upstream=()):
+    def __init__(
+        self,
+        porcelain,
+        dirty=(),
+        modified=(),
+        unpushed=(),
+        no_upstream=(),
+        local_branches=(),
+    ):
         self.porcelain = porcelain
         self.dirty = set(dirty)
         self.modified = set(modified)
         self.unpushed = dict(unpushed)
         self.no_upstream = set(no_upstream)
+        self.local_branches = list(local_branches)
         self.calls = []
 
     def __call__(self, args):
         self.calls.append(args)
         if args[:2] == ["worktree", "list"]:
             return 0, self.porcelain, ""
+        if args[0] == "for-each-ref":
+            return 0, "".join(f"{b}\n" for b in self.local_branches), ""
+        if args[0] == "rev-list":
+            branch = args[2].split("@", 1)[0]
+            if branch in self.no_upstream:
+                return 128, "", "no upstream configured"
+            return 0, "%s\n" % self.unpushed.get(branch, 0), ""
         if args[:2] == ["worktree", "remove"]:
             path = args[2]
             if path in self.dirty:
@@ -219,6 +235,51 @@ class PruneTests(unittest.TestCase):
         self.assertEqual(out["removed"], [])
         self.assertFalse(out["pruned"])
         self.assertNotIn(["worktree", "prune"], git.calls)
+
+
+class StrayBranchTests(unittest.TestCase):
+    """A merged branch whose worktree is already gone is deleted too."""
+
+    LOCALS = ["main", "eng-701", "eng-702", "eng-703", "eng-800", "eng-801"]
+
+    def test_a_stray_merged_branch_is_deleted(self):
+        git = FakeGit(PORCELAIN, local_branches=self.LOCALS)
+        out = prune({"eng-800"}, dry_run=False, git=git)
+        self.assertEqual(out["branches_removed"], ["eng-800"])
+        self.assertIn(["branch", "-D", "eng-800"], git.calls)
+        # an unmerged stray is untouched
+        self.assertNotIn(["branch", "-D", "eng-801"], git.calls)
+
+    def test_a_stray_with_unpushed_commits_is_skipped(self):
+        git = FakeGit(PORCELAIN, local_branches=self.LOCALS, unpushed={"eng-800": 2})
+        out = prune({"eng-800"}, dry_run=False, git=git)
+        self.assertEqual(out["branches_removed"], [])
+        self.assertEqual(out["skipped"][0]["path"], None)
+        self.assertIn("unpushed", out["skipped"][0]["reason"])
+        self.assertNotIn(["branch", "-D", "eng-800"], git.calls)
+
+    def test_a_stray_with_no_upstream_is_skipped(self):
+        git = FakeGit(PORCELAIN, local_branches=self.LOCALS, no_upstream=["eng-800"])
+        out = prune({"eng-800"}, dry_run=False, git=git)
+        self.assertEqual(out["branches_removed"], [])
+        self.assertNotIn(["branch", "-D", "eng-800"], git.calls)
+
+    def test_a_dry_run_reports_strays_without_deleting(self):
+        git = FakeGit(PORCELAIN, local_branches=self.LOCALS)
+        out = prune({"eng-800"}, dry_run=True, git=git)
+        self.assertEqual(out["branches_removed"], ["eng-800"])
+        self.assertTrue(all(c[:2] != ["branch", "-D"] for c in git.calls))
+
+    def test_a_worktree_branch_is_not_double_counted_as_a_stray(self):
+        git = FakeGit(PORCELAIN, local_branches=self.LOCALS)
+        out = prune({"eng-701"}, dry_run=False, git=git)
+        self.assertEqual([r["branch"] for r in out["removed"]], ["eng-701"])
+        self.assertEqual(out["branches_removed"], [])
+
+    def test_a_name_matching_nothing_is_reported_unmatched(self):
+        git = FakeGit(PORCELAIN, local_branches=self.LOCALS)
+        out = prune({"eng-701", "eng-999"}, dry_run=True, git=git)
+        self.assertEqual(out["unmatched"], ["eng-999"])
 
 
 class ReadMergedTests(unittest.TestCase):
