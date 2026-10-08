@@ -903,12 +903,16 @@ def _matches(pattern, line, allow_quoted=True):
 # option set: `git -c core.editor=dash commit -e -m '…'` hands the message
 # file to a program that runs it as a script. `printf` is absent for a
 # similar reason — zsh's `printf -v 'a[$(…)]'` evaluates the subscript.
+#
+# Each prose word must end at whitespace, not at `\b`: a word boundary also
+# falls before `=` and `-`, so `echo=1 dash -c '…'` — an assignment prefixing
+# a different command — read as `echo`, as did `echo-x` and `gh pr-x`.
 _PROSE_COMMAND = re.compile(
     r"\s*(?:git(?:\s+-C\s+"
     + _GIT_OPTION_VALUE
-    + r")*\s+(?:commit|tag|notes)\b"
-    + r"|gh\s+(?:pr|issue|release|api)\b"
-    + r"|echo\b)"
+    + r")*\s+(?:commit|tag|notes)"
+    + r"|gh\s+(?:pr|issue|release|api)"
+    + r"|echo)(?=\s|$)"
 )
 
 
@@ -1420,6 +1424,9 @@ def _self_test():
         ('echo "${x:-\\}"\'"}"\ngit push --force origin main\necho "\'"', "deny"),
         ("echo *(e:'git push --force origin main':)", "deny"),
         ("echo =(ssh host 'git push --force origin main')", "deny"),
+        # An assignment prefix is not the prose word it begins with.
+        ("echo=1 dash -c 'git push --force origin main'", "deny"),
+        ("echo=1 ksh -c 'git push -f origin eng-942'", "ask"),
         # A suppressed prose match must not hide a real push after it, and a
         # span's command start skips newlines that sit inside earlier quotes.
         ("echo 'git push --force origin main'\ngit push --force origin main", "deny"),
