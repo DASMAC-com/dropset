@@ -16,10 +16,6 @@
       "ceiling": 292086,
       "issue": "ENG-1604"
     },
-    ".claude/skills/trim-context/SKILL.md": {
-      "ceiling": 32278,
-      "issue": "ENG-1391"
-    },
     "CLAUDE.md": {
       "ceiling": 37497,
       "issue": "ENG-1392"

@@ -597,22 +597,6 @@ ENG-###s and how many levers each folded, how many parked levers were
 closed, how many were rejected and why, and how many remain parked for a
 later fold.
 
-## Appendix: the one-time legacy drain
-
-The retired inbox document may still exist with unfolded entries in it.
-Draining it is a **one-time** act, not part of this skill's normal pass,
-and it is best done in a planning session where the board is already
-open: read the document once, fold its remaining levers through steps
-3–4 above, then delete the document. Do not rebuild the document-mining
-path to do it — read it with the slice-reader if it overflows:
-
-```sh
-python3 .claude/tools/read_result.py <spilled-file> --field content --headings
-```
-
-Once it is gone, `LINEAR_SESSION_METRICS_DOC_ID` is dead configuration
-and can come out of the environment.
-
 ## Notes
 
 - **No source edits.** This skill writes only to Linear — the filed

@@ -446,10 +446,8 @@ of this section wrongly said otherwise — it claimed this session
 Neither of them commits anything. That is the 09-11 framing
 leaking; see "This session is read-only toward the repo".
 
-That overlap is real and worth de-duplicating **later**, when
-the template extraction lands. It is deliberately not a reason
-to delay this skill: implement the architect first, then let
-the generator fold the shared blocks in. The launchers are
+Verbatim overlap is de-duplicated by `make render-skills`
+(the model guard above already is). The launchers are
 likewise one parameterized helper in the committed shell init
 (`_ds_session`), differing in session name, initial prompt and
 **worktree tag** — that third parameter is what the spec home
