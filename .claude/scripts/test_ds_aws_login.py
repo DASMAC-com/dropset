@@ -343,6 +343,10 @@ class TheGateActuallyGates(unittest.TestCase):
                 "STS_RC": str(sts_rc),
                 "LOGIN_RC": str(login_rc),
                 "POST_LOGIN_STS_RC": str(post_login_sts_rc),
+                # The verbs refuse an unset model tier before this gate is
+                # reached, so a placeholder tier keeps the case on the gate.
+                "DS_MODEL_JUDGMENT": "judge-model[1m]",
+                "DS_MODEL_WORKER": "work-model[1m]",
                 # The verb-level cases never exercise the old-CLI branch, so the
                 # subcommand-exists probe always succeeds here.
                 "LOGIN_HELP_RC": "0",

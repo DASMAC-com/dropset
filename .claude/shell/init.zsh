@@ -605,31 +605,30 @@ _ds_topic_sid() {
 #   DS_MODEL_WORKER,   DS_MODEL_WORKER_SUBSTRATE
 #   DS_MODEL_BACKGROUND                (applied on Bedrock launches only)
 #
-# ONE MODEL ID SERVES BOTH SUBSTRATES. Claude Code maps a first-party id to the
-# `us.` cross-region profile when it runs on Bedrock (measured: `claude-opus-5-5`
-# went out as `us.anthropic.claude-opus-5-5`), so a substrate override flips
-# the provider without the operator having to know a second spelling. A
-# Bedrock-form id still works on Bedrock; it just stops being portable.
+# NO MODEL ID IS COMMITTED, deliberately, and there is no fallback. A model
+# ships every couple of months and the point of the tiers is to hot-swap it, so
+# the one place a model is pinned is the runtime config; the repo carries the
+# variable names and the schema only. A tier left unset refuses to launch and
+# names the variable, rather than quietly running a committed id that has gone
+# a generation stale — the slip that motivated the tiers in the first place.
 #
-# The fallbacks are FULL ids rather than aliases, because a full id is what was
-# verified on both substrates; a new model is a one-line runtime-config edit.
+# ONE MODEL ID SERVES BOTH SUBSTRATES. Claude Code maps a first-party id
+# (`claude-<family>-<version>`) to the `us.anthropic.` cross-region profile when
+# it runs on Bedrock (measured from its request log), so a substrate override
+# flips the provider without a second spelling. A Bedrock-form id still works on
+# Bedrock; it just stops being portable.
+#
+# The BACKGROUND slot is Claude Code's small model for session titles,
+# summaries and similar auxiliary calls, exported as
+# `ANTHROPIC_DEFAULT_HAIKU_MODEL`; a failure there degrades those niceties,
+# never task output. On the subscription Claude Code's own default is right, so
+# it is pinned on Bedrock launches only, and unset there it warns rather than
+# refuses. Claude Code passes it through verbatim, so it is the exact profile
+# id, with no window suffix.
 #
 # The classifier that reviews auto-mode actions is deliberately absent: Claude
 # Code runs it on Sonnet whatever is configured, so it has no tier of ours.
 # ---------------------------------------------------------------------------
-_DS_MODEL_JUDGMENT_FALLBACK='claude-fable-5-1[1m]'
-_DS_MODEL_WORKER_FALLBACK='claude-opus-5-5[1m]'
-
-# The background slot — session titles, summaries and similar auxiliary calls
-# Claude Code makes on its own, exported as `ANTHROPIC_DEFAULT_HAIKU_MODEL`. A
-# failure there degrades those niceties, never task output. On the subscription
-# Claude Code's own default is right, so it is pinned on Bedrock only, where it
-# would otherwise fall back to an id the account does not route.
-#
-# The `-v1:0` suffix is required: Claude Code passes this id through verbatim,
-# and Bedrock rejects the bare form with `400 The provided model identifier is
-# invalid` — measured. Unlike the other tiers, this id takes no window suffix.
-_DS_MODEL_BACKGROUND_FALLBACK='us.anthropic.claude-haiku-4-5-20251001-v1:0'
 
 # Where a session's substrate choice is recorded. See `_ds_substrate_write`.
 _DS_SUBSTRATE_DIR="$_DS_REPO/.claude/session-substrate"
@@ -671,12 +670,12 @@ _ds_tier() {
   case "$tier" in
     judgment)
       var=DS_MODEL_JUDGMENT
-      model="${DS_MODEL_JUDGMENT:-$_DS_MODEL_JUDGMENT_FALLBACK}"
+      model="$DS_MODEL_JUDGMENT"
       substrate="${override:-${DS_MODEL_JUDGMENT_SUBSTRATE:-anthropic}}"
       ;;
     worker)
       var=DS_MODEL_WORKER
-      model="${DS_MODEL_WORKER:-$_DS_MODEL_WORKER_FALLBACK}"
+      model="$DS_MODEL_WORKER"
       substrate="${override:-${DS_MODEL_WORKER_SUBSTRATE:-bedrock}}"
       ;;
     *)
@@ -685,11 +684,15 @@ _ds_tier() {
       ;;
   esac
 
-  # The retired spelling is named rather than silently ignored: a config still
-  # carrying it would otherwise launch on the fallback with no hint why.
-  if [[ "$tier" == worker && -n "$DS_BEDROCK_MODEL" && -z "$DS_MODEL_WORKER" ]]; then
-    print -u2 'dropset: DS_BEDROCK_MODEL is retired and ignored — rename it' \
-      'to DS_MODEL_WORKER in the runtime config.'
+  if [[ -z "$model" ]]; then
+    print -u2 "dropset: $var is unset — set it to a model id in the runtime" \
+      'config (the repo pins no model). Refusing to launch.'
+    # The retired spelling is named rather than left as a mystery.
+    if [[ "$tier" == worker && -n "$DS_BEDROCK_MODEL" ]]; then
+      print -u2 'dropset: DS_BEDROCK_MODEL is retired — rename it to' \
+        'DS_MODEL_WORKER.'
+    fi
+    return 1
   fi
 
   if [[ "$substrate" != (anthropic|bedrock) ]]; then
@@ -701,7 +704,7 @@ _ds_tier() {
     print -u2 "dropset: $var ('$model') is not a model id — refusing to launch."
     return 1
   fi
-  if [[ "$substrate" == bedrock && -n "${(P)var}" \
+  if [[ "$substrate" == bedrock \
     && "$model" != *'[1m]' && "$model" != *'[200k]' ]]; then
     print -u2 "dropset: $var ('$model') has no context-window suffix —" \
       'Bedrock will use 200k, not 1M, and will not say so.'
@@ -797,9 +800,13 @@ _ds_resume_tier() {
 # The MODEL is not exported here: the launching verb hands it to `claude` for
 # that one command, the same way on both substrates (see `_ds_session`).
 _ds_bedrock_env() {
-  if [[ -n "$DS_BEDROCK_FAST_MODEL" && -z "$DS_MODEL_BACKGROUND" ]]; then
-    print -u2 'dropset: DS_BEDROCK_FAST_MODEL is retired and ignored — rename' \
-      'it to DS_MODEL_BACKGROUND in the runtime config.'
+  # Background is the one tier that WARNS when unset rather than refusing: its
+  # failures degrade auxiliary niceties only, never the session's work.
+  if [[ -z "$DS_MODEL_BACKGROUND" ]]; then
+    print -u2 'dropset: DS_MODEL_BACKGROUND is unset — background calls on' \
+      'Bedrock use Claude Code'"'"'s own default, which may not route.'
+    [[ -n "$DS_BEDROCK_FAST_MODEL" ]] && print -u2 \
+      'dropset: DS_BEDROCK_FAST_MODEL is retired — rename it to DS_MODEL_BACKGROUND.'
   fi
 
   # Two of the variables below — `AWS_REGION` and the bearer token — are SHARED
@@ -819,7 +826,11 @@ _ds_bedrock_env() {
 
   export CLAUDE_CODE_USE_BEDROCK=1
   export AWS_REGION="${DS_BEDROCK_REGION:-us-west-2}"
-  export ANTHROPIC_DEFAULT_HAIKU_MODEL="${DS_MODEL_BACKGROUND:-$_DS_MODEL_BACKGROUND_FALLBACK}"
+  if [[ -n "$DS_MODEL_BACKGROUND" ]]; then
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="$DS_MODEL_BACKGROUND"
+  else
+    unset ANTHROPIC_DEFAULT_HAIKU_MODEL
+  fi
   export ENABLE_PROMPT_CACHING_1H=1
 
   # Resolved at launch, never held in a long-lived shell — the same lazy shape
@@ -1498,15 +1509,17 @@ models() {
   local tier model substrate profile rc=0
   for tier in judgment worker; do
     { read -r model; read -r substrate; } <<< "$(_ds_tier "$tier" '')"
-    [[ -n "$substrate" ]] || return 1
-    print -r -- "$tier  $model  ($substrate)"
+    if [[ -n "$substrate" ]]; then
+      print -r -- "$tier  $model  ($substrate)"
+    else
+      rc=1
+    fi
   done
-  print -r -- "background  ${DS_MODEL_BACKGROUND:-$_DS_MODEL_BACKGROUND_FALLBACK}  (Bedrock launches only)"
-  [[ "$1" == check ]] || return 0
+  print -r -- "background  ${DS_MODEL_BACKGROUND:-<unset>}  (Bedrock launches only)"
+  [[ "$1" == check ]] || return $rc
 
-  for model in "${DS_MODEL_JUDGMENT:-$_DS_MODEL_JUDGMENT_FALLBACK}" \
-    "${DS_MODEL_WORKER:-$_DS_MODEL_WORKER_FALLBACK}" \
-    "${DS_MODEL_BACKGROUND:-$_DS_MODEL_BACKGROUND_FALLBACK}"; do
+  for model in "$DS_MODEL_JUDGMENT" "$DS_MODEL_WORKER" "$DS_MODEL_BACKGROUND"; do
+    [[ -n "$model" ]] || continue
     profile="${model%%\[*}"
     if [[ "$profile" != claude-* && "$profile" != *.anthropic.* ]]; then
       print -r -- "skip   $model — an alias; Claude Code resolves it, not Bedrock"

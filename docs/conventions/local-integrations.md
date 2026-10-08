@@ -1468,29 +1468,33 @@ A substrate name ("seat") breaks the first time the top model leaves the
 subscription. "Frontier" was rejected too: the worker's model can be
 newer than the judgment model.
 
-| Tier         | Verbs                        | Default substrate   | Fallback model                                |
-| ------------ | ---------------------------- | ------------------- | --------------------------------------------- |
-| `JUDGMENT`   | `plan` `architect` `explore` | anthropic           | `claude-fable-5-1[1m]`                        |
-| `WORKER`     | `task` (`housekeeping`)      | bedrock             | `claude-opus-5-5[1m]`                         |
-| `BACKGROUND` | Claude Code's small slot     | follows the session | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| Tier         | Verbs                        | Default substrate   | Unset                |
+| ------------ | ---------------------------- | ------------------- | -------------------- |
+| `JUDGMENT`   | `plan` `architect` `explore` | anthropic           | refuses to launch    |
+| `WORKER`     | `task` (`housekeeping`)      | bedrock             | refuses to launch    |
+| `BACKGROUND` | Claude Code's small slot     | follows the session | warns (Bedrock only) |
 
-**The runtime config carries, per tier, exactly two things** — the
-model id and its substrate — and that is all the operator ever touches,
-and only when a model launches:
+**The model id lives ONLY in the runtime config, never in the repo.**
+Models ship every couple of months and the tiers exist to hot-swap
+them, so the repo version-controls the variable names and this schema
+and pins no model at all — not in the launcher, not in a fallback, not
+in this doc. A new model is one edit to the runtime config:
 
 ```sh
-DS_MODEL_JUDGMENT='claude-fable-5-1[1m]'
-DS_MODEL_JUDGMENT_SUBSTRATE=anthropic
-DS_MODEL_WORKER='claude-opus-5-5[1m]'
-DS_MODEL_WORKER_SUBSTRATE=bedrock
-DS_MODEL_BACKGROUND='us.anthropic.claude-haiku-4-5-20251001-v1:0'
+DS_MODEL_JUDGMENT='<model-id>[1m]'
+DS_MODEL_JUDGMENT_SUBSTRATE=anthropic   # optional; the default
+DS_MODEL_WORKER='<model-id>[1m]'
+DS_MODEL_WORKER_SUBSTRATE=bedrock       # optional; the default
+DS_MODEL_BACKGROUND='<bedrock-profile-id>'
 ```
 
-All five are optional; unset, the committed fallbacks apply. Three
-details are decisions rather than omissions:
+An unset judgment or worker model refuses to launch and names the
+variable, rather than quietly running a committed id that has gone a
+generation stale — the slip that motivated the tiers. Three details
+are decisions rather than omissions:
 
 - **One id serves both substrates.** Claude Code maps a first-party id
-  such as `claude-opus-5-5` to the `us.anthropic.…` cross-region
+  (`claude-<family>-<version>`) to the `us.anthropic.` cross-region
   profile when it runs on Bedrock (measured from its request log), so
   an override flips the provider without a second spelling. A
   Bedrock-form id still works on Bedrock; it is just not portable.
@@ -1499,25 +1503,23 @@ details are decisions rather than omissions:
   auxiliary work, whose failure degrades niceties and never task output
   — to whichever provider the session is on. It is pinned on Bedrock
   launches only; on the subscription Claude Code's own default is right.
-  The id needs its `-v1:0` suffix, and a "use case details have not been
-  submitted" error means the account's one-time Anthropic use-case form
-  for that model is still outstanding — an operator console step.
+  Claude Code passes the id through verbatim, so it must be the exact
+  Bedrock profile id, suffix and all, as `models check` reports it.
 - **The auto-mode classifier has no tier.** Claude Code runs it on
   Sonnet regardless of configuration.
 
 `housekeeping` takes the worker tier's **model** but always the
 anthropic substrate, since opening the subscription window is its
-point. The fallbacks carry `[1m]` because Bedrock defaults an
-unsuffixed id to the 200k window and reports nothing; a configured
-Bedrock string without a suffix **warns and is still honored**. The
-retired `DS_BEDROCK_MODEL` and `DS_BEDROCK_FAST_MODEL` are named on
-launch if still set, never silently ignored.
+point. A Bedrock model without a `[1m]` window suffix **warns and is
+still honored**, because Bedrock defaults an unsuffixed id to the 200k
+window and reports nothing. The retired `DS_BEDROCK_MODEL` and
+`DS_BEDROCK_FAST_MODEL` are named on launch if still set.
 
 **Fail-fast is deterministic, pre-session, and free.** Measured, the
 CLI does *not* reject an unknown id at startup — the session starts,
 and its first request fails with a `400` naming the model identifier
 as invalid. So every managed verb resolves its tier first and
-**refuses to launch** when the config does not resolve: an empty model, a model
+**refuses to launch** when the config does not resolve: an unset model, a model
 containing whitespace, or a substrate other than `anthropic` /
 `bedrock`. That check is offline. Whether an id names a **real** model
 is a network question and is deliberately *not* asked per launch — a

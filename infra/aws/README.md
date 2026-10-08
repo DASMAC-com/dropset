@@ -478,9 +478,8 @@ launch that misbehaves:
 ```sh
 export CLAUDE_CODE_USE_BEDROCK=1
 export AWS_REGION=us-west-2
-export ANTHROPIC_MODEL='claude-opus-5-5[1m]'
-export ANTHROPIC_DEFAULT_HAIKU_MODEL=\
-'us.anthropic.claude-haiku-4-5-20251001-v1:0'
+export ANTHROPIC_MODEL="$DS_MODEL_WORKER"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="$DS_MODEL_BACKGROUND"
 export ENABLE_PROMPT_CACHING_1H=1
 export AWS_BEARER_TOKEN_BEDROCK="$(op read \
   --account "$DS_OP_ACCOUNT" "$DS_OP_BEDROCK_REF")"
@@ -497,25 +496,25 @@ process that does not need it.
 value.** The launcher reads a role-named tier from that same untracked
 file (`DS_MODEL_WORKER` for `task`; the full table is in the
 local-integrations convention) and uses it verbatim, window suffix
-included. A first-party id such as `claude-opus-5-5` is portable:
-Claude Code maps it to the `us.anthropic.…` profile on Bedrock
-(measured), so the same string serves both substrates. The committed
-fallbacks carry `[1m]`, because Bedrock defaults an unsuffixed id to
-the 200k window and nothing reports it; a configured string without
-one draws a launch-time warning rather than a refusal. This stack used
-to publish a default model id as an export; nothing read it, so it was
-retired — the identity here is model-agnostic.
+included; **no model id is pinned anywhere in the repo**, so a new
+model is a runtime-config edit only. A first-party id
+(`claude-<family>-<version>`) is portable: Claude Code maps it to the
+`us.anthropic.` profile on Bedrock (measured), so the same string
+serves both substrates. Give it a `[1m]` suffix: Bedrock defaults an
+unsuffixed id to the 200k window and nothing reports it, so a string
+without one draws a launch-time warning. This stack used to publish a
+default model id as an export; nothing read it, so it was retired —
+the identity here is model-agnostic.
 
 `ANTHROPIC_DEFAULT_HAIKU_MODEL` pins the background tier
-(`DS_MODEL_BACKGROUND`) at Bedrock Haiku so background sub-turns bill
-to credits alongside the primary model, rather than falling back to the
-subscription. The id needs its `-v1:0`
-suffix: Claude Code passes it through verbatim, and Bedrock rejects the
-bare `…-20251001` form as an invalid model identifier. A
-`ResourceNotFoundException` on the suffixed id saying model use case
-details have not been submitted means the account has not filed
-Anthropic's use-case form for that model yet — the id is right, and the
-form is an operator step.
+(`DS_MODEL_BACKGROUND`) so background sub-turns bill to credits
+alongside the primary model, rather than falling back to the
+subscription. Claude Code passes the id through verbatim, so it must be
+the exact Bedrock profile id — some carry a dated `-v1:0` suffix and
+some do not, and Bedrock rejects the wrong form as an invalid model
+identifier. A `ResourceNotFoundException` saying model use case details
+have not been submitted means the account has not filed Anthropic's
+use-case form for that model — an operator step.
 
 Setting `ANTHROPIC_MODEL` does more than pick the primary model: on
 Bedrock it also routes background tasks (session titles and the like) to

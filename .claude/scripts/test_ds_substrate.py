@@ -95,22 +95,45 @@ class SubstrateHarness(unittest.TestCase):
         )
 
 
+#: A runtime config with every tier set. Placeholder ids, never real ones: the
+#: repo pins no model, and a test that did would need editing every release.
+_CONFIG = {
+    "DS_MODEL_JUDGMENT": "judge-model[1m]",
+    "DS_MODEL_WORKER": "work-model[1m]",
+    "DS_MODEL_BACKGROUND": "bg-profile-id",
+}
+
+
 class TierResolution(SubstrateHarness):
     """`_ds_tier` — the role → model + substrate table, and its refusals."""
 
     def _tier(self, tier, override="", env=None):
-        result = self._zsh(f"_ds_tier {tier} '{override}'", env=env)
+        result = self._zsh(
+            f"_ds_tier {tier} '{override}'", env={**_CONFIG, **(env or {})}
+        )
         return result, result.stdout.splitlines()
 
-    def test_the_fallbacks_and_default_substrates(self):
+    def test_the_default_substrates(self):
         # Judgment defaults to the subscription, worker to Bedrock — the
-        # ratified role mapping. Full ids carrying the 1M window: Bedrock
-        # defaults an unsuffixed id to 200k and says nothing.
+        # ratified role mapping.
         result, lines = self._tier("judgment")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(lines, ["claude-fable-5-1[1m]", "anthropic"])
+        self.assertEqual(lines, ["judge-model[1m]", "anthropic"])
         result, lines = self._tier("worker")
-        self.assertEqual(lines, ["claude-opus-5-5[1m]", "bedrock"])
+        self.assertEqual(lines, ["work-model[1m]", "bedrock"])
+
+    def test_an_unset_model_refuses_and_names_the_variable(self):
+        # No committed fallback: an unset tier must not launch on some id the
+        # repo carried, which is the generation-stale slip the tiers retire.
+        for tier, var in (
+            ("judgment", "DS_MODEL_JUDGMENT"),
+            ("worker", "DS_MODEL_WORKER"),
+        ):
+            with self.subTest(tier=tier):
+                result, lines = self._tier(tier, env={var: ""})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(lines, [])
+                self.assertIn(f"{var} is unset", result.stderr)
 
     def test_the_configured_model_and_substrate_win_verbatim(self):
         # The runtime config is the one place a new model lands, so a
@@ -118,18 +141,18 @@ class TierResolution(SubstrateHarness):
         result, lines = self._tier(
             "worker",
             env={
-                "DS_MODEL_WORKER": "claude-opus-6[1m]",
+                "DS_MODEL_WORKER": "next-model[1m]",
                 "DS_MODEL_WORKER_SUBSTRATE": "anthropic",
             },
         )
-        self.assertEqual(lines, ["claude-opus-6[1m]", "anthropic"])
+        self.assertEqual(lines, ["next-model[1m]", "anthropic"])
 
     def test_the_override_beats_the_configured_substrate(self):
         # `plan bedrock` in a credit pinch: one word, no config edit.
         result, lines = self._tier(
             "judgment", "bedrock", env={"DS_MODEL_JUDGMENT_SUBSTRATE": "anthropic"}
         )
-        self.assertEqual(lines, ["claude-fable-5-1[1m]", "bedrock"])
+        self.assertEqual(lines, ["judge-model[1m]", "bedrock"])
 
     def test_an_unknown_substrate_refuses_to_launch(self):
         # The pre-session half of fail-fast: refuse offline, before a session
@@ -154,26 +177,26 @@ class TierResolution(SubstrateHarness):
     def test_an_unsuffixed_model_on_bedrock_warns_but_is_honored(self):
         # Warn, never refuse: the override is the operator's to make.
         result, lines = self._tier(
-            "worker", env={"DS_MODEL_WORKER": "us.anthropic.claude-opus-5"}
+            "worker", env={"DS_MODEL_WORKER": "us.anthropic.some-model"}
         )
-        self.assertEqual(lines, ["us.anthropic.claude-opus-5", "bedrock"])
+        self.assertEqual(lines, ["us.anthropic.some-model", "bedrock"])
         self.assertIn("no context-window", result.stderr)
 
     def test_a_suffixed_model_is_silent(self):
         # The positive assertion keeps the `assertNotIn` from passing
         # vacuously when the function emits nothing at all.
         result, lines = self._tier(
-            "worker", env={"DS_MODEL_WORKER": "claude-opus-5-5[200k]"}
+            "worker", env={"DS_MODEL_WORKER": "work-model[200k]"}
         )
-        self.assertEqual(lines, ["claude-opus-5-5[200k]", "bedrock"])
+        self.assertEqual(lines, ["work-model[200k]", "bedrock"])
         self.assertNotIn("no context-window", result.stderr)
 
     def test_the_retired_bedrock_spelling_is_named(self):
-        # Silently ignoring it would launch on the fallback with no hint why.
+        # A config still on the old name gets told the new one.
         result, lines = self._tier(
-            "worker", env={"DS_BEDROCK_MODEL": "us.anthropic.claude-opus-5-5[1m]"}
+            "worker", env={"DS_MODEL_WORKER": "", "DS_BEDROCK_MODEL": "x[1m]"}
         )
-        self.assertEqual(lines, ["claude-opus-5-5[1m]", "bedrock"])
+        self.assertEqual(lines, [])
         self.assertIn("DS_BEDROCK_MODEL is retired", result.stderr)
 
 
@@ -194,19 +217,21 @@ class VerbLaunch(SubstrateHarness):
     _TOKEN = {"AWS_BEARER_TOKEN_BEDROCK": "placeholder-key"}
 
     def _launch(self, verb, env=None):
-        result = self._zsh(self._STUBS + verb + self._AFTER, env=env)
+        result = self._zsh(
+            self._STUBS + verb + self._AFTER, env={**_CONFIG, **(env or {})}
+        )
         return result, result.stdout
 
     def test_plan_launches_the_judgment_tier_on_anthropic(self):
         result, out = self._launch("plan")
-        self.assertIn("MODEL=claude-fable-5-1[1m] USE=unset", out, result.stderr)
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
         # No `--model` flag: the environment is the one delivery mechanism.
         self.assertNotIn("--model", out)
         self.assertIn("AFTER=unset", out)
 
     def test_plan_bedrock_is_the_pinch_override(self):
         result, out = self._launch("plan bedrock", env=self._TOKEN)
-        self.assertIn("MODEL=claude-fable-5-1[1m] USE=1", out, result.stderr)
+        self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
 
     def test_plan_rejects_any_other_word(self):
         result, out = self._launch("plan local")
@@ -218,19 +243,19 @@ class VerbLaunch(SubstrateHarness):
         result, out = self._launch("task 7; plan", env=self._TOKEN)
         lines = [ln for ln in out.splitlines() if ln.startswith("MODEL=")]
         self.assertEqual(len(lines), 2, out)
-        self.assertTrue(lines[0].startswith("MODEL=claude-opus-5-5[1m] USE=1"))
-        self.assertTrue(lines[1].startswith("MODEL=claude-fable-5-1[1m] USE=unset"))
+        self.assertTrue(lines[0].startswith("MODEL=work-model[1m] USE=1"))
+        self.assertTrue(lines[1].startswith("MODEL=judge-model[1m] USE=unset"))
 
     def test_task_launches_the_worker_tier_on_bedrock(self):
         result, out = self._launch("task 7", env=self._TOKEN)
-        self.assertIn("MODEL=claude-opus-5-5[1m] USE=1", out, result.stderr)
+        self.assertIn("MODEL=work-model[1m] USE=1", out, result.stderr)
         self.assertIn("-w eng-7", out)
 
     def test_task_anthropic_and_the_retired_local_alias(self):
         result, out = self._launch("task anthropic 7")
-        self.assertIn("MODEL=claude-opus-5-5[1m] USE=unset", out, result.stderr)
+        self.assertIn("MODEL=work-model[1m] USE=unset", out, result.stderr)
         result, out = self._launch("task local 7")
-        self.assertIn("MODEL=claude-opus-5-5[1m] USE=unset", out)
+        self.assertIn("MODEL=work-model[1m] USE=unset", out)
         self.assertIn("`local` is retired", result.stderr)
 
     def test_a_bad_config_launches_nothing(self):
@@ -242,23 +267,23 @@ class VerbLaunch(SubstrateHarness):
         result, out = self._launch(
             "housekeeping", env={"DS_MODEL_WORKER_SUBSTRATE": "bedrock"}
         )
-        self.assertIn("MODEL=claude-opus-5-5[1m] USE=unset", out, result.stderr)
+        self.assertIn("MODEL=work-model[1m] USE=unset", out, result.stderr)
 
     def test_architect_takes_the_override_after_the_topic(self):
         result, out = self._launch("architect pricing bedrock", env=self._TOKEN)
-        self.assertIn("MODEL=claude-fable-5-1[1m] USE=1", out, result.stderr)
+        self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
 
     def test_resume_re_pins_a_task_session_on_its_recorded_substrate(self):
         result, out = self._launch(
             "_ds_substrate_write eng-8 bedrock; task resume 8", env=self._TOKEN
         )
-        self.assertIn("MODEL=claude-opus-5-5[1m] USE=1", out, result.stderr)
+        self.assertIn("MODEL=work-model[1m] USE=1", out, result.stderr)
 
     def test_resume_of_an_unmarked_tag_re_pins_the_judgment_tier(self):
         # The issue-keyed explore case: no marker, so judgment on anthropic,
         # rather than the saved default the old resume path fell back to.
         result, out = self._launch("task resume 9")
-        self.assertIn("MODEL=claude-fable-5-1[1m] USE=unset", out, result.stderr)
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
 
 
 class MarkerRoundTrip(SubstrateHarness):
@@ -525,7 +550,7 @@ class BedrockEnvGate(SubstrateHarness):
             'print -r -- "REGION=$AWS_REGION"; '
             'print -r -- "FAST=$ANTHROPIC_DEFAULT_HAIKU_MODEL"; '
             'print -r -- "CACHE=$ENABLE_PROMPT_CACHING_1H"',
-            env={"AWS_BEARER_TOKEN_BEDROCK": "placeholder-key"},
+            env={**_CONFIG, "AWS_BEARER_TOKEN_BEDROCK": "placeholder-key"},
         )
         self.assertIn("rc=0", result.stdout)
         # The model is NOT exported: the verb scopes it to its one `claude`
@@ -533,13 +558,25 @@ class BedrockEnvGate(SubstrateHarness):
         self.assertIn("MODEL=\n", result.stdout)
         self.assertIn("REGION=us-west-2", result.stdout)
         self.assertIn("CACHE=1", result.stdout)
-        # The fast tier is pinned so background sub-turns bill to credits too,
-        # rather than quietly falling back to the subscription.
-        # The full id, suffix included: Bedrock rejects the bare form as an
-        # invalid identifier, so a prefix check would let that revert ship.
-        self.assertIn(
-            "FAST=us.anthropic.claude-haiku-4-5-20251001-v1:0\n", result.stdout
+        # The background tier is pinned so background sub-turns bill to credits
+        # too, rather than quietly falling back to the subscription. Verbatim
+        # and newline-anchored: Claude Code passes it through untouched.
+        self.assertIn("FAST=bg-profile-id\n", result.stdout)
+
+    def test_an_unset_background_tier_warns_and_pins_nothing(self):
+        # Background failures degrade niceties only, so this warns rather than
+        # refusing — and must not leave a stale pin from an earlier launch.
+        result = self._zsh(
+            '_ds_bedrock_env; print -r -- "rc=$?"; '
+            'print -r -- "FAST=${ANTHROPIC_DEFAULT_HAIKU_MODEL-unset}"',
+            env={
+                "AWS_BEARER_TOKEN_BEDROCK": "placeholder-key",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "stale-id",
+            },
         )
+        self.assertIn("rc=0", result.stdout)
+        self.assertIn("FAST=unset", result.stdout)
+        self.assertIn("DS_MODEL_BACKGROUND is unset", result.stderr)
 
     def test_the_region_is_overridable(self):
         result = self._zsh(

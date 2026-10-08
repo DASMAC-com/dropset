@@ -929,6 +929,13 @@ class SubstrateDetection(unittest.TestCase):
         substrate, _ = sm.resolve_substrate(self.worktree)
         self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
 
+    def test_a_recorded_anthropic_marker_reads_as_the_seat_branch(self):
+        # The launcher's current spelling for the subscription substrate.
+        self._write("eng-1364", "anthropic\n")
+        substrate, reason = sm.resolve_substrate(self.worktree)
+        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertIn("launch verb", reason)
+
     def test_an_absent_marker_reads_as_seat(self):
         # Matches `_ds_substrate_read` in `.claude/shell/init.zsh`, and fails
         # toward the branch that prints no dollar figure.
