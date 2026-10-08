@@ -102,8 +102,17 @@ sqlx = { version = "0.8", default-features = false, features = [
 # A background runtime for the `feeds` source runners only (the price polls and
 # the fill-stream bridge); the quoting tick loop stays synchronous and reads
 # the resulting broadcast channels with `try_recv`. `net` + `time` back the
-# reqwest reactor the HTTP sources use.
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "net", "time"] }
+# reqwest reactor the HTTP sources use. `signal` + `macros` back the
+# SIGINT / SIGTERM listener that hands shutdown to the tick loop, so it can pull
+# liquidity before the process exits.
+tokio = { version = "1", features = [
+  "macros",
+  "net",
+  "rt-multi-thread",
+  "signal",
+  "sync",
+  "time",
+] }
 # Surface the `feeds` runner's `tracing` diagnostics (a source failing / backing
 # off) on stderr — the migration moved feed polling behind the framework, whose
 # only failure signal is a `tracing` event, so without a subscriber a down feed

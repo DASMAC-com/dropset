@@ -1,0 +1,7 @@
+# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+#
+# The CHECK constraint and the index are not declared: neither is a relation a
+# consumer binds to.
+table maker_quote_writes
+view maker_quote_burn_hourly
+view maker_quote_burn_daily

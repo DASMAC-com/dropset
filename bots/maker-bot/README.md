@@ -93,14 +93,33 @@ the supervisor loop:
 cargo run -p dropset-maker-bot
 ```
 
+Mainnet — quote the mainnet roster (EURC, AUDD, CADC on their real
+mints) with the leader key from the secrets chain. Nothing is airdropped;
+fund the leader first:
+
+```sh
+cargo run -p dropset-maker-bot -- --cluster mainnet --rpc <mainnet-rpc-url>
+```
+
+Stopping the bot (SIGINT / SIGTERM) **pulls its liquidity**: each market
+gets the kill stamp and then a zeroed profile, the same pair a
+kill-switch halt sends, before the process exits. A second signal exits
+at once without finishing.
+
 ### Flags
 
-- `--rpc <url>` — RPC endpoint (default `http://127.0.0.1:8899`).
+- `--cluster <name>` — `localnet` (default) or `mainnet`. The genesis
+  check runs both ways: localnet mode refuses every public cluster, and
+  mainnet mode refuses anything that is not mainnet-beta.
+- `--rpc <url>` — RPC endpoint (default `http://127.0.0.1:8899`;
+  required in mainnet mode).
 - `--ws <url>` — PubSub websocket for the fill-event subscription
   (default: derived from `--rpc`, swapping the scheme and using the RPC
   port + 1, so `8899` → `8900`).
-- `--leader-key <path>` — leader / quote-authority keypair (default
-  `keys/EEEE.json`, the role key the bootstrap seeds every vault with).
+- `--leader-key <path>` — localnet only: leader / quote-authority
+  keypair (default `keys/EEEE.json`, the role key the bootstrap seeds
+  every vault with). **Refused in mainnet mode**, where the key is the
+  `dropset/maker-leader` secret instead (see Environment).
 - `--dry-run` — poll feeds and print the intended quotes, then exit.
 - `--drop <tier>` — dry-run only: suppress `coingecko`, `cmc`, or `fx`
   (repeatable) to watch the cascade fall through.
@@ -110,16 +129,24 @@ cargo run -p dropset-maker-bot
 Nothing to set: every feed in the cascade is keyless, so the bot prices
 its whole roster with no secret configured.
 
+Mainnet mode needs the leader key, resolved once at startup as the
+canonical secret `dropset/maker-leader` (`feeds::secrets`): the
+`DROPSET_MAKER_LEADER` environment variable first, then the
+`dropset` item's `maker-leader` field in the 1Password vault
+`DROPSET_OP_VAULT` names. The value is the keypair in `solana-keygen`'s
+JSON byte-array form. It is never read from a file, and a key on the
+committed `keys/` roster is refused.
+
 ## Notes and deferrals
 
-- **Localnet only.** On startup the bot reads the cluster's genesis hash
-  and refuses to run against mainnet-beta, devnet, or testnet. Its
-  airdrop needs the localnet faucet and its leader key holds no authority
-  on a public cluster, so an off-localnet `--rpc` is always a
-  misconfiguration — the guard fails fast rather than emitting doomed
-  sends. The check is keyed on the genesis hash, not the RPC host, so a
-  localnet on any address still passes while a port-forward to a public
-  cluster is caught.
+- **Genesis-checked, in both directions.** On startup the bot reads the
+  cluster's genesis hash before it loads any key. Localnet mode refuses
+  mainnet-beta, devnet and testnet. Its airdrop needs the localnet
+  faucet and its committed leader key must never sign on a public
+  cluster. Mainnet mode refuses anything that is not mainnet-beta. The
+  check is keyed on the genesis hash, not the RPC host, so a localnet on
+  any address still passes while a port-forward to a public cluster is
+  caught.
 
 - **One supervisor, one leader.** This localnet plumbing runs all
   markets from one process under one quote-authority. The delegated

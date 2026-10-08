@@ -15,6 +15,7 @@
 
 use dropset_fair_value::{FairValueConfig, LegStaleness};
 use dropset_sdk::clock::{SlotSpan, WallSpan};
+use solana_pubkey::{pubkey, Pubkey};
 use std::time::Duration;
 
 /// Default localnet RPC endpoint (the `solana-test-validator` the TUI spawns).
@@ -34,6 +35,9 @@ pub const DEFAULT_LEADER_KEY: &str = "keys/EEEE.json";
 /// localnet USDC mint keypair and its decimals.
 pub const QUOTE_KEYPAIR_FILE: &str = "keys/USDC.json";
 pub const QUOTE_DECIMALS: u8 = 6;
+
+/// Circle's mainnet USDC — the quote leg of every mainnet market.
+pub const MAINNET_USDC: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 
 /// Kraken pair for USDC against USD — the **primary** USDC/USD common-mode leg
 /// (§1 fm1). One pair shared by every market, so it rides the batched Kraken
@@ -59,8 +63,14 @@ pub struct MarketConfig {
     /// Human ticker, for logs and to map a discovered market back to its feeds.
     pub symbol: &'static str,
     /// The mock base-mint keypair (relative to the repo root); its pubkey,
-    /// paired with USDC, seeds the market PDA the bot discovers.
+    /// paired with USDC, seeds the market PDA the bot discovers on localnet.
     pub base_keypair_file: &'static str,
+    /// The issuer's real mainnet mint, or `None` for a market that is not on
+    /// the mainnet roster. Mainnet mode quotes exactly the markets that carry
+    /// one, matched against [`MAINNET_USDC`]; the addresses are the TUI's
+    /// `MAINNET_PAIRS`, and `mainnet_mints_match_the_frontend_currency_data`
+    /// holds both copies equal to the frontend's `currencies.json`.
+    pub mainnet_mint: Option<Pubkey>,
     /// Base-mint decimals — matched to the real token so the localnet plumbing
     /// exercises the same per-market decimal/atoms-ratio path mainnet will.
     pub base_decimals: u8,
@@ -188,6 +198,7 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "EURC",
         base_keypair_file: "keys/EURC.json",
+        mainnet_mint: Some(pubkey!("HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr")),
         base_decimals: 6,
         currency: "EUR",
         pyth_feed_id: "a995d00bb36a63cef7fd2c287dc105fc8f3d93779f062f09551b0af3e81ec30b",
@@ -203,6 +214,7 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "VCHF",
         base_keypair_file: "keys/VCHF.json",
+        mainnet_mint: None,
         base_decimals: 9,
         currency: "CHF",
         pyth_feed_id: "0b1e3297e69f162877b577b0d6a47a0d63b2392bc8499e6540da4187a63e28f8",
@@ -218,6 +230,7 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "TGBP",
         base_keypair_file: "keys/TGBP.json",
+        mainnet_mint: None,
         base_decimals: 9,
         currency: "GBP",
         pyth_feed_id: "84c2dde9633d93d1bcad84e7dc41c9d56578b7ec52fabedc1f335d673df0a7c1",
@@ -233,6 +246,7 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "ZARP",
         base_keypair_file: "keys/ZARP.json",
+        mainnet_mint: None,
         base_decimals: 6,
         currency: "ZAR",
         pyth_feed_id: "389d889017db82bf42141f23b61b8de938a4e2d156e36312175bebf797f493f1",
@@ -248,6 +262,7 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "MXNe",
         base_keypair_file: "keys/MXNe.json",
+        mainnet_mint: None,
         base_decimals: 9,
         currency: "MXN",
         pyth_feed_id: "e13b1c1ffb32f34e1be9545583f01ef385fde7f42ee66049d30570dc866b77ca",
@@ -280,6 +295,7 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "XSGD",
         base_keypair_file: "keys/XSGD.json",
+        mainnet_mint: None,
         base_decimals: 6,
         currency: "SGD",
         pyth_feed_id: "396a969a9c1480fa15ed50bc59149e2c0075a72fe8f458ed941ddec48bdb4918",
@@ -295,6 +311,7 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "IDRX",
         base_keypair_file: "keys/idrx.json",
+        mainnet_mint: None,
         base_decimals: 2,
         currency: "IDR",
         pyth_feed_id: "6693afcd49878bbd622e46bd805e7177932cf6ab0b1c91b135d71151b9207433",
@@ -313,6 +330,7 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "AUDD",
         base_keypair_file: "keys/AUDD.json",
+        mainnet_mint: Some(pubkey!("AUDDttiEpCydTm7joUMbYddm72jAWXZnCpPZtDoxqBSw")),
         base_decimals: 6,
         currency: "AUD",
         pyth_feed_id: "67a6f93030420c1c9e3fe37c1ab6b77966af82f995944a9fefce357a22854a80",
@@ -328,6 +346,7 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "CADC",
         base_keypair_file: "keys/CADC.json",
+        mainnet_mint: Some(pubkey!("9ewjJpmD1ES83RDRFnHs7V2hUdH76WAVjdvu6UV6WNo7")),
         base_decimals: 6,
         currency: "CAD",
         pyth_feed_id: "3112b03a41c910ed446852aacf67118cb1bec67b2cd0b9a214c58cc0eaa2ecca",
@@ -1086,6 +1105,45 @@ mod tests {
         // is spelled out because the roster only carries it as a keypair
         // filename (`QUOTE_KEYPAIR_FILE`), not as a symbol.
         check("USDC", QUOTE_DECIMALS);
+    }
+
+    /// The mainnet roster is the three MVP pairs, and each address is the
+    /// frontend's `currencies.json` mint — the same pin the TUI's
+    /// `mainnet_mints_match_the_frontend_currency_data` holds its copy to, so
+    /// the maker and the ceremony cannot disagree about which mint a market
+    /// is. A typo here would leave the maker discovering no market at all,
+    /// or the wrong one.
+    #[test]
+    fn mainnet_mints_match_the_frontend_currency_data() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../frontend/lib/data/currencies.json"
+        );
+        let raw = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let currencies: serde_json::Value =
+            serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {path}: {e}"));
+        let listed = |symbol: &str| -> String {
+            currencies
+                .as_object()
+                .expect("currencies.json is a currency-keyed object")
+                .values()
+                .flat_map(|entry| entry["stablecoins"].as_array().cloned().unwrap_or_default())
+                .find(|coin| coin["symbol"] == symbol)
+                .and_then(|coin| coin["mint"].as_str().map(str::to_owned))
+                .unwrap_or_else(|| panic!("{symbol} has no mint in currencies.json"))
+        };
+        let mainnet: Vec<&str> = MARKETS
+            .iter()
+            .filter(|m| m.mainnet_mint.is_some())
+            .map(|m| m.symbol)
+            .collect();
+        assert_eq!(mainnet, ["EURC", "AUDD", "CADC"]);
+        for m in MARKETS {
+            if let Some(mint) = m.mainnet_mint {
+                assert_eq!(mint.to_string(), listed(m.symbol), "{} mint", m.symbol);
+            }
+        }
+        assert_eq!(MAINNET_USDC.to_string(), listed("USDC"));
     }
 
     /// Every market names a Pyth FX feed, and each id is a distinct 32-byte

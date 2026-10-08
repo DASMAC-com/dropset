@@ -885,7 +885,7 @@ Numbered §6 rather than slotted before the deferred list because §5 is
 cited as "deferred" from elsewhere in the tree, and renumbering it would
 silently redirect those references.
 
-### Four tables
+### The tables
 
 - **`maker_telemetry`** — one sample per market per tick: the composed
   fair value, the three references that differ (this tick's candidate,
@@ -945,6 +945,16 @@ silently redirect those references.
   goes sick: a leg whose sources are all trimmed still writes a full
   zero-weight set every tick, deliberately.
 
+- **`maker_quote_writes`** — one row per confirmed quote write (a
+  reference re-stamp, a kill stamp, or a profile re-arm) with the fee it
+  cost the leader, rolled up by the `maker_quote_burn_hourly` and
+  `maker_quote_burn_daily` views. Per **send**, not per tick, so the
+  rollups count writes at the cadence the bot actually sent them — the
+  measured side of the rung-TIF-versus-restamp tradeoff, and what a
+  mainnet leader has to be funded for. The fees are computed from the fee
+  schedule at send time rather than read back; the migration says why the
+  two agree.
+
 - **`feed_health`** — current liveness per registered **polled** feed
   source, upserted in place.
 
@@ -954,8 +964,8 @@ silently redirect those references.
   "Push sources report a link, not a recency" below.
 
 DDL lives in `db-schema/migrations/0003_maker_telemetry.sql`,
-`0007_fair_price_fusion.sql` and
-`0008_push_liveness.sql`, which carry the per-column reasoning; the
+`0007_fair_price_fusion.sql`, `0008_push_liveness.sql` and
+`0020_maker_quote_writes.sql`, which carry the per-column reasoning; the
 single-schema-owner rule (see `docs/data-feeds.md` §8) means the bot
 issues no DDL and never asserts a schema.
 

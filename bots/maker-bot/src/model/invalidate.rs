@@ -48,6 +48,10 @@ pub enum InvalidateReason {
     /// the caller expresses it by passing `age: None`, which
     /// [`should_invalidate`] already treats as stale.
     Halted,
+    /// The process was asked to exit (SIGINT / SIGTERM). Quitting the maker
+    /// *is* pulling its liquidity, so this one is unconditional too — nothing
+    /// will refresh the reference once the process is gone.
+    Shutdown,
 }
 
 /// Whether the bot must stamp the kill price before it is safe to leave this

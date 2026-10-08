@@ -2,7 +2,11 @@
 //!
 //! Default mode supervises every demo market live against a localnet validator:
 //! discover the markets, fund the leader, and drive the tick loop, one batched
-//! feed poll shared across them. `--dry-run` instead polls the tiered feeds
+//! feed poll shared across them. `--cluster mainnet` runs the same loop over the
+//! mainnet roster instead, with the guards `cluster` describes: a genesis that
+//! must be mainnet-beta, a leader key from the secrets chain only, no airdrop.
+//! Either way SIGINT / SIGTERM pulls every market's liquidity before the process
+//! exits — a second signal exits at once. `--dry-run` instead polls the tiered feeds
 //! once and prints the reference each market *would* stamp — the wiring check
 //! that every venue is reachable and decoding, with no validator and no writes.
 //! Pass `--drop <tier>` (repeatable: `pyth`, `coinbase`, `kraken`, `coingecko`,
@@ -12,9 +16,13 @@
 //! only one, which is the shape the NGN markets run in permanently.
 //!
 //! Flags:
-//!   --rpc <url>            RPC endpoint (default http://127.0.0.1:8899)
+//!   --cluster <name>       localnet (default) | mainnet
+//!   --rpc <url>            RPC endpoint (default http://127.0.0.1:8899; required
+//!                          on mainnet)
 //!   --ws <url>             PubSub websocket (default: derived from --rpc)
-//!   --leader-key <path>    leader/quote-authority keypair (default keys/EEEE.json)
+//!   --leader-key <path>    localnet only: leader/quote-authority keypair
+//!                          (default keys/EEEE.json). Refused on mainnet, where
+//!                          the key is the `dropset/maker-leader` secret
 //!   --market <symbol>      quote only this market (repeatable); default: all
 //!   --dry-run              poll feeds and print the intended quotes, then exit
 //!   --drop <tier>          dry-run only: suppress pyth | coinbase | kraken |
@@ -32,9 +40,10 @@ use dropset_feeds::{
     connect_lazy, forward_channel, parked_source, redact_to_origin, run_until,
     run_until_with_metrics, HttpClient, RunConfig, Sink, Source, MAX_ERROR_CHARS, PARKED_SOURCES,
 };
+use dropset_maker_bot::cluster::{self, Cluster};
 use dropset_maker_bot::config::{
-    published_product, BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MARKETS,
-    QUOTE_KEYPAIR_FILE, USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
+    published_product, BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MAINNET_USDC,
+    MARKETS, QUOTE_KEYPAIR_FILE, USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
 };
 use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::fair_price::{FairPriceRow, FairPriceSource};
@@ -76,7 +85,13 @@ const MIN_LEADER_LAMPORTS: u64 = LAMPORTS_PER_SOL / 2;
 const AIRDROP_LAMPORTS: u64 = 2 * LAMPORTS_PER_SOL;
 
 struct Args {
-    leader_key: String,
+    cluster: Cluster,
+    /// Whether `--rpc` was passed. Mainnet mode requires it rather than
+    /// defaulting to the localnet URL and failing the genesis check.
+    rpc_given: bool,
+    /// `--leader-key`, if passed. `None` is the localnet default file — and on
+    /// mainnet the only accepted state.
+    leader_key: Option<String>,
     dry_run: bool,
     /// Tiers to suppress in a dry run (to exercise the cascade).
     drop: Vec<String>,
@@ -87,11 +102,13 @@ struct Args {
 }
 
 impl Args {
-    /// The roster this instance quotes: every [`MarketConfig`] whose symbol was
+    /// The roster this instance quotes: every [`MarketConfig`] on this
+    /// cluster's roster (mainnet: those with a mainnet mint) whose symbol was
     /// named with `--market` (case-insensitive), or all of them when none was.
     fn selected(&self) -> Vec<&'static MarketConfig> {
         MARKETS
             .iter()
+            .filter(|m| !self.cluster.is_mainnet() || m.mainnet_mint.is_some())
             .filter(|m| {
                 self.markets.is_empty()
                     || self
@@ -116,7 +133,7 @@ fn main() -> Result<()> {
         .init();
 
     let mut cfg = BotConfig::default();
-    let args = parse_args(&mut cfg);
+    let args = parse_args(&mut cfg)?;
     if args.dry_run {
         dry_run(&cfg, &args)
     } else {
@@ -125,17 +142,25 @@ fn main() -> Result<()> {
 }
 
 /// Parse flags, mutating `cfg` and returning the run options.
-fn parse_args(cfg: &mut BotConfig) -> Args {
-    let mut leader_key = DEFAULT_LEADER_KEY.to_string();
+fn parse_args(cfg: &mut BotConfig) -> Result<Args> {
+    let mut cluster = Cluster::Localnet;
+    let mut rpc_given = false;
+    let mut leader_key = None;
     let mut dry_run = false;
     let mut drop = Vec::new();
     let mut markets = Vec::new();
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
+            "--cluster" => {
+                if let Some(name) = it.next() {
+                    cluster = Cluster::parse(&name)?;
+                }
+            }
             "--rpc" => {
                 if let Some(url) = it.next() {
                     cfg.rpc_url = url;
+                    rpc_given = true;
                 }
             }
             "--ws" => {
@@ -145,7 +170,7 @@ fn parse_args(cfg: &mut BotConfig) -> Args {
             }
             "--leader-key" => {
                 if let Some(path) = it.next() {
-                    leader_key = path;
+                    leader_key = Some(path);
                 }
             }
             "--market" => {
@@ -162,48 +187,69 @@ fn parse_args(cfg: &mut BotConfig) -> Args {
             _ => {}
         }
     }
-    Args {
+    Ok(Args {
+        cluster,
+        rpc_given,
         leader_key,
         dry_run,
         drop,
         markets,
-    }
+    })
 }
 
 /// Discover the markets, fund the leader, and run the supervisor loop.
 fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
+    let mainnet = args.cluster.is_mainnet();
+    if mainnet && !args.rpc_given {
+        return Err(anyhow!(
+            "mainnet mode needs --rpc <url>: the default is the localnet endpoint"
+        ));
+    }
     let client = chain::rpc(&cfg.rpc_url);
-    // Guard before funding or signing anything: the airdrop needs the localnet
-    // faucet and the leader key holds no authority on a public cluster, so an
-    // off-localnet --rpc is always a misconfiguration — fail fast rather than
-    // emit doomed sends.
-    chain::assert_localnet(&client)?;
+    // Guard before loading the key, funding, or signing anything: the chain
+    // must be the cluster this run declared, in both directions, so a wrong
+    // --rpc fails fast rather than emitting doomed (or real) sends.
+    chain::assert_cluster(&client, args.cluster)?;
     // One signing handle for the whole process, shared by every market's
     // context, so roster size doesn't multiply the number of long-lived
     // copies of the key material.
-    let leader = Arc::new(
-        solana_keypair::read_keypair_file(&args.leader_key)
-            .map_err(|e| anyhow!("read leader key {}: {e}", args.leader_key))?,
-    );
+    let leader = Arc::new(cluster::load_leader(
+        args.cluster,
+        args.leader_key.as_deref(),
+        DEFAULT_LEADER_KEY,
+    )?);
 
-    // The leader pays for its own quoting txns; top it up on localnet.
+    // The leader pays for its own quoting txns. On localnet it tops itself up
+    // from the faucet; mainnet has none, so a low balance is only reported.
     let balance = client
         .get_balance(&leader.pubkey())
         .context("leader balance")?;
     if balance < MIN_LEADER_LAMPORTS {
-        println!(
-            "funding leader {} ({} SOL)…",
-            leader.pubkey(),
-            AIRDROP_LAMPORTS / LAMPORTS_PER_SOL
-        );
-        chain::airdrop(&client, &leader.pubkey(), AIRDROP_LAMPORTS)?;
+        if mainnet {
+            eprintln!(
+                "[leader] {} holds {balance} lamports — below {MIN_LEADER_LAMPORTS}; \
+                 fund it, or quote writes will start failing for fees",
+                leader.pubkey()
+            );
+        } else {
+            println!(
+                "funding leader {} ({} SOL)…",
+                leader.pubkey(),
+                AIRDROP_LAMPORTS / LAMPORTS_PER_SOL
+            );
+            chain::airdrop(&client, &leader.pubkey(), AIRDROP_LAMPORTS)?;
+        }
     }
 
     // Discover every on-chain market once, then match the roster against it by
     // base mint (quote is always USDC). The roster is narrowed to any
     // `--market` symbols so one instance can quote a single market.
     let discovered = chain::discover_markets(&client)?;
-    let quote_mint = mint_pubkey(QUOTE_KEYPAIR_FILE)?;
+    let quote_mint = if mainnet {
+        MAINNET_USDC
+    } else {
+        mint_pubkey(QUOTE_KEYPAIR_FILE)?
+    };
     let roster = args.selected();
     // The persisted last-live-stamp records, one file per market — the evidence
     // the supervisor's startup pass ages a resting book against.
@@ -230,7 +276,12 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
 
     let mut contexts = Vec::new();
     for &market in &roster {
-        let base_mint = match mint_pubkey(market.base_keypair_file) {
+        // `selected` admits only markets with a mainnet mint on mainnet.
+        let resolved = match (mainnet, market.mainnet_mint) {
+            (true, Some(mint)) => Ok(mint),
+            _ => mint_pubkey(market.base_keypair_file),
+        };
+        let base_mint = match resolved {
             Ok(pk) => pk,
             Err(e) => {
                 eprintln!("[{}] skipped — {e}", market.symbol);
@@ -263,9 +314,11 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
         ));
     }
     if contexts.is_empty() {
-        return Err(anyhow!(
-            "no demo markets found on-chain — is the localnet bootstrapped?"
-        ));
+        return Err(if mainnet {
+            anyhow!("no mainnet roster market found on-chain — has the ceremony run?")
+        } else {
+            anyhow!("no demo markets found on-chain — is the localnet bootstrapped?")
+        });
     }
 
     // The price tiers, batched across the quoted roster: each venue is polled
@@ -311,10 +364,47 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
         )
     });
 
+    let shutdown = spawn_shutdown_listener(&rt)?;
+
     // The runtime must outlive the supervisor loop that reads its channels; it
-    // does — `run_supervisor` runs until the process is killed, and `rt` is held
-    // in this frame the whole time.
-    tasks::run_supervisor(feeds, cfg.clone(), contexts, fills)
+    // does — `run_supervisor` runs until a shutdown signal has been handled,
+    // and `rt` is held in this frame the whole time.
+    tasks::run_supervisor(feeds, cfg.clone(), contexts, fills, shutdown)
+}
+
+/// Install the process's SIGINT / SIGTERM handling and return the receiver the
+/// tick loop waits on in place of a bare sleep.
+///
+/// The **first** signal is delivered to the loop, which pulls every market's
+/// liquidity and returns: quitting the maker is taking its book down, never
+/// leaving it resting for the stale-quote pass of a restart that may not come.
+/// A **second** signal exits at once, for an operator whose RPC is wedged
+/// mid-take-off — the levels then expire on their own wall-clock TIF.
+///
+/// The handlers are registered here, synchronously, rather than inside the
+/// spawned task, so a signal arriving before the first tick is never lost to
+/// the default disposition.
+fn spawn_shutdown_listener(rt: &Runtime) -> Result<std::sync::mpsc::Receiver<()>> {
+    use tokio::signal::unix::{signal, SignalKind};
+    let _guard = rt.enter();
+    let mut interrupt = signal(SignalKind::interrupt()).context("install SIGINT handler")?;
+    let mut terminate = signal(SignalKind::terminate()).context("install SIGTERM handler")?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    rt.spawn(async move {
+        tokio::select! {
+            _ = interrupt.recv() => {}
+            _ = terminate.recv() => {}
+        }
+        eprintln!("[shutdown] signal received — pulling liquidity; signal again to exit now");
+        let _ = tx.send(());
+        tokio::select! {
+            _ = interrupt.recv() => {}
+            _ = terminate.recv() => {}
+        }
+        eprintln!("[shutdown] second signal — exiting without finishing the take-off");
+        std::process::exit(130);
+    });
+    Ok(rx)
 }
 
 /// Whether a spawned source contributes a `feed_health` row.
@@ -379,9 +469,10 @@ fn parked_receiver<T: Clone>() -> broadcast::Receiver<T> {
 /// Spawn a feeds `source` on `rt`, forwarding its records onto an in-process
 /// live sink, and return the receiver the supervisor drains. The runner is
 /// given a never-resolving shutdown (`pending`) so it lives with the process: a
-/// demo feed has no cursor to flush on exit, and installing a ctrl-c handler
-/// here (as `feeds::run` does) would swallow the signal that stops the
-/// synchronous tick loop.
+/// demo feed has no cursor to flush on exit, and the process's one signal
+/// handler is [`spawn_shutdown_listener`], which hands the signal to the tick
+/// loop so it can pull liquidity before exiting — a second handler here (as
+/// `feeds::run` installs) would only race it.
 ///
 /// A polled source spawned here is driven through `run_until_with_metrics`
 /// with a health recorder attached, which is what makes the `feed_health`
@@ -1129,8 +1220,14 @@ mod tests {
     use super::*;
 
     fn args(markets: &[&str]) -> Args {
+        args_on(Cluster::Localnet, markets)
+    }
+
+    fn args_on(cluster: Cluster, markets: &[&str]) -> Args {
         Args {
-            leader_key: DEFAULT_LEADER_KEY.to_string(),
+            cluster,
+            rpc_given: false,
+            leader_key: None,
             dry_run: false,
             drop: Vec::new(),
             markets: markets.iter().map(|s| s.to_string()).collect(),
@@ -1140,6 +1237,17 @@ mod tests {
     #[test]
     fn no_market_flag_selects_the_whole_roster() {
         assert_eq!(args(&[]).selected().len(), MARKETS.len());
+    }
+
+    /// Mainnet mode quotes only the markets with a real mainnet mint, and a
+    /// `--market` naming a demo-only market selects nothing rather than
+    /// falling back to its mock mint.
+    #[test]
+    fn mainnet_selects_only_the_mainnet_roster() {
+        let all = args_on(Cluster::Mainnet, &[]).selected();
+        let symbols: Vec<&str> = all.iter().map(|m| m.symbol).collect();
+        assert_eq!(symbols, ["EURC", "AUDD", "CADC"]);
+        assert!(args_on(Cluster::Mainnet, &["IDRX"]).selected().is_empty());
     }
 
     #[test]
