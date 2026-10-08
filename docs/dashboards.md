@@ -99,6 +99,13 @@ magnitude of slack; the cadence figure is the table's own claim rather
 than a measurement, because no cadence or poll interval is recorded
 anywhere in the schema — a fact worth knowing before citing one.
 
+Seeding the leg lands `QCAD-USD` in `peg-pair`, which is the right
+class for the right reason rather than merely a tighter number: that
+class exists for pairs trading at ~1.0 where only the deviation is
+interesting, which is exactly what §3.1 watches. Read this as the
+general hazard rather than as one fixed row — **a class-derived bound
+means a missing seed is a silent liveness change**, and the roster grows.
+
 **A stablecoin seed now carries its peg.** `currency_kinds.pegged_to`
 (added by `0021_currency_pegs.sql`) names the fiat each stablecoin
 tracks, and a CHECK requires it on every stablecoin row and forbids it
@@ -107,13 +114,6 @@ at migrate time. The column is what lets the Maker operations Product
 picker narrow by Market: a market is named by its token (`EURC`) and
 its FX leg by the pair (`EUR-USD`), and the peg is the only join
 between them.
-
-Seeding the leg lands `QCAD-USD` in `peg-pair`, which is the right
-class for the right reason rather than merely a tighter number: that
-class exists for pairs trading at ~1.0 where only the deviation is
-interesting, which is exactly what §3.1 watches. Read this as the
-general hazard rather than as one fixed row — **a class-derived bound
-means a missing seed is a silent liveness change**, and the roster grows.
 
 ### Cadence is not interchangeable with freshness
 

@@ -35,7 +35,7 @@
 ALTER TABLE currency_kinds
     ADD COLUMN pegged_to TEXT REFERENCES currency_kinds (currency);
 
--- Every stablecoin seeded by 0009 and the QCAD migration, pegs as 0009's
+-- Every stablecoin seeded by 0009 and 0013, pegs as 0009's
 -- comments record them. An unmatched row is left NULL and fails the constraint
 -- below, which is the intended failure mode for a seed this list missed.
 UPDATE currency_kinds AS c

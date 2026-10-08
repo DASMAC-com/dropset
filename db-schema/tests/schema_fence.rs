@@ -1013,9 +1013,16 @@ async fn every_stablecoin_carries_its_peg() {
     assert_eq!(unpegged, 0, "a seeded stablecoin has no peg");
     assert_eq!(non_fiat, 0, "a seeded stablecoin pegs to a non-fiat row");
 
-    // The two markets whose pickers motivated the column, spot-checked so a
-    // transposed row in the backfill fails here rather than on a dashboard.
-    for (stable, fiat) in [("EURC", "EUR"), ("QCAD", "CAD")] {
+    // The live markets, plus QCAD (seeded outside 0009, so its peg was never
+    // recorded beside its row), spot-checked so a peg transposed between two
+    // fiats fails here rather than on a dashboard — the fiat check above
+    // cannot see that.
+    for (stable, fiat) in [
+        ("EURC", "EUR"),
+        ("AUDD", "AUD"),
+        ("CADC", "CAD"),
+        ("QCAD", "CAD"),
+    ] {
         let (peg,): (String,) =
             sqlx::query_as("SELECT pegged_to FROM currency_kinds WHERE currency = $1")
                 .bind(stable)
