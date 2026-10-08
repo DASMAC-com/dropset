@@ -537,6 +537,12 @@ services:
     extra_hosts:
     - 'host.docker.internal:host-gateway'
     restart: 'unless-stopped'
+    # `docker stop` sends SIGTERM, on which the maker pulls every market's
+    # liquidity — up to a confirmed kill stamp and a confirmed zeroed
+    # profile per market, one market after another — before exiting.
+    # Docker's default 10 s would SIGKILL a full-roster take-off part-way
+    # through.
+    stop_grace_period: '60s'
     volumes:
     - '../../keys:/app/keys:ro'
   migrate:

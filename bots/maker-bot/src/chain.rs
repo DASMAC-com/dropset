@@ -25,6 +25,7 @@ use solana_signer::Signer;
 use solana_transaction::Transaction;
 use std::time::Duration;
 
+use crate::cluster::Cluster;
 use crate::context::{MarketAddrs, VaultSnapshot};
 
 /// Decode scale for a `Price` to a float — `value × 10^9`, matching the SDK's
@@ -44,11 +45,10 @@ pub fn rpc(url: &str) -> RpcClient {
     )
 }
 
-/// The genesis hashes of the three public Solana clusters. `assert_localnet`
-/// refuses to run against any of them — the airdrop needs the localnet faucet
-/// and the leader key holds no authority on a public cluster, so running
-/// off-localnet is always a misconfiguration. Cross-checked against the Solana
-/// docs and the gill / mpl-bubblegum SDKs.
+/// The genesis hashes of the three public Solana clusters. Localnet mode
+/// refuses all three and mainnet mode requires the first
+/// ([`assert_cluster`]). Cross-checked against the Solana docs and the gill /
+/// mpl-bubblegum SDKs.
 const MAINNET_GENESIS: &str = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
 const DEVNET_GENESIS: &str = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
 const TESTNET_GENESIS: &str = "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY";
@@ -65,24 +65,40 @@ fn public_cluster(genesis: &str) -> Option<&'static str> {
     }
 }
 
-/// Abort unless `client` is a localnet validator. Keyed on the cluster's
-/// genesis hash rather than the RPC host, so it allows a localnet on any
-/// address (LAN, Docker) yet still trips on a port-forward / proxy that tunnels
-/// a public cluster through a loopback URL. Call once at startup, before the
-/// first signed send.
-pub fn assert_localnet(client: &RpcClient) -> Result<()> {
+/// Abort unless `client` is the cluster this run declared — the positive
+/// genesis assertion, in both directions. Call once at startup, before the
+/// leader key is loaded and before the first signed send.
+///
+/// Keyed on the cluster's genesis hash rather than the RPC host, so localnet is
+/// allowed on any address (LAN, Docker) yet a port-forward or proxy that
+/// tunnels a public cluster through a loopback URL still trips it. Localnet is
+/// a *denylist* of the three public hashes, because a test validator mints a
+/// fresh genesis per launch and so has no hash to require; mainnet is an
+/// exact match.
+pub fn assert_cluster(client: &RpcClient, cluster: Cluster) -> Result<()> {
     let genesis = client
         .get_genesis_hash()
         .context("get genesis hash")?
         .to_string();
-    if let Some(cluster) = public_cluster(&genesis) {
-        return Err(anyhow!(
-            "refusing to run against the {cluster} public cluster (genesis \
-             {genesis}): this localnet bot signs quoting transactions with the \
-             leader key and must run only against a localnet test validator"
-        ));
+    genesis_matches(&genesis, cluster)
+}
+
+/// [`assert_cluster`]'s decision, pure so both directions are unit-testable
+/// without a validator.
+fn genesis_matches(genesis: &str, cluster: Cluster) -> Result<()> {
+    match (cluster, public_cluster(genesis)) {
+        (Cluster::Localnet, Some(public)) => Err(anyhow!(
+            "refusing to run in localnet mode against the {public} public cluster \
+             (genesis {genesis}): demo mode signs with a committed role key and \
+             must run only against a local test validator"
+        )),
+        (Cluster::Localnet, None) => Ok(()),
+        (Cluster::Mainnet, Some("mainnet-beta")) => Ok(()),
+        (Cluster::Mainnet, _) => Err(anyhow!(
+            "refusing to run in mainnet mode: --rpc answers with genesis \
+             {genesis}, not mainnet-beta's {MAINNET_GENESIS}"
+        )),
     }
-    Ok(())
 }
 
 /// Airdrop `lamports` to `who` and block until it confirms (localnet faucet).
@@ -209,7 +225,7 @@ pub fn set_reference_price(
     base_decimals: u8,
     quote_decimals: u8,
     slot: u64,
-) -> Result<String> {
+) -> Result<Sent> {
     // The feeds report a human quote-per-base price; the engine stores the
     // atoms-ratio, so scale by the decimal gap before encoding.
     let ratio = human_to_atoms_ratio(price, base_decimals, quote_decimals);
@@ -227,7 +243,7 @@ pub fn set_reference_price(
         slot,
         dropset_sdk::time::now_unix(),
     );
-    send(client, leader, &[ix])
+    send(client, leader, &[ix], 0)
 }
 
 /// Kill this vault's resting book by stamping the zero sentinel through the
@@ -249,7 +265,7 @@ pub fn invalidate_reference_price(
     vault_idx: u32,
     slot: u64,
     micro_lamports: u64,
-) -> Result<String> {
+) -> Result<Sent> {
     // The datum is immaterial on this path — a zero reference price fails
     // `has_valid_reference_price()`, so matching skips the vault before any
     // level expiry is consulted — but stamp the real one anyway so the
@@ -262,8 +278,7 @@ pub fn invalidate_reference_price(
         slot,
         dropset_sdk::time::now_unix(),
     );
-    let fee = ComputeBudgetInstruction::set_compute_unit_price(micro_lamports);
-    send(client, leader, &[fee, ix])
+    send(client, leader, &[ix], micro_lamports)
 }
 
 /// Rewrite the quote ladder (`set_liquidity_profile`, cold path).
@@ -273,9 +288,9 @@ pub fn set_liquidity_profile(
     market: &Pubkey,
     vault_idx: u32,
     profile_bytes: [u8; PROFILE_BYTES],
-) -> Result<String> {
+) -> Result<Sent> {
     let ix = set_liquidity_profile_ix(leader.pubkey(), *market, vault_idx, profile_bytes);
-    send(client, leader, &[ix])
+    send(client, leader, &[ix], 0)
 }
 
 /// Current slot, for stamping the reference's `quote_slot`.
@@ -283,14 +298,86 @@ pub fn current_slot(client: &RpcClient) -> Result<u64> {
     client.get_slot().context("get_slot")
 }
 
+/// A confirmed quote write: its signature and what it cost the leader, the
+/// row the quote-burn telemetry records (`maker_quote_writes`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Sent {
+    pub signature: String,
+    /// The per-signature base fee.
+    pub base_fee_lamports: u64,
+    /// The compute-unit-price surcharge; zero on every path but the kill stamp.
+    pub priority_fee_lamports: u64,
+}
+
+/// The base fee the runtime charges per transaction signature.
+const LAMPORTS_PER_SIGNATURE: u64 = 5_000;
+/// The compute-unit limit the runtime assigns when a transaction requests
+/// none: 200k per SBF-program instruction, plus 3k per builtin instruction —
+/// the compute-unit-price instruction included — per SIMD-0170, capped per
+/// transaction. No quote write requests a limit — see
+/// `InvalidateConfig::priority_micro_lamports` for why — so its priority fee
+/// is priced against these defaults.
+const DEFAULT_PROGRAM_IX_COMPUTE_UNITS: u64 = 200_000;
+const DEFAULT_BUILTIN_IX_COMPUTE_UNITS: u64 = 3_000;
+const MAX_TX_COMPUTE_UNITS: u64 = 1_400_000;
+
+/// What a transaction with `signatures` signers, `program_ixs` SBF-program
+/// instructions and `builtin_ixs` builtin ones, at `micro_lamports` per
+/// compute unit, is charged: `(base, priority)` lamports.
+///
+/// Computed from the fee schedule rather than read back with
+/// `getTransaction`, which would add an RPC round trip to every write on the
+/// quote path. The two agree because the runtime charges the priority fee on
+/// the *requested* limit, not the units consumed, and every input is fixed
+/// here at send time — the one way they can drift is a fee-schedule change
+/// (a new SIMD) this function has not caught up with.
+fn fee_burn(
+    signatures: usize,
+    program_ixs: usize,
+    builtin_ixs: usize,
+    micro_lamports: u64,
+) -> (u64, u64) {
+    let base = LAMPORTS_PER_SIGNATURE * signatures as u64;
+    let limit = (DEFAULT_PROGRAM_IX_COMPUTE_UNITS * program_ixs as u64
+        + DEFAULT_BUILTIN_IX_COMPUTE_UNITS * builtin_ixs as u64)
+        .min(MAX_TX_COMPUTE_UNITS);
+    let priority = (u128::from(micro_lamports) * u128::from(limit)).div_ceil(1_000_000) as u64;
+    (base, priority)
+}
+
 /// Sign `ixs` with the leader (fee payer and only signer) and send,
-/// confirming at the client's commitment. On failure, re-simulate to recover
-/// the program logs a `ClientError` drops for a custom-program error.
-fn send(client: &RpcClient, leader: &Keypair, ixs: &[Instruction]) -> Result<String> {
+/// confirming at the client's commitment. A non-zero `micro_lamports` prepends
+/// the compute-unit price instruction. On failure, re-simulate to recover the
+/// program logs a `ClientError` drops for a custom-program error.
+fn send(
+    client: &RpcClient,
+    leader: &Keypair,
+    ixs: &[Instruction],
+    micro_lamports: u64,
+) -> Result<Sent> {
+    let mut all = Vec::with_capacity(ixs.len() + 1);
+    if micro_lamports > 0 {
+        all.push(ComputeBudgetInstruction::set_compute_unit_price(
+            micro_lamports,
+        ));
+    }
+    all.extend_from_slice(ixs);
     let blockhash = client.get_latest_blockhash().context("blockhash")?;
-    let tx = Transaction::new_signed_with_payer(ixs, Some(&leader.pubkey()), &[leader], blockhash);
+    let tx = Transaction::new_signed_with_payer(&all, Some(&leader.pubkey()), &[leader], blockhash);
     match client.send_and_confirm_transaction(&tx) {
-        Ok(sig) => Ok(sig.to_string()),
+        Ok(sig) => {
+            let (base_fee_lamports, priority_fee_lamports) = fee_burn(
+                tx.signatures.len(),
+                ixs.len(),
+                all.len() - ixs.len(),
+                micro_lamports,
+            );
+            Ok(Sent {
+                signature: sig.to_string(),
+                base_fee_lamports,
+                priority_fee_lamports,
+            })
+        }
         Err(err) => {
             let logs = client
                 .simulate_transaction(&tx)
@@ -316,6 +403,37 @@ mod tests {
         assert_eq!(public_cluster(DEVNET_GENESIS), Some("devnet"));
         assert_eq!(public_cluster(TESTNET_GENESIS), Some("testnet"));
         assert_eq!(public_cluster("11111111111111111111111111111111"), None);
+    }
+
+    /// The assertion holds in both directions: localnet mode refuses every
+    /// public cluster, mainnet mode refuses everything but mainnet-beta —
+    /// including a local validator, which is the misconfigured `--rpc` case.
+    #[test]
+    fn the_genesis_assertion_runs_in_both_directions() {
+        let local = "11111111111111111111111111111111";
+        assert!(genesis_matches(local, Cluster::Localnet).is_ok());
+        assert!(genesis_matches(MAINNET_GENESIS, Cluster::Localnet).is_err());
+        assert!(genesis_matches(DEVNET_GENESIS, Cluster::Localnet).is_err());
+        assert!(genesis_matches(MAINNET_GENESIS, Cluster::Mainnet).is_ok());
+        assert!(genesis_matches(local, Cluster::Mainnet).is_err());
+        assert!(genesis_matches(DEVNET_GENESIS, Cluster::Mainnet).is_err());
+        assert!(genesis_matches(TESTNET_GENESIS, Cluster::Mainnet).is_err());
+    }
+
+    /// One signer, one program instruction: the base fee alone at no priority,
+    /// and the kill stamp's surcharge priced on the default limit — 200k for
+    /// the program instruction plus 3k for the price instruction itself.
+    #[test]
+    fn the_fee_burn_follows_the_fee_schedule() {
+        assert_eq!(fee_burn(1, 1, 0, 0), (5_000, 0));
+        // 100_000 micro-lamports × 203_000 CU / 1e6 = 20_300 lamports.
+        assert_eq!(fee_burn(1, 1, 1, 100_000), (5_000, 20_300));
+        // A fractional remainder rounds up, as the runtime charges it.
+        assert_eq!(fee_burn(1, 1, 1, 1), (5_000, 1));
+        // Signers and program instructions both multiply.
+        assert_eq!(fee_burn(2, 2, 0, 100_000), (10_000, 40_000));
+        // The limit caps at the per-transaction maximum.
+        assert_eq!(fee_burn(1, 10, 1, 1_000_000), (5_000, 1_400_000));
     }
 
     /// The kill stamp's whole effect rests on `Price::ZERO` failing the same

@@ -1583,6 +1583,179 @@
       ],
       "title": "Push feed transport liveness",
       "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Quote writes the bot actually sent, per hour, and what they cost the leader in lamports \u2014 counted at the real send cadence, since the drift, skew and heartbeat triggers fire irregularly. Bars are writes by kind (reference re-stamps, kill stamps, profile re-arms); the line is the hour's total fee on the right axis. This is the measured side of the TIF-versus-restamp tradeoff: a longer rung TIF buys fewer writes for more exposure on an ungraceful exit. Fees are computed from the fee schedule at send time (base fee plus any compute-unit price), not read back.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "writes / hour",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "fee (lamports)"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "group": "B",
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "lamports / hour"
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "auto"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 89
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum",
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  bucket AS \"time\",\n  kind AS metric,\n  writes\nFROM maker_quote_burn_hourly\nWHERE bucket < $__timeTo()\n  AND bucket + interval '1 hour' > $__timeFrom()\n  AND market = ${market:sqlstring}\nORDER BY 1",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  bucket AS \"time\",\n  sum(total_fee_lamports) AS \"fee (lamports)\"\nFROM maker_quote_burn_hourly\nWHERE bucket < $__timeTo()\n  AND bucket + interval '1 hour' > $__timeFrom()\n  AND market = ${market:sqlstring}\nGROUP BY 1\nORDER BY 1",
+          "refId": "B"
+        }
+      ],
+      "title": "Quote burn per hour \u2014 ${market}",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Quote writes and their fees per UTC day, across every market, newest first. The SOL column is the day's total fee \u2014 what quoting cost the leader, which a mainnet leader has to be funded for. Pinned to the last 7 days whatever the dashboard range, since a daily rollup over the default hour would show at most one partial row.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 98
+      },
+      "id": 16,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  bucket AS \"day (UTC)\",\n  market,\n  kind,\n  writes,\n  base_fee_lamports,\n  priority_fee_lamports,\n  total_fee_lamports / 1e9 AS \"total (SOL)\"\nFROM maker_quote_burn_daily\nWHERE bucket < $__timeTo()\n  AND bucket + interval '1 day' > $__timeFrom()\nORDER BY bucket DESC, market, kind",
+          "refId": "A"
+        }
+      ],
+      "timeFrom": "7d",
+      "title": "Quote burn per day (all markets)",
+      "type": "table"
     }
   ],
   "preload": false,

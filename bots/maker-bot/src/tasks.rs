@@ -35,8 +35,11 @@ use crate::model::killswitch::{self, Action, HaltReason};
 use crate::model::ladder::{self, Side};
 use crate::model::skew;
 use crate::model::triggers::{self, RefTrigger};
-use crate::telemetry::{self, MarketId, Outcome, Record, SampleBuilder};
-use anyhow::Result;
+use crate::telemetry::{
+    self, MarketId, Outcome, QuoteWriteRow, Record, SampleBuilder, WRITE_KILL, WRITE_PROFILE,
+    WRITE_REFERENCE,
+};
+use anyhow::{anyhow, Result};
 use dropset_fair_value::{
     Anchor, Candidates, ClockCtx, FusionReport, LegReport, LegStaleness, Legs, Reading, Regime,
 };
@@ -46,6 +49,7 @@ use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast::{self, error::TryRecvError};
 
@@ -1209,13 +1213,19 @@ fn is_weekend(now: SystemTime) -> bool {
     weekend_from_unix(unix_secs(now))
 }
 
-/// Run the supervisor over every market until interrupted. Each loop iteration
-/// is one cycle; a per-market error is logged and the others continue.
+/// Run the supervisor over every market until `shutdown` delivers, then pull
+/// every market's liquidity (`take_off`) and return. Each loop iteration is
+/// one cycle; a per-market error is logged and the others continue.
+///
+/// `shutdown` replaces the bare inter-tick sleep — the wait *is* the receive —
+/// so a signal is acted on within the tick it lands in rather than after the
+/// next full cycle.
 pub fn run_supervisor(
     mut feeds: FeedReceivers,
     cfg: BotConfig,
     mut markets: Vec<Context>,
     mut fills: Option<broadcast::Receiver<Fill>>,
+    shutdown: mpsc::Receiver<()>,
 ) -> Result<()> {
     let fills_active = fills.is_some();
     for ctx in &mut markets {
@@ -1248,6 +1258,7 @@ pub fn run_supervisor(
     invalidate_stale_quotes(&mut markets, &cfg);
 
     let mut hub = FeedHub::new();
+    let mut listener_lost = false;
     loop {
         let now = Instant::now();
         // Drain each price tier's live sink into the cache. The sources on the
@@ -1372,8 +1383,83 @@ pub fn run_supervisor(
                 eprintln!("[{}] tick error: {e}", ctx.cfg.symbol);
             }
         }
-        std::thread::sleep(cfg.tick);
+        match shutdown.recv_timeout(cfg.tick) {
+            Err(RecvTimeoutError::Timeout) => {}
+            Ok(()) => break,
+            // The listener holds its sender for the life of the process, so
+            // this is a listener that panicked: keep quoting rather than turn
+            // a lost signal handler into an outage, and keep the cadence. Its
+            // handlers stay installed, so from here SIGTERM is swallowed and
+            // only SIGKILL stops the process — say so, once.
+            Err(RecvTimeoutError::Disconnected) => {
+                if !listener_lost {
+                    listener_lost = true;
+                    eprintln!(
+                        "[ALERT] the shutdown listener died — SIGINT / SIGTERM no \
+                         longer pull liquidity, and only SIGKILL stops this process"
+                    );
+                }
+                std::thread::sleep(cfg.tick);
+            }
+        }
     }
+    let failed = take_off(&mut markets, &cfg);
+    if failed > 0 {
+        // Non-zero exit, so a supervisor can tell "pulled" from "left resting".
+        return Err(anyhow!(
+            "take-off failed for {failed} market(s) — their books may still be \
+             resting; see the [shutdown] lines above"
+        ));
+    }
+    Ok(())
+}
+
+/// Pull every market's liquidity on the way out: the kill stamp, then the
+/// zeroed profile — the same pair, in the same order, a kill-switch halt sends
+/// ([`stand_down`]). Quitting the maker *is* taking its book down.
+///
+/// Unlike the halt, both go out in the same pass rather than one per cycle,
+/// because there is no next cycle. Each market is attempted independently and
+/// a failure is logged rather than propagated, so one market's failed send
+/// cannot leave the others resting. A market whose book is already dark this
+/// episode skips the stamp, and one already `Halted` skips the profile.
+///
+/// Returns how many markets had a send fail.
+fn take_off(markets: &mut [Context], cfg: &BotConfig) -> usize {
+    let now = Instant::now();
+    let ts = unix_secs(SystemTime::now()) as i64;
+    let mut failed = 0;
+    for ctx in markets {
+        let mut ok = true;
+        if !ctx.reference_invalidated {
+            if let Err(e) = send_kill_stamp(ctx, cfg, InvalidateReason::Shutdown, None) {
+                eprintln!("[{}][shutdown] kill stamp failed: {e}", ctx.cfg.symbol);
+                ok = false;
+            }
+        }
+        if let Err(e) = zero_both_sides(ctx, cfg, now, ts) {
+            eprintln!(
+                "[{}][shutdown] zeroing the profile failed: {e}",
+                ctx.cfg.symbol
+            );
+            ok = false;
+        }
+        failed += usize::from(!ok);
+    }
+    if failed == 0 {
+        println!("[shutdown] liquidity pulled — exiting");
+    }
+    failed
+}
+
+/// Record one confirmed quote write for the quote-burn rollups.
+fn record_write(ctx: &Context, ts: i64, kind: &'static str, sent: &chain::Sent) {
+    ctx.telemetry.emit(Record::QuoteWrite(QuoteWriteRow::new(
+        ts,
+        ctx.cfg.symbol,
+        kind,
+        sent,
+    )));
 }
 
 /// Validate a market's **first observable basis** against the sane band, once
@@ -1492,7 +1578,7 @@ fn send_kill_stamp(
     age: Option<Duration>,
 ) -> Result<()> {
     let slot = chain::current_slot(&ctx.client)?;
-    chain::invalidate_reference_price(
+    let sent = chain::invalidate_reference_price(
         &ctx.client,
         &ctx.leader,
         &ctx.market.market,
@@ -1500,6 +1586,7 @@ fn send_kill_stamp(
         slot,
         cfg.invalidate.priority_micro_lamports,
     )?;
+    record_write(ctx, unix_secs(SystemTime::now()) as i64, WRITE_KILL, &sent);
     ctx.reference_invalidated = true;
     // The stamped price is gone, so the cadence state describing it is stale
     // too. Clearing it puts this market back in its first-cycle shape, where
@@ -1856,7 +1943,7 @@ fn quote_market_inner(
     };
     if triggers::should_set_reference(&trig, &cfg.strategy) {
         let slot = chain::current_slot(&ctx.client)?;
-        chain::set_reference_price(
+        let sent = chain::set_reference_price(
             &ctx.client,
             &ctx.leader,
             &ctx.market.market,
@@ -1866,6 +1953,7 @@ fn quote_market_inner(
             ctx.market.quote_decimals,
             slot,
         )?;
+        record_write(ctx, ts, WRITE_REFERENCE, &sent);
         ctx.last_set_price = Some(reference);
         ctx.last_skew_bps = skew_bps;
         ctx.last_set_at = now;
@@ -2032,13 +2120,14 @@ fn standard_arm_due(ctx: &Context, cfg: &BotConfig, now: Instant) -> bool {
 /// Arm the full symmetric ladder.
 fn arm_standard(ctx: &mut Context, cfg: &BotConfig, now: Instant, ts: i64) -> Result<()> {
     let profile = ladder::build_profile(&cfg.strategy.ladder);
-    chain::set_liquidity_profile(
+    let sent = chain::set_liquidity_profile(
         &ctx.client,
         &ctx.leader,
         &ctx.market.market,
         ctx.vault_idx,
         ladder::checked_bytes(&profile)?,
     )?;
+    record_write(ctx, ts, WRITE_PROFILE, &sent);
     ctx.profile_kind = ProfileKind::Standard;
     ctx.last_profile_at = now;
     record_ladder_epoch(ctx, cfg, &profile, ProfileKind::Standard, ts);
@@ -2063,13 +2152,14 @@ fn arm_reshape(
         accumulating,
         cfg.strategy.reshape_accumulating_scale,
     );
-    chain::set_liquidity_profile(
+    let sent = chain::set_liquidity_profile(
         &ctx.client,
         &ctx.leader,
         &ctx.market.market,
         ctx.vault_idx,
         ladder::checked_bytes(&profile)?,
     )?;
+    record_write(ctx, ts, WRITE_PROFILE, &sent);
     ctx.profile_kind = ProfileKind::Reshaped(accumulating);
     ctx.last_profile_at = now;
     record_ladder_epoch(ctx, cfg, &profile, ProfileKind::Reshaped(accumulating), ts);
@@ -2094,13 +2184,14 @@ fn freeze_side(
 ) -> Result<()> {
     let mut profile = ladder::build_profile(&cfg.strategy.ladder);
     ladder::zero_side(&mut profile, side);
-    chain::set_liquidity_profile(
+    let sent = chain::set_liquidity_profile(
         &ctx.client,
         &ctx.leader,
         &ctx.market.market,
         ctx.vault_idx,
         ladder::checked_bytes(&profile)?,
     )?;
+    record_write(ctx, ts, WRITE_PROFILE, &sent);
     ctx.profile_kind = ProfileKind::FrozenSide(side);
     ctx.last_profile_at = now;
     record_ladder_epoch(ctx, cfg, &profile, ProfileKind::FrozenSide(side), ts);
@@ -2124,13 +2215,14 @@ fn zero_both_sides(ctx: &mut Context, cfg: &BotConfig, now: Instant, ts: i64) ->
         let mut profile = ladder::build_profile(&cfg.strategy.ladder);
         ladder::zero_side(&mut profile, Side::Bid);
         ladder::zero_side(&mut profile, Side::Ask);
-        chain::set_liquidity_profile(
+        let sent = chain::set_liquidity_profile(
             &ctx.client,
             &ctx.leader,
             &ctx.market.market,
             ctx.vault_idx,
             ladder::checked_bytes(&profile)?,
         )?;
+        record_write(ctx, ts, WRITE_PROFILE, &sent);
         ctx.profile_kind = ProfileKind::Halted;
         ctx.last_profile_at = now;
         record_ladder_epoch(ctx, cfg, &profile, ProfileKind::Halted, ts);

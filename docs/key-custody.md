@@ -77,9 +77,20 @@ So there is currently no mainnet signing path in the maker. Every risk
 below is latent rather than live, and the deployment work is what makes
 it live.
 
+**Superseded in part by mainnet mode.** The maker now has an explicit
+`--cluster mainnet` mode (`bots/maker-bot/src/cluster.rs`), so the
+paragraph above describes the localnet default only. **There is now a
+mainnet signing path**, so in mainnet mode the risks below are live, not
+latent, and §3 is the bar that path is held to. Mainnet mode
+replaces the denylist with an exact match on mainnet-beta's genesis,
+and localnet mode keeps the denylist — the assertion now runs in both
+directions (`chain::assert_cluster`). The guard still runs before the
+key is loaded. Mainnet mode takes its key from the secrets chain only;
+§3.2 records how.
+
 ### 1.2 The signing key is a committed localnet file
 
-The default leader key is `keys/EEEE.json`, one of fourteen keypairs
+The default leader key is `keys/EEEE.json`, one of sixteen keypairs
 committed to the repository. This is deliberate and already documented
 — `keys/README.md` carries an explicit warning that the secrets are in
 plain text, that anyone can sign for them, and that they must never be
@@ -276,6 +287,26 @@ case this rule must be restated as a runtime refusal rather than an
 absent flag. State which of the two applies when that question is
 settled; do not leave the rule attached to a build split that may never
 exist.
+
+**Settled: a runtime refusal.** The maker stays one binary with a
+`--cluster` mode, so the rule is enforced at runtime. In mainnet mode:
+
+- `--leader-key` is refused outright, so its `keys/EEEE.json` default
+  can never apply.
+- The key is resolved from the secrets chain as `dropset/maker-leader`
+  (the environment first, then 1Password; `feeds::secrets`), into
+  memory only.
+- The decoding function's own two buffers are zeroed once the keypair
+  holds the bytes. That is best-effort hygiene, not a guarantee: the
+  provider's intermediate strings, the JSON parser's internal buffers and
+  the `DROPSET_MAKER_LEADER` value in the process environment are not
+  reached.
+- A key whose pubkey is on the committed `keys/` roster is refused even
+  when it arrives through that chain. The roster is embedded as public
+  keys, so the refusal does not depend on the working directory.
+
+The Secrets Manager backend is still the hosted deploy's to add, as a
+third backend on the same chain.
 
 ### 3.3 The output-surface ban, enforced by structure we own
 

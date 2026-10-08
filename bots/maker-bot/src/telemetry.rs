@@ -332,9 +332,48 @@ pub struct LadderEpochRow {
     pub profile_kind: String,
 }
 
+/// One confirmed quote write and what it cost the leader — the
+/// `maker_quote_writes` row, the quote-burn telemetry.
+///
+/// Emitted per send rather than per tick, so the rollup views count writes at
+/// the cadence the bot *actually* sent them, not the one the trigger config
+/// implies: the drift, skew and heartbeat arms all fire irregularly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuoteWriteRow {
+    /// Unix seconds of the tick that sent it.
+    pub ts: i64,
+    pub market: String,
+    /// One of [`WRITE_REFERENCE`], [`WRITE_KILL`], [`WRITE_PROFILE`].
+    pub kind: &'static str,
+    pub signature: String,
+    pub base_fee_lamports: i64,
+    pub priority_fee_lamports: i64,
+}
+
+/// A `set_reference_price` re-stamp (hot path).
+pub const WRITE_REFERENCE: &str = "reference";
+/// The zero-price kill stamp (hot path, with a priority fee).
+pub const WRITE_KILL: &str = "kill";
+/// A `set_liquidity_profile` re-arm (cold path).
+pub const WRITE_PROFILE: &str = "profile";
+
+impl QuoteWriteRow {
+    pub fn new(ts: i64, market: &str, kind: &'static str, sent: &crate::chain::Sent) -> Self {
+        Self {
+            ts,
+            market: market.to_string(),
+            kind,
+            signature: sent.signature.clone(),
+            // Saturate rather than wrap; a fee never approaches i64::MAX.
+            base_fee_lamports: i64::try_from(sent.base_fee_lamports).unwrap_or(i64::MAX),
+            priority_fee_lamports: i64::try_from(sent.priority_fee_lamports).unwrap_or(i64::MAX),
+        }
+    }
+}
+
 /// What the telemetry channel carries.
 ///
-/// One channel for all six kinds, so a tick's sample, its legs, its per-source
+/// One channel for all seven kinds, so a tick's sample, its legs, its per-source
 /// contributions, any ladder shape it armed, and any feed liveness that landed
 /// alongside are written in **one transaction** by one [`StoreWriter`] — rather
 /// than six runners racing six connections to describe the same instant.
@@ -352,6 +391,8 @@ pub enum Record {
     /// only when the cold path re-arms the profile, which is a restart, a
     /// reshape, a freeze-side, a halt, or the daily heartbeat.
     LadderEpoch(Vec<LadderEpochRow>),
+    /// One confirmed quote write and its fee — per send, not per tick.
+    QuoteWrite(QuoteWriteRow),
     /// A **polled** source's turn, from the framework runner's metrics seam.
     Health(HealthUpdate),
     /// A **push** source's transport transition, from the producer's own
@@ -531,8 +572,9 @@ pub fn spawn(rt: &Runtime) -> Telemetry {
         vec![Box::new(BestEffortSink::new("maker telemetry", store))];
 
     // `std::future::pending` as the shutdown, matching how this crate spawns
-    // its price feeds: installing a signal handler on the background runtime
-    // would swallow the ctrl-c that stops the synchronous tick loop.
+    // its price feeds: the process's one signal handler is the binary's
+    // shutdown listener, which hands the signal to the tick loop so it can
+    // pull liquidity first, and a second handler here would only race it.
     rt.spawn(async move {
         if let Err(e) = run_until(
             source,
@@ -600,6 +642,7 @@ impl StoreWriter for TelemetryWriter {
                     }
                     n
                 }
+                Record::QuoteWrite(row) => write_quote_write(tx, row).await?,
                 Record::Health(update) => write_health(tx, update).await?,
                 Record::Liveness(update) => write_liveness(tx, update).await?,
             };
@@ -698,6 +741,22 @@ async fn write_ladder_epoch(
         .bind(row.offset_ppm)
         .bind(row.size_bps)
         .bind(&row.profile_kind)
+        .execute(&mut **tx)
+        .await?;
+    Ok(res.rows_affected())
+}
+
+async fn write_quote_write(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    row: &QuoteWriteRow,
+) -> Result<u64> {
+    let res = sqlx::query(include_str!("../queries/maker_quote_writes_insert.sql"))
+        .bind(row.ts)
+        .bind(&row.market)
+        .bind(row.kind)
+        .bind(&row.signature)
+        .bind(row.base_fee_lamports)
+        .bind(row.priority_fee_lamports)
         .execute(&mut **tx)
         .await?;
     Ok(res.rows_affected())
@@ -1664,7 +1723,7 @@ mod tests {
     /// if these grow again.
     #[test]
     fn every_insert_matches_the_bind_order_beside_it() {
-        let cases: [(&str, &str, &[&str], usize); 6] = [
+        let cases: [(&str, &str, &[&str], usize); 7] = [
             (
                 "maker_telemetry_insert",
                 include_str!("../queries/maker_telemetry_insert.sql"),
@@ -1751,6 +1810,19 @@ mod tests {
                     "profile_kind",
                 ],
                 7,
+            ),
+            (
+                "maker_quote_writes_insert",
+                include_str!("../queries/maker_quote_writes_insert.sql"),
+                &[
+                    "ts",
+                    "market",
+                    "kind",
+                    "signature",
+                    "base_fee_lamports",
+                    "priority_fee_lamports",
+                ],
+                6,
             ),
             (
                 "feed_health_ok",

@@ -7,7 +7,7 @@
 //! the taker (opt-in, off by default) is scoped to one book with
 //! `--market-address <pda>` (see `bots/maker-bot`, `bots/taker-bot`). This
 //! manager owns those children — spawns them, streams their output into the TUI
-//! log, notices when one exits, and kills every one on quit (mirroring the
+//! log, notices when one exits, and stops every one on quit (mirroring the
 //! owned [`crate::validator::Validator`] and the managed explorer container).
 //! The `App` holds one manager per bot kind (maker, taker), each keyed by the
 //! market symbol, so a maker and a taker for the same market coexist.
@@ -24,6 +24,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::thread;
+use std::time::{Duration, Instant};
 
 /// The running bot children of one kind, keyed by their market symbol (the
 /// ticker the accounts pane resolves for the market, e.g. `EURC`). A symbol
@@ -73,13 +74,12 @@ impl BotManager {
         Ok(())
     }
 
-    /// Stop the bot for `symbol`, killing and reaping the child. Returns
-    /// whether one was running.
+    /// Stop the bot for `symbol` and reap the child — see `terminate` for
+    /// how. Returns whether one was running.
     pub fn stop(&mut self, symbol: &str) -> bool {
         match self.children.remove(symbol) {
-            Some(mut child) => {
-                let _ = child.kill();
-                let _ = child.wait();
+            Some(child) => {
+                terminate(vec![child]);
                 true
             }
             None => false,
@@ -87,11 +87,10 @@ impl BotManager {
     }
 
     /// Stop every running bot. Used by "stop all" and, indirectly, by `Drop`.
+    /// Every child is signalled before any is waited on, so their take-offs
+    /// run in parallel rather than one grace period each.
     pub fn stop_all(&mut self) {
-        for (_, mut child) in self.children.drain() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+        terminate(self.children.drain().map(|(_, child)| child).collect());
     }
 
     /// Reap any child that has exited on its own, logging its status, so the
@@ -109,6 +108,50 @@ impl BotManager {
             self.children.remove(symbol);
         }
         !exited.is_empty()
+    }
+}
+
+/// How long a stopped bot gets to exit on its own after SIGTERM before it is
+/// killed. The maker spends it pulling its liquidity — a confirmed kill stamp
+/// and a confirmed zeroed profile per market — so this is sized for two
+/// confirmations, with room for a slow RPC.
+const STOP_GRACE: Duration = Duration::from_secs(20);
+
+/// Stop `children`: SIGTERM each, wait up to [`STOP_GRACE`] for them to exit,
+/// then SIGKILL whatever is left, and reap every one.
+///
+/// SIGTERM rather than `Child::kill` (which is SIGKILL) because the maker
+/// treats SIGTERM as "pull the liquidity, then exit" — stopping a market's
+/// bot from the demo *is* taking its book down. A SIGKILL skips that and
+/// leaves the book resting until its levels expire on their own TIF. The
+/// taker has no handler, so SIGTERM ends it at once.
+fn terminate(children: Vec<Child>) {
+    for child in &children {
+        // SAFETY: `kill` takes a pid and a signal number and touches no
+        // memory of ours. The pid is a child we have not yet reaped, so it
+        // cannot have been recycled for an unrelated process.
+        unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
+    }
+    let deadline = Instant::now() + STOP_GRACE;
+    for mut child in children {
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                // An unreadable status, or the grace spent: kill and reap, so
+                // no child outlives its manager.
+                Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break;
+                }
+                Ok(None) if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break;
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(100)),
+            }
+        }
     }
 }
 
@@ -226,7 +269,30 @@ fn stream<R: Read + Send + 'static>(pipe: Option<R>, symbol: &str, log: Logger) 
 
 #[cfg(test)]
 mod tests {
-    use super::{LOCALNET_STORE_URL, STORE_URL_ENV};
+    use super::{terminate, LOCALNET_STORE_URL, STOP_GRACE, STORE_URL_ENV};
+    use std::process::Command;
+    use std::time::Instant;
+
+    /// A stop signals rather than kills: a child that honours SIGTERM is
+    /// reaped well inside the grace period, not after it.
+    #[test]
+    fn a_stop_sends_sigterm_and_reaps_promptly() {
+        let children = (0..2)
+            .map(|_| {
+                Command::new("sleep")
+                    .arg("30")
+                    .spawn()
+                    .expect("spawn sleep")
+            })
+            .collect();
+        let started = Instant::now();
+        terminate(children);
+        assert!(
+            started.elapsed() < STOP_GRACE / 4,
+            "{:?}",
+            started.elapsed()
+        );
+    }
 
     /// The compose file is the third copy of both strings, and the one that
     /// actually has to agree with them.
