@@ -73,7 +73,7 @@ Parameters:
       the deny policy to the agent user. The estimate prices every model
       at the TokenRate parameters, so it is an upper bound on the real
       charge ONLY while those are the rates of the dearest model in use - a
-      pricier model left running undercounts (measured: Opus 5 traffic
+      pricier model left running is under-counted (measured: Opus 5 traffic
       priced at Opus 5.5 rates estimated 162 against 210 billed).
     MinValue: 1
     Type: 'Number'
