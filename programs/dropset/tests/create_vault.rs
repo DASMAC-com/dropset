@@ -9,7 +9,7 @@ mod common;
 
 use anchor_v2_testing::{Keypair, Signer};
 use common::fixture::Fixture;
-use common::{CREATE_MARKET_FEE_ATOMS, SIGNER_FUNDING_LAMPORTS};
+use common::{CREATE_MARKET_FEE_ATOMS, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID};
 use dropset::DropsetError;
 use solana_pubkey::Pubkey;
 
@@ -182,7 +182,7 @@ fn seq_survives_lifecycle_until_sector_reuse() {
 }
 
 #[test]
-fn second_live_vault_for_the_same_leader_rejects() {
+fn rejects_second_live_vault_for_the_same_leader() {
     let mut f = Fixture::bootstrap();
     f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
         .expect("first vault");
@@ -213,9 +213,29 @@ fn leader_may_reenter_once_its_vault_is_tombstoned() {
     let leader = f.authority.insecure_clone();
     f.close_vault(&leader, 0).expect("tombstone");
     assert!(f.vault(0).tombstoned.get());
+    // Still carrying the leader, so only the tombstone exclusion — not
+    // the emptiness marker — lets the re-create through.
+    assert_eq!(f.vault(0).leader, leader.pubkey().to_bytes().into());
 
     f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
         .expect("a tombstoned vault does not count against the leader");
+    assert_eq!(f.market_header().active_count.get(), 1);
+}
+
+#[test]
+fn same_leader_may_lead_a_vault_on_a_second_market() {
+    let mut f = Fixture::bootstrap();
+    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
+        .expect("vault on the first market");
+
+    // The guard is per-market: point the fixture at a second market and
+    // open a live vault there under the same leader.
+    let fee_mint = f.fee_mint;
+    f.market = f
+        .create_market_with_default_fee(&fee_mint, &SPL_TOKEN_PROGRAM_ID)
+        .expect("second market");
+    f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
+        .expect("the same leader may lead one live vault per market");
     assert_eq!(f.market_header().active_count.get(), 1);
 }
 

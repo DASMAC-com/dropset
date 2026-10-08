@@ -149,8 +149,9 @@ impl CreateVault {
         // don't count — a stranded depositor on a tombstone (reclaimed
         // only on the last draining withdraw) must not lock the leader
         // out of the market, and a frozen leader may re-enter. Applies
-        // on the admin `leader_override` path too. O(slab), slab ≤ 255,
-        // cold path.
+        // on the admin `leader_override` path too. O(slab) — the active
+        // set is capped by `max_vaults_per_market`, tombstoned and free
+        // sectors add to it — on a cold path.
         require!(
             !self.market.as_slice().iter().any(|v| v.is_occupied()
                 && !v.tombstoned.get()

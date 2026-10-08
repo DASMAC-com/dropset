@@ -866,7 +866,9 @@ Re-entry does not wait for Reclaim. `CreateVault`'s
 one-live-vault-per-leader guard counts only vaults that are neither
 frozen nor tombstoned, so the same leader pubkey may `CreateVault`
 afresh — paying the create-vault fee again — as soon as its vault
-enters either state, on this or any other market. Counting them would
+enters either state, on this or any other market. (A frozen vault
+still counts toward `active_count`, so on a full market the re-create
+can still fail the `max_vaults_per_market` cap.) Counting them would
 let one stranded depositor, whose draining `Withdraw` is what triggers
 Reclaim, lock the leader out of the market indefinitely.
 
@@ -1460,13 +1462,15 @@ the admin signer as the leader (same as the non-admin path).
 and before charging the fee, the instruction scans the market's slab
 and rejects with `LeaderAlreadyLeadsVault` if any occupied sector that
 is neither frozen nor tombstoned already carries that leader. The scan
-is O(slab), and the slab holds at most `max_vaults_per_market` (a `u8`)
-sectors on this cold path. The guard is unconditional, so it binds on
-the admin `leader_override` path too. Fills route by market alone, so
-a second leader-owned vault would silently clobber the maker's
-inventory accounting; the guard makes that routing invariant true by
-construction. It is per-market by design — a global guard would need a
-per-leader PDA written on every create, close and reclaim. Frozen and
+is O(slab) on a cold path: the active set is capped at
+`max_vaults_per_market` (a `u8`), and tombstoned and free sectors add
+to the slab beyond it. The guard is unconditional, so it binds on the
+admin `leader_override` path too. The maker bot keys the fills it
+attributes per market, not per vault, so a second live vault under the
+same leader would silently clobber its inventory accounting; the guard
+makes that routing invariant true by construction. It is per-market
+by design — a global guard would need a per-leader PDA written on
+every create, close and reclaim. Frozen and
 tombstoned vaults do not count (see **Frozen and tombstoned vaults**).
 `CreateVault` stays single-signer.
 
