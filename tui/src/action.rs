@@ -327,6 +327,39 @@ impl Action {
         !matches!(self, Action::OpenExplorer | Action::Wipe)
     }
 
+    /// The leader stake operation this action opens a prompt for, if any.
+    ///
+    /// Exhaustive on purpose, like every table here: a leader action routed
+    /// to `None` would fall through `App::run_action` into [`dispatch`],
+    /// whose arm for it is a no-op — setting `job_running` with no job behind
+    /// it and wedging the panel. Enabling the reserved rotation is then a
+    /// compile-time decision here, not a silent fall-through.
+    pub fn leader_op(self) -> Option<crate::leader::LeaderOp> {
+        use crate::leader::LeaderOp;
+        match self {
+            Action::LeaderDeposit => Some(LeaderOp::Deposit),
+            Action::LeaderWithdraw => Some(LeaderOp::Withdraw),
+            Action::RotateLeader
+            | Action::Deploy
+            | Action::InitRegistry
+            | Action::CreateMarket
+            | Action::CreateVault
+            | Action::Deposit
+            | Action::OpenExplorer
+            | Action::BootstrapAll
+            | Action::ProbeSwap
+            | Action::Teardown
+            | Action::Wipe
+            | Action::RepegUp
+            | Action::RepegDown
+            | Action::WidenSpread
+            | Action::TightenSpread
+            | Action::ThinFarSide
+            | Action::ResetLadder
+            | Action::ResetAllLadders => None,
+        }
+    }
+
     /// One-line reason the action is absent on `cluster` (only meaningful when
     /// [`Action::available_on`] is false).
     pub fn unavailable_reason(self, cluster: Cluster) -> &'static str {

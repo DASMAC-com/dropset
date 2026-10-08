@@ -17,9 +17,9 @@ use crate::accounts::{self, MarketView, VaultSeat, VaultStake};
 use crate::chain;
 use crate::cluster::Cluster;
 use crate::job::Logger;
-use crate::market::{self, MintKey};
+use crate::market::{self, MintKey, PairConfig};
 use anyhow::{bail, Context, Result};
-use dropset_math_core::share::{compute_pro_rata_slice, single_leg_basket};
+use dropset_math_core::share::{compute_pro_rata_slice, single_leg_basket, BasketError};
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -98,57 +98,83 @@ impl Ticket {
     /// to. Human units beside atoms, so the decimals are not the operator's
     /// mental arithmetic.
     pub fn summary(&self) -> Vec<String> {
-        let (b, q) = (self.base_symbol, self.quote_symbol);
-        let (bd, qd) = (self.market.base_decimals, self.market.quote_decimals);
         let mut lines = vec![
-            format!("market  {b}/{q}  vault #{}", self.seat.seq),
+            format!(
+                "market  {}/{}  vault #{}",
+                self.base_symbol, self.quote_symbol, self.seat.seq
+            ),
             format!("leader  {}", self.leader),
         ];
-        match self.plan {
-            Plan::Deposit {
-                quote_in,
-                base_in,
-                max_base_in,
-                shares_out,
-            } => {
-                lines.push(format!("in      {} {q}", human(quote_in, qd)));
-                lines.push(format!(
-                    "        {} {b}  (cap {})",
-                    human(base_in, bd),
-                    human(max_base_in, bd)
-                ));
-                lines.push(format!("shares  +{shares_out}"));
-            }
-            Plan::Withdraw {
-                shares_in,
-                base_out,
-                quote_out,
-                min_base_out,
-                min_quote_out,
-            } => {
-                lines.push(format!(
-                    "shares  -{shares_in} of {}",
-                    self.seat.stake.leader_shares
-                ));
-                lines.push(format!(
-                    "out     {} {b}  (min {})",
-                    human(base_out, bd),
-                    human(min_base_out, bd)
-                ));
-                lines.push(format!(
-                    "        {} {q}  (min {})",
-                    human(quote_out, qd),
-                    human(min_quote_out, qd)
-                ));
-            }
-        }
+        lines.extend(plan_lines(
+            &self.plan,
+            (self.base_symbol, self.market.base_decimals),
+            (self.quote_symbol, self.market.quote_decimals),
+            self.seat.stake.leader_shares,
+        ));
         lines
     }
 }
 
-/// `atoms` at `decimals`, as a decimal string — exact, no float.
+/// The amount lines of a confirmation, separated from [`Ticket::summary`] so
+/// the text the operator says `yes` to is testable without a `MarketView`.
+/// `base` / `quote` are each `(symbol, decimals)`.
+fn plan_lines(
+    plan: &Plan,
+    (b, bd): (&str, u8),
+    (q, qd): (&str, u8),
+    leader_shares: u64,
+) -> Vec<String> {
+    match *plan {
+        Plan::Deposit {
+            quote_in,
+            base_in,
+            max_base_in,
+            shares_out,
+        } => vec![
+            format!("in      {} {q}", human(quote_in, qd)),
+            format!(
+                "        {} {b}  (cap {})",
+                human(base_in, bd),
+                human(max_base_in, bd)
+            ),
+            // Not a bound: the instruction carries no `min_shares_out`, so
+            // this is the read's figure, and the program mints what the
+            // vault's ratio gives at send time.
+            format!("shares  ~+{shares_out} (estimate)"),
+        ],
+        Plan::Withdraw {
+            shares_in,
+            base_out,
+            quote_out,
+            min_base_out,
+            min_quote_out,
+        } => vec![
+            format!("shares  -{shares_in} of {leader_shares}"),
+            format!(
+                "out     {} {b}  (min {})",
+                human(base_out, bd),
+                human(min_base_out, bd)
+            ),
+            format!(
+                "        {} {q}  (min {})",
+                human(quote_out, qd),
+                human(min_quote_out, qd)
+            ),
+            // Two program rules the read cannot settle: fee shares minted by
+            // the realize that runs first stay behind even at 100%, and an
+            // active vault refuses a draw below the min-leader-share floor.
+            "note    pre-fee-realize; the min-leader-share floor may refuse".to_string(),
+        ],
+    }
+}
+
+/// `atoms` at `decimals`, as a decimal string — exact, no float. A decimals
+/// count past `u64`'s range (no real mint) falls back to raw atoms rather
+/// than panicking in the middle of drawing the confirmation.
 fn human(atoms: u64, decimals: u8) -> String {
-    let scale = 10u64.pow(u32::from(decimals));
+    let Some(scale) = 10u64.checked_pow(u32::from(decimals)) else {
+        return format!("{atoms} atoms");
+    };
     let (whole, frac) = (atoms / scale, atoms % scale);
     if decimals == 0 {
         whole.to_string()
@@ -174,6 +200,12 @@ pub fn plan_deposit(stake: &VaultStake, quote_in: u64) -> Result<Plan> {
     if quote_in == 0 {
         bail!("deposit at least one quote atom");
     }
+    // `single_leg_basket` divides by the leg's inventory unguarded, and a
+    // taker sell can drain a seeded vault's quote leg to exactly zero — so
+    // this refusal is what stops a panic on the event loop.
+    if stake.quote_atoms == 0 {
+        bail!("the vault holds no quote — a quote-leg top-up cannot size against it");
+    }
     let (shares_out, base_in, quote_final) = single_leg_basket(
         stake.total_shares,
         stake.base_atoms,
@@ -183,7 +215,11 @@ pub fn plan_deposit(stake: &VaultStake, quote_in: u64) -> Result<Plan> {
         u64::MAX,
         quote_in,
     )
-    .map_err(|e| anyhow::anyhow!("the deposit does not size: {e:?}"))?;
+    .map_err(|e| match e {
+        // Zero shares out reports as overflow; say what it means here.
+        BasketError::MathOverflow => anyhow::anyhow!("the amount is too small to buy one share"),
+        other => anyhow::anyhow!("the deposit does not size: {other:?}"),
+    })?;
     Ok(Plan::Deposit {
         quote_in: quote_final,
         base_in,
@@ -249,8 +285,9 @@ pub fn prepare(
     let seat = led_seat(client, &market.address, leader)?;
     let plan = match op {
         LeaderOp::Deposit => {
-            let atoms = amount
-                .checked_mul(10u64.pow(u32::from(market.quote_decimals)))
+            let atoms = 10u64
+                .checked_pow(u32::from(market.quote_decimals))
+                .and_then(|scale| amount.checked_mul(scale))
                 .context("amount overflows the quote mint's atoms")?;
             plan_deposit(&seat.stake, atoms)?
         }
@@ -386,8 +423,7 @@ fn fund_leader(
 ) -> Result<()> {
     let config = market::config_for(repo_root, cluster, &ticket.market.base_mint)
         .context("the market left the roster")?;
-    let mock = |key: &MintKey| matches!(key, MintKey::Keypair(_));
-    let can_mint = !cluster.is_mainnet() && mock(&config.base.key) && mock(&config.quote.key);
+    let can_mint = can_mint(cluster, config);
     for (mint, need, symbol) in [
         (&ticket.market.base_mint, base, ticket.base_symbol),
         (&ticket.market.quote_mint, quote, ticket.quote_symbol),
@@ -412,8 +448,18 @@ fn fund_leader(
             "minted {} {symbol} atoms to the leader",
             need - held
         ));
+        // Balances moved even if the deposit then fails to send.
+        log.accounts_changed();
     }
     Ok(())
+}
+
+/// Whether a deposit may mint the shortfall instead of refusing: only on
+/// localnet, and only when **both** legs are mock mints the admin wallet
+/// is authority over. A real mint is never minted, on any cluster.
+fn can_mint(cluster: Cluster, config: &PairConfig) -> bool {
+    let mock = |key: &MintKey| matches!(key, MintKey::Keypair(_));
+    !cluster.is_mainnet() && mock(&config.base.key) && mock(&config.quote.key)
 }
 
 #[cfg(test)]
@@ -491,5 +537,59 @@ mod tests {
         assert_eq!(human(1_234_567, 6), "1.234567");
         assert_eq!(human(5, 6), "0.000005");
         assert_eq!(human(42, 0), "42");
+        // Past u64's decimal range: raw atoms, never a panic mid-draw.
+        assert_eq!(human(7, 20), "7 atoms");
+    }
+
+    #[test]
+    fn deposit_refuses_a_vault_with_no_quote_and_a_sub_share_amount() {
+        // Quote drained to zero by a taker sell: refuse, never divide by it.
+        let err = plan_deposit(&stake(1_000, 1_000, 1_000, 0), 100).unwrap_err();
+        assert!(format!("{err}").contains("no quote"), "{err}");
+        // One quote atom against a deep vault buys zero shares.
+        let err = plan_deposit(&stake(1, 1, 1_000, 1_000_000), 1).unwrap_err();
+        assert!(format!("{err}").contains("too small"), "{err}");
+    }
+
+    #[test]
+    fn only_localnet_mock_pairs_may_mint() {
+        let mock = market::PAIRS[0];
+        let real = market::MAINNET_PAIRS[0];
+        assert!(can_mint(Cluster::Localnet, mock));
+        // Mainnet never mints, whatever the pair says.
+        assert!(!can_mint(Cluster::Mainnet, mock));
+        assert!(!can_mint(Cluster::Mainnet, real));
+        // A real mint is never minted, even on a localnet session.
+        assert!(!can_mint(Cluster::Localnet, real));
+    }
+
+    #[test]
+    fn the_confirmation_shows_the_bounds_that_are_sent() {
+        let deposit = Plan::Deposit {
+            quote_in: 2_500_000,
+            base_in: 1_000_000,
+            max_base_in: 1_010_000,
+            shares_out: 42,
+        };
+        assert_eq!(
+            plan_lines(&deposit, ("EURC", 6), ("USDC", 6), 0),
+            [
+                "in      2.500000 USDC",
+                "        1.000000 EURC  (cap 1.010000)",
+                "shares  ~+42 (estimate)",
+            ]
+        );
+        let withdraw = Plan::Withdraw {
+            shares_in: 300,
+            base_out: 3_000_000,
+            quote_out: 6_000_000,
+            min_base_out: 2_970_000,
+            min_quote_out: 5_940_000,
+        };
+        let lines = plan_lines(&withdraw, ("EURC", 6), ("USDC", 6), 600);
+        assert_eq!(lines[0], "shares  -300 of 600");
+        // Base and quote each pair the expected slice with its own floor.
+        assert_eq!(lines[1], "out     3.000000 EURC  (min 2.970000)");
+        assert_eq!(lines[2], "        6.000000 USDC  (min 5.940000)");
     }
 }

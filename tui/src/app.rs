@@ -915,7 +915,7 @@ impl App {
                 self.leader_prompt = None;
                 self.log(
                     LogKind::Info,
-                    "Leader prompt cancelled — nothing sent.".into(),
+                    "Leader prompt cancelled — nothing sent.".to_string(),
                 );
             }
             KeyCode::Backspace => {
@@ -981,7 +981,7 @@ impl App {
     /// started meanwhile).
     fn confirm_leader(&mut self, ticket: Ticket, word: &str) {
         let label = ticket.op.label();
-        if word != "yes" {
+        if !is_confirmation(word) {
             self.log(
                 LogKind::Err,
                 format!("{label} — not confirmed; nothing sent"),
@@ -1091,7 +1091,13 @@ impl App {
             self.wipe();
             return;
         }
-        if let Some(op) = leader_op(action) {
+        if let Some(op) = action.leader_op() {
+            // Refuse before the operator types a ticket a running job would
+            // only throw away at the confirm step.
+            if self.job_running {
+                self.log(LogKind::Err, "A job is already running.".to_string());
+                return;
+            }
             self.leader_prompt = Some(LeaderPrompt::Amount {
                 op,
                 buf: String::new(),
@@ -1382,17 +1388,15 @@ fn parse_swap_amount(buf: &str) -> Option<u64> {
     }
 }
 
-/// Human label for a probe-swap side — for the status bar, the actions pane,
-/// and the flip log line.
-/// The leader stake operation an `action` opens a prompt for, if any.
-fn leader_op(action: Action) -> Option<LeaderOp> {
-    match action {
-        Action::LeaderDeposit => Some(LeaderOp::Deposit),
-        Action::LeaderWithdraw => Some(LeaderOp::Withdraw),
-        _ => None,
-    }
+/// Whether `word` confirms a leader send: exactly `yes`, whole and
+/// lower-case, like the launch gate — a `y`, a `Yes` or a trailing space is a
+/// refusal, since the gate's whole job is to interrupt a reflex.
+fn is_confirmation(word: &str) -> bool {
+    word == "yes"
 }
 
+/// Human label for a probe-swap side — for the status bar, the actions pane,
+/// and the flip log line.
 pub(crate) fn swap_side_label(side: SwapSide) -> &'static str {
     match side {
         SwapSide::Buy => "Buy",
@@ -1482,7 +1486,8 @@ fn classify_basis_line(line: &str) -> Option<(String, BasisNote)> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_basis_line, hit_target, parse_swap_amount, swap_side_label, BasisNote, SwapSide,
+        classify_basis_line, hit_target, is_confirmation, parse_swap_amount, swap_side_label,
+        Action, BasisNote, SwapSide,
     };
     use ratatui::layout::Rect;
     use solana_pubkey::Pubkey;
@@ -1539,6 +1544,24 @@ mod tests {
     fn swap_side_label_names_each_side() {
         assert_eq!(swap_side_label(SwapSide::Buy), "Buy");
         assert_eq!(swap_side_label(SwapSide::Sell), "Sell");
+    }
+
+    #[test]
+    fn only_the_exact_word_yes_confirms_a_leader_send() {
+        assert!(is_confirmation("yes"));
+        for word in ["", "y", "Yes", "YES", "yes ", " yes", "yes please", "no"] {
+            assert!(!is_confirmation(word), "{word:?} must refuse");
+        }
+    }
+
+    #[test]
+    fn every_leader_action_and_only_those_open_the_prompt() {
+        use crate::leader::LeaderOp;
+        assert_eq!(Action::LeaderDeposit.leader_op(), Some(LeaderOp::Deposit));
+        assert_eq!(Action::LeaderWithdraw.leader_op(), Some(LeaderOp::Withdraw));
+        // Reserved: it must not open a prompt that sizes nothing.
+        assert_eq!(Action::RotateLeader.leader_op(), None);
+        assert_eq!(Action::Deposit.leader_op(), None);
     }
 
     #[test]
