@@ -123,13 +123,14 @@ matching entries (still report the rest).
 
 1. **Count usage per word.** For each dictionary word,
    find the distinct files that use it with the **Grep
-   tool** — where absent, `search_source.py` or a bare
-   `grep`; never `git grep` (see `CLAUDE.md` → "Shell
-   commands"). Match whole-word and case-insensitive,
-   returning file names only:
+   tool** — where absent, `search_source.py --all-text`
+   (its default set skips prose) or a bare `grep`; never
+   `git grep` (see `CLAUDE.md` → "Shell commands"). Match
+   whole-word and case-insensitive, returning file names
+   only:
 
    - pattern `\b<word>\b` (word boundaries; cspell
-     lowercases, so search with `-i` and `Borsh`
+     lowercases, so search case-insensitively and `Borsh`
      and `borsh` count as one word)
    - output mode: files with matches
 
@@ -252,8 +253,9 @@ matching entries (still report the rest).
 
 The `housekeeping` skill runs this check only when opted in
 (`housekeeping cspell`) — escape drift is slow, so it's
-upkeep, not part of the `audit` rotation. It invokes `cspell-audit` in delegated
-mode (read-only, no edits) and files the run's violations
+upkeep, not part of the `audit` rotation. It invokes
+`cspell-audit` in delegated mode (read-only, no edits)
+and files the run's violations
 as a **single aggregated** issue — **not** one
 issue per finding, because cspell fixes are trivial,
 file-disjoint, and belong in one PR.
