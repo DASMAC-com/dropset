@@ -454,6 +454,21 @@ pub struct VaultSeat {
     pub leader: Pubkey,
     /// Whether it holds a deposit (any shares or inventory).
     pub seeded: bool,
+    /// The share ledger and inventory, as of this read — what the leader
+    /// deposit / withdraw commands size their basket and slippage bounds on.
+    pub stake: VaultStake,
+}
+
+/// A vault's share ledger and inventory at one read. Pre-realize: the
+/// program accrues the performance fee before a withdraw, which can only
+/// mint shares, so a slice sized on this read errs high — the slippage
+/// tolerance absorbs it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VaultStake {
+    pub total_shares: u64,
+    pub leader_shares: u64,
+    pub base_atoms: u64,
+    pub quote_atoms: u64,
 }
 
 /// Whether a vault holds any deposit at all. Shares, not just inventory, so a
@@ -500,6 +515,12 @@ pub fn vault_seats_fresh(client: &RpcClient, market: &Pubkey) -> Result<Option<V
                 seq: v.seq.get(),
                 leader: Pubkey::new_from_array(v.leader),
                 seeded: is_seeded(v),
+                stake: VaultStake {
+                    total_shares: v.total_shares.get(),
+                    leader_shares: v.leader_shares.get(),
+                    base_atoms: v.base_atoms.get(),
+                    quote_atoms: v.quote_atoms.get(),
+                },
             })
             .collect(),
     ))
@@ -829,12 +850,14 @@ mod tests {
                 seq: 1,
                 leader: other,
                 seeded: true,
+                stake: VaultStake::default(),
             },
             VaultSeat {
                 idx: 3,
                 seq: 2,
                 leader: me,
                 seeded: false,
+                stake: VaultStake::default(),
             },
         ];
         assert_eq!(seats_led_by(&seats, &me), vec![seats[1]]);

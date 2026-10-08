@@ -18,6 +18,7 @@ pub mod deploy;
 pub mod explorer;
 pub mod fills;
 pub mod job;
+pub mod leader;
 pub mod market;
 pub mod teardown;
 pub mod ui;

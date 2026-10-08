@@ -207,11 +207,13 @@ pub fn build_create_vault_ix(
     })
 }
 
-/// `deposit_leader` — the vault's `leader` (signer) seeds `(base_in,
-/// quote_in)` atoms from its own ATAs into the market treasuries. The
-/// basket is bounded above by `(base_in, quote_in)`; the leader's ATAs must
-/// already hold the legs (mint to them first). Used by the bootstrap to
-/// open the vault with live inventory.
+/// `deposit_leader` — the vault's `leader` (signer) moves atoms from its own
+/// ATAs into the market treasuries; the leader's ATAs must already hold the
+/// legs (mint to them first). Two shapes, chosen by the program on the
+/// vault's state: a **seeding** deposit into an empty vault takes both
+/// `(base_in, quote_in)` as given (the bootstrap passes `max_* = *_in`); a
+/// **top-up** takes exactly one leg and derives the other from the vault's
+/// ratio, refusing when either final exceeds its `max_*_in` bound.
 #[allow(clippy::too_many_arguments)]
 pub fn build_deposit_leader_ix(
     leader: &Pubkey,
@@ -221,8 +223,8 @@ pub fn build_deposit_leader_ix(
     base_treasury: &Pubkey,
     quote_treasury: &Pubkey,
     vault_idx: u32,
-    base_in: u64,
-    quote_in: u64,
+    (base_in, quote_in): (u64, u64),
+    (max_base_in, max_quote_in): (u64, u64),
 ) -> Instruction {
     DepositLeader {
         signer: *leader,
@@ -244,14 +246,15 @@ pub fn build_deposit_leader_ix(
         vault_idx,
         base_in,
         quote_in,
-        max_base_in: base_in,
-        max_quote_in: quote_in,
+        max_base_in,
+        max_quote_in,
     })
 }
 
 /// `withdraw_leader` — the vault's `leader` (signer) burns `shares_in` of
 /// its own stake and receives the pro-rata `(base, quote)` basket into its
-/// ATAs, which the program creates if absent. `min_base_out` /
+/// ATAs, which must already exist — the program does not create them (prepend
+/// [`ata_with_create_ix`]'s idempotent create). `min_base_out` /
 /// `min_quote_out` are the slippage floors. The leader-path counterpart to
 /// [`build_force_withdraw_leader_ix`]: no admin, no registry account.
 #[allow(clippy::too_many_arguments)]
@@ -1154,8 +1157,8 @@ mod tests {
             &base_treasury,
             &quote_treasury,
             0,
-            1_000,
-            2_000,
+            (1_000, 2_000),
+            (1_000, 2_000),
         );
         assert_eq!(
             metas(&ix),

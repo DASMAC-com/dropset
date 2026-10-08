@@ -6,7 +6,7 @@
 
 use crate::accounts::{ChainState, Liveness, ParticipantView, Phase};
 use crate::action::{self, Action};
-use crate::app::{swap_side_label, App, LogKind};
+use crate::app::{swap_side_label, App, LeaderPrompt, LogKind};
 use crate::book;
 use crate::cluster::Cluster;
 use crate::explorer;
@@ -15,7 +15,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
     Frame,
 };
 use solana_native_token::LAMPORTS_PER_SOL;
@@ -102,6 +102,67 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     draw_fills(f, app, fills_area);
 
     draw_log(f, app, log);
+    // Last, so it paints over the dashboard rather than under it.
+    draw_leader_prompt(f, app, area);
+}
+
+/// The leader deposit / withdraw prompt, centered over the dashboard while it
+/// is open: the amount entry, then the sized ticket with the typed-`yes` line.
+/// Mainnet says so in the border — the same words as the launch banner — so
+/// the one box the operator is reading at the moment of sending names the
+/// chain.
+fn draw_leader_prompt(f: &mut Frame<'_>, app: &App, area: Rect) {
+    let Some(prompt) = &app.leader_prompt else {
+        return;
+    };
+    let input = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
+    let hint = Style::new().fg(Color::DarkGray);
+    let (op, mut lines, entry) = match prompt {
+        LeaderPrompt::Amount { op, buf } => (
+            *op,
+            vec![Line::from(Span::styled(
+                format!("amount, in {}:", op.amount_hint()),
+                hint,
+            ))],
+            format!("{buf}\u{2588}"),
+        ),
+        LeaderPrompt::Confirm { ticket, buf } => (
+            ticket.op,
+            ticket.summary().into_iter().map(Line::from).collect(),
+            format!("Type 'yes' to send: {buf}\u{2588}"),
+        ),
+    };
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(entry, input)));
+    lines.push(Line::from(Span::styled("Enter ok · Esc cancel", hint)));
+    let title = if app.ctx.cluster.is_mainnet() {
+        format!(" {} — MAINNET · REAL FUNDS ", op.label())
+    } else {
+        format!(" {} — localnet ", op.label())
+    };
+    let border = if app.ctx.cluster.is_mainnet() {
+        Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(Color::Yellow)
+    };
+    let width = area.width.min(72);
+    let height = (lines.len() as u16 + 2).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(border),
+        ),
+        rect,
+    );
 }
 
 fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
@@ -243,7 +304,14 @@ fn menu_item(
 ) -> ListItem<'static> {
     let enabled = action.enabled(phase, cluster);
     let recommended = next == Some(action);
-    let key = Span::styled(format!("{}. ", i + 1), Style::new().fg(Color::DarkGray));
+    // Only `1..=9` are keys; an entry past them is reached by `j`/`k` + Enter,
+    // and a "10." would name a key that does not exist.
+    let key_label = if i < 9 {
+        format!("{}. ", i + 1)
+    } else {
+        "   ".to_string()
+    };
+    let key = Span::styled(key_label, Style::new().fg(Color::DarkGray));
     let label_style = if !enabled {
         Style::new().fg(Color::DarkGray)
     } else if recommended {

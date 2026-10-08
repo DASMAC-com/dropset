@@ -40,6 +40,10 @@ libc = "0.2"
 # `fetch_*` account decoders, the `layout` slab mirror (active-vault walk
 # for teardown), and the blocking `RpcClient` — all behind `fetch`.
 dropset-sdk = { path = "../sdk/rs", features = ["fetch"] }
+# The program's own share arithmetic (`single_leg_basket`,
+# `compute_pro_rata_slice`), so the leader deposit / withdraw preview rounds
+# exactly as the handler does rather than re-deriving it.
+dropset-math-core = { path = "../sdk/math-core" }
 open = "5"
 ratatui = "0.29"
 # Pinned to the SDK's 3.x line (sdk/rs/Cargo.toml) so there is one
