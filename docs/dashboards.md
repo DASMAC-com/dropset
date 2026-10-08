@@ -282,8 +282,10 @@ goes on running. Add the entry and the check together.
 entry against the deployment: the service must sit behind a compose
 profile, that profile must not be the one `collectors-up` enables, and
 the Makefile's start lists must not name it. A deliberate opt-in start
-(`make pyth-up`) is still possible and is what a park is for; what the
-test forbids is starting as a side effect of the ordinary bring-up.
+(the `op run … --profile pyth up pyth` recipe in the pyth service's
+comment in `infra/localnet/docker-compose.yml`) is still possible and is
+what a park is for; what the test forbids is starting as a side effect
+of the ordinary bring-up.
 
 **How the panels reach it: a mirror, not a move.** The set stays in code
 and the market-data collectors replace the whole of it at startup in

@@ -83,12 +83,14 @@ async fn main() -> anyhow::Result<()> {
     register_instruments(&pool, SOURCE, &products).await?;
     // Yes, including here — and the apparent contradiction is worth a sentence,
     // since this is the one collector the parked set currently names. Reaching
-    // this line means somebody started the parked venue deliberately
-    // (`make pyth-up`), which a park permits; what it forbids is starting as a
-    // side effect of an ordinary bring-up. The mirror states the *decision*,
-    // which is unchanged by an attended run, so writing it here is right and
-    // skipping it would make the mirror disagree with the constant for as long
-    // as this process was the last collector to start.
+    // this line means somebody started the parked venue deliberately (the
+    // `op run` recipe in the pyth service's comment in
+    // `infra/localnet/docker-compose.yml`), which a park permits; what it
+    // forbids is starting as a side effect of an ordinary bring-up. The
+    // mirror states the *decision*, which is unchanged by an attended run, so
+    // writing it here is right and skipping it would make the mirror disagree
+    // with the constant for as long as this process was the last collector to
+    // start.
     mirror_parked_sources(&pool).await?;
 
     // Name every loaded row, so the effective roster of a running process is

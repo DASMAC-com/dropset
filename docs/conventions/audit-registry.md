@@ -456,21 +456,23 @@ feeds <-> ci-infra: which sources are deliberately NOT running exists
   narrower than "compose never starts it": per entry, the service exists,
   it declares SOME profiles: block, none of those is the profile
   collectors-up enables, and no start list names it. A deliberate opt-in
-  start (make pyth-up, which passes --profile pyth) is still possible and
-  is what a park is FOR, so it stays green. One direction only: a new
-  opt-in SOURCE added without a PARKED_SOURCES entry is NOT caught, since
-  "behind a profile" and "parked" genuinely differ (the keyed FX venues
-  sit behind fx and are expected to run). The registry-side counterpart
-  of this seam is absent by design, not by omission: instrument_registry
-  is written only by a RUNNING collector, so a parked source can never
-  write the row that would say it is parked, and no consumer of the
-  parked set can reach it THROUGH THE REGISTRY. It is reachable from SQL
-  by another route as of 0016 — see the parked-set mirror seam below,
-  which is a different table written by a different mechanism and does
-  not disturb the reasoning above. Note the sibling seam
-  market-data/tests/roster_compose_agreement.rs is the identical
-  Rust-constant-versus-compose-text shape for each collector's default
-  PRODUCT_IDS roster, and is otherwise uncovered here.
+  start (the op run recipe in the pyth service's comment in
+  infra/localnet/docker-compose.yml, which passes --profile pyth) is
+  still possible and is what a park is FOR, so it stays green. One
+  direction only: a new opt-in SOURCE added without a PARKED_SOURCES
+  entry is NOT caught, since "behind a profile" and "parked" genuinely
+  differ (the keyed FX venues sit behind fx and are expected to run).
+  The registry-side counterpart of this seam is absent by design, not by
+  omission: instrument_registry is written only by a RUNNING collector,
+  so a parked source can never write the row that would say it is
+  parked, and no consumer of the parked set can reach it THROUGH THE
+  REGISTRY. It is reachable from SQL by another route as of 0016 — see
+  the parked-set mirror seam below, which is a different table written
+  by a different mechanism and does not disturb the reasoning above.
+  Note the sibling seam market-data/tests/roster_compose_agreement.rs
+  is the identical Rust-constant-versus-compose-text shape for each
+  collector's default PRODUCT_IDS roster, and is otherwise uncovered
+  here.
 parked set (feeds <-> market-data <-> db-schema <-> grafana): the SECOND
   four-party contract on one closed vocabulary, and the structural twin of
   push liveness above — with its failure direction inverted, which is the

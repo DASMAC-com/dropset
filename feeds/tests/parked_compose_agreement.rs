@@ -15,7 +15,8 @@
 //! it.** For each entry: the compose service exists, it declares *some*
 //! `profiles:` block, none of those profiles is the one `collectors-up` enables,
 //! and the venue is named in none of the Makefile's start lists. That is not the
-//! same claim as "compose never starts it" — `make pyth-up` passes
+//! same claim as "compose never starts it" — the `op run` recipe in the pyth
+//! service's comment in `infra/localnet/docker-compose.yml` passes
 //! `--profile pyth` explicitly and starts pyth while this file stays green. A
 //! deliberate, named, opt-in start is exactly what a parked source is *for*;
 //! what the test forbids is a source that starts as a side effect of the
