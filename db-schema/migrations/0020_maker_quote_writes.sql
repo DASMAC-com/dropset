@@ -42,8 +42,6 @@ CREATE TABLE maker_quote_writes (
         CHECK (base_fee_lamports >= 0 AND priority_fee_lamports >= 0)
 );
 
--- Per-market reads: the views' market filter is pushed below their GROUP BY,
--- which this index's prefix serves.
 CREATE INDEX maker_quote_writes_market_ts ON maker_quote_writes (market, ts);
 
 CREATE VIEW maker_quote_burn_hourly AS

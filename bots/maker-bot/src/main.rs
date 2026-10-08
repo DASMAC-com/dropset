@@ -230,15 +230,16 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
             "mainnet mode needs --rpc <url>: the default is the localnet endpoint"
         ));
     }
-    // The derived websocket URL keeps only the RPC URL's host (and bumps the
-    // port), which is right for a local validator and wrong for a mainnet
-    // provider that carries its API key in the path or query: the fill
+    // The derived websocket URL drops everything from the first `/` after the
+    // host (and bumps the port), which is right for a local validator and
+    // wrong for a mainnet provider that carries its API key in the path or a
+    // `/?api-key=` query: the fill
     // subscription would connect unauthenticated and quietly fall back to the
     // inventory-diff path. So mainnet names it explicitly.
     if mainnet && cfg.ws_url.is_none() {
         return Err(anyhow!(
-            "mainnet mode needs --ws <url>: deriving it from --rpc drops any API \
-             key the provider carries in the URL path or query"
+            "mainnet mode needs --ws <url>: deriving it from --rpc drops the \
+             URL path, and with it any API key a provider carries there"
         ));
     }
     let client = chain::rpc(&cfg.rpc_url);
@@ -1278,9 +1279,8 @@ mod tests {
         assert_eq!(args(&[]).selected().len(), MARKETS.len());
     }
 
-    /// Mainnet mode quotes only the markets with a real mainnet mint, and a
-    /// `--market` naming a demo-only market selects nothing rather than
-    /// falling back to its mock mint.
+    /// Mainnet has no faucet, so a low balance is reported, never airdropped;
+    /// localnet tops up below the floor.
     #[test]
     fn mainnet_never_airdrops() {
         let low = MIN_LEADER_LAMPORTS - 1;
@@ -1294,6 +1294,9 @@ mod tests {
         }
     }
 
+    /// Mainnet mode quotes only the markets with a real mainnet mint, and a
+    /// `--market` naming a demo-only market selects nothing rather than
+    /// falling back to its mock mint.
     #[test]
     fn mainnet_selects_only_the_mainnet_roster() {
         let all = args_on(Cluster::Mainnet, &[]).selected();

@@ -119,8 +119,9 @@ second signal exits at once without finishing.
 - `--ws <url>` — PubSub websocket for the fill-event subscription
   (default: derived from `--rpc`, swapping the scheme and using the RPC
   port + 1, so `8899` → `8900`). Required in mainnet mode: the
-  derivation keeps only the host, dropping any API key a provider carries
-  in the URL path or query.
+  derivation drops everything from the first `/` after the host, so an
+  API key a provider carries in the path, or in a `/?api-key=` query, is
+  lost.
 - `--leader-key <path>` — localnet only: leader / quote-authority
   keypair (default `keys/EEEE.json`, the role key the bootstrap seeds
   every vault with). **Refused in mainnet mode**, where the key is the

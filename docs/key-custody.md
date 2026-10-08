@@ -296,10 +296,11 @@ exist.
 - The key is resolved from the secrets chain as `dropset/maker-leader`
   (the environment first, then 1Password; `feeds::secrets`), into
   memory only.
-- The parser's two buffers are zeroed once the keypair holds the bytes.
-  That is best-effort hygiene, not a guarantee: the provider's
-  intermediate strings and the `DROPSET_MAKER_LEADER` value in the
-  process environment are not reached.
+- The decoding function's own two buffers are zeroed once the keypair
+  holds the bytes. That is best-effort hygiene, not a guarantee: the
+  provider's intermediate strings, the JSON parser's internal buffers and
+  the `DROPSET_MAKER_LEADER` value in the process environment are not
+  reached.
 - A key whose pubkey is on the committed `keys/` roster is refused even
   when it arrives through that chain. The roster is embedded as public
   keys, so the refusal does not depend on the working directory.
