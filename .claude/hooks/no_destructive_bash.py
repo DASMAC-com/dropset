@@ -2,6 +2,7 @@
 # cspell:word pgdata
 # cspell:word fgrep
 # cspell:word spoofable
+# cspell:word ionice
 """PreToolUse guard: stop catastrophic and hard-to-reverse Bash commands.
 
 The three committed guards cover shell **form** (compounds, `git grep`) and
@@ -18,7 +19,7 @@ Two tiers, deliberately:
   and stays auditable in the transcript.
 * **DENY** — a very small catastrophic set that no marker overrides: a
   recursive delete of `/` or the home directory (force flag or not; for an
-  `rm` actually being run, the target anywhere among its unquoted operands),
+  `rm` actually being run, the target anywhere among its operands),
   and a force-push to the default branch.
 
 **This is a best-effort advisory stop, not a policy boundary.** It reads one
@@ -148,15 +149,17 @@ _CATASTROPHIC_CORE = (
 # how they arrive inside a shell invocation string. The quoted `$HOME` forms
 # used to be enumerated by hand, which closed exactly the cases someone thought
 # to list: `rm -rf "$HOME"` was denied while `rm -rf "/"` was not classified at
-# any tier. Deriving the wrap from one core list makes that uniform.
+# any tier. Deriving the wrap from one core list makes that uniform. A quoted
+# target may also continue past its closing quote with `/` or `/*`:
+# `rm -r "$HOME"/*` empties the home directory, and was unclassified.
 _CATASTROPHIC_TARGET = (
     r"(?:"
     + _CATASTROPHIC_CORE
-    + r"|\""
+    + r"|(?:\""
     + _CATASTROPHIC_CORE
     + r"\"|'"
     + _CATASTROPHIC_CORE
-    + r"')"
+    + r"')(?:/+\*|/+)?)"
 )
 
 # What may follow the target at end of line without making the command any less
@@ -217,28 +220,68 @@ _RM_TAIL_SHELL = r"(?:\s+-[^\s\"']+)*[\s\"']*$"
 # through at every tier, so here the operands may also end at a control
 # operator or a redirect.
 #
-# That shape is confined to an `rm` that is really being RUN — at the start of a
-# line that does not begin inside an open quote (after `sudo` / `env` and
-# similar wrappers taking dash-only options — `sudo -u root` and `env FOO=1` are
-# not recognized, and fall back to the flags-only shape), or after an unquoted
-# control operator, or as the payload of
-# a shell's `-c`. The first version applied it on every line, and because
-# `classify` splits on newlines, a line of a multi-line commit message or PR
-# body reading `rm -r ~ and rm -R / are closed` became an un-overridable deny —
-# a message describing this very fix could not be committed inline. Elsewhere
-# the flags-only shape above still applies, with the force flag now optional.
+# That shape is confined to an `rm` that is really being RUN — at COMMAND
+# POSITION (`_RM_POSITION`) on a line that does not begin inside an open quote,
+# or inside a shell's `-c` payload, which `classify` re-classifies as a command
+# of its own (`shell_payloads`). The first version applied it on every line,
+# and because `classify` splits on newlines, a line of a multi-line commit
+# message or PR body reading `rm -r ~ and rm -R / are closed` became an
+# un-overridable deny — a message describing this very fix could not be
+# committed inline. Elsewhere the flags-only shape above still applies, with
+# the force flag now optional.
 #
-# `_RM_OPERAND` excludes quotes (a trailing `then"` still ends a stored message)
-# and shell control and redirect characters, so a SECOND command's path is never
-# read as this one's operand: `rm -rf build; ls /` lists root, and must not
-# deny. The bound: a quoted operand before or after the target is not tolerated,
-# so `rm -rf "a b" /` still asks rather than denies.
-_RM_OPERAND = r"[^\s\"';&|<>()`]+"
+# `_RM_OPERAND` excludes shell control and redirect characters, so a SECOND
+# command's path is never read as this one's operand: `rm -rf build; ls /` lists
+# root, and must not deny. It admits a quoted segment only when the quote also
+# CLOSES on the line, so `rm -rf "a b" /` denies while a stray `then"` — the
+# closing line of a stored message — never extends an operand.
+_RM_WORD = r"[^\s\"';&|<>()`]"
+_RM_OPERAND = r"(?:" + _RM_WORD + r"|\"[^\"\n]*\"|'[^'\n]*')+"
 _RM_HEAD = r"(?:\s+" + _RM_OPERAND + r")*\s+"
-_RM_COMMAND_END = r"(?:\s*$|\s*(?:[;&|]|\d*>))"
+_RM_COMMAND_END = r"(?:\s*$|\s*(?:[;&|)`]|\d*>))"
 _RM_TAIL_COMMAND = r"(?:\s+" + _RM_OPERAND + r")*" + _RM_COMMAND_END
-_RM_TAIL_SHELL_COMMAND = r"(?:\s+" + _RM_OPERAND + r")*(?:[\s\"']*$|\s*(?:[;&|]|\d*>))"
-_RM_WRAPPERS = r"(?:(?:sudo|doas|env|command|exec|nohup|nice|time)(?:\s+-\S+)*\s+)*"
+
+# What may stand between a command position and the `rm` it runs: `VAR=val`
+# assignments, and wrappers that run their argv. A wrapper's options may take a
+# value (`sudo -u root`, `nice -n 10`), and `timeout` takes a duration.
+#
+# Every token here has exactly ONE reading, which is what keeps a long run of
+# them linear: an option starts with `-`, an assignment holds `=`, and a value
+# holds neither and is never a wrapper word. Let a token be read two ways and a
+# run of thirty fails in exponential time, as `_GIT_OPTION_VALUE` once did.
+_RM_WRAPPER_WORDS = (
+    r"(?:sudo|doas|env|command|exec|nohup|nice|time|xargs|ionice|stdbuf)"
+)
+_RM_ASSIGNMENT = r"[A-Za-z_]\w*=" + _RM_WORD + r"*"
+_RM_WRAPPER_VALUE = (
+    r"(?!(?:"
+    + _RM_WRAPPER_WORDS
+    + r"|timeout|rm)\s)[^\s\"';&|<>()`=-][^\s\"';&|<>()`=]*"
+)
+_RM_WRAPPER_OPTION = r"-" + _RM_WORD + r"+(?:\s+" + _RM_WRAPPER_VALUE + r")?"
+_RM_WRAPPERS = (
+    r"(?:(?:"
+    + _RM_ASSIGNMENT
+    + r"|timeout(?:\s+"
+    + _RM_WRAPPER_OPTION
+    + r")*\s+\d"
+    + _RM_WORD
+    + r"*|"
+    + _RM_WRAPPER_WORDS
+    + r"(?:\s+"
+    + _RM_WRAPPER_OPTION
+    + r")*)\s+)*"
+)
+
+# Command position: a line start, a control operator, or an opening `(`,
+# `$(` or backtick, then any of `{`, `!` and the compound keywords — so the
+# `rm` in `if true; then rm …`, `{ rm …; }`, `(rm …)` and `x=$(rm …)` is
+# recognized. A keyword counts only right after one of those anchors: an
+# `echo then rm -r / x` is not a compound statement.
+_RM_POSITION = (
+    r"(?:^|[;&|(`])(?:\s*(?:[{!]|(?:if|then|do|else|elif|while|until)(?=\s)))*\s*"
+    + _RM_WRAPPERS
+)
 
 
 def _rm_any_operand(position, tail):
@@ -324,19 +367,15 @@ SHELL_DENY_PATTERNS = (
         ),
         "a recursive delete of the filesystem root or the home directory",
     ),
-    (
-        # The any-operand form as a shell's `-c` payload.
-        _rm_any_operand(r"-c\s+[\"']\s*", _RM_TAIL_SHELL_COMMAND),
-        "a recursive delete of the filesystem root or the home directory",
-    ),
 )
 
 # Denies for an `rm` at COMMAND POSITION, checked only on a line that does not
-# begin inside an open quote, and only where the `rm` word itself is unquoted —
-# see `_RM_OPERAND` for why the any-operand shape must not reach prose.
+# begin inside an open quote, and only where the `rm` word itself is outside
+# every inert quote — see `_RM_OPERAND` for why the any-operand shape must not
+# reach prose.
 COMMAND_DENY_PATTERNS = (
     (
-        _rm_any_operand(r"(?:^\s*" + _RM_WRAPPERS + r"|[;&|]\s*)", _RM_TAIL_COMMAND),
+        _rm_any_operand(_RM_POSITION, _RM_TAIL_COMMAND),
         "a recursive delete of the filesystem root or the home directory",
     ),
 )
@@ -694,6 +733,17 @@ def unquoted_start_lines(cmd):
     exception is a heredoc fed to a SHELL (`bash <<EOF`), whose body is
     commands and is kept.
     """
+    return [line for line, command in _scan_lines(cmd) if command and line.strip()]
+
+
+def without_heredoc_bodies(cmd):
+    """``cmd`` with every prose heredoc body, terminator included, removed."""
+    return "\n".join(line for line, _ in _scan_lines(cmd))
+
+
+def _scan_lines(cmd):
+    """``[(line, begins_unquoted)]`` for the lines of ``cmd`` outside a prose
+    heredoc body — the walk `unquoted_start_lines` documents."""
     result = []
     quote = None
     heredoc = None
@@ -703,9 +753,8 @@ def unquoted_start_lines(cmd):
                 heredoc = None
             continue
         opener = None
+        result.append((line, quote is None))
         if quote is None:
-            if line.strip():
-                result.append(line)
             if program_of(line) not in SHELL_PROGRAMS:
                 spans = quoted_spans(line)
                 for match in _HEREDOC_RE.finditer(line):
@@ -957,6 +1006,46 @@ def prose_spans(cmd):
     return result
 
 
+# A shell at command position, ending in its `-c` flag, right before the quoted
+# span that is its payload. Matched against the text BEFORE the span.
+_SHELL_C = re.compile(
+    _RM_POSITION
+    + r"(?:"
+    + _RM_WORD
+    + r"*/)?(?:"
+    + "|".join(sorted(SHELL_PROGRAMS))
+    + r")(?:\s+"
+    + _RM_WORD
+    + r"+)*?\s+-[A-Za-z]*c\s*\Z",
+    re.MULTILINE,
+)
+
+# Nested `sh -c` levels `classify` follows before it stops looking deeper.
+_MAX_SHELL_DEPTH = 4
+
+
+def shell_payloads(cmd):
+    """The `-c` payloads in ``cmd``, unquoted as the shell would read them.
+
+    A payload is a COMMAND, so `classify` re-classifies it whole rather than
+    matching patterns against the quoted string. Matching in place recognized
+    only an `rm` that opened the payload: `bash -c "cd x && rm -r ~/ y"` and a
+    multi-line payload's later lines both reached only the ask tier. A payload
+    sitting inside another quote is an argument, not a payload, so only spans
+    at the top level of ``cmd`` qualify — and none in a prose heredoc body.
+    """
+    cmd = without_heredoc_bodies(cmd)
+    payloads = []
+    for lo, hi, quote in quoted_spans(cmd):
+        if not _SHELL_C.search(cmd, 0, lo - 1):
+            continue
+        body = cmd[lo:hi]
+        if quote == '"':
+            body = re.sub(r"\\([\\\"$`])", r"\1", body)
+        payloads.append(body)
+    return payloads
+
+
 def _fires_outside(pattern, cmd, spans):
     """Whether ``pattern`` matches ``cmd`` starting outside every span.
 
@@ -971,7 +1060,7 @@ def _fires_outside(pattern, cmd, spans):
     return False
 
 
-def classify(cmd):
+def classify(cmd, _depth=0):
     """``("deny"|"ask"|None, reason)`` for one command string.
 
     Each **line** is classified independently. Newline is a command separator
@@ -1033,15 +1122,26 @@ def classify(cmd):
     for pattern, reason in SHELL_DENY_PATTERNS:
         if any(_matches(pattern, line) for line in shell_lines):
             return "deny", reason
+    # Then each shell `-c` payload, classified as the command it is.
+    if _depth < _MAX_SHELL_DEPTH:
+        for payload in shell_payloads(cmd):
+            tier, reason = classify(payload, _depth + 1)
+            if tier == "deny":
+                return tier, reason
     # Then the command-position denies, on lines a shell would read as
     # commands: not a continuation of a quoted message, and with the `rm` word
-    # itself outside every quote.
+    # itself outside every inert quote. A double-quoted span holding a `$(` or
+    # a backtick is not inert — its substitution runs.
     for line in unquoted_start_lines(cmd):
-        spans = quoted_spans(line)
+        spans = [
+            (lo, hi)
+            for lo, hi, quote in quoted_spans(line)
+            if quote == "'" or not any(t in line[lo:hi] for t in _LIVE_IN_DOUBLE_QUOTES)
+        ]
         for pattern, reason in COMMAND_DENY_PATTERNS:
             for match in pattern.finditer(line):
                 start = match.start("rm")
-                if not any(lo <= start < hi for lo, hi, _ in spans):
+                if not any(lo <= start < hi for lo, hi in spans):
                     return "deny", reason
     for pattern, reason in ASK_PATTERNS:
         if fires(pattern):
@@ -1255,15 +1355,17 @@ def _self_test():
         # such a span as inert data was a real bypass — `grep "$(git push
         # --force origin main)" f` really does run the push, and it had
         # previously been an un-overridable deny. Every variant is pinned.
+        # The `rm` forms asked until a `)` or backtick could end a command;
+        # now the substitution is a command position of its own.
         ('grep "$(git push --force origin main)" f', "deny"),
-        ('grep "$(rm -rf ~)" file', "ask"),
-        ('grep "`rm -rf ~`" file', "ask"),
-        ('grep "${x:-$(rm -rf ~)}" file', "ask"),
-        ('rg "$(rm -rf ~)" .', "ask"),
-        ('python3 .claude/tools/search_source.py "$(rm -rf ~)"', "ask"),
+        ('grep "$(rm -rf ~)" file', "deny"),
+        ('grep "`rm -rf ~`" file', "deny"),
+        ('grep "${x:-$(rm -rf ~)}" file', "deny"),
+        ('rg "$(rm -rf ~)" .', "deny"),
+        ('python3 .claude/tools/search_source.py "$(rm -rf ~)"', "deny"),
         # `-m` names a module, not this repo's tool, so it must not reach the
         # allowlist.
-        ('python3 -m grep "$(rm -rf ~)"', "ask"),
+        ('python3 -m grep "$(rm -rf ~)"', "deny"),
         # A DOUBLE-quoted pattern with no substitution is still inert, so the
         # carve-out keeps working for the ordinary case.
         ('grep "rm -rf /" /tmp/log.txt', None),
@@ -1377,6 +1479,58 @@ def _self_test():
         ("cat <<EOF\nit's here\nEOF\nrm -rf build /", "deny"),
         ("bash <<EOF\nrm -rf ~/ .cache\nEOF", "deny"),
         ("cat <<< 'x'\nrm -rf build /", "deny"),
+        # Wrappers whose options take values, and assignment prefixes. Each of
+        # these fell back to the flags-only shape, unclassified at every tier.
+        ("sudo -u root rm -r / x", "deny"),
+        ("env FOO=1 rm -r ~ x", "deny"),
+        ("nice -n 10 rm -r / x", "deny"),
+        ("timeout 5 rm -r / x", "deny"),
+        ("timeout -s KILL 5 rm -r / x", "deny"),
+        ("FOO=1 rm -r / x", "deny"),
+        ("find . | xargs rm -r / x", "deny"),
+        ("sudo env FOO=1 nice -n 5 rm -r ~ x", "deny"),
+        # ...but a wrapper's value is never a program it runs.
+        ("sudo echo rm -r / x", None),
+        ("env FOO=1 echo rm -r / x", None),
+        # A wrapper run stays linear: a token read two ways is exponential.
+        ("sudo" + " -u x" * 60 + " y", None),
+        ("sudo" + " -E sudo" * 40 + " y", None),
+        # Compound-statement positions.
+        ("if true; then rm -r / x; fi", "deny"),
+        ("for f in a; do rm -r ~ x; done", "deny"),
+        ("{ rm -r / x; }", "deny"),
+        ("(rm -r / x)", "deny"),
+        ("x=$(rm -r / x)", "deny"),
+        ("! rm -r / x", "deny"),
+        ("echo `rm -r / x`", "deny"),
+        # ...but a keyword is only a keyword at command position, and an `rm`
+        # in an inert quote is prose — while one in a live substitution runs.
+        ("echo then rm -r / x", None),
+        ('git commit -m "Subject\n\nif x; then rm -r / x; fi\n"', None),
+        ("git commit -m 'run (rm -r / x) never'", None),
+        ('git commit -m "$(rm -r / x)"', "deny"),
+        ("git commit -F - <<'EOF'\nSubject\n\nthen rm -r ~ x\n(rm -r / x)\nEOF", None),
+        # A shell's `-c` payload is a command of its own, past its first word
+        # and its first line.
+        ('bash -c "cd x && rm -r ~/ y"', "deny"),
+        ("bash -c 'cd x\nrm -r / y'", "deny"),
+        ("sh -lc 'true; rm -r / y'", "deny"),
+        ("sudo bash -c 'cd x; rm -r ~ y'", "deny"),
+        ("bash -c \"sh -c 'cd x; rm -r / y'\"", "deny"),
+        ('bash -c "echo \\"rm -r / x\\""', None),
+        # ...but a payload quoted inside a stored message is prose.
+        ("git commit -m \"Subject\n\nbash -c 'cd x; rm -r / y'\n\"", None),
+        ("git commit -F - <<'EOF'\nbash -c 'cd x; rm -r / y'\nEOF", None),
+        ("echo bash -c 'cd x; rm -r / y'", None),
+        # Quoted operands next to the target, and a quote mid-token.
+        ('rm -rf "a b" /', "deny"),
+        ("rm -rf / 'a b'", "deny"),
+        ('rm -r "$HOME"/*', "deny"),
+        ("rm -r '/'/", "deny"),
+        ('rm -r "$HOME"/build', None),
+        # ...but a stray closing quote never extends an operand into prose.
+        ('git commit -m "Subject\n\nrm -r ~ x then"', None),
+        ("git commit -m 'Subject\n\nkeep rm -rf \"a b\" / out'", "ask"),
         # Long options: `--recursive` still counts, and the `r` inside
         # `--no-preserve-root` does not.
         ("rm --recursive --force build", "ask"),
