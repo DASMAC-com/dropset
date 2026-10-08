@@ -768,6 +768,11 @@ It prints `{count, flagged: [{index, rule, category, reason}]}`
   `Bash(:*)`, an unscoped `Read(…)` / `Edit(…)` root, or a
   bare-verb wildcard that subsumes many narrower rules;
 
+- **dead globs** (`category: dead-glob`) — a Bash `*` left of
+  the trailing `:*`, read literally, so the rule never matches.
+  It grants nothing, so remove these **ungated**, first, with
+  the same command's `prune-dead` subcommand;
+
 - **dangerous one-offs** (`category: dangerous`) — `rm -rf`,
   `curl … | sh`, `git push --force`;
 
@@ -803,17 +808,11 @@ It prints `{count, flagged: [{index, rule, category, reason}]}`
   the guard is ever unwired (which 7b checks).
 
 **Don't expect `machine-path` on this repo's own allowlist.**
-The audited file is `settings.local.json` — git-ignored and
-machine-local by design — so an absolute `/Users/<name>/…` is
-the *correct* form there, and the check knows it (the response
-carries `machine_local_settings: true`). It used to flag them
-regardless, which returned **40 entries of which 39 were false
-positives**, nearly all load-bearing: the
-`git -C <base>/.claude/worktrees/*` rules the worktree flow
-needs, the `~/.zshrc` reads `local-integrations.md` prescribes,
-and the `python3 <base>/.claude/tools/*` entry point. If you
-see a wall of `machine-path` here, suspect the check before the
-allowlist.
+In the machine-local `settings.local.json` an absolute
+`/Users/<name>/…` is the *correct* form, and the check knows it
+(`machine_local_settings: true`); flagging them regardless once
+returned 39 false positives of 40. A wall of `machine-path`
+here means suspect the check before the allowlist.
 
 The helper is deterministic and pattern-based, so also skim
 its `flagged` list for a **secret** that leaked into a rule
@@ -909,7 +908,8 @@ skill's mining — scan recent transcripts for repeated
 read-only shapes, test each candidate with
 `allowlist.py covers` (the existing check, so nothing already
 granted is re-proposed), and carry the survivors to the
-closing gate. Then stamp it, whatever the yield:
+closing gate — never a dead glob, which `add` refuses. Then
+stamp it, whatever the yield:
 
 ```sh
 python3 .claude/tools/allowlist.py \

@@ -263,15 +263,16 @@ Concrete rules:
   `status`, `rev-parse`) once in your local `settings.local.json` so
   they never prompt again.
 
-- Operate on a *sibling worktree* by its real path, but approve it
-  with a worktree **glob**. A command like
-  `git -C <base-repo-path>/.claude/worktrees/<tag> status --short`
-  has to name the real worktree to run, but the allow-rule it matches
-  against should be the generalized
-  `Bash(git -C <base-repo-path>/.claude/worktrees/* status:*)` — the
-  mid-path `*` covers every sibling tag and the `:*` covers the args,
-  so one rule firms the whole family. Don't approve the per-tag,
-  per-arg variant; it only ever matches that one call.
+- Operate on a *sibling worktree* by its real path. **In a Bash
+  rule the only glob is the trailing `:*`** — a `*` anywhere further
+  left is a literal character, so
+  `Bash(git -C <base-repo-path>/.claude/worktrees/* status:*)` never
+  matches a real command (Claude Code warns about each such rule at
+  startup). The rule worth firming names the exact worktree path,
+  and under the auto permission mode usually none is needed.
+  `allowlist.py add` refuses the mid-pattern form, and `prune-dead`
+  removes any that reach the file. (File-access rules differ:
+  `Read(…/worktrees/*/…)` really does glob.)
 
 - To memorialize an approved command, write the generalized rule
   directly:

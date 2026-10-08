@@ -287,24 +287,37 @@ def generalize_bash(command: str) -> str | None:
         # (any leading flag), which can't reduce to a rule narrower than the
         # whole interpreter.
         if len(tokens) >= 2 and not tokens[1].startswith("-"):
-            return f"Bash({collapse_worktree_tags(f'{prog} {tokens[1]}')}:*)"
+            return _live_bash_rule(f"{prog} {tokens[1]}")
         return None
-    literal = " ".join([prog, *_stable_head(tokens[1:])])
-    literal = collapse_worktree_tags(literal)
-    return f"Bash({literal}:*)"
+    return _live_bash_rule(" ".join([prog, *_stable_head(tokens[1:])]))
+
+
+def _live_bash_rule(literal: str) -> str | None:
+    """``Bash(<literal>:*)``, or ``None`` if that rule could never match.
+
+    Worktree tags are **not** collapsed here, unlike a file-access rule: in a
+    Bash rule only the trailing ``:*`` is a glob, so a collapsed
+    ``.claude/worktrees/*`` segment is a literal star that no command carries.
+    Every worktree rule this used to mint was dead on arrival (31 of them
+    reached the allowlist, each warned about at every startup). The exact path
+    is the only form that matches; it goes stale with its worktree, which
+    ``cruft`` already reports as ``machine-path-stale``.
+    """
+    rule = f"Bash({literal}:*)"
+    return None if is_dead_glob(rule) else rule
 
 
 def _make_verbatim_bash(command: str) -> str | None:
-    """The exact-mode rule for a Bash command: the command verbatim (worktree
-    tags still collapsed so it isn't pinned to one worktree). ``None`` for a
-    compound or a program that can't be firmed even verbatim.
+    """The exact-mode rule for a Bash command: the command verbatim. ``None``
+    for a compound, a program that can't be firmed even verbatim, or a command
+    carrying a literal ``*`` (which the rule would read as a dead glob).
     """
     command = command.strip()
     if not command or _has_compound(command):
         return None
     if command.split(" ", 1)[0] in _REFUSE_PROGRAMS:
         return None
-    return f"Bash({collapse_worktree_tags(command)}:*)"
+    return _live_bash_rule(command)
 
 
 def _webfetch_rule(tool_input: dict) -> str | None:
@@ -392,6 +405,22 @@ def _glob_to_regex(glob: str) -> re.Pattern:
     return re.compile("^" + "".join(out) + "$", re.DOTALL)
 
 
+def is_dead_glob(rule: str) -> bool:
+    """Whether a Bash rule mixes a mid-pattern ``*`` with the trailing ``:*``.
+
+    The harness treats ``*`` as a glob only in that trailing position; anywhere
+    further left it is a literal character, so a rule like
+    ``Bash(git -C /r/.claude/worktrees/* status:*)`` never matches a real
+    command (Claude Code warns about each one at startup). File-access rules are
+    unaffected: their ``*`` / ``**`` really are globs.
+    """
+    parsed = _split_rule(rule)
+    if parsed is None or parsed[0] != "Bash":
+        return False
+    inner = parsed[1]
+    return inner.endswith(":*") and "*" in inner[:-2]
+
+
 def is_covered(rule: str, allow_rules: list[str]) -> bool:
     """Whether ``rule`` is already granted by ``allow_rules`` — by an exact
     match, or by a broader existing rule that subsumes it.
@@ -400,7 +429,12 @@ def is_covered(rule: str, allow_rules: list[str]) -> bool:
     rule's (an existing ``Bash(git:*)`` covers ``Bash(git status:*)``); a
     file-access glob that matches the new rule's path; and an exact match for the
     verbatim rule kinds (WebFetch / mcp / Skill).
+
+    A stored :func:`is_dead_glob` rule covers **nothing**, not even its exact
+    twin: it grants nothing at run time, so reporting it as coverage was a false
+    answer that kept the live rule from ever being firmed.
     """
+    allow_rules = [r for r in allow_rules if not is_dead_glob(r)]
     if rule in allow_rules:
         return True
     parsed = _split_rule(rule)

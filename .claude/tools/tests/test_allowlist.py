@@ -28,6 +28,7 @@ from allowlist import (
     covers,
     cruft,
     load_allow,
+    prune_dead,
     refresh_decide,
     refresh_due,
     refresh_marker_path,
@@ -39,6 +40,15 @@ from allowlist import (
 
 def _settings(allow):
     return {"permissions": {"allow": allow}, "additionalDirectories": ["/some/dir"]}
+
+
+# The three real dead shapes that warned at every startup: a worktree-wildcard
+# `git -C`, a `pnpm --dir *`, and a `gh api` with a mid-path issue number star.
+_DEAD_GLOBS = [
+    "Bash(git -C /Users/me/repos/dropset/.claude/worktrees/* status:*)",
+    "Bash(pnpm --dir * lint:*)",
+    "Bash(gh api repos/o/r/issues/*/subscription:*)",
+]
 
 
 class LoadTests(unittest.TestCase):
@@ -200,6 +210,15 @@ class CoversTests(unittest.TestCase):
         self.assertEqual(out["insertion_index"], 2)
         self.assertEqual(out["would_subsume"], [0, 1])
 
+    def test_a_stored_dead_glob_covers_nothing(self):
+        # "Not covered" is now the honest answer rather than a glob-matching
+        # miss: the dead rule grants nothing, so the exact path stays firmable.
+        out = covers(
+            "Bash(git -C /Users/me/repos/dropset/.claude/worktrees/eng-1 status:*)",
+            _DEAD_GLOBS,
+        )
+        self.assertFalse(out["covered"])
+
 
 class ClassifyTests(unittest.TestCase):
     def _solo(self, rule):
@@ -211,6 +230,18 @@ class ClassifyTests(unittest.TestCase):
 
     def test_bare_bash_wildcard_is_over_broad(self):
         self.assertEqual(self._solo("Bash(:*)")[0], "over-broad")
+
+    def test_mid_pattern_glob_is_dead(self):
+        for rule in _DEAD_GLOBS:
+            with self.subTest(rule=rule):
+                self.assertEqual(
+                    self._solo(rule), ("dead-glob", "mid-pattern glob never matches")
+                )
+
+    def test_dead_glob_wins_over_a_stale_path_in_a_local_file(self):
+        rule = _DEAD_GLOBS[0]
+        verdict = classify(rule, 0, [rule], machine_local=True)
+        self.assertEqual(verdict[0], "dead-glob")
 
     def test_unscoped_file_root_is_over_broad(self):
         self.assertEqual(self._solo("Read(/**)")[0], "over-broad")
@@ -237,7 +268,7 @@ class ClassifyTests(unittest.TestCase):
         clean case; one that doesn't is `machine-path-stale`, tested below.
         """
         home = Path.home()
-        rule = f"Bash(git -C {home}/* status:*)"
+        rule = f"Bash(git -C {home} status:*)"
         self.assertIsNone(classify(rule, 0, [rule], machine_local=True))
 
     def test_a_malformed_path_is_flagged_even_when_machine_local(self):
@@ -321,7 +352,7 @@ class ClassifyTests(unittest.TestCase):
 class CruftFileAwarenessTests(unittest.TestCase):
     def test_a_local_settings_path_suppresses_absolute_path_flags(self):
         allow = [
-            "Bash(git -C /Users/me/repo/.claude/worktrees/*/ status:*)",
+            "Bash(git -C /Users/me/repo/.claude/worktrees/eng-1 status:*)",
             "Read(/Users/me/.zshrc)",
         ]
         out = cruft(allow, Path("/Users/me/repo/.claude/settings.local.json"))
@@ -353,8 +384,10 @@ class GuardConflictTests(unittest.TestCase):
         return classify(rule, 0, [rule], machine_local=True)
 
     def test_the_live_worktree_git_grep_grant_is_flagged(self):
-        # The real entry that motivated this, verbatim in shape.
-        rule = "Bash(git -C /Users/me/repo/.claude/worktrees/* grep:*)"
+        # The real entry that motivated this, with the dead `worktrees/*`
+        # wildcard it carried replaced by one worktree (that form is
+        # `dead-glob`, which outranks this — it grants nothing at all).
+        rule = "Bash(git -C /Users/me/repo/.claude/worktrees/eng-1 grep:*)"
         category, reason = self._solo(rule)
         self.assertEqual(category, "guard-conflict")
         self.assertIn("git grep", reason)
@@ -402,7 +435,7 @@ class GuardConflictTests(unittest.TestCase):
     def test_it_precedes_the_path_verdict(self):
         # The live entry carries an absolute worktree path, so a
         # machine-path/stale verdict would otherwise mask the real finding.
-        rule = "Bash(git -C /Users/nobody/definitely-not-here/* grep:*)"
+        rule = "Bash(git -C /Users/nobody/definitely-not-here grep:*)"
         self.assertEqual(self._solo(rule)[0], "guard-conflict")
 
     def test_a_missing_guard_degrades_to_no_finding(self):
@@ -544,6 +577,16 @@ class AddTests(unittest.TestCase):
                 self.assertFalse(out["added"], rule)
                 self.assertEqual(load_allow(p), [], rule)
 
+    def test_refuses_a_dead_glob_with_a_hint(self):
+        for rule in _DEAD_GLOBS:
+            with tempfile.TemporaryDirectory() as d:
+                p = self._path(d, [])
+                out = add(rule, p)
+                self.assertFalse(out["added"], rule)
+                self.assertIn("mid-pattern glob never matches", out["refused"])
+                self.assertIn("exact path", out["refused"])
+                self.assertEqual(load_allow(p), [], rule)
+
     def test_refusal_never_writes_even_a_scaffold(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "settings.local.json"
@@ -582,6 +625,37 @@ class AddTests(unittest.TestCase):
             self.assertEqual(
                 sorted(x.name for x in Path(d).iterdir()), ["settings.local.json"]
             )
+
+
+class PruneDeadTests(unittest.TestCase):
+    def _path(self, d, allow):
+        p = Path(d) / "settings.local.json"
+        p.write_text(json.dumps(_settings(allow)), encoding="utf-8")
+        return p
+
+    def test_removes_only_the_dead_rules(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._path(d, ["Bash(git status:*)", *_DEAD_GLOBS, "Read(/x/*/y)"])
+            out = prune_dead(p)
+            self.assertEqual(out["removed"], _DEAD_GLOBS)
+            self.assertEqual(out["count"], 2)
+            self.assertEqual(load_allow(p), ["Bash(git status:*)", "Read(/x/*/y)"])
+            settings = json.loads(p.read_text(encoding="utf-8"))
+            self.assertEqual(settings["additionalDirectories"], ["/some/dir"])
+
+    def test_a_clean_file_is_not_rewritten(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._path(d, ["Bash(git status:*)"])
+            before = p.read_text(encoding="utf-8")
+            out = prune_dead(p)
+            self.assertEqual(out, {"removed": [], "count": 1})
+            self.assertEqual(p.read_text(encoding="utf-8"), before)
+
+    def test_a_missing_file_is_a_no_op(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "settings.local.json"
+            self.assertEqual(prune_dead(p), {"removed": [], "count": 0})
+            self.assertFalse(p.exists())
 
 
 class RefreshDecideTests(unittest.TestCase):
@@ -871,6 +945,14 @@ class CliTests(unittest.TestCase):
             )
             self.assertEqual(rc, 0)
             self.assertTrue(out["added"])
+
+    def test_prune_dead_dispatch(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._write(d, ["Bash(git status:*)", _DEAD_GLOBS[1]])
+            rc, out = self._run_capture(["allowlist.py", "--settings", p, "prune-dead"])
+            self.assertEqual(rc, 0)
+            self.assertEqual(out["removed"], [_DEAD_GLOBS[1]])
+            self.assertEqual(load_allow(Path(p)), ["Bash(git status:*)"])
 
     def test_add_dispatch_exits_non_zero_when_the_floor_refuses(self):
         with tempfile.TemporaryDirectory() as d:
