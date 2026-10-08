@@ -2,4 +2,4 @@
 -- Source: maker-operations.json
 -- Regenerate: make dashboard-sql
 
-SELECT DISTINCT source FROM instrument_registry ORDER BY 1
+SELECT DISTINCT source FROM instrument_registry WHERE product_id = ANY (ARRAY[${product_id:sqlstring}]::text[]) ORDER BY 1

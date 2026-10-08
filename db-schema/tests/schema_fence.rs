@@ -986,6 +986,62 @@ async fn the_instruments_view_derives_a_class_from_the_legs() {
     }
 }
 
+/// Every seeded stablecoin carries the fiat it tracks, and only stablecoins do.
+///
+/// The maker-operations Product picker narrows by this column, so a missing peg
+/// is an empty picker for that market and a wrong one is a picker offering an
+/// unrelated FX pair — both silent. The constraint guards presence; that the
+/// peg names a FIAT row is a cross-row fact no CHECK can state, so it is
+/// asserted here.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn every_stablecoin_carries_its_peg() {
+    let (_pg, pool) = start_pg().await;
+    migrate(&pool).await.expect("apply migrations");
+
+    let (unpegged, non_fiat): (i64, i64) = sqlx::query_as(
+        "SELECT
+             count(*) FILTER (WHERE s.pegged_to IS NULL),
+             count(*) FILTER (WHERE f.kind IS DISTINCT FROM 'fiat')
+         FROM currency_kinds s
+         LEFT JOIN currency_kinds f ON f.currency = s.pegged_to
+         WHERE s.kind = 'stablecoin'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count stablecoin pegs");
+    assert_eq!(unpegged, 0, "a seeded stablecoin has no peg");
+    assert_eq!(non_fiat, 0, "a seeded stablecoin pegs to a non-fiat row");
+
+    // The two markets whose pickers motivated the column, spot-checked so a
+    // transposed row in the backfill fails here rather than on a dashboard.
+    for (stable, fiat) in [("EURC", "EUR"), ("QCAD", "CAD")] {
+        let (peg,): (String,) =
+            sqlx::query_as("SELECT pegged_to FROM currency_kinds WHERE currency = $1")
+                .bind(stable)
+                .fetch_one(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("read `{stable}`'s peg: {e}"));
+        assert_eq!(peg, fiat, "wrong peg for `{stable}`");
+    }
+
+    // A stablecoin seeded the way 0013 seeded QCAD, with no peg, must now be
+    // rejected — and a fiat must not carry one.
+    for insert in [
+        "INSERT INTO currency_kinds (currency, kind) VALUES ('ZZZ', 'stablecoin')",
+        "INSERT INTO currency_kinds (currency, kind, pegged_to) VALUES ('ZZZ', 'fiat', 'USD')",
+    ] {
+        let err = sqlx::query(insert)
+            .execute(&pool)
+            .await
+            .expect_err("the peg constraint must reject this row");
+        assert!(
+            err.to_string().contains("stablecoin_has_a_peg"),
+            "expected the peg constraint, got: {err}"
+        );
+    }
+}
+
 /// The liveness view picks its staleness bound by asset class, so an FX
 /// weekend is not read as a dead collector.
 ///

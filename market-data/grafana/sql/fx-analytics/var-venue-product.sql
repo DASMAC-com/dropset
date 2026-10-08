@@ -2,4 +2,4 @@
 -- Source: fx-analytics.json
 -- Regenerate: make dashboard-sql
 
-SELECT DISTINCT product_id FROM cex_prices WHERE source = ${venue_source:sqlstring} ORDER BY 1
+SELECT DISTINCT c.product_id FROM cex_prices AS c JOIN instruments AS i ON i.product_id = c.product_id WHERE c.source = ${venue_source:sqlstring} AND ${currency:sqlstring} IN (i.base, i.quote) ORDER BY 1

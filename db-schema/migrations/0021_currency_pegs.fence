@@ -1,0 +1,6 @@
+# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+#
+# One column on a table 0009 created. What pins the backfill is
+# `every_stablecoin_carries_its_peg`, which reads the seeded pegs back and
+# asserts the constraint rejects a peg-less stablecoin.
+column currency_kinds.pegged_to

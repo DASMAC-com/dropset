@@ -615,6 +615,30 @@
       {
         "current": {
           "selected": true,
+          "text": "EURC",
+          "value": "EURC"
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT DISTINCT legs.c\nFROM (\n  SELECT i.product_id, i.base AS c FROM instruments i\n  UNION ALL\n  SELECT i.product_id, i.quote FROM instruments i\n) legs\nWHERE EXISTS (\n  SELECT 1\n  FROM instrument_registry r\n  WHERE r.source = ${venue_source:sqlstring}\n    AND r.product_id = legs.product_id\n)\nORDER BY 1",
+        "description": "The currency umbrella: pick one and both the Venue product and the Pairs pickers below offer only pairs with that currency on either leg. This is the selector the dashboard was built without, and the README recorded that selecting by currency needed products tagged by currency family, which was a schema change rather than a dashboard one. That schema landed as the instruments dimension, so this reads the dimension's base and quote legs rather than splitting the product id, which means EURC and EUR are known to be the stablecoin and the fiat of the same currency instead of two unrelated strings. Scoped to the selected venue, for the same reason the Venue product picker is: an unfiltered list invites choosing a currency this venue does not quote, which renders nothing and reads as a broken panel.",
+        "includeAll": false,
+        "label": "Currency",
+        "multi": false,
+        "name": "currency",
+        "options": [],
+        "query": "SELECT DISTINCT legs.c\nFROM (\n  SELECT i.product_id, i.base AS c FROM instruments i\n  UNION ALL\n  SELECT i.product_id, i.quote FROM instruments i\n) legs\nWHERE EXISTS (\n  SELECT 1\n  FROM instrument_registry r\n  WHERE r.source = ${venue_source:sqlstring}\n    AND r.product_id = legs.product_id\n)\nORDER BY 1",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
           "text": "EURC-USDC",
           "value": "EURC-USDC"
         },
@@ -622,14 +646,14 @@
           "type": "postgres",
           "uid": "dropset-postgres"
         },
-        "definition": "SELECT DISTINCT product_id FROM cex_prices WHERE source = ${venue_source:sqlstring} ORDER BY 1",
-        "description": "The product to show, listing only what the selected venue actually carries. The filter on the source is load-bearing rather than cosmetic: an unfiltered list offers every product any source has ever written, so it invites selecting a symbol the chosen venue does not and could not quote. The committed default is the product with the densest traded tape, which is the one to verify against when checking that a panel renders.",
+        "definition": "SELECT DISTINCT c.product_id FROM cex_prices AS c JOIN instruments AS i ON i.product_id = c.product_id WHERE c.source = ${venue_source:sqlstring} AND ${currency:sqlstring} IN (i.base, i.quote) ORDER BY 1",
+        "description": "The product to show, listing only what the selected venue actually carries AND only pairs with the selected Currency on either leg. Both filters are load-bearing rather than cosmetic. Without the source filter the list offers every product any source has ever written, inviting a symbol the chosen venue does not and could not quote. Without the currency filter the candle panels and the cross-pair index could be pointed at unrelated currencies at once (AUDD-USDC beside EURC pairs), which is a selection that describes nothing. Listed from the candle tier, unlike Currency and Pairs, which read the registry: a currency this venue only ticks leaves this list empty, which is the honest signal that there are no candles to draw. The committed default is the product with the densest traded tape, which is the one to verify against when checking that a panel renders.",
         "includeAll": false,
         "label": "Venue product",
         "multi": false,
         "name": "venue_product",
         "options": [],
-        "query": "SELECT DISTINCT product_id FROM cex_prices WHERE source = ${venue_source:sqlstring} ORDER BY 1",
+        "query": "SELECT DISTINCT c.product_id FROM cex_prices AS c JOIN instruments AS i ON i.product_id = c.product_id WHERE c.source = ${venue_source:sqlstring} AND ${currency:sqlstring} IN (i.base, i.quote) ORDER BY 1",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
@@ -658,30 +682,6 @@
         "regex": "",
         "skipUrlSync": true,
         "sort": 3,
-        "type": "query"
-      },
-      {
-        "current": {
-          "selected": true,
-          "text": "USD",
-          "value": "USD"
-        },
-        "datasource": {
-          "type": "postgres",
-          "uid": "dropset-postgres"
-        },
-        "definition": "SELECT DISTINCT legs.c\nFROM (\n  SELECT i.product_id, i.base AS c FROM instruments i\n  UNION ALL\n  SELECT i.product_id, i.quote FROM instruments i\n) legs\nWHERE EXISTS (\n  SELECT 1\n  FROM instrument_registry r\n  WHERE r.source = ${venue_source:sqlstring}\n    AND r.product_id = legs.product_id\n)\nORDER BY 1",
-        "description": "The currency umbrella: pick one and the Pairs picker below offers every pair with that currency on either leg. This is the selector the dashboard was built without, and the README recorded that selecting by currency needed products tagged by currency family, which was a schema change rather than a dashboard one. That schema landed as the instruments dimension, so this reads the dimension's base and quote legs rather than splitting the product id, which means EURC and EUR are known to be the stablecoin and the fiat of the same currency instead of two unrelated strings. Scoped to the selected venue, for the same reason the Venue product picker is: an unfiltered list invites choosing a currency this venue does not quote, which renders nothing and reads as a broken panel.",
-        "includeAll": false,
-        "label": "Currency",
-        "multi": false,
-        "name": "currency",
-        "options": [],
-        "query": "SELECT DISTINCT legs.c\nFROM (\n  SELECT i.product_id, i.base AS c FROM instruments i\n  UNION ALL\n  SELECT i.product_id, i.quote FROM instruments i\n) legs\nWHERE EXISTS (\n  SELECT 1\n  FROM instrument_registry r\n  WHERE r.source = ${venue_source:sqlstring}\n    AND r.product_id = legs.product_id\n)\nORDER BY 1",
-        "refresh": 1,
-        "regex": "",
-        "skipUrlSync": false,
-        "sort": 1,
         "type": "query"
       },
       {
