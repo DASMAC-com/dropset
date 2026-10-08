@@ -16,7 +16,7 @@ worktree: the `gh` credential (with commit signing), and whether the
 issue already has a merged PR. Each catches a failure that is
 otherwise discovered late and expensively.
 
-There is **no model check**: `task` pins the worker tier's model at
+There is **no model check**: `task` pins the executor tier's model at
 launch and refuses to start when it does not resolve (see
 `docs/conventions/local-integrations.md`), so a turn spent asking
 which model is running buys nothing.

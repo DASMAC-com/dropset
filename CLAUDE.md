@@ -586,9 +586,9 @@ the escape for work needing web research, and `housekeeping` stays on
 the seat deliberately because the operator uses it to open the 5-hour
 subscription window.
 
-Models are named by **role tier** — judgment (`plan`, `architect`,
-`explore`), worker (`task`, `housekeeping`), background — each set in
-the untracked runtime config (`DS_MODEL_<TIER>[_SUBSTRATE]`). Every verb
+Models are named by **role tier** — advisor (`plan`, `architect`,
+`explore`), executor (`task`, `housekeeping`), background — each set in
+the untracked runtime config (`DS_MODEL_<TIER>[_SUBSTRATE]`). Each verb
 pins its tier at launch and refuses an unresolved one, so no skill
 checks its own model; `plan bedrock` is the credit-pinch override.
 

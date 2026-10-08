@@ -73,7 +73,7 @@ says anything about an `ENG-###` scope.
 architect topic has no issue of its own, and the `ceo-` prefix
 is what keeps the fleet listing readable by role.
 
-It runs the **judgment** tier, like `plan`: this session
+It runs the **advisor** tier, like `plan`: this session
 argues strategy, so it runs the top tier. If the shell arrived
 carrying Bedrock exports from an earlier `task` in the same
 tab, an anthropic launch clears them and says so.
@@ -86,12 +86,12 @@ session**, so parallel threads never share context and a
 volatility conversation cannot drift into a custody one.
 
 **There is no in-session model check.** `architect` pins the
-judgment tier at launch and refuses to start when it does not
+advisor tier at launch and refuses to start when it does not
 resolve; `architect <topic> bedrock` is the credit-pinch
 override, as for `plan`.
 
 For an architect session specifically: doing long-horizon
-design on the worker tier is the cheap-tier slip that
+design on the executor tier is the cheap-tier slip that
 pin prevents.
 
 ## Bootstrap: minimal, deliberately

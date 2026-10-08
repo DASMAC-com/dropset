@@ -591,18 +591,20 @@ _ds_topic_sid() {
 # ---------------------------------------------------------------------------
 # Model tiers: which model a verb launches, named by ROLE, never by model.
 #
-#   JUDGMENT     plan, architect, explore        default substrate: anthropic
-#   WORKER       task, housekeeping              default substrate: bedrock
+#   ADVISOR      plan, architect, explore        default substrate: anthropic
+#   EXECUTOR     task, housekeeping              default substrate: bedrock
 #   BACKGROUND   Claude Code's small-model slot  follows the session's substrate
 #
-# The names are capability-per-role on purpose. A family name (opus, haiku)
+# The names are capability-per-role on purpose, after the advisor/executor
+# pairing in Claude's own docs: the advisor tier decides, the executor tier
+# carries the work out. A family name (opus, haiku)
 # drifts the first time the role changes family, and Claude Code owns those as
 # its own alias slots; a substrate name ("seat") breaks the first time the top
 # model leaves the subscription. The verb → tier table is the code below, and
 # the tier → model + substrate table is the operator's untracked runtime config:
 #
-#   DS_MODEL_JUDGMENT, DS_MODEL_JUDGMENT_SUBSTRATE
-#   DS_MODEL_WORKER,   DS_MODEL_WORKER_SUBSTRATE
+#   DS_MODEL_ADVISOR,  DS_MODEL_ADVISOR_SUBSTRATE
+#   DS_MODEL_EXECUTOR, DS_MODEL_EXECUTOR_SUBSTRATE
 #   DS_MODEL_BACKGROUND                (applied on Bedrock launches only)
 #
 # NO MODEL ID IS COMMITTED, deliberately, and there is no fallback. A model
@@ -656,7 +658,7 @@ _ds_tag_of() {
 # Resolve a tier to the model and substrate a launch uses. Prints two lines,
 # model then substrate. NON-ZERO MEANS DO NOT LAUNCH.
 #
-#   $1 tier (`judgment` | `worker`)   $2 substrate override, or "" for the config
+#   $1 tier (`advisor` | `executor`)   $2 substrate override, or "" for the config
 #
 # This is the deterministic, pre-session half of fail-fast: a tier whose config
 # does not resolve refuses here, offline and free, rather than starting a
@@ -671,15 +673,15 @@ _ds_tag_of() {
 _ds_tier() {
   local tier="$1" override="$2" model substrate var
   case "$tier" in
-    judgment)
-      var=DS_MODEL_JUDGMENT
-      model="$DS_MODEL_JUDGMENT"
-      substrate="${override:-${DS_MODEL_JUDGMENT_SUBSTRATE:-anthropic}}"
+    advisor)
+      var=DS_MODEL_ADVISOR
+      model="$DS_MODEL_ADVISOR"
+      substrate="${override:-${DS_MODEL_ADVISOR_SUBSTRATE:-anthropic}}"
       ;;
-    worker)
-      var=DS_MODEL_WORKER
-      model="$DS_MODEL_WORKER"
-      substrate="${override:-${DS_MODEL_WORKER_SUBSTRATE:-bedrock}}"
+    executor)
+      var=DS_MODEL_EXECUTOR
+      model="$DS_MODEL_EXECUTOR"
+      substrate="${override:-${DS_MODEL_EXECUTOR_SUBSTRATE:-bedrock}}"
       ;;
     *)
       print -u2 "dropset: unknown model tier '$tier'"
@@ -691,9 +693,9 @@ _ds_tier() {
     print -u2 "dropset: $var is unset — set it to a model id in the runtime" \
       'config (the repo pins no model). Refusing to launch.'
     # The retired spelling is named rather than left as a mystery.
-    if [[ "$tier" == worker && -n "$DS_BEDROCK_MODEL" ]]; then
+    if [[ "$tier" == executor && -n "$DS_BEDROCK_MODEL" ]]; then
       print -u2 'dropset: DS_BEDROCK_MODEL is retired — rename it to' \
-        'DS_MODEL_WORKER.'
+        'DS_MODEL_EXECUTOR.'
     fi
     return 1
   fi
@@ -748,8 +750,8 @@ _ds_substrate_enter() {
 #
 # Best-effort by design — an unwritable state directory must not fail a launch,
 # so every path returns 0. The cost of a missing marker is the conservative
-# default — anthropic substrate, and (see `_ds_resume_tier`) the judgment tier's
-# model rather than the worker's — which is the next function.
+# default — anthropic substrate, and (see `_ds_resume_tier`) the advisor tier's
+# model rather than the executor's — which is the next function.
 _ds_substrate_write() {
   local key="$1" substrate="$2"
   mkdir -p "$_DS_SUBSTRATE_DIR" 2>/dev/null || return 0
@@ -774,18 +776,18 @@ _ds_substrate_read() {
   fi
 }
 
-# Which tier a `task resume <n>` re-pins. Prints `worker` or `judgment`.
+# Which tier a `task resume <n>` re-pins. Prints `executor` or `advisor`.
 #
 # Only `task` writes a marker, so a marker's PRESENCE is the tier record:
-# present means a worker session, absent means the issue-keyed `explore` that
+# present means an executor session, absent means the issue-keyed `explore` that
 # shares the `eng-<n>` tag and writes none (see that verb for why it must not).
 # This is what lets a resume restore the model and not just the substrate,
 # without a second marker that could disagree with the first.
 _ds_resume_tier() {
   if [[ -f "$_DS_SUBSTRATE_DIR/$1" ]]; then
-    print -r -- 'worker'
+    print -r -- 'executor'
   else
-    print -r -- 'judgment'
+    print -r -- 'advisor'
   fi
 }
 
@@ -878,7 +880,7 @@ _ds_bedrock_env() {
 # CALLING shell — they have to, since a child process could not set the
 # environment `claude` inherits — so the variables outlive the session that set
 # them. Run `task 1234`, quit it, and that tab is still a Bedrock tab: the next
-# `plan` in it would silently run against credits on the worker's model.
+# `plan` in it would silently run against credits on the executor's model.
 # The absence of `CLAUDE_CODE_USE_BEDROCK` IS how an anthropic launch is
 # expressed, so such a launch has to make that absence true rather than merely
 # assert it. `ANTHROPIC_MODEL` is cleared with the rest, and the verb then
@@ -959,13 +961,13 @@ _ds_seat_guard() {
 
 # Start a WORKTREE session on one Linear task. THE implementation entry point.
 #
-#   task <n>             the worker tier on its configured substrate (Bedrock)
-#   task anthropic <n>   the worker tier on the Anthropic subscription
-#   task bedrock <n>     the worker tier on Bedrock, whatever the config says
+#   task <n>             the executor tier on its configured substrate (Bedrock)
+#   task anthropic <n>   the executor tier on the Anthropic subscription
+#   task bedrock <n>     the executor tier on Bedrock, whatever the config says
 #   task resume <n>      resume by number, on the substrate and tier it had
 #
 # THE OVERRIDE VOCABULARY IS THE TWO SUBSTRATE NAMES AND NOTHING ELSE, the same
-# literal first word on every verb that takes one. Putting a worker on
+# literal first word on every verb that takes one. Putting an executor on
 # `anthropic` exists for ONE capability reason — web search and web fetch are
 # unavailable on Bedrock — so reach for it when the task needs live web
 # research, not by habit. `local` was the old spelling; it never meant local
@@ -1032,7 +1034,7 @@ task() {
 }
 
 # Internal: the worktree launch itself. $1 tag-or-number, $2 substrate override
-# or "" for the worker tier's configured one.
+# or "" for the executor tier's configured one.
 _ds_task_start() {
   local tag="$1" override="$2" model substrate
 
@@ -1044,7 +1046,7 @@ _ds_task_start() {
   # Shared with the resume side, which is the whole point — see `_ds_tag_of`.
   tag="$(_ds_tag_of "$tag")"
 
-  { read -r model; read -r substrate; } <<< "$(_ds_tier worker "$override")"
+  { read -r model; read -r substrate; } <<< "$(_ds_tier executor "$override")"
   [[ -n "$substrate" ]] || return 1
 
   _ds_base || return 1
@@ -1105,7 +1107,7 @@ _ds_task_resume() {
   # Re-pin the MODEL from the tier table as well as re-exporting the substrate,
   # BEFORE moving the shell. The tier comes from the marker's presence (see
   # `_ds_resume_tier`), so an issue-keyed explore session comes back on the
-  # judgment model rather than the saved default; the substrate is the one the
+  # advisor model rather than the saved default; the substrate is the one the
   # session recorded, not today's config, so a resume never switches provider
   # mid-conversation. Order matters: either step can refuse, and resolving
   # after the `cd` below would leave the operator relocated into the worktree
@@ -1187,7 +1189,7 @@ _ds_task_resume() {
 # kinds can claim, with different substrates and different tiers, while the
 # substrate marker keys on the tag alone. That is why nothing is written to it
 # below — and the marker's resulting ABSENCE is what tells `task resume <n>`
-# (and `fleet`, which types it) to re-pin the judgment tier on the anthropic
+# (and `fleet`, which types it) to re-pin the advisor tier on the anthropic
 # substrate. See `_ds_resume_tier`. `explore <n>` remains the natural resume
 # verb; the other two now land on the same model.
 #
@@ -1204,12 +1206,12 @@ _ds_task_resume() {
 # separate launchers with identical bodies bar one flag. The idempotency above
 # folds in the third.
 #
-# **The judgment tier, and no substrate override.** Explore work is
+# **The advisor tier, and no substrate override.** Explore work is
 # thinking-heavy, so it runs the top tier like `plan` and `architect` do. It
 # takes no `bedrock` word because the one override the operator ratified is the
 # credit-pinch case for `plan` and `architect`; explore carries no such pinch.
 # It is PINNED to the anthropic substrate, deliberately ignoring
-# `DS_MODEL_JUDGMENT_SUBSTRATE`: it writes no substrate marker (see below), so a
+# `DS_MODEL_ADVISOR_SUBSTRATE`: it writes no substrate marker (see below), so a
 # marker-less `task resume <n>` always resumes it on anthropic, and launching it
 # anywhere else would make that resume switch provider mid-conversation.
 #
@@ -1298,7 +1300,7 @@ explore() {
   name="exp-$raw"
 
   local model substrate
-  { read -r model; read -r substrate; } <<< "$(_ds_tier judgment anthropic)"
+  { read -r model; read -r substrate; } <<< "$(_ds_tier advisor anthropic)"
   [[ -n "$substrate" ]] || return 1
   _ds_substrate_enter "$substrate" 'explore' || return 1
   # NO SUBSTRATE MARKER IS WRITTEN HERE, DELIBERATELY, and the reason is the
@@ -1320,9 +1322,9 @@ explore() {
 
 # Start OR resume today's PLANNING session. The name is derived from the date.
 #
-#   plan             the judgment tier on its configured substrate (anthropic)
-#   plan bedrock     the judgment tier on Bedrock — the credit-pinch override
-#   plan anthropic   the judgment tier on the subscription, whatever the config
+#   plan             the advisor tier on its configured substrate (anthropic)
+#   plan bedrock     the advisor tier on Bedrock — the credit-pinch override
+#   plan anthropic   the advisor tier on the subscription, whatever the config
 #
 # Retention: on Bedrock a Fable-class model falls under the account's standing
 # AWS human-review opt-in (a model allowing mode `none` does not); the operator
@@ -1335,7 +1337,7 @@ explore() {
 # Things it makes deterministic, each of which used to be a manual step the
 # operator could forget:
 #
-#   * The model. Planning sessions run the judgment tier deliberately —
+#   * The model. Planning sessions run the advisor tier deliberately —
 #     fidelity over tokens — resolved from the runtime config and refused
 #     before launch when it does not resolve, on create and resume alike. The
 #     skill's `model:` frontmatter covers a mid-session `/plan` only.
@@ -1362,7 +1364,7 @@ plan() {
     print -u2 'Usage: plan [anthropic|bedrock]   (the name is derived from the date)'
     return 1
   fi
-  { read -r model; read -r substrate; } <<< "$(_ds_tier judgment "$1")"
+  { read -r model; read -r substrate; } <<< "$(_ds_tier advisor "$1")"
   [[ -n "$substrate" ]] || return 1
   _ds_substrate_enter "$substrate" 'plan' || return 1
   # A refused login must not leave a `plan bedrock`'s exports — the bearer token
@@ -1377,15 +1379,15 @@ plan() {
 # Start OR resume today's HOUSEKEEPING session — the same contract as `plan`,
 # so a day's upkeep is one verb rather than a hand-started session.
 #
-# The WORKER tier's model: housekeeping is upkeep, not board decisions, so it
-# does not inherit the judgment tier — but every managed verb pins through the
+# The EXECUTOR tier's model: housekeeping is upkeep, not board decisions, so it
+# does not inherit the advisor tier — but every managed verb pins through the
 # config, so it no longer floats on the saved default either.
 #
 # **The anthropic substrate, always, and this one is not a capability call.**
 # Housekeeping could run on Bedrock perfectly well; the operator uses it to OPEN
 # the 5-hour subscription window at the start of a day, which only a
-# subscription session does. So it takes the worker MODEL but never the worker
-# tier's substrate, and takes no override.
+# subscription session does. So it takes the executor MODEL but never the
+# executor tier's substrate, and takes no override.
 #
 # It carries the same `_ds_aws_login` gate as `plan`, with the same two
 # warn-and-launch escapes, and for the same reason: this pass reports spend and
@@ -1400,7 +1402,7 @@ housekeeping() {
     return 1
   fi
   local model substrate
-  { read -r model; read -r substrate; } <<< "$(_ds_tier worker anthropic)"
+  { read -r model; read -r substrate; } <<< "$(_ds_tier executor anthropic)"
   [[ -n "$substrate" ]] || return 1
   _ds_seat_guard 'housekeeping'
   _ds_aws_login 'housekeeping' || return 1
@@ -1419,7 +1421,7 @@ housekeeping() {
 # The name is `ceo-<topic>`, which makes the fleet listing read by role —
 # `eng-*` implementers, `plan-*` planning, `ceo-*` architecture.
 #
-# The judgment tier like `plan`, for the same reason: this session argues
+# The advisor tier like `plan`, for the same reason: this session argues
 # strategy, and fidelity beats tokens. It writes nothing to the board — see the
 # skill. It takes the same optional substrate word after the topic
 # (`architect <topic> bedrock`), with the same retention line as `plan`.
@@ -1461,7 +1463,7 @@ architect() {
     print -u2 'architect: topic must be lowercase letters, digits and dashes'
     return 1
   fi
-  { read -r model; read -r substrate; } <<< "$(_ds_tier judgment "$2")"
+  { read -r model; read -r substrate; } <<< "$(_ds_tier advisor "$2")"
   [[ -n "$substrate" ]] || return 1
   _ds_substrate_enter "$substrate" 'architect' || return 1
   _ds_session "$(_ds_topic_sid architect "$topic")" \
@@ -1514,8 +1516,8 @@ fleet() {
 # form was never submitted still reads `ACTIVE`).
 #
 # Every tier is checked in its BEDROCK form, including an anthropic-substrate
-# judgment tier: `plan bedrock` sends that same id to Bedrock, so it has to
-# resolve there too. Judgment and worker ids are mapped the way Claude Code maps
+# advisor tier: `plan bedrock` sends that same id to Bedrock, so it has to
+# resolve there too. Advisor and executor ids are mapped the way Claude Code maps
 # them (a first-party `claude-*` becomes `us.anthropic.<id>`, window suffix
 # dropped). The background id is checked VERBATIM, because Claude Code passes
 # that one through unmapped — mapping it here would pass an id that then fails
@@ -1528,7 +1530,7 @@ models() {
   fi
   local tier model substrate profile entry rc=0
   local -a profile_flag
-  for tier in judgment worker; do
+  for tier in advisor executor; do
     # Reset first: a failed `_ds_tier` prints nothing, and the previous tier's
     # values must not survive into this row.
     model='' substrate=''
@@ -1545,7 +1547,7 @@ models() {
   # The same admin profile `_ds_aws_login` probes, or the check would report a
   # false FAIL for an operator whose admin login lives under a named profile.
   [[ -n "$DS_AWS_PROFILE" ]] && profile_flag=(--profile "$DS_AWS_PROFILE")
-  for entry in "judgment:$DS_MODEL_JUDGMENT" "worker:$DS_MODEL_WORKER" \
+  for entry in "advisor:$DS_MODEL_ADVISOR" "executor:$DS_MODEL_EXECUTOR" \
     "background:$DS_MODEL_BACKGROUND"; do
     tier="${entry%%:*}" model="${entry#*:}"
     [[ -n "$model" ]] || continue

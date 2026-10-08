@@ -55,10 +55,10 @@ _SUITE_OWNED_ENV = (
     "DS_BEDROCK_PROBE",
     "DS_BEDROCK_REGION",
     "DS_MODEL_BACKGROUND",
-    "DS_MODEL_JUDGMENT",
-    "DS_MODEL_JUDGMENT_SUBSTRATE",
-    "DS_MODEL_WORKER",
-    "DS_MODEL_WORKER_SUBSTRATE",
+    "DS_MODEL_ADVISOR",
+    "DS_MODEL_ADVISOR_SUBSTRATE",
+    "DS_MODEL_EXECUTOR",
+    "DS_MODEL_EXECUTOR_SUBSTRATE",
     "DS_OP_ACCOUNT",
     "DS_OP_BEDROCK_REF",
     "ENABLE_PROMPT_CACHING_1H",
@@ -98,8 +98,8 @@ class SubstrateHarness(unittest.TestCase):
 #: A runtime config with every tier set. Placeholder ids, never real ones: the
 #: repo pins no model, and a test that did would need editing every release.
 _CONFIG = {
-    "DS_MODEL_JUDGMENT": "judge-model[1m]",
-    "DS_MODEL_WORKER": "work-model[1m]",
+    "DS_MODEL_ADVISOR": "judge-model[1m]",
+    "DS_MODEL_EXECUTOR": "work-model[1m]",
     "DS_MODEL_BACKGROUND": "bg-profile-id",
 }
 
@@ -114,20 +114,20 @@ class TierResolution(SubstrateHarness):
         return result, result.stdout.splitlines()
 
     def test_the_default_substrates(self):
-        # Judgment defaults to the subscription, worker to Bedrock — the
+        # Advisor defaults to the subscription, executor to Bedrock — the
         # ratified role mapping.
-        result, lines = self._tier("judgment")
+        result, lines = self._tier("advisor")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(lines, ["judge-model[1m]", "anthropic"])
-        result, lines = self._tier("worker")
+        result, lines = self._tier("executor")
         self.assertEqual(lines, ["work-model[1m]", "bedrock"])
 
     def test_an_unset_model_refuses_and_names_the_variable(self):
         # No committed fallback: an unset tier must not launch on some id the
         # repo carried, which is the generation-stale slip the tiers retire.
         for tier, var in (
-            ("judgment", "DS_MODEL_JUDGMENT"),
-            ("worker", "DS_MODEL_WORKER"),
+            ("advisor", "DS_MODEL_ADVISOR"),
+            ("executor", "DS_MODEL_EXECUTOR"),
         ):
             with self.subTest(tier=tier):
                 result, lines = self._tier(tier, env={var: ""})
@@ -139,10 +139,10 @@ class TierResolution(SubstrateHarness):
         # The runtime config is the one place a new model lands, so a
         # configured string must reach the launch untouched.
         result, lines = self._tier(
-            "worker",
+            "executor",
             env={
-                "DS_MODEL_WORKER": "next-model[1m]",
-                "DS_MODEL_WORKER_SUBSTRATE": "anthropic",
+                "DS_MODEL_EXECUTOR": "next-model[1m]",
+                "DS_MODEL_EXECUTOR_SUBSTRATE": "anthropic",
             },
         )
         self.assertEqual(lines, ["next-model[1m]", "anthropic"])
@@ -150,7 +150,7 @@ class TierResolution(SubstrateHarness):
     def test_the_override_beats_the_configured_substrate(self):
         # `plan bedrock` in a credit pinch: one word, no config edit.
         result, lines = self._tier(
-            "judgment", "bedrock", env={"DS_MODEL_JUDGMENT_SUBSTRATE": "anthropic"}
+            "advisor", "bedrock", env={"DS_MODEL_ADVISOR_SUBSTRATE": "anthropic"}
         )
         self.assertEqual(lines, ["judge-model[1m]", "bedrock"])
 
@@ -158,14 +158,14 @@ class TierResolution(SubstrateHarness):
         # The pre-session half of fail-fast: refuse offline, before a session
         # starts and fails on its first turn.
         result, lines = self._tier(
-            "judgment", env={"DS_MODEL_JUDGMENT_SUBSTRATE": "local"}
+            "advisor", env={"DS_MODEL_ADVISOR_SUBSTRATE": "local"}
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(lines, [])
         self.assertIn("must be anthropic or bedrock", result.stderr)
 
     def test_a_model_with_whitespace_refuses_to_launch(self):
-        result, lines = self._tier("worker", env={"DS_MODEL_WORKER": "claude opus"})
+        result, lines = self._tier("executor", env={"DS_MODEL_EXECUTOR": "claude opus"})
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(lines, [])
         # The reason, so an undefined function or a syntax error cannot pass.
@@ -179,13 +179,15 @@ class TierResolution(SubstrateHarness):
 
     def test_config_escapes_are_echoed_literally(self):
         # The refusal echoes operator config, so `print -r`: no escape expands.
-        result, _ = self._tier("worker", env={"DS_MODEL_WORKER_SUBSTRATE": "x\\tbad"})
+        result, _ = self._tier(
+            "executor", env={"DS_MODEL_EXECUTOR_SUBSTRATE": "x\\tbad"}
+        )
         self.assertIn("x\\tbad", result.stderr)
 
     def test_an_unsuffixed_model_on_bedrock_warns_but_is_honored(self):
         # Warn, never refuse: the override is the operator's to make.
         result, lines = self._tier(
-            "worker", env={"DS_MODEL_WORKER": "us.anthropic.some-model"}
+            "executor", env={"DS_MODEL_EXECUTOR": "us.anthropic.some-model"}
         )
         self.assertEqual(lines, ["us.anthropic.some-model", "bedrock"])
         self.assertIn("no context-window", result.stderr)
@@ -194,7 +196,7 @@ class TierResolution(SubstrateHarness):
         # The positive assertion keeps the `assertNotIn` from passing
         # vacuously when the function emits nothing at all.
         result, lines = self._tier(
-            "worker", env={"DS_MODEL_WORKER": "work-model[200k]"}
+            "executor", env={"DS_MODEL_EXECUTOR": "work-model[200k]"}
         )
         self.assertEqual(lines, ["work-model[200k]", "bedrock"])
         self.assertNotIn("no context-window", result.stderr)
@@ -202,7 +204,7 @@ class TierResolution(SubstrateHarness):
     def test_the_retired_bedrock_spelling_is_named(self):
         # A config still on the old name gets told the new one.
         result, lines = self._tier(
-            "worker", env={"DS_MODEL_WORKER": "", "DS_BEDROCK_MODEL": "x[1m]"}
+            "executor", env={"DS_MODEL_EXECUTOR": "", "DS_BEDROCK_MODEL": "x[1m]"}
         )
         self.assertEqual(lines, [])
         self.assertIn("DS_BEDROCK_MODEL is retired", result.stderr)
@@ -230,7 +232,7 @@ class VerbLaunch(SubstrateHarness):
         )
         return result, result.stdout
 
-    def test_plan_launches_the_judgment_tier_on_anthropic(self):
+    def test_plan_launches_the_advisor_tier_on_anthropic(self):
         result, out = self._launch("plan")
         self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
         # No `--model` flag: the environment is the one delivery mechanism.
@@ -254,7 +256,7 @@ class VerbLaunch(SubstrateHarness):
         self.assertTrue(lines[0].startswith("MODEL=work-model[1m] USE=1"))
         self.assertTrue(lines[1].startswith("MODEL=judge-model[1m] USE=unset"))
 
-    def test_task_launches_the_worker_tier_on_bedrock(self):
+    def test_task_launches_the_executor_tier_on_bedrock(self):
         result, out = self._launch("task 7", env=self._TOKEN)
         self.assertIn("MODEL=work-model[1m] USE=1", out, result.stderr)
         self.assertIn("-w eng-7", out)
@@ -270,28 +272,28 @@ class VerbLaunch(SubstrateHarness):
         self.assertIn("MODEL=work-model[1m] USE=unset", out)
         self.assertIn("`local` is retired", result.stderr)
 
-    def test_task_bedrock_overrides_an_anthropic_worker_config(self):
+    def test_task_bedrock_overrides_an_anthropic_executor_config(self):
         result, out = self._launch(
             "task bedrock 7",
-            env={**self._TOKEN, "DS_MODEL_WORKER_SUBSTRATE": "anthropic"},
+            env={**self._TOKEN, "DS_MODEL_EXECUTOR_SUBSTRATE": "anthropic"},
         )
         self.assertIn("MODEL=work-model[1m] USE=1", out, result.stderr)
 
     def test_a_bad_config_launches_nothing(self):
         # With a token, so a missing-token refusal cannot satisfy it instead.
         result, out = self._launch(
-            "task 7", env={**self._TOKEN, "DS_MODEL_WORKER_SUBSTRATE": "seat"}
+            "task 7", env={**self._TOKEN, "DS_MODEL_EXECUTOR_SUBSTRATE": "seat"}
         )
         self.assertIn("RC=1", out)
         self.assertNotIn("MODEL=", out)
         self.assertIn("must be anthropic or bedrock", result.stderr)
 
-    def test_explore_is_pinned_to_anthropic_whatever_the_judgment_config(self):
+    def test_explore_is_pinned_to_anthropic_whatever_the_advisor_config(self):
         # It writes no marker, so a resume always lands on anthropic; launching
         # it anywhere else would make that resume switch provider.
         result, out = self._launch(
             "explore 12",
-            env={**self._TOKEN, "DS_MODEL_JUDGMENT_SUBSTRATE": "bedrock"},
+            env={**self._TOKEN, "DS_MODEL_ADVISOR_SUBSTRATE": "bedrock"},
         )
         self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
         self.assertIn("-w eng-12", out)
@@ -305,9 +307,9 @@ class VerbLaunch(SubstrateHarness):
         self.assertNotIn("MODEL=", out)
         self.assertIn("USE=unset", out)
 
-    def test_housekeeping_runs_the_worker_model_on_anthropic_always(self):
+    def test_housekeeping_runs_the_executor_model_on_anthropic_always(self):
         result, out = self._launch(
-            "housekeeping", env={"DS_MODEL_WORKER_SUBSTRATE": "bedrock"}
+            "housekeeping", env={"DS_MODEL_EXECUTOR_SUBSTRATE": "bedrock"}
         )
         self.assertIn("MODEL=work-model[1m] USE=unset", out, result.stderr)
 
@@ -326,8 +328,8 @@ class VerbLaunch(SubstrateHarness):
         )
         self.assertIn("MODEL=work-model[1m] USE=1", out, result.stderr)
 
-    def test_resume_of_an_unmarked_tag_re_pins_the_judgment_tier(self):
-        # The issue-keyed explore case: no marker, so judgment on anthropic,
+    def test_resume_of_an_unmarked_tag_re_pins_the_advisor_tier(self):
+        # The issue-keyed explore case: no marker, so advisor on anthropic,
         # rather than the saved default the old resume path fell back to.
         result, out = self._launch("task resume 9")
         self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
@@ -342,7 +344,10 @@ class ModelsVerb(SubstrateHarness):
     _AWS = (
         'aws() { print -r -- "AWS $*" >> "$_DS_REPO/aws.log"; '
         '[[ "$*" == *known-* ]]; }; '
-        'env() { shift 2; "$@"; }; '
+        # Refuses unless the call really strips the bearer token, so dropping
+        # `env -u AWS_BEARER_TOKEN_BEDROCK` from `models` fails the suite.
+        'env() { [[ "$1 $2" == "-u AWS_BEARER_TOKEN_BEDROCK" ]] || return 9; '
+        'shift 2; "$@"; }; '
     )
 
     def _models(self, args, env=None):
@@ -355,30 +360,30 @@ class ModelsVerb(SubstrateHarness):
 
     def test_the_table_is_offline_and_complete(self):
         result, out = self._models("")
-        self.assertIn("judgment  judge-model[1m]  (anthropic)", out, result.stderr)
-        self.assertIn("worker  work-model[1m]  (bedrock)", out)
+        self.assertIn("advisor  judge-model[1m]  (anthropic)", out, result.stderr)
+        self.assertIn("executor  work-model[1m]  (bedrock)", out)
         self.assertIn("background  bg-profile-id", out)
         self.assertNotIn("AWS ", out)
         self.assertIn("RC=0", out)
 
     def test_an_unset_tier_makes_the_table_fail(self):
-        result, out = self._models("", env={"DS_MODEL_WORKER": ""})
-        self.assertIn("judgment  judge-model[1m]", out)
-        self.assertNotIn("worker  ", out)
+        result, out = self._models("", env={"DS_MODEL_EXECUTOR": ""})
+        self.assertIn("advisor  judge-model[1m]", out)
+        self.assertNotIn("executor  ", out)
         self.assertIn("RC=1", out)
 
     def test_check_maps_first_party_ids_but_not_background(self):
         result, out = self._models(
             "check",
             env={
-                "DS_MODEL_JUDGMENT": "claude-known-judge[1m]",
-                "DS_MODEL_WORKER": "us.anthropic.known-work",
+                "DS_MODEL_ADVISOR": "claude-known-judge[1m]",
+                "DS_MODEL_EXECUTOR": "us.anthropic.known-work",
                 "DS_MODEL_BACKGROUND": "claude-known-bg",
                 "DS_AWS_PROFILE": "admin",
             },
         )
-        self.assertIn("ok     judgment us.anthropic.claude-known-judge", out)
-        self.assertIn("ok     worker us.anthropic.known-work", out)
+        self.assertIn("ok     advisor us.anthropic.claude-known-judge", out)
+        self.assertIn("ok     executor us.anthropic.known-work", out)
         # Background is checked verbatim, the way Claude Code passes it.
         self.assertIn("--inference-profile-identifier claude-known-bg", out)
         self.assertIn("--profile admin", out)
@@ -386,11 +391,11 @@ class ModelsVerb(SubstrateHarness):
 
     def test_check_fails_on_an_unknown_profile(self):
         result, out = self._models(
-            "check", env={"DS_MODEL_JUDGMENT": "claude-missing[1m]"}
+            "check", env={"DS_MODEL_ADVISOR": "claude-missing[1m]"}
         )
-        self.assertIn("FAIL   judgment us.anthropic.claude-missing", out)
+        self.assertIn("FAIL   advisor us.anthropic.claude-missing", out)
         # A non-`claude-*`, non-Bedrock id is an alias, reported not failed.
-        self.assertIn("skip   worker work-model[1m]", out)
+        self.assertIn("skip   executor work-model[1m]", out)
         self.assertIn("RC=1", out)
 
 
@@ -412,7 +417,7 @@ class MarkerRoundTrip(SubstrateHarness):
             "_ds_substrate_write eng-6 anthropic; _ds_resume_tier eng-6; "
             "_ds_resume_tier eng-998"
         )
-        self.assertEqual(result.stdout.split(), ["worker", "judgment"])
+        self.assertEqual(result.stdout.split(), ["executor", "advisor"])
 
     def test_bedrock_round_trips(self):
         result = self._zsh(

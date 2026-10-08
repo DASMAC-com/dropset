@@ -430,14 +430,14 @@ curl https://bedrock-mantle.us-east-1.api.aws/v1/data_retention \
 
 Models whose `allowed_modes` include `none` are unaffected by the
 account setting — a more permissive account mode does not cause their
-content to be retained, which is what keeps worker-tier traffic out of
+content to be retained, which is what keeps executor-tier traffic out of
 review while its model allows `none`. The opt-in dates from when
 Fable 5.1 was the ratified agent model, and it is kept because a
 Fable-class model has to keep working without an infrastructure
-change — `plan bedrock`, the judgment tier's credit-pinch override,
+change — `plan bedrock`, the advisor tier's credit-pinch override,
 depends on it. So read the opt-in as removing a
 constraint on which models are selectable, not as a statement about
-what happens to Opus traffic.
+what happens to executor-tier traffic.
 
 **It cannot be narrowed to spare Fable traffic.** The opt-in is a
 condition of Fable access, not a dial on it: a region whose mode is
@@ -484,7 +484,7 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="$DS_MODEL_BACKGROUND"  # if set
 export ENABLE_PROMPT_CACHING_1H=1
 export AWS_BEARER_TOKEN_BEDROCK="$(op read \
   --account "$DS_OP_ACCOUNT" "$DS_OP_BEDROCK_REF")"
-ANTHROPIC_MODEL="$DS_MODEL_WORKER" claude
+ANTHROPIC_MODEL="$DS_MODEL_EXECUTOR" claude
 ```
 
 `DS_OP_BEDROCK_REF` is the `op://` coordinate, defined alongside the
@@ -496,7 +496,7 @@ process that does not need it.
 
 **The model string is runtime config, not code, and not a stack
 value.** The launcher reads a role-named tier from that same untracked
-file (`DS_MODEL_WORKER` for `task`; the full table is in the
+file (`DS_MODEL_EXECUTOR` for `task`; the full table is in the
 local-integrations convention) and uses it verbatim, window suffix
 included; **no model id is pinned anywhere in the repo**, so a new
 model is a runtime-config edit only. A first-party id

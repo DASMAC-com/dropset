@@ -67,12 +67,12 @@ new-vs-resume split to remember. It names the session
 `plan-<day-of-month>` (run on the 14th → `plan-14`), and:
 
 - if today's `plan-<day>` session does not exist, it creates
-  it — in the base repo, on the **judgment** tier's model, with
+  it — in the base repo, on the **advisor** tier's model, with
   `/plan` as the initial prompt so this skill bootstraps
   immediately;
 - if it already exists, it **resumes** it, re-pinned.
 
-The judgment tier runs on the Anthropic subscription unless the
+The advisor tier runs on the Anthropic subscription unless the
 runtime config says otherwise; `plan bedrock` is the one-word
 credit-pinch override. If the shell arrived carrying Bedrock
 exports from an earlier `task` in the same tab, an anthropic
