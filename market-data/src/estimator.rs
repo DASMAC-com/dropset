@@ -452,6 +452,8 @@ impl Estimator {
 
     /// Compose and publish until a [`Halt`] fires or a shutdown signal arrives.
     pub async fn run(mut self) -> Result<()> {
+        // Registered before the first tick, not per sleep: see `Shutdown`.
+        let mut shutdown = Shutdown::listen();
         tracing::info!(
             markets = self.markets.len(),
             tick_secs = self.tick_interval.as_secs(),
@@ -474,7 +476,7 @@ impl Estimator {
 
             tokio::select! {
                 _ = tokio::time::sleep(self.tick_interval) => {}
-                _ = shutdown() => {
+                _ = shutdown.recv() => {
                     tracing::info!("shutdown signal received; estimator stopping");
                     return Ok(());
                 }
@@ -652,6 +654,7 @@ impl Estimator {
         // every market rather than rebuilt per market.
         let peg = peg_candidates(&snapshot.ticks, ts, receipt_age);
 
+        let mut composed = Vec::with_capacity(markets.len());
         let mut tx = pool.begin().await?;
         for market in markets.iter() {
             let engine = engines
@@ -678,12 +681,31 @@ impl Estimator {
             // config — 0014 records them per row, and a bound looked up
             // elsewhere could disagree with the one the engine used.
             let fresh = publish(&mut *tx, ts, market.product_id, &fair, stale).await?;
-            log_tick(market, &fair, stale, fresh);
+            // `fresh == false` is the primary key already holding this pair at
+            // this stamp, which means something else published for it. Warned
+            // now rather than after the commit: it describes the store, not
+            // this tick, so a rollback does not retract it — and a silent
+            // `false` would hide a second estimator writing the same series.
+            if !fresh {
+                tracing::warn!(
+                    product_id = market.product_id,
+                    "a row already existed for this pair at this stamp; another publisher is writing it"
+                );
+            }
+            composed.push((market, fair, stale));
         }
         // The commit completes the publish, so it is classified on the same
         // terms — a deferred constraint is permanent, a serialization failure is
         // not. See `PublishError`'s `From<sqlx::Error>`.
         tx.commit().await?;
+
+        // Logged only once the commit has landed. A `composed` line is the
+        // log-side record of a published row, so a tick whose commit fails
+        // must leave none behind — written inside the loop, a rolled-back tick
+        // read to a log consumer exactly like a published one.
+        for (market, fair, stale) in composed {
+            log_tick(market, &fair, stale);
+        }
         Ok(())
     }
 }
@@ -849,19 +871,9 @@ fn log_outcome(outcome: Ticked) {
     }
 }
 
-/// One line per market per tick.
-///
-/// `fresh == false` is logged at **warn**: [`publish`] defines it as the primary
-/// key already holding this pair at this stamp, which means something else
-/// published for it. A silent `false` would hide a second estimator writing the
-/// same series.
-fn log_tick(market: &EstimatorMarket, fair: &FairValue, stale: LegStaleness, fresh: bool) {
-    if !fresh {
-        tracing::warn!(
-            product_id = market.product_id,
-            "a row already existed for this pair at this stamp; another publisher is writing it"
-        );
-    }
+/// One line per market per **committed** tick; the caller emits it only after
+/// the transaction lands.
+fn log_tick(market: &EstimatorMarket, fair: &FairValue, stale: LegStaleness) {
     tracing::info!(
         product_id = market.product_id,
         fair = ?fair.fair,
@@ -875,41 +887,88 @@ fn log_tick(market: &EstimatorMarket, fair: &FairValue, stale: LegStaleness, fre
     );
 }
 
-/// Resolve when the process should stop: `SIGTERM` (what an orchestrator sends)
-/// or `SIGINT`.
+/// The process's stop signals: `SIGTERM` (what an orchestrator sends) and
+/// `SIGINT`.
 ///
-/// Both, because handling only `ctrl_c` would mean a container stop always fell
+/// Both, because handling only `SIGINT` would mean a container stop always fell
 /// through to the runtime's `SIGKILL` grace period, abandoning the tick in
-/// flight rather than finishing it and rolling back the publish it was
-/// mid-transaction on with nothing said about it.
+/// flight with nothing said about it.
 ///
-/// **This narrows that window; it does not close it.** The stream is
-/// reconstructed per loop iteration and awaited only in the sleep, so a signal
-/// arriving while the tick body is running has no live listener and is dropped —
-/// that stop still falls through to `SIGKILL`. Closing it means hoisting one
-/// long-lived stream out of the loop, or racing the tick against it.
-async fn shutdown() {
+/// **Listeners held for the whole run, registered before the first tick.** A
+/// tokio signal stream sees only deliveries made after it was created, and
+/// holds one that arrives while it is not being polled. So a stop arriving
+/// mid-tick is kept here and answered at the next sleep: the in-flight tick
+/// finishes — its transaction commits or rolls back whole — and the loop exits
+/// instead of starting another. A stream built per sleep would have no
+/// listener while the tick body runs, and would drop exactly that stop through
+/// to `SIGKILL`.
+///
+/// Finishing the tick rather than racing it against the signal is deliberate:
+/// the publish is atomic either way, so cancelling buys only a faster exit
+/// from a tick that is seconds long, at the cost of a lost one. The price is
+/// that a tick stuck on an unreachable database — the first one included —
+/// holds the stop until its own timeout, or until the orchestrator's `SIGKILL`.
+struct Shutdown {
     #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        let mut term = match signal(SignalKind::terminate()) {
-            Ok(s) => s,
-            // Registration can only fail on a broken runtime; falling back to
-            // SIGINT alone is better than refusing to run.
-            Err(err) => {
-                tracing::warn!(error = %err, "cannot listen for SIGTERM; SIGINT only");
-                let _ = tokio::signal::ctrl_c().await;
-                return;
+    sigterm: Option<tokio::signal::unix::Signal>,
+    #[cfg(unix)]
+    sigint: Option<tokio::signal::unix::Signal>,
+}
+
+impl Shutdown {
+    /// Register the listeners. Synchronous, so they are live from this call
+    /// rather than from the first poll — the first poll comes after the first
+    /// tick.
+    fn listen() -> Self {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            // Registration fails only on a runtime without a signal driver or
+            // an OS refusal, and tokio installs no handler when it does: that
+            // signal keeps its default action, which terminates. Listening for
+            // the other alone is better than refusing to run.
+            let register = |kind: SignalKind, name: &str| match signal(kind) {
+                Ok(s) => Some(s),
+                Err(err) => {
+                    tracing::warn!(error = %err, signal = name, "cannot listen for this stop signal");
+                    None
+                }
+            };
+            Self {
+                sigterm: register(SignalKind::terminate(), "SIGTERM"),
+                sigint: register(SignalKind::interrupt(), "SIGINT"),
             }
-        };
-        tokio::select! {
-            _ = term.recv() => {}
-            _ = tokio::signal::ctrl_c() => {}
+        }
+        #[cfg(not(unix))]
+        {
+            Self {}
         }
     }
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
+
+    /// Resolve on the first stop signal. Cancel-safe, so it can sit in a
+    /// `select!` arm that is dropped every iteration.
+    async fn recv(&mut self) {
+        #[cfg(unix)]
+        {
+            async fn on(stream: &mut Option<tokio::signal::unix::Signal>) {
+                match stream {
+                    Some(s) => {
+                        s.recv().await;
+                    }
+                    None => std::future::pending().await,
+                }
+            }
+            tokio::select! {
+                _ = on(&mut self.sigterm) => {}
+                _ = on(&mut self.sigint) => {}
+            }
+        }
+        // Not a deployed target, so it keeps the per-call listener and the
+        // mid-tick gap that comes with it.
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
     }
 }
 
@@ -1273,6 +1332,33 @@ mod tests {
         assert!(!weekend_from_unix(h(d(FRI_00, 2), 23)));
         // Monday: open.
         assert!(!weekend_from_unix(h(d(FRI_00, 3), 12)));
+    }
+
+    /// A stop delivered while nothing polls the listener — the tick body
+    /// running — is held for the next sleep rather than dropped.
+    ///
+    /// Signals this test process itself. Once `listen` has registered, tokio's
+    /// handler replaces the default action process-wide, so the delivery
+    /// cannot kill the test binary; it can only be seen, or lost. A listener
+    /// registered lazily, on first poll, would leave the default action in
+    /// place and the binary would die — which holds only while no other test
+    /// in this binary registers `SIGTERM` first.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_stop_delivered_mid_tick_is_held_for_the_next_sleep() {
+        let mut shutdown = Shutdown::listen();
+        assert!(
+            shutdown.sigterm.is_some(),
+            "the SIGTERM listener must register"
+        );
+        let status = std::process::Command::new("kill")
+            .args(["-TERM", &std::process::id().to_string()])
+            .status()
+            .expect("running kill");
+        assert!(status.success());
+        tokio::time::timeout(Duration::from_secs(5), shutdown.recv())
+            .await
+            .expect("the held stop must resolve the next recv");
     }
 
     /// The derived clock reaches exactly two of the three session states, and a
