@@ -2,4 +2,4 @@
 -- Source: maker-operations.json
 -- Regenerate: make dashboard-sql
 
-SELECT product_id FROM instruments WHERE asset_class = ANY (ARRAY[${class:sqlstring}]::text[]) ORDER BY 1
+SELECT i.product_id FROM instruments AS i JOIN currency_kinds AS m ON m.currency = upper(${market:sqlstring}) WHERE i.asset_class = ANY (ARRAY[${class:sqlstring}]::text[]) AND (m.currency IN (i.base, i.quote) OR (m.pegged_to <> 'USD' AND m.pegged_to IN (i.base, i.quote))) ORDER BY 1

@@ -106,6 +106,15 @@ interesting, which is exactly what §3.1 watches. Read this as the
 general hazard rather than as one fixed row — **a class-derived bound
 means a missing seed is a silent liveness change**, and the roster grows.
 
+**A stablecoin seed now carries its peg.** `currency_kinds.pegged_to`
+(added by `0021_currency_pegs.sql`) names the fiat each stablecoin
+tracks, and a CHECK requires it on every stablecoin row and forbids it
+on every other, so a `(currency, kind)` insert of a new stablecoin fails
+at migrate time. The column is what lets the Maker operations Product
+picker narrow by Market: a market is named by its token (`EURC`) and
+its FX leg by the pair (`EUR-USD`), and the peg is the only join
+between them.
+
 ### Cadence is not interchangeable with freshness
 
 A daily source is not a slow real-time source; it is a different kind

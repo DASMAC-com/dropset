@@ -409,7 +409,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "The estimator's own defensibility: the number the system believes, drawn over the prints it was built from, with each source's share of that number on the right axis.\n\nThis is not the panel above. \"Quotes vs fair value\" asks whether our QUOTES track our fair; this asks whether the FAIR is defensible against its inputs. Read them in that order during an incident.\n\nPRICE ARMS (left axis). Three series per selected market \u2014 the composed fair price, the FX leg's fused estimate, and the FX leg's fast consensus median \u2014 against every selected source's raw ticks. Read the GAPS, which is why all three are drawn. Fused-vs-fast is the estimator's whole contribution: they sit on top of each other while the sources agree, and separate exactly when one source is being ignored or a dislocation is being adopted. Fused-vs-scatter shows the estimator declining to chase a stray print.\n\nWEIGHT ARMS (right axis, dashed step, 0 to 1). Each source's share of its leg's fused estimate, per tick \u2014 and note the scope is WIDER than the price arms: those are pinned to the FX leg, these are not filtered by leg at all, so a series can appear here for a leg that has no estimate line beside it. The leg name in each series label is what tells them apart \u2014 which names what the price arms only imply. A series pinned at ZERO is the interesting case, not an empty one: zero means the source answered and was TRIMMED, sitting outside the dispersion band of the fast consensus, so the estimator declined to believe it. That is a sick feed, a mis-mapped product, or a genuine disagreement between an official reference rate and the tape, and it is exactly what must not be averaged away silently. A source that stopped answering has no row at all and leaves a GAP instead. Shares over one leg-tick sum to exactly 1 on a seeding or re-seeding tick \u2014 trimming does not change that, because a trimmed source contributes no precision and so takes nothing out of the total. Only an ordinary update leaves them summing to less than 1, and that shortfall is the prior estimate's own share, deliberately not drawn because no feed is accountable for it.\n\nTWO WAYS THIS PANEL IS EMPTY, and they are different facts. If the Market picker itself is empty, NO MAKER HAS EVER WRITTEN to this database \u2014 the picker is driven from maker telemetry, so it has nothing to offer, and the Heartbeat panel above reads dead for the same reason. That is a bring-up state, not an error, and nothing you select will fix it. Only if a market IS selected and the fair line still draws over an empty scatter is this a picker pairing: a market's symbol (EURC) and its FX product id (EUR-USD) are different vocabularies with no join in the schema, so the Source and Product pickers cannot be correlated for you.",
+      "description": "The estimator's own defensibility: the number the system believes, drawn over the prints it was built from, with each source's share of that number on the right axis.\n\nThis is not the panel above. \"Quotes vs fair value\" asks whether our QUOTES track our fair; this asks whether the FAIR is defensible against its inputs. Read them in that order during an incident.\n\nPRICE ARMS (left axis). Three series per selected market \u2014 the composed fair price, the FX leg's fused estimate, and the FX leg's fast consensus median \u2014 against every selected source's raw ticks. Read the GAPS, which is why all three are drawn. Fused-vs-fast is the estimator's whole contribution: they sit on top of each other while the sources agree, and separate exactly when one source is being ignored or a dislocation is being adopted. Fused-vs-scatter shows the estimator declining to chase a stray print.\n\nWEIGHT ARMS (right axis, dashed step, 0 to 1). Each source's share of its leg's fused estimate, per tick \u2014 and note the scope is WIDER than the price arms: those are pinned to the FX leg, these are not filtered by leg at all, so a series can appear here for a leg that has no estimate line beside it. The leg name in each series label is what tells them apart \u2014 which names what the price arms only imply. A series pinned at ZERO is the interesting case, not an empty one: zero means the source answered and was TRIMMED, sitting outside the dispersion band of the fast consensus, so the estimator declined to believe it. That is a sick feed, a mis-mapped product, or a genuine disagreement between an official reference rate and the tape, and it is exactly what must not be averaged away silently. A source that stopped answering has no row at all and leaves a GAP instead. Shares over one leg-tick sum to exactly 1 on a seeding or re-seeding tick \u2014 trimming does not change that, because a trimmed source contributes no precision and so takes nothing out of the total. Only an ordinary update leaves them summing to less than 1, and that shortfall is the prior estimate's own share, deliberately not drawn because no feed is accountable for it.\n\nTWO WAYS THIS PANEL IS EMPTY, and they are different facts. If the Market picker itself is empty, NO MAKER HAS EVER WRITTEN to this database \u2014 the picker is driven from maker telemetry, so it has nothing to offer, and the Heartbeat panel above reads dead for the same reason. That is a bring-up state, not an error, and nothing you select will fix it. Only if a market IS selected and the fair line still draws over an empty scatter is it a picker question, and a narrower one than it used to be: the Product picker offers only pairs on the market's own token or on the fiat that token is pegged to (for EURC, e.g. EURC-USDC, EURC-EUR, EUR-USD), and the Source picker only venues registered for those. So an empty scatter there means the selected products printed nothing in the window, or the Source selection was narrowed past every venue that polls them.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1820,28 +1820,24 @@
         "current": {
           "selected": true,
           "text": [
-            "EUR-USD",
-            "AUD-USD",
-            "CAD-USD"
+            "All"
           ],
           "value": [
-            "EUR-USD",
-            "AUD-USD",
-            "CAD-USD"
+            "$__all"
           ]
         },
         "datasource": {
           "type": "postgres",
           "uid": "dropset-postgres"
         },
-        "definition": "SELECT product_id FROM instruments WHERE asset_class = ANY (ARRAY[${class:sqlstring}]::text[]) ORDER BY 1",
-        "description": "Every product any collector is configured to poll, from the instruments dimension, narrowed to the selected Class. Registry-driven rather than a scan of the measurement tables, which matters three ways: it covers both price tiers by construction \u2014 most of the roster is tick-only \u2014 a newly added pair appears before its first row lands, and it costs one small-table read instead of a DISTINCT over two unbounded tables on every dashboard load.\n\nON THIS DASHBOARD IT SCOPES ONE PANEL ONLY: the raw-print scatter behind Fair price over its sources. It is not correlated with the Market picker and cannot be \u2014 a market is keyed by token symbol (EURC) and a feed product by pair id (EUR-USD), and the schema holds no mapping between the two vocabularies. So pair them by hand: select the products whose prints you expect the selected market's fair to have been built from. Every other panel here reads maker telemetry and ignores this picker entirely.",
+        "definition": "SELECT i.product_id FROM instruments AS i JOIN currency_kinds AS m ON m.currency = upper(${market:sqlstring}) WHERE i.asset_class = ANY (ARRAY[${class:sqlstring}]::text[]) AND (m.currency IN (i.base, i.quote) OR (m.pegged_to <> 'USD' AND m.pegged_to IN (i.base, i.quote))) ORDER BY 1",
+        "description": "The products relevant to the selected Market, from the instruments dimension, narrowed to the selected Class. Relevant means a leg is the market's own token or the fiat that token is pegged to: for EURC that includes EURC-USDC and EURC-EUR by the token, and EUR-USD by its peg \u2014 the FX leg its fair is priced off. The market's quote token is deliberately not matched, since every market quotes in USDC and matching it would offer the whole USDC roster again. A USD peg is excluded for the same reason: USDC is itself pegged to USD, so for a USD stablecoin the peg arm would be that quote-side match by another route, offering every USD pair while there is no FX leg to narrow to.\n\nRegistry-driven rather than a scan of the measurement tables, which matters three ways: it covers both price tiers by construction \u2014 most of the roster is tick-only \u2014 a newly added pair appears before its first row lands, and it costs one small-table read instead of a DISTINCT over two unbounded tables on every dashboard load.\n\nON THIS DASHBOARD IT SCOPES ONE PANEL ONLY: the raw-print scatter behind Fair price over its sources. Every other panel here reads maker telemetry and ignores this picker entirely. An empty list means the market's token is not seeded in currency_kinds, or no collector polls a pair on either of its legs.",
         "includeAll": true,
         "label": "Product",
         "multi": true,
         "name": "product_id",
         "options": [],
-        "query": "SELECT product_id FROM instruments WHERE asset_class = ANY (ARRAY[${class:sqlstring}]::text[]) ORDER BY 1",
+        "query": "SELECT i.product_id FROM instruments AS i JOIN currency_kinds AS m ON m.currency = upper(${market:sqlstring}) WHERE i.asset_class = ANY (ARRAY[${class:sqlstring}]::text[]) AND (m.currency IN (i.base, i.quote) OR (m.pegged_to <> 'USD' AND m.pegged_to IN (i.base, i.quote))) ORDER BY 1",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
@@ -1862,14 +1858,14 @@
           "type": "postgres",
           "uid": "dropset-postgres"
         },
-        "definition": "SELECT DISTINCT source FROM instrument_registry ORDER BY 1",
-        "description": "Sources from both tiers, so the tick-only venues (kraken, pyth, erapi, frankfurter) are selectable rather than absent. Note that 'coinbase' appears once but writes both tiers - the table a row lives in is what distinguishes a print from a bucket, not the source label.",
+        "definition": "SELECT DISTINCT source FROM instrument_registry WHERE product_id = ANY (ARRAY[${product_id:sqlstring}]::text[]) ORDER BY 1",
+        "description": "The sources registered for any selected Product, from both tiers, so the tick-only venues (kraken, pyth, erapi, frankfurter) are selectable rather than absent, and a venue that polls none of the selected products is not offered at all. Note that 'coinbase' appears once but writes both tiers - the table a row lives in is what distinguishes a print from a bucket, not the source label.",
         "includeAll": true,
         "label": "Source",
         "multi": true,
         "name": "source",
         "options": [],
-        "query": "SELECT DISTINCT source FROM instrument_registry ORDER BY 1",
+        "query": "SELECT DISTINCT source FROM instrument_registry WHERE product_id = ANY (ARRAY[${product_id:sqlstring}]::text[]) ORDER BY 1",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
