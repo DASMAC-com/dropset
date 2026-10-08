@@ -22,6 +22,9 @@ WHAT IT CHECKS, and each one's confidence, because they are not equal:
   the file AND remove its pointer", so a half-done purge is precisely this.
 * **over-long index lines** (exact) — reported as a **count plus the worst few**,
   never all of them.
+* **index over its byte cap** (exact) — the whole ``MEMORY.md`` past
+  ``DEFAULT_MAX_INDEX_BYTES``. The per-line width bounds one entry; this bounds
+  the sum, which grows by one line per memory however terse each is.
 * **dangling repo paths** (exact, bounded) — a code-span repo-relative path in a
   memory body that does not resolve under the repo root.
 * **superseded candidates** (heuristic) — several memories sharing a slug stem.
@@ -56,6 +59,14 @@ from pathlib import Path
 #: costs every session that loads the index. Matches the awk threshold the
 #: improvised shape used, so the tool reports the same set it replaces.
 DEFAULT_MAX_INDEX_LINE = 160
+
+#: `MEMORY.md` is resident every turn of every session for the project — class A
+#: in `docs/conventions/context-economy.md`, beside `CLAUDE.md` — and, like the
+#: skills before their cap, it only grows: appending is free and folding costs
+#: work. Bytes as `wc -c` reports them, matching `skill_size.py`. CI has no home
+#: directory, so unlike that cap this one runs in the local tier, from
+#: `housekeeping` step 8.
+DEFAULT_MAX_INDEX_BYTES = 12_000
 
 #: How many over-long lines to name. The count is the decision input; the worst
 #: few are what make it actionable. All 56 were the measured waste.
@@ -219,6 +230,7 @@ def audit(
     memory_dir: Path,
     repo_root: Path,
     max_index_line: int = DEFAULT_MAX_INDEX_LINE,
+    max_index_bytes: int = DEFAULT_MAX_INDEX_BYTES,
 ) -> dict:
     """The whole scan as data. Pure apart from reading the two inputs."""
     if not memory_dir.is_dir():
@@ -227,7 +239,8 @@ def audit(
     files = sorted(p for p in memory_dir.glob("*.md") if p.is_file())
     memories = [p for p in files if p.name != "MEMORY.md"]
     index_path = memory_dir / "MEMORY.md"
-    index_text = index_path.read_text(encoding="utf-8") if index_path.is_file() else ""
+    index_raw = index_path.read_bytes() if index_path.is_file() else b""
+    index_text = index_raw.decode("utf-8")
 
     pointers = index_pointers(index_text)
     pointed_at = {Path(t).name for t in pointers}
@@ -327,6 +340,8 @@ def audit(
         "over_long_index_lines": len(long_lines),
         "over_long_worst": long_lines,
         "max_index_line": max_index_line,
+        "index_bytes": len(index_raw),
+        "max_index_bytes": max_index_bytes,
         # Carried so `render` can say the path check DID NOT RUN. With an empty
         # anchor set every candidate is dropped, so the check reports zero
         # findings — indistinguishable from a pass. `--repo-root` defaults to the
@@ -400,6 +415,14 @@ def render(result: dict, worst: int) -> list[str]:
             f"{result['max_index_line']} chars; worst: {where}"
         )
 
+    size, cap = result["index_bytes"], result["max_index_bytes"]
+    if size > cap:
+        lines.append(
+            f"index-over-cap: MEMORY.md is {size} bytes, {size - cap} past the "
+            f"{cap}-byte cap — cut each line to name plus a few-word hook, and "
+            f"purge memories that no longer earn their slot"
+        )
+
     kinds: dict[str, int] = {}
     for f in result["findings"]:
         kinds[f["kind"]] = kinds.get(f["kind"], 0) + 1
@@ -407,7 +430,7 @@ def render(result: dict, worst: int) -> list[str]:
     lines.append(
         f"memory-audit | {result['memories']} memories | "
         f"{len(result['findings'])} finding(s) ({breakdown}) | "
-        f"{count} over-long index line(s)"
+        f"{count} over-long index line(s) | index {size}/{cap} bytes"
     )
     return lines
 
@@ -415,23 +438,26 @@ def render(result: dict, worst: int) -> list[str]:
 HELP = """\
 Usage:
   memory_audit.py MEMORY_DIR [--repo-root PATH] [--worst N]
-                             [--max-index-line N] [--json]
+                             [--max-index-line N] [--max-index-bytes N]
+                             [--json]
 
 Print staleness CANDIDATES for housekeeping step 8 — slug + one-line reason,
 never a memory body. Exit 0 whether or not anything was found: candidates are
 input to a human decision, not a failure.
 
-  --repo-root PATH    resolve cited paths against this root (default: cwd)
-  --worst N           how many over-long index lines to name (default 3)
-  --max-index-line N  index-line width that counts as over-long (default 160)
-  --json              emit the raw finding data instead of the report"""
+  --repo-root PATH     resolve cited paths against this root (default: cwd)
+  --worst N            how many over-long index lines to name (default 3)
+  --max-index-line N   index-line width that counts as over-long (default 160)
+  --max-index-bytes N  whole-index size cap in bytes (default 12000)
+  --json               emit the raw finding data instead of the report"""
 
 
-def _parse_args(args: list[str]) -> tuple[Path, Path, int, int, bool]:
+def _parse_args(args: list[str]) -> tuple[Path, Path, int, int, int, bool]:
     memory_dir: Path | None = None
     repo_root = Path.cwd()
     worst = DEFAULT_WORST
     max_index_line = DEFAULT_MAX_INDEX_LINE
+    max_index_bytes = DEFAULT_MAX_INDEX_BYTES
     as_json = False
 
     def _int(flag: str, value: str) -> int:
@@ -458,6 +484,11 @@ def _parse_args(args: list[str]) -> tuple[Path, Path, int, int, bool]:
             if i >= len(args):
                 raise MemoryAuditError("--max-index-line requires a value")
             max_index_line = _int("--max-index-line", args[i])
+        elif arg == "--max-index-bytes":
+            i += 1
+            if i >= len(args):
+                raise MemoryAuditError("--max-index-bytes requires a value")
+            max_index_bytes = _int("--max-index-bytes", args[i])
         elif arg == "--json":
             as_json = True
         elif arg.startswith("-"):
@@ -470,7 +501,7 @@ def _parse_args(args: list[str]) -> tuple[Path, Path, int, int, bool]:
 
     if memory_dir is None:
         raise MemoryAuditError("a MEMORY_DIR argument is required")
-    return memory_dir, repo_root, worst, max_index_line, as_json
+    return memory_dir, repo_root, worst, max_index_line, max_index_bytes, as_json
 
 
 def run(argv: list[str]) -> int:
@@ -478,8 +509,15 @@ def run(argv: list[str]) -> int:
     if not args or any(a in ("-h", "--help") for a in args):
         print(HELP)
         return 0
-    memory_dir, repo_root, worst, max_index_line, as_json = _parse_args(args)
-    result = audit(memory_dir, repo_root, max_index_line)
+    (
+        memory_dir,
+        repo_root,
+        worst,
+        max_index_line,
+        max_index_bytes,
+        as_json,
+    ) = _parse_args(args)
+    result = audit(memory_dir, repo_root, max_index_line, max_index_bytes)
     if as_json:
         # `--worst` binds here too. Dumping `result` whole emitted EVERY over-long
         # row — measured at 51 against the live store — which is the same

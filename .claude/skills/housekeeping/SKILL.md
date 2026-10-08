@@ -939,22 +939,18 @@ auto-memory (`~/.claude/projects/<slug>/memory/*.md` plus the
 `MEMORY.md` index) accretes; curate it for freshness.
 
 **Cap an index line when the entry is first written, not at
-compaction time.** The index grows because per-entry hook lines
-accrete detail over many sessions — several have run 200–400
-characters — and the cost lands all at once: one session's
-single largest result (≈5.2k) was a whole-file Read of the
-index, forced by a size hook demanding compaction, plus a full
-rewrite of 71 entries. A one-line-per-entry cap applied at
-*write* time means the index never approaches the limit and no
-session pays a bulk rewrite; the detail belongs in the topic
-file, which is what the index points at.
+compaction time** — a bulk rewrite lands all at once on one
+session (measured in [`history.md`](history.md)).
 
-**This is a recommendation to the operator, not something this
-repo can enforce.** The memory-writing instruction lives
-harness-side, outside the checkout, so there is no hook or tool
-here to change — flag an over-long index line in the report and
-trim it while curating, but the durable fix is upstream in that
-instruction.
+**An index line is a pointer — name plus a few-word hook, one
+line, never content.** The memory-writing instruction lives
+harness-side, so the repo cannot shape the write; what it does
+enforce is the bound, in the local tier (CI has no home
+directory): `memory_audit.py` below reports any line past 160
+characters and the whole index past **12,000 bytes**
+(`index-over-cap`). Either finding is trimmed in this pass —
+shorten hooks, purge what no longer earns its slot — rather
+than listed for later.
 
 **Read the memory BEFORE re-verifying the fact it records.**
 The asymmetry is the same one as slice-before-whole-read, and
@@ -1001,7 +997,7 @@ python3 .claude/tools/memory_audit.py <memory_dir>
 It prints one `kind: slug — reason` line per candidate plus a
 summary, and **never a memory body**. Run it from the base
 repo root so cited paths resolve against the checkout
-(`--repo-root` overrides). Four kinds, and their confidence
+(`--repo-root` overrides). Five kinds, and their confidence
 is **not** equal — the report labels each:
 
 - **`index-desync`** (exact) — a `MEMORY.md` pointer with no
@@ -1009,6 +1005,8 @@ is **not** equal — the report labels each:
   exactly this.
 - **`over-long-index`** (exact) — reported as a **count plus
   the worst few**, never every row.
+- **`index-over-cap`** (exact) — the whole `MEMORY.md` past
+  12,000 bytes, with the overage.
 - **`dangling-path`** (exact, bounded) — a code-span
   repo-relative path that no longer resolves. Bounded because
   a candidate must start with a real top-level repo entry: a
@@ -1025,14 +1023,6 @@ is **not** equal — the report labels each:
 existence lives in Linear and the tool is offline, so a check
 that cannot run would pass silently. If a candidate's reason
 turns on an issue, verify that one through the Linear MCP.
-
-This step used to be prescribed as prose, and was the last
-one in the pass that was: every pass then improvised the same
-shapes, which cost **≈3.2k of ≈8.3k total Bash bytes (~39%)**
-on one measured pass and took four of its top six results —
-including an `ls` that printed all 97 filenames to answer
-what the already-in-context index answers, and an `awk` that
-returned 56 rows when the decision needed a count.
 
 Judgement the tool does not make: whether a memory
 **describes work that has since shipped** and so no longer
