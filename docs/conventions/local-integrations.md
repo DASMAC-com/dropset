@@ -338,10 +338,16 @@ tiers**:
   recursive delete of `/`, `~`, `$HOME`, or the home directory's
   absolute path (bare, trailing-slash or globbed; force flag or not),
   and a force-push to the default branch in any of its spellings. An
-  `rm` being run — at the start of a line, after a control operator,
-  or as a shell's `-c` payload — denies with the target anywhere among
-  its unquoted operands; a line of a quoted message is prose, so there
-  only the flags-only shape applies.
+  `rm` being run — at command position (a line start, a control
+  operator, `(` / `$(` / a backtick, a `case` or function `)`, then
+  `{`, `!` or `if` / `then` / `do` / `else` / `elif` / `while` /
+  `until`, past wrappers like `sudo -u root` or `env FOO=1`), including
+  at a command position inside the quoted `-c` payload of a shell that
+  is itself at command position — denies with the target among any of
+  its operands. Prose — a line of a quoted message, or the body of a
+  heredoc not fed to a shell — gets only the flags-only shape; a
+  command substitution inside double quotes is not prose, since it
+  runs.
 
 Every git rule matches through git's global options, so
 `git -C <path> push --force origin main` is the same deny as the bare

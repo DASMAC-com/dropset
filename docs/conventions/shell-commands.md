@@ -445,10 +445,14 @@ problem allows rather than wedging the session.
 quote-aware character by character, which is what lets it ignore a `;`
 inside a quoted commit message. The destructive guard's *comment
 handling* is quote-aware too, so a quoted `#destructive-ok` cannot
-disable it — but its **pattern matching is plain regex over the
-command**, and that is why its SQL rules require a SQL client to be
-named rather than matching the words anywhere. Do not read
-"quote-aware" as a property of the destructive matching itself.
+disable it — but its **ask-tier and SQL matching is plain regex over
+the command**, and that is why its SQL rules require a SQL client to
+be named rather than matching the words anywhere. Do not read
+"quote-aware" as a property of the destructive matching in general.
+Two deny rules are the exceptions: the force-push deny skips a push
+quoted in a prose argument, and the root-or-home `rm` deny at command
+position tracks quoted spans, heredoc bodies and shell `-c` payloads to
+tell an `rm` being run from one being quoted.
 
 Their behavior and the exact `settings.json` wiring live with the
 other local integrations in
