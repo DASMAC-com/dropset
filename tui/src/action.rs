@@ -79,6 +79,16 @@ pub enum Action {
     ProbeSwap,
     Teardown,
     Wipe,
+    /// The leader tops up its own seeded vault (one quote leg; the program
+    /// derives the base). Opens the amount → typed-`yes` prompt rather than
+    /// dispatching directly — see [`crate::leader`].
+    LeaderDeposit,
+    /// The leader draws a percentage of its own stake back out. Same prompt.
+    LeaderWithdraw,
+    /// Reserved, deliberately unimplemented: the leader-rotation instruction
+    /// arrives with its program change, and a builder guessed at its account
+    /// shape now would be rework by construction. Never enabled.
+    RotateLeader,
     // eCLOB demo controls — keybinds, not menu entries.
     RepegUp,
     RepegDown,
@@ -113,11 +123,13 @@ const THIN_DEPTH_SCALE: f64 = 0.3;
 const NEVER_EXPIRES: WallSpan = WallSpan::UNBOUNDED;
 
 /// The numbered setup menu in display order — the bootstrap lifecycle plus the
-/// explorer / teardown / wipe utilities. Indices map to the `1..=9` number
-/// keys. The swap is deliberately absent: it is a runtime control, reached only
-/// via `s` (and listed in the "runtime" pane), so it appears in exactly one
-/// place rather than doubling as a numbered step.
-pub const MENU: [Action; 9] = [
+/// explorer / teardown / wipe utilities, then the leader stake commands.
+/// Indices map to the `1..=9` number keys; the leader entries sit past them,
+/// reached with `j`/`k` + Enter (or `+` / `-`), so appending them moved no
+/// existing key. The swap is deliberately absent: it is a runtime control,
+/// reached only via `s` (and listed in the "runtime" pane), so it appears in
+/// exactly one place rather than doubling as a numbered step.
+pub const MENU: [Action; 12] = [
     Action::Deploy,
     Action::InitRegistry,
     Action::CreateMarket,
@@ -127,25 +139,33 @@ pub const MENU: [Action; 9] = [
     Action::BootstrapAll,
     Action::Teardown,
     Action::Wipe,
+    Action::LeaderDeposit,
+    Action::LeaderWithdraw,
+    Action::RotateLeader,
 ];
 
 /// The mainnet menu — every entry that is meaningful against real funds.
 ///
-/// The four ceremony steps and the explorer. Each step is one-shot and
-/// existence-checked at execution time, references the real roster mints
-/// rather than minting any (see [`market::MAINNET_PAIRS`]), and signs vault
-/// steps with the operator-supplied leader; nothing here airdrops, deploys or
-/// discards a ledger.
+/// The four ceremony steps and the explorer, then the leader stake commands.
+/// Each ceremony step is one-shot and existence-checked at execution time,
+/// references the real roster mints rather than minting any (see
+/// [`market::MAINNET_PAIRS`]), and signs vault steps with the
+/// operator-supplied leader; the leader commands send only after a typed
+/// `yes` over the exact amounts. Nothing here airdrops, deploys or discards a
+/// ledger.
 ///
 /// Kept in sync with [`Action::available_on`] by a test rather than by care —
 /// two hand-maintained lists of the same fact drift, and the direction it
 /// would drift here is toward exposing a write.
-pub const MAINNET_MENU: [Action; 5] = [
+pub const MAINNET_MENU: [Action; 8] = [
     Action::InitRegistry,
     Action::CreateMarket,
     Action::CreateVault,
     Action::Deposit,
     Action::OpenExplorer,
+    Action::LeaderDeposit,
+    Action::LeaderWithdraw,
+    Action::RotateLeader,
 ];
 
 /// The menu for `cluster`, in display order.
@@ -179,6 +199,9 @@ impl Action {
             Action::ProbeSwap => "Probe swap (CU)",
             Action::Teardown => "Teardown & reclaim",
             Action::Wipe => "Wipe localnet",
+            Action::LeaderDeposit => "Leader deposit",
+            Action::LeaderWithdraw => "Leader withdraw",
+            Action::RotateLeader => "Rotate leader",
             Action::RepegUp => "Re-peg +5 bps",
             Action::RepegDown => "Re-peg -5 bps",
             Action::WidenSpread => "Widen spread",
@@ -226,6 +249,11 @@ impl Action {
                     | Phase::Ready
             ),
             Action::Wipe => true,
+            // Moving a stake needs one to exist: a seeded vault. `Ready` is
+            // every roster market at once; the prompt then re-reads the
+            // selected market's vault fresh and refuses on its own terms.
+            Action::LeaderDeposit | Action::LeaderWithdraw => phase == Phase::Ready,
+            Action::RotateLeader => false,
             // The demo controls quote against a live vault.
             Action::RepegUp
             | Action::RepegDown
@@ -265,6 +293,12 @@ impl Action {
             Action::InitRegistry | Action::CreateMarket | Action::CreateVault | Action::Deposit => {
                 true
             }
+            // The leader's own stake. Mainnet-safe because the signer is the
+            // operator's `--leader`, never a committed key; real mints are
+            // balance-checked and never minted; and nothing sends until the
+            // operator types `yes` over the exact amounts and bounds. The
+            // reserved rotation is listed so it is visible — and stays greyed.
+            Action::LeaderDeposit | Action::LeaderWithdraw | Action::RotateLeader => true,
             // Spends real money, signed by a committed taker role key that has
             // no mainnet counterpart.
             Action::ProbeSwap => false,
@@ -291,6 +325,39 @@ impl Action {
     /// the identity check has refused everything else.
     pub fn needs_verified_chain(self) -> bool {
         !matches!(self, Action::OpenExplorer | Action::Wipe)
+    }
+
+    /// The leader stake operation this action opens a prompt for, if any.
+    ///
+    /// Exhaustive on purpose, like every table here: a leader action routed
+    /// to `None` would fall through `App::run_action` into [`dispatch`],
+    /// whose arm for it is a no-op — setting `job_running` with no job behind
+    /// it and wedging the panel. Enabling the reserved rotation is then a
+    /// compile-time decision here, not a silent fall-through.
+    pub fn leader_op(self) -> Option<crate::leader::LeaderOp> {
+        use crate::leader::LeaderOp;
+        match self {
+            Action::LeaderDeposit => Some(LeaderOp::Deposit),
+            Action::LeaderWithdraw => Some(LeaderOp::Withdraw),
+            Action::RotateLeader
+            | Action::Deploy
+            | Action::InitRegistry
+            | Action::CreateMarket
+            | Action::CreateVault
+            | Action::Deposit
+            | Action::OpenExplorer
+            | Action::BootstrapAll
+            | Action::ProbeSwap
+            | Action::Teardown
+            | Action::Wipe
+            | Action::RepegUp
+            | Action::RepegDown
+            | Action::WidenSpread
+            | Action::TightenSpread
+            | Action::ThinFarSide
+            | Action::ResetLadder
+            | Action::ResetAllLadders => None,
+        }
     }
 
     /// One-line reason the action is absent on `cluster` (only meaningful when
@@ -323,7 +390,10 @@ impl Action {
             | Action::InitRegistry
             | Action::CreateMarket
             | Action::CreateVault
-            | Action::Deposit => "",
+            | Action::Deposit
+            | Action::LeaderDeposit
+            | Action::LeaderWithdraw
+            | Action::RotateLeader => "",
         }
     }
 
@@ -361,6 +431,8 @@ impl Action {
             Action::ProbeSwap => "needs a live, seeded vault",
             Action::Teardown => "deploy the program first",
             Action::OpenExplorer | Action::Wipe => "",
+            Action::LeaderDeposit | Action::LeaderWithdraw => "needs every vault seeded",
+            Action::RotateLeader => "reserved — arrives with the leader-rotation program change",
             Action::RepegUp
             | Action::RepegDown
             | Action::WidenSpread
@@ -756,9 +828,30 @@ pub fn dispatch(
                 Ok(format!("Reset {total} ladders to the default shape"))
             });
         }
-        // Wipe is handled by the event loop (owns the validator).
-        Action::Wipe => {}
+        // Wipe is handled by the event loop (owns the validator). The leader
+        // commands open its amount → confirm prompt instead, and dispatch
+        // through [`dispatch_leader`] once the operator types `yes`; the
+        // reserved rotation is never enabled.
+        Action::Wipe | Action::LeaderDeposit | Action::LeaderWithdraw | Action::RotateLeader => {}
     }
+}
+
+/// Spawn the job that sends a confirmed leader `ticket`. The leader key is
+/// resolved here, per pair, exactly as the ceremony's vault steps resolve it:
+/// the committed role key on localnet, the operator's `--leader` on mainnet.
+pub fn dispatch_leader(ctx: &JobContext, ticket: crate::leader::Ticket, tx: Sender<JobEvent>) {
+    let rpc_url = ctx.rpc_url.clone();
+    let repo_root = ctx.repo_root.clone();
+    let wallet = ctx.wallet();
+    let cluster = ctx.cluster;
+    let operator_leader = ctx.leader.as_ref().map(Keypair::insecure_clone);
+    job::spawn(tx, ticket.op.label(), move |log| {
+        let client = chain::rpc(&rpc_url);
+        let config = market::config_for(&repo_root, cluster, &ticket.market.base_mint)
+            .context("the selected market is not in this cluster's roster")?;
+        let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
+        crate::leader::execute(&client, &wallet, &leader, &repo_root, cluster, &ticket, log)
+    });
 }
 
 /// Resolve the selected market's `(address, base_mint, vault_idx)` for an
@@ -1513,7 +1606,7 @@ mod tests {
     /// Kept complete by [`all_actions_lists_every_variant`], not by care — the
     /// `[Action; 17]` length annotation does not change when a variant is
     /// added, so nothing else would notice the list going stale.
-    const ALL_ACTIONS: [Action; 17] = [
+    const ALL_ACTIONS: [Action; 20] = [
         Action::Deploy,
         Action::InitRegistry,
         Action::CreateMarket,
@@ -1524,6 +1617,9 @@ mod tests {
         Action::ProbeSwap,
         Action::Teardown,
         Action::Wipe,
+        Action::LeaderDeposit,
+        Action::LeaderWithdraw,
+        Action::RotateLeader,
         Action::RepegUp,
         Action::RepegDown,
         Action::WidenSpread,
@@ -1543,19 +1639,27 @@ mod tests {
     }
 
     #[test]
-    fn mainnet_exposes_only_the_existence_checked_ceremony() {
+    fn mainnet_exposes_only_the_ceremony_and_the_confirm_gated_leader_stake() {
         // The load-bearing assertion of the whole mode: on mainnet the only
-        // reachable writes are the four one-shot ceremony steps. A later
-        // change that exposes anything else — a mock-minting bootstrap, a
-        // committed-key demo control — fails here.
+        // reachable writes are the four one-shot ceremony steps and the
+        // leader's own stake, which sends only after a typed `yes` over the
+        // exact amounts (the reserved rotation is listed but never enabled).
+        // A later change that exposes anything else — a mock-minting
+        // bootstrap, a committed-key demo control — fails here.
         let ceremony = [
             Action::InitRegistry,
             Action::CreateMarket,
             Action::CreateVault,
             Action::Deposit,
         ];
+        let leader_stake = [
+            Action::LeaderDeposit,
+            Action::LeaderWithdraw,
+            Action::RotateLeader,
+        ];
         for a in ALL_ACTIONS {
-            let expected = a == Action::OpenExplorer || ceremony.contains(&a);
+            let expected =
+                a == Action::OpenExplorer || ceremony.contains(&a) || leader_stake.contains(&a);
             assert_eq!(
                 a.available_on(M),
                 expected,
@@ -1610,6 +1714,7 @@ mod tests {
             seq: u64::from(idx) + 1,
             leader,
             seeded,
+            stake: accounts::VaultStake::default(),
         }
     }
 
@@ -1764,8 +1869,8 @@ mod tests {
 
     #[test]
     fn all_actions_lists_every_variant() {
-        // The completeness guard the MENU check above cannot be: MENU holds 9
-        // of the 17 variants, so a new shortcut-only action would be absent from
+        // The completeness guard the MENU check above cannot be: MENU holds 12
+        // of the 20 variants, so a new shortcut-only action would be absent from
         // both MENU and ALL_ACTIONS and silently escape all four cluster-gate
         // tests — a variant reachable only by a shortcut. PR 2 and PR 3 of this
         // series add exactly that shape.
@@ -1774,8 +1879,8 @@ mod tests {
         // one arm and no wildcard, so adding a variant fails to compile here
         // until someone edits this test; the count pins the fixture's size at
         // the enum's size; and the pairwise check rules out duplicates.
-        // Seventeen distinct variants drawn from a seventeen-variant enum is
-        // all of them.
+        // Twenty distinct variants drawn from a twenty-variant enum is all of
+        // them.
         fn is_known(a: Action) -> bool {
             match a {
                 Action::Deploy
@@ -1788,6 +1893,9 @@ mod tests {
                 | Action::ProbeSwap
                 | Action::Teardown
                 | Action::Wipe
+                | Action::LeaderDeposit
+                | Action::LeaderWithdraw
+                | Action::RotateLeader
                 | Action::RepegUp
                 | Action::RepegDown
                 | Action::WidenSpread
@@ -1799,7 +1907,7 @@ mod tests {
         }
         assert_eq!(
             ALL_ACTIONS.len(),
-            17,
+            20,
             "ALL_ACTIONS must list every Action variant"
         );
         for (i, a) in ALL_ACTIONS.iter().enumerate() {
@@ -1807,6 +1915,39 @@ mod tests {
             for b in &ALL_ACTIONS[i + 1..] {
                 assert_ne!(a, b, "ALL_ACTIONS lists {:?} twice", a.label());
             }
+        }
+    }
+
+    #[test]
+    fn leader_stake_commands_need_a_seeded_book_and_rotation_stays_reserved() {
+        let phases = [
+            Phase::NoValidator,
+            Phase::ProgramAbsent,
+            Phase::RegistryAbsent,
+            Phase::MarketAbsent,
+            Phase::VaultAbsent,
+            Phase::VaultUnseeded,
+            Phase::Ready,
+        ];
+        for cluster in [L, M] {
+            for phase in phases {
+                let ready = phase == Phase::Ready;
+                assert_eq!(Action::LeaderDeposit.enabled(phase, cluster), ready);
+                assert_eq!(Action::LeaderWithdraw.enabled(phase, cluster), ready);
+                // Reserved, not guessed at: no phase on either cluster arms it.
+                assert!(!Action::RotateLeader.enabled(phase, cluster));
+            }
+            assert!(!Action::RotateLeader
+                .disabled_reason(Phase::Ready, cluster)
+                .is_empty());
+        }
+        // None of them is a bootstrap step, so none is ever recommended.
+        for a in [
+            Action::LeaderDeposit,
+            Action::LeaderWithdraw,
+            Action::RotateLeader,
+        ] {
+            assert!(!BOOTSTRAP.contains(&a));
         }
     }
 

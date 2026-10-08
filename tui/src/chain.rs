@@ -17,6 +17,7 @@ use dropset_sdk::instructions::{
     CreateVault, CreateVaultInstructionArgs, DepositLeader, DepositLeaderInstructionArgs,
     ForceWithdrawDepositor, ForceWithdrawDepositorInstructionArgs, ForceWithdrawLeader,
     ForceWithdrawLeaderInstructionArgs, Init, InitInstructionArgs, Swap, SwapInstructionArgs,
+    WithdrawLeader, WithdrawLeaderInstructionArgs,
 };
 use dropset_sdk::DROPSET_ID;
 use dropset_util::localnet::{create_ata_idempotent_ix, mint_to_ix};
@@ -206,11 +207,13 @@ pub fn build_create_vault_ix(
     })
 }
 
-/// `deposit_leader` — the vault's `leader` (signer) seeds `(base_in,
-/// quote_in)` atoms from its own ATAs into the market treasuries. The
-/// basket is bounded above by `(base_in, quote_in)`; the leader's ATAs must
-/// already hold the legs (mint to them first). Used by the bootstrap to
-/// open the vault with live inventory.
+/// `deposit_leader` — the vault's `leader` (signer) moves atoms from its own
+/// ATAs into the market treasuries; the leader's ATAs must already hold the
+/// legs (mint to them first). Two shapes, chosen by the program on the
+/// vault's state: a **seeding** deposit into an empty vault takes both
+/// `(base_in, quote_in)` as given (the bootstrap passes `max_* = *_in`); a
+/// **top-up** takes exactly one leg and derives the other from the vault's
+/// ratio, refusing when either final exceeds its `max_*_in` bound.
 #[allow(clippy::too_many_arguments)]
 pub fn build_deposit_leader_ix(
     leader: &Pubkey,
@@ -220,8 +223,8 @@ pub fn build_deposit_leader_ix(
     base_treasury: &Pubkey,
     quote_treasury: &Pubkey,
     vault_idx: u32,
-    base_in: u64,
-    quote_in: u64,
+    (base_in, quote_in): (u64, u64),
+    (max_base_in, max_quote_in): (u64, u64),
 ) -> Instruction {
     DepositLeader {
         signer: *leader,
@@ -243,8 +246,51 @@ pub fn build_deposit_leader_ix(
         vault_idx,
         base_in,
         quote_in,
-        max_base_in: base_in,
-        max_quote_in: quote_in,
+        max_base_in,
+        max_quote_in,
+    })
+}
+
+/// `withdraw_leader` — the vault's `leader` (signer) burns `shares_in` of
+/// its own stake and receives the pro-rata `(base, quote)` basket into its
+/// ATAs, which must already exist — the program does not create them (prepend
+/// [`ata_with_create_ix`]'s idempotent create). `min_base_out` /
+/// `min_quote_out` are the slippage floors. The leader-path counterpart to
+/// [`build_force_withdraw_leader_ix`]: no admin, no registry account.
+#[allow(clippy::too_many_arguments)]
+pub fn build_withdraw_leader_ix(
+    leader: &Pubkey,
+    market: &Pubkey,
+    base_mint: &Pubkey,
+    quote_mint: &Pubkey,
+    base_treasury: &Pubkey,
+    quote_treasury: &Pubkey,
+    vault_idx: u32,
+    shares_in: u64,
+    min_base_out: u64,
+    min_quote_out: u64,
+) -> Instruction {
+    WithdrawLeader {
+        signer: *leader,
+        market: *market,
+        base_mint: *base_mint,
+        quote_mint: *quote_mint,
+        base_token_program: SPL_TOKEN_PROGRAM_ID,
+        quote_token_program: SPL_TOKEN_PROGRAM_ID,
+        signer_base_ata: associated_token_address(leader, base_mint, &SPL_TOKEN_PROGRAM_ID),
+        signer_quote_ata: associated_token_address(leader, quote_mint, &SPL_TOKEN_PROGRAM_ID),
+        market_base_treasury: *base_treasury,
+        market_quote_treasury: *quote_treasury,
+        associated_token_program: ATA_PROGRAM_ID,
+        system_program: SYSTEM_PROGRAM_ID,
+        event_authority: event_authority(),
+        program: DROPSET_ID,
+    }
+    .instruction(WithdrawLeaderInstructionArgs {
+        vault_idx,
+        shares_in,
+        min_base_out,
+        min_quote_out,
     })
 }
 
@@ -1111,8 +1157,8 @@ mod tests {
             &base_treasury,
             &quote_treasury,
             0,
-            1_000,
-            2_000,
+            (1_000, 2_000),
+            (1_000, 2_000),
         );
         assert_eq!(
             metas(&ix),
@@ -1141,5 +1187,66 @@ mod tests {
                 (DROPSET_ID, false, false),
             ]
         );
+    }
+
+    /// `withdraw_leader` metas: leader(s,w) · market(w) · base_mint ·
+    /// quote_mint · base_tp · quote_tp · leader_base(w) · leader_quote(w) ·
+    /// base_treasury(w) · quote_treasury(w) · ata · system ·
+    /// event_authority · program — note ata precedes system here, the
+    /// reverse of `deposit_leader`.
+    #[test]
+    fn withdraw_leader_ordering_matches_fixture() {
+        let leader = Pubkey::new_unique();
+        let market = Pubkey::new_unique();
+        let base_mint = Pubkey::new_unique();
+        let quote_mint = Pubkey::new_unique();
+        let base_treasury = Pubkey::new_unique();
+        let quote_treasury = Pubkey::new_unique();
+        let ix = build_withdraw_leader_ix(
+            &leader,
+            &market,
+            &base_mint,
+            &quote_mint,
+            &base_treasury,
+            &quote_treasury,
+            3,
+            500,
+            10,
+            20,
+        );
+        assert_eq!(
+            metas(&ix),
+            vec![
+                (leader, true, true),
+                (market, false, true),
+                (base_mint, false, false),
+                (quote_mint, false, false),
+                (SPL_TOKEN_PROGRAM_ID, false, false),
+                (SPL_TOKEN_PROGRAM_ID, false, false),
+                (
+                    associated_token_address(&leader, &base_mint, &SPL_TOKEN_PROGRAM_ID),
+                    false,
+                    true
+                ),
+                (
+                    associated_token_address(&leader, &quote_mint, &SPL_TOKEN_PROGRAM_ID),
+                    false,
+                    true
+                ),
+                (base_treasury, false, true),
+                (quote_treasury, false, true),
+                (ATA_PROGRAM_ID, false, false),
+                (SYSTEM_PROGRAM_ID, false, false),
+                (event_authority(), false, false),
+                (DROPSET_ID, false, false),
+            ]
+        );
+        // Discriminator 11, then vault_idx · shares_in · min_base · min_quote.
+        let mut data = vec![11u8];
+        data.extend_from_slice(&3u32.to_le_bytes());
+        data.extend_from_slice(&500u64.to_le_bytes());
+        data.extend_from_slice(&10u64.to_le_bytes());
+        data.extend_from_slice(&20u64.to_le_bytes());
+        assert_eq!(ix.data, data);
     }
 }

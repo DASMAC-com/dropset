@@ -20,6 +20,7 @@ use crate::cluster::{Cluster, Identity};
 use crate::explorer;
 use crate::fills;
 use crate::job::{JobEvent, Logger};
+use crate::leader::{self, LeaderOp, Ticket};
 use crate::market;
 use crate::ui;
 use crate::validator::Validator;
@@ -96,6 +97,24 @@ pub(crate) struct FillRow {
     pub(crate) event: FillEvent,
 }
 
+/// The open leader deposit / withdraw prompt (see [`crate::leader`]).
+///
+/// Two stages, and the second is the gate: nothing is sent until the operator
+/// has seen the sized ticket — fresh amounts, bounds and signer — and typed the
+/// whole word `yes` over it, on localnet too, so the flow practiced on the
+/// demo is the one that runs on mainnet. In-panel rather than the launch gate's
+/// stdin read, which cannot run once the alternate screen owns the terminal.
+pub enum LeaderPrompt {
+    /// Typing the amount — whole quote units, or a percentage of the stake.
+    Amount { op: LeaderOp, buf: String },
+    /// The sized ticket on screen; typing the confirmation word.
+    Confirm { ticket: Box<Ticket>, buf: String },
+}
+
+/// The longest confirmation word the prompt accepts — room for `yes` and a
+/// typo, not for a paste.
+const MAX_CONFIRM_CHARS: usize = 8;
+
 /// Whether the loop should keep running.
 #[derive(PartialEq, Eq)]
 enum Flow {
@@ -166,6 +185,9 @@ pub struct App {
     /// keybinds are suppressed, so a digit types a number rather than firing a
     /// menu action; Enter commits it to `swap_units`, Esc cancels.
     pub(crate) amount_input: Option<String>,
+    /// The open leader deposit / withdraw prompt, if any. Like
+    /// `amount_input`, it takes every keystroke while open.
+    pub(crate) leader_prompt: Option<LeaderPrompt>,
     /// The per-market maker-bot child processes the operator starts and stops.
     pub(crate) bots: BotManager,
     /// The per-market taker-bot child processes — opt-in, off by default. The
@@ -267,6 +289,7 @@ impl App {
             swap_units: action::DEFAULT_PROBE_UNITS,
             swap_side: SwapSide::Buy,
             amount_input: None,
+            leader_prompt: None,
             bots: BotManager::new(),
             takers: BotManager::new(),
             click_targets: Vec::new(),
@@ -528,6 +551,10 @@ impl App {
             self.handle_amount_key(k);
             return Flow::Continue;
         }
+        if self.leader_prompt.is_some() {
+            self.handle_leader_key(k);
+            return Flow::Continue;
+        }
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         match k.code {
             KeyCode::Char('q') | KeyCode::Esc => return Flow::Quit,
@@ -555,6 +582,10 @@ impl App {
             KeyCode::Char('S') => self.flip_swap_side(),
             // Open the swap-amount input — subsequent keys edit the amount.
             KeyCode::Char('a') => self.begin_amount_input(),
+            // The leader's own stake on the selected market — each opens the
+            // amount → typed-`yes` prompt; the same entries are in the menu.
+            KeyCode::Char('+') => self.run_action(Action::LeaderDeposit),
+            KeyCode::Char('-') => self.run_action(Action::LeaderWithdraw),
             // eCLOB demo (selected market): reprice the anchor (whole-book
             // shift) vs reshape the ladder (shape change at a fixed peg).
             KeyCode::Char('>') | KeyCode::Char('.') => self.run_action(Action::RepegUp),
@@ -867,6 +898,109 @@ impl App {
         }
     }
 
+    /// Edit the open leader prompt. On the amount stage, digits type and Enter
+    /// sizes the ticket from a fresh read; on the confirm stage, Enter sends
+    /// only on the exact word `yes`. Esc — or any refusal along the way —
+    /// closes the prompt with nothing sent.
+    fn handle_leader_key(&mut self, k: KeyEvent) {
+        let Some(prompt) = self.leader_prompt.as_mut() else {
+            return;
+        };
+        let (buf, cap, confirming) = match prompt {
+            LeaderPrompt::Amount { buf, .. } => (buf, MAX_AMOUNT_DIGITS, false),
+            LeaderPrompt::Confirm { buf, .. } => (buf, MAX_CONFIRM_CHARS, true),
+        };
+        match k.code {
+            KeyCode::Esc => {
+                self.leader_prompt = None;
+                self.log(
+                    LogKind::Info,
+                    "Leader prompt cancelled — nothing sent.".to_string(),
+                );
+            }
+            KeyCode::Backspace => {
+                buf.pop();
+            }
+            KeyCode::Enter => match self.leader_prompt.take() {
+                Some(LeaderPrompt::Amount { op, buf }) => self.size_leader_ticket(op, &buf),
+                Some(LeaderPrompt::Confirm { ticket, buf }) => self.confirm_leader(*ticket, &buf),
+                None => {}
+            },
+            // The amount stage is digits only; the confirm word is free text,
+            // so a mistyped word is refused at Enter rather than swallowed.
+            KeyCode::Char(c) if buf.len() < cap && (c.is_ascii_digit() || confirming) => {
+                buf.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    /// Size the leader ticket for `buf` against the selected market, reading
+    /// its vault fresh, and move the prompt to the confirm stage.
+    fn size_leader_ticket(&mut self, op: LeaderOp, buf: &str) {
+        let Some(amount) = parse_swap_amount(buf) else {
+            self.log(
+                LogKind::Err,
+                format!("{} — enter a positive whole number", op.label()),
+            );
+            return;
+        };
+        let Some(leader) = self.roster_leader else {
+            self.log(
+                LogKind::Err,
+                format!("{} — no leader key; relaunch with --leader", op.label()),
+            );
+            return;
+        };
+        let Some(market) = self.chain.selected_market(self.selected_market).cloned() else {
+            self.log(LogKind::Err, format!("{} — no market selected", op.label()));
+            return;
+        };
+        let sized = leader::prepare(
+            &self.client,
+            &self.ctx.repo_root,
+            self.ctx.cluster,
+            &market,
+            &leader,
+            op,
+            amount,
+        );
+        match sized {
+            Ok(ticket) => {
+                self.leader_prompt = Some(LeaderPrompt::Confirm {
+                    ticket: Box::new(ticket),
+                    buf: String::new(),
+                });
+            }
+            Err(e) => self.log(LogKind::Err, format!("{} — {e:#}", op.label())),
+        }
+    }
+
+    /// Send `ticket` if `word` is exactly `yes`, re-checking the gates a
+    /// prompt left open could have outlived (the chain identity, a job
+    /// started meanwhile).
+    fn confirm_leader(&mut self, ticket: Ticket, word: &str) {
+        let label = ticket.op.label();
+        if !is_confirmation(word) {
+            self.log(
+                LogKind::Err,
+                format!("{label} — not confirmed; nothing sent"),
+            );
+            return;
+        }
+        if let Some(reason) = self.identity.write_refusal() {
+            self.log(LogKind::Err, format!("{label} — {reason}"));
+            return;
+        }
+        if self.job_running {
+            self.log(LogKind::Err, "A job is already running.".to_string());
+            return;
+        }
+        self.job_running = true;
+        self.log(LogKind::Info, format!("\u{25b6} {label}"));
+        action::dispatch_leader(&self.ctx, ticket, self.tx.clone());
+    }
+
     /// The active cluster's menu — what the panel draws and what the number
     /// keys index. Mainnet's is shorter, so every bound must come from here
     /// rather than from the localnet menu's length.
@@ -955,6 +1089,19 @@ impl App {
         }
         if action == Action::Wipe {
             self.wipe();
+            return;
+        }
+        if let Some(op) = action.leader_op() {
+            // Refuse before the operator types a ticket a running job would
+            // only throw away at the confirm step.
+            if self.job_running {
+                self.log(LogKind::Err, "A job is already running.".to_string());
+                return;
+            }
+            self.leader_prompt = Some(LeaderPrompt::Amount {
+                op,
+                buf: String::new(),
+            });
             return;
         }
         if self.job_running {
@@ -1241,6 +1388,13 @@ fn parse_swap_amount(buf: &str) -> Option<u64> {
     }
 }
 
+/// Whether `word` confirms a leader send: exactly `yes`, whole and
+/// lower-case, like the launch gate — a `y`, a `Yes` or a trailing space is a
+/// refusal, since the gate's whole job is to interrupt a reflex.
+fn is_confirmation(word: &str) -> bool {
+    word == "yes"
+}
+
 /// Human label for a probe-swap side — for the status bar, the actions pane,
 /// and the flip log line.
 pub(crate) fn swap_side_label(side: SwapSide) -> &'static str {
@@ -1332,7 +1486,8 @@ fn classify_basis_line(line: &str) -> Option<(String, BasisNote)> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_basis_line, hit_target, parse_swap_amount, swap_side_label, BasisNote, SwapSide,
+        classify_basis_line, hit_target, is_confirmation, parse_swap_amount, swap_side_label,
+        Action, BasisNote, SwapSide,
     };
     use ratatui::layout::Rect;
     use solana_pubkey::Pubkey;
@@ -1389,6 +1544,24 @@ mod tests {
     fn swap_side_label_names_each_side() {
         assert_eq!(swap_side_label(SwapSide::Buy), "Buy");
         assert_eq!(swap_side_label(SwapSide::Sell), "Sell");
+    }
+
+    #[test]
+    fn only_the_exact_word_yes_confirms_a_leader_send() {
+        assert!(is_confirmation("yes"));
+        for word in ["", "y", "Yes", "YES", "yes ", " yes", "yes please", "no"] {
+            assert!(!is_confirmation(word), "{word:?} must refuse");
+        }
+    }
+
+    #[test]
+    fn every_leader_action_and_only_those_open_the_prompt() {
+        use crate::leader::LeaderOp;
+        assert_eq!(Action::LeaderDeposit.leader_op(), Some(LeaderOp::Deposit));
+        assert_eq!(Action::LeaderWithdraw.leader_op(), Some(LeaderOp::Withdraw));
+        // Reserved: it must not open a prompt that sizes nothing.
+        assert_eq!(Action::RotateLeader.leader_op(), None);
+        assert_eq!(Action::Deposit.leader_op(), None);
     }
 
     #[test]

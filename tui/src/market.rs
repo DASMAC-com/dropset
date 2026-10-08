@@ -657,8 +657,8 @@ pub fn seed_vault(
         &market.base_treasury,
         &market.quote_treasury,
         vault_idx,
-        base_atoms,
-        quote_atoms,
+        (base_atoms, quote_atoms),
+        (base_atoms, quote_atoms),
     );
     chain::send_logged(
         client,
