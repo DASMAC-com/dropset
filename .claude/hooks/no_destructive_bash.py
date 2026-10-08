@@ -616,34 +616,33 @@ _LIVE_IN_DOUBLE_QUOTES = ("$(", "`")
 # The sibling compound guard blocks every one of them on the separator alone,
 # but each guard is wired independently and that one has an escape marker, so
 # this guard must not lean on it.
-#
-# An UNQUOTED command or process substitution — `$(…)`, a backtick, `<(…)`,
-# `>(…)` — is a second command too, and any executor can run inside it without
-# naming a shell this list knows: `grep x $(ssh host '…')` and
-# `echo $(dash -c '…')` run the quoted text while the line's first word is a
-# search tool or `echo`. Found by adversarial review of the prose gate below,
-# which inherited the gap from this check.
-_RE_EVALUATES = re.compile(
-    r"(?:[|;&]|\beval\b|\bxargs\b|\b(?:ba|z)?sh\b|\bsource\b|\$\(|`|[<>]\()"
-)
+_RE_EVALUATES = re.compile(r"(?:[|;&]|\beval\b|\bxargs\b|\b(?:ba|z)?sh\b|\bsource\b)")
 
-# Expansions that open a FRESH quoting context, so `quoted_spans` — which knows
-# nothing of nesting — pairs a quote inside one with the wrong partner. Their
-# presence ANYWHERE, quoted or not, disables suppression; checking only outside
-# quotes misses the case that matters, because the opener sits inside double
-# quotes. Measured, each running the middle line in bash and zsh while its push
-# fell inside a wrongly paired "span":
+# The characters a command may use OUTSIDE its quotes for quote suppression to
+# apply at all, and the one `$` form allowed INSIDE double quotes. Everything
+# else — `$`, a backtick, `(`, `{`, `\`, `*`, `<`, `!` — means no suppression.
 #
-#     echo "${x:-"'"}"            echo "$(printf '"')"
-#     git push --force origin main
-#     echo "'"
+# An ALLOWLIST, because the denylist it replaced lost three rounds of
+# adversarial review in a row. Each round named constructs that either run a
+# quoted string or make `quoted_spans`, which knows no shell grammar beyond
+# plain quoting, pair a quote with the wrong partner — so a real command on a
+# later line fell inside a fake "span" and was suppressed. All ran the hidden
+# command in bash or zsh:
 #
-# On one line the same mispairing can hide a `;` from `_RE_EVALUATES`.
+#     echo $(ssh host '…')          unquoted substitution, any executor inside
+#     echo "${x:-"'"}"              quotes nested in an expansion
+#     echo "${x:-\}"'"}"            ...behind an escaped brace
+#     printf -v 'a[$(…)]' x         zsh evaluates the subscript
+#     echo *(e:'…':)                zsh glob qualifier runs its string
+#     echo =(ssh host '…')          zsh process substitution
 #
-# A `${…}` only pairs quotes wrongly when a quote sits inside it — before its first `}`,
-# since a `}` reached with no quote seen closes the expansion — so a bare
-# `${HOME}` keeps the read-only search carve-out working.
-_RE_NESTED_QUOTING = re.compile(r"\$\(|`|\$\{[^}]*[\"']")
+# plus a heredoc (`<<`), whose unquoted apostrophes open phantom quotes, and
+# ANSI-C `$'…'`, whose `\'` is an escape. None of them survives this list, and
+# a construct nobody has thought of yet fails CLOSED, into the false positive.
+# A plain `$NAME` / `${NAME}` inside double quotes expands to a value and runs
+# nothing, which is what keeps `grep -rn "rm -rf ${HOME}"` suppressed.
+_PLAIN_UNQUOTED = re.compile(r"[\w\s./:=@%+,-]*")
+_PLAIN_EXPANSION = re.compile(r"\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})")
 
 
 def quoted_spans(line):
@@ -745,6 +744,30 @@ def _carry_quote(line, quote):
     return quote
 
 
+def plain_quoting(text):
+    """Whether ``text`` uses only quoting ``quoted_spans`` models faithfully.
+
+    True when every character outside the quotes is in ``_PLAIN_UNQUOTED``,
+    every quote is closed, and each double-quoted span holds no `$` beyond a
+    plain ``_PLAIN_EXPANSION``, no backtick and no backslash. Single-quoted
+    content is unrestricted: both bash and zsh take it literally.
+    """
+    spans = quoted_spans(text)
+    unquoted = []
+    cursor = 0
+    for lo, hi, quote in spans:
+        # The span excludes its delimiters, which sit at lo - 1 and hi.
+        unquoted.append(text[cursor : lo - 1])
+        cursor = hi + 1
+        if quote == '"':
+            body = _PLAIN_EXPANSION.sub("", text[lo:hi])
+            if any(c in body for c in "$`\\"):
+                return False
+    unquoted.append(text[cursor:])
+    # An unterminated quote leaves its quote character here, and fails.
+    return bool(_PLAIN_UNQUOTED.fullmatch("".join(unquoted)))
+
+
 def inert_spans(line):
     """The quoted spans of ``line`` that no shell on this line will execute.
 
@@ -766,8 +789,12 @@ def inert_spans(line):
     self-test below; the docstring is deliberately explicit about what is
     *not* claimed, because the previous version asserted the first condition
     alone and read as covering both.
+
+    Both now sit behind ``plain_quoting``, which refuses suppression outright
+    on a line whose quoting this tracker cannot model, so the first condition
+    is defense in depth rather than the line of defense.
     """
-    if _RE_NESTED_QUOTING.search(line):
+    if not plain_quoting(line):
         return []
     spans = quoted_spans(line)
 
@@ -884,13 +911,6 @@ _PROSE_COMMAND = re.compile(
     + r"|echo\b)"
 )
 
-# Constructs that defeat whole-command quote tracking, so their presence
-# disables the prose gate. A HEREDOC body is unquoted text whose apostrophes
-# `quoted_spans` would read as opening a quote, and an ANSI-C `$'…'` string
-# takes `\'` as an escape where `quoted_spans` sees a closing quote — either
-# can shift every span after it, hiding a real command inside a "quote".
-_RE_DEFEATS_SPANS = re.compile(r"<<|\$'")
-
 
 def prose_spans(cmd):
     """Absolute ``(lo, hi)`` ranges of ``cmd`` that are inert prose arguments.
@@ -902,32 +922,28 @@ def prose_spans(cmd):
     A span qualifies only when all of these hold, and anything else returns no
     span at all:
 
-    - nothing outside the quotes hands text back to a shell — a separator,
-      `eval`, `xargs`, `sh`, a command or process substitution
-      (`_RE_EVALUATES`) — and nothing defeats the span tracking itself
-      (`_RE_DEFEATS_SPANS`);
-    - a double-quoted span holds no command substitution
-      (`_LIVE_IN_DOUBLE_QUOTES`), which runs inside double quotes;
+    - the whole command passes ``plain_quoting``, so the spans are the ones
+      a shell would see and none of them can run;
+    - nothing outside the quotes hands text back to a shell — `eval`,
+      `xargs`, `sh`, `source` (`_RE_EVALUATES`; its separators cannot pass
+      the first check anyway);
     - the command it is an argument of is a prose command (`_PROSE_COMMAND`) or
-      a read-only search (`READ_ONLY_PROGRAMS`). With no separator allowed, a
+      a read-only search (`READ_ONLY_PROGRAMS`). With no separator possible, a
       command starts at the last unquoted newline before the span.
     """
-    if _RE_NESTED_QUOTING.search(cmd):
+    if not plain_quoting(cmd):
         return []
     spans = quoted_spans(cmd)
 
     def quoted(index):
         return any(lo <= index < hi for lo, hi, _ in spans)
 
-    for regex in (_RE_EVALUATES, _RE_DEFEATS_SPANS):
-        for match in regex.finditer(cmd):
-            if not quoted(match.start()):
-                return []
+    for match in _RE_EVALUATES.finditer(cmd):
+        if not quoted(match.start()):
+            return []
 
     result = []
-    for lo, hi, quote in spans:
-        if quote == '"' and any(t in cmd[lo:hi] for t in _LIVE_IN_DOUBLE_QUOTES):
-            continue
+    for lo, hi, _ in spans:
         newline = cmd.rfind("\n", 0, lo)
         while newline != -1 and quoted(newline):
             newline = cmd.rfind("\n", 0, newline)
@@ -1398,6 +1414,12 @@ def _self_test():
         ('echo "$(printf \'"\')"\ngit push -f origin eng-942\necho "\'"', "ask"),
         ("printf -v 'a[$(git push --force origin main)]' x", "deny"),
         ("git -c core.editor=dash commit -e -m 'git push --force origin main'", "deny"),
+        # Round three, each closed by the character allowlist rather than by
+        # a pattern of its own: an escaped brace, a zsh glob qualifier, zsh's
+        # `=(…)`.
+        ('echo "${x:-\\}"\'"}"\ngit push --force origin main\necho "\'"', "deny"),
+        ("echo *(e:'git push --force origin main':)", "deny"),
+        ("echo =(ssh host 'git push --force origin main')", "deny"),
         # A suppressed prose match must not hide a real push after it, and a
         # span's command start skips newlines that sit inside earlier quotes.
         ("echo 'git push --force origin main'\ngit push --force origin main", "deny"),

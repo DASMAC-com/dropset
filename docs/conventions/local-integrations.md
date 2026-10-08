@@ -400,15 +400,21 @@ over-read:**
   a test of whether `git` sits at command position. A position test
   would have to enumerate every executor that runs its unquoted argv
   (`ssh`, `timeout`, `xargs`, `find -exec`) and fails open on a missed
-  one, while a missed prose command only fails closed. Anything that
-  hands text back to a shell disables the gate entirely: a separator,
-  `eval`, `xargs`, `source`, `sh` / `bash` / `zsh`, an unquoted command
-  or process substitution (`$(…)`, a backtick, `<(…)`), a heredoc, or
-  `$'…'`. So does a `$(…)`, a backtick, or a `${…}` holding a quote
-  **anywhere**, quoted or not: each opens a fresh quoting context the
-  span tracker cannot follow, and a wrongly paired quote once hid a real push
-  on the next line inside a fake "span". That last rule covers the
-  read-only search carve-out above as well.
+  one, while a missed prose command only fails closed.
+
+  **Both carve-outs trust quote tracking only on PLAIN quoting**, and
+  that test is a character allowlist too (`plain_quoting`). Outside the
+  quotes a command may use only letters, digits, whitespace and
+  `./:=@%+,-`. Inside double quotes the only `$` allowed is a plain
+  `$NAME` / `${NAME}`, with no backtick or backslash. Every quote must
+  close. Anything else, and nothing is suppressed. A denylist of
+  dangerous constructs lost three rounds of adversarial review in a row:
+  substitutions, quotes nested in an expansion, an escaped brace, zsh's
+  `=(…)` and glob qualifiers, a heredoc, and `$'…'` each either ran a
+  quoted string or made a wrongly paired quote hide a real push on a
+  later line. A construct nobody has thought of yet now fails closed.
+  `eval`, `xargs`, `source` and `sh` / `bash` / `zsh` outside the quotes
+  disable suppression as before.
 
 Two implementation notes worth keeping, because both were found by the
 script's own self-test rather than in review:
