@@ -366,8 +366,7 @@ async fn consecutive_ticks_accumulate_rows() {
     let mut estimator =
         Estimator::new(pool.clone(), vec![eurc], Duration::from_secs(1)).expect("constructible");
     estimator.tick_once().await.expect("first tick");
-    // Past the one-second key granularity, so the second tick takes a new stamp.
-    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    next_stamp().await;
     estimator.tick_once().await.expect("second tick");
 
     let count: i64 = sqlx::query("SELECT count(*) AS n FROM fair_price WHERE product_id = $1")
@@ -380,7 +379,7 @@ async fn consecutive_ticks_accumulate_rows() {
     assert_eq!(count, 2, "each tick publishes its own row");
 }
 
-/// An estimator over EURC alone, ticking at the one-second floor.
+/// An estimator over EURC (`MVP_MARKETS[0]`) alone, ticking once a second.
 fn eurc_estimator(pool: &PgPool) -> Estimator {
     Estimator::new(pool.clone(), vec![MVP_MARKETS[0]], Duration::from_secs(1))
         .expect("constructible")
@@ -416,36 +415,43 @@ async fn a_permanent_publish_failure_halts_immediately() {
     );
 }
 
-/// A retryable publish failure retries through its window and halts past it.
+/// Make every `fair_price` insert fail with `serialization_failure` (`40001`),
+/// which is on the transient allowlist, while the store keeps answering reads.
 ///
-/// The failure is a trigger raising `serialization_failure` (`40001`), which
-/// is on the transient allowlist and fires on every insert, so the store keeps
-/// answering while the publish keeps failing — the shape the window exists for.
-/// Driven on injected instants because the window is five minutes.
-#[tokio::test]
-#[ignore = "requires a Docker daemon (Postgres container)"]
-async fn a_transient_publish_failure_halts_at_the_retry_window() {
-    let (_pg, pool) = start_pg().await;
-    seed_all_legs(&pool, now_secs()).await;
-    let mut estimator = eurc_estimator(&pool);
-
+/// `CREATE OR REPLACE` so a test can drop the trigger and attach it again.
+async fn refuse_inserts_transiently(pool: &PgPool) {
     sqlx::query(
-        "CREATE FUNCTION refuse_transiently() RETURNS trigger LANGUAGE plpgsql AS $$
+        "CREATE OR REPLACE FUNCTION refuse_transiently() RETURNS trigger
+         LANGUAGE plpgsql AS $$
          BEGIN
              RAISE EXCEPTION 'injected' USING ERRCODE = 'serialization_failure';
          END
          $$",
     )
-    .execute(&pool)
+    .execute(pool)
     .await
     .expect("create the refusing function");
     sqlx::query(
         "CREATE TRIGGER refuse_transiently BEFORE INSERT ON fair_price
          FOR EACH ROW EXECUTE FUNCTION refuse_transiently()",
     )
-    .execute(&pool)
+    .execute(pool)
     .await
     .expect("attach the refusing trigger");
+}
+
+/// A retryable publish failure retries through its window and halts past it.
+///
+/// The failure is injected by `refuse_inserts_transiently`, so the store
+/// keeps answering while the publish keeps failing — the shape the window
+/// exists for. Driven on injected instants because the window is five minutes.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn a_transient_publish_failure_halts_at_the_retry_window() {
+    let (_pg, pool) = start_pg().await;
+    seed_all_legs(&pool, now_secs()).await;
+    let mut estimator = eurc_estimator(&pool);
+    refuse_inserts_transiently(&pool).await;
 
     let t0 = Instant::now();
     assert_eq!(
@@ -472,6 +478,51 @@ async fn a_transient_publish_failure_halts_at_the_retry_window() {
     );
 }
 
+/// A successful publish closes the retry window, so the next failure opens a
+/// fresh one rather than inheriting the outage that just cleared.
+///
+/// Without the reset, a transient blip arriving five minutes after an earlier,
+/// recovered one would halt on its first tick as though it had lasted the
+/// whole window.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn a_successful_publish_resets_the_retry_window() {
+    let (_pg, pool) = start_pg().await;
+    seed_all_legs(&pool, now_secs()).await;
+    let mut estimator = eurc_estimator(&pool);
+    refuse_inserts_transiently(&pool).await;
+
+    let t0 = Instant::now();
+    assert_eq!(
+        estimator.tick_once_at(t0).await,
+        Ok(Ticked::PublishRetrying {
+            failing_for: Duration::ZERO
+        }),
+        "the first failure opens the window"
+    );
+
+    sqlx::query("DROP TRIGGER refuse_transiently ON fair_price")
+        .execute(&pool)
+        .await
+        .expect("detach the refusing trigger");
+    assert_eq!(
+        estimator.tick_once_at(t0 + Duration::from_secs(1)).await,
+        Ok(Ticked::Published),
+        "with the trigger gone the publish succeeds"
+    );
+
+    refuse_inserts_transiently(&pool).await;
+    assert_eq!(
+        estimator
+            .tick_once_at(t0 + MAX_PUBLISH_RETRY_WINDOW + Duration::from_secs(1))
+            .await,
+        Ok(Ticked::PublishRetrying {
+            failing_for: Duration::ZERO
+        }),
+        "a failure after a recovery must open a new window, not halt on the old one"
+    );
+}
+
 /// An unreadable store halts at its silence bound, ahead of any publish class.
 ///
 /// A closed pool fails the read and the publish alike. Inside the bound the
@@ -486,14 +537,20 @@ async fn an_unreadable_store_halts_at_the_silence_bound() {
     let mut estimator = eurc_estimator(&pool);
 
     let t0 = Instant::now();
-    assert_eq!(estimator.tick_once_at(t0).await, Ok(Ticked::Published));
+    assert_eq!(
+        estimator.tick_once_at(t0).await,
+        Ok(Ticked::Published),
+        "the store answered, so the silence is measured from here"
+    );
     pool.close().await;
 
-    assert!(
-        matches!(
-            estimator.tick_once_at(t0 + MAX_STORE_SILENCE).await,
-            Ok(Ticked::PublishRetrying { .. })
-        ),
+    // The retry window opens at the first failed publish, not at the pool
+    // close: the two bounds are measured independently.
+    assert_eq!(
+        estimator.tick_once_at(t0 + MAX_STORE_SILENCE).await,
+        Ok(Ticked::PublishRetrying {
+            failing_for: Duration::ZERO
+        }),
         "at the silence bound exactly the store is not yet gone, so the tick \
          survives on the cached snapshot and the publish is retried"
     );
@@ -515,10 +572,12 @@ async fn an_unreadable_store_halts_at_the_silence_bound() {
 /// second or two here — says fresh. The variant alone cannot see that, since
 /// it is computed before the legs are built; the anchor flipping is what does.
 ///
-/// The flip is reachable only at the silence bound exactly: a tape goes stale
-/// at its bound inclusive and the store halts past its own, and the two are
-/// both five minutes — asserted below, so a recalibration that pulls them
-/// apart fails here with a reason rather than as a mysterious `fx` anchor.
+/// The tick at the silence bound is the last one before the halt, so it is
+/// where the flip is checked: a tape goes stale at its bound inclusive and the
+/// store halts past its own. That needs the tape bound not to exceed the
+/// silence bound — asserted below, so a recalibration that inverts them fails
+/// here with a reason rather than as a mysterious `fx` anchor. (Today the two
+/// are equal, which makes that tick the *only* one where the flip is visible.)
 #[tokio::test]
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn a_cached_snapshot_ages_its_legs_out_on_the_receipt_floor() {
@@ -533,13 +592,18 @@ async fn a_cached_snapshot_ages_its_legs_out_on_the_receipt_floor() {
     );
 
     let t0 = Instant::now();
-    assert_eq!(estimator.tick_once_at(t0).await, Ok(Ticked::Published));
+    assert_eq!(
+        estimator.tick_once_at(t0).await,
+        Ok(Ticked::Published),
+        "the seeded store answered, so this tick is not cached"
+    );
     assert_eq!(
         read_published(&pool, eurc.product_id)
             .await
             .expect("published")
             .anchor,
-        "fx"
+        "fx",
+        "with every leg fresh the market anchors on FX, so a later flip means something"
     );
 
     // Break the read without breaking the publish: the candle table goes, and
@@ -554,6 +618,7 @@ async fn a_cached_snapshot_ages_its_legs_out_on_the_receipt_floor() {
     assert_eq!(
         estimator.tick_once_at(t0 + minute).await,
         Ok(Ticked::ComposedFromCache { silent_for: minute }),
+        "a failed read inside the bound composes from cache, silent since the last good read"
     );
     assert_eq!(
         read_published(&pool, eurc.product_id)
@@ -570,6 +635,7 @@ async fn a_cached_snapshot_ages_its_legs_out_on_the_receipt_floor() {
         Ok(Ticked::ComposedFromCache {
             silent_for: MAX_STORE_SILENCE
         }),
+        "at the silence bound exactly the estimator still composes rather than halting"
     );
     let row = read_published(&pool, eurc.product_id)
         .await
@@ -579,7 +645,10 @@ async fn a_cached_snapshot_ages_its_legs_out_on_the_receipt_floor() {
         "the cached legs were not aged on the receipt floor: their publication \
          age is seconds, so only the floor can carry them past the tape bound"
     );
-    assert_eq!(row.regime, "degraded");
+    assert_eq!(
+        row.regime, "degraded",
+        "a static fallback must not read as a healthy composition"
+    );
 }
 
 /// A market with no live leg publishes its static peg, degraded — never a

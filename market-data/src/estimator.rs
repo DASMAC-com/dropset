@@ -498,13 +498,19 @@ impl Estimator {
 
     /// [`Self::tick_once`] at an injected instant.
     ///
-    /// **A test seam, and the only way to reach the halts.** Both bounds are
-    /// five minutes of elapsed time measured on this clock, so a test driving
-    /// the real one would wait five minutes per arm. An instant in the future
-    /// is what stands in for that wait: every elapsed-time decision in a tick
-    /// is taken against `now`, so a tick at `t0 + window` sees exactly the
-    /// window elapse. The rows' own publication age still runs on the wall
-    /// clock, which this does not move.
+    /// **A test seam, and the only way to reach the time-bounded halts.** The
+    /// retry window and the store's silence bound are both five minutes of
+    /// elapsed time on this clock, so a test driving the real one would wait
+    /// five minutes per arm. An instant in the future is what stands in for
+    /// that wait: every elapsed-time decision in a tick is taken against
+    /// `now`, so a tick at `t0 + window` sees exactly the window elapse — and
+    /// the engine is handed the jump as one tick's `dt`. The rows' own
+    /// publication age still runs on the wall clock, which this does not move.
+    ///
+    /// **Instants must not go backwards across calls**, and this must not be
+    /// mixed with [`Self::tick_once`] after a future instant. An earlier `now`
+    /// saturates the silence and the retry age to zero, which suppresses both
+    /// halts — the fail-open direction.
     #[doc(hidden)]
     pub async fn tick_once_at(&mut self, now: Instant) -> Result<Ticked, Halt> {
         let mut from_cache = None;
@@ -595,10 +601,10 @@ impl Estimator {
     /// moment the read returned, so its receipt age and the silence the store
     /// guard counts are one measurement. Stamped after the read instead, the
     /// receipt age always trails the silence by the read's own latency — and
-    /// since a tape goes stale exactly at the silence bound, that latency is
-    /// the margin by which a cached leg would stay fresh through the last tick
-    /// before the halt. Stamping early ages the legs sooner, which is the
-    /// fail-closed direction.
+    /// while the tape bound equals the silence bound, as both do today, that
+    /// latency is the margin by which a cached leg would stay fresh through
+    /// the last tick before the halt. Stamping early ages the legs sooner,
+    /// which is the fail-closed direction.
     async fn read(&self, now: Instant) -> Result<Snapshot> {
         let candles = self
             .candles
