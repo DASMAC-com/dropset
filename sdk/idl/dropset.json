@@ -3753,6 +3753,11 @@
       "code": 6048,
       "name": "MarketHasActiveVaults",
       "msg": "market still has vaults on the active list"
+    },
+    {
+      "code": 6049,
+      "name": "LeaderAlreadyLeadsVault",
+      "msg": "leader already leads a live (not frozen, not tombstoned) vault on this market"
     }
   ],
   "types": [

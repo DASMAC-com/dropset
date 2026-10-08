@@ -159,6 +159,9 @@ pub enum DropsetError {
     /// 6048 - market still has vaults on the active list
     #[error("market still has vaults on the active list")]
     MarketHasActiveVaults = 0x17A0,
+    /// 6049 - leader already leads a live (not frozen, not tombstoned) vault on this market
+    #[error("leader already leads a live (not frozen, not tombstoned) vault on this market")]
+    LeaderAlreadyLeadsVault = 0x17A1,
 }
 
 impl From<DropsetError> for solana_program_error::ProgramError {
