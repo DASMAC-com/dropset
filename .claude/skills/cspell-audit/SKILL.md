@@ -124,7 +124,8 @@ matching entries (still report the rest).
 1. **Count usage per word.** For each dictionary word,
    find the distinct files that use it with the **Grep
    tool** — where absent, `search_source.py --all-text`
-   (its default set skips prose) or a bare `grep`; never
+   (its default set skips prose) or a bare `grep` scoped to
+   source dirs, never the worktrees under `.claude/`; never
    `git grep` (see `CLAUDE.md` → "Shell commands"). Match
    whole-word and case-insensitive, returning file names
    only:
