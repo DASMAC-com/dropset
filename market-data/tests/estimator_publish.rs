@@ -1,3 +1,5 @@
+// cspell:word plpgsql
+// cspell:word ERRCODE
 //! The estimator's whole path against a real Postgres: read both tables,
 //! compose, publish, read the row back.
 //!
@@ -29,13 +31,15 @@
 
 mod common;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::{insert_bucket, insert_tick, start_pg};
 use dropset_feeds::now_secs;
 use dropset_market_data::estimator::{
-    Estimator, EstimatorMarket, Ticked, MVP_MARKETS, SOURCE_COINBASE,
+    Estimator, EstimatorMarket, Halt, Ticked, MAX_PUBLISH_RETRY_WINDOW, MVP_MARKETS,
+    SOURCE_COINBASE,
 };
+use dropset_market_data::fx_store::MAX_STORE_SILENCE;
 use dropset_market_data::tick_store::{TickStoreReader, SOURCE_KRAKEN, USDC_USD_PRODUCT};
 use sqlx::{PgPool, Row};
 
@@ -374,4 +378,243 @@ async fn consecutive_ticks_accumulate_rows() {
         .try_get("n")
         .expect("n");
     assert_eq!(count, 2, "each tick publishes its own row");
+}
+
+/// An estimator over EURC alone, ticking at the one-second floor.
+fn eurc_estimator(pool: &PgPool) -> Estimator {
+    Estimator::new(pool.clone(), vec![MVP_MARKETS[0]], Duration::from_secs(1))
+        .expect("constructible")
+}
+
+/// Past `fair_price`'s one-second key granularity, so the next tick's row takes
+/// a new stamp rather than landing on the last one and writing nothing.
+async fn next_stamp() {
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+}
+
+/// A publish the schema refuses halts on the **first** failure.
+///
+/// A dropped table is a `42P01`, outside the transient allowlist, so the class
+/// is permanent and there is no retry to wait out: the same schema refuses the
+/// same row every tick.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn a_permanent_publish_failure_halts_immediately() {
+    let (_pg, pool) = start_pg().await;
+    seed_all_legs(&pool, now_secs()).await;
+    let mut estimator = eurc_estimator(&pool);
+
+    sqlx::query("DROP TABLE fair_price")
+        .execute(&pool)
+        .await
+        .expect("drop the publish target");
+
+    assert_eq!(
+        estimator.tick_once().await,
+        Err(Halt::Publish { class: "permanent" }),
+        "a refused row must halt on the first tick, not retry"
+    );
+}
+
+/// A retryable publish failure retries through its window and halts past it.
+///
+/// The failure is a trigger raising `serialization_failure` (`40001`), which
+/// is on the transient allowlist and fires on every insert, so the store keeps
+/// answering while the publish keeps failing — the shape the window exists for.
+/// Driven on injected instants because the window is five minutes.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn a_transient_publish_failure_halts_at_the_retry_window() {
+    let (_pg, pool) = start_pg().await;
+    seed_all_legs(&pool, now_secs()).await;
+    let mut estimator = eurc_estimator(&pool);
+
+    sqlx::query(
+        "CREATE FUNCTION refuse_transiently() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+             RAISE EXCEPTION 'injected' USING ERRCODE = 'serialization_failure';
+         END
+         $$",
+    )
+    .execute(&pool)
+    .await
+    .expect("create the refusing function");
+    sqlx::query(
+        "CREATE TRIGGER refuse_transiently BEFORE INSERT ON fair_price
+         FOR EACH ROW EXECUTE FUNCTION refuse_transiently()",
+    )
+    .execute(&pool)
+    .await
+    .expect("attach the refusing trigger");
+
+    let t0 = Instant::now();
+    assert_eq!(
+        estimator.tick_once_at(t0).await,
+        Ok(Ticked::PublishRetrying {
+            failing_for: Duration::ZERO
+        }),
+        "the first transient failure opens the window rather than halting"
+    );
+    // At the window exactly: the bound is strict, so this is still a retry.
+    assert_eq!(
+        estimator.tick_once_at(t0 + MAX_PUBLISH_RETRY_WINDOW).await,
+        Ok(Ticked::PublishRetrying {
+            failing_for: MAX_PUBLISH_RETRY_WINDOW
+        }),
+        "the window is measured from the first failure, not reset per tick"
+    );
+    assert_eq!(
+        estimator
+            .tick_once_at(t0 + MAX_PUBLISH_RETRY_WINDOW + Duration::from_secs(1))
+            .await,
+        Err(Halt::Publish { class: "transient" }),
+        "a transient failure outlasting its window must halt, under its own class"
+    );
+}
+
+/// An unreadable store halts at its silence bound, ahead of any publish class.
+///
+/// A closed pool fails the read and the publish alike. Inside the bound the
+/// tick composes from cache and the publish failure is a retry; past it the
+/// read decides first, so the halt names the store rather than the publish —
+/// the two are different faults with different operator responses.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn an_unreadable_store_halts_at_the_silence_bound() {
+    let (_pg, pool) = start_pg().await;
+    seed_all_legs(&pool, now_secs()).await;
+    let mut estimator = eurc_estimator(&pool);
+
+    let t0 = Instant::now();
+    assert_eq!(estimator.tick_once_at(t0).await, Ok(Ticked::Published));
+    pool.close().await;
+
+    assert!(
+        matches!(
+            estimator.tick_once_at(t0 + MAX_STORE_SILENCE).await,
+            Ok(Ticked::PublishRetrying { .. })
+        ),
+        "at the silence bound exactly the store is not yet gone, so the tick \
+         survives on the cached snapshot and the publish is retried"
+    );
+    assert_eq!(
+        estimator
+            .tick_once_at(t0 + MAX_STORE_SILENCE + Duration::from_secs(1))
+            .await,
+        Err(Halt::StoreSilent),
+        "past the bound the silence halts, and is not reported as a publish fault"
+    );
+}
+
+/// A failed read composes from the cached snapshot, whose legs age on the
+/// receipt floor until they drop out.
+///
+/// **The row-level assertion is the point.** The receipt floor is threaded
+/// into leg assembly by `publish_tick`, and if that thread were cut every
+/// cached tick would compose off rows whose publication age — wall clock, a
+/// second or two here — says fresh. The variant alone cannot see that, since
+/// it is computed before the legs are built; the anchor flipping is what does.
+///
+/// The flip is reachable only at the silence bound exactly: a tape goes stale
+/// at its bound inclusive and the store halts past its own, and the two are
+/// both five minutes — asserted below, so a recalibration that pulls them
+/// apart fails here with a reason rather than as a mysterious `fx` anchor.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn a_cached_snapshot_ages_its_legs_out_on_the_receipt_floor() {
+    let (_pg, pool) = start_pg().await;
+    seed_all_legs(&pool, now_secs()).await;
+    let eurc = MVP_MARKETS[0];
+    let mut estimator = eurc_estimator(&pool);
+    assert!(
+        eurc.config().leg_stale.tape <= MAX_STORE_SILENCE,
+        "a tape bound past the store's silence bound is unreachable from a cached \
+         snapshot — the halt fires first, so this test cannot see the floor"
+    );
+
+    let t0 = Instant::now();
+    assert_eq!(estimator.tick_once_at(t0).await, Ok(Ticked::Published));
+    assert_eq!(
+        read_published(&pool, eurc.product_id)
+            .await
+            .expect("published")
+            .anchor,
+        "fx"
+    );
+
+    // Break the read without breaking the publish: the candle table goes, and
+    // `fair_price` stays.
+    sqlx::query("ALTER TABLE cex_prices RENAME TO cex_prices_gone")
+        .execute(&pool)
+        .await
+        .expect("rename the candle table");
+
+    next_stamp().await;
+    let minute = Duration::from_secs(60);
+    assert_eq!(
+        estimator.tick_once_at(t0 + minute).await,
+        Ok(Ticked::ComposedFromCache { silent_for: minute }),
+    );
+    assert_eq!(
+        read_published(&pool, eurc.product_id)
+            .await
+            .expect("published")
+            .anchor,
+        "fx",
+        "a minute-old snapshot is still inside the tape bound"
+    );
+
+    next_stamp().await;
+    assert_eq!(
+        estimator.tick_once_at(t0 + MAX_STORE_SILENCE).await,
+        Ok(Ticked::ComposedFromCache {
+            silent_for: MAX_STORE_SILENCE
+        }),
+    );
+    let row = read_published(&pool, eurc.product_id)
+        .await
+        .expect("published");
+    assert_eq!(
+        row.anchor, "static",
+        "the cached legs were not aged on the receipt floor: their publication \
+         age is seconds, so only the floor can carry them past the tape bound"
+    );
+    assert_eq!(row.regime, "degraded");
+}
+
+/// A market with no live leg publishes its static peg, degraded — never a
+/// pause and never a missing price.
+///
+/// This pins the consumer semantics the static fallback rests on: for the MVP
+/// roster the paused regime is unreachable and the static anchor is a real
+/// price, so the fallback has to be recognizable by its `anchor` and `regime`
+/// rather than by a NULL that would never arrive.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn an_unfed_market_publishes_its_static_peg_degraded() {
+    let (_pg, pool) = start_pg().await;
+    let mut estimator = Estimator::new(pool.clone(), MVP_MARKETS.to_vec(), Duration::from_secs(15))
+        .expect("constructible");
+    assert_eq!(
+        estimator.tick_once().await,
+        Ok(Ticked::Published),
+        "an empty store is a successful read, so this is not a cached tick"
+    );
+
+    for market in MVP_MARKETS {
+        let row = read_published(&pool, market.product_id)
+            .await
+            .unwrap_or_else(|| panic!("{} published no row", market.product_id));
+        assert_eq!(row.anchor, "static", "{}", market.product_id);
+        assert_eq!(row.regime, "degraded", "{}", market.product_id);
+        let fair = row
+            .fair
+            .unwrap_or_else(|| panic!("{}: the static fallback is a price", market.product_id));
+        assert!(
+            (fair - market.static_usd).abs() < 1e-9,
+            "{}: fair must be the roster's static peg {}, got {fair}",
+            market.product_id,
+            market.static_usd
+        );
+    }
 }
