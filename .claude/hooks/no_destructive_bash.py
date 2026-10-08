@@ -764,7 +764,16 @@ def without_heredoc_bodies(cmd):
 
 def _scan_lines(cmd):
     """``[(line, begins_unquoted)]`` for the lines of ``cmd`` outside a prose
-    heredoc body — the walk `unquoted_start_lines` documents."""
+    heredoc body — the walk `unquoted_start_lines` documents.
+
+    A heredoc opened inside a still-open `"$(` is prose too: the repo's own
+    `git commit -m "$(cat <<'EOF'` … `EOF` / `)"` idiom. Its body used to be
+    tracked as the continuation of the double quote, so one stray `"` in it —
+    a `5"`, a quoted `then"` — flipped the quote state and exposed every later
+    body line as a command, where a markdown code span reached the deny tier.
+    The body is skipped with the double quote still open, and the `)"` after
+    the terminator closes it.
+    """
     result = []
     quote = None
     heredoc = None
@@ -774,6 +783,7 @@ def _scan_lines(cmd):
                 heredoc = None
             continue
         opener = None
+        opened_at = 0
         result.append((line, quote is None))
         if quote is None:
             if program_of(line) not in SHELL_PROGRAMS:
@@ -781,9 +791,12 @@ def _scan_lines(cmd):
                 for match in _HEREDOC_RE.finditer(line):
                     if not any(lo <= match.start() < hi for lo, hi, _ in spans):
                         opener = match.group("tag")
+                        opened_at = match.start()
                         break
         quote = _carry_quote(line, quote)
-        if opener is not None and quote is None:
+        if opener is not None and (
+            quote is None or (quote == '"' and '"$(' in line[:opened_at])
+        ):
             heredoc = opener
     return result
 
@@ -1042,6 +1055,7 @@ _SHELL_C = re.compile(
     + r"*)*\s*\$?\Z",
     re.MULTILINE,
 )
+_C_FLAG_TAIL = re.compile(r"\s-[A-Za-z]*c(?:\s+-" + _RM_WORD + r"*)*\s*\$?\Z")
 
 
 def _live_regions(text, lo, hi):
@@ -1133,6 +1147,11 @@ def shell_payloads(cmd):
     payloads = []
     for lo, hi, quote in quoted_spans(cmd):
         start = cmd.rfind("\n", 0, lo) + 1
+        # A bounded look at what ends just before the quote first: only a span
+        # right after a `-c` flag gets the full search, so a line of thousands
+        # of ordinary quoted words stays linear.
+        if not _C_FLAG_TAIL.search(cmd, max(start, lo - 1 - 256), lo - 1):
+            continue
         if not _SHELL_C.search(cmd, start, lo - 1):
             continue
         body = cmd[lo:hi]
@@ -1140,7 +1159,7 @@ def shell_payloads(cmd):
             body = re.sub(r"\\([\\\"$`])", r"\1", body)
         elif cmd[lo - 2 : lo - 1] == "$":
             body = re.sub(
-                r"\\([nt\\'])",
+                r"\\([nt\\])",
                 lambda m: {"n": "\n", "t": "\t"}.get(m.group(1), m.group(1)),
                 body,
             )
@@ -1227,14 +1246,17 @@ def classify(cmd, _depth=0):
     # Then each shell `-c` payload, classified as the command it is.
     if _depth < _MAX_SHELL_DEPTH:
         for payload in shell_payloads(cmd):
-            tier, reason = classify(payload, _depth + 1)
+            tier, reason = classify(split_comments(payload)[0], _depth + 1)
             if tier == "deny":
                 return tier, reason
     # Then the command-position denies, on lines a shell would read as
     # commands: not a continuation of a quoted message, and with the `rm` word
     # itself outside every inert quote — a substitution inside double quotes
-    # runs, so it is not inert (`inert_command_spans`).
+    # runs, so it is not inert (`inert_command_spans`). A `#` comment is not a
+    # command either; `evaluate` strips the top level's, but a shell-fed
+    # heredoc body's `# 1) rm -r / x` survives to here.
     for line in unquoted_start_lines(cmd):
+        line = split_comments(line)[0]
         spans = inert_command_spans(line)
         for pattern, reason in COMMAND_DENY_PATTERNS:
             for match in pattern.finditer(line):
@@ -1668,8 +1690,27 @@ def _self_test():
         ("bash -c -e 'cd x; rm -r / y'", "deny"),
         ("bash -c $'cd x\\nrm -r / y'", "deny"),
         ("FOO=1 bash -c 'cd x; rm -r ~ y'", "deny"),
+        # A heredoc inside `"$(` is prose: a stray `"` in its body must not
+        # expose the lines after it, and the command after it still counts.
+        (
+            "git commit -m \"$(cat <<'EOF'\nKeep prose out\n\nA stray `then\"`"
+            ' line\n`rm -r "$HOME"/*` now denies\nEOF\n)"',
+            None,
+        ),
+        (
+            "gh pr create --title t --body \"$(cat <<'EOF'\n- a `then\"` line\n"
+            '- `case $x in *) rm -r / x;; esac`\n- `sudo -u root rm -r / x`\nEOF\n)"',
+            None,
+        ),
+        ('git commit -m "$(cat <<\'EOF\'\nSubject 5"\nEOF\n)"\nrm -rf build /', "deny"),
+        # A comment in a payload or a shell-fed heredoc runs nothing.
+        ("bash -c 'make # 1) rm -r / x'", None),
+        ("bash -c 'make # note; rm -r / x'", None),
+        ("bash <<'EOF'\n# 1) rm -r / x\nmake\nEOF", None),
+        ("bash <<'EOF'\nmake\n(rm -r / x)\nEOF", "deny"),
         # Payload extraction stays linear in the command's length.
         ("echo 'a'; " * 4000, None),
+        ("echo" + " 'a'" * 8000, None),
         # Long options: `--recursive` still counts, and the `r` inside
         # `--no-preserve-root` does not.
         ("rm --recursive --force build", "ask"),
