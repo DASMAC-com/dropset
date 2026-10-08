@@ -493,11 +493,30 @@ impl Estimator {
     /// positionally), so neither clippy nor a compile-time macro can see any of
     /// them; a container-backed test calling this is the only gate that can.
     pub async fn tick_once(&mut self) -> Result<Ticked, Halt> {
-        let now = Instant::now();
+        self.tick_once_at(Instant::now()).await
+    }
+
+    /// [`Self::tick_once`] at an injected instant.
+    ///
+    /// **A test seam, and the only way to reach the time-bounded halts.** The
+    /// retry window and the store's silence bound are both five minutes of
+    /// elapsed time on this clock, so a test driving the real one would wait
+    /// five minutes per arm. An instant in the future is what stands in for
+    /// that wait: every elapsed-time decision in a tick is taken against
+    /// `now`, so a tick at `t0 + window` sees exactly the window elapse — and
+    /// the engine is handed the jump as one tick's `dt`. The rows' own
+    /// publication age still runs on the wall clock, which this does not move.
+    ///
+    /// **Instants must not go backwards across calls**, and this must not be
+    /// mixed with [`Self::tick_once`] after a future instant. An earlier `now`
+    /// saturates the silence and the retry age to zero, which suppresses both
+    /// halts — the fail-open direction.
+    #[doc(hidden)]
+    pub async fn tick_once_at(&mut self, now: Instant) -> Result<Ticked, Halt> {
         let mut from_cache = None;
 
         // --- read ----------------------------------------------------------
-        match self.read().await {
+        match self.read(now).await {
             Ok(fresh) => {
                 self.snapshot = fresh;
                 self.last_read_ok = Some(now);
@@ -577,7 +596,16 @@ impl Estimator {
     /// is in the other table, and a half-read tick would compose every market
     /// with a silently absent common-mode guard while reporting a successful
     /// read.
-    async fn read(&self) -> Result<Snapshot> {
+    ///
+    /// The snapshot is stamped with the **tick's** instant rather than the
+    /// moment the read returned, so its receipt age and the silence the store
+    /// guard counts are one measurement. Stamped after the read instead, the
+    /// receipt age always trails the silence by the read's own latency — and
+    /// while the tape bound equals the silence bound, as both do today, that
+    /// latency is the margin by which a cached leg would stay fresh through
+    /// the last tick before the halt. Stamping early ages the legs sooner,
+    /// which is the fail-closed direction.
+    async fn read(&self, now: Instant) -> Result<Snapshot> {
         let candles = self
             .candles
             .latest()
@@ -591,7 +619,7 @@ impl Estimator {
         Ok(Snapshot {
             candles,
             ticks,
-            read_at: Some(Instant::now()),
+            read_at: Some(now),
         })
     }
 
