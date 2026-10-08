@@ -11,9 +11,12 @@
 //! Unlike `dropset-math-core`, **nothing here runs on-chain**: these
 //! decode account bytes and simulate fills for routers, the `/orderbook`
 //! depth endpoint, and the WASM client. A bug mis-predicts a quote rather
-//! than corrupting state, so the audit priority is lower — parity is pinned
-//! by the shared conformance vectors (see `sdk/conformance`), not by the
-//! on-chain engine running this code.
+//! than corrupting state, so the audit priority is lower. Parity with the
+//! engine is part construction (the matcher math it shares through
+//! `matching_math`) and part test (the litesvm differential in
+//! programs/dropset/tests/sdk_conformance.rs); the shared conformance
+//! vectors (see `sdk/conformance`) pin the WASM and TS clients to this
+//! crate — see the [`matching`] module header.
 //!
 //! **Feature surface.** [`layout`] is always compiled. [`matching`]
 //! (`simulate`, default on) pulls `std` collections for off-chain book

@@ -5,8 +5,8 @@
 //! won't honor.
 //!
 //! Only the *pure* arithmetic and predicates live here: flush-level
-//! pricing, the size-bps fill cap, the price-time sort key, the fees, and
-//! the side-keyed limit and liveness tests. The iteration / IO
+//! pricing, the size-bps fill cap, the price-time sort key, the fees, the
+//! side-keyed limit tests and the level-liveness gate. The iteration / IO
 //! around them — walking the on-chain slab vs. reconstructing a book —
 //! stays distinct in each caller. This module is `core`-only (it pulls no
 //! `std`), so the on-chain program depends on it without the off-chain

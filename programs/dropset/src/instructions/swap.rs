@@ -45,7 +45,7 @@ use anchor_spl_v2::{
 };
 
 use dropset_math_core::matching_math::{
-    crosses_limit, level_is_live, limit_price_ok, platform_fee_atoms, sort_key, taker_fee_atoms,
+    self, level_is_live, platform_fee_atoms, sort_key, taker_fee_atoms,
 };
 
 use crate::{
@@ -105,7 +105,7 @@ impl SwapSide {
     /// off-chain simulator through `matching_math::limit_price_ok`.
     #[inline]
     fn limit_price_ok(self, limit: Price) -> bool {
-        limit_price_ok(limit, self.consumes_asks())
+        matching_math::limit_price_ok(limit, self.consumes_asks())
     }
 
     /// Sort key for the matching heap: asks order by raw `as_u32()`
@@ -126,7 +126,7 @@ impl SwapSide {
     /// simulator through `matching_math::crosses_limit`.
     #[inline]
     fn crosses_limit(self, price: Price, limit: Price) -> bool {
-        crosses_limit(price, limit, self.consumes_asks())
+        matching_math::crosses_limit(price, limit, self.consumes_asks())
     }
 
     /// The leg the taker **receives** and the vault pays out: base on a

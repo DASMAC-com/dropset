@@ -109,10 +109,13 @@ struct Lvl {
 /// below the market can convert to more base than a `u64` holds, and it is
 /// clamped rather than widened. That is deliberate. It affects depth
 /// display only — [`simulate_swap`] and the engine never make this
-/// conversion, so fills stay exact. Saturating takes a price far below
-/// one atom-ratio, and bids sort best first, so every level above a
-/// saturated one — and the running total through it — is still exact; only
-/// the cumulative figure from the saturated level down is distorted.
+/// conversion, so fills stay exact. Saturating needs a price below
+/// `quote_atoms / u64::MAX` — a bid quoted far off the market — and
+/// whether a level saturates depends on its own quote size as well as its
+/// price, so saturated levels need not be contiguous. Every level above the
+/// first saturated one (best first), and the running total through those,
+/// is exact; from the first saturated level down, the cumulative figure
+/// understates the true depth.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BookLevel {
     pub price: Price,
@@ -1142,11 +1145,18 @@ mod tests {
     }
 
     /// Each up-front rejection the engine makes before any matching
-    /// (`InvalidPrice`, `InvalidLimitPrice`, `InvalidAmountIn`) refuses to
-    /// quote, against a book that fills the same take when the arguments are
-    /// valid. The garbage bit pattern is the dangerous one: its `as_u32` sits
-    /// above every real ask, so before the guard it never crossed and the
-    /// whole fill was quoted for a take the chain refuses outright.
+    /// (`InvalidPrice`, `InvalidLimitPrice`, `InvalidAmountIn`) quotes
+    /// nothing, against a book that fills the same take when the arguments
+    /// are valid.
+    ///
+    /// Only the invalid-bits rows exercise the guard itself. An invalid
+    /// pattern that does not cross the book would otherwise be quoted in
+    /// full for a take the chain refuses outright, so each side gets one
+    /// that cannot cross: above every ask for the Buy, below every bid for
+    /// the Sell. The wrong-side sentinel and zero-amount rows pin the output
+    /// only — those inputs already quoted nothing before the guard (the
+    /// sentinel crosses the first level; a zero input matches no leg) — and
+    /// the sentinel rule itself is pinned in `matching_math`.
     #[test]
     fn engine_argument_rejections_refuse_to_quote() {
         let data = market_data();
@@ -1157,14 +1167,22 @@ mod tests {
         assert!(quote(SwapSide::Buy, 500_000, Price::INFINITY).legs > 0);
         assert!(quote(SwapSide::Sell, 500_000, Price::ZERO).legs > 0);
 
-        let garbage = Price::from_bits(0xFFFF_FFF0);
-        assert!(!garbage.is_valid());
+        // Each significand is outside [10_000_000, 99_999_999]: one sits above
+        // every ask, one below every bid.
+        let garbage_high = Price::from_bits(0xFFFF_FFF0);
+        let garbage_low = Price::from_bits(1);
+        assert!(!garbage_high.is_valid() && !garbage_low.is_valid());
         for (side, amount_in, limit, why) in [
-            (SwapSide::Buy, 500_000, garbage, "invalid limit bits (Buy)"),
+            (
+                SwapSide::Buy,
+                500_000,
+                garbage_high,
+                "invalid limit bits (Buy)",
+            ),
             (
                 SwapSide::Sell,
                 500_000,
-                garbage,
+                garbage_low,
                 "invalid limit bits (Sell)",
             ),
             (SwapSide::Buy, 500_000, Price::ZERO, "Buy with a ZERO limit"),
