@@ -1,5 +1,3 @@
-<!-- cspell:word boto -->
-
 # AWS infrastructure (CloudFormation)
 
 Account foundation for the market-data warehouse and any later AWS
@@ -193,13 +191,14 @@ rather than automatic.
 
 `bedrock-agent.yml` stands up the identity that Bedrock agent
 sessions authenticate as: an IAM user, a managed policy scoped to model
-invocation in the US regions, and an optional monthly spend alert that
-the committed parameter file deliberately leaves uncreated — it sets no
-alert address, and a budget with an undeliverable subscriber is a
-tripwire that silently never fires. Deploying exactly as described below
-therefore gives you no spend alerting; supply `BudgetAlertEmail` to get
-it. Operator-attended sessions are unaffected — they keep using the
-subscription and never touch this stack.
+invocation in the US regions, a daily spend cap (see "Daily spend cap"
+below), and an optional monthly spend alert. The committed parameter
+file sets no alert address: you enter `BudgetAlertEmail` yourself, and
+it never reaches the repo. Without it there is no monthly budget, since
+a budget with an undeliverable subscriber is a tripwire that silently
+never fires, and the spend-cap alarms email nobody — though the cap's
+kill switch still works. Operator-attended sessions are unaffected —
+they keep using the subscription and never touch this stack.
 
 Two steps cannot be expressed in CloudFormation and follow the deploy
 by hand. Both are one-time as deploy steps — but note that step 1's
@@ -555,6 +554,71 @@ calling Bedrock, so it never reaches the provider as part of the model
 id — which is also why its absence fails silently rather than erroring:
 the session simply runs with a fifth of the context. Confirm it with
 `/context`, which prints the window it actually got.
+
+### Daily spend cap
+
+A runaway agent loop must not burn unbounded credits overnight. The
+stack estimates Bedrock spend over a **rolling 24 hours** from
+CloudWatch's Bedrock token metrics — input, output, cache read and
+cache write, summed across every model — priced at the `TokenRate*`
+parameters (Opus 5.5 rates). Pricing every model at the dearest model's
+rates makes the estimate an upper bound on the charge — but **only
+while the rates belong to the dearest model actually running**. On
+2026-10-06, leftover Opus 5 traffic priced at Opus 5.5 rates estimated
+$162 against $210 billed. Keep the rates on the priciest model in use.
+
+| Estimate vs. `SpendCapUsd` (default 2000) | What happens                                       |
+| ----------------------------------------- | -------------------------------------------------- |
+| 25%, 50%, 75%                             | Email via the `dropset-bedrock-spend-alerts` topic |
+| 100%                                      | Email, and the deny policy is attached             |
+
+The trigger is CloudWatch rather than AWS Budgets because billing data
+refreshes only about once a day, too late against an overnight loop. The
+estimate is not the bill; it is reconciled against Cost Explorer as a
+separate, recurring check. The metrics are per region, so the cap covers
+invocations made from the stack's region (us-west-2).
+
+**Entering the address.** Set `BudgetAlertEmail` once, in the console
+(the stack's *Update* → *Use current template* → parameters) or with a
+one-off `--parameter-overrides BudgetAlertEmail=<address>` typed at the
+prompt, never committed. The committed parameter file omits the key, so
+a later `aws cloudformation deploy` keeps the address you entered rather
+than resetting it. AWS then mails a subscription confirmation. **Click
+it**, because until you do, the topic delivers nothing.
+
+**Resuming after a trip.** When the 100% alarm fires, a small Lambda
+attaches `dropset-bedrock-spend-cap-deny` to `dropset-bedrock-agent`,
+and every agent call fails with an access-denied error until you detach
+it:
+
+```sh
+aws iam detach-user-policy \
+  --user-name dropset-bedrock-agent \
+  --policy-arn arn:aws:iam::<account-id>:policy/dropset-bedrock-spend-cap-deny
+```
+
+Look at what tripped it first. The rolling window still holds the spend
+that tripped it, so the alarm stays in ALARM until that spend ages out.
+It does not re-fire meanwhile, because alarm actions fire only on a
+transition into ALARM. Re-attachment happens only after the alarm
+returns to OK and crosses again.
+
+**Disarming.** Redeploy with `SpendKillSwitchEnabled=false` in the
+parameter file. All four alarms keep emailing, but the cap blocks
+nothing. A deny policy that is already attached stays attached;
+detach it as above. Before deleting the stack, detach the policy by
+hand too, since CloudFormation cannot delete an attached managed policy.
+
+**Re-seeding the rates.** When the default model changes, update the
+four `TokenRate*` values in the parameter file to that model's Bedrock
+rates (Cost Explorer's cost ÷ usage quantity per usage type gives them
+exactly) and redeploy.
+
+**Running cost** is at most $1.60 a month: CloudWatch bills a
+standard alarm $0.10 per month for each metric its expression lists,
+and four alarms × four metrics is 16. The free tier covers 10 alarm
+metrics, which brings it to \$0.60 if no other alarm uses them. The token
+metrics are free, and the Lambda runs only on a trip.
 
 ## Secrets
 

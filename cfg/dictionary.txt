@@ -32,6 +32,7 @@ birdeye
 blockhash
 blox
 borsh
+boto
 bpf
 brale
 bytemuck

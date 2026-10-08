@@ -5,10 +5,15 @@ Conditions:
   - !Equals
     - !Ref 'BudgetAlertEmail'
     - ''
+  IsSpendKillSwitchEnabled: !Equals
+  - !Ref 'SpendKillSwitchEnabled'
+  - 'true'
 Description: >-
   Dropset Bedrock agent identity: the IAM user that backs the long-term
   Amazon Bedrock API key used by agent sessions, a managed policy scoped to
-  model invocation alone, and an optional monthly spend ALERT that fires once
+  model invocation alone, a daily spend cap that warns and then blocks
+  invocation when a rolling 24-hour estimate from Bedrock token metrics
+  reaches its limit, and an optional monthly spend ALERT that fires once
   uncredited spend reaches its threshold - a coarse tripwire, not a prompt
   signal that credit coverage lapsed. No credential value is created or
   stored by this template - the API key is minted out of band and kept in
@@ -31,17 +36,23 @@ Parameters:
   BudgetAlertEmail:
     Default: ''
     Description: >-
-      Address the monthly spend alert notifies. Left empty (the default), no
-      budget is created at all, because a budget with an undeliverable
-      subscriber is a tripwire that silently never fires.
+      Address the monthly spend alert and the daily spend-cap alarms notify.
+      Entered by the operator at deploy time and never committed, which is
+      why the committed parameter file omits it - a redeploy then keeps the
+      previous value rather than wiping it. Left empty, no budget is created
+      at all, because a budget with an undeliverable subscriber is a tripwire
+      that silently never fires, and the spend-cap topic gets no subscriber;
+      the kill switch works either way.
     Type: 'String'
   BudgetLimitUsd:
     Default: '10000'
     Description: >-
-      Monthly USD threshold for the spend alert. This is an ALERT, never a
-      cap: Budgets cannot stop spend, and the ratified posture is no cap
-      while credits net the charge in full. At the ratified 10000 it is a
-      runaway alarm, not a fine-grained signal that credit coverage lapsed.
+      Monthly USD threshold for the spend alert. This budget only ALERTS: it
+      carries no budget action, so it never stops spend, although Budgets
+      could through an action that applies a deny policy. Its billing data
+      also lags by up to a day, which is why the hard stop is the daily
+      spend cap (SpendCapUsd) instead. At the ratified 10000 it is a runaway
+      alarm, not a fine-grained signal that credit coverage lapsed.
     Type: 'String'
   EnvironmentName:
     Default: 'dropset'
@@ -54,6 +65,45 @@ Parameters:
       every template rather than hard-coding literals in this one. The
       divergence is a decision, not drift - see docs/conventions/aws-infra.md.
     Type: 'String'
+  SpendCapUsd:
+    Default: 2000
+    Description: >-
+      Rolling 24-hour USD cap on ESTIMATED Bedrock spend. Warnings fire at
+      25, 50 and 75 percent of it; at 100 percent the kill switch attaches
+      the deny policy to the agent user. The estimate prices every model
+      at the TokenRate parameters, so it is an upper bound on the real
+      charge ONLY while those are the rates of the dearest model in use - a
+      pricier model left running undercounts (measured: Opus 5 traffic
+      priced at Opus 5.5 rates estimated 162 against 210 billed).
+    MinValue: 1
+    Type: 'Number'
+  SpendKillSwitchEnabled:
+    AllowedValues:
+    - 'false'
+    - 'true'
+    Default: 'true'
+    Description: >-
+      Whether reaching SpendCapUsd blocks invocation. Set to false to disarm
+      the kill switch while keeping every warning; nothing else changes.
+    Type: 'String'
+  TokenRateCacheRead:
+    Default: 0.22
+    Description: 'USD per million cache-read input tokens (Opus 5.5).'
+    Type: 'Number'
+  TokenRateCacheWrite:
+    Default: 8.80
+    Description: >-
+      USD per million cache-write input tokens (Opus 5.5, 1-hour cache - the
+      dearer of the two cache lifetimes, keeping the estimate an upper bound).
+    Type: 'Number'
+  TokenRateInput:
+    Default: 4.40
+    Description: 'USD per million uncached input tokens (Opus 5.5).'
+    Type: 'Number'
+  TokenRateOutput:
+    Default: 22.00
+    Description: 'USD per million output tokens (Opus 5.5).'
+    Type: 'Number'
 Resources:
   AgentSpendAlertBudget:
     Condition: 'HasBudgetAlertEmail'
@@ -163,4 +213,335 @@ Resources:
         Value: !Sub '${EnvironmentName}-bedrock-agent'
       UserName: !Sub '${EnvironmentName}-bedrock-agent'
     Type: 'AWS::IAM::User'
+  # The three warning alarms and the kill alarm share one metric-math
+  # estimate, repeated per alarm because CloudFormation has no way to share
+  # it: the four Bedrock token metrics WITHOUT the ModelId dimension (so
+  # every model counts, the Sonnet permission classifier included), summed
+  # over a 24-hour period, priced at the TokenRate parameters, and expressed
+  # as a percentage of SpendCapUsd. One 86400-second period is a SLIDING
+  # window re-evaluated every minute - a true rolling 24 hours, not a UTC
+  # day. The metrics are per region, so this covers invocations made from
+  # the region the stack is deployed in.
+  SpendAlarm25:
+    Properties:
+      AlarmActions:
+      - !Ref 'SpendAlertTopic'
+      AlarmDescription: >-
+        Estimated Bedrock spend over the last 24 hours reached 25 percent of
+        the daily spend cap.
+      AlarmName: !Sub '${EnvironmentName}-bedrock-spend-25pct'
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold'
+      DatapointsToAlarm: 1
+      EvaluationPeriods: 1
+      Metrics:
+      - Expression: !Sub >-
+          100 * (FILL(input, 0) * ${TokenRateInput}
+          + FILL(output, 0) * ${TokenRateOutput}
+          + FILL(cache_read, 0) * ${TokenRateCacheRead}
+          + FILL(cache_write, 0) * ${TokenRateCacheWrite})
+          / 1000000 / ${SpendCapUsd}
+        Id: 'pct'
+        Label: 'Estimated 24h spend, percent of cap'
+        ReturnData: true
+      - Id: 'input'
+        MetricStat:
+          Metric:
+            MetricName: 'InputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      - Id: 'output'
+        MetricStat:
+          Metric:
+            MetricName: 'OutputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      - Id: 'cache_read'
+        MetricStat:
+          Metric:
+            MetricName: 'CacheReadInputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      - Id: 'cache_write'
+        MetricStat:
+          Metric:
+            MetricName: 'CacheWriteInputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      Threshold: 25
+      TreatMissingData: 'notBreaching'
+    Type: 'AWS::CloudWatch::Alarm'
+  SpendAlarm50:
+    Properties:
+      AlarmActions:
+      - !Ref 'SpendAlertTopic'
+      AlarmDescription: >-
+        Estimated Bedrock spend over the last 24 hours reached 50 percent of
+        the daily spend cap.
+      AlarmName: !Sub '${EnvironmentName}-bedrock-spend-50pct'
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold'
+      DatapointsToAlarm: 1
+      EvaluationPeriods: 1
+      Metrics:
+      - Expression: !Sub >-
+          100 * (FILL(input, 0) * ${TokenRateInput}
+          + FILL(output, 0) * ${TokenRateOutput}
+          + FILL(cache_read, 0) * ${TokenRateCacheRead}
+          + FILL(cache_write, 0) * ${TokenRateCacheWrite})
+          / 1000000 / ${SpendCapUsd}
+        Id: 'pct'
+        Label: 'Estimated 24h spend, percent of cap'
+        ReturnData: true
+      - Id: 'input'
+        MetricStat:
+          Metric:
+            MetricName: 'InputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      - Id: 'output'
+        MetricStat:
+          Metric:
+            MetricName: 'OutputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      - Id: 'cache_read'
+        MetricStat:
+          Metric:
+            MetricName: 'CacheReadInputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      - Id: 'cache_write'
+        MetricStat:
+          Metric:
+            MetricName: 'CacheWriteInputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      Threshold: 50
+      TreatMissingData: 'notBreaching'
+    Type: 'AWS::CloudWatch::Alarm'
+  SpendAlarm75:
+    Properties:
+      AlarmActions:
+      - !Ref 'SpendAlertTopic'
+      AlarmDescription: >-
+        Estimated Bedrock spend over the last 24 hours reached 75 percent of
+        the daily spend cap.
+      AlarmName: !Sub '${EnvironmentName}-bedrock-spend-75pct'
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold'
+      DatapointsToAlarm: 1
+      EvaluationPeriods: 1
+      Metrics:
+      - Expression: !Sub >-
+          100 * (FILL(input, 0) * ${TokenRateInput}
+          + FILL(output, 0) * ${TokenRateOutput}
+          + FILL(cache_read, 0) * ${TokenRateCacheRead}
+          + FILL(cache_write, 0) * ${TokenRateCacheWrite})
+          / 1000000 / ${SpendCapUsd}
+        Id: 'pct'
+        Label: 'Estimated 24h spend, percent of cap'
+        ReturnData: true
+      - Id: 'input'
+        MetricStat:
+          Metric:
+            MetricName: 'InputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      - Id: 'output'
+        MetricStat:
+          Metric:
+            MetricName: 'OutputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      - Id: 'cache_read'
+        MetricStat:
+          Metric:
+            MetricName: 'CacheReadInputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      - Id: 'cache_write'
+        MetricStat:
+          Metric:
+            MetricName: 'CacheWriteInputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      Threshold: 75
+      TreatMissingData: 'notBreaching'
+    Type: 'AWS::CloudWatch::Alarm'
+  SpendAlertSubscription:
+    Condition: 'HasBudgetAlertEmail'
+    Properties:
+      # Email subscriptions start PENDING: AWS mails a confirmation link,
+      # and nothing is delivered until it is clicked.
+      Endpoint: !Ref 'BudgetAlertEmail'
+      Protocol: 'email'
+      TopicArn: !Ref 'SpendAlertTopic'
+    Type: 'AWS::SNS::Subscription'
+  SpendAlertTopic:
+    Properties:
+      TopicName: !Sub '${EnvironmentName}-bedrock-spend-alerts'
+    Type: 'AWS::SNS::Topic'
+  SpendCapDenyPolicy:
+    Properties:
+      # Description is IMMUTABLE here too - see BedrockAgentInvokePolicy.
+      Description: >-
+        Denies Bedrock model invocation, and the API-key auth gate, to the
+        agent identity. Attached by the spend-cap kill switch; detached by
+        hand to resume. An explicit deny overrides the invoke allow, and the
+        agent holds no IAM permission to remove it.
+      ManagedPolicyName: !Sub '${EnvironmentName}-bedrock-spend-cap-deny'
+      PolicyDocument:
+        Statement:
+        - Action:
+          - 'bedrock:CallWithBearerToken'
+          - 'bedrock:InvokeModel'
+          - 'bedrock:InvokeModelWithResponseStream'
+          Effect: 'Deny'
+          Resource: '*'
+          Sid: 'DenyInvocationWhileSpendCapTripped'
+        Version: '2012-10-17'
+    Type: 'AWS::IAM::ManagedPolicy'
+  SpendKillAlarm:
+    Properties:
+      # Disarming drops only the Lambda action: the alarm still emails.
+      AlarmActions: !If
+      - 'IsSpendKillSwitchEnabled'
+      - - !Ref 'SpendAlertTopic'
+        - !GetAtt 'SpendKillFunction.Arn'
+      - - !Ref 'SpendAlertTopic'
+      AlarmDescription: >-
+        Estimated Bedrock spend over the last 24 hours reached the daily
+        spend cap. When the kill switch is armed, the deny policy is now
+        attached to the agent user - see infra/aws/README.md to resume.
+      AlarmName: !Sub '${EnvironmentName}-bedrock-spend-cap'
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold'
+      DatapointsToAlarm: 1
+      EvaluationPeriods: 1
+      Metrics:
+      - Expression: !Sub >-
+          100 * (FILL(input, 0) * ${TokenRateInput}
+          + FILL(output, 0) * ${TokenRateOutput}
+          + FILL(cache_read, 0) * ${TokenRateCacheRead}
+          + FILL(cache_write, 0) * ${TokenRateCacheWrite})
+          / 1000000 / ${SpendCapUsd}
+        Id: 'pct'
+        Label: 'Estimated 24h spend, percent of cap'
+        ReturnData: true
+      - Id: 'input'
+        MetricStat:
+          Metric:
+            MetricName: 'InputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      - Id: 'output'
+        MetricStat:
+          Metric:
+            MetricName: 'OutputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      - Id: 'cache_read'
+        MetricStat:
+          Metric:
+            MetricName: 'CacheReadInputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      - Id: 'cache_write'
+        MetricStat:
+          Metric:
+            MetricName: 'CacheWriteInputTokenCount'
+            Namespace: 'AWS/Bedrock'
+          Period: 86400
+          Stat: 'Sum'
+        ReturnData: false
+      Threshold: 100
+      TreatMissingData: 'notBreaching'
+    Type: 'AWS::CloudWatch::Alarm'
+  SpendKillFunction:
+    Properties:
+      Code:
+        # Alarm actions fire only on the transition INTO the alarm state,
+        # so this runs once per trip; attaching an already-attached policy
+        # is a no-op, which makes a re-trip harmless. The code is written
+        # flat - a one-line def, its call continued inside parentheses -
+        # because the repo's yamllint rejects any line indented deeper than
+        # the block scalar's first.
+        ZipFile: |
+          import os
+          import boto3
+          IAM = boto3.client('iam')
+          def handler(event, context): IAM.attach_user_policy(
+          UserName=os.environ['USER_NAME'], PolicyArn=os.environ['POLICY_ARN'])
+      Description: >-
+        Attaches the spend-cap deny policy to the Bedrock agent user.
+      Environment:
+        Variables:
+          POLICY_ARN: !Ref 'SpendCapDenyPolicy'
+          USER_NAME: !Ref 'BedrockAgentUser'
+      Handler: 'index.handler'
+      Role: !GetAtt 'SpendKillFunctionRole.Arn'
+      Runtime: 'python3.13'
+      Timeout: 30
+    Type: 'AWS::Lambda::Function'
+  SpendKillFunctionPermission:
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Ref 'SpendKillFunction'
+      Principal: 'lambda.alarms.cloudwatch.amazonaws.com'
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !GetAtt 'SpendKillAlarm.Arn'
+    Type: 'AWS::Lambda::Permission'
+  SpendKillFunctionRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: 'sts:AssumeRole'
+          Effect: 'Allow'
+          Principal:
+            Service: 'lambda.amazonaws.com'
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+      - !Sub >-
+               arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyDocument:
+          Statement:
+          # Scoped to exactly one user and one policy: the function can
+          # attach the deny policy and nothing else, anywhere.
+          - Action: 'iam:AttachUserPolicy'
+            Condition:
+              ArnEquals:
+                iam:PolicyARN: !Ref 'SpendCapDenyPolicy'
+            Effect: 'Allow'
+            Resource: !GetAtt 'BedrockAgentUser.Arn'
+          Version: '2012-10-17'
+        PolicyName: 'attach-spend-cap-deny'
+    Type: 'AWS::IAM::Role'
 ...
