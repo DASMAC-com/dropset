@@ -142,6 +142,18 @@ class ScanFixture(_Fixture, unittest.TestCase):
         self._skill('See `thing.md` → "A real section".\n')
         self.assertEqual(cr.scan(self.repo)["dangling"], [])
 
+    def test_a_bare_name_resolves_beside_the_citer_first(self):
+        """A skill cites its own ``history.md`` ledger by bare name, and the
+        ledger's bold entry titles are the anchors."""
+        (self.repo / ".claude" / "skills" / "demo" / "history.md").write_text(
+            "# Ledger\n\n- **A measured incident.** Figures.\n", encoding="utf-8"
+        )
+        self._skill('See `history.md` → "A measured incident".\n')
+        self.assertEqual(cr.scan(self.repo)["dangling"], [])
+        self._skill('See `history.md` → "An entry nobody wrote".\n')
+        result = cr.scan(self.repo)
+        self.assertEqual(result["dangling"][0]["kind"], "missing-anchor")
+
     def test_an_abbreviated_citation_still_resolves(self):
         """Citations routinely shorten a long heading; demanding the whole
         thing would report drift that is only abbreviation."""
