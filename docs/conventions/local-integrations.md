@@ -2020,8 +2020,9 @@ issue-keyed explore task, by its number) and are idempotent like the second.
 
 **For a Grafana panel, try HTTP first.** Whether a panel returns rows, and
 under which variable values, needs no browser:
-`grafana_check.py panel --dashboard <uid> [--panel <id>]` runs its queries
-through Grafana's own API and gates on the row count. Reach for a browser
+`.claude/tools/grafana_check.py panel --dashboard <uid> [--panel <id>]` runs
+its queries through Grafana's own API and gates on the row count (pass
+`--min-rows 0` for a panel that is legitimately empty). Reach for a browser
 only to see whether the panel renders.
 
 Browser verification is a standing need rather than an accident of one PR,

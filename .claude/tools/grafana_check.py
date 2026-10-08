@@ -350,25 +350,31 @@ def _quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def interpolate(text: str, resolved: dict) -> str:
+def interpolate(text: str, resolved: dict, display: bool = False) -> str:
     """``text`` with every ``${name}`` / ``${name:sqlstring}`` substituted.
 
     Mirrors the SQL datasources' own rule: ``sqlstring`` always quotes; the bare
-    form quotes only for a multi-value or include-all variable and is otherwise
-    the raw value. A custom ``allValue`` is a literal and is inserted as-is. An
-    unknown name is left in place so the caller can report it.
+    form quotes only for a multi-value or include-all variable and otherwise
+    inserts the value with its single quotes doubled. A custom ``allValue`` is a
+    literal and is inserted as-is. An unknown name, or a format other than these
+    two (``:raw``, ``:csv``, …), is left in place so the caller can report it —
+    guessing a format's quoting would make a query pass or fail for the
+    tool's reasons rather than the panel's. ``display`` is for a panel title,
+    which is not SQL: values are joined plainly, with no quoting at all.
     """
 
     def replace(match: re.Match) -> str:
         variable = resolved.get(match.group(1))
-        if variable is None:
+        if variable is None or match.group(2) not in (None, "sqlstring"):
             return match.group(0)
         if variable["literal"] is not None:
             return variable["literal"]
         values = variable["values"]
+        if display:
+            return ",".join(values)
         if match.group(2) == "sqlstring" or variable["multi"]:
             return ",".join(_quote(v) for v in values)
-        return ",".join(values)
+        return ",".join(v.replace("'", "''") for v in values)
 
     return _TOKEN_RE.sub(replace, text)
 
@@ -397,8 +403,11 @@ def resolve_variables(
     variable — so each is resolved against everything above it. The stored
     selection is kept where it is still among the options, ``$__all`` expands to
     every option, and a selection that no longer exists falls back to the first
-    option, which is what a browser would show. Returns the resolution map, a
-    printable row per variable, and any problems.
+    real option. (Grafana versions differ on whether an include-all variable
+    falls back to All instead; ``--var`` pins either reading.) An override
+    naming no variable is a problem, not a silent no-op — the run would
+    otherwise pass under the stored default rather than the asked-for value.
+    Returns the resolution map, a printable row per variable, and any problems.
     """
     resolved: dict = {}
     rows: list[dict] = []
@@ -435,8 +444,14 @@ def resolve_variables(
             problems.append(f"variable {name!r} resolved to no values")
         resolved[name] = {"values": values, "multi": multi, "literal": literal}
         rows.append(
-            {"name": name, "values": values, "all": _ALL in selection, "kind": kind}
+            {
+                "name": name,
+                "values": [literal] if literal is not None else values,
+                "all": _ALL in selection,
+            }
         )
+    for name in sorted(set(overrides) - set(resolved)):
+        problems.append(f"--var {name!r} names no variable on this dashboard")
     return resolved, rows, problems
 
 
@@ -518,47 +533,73 @@ def _instances(panel: dict, resolved: dict) -> list[tuple[str, dict]]:
     A panel that repeats over a variable is drawn once per value with that
     variable pinned to the one value. Running it once with every value spliced
     in instead is not a weaker check but a wrong one — the SQL compares with
-    ``=``, so it fails outright.
+    ``=``, so it fails outright. The pinned value keeps the variable's own
+    ``multi`` flag, because the frontend formats it with the variable's model:
+    a bare ``${name}`` in a repeat over a multi-value variable stays quoted.
     """
     label = str(panel.get("id"))
     name = panel.get("repeat")
     if not name or name not in resolved:
         return [(label, resolved)]
+    variable = resolved[name]
     return [
         (
             f"{label}[{value}]",
-            {**resolved, name: {"values": [value], "multi": False, "literal": None}},
+            {
+                **resolved,
+                name: {"values": [value], "multi": variable["multi"], "literal": None},
+            },
         )
-        for value in resolved[name]["values"]
+        for value in variable["values"]
     ]
 
 
 def _run_panel(panel, label, resolved, run_batch, min_rows, problems) -> list[dict]:
     queries = []
-    for target in panel["targets"]:
+    for index, target in enumerate(panel["targets"]):
         if target.get("hide"):
             continue
         sql = interpolate(target.get("rawSql") or "", resolved)
-        for leftover in sorted(set(_TOKEN_RE.findall(sql))):
-            problems.append(f"panel {label} refers to unknown variable {leftover[0]!r}")
+        for name, fmt in sorted(set(_TOKEN_RE.findall(sql))):
+            if name in resolved:
+                problems.append(
+                    f"panel {label} uses unsupported format ${{{name}:{fmt}}}"
+                )
+            else:
+                problems.append(f"panel {label} refers to unknown variable {name!r}")
         queries.append(
             {
                 **target,
+                # Grafana defaults a missing refId to "A", so two targets
+                # without one would collide on the same result key.
+                "refId": target.get("refId") or f"Q{index}",
                 "datasource": target.get("datasource") or panel.get("datasource"),
                 "rawSql": sql,
             }
         )
-    results = run_batch(queries) if queries else {}
+    if not queries:
+        problems.append(f"panel {label} has no visible queries")
+        return []
+    try:
+        results = run_batch(queries)
+    except GrafanaCheckError as exc:
+        # One panel's unanswerable batch (a 400 with no per-query results)
+        # should name the panel rather than abort the whole dashboard run.
+        problems.append(f"panel {label} could not be queried: {exc}")
+        return []
     rows_out = []
     for query in queries:
-        ref = query.get("refId") or "A"
-        result = results.get(ref) or {}
+        ref = query["refId"]
+        if ref not in results:
+            problems.append(f"panel {label} query {ref} returned no result at all")
+            continue
+        result = results[ref] or {}
         rows = frame_rows(result)
         error = result.get("error") or ""
         rows_out.append(
             {
                 "id": label,
-                "title": interpolate(panel.get("title") or "", resolved),
+                "title": interpolate(panel.get("title") or "", resolved, display=True),
                 "ref": ref,
                 "rows": rows,
                 "error": error,
