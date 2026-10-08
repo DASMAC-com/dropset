@@ -19,7 +19,8 @@
 //!   --cluster <name>       localnet (default) | mainnet
 //!   --rpc <url>            RPC endpoint (default http://127.0.0.1:8899; required
 //!                          on mainnet)
-//!   --ws <url>             PubSub websocket (default: derived from --rpc)
+//!   --ws <url>             PubSub websocket (default: derived from --rpc;
+//!                          required on mainnet)
 //!   --leader-key <path>    localnet only: leader/quote-authority keypair
 //!                          (default keys/EEEE.json). Refused on mainnet, where
 //!                          the key is the `dropset/maker-leader` secret
@@ -83,6 +84,26 @@ const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
 const MIN_LEADER_LAMPORTS: u64 = LAMPORTS_PER_SOL / 2;
 /// Airdrop size when topping up the leader.
 const AIRDROP_LAMPORTS: u64 = 2 * LAMPORTS_PER_SOL;
+
+/// What to do about the leader's fee balance at startup.
+#[derive(Debug, PartialEq, Eq)]
+enum Funding {
+    Enough,
+    /// Localnet: top up from the faucet.
+    Airdrop,
+    /// Mainnet: there is no faucet, so only say so.
+    WarnLow,
+}
+
+/// The leader-funding decision, pure so "mainnet never airdrops" is pinned by a
+/// test rather than by reading `run_live`.
+fn leader_funding(cluster: Cluster, balance: u64) -> Funding {
+    match (balance < MIN_LEADER_LAMPORTS, cluster) {
+        (false, _) => Funding::Enough,
+        (true, Cluster::Localnet) => Funding::Airdrop,
+        (true, Cluster::Mainnet) => Funding::WarnLow,
+    }
+}
 
 struct Args {
     cluster: Cluster,
@@ -152,10 +173,14 @@ fn parse_args(cfg: &mut BotConfig) -> Result<Args> {
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
+            // Unlike the other flags, a bare `--cluster` is an error rather
+            // than ignored: silently staying on localnet would surface only as
+            // a confusing genesis refusal against a mainnet `--rpc`.
             "--cluster" => {
-                if let Some(name) = it.next() {
-                    cluster = Cluster::parse(&name)?;
-                }
+                let name = it
+                    .next()
+                    .ok_or_else(|| anyhow!("--cluster needs a value (localnet or mainnet)"))?;
+                cluster = Cluster::parse(&name)?;
             }
             "--rpc" => {
                 if let Some(url) = it.next() {
@@ -205,6 +230,17 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
             "mainnet mode needs --rpc <url>: the default is the localnet endpoint"
         ));
     }
+    // The derived websocket URL keeps only the RPC URL's host (and bumps the
+    // port), which is right for a local validator and wrong for a mainnet
+    // provider that carries its API key in the path or query: the fill
+    // subscription would connect unauthenticated and quietly fall back to the
+    // inventory-diff path. So mainnet names it explicitly.
+    if mainnet && cfg.ws_url.is_none() {
+        return Err(anyhow!(
+            "mainnet mode needs --ws <url>: deriving it from --rpc drops any API \
+             key the provider carries in the URL path or query"
+        ));
+    }
     let client = chain::rpc(&cfg.rpc_url);
     // Guard before loading the key, funding, or signing anything: the chain
     // must be the cluster this run declared, in both directions, so a wrong
@@ -224,14 +260,14 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     let balance = client
         .get_balance(&leader.pubkey())
         .context("leader balance")?;
-    if balance < MIN_LEADER_LAMPORTS {
-        if mainnet {
-            eprintln!(
-                "[leader] {} holds {balance} lamports — below {MIN_LEADER_LAMPORTS}; \
-                 fund it, or quote writes will start failing for fees",
-                leader.pubkey()
-            );
-        } else {
+    match leader_funding(args.cluster, balance) {
+        Funding::Enough => {}
+        Funding::WarnLow => eprintln!(
+            "[leader] {} holds {balance} lamports — below {MIN_LEADER_LAMPORTS}; \
+             fund it, or quote writes will start failing for fees",
+            leader.pubkey()
+        ),
+        Funding::Airdrop => {
             println!(
                 "funding leader {} ({} SOL)…",
                 leader.pubkey(),
@@ -276,10 +312,13 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
 
     let mut contexts = Vec::new();
     for &market in &roster {
-        // `selected` admits only markets with a mainnet mint on mainnet.
+        // `selected` admits only markets with a mainnet mint on mainnet, so
+        // `(true, None)` is unreachable today — and is an error rather than a
+        // fall-through to the mock mint, whose keypair is committed.
         let resolved = match (mainnet, market.mainnet_mint) {
             (true, Some(mint)) => Ok(mint),
-            _ => mint_pubkey(market.base_keypair_file),
+            (true, None) => Err(anyhow!("not on the mainnet roster")),
+            (false, _) => mint_pubkey(market.base_keypair_file),
         };
         let base_mint = match resolved {
             Ok(pk) => pk,
@@ -1242,6 +1281,16 @@ mod tests {
     /// Mainnet mode quotes only the markets with a real mainnet mint, and a
     /// `--market` naming a demo-only market selects nothing rather than
     /// falling back to its mock mint.
+    #[test]
+    fn mainnet_never_airdrops() {
+        let low = MIN_LEADER_LAMPORTS - 1;
+        assert_eq!(leader_funding(Cluster::Localnet, low), Funding::Airdrop);
+        assert_eq!(leader_funding(Cluster::Mainnet, low), Funding::WarnLow);
+        for cluster in [Cluster::Localnet, Cluster::Mainnet] {
+            assert_eq!(leader_funding(cluster, MIN_LEADER_LAMPORTS), Funding::Enough);
+        }
+    }
+
     #[test]
     fn mainnet_selects_only_the_mainnet_roster() {
         let all = args_on(Cluster::Mainnet, &[]).selected();

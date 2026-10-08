@@ -26,9 +26,8 @@
 use anyhow::{anyhow, bail, Result};
 use dropset_feeds::secrets::SecretProvider;
 use solana_keypair::Keypair;
-use solana_pubkey::Pubkey;
+use solana_pubkey::{pubkey, Pubkey};
 use solana_signer::Signer;
-use std::str::FromStr;
 
 /// The canonical `<provider>/<secret>` name of the mainnet leader key — the
 /// environment variable `DROPSET_MAKER_LEADER`, or the `maker-leader` field of
@@ -49,7 +48,8 @@ pub enum Cluster {
 
 impl Cluster {
     /// Parse a `--cluster` value: `localnet`, or `mainnet` / `mainnet-beta`,
-    /// case-insensitively. The same spellings the TUI accepts.
+    /// case-insensitively. A copy of `tui/src/cluster.rs`'s `Cluster::parse`
+    /// (this crate does not depend on the TUI); change the two together.
     pub fn parse(value: &str) -> Result<Self> {
         match value.to_ascii_lowercase().as_str() {
             "localnet" => Ok(Cluster::Localnet),
@@ -58,6 +58,7 @@ impl Cluster {
         }
     }
 
+    /// Whether this run targets real funds.
     pub fn is_mainnet(self) -> bool {
         self == Cluster::Mainnet
     }
@@ -75,33 +76,31 @@ impl Cluster {
 /// `the_committed_roster_matches_keys_dir` holds this list equal to the
 /// directory, so a key added there without being added here fails the build's
 /// tests rather than slipping past the refusal.
-pub const COMMITTED_PUBKEYS: [&str; 16] = [
-    "AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV",
-    "AUDD7hSnRsvgGmhi9spowDhbi7wucwQfE86ut9sAZBmJ",
-    "BBBBTc1NfW2YJ4qB98RQuGW5ECssvcwg3DyQ16v1iC5m",
-    "CADCCCmJMM9tP7m2AHMnWjTEKA28M5vqyghLD1u6FcNU",
-    "CCCC8hQ3P6aotxraFv8Jzv13RhZ9J1UPG4od3EygTVaY",
-    "DDDDxRcTmRGx9SZ5BwQnn3ru5i2y27QsCsqaZFZ9T2Yc",
-    "EEEE7hMA4awEWjZFJasS9Cw6FroCCUtQLZhLdGEdz7xf",
-    "EURCeThrvC3KKDyZEvKSXBgx5aBQBZWkozH3F45CH4rU",
-    "FFFFF76hWkT7MZnLb2ZXbrpaLEnQvMjbgamGyvkrPicZ",
-    "MXNejRGzxdS4YyJYJyqFPZJeP4WXAfr8n9Je4Vp3Ght",
-    "TGBPceijwwpZxVS3HoHWV4iDbryh4eAnUWAgVFSGqHt",
-    "USDCqka4GcPP5K2uyVPoNN9Tq6YY8bMrdq3jsjkxUZn",
-    "VCHFrwrYZr16LcBEGocuYg8iEqSGyj2cTbJccBo5pVq",
-    "XSGDJ6qXNaGujAwBxM6pZfBZ3vBWw81iU3t5ddKHhmw",
-    "ZARPfYoPus7NUocgdBz1HCQuZLpL3Y8pzoWQ2WdLJyD",
-    "idrxatdM6g4rzL5pWzzHcigyXE9RJa8eHxB9wCj6iwo",
+const COMMITTED_PUBKEYS: [Pubkey; 16] = [
+    pubkey!("AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV"),
+    pubkey!("AUDD7hSnRsvgGmhi9spowDhbi7wucwQfE86ut9sAZBmJ"),
+    pubkey!("BBBBTc1NfW2YJ4qB98RQuGW5ECssvcwg3DyQ16v1iC5m"),
+    pubkey!("CADCCCmJMM9tP7m2AHMnWjTEKA28M5vqyghLD1u6FcNU"),
+    pubkey!("CCCC8hQ3P6aotxraFv8Jzv13RhZ9J1UPG4od3EygTVaY"),
+    pubkey!("DDDDxRcTmRGx9SZ5BwQnn3ru5i2y27QsCsqaZFZ9T2Yc"),
+    pubkey!("EEEE7hMA4awEWjZFJasS9Cw6FroCCUtQLZhLdGEdz7xf"),
+    pubkey!("EURCeThrvC3KKDyZEvKSXBgx5aBQBZWkozH3F45CH4rU"),
+    pubkey!("FFFFF76hWkT7MZnLb2ZXbrpaLEnQvMjbgamGyvkrPicZ"),
+    pubkey!("MXNejRGzxdS4YyJYJyqFPZJeP4WXAfr8n9Je4Vp3Ght"),
+    pubkey!("TGBPceijwwpZxVS3HoHWV4iDbryh4eAnUWAgVFSGqHt"),
+    pubkey!("USDCqka4GcPP5K2uyVPoNN9Tq6YY8bMrdq3jsjkxUZn"),
+    pubkey!("VCHFrwrYZr16LcBEGocuYg8iEqSGyj2cTbJccBo5pVq"),
+    pubkey!("XSGDJ6qXNaGujAwBxM6pZfBZ3vBWw81iU3t5ddKHhmw"),
+    pubkey!("ZARPfYoPus7NUocgdBz1HCQuZLpL3Y8pzoWQ2WdLJyD"),
+    pubkey!("idrxatdM6g4rzL5pWzzHcigyXE9RJa8eHxB9wCj6iwo"),
 ];
 
 /// Refuse `key` as the mainnet leader when it is on the committed roster.
 /// Anyone can sign as a committed key, so a vault it led could be re-priced
-/// by anyone.
-pub fn refuse_committed(key: &Pubkey) -> Result<()> {
-    let committed = COMMITTED_PUBKEYS
-        .iter()
-        .any(|k| Pubkey::from_str(k).is_ok_and(|k| k == *key));
-    if committed {
+/// by anyone. The TUI's mainnet ceremony makes the same refusal
+/// (`tui/src/wallet.rs`, `refuse_committed`) from a runtime scan of `keys/`.
+fn refuse_committed(key: &Pubkey) -> Result<()> {
+    if COMMITTED_PUBKEYS.contains(key) {
         bail!(
             "leader {key} is a committed keys/ keypair — its secret is public, so \
              it must never lead a mainnet vault. Supply an operator-held key \
@@ -143,7 +142,11 @@ pub fn load_leader(
 }
 
 /// Decode a resolved leader secret — `solana-keygen`'s JSON byte array — and
-/// scrub the decoded copies once the keypair holds the bytes.
+/// zero this function's own two buffers once the keypair holds the bytes.
+///
+/// Best-effort hygiene, not a guarantee: copies outside this function — the
+/// provider's intermediate strings, the parser's internal buffers, and the
+/// `DROPSET_MAKER_LEADER` value in the process environment — are not reached.
 ///
 /// The error never echoes the value or the parser's message, which can quote
 /// it: a malformed real-funds secret is the one input whose contents must

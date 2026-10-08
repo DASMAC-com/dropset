@@ -7,6 +7,7 @@ SELECT
   kind AS metric,
   writes
 FROM maker_quote_burn_hourly
-WHERE $__timeFilter(bucket)
+WHERE bucket < $__timeTo()
+  AND bucket + interval '1 hour' > $__timeFrom()
   AND market = ${market:sqlstring}
 ORDER BY 1

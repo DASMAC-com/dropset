@@ -39,7 +39,7 @@ use crate::telemetry::{
     self, MarketId, Outcome, QuoteWriteRow, Record, SampleBuilder, WRITE_KILL, WRITE_PROFILE,
     WRITE_REFERENCE,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use dropset_fair_value::{
     Anchor, Candidates, ClockCtx, FusionReport, LegReport, LegStaleness, Legs, Reading, Regime,
 };
@@ -1258,6 +1258,7 @@ pub fn run_supervisor(
     invalidate_stale_quotes(&mut markets, &cfg);
 
     let mut hub = FeedHub::new();
+    let mut listener_lost = false;
     loop {
         let now = Instant::now();
         // Drain each price tier's live sink into the cache. The sources on the
@@ -1387,11 +1388,29 @@ pub fn run_supervisor(
             Ok(()) => break,
             // The listener holds its sender for the life of the process, so
             // this is a listener that panicked: keep quoting rather than turn
-            // a lost signal handler into an outage, and keep the cadence.
-            Err(RecvTimeoutError::Disconnected) => std::thread::sleep(cfg.tick),
+            // a lost signal handler into an outage, and keep the cadence. Its
+            // handlers stay installed, so from here SIGTERM is swallowed and
+            // only SIGKILL stops the process — say so, once.
+            Err(RecvTimeoutError::Disconnected) => {
+                if !listener_lost {
+                    listener_lost = true;
+                    eprintln!(
+                        "[ALERT] the shutdown listener died — SIGINT / SIGTERM no \
+                         longer pull liquidity, and only SIGKILL stops this process"
+                    );
+                }
+                std::thread::sleep(cfg.tick);
+            }
         }
     }
-    take_off(&mut markets, &cfg);
+    let failed = take_off(&mut markets, &cfg);
+    if failed > 0 {
+        // Non-zero exit, so a supervisor can tell "pulled" from "left resting".
+        return Err(anyhow!(
+            "take-off failed for {failed} market(s) — their books may still be \
+             resting; see the [shutdown] lines above"
+        ));
+    }
     Ok(())
 }
 
@@ -1404,13 +1423,18 @@ pub fn run_supervisor(
 /// a failure is logged rather than propagated, so one market's failed send
 /// cannot leave the others resting. A market whose book is already dark this
 /// episode skips the stamp, and one already `Halted` skips the profile.
-fn take_off(markets: &mut [Context], cfg: &BotConfig) {
+///
+/// Returns how many markets had a send fail.
+fn take_off(markets: &mut [Context], cfg: &BotConfig) -> usize {
     let now = Instant::now();
     let ts = unix_secs(SystemTime::now()) as i64;
+    let mut failed = 0;
     for ctx in markets {
+        let mut ok = true;
         if !ctx.reference_invalidated {
             if let Err(e) = send_kill_stamp(ctx, cfg, InvalidateReason::Shutdown, None) {
                 eprintln!("[{}][shutdown] kill stamp failed: {e}", ctx.cfg.symbol);
+                ok = false;
             }
         }
         if let Err(e) = zero_both_sides(ctx, cfg, now, ts) {
@@ -1418,9 +1442,14 @@ fn take_off(markets: &mut [Context], cfg: &BotConfig) {
                 "[{}][shutdown] zeroing the profile failed: {e}",
                 ctx.cfg.symbol
             );
+            ok = false;
         }
+        failed += usize::from(!ok);
     }
-    println!("[shutdown] liquidity pulled — exiting");
+    if failed == 0 {
+        println!("[shutdown] liquidity pulled — exiting");
+    }
+    failed
 }
 
 /// Record one confirmed quote write for the quote-burn rollups.

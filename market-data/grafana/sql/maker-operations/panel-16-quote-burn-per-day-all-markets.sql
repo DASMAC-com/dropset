@@ -11,5 +11,6 @@ SELECT
   priority_fee_lamports,
   total_fee_lamports / 1e9 AS "total (SOL)"
 FROM maker_quote_burn_daily
-WHERE $__timeFilter(bucket)
+WHERE bucket < $__timeTo()
+  AND bucket + interval '1 day' > $__timeFrom()
 ORDER BY bucket DESC, market, kind

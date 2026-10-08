@@ -311,25 +311,36 @@ pub struct Sent {
 
 /// The base fee the runtime charges per transaction signature.
 const LAMPORTS_PER_SIGNATURE: u64 = 5_000;
-/// The compute-unit limit the runtime assigns each non-compute-budget
-/// instruction when a transaction requests none, and the per-transaction cap.
-/// No quote write requests a limit — see `InvalidateConfig::priority_micro_lamports`
-/// for why — so its priority fee is priced against these defaults.
-const DEFAULT_IX_COMPUTE_UNITS: u64 = 200_000;
+/// The compute-unit limit the runtime assigns when a transaction requests
+/// none: 200k per SBF-program instruction, plus 3k per builtin instruction —
+/// the compute-unit-price instruction included — per SIMD-0170, capped per
+/// transaction. No quote write requests a limit — see
+/// `InvalidateConfig::priority_micro_lamports` for why — so its priority fee
+/// is priced against these defaults.
+const DEFAULT_PROGRAM_IX_COMPUTE_UNITS: u64 = 200_000;
+const DEFAULT_BUILTIN_IX_COMPUTE_UNITS: u64 = 3_000;
 const MAX_TX_COMPUTE_UNITS: u64 = 1_400_000;
 
-/// What a transaction with `signatures` signers and `program_ixs`
-/// non-compute-budget instructions, at `micro_lamports` per compute unit, is
-/// charged: `(base, priority)` lamports.
+/// What a transaction with `signatures` signers, `program_ixs` SBF-program
+/// instructions and `builtin_ixs` builtin ones, at `micro_lamports` per
+/// compute unit, is charged: `(base, priority)` lamports.
 ///
 /// Computed from the fee schedule rather than read back with
 /// `getTransaction`, which would add an RPC round trip to every write on the
 /// quote path. The two agree because the runtime charges the priority fee on
-/// the *requested* limit, not the units consumed, and both inputs are fixed
-/// here at send time.
-fn fee_burn(signatures: usize, program_ixs: usize, micro_lamports: u64) -> (u64, u64) {
+/// the *requested* limit, not the units consumed, and every input is fixed
+/// here at send time — the one way they can drift is a fee-schedule change
+/// (a new SIMD) this function has not caught up with.
+fn fee_burn(
+    signatures: usize,
+    program_ixs: usize,
+    builtin_ixs: usize,
+    micro_lamports: u64,
+) -> (u64, u64) {
     let base = LAMPORTS_PER_SIGNATURE * signatures as u64;
-    let limit = (DEFAULT_IX_COMPUTE_UNITS * program_ixs as u64).min(MAX_TX_COMPUTE_UNITS);
+    let limit = (DEFAULT_PROGRAM_IX_COMPUTE_UNITS * program_ixs as u64
+        + DEFAULT_BUILTIN_IX_COMPUTE_UNITS * builtin_ixs as u64)
+        .min(MAX_TX_COMPUTE_UNITS);
     let priority = (u128::from(micro_lamports) * u128::from(limit)).div_ceil(1_000_000) as u64;
     (base, priority)
 }
@@ -356,7 +367,7 @@ fn send(
     match client.send_and_confirm_transaction(&tx) {
         Ok(sig) => {
             let (base_fee_lamports, priority_fee_lamports) =
-                fee_burn(tx.signatures.len(), ixs.len(), micro_lamports);
+                fee_burn(tx.signatures.len(), ixs.len(), all.len() - ixs.len(), micro_lamports);
             Ok(Sent {
                 signature: sig.to_string(),
                 base_fee_lamports,
@@ -406,16 +417,19 @@ mod tests {
     }
 
     /// One signer, one program instruction: the base fee alone at no priority,
-    /// and the kill stamp's surcharge priced on the 200k default limit.
+    /// and the kill stamp's surcharge priced on the default limit — 200k for
+    /// the program instruction plus 3k for the price instruction itself.
     #[test]
     fn the_fee_burn_follows_the_fee_schedule() {
-        assert_eq!(fee_burn(1, 1, 0), (5_000, 0));
-        // 100_000 micro-lamports × 200_000 CU / 1e6 = 20_000 lamports.
-        assert_eq!(fee_burn(1, 1, 100_000), (5_000, 20_000));
+        assert_eq!(fee_burn(1, 1, 0, 0), (5_000, 0));
+        // 100_000 micro-lamports × 203_000 CU / 1e6 = 20_300 lamports.
+        assert_eq!(fee_burn(1, 1, 1, 100_000), (5_000, 20_300));
         // A fractional remainder rounds up, as the runtime charges it.
-        assert_eq!(fee_burn(1, 1, 1), (5_000, 1));
+        assert_eq!(fee_burn(1, 1, 1, 1), (5_000, 1));
+        // Signers and program instructions both multiply.
+        assert_eq!(fee_burn(2, 2, 0, 100_000), (10_000, 40_000));
         // The limit caps at the per-transaction maximum.
-        assert_eq!(fee_burn(1, 10, 1_000_000), (5_000, 1_400_000));
+        assert_eq!(fee_burn(1, 10, 1, 1_000_000), (5_000, 1_400_000));
     }
 
     /// The kill stamp's whole effect rests on `Price::ZERO` failing the same

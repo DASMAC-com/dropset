@@ -1,5 +1,5 @@
--- One confirmed quote write and its fee. See `0020_maker_quote_writes` for
--- what the two fee columns mean and the rollup views built on them.
+-- One confirmed quote write and its fee. The table is `0020_maker_quote_writes`;
+-- what the fee columns mean is docs/market-making.md §6.
 --
 -- Idempotent on `signature`, the primary key: a transaction signature is
 -- unique on chain, so a conflict can only be this same write delivered twice,

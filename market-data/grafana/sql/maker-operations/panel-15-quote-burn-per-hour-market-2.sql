@@ -6,7 +6,8 @@ SELECT
   bucket AS "time",
   sum(total_fee_lamports) AS "fee (lamports)"
 FROM maker_quote_burn_hourly
-WHERE $__timeFilter(bucket)
+WHERE bucket < $__timeTo()
+  AND bucket + interval '1 hour' > $__timeFrom()
   AND market = ${market:sqlstring}
 GROUP BY 1
 ORDER BY 1

@@ -1702,7 +1702,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  bucket AS \"time\",\n  kind AS metric,\n  writes\nFROM maker_quote_burn_hourly\nWHERE $__timeFilter(bucket)\n  AND market = ${market:sqlstring}\nORDER BY 1",
+          "rawSql": "SELECT\n  bucket AS \"time\",\n  kind AS metric,\n  writes\nFROM maker_quote_burn_hourly\nWHERE bucket < $__timeTo()\n  AND bucket + interval '1 hour' > $__timeFrom()\n  AND market = ${market:sqlstring}\nORDER BY 1",
           "refId": "A"
         },
         {
@@ -1713,7 +1713,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  bucket AS \"time\",\n  sum(total_fee_lamports) AS \"fee (lamports)\"\nFROM maker_quote_burn_hourly\nWHERE $__timeFilter(bucket)\n  AND market = ${market:sqlstring}\nGROUP BY 1\nORDER BY 1",
+          "rawSql": "SELECT\n  bucket AS \"time\",\n  sum(total_fee_lamports) AS \"fee (lamports)\"\nFROM maker_quote_burn_hourly\nWHERE bucket < $__timeTo()\n  AND bucket + interval '1 hour' > $__timeFrom()\n  AND market = ${market:sqlstring}\nGROUP BY 1\nORDER BY 1",
           "refId": "B"
         }
       ],
@@ -1725,7 +1725,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "Quote writes and their fees per UTC day, across every market, newest first. The SOL column is the day's total fee \u2014 what quoting cost the leader, which a mainnet leader has to be funded for.",
+      "description": "Quote writes and their fees per UTC day, across every market, newest first. The SOL column is the day's total fee \u2014 what quoting cost the leader, which a mainnet leader has to be funded for. Pinned to the last 7 days whatever the dashboard range, since a daily rollup over the default hour would show at most one partial row.",
       "gridPos": {
         "h": 8,
         "w": 24,
@@ -1749,12 +1749,13 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  bucket AS \"day (UTC)\",\n  market,\n  kind,\n  writes,\n  base_fee_lamports,\n  priority_fee_lamports,\n  total_fee_lamports / 1e9 AS \"total (SOL)\"\nFROM maker_quote_burn_daily\nWHERE $__timeFilter(bucket)\nORDER BY bucket DESC, market, kind",
+          "rawSql": "SELECT\n  bucket AS \"day (UTC)\",\n  market,\n  kind,\n  writes,\n  base_fee_lamports,\n  priority_fee_lamports,\n  total_fee_lamports / 1e9 AS \"total (SOL)\"\nFROM maker_quote_burn_daily\nWHERE bucket < $__timeTo()\n  AND bucket + interval '1 day' > $__timeFrom()\nORDER BY bucket DESC, market, kind",
           "refId": "A"
         }
       ],
       "title": "Quote burn per day (all markets)",
-      "type": "table"
+      "type": "table",
+      "timeFrom": "7d"
     }
   ],
   "preload": false,

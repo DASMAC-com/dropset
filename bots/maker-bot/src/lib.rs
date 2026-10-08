@@ -23,9 +23,10 @@
 //! each market's book was last correctly priced, which is what makes stale-quote
 //! invalidation ([`model::invalidate`]) possible across a restart.
 //!
-//! [`cluster`] decides which cluster a run targets and holds the mainnet-mode
-//! guards: the genesis assertion's expectation, where the leader key comes
-//! from, and the refusal of any committed keypair.
+//! [`cluster`] decides which cluster a run targets — the expectation
+//! `chain::assert_cluster` checks the genesis hash against — and holds the
+//! mainnet-mode key guards: where the leader key comes from, and the refusal of
+//! any committed keypair.
 //!
 //! [`telemetry`] is the write side: a tap that publishes what each tick
 //! decided to the shared Postgres for the provisioned Grafana dashboards. It

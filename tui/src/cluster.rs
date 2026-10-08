@@ -77,7 +77,9 @@ pub enum Cluster {
 impl Cluster {
     /// Parse the `--cluster` value. Accepts `mainnet` and `mainnet-beta` for
     /// the same chain, since both spellings are in common use and rejecting
-    /// one would be a pointless trap at a confirm-gated entry point.
+    /// one would be a pointless trap at a confirm-gated entry point. The maker
+    /// bot keeps a copy (`bots/maker-bot/src/cluster.rs`); change the two
+    /// together.
     pub fn parse(s: &str) -> Result<Self> {
         match s.to_ascii_lowercase().as_str() {
             "localnet" => Ok(Cluster::Localnet),

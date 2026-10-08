@@ -136,7 +136,14 @@ fn terminate(children: Vec<Child>) {
     for mut child in children {
         loop {
             match child.try_wait() {
-                Ok(Some(_)) | Err(_) => break,
+                Ok(Some(_)) => break,
+                // An unreadable status, or the grace spent: kill and reap, so
+                // no child outlives its manager.
+                Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break;
+                }
                 Ok(None) if Instant::now() >= deadline => {
                     let _ = child.kill();
                     let _ = child.wait();
