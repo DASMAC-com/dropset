@@ -70,8 +70,7 @@ new-vs-resume split to remember. It names the session
   it — in the base repo, on the **judgment** tier's model, with
   `/plan` as the initial prompt so this skill bootstraps
   immediately;
-- if it already exists, it **resumes** it, re-pinning the
-  same model.
+- if it already exists, it **resumes** it, re-pinned.
 
 The judgment tier runs on the Anthropic subscription unless the
 runtime config says otherwise; `plan bedrock` is the one-word
@@ -837,8 +836,8 @@ Five things about the boundary:
   as `fleet go`. There is no second gate inside the tool, and
   it never dispatches unasked.
 - **The substrate choice stays at the call site.** Pass
-  `task local 1234` for work that needs web research; the
-  dispatcher passes `local` straight through and adds no
+  `task anthropic 1234` for work that needs web research; the
+  dispatcher passes the word straight through and adds no
   policy of its own. See the substrate rule in
   `docs/conventions/local-integrations.md`.
 - **Best effort.** If iTerm's Python API is off, or macOS has

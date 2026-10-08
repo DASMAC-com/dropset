@@ -586,25 +586,17 @@ the escape for work needing web research, and `housekeeping` stays on
 the seat deliberately because the operator uses it to open the 5-hour
 subscription window.
 
-**Models are named by role, in three tiers**: **judgment** (`plan`,
-`architect`, `explore`), **worker** (`task`, `housekeeping`) and
-**background** (Claude Code's small-model slot). Each tier's model and
-substrate live in the untracked runtime config (`DS_MODEL_<TIER>` and
-`DS_MODEL_<TIER>_SUBSTRATE`), and every verb pins its tier's model at
-launch, refusing to start when the config does not resolve — so no
-skill spends a turn checking which model it is on. The one substrate
-override worth reaching for is `plan bedrock` / `architect <topic>
-bedrock` in a credit pinch.
+Models are named by **role tier** — judgment (`plan`, `architect`,
+`explore`), worker (`task`, `housekeeping`), background — each set in
+the untracked runtime config (`DS_MODEL_<TIER>[_SUBSTRATE]`). Every verb
+pins its tier at launch and refuses an unresolved one, so no skill
+checks its own model; `plan bedrock` is the credit-pinch override.
 
-A launch **records its substrate** in an untracked marker, and the
-resume verbs re-export it and re-pin the tier, because the slip is
-silent in both directions — a Bedrock session resumed onto the seat
-eats the subscription window; the reverse spends credits on attended
-work. An absent marker reads as **anthropic**. The seat pin IS the
-absence of `CLAUDE_CODE_USE_BEDROCK`, so an anthropic launch
-**clears** inherited Bedrock exports rather than only warning about
-them: these helpers export into the calling shell, so a tab that ran
-`task` stays a Bedrock tab. Detail, and the verb table:
+A launch **records its substrate** in an untracked marker; resume
+verbs re-export it and re-pin the tier, since the slip is silent both
+ways. An absent marker reads as **anthropic**, and an anthropic launch
+**clears** inherited Bedrock exports, since these helpers export into
+the calling shell. Detail and the verb table:
 `docs/conventions/local-integrations.md`.
 
 A planning session may **dispatch** a ready task — `session_dispatch.py`

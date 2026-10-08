@@ -234,9 +234,7 @@ class VerbLaunch(SubstrateHarness):
         self.assertIn("`local` is retired", result.stderr)
 
     def test_a_bad_config_launches_nothing(self):
-        result, out = self._launch(
-            "task 7", env={"DS_MODEL_WORKER_SUBSTRATE": "seat"}
-        )
+        result, out = self._launch("task 7", env={"DS_MODEL_WORKER_SUBSTRATE": "seat"})
         self.assertIn("RC=1", out)
         self.assertNotIn("MODEL=", out)
 

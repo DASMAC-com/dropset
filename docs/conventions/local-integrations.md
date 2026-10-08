@@ -939,8 +939,9 @@ separate coordinates file existed to keep *scripts* out of the profile,
 so with the function bodies now committed there is nothing left for it
 to keep out.
 
-That same file carries the non-secret launch knobs too — `DS_BEDROCK_MODEL`
-(the substrate section) and `DS_AWS_PROFILE` (the AWS login gate) — each
+That same file carries the non-secret launch knobs too — the
+`DS_MODEL_*` tier table (the substrate section) and `DS_AWS_PROFILE`
+(the AWS login gate) — each
 documented where its consumer is rather than listed twice here. They are
 untracked for different reasons: these `DS_OP_*` refs because they are
 credential coordinates, those because they name one machine's setup.
@@ -1098,17 +1099,22 @@ clean cut with **no aliases** — the family is small and every launcher
 is the operator's own muscle memory, so a half-migration leaving both
 names alive was the outcome to avoid.
 
-| Verb                | Job                                        | Substrate   | Model            |
-| ------------------- | ------------------------------------------ | ----------- | ---------------- |
-| `task <n>`          | worktree session on Linear task n          | Bedrock     | Opus 5.5, 1M, 1h |
-| `task local <n>`    | same, when the work needs web research     | seat        | saved default    |
-| `task resume [n]`   | resume by number (bare = the picker)       | as recorded | as launched      |
-| `explore <n\|name>` | research / audit, read-only, temp worktree | seat only   | Fable pin        |
-| `plan`              | daily planning session                     | seat        | Fable pin        |
-| `housekeeping`      | upkeep; also the 5-hour-window opener      | seat        | saved default    |
-| `architect <topic>` | design thread, read-only, temp worktree    | seat        | Fable pin        |
-| `fleet [go]`        | batch resume                               | per-window  | as launched      |
-| `cdds [n]`          | not a session verb — navigation            | —           | —                |
+| Verb                    | Job                                        | Substrate               | Tier           |
+| ----------------------- | ------------------------------------------ | ----------------------- | -------------- |
+| `task <n>`              | worktree session on Linear task n          | worker's (Bedrock)      | worker         |
+| `task anthropic <n>`    | same, when the work needs web research     | anthropic               | worker         |
+| `task resume [n]`       | resume by number (bare = the picker)       | as recorded             | re-pinned      |
+| `explore <n\|name>`     | research / audit, read-only, temp worktree | judgment's (anthropic)  | judgment       |
+| `plan [bedrock]`        | daily planning session                     | judgment's, or override | judgment       |
+| `housekeeping`          | upkeep; also the 5-hour-window opener      | anthropic, always       | worker's model |
+| `architect <topic> [b]` | design thread, read-only, temp worktree    | judgment's, or override | judgment       |
+| `fleet [go]`            | batch resume                               | per-window              | re-pinned      |
+| `models [check]`        | print the tier table; `check` it for free  | —                       | —              |
+| `cdds [n]`              | not a session verb — navigation            | —                       | —              |
+
+`[b]` is the same optional `anthropic` / `bedrock` word `plan` takes.
+`task local <n>` still works for now, printing a line naming its
+replacement. **The tier table itself is in "Model tiers" below.**
 
 **`explore resume` is gone**, and `explore` now requires a name.
 Both follow from the worktree home below: `explore <n|name>` is
@@ -1170,20 +1176,19 @@ contents are expendable by construction.
 **Two costs of sharing that tag with `task <n>`, both worth
 knowing before relying on the inheritance:**
 
-- **`fleet` reaches such a session but resumes it wrong.** It
-  types `task resume <n>`, which restores the **substrate but not
-  the model**, so a seat-pinned explore or architect session
-  comes back on the saved default rather than the Fable pin.
-  **`explore <n>` is the resume verb that keeps the pin.**
-  ENG-1402 tracks closing the gap.
+- **`fleet` reaches such a session through `task resume <n>`**,
+  which re-pins the tier as well as the substrate: an untagged
+  worktree — no marker — resumes on the **judgment** tier, so an
+  issue-keyed explore session comes back on the right model.
+  (This closed the first part of ENG-1402.)
 - **No substrate marker is written for an explore session**, and
   that is deliberate rather than an omission. The marker keys on
   the **worktree tag alone**, which `task <n>` also writes — so
   writing one here would let `explore 1196` flip a `bedrock`
   marker to `seat` and make the next `task resume 1196` resume
   the *implementation* session on the seat, silently. An absent
-  marker already reads as seat, which is correct for a seat-only
-  verb.
+  marker already reads as anthropic and as the judgment tier,
+  which is what this verb runs.
 
 Both are the same root: `eng-<n>` stopped being a single-owner
 namespace. It now names a worktree two session kinds can claim,
@@ -1424,13 +1429,16 @@ because the operator uses it to **open the 5-hour subscription window**
 at the start of a day. Moving it would silently retire that.
 
 **What a Bedrock launch exports:** `CLAUDE_CODE_USE_BEDROCK=1`,
-`AWS_REGION`, `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` (the
-fast tier, pinned so background sub-turns bill to credits too),
+`AWS_REGION`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` (the background tier,
+pinned so background sub-turns bill to credits too),
 `ENABLE_PROMPT_CACHING_1H=1`, and `AWS_BEARER_TOKEN_BEDROCK` resolved
-from 1Password at launch. A seat launch exports none of them — **the
-absence of `CLAUDE_CODE_USE_BEDROCK` IS the seat pin**, which is why a
-seat verb *clears* those variables rather than merely warning about
-them (see below).
+from 1Password at launch. An anthropic launch exports none of them —
+**the absence of `CLAUDE_CODE_USE_BEDROCK` IS the seat pin**, which is
+why an anthropic launch *clears* those variables rather than merely
+warning about them (see below). **Neither exports the model**: every
+verb hands its tier's model to `claude` as an `ANTHROPIC_MODEL`
+assignment scoped to that one command, the same on both substrates, so
+no pin outlives the session into the tab.
 
 **Two classes, and conflating them gets it wrong in both directions.**
 The four Claude variables are *owned* — nothing else sets them, so they
@@ -1450,27 +1458,119 @@ a seat verb in a tab that never launched (leave them alone), a second
 `task` in one tab (the first launch's record wins), and a value the
 operator swapped by hand afterwards (recognized as theirs, kept).
 
-**The model string is runtime config.** `DS_BEDROCK_MODEL` in the
-untracked runtime config carries the full string, context-window suffix
-included, and is used verbatim — so changing model or window is a
-one-line personal-config edit with no repo change. Unset, the launcher
-falls back to the stack's published profile id **with `[1m]` appended**.
-That append is the whole reason it is a function: the stack exports a
-bare profile id, Bedrock defaults a model with no suffix to the 200k
-window, and *nothing reports the difference* — the symptom is a session
-running at one fifth of its intended context, indistinguishable from
-one that simply filled up. A shell test asserts the composition ends in
-the suffix, and a configured string carrying no suffix **warns and is
-still honored**: the override is the operator's to make.
+#### Model tiers: the role → model table
+
+**Models are named by the capability a role needs, never by model
+family and never by substrate**, because the models get renamed out
+from under us. A family name (`opus`, `haiku`) drifts the first time a
+role changes family, and Claude Code owns those as its own alias slots.
+A substrate name ("seat") breaks the first time the top model leaves the
+subscription. "Frontier" was rejected too: the worker's model can be
+newer than the judgment model.
+
+| Tier         | Verbs                        | Default substrate   | Fallback model                                |
+| ------------ | ---------------------------- | ------------------- | --------------------------------------------- |
+| `JUDGMENT`   | `plan` `architect` `explore` | anthropic           | `claude-fable-5-1[1m]`                        |
+| `WORKER`     | `task` (`housekeeping`)      | bedrock             | `claude-opus-5-5[1m]`                         |
+| `BACKGROUND` | Claude Code's small slot     | follows the session | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+
+**The runtime config carries, per tier, exactly two things** — the
+model id and its substrate — and that is all the operator ever touches,
+and only when a model launches:
+
+```sh
+DS_MODEL_JUDGMENT='claude-fable-5-1[1m]'
+DS_MODEL_JUDGMENT_SUBSTRATE=anthropic
+DS_MODEL_WORKER='claude-opus-5-5[1m]'
+DS_MODEL_WORKER_SUBSTRATE=bedrock
+DS_MODEL_BACKGROUND='us.anthropic.claude-haiku-4-5-20251001-v1:0'
+```
+
+All five are optional; unset, the committed fallbacks apply. Three
+details are decisions rather than omissions:
+
+- **One id serves both substrates.** Claude Code maps a first-party id
+  such as `claude-opus-5-5` to the `us.anthropic.…` cross-region
+  profile when it runs on Bedrock (measured from its request log), so
+  an override flips the provider without a second spelling. A
+  Bedrock-form id still works on Bedrock; it is just not portable.
+- **The background tier has no substrate variable.** Claude Code sends
+  its background calls — session titles, summaries and similar
+  auxiliary work, whose failure degrades niceties and never task output
+  — to whichever provider the session is on. It is pinned on Bedrock
+  launches only; on the subscription Claude Code's own default is right.
+  The id needs its `-v1:0` suffix, and a "use case details have not been
+  submitted" error means the account's one-time Anthropic use-case form
+  for that model is still outstanding — an operator console step.
+- **The auto-mode classifier has no tier.** Claude Code runs it on
+  Sonnet regardless of configuration.
+
+`housekeeping` takes the worker tier's **model** but always the
+anthropic substrate, since opening the subscription window is its
+point. The fallbacks carry `[1m]` because Bedrock defaults an
+unsuffixed id to the 200k window and reports nothing; a configured
+Bedrock string without a suffix **warns and is still honored**. The
+retired `DS_BEDROCK_MODEL` and `DS_BEDROCK_FAST_MODEL` are named on
+launch if still set, never silently ignored.
+
+**Fail-fast is deterministic, pre-session, and free.** Measured, the
+CLI does *not* reject an unknown id at startup — the session starts,
+and its first request fails with a `400` naming the model identifier
+as invalid. So every managed verb resolves its tier first and
+**refuses to launch** when the config does not resolve: an empty model, a model
+containing whitespace, or a substrate other than `anthropic` /
+`bedrock`. That check is offline. Whether an id names a **real** model
+is a network question and is deliberately *not* asked per launch — a
+minimal live turn measured about eight cents on Fable, every reopen.
+`models check` asks it for free instead, through Bedrock's
+`get-inference-profile` control-plane read under the admin login (the
+bearer token stripped, or the call silently runs as the agent user and
+reads as AccessDenied). Its bound: `ACTIVE` does not prove the account
+may *invoke* the model — an un-submitted use-case form still reads
+`ACTIVE`. An alias (`fable`) is Claude Code's to resolve and is
+reported, not checked.
+
+**Every managed verb pins; a bare `claude` is unmanaged by design** —
+the operator checks the model there. That is what retires the
+in-skill model guards that used to spend a turn asking which model was
+running.
+
+**The substrate override** is the two substrate names and nothing else,
+as an optional literal word: `task anthropic <n>`, `plan bedrock`,
+`architect <topic> bedrock`. The one that will actually get used is the
+judgment tier onto Bedrock in a credit pinch. **Retention:** a
+Fable-class model on Bedrock falls under the account's standing AWS
+human-review opt-in, which is a condition of Fable access and cannot be
+narrowed per model (see `infra/aws/README.md`); Opus traffic is not
+retained under it. The operator accepts that for the pinch. A worker
+onto anthropic is rare and exists for one capability reason — web
+search and web fetch are unavailable on Bedrock — so reach for it when
+a task needs live web research, not by habit. `explore` and
+`housekeeping` take no override. The old `task local` spelling — it
+never meant local inference, only the subscription — is a deprecated
+alias that prints its replacement.
+
+**The Bedrock identity is model-agnostic.** `dropset-bedrock-agent` is
+the shared IAM user, invoke policy and API key every role's Bedrock
+sessions use; its only model-specific piece was a published default
+model id nothing read, now retired. It keeps its name: a rename would be
+a stack-replacing migration for no functional gain.
 
 **Substrate stickiness.** A launch records its choice in an untracked
 marker under `.claude/session-substrate/`, keyed by worktree tag; the
-resume verbs read it and re-export accordingly. This exists because the
-slip is **silent in both directions** — a Bedrock session resumed onto
-the seat quietly eats the 5-hour window, and a seat session resumed onto
-Bedrock quietly spends credits on attended work. Neither errors.
-**An absent marker reads as `seat`**, the conservative default, which is
-also correct for every session predating markers.
+resume verbs read it and re-export accordingly, **and re-pin the tier's
+model**. This exists because the slip is **silent in both directions**
+— a Bedrock session resumed onto the seat quietly eats the 5-hour
+window, and a seat session resumed onto Bedrock quietly spends credits
+on attended work. Neither errors. **An absent marker reads as
+`anthropic`**, the conservative default, which is also correct for
+every session predating markers (the retired `seat` value reads the
+same). Only `task` writes a marker, so a marker's **presence** is also
+the tier record: present resumes the worker tier, absent the judgment
+tier — which is what lets `task resume <n>` bring an issue-keyed
+explore session back on the right model without a second marker that
+could disagree with the first. The bare `task resume` picker cannot know
+which session will be chosen, so it resumes unpinned.
 
 **Two guards, pointing opposite ways.** A Bedrock launch **hard-gates**
 on the environment being present — no bearer token means no launch,
@@ -1479,7 +1579,7 @@ long after work has started. A seat verb **warns and clears**: these
 helpers export into the *calling* shell (they must — a child process could
 not set what `claude` inherits), so a tab that ran `task` is still a
 Bedrock tab afterwards, and the next `plan` in it would silently run on
-credits with the Fable pin dropped. Warning alone was the ratified
+credits. Warning alone was the ratified
 behavior and is not sufficient on its own, since it announces a slip it
 then permits; the warning is kept beside the correction because a silent
 fix would hide that the tab was in an unexpected state.
@@ -1575,16 +1675,18 @@ drives the real zsh functions.
   runs the bootstrap without being asked, the same trick `plan` and
   `housekeeping` use.
 
-- **`task local <n>`** — the same thing on the **seat**, for work that
-  needs web search or deep research. `local` is a literal first word
-  rather than a flag: these helpers do no flag parsing, and the word
-  reads better at the call site than `-l` would.
+- **`task anthropic <n>`** — the same thing on the **subscription**,
+  for work that needs web search or deep research (`task bedrock <n>`
+  forces the other way). The substrate is a literal first word rather
+  than a flag: these helpers do no flag parsing, and the word reads
+  better at the call site.
 
 - **`task resume <n>`** — resume a worktree session by number: takes a
   bare `<n>`, resolves it to the `eng-<n>` worktree, and resumes that
   session's most recent conversation there, **on the substrate it
-  launched with**. The number-to-worktree resolution is the whole point —
-  you resume `task resume 814`, not a UUID. A bare `task resume` opens
+  launched with and its tier's model**. The number-to-worktree
+  resolution is the whole point — you resume `task resume 814`, not a
+  UUID. A bare `task resume` opens
   the picker, which is the one form that still reaches a session whose
   worktree has already been pruned.
 
@@ -1624,14 +1726,10 @@ drives the real zsh functions.
   subject in their first message, so inventing one would be a guess to
   correct.
 
-  **Seat-only, and Fable-pinned** — both halves of one ratified
-  decision. Explore work is thinking-heavy, so it runs the top tier
-  like `plan` and `architect`; and a Fable-class model on Bedrock falls
-  under the account's standing AWS human-review retention opt-in, which
-  the seat is free of. There is deliberately **no `explore local`**:
-  seat is the only substrate, so the word would be a no-op. The
-  worktree home changed where this verb runs, not which provider it
-  runs against.
+  **The judgment tier, with no override word.** Explore work is
+  thinking-heavy, so it runs the top tier like `plan` and `architect`;
+  the ratified pinch override is theirs, so `explore` simply follows
+  `DS_MODEL_JUDGMENT_SUBSTRATE`.
 
 - **`explore resume <name>` is RETIRED** — the verb now prints a
   one-line pointer to the plain form rather than launching. Two reasons,
@@ -1645,11 +1743,13 @@ drives the real zsh functions.
   `explore` now computes one too, from its name, so the wart is gone
   rather than documented.
 
-- **`plan`** — start **or resume** a **planning** session. Takes no
-  argument: it derives the session name `plan-<day-of-month>` from
+- **`plan [anthropic|bedrock]`** — start **or resume** a **planning**
+  session. It derives the session name `plan-<day-of-month>` from
   today's date (run on the 14th → `plan-14`), `cd`s to the base repo,
-  and launches Claude Code with `--model claude-fable-5` and `/plan`
-  as the initial prompt.
+  and launches Claude Code on the judgment tier with `/plan` as the
+  initial prompt. The optional word is the substrate override —
+  `plan bedrock` in a credit pinch; see "Model tiers" for its
+  retention line.
 
   `plan` is **idempotent by design** — if today's `plan-<day>` session
   already exists it resumes it, otherwise it creates it. That collapses
@@ -1661,12 +1761,11 @@ drives the real zsh functions.
   Four things it makes deterministic, each of which used to be a
   manual step the operator could forget:
 
-  - **The model.** Planning sessions run the most capable model
-    deliberately — fidelity over tokens — and passing `--model` at
-    launch is the only session-wide mechanism. Skill frontmatter
-    (`model: fable` on the `plan` skill) is belt-and-braces for a
-    mid-session `/plan`, not a substitute; whether it switches the
-    session going forward is unspecified.
+  - **The model.** Planning sessions run the judgment tier
+    deliberately — fidelity over tokens — pinned on create and resume
+    alike, and refused before launch when the tier does not resolve.
+    Skill frontmatter (`model: fable` on the `plan` skill) covers only
+    a mid-session `/plan`.
 
   - **The directory.** A planning session touches the board, not a
     branch, so it must run in the base repo. `plan` `cd`s there
@@ -1729,13 +1828,14 @@ drives the real zsh functions.
   contract as `plan`, with three substitutions: the display name is
   `housekeeping-<day-of-month>`, the initial prompt is `/housekeeping`,
   and the session-id seed carries its own prefix so a day's planning and
-  housekeeping sessions cannot collide. **No model pin**, deliberately —
-  housekeeping is upkeep, not board decisions, so it does not inherit
-  the planning tier and runs on the saved default.
+  housekeeping sessions cannot collide. It pins the **worker** tier's
+  model — upkeep, not board decisions — but always on the anthropic
+  substrate, since opening the subscription window is its point.
 
 - **`architect <topic>`** — start **or resume** an **architect** session on
   one topic: the CEO hat, and the complement to `plan` rather than a
-  variant of it. Same model pin, same idempotency; the different halves
+  variant of it. Same tier, same optional substrate word (after the
+  topic), same idempotency; the different halves
   are the briefing (`/architect`), what it may write — **nothing to the
   board** — and **where it runs**, which is now its own temporary
   worktree `ceo-<topic>` rather than the base repo (see "Architect and

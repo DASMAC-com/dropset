@@ -430,12 +430,20 @@ curl https://bedrock-mantle.us-east-1.api.aws/v1/data_retention \
 
 Models whose `allowed_modes` include `none` are unaffected by the
 account setting — a more permissive account mode does not cause their
-content to be retained. **That includes the Opus family this stack now
-defaults to.** The opt-in was made when Fable 5.1 was the ratified
-agent model, and it is kept because the model is a parameter: a
-Fable-class model has to keep working without an infrastructure change.
-So read the opt-in as removing a constraint on which models are
-selectable, not as a statement about what happens to Opus traffic.
+content to be retained. **That includes the Opus family the worker tier
+runs.** The opt-in was made when Fable 5.1 was the ratified agent
+model, and it is kept because a Fable-class model has to keep working
+without an infrastructure change — `plan bedrock`, the judgment tier's
+credit-pinch override, depends on it. So read the opt-in as removing a
+constraint on which models are selectable, not as a statement about
+what happens to Opus traffic.
+
+**It cannot be narrowed to spare Fable traffic.** The opt-in is a
+condition of Fable access, not a dial on it: a region whose mode is
+not `aws_review` refuses Fable outright (the `400` above), and the
+mode is per-region rather than per-model or per-identity. So a Bedrock
+Fable session is a retained session, and the operator has accepted that
+for the pinch case.
 
 ### Why the `us.` inference profile, not `global.`
 
@@ -470,7 +478,7 @@ launch that misbehaves:
 ```sh
 export CLAUDE_CODE_USE_BEDROCK=1
 export AWS_REGION=us-west-2
-export ANTHROPIC_MODEL='us.anthropic.claude-opus-5-5[1m]'
+export ANTHROPIC_MODEL='claude-opus-5-5[1m]'
 export ANTHROPIC_DEFAULT_HAIKU_MODEL=\
 'us.anthropic.claude-haiku-4-5-20251001-v1:0'
 export ENABLE_PROMPT_CACHING_1H=1
@@ -485,21 +493,23 @@ carries placeholder shapes only. Resolving it at launch rather than
 exporting the key into a long-lived shell keeps the value out of every
 process that does not need it.
 
-**The model string is runtime config, not code.** `DS_BEDROCK_MODEL` in
-that same untracked file carries the full string, context-window suffix
-included, and the launcher uses it verbatim — so changing model or
-window is a one-line personal-config edit with no repo change. Unset,
-the launcher falls back to this stack's exported profile id **with
-`[1m]` appended**, because the export is the bare profile id and the
-suffix's absence is silent: it costs four fifths of the context window
-and nothing reports it. A shell test asserts that composition ends in
-the suffix, and a configured string carrying no suffix draws a
-launch-time warning rather than a refusal — the override is the
-operator's to make.
+**The model string is runtime config, not code, and not a stack
+value.** The launcher reads a role-named tier from that same untracked
+file (`DS_MODEL_WORKER` for `task`; the full table is in the
+local-integrations convention) and uses it verbatim, window suffix
+included. A first-party id such as `claude-opus-5-5` is portable:
+Claude Code maps it to the `us.anthropic.…` profile on Bedrock
+(measured), so the same string serves both substrates. The committed
+fallbacks carry `[1m]`, because Bedrock defaults an unsuffixed id to
+the 200k window and nothing reports it; a configured string without
+one draws a launch-time warning rather than a refusal. This stack used
+to publish a default model id as an export; nothing read it, so it was
+retired — the identity here is model-agnostic.
 
-`ANTHROPIC_DEFAULT_HAIKU_MODEL` pins the fast tier at Bedrock Haiku so
-background sub-turns bill to credits alongside the primary model,
-rather than falling back to the subscription. The id needs its `-v1:0`
+`ANTHROPIC_DEFAULT_HAIKU_MODEL` pins the background tier
+(`DS_MODEL_BACKGROUND`) at Bedrock Haiku so background sub-turns bill
+to credits alongside the primary model, rather than falling back to the
+subscription. The id needs its `-v1:0`
 suffix: Claude Code passes it through verbatim, and Bedrock rejects the
 bare `…-20251001` form as an invalid model identifier. A
 `ResourceNotFoundException` on the suffixed id saying model use case
@@ -514,8 +524,7 @@ that same model. That matters for cost attribution, not for permissions
 nothing fails for want of a grant. The Sonnet auto-mode classifier is
 the case in point: Claude Code invokes it regardless of the model
 selected here, and the policy covers it. Switching models needs no
-template edit and no redeploy; `AgentModelId` only steers the default
-this stack publishes.
+template edit and no redeploy.
 
 `ENABLE_PROMPT_CACHING_1H` requests the 1-hour cache TTL in place of the
 5-minute default, billed at a higher write rate. If cache token counts

@@ -9,7 +9,7 @@
       "issue": "ENG-1509"
     },
     ".claude/skills/plan/SKILL.md": {
-      "ceiling": 51887,
+      "ceiling": 50732,
       "issue": "ENG-1606"
     },
     ".claude/skills/review-pr/SKILL.md": {
@@ -17,7 +17,7 @@
       "issue": "ENG-1604"
     },
     "CLAUDE.md": {
-      "ceiling": 37497,
+      "ceiling": 37333,
       "issue": "ENG-1392"
     }
   }

@@ -132,7 +132,9 @@ def validate(argv: list[str]) -> list[str]:
         if not 1 <= len(args) <= 2 or not _NAME.match(args[0]):
             raise ValueError("`architect` takes one lowercase topic")
         if len(args) == 2 and args[1] not in _SUBSTRATES:
-            raise ValueError("`architect <topic>` takes only anthropic or bedrock after it")
+            raise ValueError(
+                "`architect <topic>` takes only anthropic or bedrock after it"
+            )
         return ["architect", *args]
 
     if verb == "fleet":

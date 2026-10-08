@@ -12,18 +12,10 @@ Description: >-
   uncredited spend reaches its threshold - a coarse tripwire, not a prompt
   signal that credit coverage lapsed. No credential value is created or
   stored by this template - the API key is minted out of band and kept in
-  1Password (see infra/aws/README.md).
+  1Password (see infra/aws/README.md). The identity is model-agnostic: it is
+  shared by every role's Bedrock sessions, and which model a session runs is
+  launcher runtime config, never a stack value.
 Outputs:
-  AgentInferenceProfileId:
-    Description: >-
-      Cross-region inference profile id agent sessions target. Exported so a
-      session launcher can read it rather than hard-coding a model string.
-      This is the profile id alone: a consumer that sets ANTHROPIC_MODEL must
-      append the context-window suffix itself (see infra/aws/README.md),
-      whose absence is silent rather than an error.
-    Export:
-      Name: !Sub '${EnvironmentName}-bedrock-agent-profile-id'
-    Value: !Sub 'us.${AgentModelId}'
   BedrockAgentPolicyArn:
     Description: 'ARN of the invoke-only managed policy.'
     Export:
@@ -36,20 +28,6 @@ Outputs:
       Name: !Sub '${EnvironmentName}-bedrock-agent-user'
     Value: !Ref 'BedrockAgentUser'
 Parameters:
-  AgentModelId:
-    Default: 'anthropic.claude-opus-5-5'
-    Description: >-
-      Default foundation model for agent sessions, published as the profile
-      id other tooling reads. It does not gate the invoke policy, which
-      permits any model in the US regions, so changing it steers the default
-      without widening or narrowing permissions. Invoked through the us.
-      cross-region inference profile, never by bare model id.
-      RETENTION TRAP - pointing this at a Fable-class model silently places
-      agent transcripts under the account standing AWS human-review opt-in,
-      which the ratified posture keeps for seat sessions only. Opus traffic,
-      Opus 5.5 included, is NOT retained under that opt-in. Changing this
-      parameter is therefore a retention decision as well as a cost one.
-    Type: 'String'
   BudgetAlertEmail:
     Default: ''
     Description: >-
