@@ -627,6 +627,24 @@ _RE_EVALUATES = re.compile(
     r"(?:[|;&]|\beval\b|\bxargs\b|\b(?:ba|z)?sh\b|\bsource\b|\$\(|`|[<>]\()"
 )
 
+# Expansions that open a FRESH quoting context, so `quoted_spans` — which knows
+# nothing of nesting — pairs a quote inside one with the wrong partner. Their
+# presence ANYWHERE, quoted or not, disables suppression; checking only outside
+# quotes misses the case that matters, because the opener sits inside double
+# quotes. Measured, each running the middle line in bash and zsh while its push
+# fell inside a wrongly paired "span":
+#
+#     echo "${x:-"'"}"            echo "$(printf '"')"
+#     git push --force origin main
+#     echo "'"
+#
+# On one line the same mispairing can hide a `;` from `_RE_EVALUATES`.
+#
+# A `${…}` only pairs quotes wrongly when a quote sits inside it — before its first `}`,
+# since a `}` reached with no quote seen closes the expansion — so a bare
+# `${HOME}` keeps the read-only search carve-out working.
+_RE_NESTED_QUOTING = re.compile(r"\$\(|`|\$\{[^}]*[\"']")
+
 
 def quoted_spans(line):
     """``[(start, end, quote)]`` index ranges of ``line`` that sit inside quotes.
@@ -749,6 +767,8 @@ def inert_spans(line):
     *not* claimed, because the previous version asserted the first condition
     alone and read as covering both.
     """
+    if _RE_NESTED_QUOTING.search(line):
+        return []
     spans = quoted_spans(line)
 
     # Look for the re-evaluating construct OUTSIDE the quotes only. Scanning the
@@ -851,12 +871,17 @@ def _matches(pattern, line, allow_quoted=True):
 # Matched by SUBCOMMAND, because the program alone is too broad: `git rebase
 # --exec '…'`, `git submodule foreach '…'` and a `!`-alias under `git -c` all
 # run their quoted argument, and `gh codespace ssh` runs one remotely.
+#
+# And only `-C <path>` may precede a git subcommand, not the full `_GIT`
+# option set: `git -c core.editor=dash commit -e -m '…'` hands the message
+# file to a program that runs it as a script. `printf` is absent for a
+# similar reason — zsh's `printf -v 'a[$(…)]'` evaluates the subscript.
 _PROSE_COMMAND = re.compile(
-    r"\s*(?:"
-    + _GIT
-    + r"(?:commit|tag|notes)\b"
+    r"\s*(?:git(?:\s+-C\s+"
+    + _GIT_OPTION_VALUE
+    + r")*\s+(?:commit|tag|notes)\b"
     + r"|gh\s+(?:pr|issue|release|api)\b"
-    + r"|(?:echo|printf)\b)"
+    + r"|echo\b)"
 )
 
 # Constructs that defeat whole-command quote tracking, so their presence
@@ -887,6 +912,8 @@ def prose_spans(cmd):
       a read-only search (`READ_ONLY_PROGRAMS`). With no separator allowed, a
       command starts at the last unquoted newline before the span.
     """
+    if _RE_NESTED_QUOTING.search(cmd):
+        return []
     spans = quoted_spans(cmd)
 
     def quoted(index):
@@ -1364,6 +1391,13 @@ def _self_test():
         ("git commit -m x `dash -c 'git push --force origin main'`", "deny"),
         ("printf %s <(ssh h 'git push -f origin eng-942')", "ask"),
         ("grep x $(ssh host 'git push --force origin main')", "deny"),
+        # Quotes nested in an expansion pair wrongly, which once hid the real push
+        # on the middle line; zsh runs a `printf -v` subscript; and an editor
+        # set under `git -c` runs the message file.
+        ('echo "${x:-"\'"}"\ngit push --force origin main\necho "\'"', "deny"),
+        ('echo "$(printf \'"\')"\ngit push -f origin eng-942\necho "\'"', "ask"),
+        ("printf -v 'a[$(git push --force origin main)]' x", "deny"),
+        ("git -c core.editor=dash commit -e -m 'git push --force origin main'", "deny"),
         # A suppressed prose match must not hide a real push after it, and a
         # span's command start skips newlines that sit inside earlier quotes.
         ("echo 'git push --force origin main'\ngit push --force origin main", "deny"),

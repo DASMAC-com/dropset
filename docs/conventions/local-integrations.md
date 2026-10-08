@@ -389,8 +389,11 @@ over-read:**
   to hide a command behind it.
 
   **The force-push patterns widen that allowlist to prose commands** —
-  `git commit` / `tag` / `notes`, `gh pr` / `issue` / `release` / `api`,
-  `echo`, `printf`. A commit message that merely quoted a push to `main`
+  `git commit` / `tag` / `notes` (with only `-C <path>` before the
+  subcommand, since `-c core.editor=…` runs the message file),
+  `gh pr` / `issue` / `release` / `api`, and `echo` — not `printf`,
+  whose zsh `-v` evaluates a subscript. A commit message that merely
+  quoted a push to `main`
   hit the deny tier, so the only way through was rewording it. Quotes are
   tracked over the whole command, so a multi-line message's body lines
   are covered too. The gate is an allowlist of prose **subcommands**, not
@@ -401,8 +404,11 @@ over-read:**
   hands text back to a shell disables the gate entirely: a separator,
   `eval`, `xargs`, `source`, `sh` / `bash` / `zsh`, an unquoted command
   or process substitution (`$(…)`, a backtick, `<(…)`), a heredoc, or
-  `$'…'`. A double-quoted argument holding `$(…)` or a backtick is never
-  prose.
+  `$'…'`. So does a `$(…)`, a backtick, or a `${…}` holding a quote
+  **anywhere**, quoted or not: each opens a fresh quoting context the
+  span tracker cannot follow, and a wrongly paired quote once hid a real push
+  on the next line inside a fake "span". That last rule covers the
+  read-only search carve-out above as well.
 
 Two implementation notes worth keeping, because both were found by the
 script's own self-test rather than in review:
