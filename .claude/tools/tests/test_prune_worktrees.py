@@ -69,7 +69,11 @@ class FakeGit:
         unpushed=(),
         no_upstream=(),
         local_branches=(),
+        refs_fail=False,
+        delete_fails=(),
     ):
+        self.refs_fail = refs_fail
+        self.delete_fails = set(delete_fails)
         self.porcelain = porcelain
         self.dirty = set(dirty)
         self.modified = set(modified)
@@ -83,7 +87,12 @@ class FakeGit:
         if args[:2] == ["worktree", "list"]:
             return 0, self.porcelain, ""
         if args[0] == "for-each-ref":
+            if self.refs_fail:
+                return 128, "", "fatal: not a git repository"
             return 0, "".join(f"{b}\n" for b in self.local_branches), ""
+        if args[:2] == ["branch", "-D"] and args[2] in self.delete_fails:
+            return 1, "", "error: cannot delete\nhint: second line\n"
+
         if args[0] == "rev-list":
             branch = args[2].split("@", 1)[0]
             if branch in self.no_upstream:
@@ -262,6 +271,26 @@ class StrayBranchTests(unittest.TestCase):
         git = FakeGit(PORCELAIN, local_branches=self.LOCALS, no_upstream=["eng-800"])
         out = prune({"eng-800"}, dry_run=False, git=git)
         self.assertEqual(out["branches_removed"], [])
+        self.assertIn("no upstream", out["skipped"][0]["reason"])
+        self.assertNotIn(["branch", "-D", "eng-800"], git.calls)
+
+    def test_main_is_never_deleted_as_a_stray(self):
+        git = FakeGit(PORCELAIN, local_branches=self.LOCALS)
+        out = prune({"main"}, dry_run=False, git=git)
+        self.assertEqual(out["branches_removed"], [])
+        self.assertNotIn(["branch", "-D", "main"], git.calls)
+
+    def test_a_refused_stray_delete_keeps_only_the_first_error_line(self):
+        git = FakeGit(PORCELAIN, local_branches=self.LOCALS, delete_fails=["eng-800"])
+        out = prune({"eng-800"}, dry_run=False, git=git)
+        self.assertEqual(out["branches_removed"], [])
+        self.assertEqual(out["skipped"][0]["reason"], "error: cannot delete")
+
+    def test_a_failed_branch_list_deletes_nothing_and_reports_no_unmatched(self):
+        git = FakeGit(PORCELAIN, refs_fail=True)
+        out = prune({"eng-800", "eng-701"}, dry_run=False, git=git)
+        self.assertEqual(out["branches_removed"], [])
+        self.assertEqual(out["unmatched"], [])
         self.assertNotIn(["branch", "-D", "eng-800"], git.calls)
 
     def test_a_dry_run_reports_strays_without_deleting(self):

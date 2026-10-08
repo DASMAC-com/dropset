@@ -40,8 +40,9 @@ refuses the whole pass, since every later step assumes it.
 open-PR guard holds even when armed, and the purge never arms — its apply stays
 an operator approval at ``plan``'s gate.
 
-**Report.** One heading of the Planning document — ``REPORT_HEADING`` — is
-replaced wholesale each run, bounded to ``REPORT_CHAR_CAP``. The same report
+**Report.** One section of the Planning document — from ``REPORT_HEADING``
+through its ``REPORT_END`` line — is replaced wholesale each run, bounded to
+``REPORT_CHAR_CAP``. The same report
 prints to stdout (the standalone interface, and the fallback when Linear is
 unreachable); ``--json`` prints the structured twin instead. A local stamp beside
 the allowlist refresh marker answers ``ran-today`` with no network read.
@@ -74,6 +75,10 @@ TOOLS = Path(__file__).resolve().parent
 REPO = "DASMAC-com/dropset"
 ARM_ENV = "DS_UPKEEP_ARMED"
 REPORT_HEADING = "Upkeep report — machine-written, latest run only"
+# The section's closing line. Splicing only between the heading and this line is
+# what keeps a note another session appended below the report from being
+# swallowed as part of it on the next run.
+REPORT_END = "End of upkeep report."
 STAMP_NAME = ".upkeep-last-run.json"
 
 # Roughly 1.5k tokens. The section is replaced every run, so the cap bounds what
@@ -90,6 +95,11 @@ TIMEOUT_TOOL = 120
 # PRs outside the listed sets are resolved one by one before giving up.
 MINE_SESSIONS = 8
 MAX_NOTIFICATION_LOOKUPS = 20
+
+# PR list bounds. A full open page means the open set may be truncated, and the
+# open-PR guard is only as good as that set, so a full page fails closed.
+CLOSED_PR_LIMIT = 30
+OPEN_PR_LIMIT = 100
 
 NOTIFICATIONS_PATH = "/notifications?all=true&per_page=50"
 
@@ -262,7 +272,7 @@ def step_prs(ctx: Ctx) -> None:
                 "--json",
                 fields,
                 "--limit",
-                "30",
+                str(CLOSED_PR_LIMIT),
             ],
         )
         opened = _gh_json(
@@ -277,9 +287,11 @@ def step_prs(ctx: Ctx) -> None:
                 "--json",
                 fields,
                 "--limit",
-                "100",
+                str(OPEN_PR_LIMIT),
             ],
         )
+        if len(opened or []) >= OPEN_PR_LIMIT:
+            raise RuntimeError(f"open PR list hit its {OPEN_PR_LIMIT} limit")
     except (RuntimeError, ValueError) as e:
         ctx.record("prs", f"PR list failed ({e}); nothing is cleanup-eligible", False)
         return
@@ -305,10 +317,11 @@ def step_prs(ctx: Ctx) -> None:
                 ctx,
                 ["pr", "view", str(num), "--repo", REPO, "--json", fields],
             )
+        except (RuntimeError, ValueError):
+            continue
+        if isinstance(pr, dict):
             by_number[num] = pr
             prs.append(pr)
-        except (RuntimeError, ValueError):
-            pass
 
     ctx.data["prs"] = prs
     ctx.data["pr_by_number"] = by_number
@@ -334,6 +347,7 @@ def step_board(ctx: Ctx) -> None:
         str(ctx.base),
     )
     local = {b for b in refs.split() if BRANCH_RE.match(b)} if rc == 0 else set()
+    flags = [] if rc == 0 else ["local branch list failed; strays not considered"]
     in_trees = {t["branch"] for t in ctx.data.get("trees", []) if t.get("branch")}
     by_number = ctx.data["pr_by_number"]
     notified = {
@@ -352,9 +366,10 @@ def step_board(ctx: Ctx) -> None:
             False,
         )
         return
-    eligible, flags = eligible_branches(
+    eligible, branch_flags = eligible_branches(
         candidates, pr_state_by_branch(ctx.data["prs"]), status
     )
+    flags += branch_flags
     ctx.data["eligible"] = eligible
     ctx.data["local_traces"] = local | in_trees
     ctx.record(
@@ -391,6 +406,9 @@ def step_prune(ctx: Ctx) -> None:
         f"{len(result.get('branches_removed', []))} stray branch(es); "
         f"{len(result['skipped'])} held back",
         skipped=[f"{s['branch']}: {s['reason']}" for s in result["skipped"]],
+        unmatched=[
+            f"{b}: matches no worktree or branch" for b in result.get("unmatched", [])
+        ],
     )
 
 
@@ -447,10 +465,12 @@ def recent_sessions(base: Path, limit: int = MINE_SESSIONS) -> list[str]:
     return [p.stem for p in files[:limit]]
 
 
-def mine_refresh_candidates(ctx: Ctx) -> list[str]:
-    """Uncovered repeated Bash shapes across recent sessions, most frequent
-    first. Read-only: the candidates go to the report, never into settings."""
+def mine_refresh_candidates(ctx: Ctx) -> tuple[list[str], int]:
+    """``(candidates, sessions_read)``: uncovered repeated Bash shapes across
+    recent sessions, most frequent first, and how many transcripts actually
+    parsed. Read-only: the candidates go to the report, never into settings."""
     counts: dict[str, int] = {}
+    read = 0
     for sid in recent_sessions(ctx.base):
         rc, out, _ = ctx.tool("session_metrics.py", "--session-id", sid, "--json")
         if rc != 0:
@@ -459,11 +479,12 @@ def mine_refresh_candidates(ctx: Ctx) -> list[str]:
             report = json.loads(out)
         except ValueError:
             continue
+        read += 1
         for c in report.get("hardening_candidates", []):
             if c.get("cost_kind") == "prompt-churn":
                 counts[c["signature"]] = counts.get(c["signature"], 0) + c["count"]
     ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-    return [f"{sig} ({n} calls)" for sig, n in ranked]
+    return [f"{sig} ({n} calls)" for sig, n in ranked], read
 
 
 def step_checks(ctx: Ctx) -> None:
@@ -499,12 +520,20 @@ def step_checks(ctx: Ctx) -> None:
     if not due.get("due"):
         ctx.record("allowlist-refresh", f"refresh not due ({due.get('reason')})")
         return
-    candidates = mine_refresh_candidates(ctx)
+    candidates, read = mine_refresh_candidates(ctx)
+    if read == 0:
+        # A miner that read nothing is broken, not a zero yield — stamping it
+        # would hide the failure for a whole month.
+        ctx.record(
+            "allowlist-refresh", "refresh due; no transcript mined, not stamped", False
+        )
+        return
     rc, _, err = ctx.tool("allowlist.py", "refresh-record", "--added", "0")
     stamped = "stamped" if rc == 0 else f"stamp failed: {first_line(err)}"
     ctx.record(
         "allowlist-refresh",
-        f"refresh due; {len(candidates)} uncovered shape(s) mined; {stamped}",
+        f"refresh due; {len(candidates)} uncovered shape(s) mined from "
+        f"{read} session(s); {stamped}",
         ok=rc == 0,
         candidates=candidates,
     )
@@ -537,9 +566,13 @@ def step_memory(ctx: Ctx) -> None:
         for ln in out.splitlines()
         if ln.strip() and not ln.startswith("memory-audit |")
     ]
-    ctx.tool("memory_scan_gate.py", "record", str(memory_dir))
+    rc, _, err = ctx.tool("memory_scan_gate.py", "record", str(memory_dir))
+    stamp = "" if rc == 0 else f"; gate stamp failed: {first_line(err)}"
     ctx.record(
-        "memory", f"memory audit ran: {len(findings)} finding(s)", findings=findings
+        "memory",
+        f"memory audit ran: {len(findings)} finding(s){stamp}",
+        ok=rc == 0,
+        findings=findings,
     )
 
 
@@ -552,7 +585,10 @@ def step_purge(ctx: Ctx) -> None:
     pruned = ctx.data.get("pruned") or {}
     if not pruned.get("dry_run", True):
         for r in pruned.get("removed", []):
-            args += ["--completed-slug", prune_conversations.slugify(Path(r["path"]))]
+            # One token with `=`: a slug of an absolute path starts with "-",
+            # which argparse would read as a flag, not as this option's value.
+            slug = prune_conversations.slugify(Path(r["path"]))
+            args.append(f"--completed-slug={slug}")
     rc, out, err = ctx.tool("prune_conversations.py", *args)
     if rc != 0:
         ctx.record("purge", f"purge dry-run failed: {first_line(err)}", False)
@@ -614,7 +650,22 @@ def defang(text: str) -> str:
     return _BASENAME_DOT.sub("․", text)
 
 
-LIST_KEYS = ("flags", "skipped", "dangling", "inert", "cruft", "candidates", "findings")
+LIST_KEYS = (
+    "flags",
+    "skipped",
+    "unmatched",
+    "dangling",
+    "inert",
+    "cruft",
+    "candidates",
+    "findings",
+)
+
+
+def one_line(text: object) -> str:
+    """Collapse whitespace, so a multi-line git error cannot inject a line that
+    reads as a heading — or as the section's end marker — into the report."""
+    return " ".join(str(text).split())
 
 
 def render(result: dict, cap: int = REPORT_CHAR_CAP) -> str:
@@ -622,11 +673,11 @@ def render(result: dict, cap: int = REPORT_CHAR_CAP) -> str:
     lines = [f"Run {result['ran_at']}, {mode}.", ""]
     for s in result["steps"]:
         mark = "" if s["ok"] else " (failed)"
-        lines.append(f"- {s['step']}{mark}: {s['line']}")
+        lines.append(f"- {s['step']}{mark}: {one_line(s['line'])}")
         for key in LIST_KEYS:
             items = s.get(key) or []
             for item in items[:LIST_CAP]:
-                lines.append(f"  - {item}")
+                lines.append(f"  - {one_line(item)}")
             if len(items) > LIST_CAP:
                 lines.append(f"  - and {len(items) - LIST_CAP} more")
     text = "\n".join(lines)
@@ -635,30 +686,48 @@ def render(result: dict, cap: int = REPORT_CHAR_CAP) -> str:
     return text
 
 
-_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
+_HEADING2 = re.compile(r"^##\s+(.*?)\s*$")
 
 
-def splice_section(content: str, heading: str, body: str) -> str:
-    """``content`` with ``heading``'s section replaced by ``body`` — through the
-    next heading of the same or a higher level — or appended as a level-2
-    section when absent."""
+def _key(text: str) -> str:
+    """A comparison key that survives the rewrites a stored document may apply —
+    an escaped character, a dash variant, changed spacing. Matching the raw
+    string instead would miss the stored heading and append a duplicate section
+    on every run."""
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+class SpliceError(Exception):
+    """The report section is not in a shape this tool can replace safely."""
+
+
+def splice_section(content: str, heading: str, body: str, end: str = REPORT_END) -> str:
+    """``content`` with the section from the level-2 ``heading`` through the
+    ``end`` line replaced, or the section appended when the heading is absent.
+
+    Bounded by an explicit end line rather than by the next heading, so text
+    appended below the report — a note, a paragraph, a deeper heading — is never
+    swallowed. Refuses rather than guesses when the heading repeats or its end
+    line is missing."""
     lines = content.split("\n")
-    start = level = None
-    for i, ln in enumerate(lines):
-        m = _HEADING.match(ln)
-        if m and m.group(2) == heading:
-            start, level = i, len(m.group(1))
-            break
-    if start is None:
-        return content.rstrip("\n") + f"\n\n## {heading}\n\n{body}\n"
-    end = len(lines)
-    for j in range(start + 1, len(lines)):
-        m = _HEADING.match(lines[j])
-        if m and len(m.group(1)) <= level:
-            end = j
-            break
-    tail = lines[end:]
-    new = lines[: start + 1] + ["", body, ""] + tail
+    starts = [
+        i
+        for i, ln in enumerate(lines)
+        if (m := _HEADING2.match(ln)) and _key(m.group(1)) == _key(heading)
+    ]
+    if len(starts) > 1:
+        raise SpliceError(f"the report heading appears {len(starts)} times")
+    section = [f"## {heading}", "", body, "", end]
+    if not starts:
+        return content.rstrip("\n") + "\n\n" + "\n".join(section) + "\n"
+    start = starts[0]
+    stop = next(
+        (j for j in range(start + 1, len(lines)) if _key(lines[j]) == _key(end)),
+        None,
+    )
+    if stop is None:
+        raise SpliceError("the report heading has no end line; not replacing")
+    new = lines[:start] + section + lines[stop + 1 :]
     return "\n".join(new).rstrip("\n") + "\n"
 
 
@@ -752,8 +821,13 @@ def run(argv: list[str]) -> int:
         except Exception as e:  # noqa: BLE001 — stdout is the fallback
             result["doc"] = f"not written: {first_line(str(e))}"
         report += f"\n- planning document: {result['doc']}"
-    write_stamp(base, now, ctx.armed)
+    # Print before stamping: stdout is the fallback when the document write
+    # failed, so nothing after this point may be able to lose it.
     print(json.dumps(result, indent=2) if args.json else report)
+    try:
+        write_stamp(base, now, ctx.armed)
+    except OSError as e:
+        print(f"upkeep: run stamp not written: {e}", file=sys.stderr)
     return 0
 
 
