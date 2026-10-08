@@ -265,6 +265,30 @@ class IndexByteCap(unittest.TestCase):
         result = audit(memory_dir, _repo([]))
         self.assertEqual(result["index_bytes"], len(text) + 2)
 
+    def test_the_default_cap_is_twelve_thousand_bytes(self):
+        # The figure the housekeeping skill and context-economy doc both cite.
+        result = audit(self._sized(1), _repo([]))
+        self.assertEqual(result["max_index_bytes"], 12_000)
+
+    def test_an_absent_index_is_zero_bytes_and_not_over_cap(self):
+        memory_dir = self._sized(1)
+        (memory_dir / "MEMORY.md").unlink()
+        result = audit(memory_dir, _repo([]))
+        self.assertEqual(result["index_bytes"], 0)
+        self.assertFalse(any(r.startswith("index-over-cap") for r in render(result, 3)))
+
+    def test_crlf_line_endings_do_not_widen_index_lines(self):
+        # The index is read as bytes for the cap, but `splitlines` still
+        # treats `\r\n` as one boundary — a CRLF index measures as LF did.
+        # The line is exactly 159 chars, so a kept `\r` would push it over.
+        line = "- [a](a.md) — " + "x" * 145
+        self.assertEqual(len(line), 159)
+        memory_dir = _store({"a.md": ""}, line)
+        text = (memory_dir / "MEMORY.md").read_text(encoding="utf-8")
+        (memory_dir / "MEMORY.md").write_bytes(text.replace("\n", "\r\n").encode())
+        result = audit(memory_dir, _repo([]), max_index_line=159)
+        self.assertEqual(result["over_long_index_lines"], 0)
+
     def test_the_cli_flag_sets_the_cap(self):
         memory_dir = self._sized(5)
         out = io.StringIO()

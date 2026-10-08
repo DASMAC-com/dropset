@@ -232,7 +232,8 @@ Some text is paid for before any tool runs. Three residency classes:
 - **C — read at a trigger:** sibling files, convention docs, tool
   results. `session-metrics` already ranks these.
 
-`.claude/tools/skill_size.py` caps A and B in bytes as `wc -c` reports
+`.claude/tools/skill_size.py` caps the committed members of A, and B, in
+bytes as `wc -c` reports
 them: **32,000** per entry file (frontmatter and rendered regions
 included), **1,024** per description, **32,000** for `CLAUDE.md`. It runs
 as the `skill-size` lint hook, so CI enforces it.

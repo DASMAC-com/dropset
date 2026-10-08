@@ -944,8 +944,8 @@ session (measured in [`history.md`](history.md)).
 
 **An index line is a pointer — name plus a few-word hook, one
 line, never content.** The memory-writing instruction lives
-harness-side, so the repo cannot shape the write; what it does
-enforce is the bound, in the local tier (CI has no home
+harness-side, so the durable fix stays upstream; what the repo
+does check is the bound, in the local tier (CI has no home
 directory): `memory_audit.py` below reports any line past 160
 characters and the whole index past **12,000 bytes**
 (`index-over-cap`). Either finding is trimmed in this pass —
@@ -995,7 +995,8 @@ python3 .claude/tools/memory_audit.py <memory_dir>
 ```
 
 It prints one `kind: slug — reason` line per candidate plus a
-summary, and **never a memory body**. Run it from the base
+summary, and **never a memory body** (why it is a tool:
+[`history.md`](history.md)). Run it from the base
 repo root so cited paths resolve against the checkout
 (`--repo-root` overrides). Five kinds, and their confidence
 is **not** equal — the report labels each:
