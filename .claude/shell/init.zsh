@@ -618,16 +618,19 @@ _ds_topic_sid() {
 # flips the provider without a second spelling. A Bedrock-form id still works on
 # Bedrock; it just stops being portable.
 #
-# The BACKGROUND slot is Claude Code's small model for session titles,
-# summaries and similar auxiliary calls, exported as
-# `ANTHROPIC_DEFAULT_HAIKU_MODEL`; a failure there degrades those niceties,
-# never task output. On the subscription Claude Code's own default is right, so
-# it is pinned on Bedrock launches only, and unset there it warns rather than
-# refuses. Claude Code passes it through verbatim, so it is the exact profile
-# id, with no window suffix.
+# The BACKGROUND slot is Claude Code's small/fast model, exported as
+# `ANTHROPIC_DEFAULT_HAIKU_MODEL`. Its docs name session title generation as the
+# example background task and give no fuller list, so this claims no more; a
+# failure there degrades a nicety, never task output. Pinned on Bedrock launches
+# only — on the subscription Claude Code's own default is right — and unset
+# there it is an informational line, not a refusal, since per the same docs a
+# Bedrock session with `ANTHROPIC_MODEL` set routes background tasks to that
+# model. Claude Code passes the id through verbatim, so it is the exact Bedrock
+# profile id: a dated `-v1:0` suffix where the profile has one, never a window
+# suffix.
 #
-# The classifier that reviews auto-mode actions is deliberately absent: Claude
-# Code runs it on Sonnet whatever is configured, so it has no tier of ours.
+# The auto-mode permission classifier is deliberately absent: Claude Code picks
+# its model itself and exposes no configuration for it, so it has no tier.
 # ---------------------------------------------------------------------------
 
 # Where a session's substrate choice is recorded. See `_ds_substrate_write`.
@@ -696,17 +699,18 @@ _ds_tier() {
   fi
 
   if [[ "$substrate" != (anthropic|bedrock) ]]; then
-    print -u2 "dropset: ${var}_SUBSTRATE ('$substrate') must be anthropic or" \
+    # `-r` throughout: these echo operator config, so escapes stay literal.
+    print -ru2 -- "dropset: ${var}_SUBSTRATE ('$substrate') must be anthropic or" \
       'bedrock — refusing to launch.'
     return 1
   fi
   if [[ "$model" == *[[:space:]]* ]]; then
-    print -u2 "dropset: $var ('$model') is not a model id — refusing to launch."
+    print -ru2 -- "dropset: $var ('$model') is not a model id — refusing to launch."
     return 1
   fi
   if [[ "$substrate" == bedrock \
     && "$model" != *'[1m]' && "$model" != *'[200k]' ]]; then
-    print -u2 "dropset: $var ('$model') has no context-window suffix —" \
+    print -ru2 -- "dropset: $var ('$model') has no context-window suffix —" \
       'Bedrock will use 200k, not 1M, and will not say so.'
   fi
   print -r -- "$model"
@@ -743,8 +747,9 @@ _ds_substrate_enter() {
 # neither gets noticed until the bill or the window does the telling.
 #
 # Best-effort by design — an unwritable state directory must not fail a launch,
-# so every path returns 0. The cost of a missing marker is one conservative
-# default, which is the next function.
+# so every path returns 0. The cost of a missing marker is the conservative
+# default — anthropic substrate, and (see `_ds_resume_tier`) the judgment tier's
+# model rather than the worker's — which is the next function.
 _ds_substrate_write() {
   local key="$1" substrate="$2"
   mkdir -p "$_DS_SUBSTRATE_DIR" 2>/dev/null || return 0
@@ -800,11 +805,12 @@ _ds_resume_tier() {
 # The MODEL is not exported here: the launching verb hands it to `claude` for
 # that one command, the same way on both substrates (see `_ds_session`).
 _ds_bedrock_env() {
-  # Background is the one tier that WARNS when unset rather than refusing: its
-  # failures degrade auxiliary niceties only, never the session's work.
+  # Background is the one tier that only NOTES an unset value: its failures
+  # degrade auxiliary niceties only, and with `ANTHROPIC_MODEL` set Claude Code
+  # routes background tasks to the session's model instead.
   if [[ -z "$DS_MODEL_BACKGROUND" ]]; then
-    print -u2 'dropset: DS_MODEL_BACKGROUND is unset — background calls on' \
-      'Bedrock use Claude Code'"'"'s own default, which may not route.'
+    print -u2 'dropset: DS_MODEL_BACKGROUND is unset — background tasks on' \
+      'Bedrock fall back to the session model.'
     [[ -n "$DS_BEDROCK_FAST_MODEL" ]] && print -u2 \
       'dropset: DS_BEDROCK_FAST_MODEL is retired — rename it to DS_MODEL_BACKGROUND.'
   fi
@@ -1202,8 +1208,10 @@ _ds_task_resume() {
 # thinking-heavy, so it runs the top tier like `plan` and `architect` do. It
 # takes no `bedrock` word because the one override the operator ratified is the
 # credit-pinch case for `plan` and `architect`; explore carries no such pinch.
-# It still follows `DS_MODEL_JUDGMENT_SUBSTRATE`, so a deliberate config change
-# moves it with the other judgment verbs — see `plan` for what that costs.
+# It is PINNED to the anthropic substrate, deliberately ignoring
+# `DS_MODEL_JUDGMENT_SUBSTRATE`: it writes no substrate marker (see below), so a
+# marker-less `task resume <n>` always resumes it on anthropic, and launching it
+# anywhere else would make that resume switch provider mid-conversation.
 #
 # The model pin, the permission mode and the start-or-resume probe all come
 # from `_ds_session`, which gets each right on both branches by construction —
@@ -1290,7 +1298,7 @@ explore() {
   name="exp-$raw"
 
   local model substrate
-  { read -r model; read -r substrate; } <<< "$(_ds_tier judgment '')"
+  { read -r model; read -r substrate; } <<< "$(_ds_tier judgment anthropic)"
   [[ -n "$substrate" ]] || return 1
   _ds_substrate_enter "$substrate" 'explore' || return 1
   # NO SUBSTRATE MARKER IS WRITTEN HERE, DELIBERATELY, and the reason is the
@@ -1317,7 +1325,8 @@ explore() {
 #   plan anthropic   the judgment tier on the subscription, whatever the config
 #
 # Retention: on Bedrock a Fable-class model falls under the account's standing
-# AWS human-review opt-in (Opus does not); the operator accepts that in a pinch.
+# AWS human-review opt-in (a model allowing mode `none` does not); the operator
+# accepts that in a pinch.
 #
 # Idempotent by design — a planning session is opened and reopened many times
 # in a day, and having to remember which state it is in is the friction this
@@ -1356,7 +1365,12 @@ plan() {
   { read -r model; read -r substrate; } <<< "$(_ds_tier judgment "$1")"
   [[ -n "$substrate" ]] || return 1
   _ds_substrate_enter "$substrate" 'plan' || return 1
-  _ds_aws_login 'plan' || return 1
+  # A refused login must not leave a `plan bedrock`'s exports — the bearer token
+  # included — behind in the tab with no session to show for them.
+  if ! _ds_aws_login 'plan'; then
+    _ds_substrate_unset
+    return 1
+  fi
   _ds_daily_session plan "plan-$(date +%-d)" /plan "$model"
 }
 
@@ -1499,15 +1513,25 @@ fleet() {
 # profile does not prove the ACCOUNT may invoke it (a model whose use-case
 # form was never submitted still reads `ACTIVE`).
 #
-# An alias (`fable`, `opus`) cannot be checked: Claude Code resolves it, not
-# Bedrock, so it is reported rather than failed.
+# Every tier is checked in its BEDROCK form, including an anthropic-substrate
+# judgment tier: `plan bedrock` sends that same id to Bedrock, so it has to
+# resolve there too. Judgment and worker ids are mapped the way Claude Code maps
+# them (a first-party `claude-*` becomes `us.anthropic.<id>`, window suffix
+# dropped). The background id is checked VERBATIM, because Claude Code passes
+# that one through unmapped — mapping it here would pass an id that then fails
+# at runtime. An alias (`fable`, `opus`) cannot be checked: Claude Code resolves
+# it, not Bedrock, so it is reported rather than failed.
 models() {
   if [[ -n "$1" && "$1" != check ]]; then
     print -u2 'Usage: models [check]'
     return 1
   fi
-  local tier model substrate profile rc=0
+  local tier model substrate profile entry rc=0
+  local -a profile_flag
   for tier in judgment worker; do
+    # Reset first: a failed `_ds_tier` prints nothing, and the previous tier's
+    # values must not survive into this row.
+    model='' substrate=''
     { read -r model; read -r substrate; } <<< "$(_ds_tier "$tier" '')"
     if [[ -n "$substrate" ]]; then
       print -r -- "$tier  $model  ($substrate)"
@@ -1518,20 +1542,30 @@ models() {
   print -r -- "background  ${DS_MODEL_BACKGROUND:-<unset>}  (Bedrock launches only)"
   [[ "$1" == check ]] || return $rc
 
-  for model in "$DS_MODEL_JUDGMENT" "$DS_MODEL_WORKER" "$DS_MODEL_BACKGROUND"; do
+  # The same admin profile `_ds_aws_login` probes, or the check would report a
+  # false FAIL for an operator whose admin login lives under a named profile.
+  [[ -n "$DS_AWS_PROFILE" ]] && profile_flag=(--profile "$DS_AWS_PROFILE")
+  for entry in "judgment:$DS_MODEL_JUDGMENT" "worker:$DS_MODEL_WORKER" \
+    "background:$DS_MODEL_BACKGROUND"; do
+    tier="${entry%%:*}" model="${entry#*:}"
     [[ -n "$model" ]] || continue
-    profile="${model%%\[*}"
-    if [[ "$profile" != claude-* && "$profile" != *.anthropic.* ]]; then
-      print -r -- "skip   $model — an alias; Claude Code resolves it, not Bedrock"
-      continue
-    fi
-    [[ "$profile" == claude-* ]] && profile="us.anthropic.$profile"
-    if env -u AWS_BEARER_TOKEN_BEDROCK aws bedrock get-inference-profile \
-      --region "${DS_BEDROCK_REGION:-us-west-2}" \
-      --inference-profile-identifier "$profile" >/dev/null 2>&1; then
-      print -r -- "ok     $profile"
+    if [[ "$tier" == background ]]; then
+      profile="$model"
     else
-      print -r -- "FAIL   $profile — not found, or the admin login has expired"
+      profile="${model%%\[*}"
+      if [[ "$profile" != claude-* && "$profile" != *anthropic.* ]]; then
+        print -r -- "skip   $tier $model — an alias; Claude Code resolves it"
+        continue
+      fi
+      [[ "$profile" == claude-* ]] && profile="us.anthropic.$profile"
+    fi
+    if env -u AWS_BEARER_TOKEN_BEDROCK aws bedrock get-inference-profile \
+      "${profile_flag[@]}" --region "${DS_BEDROCK_REGION:-us-west-2}" \
+      --inference-profile-identifier "$profile" >/dev/null 2>&1; then
+      print -r -- "ok     $tier $profile"
+    else
+      print -r -- "FAIL   $tier $profile — no such inference profile, or the" \
+        'admin login has expired'
       rc=1
     fi
   done

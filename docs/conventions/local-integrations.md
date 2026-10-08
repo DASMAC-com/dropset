@@ -1104,7 +1104,7 @@ names alive was the outcome to avoid.
 | `task <n>`              | worktree session on Linear task n          | worker's (Bedrock)      | worker         |
 | `task anthropic <n>`    | same, when the work needs web research     | anthropic               | worker         |
 | `task resume [n]`       | resume by number (bare = the picker)       | as recorded             | re-pinned      |
-| `explore <n\|name>`     | research / audit, read-only, temp worktree | judgment's (anthropic)  | judgment       |
+| `explore <n\|name>`     | research / audit, read-only, temp worktree | anthropic, always       | judgment       |
 | `plan [bedrock]`        | daily planning session                     | judgment's, or override | judgment       |
 | `housekeeping`          | upkeep; also the 5-hour-window opener      | anthropic, always       | worker's model |
 | `architect <topic> [b]` | design thread, read-only, temp worktree    | judgment's, or override | judgment       |
@@ -1430,7 +1430,7 @@ at the start of a day. Moving it would silently retire that.
 
 **What a Bedrock launch exports:** `CLAUDE_CODE_USE_BEDROCK=1`,
 `AWS_REGION`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` (the background tier,
-pinned so background sub-turns bill to credits too),
+when `DS_MODEL_BACKGROUND` is set; otherwise it is unset),
 `ENABLE_PROMPT_CACHING_1H=1`, and `AWS_BEARER_TOKEN_BEDROCK` resolved
 from 1Password at launch. An anthropic launch exports none of them —
 **the absence of `CLAUDE_CODE_USE_BEDROCK` IS the seat pin**, which is
@@ -1498,15 +1498,19 @@ are decisions rather than omissions:
   profile when it runs on Bedrock (measured from its request log), so
   an override flips the provider without a second spelling. A
   Bedrock-form id still works on Bedrock; it is just not portable.
-- **The background tier has no substrate variable.** Claude Code sends
-  its background calls — session titles, summaries and similar
-  auxiliary work, whose failure degrades niceties and never task output
-  — to whichever provider the session is on. It is pinned on Bedrock
-  launches only; on the subscription Claude Code's own default is right.
-  Claude Code passes the id through verbatim, so it must be the exact
-  Bedrock profile id, suffix and all, as `models check` reports it.
-- **The auto-mode classifier has no tier.** Claude Code runs it on
-  Sonnet regardless of configuration.
+- **The background tier has no substrate variable.** It is Claude
+  Code's small/fast slot, which its docs illustrate only with session
+  title generation — a failure there degrades a nicety, never task
+  output — and it goes to whichever provider the session is on. It is
+  pinned on Bedrock launches only; on the subscription Claude Code's own
+  default is right, and per the same docs a Bedrock session with
+  `ANTHROPIC_MODEL` set routes background tasks to that model when the
+  slot is unpinned, so an unset value only prints a note. Claude Code
+  passes the id through verbatim, so it must be the exact Bedrock
+  profile id: a dated `-v1:0` suffix where the profile has one, never a
+  window suffix. `models check` checks it verbatim for that reason.
+- **The auto-mode classifier has no tier.** Claude Code chooses its
+  model itself and exposes no setting for it.
 
 `housekeeping` takes the worker tier's **model** but always the
 anthropic substrate, since opening the subscription window is its
@@ -1543,8 +1547,9 @@ as an optional literal word: `task anthropic <n>`, `plan bedrock`,
 judgment tier onto Bedrock in a credit pinch. **Retention:** a
 Fable-class model on Bedrock falls under the account's standing AWS
 human-review opt-in, which is a condition of Fable access and cannot be
-narrowed per model (see `infra/aws/README.md`); Opus traffic is not
-retained under it. The operator accepts that for the pinch. A worker
+narrowed per model (see `infra/aws/README.md`); a model whose allowed
+modes include `none` is not retained under it. The operator accepts
+that for the pinch. A worker
 onto anthropic is rare and exists for one capability reason — web
 search and web fetch are unavailable on Bedrock — so reach for it when
 a task needs live web research, not by habit. `explore` and
@@ -1728,10 +1733,12 @@ drives the real zsh functions.
   subject in their first message, so inventing one would be a guess to
   correct.
 
-  **The judgment tier, with no override word.** Explore work is
-  thinking-heavy, so it runs the top tier like `plan` and `architect`;
-  the ratified pinch override is theirs, so `explore` simply follows
-  `DS_MODEL_JUDGMENT_SUBSTRATE`.
+  **The judgment tier, pinned to the anthropic substrate.** Explore
+  work is thinking-heavy, so it runs the top tier like `plan` and
+  `architect`, but it ignores `DS_MODEL_JUDGMENT_SUBSTRATE` and takes no
+  override word: it writes no substrate marker, so a marker-less
+  `task resume <n>` always resumes it on anthropic, and launching it
+  anywhere else would make that resume switch provider.
 
 - **`explore resume <name>` is RETIRED** — the verb now prints a
   one-line pointer to the plain form rather than launching. Two reasons,

@@ -168,11 +168,19 @@ class TierResolution(SubstrateHarness):
         result, lines = self._tier("worker", env={"DS_MODEL_WORKER": "claude opus"})
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(lines, [])
+        # The reason, so an undefined function or a syntax error cannot pass.
+        self.assertIn("is not a model id", result.stderr)
 
     def test_an_unknown_tier_refuses(self):
         result, lines = self._tier("frontier")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(lines, [])
+        self.assertIn("unknown model tier", result.stderr)
+
+    def test_config_escapes_are_echoed_literally(self):
+        # The refusal echoes operator config, so `print -r`: no escape expands.
+        result, _ = self._tier("worker", env={"DS_MODEL_WORKER_SUBSTRATE": "x\\tbad"})
+        self.assertIn("x\\tbad", result.stderr)
 
     def test_an_unsuffixed_model_on_bedrock_warns_but_is_honored(self):
         # Warn, never refuse: the override is the operator's to make.
@@ -252,16 +260,50 @@ class VerbLaunch(SubstrateHarness):
         self.assertIn("-w eng-7", out)
 
     def test_task_anthropic_and_the_retired_local_alias(self):
-        result, out = self._launch("task anthropic 7")
+        # The marker the launch writes is read raw: `_ds_substrate_read` would
+        # map a stale `seat` to anthropic too, so it cannot tell them apart.
+        marker = 'print -r -- "MARK=$(<$_DS_SUBSTRATE_DIR/eng-7)"'
+        result, out = self._launch(f"task anthropic 7; {marker}")
         self.assertIn("MODEL=work-model[1m] USE=unset", out, result.stderr)
+        self.assertIn("MARK=anthropic", out)
         result, out = self._launch("task local 7")
         self.assertIn("MODEL=work-model[1m] USE=unset", out)
         self.assertIn("`local` is retired", result.stderr)
 
+    def test_task_bedrock_overrides_an_anthropic_worker_config(self):
+        result, out = self._launch(
+            "task bedrock 7",
+            env={**self._TOKEN, "DS_MODEL_WORKER_SUBSTRATE": "anthropic"},
+        )
+        self.assertIn("MODEL=work-model[1m] USE=1", out, result.stderr)
+
     def test_a_bad_config_launches_nothing(self):
-        result, out = self._launch("task 7", env={"DS_MODEL_WORKER_SUBSTRATE": "seat"})
+        # With a token, so a missing-token refusal cannot satisfy it instead.
+        result, out = self._launch(
+            "task 7", env={**self._TOKEN, "DS_MODEL_WORKER_SUBSTRATE": "seat"}
+        )
         self.assertIn("RC=1", out)
         self.assertNotIn("MODEL=", out)
+        self.assertIn("must be anthropic or bedrock", result.stderr)
+
+    def test_explore_is_pinned_to_anthropic_whatever_the_judgment_config(self):
+        # It writes no marker, so a resume always lands on anthropic; launching
+        # it anywhere else would make that resume switch provider.
+        result, out = self._launch(
+            "explore 12",
+            env={**self._TOKEN, "DS_MODEL_JUDGMENT_SUBSTRATE": "bedrock"},
+        )
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+        self.assertIn("-w eng-12", out)
+
+    def test_a_refused_plan_bedrock_login_leaves_no_bedrock_env(self):
+        result, out = self._launch(
+            "_ds_aws_login() { return 1; }; plan bedrock; "
+            'print -r -- "USE=${CLAUDE_CODE_USE_BEDROCK-unset}"',
+            env=self._TOKEN,
+        )
+        self.assertNotIn("MODEL=", out)
+        self.assertIn("USE=unset", out)
 
     def test_housekeeping_runs_the_worker_model_on_anthropic_always(self):
         result, out = self._launch(
@@ -272,6 +314,11 @@ class VerbLaunch(SubstrateHarness):
     def test_architect_takes_the_override_after_the_topic(self):
         result, out = self._launch("architect pricing bedrock", env=self._TOKEN)
         self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
+        result, out = self._launch("architect pricing")
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+        result, out = self._launch("architect pricing local")
+        self.assertIn("RC=1", out)
+        self.assertNotIn("MODEL=", out)
 
     def test_resume_re_pins_a_task_session_on_its_recorded_substrate(self):
         result, out = self._launch(
@@ -284,6 +331,67 @@ class VerbLaunch(SubstrateHarness):
         # rather than the saved default the old resume path fell back to.
         result, out = self._launch("task resume 9")
         self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+
+
+class ModelsVerb(SubstrateHarness):
+    """`models` — the offline table, and `check` against a stubbed `aws`."""
+
+    #: Logs each `aws` argv to a file (`models` discards the call's own output)
+    #: and answers ACTIVE only for `known-*` profiles. `env -u VAR` is stubbed
+    #: to drop its two arguments and run the rest.
+    _AWS = (
+        'aws() { print -r -- "AWS $*" >> "$_DS_REPO/aws.log"; '
+        '[[ "$*" == *known-* ]]; }; '
+        'env() { shift 2; "$@"; }; '
+    )
+
+    def _models(self, args, env=None):
+        result = self._zsh(
+            self._AWS + f'models {args}; print -r -- "RC=$?"; '
+            '[[ -f "$_DS_REPO/aws.log" ]] && print -r -- "$(<$_DS_REPO/aws.log)"',
+            env={**_CONFIG, **(env or {})},
+        )
+        return result, result.stdout
+
+    def test_the_table_is_offline_and_complete(self):
+        result, out = self._models("")
+        self.assertIn("judgment  judge-model[1m]  (anthropic)", out, result.stderr)
+        self.assertIn("worker  work-model[1m]  (bedrock)", out)
+        self.assertIn("background  bg-profile-id", out)
+        self.assertNotIn("AWS ", out)
+        self.assertIn("RC=0", out)
+
+    def test_an_unset_tier_makes_the_table_fail(self):
+        result, out = self._models("", env={"DS_MODEL_WORKER": ""})
+        self.assertIn("judgment  judge-model[1m]", out)
+        self.assertNotIn("worker  ", out)
+        self.assertIn("RC=1", out)
+
+    def test_check_maps_first_party_ids_but_not_background(self):
+        result, out = self._models(
+            "check",
+            env={
+                "DS_MODEL_JUDGMENT": "claude-known-judge[1m]",
+                "DS_MODEL_WORKER": "us.anthropic.known-work",
+                "DS_MODEL_BACKGROUND": "claude-known-bg",
+                "DS_AWS_PROFILE": "admin",
+            },
+        )
+        self.assertIn("ok     judgment us.anthropic.claude-known-judge", out)
+        self.assertIn("ok     worker us.anthropic.known-work", out)
+        # Background is checked verbatim, the way Claude Code passes it.
+        self.assertIn("--inference-profile-identifier claude-known-bg", out)
+        self.assertIn("--profile admin", out)
+        self.assertIn("RC=0", out)
+
+    def test_check_fails_on_an_unknown_profile(self):
+        result, out = self._models(
+            "check", env={"DS_MODEL_JUDGMENT": "claude-missing[1m]"}
+        )
+        self.assertIn("FAIL   judgment us.anthropic.claude-missing", out)
+        # A non-`claude-*`, non-Bedrock id is an alias, reported not failed.
+        self.assertIn("skip   worker work-model[1m]", out)
+        self.assertIn("RC=1", out)
 
 
 class MarkerRoundTrip(SubstrateHarness):

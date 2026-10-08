@@ -430,11 +430,12 @@ curl https://bedrock-mantle.us-east-1.api.aws/v1/data_retention \
 
 Models whose `allowed_modes` include `none` are unaffected by the
 account setting — a more permissive account mode does not cause their
-content to be retained. **That includes the Opus family the worker tier
-runs.** The opt-in was made when Fable 5.1 was the ratified agent
-model, and it is kept because a Fable-class model has to keep working
-without an infrastructure change — `plan bedrock`, the judgment tier's
-credit-pinch override, depends on it. So read the opt-in as removing a
+content to be retained, which is what keeps worker-tier traffic out of
+review while its model allows `none`. The opt-in dates from when
+Fable 5.1 was the ratified agent model, and it is kept because a
+Fable-class model has to keep working without an infrastructure
+change — `plan bedrock`, the judgment tier's credit-pinch override,
+depends on it. So read the opt-in as removing a
 constraint on which models are selectable, not as a statement about
 what happens to Opus traffic.
 
@@ -469,7 +470,8 @@ if throughput headroom ever justifies it.
 ### Launching an agent session
 
 **The `task` verb does this for you** — `.claude/shell/init.zsh` exports
-the whole set below and resolves the key from 1Password at launch. See
+the set below, resolves the key from 1Password at launch, and hands the
+model to `claude` for that one command rather than exporting it. See
 `docs/conventions/local-integrations.md` → "Session helpers" for the
 verb table and the substrate rule that decides which verbs get these
 exports at all. What follows is the equivalent by hand, for debugging a
@@ -478,11 +480,11 @@ launch that misbehaves:
 ```sh
 export CLAUDE_CODE_USE_BEDROCK=1
 export AWS_REGION=us-west-2
-export ANTHROPIC_MODEL="$DS_MODEL_WORKER"
-export ANTHROPIC_DEFAULT_HAIKU_MODEL="$DS_MODEL_BACKGROUND"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="$DS_MODEL_BACKGROUND"  # if set
 export ENABLE_PROMPT_CACHING_1H=1
 export AWS_BEARER_TOKEN_BEDROCK="$(op read \
   --account "$DS_OP_ACCOUNT" "$DS_OP_BEDROCK_REF")"
+ANTHROPIC_MODEL="$DS_MODEL_WORKER" claude
 ```
 
 `DS_OP_BEDROCK_REF` is the `op://` coordinate, defined alongside the

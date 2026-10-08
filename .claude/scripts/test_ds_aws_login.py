@@ -390,12 +390,13 @@ class GatedVerbSurface(unittest.TestCase):
         self.source = INIT.read_text(encoding="utf-8")
 
     def test_plan_and_housekeeping_are_gated(self):
-        for verb in ("plan", "housekeeping"):
-            self.assertIn(
-                "_ds_aws_login '%s' || return 1" % verb,
-                self.source,
-                "%s lost its AWS login gate" % verb,
-            )
+        # `plan` spells the refusal as an `if !` so it can undo a `plan bedrock`'s
+        # exports first; both forms refuse the launch.
+        for gate in (
+            "if ! _ds_aws_login 'plan'; then",
+            "_ds_aws_login 'housekeeping' || return 1",
+        ):
+            self.assertIn(gate, self.source, "lost its AWS login gate: %s" % gate)
 
     def test_the_gate_runs_after_the_seat_guard(self):
         # Ordering matters: the seat guard clears an `AWS_REGION` inherited from a

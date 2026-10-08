@@ -91,7 +91,7 @@ resolve; `architect <topic> bedrock` is the credit-pinch
 override, as for `plan`.
 
 For an architect session specifically: doing long-horizon
-design on the implementation tier is the cheap-tier slip that
+design on the worker tier is the cheap-tier slip that
 pin prevents.
 
 ## Bootstrap: minimal, deliberately
