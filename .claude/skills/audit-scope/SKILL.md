@@ -564,8 +564,8 @@ Optional (ask on a direct run if not provided):
   `docs/conventions/linear-automation.md` → "Fold coupled
   findings into one issue".
 
-- Shell discipline (per `CLAUDE.md`): every command is a
-  single bare call that reduces to an allow-glob — no
-  `&&`, pipes, `$(…)`, redirects, or heredocs; content
-  search routes to the Grep tool (never `git grep`), per
-  the sub-agent brief.
+- Shell discipline (per `CLAUDE.md`): every command is one
+  bare call reducing to an allow-glob — no `&&`, pipes,
+  `$(…)`, redirects, or heredocs; content search goes to
+  Grep or its fallback, never `git grep`, per the
+  sub-agent brief.

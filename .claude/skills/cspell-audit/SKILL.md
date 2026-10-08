@@ -123,13 +123,15 @@ matching entries (still report the rest).
 
 1. **Count usage per word.** For each dictionary word,
    find the distinct files that use it with the **Grep
-   tool** — searching file contents always goes through
-   Grep, never `git grep` (see `CLAUDE.md` → "Shell
-   commands"). Match whole-word and case-insensitive,
-   returning file names only:
+   tool** — where absent, `search_source.py --all-text`
+   (its default set skips prose) or a bare `grep` scoped to
+   source dirs, never the worktrees under `.claude/`; never
+   `git grep` (see `CLAUDE.md` → "Shell commands"). Match
+   whole-word and case-insensitive, returning file names
+   only:
 
    - pattern `\b<word>\b` (word boundaries; cspell
-     lowercases, so set the Grep `-i` flag and `Borsh`
+     lowercases, so search case-insensitively and `Borsh`
      and `borsh` count as one word)
    - output mode: files with matches
 
@@ -158,10 +160,9 @@ matching entries (still report the rest).
 
 1. **Scan escape placement.** Independent of the
    dictionary, audit the inline escapes already in the
-   tree. Find every file that carries one with the **Grep
-   tool** (names only, the literal directive `cspell:word`),
-   then drop `cfg/dictionary.txt` from the hits. Searching
-   contents goes through Grep, never `git grep`.
+   tree. Find every file that carries one (names only, the
+   literal directive `cspell:word`) by the same search
+   route, then drop `cfg/dictionary.txt` from the hits.
 
    Read each hit and flag it as **mis-placed** when its
    escapes aren't already the top block its comment style
@@ -251,10 +252,11 @@ matching entries (still report the rest).
 
 ## Use from `housekeeping`
 
-The `housekeeping` skill runs this check on its periodic
-pass — escape drift is slow, so it's upkeep, not part of
-the `audit` rotation. It invokes `cspell-audit` in delegated
-mode (read-only, no edits) and files the run's violations
+The `housekeeping` skill runs this check only when opted in
+(`housekeeping cspell`) — escape drift is slow, so it's
+upkeep, not part of the `audit` rotation. It invokes
+`cspell-audit` in delegated mode (read-only, no edits)
+and files the run's violations
 as a **single aggregated** issue — **not** one
 issue per finding, because cspell fixes are trivial,
 file-disjoint, and belong in one PR.
