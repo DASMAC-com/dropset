@@ -220,6 +220,317 @@ class LiveCheckTests(unittest.TestCase):
         self.assertIn("collector stack", str(caught.exception))
 
 
+def _var(name, kind, current, **extra):
+    return {"name": name, "type": kind, "current": {"value": current}, **extra}
+
+
+def _frames(*columns, names=None):
+    names = names or [f"c{i}" for i in range(len(columns))]
+    return {
+        "frames": [
+            {
+                "schema": {"fields": [{"name": n} for n in names]},
+                "data": {"values": [list(c) for c in columns]},
+            }
+        ]
+    }
+
+
+class InterpolateTests(unittest.TestCase):
+    def _one(self, values, multi=False, literal=None):
+        return {"v": {"values": values, "multi": multi, "literal": literal}}
+
+    def test_sqlstring_quotes_and_escapes_every_value(self):
+        text = gc.interpolate("x IN (${v:sqlstring})", self._one(["a", "o'k"]))
+        self.assertEqual(text, "x IN ('a','o''k')")
+
+    def test_bare_form_is_raw_for_a_single_select_variable(self):
+        self.assertEqual(gc.interpolate("${v} min", self._one(["15"])), "15 min")
+
+    def test_bare_form_quotes_a_multi_value_variable(self):
+        self.assertEqual(gc.interpolate("${v}", self._one(["a"], multi=True)), "'a'")
+
+    def test_a_custom_all_value_is_inserted_as_a_literal(self):
+        resolved = self._one(["a", "b"], literal="%")
+        self.assertEqual(gc.interpolate("${v:sqlstring}", resolved), "%")
+
+    def test_display_mode_never_quotes_a_title(self):
+        resolved = self._one(["a", "b"], multi=True)
+        self.assertEqual(
+            gc.interpolate("OHLC ${v}", resolved, display=True), "OHLC a,b"
+        )
+
+    def test_bare_form_doubles_single_quotes_without_wrapping(self):
+        self.assertEqual(gc.interpolate("${v}", self._one(["o'k"])), "o''k")
+
+    def test_server_side_macros_and_unknown_names_are_left_alone(self):
+        text = "$__timeFilter(t) AND ${nope}"
+        self.assertEqual(gc.interpolate(text, self._one(["a"])), text)
+
+    def test_an_unsupported_format_is_left_in_place_rather_than_guessed(self):
+        text = "${v:csv}"
+        self.assertEqual(gc.interpolate(text, self._one(["a", "b"], multi=True)), text)
+
+
+class ResolveVariablesTests(unittest.TestCase):
+    def test_chained_query_variables_resolve_in_order(self):
+        # The second query interpolates the first, so order is load-bearing.
+        dashboard = {
+            "templating": {
+                "list": [
+                    _var(
+                        "class", "query", ["$__all"], query="SELECT c", includeAll=True
+                    ),
+                    _var(
+                        "pid", "query", "gone", query="WHERE c IN (${class:sqlstring})"
+                    ),
+                ]
+            }
+        }
+        seen = []
+
+        def run_query(_ds, sql):
+            seen.append(sql)
+            return (["fx", "peg"] if sql == "SELECT c" else ["EUR-USD"]), None
+
+        resolved, rows, problems = gc.resolve_variables(dashboard, {}, run_query)
+        self.assertEqual(seen[1], "WHERE c IN ('fx','peg')")
+        self.assertEqual(resolved["class"]["values"], ["fx", "peg"])
+        self.assertTrue(rows[0]["all"])
+        # A stored selection that no longer exists falls back to the first option.
+        self.assertEqual(resolved["pid"]["values"], ["EUR-USD"])
+        self.assertEqual(problems, [])
+
+    def test_a_custom_variable_reads_its_options_to_replace_a_stale_selection(self):
+        # The stored "99" is not an option, so only a parse of the query — the
+        # `label : value` form included — can produce "5".
+        dashboard = {
+            "templating": {"list": [_var("m", "custom", "99", query="Five : 5,15")]}
+        }
+        resolved, _, _ = gc.resolve_variables(dashboard, {}, None)
+        self.assertEqual(resolved["m"]["values"], ["5"])
+
+    def test_an_all_value_becomes_a_literal_even_with_no_options(self):
+        dashboard = {
+            "templating": {
+                "list": [_var("v", "query", ["$__all"], query="SELECT", allValue="%")]
+            }
+        }
+        resolved, rows, problems = gc.resolve_variables(
+            dashboard, {}, lambda _ds, _sql: ([], None)
+        )
+        self.assertEqual(resolved["v"]["literal"], "%")
+        self.assertEqual(rows[0]["values"], ["%"])
+        self.assertEqual(problems, [])
+
+    def test_an_override_naming_no_variable_is_a_problem(self):
+        dashboard = {"templating": {"list": [_var("m", "custom", "15", query="15")]}}
+        _, _, problems = gc.resolve_variables(dashboard, {"typo": ["1"]}, None)
+        self.assertEqual(problems, ["--var 'typo' names no variable on this dashboard"])
+
+    def test_an_override_wins_over_the_stored_selection(self):
+        dashboard = {"templating": {"list": [_var("m", "custom", "15", query="5,15")]}}
+        resolved, _, _ = gc.resolve_variables(dashboard, {"m": ["60"]}, None)
+        self.assertEqual(resolved["m"]["values"], ["60"])
+
+    def test_a_failing_or_empty_variable_query_is_a_problem(self):
+        dashboard = {"templating": {"list": [_var("v", "query", "", query="SELECT")]}}
+        _, _, problems = gc.resolve_variables(
+            dashboard, {}, lambda _ds, _sql: ([], "pq: boom")
+        )
+        self.assertTrue(any("pq: boom" in p for p in problems))
+        self.assertTrue(any("no values" in p for p in problems))
+
+
+class CheckPanelsTests(unittest.TestCase):
+    DASHBOARD = {
+        "templating": {"list": [_var("pid", "custom", ["a", "b"], query="a,b")]},
+        "panels": [
+            {
+                "id": 100,
+                "type": "row",
+                "panels": [
+                    {
+                        "id": 2,
+                        "title": "Nested",
+                        "targets": [{"refId": "A", "rawSql": "SELECT 2"}],
+                    },
+                ],
+            },
+            {
+                "id": 1,
+                "title": "One ${pid}",
+                "repeat": "pid",
+                "targets": [
+                    {"refId": "A", "rawSql": "WHERE p = ${pid:sqlstring}"},
+                    {"refId": "B", "rawSql": "hidden", "hide": True},
+                ],
+            },
+        ],
+    }
+
+    def _check(self, results_for, panel_id=None, min_rows=1):
+        batches = []
+
+        def run_batch(queries):
+            batches.append(queries)
+            return {q["refId"]: results_for(q["rawSql"]) for q in queries}
+
+        result = gc.check_panels(self.DASHBOARD, panel_id, {}, run_batch, min_rows)
+        return result, batches
+
+    def test_a_repeated_panel_runs_once_per_value_with_it_pinned(self):
+        result, batches = self._check(lambda _sql: _frames([1, 2]), panel_id=1)
+        statements = [q["rawSql"] for batch in batches for q in batch]
+        self.assertEqual(statements, ["WHERE p = 'a'", "WHERE p = 'b'"])
+        self.assertEqual([r["title"] for r in result["panels"]], ["One a", "One b"])
+        self.assertEqual(result["problems"], [])
+
+    def test_a_panel_inside_a_collapsed_row_is_checked(self):
+        result, _ = self._check(lambda _sql: _frames([1]), panel_id=2)
+        self.assertEqual(result["panels"][0]["rows"], 1)
+
+    def test_too_few_rows_and_query_errors_are_problems(self):
+        def results_for(sql):
+            return {"error": "pq: bad"} if "'a'" in sql else _frames([])
+
+        result, _ = self._check(results_for, panel_id=1)
+        self.assertTrue(
+            any("1[a] query A failed: pq: bad" in p for p in result["problems"])
+        )
+        self.assertTrue(any("1[b] query A returned 0" in p for p in result["problems"]))
+
+    def test_min_rows_zero_accepts_an_empty_panel(self):
+        result, _ = self._check(lambda _sql: _frames([]), panel_id=2, min_rows=0)
+        self.assertEqual(result["problems"], [])
+
+    def test_an_unknown_panel_id_names_the_ones_that_exist(self):
+        result, _ = self._check(lambda _sql: _frames([1]), panel_id=9)
+        self.assertTrue(any("have: 2, 1" in p for p in result["problems"]))
+
+    def test_a_variable_query_takes_its_value_field(self):
+        result = _frames(["A", "B"], ["a", "b"], names=["__text", "__value"])
+        self.assertEqual(gc.frame_column(result), ["a", "b"])
+
+
+def _one_panel(targets, variables=(), **panel):
+    return {
+        "templating": {"list": list(variables)},
+        "panels": [{"id": 5, "title": "P", "targets": targets, **panel}],
+    }
+
+
+class PanelEdgeTests(unittest.TestCase):
+    """Each case here is a way a broken panel could otherwise read as passing."""
+
+    def _check(self, dashboard, run_batch, min_rows=1):
+        return gc.check_panels(dashboard, None, {}, run_batch, min_rows)
+
+    def test_unknown_variables_and_unsupported_formats_are_named(self):
+        dashboard = _one_panel(
+            [{"refId": "A", "rawSql": "${nope} ${m:csv}"}],
+            [_var("m", "custom", "1", query="1")],
+        )
+        result = self._check(dashboard, lambda qs: {"A": _frames([1])})
+        self.assertIn("panel 5 refers to unknown variable 'nope'", result["problems"])
+        self.assertIn("panel 5 uses unsupported format ${m:csv}", result["problems"])
+
+    def test_a_panel_with_only_hidden_queries_is_a_problem(self):
+        dashboard = _one_panel([{"refId": "A", "rawSql": "x", "hide": True}])
+        result = self._check(dashboard, lambda qs: self.fail("nothing to run"))
+        self.assertEqual(result["problems"], ["panel 5 has no visible queries"])
+
+    def test_a_missing_result_fails_even_at_min_rows_zero(self):
+        dashboard = _one_panel([{"rawSql": "x"}, {"rawSql": "y"}])
+        sent = []
+
+        def run_batch(queries):
+            sent.extend(q["refId"] for q in queries)
+            return {"Q0": _frames([])}
+
+        result = self._check(dashboard, run_batch, min_rows=0)
+        # Distinct refIds go out, so the two results cannot collide on "A".
+        self.assertEqual(sent, ["Q0", "Q1"])
+        self.assertEqual(
+            result["problems"], ["panel 5 query Q1 returned no result at all"]
+        )
+
+    def test_an_unanswerable_batch_names_its_panel_instead_of_aborting(self):
+        def run_batch(_queries):
+            raise gc.GrafanaCheckError("http://x returned HTTP 400")
+
+        result = self._check(_one_panel([{"refId": "A", "rawSql": "x"}]), run_batch)
+        self.assertEqual(
+            result["problems"],
+            ["panel 5 could not be queried: http://x returned HTTP 400"],
+        )
+
+    def test_a_repeat_over_a_multi_variable_keeps_a_bare_token_quoted(self):
+        dashboard = _one_panel(
+            [{"refId": "A", "rawSql": "p = ${pid}"}],
+            [_var("pid", "custom", ["a"], query="a", multi=True)],
+            repeat="pid",
+        )
+        statements = []
+
+        def run_batch(queries):
+            statements.extend(q["rawSql"] for q in queries)
+            return {"A": _frames([1])}
+
+        self._check(dashboard, run_batch)
+        self.assertEqual(statements, ["p = 'a'"])
+
+    def test_a_query_variable_runs_through_the_batch_as_a_table_query(self):
+        dashboard = _one_panel(
+            [{"refId": "A", "rawSql": "WHERE c = ${c:sqlstring}"}],
+            [_var("c", "query", "x", query="SELECT c", datasource={"uid": "pg"})],
+        )
+        batches = []
+
+        def run_batch(queries):
+            batches.append(queries)
+            if queries[0]["rawSql"] == "SELECT c":
+                return {"A": _frames(["fx"])}
+            return {"A": _frames([1])}
+
+        result = self._check(dashboard, run_batch)
+        variable_query = batches[0][0]
+        self.assertEqual(variable_query["format"], "table")
+        self.assertEqual(variable_query["datasource"], {"uid": "pg"})
+        self.assertEqual(batches[1][0]["rawSql"], "WHERE c = 'fx'")
+        self.assertEqual(result["problems"], [])
+
+
+class FetchJsonTests(unittest.TestCase):
+    def test_a_partial_query_failure_returns_the_results_body(self):
+        # Grafana answers HTTP 400 when ANY query in a batch fails, with every
+        # query's result still in the body; raising would hide which one.
+        body = json.dumps({"results": {"A": {"error": "pq: bad"}}}).encode()
+        error = urllib.error.HTTPError(
+            "http://x/api/ds/query", 400, "Bad Request", {}, io.BytesIO(body)
+        )
+        with mock.patch.object(gc.urllib.request, "urlopen", side_effect=error):
+            payload = gc._fetch_json("http://x/api/ds/query", {"queries": []})
+        self.assertEqual(payload["results"]["A"]["error"], "pq: bad")
+
+    def test_a_400_post_without_results_is_still_an_error(self):
+        error = urllib.error.HTTPError("http://x", 400, "Bad", {}, io.BytesIO(b"{}"))
+        with mock.patch.object(gc.urllib.request, "urlopen", side_effect=error):
+            with self.assertRaises(gc.GrafanaCheckError):
+                gc._fetch_json("http://x", {"queries": []})
+
+    def test_a_400_on_a_plain_get_is_still_an_error(self):
+        error = urllib.error.HTTPError("http://x", 400, "Bad", {}, io.BytesIO(b"{}"))
+        with mock.patch.object(gc.urllib.request, "urlopen", side_effect=error):
+            with self.assertRaises(gc.GrafanaCheckError):
+                gc._fetch_json("http://x")
+
+    def test_a_malformed_var_override_is_a_clear_error(self):
+        with self.assertRaises(gc.GrafanaCheckError):
+            gc.parse_overrides(["missing-equals"])
+        self.assertEqual(gc.parse_overrides(["a=1", "a=2"]), {"a": ["1", "2"]})
+
+
 class CliTests(unittest.TestCase):
     def _run(self, argv):
         out, err = io.StringIO(), io.StringIO()
@@ -271,6 +582,62 @@ class CliTests(unittest.TestCase):
     def test_a_missing_file_is_a_clear_error(self):
         with self.assertRaises(gc.GrafanaCheckError):
             self._run(["static", "--file", "/nonexistent/maker.yml"])
+
+    def test_panel_prints_variables_and_rows_and_gates_on_problems(self):
+        dashboard = {
+            "dashboard": {
+                "templating": {"list": [_var("m", "custom", "15", query="15")]},
+                "panels": [
+                    {
+                        "id": 4,
+                        "title": "T",
+                        "targets": [{"refId": "A", "rawSql": "SELECT ${m}"}],
+                    }
+                ],
+            }
+        }
+
+        def fake_fetch(endpoint, body=None):
+            if body is None:
+                return dashboard
+            self.assertEqual(body["queries"][0]["rawSql"], "SELECT 15")
+            return {"results": {"A": _frames([])}}
+
+        with mock.patch.object(gc, "_fetch_json", side_effect=fake_fetch):
+            code, out, err = self._run(["panel", "--dashboard", "d"])
+        self.assertEqual(code, 1)
+        self.assertIn("var | m | 15", out)
+        self.assertIn("panel | 4 | A | 0 row(s) | T", out)
+        self.assertIn("1 problem(s)", err)
+
+    def test_panel_flags_reach_the_query_batch(self):
+        dashboard = {
+            "dashboard": {
+                "time": {"from": "now-1d", "to": "now-5m"},
+                "templating": {"list": [_var("m", "custom", "15", query="15,60")]},
+                "panels": [
+                    {"id": 4, "targets": [{"refId": "A", "rawSql": "SELECT ${m}"}]},
+                    {"id": 7, "targets": [{"refId": "A", "rawSql": "SELECT 7"}]},
+                ],
+            }
+        }
+        bodies = []
+
+        def fake_fetch(endpoint, body=None):
+            if body is None:
+                return dashboard
+            bodies.append(body)
+            return {"results": {"A": _frames([])}}
+
+        argv = ["panel", "--dashboard", "d", "--panel", "4", "--var", "m=60"]
+        argv += ["--from", "now-2h", "--min-rows", "0"]
+        with mock.patch.object(gc, "_fetch_json", side_effect=fake_fetch):
+            code, _, _ = self._run(argv)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(bodies), 1)  # only the chosen panel runs
+        self.assertEqual(bodies[0]["queries"][0]["rawSql"], "SELECT 60")
+        # --from wins; --to falls back to the dashboard's own window.
+        self.assertEqual((bodies[0]["from"], bodies[0]["to"]), ("now-2h", "now-5m"))
 
 
 class RealRepoFileTests(unittest.TestCase):
