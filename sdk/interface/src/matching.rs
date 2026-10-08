@@ -109,9 +109,10 @@ struct Lvl {
 /// below the market can convert to more base than a `u64` holds, and it is
 /// clamped rather than widened. That is deliberate. It affects depth
 /// display only — [`simulate_swap`] and the engine never make this
-/// conversion, so fills stay exact — and since bids sort best first, the
-/// saturated level is always the last on its side, so every level above it
-/// and its running total is still exact.
+/// conversion, so fills stay exact. Saturating takes a price far below
+/// one atom-ratio, and bids sort best first, so every level above a
+/// saturated one — and the running total through it — is still exact; only
+/// the cumulative figure from the saturated level down is distorted.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BookLevel {
     pub price: Price,
