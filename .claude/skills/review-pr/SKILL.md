@@ -354,8 +354,8 @@ lint-and-CI half without ~2.9M of sub-agent input.
      `cfg/pre-commit-lint.yml` and the workflow (`id:`, `files:`,
      `types_or:`, the invocation). Both are indexes; never read either
      whole (`history.md` → "Config-index reads").
-   - Never hand-verify what the gate owns — least of all with
-     `awk 'length($0)>80'`, which counts bytes (an em-dash is three).
+   - Never hand-verify what the gate owns — least of all an `awk`
+     width check, which counts bytes (an em-dash is three).
 
    **Verify at checkpoints, matched to the edit.** An unchanged tree
    since the last lint → assert, don't re-run. A copy- or comment-only
