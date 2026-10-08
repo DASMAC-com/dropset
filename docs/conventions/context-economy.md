@@ -225,14 +225,15 @@ not re-litigated per session:
 
 Some text is paid for before any tool runs. Three residency classes:
 
-- **A — every turn of every session:** `CLAUDE.md` and every skill's
-  `description`.
+- **A — every turn of every session:** `CLAUDE.md`, every skill's
+  `description`, and the auto-memory `MEMORY.md` index.
 - **B — invocation to session end:** a skill's entry file,
   `.claude/skills/<name>/SKILL.md`.
 - **C — read at a trigger:** sibling files, convention docs, tool
   results. `session-metrics` already ranks these.
 
-`.claude/tools/skill_size.py` caps A and B in bytes as `wc -c` reports
+`.claude/tools/skill_size.py` caps the committed members of A, and B, in
+bytes as `wc -c` reports
 them: **32,000** per entry file (frontmatter and rendered regions
 included), **1,024** per description, **32,000** for `CLAUDE.md`. It runs
 as the `skill-size` lint hook, so CI enforces it.
@@ -247,6 +248,13 @@ an issue. **A raised ceiling is a blocking review finding** — `--write`
 cannot raise one, so a raise was hand-edited. A newly admitted ceiling
 is a warning the review surfaces with its retiring issue, so the
 operator sees every new exception.
+
+The memory index lives under the home directory, which CI does not
+have, so its cap runs in the **local tier**: `.claude/tools/memory_audit.py`
+reports the whole index past **12,000 bytes** and any line past 160
+characters, and `housekeeping` step 8 trims what it reports. **An index
+line is a pointer** — name plus a few-word hook, one line, never
+content; the content lives in the memory file it points at.
 
 Two rules keep the cap from turning into deletion:
 

@@ -237,6 +237,67 @@ class OverLongIndex(unittest.TestCase):
         self.assertEqual([w for _, w in rows], [400, 200])
 
 
+class IndexByteCap(unittest.TestCase):
+    def _sized(self, lines: int) -> Path:
+        names = [f"m{i:03}.md" for i in range(lines)]
+        return _store({n: "" for n in names})
+
+    def test_an_index_past_the_cap_is_reported_with_its_overage(self):
+        memory_dir = self._sized(40)
+        size = (memory_dir / "MEMORY.md").stat().st_size
+        result = audit(memory_dir, _repo([]), max_index_bytes=size - 10)
+        self.assertEqual(result["index_bytes"], size)
+        row = next(r for r in render(result, 3) if r.startswith("index-over-cap"))
+        self.assertIn(f"{size} bytes, 10 past", row)
+
+    def test_an_index_at_the_cap_is_not_reported(self):
+        memory_dir = self._sized(40)
+        size = (memory_dir / "MEMORY.md").stat().st_size
+        out = render(audit(memory_dir, _repo([]), max_index_bytes=size), 3)
+        self.assertFalse(any(r.startswith("index-over-cap") for r in out))
+        self.assertIn(f"index {size}/{size} bytes", out[-1])
+
+    def test_bytes_not_characters_are_counted(self):
+        # The em-dash in every hook is three UTF-8 bytes; `wc -c` and the
+        # skill-size cap both count bytes, so a character count under-reports.
+        memory_dir = self._sized(1)
+        text = (memory_dir / "MEMORY.md").read_text(encoding="utf-8")
+        result = audit(memory_dir, _repo([]))
+        self.assertEqual(result["index_bytes"], len(text) + 2)
+
+    def test_the_default_cap_is_twelve_thousand_bytes(self):
+        # The figure the housekeeping skill and context-economy doc both cite.
+        result = audit(self._sized(1), _repo([]))
+        self.assertEqual(result["max_index_bytes"], 12_000)
+
+    def test_an_absent_index_is_zero_bytes_and_not_over_cap(self):
+        memory_dir = self._sized(1)
+        (memory_dir / "MEMORY.md").unlink()
+        result = audit(memory_dir, _repo([]))
+        self.assertEqual(result["index_bytes"], 0)
+        self.assertFalse(any(r.startswith("index-over-cap") for r in render(result, 3)))
+
+    def test_crlf_line_endings_do_not_widen_index_lines(self):
+        # The index is read as bytes for the cap, but `splitlines` still
+        # treats `\r\n` as one boundary — a CRLF index measures as LF did.
+        # The line is exactly 159 chars, so a kept `\r` would push it over.
+        line = "- [a](a.md) — " + "x" * 145
+        self.assertEqual(len(line), 159)
+        memory_dir = _store({"a.md": ""}, line)
+        text = (memory_dir / "MEMORY.md").read_text(encoding="utf-8")
+        (memory_dir / "MEMORY.md").write_bytes(text.replace("\n", "\r\n").encode())
+        result = audit(memory_dir, _repo([]), max_index_line=159)
+        self.assertEqual(result["over_long_index_lines"], 0)
+
+    def test_the_cli_flag_sets_the_cap(self):
+        memory_dir = self._sized(5)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = run(["memory_audit.py", str(memory_dir), "--max-index-bytes", "1"])
+        self.assertEqual(rc, 0)
+        self.assertIn("index-over-cap", out.getvalue())
+
+
 class SupersededHeuristic(unittest.TestCase):
     def test_two_memories_sharing_an_eng_stem_are_a_candidate(self):
         memory_dir = _store(
