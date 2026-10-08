@@ -14,6 +14,11 @@
 //! seeds a market maker. Non-admin callers must pass the
 //! [`Address::default()`] sentinel (or their own pubkey) — any other
 //! value is rejected with [`DropsetError::LeaderOverrideNotAllowed`].
+//!
+//! A leader may lead at most one live vault per market: if any sector
+//! that is neither frozen nor tombstoned already carries the resolved
+//! leader, the call fails with [`DropsetError::LeaderAlreadyLeadsVault`],
+//! on the override path included.
 
 use anchor_lang_v2::{address_eq, prelude::*};
 // `associated_token::{self, ...}` keeps the module in scope so the
@@ -136,6 +141,23 @@ impl CreateVault {
         } else {
             payer_addr
         };
+
+        // One live vault per leader per market. Fills route by market
+        // alone, so a second leader-owned sector would silently clobber
+        // the maker's inventory accounting; this makes the routing
+        // invariant true by construction. Frozen and tombstoned vaults
+        // don't count — a stranded depositor on a tombstone (reclaimed
+        // only on the last draining withdraw) must not lock the leader
+        // out of the market, and a frozen leader may re-enter. Applies
+        // on the admin `leader_override` path too. O(slab), slab ≤ 255,
+        // cold path.
+        require!(
+            !self.market.as_slice().iter().any(|v| v.is_occupied()
+                && !v.tombstoned.get()
+                && !v.frozen.get()
+                && address_eq(&v.leader, &leader)),
+            DropsetError::LeaderAlreadyLeadsVault
+        );
 
         // Charge the create-vault fee unless the signer is an admin.
         if !is_admin {

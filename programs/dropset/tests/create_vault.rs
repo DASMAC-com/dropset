@@ -1,7 +1,8 @@
 //! `create_vault` integration tests — admin leader-override path,
 //! non-admin fee path, the perf-fee bound, the cap-exceeded gate, the
-//! quote-authority guard, active-DLL linkage, and the `seq` vault-number
-//! stamp across the vault lifecycle. All built on the
+//! quote-authority guard, active-DLL linkage, the `seq` vault-number
+//! stamp across the vault lifecycle, and the one-live-vault-per-leader
+//! guard. All built on the
 //! shared [`Fixture`].
 
 mod common;
@@ -77,15 +78,16 @@ fn non_admin_pays_create_vault_fee() {
 #[test]
 fn rejects_vault_cap_exceeded() {
     let mut f = Fixture::bootstrap();
-    // Default cap is 10. Vary perf_fee_rate per call so the
-    // transactions aren't byte-identical (LiteSVM dedups signatures).
+    // Default cap is 10. Each vault gets its own leader (one live vault
+    // per leader per market), which also keeps the transactions from
+    // being byte-identical (LiteSVM dedups signatures).
     for i in 0..10u32 {
-        f.create_vault(i, f.authority.pubkey(), false, Pubkey::default())
+        f.create_vault(i, f.authority.pubkey(), false, Keypair::new().pubkey())
             .expect("vault within cap");
     }
     assert_eq!(f.market_header().active_count.get(), 10);
     let err = f
-        .create_vault(10, f.authority.pubkey(), false, Pubkey::default())
+        .create_vault(10, f.authority.pubkey(), false, Keypair::new().pubkey())
         .expect_err("the 11th vault must exceed the cap");
     common::assert_program_error(&err, DropsetError::VaultCapExceeded);
 }
@@ -111,8 +113,8 @@ fn vault_lands_at_active_head_and_increments_count() {
     );
     assert_eq!(f.market_header().active_count.get(), 1);
 
-    // Second vault (distinct perf so the txn differs) is prepended.
-    f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
+    // Second vault, under a second leader, is prepended.
+    f.create_vault(1, f.authority.pubkey(), false, Keypair::new().pubkey())
         .expect("second vault");
     assert_eq!(
         f.market_header().head.get(),
@@ -133,7 +135,7 @@ fn seq_counts_up_from_one_per_market() {
 
     f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
         .expect("first vault");
-    f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
+    f.create_vault(1, f.authority.pubkey(), false, Keypair::new().pubkey())
         .expect("second vault");
 
     assert_eq!(f.vault(0).seq.get(), 1, "first vault on a market is #1");
@@ -177,4 +179,54 @@ fn seq_survives_lifecycle_until_sector_reuse() {
     assert_eq!(f.market_header().head.get(), 0, "free sector 0 reused");
     assert_eq!(f.vault(0).seq.get(), 2, "reuse stamps a new identity");
     assert_eq!(f.market_header().next_vault_seq.get(), 2);
+}
+
+#[test]
+fn second_live_vault_for_the_same_leader_rejects() {
+    let mut f = Fixture::bootstrap();
+    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
+        .expect("first vault");
+    let err = f
+        .create_vault(1, f.authority.pubkey(), false, Pubkey::default())
+        .expect_err("a leader may lead one live vault per market");
+    common::assert_program_error(&err, DropsetError::LeaderAlreadyLeadsVault);
+    assert_eq!(f.market_header().active_count.get(), 1);
+}
+
+#[test]
+fn admin_override_is_guarded_too() {
+    let mut f = Fixture::bootstrap();
+    let foreign = Keypair::new();
+    f.create_vault(0, foreign.pubkey(), false, foreign.pubkey())
+        .expect("admin seats the foreign leader");
+    let err = f
+        .create_vault(1, foreign.pubkey(), false, foreign.pubkey())
+        .expect_err("the override path cannot seat a second live vault");
+    common::assert_program_error(&err, DropsetError::LeaderAlreadyLeadsVault);
+}
+
+#[test]
+fn leader_may_reenter_once_its_vault_is_tombstoned() {
+    // `seeded` leaves a funded vault on sector 0; tombstoning it keeps
+    // the sector occupied (shares outstanding) but no longer live.
+    let mut f = Fixture::seeded(1_000_000, 1_000_000);
+    let leader = f.authority.insecure_clone();
+    f.close_vault(&leader, 0).expect("tombstone");
+    assert!(f.vault(0).tombstoned.get());
+
+    f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
+        .expect("a tombstoned vault does not count against the leader");
+    assert_eq!(f.market_header().active_count.get(), 1);
+}
+
+#[test]
+fn leader_may_reenter_once_its_vault_is_frozen() {
+    let mut f = Fixture::seeded(1_000_000, 1_000_000);
+    let admin = f.authority.insecure_clone();
+    f.freeze_vault(&admin, 0).expect("freeze");
+    assert!(f.vault(0).frozen.get());
+
+    f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
+        .expect("a frozen vault does not count against the leader");
+    assert_eq!(f.market_header().active_count.get(), 2);
 }
