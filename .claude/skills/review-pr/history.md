@@ -41,14 +41,15 @@ the resident-size gate (`docs/conventions/context-economy.md` →
 - **Hand-rolled rebase triage.** One session ran the same `fetch` →
   `log` → two `diff --name-only` → intersect-by-eye chain three times
   as `main` moved 15 commits (≈10k of deterministic git output), and
-  re-ran the full suite each time, twice provably redundantly. The
-  committed reporter's first version then read the tip with
-  `git rev-parse origin/<base>` "before the fetch" and got it wrong on
-  its own first run: worktrees share one `.git`, so a sibling's fetch (or this
-  session's `init-pr` fetch hours earlier) had already advanced the
-  ref, and the tool reported a 0-commit delta for a base that had
-  demonstrably moved. The merge-base is correct regardless of who
-  fetched when.
+  re-ran the full suite each time, twice provably redundantly.
+- **Merge-base, not the tip.** A separate incident: the step's own
+  instruction once captured the tip with `git rev-parse origin/<base>`
+  "before the fetch" and handed that to the reporter's `--from`, and it
+  got it wrong on its own first run: worktrees share one `.git`, so a
+  sibling's fetch (or this session's `init-pr` fetch hours earlier)
+  had already advanced the ref, and the tool reported a 0-commit delta
+  for a base that had demonstrably moved. The merge-base is correct
+  regardless of who fetched when.
 - **Empty-overlap re-runs.** On one docs-only PR the base moved four
   times with an empty overlap every time, and the session still paid
   three `review_diff.py` re-runs and two full lints.
@@ -57,7 +58,8 @@ the resident-size gate (`docs/conventions/context-economy.md` →
   touched only `decks/**`: the overlap was empty and the rule as written
   said assert. That run re-ran lint on judgement and passed; had it not,
   the PR would have gone to CI red with a local green in hand. It is a
-  correctness carve-out to a skip rule, the same shape as the
+  correctness carve-out to a skip rule (re-running lint costs
+  wall-clock, not tokens), the same shape as the
   `programs/**` and lockfile carve-outs, and not a loosening of the
   freshness gate, which caught a real defect in that same session.
 - **Stale program after rebase.** A scoped `cargo test` after a rebase
@@ -110,24 +112,28 @@ the resident-size gate (`docs/conventions/context-economy.md` →
   identical re-runs after `biome` reformatting were a meaningful share
   of 3.6k / 10 scoped-lint and 900 / 5 `make lint` calls. An unwrapped
   scoped `pre-commit run` prints all 24 hook lines, ~20 of them skipped
-  (≈675 tokens; four runs ≈2k). What finally moved the reflex was
+  (≈675 tokens; four runs ≈2k). The runs were already wrapped, so the
+  cost was failure tails and wrapping harder buys nothing; it is the
+  most-missed rule in step 4. What finally moved the reflex was
   `lint_paths.py --changed`: the full sweep needed no arguments while
   the scoped one needed a hand-built file list.
 - **Serial spelling rounds.** Session a252a9d3 (PR #391): five Rust
   crates plus one doc, adding several hundred lines of doc comments (a
   module header, seventeen documented public constants, a new error enum
-  with per-variant docs). It tripped cspell on two full runs — three
-  unknown words, then two, one British — so two of its five
-  `make lint` calls were spelling alone; it skipped the pre-flight
-  because the diff did not look like prose. Others: two rounds of three
-  British `-our` / `-ise` variants each; four words then two more, all
-  six authored by the session and three of the first four British;
-  three serial rounds for three words; 26 `make lint` runs (~12.8k of
-  failure tails) on one prose-heavy change. Coinages: four rounds on one
-  change, every word a self-inflicted verb form, each reword producing
-  the next round's word (round trips, not context — the runs were
-  wrapped). Three British words tripped the hook while the rule itself
-  was being written.
+  with per-variant docs, long comments on two failure modes). It
+  tripped cspell on two full runs — three unknown words, then two, one
+  British — so two of its five `make lint` calls were spelling alone;
+  it skipped the pre-flight because the diff did not look like prose.
+  Others: two rounds of three British `-our` / `-ise` variants each;
+  four words then two more, all six authored by the session and three
+  of the first four British; three serial rounds for three words; 26
+  `make lint` runs (~12.8k of failure tails) on one prose-heavy change.
+  The pre-flight is a different lever from scoping the lint: a scoped
+  run fails identically on an unknown word, so only finding them all at
+  once helps. Coinages: four rounds on one change, every word a
+  self-inflicted verb form, each reword producing the next round's word
+  (round trips, not context — the runs were wrapped). Three British
+  words tripped the hook while the rule itself was being written.
 - **Lint workflow beyond the hooks.** Two failures in opposite
   directions. A diff added a sixth Grafana alert rule and left two stale
   counts in the file's comments: `make lint` passed, and CI came back
@@ -170,9 +176,9 @@ the resident-size gate (`docs/conventions/context-economy.md` →
   single-file edits that could not change a type; `make decks-build`
   ×11 as an inner-loop check (its README calls it a pre-commit check),
   mostly after copy-only edits; `pnpm -C decks check` ×19 across ~15
-  rounds, including after comment-only changes. After grep, it was the
-  top repeated shape in both of those sessions. The narrow
-  `tools-tests` form cost 32 calls / ≈7.1k against 15 calls / 516
+  rounds, including after comment-only changes — both on visual PRs.
+  After grep, it was the top repeated shape in both of those sessions.
+  The narrow `tools-tests` form cost 32 calls / ≈7.1k against 15 calls / 516
   tokens for the whole suite, and missed two sibling tests the edits
   had broken (`docs/conventions/context-economy.md`).
 
