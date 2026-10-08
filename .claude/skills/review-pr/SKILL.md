@@ -63,11 +63,7 @@ without eight agents and ~2.9M of sub-agent input.
 1. **Locate the PR.**
 
    ```sh
-   git branch --show-current
-   ```
-
-   ```sh
-   gh pr view <branch> --json number,title,state,isDraft,baseRefName
+   gh pr view --json number,title,state,isDraft,baseRefName
    ```
 
    No PR (`gh` exits non-zero, "no pull requests found") → stop and
@@ -95,8 +91,8 @@ without eight agents and ~2.9M of sub-agent input.
 
 1. **Clean tree, then rebase onto the PR's base.** If `git status`
    shows uncommitted changes, stop and tell the user to commit (or
-   `/commit-changes`). Capture the merge-base **before** fetching —
-   the triage below needs it — then rebase:
+   `/commit-changes`). Capture the merge-base **before** fetching (the
+   triage needs it), then rebase:
 
    ```sh
    git merge-base HEAD origin/<base>
@@ -142,7 +138,7 @@ without eight agents and ~2.9M of sub-agent input.
    **Triage what the base gained**, from the merge-base captured above
    — never `git rev-parse origin/<base>`, a shared ref another session's
    fetch may already have advanced, which reports a false 0-commit
-   all-clear:
+   all-clear (`history.md` → "Merge-base, not the tip"):
 
    ```sh
    python3 .claude/tools/rebase_overlap.py --from <mb> --to origin/<base>
@@ -152,10 +148,8 @@ without eight agents and ~2.9M of sub-agent input.
    own files, their **overlap**, and the `runs_artifact_gates` /
    `runs_rust_suites` predicates steps 9 and 11 use to decide what a
    rebase-forced re-run may skip (`history.md` → "Hand-rolled rebase
-   triage"). Then:
-
-   The rebase and every freshness gate always run (a skipped rebase
-   yields phantom hunks); only the re-runs vary:
+   triage"). The rebase and every freshness gate always run (a skipped
+   rebase yields phantom hunks); only the re-runs vary:
 
    - **Empty overlap → assert, don't re-run.** `review_diff.py` and
      `make lint` provably cannot change their answer on files the delta
@@ -180,11 +174,11 @@ without eight agents and ~2.9M of sub-agent input.
      does not count (`history.md` → "Stale node_modules after rebase").
    - **A hot surface** (overlap with several open PRs, per
      `review_diff.py --overlap`; agent-infra is one) predicts repeated
-     rebases in the tail. Advisory, for a narrower *next* PR; the signal
+     rebases and re-runs. Advisory, for a narrower *next* PR; the signal
      is overlap, not size (`history.md` → "Hot-surface tails").
 
-   **Key a skip to content, not a SHA** (an amend or rebase moves the
-   SHA, not the bytes): record after a green `make lint`, check before
+   **Key a skip to content, not a SHA** (an amend or no-overlap rebase
+   moves the SHA, not the bytes): record after a green `make lint`, check before
    any re-run:
 
    ```sh
@@ -202,8 +196,8 @@ without eight agents and ~2.9M of sub-agent input.
    or a live service.
 
 1. **Check the Linear task, mark it In Progress, and tick what's
-   done.** Autonomous runs tend to ship part of a checklist, so confirm
-   the diff delivers all of it before reviewing anything else.
+   done.** Autonomous runs ship partial checklists; confirm the diff
+   delivers all of it before reviewing anything else.
 
    - **Resolve the tag** from the PR title scope (`type(ENG-###): …`),
      falling back to the branch name (the two share one number). If
@@ -290,9 +284,9 @@ without eight agents and ~2.9M of sub-agent input.
    (`history.md` → "Full-sweep loops").
 
    **Spelling pre-flight before the first full run** whenever the diff
-   adds any comment, doc comment or markdown — the shape of the
-   addition, not the file extension, so a doc-heavy `.rs` change
-   counts:
+   adds any comment, doc comment or markdown. The trigger is the SHAPE
+   of what the diff adds, not the file extension, so a doc-heavy `.rs`
+   change counts:
 
    ```sh
    python3 .claude/tools/run_quiet.py -- \
