@@ -687,7 +687,7 @@ collectors-down: check-docker
 		$(PYTH_SERVICES) $(KEYED_SERVICES)
 
 # Grafana alone, on http://localhost:3200, serving the provisioned
-# market-data ingestion dashboard (market-data/grafana/, docs/data-feeds.md
+# dashboards (market-data/grafana/, docs/data-feeds.md
 # §8). Useful without any collector running: the dashboards read whatever
 # history is on the volume, so this is also how you look at yesterday's
 # candles. Add `?kiosk` to the URL for a chrome-free screenshare.
@@ -880,8 +880,8 @@ FX_UP = $(FX_COMPOSE) up -d --build --quiet-pull postgres migrate \
 # until the operator acknowledges it. That target is the whole reason the
 # banner has to be loud and the only place it is not: `demo` opens a Grafana
 # tab on the next line — taking window focus — and the TUI takes the
-# alternate screen on the line after, so the warning is behind a green
-# dashboard within a second of printing and does not resurface until quit.
+# alternate screen on the line after, so the warning is behind the Grafana
+# tab within a second of printing and does not resurface until quit.
 # Every other caller prints and carries on.
 #
 # Gated on stdin being a tty as well, so a script, a CI job or a backgrounded

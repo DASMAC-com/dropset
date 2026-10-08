@@ -1588,10 +1588,7 @@
   "preload": false,
   "refresh": "10s",
   "schemaVersion": 39,
-  "tags": [
-    "maker",
-    "market-data"
-  ],
+  "tags": [],
   "templating": {
     "list": [
       {

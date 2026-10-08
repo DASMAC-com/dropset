@@ -1428,10 +1428,7 @@
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": [
-    "market-data",
-    "ingestion"
-  ],
+  "tags": [],
   "templating": {
     "list": [
       {
