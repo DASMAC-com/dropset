@@ -388,6 +388,34 @@ over-read:**
   filter can only ever suppress, so a stray quote must not become a way
   to hide a command behind it.
 
+  **The force-push patterns widen that allowlist to prose commands** —
+  `git commit` / `tag` / `notes` (with only `-C <path>` before the
+  subcommand, since `-c core.editor=…` runs the message file),
+  `gh pr` / `issue` / `release` / `api`, and `echo` — not `printf`,
+  whose zsh `-v` evaluates a subscript. A commit message that merely
+  quoted a push to `main`
+  hit the deny tier, so the only way through was rewording it. Quotes are
+  tracked over the whole command, so a multi-line message's body lines
+  are covered too. The gate is an allowlist of prose **subcommands**, not
+  a test of whether `git` sits at command position. A position test
+  would have to enumerate every executor that runs its unquoted argv
+  (`ssh`, `timeout`, `xargs`, `find -exec`) and fails open on a missed
+  one, while a missed prose command only fails closed.
+
+  **Both carve-outs trust quote tracking only on PLAIN quoting**, and
+  that test is a character allowlist too (`plain_quoting`). Outside the
+  quotes a command may use only letters, digits, whitespace and
+  `./:=@%+,-`. Inside double quotes the only `$` allowed is a plain
+  `$NAME` / `${NAME}`, with no backtick or backslash. Every quote must
+  close. Anything else, and nothing is suppressed. A denylist of
+  dangerous constructs lost three rounds of adversarial review in a row:
+  substitutions, quotes nested in an expansion, an escaped brace, zsh's
+  `=(…)` and glob qualifiers, a heredoc, and `$'…'` each either ran a
+  quoted string or made a wrongly paired quote hide a real push on a
+  later line. A construct nobody has thought of yet now fails closed.
+  `eval`, `xargs`, `source` and `sh` / `bash` / `zsh` outside the quotes
+  disable suppression as before.
+
 Two implementation notes worth keeping, because both were found by the
 script's own self-test rather than in review:
 
