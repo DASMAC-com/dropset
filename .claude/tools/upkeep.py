@@ -91,6 +91,8 @@ TIMEOUT_TOOL = 120
 MINE_SESSIONS = 8
 MAX_NOTIFICATION_LOOKUPS = 20
 
+NOTIFICATIONS_PATH = "/notifications?all=true&per_page=50"
+
 RESOLVED_TYPES = ("completed", "canceled")
 BRANCH_RE = re.compile(r"^eng-(\d+)$")
 PR_URL_RE = re.compile(r"/repos/DASMAC-com/dropset/pulls/(\d+)$")
@@ -286,7 +288,9 @@ def step_prs(ctx: Ctx) -> None:
 
     notifications: list[tuple[str, int]] = []
     try:
-        raw = _gh_json(ctx, ["api", "/notifications"])
+        # `all=true`: the default lists UNREAD threads only, and a thread read
+        # but never marked done still sits in the inbox.
+        raw = _gh_json(ctx, ["api", NOTIFICATIONS_PATH])
         for n in raw or []:
             m = PR_URL_RE.search(((n.get("subject") or {}).get("url")) or "")
             if m:

@@ -185,7 +185,7 @@ class FakeRun:
                 json.dumps([{"number": 13, "headRefName": "eng-13", "state": "OPEN"}]),
                 "",
             )
-        if cmd[:3] == ["gh", "api", "/notifications"]:
+        if cmd[:2] == ["gh", "api"] and cmd[2].startswith("/notifications?all=true"):
             return (
                 0,
                 json.dumps(
