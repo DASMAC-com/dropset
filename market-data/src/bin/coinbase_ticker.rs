@@ -36,11 +36,11 @@ const SOURCE: &str = "coinbase";
 
 /// The two demo-roster tokens Coinbase lists against USDC.
 ///
-/// Both are rostered and both produce. `AUDD-USDC` is thinly traded — re-checked
-/// 2026-10-08, it prints most hours but not every one — and a ticker poll
-/// returns the last print whether or not one happened recently, so a fresh row
-/// here is not a fresh trade. `limit_only` constrains trading on the venue, not
-/// this collector.
+/// Both are rostered and both produce. `AUDD-USDC` is thinly traded: re-checked
+/// 2026-10-08, it traded in fewer than half of the preceding four weeks' hours.
+/// A ticker poll returns the last print whether or not one happened recently,
+/// so a fresh row here is not a fresh trade. `limit_only` constrains trading on
+/// the venue, not this collector.
 ///
 /// History, because it explains the pair's gap in the stored series: it went
 /// quiet on 2026-08-17 and was then de-rostered by config. The venue went quiet

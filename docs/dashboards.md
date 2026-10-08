@@ -576,7 +576,7 @@ Both directions of drift are real, so both checks are worth running.
    And the pair is thin, not dead. Re-rostering was first verified on
    the **ticker** leg only (a print at 0.71805); the **candle** leg was
    measured on 2026-10-08, when the venue's hourly endpoint returned a
-   bucket for most hours of the preceding ~19 days but not every one.
+   bucket for fewer than half the hours of the preceding four weeks.
    Candles come from trades, so an hour without a trade is a
    true-and-expected blank, which §4 still cannot render distinctly
    (item 10).
