@@ -9,17 +9,28 @@
 //! crossed.
 //!
 //! Used by the router quoting adapters (e.g. DFlow) and any depth/quote
-//! endpoint. The consensus-critical arithmetic — flush-level pricing, the
-//! size-bps fill cap, the price-time sort key — is shared with the
-//! on-chain engine via [`crate::matching_math`], so only the iteration /
-//! IO around it (reconstructing a book vs. walking the live slab) is
-//! distinct here. That residual seam is pinned to the engine by the
-//! shared conformance vectors (see `sdk/conformance`).
+//! endpoint. Part of the consensus-critical logic is shared with the
+//! on-chain engine *by construction* via [`crate::matching_math`]:
+//! flush-level pricing, the size-bps fill cap, the price-time sort key,
+//! both fees, the limit-price checks and the level-liveness gate.
+//!
+//! The rest is **not** shared. Besides the iteration / IO (reconstructing
+//! a book vs. walking the live slab), the per-leg sizing kernel — the
+//! three-cap min, the taker-bound test, the reverse conversion, the
+//! zero-input guard and the skip / exhausted / residue split — is
+//! duplicated arithmetic, written once here and once in `swap.rs`
+//! `compute_fill`, and held equal by test rather than by construction.
+//! The test that ties it to the engine is the litesvm differential in
+//! programs/dropset/tests/sdk_conformance.rs. The shared conformance
+//! vectors (see `sdk/conformance`) pin the WASM binding and the TS
+//! clients to *this* native matcher, not to the program; only the price
+//! vectors also reach the program, through its `price_conformance.rs`.
 
 use crate::clock::{SlotTime, WallTime};
 use crate::layout::{MarketView, Vault, BPS, N_LEVELS};
 use crate::matching_math::{
-    flush_level_price, level_fill_atoms, platform_fee_atoms, sort_key, taker_fee_atoms,
+    crosses_limit, flush_level_price, level_fill_atoms, level_is_live, limit_price_ok,
+    platform_fee_atoms, sort_key, taker_fee_atoms,
 };
 use crate::price::Price;
 
@@ -91,6 +102,16 @@ struct Lvl {
 /// (Internally an ask carries base atoms and a bid carries quote atoms;
 /// [`resting_levels`] normalizes the bid leg to base at the level price so
 /// both sides are comparable.)
+///
+/// `size` is therefore base-denominated on **both** sides — unlike the
+/// layout's per-level `size` fields, which carry each side's own leg.
+/// A bid's base figure **saturates at `u64::MAX`**: one quoted far enough
+/// below the market can convert to more base than a `u64` holds, and it is
+/// clamped rather than widened. That is deliberate. It affects depth
+/// display only — [`simulate_swap`] and the engine never make this
+/// conversion, so fills stay exact — and since bids sort best first, the
+/// saturated level is always the last on its side, so every level above it
+/// and its running total is still exact.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BookLevel {
     pub price: Price,
@@ -122,11 +143,21 @@ pub struct BookLevel {
 /// with a truncating division at each step: netting it off outside would
 /// round differently and drift the quote from execution by a few atoms.
 ///
-/// A rate above the market's `max_platform_fee` returns an empty [`Quote`]
-/// rather than a clamped one — the engine hard-rejects that swap
-/// (`PlatformFeeTooHigh`), so quoting a fill it would refuse is the one
-/// answer guaranteed to be wrong. Same "refuse to quote" convention the
-/// corrupt-DLL and overflow paths already use.
+/// Every up-front rejection the engine makes on these arguments returns an
+/// empty [`Quote`] rather than a best-effort one — quoting a fill the
+/// engine would refuse is the one answer guaranteed to be wrong. Mirrored
+/// from `swap.rs`, in its order:
+///
+/// - `limit_price` not a valid encoding (`InvalidPrice`);
+/// - `limit_price` the wrong side's sentinel — [`Price::ZERO`] on a Buy,
+///   [`Price::INFINITY`] on a Sell (`InvalidLimitPrice`);
+/// - `amount_in == 0` (`InvalidAmountIn`);
+/// - a rate above the market's `max_platform_fee` (`PlatformFeeTooHigh`).
+///
+/// The engine's remaining up-front checks have nothing to mirror here: the
+/// side discriminant is a typed [`SwapSide`], and the platform-fee accounts
+/// are a transaction-building concern. Same "refuse to quote" convention
+/// the corrupt-DLL and overflow paths already use.
 pub fn simulate_swap(
     market: &MarketView<'_>,
     side: SwapSide,
@@ -136,11 +167,14 @@ pub fn simulate_swap(
     now_unix: WallTime,
     platform_fee_bps: u16,
 ) -> Quote {
+    let is_buy = side == SwapSide::Buy;
+    if !limit_price.is_valid() || !limit_price_ok(limit_price, is_buy) || amount_in == 0 {
+        return Quote::default();
+    }
     let taker_fee_ppm = market.header.taker_fee.get() as u128;
     if platform_fee_bps > market.header.max_platform_fee.get() {
         return Quote::default();
     }
-    let is_buy = side == SwapSide::Buy;
 
     // Reconstruct the chosen side's book in cross-vault price-time priority.
     // `None` means the book is in a state the engine hard-rejects (a corrupt
@@ -165,12 +199,7 @@ pub fn simulate_swap(
         }
         // Limit-price filter — levels are best-first, so the first cross
         // means every remaining level crosses too.
-        let crosses = if is_buy {
-            lvl.price.as_u32() > limit_price.as_u32() && !limit_price.is_infinity()
-        } else {
-            lvl.price.as_u32() < limit_price.as_u32() && !limit_price.is_zero()
-        };
-        if crosses {
+        if crosses_limit(lvl.price, limit_price, is_buy) {
             break;
         }
 
@@ -346,7 +375,8 @@ pub fn simulate_swap(
 ///
 /// Each [`BookLevel`]'s `size` is normalized to **base atoms** — an ask
 /// carries base atoms directly, a bid's matchable quote leg is converted to
-/// base at the level price — so the two sides are directly comparable. An
+/// base at the level price, saturating at `u64::MAX` (see [`BookLevel`]) —
+/// so the two sides are directly comparable. An
 /// empty `Vec` means either no live levels or a book the engine would reject
 /// (a router must not show depth the engine won't fill).
 pub fn resting_levels(
@@ -400,8 +430,11 @@ pub fn resting_levels(
 /// nothing while the rest of the book still matches, and this collector
 /// mirrors that by skipping the offending vault's contribution on the
 /// collected side (see [`flush_side_sum_exceeds_bps`]) rather than returning
-/// `None`. Both conditions are only reachable from account bytes the program
-/// never wrote — see [`MarketView::active_dll_is_corrupt`].
+/// `None`. The two conditions are reachable differently: a corrupt DLL only
+/// from account bytes the program never wrote (see
+/// [`MarketView::active_dll_is_corrupt`]), but an oversized flush side from
+/// an ordinary, correctly-signed profile write, since the profile is stored
+/// raw.
 fn collect_side_levels(
     market: &MarketView<'_>,
     is_buy: bool,
@@ -415,11 +448,10 @@ fn collect_side_levels(
     let mut levels: Vec<Lvl> = Vec::new();
     for (sector, v) in market.active_vaults() {
         let reference = v.reference_price.price();
-        // Skip vaults the matcher won't touch: invalid/sentinel ref price or
-        // frozen (frozen vaults stay on the active DLL but are skipped from
-        // the matching set — see swap.rs).
-        if !reference.is_valid() || reference.is_zero() || reference.is_infinity() || v.frozen != 0
-        {
+        // Skip vaults the matcher won't touch: a reference price that is not
+        // `is_matchable`, or frozen (frozen vaults stay on the active DLL but
+        // are skipped from the matching set — see swap.rs).
+        if !reference.is_matchable() || v.frozen != 0 {
             continue;
         }
         let nonce = v.reference_price.nonce();
@@ -440,17 +472,19 @@ fn collect_side_levels(
         for i in 0..N_LEVELS {
             let (price, size, wall_deadline, slot_deadline) =
                 level_state(v, i, is_buy, flush, reference, base_atoms, quote_atoms);
-            // Both conjuncts, exactly as `swap.rs` gates them: a level is
-            // live only inside its wall deadline AND its slot deadline.
-            // Each `is_live_at` is domain-typed, so a transposed pair no
-            // longer compiles (see `crate::clock`).
-            if size == 0
-                || !wall_deadline.is_live_at(now_unix)
-                || !slot_deadline.is_live_at(now_slot)
-                || price.is_zero()
-                || price.is_infinity()
-                || !price.is_valid()
-            {
+            // The same gate `swap.rs` applies, shared through
+            // `matching_math`: a level is live only inside its wall deadline
+            // AND its slot deadline, non-empty and at a matchable price. The
+            // deadlines are domain-typed, so a transposed pair does not
+            // compile (see `crate::clock`).
+            if !level_is_live(
+                price,
+                size,
+                wall_deadline,
+                slot_deadline,
+                now_unix,
+                now_slot,
+            ) {
                 continue;
             }
             let key = sort_key(price, is_buy);
@@ -474,10 +508,15 @@ fn collect_side_levels(
 /// level `> BPS`. The on-chain matcher zeroes such a side's `remaining` at
 /// flush time (see `swap.rs`), dropping it from matching without aborting
 /// the take, so the simulator mirrors that by skipping this vault's
-/// contribution on the collected side. `set_liquidity_profile` still bounds
-/// the sum at write time, so this only fires on an oversized profile written
-/// outside that path (corrupted account bytes, or a future write that skips
-/// the sum check).
+/// contribution on the collected side.
+///
+/// This gate is **load-bearing**, not a corruption backstop. Nothing bounds
+/// the sum at write time — `set_liquidity_profile` stores the profile raw,
+/// and its ASM fast path validates nothing — so an over-cap side is
+/// reachable from an ordinary, correctly-signed leader write. The per-side
+/// bound is enforced solely at match time, by `Vault::materialize_remaining`
+/// on-chain and by this mirror off-chain; removing it would show depth the
+/// engine zeroes.
 fn flush_side_sum_exceeds_bps(v: &Vault, is_buy: bool) -> bool {
     let side = if is_buy {
         &v.profile.asks
@@ -1099,6 +1138,46 @@ mod tests {
             Quote::default(),
             "1 bps declared against a 0 bps ceiling must refuse, not clamp to 0"
         );
+    }
+
+    /// Each up-front rejection the engine makes before any matching
+    /// (`InvalidPrice`, `InvalidLimitPrice`, `InvalidAmountIn`) refuses to
+    /// quote, against a book that fills the same take when the arguments are
+    /// valid. The garbage bit pattern is the dangerous one: its `as_u32` sits
+    /// above every real ask, so before the guard it never crossed and the
+    /// whole fill was quoted for a take the chain refuses outright.
+    #[test]
+    fn engine_argument_rejections_refuse_to_quote() {
+        let data = market_data();
+        let view = MarketView::load(&data).unwrap();
+        let quote = |side, amount_in, limit| {
+            simulate_swap(&view, side, amount_in, limit, NOW_SLOT, NOW_WALL, 0)
+        };
+        assert!(quote(SwapSide::Buy, 500_000, Price::INFINITY).legs > 0);
+        assert!(quote(SwapSide::Sell, 500_000, Price::ZERO).legs > 0);
+
+        let garbage = Price::from_bits(0xFFFF_FFF0);
+        assert!(!garbage.is_valid());
+        for (side, amount_in, limit, why) in [
+            (SwapSide::Buy, 500_000, garbage, "invalid limit bits (Buy)"),
+            (
+                SwapSide::Sell,
+                500_000,
+                garbage,
+                "invalid limit bits (Sell)",
+            ),
+            (SwapSide::Buy, 500_000, Price::ZERO, "Buy with a ZERO limit"),
+            (
+                SwapSide::Sell,
+                500_000,
+                Price::INFINITY,
+                "Sell with an INFINITY limit",
+            ),
+            (SwapSide::Buy, 0, Price::INFINITY, "zero amount_in (Buy)"),
+            (SwapSide::Sell, 0, Price::ZERO, "zero amount_in (Sell)"),
+        ] {
+            assert_eq!(quote(side, amount_in, limit), Quote::default(), "{why}");
+        }
     }
 
     /// With a ceiling in place, the platform fee comes off the output

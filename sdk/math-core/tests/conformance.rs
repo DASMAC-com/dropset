@@ -1,6 +1,14 @@
 //! Verify the Rust `Price` math against the shared conformance vectors.
-//! The TS client verifies the same file (sdk/ts/src/conformance.test.ts);
-//! together they pin both implementations to one source of truth.
+//!
+//! **What the replay is and is not.** `gen_conformance` builds the vectors
+//! by calling this same `dropset_math_core` `Price`, so the replay here is
+//! self-consistent by construction: break the codec, regenerate, and it
+//! goes green again. Its job is to catch a change made *without*
+//! regenerating. The independent oracle is the TS client, which replays
+//! the same file against its own implementation
+//! (sdk/ts/src/conformance.test.ts). The program's `price_conformance.rs`
+//! is not a second one: the program re-exports this crate's `Price`, so
+//! that replay runs the same code as this one.
 
 use dropset_math_core::price::Price;
 use serde_json::Value;

@@ -4,13 +4,15 @@
 //! or a router quoting off the simulator produces fills the live engine
 //! won't honor.
 //!
-//! Only the *pure* arithmetic lives here: flush-level pricing, the
-//! size-bps fill cap, and the price-time sort key. The iteration / IO
+//! Only the *pure* arithmetic and predicates live here: flush-level
+//! pricing, the size-bps fill cap, the price-time sort key, the fees, and
+//! the side-keyed limit and liveness tests. The iteration / IO
 //! around them — walking the on-chain slab vs. reconstructing a book —
 //! stays distinct in each caller. This module is `core`-only (it pulls no
 //! `std`), so the on-chain program depends on it without the off-chain
 //! book-reconstruction surface in `dropset-interface`.
 
+use crate::clock::{SlotTime, WallTime};
 use crate::price::Price;
 use crate::{BPS, PPM};
 
@@ -79,6 +81,55 @@ pub fn sort_key(price: Price, is_ask: bool) -> u32 {
     } else {
         price.bid_key()
     }
+}
+
+/// Up-front limit-price sentinel check. A taker consuming asks (a Buy)
+/// rejects [`Price::ZERO`] — it would reject every ask, a likely caller
+/// mistake; one consuming bids (a Sell) rejects [`Price::INFINITY`]
+/// symmetrically. Each accepts the open-ended sentinel for its own side
+/// and any regular price. Validity of the bit pattern is a separate check
+/// ([`Price::is_valid`]), run first by both callers.
+#[inline]
+pub fn limit_price_ok(limit: Price, is_ask: bool) -> bool {
+    if is_ask {
+        !limit.is_zero()
+    } else {
+        !limit.is_infinity()
+    }
+}
+
+/// True when `price` is worse than the taker's `limit`, so the leg must
+/// not fill. Levels are walked best-first, so the first crossing leg means
+/// every later one crosses too and both callers stop there. Against asks a
+/// leg crosses when it exceeds the limit; against bids, when it falls
+/// below it. The open-ended sentinel for the side never crosses.
+#[inline]
+pub fn crosses_limit(price: Price, limit: Price, is_ask: bool) -> bool {
+    if is_ask {
+        price.as_u32() > limit.as_u32() && !limit.is_infinity()
+    } else {
+        price.as_u32() < limit.as_u32() && !limit.is_zero()
+    }
+}
+
+/// Whether a level enters the book: non-empty, inside **both** its wall
+/// and its slot deadline (expiry is dual-domain — see [`crate::clock`]),
+/// and priced at a [`Price::is_matchable`] value. This is the gate that
+/// decides displayed depth off-chain and filled depth on-chain, so the two
+/// must share it for the first to equal the second.
+#[inline]
+pub fn level_is_live(
+    price: Price,
+    size: u64,
+    wall_deadline: WallTime,
+    slot_deadline: SlotTime,
+    now_unix: WallTime,
+    now_slot: SlotTime,
+) -> bool {
+    size != 0
+        && wall_deadline.is_live_at(now_unix)
+        && slot_deadline.is_live_at(now_slot)
+        && price.is_matchable()
 }
 
 /// Taker fee on a single leg: `output_leg_atoms × taker_fee_ppm / PPM`
@@ -199,6 +250,52 @@ mod tests {
         let p = Price::encode(10_850_000, 0).unwrap();
         assert_eq!(sort_key(p, true), p.as_u32());
         assert_eq!(sort_key(p, false), p.bid_key());
+    }
+
+    #[test]
+    fn limit_price_sentinels_per_side() {
+        let p = Price::encode(10_850_000, 0).unwrap();
+        // Each side accepts its own open-ended sentinel and any real price…
+        assert!(limit_price_ok(Price::INFINITY, true));
+        assert!(limit_price_ok(Price::ZERO, false));
+        assert!(limit_price_ok(p, true) && limit_price_ok(p, false));
+        // …and rejects the other side's.
+        assert!(!limit_price_ok(Price::ZERO, true));
+        assert!(!limit_price_ok(Price::INFINITY, false));
+    }
+
+    #[test]
+    fn crosses_limit_per_side() {
+        let lo = Price::encode(10_000_000, 0).unwrap();
+        let hi = Price::encode(20_000_000, 0).unwrap();
+        // An ask above a Buy's limit crosses; at or below it does not.
+        assert!(crosses_limit(hi, lo, true));
+        assert!(!crosses_limit(lo, lo, true));
+        assert!(!crosses_limit(lo, hi, true));
+        // A bid below a Sell's limit crosses; at or above it does not.
+        assert!(crosses_limit(lo, hi, false));
+        assert!(!crosses_limit(hi, hi, false));
+        assert!(!crosses_limit(hi, lo, false));
+        // The open-ended sentinels never cross.
+        assert!(!crosses_limit(hi, Price::INFINITY, true));
+        assert!(!crosses_limit(lo, Price::ZERO, false));
+    }
+
+    #[test]
+    fn level_is_live_requires_every_clause() {
+        let p = Price::encode(10_850_000, 0).unwrap();
+        let (wall, slot) = (WallTime::new(1_000), SlotTime::new(50));
+        let (now_u, now_s) = (WallTime::new(999), SlotTime::new(49));
+        assert!(level_is_live(p, 1, wall, slot, now_u, now_s));
+        // Empty level.
+        assert!(!level_is_live(p, 0, wall, slot, now_u, now_s));
+        // Each deadline alone kills it — expiry is dual-domain.
+        assert!(!level_is_live(p, 1, wall, slot, wall, now_s));
+        assert!(!level_is_live(p, 1, wall, slot, now_u, slot));
+        // Neither sentinel nor a garbage bit pattern is matchable.
+        for bad in [Price::ZERO, Price::INFINITY, Price::from_bits(0xFFFF_FFF0)] {
+            assert!(!level_is_live(bad, 1, wall, slot, now_u, now_s));
+        }
     }
 
     #[test]
