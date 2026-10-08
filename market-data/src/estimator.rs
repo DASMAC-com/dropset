@@ -45,9 +45,10 @@
 //! anchor times a pinned 1:1 redemption peg, because the re-scope for the first
 //! fills says the FX composite alone is enough for them — and because neither
 //! has a candle series fit to compose from: CADC was never listed, and
-//! `AUDD-USDC` trades too thinly, in fewer than half of all hours.
-//! Pinning is honest where composing off a book that goes quiet between trades
-//! would *corroborate* the leg with a number nobody traded recently.
+//! `AUDD-USDC` trades too thinly (the ticker collector's `DEFAULT_PRODUCTS`
+//! records the measurement). Pinning is honest where composing off a book that
+//! goes quiet between trades would *corroborate* the leg with a last close
+//! nobody has traded at since.
 //!
 //! Note the leg this concerns is the **candle** series in `cex_prices`, not the
 //! ticker — see [`SOURCE_COINBASE`] — which is why the ticker's habit of
