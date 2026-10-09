@@ -1515,8 +1515,9 @@ are decisions rather than omissions:
   default is right, and per the same docs a Bedrock session with
   `ANTHROPIC_MODEL` set routes background tasks to that model when the
   slot is unpinned, so an unset value only prints a note. Claude Code
-  maps a first-party id in this slot exactly as it does the primary
-  model's (measured from its request log), so a first-party id is
+  maps a first-party id in this slot to its `us.anthropic.` profile, as
+  it does the primary model's (measured from its request log), so a
+  first-party id is
   portable and `models check` maps it the same way; a Bedrock-form id
   must be the exact profile id.
 - **The auto-mode classifier has no tier.** Claude Code chooses its

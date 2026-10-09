@@ -511,8 +511,9 @@ the identity here is model-agnostic.
 `ANTHROPIC_DEFAULT_HAIKU_MODEL` pins the background tier
 (`DS_MODEL_BACKGROUND`) so background sub-turns bill to credits
 alongside the primary model, rather than falling back to the
-subscription. Claude Code maps a first-party id in this slot exactly as
-it does the primary model's, so a first-party id is portable; a
+subscription. Claude Code maps a first-party id in this slot to its
+`us.anthropic.` profile, as it does the primary model's (measured from
+its request log), so a first-party id is portable; a
 Bedrock-form id must be the exact profile id, since Bedrock rejects the
 wrong form as an invalid model identifier. A
 `ResourceNotFoundException` saying model use case details have not been

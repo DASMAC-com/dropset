@@ -627,9 +627,9 @@ _ds_topic_sid() {
 # only — on the subscription Claude Code's own default is right — and unset
 # there it is an informational line, not a refusal, since per the same docs a
 # Bedrock session with `ANTHROPIC_MODEL` set routes background tasks to that
-# model. Claude Code maps a first-party id in this slot exactly as it does the
-# primary model's (measured from its request log), so a first-party id is
-# portable; a Bedrock-form id must be the exact profile id.
+# model. Claude Code maps a first-party id in this slot to its `us.anthropic.`
+# profile, as it does the primary model's (measured from its request log), so a
+# first-party id is portable; a Bedrock-form id must be the exact profile id.
 #
 # The auto-mode permission classifier is deliberately absent: Claude Code picks
 # its model itself and exposes no configuration for it, so it has no tier.
@@ -1517,9 +1517,9 @@ fleet() {
 #
 # Every tier is checked in its BEDROCK form, including an anthropic-substrate
 # advisor tier: `plan bedrock` sends that same id to Bedrock, so it has to
-# resolve there too. Every id, background included, is mapped the way Claude Code
-# maps it (a first-party `claude-*` becomes `us.anthropic.<id>`, window suffix
-# dropped). An alias (`fable`, `opus`) cannot be checked: Claude Code resolves
+# resolve there too. Every id, background included, is mapped to its Bedrock
+# profile: a first-party `claude-*` becomes `us.anthropic.<id>`, and any window
+# suffix is dropped. An alias (`fable`, `opus`) cannot be checked: Claude Code resolves
 # it, not Bedrock, so it is reported rather than failed.
 models() {
   if [[ -n "$1" && "$1" != check ]]; then

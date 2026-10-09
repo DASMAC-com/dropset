@@ -391,6 +391,25 @@ class ModelsVerb(SubstrateHarness):
         self.assertIn("--profile admin", out)
         self.assertIn("RC=0", out)
 
+    def test_check_passes_a_bedrock_form_background_id_through(self):
+        result, out = self._models(
+            "check", env={"DS_MODEL_BACKGROUND": "us.anthropic.claude-known-bg"}
+        )
+        self.assertIn("ok     background us.anthropic.claude-known-bg", out)
+        self.assertNotIn("us.anthropic.us.anthropic", out)
+
+    def test_check_skips_a_background_alias(self):
+        result, out = self._models(
+            "check",
+            env={
+                "DS_MODEL_ADVISOR": "claude-known-judge[1m]",
+                "DS_MODEL_EXECUTOR": "claude-known-work[1m]",
+                "DS_MODEL_BACKGROUND": "haiku",
+            },
+        )
+        self.assertIn("skip   background haiku", out)
+        self.assertIn("RC=0", out)
+
     def test_check_fails_on_an_unknown_profile(self):
         result, out = self._models(
             "check", env={"DS_MODEL_ADVISOR": "claude-missing[1m]"}
