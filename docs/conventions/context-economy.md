@@ -941,8 +941,9 @@ Two rules keep the cap from turning into deletion:
   hoisted "are each of these 7 moved symbols still referenced?" sweep
   came back as ~130 full match lines (≈4.2k, that session's single
   largest result), most of them one file repeating one constant 40 times
-  — for a question that is one bit per symbol. Use `-l` (files) or `-c`
-  (counts) when the question is existence, and full `-n` lines only when
+  — for a question that is one bit per symbol. Use `-l` (files) — or `-c`
+  (counts) on a named file — when the question is existence, and full
+  `-n` lines only when
   the surrounding code actually has to be read. Hoisting a *verbose*
   sweep merely relocates the sink from a sub-agent into the main loop,
   where it is replayed on every later turn.
