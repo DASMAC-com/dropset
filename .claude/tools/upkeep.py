@@ -45,7 +45,11 @@ through its ``REPORT_END`` line — is replaced wholesale each run, bounded to
 ``REPORT_CHAR_CAP``. The same report
 prints to stdout (the standalone interface, and the fallback when Linear is
 unreachable); ``--json`` prints the structured twin instead. A local stamp beside
-the allowlist refresh marker answers ``ran-today`` with no network read.
+the allowlist refresh marker answers ``ran-today`` with no network read; it is
+written only when the report reached the document, so a ``--no-doc`` preview or
+a failed write never answers it. A refused splice (heading repeated, end line
+gone) is permanent until the section is fixed by hand, and shows in the document
+as a stale run timestamp.
 
 Stdlib only; a skill-tool under ``.claude/tools/``, deliberately **not** a Cargo
 workspace member. Tests live in ``tests/test_upkeep.py``.
@@ -299,6 +303,7 @@ def step_prs(ctx: Ctx) -> None:
     by_number = {int(p["number"]): p for p in prs}
 
     notifications: list[tuple[str, int]] = []
+    notice = ""
     try:
         # `all=true`: the default lists UNREAD threads only, and a thread read
         # but never marked done still sits in the inbox.
@@ -308,7 +313,7 @@ def step_prs(ctx: Ctx) -> None:
             if m:
                 notifications.append((str(n["id"]), int(m.group(1))))
     except (RuntimeError, ValueError, KeyError) as e:
-        ctx.record("prs", f"notification list failed ({e})", False)
+        notice = f"; notification list failed ({e})"
 
     unknown = sorted({num for _, num in notifications if num not in by_number})
     for num in unknown[:MAX_NOTIFICATION_LOOKUPS]:
@@ -332,7 +337,8 @@ def step_prs(ctx: Ctx) -> None:
     ctx.record(
         "prs",
         f"{len(closed or [])} terminal PR(s), {len(opened or [])} open, "
-        f"{len(notifications)} PR notification(s)",
+        f"{len(notifications)} PR notification(s){notice}",
+        ok=not notice,
     )
 
 
@@ -721,10 +727,18 @@ def splice_section(content: str, heading: str, body: str, end: str = REPORT_END)
     if not starts:
         return content.rstrip("\n") + "\n\n" + "\n".join(section) + "\n"
     start = starts[0]
-    stop = next(
-        (j for j in range(start + 1, len(lines)) if _key(lines[j]) == _key(end)),
-        None,
-    )
+    stop = None
+    for j in range(start + 1, len(lines)):
+        # The end line matches near-exactly (escapes and spacing only), unlike the
+        # heading: a loose key would let a report item that merely reads like the
+        # marker end the section early.
+        if lines[j].replace("\\", "").strip() == end:
+            stop = j
+            break
+        if _HEADING2.match(lines[j]):
+            # The next section began first: the end line is gone, and searching
+            # past here would delete whatever lies between.
+            break
     if stop is None:
         raise SpliceError("the report heading has no end line; not replacing")
     new = lines[:start] + section + lines[stop + 1 :]
@@ -824,10 +838,13 @@ def run(argv: list[str]) -> int:
     # Print before stamping: stdout is the fallback when the document write
     # failed, so nothing after this point may be able to lose it.
     print(json.dumps(result, indent=2) if args.json else report)
-    try:
-        write_stamp(base, now, ctx.armed)
-    except OSError as e:
-        print(f"upkeep: run stamp not written: {e}", file=sys.stderr)
+    # Stamp only a pass whose report reached the document. "Ran today" gates the
+    # day's pass, so a preview or a failed write must not answer it.
+    if result.get("doc") == "written":
+        try:
+            write_stamp(base, now, ctx.armed)
+        except OSError as e:
+            print(f"upkeep: run stamp not written: {e}", file=sys.stderr)
     return 0
 
 

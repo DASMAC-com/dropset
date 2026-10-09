@@ -159,6 +159,18 @@ class ReportTests(unittest.TestCase):
                 "## Upkeep\n\nEnd.\n\n## Upkeep\n", "Upkeep", "x", end="End."
             )
 
+    def test_a_lost_end_line_refuses_rather_than_reaching_past_the_next_section(self):
+        doc = "## Upkeep\n\nold\n\n## Next\n\nkeep\n\nquoting End. in a note\nEnd.\n"
+        with self.assertRaises(SpliceError):
+            splice_section(doc, "Upkeep", "new", end="End.")
+
+    def test_an_item_that_reads_like_the_end_line_does_not_end_the_section(self):
+        body = "- step: x\n  - End of upkeep report"
+        once = splice_section("# Planning\n", "Upkeep", body, end=REPORT_END)
+        twice = splice_section(once, "Upkeep", "- step: y", end=REPORT_END)
+        self.assertEqual(twice.count(REPORT_END), 1)
+        self.assertNotIn("step: x", twice)
+
     def test_a_level_one_heading_is_not_taken_as_the_report(self):
         doc = "# Upkeep\n\nthe whole plan\n\n## Next\n\nkeep\n"
         out = splice_section(doc, "Upkeep", "new", end="End.")
@@ -525,7 +537,18 @@ class CliTests(unittest.TestCase):
             self.assertEqual(upkeep.run(["upkeep.py", "run"]), 2)
         self.assertIn("refused", err.getvalue())
 
-    def test_no_doc_json_prints_the_result_and_stamps(self):
+    def test_a_written_report_stamps_the_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            upkeep.check_base = lambda run, cwd: (base, [], "")
+            upkeep.run_pass = lambda ctx: {"ran_at": "t", "armed": False, "steps": []}
+            upkeep.write_report = lambda report: None
+            with contextlib.redirect_stdout(io.StringIO()):
+                upkeep.run(["upkeep.py", "run"])
+            self.assertTrue(upkeep.stamp_path(base).exists())
+
+    def test_no_doc_json_prints_the_result_without_stamping(self):
         with tempfile.TemporaryDirectory() as d:
             base = Path(d)
             (base / ".claude").mkdir()
@@ -537,7 +560,7 @@ class CliTests(unittest.TestCase):
                     upkeep.run(["upkeep.py", "run", "--no-doc", "--json"]), 0
                 )
             self.assertEqual(json.loads(out.getvalue())["ran_at"], "t")
-            self.assertTrue(upkeep.stamp_path(base).exists())
+            self.assertFalse(upkeep.stamp_path(base).exists())
 
     def test_a_failed_doc_write_is_reported_on_stdout(self):
         with tempfile.TemporaryDirectory() as d:
@@ -553,6 +576,7 @@ class CliTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 upkeep.run(["upkeep.py", "run"])
             self.assertIn("planning document: not written: Linear down", out.getvalue())
+            self.assertFalse(upkeep.stamp_path(base).exists())
 
 
 if __name__ == "__main__":
