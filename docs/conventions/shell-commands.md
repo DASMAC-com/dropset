@@ -154,10 +154,12 @@ Concrete rules:
     (`pyth` ⊂ `python`), so anchor it with `\b` from the first call; and
     a lowercase sweep never reaches a `SCREAMING_CASE` constant, even
     when the constant's lowercase *value* matches and makes the sweep
-    look complete. The tool counts both on a scoped run and says so on
-    the summary line. A skill's one-line frontmatter `description` makes
-    any hit in it fat, so `--skip-frontmatter` drops those unless the
-    frontmatter is what you are searching.
+    look complete. The tool flags the first at any scope and the second
+    on a scoped (`--glob` / `--dir`) run, each with a count on the
+    summary line. A skill's one-line frontmatter `description` makes any
+    hit in it fat, so `--skip-frontmatter` drops matches inside a
+    markdown file's leading YAML block unless that is what you are
+    searching.
 
     **A `--context N` window is for adjudicating a hit, never for
     enumerating them.** It multiplies the payload by `N`: one

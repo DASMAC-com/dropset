@@ -511,16 +511,31 @@ def indented_declaration_branches(pattern: str) -> list[str]:
 
     Single-branch patterns are never flagged: a lone ``^    def `` is a deliberate
     search for indented methods, and only an *alternation* is a section map.
+    Nor is an OPTIONAL indent (``^ *``, ``^\\s*$``, ``^[ \\t]?``): it also
+    matches column zero, so it is not reaching past the declarations.
     """
     branches = [raw.lstrip() for raw in pattern.split("|")]
     if len(branches) < 2:
         return []
-    return [
-        branch
-        for branch in branches
-        if branch.startswith(_ANCHORED_BRANCH)
-        and branch[len(_ANCHORED_BRANCH) :].startswith(_INDENT_STARTS)
-    ]
+    found = []
+    for branch in branches:
+        if not branch.startswith(_ANCHORED_BRANCH):
+            continue
+        body = branch[len(_ANCHORED_BRANCH) :]
+        if not body.startswith(_INDENT_STARTS):
+            continue
+        # Where the first indent token ends: a class, an escape, or one char.
+        if body.startswith("["):
+            end = body.find("]") + 1 or len(body)
+        elif body.startswith("\\"):
+            end = 2
+        else:
+            end = 1
+        quantifier = body[end:]
+        if quantifier.startswith(("*", "?", "{0")):
+            continue
+        found.append(branch)
+    return found
 
 
 #: The longest bare word the prefix-collision probe considers "short". Measured:
@@ -544,13 +559,17 @@ def short_token_branches(pattern: str) -> list[str] | None:
     return None
 
 
-def case_blind_pattern(pattern: str) -> bool:
+def case_blind_pattern(pattern: str, fixed: bool = False) -> bool:
     """Whether ``pattern`` holds letters but no uppercase ones.
 
     Escape sequences are dropped first, so ``\\b`` / ``\\S`` / ``\\W`` don't count:
-    they are syntax, not the caller's choice of case.
+    they are syntax, not the caller's choice of case — except under ``fixed``,
+    where a backslash is literal text. A pattern with a character class is
+    never case-blind: ``[a-z]`` is a deliberate choice, not an oversight.
     """
-    letters = re.sub(r"\\.", "", pattern)
+    if not fixed and "[" in pattern:
+        return False
+    letters = pattern if fixed else re.sub(r"\\.", "", pattern)
     return any(ch.islower() for ch in letters) and not any(
         ch.isupper() for ch in letters
     )
@@ -723,7 +742,8 @@ def search(
             continue
         fence = (
             frontmatter_end(lines)
-            if skip_frontmatter and path.suffix.lstrip(".") in ("md", "markdown")
+            if skip_frontmatter
+            and path.suffix.lstrip(".").lower() in ("md", "markdown")
             else -1
         )
         hit_in_file = False
@@ -1382,16 +1402,10 @@ def run(argv: list[str]) -> int:
     if not result["total"] and not args.fixed:
         branch = first_alternation_branch(args.pattern)
         if branch:
-            probe = search(
-                branch,
-                Path(args.root),
-                dirs=list(dirs) if dirs is not None else None,
-                extensions=extensions,
-                fixed=args.fixed,
-                ignore_case=args.ignore_case,
-                limit=1,
-                globs=globs,
-            )
+            # Through `run_search`, so `--skip-frontmatter` applies here too:
+            # a branch that matched only inside skipped frontmatter would
+            # otherwise "prove" a broken alternation that parsed fine.
+            probe = run_search(branch, context=0)
             if probe["total"]:
                 notes.append(
                     f"WARNING: 0 matches, but the single branch {branch!r} "
@@ -1408,13 +1422,18 @@ def run(argv: list[str]) -> int:
     # the note carries the count rather than a guess.
     tokens = None if args.fixed else short_token_branches(args.pattern)
     if tokens and result["total"]:
-        bounded = run_search(r"\b(?:" + "|".join(tokens) + r")\b", context=0)
+        anchored = (
+            rf"\b{tokens[0]}\b"
+            if len(tokens) == 1
+            else r"\b(?:" + "|".join(tokens) + r")\b"
+        )
+        bounded = run_search(anchored, context=0)
         partial = result["total"] - bounded["total"]
         if partial and partial * 2 >= result["total"]:
             notes.append(
                 f"NOTE: {partial} of {result['total']} match(es) are the token "
                 f"inside a longer word (pyth inside python is the measured "
-                f"case) — anchor it: '\\b{tokens[0]}\\b'"
+                f"case) — anchor it: '{anchored}'"
             )
 
     # A LOWERCASE pattern that silently misses SCREAMING_CASE. The partial answer
@@ -1423,7 +1442,11 @@ def run(argv: list[str]) -> int:
     # `SUBSTRATE_DIR`'s string literal, concluded case could not be the problem,
     # and filed a false "the tool is broken" caveat. Scoped runs only, so the
     # second walk stays bounded.
-    if not args.ignore_case and (globs or dirs) and case_blind_pattern(args.pattern):
+    if (
+        not args.ignore_case
+        and (globs or dirs)
+        and case_blind_pattern(args.pattern, fixed=args.fixed)
+    ):
         folded = run_search(args.pattern, context=0, ignore_case=True)
         extra = folded["total"] - result["total"]
         if extra > 0:

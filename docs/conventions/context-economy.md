@@ -315,7 +315,8 @@ Two rules keep the cap from turning into deletion:
   hoisted-grep step, so the implement phase read as exempt. It is not:
 
   1. **Locate** with `--files-only` (or `--glob <file>`) — one line per
-     file, no bodies.
+     file, no bodies — or `--locations` when you need the lines, which
+     prints `path:line` per match.
   1. **Then read** the one region you actually want, sliced.
 
   Take context lines only when the question is genuinely *what does
@@ -410,17 +411,18 @@ Two rules keep the cap from turning into deletion:
   shape is this written in" question.
 
   **Enumeration is a third case, beside existence and adjudication.**
-  The split above is location (`--files-only`) versus reading what code
-  does (`--context`), and a real third shape fits neither: *retrieving
-  several known blocks from one file*. That is a slice-read — one read
-  spanning them, or a bounded read per block — never a grep, however
-  tempting the single call looks. Measured: a `--context 3` sweep for
-  this answered at ~2.0k, the run's largest single result, and **still**
-  needed four separate slice reads afterwards, because the context width
-  truncated the very bullets the sweep was meant to retrieve. It bought
-  overlapping windows *and* the reads that replaced them. This is also
-  the case the tool's own thresholds cannot save you from: they fire once
-  the call is made, and here the right move is not to make it.
+  The split above is location (`--files-only` / `--locations`) versus
+  reading what code does (`--context`), and a real third shape fits
+  neither: *retrieving several known blocks from one file*. That is a
+  slice-read — one read spanning them, or a bounded read per block —
+  never a grep, however tempting the single call looks. Measured: a
+  `--context 3` sweep for this answered at ~2.0k, the run's largest
+  single result, and **still** needed four separate slice reads
+  afterwards, because the context width truncated the very bullets the
+  sweep was meant to retrieve. It bought overlapping windows *and* the
+  reads that replaced them. This is also the case the tool's own
+  thresholds cannot save you from: they fire once the call is made, and
+  here the right move is not to make it.
 
   **If an earlier call this session already named the file, pass
   `--glob`.** Narrowing the SCOPE is a separate axis from narrowing the
