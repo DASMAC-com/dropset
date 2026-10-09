@@ -1100,7 +1100,7 @@ def run(argv: list[str]) -> int:
     )
 
     # The same clamp, for a scope that RESOLVES to one file without naming it:
-    # `--dir db-schema --glob lib.rs`, or a wildcard glob with one hit. The
+    # `--dir db-schema --glob lib.rs`, or a wildcard glob selecting one file. The
     # argument check above cannot see either, and the measured miss was exactly
     # this shape — a `--context 6` sweep over one file, honoured in full, with no
     # notice at all. Only a scoped run qualifies: an unscoped sweep that happens
@@ -1150,18 +1150,23 @@ def run(argv: list[str]) -> int:
     # the caller already scoped to, while the bare match lines carry the offsets
     # a slice-read needs. `--force-context` lifts it, as with the degrades
     # below; the single-file clamp above already ran and stays in force.
+    #
+    # Keyed on the matches that would PRINT, not on `total`: a caller who has
+    # already bounded the windows with `--max` pays for that many, however many
+    # more the file holds.
+    shown = len(result["matches"])
     if (
         context
         and not files_only
         and not args.force_context
-        and result["total"] >= DENSITY_DEGRADE_MATCHES
+        and shown >= DENSITY_DEGRADE_MATCHES
         and len(result["files"]) <= SPREAD_DEGRADE_FILES
     ):
         where = (
             "one file" if len(result["files"]) == 1 else f"{len(result['files'])} files"
         )
         notes.append(
-            f"NOTE: --context {context} was DROPPED because {result['total']} "
+            f"NOTE: --context {context} was DROPPED because {shown} "
             f"matches cluster in {where}, where the windows overlap toward "
             f"buying the file whole — the matched lines below give the offsets; "
             f"slice-read the region with Read offset/limit, or re-run with "
@@ -1180,7 +1185,7 @@ def run(argv: list[str]) -> int:
         if printed > CONTEXT_DEGRADE_LINES and not args.force_context:
             files_only = True
             notes.append(
-                f"NOTE: --context {args.context} would have printed {printed} "
+                f"NOTE: --context {context} would have printed {printed} "
                 f"lines across {len(result['files'])} file(s), so this DEGRADED "
                 f"to --files-only — the files below are the complete answer to "
                 f"WHERE. To read what the code does, slice-read the region with "

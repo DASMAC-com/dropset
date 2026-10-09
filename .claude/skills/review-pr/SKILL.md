@@ -2216,15 +2216,15 @@ without eight agents and ~2.9M of sub-agent input.
      **clamps** a wide `--context`; a sweep **spread** across
      more than three files, at any scope, or past a size
      threshold **degrades** to `--files-only`; and ten-plus
-     matches **clustered** in a handful of files drops the
+     matches **clustered** in three or fewer files drops the
      context and prints the match lines, for the slice-read
      offsets. Each says so on the summary line.
      `--force-context` lifts all but the clamp and is for
      adjudication — which licenses context, never breadth.
 
-     **Enumeration-for-edit is a THIRD case, and it takes
-     `--files-only`.** A sweep whose purpose is to enumerate
-     the sites of a rename or a removal produces a
+     **Enumeration-for-edit is a third case beside location
+     and adjudication, and it takes `--files-only`.** A sweep
+     whose purpose is to enumerate the sites of a rename or a removal produces a
      **work list** you will open one by one, so its context is
      redundant by construction: every site returned is a file
      you are about to open and edit anyway. Measured: a
@@ -2244,9 +2244,10 @@ without eight agents and ~2.9M of sub-agent input.
      adjudication you need it *to decide whether to act at
      all*, and you may never open the file. Only the second
      earns context in the sweep — and this removes the
-     standing reason to override the advisory, which fires
-     correctly on rename sweeps and whose override trains the
-     habit of overriding it everywhere.
+     standing reason to pass `--force-context` past the spread
+     degrade, which fires correctly on a rename sweep across
+     four-plus files and whose override trains the habit of
+     overriding it everywhere.
 
      **This rule is phase-neutral, and that is why it keeps
      getting missed.** Seven separate sessions answered a
@@ -2376,7 +2377,7 @@ without eight agents and ~2.9M of sub-agent input.
    (a 658-line generated instruction file) that no lens needed:
 
    ```sh
-   python3 .claude/tools/search_source.py '<identifier>' --context 2
+   python3 .claude/tools/search_source.py '<identifier>' --files-only
    ```
 
    It reduces to one stable allow-rule

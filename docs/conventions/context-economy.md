@@ -354,7 +354,7 @@ Two rules keep the cap from turning into deletion:
   the escape hatch, for an adjudication read where the surrounding lines
   genuinely are the question.
 
-  **`--force-context` lifts the size degrade and NEVER the single-file
+  **`--force-context` lifts the degrades and NEVER the single-file
   clamp**, and the asymmetry is deliberate rather than an oversight. The
   degrades fire on the shape of the result — printed size, a spread
   across more than three files, or a dense cluster — where the
@@ -423,7 +423,7 @@ Two rules keep the cap from turning into deletion:
 
   This is a third axis, distinct from both the scope rule above and the
   output-width rule: the sweep here was *already* narrow — two files,
-  both genuine hits — and the tool's advisory correctly did not fire,
+  both genuine hits — and the tool's degrades correctly did not fire,
   since four matches across two files is neither clustered nor spread.
   What was wasteful was one **specific known file**, which no
   density heuristic can know is redundant.
@@ -534,14 +534,15 @@ Two rules keep the cap from turning into deletion:
   the ones that reach a merged PR.
 
   **A pattern you have not searched before starts `--files-only`.** The
-  advisory is post-hoc by construction — it can only arrive with a
-  payload already paid for — so the first call needs a rule of its own,
-  and this is it: locate first, earn context on a narrowed second call.
-  Five of one session's seven largest results were context-bearing
-  sweeps (~7.4k of a ~25k session), and the instructive one was purely
-  locational. This does **not** override the location-vs-adjudication
-  distinction: the same session's adjudication sweeps took context and
-  were right to, finding three real stale-comment defects.
+  tool's degrades catch only a sweep past their thresholds; a
+  sub-threshold context sweep is still paid in full, with no notice — so
+  the first call needs a rule of its own, and this is it: locate first,
+  earn context on a narrowed second call. Five of one session's seven
+  largest results were context-bearing sweeps (~7.4k of a ~25k
+  session), and the instructive one was purely locational. This does
+  **not** override the location-vs-adjudication distinction: the same
+  session's adjudication sweeps took context and were right to, finding
+  three real stale-comment defects.
 
   **Enumeration-for-edit is a THIRD case, and it takes
   `--files-only`.** A sweep whose purpose is to enumerate the sites of a
@@ -561,9 +562,10 @@ Two rules keep the cap from turning into deletion:
   site *while editing it*, at which point the file is open; for a true
   adjudication you need it *to decide whether to act at all*, and you may
   never open the file. Only the second earns context in the sweep. This
-  also removes the standing reason to override the tool's advisory,
-  which fires correctly on rename sweeps — and overriding it there
-  trains the habit of overriding it everywhere.
+  also removes the standing reason to pass `--force-context` past the
+  spread degrade, which fires correctly on a rename sweep across
+  four-plus files — and overriding it there trains the habit of
+  overriding it everywhere.
 
   **Verify a list-producing flag with a count, not the list.** One
   session's largest single result (~5.8k, ~35% of its Bash cost) was a

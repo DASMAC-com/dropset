@@ -1237,6 +1237,71 @@ class ContextDegradeTests(unittest.TestCase):
         self.assertNotIn("clamped", printed)
         self.assertIn("// tail 5", printed)
 
+    def test_density_counts_across_up_to_three_files(self):
+        # Pins `<= SPREAD_DEGRADE_FILES` on the density side: a `== 1` key would
+        # leave this shape — the same overlap, split three ways — verbose.
+        for n in range(3):
+            self._dense(f"tri{n}", 4)
+        _, printed = self._run(["fn tri", "--context", "1"])
+        self.assertIn("DROPPED", printed)
+        self.assertIn("cluster in 3 files", printed)
+        self.assertNotIn("// gap", printed)
+
+    def test_dense_matches_over_four_files_spread_rather_than_drop(self):
+        for n in range(4):
+            self._dense(f"quad{n}", 3)
+        _, printed = self._run(["fn quad", "--context", "1"])
+        self.assertIn("SPREAD", printed)
+        self.assertNotIn("DROPPED", printed)
+
+    def test_a_resolved_clamp_and_the_density_drop_both_report(self):
+        # The measured-miss shape: one file reached by a wildcard, a wide window,
+        # many matches. Both notes must survive on the one summary line.
+        self._dense("both", ss.DENSITY_DEGRADE_MATCHES)
+        _, printed = self._run(["fn both", "--context", "6", "--glob", "bo*.rs"])
+        self.assertIn("clamped", printed)
+        self.assertIn("DROPPED", printed)
+        self.assertIn("both.rs:1:fn both_0", printed)
+        self.assertNotIn("// gap", printed)
+
+    def test_files_only_bypasses_the_resolved_clamp(self):
+        (self.root / "crate").mkdir()
+        (self.root / "crate" / "lib.rs").write_text(
+            "fn needle() {}\n", encoding="utf-8"
+        )
+        _, printed = self._run(
+            [
+                "needle",
+                "--context",
+                "6",
+                "--dir",
+                "crate",
+                "--glob",
+                "lib.rs",
+                "--files-only",
+            ]
+        )
+        self.assertNotIn("clamped", printed)
+
+    def test_a_plain_spread_search_without_context_stays_verbose(self):
+        # The spread degrade is about context windows; a bare multi-file search
+        # must keep printing its match lines.
+        for n in range(8):
+            (self.root / f"z{n}.rs").write_text("fn zero() {}\n", encoding="utf-8")
+        _, printed = self._run(["fn zero"])
+        self.assertNotIn("SPREAD", printed)
+        self.assertIn("z0.rs:1:fn zero", printed)
+
+    def test_a_max_bounded_sweep_keeps_its_context(self):
+        # Density keys on what prints: `--max 3` already bounds the windows, so
+        # the twelve matches the file holds are not what the caller pays for.
+        self._dense("capped", 12)
+        _, printed = self._run(
+            ["fn capped", "--context", "1", "--glob", "capped.rs", "--max", "3"]
+        )
+        self.assertNotIn("DROPPED", printed)
+        self.assertIn("// gap", printed)
+
     def test_an_explicit_files_only_is_not_relabelled_a_degrade(self):
         # --files-only was already the cheap form; reporting it back as DEGRADED
         # would describe the caller's own choice as the tool overriding them.
