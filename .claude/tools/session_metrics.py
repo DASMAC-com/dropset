@@ -380,10 +380,11 @@ class ResidentLine:
 
     **Instruction prose is not a tool result**, so the tool and sink tables can
     never see it — yet every request after its injection replays it, which is
-    exactly the quadratic the prefix line describes. ``turns`` is how many
-    requests carried it: everything from the request after the injection to the
-    end of the session. A compaction drops the old copy, so across one this is
-    an upper bound.
+    exactly the quadratic the prefix line describes. ``turns`` counts every
+    turn after the injection to the end of the session, on the same
+    ``Totals.turns`` count the totals line reports (an all-zero usage record
+    included). A compaction drops the old copy, so across one this is an upper
+    bound.
     """
 
     kind: str
@@ -734,8 +735,9 @@ class SessionAggregator:
         """Record an invoked skill's entry file, which arrives as an ``isMeta``
         user record opening with :data:`SKILL_BODY_PREFIX`. The injected text,
         not the file on disk, is what the prefix carried, so it is what's
-        measured: it survives the worktree being pruned, and it is the file's
-        committed size at the moment of invocation.
+        measured: it survives the worktree being pruned, and it is exactly
+        what the prefix carried, header line and any uncommitted edits
+        included.
         """
         if isinstance(content, list):
             texts = [
@@ -768,12 +770,12 @@ class SessionAggregator:
         token cost of every user-side record in between. An all-zero usage
         block carries no prefix, so like the prefix bounds it is skipped.
 
-        Two biases remain, both bounded by the dominance test. Attachments
-        recorded without rendered text (mostly one-line hook acknowledgements)
-        add tokens but no bytes. And if the last request's thinking is not
-        replayed, subtracting all of its output understates the delta. Both are
-        small next to a skill body: 93 output tokens against 102.7k on the
-        first measured `review-pr` sample.
+        Two biases remain, and the dominance test, comparing bytes with bytes,
+        sees neither. Attachments recorded without rendered text (mostly
+        one-line hook acknowledgements) add tokens but no bytes. And if the
+        last request's thinking is not replayed, subtracting all of its output
+        understates the delta. Both are small next to a skill body: 93 output
+        tokens against 102.7k on the first measured `review-pr` sample.
         """
         prefix = (
             int(usage.get("input_tokens", 0) or 0)

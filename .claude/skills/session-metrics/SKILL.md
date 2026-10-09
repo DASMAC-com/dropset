@@ -330,11 +330,12 @@ python3 .claude/tools/trim_levers.py probe --fingerprint <domain>:<slug>
 ```
 
 A resident-prose lever is keyed by the line it names, so every
-session's evidence lands on one issue:
-`claude-skills:resident-<skill>` for an entry file, and
-`claude-skills:resident-claude-md` or
-`claude-skills:resident-skill-listing` for the other two — never
-a bare `name.ext`, which Linear linkifies.
+session naming that line appends to one issue:
+`claude-skills:resident-<slug>`, where the slug is the skill name
+for an entry file, `skill-listing` for the listing, and an
+instructions file's name lowercased with `.` as `-`
+(`claude-md`, `memory-md`) — never a bare `name.ext`, which
+Linear linkifies.
 
 - **`NONE`** (exit 1) — this lever is new. Write its body to a
   scratchpad file and file it:

@@ -1292,8 +1292,8 @@ class ResidentProseLine(unittest.TestCase):
         self.assertEqual(report["resident_prose"].samples, 0)
 
     def _gap(self, tool_bytes: int) -> dict:
-        """A gap holding a ~2.4k skill body plus a tool result of
-        ``tool_bytes``, so the injection's share of the gap is set by it.
+        """A gap holding a 2355-byte skill body plus a tool result item of
+        53 + ``tool_bytes`` bytes, so the injection's share is set by it.
         """
         return self._finish(
             [
@@ -1307,9 +1307,9 @@ class ResidentProseLine(unittest.TestCase):
         )
 
     def test_the_dominance_threshold_is_the_one_that_decides(self):
-        # About 69% injection is below the 0.8 bar; about 90% clears it.
-        self.assertEqual(self._gap(1000)["resident_prose"].samples, 0)
-        self.assertEqual(self._gap(200)["resident_prose"].samples, 1)
+        # 78% injection is below the 0.8 bar; 82% clears it.
+        self.assertEqual(self._gap(611)["resident_prose"].samples, 0)
+        self.assertEqual(self._gap(464)["resident_prose"].samples, 1)
 
     def _priced(
         self,
@@ -1334,12 +1334,13 @@ class ResidentProseLine(unittest.TestCase):
         )
 
     def test_a_share_under_the_bar_is_not_a_lever(self):
-        # 2000 token-turns against 100000 of input is 2%.
-        report = self._priced(prefix=50000)
+        # 2000 token-turns against 22222 of input is 9%; against 18182, 11%.
+        report = self._priced(prefix=11111)
         self.assertFalse(report["resident_prose"].is_lever())
         md = sm.to_markdown(report, "abcd1234")
         self.assertIn("**Resident instruction prose**", md)
         self.assertNotIn("**Lever**", md)
+        self.assertTrue(self._priced(prefix=9091)["resident_prose"].is_lever())
 
     def test_an_unpriced_bedrock_session_renders_no_resident_figure(self):
         md = sm.to_markdown(self._priced(model="claude-unknown"), "abcd1234")
