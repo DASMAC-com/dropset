@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Resident-size gate: a hard byte cap on what every session carries.
 
-Three residency classes exist, and only the third is visible to
-``session_metrics.py``:
+Three residency classes exist. ``session_metrics.py`` ranks the third as tool
+results and reports the first two as its resident-instruction-prose line:
 
 * **Class A** — resident on *every* turn of *every* session: the project
   instructions file and every skill's ``description``. The harness loads all of
@@ -17,8 +17,10 @@ tool result and is already ranked, and a per-skill *total* would penalize the
 progressive loading the budget exists to encourage.
 
 **Bytes, not tokens or lines.** Bytes are what ``wc -c`` reports, need no
-tokenizer, and do not move when the model does (measured at ~4 bytes per token
-on the largest file). A rendered ``.claude/shared/`` region counts in full:
+tokenizer, and do not move when the model does. The caps assume about 4 bytes
+per token; ``session_metrics.py`` calibrates the real ratio from each session's
+skill injections and flags one outside 3.5–4.5, the signal to revisit them. A
+rendered ``.claude/shared/`` region counts in full:
 rendering solves sync, not size.
 
 **One cap, frozen exceptions, no ratchet schedule.** A committed baseline
