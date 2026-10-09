@@ -323,7 +323,7 @@ parsed worktree list; step 2 reuses it.
 Once confirmed, fast-forward `main` so the pass runs
 on the latest committed code — the up-to-date version
 of **this** skill and of the sub-skills it invokes
-(`cspell-audit`, `trim-context`, `audit`), rather than whatever
+(`cspell-audit`, `trim-context`), rather than whatever
 was current when the worktree was last synced. The base
 repo has `main` checked out, so pull it in place (a bare
 `git pull` reduces to the `Bash(git pull:*)` allow-rule):
@@ -550,7 +550,7 @@ than two files (with its sole file and recommended
 action), and a file whose inline escapes aren't in one
 contiguous block at the top (with its path). This skill
 is the only place the scheduled check lives — opt-in here,
-via the `cspell` flag; `audit` no longer runs it.
+via the `cspell` flag; no audit runs it.
 
 cspell fixes are all trivial and file-disjoint, so they
 belong in **one PR** — file the run's drift as a **single

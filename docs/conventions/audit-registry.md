@@ -1,9 +1,10 @@
 # Audit registry
 
-`audit` reads its coverage map from here — the **subsystems**
-to range over, the **interfaces** between them where contract drift
-hides, and the **skip-globs** of generated / vendored paths never
-worth auditing (`audit-scope` reads just the subsystem `kind`). These
+`audit-scope --rotation` reads its coverage map from here — the
+**subsystems** to range over, the **interfaces** between them where
+contract drift hides, and the **skip-globs** of generated / vendored
+paths never worth auditing (a scoped `audit-scope` run reads just the
+subsystem `kind`). These
 lists live in this committed, shared doc (referenced from `CLAUDE.md`)
 rather than in per-worktree state, and `review-pr` refreshes them on
 every run: when a diff introduces a new subsystem, a new seam between

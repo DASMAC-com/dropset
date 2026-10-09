@@ -188,7 +188,7 @@ what to file.
    ```
 
    It prints `identifier  title` lines and nothing else. Every
-   other filing skill's dedup step (`audit`, `audit-scope`,
+   other filing skill's dedup step (`audit-scope`,
    `housekeeping`) runs this same probe and should use it too.
 
    Treat a **title** match as sufficient to investigate and

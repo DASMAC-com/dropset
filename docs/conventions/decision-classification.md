@@ -80,7 +80,7 @@ So when classifying a decision, ask what each mistake costs:
 
 **"Propose, do not act" is the User-challenge tier, not a general
 disposition.** Applying it everywhere produces a skill that asks
-permission to do its job — which is why `audit`, `audit-scope` and the
+permission to do its job — which is why `audit-scope` and the
 review fan-out are explicit that **invoking them is the authorization**
 for their sub-agent pass. Those are Mechanical: the fan-out *is* the
 deliverable, and asking again is ceremony.

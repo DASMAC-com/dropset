@@ -4,7 +4,7 @@
 
 # Linear automation
 
-Skills that **file** Linear issues (`linear-task`, `audit`,
+Skills that **file** Linear issues (`linear-task`,
 `audit-scope`, `trim-context`, `housekeeping`, `plan`) resolve the
 filing destination — team, project, assignee — from **environment
 variables**, never hard-coded UUIDs. (Skills that only **update**
@@ -196,7 +196,7 @@ reads back, on top of the human prose — `**Fingerprint**:`. It was two
 until `**Touches**:` was retired (see below). Keep the field **name**
 stable: the filing skills emit it and the dedup probes match on it.
 
-- `**Fingerprint**: <domain-token>:<slug>` — the dedup key `audit`
+- `**Fingerprint**: <domain-token>:<slug>` — the dedup key `audit-scope`
   matches on so a finding is never refiled. Mandatory on audit
   findings; one line per finding (a merged issue carries several).
 
@@ -684,7 +684,7 @@ e.g. `Claude: Add a /merge-tasks skill` — so all agent-infra work
 batches together and can be filtered, staged, and reviewed apart from
 product code on the board.
 
-- **Filing skills emit it.** `linear-task`, `audit`, `audit-scope`,
+- **Filing skills emit it.** `linear-task`, `audit-scope`,
   `housekeeping`, and `plan` prepend `Claude:` to a title when **every
   path the fix will edit** is on the meta surface above. `/merge-tasks`
   applies it when every issue it consolidates is meta. (`plan` matters
@@ -1434,7 +1434,7 @@ removes the wasted round trip entirely.
 ## Blocking relations
 
 **No automated writer files a blocking edge — ever.** Not a filing
-skill (`linear-task`, `audit`, `audit-scope`, `trim-context`,
+skill (`linear-task`, `audit-scope`, `trim-context`,
 `housekeeping`, `merge-tasks`, `plan`),
 not an autonomous audit rotation. This holds for edges an agent believes are
 genuinely semantic, not just for file-overlap ones.
