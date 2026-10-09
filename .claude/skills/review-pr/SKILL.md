@@ -2216,7 +2216,7 @@ without eight agents and ~2.9M of sub-agent input.
      **clamps** a wide `--context`; a sweep **spread** across
      more than three files, at any scope, or past a size
      threshold **degrades** to `--files-only`; and ten-plus
-     matches **clustered** in three or fewer files drops the
+     printed matches **clustered** in three or fewer files drops the
      context and prints the match lines, for the slice-read
      offsets. Each says so on the summary line.
      `--force-context` lifts all but the clamp and is for

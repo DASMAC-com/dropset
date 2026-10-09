@@ -1151,20 +1151,19 @@ def run(argv: list[str]) -> int:
     # a slice-read needs. `--force-context` lifts it, as with the degrades
     # below; the single-file clamp above already ran and stays in force.
     #
-    # Keyed on the matches that would PRINT, not on `total`: a caller who has
-    # already bounded the windows with `--max` pays for that many, however many
-    # more the file holds.
+    # Keyed on the matches that would PRINT, and the files they sit in, not on
+    # `total` / `files`: a caller who has already bounded the windows with
+    # `--max` pays for that many, however many more the tree holds.
     shown = len(result["matches"])
+    shown_files = len({m["path"] for m in result["matches"]})
     if (
         context
         and not files_only
         and not args.force_context
         and shown >= DENSITY_DEGRADE_MATCHES
-        and len(result["files"]) <= SPREAD_DEGRADE_FILES
+        and shown_files <= SPREAD_DEGRADE_FILES
     ):
-        where = (
-            "one file" if len(result["files"]) == 1 else f"{len(result['files'])} files"
-        )
+        where = "one file" if shown_files == 1 else f"{shown_files} files"
         notes.append(
             f"NOTE: --context {context} was DROPPED because {shown} "
             f"matches cluster in {where}, where the windows overlap toward "
