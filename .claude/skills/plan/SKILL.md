@@ -62,34 +62,56 @@ a bare **`plan`**:
 plan
 ```
 
-`plan` is **idempotent by design** — one verb, no
-new-vs-resume split to remember. It names the session
-`plan-<day-of-month>` (run on the 14th → `plan-14`), and:
-
-- if today's `plan-<day>` session does not exist, it creates
-  it — in the base repo, on the **advisor** tier's model, with
-  `/plan` as the initial prompt so this skill bootstraps
-  immediately;
-- if it already exists, it **resumes** it, re-pinned.
-
-The advisor tier runs on the Anthropic subscription unless the
-runtime config says otherwise; `plan bedrock` is the one-word
-credit-pinch override. If the shell arrived carrying Bedrock
-exports from an earlier `task` in the same tab, an anthropic
-launch clears them and says so.
-
-That supersedes hand-naming a base-repo session
-`planning-<day>`. `plan`, its worktree counterpart `task`,
-and the general-purpose `explore` are documented in
+`plan` is **idempotent** — one verb, no new-vs-resume split.
+It creates or resumes today's `plan-<day-of-month>` (the 14th
+→ `plan-14`) on the **advisor** tier's model, re-pinned either
+way, with `/plan` as a new session's prompt so this skill
+bootstraps immediately. `plan bedrock` is the credit-pinch
+override; an anthropic launch clears inherited Bedrock
+exports. The verbs are documented in
 `docs/conventions/local-integrations.md`.
 
-**There is no in-session model check.** The launcher pins the
-model and refuses to start when the tier does not resolve, so a
-turn spent asking which model is running buys nothing. A session
-started by hand with bare `claude` is unmanaged by design.
+**There is no in-session model check**: the launcher pins the
+model and refuses an unresolved tier. A session started with
+bare `claude` is unmanaged by design.
 
 For a planning session specifically, fidelity is a hard
 constraint on what may be *proposed* — see step 7.
+
+## Cycling
+
+The hub's prefix only grows, so the session **cycles**: close
+out, exit, and the `plan` launcher relaunches it in the same
+tab under a fresh id and the same name. Compaction is a
+manual operator lever, never this mechanism.
+
+- **The operator types `cycle`** → run the procedure now, no
+  ask.
+
+- **The trigger.** At each idle point — turn done, nothing
+  queued, no consult half-answered — run:
+
+  ```sh
+  python3 .claude/tools/plan_cycle.py check
+  ```
+
+  On `"due": true` (a 250k prefix or 40 inbound messages),
+  ask once: cycle now? — yes recommended. On no, run
+  `plan_cycle.py snooze` (+50k tokens / +15 messages).
+
+- **The procedure.** A one-line FYI to every live worker
+  with an unanswered consult — planning is cycling, re-send
+  anything unanswered; then step 6's close-out rewrite, echo
+  verified; then `plan_cycle.py cycle`, which leaves the
+  marker and ends the client.
+
+- **The warm bootstrap.** A full bootstrap writes a
+  `Bootstrap stamp: <YYYY-MM-DD>` line to the document, and
+  every close-out rewrite keeps it. A bootstrap finding
+  today's date there is **warm**: read the document, run
+  `ListAgents`, surface the outstanding list — and skip the
+  once-a-day duties (the meta fold, the audit heartbeat, the
+  parked counts, step 8). No stamp means a full bootstrap.
 
 ## Steps
 
@@ -157,7 +179,7 @@ this same bootstrap. It is written up as step 8 because
 **runs now** — a count and a prompt, alongside the umbrellas.
 Do not defer it to the end of the session.
 
-**Run the audit heartbeat — every bootstrap, unprompted.**
+**Run the audit heartbeat — every full bootstrap, unprompted.**
 The document carries a bounded **audit-state table**, one row
 per unit in `docs/conventions/audit-registry.md`: the unit,
 the date it was last audited, the finding count, and an
@@ -946,25 +968,12 @@ row with the new date, count, and issue pointer. An audit
 issue filed but not yet pulled changes no row — the row
 records what was *audited*, not what was *scheduled*.
 
-**Why no directive.** An audit is a real capacity spend, and
-the directive path made it an invisible daily tax with three
-handoffs across two skills and a document, plus a built-in
-staleness window between writing the directive and firing it.
-The audits that matter keep turning out to be issue-shaped —
-carrying scope, rationale, and sequencing the way real work
-does — so they are filed as issues and compete in the queue.
-The daily random rotation this replaced had the same targeting
-failure from the other direction: one pass filed **fifteen**
-parked findings, several against maker-model and fair-value
-files that open Backlog issues were already slated to rewrite.
-The engine was working; the targeting was not — and because
-the parked pool drains only through the promotion step (step
-8, which runs at bootstrap), over-filing costs this session
-directly.
-
-The known risk of the issue model is cadence decay by
-neglect. The bootstrap heartbeat (step 1) is the guard, which
-is why its decline branch must record a reason.
+**Why no directive**: audits are issue-shaped, so they
+compete in the queue — the retired directive's cost is in
+[`history.md`](history.md). The known risk of the issue
+model is cadence decay by neglect. The bootstrap heartbeat
+(step 1) is the guard, which is why its decline branch must
+record a reason.
 
 **7. Capture the session's token profile at close-out.** Run
 the committed metrics tool over the planning transcript, then
@@ -974,8 +983,8 @@ planning-session shapes too, rather than only review shapes:
 
 **COMPUTE this session's id; never list the projects
 directory to find it.** A daily verb's session id is
-deterministic — an md5 of `dropset-<kind>-<YYYYMMDD>` — so
-one call names it:
+deterministic — an md5 of `dropset-<kind>-<YYYYMMDD>`, plus
+`-c<N>` once cycled — so one call names it:
 
 ```sh
 python3 .claude/tools/resolve_session.py --daily-id plan
@@ -985,15 +994,9 @@ python3 .claude/tools/resolve_session.py --daily-id plan
 make session-metrics SESSION=<uuid>
 ```
 
-Searching for it instead is expensive and looks reasonable:
-one planning session ran a bare long-format listing of the
-Claude projects folder to find its own transcript, at
-**≈6.0k** for that single call — its sixth-largest result, and
-≈6.4k across five such calls, making the listing that
-session's top hardening candidate by result size. The next
-bootstrap reproduced the same id by computation at near-zero
-cost. Pass `--date YYYYMMDD` for an earlier day's session;
-`housekeeping` is the other daily kind.
+It reads the cycle counter itself; searching instead is
+expensive ([`history.md`](history.md)). Pass `--date YYYYMMDD`
+for an earlier day; `housekeeping` is the other daily kind.
 
 Levers file through `.claude/tools/trim_levers.py` (probe,
 then `file` or `append-evidence`), **not** into a document —
