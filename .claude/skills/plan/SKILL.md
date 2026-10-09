@@ -133,10 +133,12 @@ python3 .claude/tools/board_batch.py list
 ```
 
 ```sh
-python3 .claude/tools/board_batch.py list --state Todo
+python3 .claude/tools/board_batch.py list --state Todo \
+  --include-milestoned --show-milestone
 ```
 
-Milestoned (parked) issues are dropped from both by default.
+The Todo call keeps the parked issues, tagged, for step 1's
+meta review; the Backlog call drops milestoned ones.
 Pull a full body only when a decision turns on it.
 
 **What keeps the Todo set small:** a planning session either
@@ -300,41 +302,37 @@ collision clusters" below); where two would rewrite the same
 skill, promote one and leave the other parked. Meta is judged
 on collision clusters exactly as product work is.
 
-**Review the parked AND blocked meta issues at EVERY
-bootstrap, whether or not the document names a lane** —
-otherwise promotion collapses into the named lane and most
-batches are never considered. It is a **necessity gate**, not
-only a slating pass:
+**Review every meta issue at EVERY bootstrap — parked, Next
+and Blocked — whether or not the document names a lane.** It
+is a **necessity gate**: each ends doable, blocked, or killed.
+Work from the bootstrap's two listings:
 
 1. Say the counts out loud.
-1. Group the `Claude:` rows by the surface each rewrites
-   (`review-pr`, `init-pr`, the shell init file, guard hooks,
-   tools, conventions, AWS) from **titles alone**, no body read,
-   from `board_batch.py list --include-milestoned --show-milestone`
-   once bare (Backlog, where a surface-held issue waits behind
-   its edge) and once with `--state Todo`.
-1. **Kill on doubt**: an issue that cannot name a concrete
-   recurring cost larger than its landing-plus-ratification
-   cost goes on a kill list. A wrongly closed lever's cost
-   resurfaces when it recurs and is measured again; a wrongly
-   kept one spends a session and a ratification on noise.
-1. Mark each surviving group **free**, or **in flight** when an
-   In Progress / In Review meta issue or a promoted-but-unpulled
-   batch already rewrites that surface.
+1. **Before assembly, kill on doubt**, per issue: one that
+   cannot name a concrete recurring cost larger than its
+   landing-plus-ratification cost goes on a kill list (titles
+   first; read only a kill candidate's body).
+1. After assembly, group the batches by the surface each
+   rewrites (`review-pr`, `init-pr`, the shell init file, guard
+   hooks, tools, conventions, AWS) from **titles alone**. A
+   `[blocked by …]` row stays blocked behind its human-placed
+   edge and is never slated.
+1. Mark each group **free**, or **in flight** when an In
+   Progress / In Review meta issue (`list --state`) already
+   rewrites that surface.
 1. Offer the slate (from the free groups) and the kill list in
-   the same `AskUserQuestion` as step 8's audit-findings offer,
-   recommended set first.
+   step 8's `AskUserQuestion`, recommended set first.
 1. On a yes, promote each with both halves in one
    `board_batch.py fields` write (milestone `null`, Todo →
    Backlog, Urgent), and close each kill `Canceled` with its
    reason, as `trim-context` step 6 does.
-1. Record the outcome — promoted, killed, and each held group
-   with why — under the `In-session notes` heading.
+1. Record promoted, killed, blocked, each held group with why,
+   and the parked count under the `In-session notes` heading.
 
 **The pool also includes any open, UNPULLED batch — that
 clause is load-bearing.** Sweep the milestone **plus** every
-open `Claude:`-prefixed Backlog issue that is not In Progress
-or In Review. Lowest number still survives, so a batch
+open, unblocked `Claude:`-prefixed Backlog issue that is not
+In Progress or In Review. Lowest number still survives, so a batch
 assembled yesterday and never pulled is swallowed by today's
 assembly.
 
@@ -1030,8 +1028,9 @@ how the planning flow continuously **absorbs** that output
 instead of letting it pile up unlooked-at.
 
 **Offer at bootstrap: a count and a prompt, never a
-listing.** "N audit findings are parked — slate any in?" The
-bodies stay unread unless the answer is yes.
+listing.** "N audit findings are parked — slate any in?",
+asked with step 1's meta slate and kill list. The bodies stay
+unread unless the answer is yes.
 
 On a yes:
 
