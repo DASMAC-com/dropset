@@ -464,15 +464,12 @@ merged branches (run from the base repo root):
 python3 .claude/tools/prune_worktrees.py --merged <branch> <branch> ...
 ```
 
-It prints `{removed, skipped, left, pruned, dry_run}` — the
-tally to report: `removed` (worktree + branch dropped),
-`skipped` (a dirty/locked merged tree that refused — the safe
-outcome), and `left` (branches not in the merged set: PR
-still open, closed-without-merge, or no PR). Preview with
-`--dry-run` first if you want to see the candidates without
-touching anything. Closed-without-merge and dirty worktrees
-are not dropped automatically — they land in `skipped` /
-`left` so the user can decide.
+Its JSON is the tally to report: `removed` (worktree + branch
+dropped), `branches_removed` (a stray branch, worktree already
+gone), `skipped` (dirty, locked or unpushed — the safe
+outcome), `left` (not in the merged set), `unmatched` (matches
+nothing). Preview with `--dry-run`. Closed-without-merge and
+dirty worktrees land in `skipped` / `left` for the user.
 
 **Then mark notifications for merged PRs done.** Merged PRs
 leave GitHub notifications that otherwise pile up with no

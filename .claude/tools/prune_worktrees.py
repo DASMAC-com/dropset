@@ -13,10 +13,14 @@ Usage (run from the base repo root — you can't remove the worktree you stand i
     python3 .claude/tools/prune_worktrees.py --merged eng-701 eng-702
     python3 .claude/tools/prune_worktrees.py --merged-file /tmp/merged.txt --dry-run
 
-Prints JSON ``{removed: [{path, branch}], skipped: [{path, branch, reason}],
-left: [{path, branch}], pruned: bool, dry_run: bool}``:
+Prints JSON ``{removed: [{path, branch}], branches_removed: [branch],
+skipped: [{path, branch, reason}], left: [{path, branch}], unmatched: [branch],
+pruned: bool, dry_run: bool}``:
 
 * ``removed`` — merged worktrees whose worktree + branch were dropped;
+* ``branches_removed`` — merged local branches with no worktree, deleted under
+  the same unpushed-commit gate (a skip here carries ``path: None``);
+* ``unmatched`` — merged names matching no worktree and no local branch;
 * ``skipped`` — merged worktrees held back as unsafe, left in place: either the
   pre-flight found uncommitted changes / unpushed commits / no upstream (see
   ``unsafe_reason``), or ``git worktree remove`` itself **refused** (a dirty or
@@ -118,9 +122,14 @@ def unsafe_reason(path: str, branch: str, git=_real_git) -> str | None:
         return "could not read the worktree's status, so safety is unprovable"
     if out.strip():
         return f"{len(out.strip().splitlines())} uncommitted change(s)"
+    return unpushed_reason(branch, git, ["-C", path])
 
+
+def unpushed_reason(branch: str, git=_real_git, prefix: list[str] = ()) -> str | None:
+    """The unpushed-commit half of :func:`unsafe_reason`, alone — the whole gate
+    for a local branch with no worktree, which has no status to read."""
     rc, out, _ = git(
-        ["-C", path, "rev-list", "--count", f"{branch}@{{upstream}}..{branch}"]
+        [*prefix, "rev-list", "--count", f"{branch}@{{upstream}}..{branch}"]
     )
     if rc != 0:
         return "no upstream branch, so unpushed commits cannot be ruled out"
@@ -142,7 +151,9 @@ def prune(merged: set[str], dry_run: bool, git=_real_git) -> dict:
     """Remove each merged branch's worktree + local branch, skipping unsafe ones.
 
     Two gates, and both matter: ``merged`` restricts the candidates to branches
-    whose PR is confirmed merged, and :func:`unsafe_reason` then refuses any of
+    the caller has confirmed finished — a merged PR for ``housekeeping``, a
+    completed or canceled issue with no open PR for ``upkeep`` — and
+    :func:`unsafe_reason` then refuses any of
     those still holding uncommitted or unpushed work. ``git`` is an injectable
     ``(args) -> (rc, stdout, stderr)`` runner."""
     rc, out, err = git(["worktree", "list", "--porcelain"])
@@ -178,9 +189,34 @@ def prune(merged: set[str], dry_run: bool, git=_real_git) -> dict:
             )
             continue
         # Squash/rebase-merged tips aren't ancestors of main, so -d would refuse;
-        # the PR is confirmed merged, so force the branch delete.
+        # the branch is confirmed finished and its commits pushed, so force it.
         git(["branch", "-D", branch])
         removed.append({"path": path, "branch": branch})
+
+    # A merged branch whose worktree is already gone used to survive every pass:
+    # only a worktree removal ever deleted a branch. Same gate, minus the status
+    # read there is no tree to make.
+    in_trees = {t["branch"] for t in parse_worktrees(out) if t.get("branch")}
+    refs_rc, refs, _ = git(["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+    local = set(refs.split()) if refs_rc == 0 else set()
+    branches_removed: list[str] = []
+    for branch in sorted((merged & local) - in_trees - {"main"}):
+        reason = unpushed_reason(branch, git)
+        if reason is not None:
+            skipped.append({"path": None, "branch": branch, "reason": reason})
+            continue
+        if not dry_run:
+            d_rc, _, d_err = git(["branch", "-D", branch])
+            if d_rc != 0:
+                skipped.append(
+                    {
+                        "path": None,
+                        "branch": branch,
+                        "reason": (d_err.strip().splitlines() or ["refused"])[0],
+                    }
+                )
+                continue
+        branches_removed.append(branch)
 
     pruned = False
     if not dry_run and removed:
@@ -189,8 +225,15 @@ def prune(merged: set[str], dry_run: bool, git=_real_git) -> dict:
 
     return {
         "removed": removed,
+        "branches_removed": branches_removed,
         "skipped": skipped,
         "left": left,
+        # Reported, not dropped: a merged name matching no worktree and no local
+        # branch is usually long-finished work, but silence hid the case where
+        # the name itself was wrong.
+        # Empty when the branch list itself failed: then every name would read
+        # as unmatched, which says nothing about the names.
+        "unmatched": sorted(merged - in_trees - local) if refs_rc == 0 else [],
         "pruned": pruned,
         "dry_run": dry_run,
     }
