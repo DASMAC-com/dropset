@@ -276,15 +276,6 @@ Two rules keep the cap from turning into deletion:
   allows it (`gh … --json <fields>`, a GraphQL projection), paginate
   instead of dumping, and **never re-fetch what's already in context**.
 
-  **An inventory question takes a rollup, not the per-entry listing.**
-  The Actions cache holds ~2,900 entries, and one
-  `gh cache list --json … --limit 100` returned ≈6.8k — its session's
-  largest result by 5x, replayed ~80 turns — to answer "what is on main,
-  and how old is the oldest entry". Start with
-  `gh api repos/DASMAC-com/dropset/actions/cache/usage`, then a `--jq`
-  `group_by` rollup (ref family × kind → count, MiB, oldest `createdAt`)
-  at a few hundred tokens; per-entry output only for a named key.
-
   This binds the **main loop's own discovery greps**, not just the
   sweeps it hoists for sub-agents — the rule is usually read as being
   about material handed onward, so it gets skipped for a search you run
@@ -292,6 +283,18 @@ Two rules keep the cap from turning into deletion:
   ask `--files-only` (or `grep -l`) and stop: one consumer-discovery
   sweep returned 39 full match lines for a question that was one bit per
   file. Take full lines only once you need to read the surrounding code.
+
+  **An inventory question takes a rollup, not the per-entry listing.**
+  The Actions cache holds ~2,900 entries, and one
+  `gh cache list --json … --limit 100` returned ≈6.8k — its session's
+  largest result by 5x, replayed ~80 turns — to answer "what is on main,
+  and how old is the oldest entry". Take the totals from
+  `gh api repos/DASMAC-com/dropset/actions/cache/usage`, and the
+  breakdown from `gh cache list --json key,ref,sizeInBytes,createdAt`
+  with a `--limit` covering every entry (a sample's oldest `createdAt`
+  is wrong) and a `--jq` `group_by` rollup — ref family × kind from the
+  key → count, MiB, oldest — at a few hundred tokens. Per-entry output
+  only for a named key.
 
   **Match the search shape to the question type, in every phase.** This
   is the single most recurring lever across mined sessions — seven of
@@ -941,9 +944,8 @@ Two rules keep the cap from turning into deletion:
   hoisted "are each of these 7 moved symbols still referenced?" sweep
   came back as ~130 full match lines (≈4.2k, that session's single
   largest result), most of them one file repeating one constant 40 times
-  — for a question that is one bit per symbol. Use `-l` (files) — or `-c`
-  (counts) on a named file — when the question is existence, and full
-  `-n` lines only when
+  — for a question that is one bit per symbol. Use `-l` (files) when the
+  question is existence, and full `-n` lines only when
   the surrounding code actually has to be read. Hoisting a *verbose*
   sweep merely relocates the sink from a sub-agent into the main loop,
   where it is replayed on every later turn.
@@ -1236,7 +1238,7 @@ Two rules keep the cap from turning into deletion:
     for all 85 Bash calls), and two of them confirmed what
     `/api/search` and the Grafana log already said. Screenshot only what
     no API answers, **once, against the final tree** rather than after
-    each edit, at the smallest window that frames the question.
+    each edit.
   - **Clip by default.** `clip` takes the rect you just measured, so it
     costs nothing extra to author.
   - **Reserve a full viewport** for when the composition itself is the
