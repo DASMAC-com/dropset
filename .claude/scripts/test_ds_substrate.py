@@ -378,7 +378,7 @@ class ModelsVerb(SubstrateHarness):
             env={
                 "DS_MODEL_ADVISOR": "claude-known-judge[1m]",
                 "DS_MODEL_EXECUTOR": "us.anthropic.known-work",
-                "DS_MODEL_BACKGROUND": "claude-known-bg",
+                "DS_MODEL_BACKGROUND": "claude-known-bg[1m]",
                 "DS_AWS_PROFILE": "admin",
             },
         )
@@ -397,8 +397,9 @@ class ModelsVerb(SubstrateHarness):
         )
         self.assertIn("ok     background us.anthropic.claude-known-bg", out)
         self.assertNotIn("us.anthropic.us.anthropic", out)
+        self.assertIn("RC=0", out)
 
-    def test_check_skips_a_background_alias(self):
+    def test_check_fails_a_background_alias(self):
         result, out = self._models(
             "check",
             env={
@@ -407,8 +408,10 @@ class ModelsVerb(SubstrateHarness):
                 "DS_MODEL_BACKGROUND": "haiku",
             },
         )
-        self.assertIn("skip   background haiku", out)
-        self.assertIn("RC=0", out)
+        # Claude Code resolves `haiku` through this very slot, so an alias
+        # here is circular and fails rather than being skipped.
+        self.assertIn("FAIL   background haiku", out)
+        self.assertIn("RC=1", out)
 
     def test_check_fails_on_an_unknown_profile(self):
         result, out = self._models(

@@ -1519,8 +1519,10 @@ fleet() {
 # advisor tier: `plan bedrock` sends that same id to Bedrock, so it has to
 # resolve there too. Every id, background included, is mapped to its Bedrock
 # profile: a first-party `claude-*` becomes `us.anthropic.<id>`, and any window
-# suffix is dropped. An alias (`fable`, `opus`) cannot be checked: Claude Code resolves
-# it, not Bedrock, so it is reported rather than failed.
+# suffix is dropped. An advisor or executor alias (`fable`, `opus`) cannot be
+# checked: Claude Code resolves it, not Bedrock, so it is reported rather than
+# failed. A background alias fails instead: Claude Code resolves `haiku` THROUGH
+# this slot, so an alias here is circular.
 models() {
   if [[ -n "$1" && "$1" != check ]]; then
     print -u2 'Usage: models [check]'
@@ -1551,7 +1553,12 @@ models() {
     [[ -n "$model" ]] || continue
     profile="${model%%\[*}"
     if [[ "$profile" != claude-* && "$profile" != *anthropic.* ]]; then
-      print -r -- "skip   $tier $model — an alias; Claude Code resolves it"
+      if [[ "$tier" == background ]]; then
+        print -r -- "FAIL   $tier $model — an alias; this slot needs a model id"
+        rc=1
+      else
+        print -r -- "skip   $tier $model — an alias; Claude Code resolves it"
+      fi
       continue
     fi
     [[ "$profile" == claude-* ]] && profile="us.anthropic.$profile"

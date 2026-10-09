@@ -514,8 +514,8 @@ alongside the primary model, rather than falling back to the
 subscription. Claude Code maps a first-party id in this slot to its
 `us.anthropic.` profile, as it does the primary model's (measured from
 its request log), so a first-party id is portable; a
-Bedrock-form id must be the exact profile id, since Bedrock rejects the
-wrong form as an invalid model identifier. A
+Bedrock-form id must be the exact profile id, since Bedrock rejects any
+other spelling as an invalid model identifier. A
 `ResourceNotFoundException` saying model use case details have not been
 submitted means the account has not filed Anthropic's use-case form for
 that model — an operator step.
