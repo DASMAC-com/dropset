@@ -106,6 +106,93 @@ fn postgres_image_tag_matches_the_deployed_image() {
     );
 }
 
+/// Every Postgres test container in the workspace chains the tag pin.
+///
+/// `postgres_image_tag_matches_the_deployed_image` proves the constant is
+/// right, not that anyone uses it: a harness that calls `Postgres::default()`
+/// without chaining the pin still starts Postgres 11. That happened once — the
+/// market-data parked-mirror harness — and surfaced only when a migration using
+/// a Postgres 12 feature dequeued an unrelated PR. This holds the count of such
+/// harnesses at zero by requiring `.with_tag(` somewhere in the same statement
+/// as the constructor, whatever the argument — not directly after it, since
+/// `Postgres`'s own builders (`with_db_name` and the like) must precede it.
+///
+/// It scans every `.rs` file under the workspace root, skipping `target/`,
+/// `node_modules/` and hidden directories (which is also what keeps it out of
+/// sibling worktrees), and ignores comment lines so a doc comment naming the
+/// constructor is no violation. It is a text match, so another spelling of the
+/// same call (`Default::default()` on a `Postgres`-typed binding) goes unseen;
+/// what it holds is the one shape a copied harness actually takes. Like the
+/// test above it needs no container, so it runs in the default suite.
+#[test]
+fn every_postgres_container_pins_the_image_tag() {
+    // Assembled so this file's own source does not match the scan.
+    const CONSTRUCTOR: &str = concat!("Postgres", "::default()");
+    const PIN: &str = ".with_tag(";
+
+    fn visit(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in fs::read_dir(dir).expect("read workspace directory") {
+            let entry = entry.expect("read directory entry");
+            let path = entry.path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            // `file_type` does not follow symlinks, so a linked directory
+            // cannot loop the walk.
+            if entry.file_type().expect("read file type").is_dir() {
+                if !name.starts_with('.') && name != "target" && name != "node_modules" {
+                    visit(&path, files);
+                }
+            } else if name.ends_with(".rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let mut files = Vec::new();
+    visit(root, &mut files);
+
+    let mut pinned_trees = std::collections::BTreeSet::new();
+    let mut violations = Vec::new();
+    for path in &files {
+        let source = fs::read_to_string(path).expect("read source file");
+        for (at, _) in source.match_indices(CONSTRUCTOR) {
+            let line_start = source[..at].rfind('\n').map_or(0, |i| i + 1);
+            if source[line_start..at].trim_start().starts_with("//") {
+                continue;
+            }
+            // The statement ends at a `;`, or at a `}` closing the block a
+            // tail expression sits in, so a later call's pin cannot vouch
+            // for this one.
+            let rest = &source[at + CONSTRUCTOR.len()..];
+            let statement = rest.split([';', '}']).next().unwrap_or(rest);
+            let shown = path.strip_prefix(root).unwrap_or(path);
+            if statement.contains(PIN) {
+                pinned_trees.insert(shown.components().next().map(|c| c.as_os_str().to_owned()));
+            } else {
+                let line = source[..at].matches('\n').count() + 1;
+                violations.push(format!("{}:{line}", shown.display()));
+            }
+        }
+    }
+    // This file holds a pinned call of its own, so the walk always finds one;
+    // requiring hits in more than one top-level tree is what proves it is
+    // reaching the other crates' harnesses rather than passing vacuously.
+    assert!(
+        pinned_trees.len() > 1,
+        "found pinned {CONSTRUCTOR} calls only in {pinned_trees:?} under {}; \
+         the walk is not reaching the other crates' test harnesses",
+        root.display()
+    );
+    assert!(
+        violations.is_empty(),
+        "{CONSTRUCTOR} without {PIN}POSTGRES_IMAGE_TAG) resolves to Postgres 11, \
+         which nothing here deploys. Chain the pin, or use the crate's shared \
+         start helper where one exists: {violations:?}"
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn fence_rejects_an_unprovisioned_database() {
