@@ -2188,6 +2188,8 @@ without eight agents and ~2.9M of sub-agent input.
      - **Existence** ("is it still referenced?", "does this
        word appear in ≥ 2 files?") → files:
        `--files-only` or `grep -l`, not `-rc`.
+     - **Location** ("which lines, so I can slice-read
+       them?") → `--locations`, which prints `path:line` only.
      - **Adjudication** (the lens must read the surrounding
        code) → full `-n` lines, and only then.
 

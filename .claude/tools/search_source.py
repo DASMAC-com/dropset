@@ -494,6 +494,97 @@ def comment_marker_branches(pattern: str, prose: bool = False) -> list[str]:
     return found
 
 
+#: What an anchored branch starts with when it is reaching for an INDENTED line:
+#: literal spaces or a tab, or the regex spellings of either.
+_INDENT_STARTS = (" ", "\t", "\\s", "\\t", "[ ", "[\\t")
+
+
+def indented_declaration_branches(pattern: str) -> list[str]:
+    """Anchored branches in ``pattern`` that match an indented line, in order.
+
+    The sibling of :func:`comment_marker_branches`, enforcing the other half of
+    the same documented rule — anchor a section map at column zero, never add a
+    leading-space alternative. In a unittest file every method is indented, so
+    ``^    def `` turned a map of about six classes into a listing of about fifty
+    methods (≈1.6k, the third-largest result of its session) — the Python form of
+    the Rust ``^ *fn`` that dumps a whole ``#[cfg(test)]`` module.
+
+    Single-branch patterns are never flagged: a lone ``^    def `` is a deliberate
+    search for indented methods, and only an *alternation* is a section map.
+    Nor is an OPTIONAL indent (``^ *``, ``^\\s*$``, ``^[ \\t]?``): it also
+    matches column zero, so it is not reaching past the declarations.
+    """
+    branches = [raw.lstrip() for raw in pattern.split("|")]
+    if len(branches) < 2:
+        return []
+    found = []
+    for branch in branches:
+        if not branch.startswith(_ANCHORED_BRANCH):
+            continue
+        body = branch[len(_ANCHORED_BRANCH) :]
+        if not body.startswith(_INDENT_STARTS):
+            continue
+        # Where the first indent token ends: a class, an escape, or one char.
+        if body.startswith("["):
+            end = body.find("]") + 1 or len(body)
+        elif body.startswith("\\"):
+            end = 2
+        else:
+            end = 1
+        quantifier = body[end:]
+        if quantifier.startswith(("*", "?", "{0")):
+            continue
+        found.append(branch)
+    return found
+
+
+#: The longest bare word the prefix-collision probe considers "short". Measured:
+#: ``pyth`` matched every ``python3`` recipe line in the Makefile and ~40
+#: ``Python`` doc comments repo-wide, ≈6k across two calls, before ``\\bpyth\\b``
+#: answered on the third. Longer tokens rarely sit inside a common word.
+SHORT_TOKEN_CHARS = 6
+
+_BARE_WORD = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+def short_token_branches(pattern: str) -> list[str] | None:
+    """The branches of ``pattern`` when EVERY one is a short bare word, else None.
+
+    Only that shape is probed, which keeps the second search rare: a pattern with
+    any regex syntax, anchoring or a long branch has already said what it means.
+    """
+    branches = pattern.split("|")
+    if all(_BARE_WORD.match(b) and len(b) <= SHORT_TOKEN_CHARS for b in branches):
+        return branches
+    return None
+
+
+def case_blind_pattern(pattern: str, fixed: bool = False) -> bool:
+    """Whether ``pattern`` holds letters but no uppercase ones.
+
+    Escape sequences are dropped first, so ``\\b`` / ``\\S`` / ``\\W`` don't count:
+    they are syntax, not the caller's choice of case — except under ``fixed``,
+    where a backslash is literal text. A pattern with a character class is
+    never case-blind: ``[a-z]`` is a deliberate choice, not an oversight.
+    """
+    if not fixed and "[" in pattern:
+        return False
+    letters = pattern if fixed else re.sub(r"\\.", "", pattern)
+    return any(ch.islower() for ch in letters) and not any(
+        ch.isupper() for ch in letters
+    )
+
+
+def frontmatter_end(lines: list[str]) -> int:
+    """Index of the closing ``---`` of a leading YAML frontmatter block, or -1."""
+    if not lines or lines[0].strip() != "---":
+        return -1
+    for index in range(1, len(lines)):
+        if lines[index].strip() == "---":
+            return index
+    return -1
+
+
 def first_alternation_branch(pattern: str) -> str | None:
     """The first branch of ``pattern``'s alternation, or None if it has none.
 
@@ -548,8 +639,15 @@ def search(
     ignore_case: bool = False,
     limit: int = DEFAULT_MAX,
     globs: tuple[str, ...] | None = None,
+    skip_frontmatter: bool = False,
 ) -> dict:
     """Search and return ``{matches, files, total, truncated}``.
+
+    ``skip_frontmatter`` drops matches inside a markdown file's leading YAML
+    block and counts them in ``frontmatter_skipped``. A skill's ``description``
+    is one 1,000–1,500-character line, so any rule word it contains returns
+    ~300 tokens for that single hit — and no narrower pattern or ``--context 0``
+    can fix it, because the match line itself is what is fat.
 
     ``total`` counts every match found, ``matches`` holds at most ``limit`` of
     them, and ``truncated`` is the difference — reported so a capped result is
@@ -635,15 +733,25 @@ def search(
     scanned = 0
     oversized: list[Path] = []
     stats: dict = {"glob_hits": 0}
+    frontmatter_skipped = 0
     for path in iter_files(roots, extensions, oversized, globs, base, stats):
         scanned += 1
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             continue
+        fence = (
+            frontmatter_end(lines)
+            if skip_frontmatter
+            and path.suffix.lstrip(".").lower() in ("md", "markdown")
+            else -1
+        )
         hit_in_file = False
         for index, line in enumerate(lines):
             if not matcher.search(line):
+                continue
+            if index <= fence:
+                frontmatter_skipped += 1
                 continue
             total += 1
             hit_in_file = True
@@ -698,6 +806,7 @@ def search(
         "files": files,
         "total": total,
         "truncated": max(0, total - len(matches)),
+        "frontmatter_skipped": frontmatter_skipped,
         # The size cap is the tool's *other* cap, and the same rule applies: a cap
         # nobody is told about reads as "searched everything".
         "skipped_oversized": sorted(relative(p) for p in oversized),
@@ -844,6 +953,7 @@ def print_result(
     files_only: bool,
     context: int,
     notes: list[str] | None = None,
+    locations: bool = False,
 ) -> None:
     """Emit ``grep -n``-shaped lines on stdout and one summary line on stderr.
 
@@ -861,6 +971,11 @@ def print_result(
     if files_only:
         for path in result["files"]:
             print(path)
+    elif locations:
+        # `path:line` and nothing else — the offset a slice-read consumes, at a
+        # fraction of the matched text's cost.
+        for match in result["matches"]:
+            print(f"{match['path']}:{match['line']}")
     elif context:
         for path, start, lines in merge_context_blocks(result["matches"]):
             for offset, line in enumerate(lines):
@@ -989,6 +1104,24 @@ def run(argv: list[str]) -> int:
         "for deliberately searching comment lines, as opposed to writing a "
         "section map that accidentally matches them all",
     )
+    parser.add_argument(
+        "--force-indented",
+        action="store_true",
+        help="allow an indented-line branch in an anchored alternation — the "
+        "escape hatch for deliberately mapping indented declarations",
+    )
+    parser.add_argument(
+        "--locations",
+        action="store_true",
+        help="print path:line per match and nothing else — the narrowest answer "
+        "to WHERE, and the offset a slice-read needs",
+    )
+    parser.add_argument(
+        "--skip-frontmatter",
+        action="store_true",
+        help="drop matches inside a markdown file's leading YAML frontmatter, "
+        "whose one-line skill descriptions make every hit there fat",
+    )
     parser.add_argument("--fixed", action="store_true", help="literal, not regex")
     parser.add_argument("--ignore-case", action="store_true")
     parser.add_argument(
@@ -1020,6 +1153,12 @@ def run(argv: list[str]) -> int:
 
     if exts and args.all_text:
         raise SearchSourceError("--ext and --all-text are alternatives")
+    if args.locations and args.files_only:
+        raise SearchSourceError("--locations and --files-only are alternatives")
+    if args.locations and args.context:
+        raise SearchSourceError(
+            "--locations prints no lines, so --context has nothing to widen"
+        )
 
     # CLAMP a wide context window once the scope is provably one file. Sweeping
     # a named file buys its matched regions at an N-line markup, and on clustered
@@ -1087,17 +1226,38 @@ def run(argv: list[str]) -> int:
                 f"really are searching for comment lines."
             )
 
-    result = search(
-        args.pattern,
-        Path(args.root),
-        dirs=list(dirs) if dirs is not None else None,
-        extensions=extensions,
-        context=args.context,
-        fixed=args.fixed,
-        ignore_case=args.ignore_case,
-        limit=args.max,
-        globs=globs,
-    )
+    # REFUSE an indented-line branch in an anchored alternation, for the same
+    # reason and with the same escape shape as the comment-marker refusal: the
+    # rule ("anchor at column zero; never add a leading-space alternative") was
+    # written beside that one and only that one was enforced.
+    if not args.fixed and not args.force_indented:
+        indented = indented_declaration_branches(args.pattern)
+        if indented:
+            raise SearchSourceError(
+                f"pattern contains indented-line branch(es) "
+                f"{', '.join(repr(b) for b in indented)} in an anchored "
+                f"alternation — a section map anchors at column zero, and an "
+                f"indented branch lists every method of every class (a unittest "
+                f"map this way returned ~50 methods to locate ~6 classes). Drop "
+                f"those branches (for Python: '^class |^def '). Pass "
+                f"--force-indented if indented declarations really are the target."
+            )
+
+    def run_search(pattern, *, context=args.context, ignore_case=args.ignore_case):
+        return search(
+            pattern,
+            Path(args.root),
+            dirs=list(dirs) if dirs is not None else None,
+            extensions=extensions,
+            context=context,
+            fixed=args.fixed,
+            ignore_case=ignore_case,
+            limit=args.max,
+            globs=globs,
+            skip_frontmatter=args.skip_frontmatter,
+        )
+
+    result = run_search(args.pattern)
 
     # The same clamp, for a scope that RESOLVES to one file without naming it:
     # `--dir db-schema --glob lib.rs`, or a wildcard glob selecting one file. The
@@ -1115,19 +1275,14 @@ def run(argv: list[str]) -> int:
     ):
         clamped_from = (args.context, result["files"][0])
         args.context = SINGLE_FILE_CONTEXT_LIMIT
-        result = search(
-            args.pattern,
-            Path(args.root),
-            dirs=list(dirs) if dirs is not None else None,
-            extensions=extensions,
-            context=args.context,
-            fixed=args.fixed,
-            ignore_case=args.ignore_case,
-            limit=args.max,
-            globs=globs,
-        )
+        result = run_search(args.pattern, context=args.context)
 
     notes: list[str] = []
+    if result["frontmatter_skipped"]:
+        notes.append(
+            f"NOTE: {result['frontmatter_skipped']} match(es) inside YAML "
+            f"frontmatter were skipped (--skip-frontmatter)"
+        )
     if clamped_from is not None:
         width, target = clamped_from
         notes.append(
@@ -1247,16 +1402,10 @@ def run(argv: list[str]) -> int:
     if not result["total"] and not args.fixed:
         branch = first_alternation_branch(args.pattern)
         if branch:
-            probe = search(
-                branch,
-                Path(args.root),
-                dirs=list(dirs) if dirs is not None else None,
-                extensions=extensions,
-                fixed=args.fixed,
-                ignore_case=args.ignore_case,
-                limit=1,
-                globs=globs,
-            )
+            # Through `run_search`, so `--skip-frontmatter` applies here too:
+            # a branch that matched only inside skipped frontmatter would
+            # otherwise "prove" a broken alternation that parsed fine.
+            probe = run_search(branch, context=0)
             if probe["total"]:
                 notes.append(
                     f"WARNING: 0 matches, but the single branch {branch!r} "
@@ -1266,7 +1415,48 @@ def run(argv: list[str]) -> int:
                     f"`{alternation_hint(args.pattern)}`."
                 )
 
-    print_result(result, files_only, context, notes)
+    # A SHORT bare token that is mostly a prefix of a longer word. Pattern
+    # precision is a third axis beside output width and scope, and both of the
+    # measured `pyth` calls were correctly scoped and one was `--files-only`, so
+    # neither existing rule could fire. The probe re-runs the token anchored, so
+    # the note carries the count rather than a guess.
+    tokens = None if args.fixed else short_token_branches(args.pattern)
+    if tokens and result["total"]:
+        anchored = (
+            rf"\b{tokens[0]}\b"
+            if len(tokens) == 1
+            else r"\b(?:" + "|".join(tokens) + r")\b"
+        )
+        bounded = run_search(anchored, context=0)
+        partial = result["total"] - bounded["total"]
+        if partial and partial * 2 >= result["total"]:
+            notes.append(
+                f"NOTE: {partial} of {result['total']} match(es) are the token "
+                f"inside a longer word (pyth inside python is the measured "
+                f"case) — anchor it: '{anchored}'"
+            )
+
+    # A LOWERCASE pattern that silently misses SCREAMING_CASE. The partial answer
+    # reads exactly like a complete one, and a constant whose VALUE contains its
+    # own name in lowercase defeats the obvious self-check — one lens matched
+    # `SUBSTRATE_DIR`'s string literal, concluded case could not be the problem,
+    # and filed a false "the tool is broken" caveat. Scoped runs only, so the
+    # second walk stays bounded.
+    if (
+        not args.ignore_case
+        and (globs or dirs)
+        and case_blind_pattern(args.pattern, fixed=args.fixed)
+    ):
+        folded = run_search(args.pattern, context=0, ignore_case=True)
+        extra = folded["total"] - result["total"]
+        if extra > 0:
+            notes.append(
+                f"NOTE: --ignore-case matches {extra} more line(s) — a lowercase "
+                f"pattern does not reach SCREAMING_CASE constants or CamelCase "
+                f"types; re-run with --ignore-case or in the identifier's own case"
+            )
+
+    print_result(result, files_only, context, notes, locations=args.locations)
     # 0 when something matched, 1 when nothing did — grep's convention, so a
     # caller can branch on it.
     return 0 if result["total"] else 1
