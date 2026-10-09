@@ -1,14 +1,34 @@
 [
   {
-    "ParameterKey": "BudgetAlertEmail",
-    "ParameterValue": ""
-  },
-  {
     "ParameterKey": "BudgetLimitUsd",
     "ParameterValue": "10000"
   },
   {
     "ParameterKey": "EnvironmentName",
     "ParameterValue": "dropset"
+  },
+  {
+    "ParameterKey": "SpendCapUsd",
+    "ParameterValue": "2000"
+  },
+  {
+    "ParameterKey": "SpendKillSwitchEnabled",
+    "ParameterValue": "true"
+  },
+  {
+    "ParameterKey": "TokenRateCacheRead",
+    "ParameterValue": "0.22"
+  },
+  {
+    "ParameterKey": "TokenRateCacheWrite",
+    "ParameterValue": "8.80"
+  },
+  {
+    "ParameterKey": "TokenRateInput",
+    "ParameterValue": "4.40"
+  },
+  {
+    "ParameterKey": "TokenRateOutput",
+    "ParameterValue": "22.00"
   }
 ]
