@@ -5,9 +5,9 @@
 The measured incidents behind the rules in [`SKILL.md`](SKILL.md),
 kept here so the entry file states each rule once. Read on demand,
 never on invocation. The entry file grew 12k → 15k → 45k → 83k bytes
-from July to October before this split. A rule the entry file only
-cites keeps its figures in `docs/conventions/context-economy.md`,
-not here.
+from July to October before this split. A figure
+`docs/conventions/context-economy.md` already carries lives there and
+is not repeated here.
 
 ## Pre-checks
 
@@ -47,27 +47,13 @@ not here.
   next result) to answer a ~six-line question; the live planning
   session then answered better, correcting a stale fact the document
   still carried.
-- **Whole reads.** A 192-line module read whole (≈2.3k) for one call
-  site and one import after a sweep had named the line; router modules
-  read whole after a map (≈8.6k, 62% of a session's Read cost); five
-  survey-time reads (≈15k) of a small crate; `swap.rs` sliced four
-  times for more than one whole read; a ~650-line `Makefile` sliced
-  five times (≈413 lines).
-- **Section maps.** `^ *fn` turned a map of a ~2140-line file into 97
-  matches (≈1.9k), ~80 of them test functions; `^///` over
-  `schema_fence.rs` cost ≈1.8k; a three-field map of a 394-line JSON
-  array cost ≈1.0k where one field returned ~25 lines.
-- **Search shape.** Seven sessions answered a location question with
-  a context sweep (one ≈3.6k for a three-line function); a repo-wide
-  sweep for frontend-local identifiers (≈3.6k); a `--context 3` sweep
-  of 21 clustered matches bought the file twice (≈3.1k); an unanchored
-  short token (≈2.1k); two flagged sinks used anyway (≈3.1k, 39% of
-  Bash cost); five of seven largest results context-bearing (≈7.4k of
-  ≈25k).
+- **Whole reads.** Router modules read whole after a map (≈8.6k, 62%
+  of a session's Read cost); five survey-time reads (≈15k) of a small
+  crate; `swap.rs` sliced four times for more than one whole read.
+- **Section maps.** `^///` over `schema_fence.rs` cost ≈1.8k.
 - **Quiet runner.** Unwrapped cspell cascade (≈2.5k); 7 bare
-  collector-stack runs (3.5k); 12 frontend test runs plus 9 `exec`s
-  (≈5.2k); a cold `pnpm install` full of registry `ETIMEDOUT`
-  retries (≈2.0k).
+  collector-stack runs (3.5k); a cold `pnpm install` full of registry
+  `ETIMEDOUT` retries (≈2.0k).
 - **Lint.** 13 full `make lint` sweeps (≈5.8k) while editing the rule
   forbidding them; a crate-scoped clippy reported five false dead-code
   errors CI did not.
@@ -79,9 +65,6 @@ not here.
   (≈4.3k).
 - **Manual CI polls.** Four `gh pr checks` calls (922 tokens) before
   one `wait_for_checks.py` (≈200).
-- **Skill docs.** `review-pr/SKILL.md` (≈1.6k) and
-  `pr-title-description/SKILL.md` (≈1.3k, whole) were ~93% of a
-  two-line PR's Read cost.
 
 ## Steps
 

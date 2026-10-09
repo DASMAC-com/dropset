@@ -144,7 +144,9 @@ The convention owns the rules this phase slips on most — the four
 whole-read licenses, declaration-only section maps, `run_quiet.py` by
 shape (dry runs included), never polling a backgrounded log,
 `make tools-tests` whole, `wait_for_checks.py` for CI, and never
-re-reading what you authored. Three reminders it does not state:
+re-reading what you authored. A refused search leaves its question
+unanswered, never zero hits (`docs/conventions/shell-commands.md`).
+Three reminders neither states:
 
 - **Lint the changed set** with one bare command; full `make lint`
   only before committing and at the end:
@@ -161,7 +163,8 @@ re-reading what you authored. Three reminders it does not state:
 
 - **Don't re-derive a diff.** Read a `review_diff.py --split` diff
   from its slices; reach for `git diff` only for a change you have not
-  read (a rebase, a hook autofix, a sibling session), `--stat` first.
+  read (a rebase, a hook autofix, a sibling session), and take
+  `--stat` first when the question is which files moved.
 
 - **`replace_all` is safe only when search and replacement are
   disjoint.** A replacement that contains the search string rewrites
@@ -202,8 +205,9 @@ Steps 1–4 and step 0b read their answers from this one call. The
 **measured facts** rather than predictions: act on them, don't reason
 from the diff. `--link-env` keeps the command line free of absolute
 paths, so it reduces to one stable allow-rule. Allow-rules already
-reach every worktree; what a cold one lacks is untracked
-per-directory content, which step 3 handles.
+reach every worktree (`docs/conventions/local-integrations.md` → "How
+settings files resolve across worktrees"); what a cold one lacks is
+untracked per-directory content, which step 3 handles.
 
 ## Steps
 
