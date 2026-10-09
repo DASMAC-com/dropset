@@ -440,12 +440,18 @@ _ds_aws_login() {
 # September cannot collide; the display name stays day-only by operator choice,
 # and this id is what actually disambiguates them. The kind prefix keeps a
 # day's planning and housekeeping sessions apart for the same reason.
+#
+# An optional $2 is the planning CYCLE: N > 0 appends `-cN`, a fresh id under
+# the same display name (see `plan`). Cycle 0 is the bare seed, so ids computed
+# before cycling existed are unchanged. resolve_session.py's
+# `daily_session_id` mirrors this seed and pins both against `md5 -qs`.
 _ds_daily_sid() {
-  local raw
+  local raw seed="dropset-$1-$(date +%Y%m%d)"
+  (( ${2:-0} > 0 )) && seed+="-c$2"
   if (( $+commands[md5] )); then
-    raw="$(printf 'dropset-%s-%s' "$1" "$(date +%Y%m%d)" | md5 -q)"
+    raw="$(printf '%s' "$seed" | md5 -q)"
   else
-    raw="$(printf 'dropset-%s-%s' "$1" "$(date +%Y%m%d)" | md5sum)"
+    raw="$(printf '%s' "$seed" | md5sum)"
     raw="${raw%% *}"
   fi
   print -r -- \
@@ -1358,8 +1364,20 @@ explore() {
 #     runs under the launcher's region, which is the region the session uses.
 #
 # `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not `plan-05`.
+#
+# THE CYCLE LOOP. A planning session that cycles (the `plan` skill's "Cycling")
+# closes out, writes `plan-cycle-pending` beside the substrate markers and ends
+# its own client; this loop sees the marker and relaunches IN THIS TAB — no tab
+# opened or closed — under a fresh id (today's counter, `plan-cycle-<date>`,
+# bumped) and the same display name, so worker addressing never changes. It
+# refuses to relaunch while a live session already holds the name: the client
+# would rename the duplicate and every `SendMessage` to `plan-<day>` would land
+# on the old one. The counter is per day, so a later bare `plan` resumes the
+# latest cycle, and the guard and the session's own id share
+# .claude/tools/plan_cycle.py and resolve_session.py.
 plan() {
-  local model substrate
+  local model substrate day counter cycle name rc relaunch=''
+  local marker="$_DS_SUBSTRATE_DIR/plan-cycle-pending"
   if [[ -n "$2" || ( -n "$1" && "$1" != (anthropic|bedrock) ) ]]; then
     print -u2 'Usage: plan [anthropic|bedrock]   (the name is derived from the date)'
     return 1
@@ -1373,7 +1391,27 @@ plan() {
     _ds_substrate_unset
     return 1
   fi
-  _ds_daily_session plan "plan-$(date +%-d)" /plan "$model"
+  while true; do
+    day="$(date +%Y%m%d)" name="plan-$(date +%-d)"
+    counter="$_DS_SUBSTRATE_DIR/plan-cycle-$day" cycle=0
+    [[ -r "$counter" ]] && cycle="$(<"$counter")"
+    [[ "$cycle" == <-> ]] || cycle=0
+    if [[ -n "$relaunch" ]] &&
+      python3 "$_DS_REPO/.claude/tools/plan_cycle.py" live-name "$name"; then
+      print -u2 "dropset: a live $name session already exists — not cycling," \
+        "since a duplicate name would be renamed and break worker addressing."
+      return 1
+    fi
+    rm -f "$marker"
+    _ds_session "$(_ds_daily_sid plan "$cycle")" "$name" /plan "$model"
+    rc=$?
+    [[ -f "$marker" ]] || return $rc
+    # Bump the LAUNCH day's counter: a cycle that straddles midnight lands on
+    # the new day's cycle 0, which is that day's own first session.
+    mkdir -p "$_DS_SUBSTRATE_DIR"
+    print -r -- $(( cycle + 1 )) >| "$counter"
+    relaunch=1
+  done
 }
 
 # Start OR resume today's HOUSEKEEPING session — the same contract as `plan`,

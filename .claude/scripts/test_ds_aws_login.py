@@ -327,11 +327,14 @@ class TheGateActuallyGates(unittest.TestCase):
 
     def _run_verb(self, verb, *, sts_rc, login_rc=0, post_login_sts_rc=0):
         # `_ds_seat_guard` and the launcher are both stubbed: this case is about
-        # the gate's effect on the launch, and nothing else.
+        # the gate's effect on the launch, and nothing else. `plan` reaches
+        # `_ds_session` directly (its cycle loop computes the id), so both
+        # launcher entry points are stubbed.
         script = (
             'source "%s" 2>/dev/null; %s'
             "_ds_seat_guard() { : }; "
             '_ds_daily_session() { print -r -- "1|LAUNCHED" >> "$CALLS" }; '
+            '_ds_session() { print -r -- "1|LAUNCHED" >> "$CALLS" }; '
             "%s" % (INIT, _STUB, verb)
         )
         child_env = {**os.environ}
