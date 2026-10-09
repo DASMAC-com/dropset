@@ -45,10 +45,10 @@
 # live in a folder, and the dashboards deliberately have none, so this folder
 # is the only one in the dashboard list and it is always empty of dashboards.
 # Named after the product, it read as a stray empty dashboard folder; named
-# after its contents, it says why it is there. A change to this name applies
-# on container RECREATE (`make grafana-down` then `make grafana`), not on a
-# restart: the store has no volume, so only a recreate discards the old
-# folder, and a restart leaves it behind, empty, beside the new one.
+# after its contents, it says why it is there. A change to this name is only
+# clean on container RECREATE (`make grafana-down` then `make grafana`): a
+# restart re-provisions the rules into the new folder but leaves the old one
+# behind, empty, and the store has no volume, so only a recreate discards it.
 apiVersion: 1
 groups:
 - folder: 'Alert rules'

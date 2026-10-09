@@ -47,7 +47,7 @@ all-time bar count and its freshness. Those answer *is there data and
 does it make sense* before anything derived is shown, and the table is a
 table rather than a tile per feed precisely because the roster grows.
 Then realized volatility by hour, the cross-pair index, and last the
-spot-ticks panel.
+**Spot ticks** panel.
 
 Most of it reads **one product at a time**, but the **cross-pair index**
 does not: pick a currency and it overlays every pair carrying it on
@@ -64,7 +64,7 @@ Every panel but Spot ticks reads the **candle** tier, so `Venue source`
 lists candle venues only. A venue that writes nothing but spot ticks —
 `kraken`, `erapi`, `frankfurter`, `pyth` — is absent from it by
 construction, and the page says so on that picker. Those venues are
-drawn by the **Spot ticks** panel, which has its own `Tick venue` and
+drawn by the Spot ticks panel, which has its own `Tick venue` and
 `Tick product` pickers and sits last, out of the raw-first order,
 because it follows neither `Currency` nor `Venue source`: both are
 scoped to the candle venue's registry, and coupling the panel to them
