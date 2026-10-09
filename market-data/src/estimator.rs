@@ -325,6 +325,13 @@ fn tick_interval_from_secs(secs: Option<u64>) -> Duration {
 /// an outage does not change the calendar, so the cached span still answers
 /// until it ends — and once nothing held covers the tick, the session is
 /// `Unknown` and every market pauses. See [`crate::session_fence`].
+///
+/// The cost of sharing the read, stated rather than hidden: a fault in the
+/// fence alone — the view dropped or renamed — fails the whole snapshot, so
+/// the rows freeze with it and the halt that follows reports store silence
+/// rather than naming the fence. Accepted because the fence and the rows are
+/// one database, and a view missing from it is a schema fault the startup
+/// schema assertion is the first place to catch.
 #[derive(Clone, Debug, Default)]
 struct Snapshot {
     candles: Vec<FxStoreRow>,
@@ -668,6 +675,17 @@ impl Estimator {
 
         let ts = now_secs();
         let clock = snapshot.clock(ts);
+        // Named here because nothing else names it. A fence that answers but
+        // covers nothing — its horizon run out, or a gap in the view — keeps
+        // every read succeeding, so no store-silence halt ever fires, and the
+        // maker reads the paused rows as an ordinary pause. Without this line
+        // a missing session authority would look exactly like a quiet market.
+        if !clock.session.is_known() {
+            tracing::error!(
+                "the FX session fence covers nothing for this tick — every market \
+                 publishes paused until it answers"
+            );
+        }
         let receipt_age = snapshot.receipt_age(now);
 
         // The peg leg is portfolio-wide, so it is resolved once and offered to

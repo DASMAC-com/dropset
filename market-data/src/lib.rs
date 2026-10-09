@@ -26,9 +26,10 @@
 //! estimator and the maker compose under. It lives here for the same reason, and
 //! because sharing one reader is what keeps those two consumers on one clock.
 //!
-//! The two price readers are a pair rather than a duplicate: the tables hold different
-//! row shapes, and which collector writes where is not guessable from a venue's
-//! name. [`tick_store`] states the split and why one statement cannot serve both.
+//! The two price readers are a pair rather than a duplicate: the tables hold
+//! different row shapes, and which collector writes where is not guessable from
+//! a venue's name. [`tick_store`] states the split and why one statement cannot
+//! serve both.
 //!
 //! [`estimator`] is the process that drives all three: it reads the legs,
 //! composes one fair value per market, and publishes the tick. It is the one

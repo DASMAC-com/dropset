@@ -1456,6 +1456,20 @@ mod tests {
         let r = e.compose(legs, secs(5), ClockCtx::unknown());
         assert_eq!(r.regime, Regime::Paused);
         assert!(r.usdc_breach);
+
+        // And a sound peg reports none: a fence outage is not a depeg, and a
+        // breach raised on every outage would be the false alarm that teaches
+        // the operator to ignore the real one.
+        let sound = Legs {
+            usdc_usd: src(fresh(1.0)),
+            ..legs
+        };
+        let r = e.compose(sound, secs(5), ClockCtx::unknown());
+        assert!(!r.usdc_breach);
+        assert!(
+            r.crypto_leg.n > 0,
+            "the paused tick still reports the crypto leg"
+        );
     }
 
     /// The fail-closed default: a context nobody filled in pauses rather than

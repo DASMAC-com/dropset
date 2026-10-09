@@ -11,7 +11,7 @@
 //! UTC bracket of its own.
 //!
 //! The migration's header says the view has no reader and that the maker still
-//! decides from a local bracket. That was its STAGING note and is no longer
+//! decides from a local bracket. That was its staging note and is no longer
 //! true; this module is the reader it anticipated, and the brackets are gone.
 //! The header cannot be corrected in place — an applied migration is hashed
 //! byte for byte — so the current claim lives here.
@@ -39,7 +39,7 @@
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use dropset_fair_value::FxSession;
-use dropset_feeds::{Batch, Source};
+use dropset_feeds::{now_secs, Batch, Source};
 use sqlx::{PgPool, Row};
 
 /// One row of the fence: `session` holds over `[starts_at, ends_at)`, in epoch
@@ -72,15 +72,15 @@ pub struct FenceSpans {
     pub spans: Vec<FenceSpan>,
 }
 
-/// The session at `now_unix` under the spans held: the covering span's state,
+/// The session at `at_unix` under the spans held: the covering span's state,
 /// or [`FxSession::Unknown`] when none covers it.
 ///
 /// The one place a consumer turns the fence into a session, so both consumers
 /// fail closed identically — and the reason `Unknown` is producible at all.
-pub fn session_at(held: &FenceSpans, now_unix: i64) -> FxSession {
+pub fn session_at(held: &FenceSpans, at_unix: i64) -> FxSession {
     held.spans
         .iter()
-        .find(|s| s.covers(now_unix))
+        .find(|s| s.covers(at_unix))
         .map_or(FxSession::Unknown, |s| s.session)
 }
 
@@ -120,13 +120,6 @@ pub async fn read_spans(pool: &PgPool, at_unix: i64) -> Result<FenceSpans> {
     Ok(FenceSpans { spans })
 }
 
-/// The wall clock as an epoch second, for a read that has no tick of its own.
-fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
-}
-
 /// Polls the fence for the maker, which takes every input as a background
 /// [`Source`] drained once per tick rather than reading inline.
 pub struct SessionFenceSource {
@@ -155,7 +148,7 @@ impl Source for SessionFenceSource {
         // Always emit, even empty: an empty set replaces what the consumer
         // holds, so a horizon that has run out reaches it as `Unknown` instead
         // of being masked by the last span it cached.
-        let spans = read_spans(&self.pool, now_unix()).await?;
+        let spans = read_spans(&self.pool, now_secs()).await?;
         Ok(Batch::new(vec![spans]).with_caught_up(true))
     }
 }

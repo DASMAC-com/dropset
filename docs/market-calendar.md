@@ -632,7 +632,10 @@ defines, and the mapping follows §3.3 exactly:
   composes under a named reason (`SessionUnestablished`). There is no
   fallback clock. A reader holds the spans it last read, the covering
   one and the next, and a span keeps answering until it ends, so a
-  failed read darkens nothing until a boundary passes uncovered.
+  failed read leaves the *session* answered until a boundary passes
+  uncovered. That bounds the session answer only: the estimator reads
+  the fence in the same snapshot as its price rows, so a failing read
+  freezes those rows too, and its store-silence halt still applies.
 
 **The widening policy per state.** All three act through one lever —
 inflating the confidence half-width the existing uncertainty
@@ -861,7 +864,7 @@ independently, without reference to any external schedule:
 | Sunday          | 9    | 405–414     | 416         | ~98.5%   |
 
 Friday's 1,020 is midnight to the 17:00 ET close. Sunday's denominator
-is **416**, not 420: the anchor's first bar is 17:04 (§5.2), so
+is **416**, not 420: the anchor's first bar is 17:04 (§6.1), so
 17:04–midnight is 416 minutes. Using 420 understates Sunday coverage
 as ~97.5%.
 
@@ -1023,9 +1026,11 @@ three places, and a mis-classification propagates to all of them:
 
 1. **The regime.** Closed-when-open masks a real FX outage as healthy
    (§5.2). Open-when-closed is worse: it degrades the engine on a
-   normally-shut market, every week. That one is not hypothetical:
-   the fence's convention reopen precedes the anchor's first Sunday bar
-   by about four minutes, an accepted cost (§5.2).
+   normally-shut market, every week. The fence's own Sunday edge is a
+   different thing, a feed gap rather than a misclassification: the
+   market is open at 17:00 by convention, and the anchor's first bar
+   lands about four minutes later, so a tick in that window degrades
+   only if no other FX reading is live — an accepted cost (§5.2).
 1. **The FX fallback.** The flag gates suppression of the
    receipt-aged fallback. Wrong in one direction, a stale weekend rate
    anchors the mid; wrong in the other, a usable fallback is

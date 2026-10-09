@@ -8,7 +8,7 @@
 //! week under EST, so a reader that rendered the instants in the wrong zone
 //! fails one of them by an hour.
 //!
-//! Needs a Docker daemon, so `#[ignore]`d like the fence tests:
+//! Needs a Docker daemon, so `#[ignore]`d like the other store tests:
 //!
 //! ```sh
 //! cargo test -p dropset-market-data -- --ignored
