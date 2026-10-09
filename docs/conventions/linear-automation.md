@@ -574,6 +574,17 @@ nobody can promote. A genuinely urgent stray — a broken guard, a verb
 that is actively hurting — is promoted on the spot rather than waiting
 for the daily rhythm.
 
+**The parked meta batches get a promotion review at every bootstrap**,
+beside the audit-findings offer and in the same `AskUserQuestion`: the
+count, the batches grouped by the surface each rewrites (from titles
+alone), each group marked free or in flight, and a recommended
+file-disjoint slate drawn from the free groups. It runs whether or not
+the Planning document names a lane — without it, "promote a file-disjoint
+subset" collapses into the named lane and most batches are never
+considered — and its outcome, promoted and held-with-why, is recorded in
+the document's in-session notes. The procedure is the `plan` skill's,
+step 1.
+
 ### Which milestones park, and which do not
 
 The project's milestones split into two kinds, and only one kind parks.

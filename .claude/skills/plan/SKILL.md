@@ -264,13 +264,10 @@ parked batch could only ever *grow* it, past the 4–5-part bound
 and back toward the one-giant-batch form this rule exists to
 retire. So: fold **strays**, promote **batches**.
 
-**Assembling and promoting are two different acts** — under
-the retired one-giant-batch form there was exactly one
-survivor, so filing it Backlog/Urgent and promoting it were
-the same step. With several batches they are not, and filing
-them all Backlog/Urgent would flood Next with Urgent meta work
-and leave no remainder to park, making the disjoint-set bound
-below unreachable.
+**Assembling and promoting are two different acts** — filing
+every batch Backlog/Urgent would flood Next and leave no
+remainder to park, making the disjoint-set bound below
+unreachable.
 
 **Each batch carries roughly 4–5 parts** (operator rule,
 2026-09-11, superseding the one-giant-batch form) — a pool of
@@ -281,9 +278,7 @@ so a batch sized to a short session is the cheapest unit this
 board can hand out — the measurement, and the \$155–198 versus
 \$455 modeling behind it, is in
 `docs/conventions/context-economy.md` → "Session length is
-itself a cost lever". The ENG-1194 batch is the counterexample
-to cite: the whole parked pool in one issue, worked in a
-19-hour, \$409 run.
+itself a cost lever".
 
 **Cross-check each batch against the line band.** The same
 convention gives a target of **300–800 changed lines** per PR,
@@ -310,14 +305,32 @@ next rhythm. **Meta loses its special case here rather than
 gaining a new one** — it is judged on collision clusters
 exactly as product work is.
 
-That normally works out to one or two batches per bootstrap,
-but read the count as a **consequence** of the disjoint-set
-requirement plus queue hygiene, never as the rule. A bare count is the wrong
-bound: it would license promoting two batches that rewrite the
-same skill, which is the one failure the retired
-one-at-a-time invariant actually prevented. Leave the
-remainder parked under the milestone, and say the parked count
-out loud.
+**Review the parked batches for promotion at EVERY bootstrap,
+whether or not the document names a lane** — otherwise
+"promote a file-disjoint subset" collapses into the named lane
+and most batches are never considered:
+
+1. Say the parked batch count out loud.
+1. Group the `[Claude meta]` rows by the surface each rewrites
+   (`review-pr`, `init-pr`, the shell init file, guard hooks,
+   tools, conventions, AWS) from **titles alone**, no body read:
+   `board_batch.py list --state Todo --include-milestoned --show-milestone`.
+1. Mark each group **free**, or **in flight** when an In
+   Progress / In Review meta issue or a promoted-but-unpulled
+   batch already rewrites that surface.
+1. Recommend a slate from the free groups, bounded by the
+   collision clusters, in the same `AskUserQuestion` as step
+   8's audit-findings offer, recommended set first.
+1. On a yes, promote each with both halves in one
+   `board_batch.py fields` write (milestone `null`, Todo →
+   Backlog, Urgent).
+1. Record the outcome — promoted, and each held group with why
+   — under the `In-session notes` heading, so the next
+   bootstrap starts from it rather than re-deriving it.
+
+The slate's size is a **consequence** of the disjoint-set
+requirement, never the rule: a bare count would license
+promoting two batches that rewrite the same skill.
 
 **The pool also includes any open, UNPULLED batch — that
 clause is load-bearing.** Sweep the milestone **plus** every
@@ -540,22 +553,11 @@ whole reason the vocabulary is worth writing down:
   **short, pullable units**, and more than one of them may be
   unblocked and in flight at a time.
 
-  **Nothing serializes them — not an edge, and no longer a
-  precondition either.** Assembly used to be gated on no meta
-  issue being In Progress or In Review, which is what made the
-  retired *wait for the one in flight* edge true by
-  construction. Both are gone now: several short sessions beat
-  one long one by enough — cost is roughly quadratic in session
-  length, per
-  `docs/conventions/context-economy.md` → "Session length is
-  itself a cost lever" — that the file contention they create
-  is worth paying as an occasional **rebase**.
-
-  What still bounds Next is that this session promotes only a
-  **file-disjoint** set — the same collision-cluster procedure
-  the parked audit findings get — with the remainder staying
-  parked under the milestone. The disjoint-set requirement is
-  the bound; the resulting count is only its consequence.
+  **Nothing serializes them — no edge, no in-flight
+  precondition.** Several short sessions beat one long one by
+  enough that their file contention is paid as an occasional
+  **rebase**. What bounds Next is the step-1 promotion review's
+  **file-disjoint** slate.
 
   So there is **no standing exception left** to the
   proposal-per-edge rule. Each shape removed relations rather
