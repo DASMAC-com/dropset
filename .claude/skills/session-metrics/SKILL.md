@@ -131,6 +131,21 @@ and prints, as compact Markdown (or `--json`):
   entirely** — not merely which payloads could have been
   smaller.
 
+- **Resident instruction prose** — every invoked skill's entry
+  file, the instructions files (`CLAUDE.md` and the memory
+  index) and the skills listing, each times the turns after its
+  injection, in token-turns, as a share of all input, and (on
+  Bedrock) priced at the cache-read rate. Instruction prose is
+  not a tool result, so no other line can see it; a sibling
+  file read early is entry content under another name, and
+  shows up in the sinks instead. The bytes-per-token ratio is
+  **calibrated** from the session's own skill injections when
+  one dominated its turn, and the report flags a ratio outside
+  the 3.5–4.5 band the skill-size gate's byte caps assume —
+  that is the signal to revisit the cap. When the share clears
+  the bar the report names, file it as a lever like any other
+  (step 5), naming the entry file to split.
+
 - **Cache-hit rate** — cache-read ÷ all input.
 
 - **Costliest tools** — by total result size, with an
