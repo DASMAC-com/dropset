@@ -1776,6 +1776,17 @@ drives the real zsh functions.
   remember which state it is in is the friction the helper removes. An
   `rpaps` twin was considered and rejected for that reason.
 
+  **It also relaunches a cycled session in place.** When a planning
+  session cycles (the `plan` skill's "Cycling"), it closes out, leaves
+  a `plan-cycle-pending` marker under `.claude/session-substrate/` and
+  ends its own client. `plan` wraps the client in a loop: on an exit
+  with the marker present it bumps the day's `plan-cycle-<YYYYMMDD>`
+  counter and relaunches in the **same tab** under a fresh id (the
+  daily seed plus `-c<N>`) and the **same** display name, so worker
+  addressing never changes. It refuses to relaunch while a live session
+  already holds the name, since the client would rename the duplicate.
+  A later bare `plan` resumes the day's latest cycle.
+
   Four things it makes deterministic, each of which used to be a
   manual step the operator could forget:
 
