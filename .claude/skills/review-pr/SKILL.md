@@ -2186,8 +2186,8 @@ without eight agents and ~2.9M of sub-agent input.
      Then ask for the narrowest form the question admits:
 
      - **Existence** ("is it still referenced?", "does this
-       word appear in ≥ 2 files?") → files or counts:
-       `--files-only`, or `grep -l` / `-c`.
+       word appear in ≥ 2 files?") → files:
+       `--files-only` or `grep -l`, not `-rc`.
      - **Adjudication** (the lens must read the surrounding
        code) → full `-n` lines, and only then.
 

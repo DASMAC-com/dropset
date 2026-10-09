@@ -60,7 +60,8 @@ copy, so the wording stays in one place.
 >   looks; narrowness bounds *what it returns*. When the question is
 >   existence — "is this symbol still referenced anywhere?" — ask for
 >   paths, not full match lines: `search_source.py --files-only`, or a
->   bare `grep -l` / `-c`. (`search_source.py` prints the match and file
+>   bare `grep -l` (never a recursive `-c`, which prints a line per file,
+>   zeros included). (`search_source.py` prints the match and file
 >   counts on its summary line in **every** mode, so `--files-only`
 >   already answers "how many?" too.) One such sweep came back as ~130
 >   lines, most of them one file repeating one constant 40 times, for an

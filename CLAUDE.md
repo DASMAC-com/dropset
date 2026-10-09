@@ -500,9 +500,9 @@ prunes the generated families and the never-search trees, or failing
 that a bare, single `grep`, on the **main-loop** path too, not only in
 the sub-agent brief, and a recursive one is **scoped to source
 directories** (it doesn't honor gitignore). Ask for a search's
-narrowest form — `-l` / `-c` when the question is existence — since
+narrowest form — `-l` for existence, never a recursive `-c` — since
 hoisting a verbose sweep only relocates the sink; narrow the **scope**
-too (`--dir` / `--glob`), which is an independent axis, and remember
+too (`--dir` / `--glob`), an independent axis, and remember
 `--context` scales with match *density*, so clustered matches want
 `--files-only` plus a slice-read instead. Keep a
 stable command + subcommand prefix and let only the args vary.
