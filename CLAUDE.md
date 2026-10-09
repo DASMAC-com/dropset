@@ -40,7 +40,7 @@ recommended default **first**. Full detail:
 
 ## Linear automation
 
-Filing skills (`linear-task`, `audit`, `audit-scope`,
+Filing skills (`linear-task`, `audit-scope`,
 `trim-context`, `housekeeping`, `plan`) resolve team / project /
 assignee and the Planning document id from **environment variables**
 (`LINEAR_*`), never hard-coded UUIDs — each via its **own** bare
@@ -183,7 +183,7 @@ incidental comment fix in product code where it names retired agent
 material — carry
 a leading **`Claude:`** token on their **Linear issue title** (capital
 C, colon, space) so agent-infra work batches apart from product code.
-Filing skills (`linear-task`, `audit`, `audit-scope`, `housekeeping`,
+Filing skills (`linear-task`, `audit-scope`, `housekeeping`,
 `plan`)
 emit it at filing time, so the prefix and the touched paths stay
 consistent by construction; a human filters the Linear board by it. It
@@ -306,11 +306,11 @@ count, outcome pointer) and either files an audit issue or
 **declines with a recorded reason**. An unrecorded
 non-decision is the failure that guard exists to catch. The
 broad random rotation survives only as an explicit ad-hoc
-`/audit`. And the **adversarial sub-agent fan-out is authorized
-by the invocation itself** — pulling an audit issue *is* the
+`audit-scope --rotation N`. And the **adversarial sub-agent fan-out
+is authorized by the invocation itself** — pulling an audit issue *is* the
 authorization: never substitute an inline pass, never silently
 skip it; if the tooling is absent, stop and ask. Detail: the
-`audit`, `audit-scope` and `plan` skills.
+`audit-scope` and `plan` skills.
 
 ### Trim levers are parked issues, not a document
 
@@ -619,7 +619,7 @@ operator's direction is the default, and the case for changing it is
 put through `AskUserQuestion` with evidence, silence meaning no. The
 canonical instance is the blocking-edge prohibition. The test for which
 tier applies is **the asymmetry of the two errors**. Note that
-"propose, don't act" is the third tier only — invoking `audit` /
+"propose, don't act" is the third tier only — invoking
 `audit-scope` / the review fan-out **is** their authorization. Full
 detail: `docs/conventions/decision-classification.md`.
 
@@ -668,6 +668,6 @@ authoritative statement of current behavior. Full detail:
 ## Audit registry
 
 The audit coverage map — the **subsystems**, **inter-subsystem
-interfaces**, and **skip-globs** that `audit` / `audit-scope`
-range over and `review-pr` refreshes on the PR path — lives in
+interfaces**, and **skip-globs** that `audit-scope`
+ranges over and `review-pr` refreshes on the PR path — lives in
 `docs/conventions/audit-registry.md`. Read and append it there.

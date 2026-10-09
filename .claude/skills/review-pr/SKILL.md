@@ -53,7 +53,7 @@ migrations or generation inputs, and whether it spans crates.
   — a proposal to trim that cap was rejected (closed record under the
   `Trim levers` milestone).
 
-`audit` / `audit-scope` ask nothing, since invoking them is the
+`audit-scope` asks nothing, since invoking it is the
 authorization (`docs/conventions/decision-classification.md`); here the
 fan-out is one step of many, and an operator may want lint and CI
 without eight agents and ~2.9M of sub-agent input.
@@ -3230,7 +3230,7 @@ without eight agents and ~2.9M of sub-agent input.
    (including its scoped per-hook re-run on a failure).
 
 1. **Refresh the Audit registry if the diff changed the
-   platform shape.** `audit` reads its subsystems,
+   platform shape.** Audits read their subsystems,
    inter-subsystem interfaces, and skip-globs from
    `docs/conventions/audit-registry.md`; that registry is
    kept current on the PR path — here, on every run.

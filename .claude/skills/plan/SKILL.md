@@ -151,7 +151,7 @@ context the session was started to hold.
 
 **And fire step 8's parked-findings offer here**, as part of
 this same bootstrap. It is written up as step 8 because
-`audit` and `audit-scope` both cite it by that name, but it
+`audit-scope` cites it by that name, but it
 **runs now** — a count and a prompt, alongside the umbrellas.
 Do not defer it to the end of the session.
 
@@ -207,10 +207,10 @@ audit only looks and researches and produces a spec or filed
 findings, so it wants the seat rather than the implementation
 substrate; `explore` is already a seat role, so this needs no
 carve-out. The worktree is **temporary working state** and an
-audit opens no PR. The mechanism is
-`docs/conventions/local-integrations.md`; the reasoning, and
-what the issue state does and does not protect, is
-`.claude/skills/audit/SKILL.md` → "Where it runs".
+audit opens no PR. The mechanism, the reasoning, and what
+the issue state does and does not protect are
+`docs/conventions/local-integrations.md` → "Architect and
+explore sessions: temporary worktree, no PR".
 
 Two consequences for this session specifically. **Say the
 dispatch verb in the issue's sequencing prose**, so the shape
@@ -1020,7 +1020,7 @@ next fold from re-deriving it, since the fingerprint probe
 searches resolved issues too.
 
 **8. Offer the parked audit findings — don't wait to be
-asked.** `audit` files its confirmed findings as real issues
+asked.** `audit-scope` files its confirmed findings as real issues
 stamped with the **Audit findings** project milestone, which
 means they are **parked**: first-class open issues for dedup
 and search, but costing a bootstrap read nothing. The repo is
@@ -1067,7 +1067,7 @@ On a yes:
   fresh copy; don't.
 
 **A planning session does not re-adjudicate a finding.**
-`audit` already cross-checks adversarially before filing, so
+`audit-scope` cross-checks adversarially before filing, so
 a parked finding is **validated**. The only decision left is
 whether it belongs in the current phase. Re-validating would
 duplicate the expensive half of the audit inside the most

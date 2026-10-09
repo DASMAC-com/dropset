@@ -1,6 +1,6 @@
 ---
 name: audit-scope
-description: Use to audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — and when pulling a planning-filed audit issue, which names its target and runs as an `explore` task in its own worktree with the issue held In Progress until ratification-plus-fold. Audits across the dimensions the scope's platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness) with an adversarial sub-agent cross-check this invocation authorizes. Files confirmed findings as the fewest coherent Linear issues, each sized to a short session, PARKED (Todo plus the `Audit findings` milestone) with no relations or edges. Also the engine `audit` drives one file at a time.
+description: Use to audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — and when pulling a planning-filed audit issue, which names its target and runs as an `explore` task in its own worktree with the issue held In Progress until ratification-plus-fold. Audits across the dimensions the scope's platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness) with an adversarial sub-agent cross-check this invocation authorizes. Files confirmed findings as the fewest coherent Linear issues, each sized to a short session, PARKED (Todo plus the `Audit findings` milestone) with no relations or edges. With `--rotation N`, runs N bounded RANDOM seven-unit rotations instead (four random files plus a subsystem, an interface and a repo-layout pass) — an ad-hoc breadth sweep, never a default.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -15,10 +15,10 @@ confirmed findings as Linear issues **parked under the
 into the fewest coherent PRs (coupled findings that share a
 PR become one issue, up to the size of a short session; see
 Notes), in the same destination and
-format `linear-task` and `audit` use. Use when a project
+format `linear-task` uses. Use when a project
 milestone lands, a feature ships, or before declaring a
-subsystem "stable", and as the engine `audit` calls for its
-per-file passes.
+subsystem "stable" — or, with `--rotation N`, for a broad
+random sweep.
 
 This replaces the old `audit-codebase`, which wrote a
 gitignored checklist. Findings now live as real Linear
@@ -38,8 +38,8 @@ See `docs/conventions/linear-automation.md` → "Parked
 findings sit in **Todo**, never Backlog".
 
 **The adversarial sub-agent cross-check is authorized by the
-invocation.** Invoking this skill (or `audit`, or pulling an
-audit issue) **is** the request for the fan-out — it is
+invocation.** Invoking this skill (scoped or `--rotation`,
+or by pulling an audit issue) **is** the request for the fan-out — it is
 the engine's mechanism, not an optional extra, so a
 session-level "don't spawn agents unless asked" default is
 *satisfied* by that authorization rather than in tension
@@ -65,23 +65,25 @@ session's audit heartbeat, naming one target from
 rationale; the session that pulls it invokes this skill once,
 scoped to that target. `housekeeping` runs no audit and reads
 no directive — that path is retired. The broad random
-rotation is `/audit`, an ad-hoc invocation.
+rotation is `--rotation N`, an ad-hoc invocation.
 
 ## Two ways it runs
 
-- **Directly (you invoke it).** Plan-gated: you give a
-  scope, confirm the plan, and the skill files the
-  surviving findings as parked issues itself.
-- **Delegated (`audit` invokes it).** The caller has
-  already picked the file and owns selection + dedup, so
-  audit-scope skips the plan gate, runs the audit, and
-  **returns the confirmed findings** to the caller, which
-  dedups them against live Linear and files. It does
-  **not** file in this mode — the caller does.
+- **Scoped (the default).** Plan-gated: you give a scope,
+  confirm the plan, and the skill files the surviving
+  findings as parked issues itself.
+- **Rotation (`--rotation N`).** No scope and no plan
+  gate: each of `N` rotations runs seven units — four
+  random files through steps 2–5 below, plus one random
+  subsystem, one interface and one repo-layout pass — and
+  dedups, files and announces as each unit finishes.
+  **Read [`rotation.md`](rotation.md) before the first
+  unit**; it owns the unit sequence, selection, the
+  structural lenses, cross-unit folding and the `DONE`
+  line. Everything shared lives here.
 
-The work in between — classify the scope, fan out the
-dimensions, adversarially cross-check — is identical
-either way.
+Classifying the scope, fanning out the dimensions and the
+adversarial cross-check are identical either way.
 
 ## Where it runs
 
@@ -90,14 +92,14 @@ task, in its own worktree** — operator rule, 2026-09-11,
 covering every audit however it was targeted. Launch it
 with the plain verb naming the issue's tag (`explore 1196`);
 the worktree is implicit in the verb, and it takes the
-issue's own tag for both worktree and branch. The mechanism
-is owned by `docs/conventions/local-integrations.md`; the
-reasoning, and what the worktree's protection does and does
-not cover, is stated once in
-`.claude/skills/audit/SKILL.md` → "Where it runs". Don't
-restate either here.
+issue's own tag for both worktree and branch. The
+mechanism, its reasoning, and what the worktree's
+protection does and does not cover are owned by
+`docs/conventions/local-integrations.md` → "Architect and
+explore sessions: temporary worktree, no PR". Don't restate
+them here.
 
-Two duties this skill owns directly:
+Three duties this skill owns directly:
 
 - **Findings files live in the worktree**, never in a scratch
   path outside the repo.
@@ -107,9 +109,12 @@ Two duties this skill owns directly:
   mistake that produced the rule — and under the no-PR shape
   it is the issue state that the cleanup machinery reads, so
   an honest state is the whole of this skill's obligation.
-
-A **delegated** run inherits its caller's session and
-worktree and does none of this itself.
+- **Read-only toward the repo, worktree included.** No source
+  edit, no commit, no push, no local state — Linear is the
+  record, so a wiped worktree loses nothing. Note the
+  transcript is *not* covered by the issue's state: the
+  conversation purge protects only a transcript on an open
+  PR, which an audit never has.
 
 ## Input
 
@@ -128,19 +133,18 @@ Optional (ask on a direct run if not provided):
 
 ## Steps
 
-1. **(Direct runs only) Collect scope and plan.** Gather
+1. **(Scoped runs only) Collect scope and plan.** Gather
    the scope and any extra focus areas, draft an audit
    plan (the exact paths in scope, the dimensions below,
    the per-kind security checklist the scope selects, the
    extra focus areas, and the sub-agents that will run),
    show it to the user, and wait for confirmation before
-   searching. Delegated runs skip this — `audit`
-   supplies the scope and there's no one to gate.
+   searching. A rotation skips this — it picks its
+   own files and there's no one to gate.
 
 1. **Classify the scope by platform kind.** Match the
    scope's paths to a platform/subsystem so the right
-   checklist runs — this is the subsystem-scope logic the
-   audit shares with `audit`. Read the **Audit
+   checklist runs. Read the **Audit
    registry** in `docs/conventions/audit-registry.md` and
    take the `kind` of the subsystem whose `roots` the paths
    map
@@ -303,10 +307,12 @@ Optional (ask on a direct run if not provided):
 
    Each sub-agent returns findings with `file`, `line`,
    `dimension`, `severity` (high/med/low), a deterministic
-   `fingerprint_slug` (`<topic>:<detail>`, lowercased,
-   each run of non-alphanumeric characters collapsed to a
-   single `-`), a `title`, a one-line `rationale`, and a
-   `fix_sketch`.
+   `fingerprint_slug` (`<topic>:<detail>` with no file
+   component — the *what*; each part lowercased, every run
+   of non-alphanumeric characters collapsed to a single
+   `-`, leading/trailing `-` trimmed, so two passes over
+   one issue yield one key), a `title`, a one-line
+   `rationale`, and a `fix_sketch`.
 
    **Every dimension prompt ends with the self-deflation
    clause**, and it is not optional boilerplate — it is the
@@ -353,14 +359,22 @@ Optional (ask on a direct run if not provided):
    doesn't yet, keep it and note the rule or config that
    would catch the family.
 
-1. **Hand off the survivors.**
+1. **Dedup, then file the survivors.** (A rotation's FILE
+   unit reaches here per unit, its structural units after
+   their own cross-check — see `rotation.md`.)
 
-   - **Delegated run:** return the confirmed findings
-     (their `fingerprint_slug`s, titles, bodies, and
-     severities) to the caller (`audit`). Do **not** file —
-     the caller dedups against live Linear first. Stop here.
+   - **Dedup against live Linear, open *and* resolved.**
+     Build the set once per run: list every Dropset-project
+     issue with `mcp__claude_ai_Linear__list_issues`
+     (`includeArchived: true`) and collect **every**
+     `**Fingerprint**:` line on each — a combined issue
+     carries several — with its state. A finding whose
+     fingerprint is already present, in **any** state, is
+     not refiled: a resolved match (Done / Won't-fix /
+     Canceled) was already triaged, and refiling it would
+     reopen settled noise.
 
-   - **Direct run:** file the surviving findings as Linear
+   - **File** the surviving findings as Linear
      issues **parked under the `Audit findings` project
      milestone**, otherwise exactly as `linear-task` does —
      **folding coupled findings into the fewest coherent
@@ -393,12 +407,8 @@ Optional (ask on a direct run if not provided):
      honors only its first operand, so a combined
      `printenv A B C` returns just `A`.
 
-     Before filing, dedup against the live Backlog with
-     `mcp__claude_ai_Linear__list_issues` (same
-     destination) so a re-run doesn't refile a finding
-     already captured — match on the `**Fingerprint**:`
-     line. Then file through the **zero-echo writer**, one
-     call per finding, body on disk:
+     File through the **zero-echo writer**, one
+     call per issue, body on disk:
 
      ```sh
      python3 .claude/tools/linear_issue.py create \
@@ -477,6 +487,11 @@ Optional (ask on a direct run if not provided):
 
      - `**What**:` the precise problem.
 
+     - `**Why it's safe to fix in isolation**:` it touches
+       only this file/symbol and depends on no other open
+       finding. Omit it when a `**Suspected dependency**:`
+       line is present — the two contradict.
+
      - `**Evidence**:` the offending snippet (+ the doc or
        comment it contradicts, where relevant).
 
@@ -487,15 +502,20 @@ Optional (ask on a direct run if not provided):
 
      - `**Fingerprint**: <domain-token>:<fingerprint_slug>`
        — the dedup key (e.g. `swap:slippage:no-min-out`),
-       so `audit` and re-runs recognize it. Mandatory.
+       so re-runs and rotations recognize it. Mandatory,
+       one line per finding on a combined issue.
 
        `<domain-token>` is the file's basename with the
        **extension dropped** and any remaining `.` replaced
-       by `-` (`swap.rs` → `swap`); prefix the parent
-       directory when the stem is generic (`mod`, `main`,
-       `lib`, `index`). It must be **dotless**: Linear
+       by `-` (`swap.rs` → `swap`) — derived from the
+       basename so a moved file keeps its key; prefix the
+       parent directory when the stem is generic (`mod`,
+       `main`, `lib`, `index`: `feeds/src/mod.rs` →
+       `feeds-mod`). It must be **dotless**: Linear
        linkifies a hostname-valid `name.ext` at the start of
-       the line and corrupts the key.
+       the line and corrupts the key. (A rotation's
+       structural findings use an `arch:` prefix instead —
+       `rotation.md`.)
 
        **The fingerprint is the stable key; a `file:line`
        is not.** Every citation and quoted snippet above is
@@ -512,6 +532,10 @@ Optional (ask on a direct run if not provided):
        are as-of-discovery. The implementer re-derives the
        location; the fingerprint is what survives.
 
+     - `**Discovered by**: audit-scope <scope> @ <SHA>` —
+       the scope, or the rotation unit; the SHA is what
+       dates every citation above it.
+
      **No `**Touches**:` line.** The declared-scope glob
      field is retired (see `CLAUDE.md` → "Structured filing
      fields"): nothing consumed it once the collision
@@ -527,24 +551,23 @@ Optional (ask on a direct run if not provided):
    human-curated (`CLAUDE.md` → "Blocking relations").
 
 1. **Report.** Print a short tally — findings by
-   dimension and severity, deduped count, and (direct run)
-   the filed issue identifiers, or (delegated run) a note
-   that the findings were handed back to the caller.
+   dimension and severity, deduped count, and the filed
+   issue identifiers. A rotation announces per unit and
+   closes with its `DONE` line instead (`rotation.md`).
 
 ## Notes
 
 - **Read-only with respect to source.** This skill never
-  edits source files; it only files Linear issues (or
-  returns findings). Fixes happen in normal PRs picked up
-  from the Backlog.
+  edits source files; it only files Linear issues. Fixes
+  happen in normal PRs picked up from the Backlog.
 
 - **Fold coupled findings into the fewest coherent issues.**
   When findings share a PR — same subsystem, crate, or
   language-domain, and they would land as one change (e.g.
   all doc-/comment-freshness fixes, or all low-risk refactors
   in one crate) — file them as **one** combined issue, with a
-  `**Fingerprint**:` line per finding (the union), the way
-  `audit` does. The bar is **same-PR
+  `**Fingerprint**:` line per finding (the union). The bar
+  is **same-PR
   coherence**, not same-file; but never fold across separate
   apps, languages, or deploy units (the **coherence floor**).
   Nothing merges issues for you, so coupled findings become

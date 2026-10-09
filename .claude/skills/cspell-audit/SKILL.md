@@ -254,7 +254,7 @@ matching entries (still report the rest).
 
 The `housekeeping` skill runs this check only when opted in
 (`housekeeping cspell`) — escape drift is slow, so it's
-upkeep, not part of the `audit` rotation. It invokes
+upkeep, not part of an audit rotation. It invokes
 `cspell-audit` in delegated mode (read-only, no edits)
 and files the run's violations
 as a **single aggregated** issue — **not** one

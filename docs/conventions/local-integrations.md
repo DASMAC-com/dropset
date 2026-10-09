@@ -1139,10 +1139,8 @@ repo: no commits, no PR.** Durable state is captured in
 lands later via a **follow-up worker task**. This is the
 canonical statement of the mechanism; the `architect` and `plan`
 skills state their own duties and point here rather than
-redescribing it. (The `audit` and `audit-scope` skills carry no
-pointer yet — an audit reaches this shape through the verb, whose
-bootstrap prompt states the posture, so nothing is broken by the
-omission.)
+redescribing it, and so does `audit-scope`, which every audit runs
+through.
 
 Operator ruling, **2026-09-14**, superseding the 09-11 shape
 recorded on ENG-1367.
