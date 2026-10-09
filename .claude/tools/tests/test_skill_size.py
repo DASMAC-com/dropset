@@ -215,6 +215,17 @@ class Check(Fixture):
         self.assertEqual(code, 0)
         self.assertIn(f"note: {self.big_key()}", err)
 
+    def test_an_entry_whose_subject_is_back_under_the_cap_is_a_notice(self):
+        # Within its headroom, but `--write` would drop it: still worth a note.
+        self.write_baseline(
+            {self.big_key(): {"ceiling": ss.ENTRY_CAP + 100, "issue": "ENG-1"}}
+        )
+        self.put(self.big_key(), skill("short", ss.ENTRY_CAP - 1_000))
+        code, _, err = self.run_tool("--check")
+        self.assertEqual(code, 0)
+        self.assertIn(f"note: {self.big_key()}", err)
+        self.assertIn("drop its baseline entry", err)
+
     def test_slack_within_the_headroom_is_quiet(self):
         self.write_baseline(
             {self.big_key(): {"ceiling": ss.ENTRY_CAP + 900, "issue": "ENG-1"}}
@@ -400,9 +411,18 @@ class Utilization(Fixture):
         # With no baseline entry, the big file is over its cap: above the watch.
         code, out, err = self.run_tool("--utilization")
         self.assertEqual(code, 1)
-        self.assertIn(f"skill-size:   {self.big_key()}", err)
-        self.assertNotIn(".claude/skills/small/SKILL.md\n", err)
+        flagged = [
+            line for line in err.splitlines() if line.startswith("skill-size:   ")
+        ]
+        self.assertEqual(flagged, [f"skill-size:   {self.big_key()}"])
         self.assertTrue(out.splitlines()[0].startswith("!"))
+
+    def test_equal_percents_tie_break_by_key(self):
+        # Both descriptions are "short": the same bytes against the same cap.
+        lines, _ = ss.utilization(list(reversed(ss.collect(self.root))), {})
+        tied = [line.split()[-1] for line in lines if line.endswith("#description")]
+        self.assertEqual(len(tied), 2)
+        self.assertEqual(tied, sorted(tied))
 
     def test_the_threshold_is_strictly_above(self):
         at = ss.ENTRY_CAP * ss.WATCH_PERCENT // 100

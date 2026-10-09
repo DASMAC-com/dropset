@@ -205,9 +205,10 @@ def check(
     A failure is a subject over its limit, an over-cap ceiling naming no
     retiring issue, or an entry naming a subject that no longer exists
     (malformed entries are reported by ``load_baseline``). A notice is an entry
-    whose ceiling is above the headroom ceiling of its current size — harmless
-    (the slack can be regrown, but never past the ceiling), and tightened by
-    ``--write``.
+    ``--write`` would change: one whose subject is now within its cap (dropped),
+    or whose ceiling is above the headroom ceiling of its current size
+    (lowered). Both are harmless until then — the slack can be regrown, but
+    never past the ceiling.
     """
     failures: list[str] = []
     notices: list[str] = []
@@ -239,6 +240,11 @@ def check(
                 why = f"frozen until {entry['issue']}"
             failures.append(
                 f"{subject.key}: {subject.size:,} bytes > {limit:,} ({why})"
+            )
+        elif entry is not None and subject.size <= subject.cap:
+            notices.append(
+                f"{subject.key}: {subject.size:,} bytes, within its "
+                f"{subject.cap:,} cap — run --write to drop its baseline entry"
             )
         elif entry is not None and headroom_ceiling(subject.size) < ceiling:
             notices.append(
