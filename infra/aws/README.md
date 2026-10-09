@@ -15,7 +15,8 @@ infra/aws/
   network.yml         VPC, public/private subnets (2 AZs), NAT, routing
   iam-baseline.yml    CFN deployment role, agent role, secrets policy
   cloudtrail.yml      multi-region audit trail + private log bucket
-  bedrock-agent.yml   Bedrock agent IAM user, invoke policy, spend alert
+  bedrock-agent.yml   Bedrock agent IAM user, invoke policy, spend cap
+                      and kill switch, monthly spend alert
   params/             per-stack example parameter files (<stack>.<env>.json)
 ```
 
@@ -71,7 +72,8 @@ create IAM roles, and it cannot pass a role to CloudFormation
      --parameter-overrides file://infra/aws/params/cloudtrail.dev.json
    ```
 
-1. **Bedrock agent — admin, once.** Creates an IAM user, so it needs
+1. **Bedrock agent — admin, once.** Creates an IAM user (and the spend
+   cap's Lambda role), so it needs
    the same named-IAM capability as the baseline. See "Bedrock agent
    identity" below for the two out-of-band steps that follow it.
 
@@ -334,7 +336,11 @@ working key:
 
 **Re-check the attached policies after every mint**, not just the first
 — the check above is part of every rotation. The user's Permissions tab
-should list only `dropset-bedrock-invoke`. A rotation that skips the
+should list only `dropset-bedrock-invoke` — plus, after a spend-cap
+trip, `dropset-bedrock-spend-cap-deny` (see "Daily spend cap" below).
+That one is the expected exception: it only removes access, and its
+`AttachUserPolicy` event in CloudTrail is made by the stack's
+`SpendKillFunctionRole`, not by a person. A rotation that skips the
 check would leave a re-widened identity out of step with what this
 template declares, and nothing else would report it.
 
@@ -567,29 +573,44 @@ while the rates belong to the dearest model actually running**. On
 2026-10-06, leftover Opus 5 traffic priced at Opus 5.5 rates estimated
 $162 against $210 billed. Keep the rates on the priciest model in use.
 
-| Estimate vs. `SpendCapUsd` (default 2000) | What happens                                       |
-| ----------------------------------------- | -------------------------------------------------- |
-| 25%, 50%, 75%                             | Email via the `dropset-bedrock-spend-alerts` topic |
-| 100%                                      | Email, and the deny policy is attached             |
+| Estimate vs. `SpendCapUsd` (default 2000) | What happens                                        |
+| ----------------------------------------- | --------------------------------------------------- |
+| 25%, 50%, 75%                             | Email via the `dropset-bedrock-spend-alerts` topic  |
+| 100%                                      | Email, and the deny policy is attached (when armed) |
 
 The trigger is CloudWatch rather than AWS Budgets because billing data
-refreshes only about once a day, too late against an overnight loop. The
-estimate is not the bill; it is reconciled against Cost Explorer as a
-separate, recurring check. The metrics are per region, so the cap covers
-invocations made from the stack's region (us-west-2).
+refreshes only about once a day, too late against an overnight loop.
+**The estimate is not the bill**, and nothing reconciles the two
+automatically yet: compare it against Cost Explorer by hand until a
+reconciliation step exists. Two scope limits follow from the metrics:
+
+- They are **per region**, so the cap counts only invocations made from
+  the stack's region (us-west-2, the session launcher's default). A
+  session pointed elsewhere through `DS_BEDROCK_REGION` spends
+  uncounted, although a trip still blocks it, since the deny is global.
+- They carry **no identity**, so any Bedrock use in that account and
+  region counts toward the cap, not only the agent user's. That errs on
+  the safe side.
 
 **Entering the address.** Set `BudgetAlertEmail` once, in the console
-(the stack's *Update* → *Use current template* → parameters) or with a
-one-off `--parameter-overrides BudgetAlertEmail=<address>` typed at the
-prompt, never committed. The committed parameter file omits the key, so
-a later `aws cloudformation deploy` keeps the address you entered rather
-than resetting it. AWS then mails a subscription confirmation. **Click
-it**, because until you do, the topic delivers nothing.
+(the stack's *Update* → *Use current template* → parameters), or with a
+deploy that passes `--parameter-overrides BudgetAlertEmail=<address>`
+**instead of** the `file://` override — typed at the prompt, never
+committed. Every parameter left out of an override keeps its previous
+value (`aws cloudformation deploy` sends `UsePreviousValue` for it), and
+the committed parameter file omits this key, so a later routine deploy
+keeps the address. AWS then mails a subscription confirmation. **Click
+it**, because until you do, the topic delivers nothing. Confirmation
+only catches future crossings; an alarm already in ALARM stays silent
+until its next transition.
 
 **Resuming after a trip.** When the 100% alarm fires, a small Lambda
 attaches `dropset-bedrock-spend-cap-deny` to `dropset-bedrock-agent`,
-and every agent call fails with an access-denied error until you detach
-it:
+and every agent call fails with an access-denied error. The alarm email
+is not proof the block landed — a failed attach is retried twice and
+then dropped silently — so confirm with
+`aws iam list-attached-user-policies --user-name dropset-bedrock-agent`.
+Look at what tripped it, then detach:
 
 ```sh
 aws iam detach-user-policy \
@@ -597,17 +618,32 @@ aws iam detach-user-policy \
   --policy-arn arn:aws:iam::<account-id>:policy/dropset-bedrock-spend-cap-deny
 ```
 
-Look at what tripped it first. The rolling window still holds the spend
-that tripped it, so the alarm stays in ALARM until that spend ages out.
-It does not re-fire meanwhile, because alarm actions fire only on a
-transition into ALARM. Re-attachment happens only after the alarm
-returns to OK and crosses again.
+**Detaching alone leaves the cap OFF.** The rolling window still holds
+the spend that tripped it, so the alarm stays in ALARM, and alarm
+actions fire only on a transition into ALARM. While it stays there
+nothing re-blocks and no alarm emails — and at a steady rate at or above
+the cap, it never leaves. So re-arm it straight after the detach:
 
-**Disarming.** Redeploy with `SpendKillSwitchEnabled=false` in the
-parameter file. All four alarms keep emailing, but the cap blocks
-nothing. A deny policy that is already attached stays attached;
-detach it as above. Before deleting the stack, detach the policy by
-hand too, since CloudFormation cannot delete an attached managed policy.
+```sh
+aws cloudwatch set-alarm-state --alarm-name dropset-bedrock-spend-cap \
+  --state-value OK --state-reason 'Re-armed after a manual resume'
+```
+
+The next evaluation, within about a minute, re-trips it if the estimate
+is still over the cap. To keep agents running while over the cap on
+purpose, disarm instead (below).
+
+**Disarming.** Set `SpendKillSwitchEnabled` to `false` **in the
+committed parameter file** and redeploy. A one-off console or CLI
+override works too, but the next routine deploy from the committed file
+re-arms it — the same holds for `SpendCapUsd`. All four alarms keep
+emailing, but the cap blocks nothing. A deny policy that is already
+attached stays attached; detach it as above. Re-arming by setting the
+value back to `true` takes effect only on the alarm's next transition,
+so follow it with the `set-alarm-state` call above if the alarm is
+already in ALARM. Before deleting the stack, or changing
+`EnvironmentName` (which renames the policy), detach the policy by hand,
+since CloudFormation cannot delete an attached managed policy.
 
 **Re-seeding the rates.** When the default model changes, update the
 four `TokenRate*` values in the parameter file to that model's Bedrock

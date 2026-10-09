@@ -11,12 +11,13 @@ Conditions:
 Description: >-
   Dropset Bedrock agent identity: the IAM user that backs the long-term
   Amazon Bedrock API key used by agent sessions, a managed policy scoped to
-  model invocation alone, a daily spend cap that warns and then blocks
-  invocation when a rolling 24-hour estimate from Bedrock token metrics
-  reaches its limit, and an optional monthly spend ALERT that fires once
-  uncredited spend reaches its threshold - a coarse tripwire, not a prompt
-  signal that credit coverage lapsed. No credential value is created or
-  stored by this template - the API key is minted out of band and kept in
+  model invocation alone, a daily spend cap that warns and then, when
+  armed, blocks invocation once a rolling 24-hour estimate from Bedrock
+  token metrics reaches its limit, and an optional monthly spend ALERT that
+  fires once uncredited spend reaches its threshold - a coarse tripwire,
+  not a prompt signal that credit coverage lapsed. No credential value is
+  created or stored by this template - the API key is minted out of band
+  and kept in
   1Password (see infra/aws/README.md). The identity is model-agnostic: it is
   shared by every role's Bedrock sessions, and which model a session runs is
   launcher runtime config, never a stack value.
@@ -401,6 +402,9 @@ Resources:
     Type: 'AWS::SNS::Subscription'
   SpendAlertTopic:
     Properties:
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-bedrock-spend-alerts'
       TopicName: !Sub '${EnvironmentName}-bedrock-spend-alerts'
     Type: 'AWS::SNS::Topic'
   SpendCapDenyPolicy:
@@ -508,6 +512,9 @@ Resources:
       Handler: 'index.handler'
       Role: !GetAtt 'SpendKillFunctionRole.Arn'
       Runtime: 'python3.13'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-bedrock-spend-kill'
       Timeout: 30
     Type: 'AWS::Lambda::Function'
   SpendKillFunctionPermission:
@@ -528,8 +535,7 @@ Resources:
             Service: 'lambda.amazonaws.com'
         Version: '2012-10-17'
       ManagedPolicyArns:
-      - !Sub >-
-               arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
       Policies:
       - PolicyDocument:
           Statement:
@@ -543,5 +549,8 @@ Resources:
             Resource: !GetAtt 'BedrockAgentUser.Arn'
           Version: '2012-10-17'
         PolicyName: 'attach-spend-cap-deny'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub '${EnvironmentName}-bedrock-spend-kill'
     Type: 'AWS::IAM::Role'
 ...
