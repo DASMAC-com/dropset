@@ -5,11 +5,13 @@
 The measured incidents behind the rules in [`SKILL.md`](SKILL.md),
 kept here so the entry file states each rule once. Read on demand,
 never on invocation. The entry file grew 12k → 15k → 45k → 83k bytes
-from July to October before this split.
+from July to October before this split. A rule the entry file only
+cites keeps its figures in `docs/conventions/context-economy.md`,
+not here.
 
 ## Pre-checks
 
-- **Credential (step 0b).** One run reached step 7 of 12 — renamed,
+- **Credential (step 0b).** One run reached the push step — renamed,
   rebased, signed empty commit — before `git push` died with "could
   not read Username" on an expired token. Diagnosis took five calls
   plus two `printenv` probes, and `git ls-remote` came back clean
@@ -45,20 +47,16 @@ from July to October before this split.
   next result) to answer a ~six-line question; the live planning
   session then answered better, correcting a stale fact the document
   still carried.
-- **Whole reads.** A 310-line module read whole at ≈3.4k to learn a
-  convention when ~60 lines were needed; a 192-line module read whole
-  (≈2.3k) for one call site and one import after a sweep had named the
-  line; router modules read whole after a map (≈8.6k, 62% of a
-  session's Read cost); five survey-time reads (≈15k) of a small
-  crate; `swap.rs` sliced four times for more than one whole read;
-  a ~650-line `Makefile` sliced five times (≈413 lines).
+- **Whole reads.** A 192-line module read whole (≈2.3k) for one call
+  site and one import after a sweep had named the line; router modules
+  read whole after a map (≈8.6k, 62% of a session's Read cost); five
+  survey-time reads (≈15k) of a small crate; `swap.rs` sliced four
+  times for more than one whole read; a ~650-line `Makefile` sliced
+  five times (≈413 lines).
 - **Section maps.** `^ *fn` turned a map of a ~2140-line file into 97
-  matches (≈1.9k), ~80 of them test functions; an unscoped
-  `^export|^function|^const` probe hit 747 matches across 75 files
-  (≈4.5k); `^#` over the `Makefile` returned every comment (≈5.4k);
-  `^///` over `schema_fence.rs` cost ≈1.8k; a doc map matching table
-  rows cost ≈2.6k; a three-field map of a 394-line JSON array cost
-  ≈1.0k where one field returned ~25 lines.
+  matches (≈1.9k), ~80 of them test functions; `^///` over
+  `schema_fence.rs` cost ≈1.8k; a three-field map of a 394-line JSON
+  array cost ≈1.0k where one field returned ~25 lines.
 - **Search shape.** Seven sessions answered a location question with
   a context sweep (one ≈3.6k for a three-line function); a repo-wide
   sweep for frontend-local identifiers (≈3.6k); a `--context 3` sweep
@@ -68,26 +66,17 @@ from July to October before this split.
   ≈25k).
 - **Quiet runner.** Unwrapped cspell cascade (≈2.5k); 7 bare
   collector-stack runs (3.5k); 12 frontend test runs plus 9 `exec`s
-  (≈5.2k); `make -n demo` four times (≈1.1k, against ~50 tokens
-  through the wrapper) — and its first run really tore down the
-  keyless collectors; seven empty `tail` polls of a backgrounded run;
-  a cold `pnpm install` full of registry `ETIMEDOUT` retries (≈2.0k).
+  (≈5.2k); a cold `pnpm install` full of registry `ETIMEDOUT`
+  retries (≈2.0k).
 - **Lint.** 13 full `make lint` sweeps (≈5.8k) while editing the rule
   forbidding them; a crate-scoped clippy reported five false dead-code
   errors CI did not.
-- **Tools tests.** Per-module `unittest discover` measured 32 calls /
-  ≈7.1k against 15 calls / 516 tokens for `make tools-tests`, and
-  missed a broken sibling test twice.
 - **`replace_all`.** `MAX_ATTEMPTS` → `REALIZED_FILL_MAX_ATTEMPTS`
   produced `REALIZED_FILL_REALIZED_FILL_MAX_ATTEMPTS` and 14 failing
   tests reading `ReferenceError: REALIZED_FILL_MAX_ATTEMPTS is not defined`.
-- **Screenshots.** Five full-viewport PNGs were 91% of one session's
-  Read cost (≈105k of ≈115k); two clipped captures cost ≈1.4k each.
-- **Diffs and listings.** A bare `git diff` was one session's largest
-  result (≈2.9k, 4.3k over 6 calls); another diffed its own authored
-  file (≈4.3k); a `--print` of ~600 paths (≈5.8k) answered a yes/no;
-  a whole-blob `git show` (≈3.8k); `get_latest_release` returned
-  60,413 characters.
+- **Diffs.** A bare `git diff` was one session's largest result
+  (≈2.9k, 4.3k over 6 calls); another diffed its own authored file
+  (≈4.3k).
 - **Manual CI polls.** Four `gh pr checks` calls (922 tokens) before
   one `wait_for_checks.py` (≈200).
 - **Skill docs.** `review-pr/SKILL.md` (≈1.6k) and

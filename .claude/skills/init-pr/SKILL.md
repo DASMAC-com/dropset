@@ -53,17 +53,12 @@ rename, the first thing that costs anything to undo:
 On any stop in this step, ask rather than retrying more than once or working
 around it; nothing is lost, since no commit was written yet.
 
-Do not add an agent probe (`ssh-add -l`, `ssh-keygen -Y sign`) or a
+Add no agent probe (`ssh-add -l`, `ssh-keygen -Y sign`) or
 `--show-signature` read: with an external signer git never consults
-the agent, so those fail unconditionally and block every bootstrap
-with a diagnosis no operator can clear.
-
-State the gate's bound honestly: `agent-ok` rests on a live probe;
-`external-signer` proves only that the signing path is **wired**, not
-that the backend is unlocked. A locked app still fails at step 6 (as
-`failed to fill whole buffer`), and only a signed commit proves
-signing works. The standing rule holds: **a signing failure is an
-unpushed-state alarm.**
+the agent, so they fail unconditionally. `external-signer` proves only
+that the signing path is **wired**; a locked app still fails at step 6
+(`failed to fill whole buffer`). Only a signed commit proves signing,
+and **a signing failure is an unpushed-state alarm.**
 
 ## Step 0c: pre-check that the issue is not already merged
 
@@ -145,24 +140,11 @@ The three rules specific to `init-pr`:
    line reads exactly like a current one; a planning session answers
    with the current ruling. Read the document only when none is live.
 
-The phase-specific reminders not stated in the convention:
-
-- **Reading whole is licensed by any ONE of four conditions** — you
-  will both edit the file and brief agents on it; a planned
-  multi-region read covering most of it; an exemplar you will imitate
-  N times; or proving an absence that is itself the answer. Absent
-  all four, slice. The test is **reuse, not size**: name who else
-  uses the content. If a search already named the line, slice from
-  it. Decide the license **before the first slice** when you intend
-  to rewrite a file.
-
-- **Section maps match declarations only.** Anchor at column zero;
-  no comment-marker alternation (`^#`, `^///`) in a source map — on a
-  prose file `^#` *is* the declaration, and
-  `read_result.py --headings <file>` does it outright. On a
-  records-shaped data file, match the one identifying field.
-  `search_source.py` refuses the comment-marker form; a refusal is an
-  unanswered question, never zero hits.
+The convention owns the rules this phase slips on most — the four
+whole-read licenses, declaration-only section maps, `run_quiet.py` by
+shape (dry runs included), never polling a backgrounded log,
+`make tools-tests` whole, `wait_for_checks.py` for CI, and never
+re-reading what you authored. Three reminders it does not state:
 
 - **Lint the changed set** with one bare command; full `make lint`
   only before committing and at the end:
@@ -177,25 +159,15 @@ The phase-specific reminders not stated in the convention:
   `cargo clippy` reports false dead-code errors; verify in the form
   CI runs.
 
-- **Don't re-derive a diff.** Content you wrote through `Edit` /
-  `Write` is already in context, and a diff `review_diff.py --split`
-  already wrote is read from its slices. Reach for `git diff` only for
-  a change you have not read (a rebase, a hook autofix, a sibling
-  session), and take `--stat` first when the question is which files
-  moved.
+- **Don't re-derive a diff.** Read a `review_diff.py --split` diff
+  from its slices; reach for `git diff` only for a change you have not
+  read (a rebase, a hook autofix, a sibling session), `--stat` first.
 
 - **`replace_all` is safe only when search and replacement are
   disjoint.** A replacement that contains the search string rewrites
   sites already renamed (`MAX_ATTEMPTS` → `REALIZED_FILL_MAX_ATTEMPTS`
   mangles an existing import), and surfaces as an error naming the
   *correct* symbol.
-
-- **Route any verbose-on-success command through
-  `run_quiet.py`, by shape not by name** — builds, lints, `pnpm`,
-  `docker`, `pre-commit run`, and dry runs (`make -n` still executes
-  `$(MAKE)` lines). Don't poll a backgrounded run's log; wait for the
-  notification. A `.claude/tools/` edit runs `make tools-tests`
-  whole, through the wrapper. Poll CI with `wait_for_checks.py`.
 
 ## The branch/worktree helper tool
 
@@ -229,13 +201,8 @@ Steps 1–4 and step 0b read their answers from this one call. The
 `frontend_node_modules`, `program_so` and `signing` fields are
 **measured facts** rather than predictions: act on them, don't reason
 from the diff. `--link-env` keeps the command line free of absolute
-paths, so it reduces to one stable allow-rule.
-
-`settings.local.json` is one shared file resolved through worktrees to
-the main checkout, so project-scope allow-rules are live in every
-worktree; promote to `~/.claude/settings.json` only for other repos
-(see `docs/conventions/local-integrations.md` → "How settings files
-resolve across worktrees"). What a cold worktree lacks is untracked
+paths, so it reduces to one stable allow-rule. Allow-rules already
+reach every worktree; what a cold one lacks is untracked
 per-directory content, which step 3 handles.
 
 ## Steps
