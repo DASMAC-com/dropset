@@ -574,6 +574,37 @@ nobody can promote. A genuinely urgent stray — a broken guard, a verb
 that is actively hurting — is promoted on the spot rather than waiting
 for the daily rhythm.
 
+**Every meta issue gets a review at every bootstrap** — parked, in the
+operator's **Next** view (unblocked Backlog) and in the **Blocked** view
+— and each ends doable, blocked, or killed. It runs whether or not the
+Planning document names a lane: without it, "promote a file-disjoint
+subset" collapses into the named lane and most batches are never
+considered. Its offer — a recommended file-disjoint slate of assembled
+batches, drawn from the surfaces no in-flight meta issue rewrites, and a
+**kill list** — rides in the same `AskUserQuestion` as the audit-findings
+offer. Its outcome is recorded in the document's in-session notes. The
+procedure is the `plan` skill's, step 1.
+
+**A blocked meta issue is never a fold input.** The assembly pool takes
+only **unblocked** `Claude:` Backlog issues, because `/merge-tasks` does
+not carry an inherited blocking edge silently — it re-proposes it, and
+drops it unapproved — so folding an edge-held issue would rewrite or lose
+a human-placed edge. It is reviewed for a kill, never slated: promoting
+it would clear no edge.
+
+**The review is a necessity gate, and it closes on doubt.** On the
+operator's yes, any meta issue that cannot name a concrete recurring cost
+larger than its landing-plus-ratification cost is closed `Canceled` with
+its reason. The kill pass runs **per issue, before assembly**, since a
+folded issue can no longer be killed on its own; titles decide the
+grouping, but a kill candidate's body is read, because the cost a kill
+turns on lives there. The asymmetry is what decides doubt: a wrongly
+closed issue's cost resurfaces when it recurs and is measured again — a
+trim lever as a refused refile that names the closed issue — while a
+wrongly kept one spends a session and an operator ratification on noise.
+Meta and trim filings otherwise compound, because nothing ever declines
+one.
+
 ### Which milestones park, and which do not
 
 The project's milestones split into two kinds, and only one kind parks.
@@ -737,8 +768,8 @@ bound below unreachable — there would never be a remainder to leave
 parked.
 
 **The pool is the milestone PLUS any open, unpulled batch** — every
-open `Claude:`-prefixed Backlog issue that is not In Progress or In
-Review. Lowest number survives, so yesterday's un-pulled batch is
+open, unblocked `Claude:`-prefixed Backlog issue that is not In Progress
+or In Review. Lowest number survives, so yesterday's un-pulled batch is
 swallowed by today's assembly rather than sitting beside it.
 
 That clause keeps a batch from being **duplicated** across bootstraps,
