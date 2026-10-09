@@ -516,12 +516,14 @@ the identity here is model-agnostic.
 `ANTHROPIC_DEFAULT_HAIKU_MODEL` pins the background tier
 (`DS_MODEL_BACKGROUND`) so background sub-turns bill to credits
 alongside the primary model, rather than falling back to the
-subscription. Claude Code passes the id through verbatim, so it must be
-the exact Bedrock profile id — some carry a dated `-v1:0` suffix and
-some do not, and Bedrock rejects the wrong form as an invalid model
-identifier. A `ResourceNotFoundException` saying model use case details
-have not been submitted means the account has not filed Anthropic's
-use-case form for that model — an operator step.
+subscription. Claude Code maps a first-party id in this slot to its
+`us.anthropic.` profile, as it does the primary model's (measured from
+its request log), so a first-party id is portable; a
+Bedrock-form id must be the exact profile id, since Bedrock rejects any
+other spelling as an invalid model identifier. A
+`ResourceNotFoundException` saying model use case details have not been
+submitted means the account has not filed Anthropic's use-case form for
+that model — an operator step.
 
 Setting `ANTHROPIC_MODEL` does more than pick the primary model: on
 Bedrock it also routes background tasks (session titles and the like) to

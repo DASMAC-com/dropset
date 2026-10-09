@@ -372,22 +372,46 @@ class ModelsVerb(SubstrateHarness):
         self.assertNotIn("executor  ", out)
         self.assertIn("RC=1", out)
 
-    def test_check_maps_first_party_ids_but_not_background(self):
+    def test_check_maps_first_party_ids_in_every_tier(self):
         result, out = self._models(
             "check",
             env={
                 "DS_MODEL_ADVISOR": "claude-known-judge[1m]",
                 "DS_MODEL_EXECUTOR": "us.anthropic.known-work",
-                "DS_MODEL_BACKGROUND": "claude-known-bg",
+                "DS_MODEL_BACKGROUND": "claude-known-bg[1m]",
                 "DS_AWS_PROFILE": "admin",
             },
         )
         self.assertIn("ok     advisor us.anthropic.claude-known-judge", out)
         self.assertIn("ok     executor us.anthropic.known-work", out)
-        # Background is checked verbatim, the way Claude Code passes it.
-        self.assertIn("--inference-profile-identifier claude-known-bg", out)
+        # Background is mapped too, the way Claude Code maps it.
+        self.assertIn(
+            "--inference-profile-identifier us.anthropic.claude-known-bg", out
+        )
         self.assertIn("--profile admin", out)
         self.assertIn("RC=0", out)
+
+    def test_check_passes_a_bedrock_form_background_id_through(self):
+        result, out = self._models(
+            "check", env={"DS_MODEL_BACKGROUND": "us.anthropic.claude-known-bg"}
+        )
+        self.assertIn("ok     background us.anthropic.claude-known-bg", out)
+        self.assertNotIn("us.anthropic.us.anthropic", out)
+        self.assertIn("RC=0", out)
+
+    def test_check_fails_a_background_alias(self):
+        result, out = self._models(
+            "check",
+            env={
+                "DS_MODEL_ADVISOR": "claude-known-judge[1m]",
+                "DS_MODEL_EXECUTOR": "claude-known-work[1m]",
+                "DS_MODEL_BACKGROUND": "haiku",
+            },
+        )
+        # Claude Code resolves `haiku` through this very slot, so an alias
+        # here is circular and fails rather than being skipped.
+        self.assertIn("FAIL   background haiku", out)
+        self.assertIn("RC=1", out)
 
     def test_check_fails_on_an_unknown_profile(self):
         result, out = self._models(
@@ -672,8 +696,8 @@ class BedrockEnvGate(SubstrateHarness):
         self.assertIn("REGION=us-west-2", result.stdout)
         self.assertIn("CACHE=1", result.stdout)
         # The background tier is pinned so background sub-turns bill to credits
-        # too, rather than quietly falling back to the subscription. Verbatim
-        # and newline-anchored: Claude Code passes it through untouched.
+        # too, rather than quietly falling back to the subscription. Exported
+        # as configured and newline-anchored: the mapping is Claude Code's.
         self.assertIn("FAST=bg-profile-id\n", result.stdout)
 
     def test_an_unset_background_tier_warns_and_pins_nothing(self):

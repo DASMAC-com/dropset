@@ -1494,7 +1494,7 @@ DS_MODEL_ADVISOR='<model-id>[1m]'
 DS_MODEL_ADVISOR_SUBSTRATE=anthropic   # optional; the default
 DS_MODEL_EXECUTOR='<model-id>[1m]'
 DS_MODEL_EXECUTOR_SUBSTRATE=bedrock       # optional; the default
-DS_MODEL_BACKGROUND='<bedrock-profile-id>'
+DS_MODEL_BACKGROUND='<model-id>'
 ```
 
 An unset advisor or executor model refuses to launch and names the
@@ -1515,9 +1515,11 @@ are decisions rather than omissions:
   default is right, and per the same docs a Bedrock session with
   `ANTHROPIC_MODEL` set routes background tasks to that model when the
   slot is unpinned, so an unset value only prints a note. Claude Code
-  passes the id through verbatim, so it must be the exact Bedrock
-  profile id: a dated `-v1:0` suffix where the profile has one, never a
-  window suffix. `models check` checks it verbatim for that reason.
+  maps a first-party id in this slot to its `us.anthropic.` profile, as
+  it does the primary model's (measured from its request log), so a
+  first-party id is
+  portable and `models check` maps it the same way; a Bedrock-form id
+  must be the exact profile id.
 - **The auto-mode classifier has no tier.** Claude Code chooses its
   model itself and exposes no setting for it.
 

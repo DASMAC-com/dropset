@@ -627,9 +627,9 @@ _ds_topic_sid() {
 # only — on the subscription Claude Code's own default is right — and unset
 # there it is an informational line, not a refusal, since per the same docs a
 # Bedrock session with `ANTHROPIC_MODEL` set routes background tasks to that
-# model. Claude Code passes the id through verbatim, so it is the exact Bedrock
-# profile id: a dated `-v1:0` suffix where the profile has one, never a window
-# suffix.
+# model. Claude Code maps a first-party id in this slot to its `us.anthropic.`
+# profile, as it does the primary model's (measured from its request log), so a
+# first-party id is portable; a Bedrock-form id must be the exact profile id.
 #
 # The auto-mode permission classifier is deliberately absent: Claude Code picks
 # its model itself and exposes no configuration for it, so it has no tier.
@@ -1517,12 +1517,12 @@ fleet() {
 #
 # Every tier is checked in its BEDROCK form, including an anthropic-substrate
 # advisor tier: `plan bedrock` sends that same id to Bedrock, so it has to
-# resolve there too. Advisor and executor ids are mapped the way Claude Code maps
-# them (a first-party `claude-*` becomes `us.anthropic.<id>`, window suffix
-# dropped). The background id is checked VERBATIM, because Claude Code passes
-# that one through unmapped — mapping it here would pass an id that then fails
-# at runtime. An alias (`fable`, `opus`) cannot be checked: Claude Code resolves
-# it, not Bedrock, so it is reported rather than failed.
+# resolve there too. Every id, background included, is mapped to its Bedrock
+# profile: a first-party `claude-*` becomes `us.anthropic.<id>`, and any window
+# suffix is dropped. An advisor or executor alias (`fable`, `opus`) cannot be
+# checked: Claude Code resolves it, not Bedrock, so it is reported rather than
+# failed. A background alias fails instead: Claude Code resolves `haiku` THROUGH
+# this slot, so an alias here is circular.
 models() {
   if [[ -n "$1" && "$1" != check ]]; then
     print -u2 'Usage: models [check]'
@@ -1551,16 +1551,17 @@ models() {
     "background:$DS_MODEL_BACKGROUND"; do
     tier="${entry%%:*}" model="${entry#*:}"
     [[ -n "$model" ]] || continue
-    if [[ "$tier" == background ]]; then
-      profile="$model"
-    else
-      profile="${model%%\[*}"
-      if [[ "$profile" != claude-* && "$profile" != *anthropic.* ]]; then
+    profile="${model%%\[*}"
+    if [[ "$profile" != claude-* && "$profile" != *anthropic.* ]]; then
+      if [[ "$tier" == background ]]; then
+        print -r -- "FAIL   $tier $model — an alias; this slot needs a model id"
+        rc=1
+      else
         print -r -- "skip   $tier $model — an alias; Claude Code resolves it"
-        continue
       fi
-      [[ "$profile" == claude-* ]] && profile="us.anthropic.$profile"
+      continue
     fi
+    [[ "$profile" == claude-* ]] && profile="us.anthropic.$profile"
     if env -u AWS_BEARER_TOKEN_BEDROCK aws bedrock get-inference-profile \
       "${profile_flag[@]}" --region "${DS_BEDROCK_REGION:-us-west-2}" \
       --inference-profile-identifier "$profile" >/dev/null 2>&1; then
