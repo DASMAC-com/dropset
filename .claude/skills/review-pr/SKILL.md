@@ -393,13 +393,14 @@ without eight agents and ~2.9M of sub-agent input.
    with the sub-agents; `/tmp` is shared across *sessions*, so a
    sibling's stale `review-diff.txt` can sit at the same path and the
    fan-out reviews the wrong diff (`history.md` → "Diff hygiene").
-   One `review_diff.py` call does all of it and returns one verdict:
+   One `review_diff.py` call does the fetch, range checks, excluded
+   diff and stat, and returns one verdict:
 
    - **Ref `origin/<base>..HEAD`** — the local base in a worktree is
      stale by already-merged PRs. The tool fetches it itself.
    - **Generated families excluded** by `:(exclude)` path patterns from
      the tool's `DIFF_EXCLUDES` (`--print-grep-excludes` lists them); step
-     9 gate-checks them, and a family not yet listed gets the
+     9 regenerates and gate-checks them; a family not yet listed gets the
      hand-written-slice rule below. The
      verdict's `files` list stays **unfiltered**, which is how step 9
      sees it must run.
@@ -495,7 +496,7 @@ without eight agents and ~2.9M of sub-agent input.
      region the question needs (the excerpt rule below).
 
    **When a slice is still huge, split the slice — not the prompt.**
-   The input floor is the slice. **The ceiling is roughly 500 lines
+   **The ceiling is roughly 500 lines
    per lens slice**; past it, subdivide with `--only`, which takes
    repeatable path globs (never hand-rolled
    `git diff` calls) — by crate, by directory, or by the diff's own
@@ -519,8 +520,8 @@ without eight agents and ~2.9M of sub-agent input.
      (≈3× the ceiling, ≈3× the turns), stated in the brief; otherwise
      it overruns by construction and a hard stop discards the findings
      least recoverable by a narrower re-run.
-   - **Expect the exemplar band to shift with size**: a 509-line slice
-     with every discipline applied costs ≈440k, not the ≈200k of the
+   - **The exemplar band shifts with size**: a 509-line slice
+     fully disciplined costs ≈440k, not the ≈200k of the
      small-diff exemplars.
    - **Slices are namespaced off the `--out` stem**
      (`--out review-diff-tools.txt` writes `review-diff-tools-source.txt`
@@ -642,12 +643,12 @@ without eight agents and ~2.9M of sub-agent input.
      *"adjudicate from the provided diff + excerpts; cold-read only a
      file no excerpt covers."* The freshness lenses get their positive
      scope (their named files) alongside the template's negative one.
-   - **A cap in turns AND tool calls, called a hard stop** — *"≤ 6
-     turns / ≤ 8 tool calls, hard stop"* — in **every** brief, not one
+   - **A cap in turns AND tool calls, called a hard stop** — *"≤ 4
+     turns / ≤ 6 tool calls, hard stop"* — in **every** brief, not one
      lens's. A turn is not a unit an agent can count, and a soft "≈6"
      is read as a suggestion (`history.md` → "Hard-stop wording").
-     Default to **≈4 turns**, or ≈6 for a lens holding a section map.
-     A hard stop and the template's negative-scope line and
+     Default to **4 turns**, or 6 for a lens holding a section map. A
+     hard stop, the template's negative-scope line and its
      do-not-re-open negative bind the step-6 cross-check too, but at its
      own higher cap (step 6), never this one.
    - **At most three enumerated sub-questions.** The wording is
