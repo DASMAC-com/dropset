@@ -276,6 +276,15 @@ Two rules keep the cap from turning into deletion:
   allows it (`gh … --json <fields>`, a GraphQL projection), paginate
   instead of dumping, and **never re-fetch what's already in context**.
 
+  **An inventory question takes a rollup, not the per-entry listing.**
+  The Actions cache holds ~2,900 entries, and one
+  `gh cache list --json … --limit 100` returned ≈6.8k — its session's
+  largest result by 5x, replayed ~80 turns — to answer "what is on main,
+  and how old is the oldest entry". Start with
+  `gh api repos/DASMAC-com/dropset/actions/cache/usage`, then a `--jq`
+  `group_by` rollup (ref family × kind → count, MiB, oldest `createdAt`)
+  at a few hundred tokens; per-entry output only for a named key.
+
   This binds the **main loop's own discovery greps**, not just the
   sweeps it hoists for sub-agents — the rule is usually read as being
   about material handed onward, so it gets skipped for a search you run
@@ -503,6 +512,14 @@ Two rules keep the cap from turning into deletion:
   next call, anchored to the host-side use, answered it in one file.
   Anchor to the use (`ctx.leader`) or scope with `--dir` to the crate.
   This is pattern precision, a separate axis from output width.
+
+  **A bare common integer is the numeric form of the same problem.**
+  Hunting the old 200-byte `FillEvent` size pin, a `'\b200\b'` sweep over
+  Rust and TypeScript returned 87 matches across 40 files (≈2.1k) — HTTP
+  statuses, durations, test constants — and the real pin, an
+  `assert_eq!(body.len(), 200)`, was found by `make test` failing. Search
+  the assertion or call that uses the number (`len\(\), *200`,
+  `size_of::<FillEvent>`), or let the suite find it.
 
   **Before grepping for a concept, say the widest branch of your pattern
   out loud.** If it is an ordinary English word — `age`, `time`, `state`,
@@ -782,6 +799,16 @@ Two rules keep the cap from turning into deletion:
     that followed. Pick the single field that **identifies** a record,
     and take everything else from the slice.
 
+    **A CI workflow is both cases at once.** This repo's workflows carry
+    long rationale comments, so a domain noun there (`cache`, `key`,
+    `needs`) is prose, and a repeated guard (`needs.changes.outputs.code`)
+    fires once per step like a records field. Measured on `test.yml`: a
+    map alternating trigger branches with `cache|save-if|key:` returned
+    ≈1.4k to locate the `on:` block and ~5 cache steps, and an
+    `event_name|paths-filter|needs\.|outputs:|if:` map hit 50+ copies of
+    that guard (≈700). Match one distinctive token per question
+    (`^'on':`, `uses: 'Swatinem`).
+
     **A SQL migration is a comment-heavy file, and reads as if it is
     not.** The comment-alternation rule above names a `Makefile` and a
     prose doc, so a `.sql` file looks like source and gets mapped with
@@ -919,6 +946,14 @@ Two rules keep the cap from turning into deletion:
   the surrounding code actually has to be read. Hoisting a *verbose*
   sweep merely relocates the sink from a sub-agent into the main loop,
   where it is replayed on every later turn.
+
+  **Recursive existence takes `-l`, never `-c`.** `-c` is per-file and
+  prints a `:0` line for every file it walks, so a recursive `grep -rc`
+  returns the tree listing: one `grep -rn -c '"tags"'` over a dashboards
+  directory came back as ~60 lines (≈1.0k), nearly all zeros, to learn
+  that three files held the key. `-c` is for counting matches in a named
+  file; `grep -rl` or `search_source.py --files-only` answers "which
+  files".
 
 - **Query an indexing MCP before grepping a vendored dependency
   checkout — and never with a wide `-A` window.** Answering "does this
@@ -1194,7 +1229,13 @@ Two rules keep the cap from turning into deletion:
     evidence than an image, because it is exact. In that session a
     programmatic rectangle-intersection test had already proven the
     overlay did not collide with anything, which is what made the
-    full-frame shots confirmatory.
+    full-frame shots confirmatory. Where the app has its own API, read
+    that before any pixel: a Grafana landing-page change took three
+    screenshots (≈30k, the session's top three results, against ≈11.2k
+    for all 85 Bash calls), and two of them confirmed what
+    `/api/search` and the Grafana log already said. Screenshot only what
+    no API answers, **once, against the final tree** rather than after
+    each edit, at the smallest window that frames the question.
   - **Clip by default.** `clip` takes the rect you just measured, so it
     costs nothing extra to author.
   - **Reserve a full viewport** for when the composition itself is the
