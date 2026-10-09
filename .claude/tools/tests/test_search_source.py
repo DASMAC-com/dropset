@@ -394,69 +394,6 @@ class DirIsADirectoryTests(unittest.TestCase):
         self.assertIn("no such directory", str(caught.exception))
 
 
-class ContextNudgeTests(unittest.TestCase):
-    """The summary should say when `--context` was probably the wrong shape.
-
-    Nothing here is a wrong answer — these results are complete. The nudge exists
-    because the narrowness rule is missed while typing, not while reading.
-    """
-
-    def _summary(self, result, files_only=False, context=2):
-        err = io.StringIO()
-        # stdout is captured too, not just redirected for tidiness: `--files-only`
-        # prints the path list there, and letting it escape scribbles over the
-        # test runner's own output.
-        with redirect_stderr(err), redirect_stdout(io.StringIO()):
-            ss.print_result(result, files_only, context)
-        return err.getvalue()
-
-    def _result(self, total, files):
-        return {
-            "matches": [],
-            "files": [f"f{k}.rs" for k in range(files)],
-            "total": total,
-            "truncated": 0,
-        }
-
-    def test_context_over_many_files_suggests_files_only(self):
-        got = self._summary(self._result(20, ss.CONTEXT_FILE_NUDGE + 1))
-        self.assertIn("--files-only", got)
-        self.assertIn("WHERE", got)
-
-    def test_context_over_a_handful_of_files_says_nothing(self):
-        got = self._summary(self._result(5, ss.CONTEXT_FILE_NUDGE))
-        self.assertNotIn("NOTE: --context", got)
-
-    def test_matches_clustered_in_one_file_suggest_a_slice_read(self):
-        got = self._summary(self._result(ss.CONTEXT_DENSITY_NUDGE, 1))
-        self.assertIn("cluster in one file", got)
-        self.assertIn("slice Read", got)
-
-    def test_a_few_matches_in_one_file_say_nothing(self):
-        got = self._summary(self._result(2, 1))
-        self.assertNotIn("cluster in", got)
-
-    def test_dense_matches_across_a_handful_of_files_also_nudge(self):
-        # The gap the single-file test left: 2-3 files fired neither branch,
-        # however dense, yet that is the same overlap shape.
-        got = self._summary(self._result(40, 3))
-        self.assertIn("cluster in 3 files", got)
-
-    def test_no_nudge_without_context(self):
-        got = self._summary(self._result(50, 20), context=0)
-        self.assertNotIn("NOTE: --context", got)
-
-    def test_no_nudge_when_already_files_only(self):
-        got = self._summary(self._result(50, 20), files_only=True)
-        self.assertNotIn("NOTE: --context", got)
-
-    def test_no_nudge_on_an_empty_result(self):
-        # An empty result's problem is scope, not output form; the existing
-        # prose/glob diagnostics own that case.
-        got = self._summary(self._result(0, 0))
-        self.assertNotIn("NOTE: --context", got)
-
-
 class GlobFilterTests(unittest.TestCase):
     """``--glob`` picks *files*, where ``--dir`` picks subtrees.
 
@@ -1179,81 +1116,126 @@ class ContextDegradeTests(unittest.TestCase):
         for n in range(8):
             (self.root / f"g{n}.rs").write_text("fn marker() {}\n", encoding="utf-8")
         _, printed = self._run(["marker", "--context", "1"])
-        self.assertIn("UNSCOPED", printed)
+        self.assertIn("SPREAD", printed)
         self.assertIn("g0.rs", printed)
+        self.assertNotIn("fn marker", printed)
 
-    def test_a_narrow_unscoped_context_sweep_is_left_alone(self):
-        """Scope alone would over-fire: a two-file unscoped read is cheap and
-        may genuinely be an adjudication, so refusing it would cost a re-run to
-        buy nothing the size degrade was not already catching."""
+    def test_a_narrow_context_sweep_is_left_alone(self):
+        """Spread, not scope: a two-file read is cheap and may genuinely be an
+        adjudication, so degrading it would cost a re-run to buy nothing the
+        size degrade was not already catching."""
         (self.root / "one.rs").write_text("fn solo() {}\n", encoding="utf-8")
         (self.root / "two.rs").write_text("fn solo() {}\n", encoding="utf-8")
         _, printed = self._run(["solo", "--context", "1"])
-        self.assertNotIn("UNSCOPED", printed)
+        self.assertNotIn("SPREAD", printed)
         self.assertIn("fn solo", printed)
 
-    def test_scoping_the_spread_sweep_restores_context(self):
-        """The answer the note hands back is what makes context available
-        again, so the loop terminates in one extra call rather than in a
-        standoff.
+    def test_a_glob_scoped_spread_sweep_degrades_too(self):
+        """Scoping used to exempt a spread sweep, and that exemption was where
+        the measured misses lived: a crate-narrowed `--context` over four
+        files, under the line threshold, consumed for a location question.
 
-        The glob must still match ALL eight files. This test used to pass
-        `--glob h0.rs`, which narrows the result to one file — already below
-        `UNSCOPED_SPREAD_FILES`, so the spread predicate suppressed the degrade
-        on its own and the `not globs` clause was never exercised. Deleting
-        that clause left the test green, which makes it a confound rather than
-        a check.
+        The glob must still match ALL eight files, or the count alone would
+        hold the degrade off and the scope clause would go untested.
         """
         for n in range(8):
             (self.root / f"h{n}.rs").write_text("fn tag() {}\n", encoding="utf-8")
         _, printed = self._run(["tag", "--context", "1", "--glob", "h*.rs"])
-        self.assertNotIn("UNSCOPED", printed)
-        self.assertIn("fn tag", printed)
+        self.assertIn("SPREAD", printed)
+        self.assertNotIn("fn tag", printed)
 
-    def test_scoping_by_dir_also_restores_context(self):
-        """`--dir` is the other half of the same clause and had no test at all."""
+    def test_a_dir_scoped_spread_sweep_degrades_too(self):
         (self.root / "sub").mkdir()
         for n in range(8):
             (self.root / "sub" / f"d{n}.rs").write_text(
                 "fn dtag() {}\n", encoding="utf-8"
             )
         _, printed = self._run(["dtag", "--context", "1", "--dir", "sub"])
-        self.assertNotIn("UNSCOPED", printed)
-        self.assertIn("fn dtag", printed)
+        self.assertIn("SPREAD", printed)
+        self.assertNotIn("fn dtag", printed)
 
     def test_the_spread_threshold_is_exclusive_at_its_boundary(self):
-        """`> UNSCOPED_SPREAD_FILES` means 3 files stay verbose and 4 degrade.
-        The existing cases used 8 and 2, so neither touched the one value a
-        future edit is most likely to move by one.
-
-        Both halves must be UNSCOPED. Passing globs to hold the count down
-        would suppress the degrade through the `not globs` clause instead of
-        through the threshold — the same confound as the test above, and the
-        first draft of this one made exactly that mistake.
-        """
-        self.assertEqual(ss.UNSCOPED_SPREAD_FILES, 3)
+        """`> SPREAD_DEGRADE_FILES` means 3 files stay verbose and 4 degrade —
+        the one value a future edit is most likely to move by one."""
+        self.assertEqual(ss.SPREAD_DEGRADE_FILES, 3)
         for n in range(3):
             (self.root / f"c{n}.rs").write_text("fn ctag() {}\n", encoding="utf-8")
         for n in range(4):
             (self.root / f"b{n}.rs").write_text("fn etag() {}\n", encoding="utf-8")
 
-        # Exactly at the limit: 3 files, unscoped, context preserved.
         _, at_limit = self._run(["ctag", "--context", "1"])
-        self.assertNotIn("UNSCOPED", at_limit)
+        self.assertNotIn("SPREAD", at_limit)
         self.assertIn("fn ctag", at_limit)
 
-        # One past it: 4 files, unscoped, degraded.
         _, over = self._run(["etag", "--context", "1"])
-        self.assertIn("UNSCOPED", over)
+        self.assertIn("SPREAD", over)
 
     def test_force_context_overrides_the_spread_degrade(self):
-        """Unlike the single-file clamp, this one IS overridable — an unscoped
+        """Unlike the single-file clamp, this one IS overridable — a spread
         adjudication read is unusual rather than impossible."""
         for n in range(8):
             (self.root / f"k{n}.rs").write_text("fn ovr() {}\n", encoding="utf-8")
         _, printed = self._run(["ovr", "--context", "1", "--force-context"])
-        self.assertNotIn("UNSCOPED", printed)
+        self.assertNotIn("SPREAD", printed)
         self.assertIn("fn ovr", printed)
+
+    def _dense(self, name, matches):
+        # Matches every other line, so --context 1 windows merge into one block:
+        # under the line threshold, which keeps the size degrade out of it.
+        body = []
+        for k in range(matches):
+            body += [f"fn {name}_{k}() {{}}", f"// gap {k}"]
+        (self.root / f"{name}.rs").write_text("\n".join(body) + "\n", encoding="utf-8")
+
+    def test_a_dense_sweep_drops_context_and_keeps_the_match_lines(self):
+        """The density advisory was consumed anyway on calls already clamped to
+        one file, so it acts now. It keeps the match lines rather than going
+        `--files-only`: the caller scoped to this file already, and what a
+        slice-read needs from here is the offsets."""
+        self._dense("dense", ss.DENSITY_DEGRADE_MATCHES)
+        _, printed = self._run(["fn dense", "--context", "1", "--glob", "dense.rs"])
+        self.assertIn("DROPPED", printed)
+        self.assertIn("dense.rs:1:fn dense_0", printed)
+        self.assertNotIn("// gap", printed)
+
+    def test_a_sparse_single_file_sweep_keeps_its_context(self):
+        self._dense("sparse", ss.DENSITY_DEGRADE_MATCHES - 1)
+        _, printed = self._run(["fn sparse", "--context", "1", "--glob", "sparse.rs"])
+        self.assertNotIn("DROPPED", printed)
+        self.assertIn("// gap", printed)
+
+    def test_force_context_overrides_the_density_drop(self):
+        self._dense("forced", ss.DENSITY_DEGRADE_MATCHES)
+        _, printed = self._run(
+            ["fn forced", "--context", "1", "--glob", "forced.rs", "--force-context"]
+        )
+        self.assertNotIn("DROPPED", printed)
+        self.assertIn("// gap", printed)
+
+    def test_a_scope_that_resolves_to_one_file_is_clamped(self):
+        """`--dir X --glob lib.rs` names no single path, so the argument check
+        cannot see it — yet the measured miss was exactly that: `--context 6`
+        over one file, honoured in full, with no notice."""
+        (self.root / "crate").mkdir()
+        (self.root / "crate" / "lib.rs").write_text(
+            "\n".join(["fn needle() {}"] + [f"// tail {k}" for k in range(8)]) + "\n",
+            encoding="utf-8",
+        )
+        _, printed = self._run(
+            ["needle", "--context", "6", "--dir", "crate", "--glob", "lib.rs"]
+        )
+        self.assertIn("clamped", printed)
+        self.assertIn("// tail 1", printed)
+        self.assertNotIn("// tail 2", printed)
+
+    def test_an_unscoped_sweep_landing_in_one_file_is_not_clamped(self):
+        (self.root / "lone.rs").write_text(
+            "\n".join(["fn lone() {}"] + [f"// tail {k}" for k in range(8)]) + "\n",
+            encoding="utf-8",
+        )
+        _, printed = self._run(["fn lone", "--context", "6"])
+        self.assertNotIn("clamped", printed)
+        self.assertIn("// tail 5", printed)
 
     def test_an_explicit_files_only_is_not_relabelled_a_degrade(self):
         # --files-only was already the cheap form; reporting it back as DEGRADED

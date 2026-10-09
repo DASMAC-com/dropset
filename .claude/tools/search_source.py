@@ -766,16 +766,17 @@ def merge_context_blocks(matches: list[dict]) -> list[tuple[str, int, list[str]]
     return blocks
 
 
-# Above how many files a `--context` sweep gets told it is probably the wrong
-# shape. Three is "a handful": at four-plus files the windows are being read to
-# locate something, which `--files-only` answers for a fraction.
-CONTEXT_FILE_NUDGE = 3
-
-# And the opposite shape, from the same evidence: matches clustered in ONE file.
-# At this many, the merged context windows approach buying the file outright —
-# one measured sweep bought a file roughly twice over *after* --files-only had
-# already identified it — so a slice-read of the region is the cheaper move.
-CONTEXT_DENSITY_NUDGE = 10
+# How many matches in at most `SPREAD_DEGRADE_FILES` files make a `--context`
+# sweep DROP its context and print the matched lines alone. At this many, the
+# merged windows approach buying the file outright — one measured sweep bought a
+# file roughly twice over *after* --files-only had already identified it — so a
+# slice-read of the region is the cheaper move, and the bare match lines carry
+# the offsets that slice needs.
+#
+# This used to be an advisory on the summary line, and it was consumed anyway in
+# session after session, including on calls already clamped to one file — the
+# clamp bounds the width, never the density. So the tool acts on it instead.
+DENSITY_DEGRADE_MATCHES = 10
 
 # The widest `--context` a single-file scope may ask for before this tool
 # refuses. Anything past a line or two of either side is on its way to buying
@@ -804,23 +805,27 @@ SINGLE_FILE_CONTEXT_LIMIT = 2
 # a genuine adjudication read — a handful of regions — untouched.
 CONTEXT_DEGRADE_LINES = 100
 
-# How many files an UNSCOPED `--context` sweep may touch before it degrades to
-# `--files-only` regardless of size. Spread — not scope alone, and not printed
-# lines — is what identifies a caller who does not yet know where the thing is,
-# and that caller is asking WHERE. Three is deliberately permissive: a genuine
-# unscoped adjudication read usually lands in one or two files, and the
-# line-count degrade above still catches anything merely large.
-UNSCOPED_SPREAD_FILES = 3
+# How many files a `--context` sweep may touch, at any scope, before it degrades
+# to `--files-only` regardless of size. Spread — not printed lines — is what
+# identifies a caller asking WHERE, and at four-plus files the windows are being
+# read to locate something. Three is deliberately permissive: a genuine
+# adjudication read usually lands in one or two files, and the line-count
+# degrade above still catches anything merely large.
+#
+# Scoped sweeps used to be exempt, and that exemption was the gap: a `--dir` or
+# `--glob` narrowed to one crate makes a wide context FEEL affordable, and the
+# measured misses were exactly that shape — four files, under the line
+# threshold, a location question, the advisory printed and the payload used.
+SPREAD_DEGRADE_FILES = 3
 
 
 def single_file_scope(globs, dirs) -> str | None:
     """The one file this invocation can possibly search, or ``None``.
 
-    Detected from the **arguments**, before any file is opened, which is the
-    whole point: the density advisory below is correct but arrives *with the
-    result*, after the tokens are spent — it teaches the next call, not the one
-    that pays. A wildcard-free ``--glob`` (or ``--dir``) naming one path is a
-    scope signal available up front.
+    Detected from the **arguments**, before any file is opened. A wildcard-free
+    ``--glob`` (or ``--dir``) naming one path is a scope signal available up
+    front; a combination that only *resolves* to one file (``--dir X --glob
+    lib.rs``) is caught after the walk instead, from the scanned count.
     """
     candidates = []
     for group in (globs, dirs):
@@ -933,30 +938,6 @@ def print_result(
             f"as a generated family or never-search tree, so they were NOT "
             f"searched: {', '.join(pruned)}"
         )
-    # The output-form nudge. Unlike the warnings above, nothing here is wrong —
-    # the answer is complete. It fires because the discipline it defends fails at
-    # the moment of *typing*, not the moment of reading the convention: one
-    # session landed the doc rule and then violated it five times in the same
-    # run. So the reminder is attached to the result instead, where it is read
-    # right next to the cost it is describing.
-    if context and not files_only and result["total"]:
-        file_count = len(result["files"])
-        if file_count > CONTEXT_FILE_NUDGE:
-            summary += (
-                f" | NOTE: --context {context} across {file_count} file(s) — if "
-                "the question was WHERE something is, --files-only answers it "
-                "for a fraction; take context only to read what code does"
-            )
-        elif result["total"] >= CONTEXT_DENSITY_NUDGE:
-            # `<=` the file threshold, not `== 1`. Keying on a single file left a
-            # gap at 2-3 files: a 3-file sweep with 40 matches each is exactly
-            # the overlap shape this note describes, and got silence.
-            where = "one file" if file_count == 1 else f"{file_count} files"
-            summary += (
-                f" | NOTE: {result['total']} matches cluster in {where}, so "
-                "these windows overlap toward buying them whole — --files-only "
-                "then a slice Read of the region is cheaper"
-            )
     print(summary, file=sys.stderr)
 
 
@@ -996,9 +977,10 @@ def run(argv: list[str]) -> int:
     parser.add_argument(
         "--force-context",
         action="store_true",
-        help="print the context windows even when they would degrade to "
-        "--files-only for size — the escape hatch for an adjudication read "
-        "where the surrounding lines ARE the question",
+        help="print the context windows even when they would degrade for size, "
+        "spread or density — the escape hatch for an adjudication read where "
+        "the surrounding lines ARE the question. Never lifts the single-file "
+        "clamp",
     )
     parser.add_argument(
         "--force-comments",
@@ -1116,6 +1098,35 @@ def run(argv: list[str]) -> int:
         limit=args.max,
         globs=globs,
     )
+
+    # The same clamp, for a scope that RESOLVES to one file without naming it:
+    # `--dir db-schema --glob lib.rs`, or a wildcard glob with one hit. The
+    # argument check above cannot see either, and the measured miss was exactly
+    # this shape — a `--context 6` sweep over one file, honoured in full, with no
+    # notice at all. Only a scoped run qualifies: an unscoped sweep that happens
+    # to land in one file was not aimed there, and a narrow read of it is cheap.
+    if (
+        clamped_from is None
+        and not args.files_only
+        and args.context > SINGLE_FILE_CONTEXT_LIMIT
+        and (globs or dirs)
+        and result["scanned"] == 1
+        and result["total"]
+    ):
+        clamped_from = (args.context, result["files"][0])
+        args.context = SINGLE_FILE_CONTEXT_LIMIT
+        result = search(
+            args.pattern,
+            Path(args.root),
+            dirs=list(dirs) if dirs is not None else None,
+            extensions=extensions,
+            context=args.context,
+            fixed=args.fixed,
+            ignore_case=args.ignore_case,
+            limit=args.max,
+            globs=globs,
+        )
+
     notes: list[str] = []
     if clamped_from is not None:
         width, target = clamped_from
@@ -1131,7 +1142,34 @@ def run(argv: list[str]) -> int:
     # which is the entire cost the caller pays. So the check is exact rather than
     # projected — merge the windows and count the lines they would emit.
     files_only = args.files_only
-    if args.context and not files_only and result["total"]:
+    context = args.context
+
+    # DROP the context on a DENSE sweep — many matches in a handful of files —
+    # and print the matched lines alone. Checked ahead of the size degrade on
+    # purpose: for this shape `--files-only` would hand back only the file name
+    # the caller already scoped to, while the bare match lines carry the offsets
+    # a slice-read needs. `--force-context` lifts it, as with the degrades
+    # below; the single-file clamp above already ran and stays in force.
+    if (
+        context
+        and not files_only
+        and not args.force_context
+        and result["total"] >= DENSITY_DEGRADE_MATCHES
+        and len(result["files"]) <= SPREAD_DEGRADE_FILES
+    ):
+        where = (
+            "one file" if len(result["files"]) == 1 else f"{len(result['files'])} files"
+        )
+        notes.append(
+            f"NOTE: --context {context} was DROPPED because {result['total']} "
+            f"matches cluster in {where}, where the windows overlap toward "
+            f"buying the file whole — the matched lines below give the offsets; "
+            f"slice-read the region with Read offset/limit, or re-run with "
+            f"--force-context."
+        )
+        context = 0
+
+    if context and not files_only and result["total"]:
         # Count the block SEPARATORS too. `print_result`'s context branch emits
         # one `--` after each merged block, so summing only the content lines
         # falls short by the block count and the threshold fires marginally
@@ -1149,7 +1187,7 @@ def run(argv: list[str]) -> int:
                 f"Read offset/limit, or re-run with --force-context."
             )
 
-    # DEGRADE an UNSCOPED context sweep that SPREADS across files.
+    # DEGRADE a context sweep that SPREADS across files, at any scope.
     #
     # The degrade above is keyed on printed lines, so a first, blind `--context`
     # sweep is only caught once it is already expensive — and a location
@@ -1158,33 +1196,31 @@ def run(argv: list[str]) -> int:
     # documented and gets skipped, because an advisory can only arrive *with* a
     # payload already paid for.
     #
-    # Keyed on SPREAD rather than on scope alone, deliberately. "Unscoped" on
-    # its own over-fires: a narrow unscoped read of two files is cheap and may
-    # genuinely be an adjudication, and refusing it would cost a re-run to buy
-    # nothing the size degrade was not already catching. Spread is the actual
-    # signal that the caller did not know where to look, which is the case
-    # where surrounding lines cannot yet be the question.
+    # Keyed on SPREAD rather than on scope, deliberately. Scope on its own
+    # over-fires — a narrow read of two files is cheap and may genuinely be an
+    # adjudication — and under-fires once the caller has added a `--dir`, which
+    # is the shape that kept slipping through. Spread is the actual signal that
+    # the windows are being read to locate something.
     #
     # (The lever behind this proposed tracking first-time *patterns* per
     # session instead. That is not implementable here: this tool has no way to
     # identify its session — `CLAUDE_SESSION_ID` is not set in a Bash tool call
     # — and guessing by newest-mtime is a race under a fleet of sessions.)
     if (
-        args.context
+        context
         and not files_only
         and result["total"]
-        and not globs
-        and dirs is None
         and not args.force_context
-        and len(result["files"]) > UNSCOPED_SPREAD_FILES
+        and len(result["files"]) > SPREAD_DEGRADE_FILES
     ):
         files_only = True
         notes.append(
-            f"NOTE: --context {args.context} was dropped because this sweep is "
-            f"UNSCOPED and spread across {len(result['files'])} files — that "
-            "shape is a WHERE question, and the files below are the complete "
-            "answer to it. Narrow with --glob/--dir and ask again if you then "
-            "need the surrounding lines, or re-run with --force-context."
+            f"NOTE: --context {context} was dropped because this sweep is "
+            f"SPREAD across {len(result['files'])} files — that shape is a "
+            "WHERE question, and the files below are the complete answer to "
+            "it. Narrow to the file you mean and slice-read the region, or "
+            "re-run with --force-context if the surrounding lines really are "
+            "the question."
         )
 
     # A ZERO result from a pattern whose dialect may be wrong.
@@ -1226,7 +1262,7 @@ def run(argv: list[str]) -> int:
                     f"`{alternation_hint(args.pattern)}`."
                 )
 
-    print_result(result, files_only, args.context, notes)
+    print_result(result, files_only, context, notes)
     # 0 when something matched, 1 when nothing did — grep's convention, so a
     # caller can branch on it.
     return 0 if result["total"] else 1

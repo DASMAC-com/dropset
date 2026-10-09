@@ -2210,28 +2210,17 @@ without eight agents and ~2.9M of sub-agent input.
      the hits cluster in one file, take `--files-only` and
      then slice-read the region.
 
-     **The helper's advisory line is a DIRECTIVE, not a
-     note.** `search_source.py` already prints the right
-     warning when a context sweep clusters in one file or
-     spreads across many — detection is not the missing half,
-     **obedience** is. One session got the correct advisory on
-     its **top two sinks** (≈3.1k, 39% of its whole Bash cost)
-     and consumed both results anyway. When you see that line:
-     do not use the result. Re-issue with `--files-only` (or
-     add a `--glob`), then slice-read the region it names.
-
-     Two cases no longer depend on that obedience, because the
-     helper acts rather than advising. Once the scope is a
-     **single named file** it **clamps** a wide `--context` to
-     a line or two, that shape being a whole-file read with
-     extra steps. And past a size threshold, at **any** scope,
-     it **degrades** to `--files-only` — which is what catches
-     the sweep a scope rule cannot, such as a `--context 2`
-     across one crate directory returning 71 matches in 9
-     files to answer a location question. Both say so on the
-     summary line. `--force-context` overrides the degrade and
-     is for adjudication, not for buying a location answer
-     back at full price.
+     The helper **acts** on these shapes rather than advising,
+     because its advisories were consumed anyway, session after
+     session. A scope that is — or resolves to — **one file**
+     **clamps** a wide `--context`; a sweep **spread** across
+     more than three files, at any scope, or past a size
+     threshold **degrades** to `--files-only`; and ten-plus
+     matches **clustered** in a handful of files drops the
+     context and prints the match lines, for the slice-read
+     offsets. Each says so on the summary line.
+     `--force-context` lifts all but the clamp and is for
+     adjudication — which licenses context, never breadth.
 
      **Enumeration-for-edit is a THIRD case, and it takes
      `--files-only`.** A sweep whose purpose is to enumerate

@@ -321,10 +321,9 @@ Two rules keep the cap from turning into deletion:
   for **sparse** matches spread across files. When matches cluster in
   one file, take `--files-only` and then slice-read the region; when the
   target is a single named file, drop `--context` altogether and slice.
-  `search_source.py` now says this in its own summary line when a
-  context sweep spans more than a handful of files, or piles up in one —
-  the discipline fails at the moment of typing, not the moment of
-  reading this doc, so the reminder is attached to the result.
+  `search_source.py` enforces both halves itself, as below: the
+  discipline fails at the moment of typing, not the moment of reading
+  this doc.
 
   **Once the scope is a single named file, the tool CLAMPS a wide
   `--context`.** A sweep over one file buys its matched regions at an
@@ -336,11 +335,13 @@ Two rules keep the cap from turning into deletion:
   `--context 40` single-symbol probe that is a whole-file read with extra
   steps — ~11.9k together, roughly **60% of that session's entire Bash
   cost**. `search_source.py` detects a wildcard-free single-file scope
-  from the *arguments* and narrows the window, saying so on its summary
-  line; take `--files-only` and slice-read the region it names. It
-  clamps rather than refusing because a refusal keys on **scope** while
-  the cost is a function of **match count** — it rejected genuinely cheap
-  calls, and an unanswered question just costs a second one.
+  from the *arguments* — and a `--dir` / `--glob` combination that only
+  *resolves* to one file from the scanned count — and narrows the
+  window, saying so on its summary line; take `--files-only` and
+  slice-read the region it names. It clamps rather than refusing
+  because a refusal keys on **scope** while the cost is a function of
+  **match count** — it rejected genuinely cheap calls, and an unanswered
+  question just costs a second one.
 
   **Past a size threshold, any `--context` sweep degrades to
   `--files-only` by itself**, whatever its scope, printing the file list
@@ -355,11 +356,10 @@ Two rules keep the cap from turning into deletion:
 
   **`--force-context` lifts the size degrade and NEVER the single-file
   clamp**, and the asymmetry is deliberate rather than an oversight. The
-  degrade fires without the caller having named anything — on printed
-  size, or on a sweep spread across more than three files — where the
+  degrades fire on the shape of the result — printed size, a spread
+  across more than three files, or a dense cluster — where the
   surrounding lines may really be the question and nothing substitutes
-  for them. ("Size alone" overstated it: the spread half never fires
-  under `--dir` or `--glob` at all.) The clamp fires only
+  for them. The clamp fires only
   once the caller has *already named one file* — and for that case a
   slice `Read` answers the same question strictly better, so an override
   would buy nothing but a way to pay more.
@@ -375,17 +375,16 @@ Two rules keep the cap from turning into deletion:
   twice in one run — is why this one is enforced in the tool rather than
   restated here.
 
-  **Treat the helper's advisory line as a DIRECTIVE, not a note.** When
-  the summary reports clustering or a many-file spread, do not consume
-  that result: re-issue `--files-only` (or add a `--glob`) and slice-read
-  the named region. The detection already works — one session got the
-  correct advisory on its top two sinks (~3.1k, 39% of its Bash cost) and
-  consumed both results anyway. Obedience is the missing half, which is
-  why both cases above were promoted out of advice and into the tool: the
-  single-file case into a clamp, the size case into a degrade. What
-  remains advisory is the shape neither threshold catches, and there the
-  NOTE is a finding about the call you just made — not boilerplate, and
-  not something to re-run in the same shape.
+  **The clustering and spread advisories are enforced now, too.** They
+  were correct and consumed anyway — one session got them on its top two
+  sinks (~3.1k, 39% of its Bash cost), and the same failure recurred in
+  at least seven more. So a `--context` sweep spread across more than
+  three files degrades to `--files-only` **at any scope**, and ten-plus
+  matches in at most three files drops the context and prints the match
+  lines, which carry the offsets a slice-read needs. Neither is an
+  exemption for adjudication: needing to compare wordings licenses
+  context, never breadth, and two representative files saturate a "what
+  shape is this written in" question.
 
   **Enumeration is a third case, beside existence and adjudication.**
   The split above is location (`--files-only`) versus reading what code
