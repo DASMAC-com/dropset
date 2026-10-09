@@ -387,78 +387,30 @@ without eight agents and ~2.9M of sub-agent input.
      Whatever still fails is **blocking** (step 7); don't mark the PR
      ready.
 
-1. **Adversarial diff review.** Collect the diff and log —
-   but write the **diff to a single file** rather than into
-   context, so the fan-out below hands each agent a path
-   instead of inlining N resident copies (per `CLAUDE.md` →
-   "Context economy"; the file-handoff pattern). The tool
-   below streams the diff straight to that file — no shell
-   redirect, and the bulky diff never enters the main
-   transcript.
+1. **Adversarial diff review.** Write the diff to **one file in the
+   session scratchpad** and hand each agent a path, never N inlined
+   copies (`CLAUDE.md` → "Context economy"). The scratchpad is shared
+   with the sub-agents; `/tmp` is shared across *sessions*, so a
+   sibling's stale `review-diff.txt` can sit at the same path and the
+   fan-out reviews the wrong diff (`history.md` → "Diff hygiene").
+   One `review_diff.py` call does the fetch, range checks, excluded
+   diff and stat, and returns one verdict:
 
-   **Diff against `origin/<base>`, not a local branch, and
-   exclude the generated families.** `review_diff.py` below
-   does both — the reasoning, so the tool's behavior isn't a
-   black box:
+   - **Ref `origin/<base>..HEAD`** — the local base in a worktree is
+     stale by already-merged PRs. The tool fetches it itself.
+   - **Generated families excluded** by `:(exclude)` path patterns from
+     the tool's `DIFF_EXCLUDES` (`--print-grep-excludes` lists them); step
+     9 regenerates and gate-checks them; a family not yet listed gets the
+     hand-written-slice rule below. The
+     verdict's `files` list stays **unfiltered**, which is how step 9
+     sees it must run.
 
-   - **Ref: `origin/<base>..HEAD`.** In a worktree, the local
-     base branch is stale behind origin by already-merged
-     PRs, so `git diff <base>..HEAD` pulls unrelated
-     merged-PR files into `review-diff.txt` (the stale-diff
-     hazard, reached via the wrong ref). The tool fetches
-     `origin/<base>` itself and diffs against it.
-   - **Exclude generated files with pathspec `:(exclude)`
-     globs.** A review lens reads source, not regenerated
-     output — yet a lockfile or a regenerated SDK/IDL tree
-     can be the *bulk* of a diff (a 6001-line diff that was
-     ~3607 lines of `pnpm-lock.yaml`, read by all 7 agents),
-     replayed per agent and per turn. The tool's
-     `DIFF_EXCLUDES` holds the known generated families so
-     each lens reads source-only: lock files
-     (`pnpm-lock.yaml`, `Cargo.lock`), the generated SDK
-     clients (`sdk/ts/src/generated`, `sdk/rs/src/generated`),
-     and the generated IDL (`sdk/idl/dropset.json`). (These
-     are regenerated and gate-checked in step 9 — reviewing
-     their diff by eye adds nothing.) Note the verdict's
-     `files` list is **unfiltered**, so an excluded family
-     still shows up there as a changed path — which is what
-     lets step 9 see that it needs to run.
-
-   **Write it to the session scratchpad, not `/tmp`.** The
-   environment designates a per-session scratchpad directory
-   (the harness prints its path at session start) that **is
-   shared with the sub-agents** you spawn. `/tmp` is **not**
-   safe here: it's shared across sessions, so a sibling
-   session's stale `review-diff.txt` can sit at the same path
-   and the fan-out then reviews the **wrong diff** — a real
-   bug that has cost an entire 6-agent pass. Write to
-   `<scratchpad>/review-diff.txt` (substitute the actual
-   scratchpad path), and **verify the file is this branch's
-   diff before fanning out** — which is what the gate below
-   does, so a zero-length or stale file is caught now, not
-   after N agents have read it.
-
-   This whole preamble — the fetch, the two `git log` range
-   checks, the excluded `git diff` into the file, the per-file
-   stat, and the line count — is fixed string/path logic
-   resolving to a mechanical verdict, so it lives in the
-   skill-tool `.claude/tools/review_diff.py` (per `CLAUDE.md`
-   → "Skill tooling"). **One** call replaces the six commands
-   and returns **one** compact JSON object instead of six tool
-   results:
-
-   **Finish your own edits to the diff before generating
-   slices.** Composing the lens briefs is when you notice your
-   own stale prose — fix it first, in one pass, then generate. A
-   slice regenerated mid-composition invalidates every brief
-   already written against it, and a lens handed a stale slice
-   reviews a tree that no longer exists. The sharper form: take a
-   first read-through of the diff looking specifically for
-   self-inflicted staleness before generating; on one measured
-   run that would have caught three of four regenerations in one
-   go. The correctness argument is stronger than the token one —
-   a lens spawned against a stale slice is a **silent** failure
-   of that lens.
+   **Finish your own edits before generating slices.** Composing the
+   briefs is when you notice your own stale prose: take one
+   read-through for self-inflicted staleness and fix it in one pass
+   first. A slice regenerated mid-composition invalidates every brief
+   written against it, and a lens handed a stale slice fails
+   **silently**.
 
    ```sh
    python3 .claude/tools/review_diff.py --base <base> --split \
@@ -488,214 +440,68 @@ without eight agents and ~2.9M of sub-agent input.
    }
    ```
 
-   **Pass `--split`, and hand each lens its slice, not the
-   whole diff.** Prompt tightening has visibly *saturated*:
-   one fan-out cost ≈2.68M across five lenses on a ~1.5k-line
-   diff even though every brief already inlined excerpts,
-   named its comparison files, stated a turn cap, and handed
-   the diff by path. The residual is **structural** — all five
-   agents `Read` the *same whole* file, and that one carried
-   212 lines of `docs/architecture.md` plus large comment
-   reflows only one lens needed. So route by slice:
+   **`ready` is the gate: nothing is spawned until it is `true`.** It
+   is defined as `not blockers`, and the tool exits non-zero when it is
+   false. The four blockers: a stale base; a **failed fetch**
+   (freshness unverified — `--no-fetch` accepts the local ref
+   deliberately); nothing changed; or every changed path is an
+   excluded generated family (no source to review, though the step
+   9/10 gates still apply) — the last two each with an `--only`
+   variant. On `base_fresh: false` re-fetch, re-rebase
+   onto `origin/<base>`, and re-run the tool. The base can advance
+   *past* the step-2 rebase mid-review — worktrees share one `.git` —
+   and the diff then shows whatever the base added as a **phantom
+   deletion** (`history.md` → "Phantom deletion"). Once `base_fresh`
+   holds, read `files` for **sizing and tiering**, not as a second
+   freshness check. Pass `commits` inline; the diff lives only in the
+   file.
 
-   - **source** — correctness, security, style, completeness.
-   - **tests** — completeness (and correctness, when the diff
-     changes behavior tests pin).
-   - **docs** — the doc-freshness lens.
+   The tool **owns** three path lists — the generated-family excludes,
+   the mirror of `test.yml`'s `code` filter, and the generation inputs
+   — which is why steps 9 and 10 read `runs_rust_suites` and
+   `runs_artifact_gates` off the verdict. Change them there, never in
+   prose. `--out` is required but **not** validated against the
+   scratchpad root, so substitute the real path (a guessed one is
+   created, not rejected); the tool rewrites it every run, owner-only
+   (`0o600`).
 
-   **When the branch diff is dominated by generated output, the
-   completeness lens and the cross-check get the HAND-WRITTEN
-   slices — not `diff_path` by default.** Regenerated output is
-   not part of what the cross-check should see: on a
-   conformance-vectors PR the full-diff lenses cost 2.6–2.9x
-   the cheapest (`history.md`).
-   `sdk/conformance` is in `DIFF_EXCLUDES` now; the rule is for
-   the next generated family that is not.
+   **Route by slice, and default each lens to exactly ONE**
+   (`history.md` → "Slice routing"):
 
-   **Each brief must NAME the slice it is handed**, and a
-   lens scoped to one tree gets that tree's `--only` diff
-   rather than the branch diff: a tools-correctness lens
-   receives `--only '.claude/tools/**'`, a
-   conventions-freshness lens receives `docs/conventions/**`
-   plus `CLAUDE.md`. The step already computes the split and
-   the failure is simply not routing it.
+   | slice  | lenses                                                       |
+   | ------ | ------------------------------------------------------------ |
+   | source | correctness, security, style, completeness                   |
+   | tests  | completeness; correctness when the diff changes pinned logic |
+   | docs   | doc-freshness                                                |
 
-   **Default each lens to exactly ONE slice**, and require a
-   one-line justification in the brief for any lens receiving
-   more — stating why its question spans the seam between them.
-   Print the **slice count** beside the byte count below, so an
-   over-broad hand-in is visible at fan-out time. Inverting the
-   default is the point: handing a second slice "for context" is
-   the cheapest thing to do and the most expensive to have done.
-   This is a scoping lever only — the run that produced it had
-   all five lenses at or under cap, every one returning real
-   findings including two convergent blocking defects, so
-   nothing here argues for fewer lenses or shallower ones.
+   - **Each brief NAMES its slice**, and a lens scoped to one tree gets
+     that tree's `--only` diff (a tools lens `--only '.claude/tools/**'`;
+     a conventions lens `docs/conventions/**` plus `CLAUDE.md`).
+   - **A second slice needs a one-line justification** in the brief —
+     why its question spans the seam. Print each lens's **slice count
+     and handed-in byte count** beside the brief, so an over-broad
+     hand-in shows at fan-out time. This is scoping only; nothing here
+     argues for fewer or shallower lenses.
+   - **When generated output dominates the diff**, the completeness
+     lens and the cross-check get the hand-written slices, not
+     `diff_path` (`history.md` → "Generated output dominating the
+     diff"). The step-6 cross-check otherwise gets the **full**
+     `diff_path`: it is the one pass that sees everything.
+   - **Rust inline tests are already extracted**: `--split` routes
+     `#[cfg(test)]` hunks into the tests slice, so an empty tests slice
+     on a Rust diff means something. An empty slice is still written,
+     so absent never reads as "nothing here".
+   - **Never tell a lens its slice holds a whole function.** A slice is
+     hunks with N lines of context; say so, and inline any surrounding
+     region the question needs (the excerpt rule below).
 
-   Measured: seven
-   sub-agents summing **≈2.28M** of per-turn input —
-   cross-check 504.8k/6, test adequacy 502.8k/6, conventions
-   freshness 357.7k/5, correctness-modified 304.6k/4, skill
-   prose 289.4k/4, correctness-new 207.8k/3, security 110.0k/2
-   — with four of the seven at 1.7–2.8× the top of the
-   exemplar band. The diagnosis is **scope, not depth**: a
-   lens's context is re-sent every turn, so input scales with
-   (material handed in) × (turns taken), and the lenses that
-   ran longest were the ones handed the broadest material.
-   Some of that diff was irreducibly large (60 files,
-   +8656/−532), but the two correctness lenses are precisely
-   what `--only` exists to narrow and neither got a narrowed
-   slice. Print each lens's handed-in byte count alongside the
-   brief, so an over-broad one is visible at fan-out time
-   rather than in the next session's metrics.
-
-   **The docs lens gets a claim→excerpt table, not the source
-   slices.** This step routes the docs slice to it and says
-   nothing about what it needs to check a doc claim *against
-   the code*, so the natural move is to hand it the source too
-   — which is the whole diff by another name, defeating the
-   split. Measured: a doc-accuracy lens handed the docs slice
-   **plus both full source sub-slices** as "ground truth" came
-   in at **504.4k over 6 turns**, the second most expensive
-   agent of its session and 2.5× the cheapest substantive lens
-   on the same diff (249.6k / 4 turns).
-
-   **Carry LINE NUMBERS with any inlined excerpt.** A claim
-   table gets a line-number column; a pasted excerpt states its
-   starting line. The main loop already knows them — it grepped
-   or sliced to produce the excerpt in the first place — so this
-   is a hoist of something already paid for, exactly like the
-   repo-wide-grep hoist below. The reason is not obvious from
-   either rule alone: the pre-emit gate makes `file:line` a
-   **deliverable**, so a brief that omits line numbers has
-   silently made a file read mandatory however complete its
-   excerpts are.
-
-   A doc-accuracy lens adjudicates a bounded list of
-   **claims**, not a codebase — and the main loop wrote those
-   docs, so it already knows which code each claim rests on.
-   Every finding that lens returned turned on a handful of
-   lines already in the main loop's context; none needed
-   either source slice in full. So hand it the docs slice plus
-   a short table of *the assertion* and *the five to fifteen
-   lines that settle it*, cold-reading only where no excerpt
-   covers. Add the docs lens to the list whose comparison
-   material must be **inlined rather than named** — the same
-   excerpt-not-filenames discipline this step already
-   prescribes for the style lens, measurably its cheapest,
-   and simply never stated for docs.
-
-   **When a slice is still huge, split the slice — do not
-   tighten the prompt again.** This is the sharpened form of
-   the point above, and it names the lever precisely. One
-   measured fan-out ran at ~95% of total session cost while
-   **fully compliant**: every lens got inlined excerpts, a
-   named comparison-file list, a hard-stop turn cap and its own
-   split slice, and the turn counts *held*. Input still ran 1.3
-   to 5× the exemplars — because the `source` slice itself was
-   **3,297 lines**. No prompt discipline reaches that; the
-   input floor is the slice.
-
-   So treat slice size as its own dial. **The ceiling is roughly
-   500 lines per lens slice**, and past it the slice is
-   subdivided by `--only` rather than the brief being reworded
-   again — by crate, by directory, or by the natural seam the
-   diff already has, giving each sub-slice its own lens
-   instance. Prompt tightening has saturated; slice granularity
-   has not.
-
-   This used to say "past roughly a thousand lines", and that
-   threshold is too loose: one run cleared it on two slices
-   while still overrunning. Measured with **every** prompt-side
-   discipline applied simultaneously, lens input ran
-   **2.2–3.6× the documented exemplars** and **four of six**
-   agents overran their turn cap by exactly one. The residual
-   variance tracked **slice size**, not brief quality.
-
-   Two bounds on that number, both of which stop it being
-   applied mechanically:
-
-   - **A prose or cross-file-consistency lens is the hardest to
-     subdivide, and usually should not be.** Cross-file
-     consistency *is* its question, so splitting the slice
-     destroys the relation it checks. In that same run the prose
-     lens was the most expensive, was deliberately handed the
-     whole 1,536-line prose slice for exactly that reason, and
-     found six real contradictions. Accept the cost there and
-     subdivide everywhere else — which is a different
-     instruction from applying one ceiling uniformly.
-
-     **An exemption from the slice ceiling must LIFT THAT LENS'S
-     TURN CAP with it.** Otherwise the exemption is only half
-     granted: the lens keeps a slice three times the ceiling
-     while being held to a cap calibrated for one at the
-     ceiling, so it overruns *by construction* and the overrun
-     reads as indiscipline rather than as the arithmetic it is.
-     This is what the "four of six overran by exactly one"
-     figure above is measuring — an off-by-one that tracked
-     slice size, not brief quality. Scale the cap roughly with
-     the slice: at ~3× the ceiling, allow ~3× the turns, and say
-     so **in the brief** so the agent is not
-     hard-stopped mid-question. A hard stop that fires because
-     the cap was never raised discards the lens's findings, and
-     the cross-file lens is the one whose findings are least
-     recoverable by re-running a narrower slice.
-
-   - **Expect the exemplar band to shift with diff size.** At a
-     509-line slice with every discipline applied, expect
-     ~440k, not ~200k. The published exemplars (90.4k / 102.9k /
-     ~145k) came from *much* smaller diffs, so comparing a
-     large-diff lens against them reads as a failure when it is
-     the floor.
-
-   **The subdivision decision is PER LENS, not per fan-out.**
-   Stated only as "subdivide an oversized slice", it reads as
-   one judgement about the diff, so a session that finds the
-   diff to be a single coherent seam declines to subdivide for
-   *every* lens at once — which is the wrong shape, because the
-   lenses do not all ask cross-cutting questions.
-
-   The test: **does this lens's question span the seam between
-   crates, or sit inside one?** Correctness and security
-   usually need the cross-crate chain and are right to take the
-   whole slice. Style, naming and a new-public-surface question
-   usually do not.
-
-   Measured (session a252a9d3, PR #391): a 1,888-line diff
-   across five crates produced a 1,070-line source slice handed
-   to **every** lens. Every lens came in at or under cap and the
-   brief discipline was fully applied — 45 established facts
-   including negatives, verbatim comparison excerpts, a
-   three-sub-question ceiling, caps in both turns and tool
-   calls. Input still ran 1.4–3.3× the efficient exemplars.
-   The style lens's three questions were entirely about one
-   file's new public surface and it was handed all five crates;
-   `--only 'sdk/rs/**'` would have cut it to roughly a third.
-   So the answer is never "always subdivide" — it is "decide per
-   lens", and the per-lens byte count printed above is what
-   makes a wrong decision visible before the lens runs.
-
-   **Never tell a lens its slice holds a whole function.** A
-   diff slice is *hunks*, so an unchanged remainder of a
-   function it touches is simply not there. A brief that
-   promises otherwise sends the lens looking for a body it
-   cannot see, and the honest outcomes are both bad: it either
-   reads the file itself — buying the whole file the slicing was
-   meant to avoid — or reasons about the missing half from its
-   name. Say what the slice is (changed hunks, with N lines of
-   context) and inline any surrounding region the question
-   genuinely needs, which the excerpt rule below already
-   covers.
-
-   **Use `--only` to cut it; do not hand-roll the split.**
-   `--split` cuts by *category* (source / tests / docs) and
-   cannot subdivide within one, which is why this paragraph
-   used to prescribe a subdivision the tool could not perform:
-   3,156- and 4,148-line source slices went to every lens
-   whole (the costliest single agent on one such run took
-   **634.7k** of input), and a second session hand-rolled the
-   split as three separate `git diff` calls with literal path
-   lists. The flag takes repeatable path globs:
+   **When a slice is still huge, split the slice — not the prompt.**
+   **The ceiling is roughly 500 lines
+   per lens slice**; past it, subdivide with `--only`, which takes
+   repeatable path globs (never hand-rolled
+   `git diff` calls) — by crate, by directory, or by the diff's own
+   seam — running it once per sub-slice and giving each its own lens
+   instance and `--out` path (`history.md` → "Slice size"):
 
    ```sh
    python3 .claude/tools/review_diff.py --base main \
@@ -703,236 +509,49 @@ without eight agents and ~2.9M of sub-agent input.
      --only 'programs/**' --split
    ```
 
-   Run it once per sub-slice, and hand each lens its own
-   `--out` path.
+   - **Decide PER LENS, not per fan-out.** The test: does this lens's
+     question span the seam between crates, or sit inside one?
+     Correctness and
+     security usually need the cross-crate chain; style, naming and
+     new-public-surface questions usually do not.
+   - **A prose or cross-file-consistency lens usually keeps the whole
+     slice** — splitting destroys the relation it checks. That
+     exemption **lifts its turn cap with it**, roughly in proportion
+     (≈3× the ceiling, ≈3× the turns), stated in the brief; otherwise
+     it overruns by construction and a hard stop discards the findings
+     least recoverable by a narrower re-run.
+   - **The exemplar band shifts with size**: a 509-line slice
+     fully disciplined costs ≈440k, not the ≈200k of the
+     small-diff exemplars.
+   - **Slices are namespaced off the `--out` stem**
+     (`--out review-diff-tools.txt` writes `review-diff-tools-source.txt`
+     and siblings), so each lens gets its own path and a scoped run
+     cannot overwrite the unscoped set (`history.md` → "Fixed slice
+     names").
 
-   **The slices are namespaced off that `--out` stem** —
-   `--out review-diff-tools.txt --split` writes
-   `review-diff-tools-source.txt` and siblings, while the plain
-   `--out review-diff.txt` still writes the documented
-   `review-diff-source.txt` set. That is what makes "its own
-   `--out` path" true rather than aspirational: the slice names
-   were once **fixed**, so a scoped `--only` run silently
-   overwrote the unscoped run's slices — and because a
-   tools-only run has no docs hunks, it left
-   `review-diff-docs.txt` **empty**. The lens handed that slice
-   then correctly reports nothing to review, which is a silent
-   and total failure of that lens, in the same class as the
-   missing-preamble case above. Caught in one review by a
-   `wc -l` before spawning; do not rely on catching it.
+   **Once written, the slice files ARE the diff — for the main loop
+   too.** Do not re-derive their content with `git diff`; read the
+   slice or `diff_path`. But a **per-file** question wants a per-file
+   scope: `--only '<path>'` or a path-limited `git diff`, never a
+   `^[+-]` grep over a whole slice, which re-buys every file in it
+   (`history.md` → "Re-deriving the sliced diff").
 
-   **Rust inline tests are already extracted for you.** Rust
-   keeps unit tests inside the source file, so the category
-   split used to produce a **zero-line** tests slice on a diff
-   full of test changes — measured on a 4,351-line Rust diff,
-   after which the test-adequacy lens read three source slices
-   and became that run's costliest agent (473.6k).
-   `--split` now routes `#[cfg(test)]` hunks into the tests
-   slice by parsing the post-image, so the tests slice is
-   trustworthy on Rust; if it comes back empty on a Rust diff
-   now, that means something.
+   **The spawn is already authorized — do not ask again.** The entry
+   gate's tier choice **is** the spawn approval, including under a
+   standing "don't spawn agents unless asked" default; a mid-flight
+   fan-out prompt is ceremony (`history.md` → "The second spawn
+   question"). **The one hard gate is tooling**: if the harness offers
+   no `Agent` tool, do not spawn, do not silently skip, and **do not
+   substitute an inline pass** — stop, say so, and let the user
+   decide. An inline lens shares the author's blind spots, so it is
+   structurally a self-review at any diff size (`history.md` → "Why
+   the inline path was removed").
 
-   **Once this has run, the slice files ARE the diff — for the
-   main loop too.** Having written them, do not turn round and
-   re-derive the same content with a bare `git diff` to read it
-   yourself: that buys the same bytes twice, and it was the
-   **second-largest single result** of two separate sessions
-   (≈3.4k re-running a `git diff` over a range already sliced,
-   ≈3.1k doing it for a self-review). Read the slice you want,
-   or `diff_path` for the whole thing. This is the standing
-   "never re-fetch what's already in context" rule applied to a
-   payload the session itself produced, which is exactly why it
-   slips — the rule reads as being about *tool results*, and a
-   file you wrote does not feel like one.
-
-   **But a per-FILE question wants a per-file scope.** The rule
-   above is what makes the slice the reflex, and reaching for it
-   to settle a claim about one file inside it buys every other
-   file too. Measured (session 08c0ae6b, PR #383): a
-   `read_result.py --grep '^[+-][^+-]'` over a 450-line source
-   slice returned ≈4.7k — rank 3 of all results that session —
-   printing 306 of 447 lines, when the question concerned one
-   file with 31 changed lines. The other ~275 lines were files
-   the main loop had itself just authored and already held. A
-   path-limited `git diff` in the same turn cost a fraction and
-   is what actually answered it.
-
-   So scope it: `--only '<path>'` on `review_diff.py`, or a
-   path-limited `git diff`. Grepping a whole slice for `^[+-]`
-   re-buys every file in it, and this is the one case where
-   "the slice IS the diff" points the wrong way — the slice is
-   still the right *source*, just not the right *scope*.
-
-   A lens that genuinely needs two categories gets two paths;
-   the full `diff_path` stays available for the cross-check,
-   which is the one pass that should see everything. Two
-   caveats to state in the brief so a lens isn't misled: the
-   split is **by file**, so Rust's inline `#[cfg(test)]` unit
-   tests ride in the **source** slice, and an empty slice is
-   still written (an absent file would be ambiguous between
-   "nothing here" and "the split didn't run").
-
-   **`ready` is the gate: do not fan out unless it is `true`.**
-   It is defined as `not blockers`, so the two can never
-   disagree, and the tool exits non-zero when it is false — the
-   check can't be skipped by only reading the status.
-   `blockers` names the reason, and there are four: a stale
-   base, a **failed fetch** (freshness unverified rather than
-   verified-fresh — pass `--no-fetch` to accept the local ref
-   deliberately), nothing changed at all, or something changed
-   but every path is an excluded generated family (no source to
-   review, though the step 9/10 gates still apply — reported as
-   its own distinct reason). `commits` is small, so pass it
-   inline to the lenses; the diff itself lives only in
-   `<scratchpad>/review-diff.txt`.
-
-   The tool **owns** three path lists that used to sit as
-   prose here and were re-typed by hand each run — the
-   generated-family diff excludes, the mirror of `test.yml`'s
-   `code` filter, and the generation inputs. Keeping them in
-   one place is why `runs_rust_suites` and
-   `runs_artifact_gates` can be read off the verdict in steps
-   9 and 10 rather than re-derived. When one of those lists
-   changes upstream, change it in `review_diff.py`.
-
-   `--out` is **required**, so the path can't be omitted — but
-   it is *not* validated against the scratchpad root, so
-   substitute the real path rather than guessing: a guessed
-   path gets created and written, not rejected. What the tool
-   does remove is the **stale**-file hazard, since it rewrites
-   `--out` on every run (owner-only, `0o600` — a review diff
-   can carry a fixture key or a config token, so it gets the
-   same treatment as a `run_quiet` log).
-
-   **Why `base_fresh` is a field and not a line count.** The
-   base can advance *past* the step-2 rebase while the review
-   is in flight: worktrees share one `.git`, so a sibling
-   session's fetch (or a merge landing on `main`) moves
-   `origin/<base>` under this session with no fetch of its own.
-   The review diff then reads as if this branch **deleted**
-   whatever the base just added — a phantom `-` hunk. That is
-   not hypothetical: on one run a newly-landed test showed up
-   as a phantom deletion and **both** the correctness and
-   completeness lenses independently flagged it as a blocking
-   coverage regression; the whole fan-out was spent
-   adjudicating a false positive, then re-run from scratch on a
-   corrected base along with the full test suite. A line count
-   **passed** throughout — it cannot distinguish a phantom
-   deletion from real content, so it never surfaces this, which
-   is why `diff_lines` alone is not the gate.
-
-   So when `base_fresh` is `false` (equivalently, `base_ahead`
-   is non-empty), the base has commits this branch doesn't:
-   re-fetch, re-rebase onto `origin/<base>`, re-run
-   `review_diff.py`, and only then fan out. **Nothing is
-   spawned until `ready` is `true`.**
-
-   Read the `files` list for **sizing and tiering** (which
-   crates and surfaces the diff spans, feeding the fan-out
-   scaling below) — not as a second freshness check: once
-   `base_fresh` holds, a foreign path can't be base drift,
-   because there is no drift to leak.
-
-   **The spawn is already authorized — do not ask again here.**
-   The entry gate (step 0) carried one `AskUserQuestion` that
-   approved both "run `/review-pr` now" and the **tier**, and
-   that explicit tier choice **is** the spawn approval. Spawn
-   the approved tier and move on. A session operating under a
-   standing "don't spawn agents unless asked" instruction has
-   already satisfied it: the user picked a tier by name.
-
-   Adding a second question here is what the one-gate rule
-   exists to remove. One review ran under exactly that standing
-   default and paid a round trip to ask, the user authorized it,
-   the fan-out then found **six blocking defects** — and the
-   question was ceremony, since the user had just typed the
-   skill name. Never add a mid-flight fan-out prompt on the
-   normal path.
-
-   **The hard gate survives for genuine tooling
-   unavailability.** If the harness does not offer the `Agent`
-   tool at all, that is not a permission question and no
-   approval can fix it: do not spawn, do not silently skip, and
-   **do not substitute an inline pass**. Stop, say the tool is
-   absent, and let the user decide — the same stop condition as
-   before, now scoped to the case that is actually about
-   availability rather than authorization.
-
-   **Blocking is the intended behavior, not a degraded mode.**
-   A session that cannot spawn **cannot complete a `review-pr`
-   pass**. That is stated plainly here so it is implemented
-   deliberately rather than discovered: an independent
-   adversarial pass is the *entire point* of the step, so
-   declining to run it is a stop condition.
-
-   **Why the inline path was removed, since it reads as the
-   obvious accommodation.** A lens running in the same context
-   as the author cannot disagree with the author's blind
-   spots — it shares them. That makes an inline pass
-   structurally a **self-review**, whatever it happens to
-   find. The objection is to the **assurance property**, so it
-   does not soften with a smaller diff: an earlier proposal to
-   keep the inline path behind a diff-size or rebase-risk
-   ceiling is **superseded** for exactly that reason. A small
-   diff self-reviewed is still self-reviewed.
-
-   Two further notes, recorded so the old reasoning is not
-   reconstructed:
-
-   - **Cost is not the argument, and the naive cost reading is
-     backwards.** An inline pass is cheaper in *total* tokens
-     — no fan-out appears in the rollup at all — but every
-     byte it spends lands in the **main loop**, where it is
-     replayed on **every subsequent turn**. A fan-out spends
-     more, in throwaway contexts that evaporate on completion,
-     and the main loop only ever sees the findings. Total
-     spend and main-loop context pressure are different costs;
-     the inline path is cheaper in one and more exposed in the
-     other. That exposure compounds under the post-review
-     rebase churn this skill already documents as recurring.
-   - **One such run did find two real defects**, and that is
-     not evidence the path was sound — an unchecked review can
-     be right. The failure it invites is the one nobody
-     notices. Observed instance: a PR ran its fan-out inline
-     under a no-agents instruction, correctly declared the
-     reduced assurance in its summary, and still produced a
-     review no fresh context ever checked.
-
-   **Brief every sub-agent on the shell rules.** The standing
-   sub-agent brief from `docs/conventions/sub-agent-brief.md`
-   reaches **each** Agent prompt — the review agents here
-   *and* the cross-check agent in step 6 — via the preamble
-   file built below, so there is no need to `Read` that
-   convention doc here. That brief is the canonical wording
-   (read-only framing, Read/Grep/Glob over shell, one bare
-   command per Bash call, each reducible to an allow-rule);
-   it exists so sub-agents — which inherit neither that
-   brief nor `CLAUDE.md` — don't reach for the
-   `find` / `sed … | grep` / `cat`
-   compounds that re-prompt on every run.
-
-   **Write the invariant preamble to the scratchpad once,
-   and hand each lens its path.** Every lens brief has two
-   halves: a **standing** half that is byte-identical across
-   all of them — the sub-agent brief above, the negative
-   scope, the standing suppressions, the lint carve-out, the
-   pre-emit gate — and a **per-lens** half (its dimension,
-   its excerpts, its cap). The standing half ran ~1.5–2k
-   tokens per lens in one measured review, and a sub-agent's
-   prompt is re-sent on **every one of its turns**, so
-   across six lenses at 6–14 turns each that is a meaningful
-   slice of a 5.4M fan-out — paid to say the same thing
-   forty-odd times.
-
-   **Don't compose it by hand — emit it.** Writing it
-   yourself means first `Read`ing
-   `docs/conventions/sub-agent-brief.md` whole (≈1.7k,
-   measured on two separate runs) purely to copy verbatim,
-   unchanging boilerplate. That is deterministic string
-   assembly over a file with one owner, so a tool does it —
-   reading the brief in its **own** process, which is the
-   point (per `CLAUDE.md` → "Skill tooling"). One bare
-   command, and the skill reads nothing:
+   **Emit the standing preamble with the tool, never by hand.** The
+   byte-identical standing half of every brief is written once and
+   handed by path; the tool reads `docs/conventions/sub-agent-brief.md`
+   in its own process so the skill reads nothing (`history.md` →
+   "Preamble economics"). It reaches the step-6 cross-check too:
 
    ```sh
    python3 .claude/tools/lens_preamble.py \
@@ -941,139 +560,50 @@ without eight agents and ~2.9M of sub-agent input.
      --facts-file <scratchpad>/facts.md
    ```
 
-   **Write the facts to a file; do not copy an example.** The `--fact` flags are
-   equivalent, but a worked example in a copy-paste command is a trap here: the
-   composed section instructs every lens to treat its contents as **binding and
-   not to re-derive them**, so a run that pastes someone else's example injects
-   *false* established facts into the entire fan-out. Compose
-   `<scratchpad>/facts.md` from what **this** run actually verified — one claim
-   per line, negatives included — and pass the path. Pass `--no-facts` only to
-   state on the record that nothing was verified.
+   It composes the canonical shell rules with `lens-standing.md` beside
+   this file — the scope and negative scope, the budget and hard stop,
+   the pre-emit gate, the standing suppressions. **That template is the
+   agent-facing wording; this step is its rationale.** When you change
+   one, check the other still describes it.
 
-   **A fact stating a formula states the WIDTH it is computed
-   in.** A formula reads as complete, so it never trips the
-   what-am-I-omitting check — and an incomplete one sends a
-   lens back to the source to answer the question the fact was
-   supposed to settle. Measured: a facts block gave the
-   flush-level factor formula without its width, so the
-   claim-accuracy lens re-read the matching-math module cold to
-   check whether a PPM multiply plus a max offset could trap.
-   It computes in `u128`; one word would have closed it, and
-   the lens spent a call from its turn cap on a file the facts
-   already covered.
+   **The facts are the highest-leverage input in this step.** The tool
+   refuses a run with neither facts (`--facts-file`, or the equivalent
+   repeatable `--fact`) nor an explicit `--no-facts`. The
+   excerpt rule covers what you have read; the facts cover **what you
+   know isn't there** — "no test harness here", "zero call sites" — and
+   a lens cannot tell "nobody told me" from "I had better go check"
+   (`history.md` → "Facts-block evidence"). Compose
+   `<scratchpad>/facts.md` from what **this** run verified, one claim
+   per line, negatives included. Never paste a worked example: the
+   block tells every lens its contents are binding, so a borrowed
+   example injects *false* facts into the whole fan-out. `--no-facts`
+   only states on the record that nothing was verified.
 
-   So any fact carrying a formula, an expression, or a
-   conversion also states:
+   - **A formula, expression or conversion states its width** (`u64`,
+     `u128`, an `f64` intermediate), its **rounding direction**, and
+     whether it **saturates or wraps**; an incomplete one sends the lens
+     back to the source it was meant to settle.
+   - **Quote an expression WHOLE, guard included**, or label it a
+     paraphrase — a lens bound by the block cannot notice a dropped
+     null guard, default or short-circuit.
+   - **For a key, id or wire format, hoist both ends**: the writer-side
+     constants that compose it, not only the reader-side schema.
 
-   - the **type or width** it is performed in (`u64`, `u128`,
-     `i32`, an `f64` intermediate);
-   - the **rounding direction**, where one applies;
-   - whether it **saturates or wraps** on overflow.
+   **Emit the preamble at the spawn gate; a missing file is a stop —
+   re-emit it and re-check.** Run `lens_preamble.py` immediately before
+   spawning, in the same gate that checks `review_diff.py`'s `ready`,
+   and check the path in the same command sequence that spawns, so it
+   fails loudly there — a session resume can strip a file emitted
+   earlier, and the fan-out then runs with no shell rules and no
+   suppressions while reading as normal (`history.md` → "Missing
+   preamble").
 
-   **Quote an expression WHOLE, guard included.** An
-   established fact that drops a null guard, a default, or a
-   short-circuit hands the lens a materially different
-   expression from the one in the source — and the fact block
-   says to treat its contents as binding and not re-derive
-   them, so the lens has no license to notice. A quoted
-   expression is either the whole expression or it is a
-   paraphrase that should be labelled as one.
-
-   **Hoist the WRITER-side constants that define a key, not
-   only the reader-side schema.** A facts block that gives a
-   lens the schema a key is parsed by, without the constants
-   the key is composed from, cannot support the question the
-   lens was spawned to answer: whether a diff's key is
-   *well-formed*. The lens can see how the value is consumed
-   and not what a correct one looks like, so it either goes to
-   the source for the writer or adjudicates the half it has.
-   When a fact concerns a key, an id, or a wire format, hoist
-   both ends.
-
-   It composes two committed halves, each with a single
-   owner: the canonical shell rules from the convention doc,
-   and this skill's own standing scaffolding from
-   `lens-standing.md` beside this file — the negative scope,
-   the budget, the pre-emit gate, the standing suppressions.
-   **That template is the agent-facing wording**; the prose in
-   this step is the rationale for it. When you change one,
-   check the other still describes it.
-
-   **`--fact` is required, and it is the highest-leverage
-   thing in this step.** Every brief must carry the facts
-   already verified before the run — including the
-   **negatives**: "there is no test harness here", "this
-   export has zero call sites", "there is no central clock
-   provider". The tool **refuses** a run with no facts and no
-   explicit `--no-facts`, because omitting the section silently
-   is what used to happen.
-
-   This is measured twice, not a hunch. One run brought all
-   five lenses in at or under their turn caps — 2, 2, 3, 4, 4
-   against 5/5/4/5/8, zero overruns — and credited not the
-   hard-stop wording (already standard) but an ad-hoc block of
-   exactly this shape carrying three pre-run grep results, the
-   lint gate's coverage, and explicit negatives; **two lenses
-   said outright they needed no further reads**. Another
-   reproduced it: a security lens at 90.4k over 2 turns with
-   **zero cold reads**, cheaper than every exemplar named
-   below, producing that review's sharpest findings.
-
-   The excerpt rule covers what you have already read; this
-   covers **what you already know isn't there** — and a lens
-   cannot distinguish "nobody told me" from "I had better go
-   check". Gather the facts as you prepare the review (the
-   pre-run greps you were going to run anyway) and pass them.
-
-   **Emit the preamble at the spawn gate, and treat its
-   absence as a blocker.** Run `lens_preamble.py` immediately
-   before spawning — in the same gate that checks
-   `review_diff.py`'s `ready` — and confirm the file exists,
-   rather than emitting it once earlier in the run and trusting
-   it to still be there.
-
-   This is not defensive padding; it is a measured silent
-   degradation of the one step whose entire value is
-   independent assurance. In one review **all four lenses
-   independently reported `lens-preamble.md` missing** and said
-   so in their output, and nothing in the skill noticed. The
-   cause: the preamble had been emitted before a session
-   restart and its scratchpad was cleaned, while
-   `review_diff.py`'s slices survived because they happened to
-   be regenerated after a mid-review rebase. So the fan-out ran
-   with no standing shell rules and no suppression list, and
-   the run read as normal.
-
-   A missing preamble is a **stop**, exactly as a stale base
-   is. Re-emit it and re-check; do not spawn a lens that will
-   have to invent its own framing.
-
-   **Make that check mechanical, not a remembered step.** The
-   failure above was a *session resume* silently stripping the
-   file, and a step that says "confirm the file exists" is
-   satisfied by a reader who believes it does. So assert it the
-   way the `ready` gate is asserted: check the path in the same
-   command sequence that spawns, and let a missing file fail
-   loudly there. A resume cannot strip a check that runs at the
-   spawn gate; it can always strip one that ran earlier.
-
-   **Scope the whole-read license to the EXCERPT, not the
-   file.** Before reading a file whole in order to brief a lens,
-   **name the region you expect to excerpt**. If that region is a
-   known section rather than the file, map and slice — the
-   excerpt is what gets briefed either way, so the license should
-   extend to the excerpt's span, not the file's. The
-   edit-plus-brief condition is easy to read as licensing the
-   whole file whenever a brief is involved, and that is one step
-   too generous.
-
-   And the case worth naming, because it recurs whenever a diff
-   touches sibling implementations: **when two files are
-   near-identical in the region of interest, read one and diff
-   the other against it.** A near-duplicate sibling is the
-   cheapest possible slice.
-
-   Then give each Agent the paths plus its own scope:
+   **The per-lens material travels by file too.** Write each lens's
+   block — handler semantics, fixture helpers, known negatives,
+   measured values — to `<scratchpad>/lens-<name>.md`, so a retry after
+   a transient failure re-sends a path, not the brief (`history.md` →
+   "Per-lens retries"). Keep inline only
+   what identifies the lens — its dimension, scope line and cap:
 
    ```txt
    Read <scratchpad>/lens-preamble.md first — it is the
@@ -1082,513 +612,123 @@ without eight agents and ~2.9M of sub-agent input.
    gathered for your lens. Then: <per-lens scope>
    ```
 
-   **The per-lens excerpts travel by file too.** The diff and
-   the standing preamble already do; the per-lens block —
-   handler semantics, fixture helpers, known negatives,
-   measured values — used to stay inline, and that is the half
-   a retry re-buys. In one review three of four lens spawns
-   died on an upstream 529 **before taking a single turn**, and
-   each retry re-sent the full ≈6k brief for zero work.
+   **Excerpts inline: if the main loop has read it, the excerpt goes
+   in the brief.** This is the single highest-value lever in the step,
+   for **every** lens, and it is *input*-scoping, not fewer lenses
+   (`history.md` → "Cold-reading held context"). A brief never names a
+   file path the main loop could have quoted — reference and prior-art
+   files included (the module the change imitates, the type it must
+   stay compatible with), since a named path is an instruction to go
+   read. Pass any file→symbol map the implement phase produced, to
+   every lens reasoning about the surrounding code — on a concurrency-
+   or invariant-heavy diff that map is what spares correctness a
+   re-survey; when none exists, do not manufacture one. **Carry line
+   numbers** with every excerpt: the pre-emit gate makes `file:line` a
+   deliverable, so an excerpt without them makes a read mandatory.
+   **Scope the whole-read license to the excerpt**: name the region you
+   will excerpt before reading a file whole, and map-and-slice when it
+   is a known section. When two files are near-identical in the region,
+   read one and diff the other against it. Three lenses need it shaped:
 
-   Writing it to `<scratchpad>/lens-<name>.md` makes a retry
-   after a transient failure nearly free, which is what makes
-   the back-off policy below cheap enough to actually follow.
-   Keep inline only what identifies the lens: its dimension,
-   its scope line, its turn cap.
+   | lens      | hand it                                                                                                                        | never                                       |
+   | --------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
+   | docs      | the docs slice plus a claim → excerpt table: the assertion, the 5–15 lines that settle it, a line-number column                | the source slices as "ground truth"         |
+   | style     | the one or two sibling files that define the idiom, named **and their excerpts pasted**                                        | a discovery glob (`components/**`)          |
+   | freshness | its named files (`CLAUDE.md`, the skill files, `test.yml`) as a positive scope, opened only through Read / Grep and slice-read | shell `grep` / `git grep`; whole-file Reads |
 
-   **Then narrow the scope for these reviewers.** The
-   brief deliberately lets an agent explore other repos
-   and paths, but a *diff review* doesn't need that —
-   tell each reviewer to work **only from the diff and
-   commit log provided below**. Dependency and toolchain
-   sources (`~/.cargo`, `node_modules`, another repo) are
-   out of scope here; if a reviewer thinks it needs a
-   library's source, it should say so in its findings
-   rather than scanning for it. This narrows *where the
-   agent looks* on top of the brief — it does not relax
-   the shell rules.
+   **Bound every lens; the template carries the wording.** In the
+   per-lens half, state:
 
-   **State the negative scope explicitly.** Give every lens
-   prompt (and the step-6 cross-check) a one-line bound so
-   an on-topic agent can't wander into a settings /
-   permissions / git audit: **"review the code diff only;
-   do not audit permissions, settings, or git history."**
-   Review lenses have drifted into a permission-allowlist
-   audit or run the full test suite
-   instead of reviewing the diff, forcing an expensive
-   redo; the negative-scope line is what kept the redo on
-   task. The only exception is the two **freshness** lenses
-   below, which are *meant* to read named convention files —
-   give them their positive scope (the named files) instead.
+   - **The scope line, verbatim**:
+     *"adjudicate from the provided diff + excerpts; cold-read only a
+     file no excerpt covers."* The freshness lenses get their positive
+     scope (their named files) alongside the template's negative one.
+   - **A cap in turns AND tool calls, called a hard stop** — *"≤ 4
+     turns / ≤ 6 tool calls, hard stop"* — in **every** brief, not one
+     lens's. A turn is not a unit an agent can count, and a soft "≈6"
+     is read as a suggestion (`history.md` → "Hard-stop wording").
+     Default to **4 turns**, or 6 for a lens holding a section map. A
+     hard stop, the template's negative-scope line and its
+     do-not-re-open negative bind the step-6 cross-check too, but at its
+     own higher cap (step 6), never this one.
+   - **At most three enumerated sub-questions.** The wording is
+     necessary and not sufficient; sub-question count is where the
+     remaining variance lives (`history.md` → "Sub-question count").
+     Any sub-question the main loop can answer gets *answered* in the
+     brief — a known answer is a fact with a question mark on it. More
+     than three means you are surveying, or the lens should split.
+   - **A cap the ask can satisfy.** When the question is genuinely "do
+     these two large files agree in their entirety", either **hoist the
+     extraction** into the main loop and hand over the pairs
+     (preferred), or state the higher cap and why. Silently keeping ≈6
+     is the one option always wrong.
+   - **A self-report of the files it opened**, so an overrun is visible
+     next time.
+   - **The exemplar to match**: read once, adjudicate, report. The
+     current targets — security **90.4k / 2 turns, zero cold reads**;
+     correctness **102.9k / 2 turns**; style **81.7k / 2 turns / 1 tool
+     call** — all credit facts and excerpts inlined (`history.md` → "Exemplar
+     figures"). They are **summed per-turn input** from
+     `session-metrics`' rollup, not the Agent tool's `subagent_tokens`;
+     the gap grows with turns (≈1.7–2.5× at 2–3 turns, near 10× for
+     long lenses).
+   - **A closing "checks to run" list**: concerns it could not settle
+     in scope, each phrased as the check that would. Without that slot
+     a lens can only speculate or stay silent. Run them in the main
+     loop before step 7 and fold each result into the catalogue as one
+     line. **Re-shape an inherited check first**: the lens phrased it
+     for adjudication, the main loop usually needs existence, and the
+     right tool may differ (`history.md` → "Checks to run").
 
-   The two **freshness** lenses below are the deliberate
-   exception: they *do* read a handful of named
-   in-workspace files (`CLAUDE.md`, the skill files under
-   `.claude/skills/`, `.github/workflows/test.yml`).
-   Tell those two reviewers to open and search those files
-   **only through the Read / Grep tools** — never shell
-   `grep` or `git grep` (including `git -C <path> grep`),
-   which re-prompt and, with a quoted `\|` alternation,
-   can't even be firmed. And tell them to **slice-read**:
-   `CLAUDE.md` and the larger SKILL.md files are big, so
-   Grep to the relevant section and `Read` it with
-   `offset`/`limit` rather than pulling the whole file to
-   check one rule (per `CLAUDE.md` → "Context economy") —
-   a whole-file Read of each is a top token sink otherwise.
+   **Gate a lens on its historical YIELD too.** A lens returning zero
+   findings across **ten or more** dispatches is auto-skipped, and the
+   skip is named in the summary. **Insurance lenses are exempt** —
+   security canonically, and any lens whose absence would surface only
+   in production (`history.md` → "Yield gating").
 
-   **Hand each agent its diff by path, not inline.** Tell every
-   reviewer to **Read its own slice** from the `slices` map —
-   `review-diff-source.txt`, `-tests.txt`, or `-docs.txt` per
-   the routing above — and pass the small commit log inline.
-   The step-6 cross-check gets the **full**
-   `<scratchpad>/review-diff.txt` instead, since it is the pass
-   that should see everything. This holds **one** resident copy
-   per agent (read into its own context) instead of N copies
-   inlined across the prompts, and now a *smaller* copy for
-   most of them; no agent re-fetches the diff by shelling out.
+   **A resume is a report-now order.** A `SendMessage` resume re-sends
+   the lens's whole context, so it carries **"report now, at most 2
+   more tool calls"**, never an open continuation; a lens that cannot
+   conclude under that is reported unfinished, not resumed again
+   (`history.md` → "Resumed lenses").
 
-   **Tell each reviewer to read every file it needs once,
-   up front, and reason from that copy.** A lens that
-   re-`Read`s or re-greps the same file on each turn pays
-   for it every turn (review lenses have run 197k–469k input
-   each doing this). Brief each agent to open the handful of
-   files its lens touches a single time at the start —
-   slice-reading the large ones (Grep to the section, then
-   `Read` with `offset`/`limit`) — and then work from what
-   it has read, not re-fetch. Combined with the diff-by-path
-   handoff above, an agent should rarely need to shell out
-   again.
-
-   **Give each lens an explicit read/turn budget as a HARD
-   STOP, and one hard negative.** In the brief, tell the lens
-   to adjudicate from the diff plus a **single** up-front read
-   of each file it needs, and give it a numeric cap
-   described in those two words — **hard stop**: at the cap it
-   reports what it has, flagging anything unresolved, rather
-   than continuing. The hard negative, stated verbatim: **do
-   NOT re-open a file a finding already cites** unless you are
-   resolving a specific, named dispute about that exact file.
-
-   **State that cap in tool calls, not only in turns.** A
-   "turn" is not a unit an agent can count as it goes, and the
-   rollup does not score it the way an operator reads it: one
-   completeness lens ran **939 seconds and 17 tool calls**
-   while the rollup scored it **7 turns** — compliant to the
-   harness, a 3× overrun to whoever is paying. Tool calls are
-   the thing the lens actually issues, so they are the thing it
-   can hold itself to. Write the cap in both units — *"≤ 6
-   turns / ≤ 8 tool calls, hard stop"* — so neither reading
-   leaves it unbounded.
-   Re-reading a file the diff already handed the lens
-   (`swap.rs`, `matching.rs`) to "double-check" has run a
-   single lens to 700k+ input for facts it already had. The
-   same budget and negative apply to the step-6 cross-check
-   below.
-
-   **The hard stop goes in EVERY lens brief, not just the
-   freshness one.** A soft "≈6 turns" is read as a suggestion
-   and overrun, and the comparison is controlled — it has
-   happened *within single sessions*, same diff, same model:
-
-   - One run gave exactly one lens (freshness) an explicit hard
-     stop plus its material inline. That lens was the
-     **cheapest at 241.8k / 6 turns** and produced the **two
-     best findings** of the review; the lens given a soft
-     "≈6 turns" ran **850.2k / 15 turns** — 2.5× its cap and
-     3.5× the cost.
-   - Another: security 323.2k and completeness 349.9k, each
-     **7** turns against a soft "~6".
-   - And the confirming case: a full five-lens tier where
-     **every** lens came in under cap (314.3k/5, 249.4k/4,
-     227.4k/4, 382.6k/6, 448.6k/7) — the one thing that
-     changed being that every lens got the treatment
-     previously reserved for freshness.
-
-   So it is not a freshness-lens quirk. Same three words, same
-   excerpts-not-filenames discipline, in every brief.
-
-   **But do not read the above as "cap-overrun is solved".**
-   It is not, and the later evidence is unambiguous: four
-   sessions ran the fan-out with the verbatim hard-stop wording
-   *and* inlined excerpts exactly as prescribed, and overran
-   anyway — one where three of six lenses went over by exactly
-   one turn, and one controlled within-session case where a
-   **byte-identical brief** bound one lens (completeness, 4
-   turns / 222.5k) and not another (correctness, 9 turns /
-   486.6k). Same words, same diff, same model, 2× the cost. So
-   the wording is necessary and is not sufficient, and the next
-   rule is where the remaining variance actually lives.
-
-   **Cap a lens brief at three enumerated sub-questions.**
-   Sub-question count is the discriminator the turn cap is
-   not. On one review the two most expensive lenses (463.1k and
-   447.4k, 8 turns each) were each handed **six** enumerated
-   investigative sub-questions — every one an invitation to its
-   own file read — while the cheapest (255.3k, 5 turns) got
-   five questions scoped to two named files. Both of the
-   expensive lenses
-   spent their turns re-deriving layout facts (a struct's
-   fields, a guard in `create_market`) the main loop could have
-   inlined in two lines.
-
-   So, when writing a brief: **any sub-question the main loop
-   can already answer gets *answered* in the brief, not
-   asked.** A question you know the answer to is not a probe,
-   it is a fact with a question mark on it, and it costs a file
-   read to convert back. Three genuine open questions is the
-   ceiling; if you have more, either you are surveying (see the
-   scope line below) or the lens should be split.
-
-   **Hand every lens the context you already hold — not just
-   correctness.** This is the single highest-value lever in
-   the whole step, and it applies to **every** lens: an agent
-   that cold-reads the very files the main loop authored or
-   read this session is re-buying context the session already
-   paid for, and that has been the largest sink in ten
-   consecutive PR runs (freshness 379.3k; completeness 653.1k
-   and cross-check 631.0k on one PR; style 485.8k on another).
-   Note what the lever is **not**: it is *input*-scoping, not
-   "spawn fewer lenses" — those same full fan-outs each caught
-   real blocking bugs, and the gating rules above already
-   decide the lens *count*. What recurs is the wasted
-   **inputs**.
-
-   So for each lens you do spawn:
-
-   - **Pass the excerpts and the section-map the main loop
-     already has** — inline, in the prompt. If the implement
-     phase produced a file→symbol map of the touched area (an
-     `Explore` survey, or a map the main loop assembled while
-     writing the change), that map goes to every lens that
-     must reason about the surrounding code. When no such map
-     exists, don't manufacture one — the lens reads what it
-     needs once, per the budget above.
-
-   - **The rule covers reference / prior-art files too, not
-     only the diff's own files.** This is the reading that
-     gets missed — the rule above sounds like it is about the
-     files the diff touches. A brief that *names* a reference
-     file for the lens to go read (the exemplar module, the
-     pattern the change imitates, the type it must stay
-     byte-compatible with) re-buys context the session already
-     paid for just as surely. One correctness lens ran
-     **683.5k / 10 turns** against a ≤ 6-turn cap — roughly 4×
-     the cross-check on the same diff — not by sweeping the
-     repo (the failure mode the freshness rules below address)
-     but by cold-reading two named reference files
-     (`sdk/rs/src/events.rs`, `tui/src/fills.rs`) whose
-     relevant excerpts the main loop had already read earlier
-     in the same session. So: **if the main loop has read it,
-     the excerpt goes inline in the brief.** A lens brief never
-     names a file path the main loop could have quoted.
-
-   - **State the scope line verbatim:** *"adjudicate from the
-     provided diff + excerpts; cold-read only a file no
-     excerpt covers."* This is what turns a survey back into
-     an adjudication.
-
-   - **With the map in hand, hold the budget tighter** —
-     state an explicit low turn cap (≈6 turns), since the
-     lens should be adjudicating, not surveying.
-
-     **But check the cap is one the ask can actually
-     satisfy.** A cap is unenforced, so a lens reads as
-     compliant right up until the token bill. When the
-     question is genuinely "do these two large files agree
-     in their **entirety**" — one run put a 714-line
-     component against an ~850-line spec — no amount of
-     diff-plus-excerpt framing shrinks it, and the two
-     lenses ran 8 and 11 turns against a stated "≤ 6".
-     Neither disobeyed; the cap was simply impossible.
-     Two honest fixes, and you must pick one:
-
-     - **Hoist the extraction into the main loop** — emit
-       the two lists yourself and hand the lens the
-       *pairs* to adjudicate. Preferred: it converts a
-       survey into an adjudication, which is the whole
-       point of the cap.
-     - **Or state a cap that matches the ask**, and say
-       why it is higher than the usual six.
-
-     Silently keeping the ≈6 is the one option that is
-     always wrong.
-
-   - **Name the efficient exemplar — with the number.** A run
-     needs a target to beat, or it re-litigates after the fact
-     whether an expensive lens was worth it. The measured
-     bests, all attributable to inlining the actual call sites,
-     conversion contracts, and pre-change function bodies
-     rather than naming files:
-
-     - **90.4k / 2 turns, zero cold reads** — a security lens,
-       the cheapest clean verdict recorded, and the one that
-       produced its review's sharpest findings. It credits the
-       established-facts block (step 5): with the negatives
-       stated, it needed no reads of its own.
-     - **102.9k / 2 turns** — a correctness lens, with all six
-       lenses on that review under cap.
-     - **~145k / 3 turns** — two lenses on one review.
-     - **180.5k / 4 turns** — a correctness lens.
-     - **202.3k** — correctness / move-fidelity, roughly a
-       quarter of what the completeness lens spent on the same
-       PR.
-
-     Tell each lens that is the shape to match: read once,
-     adjudicate, report. The top two figures are the current
-     targets, and **both credit the same cause** — facts and
-     excerpts inlined into the brief, so the lens adjudicates
-     instead of exploring.
-
-     **These figures are summed per-turn input, not the
-     `subagent_tokens` the Agent tool reports.** The two
-     differ because a sub-agent's context is re-sent on
-     every one of its turns: two lenses whose Agent results
-     read ≈102k and ≈104k had per-turn input summing to
-     **911.6k and 604.3k**. So judging a fan-out from the
-     Agent result line concludes a lens was cheap when it was
-     the most expensive thing in the session — and comparing
-     that number against the exemplars above compares unlike
-     quantities. Use `session-metrics`' per-sub-agent
-     rollup, which sums per-turn input, whenever you need
-     the real figure.
-
-     **The divergence tracks TURN COUNT — it is not a
-     constant.** This used to say "roughly an order of
-     magnitude" unconditionally, which misleads in the common
-     case: measured at **1.7x–2.5x** on 2–3-turn lenses, and
-     only many-turn lenses approach 10x. A session calibrating
-     its fan-out budget on the flat figure misjudges it
-     several-fold. Multiply by turns, not by ten.
-
-   - **Bound each lens by TURNS, not only by lens count.**
-     Cost tracks turns nearly linearly for the reason just
-     given, and the measured spread is wide: on a 52-file meta
-     PR the lenses ran 4–5x over the efficient exemplars above
-     (~3.24M total), with **3 turns = 162.8k** against
-     **8 turns = 797.6k**. Two halves, both in the brief:
-
-     - A **hard per-lens turn budget of ~4**, stated in the
-       prompt the way the cross-check already states its call
-       cap. A lens that has not found its finding by then is
-       exploring, not reviewing.
-     - **Hand it a pre-sliced diff path and an explicit read
-       allowance**, and ask it to **self-report which files it
-       opened**. Unbounded reading is what turns a 3-turn lens
-       into an 8-turn one, and the self-report is what makes
-       the overrun visible next time.
-
-     Neither half reduces the number of lenses. And this is
-     **not** the cross-check cap — that rejection stands, and
-     this evidence does not disturb it: the cross-check ranked
-     only fourth in cost here, and its synthesis reframed the
-     whole finding set.
-
-   - **Gate a lens on its historical YIELD, not only on the
-     diff's shape.** The conditional gating above keys entirely
-     on what the diff *looks like* — security on a trust
-     surface, freshness on touched paths, style skipped for
-     meta-work. That is one axis; yield is a second, and it
-     reaches what prompt discipline cannot: one measured pass
-     ran the fan-out at roughly **95% of total session cost**
-     while fully compliant with every tightening rule in this
-     step.
-
-     So: a lens returning **zero findings across ten or more
-     dispatches** is auto-skipped, and the skip is reported in
-     the review summary rather than being silent.
-
-     **The exemption list is the essential half.** A lens that
-     rarely fires is not a lens that does not matter — it may
-     be the one standing between the repo and the expensive
-     failure. Name **insurance lenses** exempt from yield
-     gating outright; **security is the canonical case**, and
-     any lens whose absence would be discovered only in
-     production belongs beside it.
-
-   - **A resumed lens re-pays its whole context, so a resume
-     is always a report-now order.** If a session restart or
-     an interruption forces a `SendMessage` resume, that
-     message re-sends the lens's entire accumulated context —
-     so an open-ended "carry on" buys the whole conversation
-     again for whatever remains. In one review two lenses
-     overran a stated 5-turn hard stop (**9 and 8 turns**) for
-     no reason other than having been resumed; the caps held
-     everywhere no resume intervened (correctness 141.8k/5,
-     cross-check 269.1k/5).
-
-     The resume prompt that worked demanded **"report now, at
-     most 2 more tool calls"** — and both lenses returned in
-     **0**. So a resume carries a hard tool-call bound and an
-     order to report, never an open continuation. If the lens
-     genuinely cannot conclude under that bound, treat it as
-     an unfinished lens and say so in the summary rather than
-     resuming it again.
-
-   **On a transient fan-out failure, back off and probe with
-   one lens.** Upstream 529s have twice taken out most of a
-   spawn batch — eight spawns across two attempts in one
-   review, six across ~15 minutes in another — and the right
-   response had to be re-derived under pressure both times,
-   because this step is emphatic that an inline pass is a stop
-   condition and says nothing about the transient case.
-
-   The policy: on repeated 529, **back off once, then relaunch
-   a single lens as a probe.** If that one comes back, relaunch
-   the rest; if the whole fan-out still fails, **park the
-   review** — report the state, leave the PR as it is, and pick
-   it up later. Substituting an inline pass is still never the
-   answer, and neither is retrying the full batch on a loop.
-
-   Two notes that keep this honest. The token cost of those
-   retries was **near zero** (a spawn that dies before its
-   first turn records 0 input), so this is a **wall-clock and
-   process** finding — do not mine it as a token multiple. And
-   the probe is cheap precisely because the excerpts travel by
-   file (above), so a relaunch re-sends a path rather than a
-   ≈6k brief.
-
-   - **Give the lens a sanctioned "checks to run" section.**
-     Brief every lens to end its report with an explicit
-     *checks to run* list: concerns it could not adjudicate
-     inside its own scope, phrased as the specific check that
-     would settle each one. Without a sanctioned place to put
-     those, a lens has only two options — speculate (and get
-     refuted downstream, see the convention-claim rule below)
-     or stay silent — and silence is the expensive one.
-
-     The evidence is a security lens whose most valuable output
-     was **not a finding**: it flagged that it could not verify
-     whether a reader in another language independently
-     re-derived the same gate. One main-loop grep resolved it
-     clean (the TS reader already handles the sentinel, so the
-     demo UI won't render a ladder for a dark vault). A lens
-     that had to choose between guessing and dropping it would
-     have produced either a wrong finding or nothing.
-
-     Run those checks in the main loop before step 7, and fold
-     each result into the catalogue — a resolved check is worth
-     one line, not silence.
-
-     **RE-SHAPE an inherited check before running it.** A check
-     that arrives from a lens report is already phrased — often
-     as a grep — and gets run verbatim, which is precisely
-     where the match-the-search-shape-to-the-question rule gets
-     skipped. The lens phrased it for *adjudication* inside its
-     own scope; the main loop usually needs *existence*. So
-     restate the check as your question type first, then run
-     it.
-
-     Measured (session dacc811a, PR #347): the single largest
-     result of the run (≈5.0k) was a `search_source.py` call
-     with `--context 3`, run to settle one yes/no question a
-     lens had raised — `--files-only` plus one targeted
-     slice-read answers that for a fraction. It was the third
-     session in a row for the underlying lever, and what
-     distinguishes it is *where the search came from*: not one
-     the session composed, but one it inherited. Prescribing
-     the inherited-check pathway above is what makes this gap
-     live rather than incidental.
-
-     Re-shaping can change the tool entirely, not just the
-     flags: a security lens returned "verify urllib's redirect
-     scheme allowlist", phrased as a source question. Run as
-     posed it meant reading CPython; re-shaped it was one
-     source-introspection call in the interpreter.
-
-   This is distinct from scaling the lens *count* down for an
-   extraction/move diff (above) — here the lens runs at full
-   depth; the provided context just spares it the re-survey.
-   On a concurrency- or invariant-heavy diff the correctness
-   lens genuinely needs the surrounding modules to check a
-   shared-state invariant, and without the map it has
-   re-derived one from scratch (923k input / 12 turns on a
-   944-line TUI diff) despite the "read each file once" rule.
-
-   **For the style lens, name the comparison files — and
-   paste their excerpts.** Style is the lens most prone to a
-   broad discovery scan — turned loose it globs
-   `components/**` (or the crate's whole module tree) hunting
-   for the local idiom, which is how one run reached 485.8k.
-   When the touched files were authored or read in-session,
-   the main loop **already knows** which siblings define the
-   idiom: name the specific **one or two** of them in the
-   brief and scope the comparison to those, rather than
-   letting the lens rediscover them.
-
-   Naming them is half the lever; **inlining them is the other
-   half**, and it is the half that gets dropped, because a
-   named path reads like enough. It is not: a path is an
-   instruction to go read, and the lens will. The exemplar to
-   beat is a style lens run at **81.7k input / 2 turns / 1
-   tool call** — cheaper than every other figure on this page,
-   including the reduced-tier ones below, and below the 85.8k
-   this skill used to name as its best — and the one thing that
-   distinguished it from its siblings on the same review was
-   that it received its comparison files *and their excerpts*
-   inline. One tool call, because there was nothing left to go
-   and fetch.
+   **On a transient fan-out failure, back off once, then probe with
+   one lens.** On repeated upstream 529s, relaunch a single lens; if it
+   returns, relaunch the rest; if the fan-out still fails, **park the
+   review** — report the state, leave the PR as it is, and pick it up
+   later. Never an
+   inline pass, never the full batch on a loop. It is a wall-clock
+   finding, not a token one (`history.md` → "529 fan-out failures").
 
    **Check for in-flight overlapping PRs BEFORE spending the
-   fan-out.** The base-freshness gate cannot see this hazard:
-   it compares HEAD against the base and is satisfied whenever
-   the base has not moved, so an open PR that overlaps this
-   diff and **lands during the review** passes every check and
-   still invalidates it. Measured: a five-lens pass (~1.23M
-   input, ~4.36M total sub-agent input for the session) was
-   invalidated exactly that way — and the overlap had been
-   written into the issue days earlier.
+   fan-out.** The base-freshness gate is satisfied whenever the base has
+   not moved, so an overlapping PR that **lands during the review**
+   passes every check and still invalidates it (`history.md` →
+   "Overlap invalidation"):
 
    ```sh
    python3 .claude/tools/review_diff.py --base main \
      --out <scratchpad>/review-diff.txt --split --overlap
    ```
 
-   The tool intersects each open PR's file list with this
-   diff's, **inside its own process**, and returns only the
-   overlap — the per-PR file lists never reach context (a
-   `gh pr list --json files` costs ~4.0k for a two-line
-   answer). It **reports, never blocks**: a missing or
-   unauthenticated `gh` is noted and the gate proceeds.
+   It intersects the open PRs' files in-process and returns only the
+   overlap; it **reports, never
+   blocks** (a missing or unauthenticated `gh` is noted). On a
+   substantial overlap, put
+   the decision before spawning — wait for the other PR, or proceed
+   with the re-run cost recorded. **Gate a consolidation's straggler
+   fixes on that report**: the last references to a renamed or retired
+   thing are what an in-flight PR most likely reintroduces, so decide
+   after reading it whether they are yours or the second-landing PR's.
 
-   When the overlap is substantial, surface it as a decision
-   before spawning — wait for the other PR to land, or proceed
-   with the re-run cost documented in the review notes.
-   Waiting is sometimes right and sometimes not; what is never
-   right is spending the fan-out without knowing.
-
-   **And gate a consolidation straggler fix on that same
-   report.** When this diff consolidates something — a renamed
-   convention, a retired helper, a moved rule — the last
-   straggler references are exactly what an in-flight PR is most
-   likely to reintroduce, so fixing them before the overlap
-   report is in is work that may need redoing. Read the report
-   first, then decide whether the stragglers are yours to fix now
-   or belong to whichever PR lands second.
-
-   **Ask whether an AMENDMENT is pending before you spawn.** If
-   a planning session, a peer, or the operator has work queued
-   for this branch — a measurement in flight, a decision
-   expected, a review of a related PR that might change this one
-   — the fan-out is about to review a diff that changes.
+   **Ask whether an AMENDMENT is pending before you spawn.** If a
+   planning session, a peer or the operator has work queued for this
+   branch, the fan-out is about to review a diff that changes;
    `ListAgents` shows whether a planning session is live, and one
-   message costs a fraction of one lens. Either fold the
-   amendment in first, or spawn knowing a re-spawn is coming and
-   say so in the summary.
-
-   Measured: a planning session sent a performance rewrite of a
-   change's core query **after** the five-lens fan-out and the
-   adversarial cross-check had both completed. The rewrite was
-   correct and landed — but absorbing it cost a **sixth
-   sub-agent** (316.5k / 5 turns) because the cross-check had
-   reviewed a diff that no longer existed, plus two further full
-   re-verify cycles and a lint failure cycle each time. Against a
-   fan-out of 2.41M across seven agents, that sixth agent was
-   ~13% — spent entirely on **arrival order**, not content.
-
-   When an amendment does land after the fan-out, the answer is
-   a **scoped re-review of just the amendment**, not a full
-   re-fan-out. That is what the measured session did, and it
-   worked; it simply had no rule telling it to.
+   message costs a fraction of one lens. Fold the amendment in first,
+   or spawn and say a re-spawn is coming. One that lands after the
+   fan-out gets a **scoped re-review of just the amendment**, never a
+   full re-fan-out (`history.md` → "Late amendment").
 
    **Scale the fan-out to the diff.** The full lens set
    below plus the step-6 cross-check is the right spend for
