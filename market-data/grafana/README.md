@@ -21,7 +21,7 @@ make grafana-down   # stop it; leaves postgres and the data alone
 It serves on **<http://localhost:3200>** and opens on a list of the
 dashboards by name (`home/home.json`). All three dashboards sit at the
 top level of the dashboard list, with no folder and no tags; at three
-dashboards neither earns its keep. The `Dropset` folder beside them
+dashboards neither earns its keep. The `Alert rules` folder beside them
 holds only the alert rules, which Grafana requires to live in a folder;
 read those from the Alerting page. Append `?kiosk` to the URL for a
 chrome-free view — no nav, no side menu — which is what you want on a
@@ -46,7 +46,8 @@ dashboard carries, per source, product and bucket width, with its
 all-time bar count and its freshness. Those answer *is there data and
 does it make sense* before anything derived is shown, and the table is a
 table rather than a tile per feed precisely because the roster grows.
-Then realized volatility by hour, and last the cross-pair index.
+Then realized volatility by hour, the cross-pair index, and last the
+**Spot ticks** panel.
 
 Most of it reads **one product at a time**, but the **cross-pair index**
 does not: pick a currency and it overlays every pair carrying it on
@@ -58,6 +59,17 @@ dashboard to open. It offers every **registered** pair rather than only
 live ones, and names a quiet pair in the legend instead of dropping it —
 a liveness filter there made the panel show fewer pairs the wider an
 outage got.
+
+Every panel but Spot ticks reads the **candle** tier, so `Venue source`
+lists candle venues only. A venue that writes nothing but spot ticks —
+`kraken`, `erapi`, `frankfurter`, `pyth` — is absent from it by
+construction, and the page says so on that picker. Those venues are
+drawn by the Spot ticks panel, which has its own `Tick venue` and
+`Tick product` pickers and sits last, out of the raw-first order,
+because it follows neither `Currency` nor `Venue source`: both are
+scoped to the candle venue's registry, and coupling the panel to them
+would hide exactly the tick-only products it exists to show. `coinbase`
+writes both tiers and appears in both pickers.
 
 Selecting by currency needed products tagged by currency family, which
 was a schema change rather than a dashboard one; it landed as the

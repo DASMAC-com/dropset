@@ -20,7 +20,7 @@
       }
     ]
   },
-  "description": "Raw collected series first, then the regime analytics derived from them. Read it top-down: is there data for this venue and product, what does the store hold across every venue, what does the data say about volatility by hour, and how does this currency's whole pair set compare. The candlestick and the vol panel read one product at a time; the cross-pair index deliberately reads the whole currency at once.",
+  "description": "Raw collected series first, then the regime analytics derived from them. Read it top-down: is there data for this venue and product, what does the store hold across every venue, what does the data say about volatility by hour, and how does this currency's whole pair set compare. The candlestick and the vol panel read one product at a time; the cross-pair index deliberately reads the whole currency at once. Every panel except Spot ticks reads the candle tier, so Venue source lists candle venues only; the tick-only venues (kraken among them) are under Tick venue and drawn by the Spot ticks panel at the bottom.",
   "editable": true,
   "graphTooltip": 1,
   "links": [
@@ -580,6 +580,86 @@
       ],
       "title": "Cross-pair index \u2014 ${currency} pairs on ${venue_source} (first bar = 100)",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "The tick-tier venues, which no panel above can show. kraken, erapi, frankfurter and pyth write only spot ticks, so they never appear in the Venue source picker \u2014 that picker and every panel driven by it read the candle tier. coinbase writes both, so its ticker appears here as well as its candles above. This panel is where those venues are represented on this page: pick a product with Tick product and every selected Tick venue that printed it inside the window draws one line, so a peg or a reference rate reads across venues at once. A venue that has printed the product but not in the window draws nothing; widen the window or check Tick coverage on the market-data dashboard.\n\nGAPS UNDER FIVE MINUTES ARE JOINED, longer ones are not. With more than one venue selected, two venues rarely print in the same second, so below their poll cadence most aligned rows are half empty and an unjoined line would draw almost nothing; joining gaps up to five minutes closes that. A longer gap breaks the line only where another selected venue printed in the missing bucket. A bucket NO selected venue printed has no row at all and is drawn straight across, so do not read an unbroken line here as proof of no outage; Tick coverage on the market-data dashboard is the panel for that. The once-a-day reference venues are drawn as points where the panel's point density allows.\n\nAVERAGED INTO THE PANEL'S INTERVAL. The default window is thirty days and the minute-cadence venues print tens of thousands of ticks across it, so each line is the mean price per display interval rather than every print. Zoom in until the interval falls below a venue's poll cadence to see its raw prints; Price by source on the market-data dashboard plots them unaggregated.\n\nNot scoped by Currency or Venue source, deliberately: both are scoped to the candle venue's registry, so coupling this panel to them would hide exactly the tick-only products it exists to show.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "price",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": 300000
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 38
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [
+            "first",
+            "last",
+            "min",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "-- The tick tier, one line per venue for one product. Every other panel on\n-- this dashboard reads cex_prices, so a venue that only writes spot_ticks\n-- (kraken, erapi, frankfurter, pyth) is invisible to them; this is where\n-- those venues are represented on the page. coinbase writes both tiers.\n--\n-- AVERAGED PER DISPLAY INTERVAL because the default window is thirty days and\n-- a minute-cadence venue prints tens of thousands of ticks across it. The\n-- column is bare inside both macros: Grafana captures a macro argument with a\n-- regex that stops at the first closing paren, so a to_timestamp(...) inside\n-- one truncates the argument. The group alias emits epoch seconds, which the\n-- time_series format reads as time directly.\nSELECT\n  $__unixEpochGroupAlias(observed_at, $__interval),\n  source AS metric,\n  avg(price) AS value\nFROM spot_ticks\nWHERE $__unixEpochFilter(observed_at)\n  AND source = ANY (ARRAY[${tick_source:sqlstring}]::text[])\n  AND product_id = ${tick_product:sqlstring}\nGROUP BY 1, 2\nORDER BY 1, 2\n",
+          "refId": "A"
+        }
+      ],
+      "title": "Spot ticks \u2014 ${tick_product} by tick venue",
+      "type": "timeseries"
     }
   ],
   "preload": false,
@@ -599,7 +679,7 @@
           "uid": "dropset-postgres"
         },
         "definition": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
-        "description": "The venue whose collected series is being shown. Single-select: the candlestick and the vol panel each read one venue and product at a time, and the cross-pair index reads one venue across many pairs, so two vendors carrying the same pair never draw duplicate lines.",
+        "description": "The venue whose collected series is being shown. Single-select: the candlestick and the vol panel each read one venue and product at a time, and the cross-pair index reads one venue across many pairs, so two vendors carrying the same pair never draw duplicate lines. CANDLE VENUES ONLY: this lists the sources in the candle tier, so a venue that writes only spot ticks (kraken, erapi, frankfurter, pyth) is absent by construction, not by omission. Those are under Tick venue, which drives the Spot ticks panel at the bottom; coinbase writes both tiers, so it appears in both pickers.",
         "includeAll": false,
         "label": "Venue source",
         "multi": false,
@@ -764,6 +844,58 @@
         "query": "5,15,60,360,1440",
         "skipUrlSync": true,
         "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT DISTINCT source FROM spot_ticks ORDER BY 1",
+        "description": "The tick-tier venues: every source that has ever written spot ticks. kraken, erapi, frankfurter and pyth write nothing else, which is why they do not appear under Venue source; coinbase writes both tiers and appears in both. Drives only the Spot ticks panel at the bottom. Multi-select and All by default, because the panel's question is how one product reads across venues; narrow it to isolate one.",
+        "includeAll": true,
+        "label": "Tick venue",
+        "multi": true,
+        "name": "tick_source",
+        "options": [],
+        "query": "SELECT DISTINCT source FROM spot_ticks ORDER BY 1",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "EURC-USDC",
+          "value": "EURC-USDC"
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "dropset-postgres"
+        },
+        "definition": "SELECT DISTINCT product_id FROM spot_ticks WHERE source = ANY (ARRAY[${tick_source:sqlstring}]::text[]) ORDER BY 1",
+        "description": "The product the Spot ticks panel draws, listing only what at least one selected Tick venue has ever printed, so a choice never names a product no selected venue carries. Not time-filtered: a product last printed before the window is listed and draws an empty panel, which is the honest reading of a venue gone quiet. Independent of Currency and Venue product, which are scoped to the candle venue and would otherwise hide tick-only products.",
+        "includeAll": false,
+        "label": "Tick product",
+        "multi": false,
+        "name": "tick_product",
+        "options": [],
+        "query": "SELECT DISTINCT product_id FROM spot_ticks WHERE source = ANY (ARRAY[${tick_source:sqlstring}]::text[]) ORDER BY 1",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
       }
     ]
   },
