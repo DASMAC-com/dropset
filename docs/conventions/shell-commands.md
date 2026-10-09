@@ -149,6 +149,16 @@ Concrete rules:
     bare `grep`, the very thing the tool replaces. The summary line now
     names the omission; pass `--ext md` (or `--all-text`) instead.
 
+    **Pattern precision is a third axis, beside width and scope.** A
+    token of six characters or fewer can be a prefix of a common word
+    (`pyth` ⊂ `python`), so anchor it with `\b` from the first call; and
+    a lowercase sweep never reaches a `SCREAMING_CASE` constant, even
+    when the constant's lowercase *value* matches and makes the sweep
+    look complete. The tool counts both on a scoped run and says so on
+    the summary line. A skill's one-line frontmatter `description` makes
+    any hit in it fat, so `--skip-frontmatter` drops those unless the
+    frontmatter is what you are searching.
+
     **A `--context N` window is for adjudicating a hit, never for
     enumerating them.** It multiplies the payload by `N`: one
     `--context 8` sweep returned 65.8KB, overflowed the tool-result cap,

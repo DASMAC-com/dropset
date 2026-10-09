@@ -1594,5 +1594,133 @@ class ZeroResultDialectTests(unittest.TestCase):
         self.assertNotIn("ALTERNATION did not parse", printed)
 
 
+class PatternShapeTests(unittest.TestCase):
+    """Output modes and pattern-precision guards beside width and scope.
+
+    Each one either refuses a section-map shape the docs forbid (an indented
+    branch), narrows the output to what the question needs (`--locations`,
+    `--skip-frontmatter`), or reports with a count when the pattern itself was
+    imprecise (a short token inside longer words, a lowercase sweep that misses
+    SCREAMING_CASE).
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, self.cwd)
+
+    def _write(self, name, text):
+        (self.root / name).write_text(text, encoding="utf-8")
+
+    def _run(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = ss.run(["search_source.py"] + argv)
+        return code, out.getvalue() + err.getvalue()
+
+    def test_an_indented_branch_in_a_section_map_is_refused(self):
+        self._write("t.py", "class A:\n    def m(self):\n        pass\n")
+        with self.assertRaisesRegex(
+            ss.SearchSourceError, "indented-line branch.*--force-indented"
+        ):
+            self._run(["^class |^    def ", "--glob", "t.py"])
+
+    def test_regex_indent_spellings_are_refused_too(self):
+        self.assertEqual(
+            ss.indented_declaration_branches(r"^fn |^\s+fn |^\tdef "),
+            [r"^\s+fn ", r"^\tdef "],
+        )
+
+    def test_a_lone_indented_branch_is_a_deliberate_search(self):
+        self._write("t.py", "class A:\n    def m(self):\n        pass\n")
+        code, printed = self._run(["^    def ", "--glob", "t.py"])
+        self.assertEqual(code, 0)
+        self.assertIn("t.py:2:", printed)
+
+    def test_force_indented_lifts_the_refusal(self):
+        self._write("t.py", "class A:\n    def m(self):\n        pass\n")
+        code, printed = self._run(
+            ["^class |^    def ", "--glob", "t.py", "--force-indented"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("t.py:2:", printed)
+
+    def test_locations_prints_path_and_line_only(self):
+        self._write("a.rs", "fn needle() {}\n// gap\nfn needle_two() {}\n")
+        _, printed = self._run(["needle", "--locations"])
+        self.assertIn("a.rs:1\n", printed)
+        self.assertIn("a.rs:3\n", printed)
+        self.assertNotIn("fn needle", printed)
+
+    def test_locations_refuses_a_context_width_and_files_only(self):
+        self._write("a.rs", "fn needle() {}\n")
+        with self.assertRaises(ss.SearchSourceError):
+            ss.run(["search_source.py", "needle", "--locations", "--context", "2"])
+        with self.assertRaises(ss.SearchSourceError):
+            ss.run(["search_source.py", "needle", "--locations", "--files-only"])
+
+    def test_skip_frontmatter_drops_the_description_line_and_counts_it(self):
+        self._write(
+            "SKILL.md",
+            "---\nname: x\ndescription: promote the rule\n---\n\npromote here\n",
+        )
+        _, printed = self._run(["promote", "--glob", "SKILL.md", "--skip-frontmatter"])
+        self.assertIn("SKILL.md:6:promote here", printed)
+        self.assertNotIn("SKILL.md:3:", printed)
+        self.assertIn("1 match(es) inside YAML frontmatter", printed)
+
+    def test_frontmatter_is_kept_without_the_flag(self):
+        self._write("SKILL.md", "---\ndescription: promote\n---\npromote\n")
+        _, printed = self._run(["promote", "--glob", "SKILL.md"])
+        self.assertIn("SKILL.md:2:", printed)
+
+    def test_an_unclosed_fence_is_not_frontmatter(self):
+        self.assertEqual(ss.frontmatter_end(["---", "promote"]), -1)
+
+    def test_a_short_token_inside_longer_words_says_to_anchor_it(self):
+        self._write("Makefile", "\tpython3 a.py\n\tpython3 b.py\nPYTH = pyth\n")
+        _, printed = self._run(["pyth", "--glob", "Makefile"])
+        self.assertIn("2 of 3 match(es) are the token inside a longer word", printed)
+        self.assertIn(r"\bpyth\b", printed)
+
+    def test_a_token_mostly_matching_whole_words_is_left_alone(self):
+        self._write("a.rs", "let pyth = 1;\nlet pyth = 2;\nlet python = 3;\n")
+        _, printed = self._run(["pyth", "--glob", "a.rs"])
+        self.assertNotIn("inside a longer word", printed)
+
+    def test_a_long_or_regex_pattern_is_not_probed_for_prefixes(self):
+        self.assertIsNone(ss.short_token_branches("pythonic"))
+        self.assertIsNone(ss.short_token_branches(r"\bpyth"))
+        self.assertEqual(ss.short_token_branches("pyth|PYTH"), ["pyth", "PYTH"])
+
+    def test_a_lowercase_scoped_sweep_reports_missed_screaming_case(self):
+        # The measured trap: the constant's lowercase VALUE matches, so the
+        # sweep looks like it reached the identifier when it did not.
+        self._write(
+            "a.py",
+            'SUBSTRATE_DIR = "session-substrate"\n'
+            "choices = (SUBSTRATE_BEDROCK, SUBSTRATE_SEAT)\n",
+        )
+        _, printed = self._run(["substrate", "--glob", "a.py"])
+        self.assertIn("--ignore-case matches 1 more line(s)", printed)
+
+    def test_the_case_probe_skips_unscoped_mixed_case_and_ignore_case(self):
+        self._write("a.py", "SUBSTRATE = 'substrate'\nSUBSTRATE_SEAT = 1\n")
+        for argv in (
+            ["substrate"],
+            ["Substrate", "--glob", "a.py"],
+            ["substrate", "--glob", "a.py", "--ignore-case"],
+        ):
+            _, printed = self._run(argv)
+            self.assertNotIn("--ignore-case matches", printed, argv)
+
+    def test_escapes_do_not_count_as_uppercase(self):
+        self.assertTrue(ss.case_blind_pattern(r"\bsubstrate\S"))
+        self.assertFalse(ss.case_blind_pattern("SUBSTRATE"))
+
+
 if __name__ == "__main__":
     unittest.main()
