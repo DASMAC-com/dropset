@@ -103,13 +103,14 @@ Three duties this skill owns directly:
 
 - **A findings or spec file is never the only copy** —
   durable state is the filed issue. Writer body files
-  (`<scratchpad>/finding-N.md`) are transient input, not
+  (`<scratchpad>/finding-N.md`, a rotation's
+  `part-N.md`) are transient input, not
   findings state.
 - **The audit issue stays In Progress while the findings
   loop is open**, and reaches Done only at ratification
   plus fold. Marking it Done at the handoff is the measured
-  mistake that produced the rule — and under the no-PR shape
-  it is the issue state that the cleanup machinery reads, so
+  mistake that produced the rule — under the no-PR shape the
+  issue state is the only signal that the work is live, so
   an honest state is the whole of this skill's obligation.
 - **Read-only toward source.** No source edit, no commit, no
   push, no local state — Linear is the record, so a wiped
