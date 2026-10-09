@@ -304,9 +304,10 @@ the resident-size gate (`docs/conventions/context-economy.md` →
   noticed: the preamble was emitted before a session restart cleaned
   the scratchpad, while the slices survived because a mid-review
   rebase regenerated them. The fan-out ran with no standing shell
-  rules and no suppression list. Per-lens files: three of four spawns
-  in another review died on an upstream 529 before a single turn, and
-  each retry re-sent the full ≈6k inline brief for zero work.
+  rules and no suppression list.
+- **Per-lens retries.** Three of four lens spawns in one review died on
+  an upstream 529 before a single turn, and each retry re-sent the full
+  ≈6k inline brief for zero work — the case for per-lens files.
 - **Cold-reading held context.** The largest sink across ten
   consecutive PR runs (freshness 379.3k; completeness 653.1k and
   cross-check 631.0k on one PR; style 485.8k on another), in fan-outs
@@ -359,8 +360,11 @@ the resident-size gate (`docs/conventions/context-economy.md` →
   whose Agent results read ≈102k and ≈104k had per-turn input summing
   to 911.6k and 604.3k. The divergence used to read "roughly an order
   of magnitude" unconditionally; measured at 1.7–2.5× on 2–3-turn
-  lenses. Yield gating came from a pass running the fan-out at ~95% of
-  session cost while fully compliant.
+  lenses.
+- **Yield gating.** Yield is a second axis beside the diff's shape, and
+  it reaches what prompt discipline cannot: one pass ran the fan-out at
+  ~95% of session cost while fully compliant with every tightening rule
+  in the step.
 - **Resumed lenses.** Two lenses overran a stated 5-turn hard stop (9
   and 8 turns) only because they were resumed; the caps held
   everywhere else (correctness 141.8k/5, cross-check 269.1k/5). The
