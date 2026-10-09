@@ -153,7 +153,7 @@ fn every_postgres_container_pins_the_image_tag() {
     let mut files = Vec::new();
     visit(root, &mut files);
 
-    let mut pinned = 0;
+    let mut pinned_trees = std::collections::BTreeSet::new();
     let mut violations = Vec::new();
     for path in &files {
         let source = fs::read_to_string(path).expect("read source file");
@@ -162,23 +162,27 @@ fn every_postgres_container_pins_the_image_tag() {
             if source[line_start..at].trim_start().starts_with("//") {
                 continue;
             }
+            // The statement ends at a `;`, or at a `}` closing the block a
+            // tail expression sits in, so a later call's pin cannot vouch
+            // for this one.
             let rest = &source[at + CONSTRUCTOR.len()..];
-            let statement = rest.split(';').next().unwrap_or(rest);
+            let statement = rest.split([';', '}']).next().unwrap_or(rest);
+            let shown = path.strip_prefix(root).unwrap_or(path);
             if statement.contains(PIN) {
-                pinned += 1;
+                pinned_trees.insert(shown.components().next().map(|c| c.as_os_str().to_owned()));
             } else {
                 let line = source[..at].matches('\n').count() + 1;
-                let shown = path.strip_prefix(root).unwrap_or(path);
                 violations.push(format!("{}:{line}", shown.display()));
             }
         }
     }
-    // A walk that found nothing would pass the assertion below vacuously — a
-    // moved crate or an over-broad skip would silently retire the guard.
+    // This file holds a pinned call of its own, so the walk always finds one;
+    // requiring hits in more than one top-level tree is what proves it is
+    // reaching the other crates' harnesses rather than passing vacuously.
     assert!(
-        pinned > 0,
-        "found no pinned {CONSTRUCTOR} anywhere under {}; the walk is not \
-         reaching the workspace's test harnesses",
+        pinned_trees.len() > 1,
+        "found pinned {CONSTRUCTOR} calls only in {pinned_trees:?} under {}; \
+         the walk is not reaching the other crates' test harnesses",
         root.display()
     );
     assert!(

@@ -354,9 +354,11 @@ spawned, so it emits no batches rather than empty ones, which makes
 any row there for a parked source dated after its park the fault
 itself — the panel deliberately does not join parked sources out for
 exactly that reason. A collector whose every poll errors (a rejected
-credential) shows on neither the panel nor `Printing now`, leaving
-`Products` — written at startup, before any poll — as the one tell that
-survives. Pyth with no key at all is louder: it refuses to start.
+credential) shows on neither the panel nor `Printing now`. It does
+refresh `instrument_registry.last_registered_at` at startup, but no
+panel reads that column, and `Products` is an all-time count that
+pre-park registrations can already hold up — so that case has no tell
+today. Pyth with no key at all is louder: it refuses to start.
 **Do not send a
 reader to `Collector cursor age` for it**: that panel builds its
 expectation from a four-source literal Pyth is not in, and a
@@ -636,8 +638,8 @@ Both directions of drift are real, so both checks are worth running.
    from a four-source literal Pyth is not in and a latest-price feed
    writes no cursor at all. The incidental tells are the coverage row's
    own non-zero counts and any `Batch ingestion by feed` row for a
-   parked source (§4), of which only `Products` survives a collector
-   whose every poll errors. Making the state legible has, if anything,
+   parked source (§4), and neither catches a collector whose every
+   poll errors. Making the state legible has, if anything,
    made the back half easier to forget.
 
 1. **The §3.1 QCAD tripwire is specified but not collected.** *Closed* —
