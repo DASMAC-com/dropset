@@ -1173,6 +1173,234 @@ class SubstrateRendering(unittest.TestCase):
         self.assertIn("This session cost about $14", md)
 
 
+def read_usage(prefix: int, output: int = 0) -> str:
+    """A usage block whose whole prefix is a cache read, so the prefix is exact."""
+    return json.dumps(
+        {
+            "input_tokens": 0,
+            "output_tokens": output,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": prefix,
+        }
+    )
+
+
+def skill_body(name: str, body: str) -> str:
+    """The ``isMeta`` user record an invoked skill's entry file arrives as."""
+    return json.dumps(
+        {
+            "type": "user",
+            "isMeta": True,
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"{sm.SKILL_BODY_PREFIX}/r/.claude/skills/{name}\n\n{body}",
+                    }
+                ],
+            },
+        }
+    )
+
+
+def attachment(payload: dict) -> str:
+    return json.dumps({"type": "attachment", "attachment": payload})
+
+
+class ResidentProseLine(unittest.TestCase):
+    """Instruction prose is not a tool result, so it needs its own line."""
+
+    def _finish(self, lines: list[str], substrate: str = sm.SUBSTRATE_BEDROCK):
+        agg = sm.SessionAggregator()
+        for line in lines:
+            agg.ingest_main_line(line)
+        return agg.finish(substrate)
+
+    def test_each_injection_counts_the_turns_after_it(self):
+        report = self._finish(
+            [
+                attachment(
+                    {
+                        "type": "instructions",
+                        "files": [
+                            {
+                                "path": "/r/CLAUDE.md",
+                                "type": "Project",
+                                "content": "a" * 400,
+                            },
+                            {
+                                "path": "/m/MEMORY.md",
+                                "type": "AutoMem",
+                                "content": "b" * 40,
+                            },
+                        ],
+                    }
+                ),
+                attachment(
+                    {"type": "skill_listing", "content": "c" * 80, "isInitial": True}
+                ),
+                assistant(read_usage(1000), ""),
+                assistant(read_usage(1100), ""),
+                skill_body("review-pr", "d" * 4000),
+                assistant(read_usage(2100), ""),
+                assistant(read_usage(2200), ""),
+            ]
+        )
+        lines = {r.label: r for r in report["resident_prose"].lines}
+        self.assertEqual(lines["CLAUDE.md (Project)"].turns, 4)
+        self.assertEqual(lines["MEMORY.md (AutoMem)"].turns, 4)
+        self.assertEqual(lines["initial"].kind, "skill-listing")
+        self.assertEqual(lines["initial"].turns, 4)
+        self.assertEqual(lines["review-pr"].kind, "skill")
+        self.assertEqual(lines["review-pr"].turns, 2)
+
+    def test_a_dominant_injection_calibrates_the_ratio(self):
+        body = skill_body("demo", "x" * 3000)
+        size = len(json.loads(body)["message"]["content"][0]["text"].encode())
+        # The last request ends at 1000 + 100 output, so 1000 tokens appear.
+        report = self._finish(
+            [
+                assistant(read_usage(1000, output=100), ""),
+                body,
+                assistant(read_usage(2100), ""),
+            ]
+        )
+        resident = report["resident_prose"]
+        self.assertEqual(resident.samples, 1)
+        self.assertAlmostEqual(resident.bytes_per_token, size / 1000)
+
+    def test_an_injection_outweighed_by_a_tool_result_is_no_sample(self):
+        report = self._finish(
+            [
+                assistant(
+                    read_usage(1000), tool_use("t1", "Read", '{"file_path":"/x"}')
+                ),
+                tool_result("t1", json.dumps("y" * 5000)),
+                skill_body("demo", "small"),
+                assistant(read_usage(3000), ""),
+            ]
+        )
+        resident = report["resident_prose"]
+        self.assertEqual(resident.samples, 0)
+        self.assertEqual(resident.bytes_per_token, sm.BYTES_PER_TOKEN)
+
+    def test_an_injection_before_the_first_request_is_no_sample(self):
+        report = self._finish(
+            [skill_body("init-pr", "z" * 3000), assistant(read_usage(5000), "")]
+        )
+        self.assertEqual(report["resident_prose"].samples, 0)
+
+    def _gap(self, tool_bytes: int) -> dict:
+        """A gap holding a 2355-byte skill body plus a tool result item of
+        53 + ``tool_bytes`` bytes, so the injection's share is set by it.
+        """
+        return self._finish(
+            [
+                assistant(
+                    read_usage(1000), tool_use("t1", "Read", '{"file_path":"/x"}')
+                ),
+                tool_result("t1", json.dumps("y" * tool_bytes)),
+                skill_body("demo", "x" * 2300),
+                assistant(read_usage(2000), ""),
+            ]
+        )
+
+    def test_the_dominance_threshold_is_the_one_that_decides(self):
+        # 78% injection is below the 0.8 bar; 82% clears it.
+        self.assertEqual(self._gap(611)["resident_prose"].samples, 0)
+        self.assertEqual(self._gap(464)["resident_prose"].samples, 1)
+
+    def _priced(
+        self,
+        model: str = MODEL,
+        substrate: str = sm.SUBSTRATE_BEDROCK,
+        prefix: int = 5000,
+    ):
+        # 4000 bytes over 2 turns at the assumed 4 bytes/token is 2000
+        # token-turns; against the default 10000 of input, a 20% share.
+        return self._finish(
+            [
+                attachment(
+                    {
+                        "type": "instructions",
+                        "files": [{"path": "/r/CLAUDE.md", "content": "a" * 4000}],
+                    }
+                ),
+                assistant(read_usage(prefix), "", model=model),
+                assistant(read_usage(prefix), "", model=model),
+            ],
+            substrate,
+        )
+
+    def test_a_share_under_the_bar_is_not_a_lever(self):
+        # 2000 token-turns against 22222 of input is 9%; against 18182, 11%.
+        report = self._priced(prefix=11111)
+        self.assertFalse(report["resident_prose"].is_lever())
+        md = sm.to_markdown(report, "abcd1234")
+        self.assertIn("**Resident instruction prose**", md)
+        self.assertNotIn("**Lever**", md)
+        self.assertTrue(self._priced(prefix=9091)["resident_prose"].is_lever())
+
+    def test_an_unpriced_bedrock_session_renders_no_resident_figure(self):
+        md = sm.to_markdown(self._priced(model="claude-unknown"), "abcd1234")
+        self.assertIn("**Resident instruction prose**", md)
+        self.assertNotIn("cache-read rate", md)
+
+    def test_token_turns_are_priced_at_the_cache_read_rate(self):
+        resident = self._priced()["resident_prose"]
+        self.assertEqual(resident.token_turns, 2000)
+        self.assertAlmostEqual(resident.share, 0.2)
+        self.assertAlmostEqual(
+            resident.cost, 2000 / 1_000_000 * sm.RATES_BY_MODEL[MODEL].cache_read
+        )
+        self.assertTrue(resident.is_lever())
+
+    def test_an_unpriced_model_withholds_the_figure(self):
+        report = self._priced(model="claude-unknown")
+        self.assertIsNone(report["resident_prose"].cost)
+        self.assertIsNone(json.loads(sm.to_json(report))["resident_prose"]["cost"])
+
+    def test_markdown_renders_the_line_and_the_lever(self):
+        md = sm.to_markdown(self._priced(), "abcd1234")
+        self.assertIn("**Resident instruction prose**: ≈2.0k token-turns, 20%", md)
+        self.assertIn("at the cache-read rate", md)
+        self.assertIn("4 bytes/token assumed", md)
+        self.assertIn("**Lever**", md)
+        self.assertNotIn("outside the", md)
+        self.assertIn("| CLAUDE.md | instructions | 4.0k | 1.0k | 2 | 2.0k |", md)
+
+    def test_a_seat_session_gets_no_resident_dollar_figure(self):
+        md = sm.to_markdown(self._priced(substrate=sm.SUBSTRATE_SEAT), "abcd1234")
+        self.assertIn("**Resident instruction prose**", md)
+        self.assertNotIn("cache-read rate", md)
+
+    def test_a_ratio_outside_the_gate_band_is_called_out(self):
+        report = self._finish(
+            [
+                assistant(read_usage(1000), ""),
+                skill_body("demo", "x" * 2900),
+                # About 2.9 bytes per token, the figure first measured on a
+                # real `review-pr` injection.
+                assistant(read_usage(2000), ""),
+            ]
+        )
+        self.assertFalse(report["resident_prose"].ratio_in_band())
+        self.assertIn("outside the 3.5–4.5 band", sm.to_markdown(report, "abcd1234"))
+
+    def test_json_carries_the_line(self):
+        out = json.loads(sm.to_json(self._priced()))["resident_prose"]
+        self.assertEqual(out["token_turns"], 2000)
+        self.assertEqual(out["by_kind"], {"instructions": 2000})
+        self.assertTrue(out["lever"])
+        self.assertTrue(out["ratio_in_gate_band"])
+        self.assertEqual(out["lines"][0]["byte_turns"], 8000)
+
+    def test_a_session_without_resident_prose_renders_no_line(self):
+        md = sm.to_markdown(self._finish([assistant(read_usage(100), "")]), "x")
+        self.assertNotIn("Resident instruction prose", md)
+
+
 class MoneyFormatting(unittest.TestCase):
     """`money()`'s thresholds are otherwise unpinned, and transposing its format
     specs would render every session's headline wrong with a green suite."""

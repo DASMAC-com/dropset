@@ -131,6 +131,22 @@ and prints, as compact Markdown (or `--json`):
   entirely** — not merely which payloads could have been
   smaller.
 
+- **Resident instruction prose** — every invoked skill's entry
+  file, the instructions files (`CLAUDE.md` and the memory
+  index) and the skills listing, each times the turns after its
+  injection, in token-turns, as a share of all input, and (on
+  Bedrock) priced at the cache-read rate. Instruction prose is
+  not a tool result, so no other line can see it; a sibling
+  file read early is entry content under another name, and
+  shows up in the sinks instead. The bytes-per-token ratio is
+  **calibrated** from the session's own skill injections when
+  one dominated its turn, and the report flags a ratio outside
+  the 3.5–4.5 band the skill-size gate's byte caps assume —
+  that is the signal to revisit the cap. When the share clears
+  the bar the report names, file it as a lever like any other
+  (step 5), naming the top resident line — usually an entry file
+  to split.
+
 - **Cache-hit rate** — cache-read ÷ all input.
 
 - **Costliest tools** — by total result size, with an
@@ -312,6 +328,14 @@ committed writer, which prints **one line** per write
 ```sh
 python3 .claude/tools/trim_levers.py probe --fingerprint <domain>:<slug>
 ```
+
+A resident-prose lever is keyed by the line it names, so every
+session naming that line appends to one issue:
+`claude-skills:resident-<slug>`, where the slug is the skill name
+for an entry file, `skill-listing` for the listing, and an
+instructions file's name lowercased with `.` as `-`
+(`claude-md`, `memory-md`) — never a bare `name.ext`, which
+Linear linkifies.
 
 - **`NONE`** (exit 1) — this lever is new. Write its body to a
   scratchpad file and file it:

@@ -7,7 +7,8 @@ Given a ``--session-id``, the tool resolves the session's on-disk transcript
 itself, reads it (and its sub-agent transcripts) in its **own** process — so the
 multi-megabyte file never enters the model's context — and prints a compact,
 ranked summary: what the session cost, session-wide token totals, how far its
-replayed prefix grew, a cache-hit rate, the tools whose results cost the most,
+replayed prefix grew, how much of that prefix was resident instruction prose (see
+:class:`ResidentLine`), a cache-hit rate, the tools whose results cost the most,
 the single largest results, a per-sub-agent rollup, and the repeated command
 shapes that are candidates to harden into a tool. Pass ``--json`` for the same
 data as JSON.
@@ -89,6 +90,25 @@ CONTEXT_MIN_AVG_BYTES = 400
 # had to hand-annotate this, because a count-ranked table listed `make lint` ×10
 # as if it were a token sink when it cost ~20 tokens.
 RUN_QUIET_MARKER = "run_quiet.py"
+
+# How an invoked skill's entry file reaches the transcript: an `isMeta` user
+# record whose text opens with this line, naming the skill's directory.
+SKILL_BODY_PREFIX = "Base directory for this skill: "
+
+# The bytes-per-token band the skill-size gate's byte caps are sound inside. It
+# caps in bytes on the `BYTES_PER_TOKEN` proxy, so a calibrated ratio outside
+# this band is the signal to revisit the cap, not just a reporting curiosity.
+GATE_BYTES_PER_TOKEN_BAND = (3.5, 4.5)
+
+# A skill injection is a calibration sample only when it is at least this share
+# of every user-side byte between its two requests, so the prefix delta across
+# it is mostly the injection's own tokens rather than a tool result's.
+CALIBRATION_MIN_SHARE = 0.8
+
+# The share of all input, in token-turns, that resident instruction prose must
+# clear before the report flags it as a trim lever. The 09-15 reference session
+# that motivated the line sat near 19%; a tenth is where it stops being noise.
+RESIDENT_LEVER_SHARE = 0.10
 
 
 @dataclass(frozen=True)
@@ -353,6 +373,62 @@ class SubAgentLine:
         return self.input + self.cache_creation + self.cache_read
 
 
+@dataclass
+class ResidentLine:
+    """One piece of instruction prose resident in the replayed prefix: an
+    invoked skill's entry file, an instructions file, or a skills listing.
+
+    **Instruction prose is not a tool result**, so the tool and sink tables can
+    never see it — yet every request after its injection replays it, which is
+    exactly the quadratic the prefix line describes. ``turns`` counts every
+    turn after the injection to the end of the session, on the same
+    ``Totals.turns`` count the totals line reports (an all-zero usage record
+    included). A compaction drops the old copy, so across one this is an upper
+    bound.
+    """
+
+    kind: str
+    label: str
+    bytes: int
+    # Requests already billed when it was injected; `finish` turns it into
+    # `turns`.
+    injected_after: int = 0
+    turns: int = 0
+
+    def byte_turns(self) -> int:
+        return self.bytes * self.turns
+
+
+@dataclass
+class ResidentProse:
+    """The resident-instruction-prose line: what the prefix carried in skill
+    entry files, instructions files and skill listings, times the turns that
+    replayed it.
+
+    ``bytes_per_token`` is calibrated from the session's own skill injections
+    when any dominated its turn (``samples``), else it is the
+    :data:`BYTES_PER_TOKEN` proxy. ``cost`` prices the token-turns at the
+    cache-read rate of the main session's dominant model, and is ``None`` when
+    any billable model is unpriced, the same refusal the headline makes.
+    """
+
+    lines: list[ResidentLine]
+    omitted: int
+    bytes_per_token: float
+    samples: int
+    token_turns: int
+    by_kind: dict[str, int]
+    share: float
+    cost: float | None
+
+    def ratio_in_band(self) -> bool:
+        low, high = GATE_BYTES_PER_TOKEN_BAND
+        return low <= self.bytes_per_token <= high
+
+    def is_lever(self) -> bool:
+        return self.share >= RESIDENT_LEVER_SHARE
+
+
 def _load_allowlist() -> list[str]:
     """The shared allowlist's rules, or ``[]`` when it cannot be read.
 
@@ -529,6 +605,18 @@ class SessionAggregator:
         # lets a session be mined correctly from somewhere else entirely.
         self.cwd: str | None = None
         self.parse_errors = 0
+        self._resident: list[ResidentLine] = []
+        # Calibration state for the bytes-per-token proxy. Each new request's
+        # prefix minus the previous request's prefix and output is what the
+        # user-side records between them cost in real tokens; when a skill
+        # injection dominates those bytes, the pair is a sample. See
+        # `_close_request`.
+        self._last_request_end: int | None = None
+        self._bytes_since_request = 0
+        self._injected_since_request = 0
+        self._calibration_bytes = 0
+        self._calibration_tokens = 0
+        self._calibration_samples = 0
 
     # -- ingestion -------------------------------------------------------- #
 
@@ -589,6 +677,9 @@ class SessionAggregator:
             cwd = rec.get("cwd")
             if isinstance(cwd, str) and cwd.strip():
                 self.cwd = cwd.strip()
+        attachment = rec.get("attachment")
+        if isinstance(attachment, dict):
+            self._ingest_attachment(rec, attachment)
         msg = rec.get("message")
         if not isinstance(msg, dict):
             return
@@ -598,15 +689,117 @@ class SessionAggregator:
             # record (which repeats the same usage).
             if self._first_usage_sighting(msg.get("id")):
                 self.totals.add(usage, _model_of(msg))
+                self._close_request(usage)
+        content = msg.get("content")
+        if rec.get("type") == "user" and content is not None:
+            self._bytes_since_request += prose_len(content)
+            if rec.get("isMeta"):
+                self._ingest_skill_body(content)
         # The content array is walked on *every* record (tool_use items are
         # idempotent in `pending`; tool_results live in separate user records),
         # so attribution is unaffected by the per-message split.
-        content = msg.get("content")
         if not isinstance(content, list):
             return
         for item in content:
             if isinstance(item, dict):
                 self._ingest_content_item(item)
+
+    def _ingest_attachment(self, rec: dict, attachment: dict) -> None:
+        """Record the instruction prose an attachment makes resident: the
+        instructions files (the project file and the memory index) and the
+        skills listing, initial or a later delta. Every attachment's rendered
+        text also counts toward the bytes between two requests.
+        """
+        rendered_list = rec.get("rendered")
+        for rendered in rendered_list if isinstance(rendered_list, list) else []:
+            if isinstance(rendered, dict):
+                self._bytes_since_request += value_len(rendered.get("content", ""))
+        kind = attachment.get("type")
+        files = attachment.get("files")
+        if kind == "instructions" and isinstance(files, list):
+            for f in files:
+                if not isinstance(f, dict) or not isinstance(f.get("content"), str):
+                    continue
+                path = f.get("path")
+                label = Path(path).name if isinstance(path, str) else "instructions"
+                if isinstance(f.get("type"), str):
+                    label = f"{label} ({f['type']})"
+                self._add_resident("instructions", label, value_len(f["content"]))
+        elif kind == "skill_listing":
+            content = attachment.get("content")
+            if isinstance(content, str):
+                label = "initial" if attachment.get("isInitial") else "delta"
+                self._add_resident("skill-listing", label, value_len(content))
+
+    def _ingest_skill_body(self, content) -> None:
+        """Record an invoked skill's entry file, which arrives as an ``isMeta``
+        user record opening with :data:`SKILL_BODY_PREFIX`. The injected text,
+        not the file on disk, is what the prefix carried, so it is what's
+        measured: it survives the worktree being pruned, and it is exactly
+        what the prefix carried, header line and any uncommitted edits
+        included.
+        """
+        if isinstance(content, list):
+            texts = [
+                i.get("text")
+                for i in content
+                if isinstance(i, dict) and isinstance(i.get("text"), str)
+            ]
+            text = texts[0] if texts else ""
+        else:
+            text = content if isinstance(content, str) else ""
+        if not text.startswith(SKILL_BODY_PREFIX):
+            return
+        skill_dir = text[len(SKILL_BODY_PREFIX) :].split("\n", 1)[0].strip()
+        size = value_len(text)
+        self._add_resident("skill", Path(skill_dir).name or "skill", size)
+        self._injected_since_request += size
+
+    def _add_resident(self, kind: str, label: str, size: int) -> None:
+        self._resident.append(
+            ResidentLine(
+                kind=kind, label=label, bytes=size, injected_after=self.totals.turns
+            )
+        )
+
+    def _close_request(self, usage: dict) -> None:
+        """Take a calibration sample if the gap this request closes was
+        dominated by a skill injection, then start the next gap.
+
+        The new prefix less the last request's prefix and output is the real
+        token cost of every user-side record in between. An all-zero usage
+        block carries no prefix, so like the prefix bounds it is skipped.
+
+        Two biases remain, and the dominance test, comparing bytes with bytes,
+        sees neither. Attachments recorded without rendered text (mostly
+        one-line hook acknowledgements) add tokens but no bytes. And if the
+        last request's thinking is not replayed, subtracting all of its output
+        understates the delta. Both are small next to a skill body: 93 output
+        tokens against 102.7k on the first measured `review-pr` sample.
+        """
+        prefix = (
+            int(usage.get("input_tokens", 0) or 0)
+            + int(usage.get("cache_creation_input_tokens", 0) or 0)
+            + int(usage.get("cache_read_input_tokens", 0) or 0)
+        )
+        if not prefix:
+            return
+        between = self._bytes_since_request
+        injected = self._injected_since_request
+        if (
+            self._last_request_end is not None
+            and injected
+            and injected >= CALIBRATION_MIN_SHARE * between
+        ):
+            delta = prefix - self._last_request_end
+            # A shrink is a compaction, not a measurement.
+            if delta > 0:
+                self._calibration_bytes += between
+                self._calibration_tokens += delta
+                self._calibration_samples += 1
+        self._last_request_end = prefix + int(usage.get("output_tokens", 0) or 0)
+        self._bytes_since_request = 0
+        self._injected_since_request = 0
 
     def _ingest_content_item(self, item: dict) -> None:
         kind = item.get("type")
@@ -753,6 +946,8 @@ class SessionAggregator:
                 subagent_cost = subagent_cost.plus(Cost.price_by_model(line.by_model))
             total_cost = session_cost.plus(subagent_cost)
 
+        resident = self._resident_prose(total_input, unpriced_models)
+
         return {
             "totals": self.totals,
             "substrate": substrate,
@@ -768,11 +963,50 @@ class SessionAggregator:
             "top_sinks": sinks,
             "subagents": subagents,
             "hardening_candidates": candidates,
+            "resident_prose": resident,
             "parse_errors": self.parse_errors,
             "tools_omitted": tools_omitted,
             "sinks_omitted": sinks_omitted,
             "candidates_omitted": candidates_omitted,
         }
+
+    def _resident_prose(
+        self, total_input: int, unpriced_models: list[str]
+    ) -> ResidentProse:
+        if self._calibration_samples:
+            ratio = self._calibration_bytes / self._calibration_tokens
+        else:
+            ratio = float(BYTES_PER_TOKEN)
+        lines = []
+        for line in self._resident:
+            line.turns = max(0, self.totals.turns - line.injected_after)
+            lines.append(line)
+        by_kind: dict[str, int] = {}
+        for line in lines:
+            by_kind[line.kind] = by_kind.get(line.kind, 0) + line.byte_turns()
+        by_kind = {k: round(v / ratio) for k, v in by_kind.items()}
+        token_turns = sum(by_kind.values())
+        share = 0.0 if total_input == 0 else token_turns / total_input
+
+        # Resident prose is replayed, never re-written, so the cache-read rate
+        # is the one it pays: priced at the model that read the most.
+        cost: float | None = None
+        billable = {m: t for m, t in self.totals.by_model.items() if t.billable()}
+        if billable and not unpriced_models:
+            model = max(billable, key=lambda m: (billable[m].cache_read, m))
+            cost = token_turns / 1_000_000.0 * RATES_BY_MODEL[model].cache_read
+
+        lines.sort(key=lambda r: (-r.byte_turns(), r.kind, r.label))
+        return ResidentProse(
+            lines=lines[:TOP_N],
+            omitted=max(0, len(lines) - TOP_N),
+            bytes_per_token=ratio,
+            samples=self._calibration_samples,
+            token_turns=token_turns,
+            by_kind=by_kind,
+            share=share,
+            cost=cost,
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -793,6 +1027,22 @@ def value_len(v) -> int:
         return len(serialized.encode("utf-8"))
     except (TypeError, ValueError):
         return 0
+
+
+def prose_len(content) -> int:
+    """Byte length of a message's ``content`` as the model reads it: a text
+    item by its raw text, anything else by :func:`value_len`. Serializing a
+    text item would count each escaped newline twice, which on a prose-heavy
+    skill body skews the bytes-per-token calibration it feeds.
+    """
+    if not isinstance(content, list):
+        return value_len(content)
+    return sum(
+        value_len(item["text"])
+        if isinstance(item, dict) and isinstance(item.get("text"), str)
+        else value_len(item)
+        for item in content
+    )
 
 
 def _pick(input_obj: dict, keys: list[str]):
@@ -1051,6 +1301,41 @@ def _rate_standing(model: str) -> str:
     return f"`{model}` projected, unverified"
 
 
+def _resident_headline(resident: ResidentProse, substrate: str) -> str:
+    """The resident-prose line, rendered beside prefix growth. Its dollar
+    figure follows the headline's rule: Bedrock only, and never when a model is
+    unpriced.
+    """
+    parts = " · ".join(
+        f"{kind} {human(tokens)}"
+        for kind, tokens in sorted(resident.by_kind.items(), key=lambda kv: -kv[1])
+    )
+    line = "**Resident instruction prose**: ≈{} token-turns, {:.0f}% of all input ({})".format(
+        human(resident.token_turns), resident.share * 100.0, parts
+    )
+    if substrate == SUBSTRATE_BEDROCK and resident.cost is not None:
+        line += f", about {money(resident.cost)} at the cache-read rate"
+    if resident.samples:
+        ratio = "{:.2f} bytes/token, calibrated from {} skill injection(s)".format(
+            resident.bytes_per_token, resident.samples
+        )
+    else:
+        ratio = f"{BYTES_PER_TOKEN} bytes/token assumed, no injection to calibrate on"
+    line += f"; {ratio}\n"
+    if not resident.ratio_in_band():
+        low, high = GATE_BYTES_PER_TOKEN_BAND
+        line += (
+            f"**Note**: the measured ratio is outside the {low}–{high} band the "
+            "skill-size gate's byte caps assume, so the cap needs revisiting.\n"
+        )
+    if resident.is_lever():
+        line += (
+            f"**Lever**: resident prose clears the {RESIDENT_LEVER_SHARE:.0%} "
+            "share bar — file it like any other trim lever.\n"
+        )
+    return line
+
+
 def to_markdown(report: dict, session_label: str) -> str:
     """Render the compact Markdown summary printed by default."""
     totals: Totals = report["totals"]
@@ -1136,6 +1421,9 @@ def to_markdown(report: dict, session_label: str) -> str:
             human(totals.prefix_max),
         )
     )
+    resident: ResidentProse = report["resident_prose"]
+    if resident.token_turns:
+        out.append(_resident_headline(resident, report["substrate"]))
     out.append(
         "**Cache-hit rate**: {:.0f}% (cache-read ÷ all input)\n".format(
             report["cache_hit_rate"] * 100.0
@@ -1169,6 +1457,21 @@ def to_markdown(report: dict, session_label: str) -> str:
             )
         if report["sinks_omitted"] > 0:
             out.append(f"\n_+{report['sinks_omitted']} more result(s) omitted._\n")
+
+    if resident.lines and resident.token_turns:
+        out.append("\n### Resident instruction prose (by ≈token-turns)\n\n")
+        out.append(
+            "| prose | kind | bytes | ≈tokens | turns | ≈token-turns |\n"
+            "|---|---|--:|--:|--:|--:|\n"
+        )
+        for r in resident.lines:
+            out.append(
+                f"| {r.label} | {r.kind} | {human(r.bytes)} | "
+                f"{human(round(r.bytes / resident.bytes_per_token))} | {r.turns} | "
+                f"{human(round(r.byte_turns() / resident.bytes_per_token))} |\n"
+            )
+        if resident.omitted > 0:
+            out.append(f"\n_+{resident.omitted} more injection(s) omitted._\n")
 
     subagents: list[SubAgentLine] = report["subagents"]
     if subagents:
@@ -1269,6 +1572,27 @@ def to_json(report: dict) -> str:
                 "avg_bytes": obj.avg_bytes(),
                 "via_run_quiet": obj.via_run_quiet,
                 "cost_kind": obj.cost_kind(),
+            }
+        if isinstance(obj, ResidentLine):
+            return {
+                "kind": obj.kind,
+                "label": obj.label,
+                "bytes": obj.bytes,
+                "turns": obj.turns,
+                "byte_turns": obj.byte_turns(),
+            }
+        if isinstance(obj, ResidentProse):
+            return {
+                "lines": obj.lines,
+                "omitted": obj.omitted,
+                "bytes_per_token": round(obj.bytes_per_token, 3),
+                "calibration_samples": obj.samples,
+                "ratio_in_gate_band": obj.ratio_in_band(),
+                "token_turns": obj.token_turns,
+                "by_kind": obj.by_kind,
+                "share": round(obj.share, 4),
+                "cost": None if obj.cost is None else round(obj.cost, 6),
+                "lever": obj.is_lever(),
             }
         raise TypeError(f"not serializable: {type(obj)!r}")
 
