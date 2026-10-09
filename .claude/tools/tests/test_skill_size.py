@@ -207,25 +207,66 @@ class Check(Fixture):
                 self.assertEqual(code, 1)
                 self.assertNotIn("Traceback", err)
 
-    def test_slack_under_a_ceiling_is_a_notice_not_a_failure(self):
+    def test_slack_beyond_the_headroom_is_a_notice_not_a_failure(self):
         self.write_baseline(
-            {self.big_key(): {"ceiling": ss.ENTRY_CAP + 900, "issue": "ENG-1"}}
+            {self.big_key(): {"ceiling": 2 * ss.ENTRY_CAP, "issue": "ENG-1"}}
         )
         code, _, err = self.run_tool("--check")
         self.assertEqual(code, 0)
         self.assertIn(f"note: {self.big_key()}", err)
 
-
-class Write(Fixture):
-    def test_write_lowers_a_ceiling_to_the_current_size(self):
+    def test_slack_within_the_headroom_is_quiet(self):
         self.write_baseline(
             {self.big_key(): {"ceiling": ss.ENTRY_CAP + 900, "issue": "ENG-1"}}
         )
+        code, _, err = self.run_tool("--check")
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+
+
+class Headroom(unittest.TestCase):
+    def test_headroom_is_ten_percent_rounded_up(self):
+        self.assertEqual(ss.headroom_ceiling(1_000), 1_100)
+        self.assertEqual(ss.headroom_ceiling(1_001), 1_102)
+        self.assertEqual(ss.headroom_ceiling(0), 0)
+
+    def test_a_fresh_ratchet_reads_below_the_watch_threshold(self):
+        for size in (1, 999, 32_001, 250_944):
+            ceiling = ss.headroom_ceiling(size)
+            self.assertLessEqual(100 * size / ceiling, ss.WATCH_PERCENT)
+
+
+class Write(Fixture):
+    def test_write_lowers_a_ceiling_to_the_size_plus_headroom(self):
+        self.write_baseline(
+            {self.big_key(): {"ceiling": 2 * ss.ENTRY_CAP, "issue": "ENG-1"}}
+        )
         self.assertEqual(self.run_tool("--write")[0], 0)
         stored = json.loads(self.baseline.read_text())["exceptions"]
+        size = ss.ENTRY_CAP + 500
         self.assertEqual(
-            stored[self.big_key()], {"ceiling": ss.ENTRY_CAP + 500, "issue": "ENG-1"}
+            stored[self.big_key()],
+            {"ceiling": -(-size * 11 // 10), "issue": "ENG-1"},
         )
+
+    def test_a_ratcheted_file_may_grow_within_its_headroom_only(self):
+        self.write_baseline(
+            {self.big_key(): {"ceiling": 2 * ss.ENTRY_CAP, "issue": "ENG-1"}}
+        )
+        self.run_tool("--write")
+        ceiling = ss.headroom_ceiling(ss.ENTRY_CAP + 500)
+        self.put(self.big_key(), skill("short", ceiling))
+        self.assertEqual(self.run_tool("--check")[0], 0)
+        self.put(self.big_key(), skill("short", ceiling + 1))
+        self.assertEqual(self.run_tool("--check")[0], 1)
+
+    def test_a_shrink_within_the_headroom_keeps_the_old_ceiling(self):
+        self.write_baseline(
+            {self.big_key(): {"ceiling": ss.ENTRY_CAP + 900, "issue": "ENG-1"}}
+        )
+        self.run_tool("--write")
+        stored = json.loads(self.baseline.read_text())["exceptions"]
+        self.assertEqual(stored[self.big_key()]["ceiling"], ss.ENTRY_CAP + 900)
 
     def test_write_never_raises_a_ceiling(self):
         self.write_baseline(
@@ -327,6 +368,61 @@ class Report(Fixture):
     def test_report_ignores_a_malformed_baseline(self):
         self.baseline.write_text("[]", encoding="utf-8")
         self.assertEqual(self.run_tool("--report")[0], 0)
+
+
+class Utilization(Fixture):
+    def test_every_subject_is_listed_highest_percent_first(self):
+        self.write_baseline(
+            {self.big_key(): {"ceiling": 2 * ss.ENTRY_CAP, "issue": "ENG-1"}}
+        )
+        code, out, err = self.run_tool("--utilization")
+        self.assertEqual((code, err), (0, ""))
+        lines = out.splitlines()
+        keys = [line.split()[-1] for line in lines]
+        self.assertEqual(
+            sorted(keys),
+            sorted(subject.key for subject in ss.collect(self.root)),
+        )
+        percents = [float(line[1:].split("%")[0]) for line in lines]
+        self.assertEqual(percents, sorted(percents, reverse=True))
+
+    def test_the_limit_is_the_greater_of_cap_and_ceiling(self):
+        self.write_baseline(
+            {self.big_key(): {"ceiling": 2 * ss.ENTRY_CAP, "issue": "ENG-1"}}
+        )
+        _, out, _ = self.run_tool("--utilization")
+        big = next(line for line in out.splitlines() if line.endswith(self.big_key()))
+        self.assertEqual(
+            big.split()[1:4], [f"{ss.ENTRY_CAP + 500:,}", "/", f"{2 * ss.ENTRY_CAP:,}"]
+        )
+
+    def test_a_subject_above_the_watch_threshold_fails_and_is_named(self):
+        # With no baseline entry, the big file is over its cap: above the watch.
+        code, out, err = self.run_tool("--utilization")
+        self.assertEqual(code, 1)
+        self.assertIn(f"skill-size:   {self.big_key()}", err)
+        self.assertNotIn(".claude/skills/small/SKILL.md\n", err)
+        self.assertTrue(out.splitlines()[0].startswith("!"))
+
+    def test_the_threshold_is_strictly_above(self):
+        at = ss.ENTRY_CAP * ss.WATCH_PERCENT // 100
+        self.put(self.big_key(), skill("short", at))
+        self.assertEqual(self.run_tool("--utilization")[0], 0)
+        self.put(self.big_key(), skill("short", at + 1))
+        self.assertEqual(self.run_tool("--utilization")[0], 1)
+
+    def test_a_fresh_ratchet_reads_clean(self):
+        self.write_baseline(
+            {self.big_key(): {"ceiling": 2 * ss.ENTRY_CAP, "issue": "ENG-1"}}
+        )
+        self.run_tool("--write")
+        self.assertEqual(self.run_tool("--utilization")[0], 0)
+
+    def test_a_malformed_baseline_is_refused(self):
+        self.baseline.write_text("[]", encoding="utf-8")
+        code, out, err = self.run_tool("--utilization")
+        self.assertEqual((code, out), (2, ""))
+        self.assertNotIn("Traceback", err)
 
 
 if __name__ == "__main__":
