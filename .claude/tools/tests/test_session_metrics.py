@@ -1291,9 +1291,34 @@ class ResidentProseLine(unittest.TestCase):
         )
         self.assertEqual(report["resident_prose"].samples, 0)
 
-    def _priced(self, model: str = MODEL, substrate: str = sm.SUBSTRATE_BEDROCK):
+    def _gap(self, tool_bytes: int) -> dict:
+        """A gap holding a ~2.4k skill body plus a tool result of
+        ``tool_bytes``, so the injection's share of the gap is set by it.
+        """
+        return self._finish(
+            [
+                assistant(
+                    read_usage(1000), tool_use("t1", "Read", '{"file_path":"/x"}')
+                ),
+                tool_result("t1", json.dumps("y" * tool_bytes)),
+                skill_body("demo", "x" * 2300),
+                assistant(read_usage(2000), ""),
+            ]
+        )
+
+    def test_the_dominance_threshold_is_the_one_that_decides(self):
+        # About 69% injection is below the 0.8 bar; about 90% clears it.
+        self.assertEqual(self._gap(1000)["resident_prose"].samples, 0)
+        self.assertEqual(self._gap(200)["resident_prose"].samples, 1)
+
+    def _priced(
+        self,
+        model: str = MODEL,
+        substrate: str = sm.SUBSTRATE_BEDROCK,
+        prefix: int = 5000,
+    ):
         # 4000 bytes over 2 turns at the assumed 4 bytes/token is 2000
-        # token-turns, against 10000 of input: a 20% share.
+        # token-turns; against the default 10000 of input, a 20% share.
         return self._finish(
             [
                 attachment(
@@ -1302,11 +1327,24 @@ class ResidentProseLine(unittest.TestCase):
                         "files": [{"path": "/r/CLAUDE.md", "content": "a" * 4000}],
                     }
                 ),
-                assistant(read_usage(5000), "", model=model),
-                assistant(read_usage(5000), "", model=model),
+                assistant(read_usage(prefix), "", model=model),
+                assistant(read_usage(prefix), "", model=model),
             ],
             substrate,
         )
+
+    def test_a_share_under_the_bar_is_not_a_lever(self):
+        # 2000 token-turns against 100000 of input is 2%.
+        report = self._priced(prefix=50000)
+        self.assertFalse(report["resident_prose"].is_lever())
+        md = sm.to_markdown(report, "abcd1234")
+        self.assertIn("**Resident instruction prose**", md)
+        self.assertNotIn("**Lever**", md)
+
+    def test_an_unpriced_bedrock_session_renders_no_resident_figure(self):
+        md = sm.to_markdown(self._priced(model="claude-unknown"), "abcd1234")
+        self.assertIn("**Resident instruction prose**", md)
+        self.assertNotIn("cache-read rate", md)
 
     def test_token_turns_are_priced_at_the_cache_read_rate(self):
         resident = self._priced()["resident_prose"]
@@ -1329,7 +1367,7 @@ class ResidentProseLine(unittest.TestCase):
         self.assertIn("4 bytes/token assumed", md)
         self.assertIn("**Lever**", md)
         self.assertNotIn("outside the", md)
-        self.assertIn("| CLAUDE.md | instructions | 1.0k | 2 | 2.0k |", md)
+        self.assertIn("| CLAUDE.md | instructions | 4.0k | 1.0k | 2 | 2.0k |", md)
 
     def test_a_seat_session_gets_no_resident_dollar_figure(self):
         md = sm.to_markdown(self._priced(substrate=sm.SUBSTRATE_SEAT), "abcd1234")

@@ -709,12 +709,14 @@ class SessionAggregator:
         skills listing, initial or a later delta. Every attachment's rendered
         text also counts toward the bytes between two requests.
         """
-        for rendered in rec.get("rendered") or []:
+        rendered_list = rec.get("rendered")
+        for rendered in rendered_list if isinstance(rendered_list, list) else []:
             if isinstance(rendered, dict):
                 self._bytes_since_request += value_len(rendered.get("content", ""))
         kind = attachment.get("type")
-        if kind == "instructions":
-            for f in attachment.get("files") or []:
+        files = attachment.get("files")
+        if kind == "instructions" and isinstance(files, list):
+            for f in files:
                 if not isinstance(f, dict) or not isinstance(f.get("content"), str):
                     continue
                 path = f.get("path")
@@ -765,6 +767,13 @@ class SessionAggregator:
         The new prefix less the last request's prefix and output is the real
         token cost of every user-side record in between. An all-zero usage
         block carries no prefix, so like the prefix bounds it is skipped.
+
+        Two biases remain, both bounded by the dominance test. Attachments
+        recorded without rendered text (mostly one-line hook acknowledgements)
+        add tokens but no bytes. And if the last request's thinking is not
+        replayed, subtracting all of its output understates the delta. Both are
+        small next to a skill body: 93 output tokens against 102.7k on the
+        first measured `review-pr` sample.
         """
         prefix = (
             int(usage.get("input_tokens", 0) or 0)
@@ -1450,11 +1459,12 @@ def to_markdown(report: dict, session_label: str) -> str:
     if resident.lines and resident.token_turns:
         out.append("\n### Resident instruction prose (by ≈token-turns)\n\n")
         out.append(
-            "| prose | kind | ≈tokens | turns | ≈token-turns |\n|---|---|--:|--:|--:|\n"
+            "| prose | kind | bytes | ≈tokens | turns | ≈token-turns |\n"
+            "|---|---|--:|--:|--:|--:|\n"
         )
         for r in resident.lines:
             out.append(
-                f"| {r.label} | {r.kind} | "
+                f"| {r.label} | {r.kind} | {human(r.bytes)} | "
                 f"{human(round(r.bytes / resident.bytes_per_token))} | {r.turns} | "
                 f"{human(round(r.byte_turns() / resident.bytes_per_token))} |\n"
             )

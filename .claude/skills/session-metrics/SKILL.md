@@ -144,7 +144,8 @@ and prints, as compact Markdown (or `--json`):
   the 3.5–4.5 band the skill-size gate's byte caps assume —
   that is the signal to revisit the cap. When the share clears
   the bar the report names, file it as a lever like any other
-  (step 5), naming the entry file to split.
+  (step 5), naming the top resident line — usually an entry file
+  to split.
 
 - **Cache-hit rate** — cache-read ÷ all input.
 
@@ -327,6 +328,13 @@ committed writer, which prints **one line** per write
 ```sh
 python3 .claude/tools/trim_levers.py probe --fingerprint <domain>:<slug>
 ```
+
+A resident-prose lever is keyed by the line it names, so every
+session's evidence lands on one issue:
+`claude-skills:resident-<skill>` for an entry file, and
+`claude-skills:resident-claude-md` or
+`claude-skills:resident-skill-listing` for the other two — never
+a bare `name.ext`, which Linear linkifies.
 
 - **`NONE`** (exit 1) — this lever is new. Write its body to a
   scratchpad file and file it:
