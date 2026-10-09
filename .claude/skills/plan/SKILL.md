@@ -293,44 +293,43 @@ including which rule yields when the two disagree:
 the interim".
 
 **Promote only a FILE-DISJOINT set — that is the bound, not a
-count.** Several meta batches may now be worked in parallel,
-so a promoted set is only useful if its members can be worked
-**simultaneously**, which means they must not collide on
-files. Use the same procedure the parked audit findings
-already get (see "Select a parallelizable batch, using the
-collision clusters" below): promote a set whose members appear
-in **no common cluster**, and where two batches would rewrite
-the same skill, promote one and leave the other parked for the
-next rhythm. **Meta loses its special case here rather than
-gaining a new one** — it is judged on collision clusters
-exactly as product work is.
+count.** Promoted batches are worked in parallel, so promote a
+set whose members appear in **no common cluster** (the
+procedure of "Select a parallelizable batch, using the
+collision clusters" below); where two would rewrite the same
+skill, promote one and leave the other parked. Meta is judged
+on collision clusters exactly as product work is.
 
-**Review the parked batches for promotion at EVERY bootstrap,
-whether or not the document names a lane** — otherwise
-"promote a file-disjoint subset" collapses into the named lane
-and most batches are never considered:
+**Review the parked AND blocked meta issues at EVERY
+bootstrap, whether or not the document names a lane** —
+otherwise promotion collapses into the named lane and most
+batches are never considered. It is a **necessity gate**, not
+only a slating pass:
 
-1. Say the parked batch count out loud.
-1. Group the `[Claude meta]` rows by the surface each rewrites
+1. Say the counts out loud.
+1. Group the `Claude:` rows by the surface each rewrites
    (`review-pr`, `init-pr`, the shell init file, guard hooks,
-   tools, conventions, AWS) from **titles alone**, no body read:
-   `board_batch.py list --state Todo --include-milestoned --show-milestone`.
-1. Mark each group **free**, or **in flight** when an In
-   Progress / In Review meta issue or a promoted-but-unpulled
+   tools, conventions, AWS) from **titles alone**, no body read,
+   from `board_batch.py list --include-milestoned --show-milestone`
+   once bare (Backlog, where a surface-held issue waits behind
+   its edge) and once with `--state Todo`.
+1. **Kill on doubt**: an issue that cannot name a concrete
+   recurring cost larger than its landing-plus-ratification
+   cost goes on a kill list. A wrongly closed lever's cost
+   resurfaces when it recurs and is measured again; a wrongly
+   kept one spends a session and a ratification on noise.
+1. Mark each surviving group **free**, or **in flight** when an
+   In Progress / In Review meta issue or a promoted-but-unpulled
    batch already rewrites that surface.
-1. Recommend a slate from the free groups, bounded by the
-   collision clusters, in the same `AskUserQuestion` as step
-   8's audit-findings offer, recommended set first.
+1. Offer the slate (from the free groups) and the kill list in
+   the same `AskUserQuestion` as step 8's audit-findings offer,
+   recommended set first.
 1. On a yes, promote each with both halves in one
    `board_batch.py fields` write (milestone `null`, Todo →
-   Backlog, Urgent).
-1. Record the outcome — promoted, and each held group with why
-   — under the `In-session notes` heading, so the next
-   bootstrap starts from it rather than re-deriving it.
-
-The slate's size is a **consequence** of the disjoint-set
-requirement, never the rule: a bare count would license
-promoting two batches that rewrite the same skill.
+   Backlog, Urgent), and close each kill `Canceled` with its
+   reason, as `trim-context` step 6 does.
+1. Record the outcome — promoted, killed, and each held group
+   with why — under the `In-session notes` heading.
 
 **The pool also includes any open, UNPULLED batch — that
 clause is load-bearing.** Sweep the milestone **plus** every

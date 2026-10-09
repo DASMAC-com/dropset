@@ -574,16 +574,26 @@ nobody can promote. A genuinely urgent stray — a broken guard, a verb
 that is actively hurting — is promoted on the spot rather than waiting
 for the daily rhythm.
 
-**The parked meta batches get a promotion review at every bootstrap**,
-beside the audit-findings offer and in the same `AskUserQuestion`: the
-count, the batches grouped by the surface each rewrites (from titles
-alone), each group marked free or in flight, and a recommended
-file-disjoint slate drawn from the free groups. It runs whether or not
-the Planning document names a lane — without it, "promote a file-disjoint
-subset" collapses into the named lane and most batches are never
-considered — and its outcome, promoted and held-with-why, is recorded in
-the document's in-session notes. The procedure is the `plan` skill's,
-step 1.
+**The parked and blocked meta issues get a promotion review at every
+bootstrap**, beside the audit-findings offer and in the same
+`AskUserQuestion`: the counts, the issues grouped by the surface each
+rewrites (from titles alone), each group marked free or in flight, a
+recommended file-disjoint slate drawn from the free groups, and a **kill
+list**. It runs whether or not the Planning document names a lane —
+without it, "promote a file-disjoint subset" collapses into the named
+lane and most batches are never considered — and it covers the blocked
+Backlog meta issues as well as the milestone, since a surface-held one
+waits behind an edge rather than under it. Its outcome — promoted,
+killed, and held-with-why — is recorded in the document's in-session
+notes. The procedure is the `plan` skill's, step 1.
+
+**The review is a necessity gate, and it closes on doubt.** Any meta
+issue that cannot name a concrete recurring cost larger than its
+landing-plus-ratification cost is closed `Canceled` with its reason. The
+asymmetry is what decides doubt: a wrongly closed lever's cost resurfaces
+when it recurs and is measured again, while a wrongly kept one spends a
+session and an operator ratification on noise. Meta and trim filings
+otherwise compound, because nothing ever declines one.
 
 ### Which milestones park, and which do not
 
