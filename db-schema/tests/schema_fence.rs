@@ -106,6 +106,73 @@ fn postgres_image_tag_matches_the_deployed_image() {
     );
 }
 
+/// Every Postgres test container in the workspace chains the tag pin.
+///
+/// `postgres_image_tag_matches_the_deployed_image` proves the constant is
+/// right, not that anyone uses it: a harness that calls the module's default
+/// constructor bare still starts Postgres 11. That happened once — the
+/// market-data parked-mirror harness — and surfaced only when a migration using
+/// a Postgres 12 feature dequeued an unrelated PR. This holds the count of such
+/// harnesses at zero by requiring the constructor to be followed directly by
+/// `.with_tag(`, whatever the argument.
+///
+/// It scans every `.rs` file under the workspace root, skipping build output and
+/// hidden directories (which is also what keeps it out of sibling worktrees),
+/// and ignores comment lines so a doc comment naming the default is no
+/// violation. Like the test above it needs no container, so it runs in the
+/// default suite.
+#[test]
+fn every_postgres_container_pins_the_image_tag() {
+    // Assembled so this file's own source does not match the scan.
+    const CONSTRUCTOR: &str = concat!("Postgres", "::default()");
+    const PIN: &str = ".with_tag(";
+
+    fn visit(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in fs::read_dir(dir).expect("read workspace directory") {
+            let path = entry.expect("read directory entry").path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if path.is_dir() {
+                if !name.starts_with('.') && name != "target" && name != "node_modules" {
+                    visit(&path, files);
+                }
+            } else if name.ends_with(".rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let mut files = Vec::new();
+    visit(root, &mut files);
+
+    let mut violations = Vec::new();
+    for path in &files {
+        let source = fs::read_to_string(path).expect("read source file");
+        for (at, _) in source.match_indices(CONSTRUCTOR) {
+            let line_start = source[..at].rfind('\n').map_or(0, |i| i + 1);
+            if source[line_start..at].trim_start().starts_with("//") {
+                continue;
+            }
+            if !source[at + CONSTRUCTOR.len()..]
+                .trim_start()
+                .starts_with(PIN)
+            {
+                let line = source[..at].matches('\n').count() + 1;
+                let shown = path.strip_prefix(root).unwrap_or(path);
+                violations.push(format!("{}:{line}", shown.display()));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "{CONSTRUCTOR} without {PIN}POSTGRES_IMAGE_TAG) resolves to Postgres 11, \
+         which nothing here deploys. Chain the pin, or use the crate's shared \
+         start helper where one exists: {violations:?}"
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn fence_rejects_an_unprovisioned_database() {

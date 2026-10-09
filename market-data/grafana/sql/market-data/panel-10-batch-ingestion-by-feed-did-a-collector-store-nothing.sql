@@ -30,6 +30,11 @@
 -- more slowly than the window. The ordering below can only rank a feed that has
 -- a row in range, so one that vanishes does NOT sort to the top -- cross-read
 -- Collector cursor age and Source coverage, which name every source regardless.
+--
+-- A PARKED SOURCE NEVER POLLS: it is never spawned, so it emits no batches,
+-- not empty ones, and cannot false-positive here. A row for a parked source is
+-- therefore the fault itself -- its collector was started anyway -- which is
+-- why parked sources are not joined out of this query.
 SELECT
   feed,
   count(*) AS batches,

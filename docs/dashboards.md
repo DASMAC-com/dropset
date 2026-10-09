@@ -343,12 +343,18 @@ a safeguard on any page that does not show it. A source declared in the
 roster whose park the mirror has *not* confirmed reads `UNCLASSIFIED`
 and sorts first, which is the loud reading it should get.
 
-**A parked venue started anyway is caught by no panel, and this is the
-open half of item 8 below.** Because the mirror describes the
+**A parked venue started anyway is caught only incidentally, and this
+is the open half of item 8 below.** Because the mirror describes the
 *decision*, it renders as properly parked whatever the process is doing.
-The one available tell is the coverage row's own counts — a running
-collector registers products and prints, so a parked row with non-zero
-`Products` or `Printing now` is a started-anyway venue. **Do not send a
+There are two tells, neither of them labeled. The coverage row's own
+counts — a running collector registers products and prints, so a parked
+row with non-zero `Products` or `Printing now` is a started-anyway
+venue. And `Batch ingestion by feed`: a parked collector is never
+spawned, so it emits no batches rather than empty ones, which makes
+*any* row there for a parked source the fault itself — the panel
+deliberately does not join parked sources out for exactly that reason.
+Both tells need the collector's polls to succeed; one that errors on
+every poll (Pyth without its key) writes neither. **Do not send a
 reader to `Collector cursor age` for it**: that panel builds its
 expectation from a four-source literal Pyth is not in, and a
 latest-price feed writes no cursor row even when perfectly healthy, so
@@ -625,9 +631,11 @@ Both directions of drift are real, so both checks are worth running.
    this item said before and continues to say: the cursor-age panel is
    not the exception it might look like, since its expectation comes
    from a four-source literal Pyth is not in and a latest-price feed
-   writes no cursor at all. The one incidental tell is the coverage
-   row's own non-zero counts (§4). Making the state legible has, if
-   anything, made the back half easier to forget.
+   writes no cursor at all. The incidental tells are the coverage row's
+   own non-zero counts and any `Batch ingestion by feed` row for a
+   parked source (§4) — both silent for a collector whose every poll
+   errors. Making the state legible has, if anything, made the back
+   half easier to forget.
 
 1. **The §3.1 QCAD tripwire is specified but not collected.** *Closed* —
    `QCAD-USD` is on the Kraken roster, so §2's row for it describes a
