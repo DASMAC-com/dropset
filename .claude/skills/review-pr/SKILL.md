@@ -3230,8 +3230,8 @@ without eight agents and ~2.9M of sub-agent input.
    (including its scoped per-hook re-run on a failure).
 
 1. **Refresh the Audit registry if the diff changed the
-   platform shape.** Audits read their subsystems,
-   inter-subsystem interfaces, and skip-globs from
+   platform shape.** Rotations read the subsystems,
+   inter-subsystem interfaces and skip-globs from
    `docs/conventions/audit-registry.md`; that registry is
    kept current on the PR path — here, on every run.
    Inspect the diff for any of three additions and, when

@@ -84,7 +84,3 @@ user- and model-invocable), but the flow never offers it on its own;
   "(Recommended)". This is the shared pattern behind the
   init-pr → review-pr handoff and review-pr's closing
   session-metrics gate.
-  (`housekeeping`'s audit kickoff is the one deliberate
-  exception: it is **arg-gated** — passing the `audit` flag is itself
-  the go-ahead — rather than `AskUserQuestion`-gated, because the flag
-  carries the intent.)

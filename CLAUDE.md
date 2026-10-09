@@ -668,6 +668,6 @@ authoritative statement of current behavior. Full detail:
 ## Audit registry
 
 The audit coverage map — the **subsystems**, **inter-subsystem
-interfaces**, and **skip-globs** that `audit-scope`
+interfaces**, and **skip-globs** that a rotation
 ranges over and `review-pr` refreshes on the PR path — lives in
 `docs/conventions/audit-registry.md`. Read and append it there.

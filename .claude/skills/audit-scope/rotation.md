@@ -6,7 +6,8 @@ The procedure `audit-scope` follows when invoked with `--rotation N`.
 The entry file (`SKILL.md`) owns everything a rotation shares with a
 scoped run — classification and the dimensions (steps 2–3), the
 cross-check (4), the linter screen (5), the dedup set, fingerprints,
-the parked filing call and body fields (6), and the fold rule (Notes). This file owns only what is specific to a rotation.
+the parked filing call and body fields (6), and the fold rule (Notes).
+This file owns only what is specific to a rotation.
 
 A rotation is a fixed sequence of **seven units** — four random files
 plus three structural passes. `N` (default 1) is how many independent
@@ -153,9 +154,11 @@ the lens agent to defend or retract on material disagreement, at most 2
 more rounds.
 
 **Structural fingerprints** have no basename, so they are fixed-prefixed
-`arch:` — `arch:<fingerprint_slug>` = `arch:<lens>:<topic-slug>`, e.g.
-`arch:program-sdk-clients:idl-event-drift`. One prefix across all three
-units keeps continuity with fingerprints earlier rotations filed.
+`arch:` — `arch:<fingerprint_slug>`, the unit's own slug as defined
+above (subsystem name, interface pair, or `layout` / `docs`, then the
+topic), e.g. `arch:program-sdk-clients:idl-event-drift`. One prefix
+across all three units keeps continuity with fingerprints earlier
+rotations filed.
 
 ## Filing across units
 
@@ -181,6 +184,8 @@ a fresh sequential issue, naming the earlier one in a
 **Structural findings file one detailed proposal issue each** — same
 parked call, but they are not atomically fixable, so the body is:
 
+- `**Severity**: <high|med|low>` — the announce line, the `DONE` tally
+  and the push all read it.
 - `**Concern**:` what is structurally wrong and why it matters.
 - `**Evidence**:` the files / instructions / spec sections involved,
   with `path:line` anchors.
@@ -192,7 +197,8 @@ parked call, but they are not atomically fixable, so the body is:
 - `**Discovered by**: audit-scope rotation <unit> @ <commit SHA>`
 
 Priority 3 — proposals to triage, not pre-approved work. Title by area:
-`arch: decouple the matcher from Market storage layout`.
+`arch: decouple the matcher from Market storage layout`. On the meta
+surface the `Claude:` token still leads: `Claude: arch: …`.
 
 **Why parked matters more here.** A rotation files the most issues
 unattended; thirty or forty findings queued into the Backlog would be
@@ -216,7 +222,8 @@ under the Audit findings milestone and await sequencing** — a rotation
 must not read as having queued work.
 
 If at least one **high-severity** issue was filed, send exactly **one**
-`PushNotification` naming the top one; otherwise send none.
+`PushNotification` naming the top one (where the harness offers it;
+otherwise print that line prominently); otherwise send none.
 
 After the seventh unit, print one line and stop (or start the next of
 the `N` rotations):

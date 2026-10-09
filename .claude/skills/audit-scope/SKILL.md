@@ -46,7 +46,7 @@ session-level "don't spawn agents unless asked" default is
 with it. If sub-agent tooling is genuinely unavailable,
 **stop and ask**: never substitute an inline pass, which is
 the trade `review-pr` deleted its inline path to prevent,
-and never silently skip the cross-check.
+and never silently skip the fan-out.
 
 **`review-pr` asks and this skill does not, deliberately.**
 It puts one question at its entry approving both "run now"
@@ -101,31 +101,34 @@ them here.
 
 Three duties this skill owns directly:
 
-- **Findings files live in the worktree**, never in a scratch
-  path outside the repo.
+- **A findings or spec file is never the only copy** —
+  durable state is the filed issue. Writer body files
+  (`<scratchpad>/finding-N.md`) are transient input, not
+  findings state.
 - **The audit issue stays In Progress while the findings
   loop is open**, and reaches Done only at ratification
   plus fold. Marking it Done at the handoff is the measured
   mistake that produced the rule — and under the no-PR shape
   it is the issue state that the cleanup machinery reads, so
   an honest state is the whole of this skill's obligation.
-- **Read-only toward the repo, worktree included.** No source
-  edit, no commit, no push, no local state — Linear is the
-  record, so a wiped worktree loses nothing. Note the
+- **Read-only toward source.** No source edit, no commit, no
+  push, no local state — Linear is the record, so a wiped
+  worktree loses nothing. A rotation's ff-only sync to
+  `main` is the one repo operation (`rotation.md`). Note the
   transcript is *not* covered by the issue's state: the
   conversation purge protects only a transcript on an open
   PR, which an audit never has.
 
 ## Input
 
-Required:
+Required on a scoped run (a `--rotation` run takes none):
 
 - **Scope** — the paths, feature, module, or component
   to audit (e.g. "the swap flow", `src/picker/`, one
   file, a PR's touched files, "the whole codebase"). If
-  missing on a direct run, stop and ask.
+  missing, stop and ask.
 
-Optional (ask on a direct run if not provided):
+Optional (ask on a scoped run if not provided):
 
 - **Extra focus areas** — anything to weight heavily
   (e.g. "error handling in the RPC path", "race
@@ -149,7 +152,7 @@ Optional (ask on a direct run if not provided):
    take the `kind` of the subsystem whose `roots` the paths
    map
    to; if the paths match no registered subsystem (or on a
-   direct run over something new), infer the kind from the
+   scoped run over something new), infer the kind from the
    paths and build manifests (`Cargo.toml`,
    `package.json`, `Dockerfile`, `.github/workflows/`):
 
@@ -533,7 +536,8 @@ Optional (ask on a direct run if not provided):
        location; the fingerprint is what survives.
 
      - `**Discovered by**: audit-scope <scope> @ <SHA>` —
-       the scope, or the rotation unit; the SHA is what
+       a rotation writes `rotation <unit>` as the scope;
+       the SHA is what
        dates every citation above it.
 
      **No `**Touches**:` line.** The declared-scope glob
