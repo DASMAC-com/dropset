@@ -35,13 +35,15 @@ use crate::model::killswitch::{self, Action, HaltReason};
 use crate::model::ladder::{self, Side};
 use crate::model::skew;
 use crate::model::triggers::{self, RefTrigger};
+use crate::session_fence::{session_at, FenceSpans};
 use crate::telemetry::{
     self, MarketId, Outcome, QuoteWriteRow, Record, SampleBuilder, WRITE_KILL, WRITE_PROFILE,
     WRITE_REFERENCE,
 };
 use anyhow::{anyhow, Result};
 use dropset_fair_value::{
-    Anchor, Candidates, ClockCtx, FusionReport, LegReport, LegStaleness, Legs, Reading, Regime,
+    Anchor, Candidates, ClockCtx, FusionReport, FxSession, LegReport, LegStaleness, Legs, Reading,
+    Regime,
 };
 use dropset_feeds::venues::{ErApiSnapshot, FrankfurterSnapshot, FxQuote};
 use dropset_sdk::layout::LiquidityProfile;
@@ -93,6 +95,31 @@ pub struct FeedReceivers {
     /// instead of composing inline, and losing it halts them —
     /// [`HaltReason::EstimatorStalled`].
     pub fair_price: broadcast::Receiver<FairPriceSnapshot>,
+    /// The session fence — not a price, but the imposed FX session every
+    /// inline composition runs under. See [`crate::session_fence`].
+    pub fence: broadcast::Receiver<FenceSpans>,
+}
+
+/// Drain the fence reader into `held`, keeping the newest answer. Returns
+/// whether it answered at all this cycle, as [`drain_fair_price_into`] does.
+///
+/// Each answer **replaces** what is held rather than merging into it. An
+/// empty answer is the fence saying nothing covers the instant, and merging
+/// would let a stale span outvote it; a failed read sends nothing, so the
+/// spans already held keep answering until they end.
+fn drain_fence_into(rx: &mut broadcast::Receiver<FenceSpans>, held: &mut FenceSpans) -> bool {
+    let mut answered = false;
+    loop {
+        match rx.try_recv() {
+            Ok(spans) => {
+                answered = true;
+                *held = spans;
+            }
+            Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+            Err(TryRecvError::Lagged(_)) => continue,
+        }
+    }
+    answered
 }
 
 /// Drain every reading queued on `rx` into `cache`, stamping `now` as the read
@@ -401,12 +428,20 @@ fn priced_for(verdict: Published) -> (FairValue, Priced) {
 /// The halt a market takes **before** the pause path, if its source demands
 /// one.
 ///
-/// Only a stalled estimator does. Pausing holds the reference until the
-/// staleness bound, which is right for "no usable feed yet" and wrong for "the
-/// authority stopped publishing": that one stands the book down now, as store
-/// silence does.
-fn halt_before_pause(priced: Priced) -> Option<HaltReason> {
-    (priced == Priced::Stalled).then_some(HaltReason::EstimatorStalled)
+/// Two do: a stalled estimator, and an inline composition whose session the
+/// fence cannot establish. Pausing holds the reference until the staleness
+/// bound, which is right for "no usable feed yet" and wrong for "the authority
+/// stopped answering": that stands the book down now, as store silence does.
+///
+/// The session arm is scoped to `Inline` because only there is this bot's
+/// fence read the one the composition used. A published market's session is
+/// the estimator's, already folded into the row it published.
+fn halt_before_pause(priced: Priced, store: StoreStatus) -> Option<HaltReason> {
+    match priced {
+        Priced::Stalled => Some(HaltReason::EstimatorStalled),
+        Priced::Inline if store.session_unestablished => Some(HaltReason::SessionUnestablished),
+        _ => None,
+    }
 }
 
 /// Whether a published market lacks the live tape it requires — the
@@ -488,6 +523,15 @@ struct StoreStatus {
     /// either — so an MVP pair quotes off day-old fixes for the whole window.
     /// See [`crate::fx_store::STARTUP_TAPE_GRACE`].
     tape_guard_armed: bool,
+    /// The session fence covers nothing for this tick **and** the guard is
+    /// armed — the fence has answered once, or the startup grace has run out.
+    ///
+    /// Armed on the same two disjuncts as the tape guard and for the same
+    /// reason: before the first read, every tick is `Unknown`, and halting on
+    /// that would alarm and pull every book on every startup. Unarmed, an
+    /// `Unknown` tick still composes nothing — the engine pauses it — so the
+    /// excuse costs a held reference for the first poll, never a quote.
+    session_unestablished: bool,
 }
 
 /// The shared feed cache. Each tier's source polls on its own cadence and
@@ -543,6 +587,13 @@ struct FeedHub {
     /// guard's. Sticky, unlike that one: this reader's liveness is judged by
     /// row age, not by a silence bound.
     fair_price_answered: bool,
+    /// The session fence's spans, as last read. Answers every tick it covers,
+    /// whether or not the latest read succeeded.
+    fence: FenceSpans,
+    /// Whether the fence reader has ever answered — the answer half of the
+    /// session guard's startup arming. Sticky, like `fair_price_answered`:
+    /// after the first answer, an expired span is a real outage.
+    fence_answered: bool,
 }
 
 impl FeedHub {
@@ -560,7 +611,15 @@ impl FeedHub {
             started_at: Instant::now(),
             fair_price: HashMap::new(),
             fair_price_answered: false,
+            fence: FenceSpans::default(),
+            fence_answered: false,
         }
+    }
+
+    /// The imposed session at `now_unix` — `Unknown` whenever nothing held
+    /// covers it, which includes every tick before the first fence read.
+    fn session(&self, now_unix: i64) -> FxSession {
+        session_at(&self.fence, now_unix)
     }
 
     /// The estimator's verdict for one published product this tick.
@@ -594,14 +653,16 @@ impl FeedHub {
         fx_store::store_unavailable(since)
     }
 
-    /// This tick's view of the store, for the fail-closed guards.
-    fn store_status(&self, now: Instant) -> StoreStatus {
+    /// This tick's view of the store, for the fail-closed guards. `session` is
+    /// the tick's [`FeedHub::session`], passed in so the guard and the
+    /// composition are judged on the one value.
+    fn store_status(&self, now: Instant, session: FxSession) -> StoreStatus {
+        let since_start = now.duration_since(self.started_at);
         StoreStatus {
             silent: self.store_silent(now),
-            tape_guard_armed: startup_armed(
-                self.fx_store_last_ok.is_some(),
-                now.duration_since(self.started_at),
-            ),
+            tape_guard_armed: startup_armed(self.fx_store_last_ok.is_some(), since_start),
+            session_unestablished: !session.is_known()
+                && startup_armed(self.fence_answered, since_start),
         }
     }
 
@@ -624,6 +685,9 @@ impl FeedHub {
         }
         if drain_fair_price_into(&mut rx.fair_price, &mut self.fair_price) {
             self.fair_price_answered = true;
+        }
+        if drain_fence_into(&mut rx.fence, &mut self.fence) {
+            self.fence_answered = true;
         }
     }
 
@@ -672,7 +736,7 @@ impl FeedHub {
         // So this stays, for the reason the sibling tier already had: a market
         // that is not trading must not be quoted off a rate that describes it,
         // however fresh that rate honestly is (§1 fm2).
-        let fx_reference = (!tick.weekend)
+        let fx_reference = (!tick.session.is_closed())
             .then(|| self.fx.get(market.currency))
             .flatten()
             .map(|(v, reference_date, t)| {
@@ -714,7 +778,7 @@ impl FeedHub {
         // before fusion ever saw it. The provider stall guard binds well before
         // the reference bound does — see [`MAX_ERAPI_SNAPSHOT_AGE`] for why the
         // two answer different questions.
-        let fx_erapi = (!tick.weekend)
+        let fx_erapi = (!tick.session.is_closed())
             .then(|| self.erapi.get(market.currency))
             .flatten()
             .filter(|(_, last_update, _)| !erapi_provider_stalled(*last_update, tick.now_unix))
@@ -905,12 +969,15 @@ struct TickCtx {
     /// age floor for a fix that arrived with no parseable stamp. See
     /// [`frankfurter_reading`].
     reference_publish_interval: Duration,
-    /// Whether the FX session is closed (§1 fm2) — suppresses the daily FX
-    /// references so the crypto-only regime can engage. Still required after
-    /// honest publication ageing: the reference bound has to clear a
-    /// holiday-length publication gap, so a Friday fix is legitimately live all
-    /// weekend and would otherwise stand in on a shut market.
-    weekend: bool,
+    /// The imposed FX session for this tick, all three states of it — read from
+    /// the session fence, never derived from the wall clock here.
+    ///
+    /// A closed session suppresses the daily FX references so the crypto-only
+    /// regime can engage (§1 fm2). Still required after honest publication
+    /// ageing: the reference bound has to clear a holiday-length publication
+    /// gap, so a Friday fix is legitimately live all weekend and would otherwise
+    /// stand in on a shut market.
+    session: FxSession,
 }
 
 /// Source names carried on every candidate, so a dispersed leg can name which
@@ -1183,34 +1250,12 @@ fn erapi_provider_stalled(last_update: i64, now_unix: i64) -> bool {
         || delta < -(MAX_VENUE_CLOCK_SKEW.as_secs() as i64)
 }
 
-/// Whether the Unix timestamp `secs` falls in the FX-closed weekend window.
-/// Interbank FX and CME 6E are shut Fri ~17:00 → Sun ~17:00 ET (§1 fm2);
-/// approximated here in UTC as Fri 21:00 → Sun 22:00 (≈ 17:00 ET, ignoring
-/// DST). The exact session thresholds are TBD(analytics). Inside this window a
-/// missing FX anchor is the normal crypto-only regime, not a fault.
-fn weekend_from_unix(secs: u64) -> bool {
-    let days = secs / 86_400; // whole days since 1970-01-01 (a Thursday)
-    let hour = (secs % 86_400) / 3_600; // hour of the UTC day
-    let dow = (days + 4) % 7; // 0 = Sun … 6 = Sat (epoch day was Thursday = 4)
-    match dow {
-        5 => hour >= 21, // Friday, after the interbank close
-        6 => true,       // all of Saturday
-        0 => hour < 22,  // Sunday, until the CME reopen
-        _ => false,
-    }
-}
-
 /// The wall clock as an epoch second. A clock before the Unix epoch
 /// (unreachable in practice) reads as zero.
 fn unix_secs(now: SystemTime) -> u64 {
     now.duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
-}
-
-/// [`weekend_from_unix`] for the wall clock.
-fn is_weekend(now: SystemTime) -> bool {
-    weekend_from_unix(unix_secs(now))
 }
 
 /// Run the supervisor over every market until `shutdown` delivers, then pull
@@ -1275,34 +1320,20 @@ pub fn run_supervisor(
             }
         }
 
-        // The FX session is closed the same wall-clock window for every market,
-        // and the same second dates every Pyth reading this cycle.
-        let wall = SystemTime::now();
-        let weekend = is_weekend(wall);
-        // Still the locally derived bracket, not an imposed session authority —
-        // see `weekend_from_unix` for what that costs.
-        //
-        // Safe in the meantime, and the reason is arithmetic rather than
-        // optimism. The bracket shuts at 21:00 UTC and reopens at 22:00, which
-        // are the *earlier* of the two possible closes (17:00 EDT) and the
-        // *later* of the two possible reopens (17:00 EST). So under EDT the
-        // close is exact and the reopen an hour late; under EST the close is an
-        // hour early and the reopen exact. Both deviations hold the market shut
-        // for LONGER than it really is, in either half of the year — never
-        // shorter, which is the direction that would quote a live market's
-        // prices at a shut one.
-        let clock = if weekend {
-            ClockCtx::weekend()
-        } else {
-            ClockCtx::in_session()
-        };
+        // The FX session is one fact for every market, read off the imposed
+        // fence — the same reader the estimator composes under, so an inline
+        // market and a published one cannot disagree about whether the market
+        // is trading. The same second dates every Pyth reading this cycle.
+        let now_unix = unix_secs(SystemTime::now()) as i64;
+        let session = hub.session(now_unix);
+        let clock = ClockCtx { session };
         let tick = TickCtx {
             now,
-            now_unix: unix_secs(wall) as i64,
+            now_unix,
             leg_stale: cfg.fair_value.leg_stale,
             leg_dispersion: cfg.fair_value.leg_dispersion_frac,
             reference_publish_interval: cfg.fair_value.fusion.reference_publish_interval,
-            weekend,
+            session,
         };
         // The sample and its legs share one timestamp — the tick's, not each
         // row's write time — so a join between the two tables lines up
@@ -1312,12 +1343,24 @@ pub fn run_supervisor(
         // One verdict for the whole cycle, not per market: the store is a
         // process-wide dependency, so every market halts or none does. Read
         // after the drain above, so a snapshot that arrived this cycle counts.
-        let store = hub.store_status(now);
+        let store = hub.store_status(now, session);
         if store.silent {
             eprintln!(
                 "[halt] the market-data store has been silent past {:?} — \
                  every market stops quoting until it answers",
                 fx_store::MAX_STORE_SILENCE
+            );
+        }
+        // Named only when some market composes here: a published market takes
+        // its session from the estimator's own fence read, so this bot's
+        // outage is not its halt.
+        let composes_inline = markets
+            .iter()
+            .any(|c| published_product(c.cfg.symbol).is_none());
+        if store.session_unestablished && composes_inline {
+            eprintln!(
+                "[halt] the FX session fence covers nothing for this tick — every \
+                 market composed here stops quoting until it answers"
             );
         }
         for ctx in &mut markets {
@@ -1341,7 +1384,7 @@ pub fn run_supervisor(
                 continue;
             }
             let legs = hub.legs(&ctx.cfg, &tick);
-            check_first_basis(ctx, &cfg, legs);
+            check_first_basis(ctx, &cfg, legs, clock);
             // Resolved here rather than read off the composed reference,
             // because `FairValue` reports only the FX and basis legs — the
             // peg leg has no `LegReport` on it, and the peg is exactly the
@@ -1496,13 +1539,15 @@ fn record_write(ctx: &Context, ts: i64, kind: &'static str, sent: &chain::Sent) 
 /// gate cannot do — attributing the *very first* observation, where there is no
 /// history to say whether a market has departed from anything, and where a
 /// single source may be all there is to compare against nothing.
-fn check_first_basis(ctx: &mut Context, cfg: &BotConfig, legs: Legs) {
+fn check_first_basis(ctx: &mut Context, cfg: &BotConfig, legs: Legs, clock: ClockCtx) {
     if ctx.basis_checked || ctx.cfg.pinned_basis.is_some() {
         return;
     }
-    let Some(observed) =
-        legs.observed_basis(cfg.fair_value.leg_stale, cfg.fair_value.leg_dispersion_frac)
-    else {
+    let Some(observed) = legs.observed_basis(
+        clock,
+        cfg.fair_value.leg_stale,
+        cfg.fair_value.leg_dispersion_frac,
+    ) else {
         return;
     };
     ctx.basis_checked = true;
@@ -1815,7 +1860,7 @@ fn quote_market_inner(
     // it carries no mid, and pausing *holds* the reference until the
     // staleness bound — a stalled estimator stands the book down now, as store
     // silence does, rather than leaving it matchable at the last row's price.
-    if let Some(reason) = halt_before_pause(priced) {
+    if let Some(reason) = halt_before_pause(priced, store) {
         sample.outcome(Outcome::Decided(Action::Halt(reason)));
         return stand_down(ctx, cfg, &vault, now, ts, reason);
     }
@@ -2360,7 +2405,7 @@ mod tests {
 
         let mut pinned = offline_ctx(&dir);
         pinned.cfg.pinned_basis = Some(1.0);
-        check_first_basis(&mut pinned, &cfg, legs);
+        check_first_basis(&mut pinned, &cfg, legs, ClockCtx::in_session());
         assert!(
             !pinned.basis_checked,
             "a pinned market has nothing to check"
@@ -2369,7 +2414,7 @@ mod tests {
         // The same legs on an unpinned market do consume the shot, once.
         let mut observed = offline_ctx(&dir);
         observed.cfg.pinned_basis = None;
-        check_first_basis(&mut observed, &cfg, legs);
+        check_first_basis(&mut observed, &cfg, legs, ClockCtx::in_session());
         assert!(observed.basis_checked);
     }
 
@@ -2419,19 +2464,24 @@ mod tests {
         let mut ctx = offline_ctx(&dir);
         ctx.cfg.pinned_basis = None;
 
-        check_first_basis(&mut ctx, &cfg, Legs::default());
+        let open = ClockCtx::in_session();
+        check_first_basis(&mut ctx, &cfg, Legs::default(), open);
         assert!(!ctx.basis_checked, "nothing was observable yet");
 
-        check_first_basis(
-            &mut ctx,
-            &cfg,
-            Legs {
-                fx: one("pyth-hermes", 1.14),
-                crypto_usdc: one("coinbase", 1.14),
-                static_usd: 1.14,
-                ..Legs::default()
-            },
-        );
+        let live = Legs {
+            fx: one("pyth-hermes", 1.14),
+            crypto_usdc: one("coinbase", 1.14),
+            static_usd: 1.14,
+            ..Legs::default()
+        };
+        // Live legs on a shut or unestablished session are not an observation:
+        // the FX reading may be a grid venue's indicative print, so the one
+        // shot must survive the weekend rather than be spent on it.
+        check_first_basis(&mut ctx, &cfg, live, ClockCtx::closed());
+        check_first_basis(&mut ctx, &cfg, live, ClockCtx::unknown());
+        assert!(!ctx.basis_checked, "a shut market observed nothing");
+
+        check_first_basis(&mut ctx, &cfg, live, open);
         assert!(ctx.basis_checked);
     }
 
@@ -2520,25 +2570,6 @@ mod tests {
         assert_eq!(inv, (100, 200));
         assert_eq!(pos, (100, 200));
         assert!(reconciled);
-    }
-
-    #[test]
-    fn weekend_window_brackets_the_fx_session_close() {
-        // Anchored to known UTC instants in Jan 2021: the 1st was a Friday.
-        const FRI_00: u64 = 1_609_459_200; // 2021-01-01 00:00 UTC (Friday)
-        let h = |base: u64, hour: u64| base + hour * 3_600;
-        let d = |base: u64, days: u64| base + days * 86_400;
-
-        // Friday: open through the day, closed from 21:00 UTC.
-        assert!(!weekend_from_unix(h(FRI_00, 12)));
-        assert!(weekend_from_unix(h(FRI_00, 21)));
-        // Saturday: closed all day.
-        assert!(weekend_from_unix(h(d(FRI_00, 1), 3)));
-        // Sunday: closed until the 22:00 UTC reopen, then open.
-        assert!(weekend_from_unix(h(d(FRI_00, 2), 21)));
-        assert!(!weekend_from_unix(h(d(FRI_00, 2), 23)));
-        // Monday: open.
-        assert!(!weekend_from_unix(h(d(FRI_00, 3), 12)));
     }
 
     #[test]
@@ -2680,7 +2711,7 @@ mod tests {
                 .fair_value
                 .fusion
                 .reference_publish_interval,
-            weekend: false,
+            session: FxSession::Open,
         }
     }
 
@@ -2908,12 +2939,15 @@ mod tests {
     #[test]
     fn a_fresh_hub_has_not_asked_the_store_yet() {
         let mut hub = FeedHub::new();
-        let status = hub.store_status(hub.started_at);
+        let status = hub.store_status(hub.started_at, FxSession::Open);
         assert!(!status.tape_guard_armed, "nothing has been read yet");
         assert!(!status.silent, "and the startup grace has not elapsed");
 
         hub.fx_store_last_ok = Some(hub.started_at);
-        assert!(hub.store_status(hub.started_at).tape_guard_armed);
+        assert!(
+            hub.store_status(hub.started_at, FxSession::Open)
+                .tape_guard_armed
+        );
     }
 
     /// THE COLD-START HOLE. A store that is down at boot never answers, so an
@@ -2928,12 +2962,12 @@ mod tests {
         let hub = FeedHub::new();
         let within = hub.started_at + fx_store::STARTUP_TAPE_GRACE;
         assert!(
-            !hub.store_status(within).tape_guard_armed,
+            !hub.store_status(within, FxSession::Open).tape_guard_armed,
             "inside the grace an empty cache is still 'not yet polled'"
         );
 
         let after = hub.started_at + fx_store::STARTUP_TAPE_GRACE + Duration::from_secs(1);
-        let status = hub.store_status(after);
+        let status = hub.store_status(after, FxSession::Open);
         assert!(
             status.tape_guard_armed,
             "past the grace an empty cache means dark venues, and the guard must fire"
@@ -2957,10 +2991,12 @@ mod tests {
         let armed = StoreStatus {
             silent: false,
             tape_guard_armed: true,
+            session_unestablished: false,
         };
         let disarmed = StoreStatus {
             silent: false,
             tape_guard_armed: false,
+            session_unestablished: false,
         };
         let only_fixes = leg_with(&[SOURCE_FRANKFURTER, SOURCE_ERAPI]);
         let with_tape = leg_with(&[fx_store::SOURCE_OANDA, SOURCE_FRANKFURTER]);
@@ -3013,7 +3049,7 @@ mod tests {
     fn an_unanswered_store_still_halts_on_its_own_bound() {
         let hub = FeedHub::new();
         let past = hub.started_at + fx_store::MAX_STORE_SILENCE + Duration::from_secs(1);
-        let status = hub.store_status(past);
+        let status = hub.store_status(past, FxSession::Open);
         assert!(status.silent, "the store bound is what covers this case");
     }
 
@@ -3306,7 +3342,7 @@ mod tests {
         let mut hub = full_hub(now, now_unix);
         hub.pyth.clear();
         let mut tick = tick_at(now, now_unix);
-        tick.weekend = true;
+        tick.session = FxSession::Closed;
         assert!(hub.legs(&m, &tick).fx.is_empty());
         // The basis leg is untouched by the session — it is what anchors the
         // crypto-only regime.
@@ -3639,7 +3675,7 @@ mod tests {
         // trading. Suppression cannot be inferred from its timestamp.
         let (now, now_unix) = (Instant::now(), 1_786_579_250);
         let tick = TickCtx {
-            weekend: true,
+            session: FxSession::Closed,
             ..tick_at(now, now_unix)
         };
         let legs = full_hub(now, now_unix).legs(&eurc(), &tick);
@@ -3837,14 +3873,15 @@ mod tests {
     /// its value and tape flag through. Swapping any two arms is caught here.
     #[test]
     fn the_verdict_maps_onto_the_right_path() {
+        let store = sound_store();
         let (fair, priced) = priced_for(Published::NotYet);
         assert_eq!((fair.fair, priced), (None, Priced::NotYet));
-        assert_eq!(halt_before_pause(priced), None);
+        assert_eq!(halt_before_pause(priced, store), None);
 
         let (fair, priced) = priced_for(Published::Stalled("x".into()));
         assert_eq!((fair.fair, priced), (None, Priced::Stalled));
         assert_eq!(
-            halt_before_pause(priced),
+            halt_before_pause(priced, store),
             Some(HaltReason::EstimatorStalled)
         );
 
@@ -3852,8 +3889,96 @@ mod tests {
         let (fair, priced) = priced_for(judge_published(Some(&row), true, true, 1_000));
         assert_eq!(fair.fair, Some(1.14));
         assert_eq!(priced, Priced::Published { tape_live: false });
-        assert_eq!(halt_before_pause(priced), None);
-        assert_eq!(halt_before_pause(Priced::Inline), None);
+        assert_eq!(halt_before_pause(priced, store), None);
+        assert_eq!(halt_before_pause(Priced::Inline, store), None);
+    }
+
+    fn sound_store() -> StoreStatus {
+        StoreStatus {
+            silent: false,
+            tape_guard_armed: true,
+            session_unestablished: false,
+        }
+    }
+
+    /// A dark fence halts the markets composed here, ahead of the pause path
+    /// an `Unknown` tick would otherwise take — and only those: a published
+    /// market's session is the estimator's, not this bot's read.
+    #[test]
+    fn a_dark_fence_halts_only_an_inline_composition() {
+        let dark = StoreStatus {
+            session_unestablished: true,
+            ..sound_store()
+        };
+        assert_eq!(
+            halt_before_pause(Priced::Inline, dark),
+            Some(HaltReason::SessionUnestablished)
+        );
+        assert_eq!(
+            halt_before_pause(Priced::Published { tape_live: true }, dark),
+            None
+        );
+        assert_eq!(
+            halt_before_pause(Priced::Stalled, dark),
+            Some(HaltReason::EstimatorStalled),
+            "a stalled estimator is still named as itself"
+        );
+    }
+
+    /// The session guard arms like the tape guard: an `Unknown` session before
+    /// the fence has ever answered is "not yet read", not an outage, until the
+    /// startup grace runs out. After the first answer it fires immediately.
+    #[test]
+    fn the_session_guard_is_excused_only_until_the_fence_answers() {
+        let mut hub = FeedHub::new();
+        let start = hub.started_at;
+        assert!(
+            !hub.store_status(start, FxSession::Unknown)
+                .session_unestablished
+        );
+        let after = start + fx_store::STARTUP_TAPE_GRACE + Duration::from_secs(1);
+        assert!(
+            hub.store_status(after, FxSession::Unknown)
+                .session_unestablished
+        );
+
+        hub.fence_answered = true;
+        assert!(
+            hub.store_status(start, FxSession::Unknown)
+                .session_unestablished
+        );
+        assert!(
+            !hub.store_status(start, FxSession::Closed)
+                .session_unestablished
+        );
+        assert!(
+            !hub.store_status(start, FxSession::Open)
+                .session_unestablished
+        );
+    }
+
+    /// An answer replaces the spans held — an empty one included, so a fence
+    /// whose horizon has run out reaches the tick as `Unknown` rather than
+    /// being masked by the last span cached.
+    #[test]
+    fn a_fence_answer_replaces_what_is_held() {
+        use crate::session_fence::FenceSpan;
+        let (tx, mut rx) = broadcast::channel::<FenceSpans>(8);
+        let mut held = FenceSpans::default();
+        assert!(!drain_fence_into(&mut rx, &mut held), "nothing sent yet");
+
+        let open = FenceSpan {
+            session: FxSession::Open,
+            starts_at: 0,
+            ends_at: 1_000,
+        };
+        tx.send(FenceSpans { spans: vec![open] }).unwrap();
+        assert!(drain_fence_into(&mut rx, &mut held));
+        assert_eq!(session_at(&held, 500), FxSession::Open);
+
+        tx.send(FenceSpans::default()).unwrap();
+        assert!(drain_fence_into(&mut rx, &mut held));
+        assert_eq!(session_at(&held, 500), FxSession::Unknown);
     }
 
     /// The published tape arm halts a tape-requiring market whose estimator
@@ -3863,6 +3988,7 @@ mod tests {
         let store = StoreStatus {
             silent: false,
             tape_guard_armed: true,
+            session_unestablished: false,
         };
         let leg = LegReport::default();
         let published = |tape_live| Priced::Published { tape_live };

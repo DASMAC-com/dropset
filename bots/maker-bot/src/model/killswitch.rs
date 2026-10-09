@@ -127,6 +127,20 @@ pub enum HaltReason {
     /// the store's own silence bound — so this reason also covers the first
     /// minutes of an outage on a published market.
     EstimatorStalled,
+    /// The FX session fence covers nothing for this tick, so a market this bot
+    /// composes cannot tell whether the FX market is trading — the fence read
+    /// failed across a boundary, or its horizon ran out.
+    ///
+    /// The engine pauses such a tick on its own; this reason exists so the
+    /// pause is a **halt with a name** rather than a held reference that reads
+    /// like any other feed gap. A fence outage is missing input, the same class
+    /// as [`HaltReason::PriceStoreUnavailable`], and separate from it because
+    /// the store can answer while the fence does not.
+    ///
+    /// Armed after the fence first answers or the startup grace runs out, as the
+    /// tape guard is, so a cold start does not alarm. Taken ahead of the pause
+    /// path, since an unestablished tick carries no mid.
+    SessionUnestablished,
     /// USDC/USD left its common-mode band — a correlated, portfolio-wide depeg
     /// that moves every market's basis at once (§1 fm1, §4). The most systemic
     /// halt, so it is evaluated before the per-market peg event.

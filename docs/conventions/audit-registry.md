@@ -380,6 +380,21 @@ db-schema <-> market-data fair price: the FOURTH write path into the
   the fail-closed direction. A caller must branch on retryable() before
   retrying; retrying a permanent failure is a silent stall that looks like
   a busy estimator publishing nothing.
+db-schema <-> market-data session fence: the one SESSION authority,
+  read rather than written. db-schema/migrations/0015_fx_session_window.sql
+  defines the fx_session_window view (contiguous open/closed spans, read
+  half-open, anchored in America/New_York, with a bounded horizon);
+  market-data/src/session_fence.rs reads it through
+  market-data/queries/session_fence_spans.sql for BOTH consumers — the
+  estimator, in its per-tick snapshot, and the maker, through
+  SessionFenceSource — so the two price under one clock. The contract is
+  three-valued: no covering span is FxSession::Unknown, which pauses
+  the composition and halts the maker's inline markets, and must never
+  be read as closed. Hazards: a view state other than 'open' / 'closed'
+  is a failed read by design; a held span keeps answering across failed
+  reads until it ends, so an outage surfaces only at the next boundary;
+  and an empty answer past the horizon publishes paused rows that only
+  the estimator's own log names.
 db-schema <-> grafana dashboards: db-schema/migrations owns the
   dropset_ro reader role and the SELECT grants behind it, which the
   provisioned datasource

@@ -66,3 +66,7 @@ pub use dropset_market_data::fx_store;
 // The published fair price: its reader sits beside the estimator that writes
 // it, sharing one wire vocabulary.
 pub use dropset_market_data::fair_price;
+// The imposed FX session, read from the same store: the one reader both this
+// bot and the estimator take their session from, so the two price under one
+// clock.
+pub use dropset_market_data::session_fence;
