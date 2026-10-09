@@ -3,9 +3,9 @@
 -- Regenerate: make dashboard-sql
 
 -- The tick tier, one line per venue for one product. Every other panel on
--- this dashboard reads cex_prices, so a venue that only writes spot_ticks --
--- Kraken, er-api, Frankfurter, Pyth -- is invisible to them; this is where
--- those venues are represented on the page. Coinbase writes both tiers.
+-- this dashboard reads cex_prices, so a venue that only writes spot_ticks
+-- (kraken, erapi, frankfurter, pyth) is invisible to them; this is where
+-- those venues are represented on the page. coinbase writes both tiers.
 --
 -- AVERAGED PER DISPLAY INTERVAL because the default window is thirty days and
 -- a minute-cadence venue prints tens of thousands of ticks across it. The
