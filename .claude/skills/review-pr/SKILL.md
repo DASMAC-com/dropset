@@ -2210,32 +2210,21 @@ without eight agents and ~2.9M of sub-agent input.
      the hits cluster in one file, take `--files-only` and
      then slice-read the region.
 
-     **The helper's advisory line is a DIRECTIVE, not a
-     note.** `search_source.py` already prints the right
-     warning when a context sweep clusters in one file or
-     spreads across many — detection is not the missing half,
-     **obedience** is. One session got the correct advisory on
-     its **top two sinks** (≈3.1k, 39% of its whole Bash cost)
-     and consumed both results anyway. When you see that line:
-     do not use the result. Re-issue with `--files-only` (or
-     add a `--glob`), then slice-read the region it names.
+     The helper **acts** on these shapes rather than advising,
+     because its advisories were consumed anyway, session after
+     session. A scope that is — or resolves to — **one file**
+     **clamps** a wide `--context`; a sweep **spread** across
+     more than three files, at any scope, or past a size
+     threshold **degrades** to `--files-only`; and ten-plus
+     printed matches **clustered** in three or fewer files drops the
+     context and prints the match lines, for the slice-read
+     offsets. Each says so on the summary line.
+     `--force-context` lifts all but the clamp and is for
+     adjudication — which licenses context, never breadth.
 
-     Two cases no longer depend on that obedience, because the
-     helper acts rather than advising. Once the scope is a
-     **single named file** it **clamps** a wide `--context` to
-     a line or two, that shape being a whole-file read with
-     extra steps. And past a size threshold, at **any** scope,
-     it **degrades** to `--files-only` — which is what catches
-     the sweep a scope rule cannot, such as a `--context 2`
-     across one crate directory returning 71 matches in 9
-     files to answer a location question. Both say so on the
-     summary line. `--force-context` overrides the degrade and
-     is for adjudication, not for buying a location answer
-     back at full price.
-
-     **Enumeration-for-edit is a THIRD case, and it takes
-     `--files-only`.** A sweep whose purpose is to enumerate
-     the sites of a rename or a removal produces a
+     **Enumeration-for-edit is a third case beside location
+     and adjudication, and it takes `--files-only`.** A sweep
+     whose purpose is to enumerate the sites of a rename or a removal produces a
      **work list** you will open one by one, so its context is
      redundant by construction: every site returned is a file
      you are about to open and edit anyway. Measured: a
@@ -2255,9 +2244,10 @@ without eight agents and ~2.9M of sub-agent input.
      adjudication you need it *to decide whether to act at
      all*, and you may never open the file. Only the second
      earns context in the sweep — and this removes the
-     standing reason to override the advisory, which fires
-     correctly on rename sweeps and whose override trains the
-     habit of overriding it everywhere.
+     standing reason to pass `--force-context` past the spread
+     degrade, which fires correctly on a rename sweep across
+     four-plus files and whose override trains the habit of
+     overriding it everywhere.
 
      **This rule is phase-neutral, and that is why it keeps
      getting missed.** Seven separate sessions answered a
@@ -2387,7 +2377,7 @@ without eight agents and ~2.9M of sub-agent input.
    (a 658-line generated instruction file) that no lens needed:
 
    ```sh
-   python3 .claude/tools/search_source.py '<identifier>' --context 2
+   python3 .claude/tools/search_source.py '<identifier>' --files-only
    ```
 
    It reduces to one stable allow-rule
