@@ -48,8 +48,7 @@ is not repeated here.
   session then answered better, correcting a stale fact the document
   still carried.
 - **Whole reads.** Router modules read whole after a map (≈8.6k, 62%
-  of a session's Read cost); five survey-time reads (≈15k) of a small
-  crate; `swap.rs` sliced four times for more than one whole read.
+  of a session's Read cost).
 - **Section maps.** `^///` over `schema_fence.rs` cost ≈1.8k.
 - **Quiet runner.** Unwrapped cspell cascade (≈2.5k); 7 bare
   collector-stack runs (3.5k); a cold `pnpm install` full of registry
