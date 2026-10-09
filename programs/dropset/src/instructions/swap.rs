@@ -44,7 +44,9 @@ use anchor_spl_v2::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use dropset_math_core::matching_math::{platform_fee_atoms, sort_key, taker_fee_atoms};
+use dropset_math_core::matching_math::{
+    self, level_is_live, platform_fee_atoms, sort_key, taker_fee_atoms,
+};
 
 use crate::{
     errors::DropsetError,
@@ -99,13 +101,11 @@ impl SwapSide {
     /// Up-front limit-price sentinel check. `Buy` rejects `ZERO` (it
     /// would reject every ask — a likely caller mistake); `Sell` rejects
     /// `INFINITY` symmetrically. Each accepts the open-ended sentinel for
-    /// its own side and any regular price.
+    /// its own side and any regular price. The rule is shared with the
+    /// off-chain simulator through `matching_math::limit_price_ok`.
     #[inline]
     fn limit_price_ok(self, limit: Price) -> bool {
-        match self {
-            SwapSide::Buy => !limit.is_zero(),
-            SwapSide::Sell => !limit.is_infinity(),
-        }
+        matching_math::limit_price_ok(limit, self.consumes_asks())
     }
 
     /// Sort key for the matching heap: asks order by raw `as_u32()`
@@ -122,13 +122,11 @@ impl SwapSide {
     /// crossing leg means every later one crosses too, so the caller
     /// `break`s. A `Buy` crosses when the ask exceeds the limit; a
     /// `Sell` crosses when the bid falls below it. The open-ended
-    /// sentinel for the side never crosses.
+    /// sentinel for the side never crosses. Shared with the off-chain
+    /// simulator through `matching_math::crosses_limit`.
     #[inline]
     fn crosses_limit(self, price: Price, limit: Price) -> bool {
-        match self {
-            SwapSide::Buy => price.as_u32() > limit.as_u32() && !limit.is_infinity(),
-            SwapSide::Sell => price.as_u32() < limit.as_u32() && !limit.is_zero(),
-        }
+        matching_math::crosses_limit(price, limit, self.consumes_asks())
     }
 
     /// The leg the taker **receives** and the vault pays out: base on a
@@ -693,15 +691,18 @@ impl Swap {
                     // dead, which materialization already encoded as a
                     // zero deadline, so each domain is one compare.
                     // `is_live_at` is domain-typed, so the two conjuncts
-                    // cannot be crossed over (see `crate::clock`); it
-                    // compiles to the same single unconditional compare.
-                    if size == 0
-                        || !lvl.wall_deadline().is_live_at(now_unix)
-                        || !lvl.slot_deadline().is_live_at(now_slot)
-                        || price.is_zero()
-                        || price.is_infinity()
-                        || !price.is_valid()
-                    {
+                    // cannot be crossed over (see `crate::clock`). The
+                    // gate is `matching_math::level_is_live`, shared with
+                    // the off-chain simulator so displayed depth equals
+                    // filled depth.
+                    if !level_is_live(
+                        price,
+                        size,
+                        lvl.wall_deadline(),
+                        lvl.slot_deadline(),
+                        now_unix,
+                        now_slot,
+                    ) {
                         continue;
                     }
                     let price_key = side.price_sort_key(price);

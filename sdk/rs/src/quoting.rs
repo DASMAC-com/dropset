@@ -9,7 +9,7 @@
 //! program stores, anchored to a chosen reference price.
 //!
 //! The translation is the inverse of the on-chain flush
-//! (`swap::flush_level_price`): an ask at absolute price `P` against
+//! (`matching_math::flush_level_price`): an ask at absolute price `P` against
 //! reference `R` becomes a ppm offset `(P/R - 1)·1e6`; a level of `size`
 //! atoms against an inventory leg of `leg` atoms becomes `size/leg·10000`
 //! bps. Sizes are bounded by the per-side `Σ size_bps ≤ 10000` invariant

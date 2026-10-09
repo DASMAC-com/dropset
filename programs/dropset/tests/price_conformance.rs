@@ -3,11 +3,14 @@
 //! The cross-language codec vectors in `sdk/conformance/price_vectors.json`
 //! are generated from `dropset-math-core` and verified by the math-core
 //! Rust (`sdk/math-core/tests/conformance.rs`) and the TS client
-//! (`sdk/ts/src/conformance.test.ts`). The **program's own** `Price` — the
-//! copy in `programs/dropset/src/price.rs` that actually moves funds — is a
-//! hand-mirror of that math, so it must be pinned to the same source of
-//! truth. This test closes that gap: it replays the shared
-//! vectors through `dropset::Price`.
+//! (`sdk/ts/src/conformance.test.ts`). This test replays the same vectors
+//! through `dropset::Price`, the path the funds-moving code names.
+//!
+//! That `Price` is a re-export of `dropset-math-core`'s, not a hand-mirror
+//! of it, so this replay runs the same code as the generator and is not an
+//! independent oracle — the TS client is. What it guards is the re-export
+//! itself: should the program ever grow its own copy again, this is the
+//! test that pins the copy to the shared vectors.
 //!
 //! Scope: the funds-moving paths the program exposes — encoding *validity*
 //! (`is_valid`, which gates order-book ordering), the raw-bits round-trip,

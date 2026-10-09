@@ -72,11 +72,12 @@ pub const FLUSH_BIT: u64 = 1u64 << 63;
 /// initial VPS is exactly 1.0.
 pub const Q32_32_ONE: u64 = 1u64 << 32;
 
-/// Parts-per-million denominator (`1_000_000 = 100%`).
-pub const PPM: u64 = 1_000_000;
-
-/// Basis-points denominator (`10_000 = 100%`).
-pub const BPS: u64 = 10_000;
+// The parts-per-million and basis-points denominators are re-exported
+// from math-core rather than redeclared, for the same reason as the
+// kernels above: the bounds this crate checks against them and the
+// divisions math-core performs with them must be the same constant, not
+// two literals that happen to agree.
+pub use dropset_math_core::{BPS, PPM};
 
 /// Market account: [`MarketHeader`] followed by a slab tail of [`Vault`]
 /// sectors. Sectors are managed via the [`VaultDll`] operations rather

@@ -26,8 +26,9 @@ pub const N_LEVELS: usize = 8;
 pub const NULL_SECTOR: u32 = u32::MAX;
 /// Flush flag OR'd onto `ReferencePrice::stamp`.
 pub const FLUSH_BIT: u64 = 1u64 << 63;
-pub const PPM: u64 = 1_000_000;
-pub const BPS: u64 = 10_000;
+/// Re-exported, not redeclared: the bounds checked against these and the
+/// divisions `matching_math` performs with them must be one constant.
+pub use dropset_math_core::{BPS, PPM};
 /// Anchor account discriminator length.
 pub const ACCOUNT_DISCRIMINATOR_LEN: usize = 8;
 /// On-chain `align_of::<Vault>()`. The program's `Vault` embeds `Price`

@@ -1,14 +1,22 @@
-//! Wall-clock time for the quote datum and the book's expiry filter.
+//! Wall-clock time for the quote datum and the wall half of the book's
+//! expiry filter.
 //!
-//! Level expiry is wall-denominated: a leader stamps
-//! `reference_price.quote_unix` when it quotes, each level dies
-//! `expiry_offset_secs` later, and the engine gates on the
-//! validator's `Clock.unix_timestamp`. Every off-chain consumer therefore
-//! needs a "now" in the same units — the maker to stamp the datum, the
-//! taker / TUI / router adapters to filter the book the way the engine
-//! will.
+//! Level expiry is **dual-domain**: a level rests only while it is inside
+//! both its slot deadline and its wall deadline, and the engine gates the
+//! two together. This module covers the **wall half only**. The slot half
+//! has no host-clock substitute — the current slot is a chain read, since
+//! nothing off-chain can derive it — which is why the crate ships no
+//! host-side slot helper. A book filter built from this module alone
+//! resurrects slot-expired levels; pass a chain-read slot alongside it.
 //!
-//! That "now" is read from the **host clock**, not from the chain, so
+//! For the wall half, a leader stamps `reference_price.quote_unix` when it
+//! quotes, each level's wall deadline falls `expiry_offset_secs` later,
+//! and the engine gates on the validator's `Clock.unix_timestamp`. Every
+//! off-chain consumer therefore needs a wall "now" in the same units — the
+//! maker to stamp the datum, the taker / TUI / router adapters to filter
+//! the book the way the engine will.
+//!
+//! That wall "now" is read from the **host clock**, not from the chain, so
 //! neither the maker's re-quote path nor a book poll pays an RPC for it.
 //! The skew this accepts is immaterial at the timescales involved:
 //! `Clock.unix_timestamp` is itself stake-weighted from validator vote
@@ -26,8 +34,9 @@
 //!   plainly because the maker-side argument does not cover it. A quoting
 //!   client filters the book by *its own* clock while the engine gates on
 //!   the cluster's, so a client running behind sizes `min_out` against
-//!   levels the engine will drop (the swap reverts on `min_out`, fees
-//!   paid), and one running ahead reports "no liquidity" against a
+//!   levels the engine will drop (the swap soft-reverts on `min_out` with
+//!   no fill, so only the network transaction fee is paid), and one
+//!   running ahead reports "no liquidity" against a
 //!   healthy book. Both failures are visible rather than silent, and both
 //!   need a skew larger than the tier's whole wall TIF — but a consumer
 //!   that cannot bound its own clock should quote against a chain-read
