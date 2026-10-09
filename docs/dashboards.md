@@ -351,10 +351,13 @@ counts — a running collector registers products and prints, so a parked
 row with non-zero `Products` or `Printing now` is a started-anyway
 venue. And `Batch ingestion by feed`: a parked collector is never
 spawned, so it emits no batches rather than empty ones, which makes
-*any* row there for a parked source the fault itself — the panel
-deliberately does not join parked sources out for exactly that reason.
-Both tells need the collector's polls to succeed; one that errors on
-every poll (Pyth without its key) writes neither. **Do not send a
+any row there for a parked source dated after its park the fault
+itself — the panel deliberately does not join parked sources out for
+exactly that reason. A collector whose every poll errors (a rejected
+credential) shows on neither the panel nor `Printing now`, leaving
+`Products` — written at startup, before any poll — as the one tell that
+survives. Pyth with no key at all is louder: it refuses to start.
+**Do not send a
 reader to `Collector cursor age` for it**: that panel builds its
 expectation from a four-source literal Pyth is not in, and a
 latest-price feed writes no cursor row even when perfectly healthy, so
@@ -633,9 +636,9 @@ Both directions of drift are real, so both checks are worth running.
    from a four-source literal Pyth is not in and a latest-price feed
    writes no cursor at all. The incidental tells are the coverage row's
    own non-zero counts and any `Batch ingestion by feed` row for a
-   parked source (§4) — both silent for a collector whose every poll
-   errors. Making the state legible has, if anything, made the back
-   half easier to forget.
+   parked source (§4), of which only `Products` survives a collector
+   whose every poll errors. Making the state legible has, if anything,
+   made the back half easier to forget.
 
 1. **The §3.1 QCAD tripwire is specified but not collected.** *Closed* —
    `QCAD-USD` is on the Kraken roster, so §2's row for it describes a

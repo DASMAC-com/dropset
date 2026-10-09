@@ -109,18 +109,21 @@ fn postgres_image_tag_matches_the_deployed_image() {
 /// Every Postgres test container in the workspace chains the tag pin.
 ///
 /// `postgres_image_tag_matches_the_deployed_image` proves the constant is
-/// right, not that anyone uses it: a harness that calls the module's default
-/// constructor bare still starts Postgres 11. That happened once — the
+/// right, not that anyone uses it: a harness that calls `Postgres::default()`
+/// without chaining the pin still starts Postgres 11. That happened once — the
 /// market-data parked-mirror harness — and surfaced only when a migration using
 /// a Postgres 12 feature dequeued an unrelated PR. This holds the count of such
-/// harnesses at zero by requiring the constructor to be followed directly by
-/// `.with_tag(`, whatever the argument.
+/// harnesses at zero by requiring `.with_tag(` somewhere in the same statement
+/// as the constructor, whatever the argument — not directly after it, since
+/// `Postgres`'s own builders (`with_db_name` and the like) must precede it.
 ///
-/// It scans every `.rs` file under the workspace root, skipping build output and
-/// hidden directories (which is also what keeps it out of sibling worktrees),
-/// and ignores comment lines so a doc comment naming the default is no
-/// violation. Like the test above it needs no container, so it runs in the
-/// default suite.
+/// It scans every `.rs` file under the workspace root, skipping `target/`,
+/// `node_modules/` and hidden directories (which is also what keeps it out of
+/// sibling worktrees), and ignores comment lines so a doc comment naming the
+/// constructor is no violation. It is a text match, so another spelling of the
+/// same call (`Default::default()` on a `Postgres`-typed binding) goes unseen;
+/// what it holds is the one shape a copied harness actually takes. Like the
+/// test above it needs no container, so it runs in the default suite.
 #[test]
 fn every_postgres_container_pins_the_image_tag() {
     // Assembled so this file's own source does not match the scan.
@@ -129,9 +132,12 @@ fn every_postgres_container_pins_the_image_tag() {
 
     fn visit(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
         for entry in fs::read_dir(dir).expect("read workspace directory") {
-            let path = entry.expect("read directory entry").path();
+            let entry = entry.expect("read directory entry");
+            let path = entry.path();
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if path.is_dir() {
+            // `file_type` does not follow symlinks, so a linked directory
+            // cannot loop the walk.
+            if entry.file_type().expect("read file type").is_dir() {
                 if !name.starts_with('.') && name != "target" && name != "node_modules" {
                     visit(&path, files);
                 }
@@ -147,6 +153,7 @@ fn every_postgres_container_pins_the_image_tag() {
     let mut files = Vec::new();
     visit(root, &mut files);
 
+    let mut pinned = 0;
     let mut violations = Vec::new();
     for path in &files {
         let source = fs::read_to_string(path).expect("read source file");
@@ -155,16 +162,25 @@ fn every_postgres_container_pins_the_image_tag() {
             if source[line_start..at].trim_start().starts_with("//") {
                 continue;
             }
-            if !source[at + CONSTRUCTOR.len()..]
-                .trim_start()
-                .starts_with(PIN)
-            {
+            let rest = &source[at + CONSTRUCTOR.len()..];
+            let statement = rest.split(';').next().unwrap_or(rest);
+            if statement.contains(PIN) {
+                pinned += 1;
+            } else {
                 let line = source[..at].matches('\n').count() + 1;
                 let shown = path.strip_prefix(root).unwrap_or(path);
                 violations.push(format!("{}:{line}", shown.display()));
             }
         }
     }
+    // A walk that found nothing would pass the assertion below vacuously — a
+    // moved crate or an over-broad skip would silently retire the guard.
+    assert!(
+        pinned > 0,
+        "found no pinned {CONSTRUCTOR} anywhere under {}; the walk is not \
+         reaching the workspace's test harnesses",
+        root.display()
+    );
     assert!(
         violations.is_empty(),
         "{CONSTRUCTOR} without {PIN}POSTGRES_IMAGE_TAG) resolves to Postgres 11, \
