@@ -297,9 +297,10 @@ The interbank week runs **Sunday 17:00 to Friday 17:00 New York
 time**. That is the convention, and it is the boundary the
 availability question turns on. The stored series matches the Friday
 close exactly and the Sunday open to within four minutes — the anchor's
-first bar lands at 17:04, which §5.2 argues is structural and ratifies
-as the instant the generator actually emits. So "17:00" below means the
-convention; where the four minutes matter, they are called out.
+first bar lands at 17:04. The fence emits the convention instant at
+both ends; §5.2 says why, and what the four minutes cost. So "17:00"
+below means the convention; where the four minutes matter, they are
+called out.
 
 Under the local-time model its UTC position moves with US daylight
 saving: Friday close at 21:00 UTC and Sunday open at 21:00 UTC while
@@ -568,11 +569,10 @@ the filing suggested:
   is not a stall.
 
 So what the calendar changes here is **not the mechanism but its
-clock**. Today the weekend flag comes from a hardcoded UTC
-approximation; the calendar makes it authoritative. That is a much
+clock**. The weekend flag used to come from a hardcoded UTC
+approximation; the imposed fence replaced it (§5.2). That was a much
 smaller and better-defined change than "specify expected
-unavailability from scratch," and it means the consumer work is a
-substitution with a cross-check, not a new subsystem.
+unavailability from scratch": a substitution, not a new subsystem.
 
 One gap does remain, and it is genuinely unimplemented: the
 *reporting* surface. Operator-facing health — the TUI, alerts — has no
@@ -582,88 +582,38 @@ the standing surface split, health and telemetry are Grafana's, and
 this is where the "unsurprised when OANDA goes dark" requirement
 actually needs building.
 
-### 5.2 The measured defect in today's approximation
+### 5.2 The approximation this replaced, and the boundary chosen
 
-The current weekend flag is a hardcoded UTC bracket — Friday 21:00 to
-Sunday 22:00 UTC, DST explicitly ignored, thresholds marked as to be
-determined. Against the measured boundary it is wrong by about an hour
-a week, and the error is seasonal:
+Both consumers used to decide the session from a private hardcoded UTC
+bracket — Friday 21:00 to Sunday 22:00 UTC, daylight saving ignored.
+Measured against the stored series it was wrong by about an hour a
+week, seasonally: under EDT the Sunday reopen was an hour late, under
+EST the Friday close an hour early. Its errors declared the market
+closed while it was open, which is why they went unnoticed — and why
+they masked a real FX outage for that hour as a scheduled closure.
 
-|              | Approximation | Convention | First bar seen |
-| ------------ | ------------- | ---------- | -------------- |
-| Friday close | 21:00 UTC     | 21:00 UTC  | 20:59 (last)   |
-| Sunday open  | 22:00 UTC     | 21:00 UTC  | **21:04**      |
+**That bracket is retired, with no fallback.** The maker and the
+fair-value estimator both read the imposed fence — the
+`fx_session_window` view of migration 0015 — through one shared reader,
+`market-data/src/session_fence.rs`, so the two cannot price under
+different clocks. An earlier revision of this section kept the
+approximation as a permanent fallback and promoted the fence through a
+run-both cross-check; both were dropped. A comparator kept alive is the
+derived clock the fence exists to retire, and an alarm on disagreement
+would sit downstream of the halt it reports. What happens when the
+fence cannot answer is §5.3's.
 
-Against the convention boundary the Sunday error is a round **60
-minutes**; against the first bar actually observed it is ~56. Both
-numbers are defensible because there are two references, and which one
-governs is settled at the end of this section rather than left
-implicit. In winter
-the boundary shifts an hour later in UTC and the error swaps ends: the
-Friday close becomes ~60 minutes early and the Sunday open lands on
-the convention boundary exactly. So one boundary is right and the
-other is about an hour wrong, in each half of the year.
-
-The direction matters more than the magnitude. Measured against the
-**convention** boundary, the approximation's window is a superset of
-the true window in both seasons and on both transition weekends, so
-its errors declare the market **closed while it is open**. That is the
-safe direction: it cannot spuriously degrade the engine or tighten the
-kill switches on a live market. What it does instead is **mask a real
-outage** for that hour — a genuine FX failure inside the window reads
-as a healthy scheduled closure. That is why the defect has gone
-unnoticed, and also why it is worth fixing rather than tolerating.
-
-**One exception, and it runs the unsafe way.** Measured instead
-against the boundary this document goes on to ratify — feed
-availability at 17:04, below — the superset property fails at one end
-for half the year. On an EST Sunday the approximation reopens at 22:00
-UTC, which is 17:00 EST, while the anchor does not publish until 17:04
-EST. For those four minutes it declares the market **open while the FX
-leg is provably absent**, which composes to `Degraded(FxStale)` and
-tightens the kill switches (§6.5). That is roughly 22 Sundays a year.
-So the approximation is not uniformly conservative after all: it is
-conservative by about an hour on one edge and wrong by four minutes on
-the other, and which edge depends on the season.
-
-This has a concrete consequence, because §5.3 keeps the approximation
-as the **permanent** fallback. Its Sunday reopen should move to
-**22:05 UTC** as part of the substitution, which restores the superset
-property under the ratified reference and costs only five more minutes
-of scheduled-silence masking. Without that change the fallback carries
-a weekly false-degrade window, and the promotion cross-check would
-correctly flag it as *unexpected* disagreement — the known seasonal
-hour it is told to ignore sits on the Friday edge, not this one.
-
-**Which instant the generator should emit — 17:00 or 17:04.** The four
-minutes are not noise, and the choice has a consequence. Across all
-nine Sundays the first bar lands at 17:04 ET with **zero** bars at
-17:00 through 17:03; minute 04 is present on 9 of 9, while later
-minutes in the same hour are missing on some (17:06 on 7 of 9). A
-liquidity gap would vary — this does not, so 17:04 is a structural
-property of the anchor's reopen rather than a quiet opening few
-minutes.
-
-That settles the choice. The consumer is *do we expect a leading
-feed*, not *is the market notionally open*, and those differ by four
-minutes every Sunday. Emitting the convention 17:00 would have the
-maker expect an anchor that provably is not there yet — and a missing
-FX leg outside the weekend window composes to
-`Degraded(FxStale)`, with the kill-switch tightening of §6.5 behind
-it. That is a false degrade, weekly, introduced by the fix. So the
-generated open is the **feed-availability** instant, and the
-convention boundary is recorded beside it as documentation rather than
-used.
-
-The cost, stated because it is real: this makes the weekly open a fact
-about *our anchor* rather than about the market, so it must be
-re-derived if the anchor vendor changes. That is the one place this
-calendar deliberately describes the feed instead of the market, and it
-is why §6.1's acceptance test is written against observed gaps.
-
-This document specifies the fix but does not implement it; the
-substitution belongs to the quoting-posture issue, where the
-cross-check below governs the promotion.
+**The boundary is the convention instant, 17:00 ET at both ends**, as
+the migration encodes it — not the anchor's measured first bar. The
+anchor's first Sunday bar lands a few minutes after 17:00 ET on every
+observed weekend, and this section once recommended emitting that
+instant instead. It was not adopted: the boundary is the market's rule,
+and pinning it to one vendor's observed edge would make the calendar a
+fact about our feed that must be re-derived whenever the vendor
+changes. The cost is stated rather than hidden: in the minutes between
+the convention reopen and the anchor's first bar, a tick that finds no
+fresh FX tape composes as an FX degrade rather than as the crypto-only
+closed state.
 
 ### 5.3 Quoting posture
 
@@ -676,8 +626,13 @@ defines, and the mapping follows §3.3 exactly:
   is the operator's first motivating example and is easy to lose
   behind the regime switch: see the policy below.
 - **Session overlap** — widen, per the table below.
-- **Calendar unavailable or expired** — fall back to the existing
-  approximation, loudly, and never to "open" and never to a halt.
+- **Calendar unavailable or expired** — the session is *unestablished*
+  (`FxSession::Unknown`), never "open" and never a guessed "closed".
+  The engine pauses the composition, and the maker halts each market it
+  composes under a named reason (`SessionUnestablished`). There is no
+  fallback clock. A reader holds the spans it last read, the covering
+  one and the next, and a span keeps answering until it ends, so a
+  failed read darkens nothing until a boundary passes uncovered.
 
 **The widening policy per state.** All three act through one lever —
 inflating the confidence half-width the existing uncertainty
@@ -738,13 +693,10 @@ Five things this table is careful about, because the naive reading of
   quoting-posture issue owns the constants and their tests; this spec
   owns the shape, the derivation, and the floor.
 
-The promotion path is a cross-check, not a swap: run the
-calendar-derived state alongside the existing approximation, alarm on
-disagreement, and rewire only once the generated instants have been
-validated against the stored series. The two are already known to
-disagree for about an hour a week (§5.2), so the alarm must be keyed
-to *unexpected* disagreement — the known seasonal hour is the
-approximation being wrong, not the calendar.
+The promotion was a swap, not a cross-check (§5.2 says why). The
+fence's instants are validated against Postgres in both daylight-saving
+phases, by the schema tests and by the shared reader's own tests,
+rather than by running a second clock beside it.
 
 ### 5.4 The estimator and analytics
 
@@ -1071,10 +1023,9 @@ three places, and a mis-classification propagates to all of them:
 
 1. **The regime.** Closed-when-open masks a real FX outage as healthy
    (§5.2). Open-when-closed is worse: it degrades the engine on a
-   normally-shut market, every week. That one is not hypothetical —
-   today's approximation does it for four minutes on every EST Sunday
-   (§5.2), which is why the fallback bracket wants widening rather
-   than keeping as-is.
+   normally-shut market, every week. That one is not hypothetical:
+   the fence's convention reopen precedes the anchor's first Sunday bar
+   by about four minutes, an accepted cost (§5.2).
 1. **The FX fallback.** The flag gates suppression of the
    receipt-aged fallback. Wrong in one direction, a stale weekend rate
    anchors the mid; wrong in the other, a usable fallback is
@@ -1096,9 +1047,8 @@ three places, and a mis-classification propagates to all of them:
    its switches nor its label — the calendar buys it nothing either
    way.
 
-This asymmetry is why the fallback is to the approximation and never
-to "open," and why the promotion path is a cross-check rather than a
-swap.
+This asymmetry is why a fence that cannot answer reads as
+*unestablished* and halts, never as "open" (§5.3).
 
 ### 6.6 What is not yet verified
 

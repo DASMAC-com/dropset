@@ -51,6 +51,7 @@ use dropset_maker_bot::fair_price::{FairPriceRow, FairPriceSource};
 use dropset_maker_bot::fx_store::{self, FxStoreSource};
 use dropset_maker_bot::model::fair_mid::build_legs;
 use dropset_maker_bot::quote_state::QuoteStateStore;
+use dropset_maker_bot::session_fence::SessionFenceSource;
 use dropset_maker_bot::tasks::{
     FeedReceivers, SOURCE_CMC, SOURCE_COINBASE, SOURCE_COINGECKO, SOURCE_ERAPI, SOURCE_FRANKFURTER,
     SOURCE_KRAKEN, SOURCE_PYTH,
@@ -846,6 +847,19 @@ fn spawn_price_feeds(
         telemetry,
         HealthRow::Report,
     );
+    // The session fence, on the same pool and cadence as the store reader: the
+    // spans it returns carry the next boundary with them, so the poll rate
+    // bounds only how soon an outage is noticed, never a gap at the close.
+    let fence = spawn_feed(
+        rt,
+        SessionFenceSource::new("store:session-fence", pool.clone()),
+        RunConfig {
+            poll_interval: cfg.fx_store_poll,
+            error_backoff: FEED_ERROR_BACKOFF,
+        },
+        telemetry,
+        HealthRow::Report,
+    );
     let fx_store = spawn_feed(
         rt,
         FxStoreSource::fx(
@@ -874,6 +888,7 @@ fn spawn_price_feeds(
         erapi,
         fx_store,
         fair_price,
+        fence,
     })
 }
 

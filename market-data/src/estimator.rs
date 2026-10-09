@@ -91,6 +91,7 @@ use crate::fx_store::{
     fx_product_id, push_store_candidate, store_reading, store_unavailable, FxStoreRow,
     FxStoreSource, FX_STORE_SOURCES,
 };
+use crate::session_fence::{read_spans, session_at, FenceSpans};
 use crate::tick_store::{TickStoreReader, TickStoreRow, SOURCE_KRAKEN, USDC_USD_PRODUCT};
 
 /// `cex_prices.source` for the crypto reference venue.
@@ -317,14 +318,29 @@ fn tick_interval_from_secs(secs: Option<u64>) -> Duration {
 /// snapshot: the rows' own stamps stop moving, so the receipt floor is the only
 /// thing that can age the legs out. This is the shape
 /// [`crate::fx_store::store_reading_age`]'s floor exists for.
+///
+/// The session fence rides in the same snapshot, so a failed read keeps the
+/// spans last held exactly as it keeps the rows. That is the right posture for
+/// the fence in particular: a span is the calendar's answer for an interval and
+/// an outage does not change the calendar, so the cached span still answers
+/// until it ends — and once nothing held covers the tick, the session is
+/// `Unknown` and every market pauses. See [`crate::session_fence`].
 #[derive(Clone, Debug, Default)]
 struct Snapshot {
     candles: Vec<FxStoreRow>,
     ticks: Vec<TickStoreRow>,
+    fence: FenceSpans,
     read_at: Option<Instant>,
 }
 
 impl Snapshot {
+    /// The imposed session for the tick at epoch second `now_unix`.
+    fn clock(&self, now_unix: i64) -> ClockCtx {
+        ClockCtx {
+            session: session_at(&self.fence, now_unix),
+        }
+    }
+
     /// How long ago these rows were read, or zero before the first read.
     fn receipt_age(&self, now: Instant) -> Duration {
         self.read_at
@@ -620,9 +636,13 @@ impl Estimator {
             .latest()
             .await
             .context("reading spot_ticks for the USDC/USD peg leg")?;
+        let fence = read_spans(&self.pool, now_secs())
+            .await
+            .context("reading fx_session_window for the session fence")?;
         Ok(Snapshot {
             candles,
             ticks,
+            fence,
             read_at: Some(now),
         })
     }
@@ -647,7 +667,7 @@ impl Estimator {
         } = self;
 
         let ts = now_secs();
-        let clock = derived_clock(ts);
+        let clock = snapshot.clock(ts);
         let receipt_age = snapshot.receipt_age(now);
 
         // The peg leg is portfolio-wide, so it is resolved once and offered to
@@ -707,58 +727,6 @@ impl Estimator {
             log_tick(market, &fair, stale);
         }
         Ok(())
-    }
-}
-
-/// Whether the Unix timestamp `secs` falls in the FX-closed weekend window.
-///
-/// Interbank FX and CME 6E are shut Fri ~17:00 → Sun ~17:00 ET (§1 fm2);
-/// approximated here in UTC as Fri 21:00 → Sun 22:00. Each bound is 17:00 ET
-/// under one DST regime — Friday under EDT, Sunday under EST — so the asymmetric
-/// pair brackets the close conservatively rather than tracking DST. The exact
-/// session thresholds are TBD(analytics).
-///
-/// **Private to this crate, and deliberately a second copy** of the maker bot's
-/// `weekend_from_unix` rather than a shared helper. Hoisting the arithmetic into
-/// `dropset_fair_value` beside [`ClockCtx`] is the shape that was rejected: that
-/// crate takes the session as an **imposed** input precisely because feed
-/// liveness is not evidence about the session, and giving it a derivation would
-/// hand every consumer a way to re-derive what it is supposed to be told. Two
-/// provisional copies that agree today are the cheaper error than one authority
-/// in the wrong crate.
-///
-/// Both copies are temporary: the imposed fence read replaces them with a
-/// session table for which Postgres is the one DST authority, and that read is
-/// what makes [`dropset_fair_value::FxSession::Unknown`] producible at all.
-fn weekend_from_unix(secs: u64) -> bool {
-    let days = secs / 86_400; // whole days since 1970-01-01 (a Thursday)
-    let hour = (secs % 86_400) / 3_600; // hour of the UTC day
-    let dow = (days + 4) % 7; // 0 = Sun … 6 = Sat (epoch day was Thursday = 4)
-    match dow {
-        5 => hour >= 21, // Friday, after the interbank close
-        6 => true,       // all of Saturday
-        0 => hour < 22,  // Sunday, until the CME reopen
-        _ => false,
-    }
-}
-
-/// The [`ClockCtx`] for the tick at epoch second `now_unix`.
-///
-/// **Never [`dropset_fair_value::FxSession::Unknown`].** This helper *derives* the window from the
-/// clock, and a clock is always readable, so it can only ever answer `Open` or
-/// `Closed`. `Unknown` means the session authority could not be reached — a
-/// state that becomes producible only once the fence read lands, which is
-/// deliberately not this issue's scope. So the estimator today cannot halt on an
-/// unestablished session, and its composition is fail-closed only against the
-/// window being wrong, not against not knowing it.
-///
-/// A pre-epoch clock (unreachable in practice) reads as zero, matching the bot.
-fn derived_clock(now_unix: i64) -> ClockCtx {
-    let secs = u64::try_from(now_unix).unwrap_or(0);
-    if weekend_from_unix(secs) {
-        ClockCtx::weekend()
-    } else {
-        ClockCtx::in_session()
     }
 }
 
@@ -1181,6 +1149,7 @@ mod tests {
         let snapshot = Snapshot {
             candles,
             ticks: Vec::new(),
+            fence: FenceSpans::default(),
             read_at: None,
         };
         let market = eurc();
@@ -1206,6 +1175,7 @@ mod tests {
         let snapshot = Snapshot {
             candles: vec![candle("oanda", "AUD-USD", 1_000, 0.7200)],
             ticks: Vec::new(),
+            fence: FenceSpans::default(),
             read_at: None,
         };
         let market = audd();
@@ -1298,6 +1268,7 @@ mod tests {
         let snapshot = Snapshot {
             candles: Vec::new(),
             ticks: Vec::new(),
+            fence: FenceSpans::default(),
             read_at: Some(read_at),
         };
         let later = read_at + Duration::from_secs(90);
@@ -1306,32 +1277,14 @@ mod tests {
         assert_eq!(Snapshot::default().receipt_age(later), Duration::ZERO);
     }
 
-    /// The same boundaries the maker bot's own copy pins, at the same anchors.
-    ///
-    /// **Deliberately duplicated rather than shared.** The two derivations are a
-    /// sanctioned second copy (see [`weekend_from_unix`]), and a duplicated rule
-    /// is only defensible while both copies are pinned: with one of them untested
-    /// they could drift apart and nothing would fail. Cross-calling is not
-    /// available — the bot's copy is private to another crate — so agreement is
-    /// enforced by both tests naming the same instants, and a divergence surfaces
-    /// as a failure in whichever crate moved.
+    /// A snapshot that has never read the fence composes under `Unknown`, so
+    /// the estimator's first ticks pause rather than assume a trading market.
     #[test]
-    fn the_weekend_window_brackets_the_fx_session_close() {
-        // Anchored to known UTC instants in Jan 2021: the 1st was a Friday.
-        const FRI_00: u64 = 1_609_459_200; // 2021-01-01 00:00 UTC (Friday)
-        let h = |base: u64, hour: u64| base + hour * 3_600;
-        let d = |base: u64, days: u64| base + days * 86_400;
-
-        // Friday: open through the day, closed from 21:00 UTC.
-        assert!(!weekend_from_unix(h(FRI_00, 12)));
-        assert!(weekend_from_unix(h(FRI_00, 21)));
-        // Saturday: closed all day.
-        assert!(weekend_from_unix(h(d(FRI_00, 1), 3)));
-        // Sunday: closed until the 22:00 UTC reopen, then open.
-        assert!(weekend_from_unix(h(d(FRI_00, 2), 21)));
-        assert!(!weekend_from_unix(h(d(FRI_00, 2), 23)));
-        // Monday: open.
-        assert!(!weekend_from_unix(h(d(FRI_00, 3), 12)));
+    fn an_unread_fence_is_an_unestablished_session() {
+        assert_eq!(
+            Snapshot::default().clock(1_700_000_000).session,
+            FxSession::Unknown
+        );
     }
 
     /// A stop delivered while nothing polls the listener — the tick body
@@ -1359,22 +1312,5 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), shutdown.recv())
             .await
             .expect("the held stop must resolve the next recv");
-    }
-
-    /// The derived clock reaches exactly two of the three session states, and a
-    /// pre-epoch clock lands *in session* rather than inventing `Unknown`.
-    #[test]
-    fn the_derived_clock_is_never_unknown() {
-        const FRI_00: i64 = 1_609_459_200; // 2021-01-01 00:00 UTC (Friday)
-        let in_session = derived_clock(FRI_00 + 12 * 3_600);
-        let closed = derived_clock(FRI_00 + 21 * 3_600);
-        assert_eq!(in_session.session, FxSession::Open);
-        assert_eq!(closed.session, FxSession::Closed);
-
-        // A pre-epoch clock reads as zero — 1970-01-01 was a Thursday, so it
-        // lands in session. This pins the saturating conversion, not a policy:
-        // `Unknown` is what a *fence* answers when the authority is unreachable,
-        // and this helper never consults one, so it must not invent that state.
-        assert_eq!(derived_clock(-1).session, FxSession::Open);
     }
 }

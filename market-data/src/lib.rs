@@ -21,7 +21,12 @@
 //! sit off the collection path, which is why their failure postures differ from a
 //! collector's.
 //!
-//! The two readers are a pair rather than a duplicate: the tables hold different
+//! [`session_fence`] is the fourth reader and not a price at all: it reads the
+//! FX session fence, the imposed open / closed / unestablished state both the
+//! estimator and the maker compose under. It lives here for the same reason, and
+//! because sharing one reader is what keeps those two consumers on one clock.
+//!
+//! The two price readers are a pair rather than a duplicate: the tables hold different
 //! row shapes, and which collector writes where is not guessable from a venue's
 //! name. [`tick_store`] states the split and why one statement cannot serve both.
 //!
@@ -93,6 +98,7 @@ pub mod instruments;
 pub mod parked_mirror;
 pub mod pyth_roster;
 pub mod roster;
+pub mod session_fence;
 pub mod store;
 pub mod supervise;
 pub mod tick_store;

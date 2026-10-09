@@ -749,6 +749,27 @@ impl Fusion {
         self.fuse(prior, measurements, n)
     }
 
+    /// Advance the filter across `dt` with **no** observation: widen the
+    /// variance for the elapsed time and age every absorption clock, and fold
+    /// nothing in.
+    ///
+    /// This is the step for a tick whose readings may not be interpreted at all
+    /// — the session-unestablished arm of the composition — as opposed to a
+    /// tick that simply had none, which [`Fusion::update`] already handles as
+    /// [`FusionStep::Carried`]. Without it the filter returns from an outage
+    /// carrying its pre-outage variance, and fresh readings are then
+    /// under-weighted against a prior that is far less certain than it claims.
+    ///
+    /// The mean does not move, and that is a property of the model rather than
+    /// a choice made here: the prediction is a random walk, so elapsed time
+    /// widens the estimate and never shifts it. The inflation is therefore
+    /// exactly proportional to the outage, with zero observations moving
+    /// nothing.
+    pub fn coast(&mut self, dt: Duration) {
+        self.predict(dt);
+        self.age_absorbed(dt);
+    }
+
     /// Grow the estimate's variance for `dt` of elapsed time — the random-walk
     /// prediction step. A degenerate `dt` adds nothing rather than poisoning the
     /// variance with a NaN.
@@ -1444,6 +1465,41 @@ mod tests {
         assert_eq!(r.value, seeded.value, "unchanged");
         assert!(r.variance > seeded.variance, "but less certain");
         assert_eq!(r.n, 0);
+    }
+
+    /// Coasting across an interval is the same widening an empty tick of that
+    /// length applies, and moves the mean exactly as little — which is what
+    /// licenses calling it across an outage whose readings cannot be read.
+    #[test]
+    fn coasting_widens_like_an_empty_tick_and_leaves_the_mean() {
+        let mut coasted = fusion();
+        let seeded = coasted.update(&set(&[tape("a", 1.14)]), Some(1.14), BAND, secs(5));
+        let mut carried = coasted.clone();
+
+        coasted.coast(secs(600));
+        let after_coast = coasted.update(&set(&[]), None, BAND, Duration::ZERO);
+        let after_carry = carried.update(&set(&[]), None, BAND, secs(600));
+
+        assert_eq!(after_coast.value, seeded.value, "no observation, no move");
+        assert_eq!(after_coast.variance, after_carry.variance);
+        assert!(after_coast.variance > seeded.variance);
+    }
+
+    /// Coasting ages the absorption clocks too, so a daily fix absorbed before
+    /// an outage counts again once its publication interval has passed during
+    /// it — rather than staying throttled as if no time had elapsed.
+    #[test]
+    fn coasting_ages_a_reference_fix_back_into_eligibility() {
+        let mut f = fusion();
+        let interval = f.cfg.reference_publish_interval;
+        let c = set(&[reference("frankfurter", 1.14)]);
+        f.update(&c, resolved(1.14), BAND, secs(5));
+
+        f.coast(interval);
+        let r = f.update(&c, resolved(1.14), BAND, Duration::ZERO);
+
+        assert_eq!(r.step, FusionStep::Fused);
+        assert_eq!(r.n, 1, "the fix is a new observation after the interval");
     }
 
     /// After an ordinary update the sources' shares sum to strictly less than

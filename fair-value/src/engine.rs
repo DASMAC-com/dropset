@@ -153,7 +153,11 @@ impl ClockCtx {
     }
 
     /// A context for a tick in the FX-closed window.
-    pub fn weekend() -> Self {
+    ///
+    /// Named for the session state rather than the weekend, because the state is
+    /// what the session authority imposes — a holiday closure, should the fence
+    /// ever carry one, is the same `Closed` and not a weekend.
+    pub fn closed() -> Self {
         Self {
             session: FxSession::Closed,
         }
@@ -178,7 +182,25 @@ impl Legs {
     /// division are stated once. The consumer's copy had already drifted into
     /// re-implementing the crate's leg gating alongside the arithmetic, which is
     /// the shape this crate exists to prevent.
-    pub fn observed_basis(&self, stale: LegStaleness, dispersion_frac: f64) -> Option<f64> {
+    ///
+    /// **Takes the session, and observes nothing unless the market is open.**
+    /// Without it this was a clock-free path around the fence: on a shut market
+    /// a grid venue keeps printing indicative FX, so the legs still resolve and
+    /// the quotient looks like a basis — one [`FairValueEngine::compose`] would
+    /// never have formed, since it empties the FX leg first. A consumer latching
+    /// on its first observation would then spend that one shot on a weekend
+    /// print. An unestablished session is refused for the same reason the
+    /// composition pauses on it: whether the FX reading describes a trading
+    /// market is exactly what is not known.
+    pub fn observed_basis(
+        &self,
+        clock: ClockCtx,
+        stale: LegStaleness,
+        dispersion_frac: f64,
+    ) -> Option<f64> {
+        if clock.session != FxSession::Open {
+            return None;
+        }
         let fx = self.fx.resolve(stale, dispersion_frac).reading?;
         let crypto = self.crypto_usdc.resolve(stale, dispersion_frac).reading?;
         observed_basis(crypto.value, fx.value)
@@ -624,26 +646,26 @@ impl FairValueEngine {
         // where the knowledge actually lives.
         //
         // The legs are still resolved and reported, because an operator
-        // diagnosing a dark fence needs to see what the feeds were doing. The
-        // fusion estimators are deliberately *not* advanced: folding readings
+        // diagnosing a dark fence needs to see what the feeds were doing — the
+        // peg leg included, since a USDC depeg during a fence outage is still a
+        // depeg, and a paused tick that reported `usdc_breach: false` would say
+        // the peg was sound when nobody had looked.
+        //
+        // The fusion estimators are **coasted, not updated**. Folding readings
         // whose session is unknown is how an outage would corrupt the estimate
-        // the composition prices off once the fence recovers.
-        //
-        // KNOWN GAP, and it belongs to whoever gives this arm a producer.
-        // Skipping the update also skips `Fusion::predict`, so the filters do not
-        // age across an outage and the prior returns from one carrying its
-        // pre-outage VARIANCE — fresh readings are then under-weighted against a
-        // stale prior. Nothing constructs [`FxSession::Unknown`] yet, so the arm
-        // is unreachable and the gap is latent.
-        //
-        // The remedy is deliberately NOT "call `update` from here": `predict`
-        // advances the state estimate as well as widening variance, so feeding a
-        // long outage's `dt` through it would move the mean on zero observations,
-        // which is not obviously safer than freezing it. What is wanted is
-        // variance inflation proportional to the outage, applied on recovery.
-        // Wiring a real session authority must land that first, or this goes live.
+        // the composition prices off once the fence recovers, so no reading
+        // enters. But the outage still elapses: skipping the filters outright
+        // would return them from it carrying their pre-outage variance, and
+        // fresh readings would then be under-weighted against a prior far less
+        // certain than it claims. `Fusion::coast` widens the variance for the
+        // elapsed time and leaves the mean where it was — the prediction is a
+        // random walk, so zero observations move nothing.
         if !clock.session.is_known() {
+            self.fx_fusion.coast(dt);
+            self.crypto_fusion.coast(dt);
+            let usdc = legs.usdc_usd.resolve(stale, dispersion);
             let mut out = FairValue::of(Regime::Paused, Anchor::None, None);
+            out.usdc_breach = self.usdc_breach(&legs, &usdc);
             out.fx_leg = legs.fx.resolve(stale, dispersion).into();
             out.crypto_leg = legs.crypto_usdc.resolve(stale, dispersion).into();
             return out;
@@ -760,28 +782,7 @@ impl FairValueEngine {
         // consensus that resolves to nothing would silence the guard exactly
         // when it should fire.
         let (fx, crypto) = (fx_leg.reading, crypto_leg.reading);
-
-        // The USDC/USD common-mode guard is regime-independent: a depeg moves
-        // every market's basis at once, so it is evaluated wherever a live
-        // USDC/USD reading exists (§1 fm1).
-        //
-        // It reads the **candidates**, not the consensus, and that distinction is
-        // the whole point. This leg is structurally the most fragile on the
-        // roster — exactly two sources, neither designated, so unlike the FX leg
-        // it has no designation to break a tie — and disagreement is not an edge
-        // case for it, it is *what a depeg looks like* when one venue prints spot
-        // and the other lags. Reading the consensus would mean a dispersed pair
-        // resolves to nothing, `usdc` is `None`, and the guard reports no breach
-        // at exactly the moment it exists to fire. So: any healthy reading
-        // outside the band raises it, and a leg whose sources cannot agree raises
-        // it too — a guard that cannot establish the peg must not report the peg
-        // as sound.
-        let usdc_out_of_band = |v: f64| v < self.cfg.usdc_low || v > self.cfg.usdc_high;
-        let usdc_breach = legs
-            .usdc_usd
-            .healthy_values(self.cfg.leg_stale)
-            .any(usdc_out_of_band)
-            || usdc_leg.state == ConsensusState::Dispersed;
+        let usdc_breach = self.usdc_breach(legs, &usdc_leg);
 
         // `since_basis` accumulates here and is only reset when the EMA folds an
         // observation, which a pinned market never reaches. That is harmless
@@ -956,6 +957,30 @@ impl FairValueEngine {
         }
     }
 
+    /// The USDC/USD common-mode guard (§1 fm1). Regime-independent, and
+    /// session-independent too: a depeg moves every market's basis at once
+    /// whether or not the FX market is trading, so it is evaluated wherever a
+    /// live USDC/USD reading exists — including on a tick that pauses because
+    /// the session could not be established.
+    ///
+    /// It reads the **candidates**, not the consensus, and that distinction is
+    /// the whole point. This leg is structurally the most fragile on the
+    /// roster — exactly two sources, neither designated, so unlike the FX leg
+    /// it has no designation to break a tie — and disagreement is not an edge
+    /// case for it, it is *what a depeg looks like* when one venue prints spot
+    /// and the other lags. Reading the consensus would mean a dispersed pair
+    /// resolves to nothing and the guard reports no breach at exactly the
+    /// moment it exists to fire. So: any healthy reading outside the band
+    /// raises it, and a leg whose sources cannot agree raises it too — a guard
+    /// that cannot establish the peg must not report the peg as sound.
+    fn usdc_breach(&self, legs: &Legs, usdc_leg: &Consensus) -> bool {
+        let usdc_out_of_band = |v: f64| v < self.cfg.usdc_low || v > self.cfg.usdc_high;
+        legs.usdc_usd
+            .healthy_values(self.cfg.leg_stale)
+            .any(usdc_out_of_band)
+            || usdc_leg.state == ConsensusState::Dispersed
+    }
+
     /// The carried basis, if it is both seeded **and** within its age bound.
     ///
     /// The crate bounds the age of every input leg and, until this existed,
@@ -1070,10 +1095,11 @@ fn fused_into(mut leg: Consensus, fusion: &FusionReport) -> Consensus {
 /// `(token/USDC) ÷ (fiat/USD)`, in the units §1 defines. `None` when the anchor
 /// is not a usable divisor or the result is not finite.
 ///
-/// Exported so the consumer's first-basis wiring check bands the same quantity
-/// the engine does, rather than re-deriving it — the duplicate it replaces had
-/// already drifted into re-implementing the crate's leg gating alongside it.
-pub fn observed_basis(crypto_usdc: f64, fx: f64) -> Option<f64> {
+/// Crate-private on purpose. A consumer's observation goes through
+/// [`Legs::observed_basis`], which takes the session; exporting the bare
+/// quotient too would leave a clock-free path around the fence for a caller
+/// that only wanted the arithmetic.
+pub(crate) fn observed_basis(crypto_usdc: f64, fx: f64) -> Option<f64> {
     if !fx.is_finite() || fx <= 0.0 || !crypto_usdc.is_finite() {
         return None;
     }
@@ -1276,7 +1302,7 @@ mod tests {
             usdc_usd: Candidates::none(),
             static_usd: 1.14,
         };
-        let r = e.compose(legs, secs(5), ClockCtx::weekend());
+        let r = e.compose(legs, secs(5), ClockCtx::closed());
         assert_eq!(r.regime, Regime::CryptoOnly);
         assert_eq!(r.anchor, Anchor::CryptoReference);
         assert_eq!(r.health, Health::Ok);
@@ -1315,7 +1341,7 @@ mod tests {
         // Shut, the same reading is withdrawn, so the leg empties and the existing
         // crypto-only arm takes over — structurally healthy, not a degrade.
         let mut e = engine();
-        let shut = e.compose(legs(), secs(5), ClockCtx::weekend());
+        let shut = e.compose(legs(), secs(5), ClockCtx::closed());
         assert_eq!(shut.regime, Regime::CryptoOnly);
         assert_eq!(shut.anchor, Anchor::CryptoReference);
         assert_eq!(shut.health, Health::Ok);
@@ -1347,7 +1373,7 @@ mod tests {
             usdc_usd: Candidates::none(),
             static_usd: 1.14,
         };
-        let r = e.compose(legs, secs(5), ClockCtx::weekend());
+        let r = e.compose(legs, secs(5), ClockCtx::closed());
         assert_eq!(
             r.anchor,
             Anchor::CryptoReference,
@@ -1389,6 +1415,47 @@ mod tests {
             r.fx_leg.n > 0,
             "the paused tick must still report what the FX leg resolved to"
         );
+    }
+
+    /// A fence outage still elapses for the filters. The engine that sat through
+    /// one returns less certain than a twin that did not, so its first fresh
+    /// reading is weighted as the evidence it is rather than against a prior
+    /// still claiming its pre-outage precision.
+    #[test]
+    fn an_unestablished_session_inflates_the_fused_variance() {
+        let legs = || Legs {
+            fx: src(fresh(1.10)),
+            crypto_usdc: src(fresh(1.14)),
+            usdc_usd: Candidates::none(),
+            static_usd: 1.14,
+        };
+        let mut outage = engine();
+        outage.compose(legs(), secs(5), ClockCtx::in_session());
+        let mut twin = outage.clone();
+
+        outage.compose(legs(), secs(3_600), ClockCtx::unknown());
+        let recovered = outage.compose(legs(), Duration::ZERO, ClockCtx::in_session());
+        let steady = twin.compose(legs(), Duration::ZERO, ClockCtx::in_session());
+
+        assert!(recovered.fx_fusion.variance > steady.fx_fusion.variance);
+        assert!(recovered.crypto_fusion.variance > steady.crypto_fusion.variance);
+    }
+
+    /// The common-mode guard does not go quiet because the session did. A
+    /// depeg during a fence outage is still a depeg, and a paused tick that
+    /// reported none would tell the operator the peg had been checked.
+    #[test]
+    fn an_unestablished_session_still_reports_a_usdc_breach() {
+        let mut e = engine();
+        let legs = Legs {
+            fx: src(fresh(1.10)),
+            crypto_usdc: src(fresh(1.14)),
+            usdc_usd: src(fresh(0.80)),
+            static_usd: 1.14,
+        };
+        let r = e.compose(legs, secs(5), ClockCtx::unknown());
+        assert_eq!(r.regime, Regime::Paused);
+        assert!(r.usdc_breach);
     }
 
     /// The fail-closed default: a context nobody filled in pauses rather than
@@ -1854,7 +1921,7 @@ mod tests {
                 static_usd: 0.0573,
             },
             secs(5),
-            ClockCtx::weekend(),
+            ClockCtx::closed(),
         );
         assert_eq!(r.anchor, Anchor::Static);
         assert_eq!(r.fair, Some(0.0573));
@@ -1884,13 +1951,14 @@ mod tests {
     #[test]
     fn a_basis_is_observable_only_when_both_legs_are_live_and_fresh() {
         let stale = LegStaleness::uniform(secs(300));
+        let open = ClockCtx::in_session();
         let base = Legs {
             fx: src(fresh(0.0573)),
             crypto_usdc: src(fresh(0.0573)),
             usdc_usd: src(fresh(1.0)),
             static_usd: 0.0573,
         };
-        assert_eq!(base.observed_basis(stale, BAND), Some(1.0));
+        assert_eq!(base.observed_basis(open, stale, BAND), Some(1.0));
 
         // Either leg missing — nothing to observe yet.
         assert_eq!(
@@ -1898,7 +1966,7 @@ mod tests {
                 fx: Candidates::none(),
                 ..base
             }
-            .observed_basis(stale, BAND),
+            .observed_basis(open, stale, BAND),
             None
         );
         assert_eq!(
@@ -1906,7 +1974,7 @@ mod tests {
                 crypto_usdc: Candidates::none(),
                 ..base
             }
-            .observed_basis(stale, BAND),
+            .observed_basis(open, stale, BAND),
             None
         );
         // A leg present but stale is not a reading.
@@ -1915,7 +1983,7 @@ mod tests {
                 fx: src(Reading::new(0.0573, secs(600))),
                 ..base
             }
-            .observed_basis(stale, BAND),
+            .observed_basis(open, stale, BAND),
             None
         );
         // A non-positive anchor would divide by zero.
@@ -1924,7 +1992,7 @@ mod tests {
                 fx: src(fresh(0.0)),
                 ..base
             }
-            .observed_basis(stale, BAND),
+            .observed_basis(open, stale, BAND),
             None
         );
         // The thin-market shape that motivated this work: a basis near 0.53.
@@ -1932,9 +2000,25 @@ mod tests {
             crypto_usdc: src(fresh(0.03064)),
             ..base
         }
-        .observed_basis(stale, BAND)
+        .observed_basis(open, stale, BAND)
         .unwrap();
         assert!((observed - 0.5347).abs() < 1e-3, "observed {observed}");
+    }
+
+    /// The observation is fenced exactly as the composition is: with both legs
+    /// live and fresh, a shut or unestablished session still observes nothing,
+    /// because the FX reading may be a grid venue's indicative print.
+    #[test]
+    fn a_basis_is_not_observable_outside_an_open_session() {
+        let stale = LegStaleness::uniform(secs(300));
+        let legs = Legs {
+            fx: src(fresh(0.0573)),
+            crypto_usdc: src(fresh(0.0573)),
+            usdc_usd: src(fresh(1.0)),
+            static_usd: 0.0573,
+        };
+        assert_eq!(legs.observed_basis(ClockCtx::closed(), stale, BAND), None);
+        assert_eq!(legs.observed_basis(ClockCtx::unknown(), stale, BAND), None);
     }
 
     #[test]
@@ -2000,7 +2084,7 @@ mod tests {
                 ..normal(1.14)
             },
             secs(5),
-            ClockCtx::weekend(),
+            ClockCtx::closed(),
         );
         assert_eq!(r.regime, Regime::CryptoOnly);
         assert_eq!(r.health, Health::Ok);
@@ -2046,7 +2130,7 @@ mod tests {
                 ..normal(1.14)
             },
             secs(5),
-            ClockCtx::weekend(),
+            ClockCtx::closed(),
         );
         assert_eq!(r.regime, Regime::Uncorroborated);
         assert_eq!(r.health, Health::Unverified);
@@ -2406,7 +2490,7 @@ mod tests {
                 ..normal(1.14)
             },
             secs(5),
-            ClockCtx::weekend(),
+            ClockCtx::closed(),
         );
         assert_eq!(r.regime, Regime::Degraded(Degrade::LegDispersed));
         assert_eq!(
@@ -2591,7 +2675,7 @@ mod tests {
                     fx: Candidates::none(),
                     ..normal(1.02)
                 },
-                ClockCtx::weekend(),
+                ClockCtx::closed(),
             ),
             (
                 Legs {
