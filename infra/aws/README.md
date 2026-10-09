@@ -339,10 +339,10 @@ working key:
 should list only `dropset-bedrock-invoke` — plus, after a spend-cap
 trip, `dropset-bedrock-spend-cap-deny` (see "Daily spend cap" below).
 That one is the expected exception: it only removes access, and its
-`AttachUserPolicy` event in CloudTrail is made by the stack's
-`SpendKillFunctionRole`, not by a person. A rotation that skips the
-check would leave a re-widened identity out of step with what this
-template declares, and nothing else would report it.
+`AttachUserPolicy` event in CloudTrail is made by an assumed role whose
+generated name contains `SpendKillFunctionRole`, not by a person. A
+rotation that skips the check would leave a re-widened identity out of
+step with what this template declares, and nothing else would report it.
 
 Verify it from the command line with the same two reads, remembering the
 region:
@@ -610,7 +610,21 @@ and every agent call fails with an access-denied error. The alarm email
 is not proof the block landed — a failed attach is retried twice and
 then dropped silently — so confirm with
 `aws iam list-attached-user-policies --user-name dropset-bedrock-agent`.
-Look at what tripped it, then detach:
+
+Look at what tripped it before anything else. Right after a trip the
+rolling window still holds the spend that tripped it, so the estimate is
+**still over the cap for up to 24 hours**. That decides how to resume:
+
+1. **To wait it out**, do nothing; agents stay blocked. Once the
+   estimate has dropped back under the cap, detach and re-arm (both
+   commands below).
+
+1. **To resume now, while still over the cap**, raise the cap
+   (`SpendCapUsd`) or disarm (below) first, then detach. Detaching
+   without one of those is not a resume: re-arming re-trips within about
+   a minute, and *not* re-arming leaves the cap off (next point).
+
+Detach:
 
 ```sh
 aws iam detach-user-policy \
@@ -618,20 +632,19 @@ aws iam detach-user-policy \
   --policy-arn arn:aws:iam::<account-id>:policy/dropset-bedrock-spend-cap-deny
 ```
 
-**Detaching alone leaves the cap OFF.** The rolling window still holds
-the spend that tripped it, so the alarm stays in ALARM, and alarm
-actions fire only on a transition into ALARM. While it stays there
-nothing re-blocks and no alarm emails — and at a steady rate at or above
-the cap, it never leaves. So re-arm it straight after the detach:
+Re-arm:
 
 ```sh
 aws cloudwatch set-alarm-state --alarm-name dropset-bedrock-spend-cap \
   --state-value OK --state-reason 'Re-armed after a manual resume'
 ```
 
-The next evaluation, within about a minute, re-trips it if the estimate
-is still over the cap. To keep agents running while over the cap on
-purpose, disarm instead (below).
+**A detach without the re-arm leaves the cap OFF.** The alarm is still
+in ALARM, and alarm actions fire only on a transition into ALARM. So
+while it stays there nothing re-blocks and no alarm emails, and at a
+steady rate at or above the cap it never leaves. The re-arm forces the
+transition: the next evaluation, within about a minute, re-trips if the
+estimate is over the cap and otherwise stays armed.
 
 **Disarming.** Set `SpendKillSwitchEnabled` to `false` **in the
 committed parameter file** and redeploy. A one-off console or CLI
@@ -640,8 +653,8 @@ re-arms it — the same holds for `SpendCapUsd`. All four alarms keep
 emailing, but the cap blocks nothing. A deny policy that is already
 attached stays attached; detach it as above. Re-arming by setting the
 value back to `true` takes effect only on the alarm's next transition,
-so follow it with the `set-alarm-state` call above if the alarm is
-already in ALARM. Before deleting the stack, or changing
+so once the estimate is under the cap, follow it with the re-arm call
+above. Before deleting the stack, or changing
 `EnvironmentName` (which renames the policy), detach the policy by hand,
 since CloudFormation cannot delete an attached managed policy.
 
