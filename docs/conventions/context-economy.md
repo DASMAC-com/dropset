@@ -242,12 +242,23 @@ which are reported but never capped.
 
 Files already over a cap are **frozen** in `cfg/skill-size-baseline.json`
 at their size on admission, each naming the issue that retires it. A
-frozen file may not grow by a byte; `--write` only lowers a ceiling or
-drops a retired entry, and admitting a new exception (`--admit`) must name
-an issue. **A raised ceiling is a blocking review finding** — `--write`
-cannot raise one, so a raise was hand-edited. A newly admitted ceiling
-is a warning the review surfaces with its retiring issue, so the
-operator sees every new exception.
+frozen file may not grow past its ceiling; `--write` only lowers a
+ceiling or drops a retired entry, and admitting a new exception
+(`--admit`) must name an issue. **A lowered ceiling carries 10 percent
+headroom** — `--write` sets it to `ceil(size × 1.10)`, never above the
+old one — so a compressed file does not land at 100 percent and leave
+the next writer on it nothing; growth within that headroom is paid from
+it, never by a raise. **A raised ceiling is a blocking review finding**
+— `--write` cannot raise one, so a raise was hand-edited. A newly
+admitted ceiling is a warning the review surfaces with its retiring
+issue, so the operator sees every new exception.
+
+`make skill-size ARGS=--utilization` prints size, limit and percent per
+subject and exits nonzero naming every one above the **95 percent watch
+threshold** — above the 90.9 percent a file reads just after the
+ratchet lowers its ceiling, so it flags once about half that headroom is
+spent. No hook runs it yet; once a pass does, a flagged file becomes a
+compression task through the normal meta filing flow.
 
 The memory index lives under the home directory, which CI does not
 have, so its cap runs in the **local tier**: `.claude/tools/memory_audit.py`

@@ -23,19 +23,26 @@ skill injections and flags one outside 3.5–4.5, the signal to revisit them. A
 rendered ``.claude/shared/`` region counts in full:
 rendering solves sync, not size.
 
-**One cap, frozen exceptions, no ratchet schedule.** A committed baseline
+**One cap, frozen exceptions, a headroom ratchet.** A committed baseline
 (``cfg/skill-size-baseline.json``) names every subject over its cap with a
-``ceiling`` equal to its size when it was admitted and the issue that retires
-it. ``--check`` fails any subject larger than the **greater** of cap and
-ceiling, so an over-cap file cannot grow by a byte and an under-cap file — a
-stale entry's included — may grow to the cap. (The filing said "lesser", which
-would fail every frozen exception on enable day; the two behaviors it
-describes need the greater.) ``--write`` only ever *lowers* a ceiling (to the
-current size) or drops an entry whose subject is under its cap or gone; it
-never raises one and never adds one. Admitting a new exception is a separate,
-explicit act (``--admit``) that must name its retiring issue, and a review
-surfaces each one; a *raised* ceiling is a blocking review finding, since only a
-hand edit can produce one.
+``ceiling`` and the issue that retires it. ``--check`` fails any subject larger
+than the **greater** of cap and ceiling, so an over-cap file cannot grow past
+its ceiling and an under-cap file may grow to the cap (or to a stale entry's
+higher ceiling, which ``--check`` notes until ``--write`` drops it). (The
+filing said "lesser", which would fail every frozen exception on enable day;
+the two behaviors it describes need the greater.) ``--write`` only ever
+*lowers* a ceiling — to ``ceil(size × 1.10)``, never above the old one — or
+drops an entry whose subject is under its cap or gone; it never raises
+one and never adds one. The 10 percent is **headroom**: a ceiling written at
+the shrunk size would leave every compressed file at 100 percent, and the next
+writer on it nothing. Admitting a new exception is a separate, explicit act
+(``--admit``, at the current size) that must name its retiring issue, and a
+review surfaces each one; a *raised* ceiling is a blocking review finding,
+since only a hand edit can produce one.
+
+``--utilization`` prints size, limit and percent for every subject and exits
+nonzero listing each one above the watch threshold, so a file nearing its
+limit becomes a compression task before it blocks a commit.
 
 Stdlib only. This is a Python skill-tool under ``.claude/tools/`` — deliberately
 **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
@@ -53,6 +60,13 @@ from typing import NamedTuple
 ENTRY_CAP = 32_000
 DESCRIPTION_CAP = 1_024
 PROJECT_CAP = 32_000
+
+# `--write` sets a lowered ceiling this many percent above the current size.
+HEADROOM_PERCENT = 10
+# `--utilization` flags a subject above this percent of its limit. Above
+# 100 / 1.10 ≈ 90.9, so a file whose ceiling the ratchet just lowered reads
+# clean; it flags once about half that headroom is spent.
+WATCH_PERCENT = 95
 
 PROJECT_FILE = "CLAUDE.md"
 SKILLS_DIR = ".claude/skills"
@@ -75,6 +89,11 @@ class Subject(NamedTuple):
     key: str
     size: int
     cap: int
+
+
+def headroom_ceiling(size: int) -> int:
+    """``ceil(size × (1 + HEADROOM_PERCENT / 100))``, in integer arithmetic."""
+    return -(-size * (100 + HEADROOM_PERCENT) // 100)
 
 
 def description_value(text: str) -> str | None:
@@ -189,8 +208,10 @@ def check(
     A failure is a subject over its limit, an over-cap ceiling naming no
     retiring issue, or an entry naming a subject that no longer exists
     (malformed entries are reported by ``load_baseline``). A notice is an entry
-    whose subject is now below its ceiling — harmless (the slack can be
-    regrown, but never past the ceiling), and cleared by ``--write``.
+    ``--write`` would change: one whose subject is now within its cap (dropped),
+    or whose ceiling is above the headroom ceiling of its current size
+    (lowered). Both are harmless until then — the slack can be regrown, but
+    never past the ceiling.
     """
     failures: list[str] = []
     notices: list[str] = []
@@ -223,10 +244,16 @@ def check(
             failures.append(
                 f"{subject.key}: {subject.size:,} bytes > {limit:,} ({why})"
             )
-        elif entry is not None and subject.size < ceiling:
+        elif entry is not None and subject.size <= subject.cap:
             notices.append(
-                f"{subject.key}: {subject.size:,} bytes, below its baseline "
-                "ceiling — run --write to tighten it"
+                f"{subject.key}: {subject.size:,} bytes, within its "
+                f"{subject.cap:,} cap — run --write to drop its baseline entry"
+            )
+        elif entry is not None and headroom_ceiling(subject.size) < ceiling:
+            notices.append(
+                f"{subject.key}: {subject.size:,} bytes, more than "
+                f"{HEADROOM_PERCENT}% below its baseline ceiling — run --write "
+                "to tighten it"
             )
     return failures, notices
 
@@ -234,10 +261,11 @@ def check(
 def write(subjects: list[Subject], exceptions: dict[str, dict]) -> dict[str, dict]:
     """Tighten the baseline: lower ceilings, drop entries no longer needed.
 
-    Drops an entry whose subject is within its cap or no longer exists. Never
-    raises a ceiling and never adds an entry. A subject that has grown
-    past its ceiling keeps the old one, so ``--check`` keeps failing it — the
-    fix is to shrink the file, not to re-baseline it.
+    A lowered ceiling is the headroom ceiling of the current size, so a shrink
+    leaves room for the next writer. Drops an entry whose subject is within its
+    cap or no longer exists. Never raises a ceiling and never adds an entry. A
+    subject that has grown past its ceiling keeps the old one, so ``--check``
+    keeps failing it — the fix is to shrink the file, not to re-baseline it.
     """
     by_key = {subject.key: subject for subject in subjects}
     tightened: dict[str, dict] = {}
@@ -246,7 +274,7 @@ def write(subjects: list[Subject], exceptions: dict[str, dict]) -> dict[str, dic
         if subject is None or subject.size <= subject.cap:
             continue
         tightened[key] = {
-            "ceiling": min(entry["ceiling"], subject.size),
+            "ceiling": min(entry["ceiling"], headroom_ceiling(subject.size)),
             "issue": entry["issue"],
         }
     return tightened
@@ -327,6 +355,34 @@ def report(root: Path, subjects: list[Subject], show_all: bool) -> list[str]:
     return lines
 
 
+def utilization(
+    subjects: list[Subject], exceptions: dict[str, dict]
+) -> tuple[list[str], list[str]]:
+    """Return ``(lines, flagged)``: every subject's use of its limit, and the
+    keys above ``WATCH_PERCENT``.
+
+    The limit is the one ``--check`` enforces, the greater of cap and
+    ceiling. Lines run highest percent first.
+    """
+    rows: list[tuple[float, str, Subject, int]] = []
+    for subject in subjects:
+        entry = exceptions.get(subject.key)
+        limit = max(subject.cap, entry["ceiling"] if entry else 0)
+        rows.append((100 * subject.size / limit, subject.key, subject, limit))
+    rows.sort(key=lambda row: (-row[0], row[1]))
+    lines: list[str] = []
+    flagged: list[str] = []
+    for percent, key, subject, limit in rows:
+        over = percent > WATCH_PERCENT
+        if over:
+            flagged.append(key)
+        lines.append(
+            f"{'!' if over else ' '} {percent:5.1f}%  {subject.size:>9,} / "
+            f"{limit:>9,}  {key}"
+        )
+    return lines, flagged
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="skill_size.py",
@@ -341,6 +397,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     mode.add_argument(
         "--report", action="store_true", help="per-skill sizes, siblings included"
+    )
+    mode.add_argument(
+        "--utilization",
+        action="store_true",
+        help=f"size / limit per subject; fail on any above {WATCH_PERCENT}%%",
     )
     parser.add_argument(
         "--admit",
@@ -369,6 +430,24 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     exceptions, baseline_errors = load_baseline(baseline_path)
+    if args.utilization:
+        if baseline_errors:
+            for error in baseline_errors:
+                print(f"skill-size: {error}", file=sys.stderr)
+            return 2
+        lines, flagged = utilization(subjects, exceptions)
+        print("\n".join(lines))
+        if not flagged:
+            return 0
+        print(
+            f"skill-size: {len(flagged)} subject(s) above {WATCH_PERCENT}% "
+            "of their limit:",
+            file=sys.stderr,
+        )
+        for key in flagged:
+            print(f"skill-size:   {key}", file=sys.stderr)
+        return 1
+
     if args.write:
         if baseline_errors:
             for error in baseline_errors:
