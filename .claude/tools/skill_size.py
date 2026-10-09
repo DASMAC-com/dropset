@@ -25,11 +25,12 @@ rendering solves sync, not size.
 (``cfg/skill-size-baseline.json``) names every subject over its cap with a
 ``ceiling`` and the issue that retires it. ``--check`` fails any subject larger
 than the **greater** of cap and ceiling, so an over-cap file cannot grow past
-its ceiling and an under-cap file — a stale entry's included — may grow to the
-cap. (The filing said "lesser", which would fail every frozen exception on
-enable day; the two behaviors it describes need the greater.) ``--write`` only
-ever *lowers* a ceiling — to ``ceil(size × 1.10)``, never below the old one
-— or drops an entry whose subject is under its cap or gone; it never raises
+its ceiling and an under-cap file may grow to the cap (or to a stale entry's
+higher ceiling, which ``--check`` notes until ``--write`` drops it). (The
+filing said "lesser", which would fail every frozen exception on enable day;
+the two behaviors it describes need the greater.) ``--write`` only ever
+*lowers* a ceiling — to ``ceil(size × 1.10)``, never above the old one — or
+drops an entry whose subject is under its cap or gone; it never raises
 one and never adds one. The 10 percent is **headroom**: a ceiling written at
 the shrunk size would leave every compressed file at 100 percent, and the next
 writer on it nothing. Admitting a new exception is a separate, explicit act
@@ -61,8 +62,8 @@ PROJECT_CAP = 32_000
 # `--write` sets a lowered ceiling this many percent above the current size.
 HEADROOM_PERCENT = 10
 # `--utilization` flags a subject above this percent of its limit. Above
-# 100 / 1.10 ≈ 90.9, so a freshly ratcheted file reads clean; it flags once
-# about half its headroom is spent.
+# 100 / 1.10 ≈ 90.9, so a file whose ceiling the ratchet just lowered reads
+# clean; it flags once about half that headroom is spent.
 WATCH_PERCENT = 95
 
 PROJECT_FILE = "CLAUDE.md"

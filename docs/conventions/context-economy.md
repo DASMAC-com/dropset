@@ -255,10 +255,10 @@ issue, so the operator sees every new exception.
 
 `make skill-size ARGS=--utilization` prints size, limit and percent per
 subject and exits nonzero naming every one above the **95 percent watch
-threshold** — above the 90.9 percent a fresh ratchet reads, so it flags
-once about half the headroom is spent. No hook runs it yet; once a
-pass does, a flagged file becomes a compression task through the normal
-meta filing flow.
+threshold** — above the 90.9 percent a file reads just after the
+ratchet lowers its ceiling, so it flags once about half that headroom is
+spent. No hook runs it yet; once a pass does, a flagged file becomes a
+compression task through the normal meta filing flow.
 
 The memory index lives under the home directory, which CI does not
 have, so its cap runs in the **local tier**: `.claude/tools/memory_audit.py`
