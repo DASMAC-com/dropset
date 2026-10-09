@@ -22,7 +22,7 @@
 # No `folder`, on purpose: everything in this instance is Dropset's, so a
 # folder is only one more click between the menu and every dashboard. Alert
 # rules must live in a folder, so `provisioning/alerting/maker.yml` still
-# creates `Dropset`; it sits beside the dashboards, empty of them. That is
+# creates `Alert rules`; it sits beside the dashboards, empty of them. That is
 # expected: alerts are read from the Alerting page, not the dashboard list.
 apiVersion: 1
 providers:

@@ -40,9 +40,16 @@
 # single-row query — a threshold applied straight to a table frame is not
 # evaluated per series, and it is the per-series behavior the four
 # multi-dimensional rules depend on (one per feed, three per market).
+#
+# THE FOLDER IS NAMED FOR WHAT IT HOLDS. Grafana requires every alert rule to
+# live in a folder, and the dashboards deliberately have none, so this folder
+# is the only one in the dashboard list and it is always empty of dashboards.
+# Naming it after the product read as a stray empty dashboard folder; naming
+# it after its contents says why it is there. Renaming it is safe: the store
+# has no volume, so the old folder goes with the container on recreate.
 apiVersion: 1
 groups:
-- folder: 'Dropset'
+- folder: 'Alert rules'
   # A minute, against a 5 s tick: fast enough that the operator learns of a
   # dead maker within a minute of its `for` elapsing, slow enough that the
   # five queries here are nothing beside the ingestion load on the same box.
