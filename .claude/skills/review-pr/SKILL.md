@@ -637,10 +637,10 @@ without eight agents and ~2.9M of sub-agent input.
    **Bound every lens; the template carries the wording.** In the
    per-lens half, state:
 
-   - **The scope line, verbatim**: \*"adjudicate from the provided diff
-     - excerpts; cold-read only a file no excerpt covers."\* The
-       freshness lenses take their positive scope instead of the
-       template's negative one.
+   - **The scope line, verbatim**:
+     *"adjudicate from the provided diff + excerpts; cold-read only a
+     file no excerpt covers."* The freshness lenses take their positive
+     scope instead of the template's negative one.
    - **A cap in turns AND tool calls, called a hard stop** — *"≤ 6
      turns / ≤ 8 tool calls, hard stop"* — in **every** brief, not one
      lens's. A turn is not a unit an agent can count, and a soft "≈6"
