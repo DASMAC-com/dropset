@@ -255,7 +255,9 @@ the resident-size gate (`docs/conventions/context-economy.md` →
   08c0ae6b, PR #383): a `read_result.py --grep '^[+-][^+-]'` over a
   450-line source slice returned ≈4.7k, rank 3 of that session,
   printing 306 of 447 lines for a question about one file with 31
-  changed lines; a path-limited `git diff` cost a fraction.
+  changed lines — the other ~275 lines were files the main loop had
+  just authored and already held; a path-limited `git diff` cost a
+  fraction.
 - **Phantom deletion.** A newly landed test showed up as a phantom
   deletion after the base moved under the review, and both the
   correctness and completeness lenses independently flagged it as a
@@ -329,7 +331,9 @@ the resident-size gate (`docs/conventions/context-economy.md` →
   treatment. Units: one completeness lens ran 939 seconds and 17 tool
   calls while the rollup scored 7 turns — compliant to the harness, a
   3× overrun to whoever pays. Re-reading files the diff already handed
-  over (`swap.rs`, `matching.rs`) has run one lens past 700k. Not
+  over (`swap.rs`, `matching.rs`) has run one lens past 700k, and lenses
+  re-reading or re-grepping a file each turn have run 197k–469k input
+  apiece — the case for read-once. Not
   solved: four sessions with the verbatim wording and inlined excerpts
   overran anyway — three of six over by exactly one turn in one, and in
   another a byte-identical brief bound completeness (4 turns / 222.5k)
