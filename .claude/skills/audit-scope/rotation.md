@@ -4,9 +4,9 @@
 
 The procedure `audit-scope` follows when invoked with `--rotation N`.
 The entry file (`SKILL.md`) owns everything a rotation shares with a
-scoped run — the dimensions, the cross-check, the linter screen, the
-dedup set, fingerprints, the parked filing call, the body fields, and
-the fold rule. This file owns only what is specific to a rotation.
+scoped run — classification and the dimensions (steps 2–3), the
+cross-check (4), the linter screen (5), the dedup set, fingerprints,
+the parked filing call and body fields (6), and the fold rule (Notes). This file owns only what is specific to a rotation.
 
 A rotation is a fixed sequence of **seven units** — four random files
 plus three structural passes. `N` (default 1) is how many independent
@@ -70,7 +70,7 @@ range over its subject.
    never force or rebase. This is the rotation's one repo operation; it
    pulls in others' merged work and introduces nothing of its own.
 
-1. **Rebuild the dedup set** from live Linear (`SKILL.md` → "Dedup").
+1. **Rebuild the dedup set** from live Linear (`SKILL.md` step 6).
 
 1. **Read the registry** — subsystems (`name (kind, risk): roots`),
    interfaces (`A <-> B: contract`), skip-globs — from
@@ -148,7 +148,7 @@ rationale and the slug, and ends with the self-deflation clause.
 ## Structural cross-check
 
 FILE findings were cross-checked in the engine; SUBSYSTEM / INTERFACE /
-LAYOUT findings get engine step 3 here — a fresh skeptic, re-spawning
+LAYOUT findings get engine step 4 here — a fresh skeptic, re-spawning
 the lens agent to defend or retract on material disagreement, at most 2
 more rounds.
 
