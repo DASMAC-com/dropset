@@ -860,9 +860,17 @@ no further fee accrues to the leader after exit. They differ in
 Either state ends at **Reclaim** (see **Storage layout**): the
 final `Withdraw` that drives `total_shares` to 0 unlinks the vault
 from its current DLL, zeroes `vault.leader` so the emptiness marker
-holds, and pushes the sector onto the free list. The same leader
-pubkey may then `CreateVault` afresh — paying the create-vault fee
-again — on this or any other market.
+holds, and pushes the sector onto the free list.
+
+Re-entry does not wait for Reclaim. `CreateVault`'s
+one-live-vault-per-leader guard counts only vaults that are neither
+frozen nor tombstoned, so the same leader pubkey may `CreateVault`
+afresh — paying the create-vault fee again — as soon as its vault
+enters either state, on this or any other market. (A frozen vault
+still counts toward `active_count`, so on a full market the re-create
+can still fail the `max_vaults_per_market` cap.) Counting them would
+let one stranded depositor, whose draining `Withdraw` is what triggers
+Reclaim, lock the leader out of the market indefinitely.
 
 When the `admin-teardown` Cargo feature is enabled (see **Account
 lifecycle and rent reclamation**), an admin may additionally
@@ -1449,6 +1457,22 @@ otherwise the instruction rejects with `LeaderOverrideNotAllowed`.
 Admins may pass any pubkey; that pubkey is stamped as
 `Vault.leader`. Passing `Address::default()` on the admin path uses
 the admin signer as the leader (same as the non-admin path).
+
+**One live vault per leader per market.** After resolving the leader
+and before charging the fee, the instruction scans the market's slab
+and rejects with `LeaderAlreadyLeadsVault` if any occupied sector that
+is neither frozen nor tombstoned already carries that leader. The scan
+is O(slab) on a cold path: the active set is capped at
+`max_vaults_per_market` (a `u8`), and tombstoned and free sectors add
+to the slab beyond it. The guard is unconditional, so it binds on the
+admin `leader_override` path too. The maker bot keys the fills it
+attributes per market, not per vault, so a second live vault under the
+same leader would silently clobber its inventory accounting; the guard
+makes that routing invariant true by construction. It is per-market
+by design — a global guard would need a per-leader PDA written on
+every create, close and reclaim. Frozen and
+tombstoned vaults do not count (see **Frozen and tombstoned vaults**).
+`CreateVault` stays single-signer.
 
 Side effect: the instruction stamps `Vault.min_leader_share` from the
 market's `MarketHeader.default_min_leader_share` (the skin-in-the-game

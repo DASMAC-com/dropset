@@ -474,16 +474,19 @@ impl Fixture {
         // ATA as sector 0's) isn't a byte-identical, already-processed txn.
         f.svm.expire_blockhash();
 
-        // Sector 1. Its register / seed transactions mirror sector 0's
-        // argument-for-argument; the blockhash bump above is what keeps
-        // them from colliding as already-processed duplicates.
-        f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
+        // Sector 1. A leader leads at most one live vault per market, so
+        // the admin seats a second leader via the override; `authority`
+        // stays its quote authority, so the price / profile stamps mirror
+        // sector 0's. The blockhash bump above keeps those mirrored
+        // transactions from colliding as already-processed duplicates.
+        let leader1 = f.funded_keypair(10 * SIGNER_FUNDING_LAMPORTS);
+        f.create_vault(1, f.authority.pubkey(), false, leader1.pubkey())
             .expect("register vault 1");
         f.set_reference_price(&auth, 1, ref1_bits, 0)
             .expect("ref 1");
         f.set_liquidity_profile(&auth, 1, simple_profile(5_000, 10_000, u32::MAX))
             .expect("profile 1");
-        f.deposit_leader(1, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
+        f.deposit_leader_as(&leader1, 1, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
             .expect("seed 1");
         f
     }

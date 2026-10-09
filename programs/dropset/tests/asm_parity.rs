@@ -57,7 +57,7 @@
 mod common;
 
 use anchor_lang_v2::InstructionData;
-use anchor_v2_testing::Signer;
+use anchor_v2_testing::{Keypair, Signer};
 use common::fixture::{simple_profile, Fixture, PROFILE_BYTES};
 use core::mem::{offset_of, size_of};
 use dropset::asm_offsets::equ;
@@ -364,7 +364,10 @@ fn stamp_write_footprint(mut f: Fixture) -> (Vec<(usize, u8)>, u64) {
     let auth = f.authority.pubkey();
     f.create_vault(0, auth, false, Pubkey::default())
         .expect("create_vault 0");
-    f.create_vault(1, auth, false, Pubkey::default())
+    // A leader leads at most one live vault per market, so sector 1 gets a
+    // second leader; `auth` stays its quote authority, which is what signs
+    // the stamp.
+    f.create_vault(1, auth, false, Keypair::new().pubkey())
         .expect("create_vault 1");
     let signer = f.authority.insecure_clone();
     // Seed sector 0's reference price, so a store that lands one sector low
@@ -613,12 +616,13 @@ fn profile_write_footprint(
     profile: [u8; PROFILE_BYTES],
 ) -> (Vec<(usize, u8)>, u64, Vec<u8>) {
     let auth = f.authority.pubkey();
-    // Two vaults; the slab allocates them into sectors 0 then 1. The
-    // `perf_fee_rate` differs only to keep the two transactions distinct
-    // (identical ones in the same slot are rejected as `AlreadyProcessed`).
+    // Two vaults; the slab allocates them into sectors 0 then 1. A leader
+    // leads at most one live vault per market, so sector 1 gets a second
+    // leader; `auth` stays its quote authority, which is what signs the
+    // writes below.
     f.create_vault(0, auth, false, Pubkey::default())
         .expect("create_vault 0");
-    f.create_vault(1, auth, false, Pubkey::default())
+    f.create_vault(1, auth, false, Keypair::new().pubkey())
         .expect("create_vault 1");
     let signer = f.authority.insecure_clone();
     // Seed sector 0 with a different ladder, so a copy that lands one sector

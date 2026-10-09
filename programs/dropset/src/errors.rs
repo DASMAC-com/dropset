@@ -113,4 +113,6 @@ pub enum DropsetError {
     MissingPlatformFeeAccounts,
     #[msg("market still has vaults on the active list")]
     MarketHasActiveVaults,
+    #[msg("leader already leads a live (not frozen, not tombstoned) vault on this market")]
+    LeaderAlreadyLeadsVault,
 }
