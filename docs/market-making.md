@@ -1191,6 +1191,17 @@ zero is the interesting case, not an empty one: that source answered and
 was **trimmed**. A source that stopped answering leaves a gap instead,
 so the two are distinguishable on sight.
 
+The card also draws the fair-value estimator's published fair from
+`fair_price`, which is the one line on it that does not depend on the
+maker. The estimator is a separate process that composes the same way,
+so on a stack with a maker the two lines should agree, and on a
+collectors-only stack the estimator line is all that renders. A static
+fallback print gets its own `static peg` series overlaying that line, so
+the 1.14 EURC constant an estimator publishes against an empty store
+reads as the fallback rather than as a composed mid. The Market picker
+lists markets either writer has published, which is what keeps the line
+reachable with no maker running.
+
 Its pickers, Market and Product/Source, are **independent and not
 auto-correlated**. A market is keyed by token symbol (`EURC`) and a feed
 product by pair id (`EUR-USD`); the schema holds no mapping between the
