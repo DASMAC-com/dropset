@@ -1192,10 +1192,11 @@ was **trimmed**. A source that stopped answering leaves a gap instead,
 so the two are distinguishable on sight.
 
 The card also draws the fair-value estimator's published fair from
-`fair_price`, which is the one line on it that does not depend on the
+`fair_price`, the one fair line on it that does not depend on the
 maker. The estimator is a separate process that composes the same way,
-so on a stack with a maker the two lines should agree, and on a
-collectors-only stack the estimator line is all that renders. A static
+so on a stack with a maker the two fair lines should agree, and on a
+collectors-only stack the estimator line and the raw tick scatter are
+what render. A static
 fallback print gets its own `static peg` series overlaying that line, so
 the 1.14 EURC constant an estimator publishes against an empty store
 reads as the fallback rather than as a composed mid. The Market picker
