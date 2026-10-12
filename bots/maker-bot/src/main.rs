@@ -899,6 +899,17 @@ fn mint_pubkey(keypair_file: &str) -> Result<Pubkey> {
         .map_err(|e| anyhow!("read mint key {keypair_file}: {e}"))
 }
 
+/// Unwrap a dry-run tier's one-shot poll, printing the redacted cause on failure.
+/// The tier is still left empty so the cascade proceeds, but an unreachable venue
+/// now reads as unreachable rather than as a venue that answered with nothing.
+fn dry_run_tier<T: Default>(tier: &str, polled: Result<T>) -> T {
+    polled.unwrap_or_else(|e| {
+        let cause = redact_to_origin(&format!("{e:#}"), MAX_ERROR_CHARS);
+        eprintln!("[dry-run] the {tier} poll failed ({cause}) — the tier is empty");
+        T::default()
+    })
+}
+
 /// Poll the tiered feeds once and print the reference each market would stamp.
 /// No validator and no writes — a credentials/cascade check. `--drop` suppresses
 /// a tier so the cascade to the next one is observable.
@@ -915,21 +926,25 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     let markets = args.selected();
     let roster = FeedRoster::for_markets(&markets);
 
-    // Each tier is polled once, and a failed poll is indistinguishable from a
-    // suppressed one here on purpose: both leave the tier empty and let the
-    // cascade below show what still prices.
+    // Each tier is polled once. A failed poll leaves the tier empty, as a
+    // suppressed one does, so the cascade below shows what still prices — but
+    // it says why on stderr, so the two are never mistaken for each other.
     let pyth = if drop("pyth") {
         Default::default()
     } else {
         // Keyless for the same reason as the live path above.
-        rt.block_on(PythHermesSource::new(&cfg.feeds.pyth_base_url, None, roster.pyth)?.poll())
-            .unwrap_or_default()
+        dry_run_tier(
+            "pyth",
+            rt.block_on(PythHermesSource::new(&cfg.feeds.pyth_base_url, None, roster.pyth)?.poll()),
+        )
     };
     let kraken = if drop("kraken") {
         Default::default()
     } else {
-        rt.block_on(KrakenSource::new(&cfg.feeds.kraken_base_url, roster.kraken)?.poll())
-            .unwrap_or_default()
+        dry_run_tier(
+            "kraken",
+            rt.block_on(KrakenSource::new(&cfg.feeds.kraken_base_url, roster.kraken)?.poll()),
+        )
     };
     let mut coinbase: HashMap<String, f64> = HashMap::new();
     if !drop("coinbase") {
@@ -938,7 +953,8 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
         let http = HttpClient::new(&cfg.feeds.coinbase_base_url)?;
         for product in &roster.coinbase {
             let ticker = CoinbaseTicker::from_client(http.clone(), product.clone());
-            if let Ok(Some(price)) = rt.block_on(ticker.poll()) {
+            let polled = rt.block_on(ticker.poll());
+            if let Some(price) = dry_run_tier(&format!("coinbase {product}"), polled) {
                 coinbase.insert(product.clone(), price);
             }
         }
@@ -946,14 +962,22 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     let cg = if drop("coingecko") {
         Default::default()
     } else {
-        rt.block_on(CoinGeckoSource::new(&cfg.feeds.coingecko_base_url, roster.coingecko)?.poll())
-            .unwrap_or_default()
+        dry_run_tier(
+            "coingecko",
+            rt.block_on(
+                CoinGeckoSource::new(&cfg.feeds.coingecko_base_url, roster.coingecko)?.poll(),
+            ),
+        )
     };
     let cmc = if drop("cmc") || roster.coinmarketcap.is_empty() {
         Default::default()
     } else {
-        rt.block_on(CmcSource::new(&cfg.feeds.coinmarketcap_base_url, roster.coinmarketcap)?.poll())
-            .unwrap_or_default()
+        dry_run_tier(
+            "cmc",
+            rt.block_on(
+                CmcSource::new(&cfg.feeds.coinmarketcap_base_url, roster.coinmarketcap)?.poll(),
+            ),
+        )
     };
     // Only the rates are kept: the dry run composes one tick from a single poll,
     // so there is no receipt age to compare a snapshot instant against and no
@@ -961,9 +985,13 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     let erapi = if drop("erapi") {
         Default::default()
     } else {
-        rt.block_on(ErApiSource::new(&cfg.feeds.erapi_base_url, roster.currencies.clone())?.poll())
-            .map(|snap| snap.rates)
-            .unwrap_or_default()
+        dry_run_tier(
+            "erapi",
+            rt.block_on(
+                ErApiSource::new(&cfg.feeds.erapi_base_url, roster.currencies.clone())?.poll(),
+            )
+            .map(|snap| snap.rates),
+        )
     };
     // The store tier. Unlike the live path this tolerates an absent or
     // unreachable database: a dry run is a wiring check, and reporting "no
@@ -1044,10 +1072,12 @@ fn dry_run(cfg: &BotConfig, args: &Args) -> Result<()> {
     let fx = if drop("fx") {
         Default::default()
     } else {
-        rt.block_on(
-            FrankfurterSource::new(&cfg.feeds.frankfurter_base_url, roster.currencies)?.poll(),
+        dry_run_tier(
+            "fx",
+            rt.block_on(
+                FrankfurterSource::new(&cfg.feeds.frankfurter_base_url, roster.currencies)?.poll(),
+            ),
         )
-        .unwrap_or_default()
     };
 
     println!(
@@ -1287,6 +1317,16 @@ mod tests {
             drop: Vec::new(),
             markets: markets.iter().map(|s| s.to_string()).collect(),
         }
+    }
+
+    /// A failed dry-run poll empties its tier rather than aborting the run; a
+    /// successful one passes through untouched.
+    #[test]
+    fn dry_run_tier_empties_a_failed_poll() {
+        let failed: Result<HashMap<String, f64>> = Err(anyhow!("GET https://h/?k=SECRET"));
+        assert!(dry_run_tier("kraken", failed).is_empty());
+        let answered = HashMap::from([("pair".to_string(), 1.0)]);
+        assert_eq!(dry_run_tier("kraken", Ok(answered.clone())), answered);
     }
 
     #[test]
