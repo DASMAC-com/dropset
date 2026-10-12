@@ -900,12 +900,12 @@ fn mint_pubkey(keypair_file: &str) -> Result<Pubkey> {
 }
 
 /// Unwrap a dry-run tier's one-shot poll, printing the redacted cause on failure.
-/// The tier is still left empty so the cascade proceeds, but an unreachable venue
-/// reads as unreachable rather than as a venue that answered with nothing.
+/// The failed poll still contributes nothing so the cascade proceeds, but an
+/// unreachable venue reads as unreachable rather than as one that answered empty.
 fn dry_run_tier<T: Default>(tier: &str, polled: Result<T>) -> T {
     polled.unwrap_or_else(|e| {
         let cause = redact_to_origin(&format!("{e:#}"), MAX_ERROR_CHARS);
-        eprintln!("[dry-run] the {tier} poll failed ({cause}) — the tier is empty");
+        eprintln!("[dry-run] the {tier} poll failed ({cause}) — nothing from it is used");
         T::default()
     })
 }
