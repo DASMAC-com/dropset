@@ -901,7 +901,7 @@ fn mint_pubkey(keypair_file: &str) -> Result<Pubkey> {
 
 /// Unwrap a dry-run tier's one-shot poll, printing the redacted cause on failure.
 /// The tier is still left empty so the cascade proceeds, but an unreachable venue
-/// now reads as unreachable rather than as a venue that answered with nothing.
+/// reads as unreachable rather than as a venue that answered with nothing.
 fn dry_run_tier<T: Default>(tier: &str, polled: Result<T>) -> T {
     polled.unwrap_or_else(|e| {
         let cause = redact_to_origin(&format!("{e:#}"), MAX_ERROR_CHARS);
@@ -1323,7 +1323,7 @@ mod tests {
     /// successful one passes through untouched.
     #[test]
     fn dry_run_tier_empties_a_failed_poll() {
-        let failed: Result<HashMap<String, f64>> = Err(anyhow!("GET https://h/?k=SECRET"));
+        let failed: Result<HashMap<String, f64>> = Err(anyhow!("venue unreachable"));
         assert!(dry_run_tier("kraken", failed).is_empty());
         let answered = HashMap::from([("pair".to_string(), 1.0)]);
         assert_eq!(dry_run_tier("kraken", Ok(answered.clone())), answered);
