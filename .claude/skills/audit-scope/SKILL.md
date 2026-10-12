@@ -48,15 +48,10 @@ with it. If sub-agent tooling is genuinely unavailable,
 the trade `review-pr` deleted its inline path to prevent,
 and never silently skip the fan-out.
 
-**`review-pr` asks and this skill does not, deliberately.**
-It puts one question at its entry approving both "run now"
-and at which tier, and the tier choice is its spawn
-authorization — it asks because it does many things and the
-fan-out is one step, so an operator can reasonably want its
-lint-and-CI half alone. Here the fan-out **is** the
-deliverable and there is no earlier gate to ride, so a
-question would be ceremony. Recorded so the difference does
-not read as an oversight.
+**`review-pr` works the same way.** Invoking it pre-approves
+its regular fan-out; its one entry question exists only to
+offer an abridged tier on a small diff, and an unanswered one
+proceeds at the regular tier.
 
 **This skill is what an audit issue runs.** Auditing reaches
 the board as a first-class Backlog issue filed by a planning

@@ -3,7 +3,7 @@
 
 The preamble was six fixed commands in a fixed order on **every** review —
 ``git fetch origin <base>``, ``git log HEAD..origin/<base>``, the
-``git diff --output`` carrying five generated-family excludes,
+``git diff --output`` carrying the generated-family excludes,
 ``git log origin/<base>..HEAD``, ``git diff --stat``, and a ``wc -l`` — all of
 it pure string/path logic resolving to a mechanical verdict: is the base fresh,
 is the diff non-empty, which files changed, and which gates does that imply?
