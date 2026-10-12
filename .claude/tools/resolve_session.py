@@ -433,6 +433,13 @@ def run(argv: list[str]) -> int:
         else:
             date = datetime.now().strftime("%Y%m%d")
         cycle = args.cycle
+        # Validated like the kind and the date, and for the same reason: a
+        # wrong value still hashes to a well-formed id naming no session.
+        if cycle is not None and (args.daily_id != "plan" or cycle < 0):
+            raise ResolveSessionError(
+                f"--cycle applies only to --daily-id plan and must be >= 0, got "
+                f"{cycle} for {args.daily_id!r} — only planning sessions cycle."
+            )
         if cycle is None:
             cycle = read_cycle(repo, date) if args.daily_id == "plan" else 0
         print(daily_session_id(args.daily_id, date, cycle))

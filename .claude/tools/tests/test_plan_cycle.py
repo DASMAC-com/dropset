@@ -251,8 +251,18 @@ class LiveAndCycleTests(unittest.TestCase):
         # and its pid is now someone else's: the newest entry is ours.
         with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
             sid = rs.daily_session_id("plan", DATE, 0)
-            fx.register(1111, "plan-10", sid, started=100)
-            fx.register(4242, "plan-10", sid, started=200)
+            # The newer client sorts FIRST, so neither first- nor last-file
+            # order can pass for the start-time rule.
+            fx.register(1111, "plan-10", sid, started=200)
+            fx.register(4242, "plan-10", sid, started=100)
+            fx.register(5353, "plan-10", sid, started=150)
+            _, killed = fx.cycle_cli()
+        self.assertEqual(killed, [1111])
+
+    def test_a_malformed_start_time_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            sid = rs.daily_session_id("plan", DATE, 0)
+            fx.register(4242, "plan-10", sid, started="soon")
             _, killed = fx.cycle_cli()
         self.assertEqual(killed, [4242])
 

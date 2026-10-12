@@ -457,7 +457,24 @@ class CycleIdTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"DS_PLAN_DATE": "20260910"}):
             self.assertEqual(rs.launch_date(), "20260910")
         with mock.patch.dict(os.environ, {"DS_PLAN_DATE": "2026-09-10"}):
-            self.assertRegex(rs.launch_date(), r"^\d{8}$")
+            # A malformed value falls back to TODAY, not to the bad value.
+            self.assertEqual(rs.launch_date(), rs.datetime.now().strftime("%Y%m%d"))
+
+    def test_the_cli_names_the_plan_session_by_its_launch_date(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, {"DS_PLAN_DATE": "20260910"}):
+                with redirect_stdout(out):
+                    rs.run(["resolve_session.py", "--daily-id", "plan", "--repo", tmp])
+        self.assertEqual(out.getvalue().strip(), "90195a08-2348-adba-e976-f4b4a7aa6bf9")
+
+    def test_a_cycle_outside_plan_or_below_zero_is_refused(self):
+        for argv in (
+            ["--daily-id", "housekeeping", "--cycle", "1"],
+            ["--daily-id", "plan", "--cycle", "-1"],
+        ):
+            with self.assertRaises(rs.ResolveSessionError, msg=argv):
+                rs.run(["resolve_session.py", *argv, "--date", "20260910"])
 
 
 if __name__ == "__main__":

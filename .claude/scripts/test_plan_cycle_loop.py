@@ -38,10 +38,23 @@ _DS_REPO="$REPO" _DS_SUBSTRATE_DIR="$STATE"
 _ds_tier() { print -r -- model; print -r -- anthropic }
 _ds_substrate_enter() { : }
 _ds_aws_login() { : }
+if [[ -n "$MIDNIGHT" ]]; then
+  # The clock rolls from the 10th to the 11th once the first client exits.
+  date() {
+    local d=20260910 dd=10
+    [[ -f "$STATE/rolled" ]] && d=20260911 dd=11
+    case "$1" in
+      +%Y%m%d) print -r -- $d ;;
+      +%-d) print -r -- $dd ;;
+      *) command date "$@" ;;
+    esac
+  }
+fi
 _ds_session() {
   print -r -- "$1|$2|$3|$DS_PLAN_DATE" >> "$CALLS"
   local n=$(wc -l < "$CALLS")
   (( n <= CYCLES )) && print -r -- "$1" > "$STATE/plan-cycle-pending"
+  [[ -n "$MIDNIGHT" ]] && : > "$STATE/rolled"
   return ${CLIENT_RC:-0}
 }
 plan
@@ -63,10 +76,18 @@ class CycleLoop(unittest.TestCase):
         self.day = datetime.now().strftime("%Y%m%d")
         self.name = f"plan-{datetime.now().day}"
 
-    def _plan(self, cycles: int, client_rc: int = 0) -> subprocess.CompletedProcess:
-        env = {
+    def _plan(
+        self, cycles: int, client_rc: int = 0, midnight: bool = False
+    ) -> subprocess.CompletedProcess:
+        env = {**os.environ}
+        # A suite run from inside a planning session inherits the launcher's
+        # DS_PLAN_DATE, which would mask a launcher that stopped passing it.
+        for inherited in ("DS_PLAN_DATE", "MIDNIGHT"):
+            env.pop(inherited, None)
+        if midnight:
+            env["MIDNIGHT"] = "1"
+        env |= {
             "CLIENT_RC": str(client_rc),
-            **os.environ,
             "INIT": str(INIT),
             "REPO": str(REPO),
             "STATE": str(self.state),
@@ -107,6 +128,18 @@ class CycleLoop(unittest.TestCase):
         self.calls.write_text("")
         self._plan(cycles=0)
         self.assertEqual(self._launches()[0][0], cycled)
+
+    def test_a_cycle_past_midnight_keeps_the_launch_day(self):
+        # Worker addressing must not change: the relaunch stays `plan-10`, on
+        # the 10th's ids, even though the clock now reads the 11th.
+        result = self._plan(cycles=1, midnight=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        (sid0, name0, _, date0), (sid1, name1, _, date1) = self._launches()
+        self.assertEqual((name0, name1), ("plan-10", "plan-10"))
+        self.assertEqual((date0, date1), ("20260910", "20260910"))
+        self.assertEqual(sid0, rs.daily_session_id("plan", "20260910", 0))
+        self.assertEqual(sid1, rs.daily_session_id("plan", "20260910", 1))
+        self.assertEqual((self.state / "plan-cycle-20260910").read_text().strip(), "1")
 
     def test_a_plain_exit_returns_the_clients_status(self):
         self.assertEqual(self._plan(cycles=0, client_rc=3).returncode, 3)

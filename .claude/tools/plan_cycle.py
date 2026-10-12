@@ -22,12 +22,13 @@ Usage::
 * ``cycle`` writes the marker the launcher looks for, then ends this session's
   client. Run it only after the close-out rewrite has verified.
 * ``live-name NAME`` is the launcher's guard: exit 0 when a live session already
-  holds NAME, 1 when none does. A relaunch under a live session's name would be
-  renamed by the client and break every worker's addressing.
+  holds NAME, 1 when none does. A relaunch under a live session's name would
+  give the fleet two sessions answering to it and break worker addressing.
 
 The session's own id is computed exactly as the launcher computes it
-(``resolve_session.daily_session_id`` plus today's cycle counter), never found by
-listing the projects directory.
+(``resolve_session.daily_session_id`` plus the LAUNCH day's cycle counter, the
+day arriving as ``DS_PLAN_DATE``), never found by listing the projects
+directory.
 
 Standard library only; tests in ``tests/test_plan_cycle.py``, run via
 ``make tools-tests``.
@@ -212,6 +213,14 @@ def live_sessions() -> list[dict]:
     return found
 
 
+def _started(entry: dict) -> int:
+    """A registry entry's start time; malformed reads as oldest, never raises."""
+    try:
+        return int(entry.get("startedAt") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def cycle(repo: Path, date: str) -> str:
     """Write the marker, then end this session's client. Returns its pid.
 
@@ -225,7 +234,7 @@ def cycle(repo: Path, date: str) -> str:
     (state / MARKER).write_text(sid + "\n")
     mine = [e for e in live_sessions() if e.get("sessionId") == sid]
     if mine:
-        entry = max(mine, key=lambda e: int(e.get("startedAt") or 0))
+        entry = max(mine, key=_started)
         os.kill(int(entry["pid"]), signal.SIGTERM)
         return str(entry["pid"])
     raise PlanCycleError(
