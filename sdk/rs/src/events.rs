@@ -37,7 +37,7 @@
 use crate::types::{
     CloseMarketTreasuryEvent, CloseRegistryFeeVaultEvent, CloseVaultEvent, CreateVaultEvent,
     DepositEvent, FillEvent, FreezeVaultEvent, PlatformFeeEvent, RealizeEvent,
-    SetDefaultFeeConfigEvent, SetMarketFeeConfigEvent, SetMaxPlatformFeeEvent,
+    SetDefaultFeeConfigEvent, SetLeaderEvent, SetMarketFeeConfigEvent, SetMaxPlatformFeeEvent,
     SetMinLeaderShareEvent, SetRegistryDefaultsEvent, SetTakerFeeEvent, SweepResidualEvent,
     WithdrawEvent,
 };
@@ -90,6 +90,8 @@ pub const REALIZE_EVENT_DISCRIMINATOR: [u8; 8] = [255, 60, 160, 248, 4, 188, 32,
 /// Discriminator for `SetDefaultFeeConfigEvent`.
 pub const SET_DEFAULT_FEE_CONFIG_EVENT_DISCRIMINATOR: [u8; 8] =
     [173, 121, 245, 191, 189, 52, 211, 216];
+/// Discriminator for `SetLeaderEvent`.
+pub const SET_LEADER_EVENT_DISCRIMINATOR: [u8; 8] = [191, 196, 23, 169, 146, 73, 15, 235];
 /// Discriminator for `SetMarketFeeConfigEvent`.
 pub const SET_MARKET_FEE_CONFIG_EVENT_DISCRIMINATOR: [u8; 8] = [29, 171, 38, 30, 62, 131, 204, 214];
 /// Discriminator for `SetMaxPlatformFeeEvent`.
@@ -121,6 +123,7 @@ pub enum DropsetEvent {
     CreateVault(CreateVaultEvent),
     CloseVault(CloseVaultEvent),
     FreezeVault(FreezeVaultEvent),
+    SetLeader(SetLeaderEvent),
     Realize(RealizeEvent),
     SetMinLeaderShare(SetMinLeaderShareEvent),
     SetMarketFeeConfig(SetMarketFeeConfigEvent),
@@ -145,6 +148,7 @@ impl DropsetEvent {
             Self::CreateVault(_) => "CreateVaultEvent",
             Self::CloseVault(_) => "CloseVaultEvent",
             Self::FreezeVault(_) => "FreezeVaultEvent",
+            Self::SetLeader(_) => "SetLeaderEvent",
             Self::Realize(_) => "RealizeEvent",
             Self::SetMinLeaderShare(_) => "SetMinLeaderShareEvent",
             Self::SetMarketFeeConfig(_) => "SetMarketFeeConfigEvent",
@@ -244,6 +248,7 @@ pub fn try_decode_event_payload(payload: &[u8]) -> Result<DropsetEvent, DecodeEr
         CREATE_VAULT_EVENT_DISCRIMINATOR => decode!(CreateVault, CreateVaultEvent),
         CLOSE_VAULT_EVENT_DISCRIMINATOR => decode!(CloseVault, CloseVaultEvent),
         FREEZE_VAULT_EVENT_DISCRIMINATOR => decode!(FreezeVault, FreezeVaultEvent),
+        SET_LEADER_EVENT_DISCRIMINATOR => decode!(SetLeader, SetLeaderEvent),
         REALIZE_EVENT_DISCRIMINATOR => decode!(Realize, RealizeEvent),
         SET_MIN_LEADER_SHARE_EVENT_DISCRIMINATOR => {
             decode!(SetMinLeaderShare, SetMinLeaderShareEvent)
@@ -398,6 +403,7 @@ mod tests {
             SET_DEFAULT_FEE_CONFIG_EVENT_DISCRIMINATOR,
             "SetDefaultFeeConfigEvent",
         ),
+        (SET_LEADER_EVENT_DISCRIMINATOR, "SetLeaderEvent"),
         (
             SET_MARKET_FEE_CONFIG_EVENT_DISCRIMINATOR,
             "SetMarketFeeConfigEvent",

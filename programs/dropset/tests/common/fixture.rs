@@ -23,8 +23,8 @@
 use super::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
     create_spl_mint, deploy_with_authority, deploy_with_authority_from, mint_to, send_ixn,
-    send_ixn_meta, ATA_PROGRAM_ID, CREATE_MARKET_FEE_ATOMS, PROGRAM_ID, REF_PROGRAM_SO_PATH,
-    SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
+    send_ixn_meta, send_ixn_signed_meta, ATA_PROGRAM_ID, CREATE_MARKET_FEE_ATOMS, PROGRAM_ID,
+    REF_PROGRAM_SO_PATH, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
 };
 use anchor_lang_v2::{bytemuck, programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, LiteSVM, Signer};
@@ -37,9 +37,9 @@ use dropset::{
         ForceWithdrawDepositor as ForceWithdrawDepositorIx,
         ForceWithdrawLeader as ForceWithdrawLeaderIx, FreezeVault as FreezeVaultIx, Init as InitIx,
         SetAllowOutsideDepositors as SetAllowOutsideDepositorsIx,
-        SetDefaultFeeConfig as SetDefaultFeeConfigIx, SetLiquidityProfile as SetLiquidityProfileIx,
-        SetMarketFeeConfig as SetMarketFeeConfigIx, SetMaxPlatformFee as SetMaxPlatformFeeIx,
-        SetMinLeaderShare as SetMinLeaderShareIx,
+        SetDefaultFeeConfig as SetDefaultFeeConfigIx, SetLeader as SetLeaderIx,
+        SetLiquidityProfile as SetLiquidityProfileIx, SetMarketFeeConfig as SetMarketFeeConfigIx,
+        SetMaxPlatformFee as SetMaxPlatformFeeIx, SetMinLeaderShare as SetMinLeaderShareIx,
         SetOutsideDepositsApproved as SetOutsideDepositsApprovedIx,
         SetQuoteAuthority as SetQuoteAuthorityIx, SetReferencePrice as SetReferencePriceIx,
         SetRegistryDefaults as SetRegistryDefaultsIx, SetTakerFee as SetTakerFeeIx, Swap as SwapIx,
@@ -963,6 +963,49 @@ impl Fixture {
             ],
         );
         send_ixn(&mut self.svm, signer, ix)
+    }
+
+    /// `set_leader` — `leader` hands the vault to `new_leader`, which
+    /// co-signs. `leader` pays the fee.
+    pub fn set_leader(
+        &mut self,
+        leader: &Keypair,
+        new_leader: &Keypair,
+        vault_idx: u32,
+    ) -> Result<(), String> {
+        self.set_leader_meta(leader, new_leader, vault_idx)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::set_leader`] but yields the transaction metadata so a
+    /// test can decode the emitted `SetLeaderEvent`.
+    pub fn set_leader_meta(
+        &mut self,
+        leader: &Keypair,
+        new_leader: &Keypair,
+        vault_idx: u32,
+    ) -> Result<TransactionMetadata, String> {
+        let (new_leader_depositor, _) =
+            vault_depositor_pda(&self.market, vault_idx, &new_leader.pubkey());
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &SetLeaderIx { vault_idx }.data(),
+            vec![
+                AccountMeta::new_readonly(leader.pubkey(), true),
+                AccountMeta::new_readonly(new_leader.pubkey(), true),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(new_leader_depositor, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        // A same-key rotation signs once: a transaction cannot carry one
+        // keypair twice.
+        if leader.pubkey() == new_leader.pubkey() {
+            send_ixn_signed_meta(&mut self.svm, &[leader], ix)
+        } else {
+            send_ixn_signed_meta(&mut self.svm, &[leader, new_leader], ix)
+        }
     }
 
     /// `set_min_leader_share` — admin retunes a vault's skin-in-the-game

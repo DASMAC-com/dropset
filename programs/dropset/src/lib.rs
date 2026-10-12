@@ -493,6 +493,17 @@ pub mod dropset {
         emit_cpi!(event);
         Ok(())
     }
+
+    // Leader-only custody rotation, co-signed by the incoming key. A
+    // post-create leader lever like `set_quote_authority` (27) by subject,
+    // appended at the tail so discriminants 0–29 keep their numbers. See
+    // the architecture spec, § SetLeader.
+    #[discrim = 30]
+    pub fn set_leader(ctx: &mut Context<SetLeader>, vault_idx: u32) -> Result<()> {
+        let event = ctx.accounts.set_leader(vault_idx)?;
+        emit_cpi!(event);
+        Ok(())
+    }
 }
 
 // Under `asm-entrypoint` the crate's `no-entrypoint` feature stops the

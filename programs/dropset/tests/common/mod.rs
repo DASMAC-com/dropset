@@ -120,9 +120,19 @@ pub fn send_ixn_meta(
     signer: &Keypair,
     ixn: Instruction,
 ) -> Result<TransactionMetadata, String> {
+    send_ixn_signed_meta(svm, &[signer], ixn)
+}
+
+/// Like [`send_ixn_meta`] for an instruction that needs more than one
+/// signature. `signers[0]` is the fee payer.
+pub fn send_ixn_signed_meta(
+    svm: &mut LiteSVM,
+    signers: &[&Keypair],
+    ixn: Instruction,
+) -> Result<TransactionMetadata, String> {
     let blockhash = svm.latest_blockhash();
-    let msg = Message::new_with_blockhash(&[ixn], Some(&signer.pubkey()), &blockhash);
-    let txn = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[signer]).unwrap();
+    let msg = Message::new_with_blockhash(&[ixn], Some(&signers[0].pubkey()), &blockhash);
+    let txn = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), signers).unwrap();
     svm.send_transaction(txn)
         .map_err(|e| format!("{:?}", e.err))
 }

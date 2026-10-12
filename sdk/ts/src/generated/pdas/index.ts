@@ -9,5 +9,6 @@
 export * from './eventAuthority';
 export * from './forceWithdrawDepositorVaultDepositor';
 export * from './market';
+export * from './newLeaderDepositor';
 export * from './registry';
 export * from './vaultDepositor';

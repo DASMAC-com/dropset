@@ -115,4 +115,8 @@ pub enum DropsetError {
     MarketHasActiveVaults,
     #[msg("leader already leads a live (not frozen, not tombstoned) vault on this market")]
     LeaderAlreadyLeadsVault,
+    #[msg("new leader is the vault's current leader")]
+    SameLeader,
+    #[msg("new leader holds a depositor position on this vault")]
+    NewLeaderIsDepositor,
 }

@@ -2,7 +2,7 @@
 //! tail. Centralizes the `u32`-index range check so business logic in the
 //! instruction handlers stops touching the physical slab layout.
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang_v2::{address_eq, prelude::*};
 
 use crate::errors::DropsetError;
 
@@ -48,6 +48,23 @@ pub trait VaultAccess {
     /// so a corrupt slab claiming more than `u64::MAX` can't wrap into a
     /// small number.
     fn leg_vault_sum(&self, is_base: bool) -> u128;
+
+    /// True when `leader` leads a **live** vault on this market — an
+    /// occupied sector that is neither frozen nor tombstoned.
+    ///
+    /// The one-live-vault-per-leader rule. The maker bot keys its fills
+    /// per market, not per vault, so a second live vault under the same
+    /// leader would silently clobber its inventory accounting. Frozen and
+    /// tombstoned vaults don't count — a stranded depositor on a tombstone
+    /// (reclaimed only on the last draining withdraw) must not lock the
+    /// leader out of the market, and a frozen leader may re-enter.
+    ///
+    /// Shared by the two paths that can seat a key as a leader —
+    /// `create_vault` (the override path included) and `set_leader` — so
+    /// the rule can't drift between them. O(slab) on a cold path: the
+    /// active set is capped by `max_vaults_per_market`, and tombstoned and
+    /// free sectors add to the slab beyond it.
+    fn leads_live_vault(&self, leader: &Address) -> bool;
 }
 
 impl VaultAccess for Market {
@@ -76,6 +93,15 @@ impl VaultAccess for Market {
             sum = sum.saturating_add(leg as u128);
         }
         sum
+    }
+
+    fn leads_live_vault(&self, leader: &Address) -> bool {
+        self.as_slice().iter().any(|v| {
+            v.is_occupied()
+                && !v.tombstoned.get()
+                && !v.frozen.get()
+                && address_eq(&v.leader, leader)
+        })
     }
 }
 

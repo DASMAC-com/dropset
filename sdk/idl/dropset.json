@@ -1922,6 +1922,125 @@
       ]
     },
     {
+      "name": "set_leader",
+      "discriminator": [
+        30
+      ],
+      "accounts": [
+        {
+          "name": "leader",
+          "docs": [
+            "The vault's current leader — the only key that may hand it off."
+          ],
+          "signer": true
+        },
+        {
+          "name": "new_leader",
+          "docs": [
+            "The incoming leader. Its signature is the liveness proof."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market holding the target vault. `mut` for the leader write."
+          ],
+          "writable": true
+        },
+        {
+          "name": "new_leader_depositor",
+          "docs": [
+            "The `VaultDepositor` PDA the new leader would hold on this vault.",
+            "Must be uninitialized: a vault's leader never also holds a",
+            "depositor position on it (see the handler).",
+            "CHECK: bound to `(market, vault_idx, new_leader)` by the seeds and",
+            "only read for its owner."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  100,
+                  101,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  111,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              },
+              {
+                "kind": "arg",
+                "path": "vault_idx"
+              },
+              {
+                "kind": "account",
+                "path": "new_leader"
+              }
+            ]
+          }
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        }
+      ]
+    },
+    {
       "name": "set_liquidity_profile",
       "discriminator": [
         6
@@ -3417,6 +3536,19 @@
       ]
     },
     {
+      "name": "SetLeaderEvent",
+      "discriminator": [
+        191,
+        196,
+        23,
+        169,
+        146,
+        73,
+        15,
+        235
+      ]
+    },
+    {
       "name": "SetMarketFeeConfigEvent",
       "discriminator": [
         29,
@@ -3758,6 +3890,16 @@
       "code": 6049,
       "name": "LeaderAlreadyLeadsVault",
       "msg": "leader already leads a live (not frozen, not tombstoned) vault on this market"
+    },
+    {
+      "code": 6050,
+      "name": "SameLeader",
+      "msg": "new leader is the vault's current leader"
+    },
+    {
+      "code": 6051,
+      "name": "NewLeaderIsDepositor",
+      "msg": "new leader holds a depositor position on this vault"
     }
   ],
   "types": [
@@ -4686,6 +4828,49 @@
           {
             "name": "atoms",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetLeaderEvent",
+      "docs": [
+        "Emitted by `set_leader` when a leader hands custody of their vault to",
+        "a new key. Carries the unchanged `quote_authority` so an indexer sees",
+        "the full post-rotation authority pair without a second read: the",
+        "rotation deliberately leaves the quoting delegate where it was. See",
+        "the spec's **SetLeader**."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "sector_idx",
+            "type": "u32"
+          },
+          {
+            "name": "vault_seq",
+            "docs": [
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "old_leader",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_leader",
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_authority",
+            "type": "pubkey"
           }
         ]
       }

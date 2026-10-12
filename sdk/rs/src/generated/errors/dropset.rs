@@ -162,6 +162,12 @@ pub enum DropsetError {
     /// 6049 - leader already leads a live (not frozen, not tombstoned) vault on this market
     #[error("leader already leads a live (not frozen, not tombstoned) vault on this market")]
     LeaderAlreadyLeadsVault = 0x17A1,
+    /// 6050 - new leader is the vault's current leader
+    #[error("new leader is the vault's current leader")]
+    SameLeader = 0x17A2,
+    /// 6051 - new leader holds a depositor position on this vault
+    #[error("new leader holds a depositor position on this vault")]
+    NewLeaderIsDepositor = 0x17A3,
 }
 
 impl From<DropsetError> for solana_program_error::ProgramError {

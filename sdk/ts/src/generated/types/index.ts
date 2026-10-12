@@ -18,6 +18,7 @@ export * from './platformFeeEvent';
 export * from './price';
 export * from './realizeEvent';
 export * from './setDefaultFeeConfigEvent';
+export * from './setLeaderEvent';
 export * from './setMarketFeeConfigEvent';
 export * from './setMaxPlatformFeeEvent';
 export * from './setMinLeaderShareEvent';

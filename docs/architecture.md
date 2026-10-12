@@ -573,7 +573,8 @@ pointers (`next` / `prev`) thread it into one of three lists (see
 - **`quote_authority` is always populated.** At `CreateVault` the
   caller may pass one; otherwise the protocol stamps `leader`, so the
   hot-path auth check is a single compare. Rotated via
-  `SetQuoteAuthority` (leader-only).
+  `SetQuoteAuthority` (leader-only). `leader` itself rotates via
+  `SetLeader`, which leaves `quote_authority` where it is.
 - **Vault identity is `(market, seq)`.** `CreateVault` checked-increments
   `MarketHeader.next_vault_seq` and stamps the result, so the first vault
   on a market is `1` and `0` means never stamped. A rotation keeps the
@@ -1171,6 +1172,25 @@ external feed. So when the display price differs from the on-chain
 reference, only the **totals** (`all_time_pnl`) reconcile across the
 realized/unrealized boundary; the per-leg yield/FX split does not.
 
+#### Leader-and-depositor invariant
+
+A vault's leader never holds a `VaultDepositor` on that same vault. The
+leader's stake is `leader_shares`; a second, PDA-held claim beside it
+would let one key sit on both sides of every leader-versus-depositor
+gate. Each of the three ways a key can end up as both is closed:
+
+- **Deposit** rejects the leader's signer, whose deposits go through
+  `DepositLeader` and carry no PDA.
+- **CreateVault** cannot collide: a fresh sector has no depositor PDAs,
+  and a recycled one required them all closed by invariant I6 before
+  the reclaim.
+- **SetLeader** rejects a new leader whose `VaultDepositor` on the
+  vault is live (`NewLeaderIsDepositor`).
+
+Overlap **across** vaults stays allowed. Every withdraw gate compares
+against the withdrawn vault's own leader, so leading vault A while
+depositing on vault B is harmless.
+
 #### Admin force-withdraw (feature-gated)
 
 The `force_withdraw_depositor` instruction lives behind the
@@ -1276,9 +1296,10 @@ caller; the third is the per-ix authority gate.
      *next* quote to a later (worse) time priority, and never reorders
      quotes already stamped.
 
-   - **Leader-only** (`SetQuoteAuthority`,
+   - **Leader-only** (`SetQuoteAuthority`, `SetLeader`,
      `SetAllowOutsideDepositors`, `CloseVault`):
-     `vault.leader == signer`.
+     `vault.leader == signer`. `SetLeader` also requires the incoming
+     leader's signature.
 
    - **Deposit**: leader path requires `vault.leader == signer`;
      otherwise outside path requires both
@@ -1393,6 +1414,9 @@ authoritative.
 | Outside deposit, admin approval off                         | `OutsideDepositorsNotApproved` |
 | Withdraw of more shares than the caller holds               | `InsufficientShares`           |
 | `VaultDepositor` PDA ≠ `(market, sector, owner)` seeds      | `VaultDepositorMismatch`       |
+| Leader would lead a second live vault on the market         | `LeaderAlreadyLeadsVault`      |
+| `SetLeader` names the vault's current leader                | `SameLeader`                   |
+| `SetLeader` names a depositor on the same vault             | `NewLeaderIsDepositor`         |
 | Reference price unset where a basis read needs it           | `ReferencePriceNotSet`         |
 | Swap `limit_price` bits not a well-formed `Price`           | `InvalidPrice`                 |
 | Swap `amount_in == 0`                                       | `InvalidAmountIn`              |
@@ -1873,6 +1897,43 @@ any pubkey including the leader's own (effectively revoking
 delegation). Useful for rotating a hot wallet, delegating to a
 third-party MM firm, or moving quoting authority while keeping
 custody of inventory.
+
+### SetLeader
+
+Leader-only, and **co-signed by the incoming leader**. Writes
+`Vault.leader = new_leader` and nothing else. The co-signature proves
+the destination key is live at the moment of rotation; a two-step
+pending / accept would buy the same proof with stored pending state, a
+second instruction, cleanup on close and reclaim, and a guard re-run at
+accept time.
+
+The new leader must be:
+
+- non-zero — the zero address is the free-list emptiness marker, so a
+  zero leader would put a funded vault on the free list;
+- different from the current leader (`SameLeader`), so no event claims
+  a hand-off that never happened;
+- not already the leader of a live vault on the market
+  (`LeaderAlreadyLeadsVault`, the same scan `CreateVault` runs);
+- not a depositor on this vault (`NewLeaderIsDepositor`): the
+  instruction takes the new leader's `VaultDepositor` PDA and requires
+  it not to be program-owned. The test is ownership, not lamports,
+  because anyone can send lamports to the PDA address. See **Depositor
+  positions and cost basis → Leader-and-depositor invariant**.
+
+`quote_authority` does **not** follow the leader. The intended endgame
+is the leader on a hardware wallet and the quoting delegate on the hot
+maker key; a caller that wants both rotated bundles a
+`SetQuoteAuthority` in the same transaction. `leader_shares`, the HWM,
+the fee rate, the flags and `seq` are unchanged — the same vault under a
+new key.
+
+Allowed on frozen and tombstoned vaults: moving custody of a
+winding-down vault is exactly what a leaked-key rotation needs. There is
+deliberately no admin path, since an admin rotation would be a
+custody-seizure lever and admins already hold `FreezeVault`. Emits
+`SetLeaderEvent` (`market`, `sector_idx`, `vault_seq`, `old_leader`,
+`new_leader`, `quote_authority`).
 
 ### SetAllowOutsideDepositors
 
@@ -2606,7 +2667,9 @@ withdraw family — leader and force-withdraw variants included, each
 paired with a `Realize` when it crystallizes fees; the force-withdraw
 pair only on `admin-teardown` builds, inert on the immutable deploy),
 the per-leg `FillEvent` that is the take's only event, the
-vault-lifecycle changes (`CloseVault`, `FreezeVault`), the admin
+vault-lifecycle changes (`CloseVault`, `FreezeVault`), the custody
+rotation `SetLeader` — a coalesced diff collapses an A → B → C
+rotation inside one slot to A → C, losing who held custody when — the admin
 retuning levers (`SetMinLeaderShare`, `SetMarketFeeConfig`,
 `SetTakerFee`, `SetRegistryDefaults`), and `SweepResidual` — which emits
 on **every** call, including the zero-sweep case, because the three terms
