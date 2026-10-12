@@ -532,7 +532,7 @@ def indented_declaration_branches(pattern: str) -> list[str]:
         else:
             end = 1
         quantifier = body[end:]
-        if quantifier.startswith(("*", "?", "{0")):
+        if quantifier.startswith(("*", "?", "{0", "{,")):
             continue
         found.append(branch)
     return found
@@ -564,12 +564,13 @@ def case_blind_pattern(pattern: str, fixed: bool = False) -> bool:
 
     Escape sequences are dropped first, so ``\\b`` / ``\\S`` / ``\\W`` don't count:
     they are syntax, not the caller's choice of case — except under ``fixed``,
-    where a backslash is literal text. A pattern with a character class is
-    never case-blind: ``[a-z]`` is a deliberate choice, not an oversight.
+    where a backslash is literal text. Outside ``fixed``, a pattern with a
+    character class is never case-blind: ``[a-z]`` is a deliberate choice, not
+    an oversight — though an escaped ``\\[`` is a literal bracket, not a class.
     """
-    if not fixed and "[" in pattern:
-        return False
     letters = pattern if fixed else re.sub(r"\\.", "", pattern)
+    if not fixed and "[" in letters:
+        return False
     return any(ch.islower() for ch in letters) and not any(
         ch.isupper() for ch in letters
     )
@@ -645,7 +646,7 @@ def search(
 
     ``skip_frontmatter`` drops matches inside a markdown file's leading YAML
     block and counts them in ``frontmatter_skipped``. A skill's ``description``
-    is one 1,000–1,500-character line, so any rule word it contains returns
+    is one line of up to ~1,000 characters, so any rule word it contains returns
     ~300 tokens for that single hit — and no narrower pattern or ``--context 0``
     can fix it, because the match line itself is what is fat.
 

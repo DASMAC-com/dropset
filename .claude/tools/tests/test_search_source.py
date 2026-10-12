@@ -1777,6 +1777,11 @@ class PatternShapeTests(unittest.TestCase):
 
     def test_a_character_class_is_a_deliberate_case_choice(self):
         self.assertFalse(ss.case_blind_pattern("[a-z_]+"))
+        # An escaped bracket is a literal, so the probe still applies.
+        self.assertTrue(ss.case_blind_pattern(r"foo\[0\]"))
+
+    def test_an_optional_brace_indent_is_not_refused(self):
+        self.assertEqual(ss.indented_declaration_branches(r"^\s{,4}def|^class "), [])
 
     def test_under_fixed_a_backslash_is_text_not_an_escape(self):
         self.assertFalse(ss.case_blind_pattern(r"c:\Users", fixed=True))
