@@ -702,8 +702,8 @@ Both directions of drift are real, so both checks are worth running.
    estimator card on the maker dashboard. That card used to distinguish
    "no maker has ever written" by an empty market picker; the picker now
    also lists markets the fair-value estimator has published, so on a
-   collectors-only stack it is populated, the estimator line and the
-   tick scatter render, and the maker-table series and panels are the
+   collectors-only stack it is populated, the fair-value estimator line
+   and the tick scatter render, and the maker-table series and panels are the
    ones left blank.
    An empty picker now means neither writer has published. The general
    rule still has nothing enforcing it.*
