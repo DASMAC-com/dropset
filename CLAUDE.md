@@ -267,7 +267,7 @@ means pullable and the operator's "Next" view is the unblocked
 Backlog, so a filing skill sets state **`Todo` plus the
 milestone, in the creating call**. Promotion is a
 planning-session act with **two** halves — clear the milestone
-**and** move Todo → Backlog. Every bootstrap says each parked
+**and** move Todo → Backlog. Every full bootstrap says each parked
 count **out loud**, so a parked issue is invisible to the queue
 without being invisible to the operator; a genuinely urgent
 stray (a broken guard, an actively hurting verb) can be
@@ -299,7 +299,7 @@ scoped `audit-scope` run. Findings still land **parked**
 (`Todo` plus the `Audit findings` milestone), and promotion is
 still the planning session's two-halves act.
 
-Cadence is kept by the **audit heartbeat**: every planning
+Cadence is kept by the **audit heartbeat**: every full planning
 bootstrap reads the Planning document's bounded **audit-state
 table** (one row per registry unit — last audited, finding
 count, outcome pointer) and either files an audit issue or
