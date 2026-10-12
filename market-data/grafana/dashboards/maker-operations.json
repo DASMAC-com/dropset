@@ -468,6 +468,35 @@
           {
             "matcher": {
               "id": "byRegexp",
+              "options": ".*fair \\(estimator, static peg\\)$"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 3
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    4,
+                    4
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
               "options": ".*fx consensus \\(fast\\).*"
             },
             "properties": [
