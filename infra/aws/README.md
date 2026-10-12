@@ -1,3 +1,5 @@
+<!-- cspell:word Unblended -->
+
 # AWS infrastructure (CloudFormation)
 
 Account foundation for the market-data warehouse and any later AWS
@@ -670,6 +672,35 @@ standard alarm $0.10 per month for each metric its expression lists,
 and four alarms × four metrics is 16. The free tier covers 10 alarm
 metrics, which brings it to \$0.60 if no other alarm uses them. The token
 metrics are free, and the Lambda runs only on a trip.
+
+## Where to see spend
+
+Credits cover the whole bill, so every **net** cost view reads \$0. To
+see what is actually being spent, exclude the **Credit** charge type.
+
+**The view.** Billing and Cost Management → *Dashboards* → **Actual
+daily costs** (bookmark it). Its one widget is a stacked daily bar over
+the last 7 days: *Unblended costs*, grouped by *Service*, with the
+*Charge type* filter excluding *Credit*. Each Claude model is its own
+service (`Claude Opus 5.5 (Amazon Bedrock Edition)`), so the bars split
+by model. No service is filtered out, so anything that starts charging
+— a database, a second CloudTrail trail — shows up as its own bar.
+Cost Explorer lags up to a day, so today's bar fills in late.
+
+Two settings make the difference between this view and a misleading
+one:
+
+- **A cost metric, not *Usage quantity*.** Usage counts free units too,
+  so CloudTrail's tens of thousands of free events dwarf every model.
+- **Credit excluded.** With credits included, every bar nets to zero.
+
+The dashboard is account-scoped, so every login with
+`bcm-dashboards:GetDashboard` and Cost Explorer read access sees it.
+PowerUser does. It cannot be put on Console Home: Console Home widgets
+are a fixed AWS set that can be added, moved, and resized, but not
+reconfigured. CloudFormation cannot create dashboards, so to rebuild it, use
+the console steps above or `aws bcm-dashboards create-dashboard` with
+the same query.
 
 ## Secrets
 
