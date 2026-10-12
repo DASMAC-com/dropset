@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import datetime
@@ -21,6 +22,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 INIT = REPO / ".claude" / "shell" / "init.zsh"
+sys.path.insert(0, str(REPO / ".claude" / "tools"))
+
+import resolve_session as rs  # noqa: E402
+
 ZSH = shutil.which("zsh")
 _NEEDS_ZSH = "the session helpers are zsh; no zsh on this machine"
 
@@ -34,10 +39,10 @@ _ds_tier() { print -r -- model; print -r -- anthropic }
 _ds_substrate_enter() { : }
 _ds_aws_login() { : }
 _ds_session() {
-  print -r -- "$1|$2|$3" >> "$CALLS"
+  print -r -- "$1|$2|$3|$DS_PLAN_DATE" >> "$CALLS"
   local n=$(wc -l < "$CALLS")
   (( n <= CYCLES )) && print -r -- "$1" > "$STATE/plan-cycle-pending"
-  return 0
+  return ${CLIENT_RC:-0}
 }
 plan
 """
@@ -58,8 +63,9 @@ class CycleLoop(unittest.TestCase):
         self.day = datetime.now().strftime("%Y%m%d")
         self.name = f"plan-{datetime.now().day}"
 
-    def _plan(self, cycles: int) -> subprocess.CompletedProcess:
+    def _plan(self, cycles: int, client_rc: int = 0) -> subprocess.CompletedProcess:
         env = {
+            "CLIENT_RC": str(client_rc),
             **os.environ,
             "INIT": str(INIT),
             "REPO": str(REPO),
@@ -83,10 +89,14 @@ class CycleLoop(unittest.TestCase):
     def test_a_cycle_relaunches_under_a_fresh_id_and_the_same_name(self):
         result = self._plan(cycles=1)
         self.assertEqual(result.returncode, 0, result.stderr)
-        (sid0, name0, prompt0), (sid1, name1, prompt1) = self._launches()
-        self.assertNotEqual(sid0, sid1)
+        (sid0, name0, prompt0, date0), (sid1, name1, prompt1, date1) = self._launches()
+        # The shell seed and resolve_session's must name the same sessions,
+        # or plan_cycle.py cannot find its own transcript or client.
+        self.assertEqual(sid0, rs.daily_session_id("plan", self.day, 0))
+        self.assertEqual(sid1, rs.daily_session_id("plan", self.day, 1))
         self.assertEqual((name0, name1), (self.name, self.name))
         self.assertEqual((prompt0, prompt1), ("/plan", "/plan"))
+        self.assertEqual((date0, date1), (self.day, self.day))
         counter = self.state / f"plan-cycle-{self.day}"
         self.assertEqual(counter.read_text().strip(), "1")
         self.assertFalse((self.state / "plan-cycle-pending").exists())
@@ -97,6 +107,10 @@ class CycleLoop(unittest.TestCase):
         self.calls.write_text("")
         self._plan(cycles=0)
         self.assertEqual(self._launches()[0][0], cycled)
+
+    def test_a_plain_exit_returns_the_clients_status(self):
+        self.assertEqual(self._plan(cycles=0, client_rc=3).returncode, 3)
+        self.assertEqual(len(self._launches()), 1)
 
     def test_a_live_same_name_session_blocks_the_relaunch(self):
         (self.home / "sessions" / "1.json").write_text(

@@ -419,14 +419,45 @@ class CycleIdTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(out.getvalue().strip(), "9d60ce20-44af-0b89-a8d0-9358a6d2fae9")
 
-    def test_a_garbled_or_absent_counter_reads_as_zero(self):
+    def test_the_counter_reads_like_the_shell_does(self):
+        # The launcher keeps digits only after `$(<counter)` (trailing newlines
+        # stripped) and normalizes `01` to 1; anything else is 0 on both sides.
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             self.assertEqual(rs.read_cycle(repo, "20260910"), 0)
             counter = rs.cycle_counter_path(repo, "20260910")
             counter.parent.mkdir(parents=True)
-            counter.write_text("two")
-            self.assertEqual(rs.read_cycle(repo, "20260910"), 0)
+            for text, want in (("two", 0), (" 1", 0), ("01\n", 1), ("3\n\n", 3)):
+                counter.write_text(text)
+                self.assertEqual(rs.read_cycle(repo, "20260910"), want, msg=text)
+
+    def test_housekeeping_ignores_the_plan_counter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            counter = rs.cycle_counter_path(Path(tmp), "20260910")
+            counter.parent.mkdir(parents=True)
+            counter.write_text("1\n")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rs.run(
+                    [
+                        "resolve_session.py",
+                        "--daily-id",
+                        "housekeeping",
+                        "--date",
+                        "20260910",
+                        "--repo",
+                        tmp,
+                    ]
+                )
+        self.assertEqual(
+            out.getvalue().strip(), rs.daily_session_id("housekeeping", "20260910")
+        )
+
+    def test_plan_defaults_to_the_launch_date(self):
+        with mock.patch.dict(os.environ, {"DS_PLAN_DATE": "20260910"}):
+            self.assertEqual(rs.launch_date(), "20260910")
+        with mock.patch.dict(os.environ, {"DS_PLAN_DATE": "2026-09-10"}):
+            self.assertRegex(rs.launch_date(), r"^\d{8}$")
 
 
 if __name__ == "__main__":

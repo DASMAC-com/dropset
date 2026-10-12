@@ -996,7 +996,8 @@ make session-metrics SESSION=<uuid>
 
 It reads the cycle counter itself; searching instead is
 expensive ([`history.md`](history.md)). Pass `--date YYYYMMDD`
-for an earlier day; `housekeeping` is the other daily kind.
+(and `--cycle N`) for an earlier session; `housekeeping` is the
+other daily kind.
 
 Levers file through `.claude/tools/trim_levers.py` (probe,
 then `file` or `append-evidence`), **not** into a document —

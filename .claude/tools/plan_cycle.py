@@ -40,7 +40,6 @@ import json
 import os
 import signal
 import sys
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -195,6 +194,8 @@ def live_sessions() -> list[dict]:
 
     The client writes ``<claude_home>/sessions/<pid>.json`` while it runs; a
     crashed client can leave one behind, so the pid is probed rather than trusted.
+    A pid owned by another user is not live for this purpose: the registry is
+    per-user, so such a pid can only be a stale file's number reused.
     """
     found = []
     for path in sorted((rs.claude_home() / "sessions").glob("*.json")):
@@ -205,24 +206,28 @@ def live_sessions() -> list[dict]:
             continue
         try:
             os.kill(pid, 0)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             continue
-        except PermissionError:
-            pass  # alive, owned by someone else
         found.append(entry)
     return found
 
 
 def cycle(repo: Path, date: str) -> str:
-    """Write the marker, then end this session's client. Returns its pid."""
+    """Write the marker, then end this session's client. Returns its pid.
+
+    The id is deterministic, so a crashed earlier client of the same session
+    can leave a registry file naming it; when several live entries match, the
+    most recently started is this one.
+    """
     sid = session_id(repo, date)
     state = repo / rs.STATE_DIR
     state.mkdir(parents=True, exist_ok=True)
     (state / MARKER).write_text(sid + "\n")
-    for entry in live_sessions():
-        if entry.get("sessionId") == sid:
-            os.kill(int(entry["pid"]), signal.SIGTERM)
-            return str(entry["pid"])
+    mine = [e for e in live_sessions() if e.get("sessionId") == sid]
+    if mine:
+        entry = max(mine, key=lambda e: int(e.get("startedAt") or 0))
+        os.kill(int(entry["pid"]), signal.SIGTERM)
+        return str(entry["pid"])
     raise PlanCycleError(
         f"marker written, but no live client holds session {sid} — type /exit "
         f"and the launcher relaunches."
@@ -240,7 +245,8 @@ def run(argv: list[str]) -> int:
         "--date",
         default=None,
         metavar="YYYYMMDD",
-        help="the launch date (default: today, local time)",
+        help="the launch date (default: $DS_PLAN_DATE, which the launcher "
+        "sets, else today)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("check", help="report prefix, inbound count and whether due")
@@ -251,7 +257,7 @@ def run(argv: list[str]) -> int:
     args = parser.parse_args(argv[1:])
 
     repo = Path(os.path.abspath(args.repo)) if args.repo else default_repo()
-    date = args.date or datetime.now().strftime("%Y%m%d")
+    date = args.date or rs.launch_date()
 
     if args.command == "check":
         print(json.dumps(check(repo, date)))

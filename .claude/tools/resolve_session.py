@@ -290,11 +290,30 @@ def cycle_counter_path(repo: Path, date: str) -> Path:
 
 def read_cycle(repo: Path, date: str) -> int:
     """Today's cycle number; an absent or garbled counter reads as 0, the
-    pre-cycling id, so a missing file can only name the day's first session."""
+    pre-cycling id, so a missing file can only name the day's first session.
+
+    Digits only, trailing newlines stripped and nothing else — the same rule as
+    the launcher's `$(<counter)` plus `<->` test, so the two can never derive
+    different ids from one hand-edited file.
+    """
     try:
-        return max(int(cycle_counter_path(repo, date).read_text().strip()), 0)
-    except (OSError, ValueError):
+        raw = cycle_counter_path(repo, date).read_text().rstrip("\n")
+    except OSError:
         return 0
+    return int(raw) if raw.isascii() and raw.isdigit() else 0
+
+
+def launch_date() -> str:
+    """The date a planning session was LAUNCHED on, not today's.
+
+    The `plan` launcher exports `DS_PLAN_DATE` into the client, so a session
+    still running past midnight computes the id it was started under rather
+    than the new day's.
+    """
+    env = os.environ.get("DS_PLAN_DATE", "")
+    if _DAILY_DATE_RE.match(env):
+        return env
+    return datetime.now().strftime("%Y%m%d")
 
 
 def daily_session_id(kind: str, date: str, cycle: int = 0) -> str:
@@ -379,7 +398,8 @@ def run(argv: list[str]) -> int:
         default=None,
         metavar="N",
         help="the planning cycle for --daily-id plan (default: the launcher's "
-        "counter for that date, 0 when none)",
+        "counter for that date under --repo, 0 when none — so run it from the "
+        "base checkout)",
     )
     parser.add_argument("--tag", help="eng-### or a bare number")
     parser.add_argument(
@@ -406,7 +426,12 @@ def run(argv: list[str]) -> int:
     repo = Path(os.path.abspath(args.repo if args.repo else Path.cwd()))
 
     if args.daily_id:
-        date = args.date or datetime.now().strftime("%Y%m%d")
+        if args.date:
+            date = args.date
+        elif args.daily_id == "plan":
+            date = launch_date()
+        else:
+            date = datetime.now().strftime("%Y%m%d")
         cycle = args.cycle
         if cycle is None:
             cycle = read_cycle(repo, date) if args.daily_id == "plan" else 0

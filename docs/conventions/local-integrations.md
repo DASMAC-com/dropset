@@ -1769,8 +1769,9 @@ drives the real zsh functions.
   `plan bedrock` in a credit pinch; see "Model tiers" for its
   retention line.
 
-  `plan` is **idempotent by design** — if today's `plan-<day>` session
-  already exists it resumes it, otherwise it creates it. That collapses
+  `plan` is **idempotent by design** — if today's latest `plan-<day>`
+  session (see cycling below) exists it resumes it, otherwise it creates
+  it. That collapses
   the new-vs-resume split into one verb, which is the point: a planning
   session is opened and reopened many times in a day, and having to
   remember which state it is in is the friction the helper removes. An
@@ -1784,8 +1785,11 @@ drives the real zsh functions.
   counter and relaunches in the **same tab** under a fresh id (the
   daily seed plus `-c<N>`) and the **same** display name, so worker
   addressing never changes. It refuses to relaunch while a live session
-  already holds the name, since the client would rename the duplicate.
-  A later bare `plan` resumes the day's latest cycle.
+  already holds the name — or when that check itself fails — since a
+  duplicate name would break that addressing. The relaunch carries
+  `DS_PLAN_DATE` (the launch day) into the client, so the session's
+  own tools still compute its id after midnight. A later bare `plan`
+  resumes the day's latest cycle.
 
   Four things it makes deterministic, each of which used to be a
   manual step the operator could forget:

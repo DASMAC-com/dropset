@@ -1395,15 +1395,23 @@ plan() {
     day="$(date +%Y%m%d)" name="plan-$(date +%-d)"
     counter="$_DS_SUBSTRATE_DIR/plan-cycle-$day" cycle=0
     [[ -r "$counter" ]] && cycle="$(<"$counter")"
-    [[ "$cycle" == <-> ]] || cycle=0
-    if [[ -n "$relaunch" ]] &&
-      python3 "$_DS_REPO/.claude/tools/plan_cycle.py" live-name "$name"; then
-      print -u2 "dropset: a live $name session already exists — not cycling," \
-        "since a duplicate name would be renamed and break worker addressing."
-      return 1
+    # `10#` so a hand-edited `01` reads as 1, matching resolve_session's int().
+    [[ "$cycle" == <-> ]] && cycle=$(( 10#$cycle )) || cycle=0
+    if [[ -n "$relaunch" ]]; then
+      # Fail CLOSED: 0 is "held", 1 is "free", anything else is unanswered.
+      python3 "$_DS_REPO/.claude/tools/plan_cycle.py" live-name "$name"
+      rc=$?
+      if (( rc != 1 )); then
+        print -u2 "dropset: not cycling — a live $name session exists, or" \
+          "the check failed (exit $rc); relaunching would break the name."
+        return 1
+      fi
     fi
     rm -f "$marker"
-    _ds_session "$(_ds_daily_sid plan "$cycle")" "$name" /plan "$model"
+    # DS_PLAN_DATE tells the session its LAUNCH day, so plan_cycle.py and
+    # resolve_session.py still name this session after midnight.
+    DS_PLAN_DATE="$day" _ds_session "$(_ds_daily_sid plan "$cycle")" \
+      "$name" /plan "$model"
     rc=$?
     [[ -f "$marker" ]] || return $rc
     # Bump the LAUNCH day's counter: a cycle that straddles midnight lands on

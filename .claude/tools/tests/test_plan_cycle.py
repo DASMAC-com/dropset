@@ -11,7 +11,7 @@ import os
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -45,11 +45,11 @@ PEER = {
     "message": {"content": "<cross-session-message ...>"},
 }
 
-#: The same text echoed by an attachment and a queue record, which must not
-#: count — the substring alone appears three times per message.
+#: The same message echoed by an attachment and a queue record, which must not
+#: count. They carry a peer origin too, so only the `type` test excludes them.
 ECHOES = [
-    {"type": "attachment", "content": '"kind": "peer"'},
-    {"type": "queue-operation", "content": '"kind": "peer"'},
+    {"type": "attachment", "origin": {"kind": "peer"}},
+    {"type": "queue-operation", "origin": {"kind": "peer"}},
 ]
 
 
@@ -63,6 +63,9 @@ class Fixture:
 
     def __enter__(self):
         self.env.start()
+        # A suite run from inside a planning session inherits the launcher's
+        # date; patch.dict restores it on exit.
+        os.environ.pop("DS_PLAN_DATE", None)
         return self
 
     def __exit__(self, *exc):
@@ -80,12 +83,24 @@ class Fixture:
         counter.parent.mkdir(parents=True, exist_ok=True)
         counter.write_text(f"{n}\n")
 
-    def register(self, pid: int, name: str, sid: str) -> None:
+    def register(self, pid: int, name: str, sid: str, started: int = 0) -> None:
         sessions = self.home / "sessions"
         sessions.mkdir(parents=True, exist_ok=True)
         (sessions / f"{pid}.json").write_text(
-            json.dumps({"pid": pid, "name": name, "sessionId": sid})
+            json.dumps(
+                {"pid": pid, "name": name, "sessionId": sid, "startedAt": started}
+            )
         )
+
+    def cycle_cli(self) -> tuple[int, list]:
+        """Run `cycle` with every pid live and every signal recorded."""
+        sent = []
+        with mock.patch.object(pc.os, "kill", lambda pid, sig: sent.append((pid, sig))):
+            with redirect_stdout(io.StringIO()):
+                rc = pc.run(
+                    ["plan_cycle.py", "--repo", str(self.repo), "--date", DATE, "cycle"]
+                )
+        return rc, [pid for pid, sig in sent if sig == pc.signal.SIGTERM]
 
 
 class CheckTests(unittest.TestCase):
@@ -112,13 +127,50 @@ class CheckTests(unittest.TestCase):
             fx.transcript([PEER] * pc.MESSAGE_THRESHOLD + [assistant(0, 1, 0)])
             self.assertTrue(pc.check(fx.repo, DATE)["due"])
 
-    def test_the_tail_read_skips_the_partial_first_line(self):
+    def test_a_usage_only_in_the_head_is_found_by_the_fallback(self):
         with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
             filler = {"type": "user", "message": {"content": "x" * 4096}}
             fx.transcript([assistant(0, 7, 0)] + [filler] * 400)
             with mock.patch.object(pc, "TAIL_BYTES", 10_000):
-                # No usage in the tail: the whole-file fallback finds it.
                 self.assertEqual(pc.check(fx.repo, DATE)["prefix_tokens"], 7)
+
+    def test_the_tail_wins_over_an_older_usage_in_the_head(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            filler = {"type": "user", "message": {"content": "x" * 4096}}
+            fx.transcript([assistant(0, 7, 0)] + [filler] * 400 + [assistant(0, 9, 0)])
+            with mock.patch.object(pc, "TAIL_BYTES", 10_000):
+                self.assertEqual(pc.check(fx.repo, DATE)["prefix_tokens"], 9)
+
+    def test_the_cli_prints_one_json_line(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            fx.transcript([assistant(0, 3, 0)])
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = pc.run(
+                    ["plan_cycle.py", "--repo", str(fx.repo), "--date", DATE, "check"]
+                )
+        self.assertEqual(rc, 0)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(json.loads(lines[0])["prefix_tokens"], 3)
+
+    def test_the_launch_date_comes_from_the_launcher(self):
+        # Past midnight the session must still name the id it was started
+        # under, which only the launcher's DS_PLAN_DATE knows.
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            fx.transcript([assistant(0, 4, 0)])
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, {"DS_PLAN_DATE": DATE}):
+                with redirect_stdout(out):
+                    pc.run(["plan_cycle.py", "--repo", str(fx.repo), "check"])
+        self.assertEqual(json.loads(out.getvalue())["prefix_tokens"], 4)
+
+    def test_main_maps_a_tool_error_to_exit_2(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            argv = ["plan_cycle.py", "--repo", str(fx.repo), "--date", DATE, "check"]
+            with mock.patch.object(pc.sys, "argv", argv):
+                with redirect_stderr(io.StringIO()):
+                    self.assertEqual(pc.main(), 2)
 
     def test_the_cycle_counter_selects_the_transcript(self):
         with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
@@ -173,32 +225,36 @@ class LiveAndCycleTests(unittest.TestCase):
             self.assertEqual(pc.run(["plan_cycle.py", "live-name", "plan-10"]), 0)
             self.assertEqual(pc.run(["plan_cycle.py", "live-name", "plan-11"]), 1)
 
-    def test_cycle_writes_the_marker_and_signals_its_own_client(self):
+    def test_a_pid_owned_by_another_user_is_not_live(self):
+        def kill(pid, sig):
+            raise PermissionError(pid)
+
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            fx.register(1, "plan-10", "a")
+            with mock.patch.object(pc.os, "kill", kill):
+                self.assertEqual(pc.live_sessions(), [])
+
+    def test_cycle_writes_the_marker_and_signals_only_its_own_client(self):
         with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
             sid = rs.daily_session_id("plan", DATE, 0)
+            # The bystander's file sorts FIRST, so an unfiltered kill hits it.
+            fx.register(1111, "eng-1", "other")
             fx.register(4242, "plan-10", sid)
-            fx.register(4343, "eng-1", "other")
-            sent = []
-            with mock.patch.object(
-                pc.os, "kill", lambda pid, sig: sent.append((pid, sig))
-            ):
-                out = io.StringIO()
-                with redirect_stdout(out):
-                    rc = pc.run(
-                        [
-                            "plan_cycle.py",
-                            "--repo",
-                            str(fx.repo),
-                            "--date",
-                            DATE,
-                            "cycle",
-                        ]
-                    )
+            rc, killed = fx.cycle_cli()
             marker = (fx.repo / rs.STATE_DIR / pc.MARKER).read_text().strip()
         self.assertEqual(rc, 0)
         self.assertEqual(marker, sid)
-        self.assertIn((4242, pc.signal.SIGTERM), sent)
-        self.assertNotIn(4343, [pid for pid, sig in sent if sig])
+        self.assertEqual(killed, [4242])
+
+    def test_a_stale_entry_for_the_same_session_is_not_signalled(self):
+        # A crashed earlier client of this deterministic id left its file,
+        # and its pid is now someone else's: the newest entry is ours.
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            sid = rs.daily_session_id("plan", DATE, 0)
+            fx.register(1111, "plan-10", sid, started=100)
+            fx.register(4242, "plan-10", sid, started=200)
+            _, killed = fx.cycle_cli()
+        self.assertEqual(killed, [4242])
 
     def test_cycle_with_no_client_still_leaves_the_marker(self):
         with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
