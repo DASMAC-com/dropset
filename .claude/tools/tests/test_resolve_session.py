@@ -380,5 +380,102 @@ class DailySessionIdTests(unittest.TestCase):
         self.assertEqual(rs.DAILY_KINDS, ("plan", "housekeeping"))
 
 
+class CycleIdTests(unittest.TestCase):
+    """A cycled planning session gets a fresh id under the same display name."""
+
+    #: Pinned against `md5 -qs 'dropset-plan-20260910-c1'`, the seed
+    #: `_ds_daily_sid plan 1` builds in `.claude/shell/init.zsh`.
+    def test_cycle_one_matches_the_shell_seed(self):
+        self.assertEqual(
+            rs.daily_session_id("plan", "20260910", 1),
+            "9d60ce20-44af-0b89-a8d0-9358a6d2fae9",
+        )
+
+    def test_cycle_zero_is_the_pre_cycling_id(self):
+        self.assertEqual(
+            rs.daily_session_id("plan", "20260910", 0),
+            "90195a08-2348-adba-e976-f4b4a7aa6bf9",
+        )
+
+    def test_the_cli_reads_the_launchers_counter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            counter = rs.cycle_counter_path(repo, "20260910")
+            counter.parent.mkdir(parents=True)
+            counter.write_text("1\n")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = rs.run(
+                    [
+                        "resolve_session.py",
+                        "--daily-id",
+                        "plan",
+                        "--date",
+                        "20260910",
+                        "--repo",
+                        tmp,
+                    ]
+                )
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue().strip(), "9d60ce20-44af-0b89-a8d0-9358a6d2fae9")
+
+    def test_the_counter_reads_like_the_shell_does(self):
+        # The launcher keeps digits only after `$(<counter)` (trailing newlines
+        # stripped) and normalizes `01` to 1; anything else is 0 on both sides.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self.assertEqual(rs.read_cycle(repo, "20260910"), 0)
+            counter = rs.cycle_counter_path(repo, "20260910")
+            counter.parent.mkdir(parents=True)
+            for text, want in (("two", 0), (" 1", 0), ("01\n", 1), ("3\n\n", 3)):
+                counter.write_text(text)
+                self.assertEqual(rs.read_cycle(repo, "20260910"), want, msg=text)
+
+    def test_housekeeping_ignores_the_plan_counter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            counter = rs.cycle_counter_path(Path(tmp), "20260910")
+            counter.parent.mkdir(parents=True)
+            counter.write_text("1\n")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rs.run(
+                    [
+                        "resolve_session.py",
+                        "--daily-id",
+                        "housekeeping",
+                        "--date",
+                        "20260910",
+                        "--repo",
+                        tmp,
+                    ]
+                )
+        self.assertEqual(
+            out.getvalue().strip(), rs.daily_session_id("housekeeping", "20260910")
+        )
+
+    def test_plan_defaults_to_the_launch_date(self):
+        with mock.patch.dict(os.environ, {"DS_PLAN_DATE": "20260910"}):
+            self.assertEqual(rs.launch_date(), "20260910")
+        with mock.patch.dict(os.environ, {"DS_PLAN_DATE": "2026-09-10"}):
+            # A malformed value falls back to TODAY, not to the bad value.
+            self.assertEqual(rs.launch_date(), rs.datetime.now().strftime("%Y%m%d"))
+
+    def test_the_cli_names_the_plan_session_by_its_launch_date(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, {"DS_PLAN_DATE": "20260910"}):
+                with redirect_stdout(out):
+                    rs.run(["resolve_session.py", "--daily-id", "plan", "--repo", tmp])
+        self.assertEqual(out.getvalue().strip(), "90195a08-2348-adba-e976-f4b4a7aa6bf9")
+
+    def test_a_cycle_outside_plan_or_below_zero_is_refused(self):
+        for argv in (
+            ["--daily-id", "housekeeping", "--cycle", "1"],
+            ["--daily-id", "plan", "--cycle", "-1"],
+        ):
+            with self.assertRaises(rs.ResolveSessionError, msg=argv):
+                rs.run(["resolve_session.py", *argv, "--date", "20260910"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -273,8 +273,50 @@ DAILY_KINDS = ("plan", "housekeeping")
 
 _DAILY_DATE_RE = re.compile(r"^\d{8}$")
 
+#: Where the launcher keeps per-launch state — the substrate markers, and the
+#: planning hub's cycle counter beside them. Mirrors `_DS_SUBSTRATE_DIR` in
+#: `.claude/shell/init.zsh`, relative to the base checkout.
+STATE_DIR = Path(".claude") / "session-substrate"
 
-def daily_session_id(kind: str, date: str) -> str:
+
+def cycle_counter_path(repo: Path, date: str) -> Path:
+    """The per-day file holding how many times today's `plan` has cycled.
+
+    Per DAY, so a reopen later the same day resumes the latest cycle rather
+    than cycle 0, and tomorrow starts from 0 with nothing to clean up.
+    """
+    return repo / STATE_DIR / f"plan-cycle-{date}"
+
+
+def read_cycle(repo: Path, date: str) -> int:
+    """Today's cycle number; an absent or garbled counter reads as 0, the
+    pre-cycling id, so a missing file can only name the day's first session.
+
+    Digits only, trailing newlines stripped and nothing else — the same rule as
+    the launcher's `$(<counter)` plus `<->` test, so the two can never derive
+    different ids from one hand-edited file.
+    """
+    try:
+        raw = cycle_counter_path(repo, date).read_text().rstrip("\n")
+    except OSError:
+        return 0
+    return int(raw) if raw.isascii() and raw.isdigit() else 0
+
+
+def launch_date() -> str:
+    """The date a planning session was LAUNCHED on, not today's.
+
+    The `plan` launcher exports `DS_PLAN_DATE` into the client, so a session
+    still running past midnight computes the id it was started under rather
+    than the new day's.
+    """
+    env = os.environ.get("DS_PLAN_DATE", "")
+    if _DAILY_DATE_RE.match(env):
+        return env
+    return datetime.now().strftime("%Y%m%d")
+
+
+def daily_session_id(kind: str, date: str, cycle: int = 0) -> str:
     """The session id a daily verb (`plan`, `housekeeping`) computes for itself.
 
     A seat session's id is **deterministic**, not discovered: an md5 of
@@ -295,6 +337,10 @@ def daily_session_id(kind: str, date: str) -> str:
     display name is day-only by operator choice, and this id is what
     disambiguates. An `architect` session deliberately uses a *topic* seed with no
     date, because it is meant to be resumed days later.
+
+    A **cycled** planning session (the `plan` skill's "Cycling") appends
+    ``-c<cycle>`` to the seed: a fresh id under the same display name. Cycle 0
+    keeps the bare seed, so every id computed before cycling existed still holds.
 
     **Both inputs are validated, because a wrong one is not detectable
     downstream.** Any string hashes to a well-formed UUID, so ``--daily-id Plan``
@@ -319,7 +365,8 @@ def daily_session_id(kind: str, date: str) -> str:
             f"is a literal `date +%Y%m%d`, so any other spelling hashes to the "
             f"wrong id."
         )
-    digest = hashlib.md5(f"dropset-{kind}-{date}".encode("utf-8")).hexdigest()  # noqa: S324 - a naming seed, not a security primitive
+    seed = f"dropset-{kind}-{date}" + (f"-c{cycle}" if cycle > 0 else "")
+    digest = hashlib.md5(seed.encode("utf-8")).hexdigest()  # noqa: S324 - a naming seed, not a security primitive
     return (
         f"{digest[0:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}"
     )
@@ -345,6 +392,15 @@ def run(argv: list[str]) -> int:
         help="the date for --daily-id (default: today, local time, matching "
         "what the launcher used)",
     )
+    parser.add_argument(
+        "--cycle",
+        type=int,
+        default=None,
+        metavar="N",
+        help="the planning cycle for --daily-id plan (default: the launcher's "
+        "counter for that date under --repo, 0 when none — so run it from the "
+        "base checkout)",
+    )
     parser.add_argument("--tag", help="eng-### or a bare number")
     parser.add_argument(
         "--repo",
@@ -360,16 +416,6 @@ def run(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv[1:])
 
-    if args.daily_id:
-        date = args.date or datetime.now().strftime("%Y%m%d")
-        print(daily_session_id(args.daily_id, date))
-        return 0
-
-    # `--tag` is required for the resolution path but not for `--daily-id`, so it
-    # is validated here rather than by argparse.
-    if not args.tag:
-        raise ResolveSessionError("--tag is required (or pass --daily-id KIND)")
-
     # `abspath`, NOT `resolve()`. Claude Code derives the slug from the working
     # directory **string** it was given, so the slug has to be computed from
     # that same string — and `resolve()` follows symlinks, silently rewriting it.
@@ -378,6 +424,32 @@ def run(argv: list[str]) -> int:
     # misses while looking entirely correct. `abspath` normalizes a relative
     # argument without touching symlinks, which is exactly the needed half.
     repo = Path(os.path.abspath(args.repo if args.repo else Path.cwd()))
+
+    if args.daily_id:
+        if args.date:
+            date = args.date
+        elif args.daily_id == "plan":
+            date = launch_date()
+        else:
+            date = datetime.now().strftime("%Y%m%d")
+        cycle = args.cycle
+        # Validated like the kind and the date, and for the same reason: a
+        # wrong value still hashes to a well-formed id naming no session.
+        if cycle is not None and (args.daily_id != "plan" or cycle < 0):
+            raise ResolveSessionError(
+                f"--cycle applies only to --daily-id plan and must be >= 0, got "
+                f"{cycle} for {args.daily_id!r} — only planning sessions cycle."
+            )
+        if cycle is None:
+            cycle = read_cycle(repo, date) if args.daily_id == "plan" else 0
+        print(daily_session_id(args.daily_id, date, cycle))
+        return 0
+
+    # `--tag` is required for the resolution path but not for `--daily-id`, so it
+    # is validated here rather than by argparse.
+    if not args.tag:
+        raise ResolveSessionError("--tag is required (or pass --daily-id KIND)")
+
     verdict = resolve(normalize_tag(args.tag), repo)
     if args.format == "lines":
         # Three fixed lines in a fixed order, so a shell reads them positionally

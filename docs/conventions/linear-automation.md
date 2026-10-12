@@ -574,7 +574,8 @@ nobody can promote. A genuinely urgent stray — a broken guard, a verb
 that is actively hurting — is promoted on the spot rather than waiting
 for the daily rhythm.
 
-**Every meta issue gets a review at every bootstrap** — parked, in the
+**Every meta issue gets a review at every full bootstrap** (a warm
+same-day relaunch after a cycle skips it) — parked, in the
 operator's **Next** view (unblocked Backlog) and in the **Blocked** view
 — and each ends doable, blocked, or killed. It runs whether or not the
 Planning document names a lane: without it, "promote a file-disjoint
