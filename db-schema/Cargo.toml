@@ -46,8 +46,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dropset-db-schema = { path = ".", features = ["test-support"] }
 
 [features]
-# The container-backed tests' shared mapped-port lookup (src/testing.rs). Every
-# crate with such tests enables it from its dev-dependencies.
+# The container-backed tests' shared throwaway-Postgres start
+# (src/testing.rs). Every crate with such tests enables it from its
+# dev-dependencies.
 test-support = ["dep:testcontainers-modules", "tokio/time"]
 
 [package]

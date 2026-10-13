@@ -59,7 +59,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 # Build tagged event bytes in the decode unit test and the store tests.
 borsh = { version = "1", features = ["derive"] }
-# The container tests' shared mapped-port lookup.
+# The container tests' shared throwaway-Postgres start
+# (db-schema/src/testing.rs).
 dropset-db-schema = { path = "../db-schema", features = ["test-support"] }
 # The store path is exercised against a real Postgres in a throwaway
 # container (indexer/tests/store_postgres.rs), provisioned through

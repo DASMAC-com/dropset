@@ -62,7 +62,8 @@ http = "1"
 #
 # The schema owner is a dev-dependency only: the framework depends on the
 # `feed_cursors` table existing, never on who created it, so nothing but the
-# test needs this edge.
+# test needs this edge. `test-support` brings the shared throwaway-Postgres
+# start (db-schema/src/testing.rs).
 dropset-db-schema = { path = "../db-schema", features = ["test-support"] }
 sqlx = { version = "0.8", default-features = false, features = [
   "runtime-tokio",
