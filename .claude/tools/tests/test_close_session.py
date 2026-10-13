@@ -138,6 +138,8 @@ class PureTests(unittest.TestCase):
     def test_issue_from_branch_and_override(self):
         self.assertEqual(issue_for("eng-1669", None), "ENG-1669")
         self.assertEqual(issue_for("worktree-eng-42", None), "ENG-42")
+        # A bare-number architect / explore session never renames its branch.
+        self.assertEqual(issue_for("worktree-1572", None), "ENG-1572")
         self.assertEqual(issue_for("worktree-ceo-1571", "eng-1571"), "ENG-1571")
         with self.assertRaises(Refusal):
             issue_for("worktree-ceo-1571", None)
