@@ -1,5 +1,3 @@
-<!-- cspell:word Unblended -->
-
 # AWS infrastructure (CloudFormation)
 
 Account foundation for the market-data warehouse and any later AWS
@@ -298,16 +296,19 @@ Two things to know about that dialog:
     `{dropset-bedrock-invoke}` before and after. There was no
     `AttachUserPolicy`, `DetachUserPolicy` or `PutUserPolicy` in the
     window, though the mint's own `CreateServiceSpecificCredential` is
-    present.
+    present. The previous key was deliberately left Active to expire on
+    its own (2026-12-08), so sessions that already held it kept working.
+    Two Active keys until then is intended.
 
   Read the bound on that honestly before acting on it. Three mints is
   still a small n, and an absent event is weaker evidence than a present
   one, since the console could in principle attach through an API that
   logs under another name or under an AWS-internal principal this trail
-  does not capture. What every window establishes is that management
-  events *were* being recorded throughout — `CreateUser`, `CreatePolicy`,
-  `CreateServiceSpecificCredential` and both attach/detach pairs are all
-  present — so a silent trail is not the explanation.
+  does not capture. Every window shows management events *were* being
+  recorded: the first two hold `CreateUser`, `CreatePolicy`,
+  `CreateServiceSpecificCredential` and both attach/detach pairs, and
+  the third holds the mint's own `CreateServiceSpecificCredential`. So a
+  silent trail is not the explanation.
 
   Hence: keep the step, drop the certainty. Detaching a policy that was
   never attached costs one glance at a tab; skipping a check that turns
@@ -324,8 +325,10 @@ only makes the first failed call readable instead of opaque. The
 warning is a dated Linear reminder filed at each mint. IAM holds at
 most **two** Bedrock keys per user, and an expired key may still count
 toward that limit. So when two are already listed, first delete the one
-that is expired or already replaced, never the live key: that one goes
-only after its replacement works (step 4 below). List the current
+that is expired, or that has been replaced and is no longer used by any
+running session. Never delete the key the 1Password field currently
+holds: it goes only after its replacement works (step 4 below). List
+the current
 credentials, their status and their expiry dates with:
 
 ```sh
@@ -696,7 +699,9 @@ the last 7 days: *Unblended costs*, grouped by *Service*, with the
 *Charge type* filter excluding *Credit*. Each Claude model is its own
 service (`Claude Opus 5.5 (Amazon Bedrock Edition)`), so the bars split
 by model. No service is filtered out, so anything that starts charging
-— a database, a second CloudTrail trail — shows up as its own bar.
+shows up: a new service such as a database as its own bar, and a second
+CloudTrail trail as a CloudTrail bar. Whether the chart folds small
+services into an *Others* bar once there are many is unverified.
 Cost Explorer lags up to a day, so today's bar fills in late.
 
 Two settings make the difference between this view and a misleading
@@ -711,9 +716,26 @@ The dashboard is account-scoped, so every login with
 PowerUser and the admin login both do. It cannot be put on Console
 Home: the Console Home docs allow adding, removing, moving and resizing
 AWS's own widgets, but give no way to reconfigure one or embed a
-dashboard. CloudFormation cannot create dashboards, so to rebuild it,
-use the settings above in the console or
-`aws bcm-dashboards create-dashboard` with the same query.
+dashboard.
+
+**The widget definition is committed** at
+`dashboards/actual-daily-costs.widgets.json`, and it is the source of
+truth. CloudFormation cannot create dashboards, so apply it with the
+CLI, never by editing in the console (a console edit is drift; if one
+happens, read it back with `get-dashboard` and commit it). From the
+repo root:
+
+```sh
+aws bcm-dashboards update-dashboard --region us-east-1 \
+  --arn <dashboard-arn> --name 'Actual daily costs' \
+  --description 'Last 7 days of cost by service, credits excluded' \
+  --widgets file://infra/aws/dashboards/actual-daily-costs.widgets.json
+```
+
+`aws bcm-dashboards list-dashboards --region us-east-1` gives the ARN.
+To rebuild it from scratch, use `create-dashboard` with the same three
+flags. The update replaces every field, so leaving out `--description`
+clears it, and the description rejects parentheses.
 
 ### Where alerts go
 
@@ -727,13 +749,15 @@ while `SpendKillSwitchEnabled` is armed. The other two only email.
 | `dropset-bedrock-agent-spend` budget                              | Monthly cost **before credits** past 80% actual or 100% forecast of limit | Email only                                            |
 | Cost Anomaly Detection `Default-Services-Subscription` (console)  | Daily; an anomaly of at least \$100 **and** 40% on any service            | Email only                                            |
 
-The budget counts the dashboard's before-credits cost (minus refunds),
-across every service, so free usage counts as \$0 and credits do not
-hide spend, but it fires only near its \$10,000 monthly limit. Anomaly
-detection also sees spend before credits: it flagged the 2026-09-10
-Opus 5 spike. That makes it the only alert likely to catch a sizable
-new charge on a non-Bedrock service. A charge of a few dollars a day
-fires neither, and shows up only on the dashboard. Anomaly detection
+The budget counts the dashboard's before-credits cost across every
+service, ignoring refunds, so free usage counts as \$0 and credits do
+not hide spend. It fires only at 80% of `BudgetLimitUsd` (default
+\$10,000) in actual spend, or when the month's forecast passes that
+limit. Anomaly detection also sees spend before credits: it flagged
+the 2026-09-10 Opus 5 spike. That makes it the only alert likely to
+catch a sizable new charge on a non-Bedrock service. A charge of a few
+dollars a day is unlikely to fire any of the three, and may show up
+only on the dashboard. Anomaly detection
 is not in any template. Check its subscriber with
 `aws ce get-anomaly-subscriptions --region us-east-1`. An email
 subscriber that reads anything but `CONFIRMED`, or an SNS subscription
