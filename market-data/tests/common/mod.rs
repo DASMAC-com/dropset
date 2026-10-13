@@ -19,8 +19,11 @@
 
 use dropset_db_schema::{connect, migrate, POSTGRES_IMAGE_TAG};
 use sqlx::PgPool;
+use std::time::Duration;
 use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
+use testcontainers_modules::testcontainers::{
+    runners::AsyncRunner, ContainerAsync, ImageExt, TestcontainersError,
+};
 
 /// A throwaway Postgres with every migration applied.
 ///
@@ -34,14 +37,34 @@ pub async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
         .start()
         .await
         .expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("resolve mapped port");
+    let port = mapped_port(&container).await;
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     let pool = connect(&url).await.expect("connect pool");
     migrate(&pool).await.expect("apply migrations");
     (container, pool)
+}
+
+/// The host port Docker mapped to the container's 5432.
+///
+/// `start` can return before Docker has published the port mapping, and the
+/// lookup then fails with `PortNotExposed` even though the container is fine.
+/// It is a startup race rather than a broken container, and it lands on a
+/// different test each run, so it is absorbed here: each attempt re-inspects
+/// the container, and only that one error is retried — anything else is a real
+/// failure and panics on the spot.
+async fn mapped_port(container: &ContainerAsync<Postgres>) -> u16 {
+    const ATTEMPTS: u32 = 10;
+    const BACKOFF: Duration = Duration::from_millis(200);
+    for attempt in 1..=ATTEMPTS {
+        match container.get_host_port_ipv4(5432).await {
+            Ok(port) => return port,
+            Err(TestcontainersError::PortNotExposed { .. }) if attempt < ATTEMPTS => {
+                tokio::time::sleep(BACKOFF).await;
+            }
+            Err(e) => panic!("resolve mapped port (attempt {attempt}/{ATTEMPTS}): {e}"),
+        }
+    }
+    unreachable!("the final attempt either returns or panics")
 }
 
 /// Insert one closed bucket into `cex_prices`.
