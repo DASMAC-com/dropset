@@ -1,0 +1,54 @@
+[
+  {
+    "configs": [
+      {
+        "displayConfig": {
+          "graph": {
+            "UnblendedCost": {
+              "visualType": "STACK"
+            }
+          }
+        },
+        "queryParameters": {
+          "costAndUsage": {
+            "filter": {
+              "not": {
+                "dimensions": {
+                  "key": "RECORD_TYPE",
+                  "values": [
+                    "Credit"
+                  ]
+                }
+              }
+            },
+            "granularity": "DAILY",
+            "groupBy": [
+              {
+                "key": "SERVICE",
+                "type": "DIMENSION"
+              }
+            ],
+            "metrics": [
+              "UnblendedCost"
+            ],
+            "timeRange": {
+              "endTime": {
+                "type": "RELATIVE",
+                "value": "-P0D"
+              },
+              "startTime": {
+                "type": "RELATIVE",
+                "value": "-P7D"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "description": "Unblended cost by service, Credit charge type excluded, so credit-funded spend does not net to zero.",
+    "height": 6,
+    "horizontalOffset": 0,
+    "title": "Actual daily costs",
+    "width": 4
+  }
+]

@@ -257,11 +257,13 @@ In the IAM console: **Users** → `dropset-bedrock-agent` →
 **Amazon Bedrock** as the service → pick an expiration → **Generate**,
 then copy the value.
 
-**Rotation is monthly**, so the expiry chosen here is a backstop rather
-than the schedule — the operator re-mints on the monthly rhythm well
-before any of the offered expirations lands. Leak exposure on this key
-is bounded to credit burn rather than data, which is what keeps custody
-this simple; the cadence is the compensating control.
+**Rotation is yearly: mint with a 365-day expiry.** The expiry is the
+schedule, and a reminder fires about two months before it lands.
+Leak exposure on this key is bounded to credit burn rather than data,
+and the daily spend cap (below) emails as that burn climbs and, while
+armed, bounds it. Those two controls are why a year-long key is
+acceptable here.
+Monthly rotation was the rule before the cap existed.
 
 Two things to know about that dialog:
 
@@ -276,7 +278,7 @@ Two things to know about that dialog:
   does not already grant.
 
   **Treat that as a check, not as a known fact.** The CloudTrail record
-  does not corroborate it, across **two** mints:
+  does not corroborate it, across **three** mints:
 
   - **2026-09-04 00:37:16 UTC** (the first). Over the 90-day window
     there is **no `AttachUserPolicy` for `AmazonBedrockLimitedAccess` at
@@ -289,15 +291,24 @@ Two things to know about that dialog:
     `{dropset-bedrock-invoke}` immediately after. The only attach in
     that window is CloudFormation's, 2.5 minutes *before* the mint; the
     only detach is the old stack's teardown, 12 minutes after.
+  - **2026-10-13 00:36:04 UTC** (the first rotation, minted in the
+    console as `dev-admin`). Attached policies were
+    `{dropset-bedrock-invoke}` before and after. There was no
+    `AttachUserPolicy`, `DetachUserPolicy` or `PutUserPolicy` in the
+    window, though the mint's own `CreateServiceSpecificCredential` is
+    present. The previous key was deliberately left Active to expire on
+    its own (2026-12-08), so sessions that already held it kept working.
+    Two Active keys until then is intended.
 
-  Read the bound on that honestly before acting on it. Two mints is
+  Read the bound on that honestly before acting on it. Three mints is
   still a small n, and an absent event is weaker evidence than a present
   one, since the console could in principle attach through an API that
   logs under another name or under an AWS-internal principal this trail
-  does not capture. What both windows establish is that management
-  events *were* being recorded throughout — `CreateUser`, `CreatePolicy`,
-  `CreateServiceSpecificCredential` and both attach/detach pairs are all
-  present — so a silent trail is not the explanation.
+  does not capture. Every window shows management events *were* being
+  recorded: the first two hold `CreateUser`, `CreatePolicy`,
+  `CreateServiceSpecificCredential` and both attach/detach pairs, and
+  the third holds the mint's own `CreateServiceSpecificCredential`. So a
+  silent trail is not the explanation.
 
   Hence: keep the step, drop the certainty. Detaching a policy that was
   never attached costs one glance at a tab; skipping a check that turns
@@ -308,11 +319,17 @@ Two things to know about that dialog:
   against `us-west-2` returns zero events for every one of these names
   and reads exactly like "it never happened".
 
-**Rotating it.** Rotate monthly. The key also expires on the date chosen
-at generation, and expiry is silent from this repo's side — nothing here
-warns you, and the launcher's only job is to make the first failed call
-legible rather than opaque. List the current credential, its status and
-its expiry date with:
+**Rotating it.** Rotate yearly, before the key's expiry. Expiry is
+silent from this repo's side. Nothing here warns you, and the launcher
+only makes the first failed call readable instead of opaque. The
+warning is a dated Linear reminder filed at each mint. IAM holds at
+most **two** Bedrock keys per user, and an expired key may still count
+toward that limit. So when two are already listed, first delete the one
+that is expired, or that has been replaced and is no longer used by any
+running session. Never delete the key the 1Password field currently
+holds: it goes only after its replacement works (step 4 below). List
+the current
+credentials, their status and their expiry dates with:
 
 ```sh
 aws iam list-service-specific-credentials \
@@ -670,6 +687,81 @@ standard alarm $0.10 per month for each metric its expression lists,
 and four alarms × four metrics is 16. The free tier covers 10 alarm
 metrics, which brings it to \$0.60 if no other alarm uses them. The token
 metrics are free, and the Lambda runs only on a trip.
+
+## Where to see spend
+
+Credits cover the whole bill, so every **net** cost view reads \$0. To
+see what is actually being spent, exclude the **Credit** charge type.
+
+**The view.** Billing and Cost Management → *Dashboards* → **Actual
+daily costs** (bookmark it). Its one widget is a stacked daily bar over
+the last 7 days: *Unblended costs*, grouped by *Service*, with the
+*Charge type* filter excluding *Credit*. Each Claude model is its own
+service (`Claude Opus 5.5 (Amazon Bedrock Edition)`), so the bars split
+by model. No service is filtered out, so anything that starts charging
+shows up: a new service such as a database as its own bar, and a second
+CloudTrail trail as a CloudTrail bar. Whether the chart folds small
+services into an *Others* bar once there are many is unverified.
+Cost Explorer lags up to a day, so today's bar fills in late.
+
+Two settings make the difference between this view and a misleading
+one:
+
+- **A cost metric, not *Usage quantity*.** Usage counts free units too,
+  so CloudTrail's tens of thousands of free events dwarf every model.
+- **Credit excluded.** With credits included, every bar nets to zero.
+
+The dashboard is account-scoped, so every login with
+`bcm-dashboards:GetDashboard` and Cost Explorer read access sees it.
+PowerUser and the admin login both do. It cannot be put on Console
+Home: the Console Home docs allow adding, removing, moving and resizing
+AWS's own widgets, but give no way to reconfigure one or embed a
+dashboard.
+
+**The widget definition is committed** at
+`dashboards/actual-daily-costs.widgets.json`, and it is the source of
+truth. CloudFormation cannot create dashboards, so apply it with the
+CLI, never by editing in the console (a console edit is drift; if one
+happens, read it back with `get-dashboard` and commit it). From the
+repo root:
+
+```sh
+aws bcm-dashboards update-dashboard --region us-east-1 \
+  --arn <dashboard-arn> --name 'Actual daily costs' \
+  --description 'Last 7 days of cost by service, credits excluded' \
+  --widgets file://infra/aws/dashboards/actual-daily-costs.widgets.json
+```
+
+`aws bcm-dashboards list-dashboards --region us-east-1` gives the ARN.
+To rebuild it from scratch, use `create-dashboard` with the same three
+flags. The update replaces every field, so leaving out `--description`
+clears it, and the description rejects parentheses.
+
+### Where alerts go
+
+All three go to the operator's one alert address, which is set in AWS
+and never committed. Only the daily cap ever cuts anything off, and only
+while `SpendKillSwitchEnabled` is armed. The other two only email.
+
+| Alert                                                             | Fires on                                                                  | Effect                                                |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `dropset-bedrock-spend-alerts` SNS topic (four CloudWatch alarms) | 24-hour Bedrock estimate at 25, 50, 75 and 100% of `SpendCapUsd`          | Email; at 100%, when armed, the deny blocks every key |
+| `dropset-bedrock-agent-spend` budget                              | Monthly cost **before credits** past 80% actual or 100% forecast of limit | Email only                                            |
+| Cost Anomaly Detection `Default-Services-Subscription` (console)  | Daily; an anomaly of at least \$100 **and** 40% on any service            | Email only                                            |
+
+The budget counts the dashboard's before-credits cost across every
+service, ignoring refunds, so free usage counts as \$0 and credits do
+not hide spend. It fires only at 80% of `BudgetLimitUsd` (default
+\$10,000) in actual spend, or when the month's forecast passes that
+limit. Anomaly detection also sees spend before credits: it flagged
+the 2026-09-10 Opus 5 spike. That makes it the only alert likely to
+catch a sizable new charge on a non-Bedrock service. A charge of a few
+dollars a day is unlikely to fire any of the three, and may show up
+only on the dashboard. Anomaly detection
+is not in any template. Check its subscriber with
+`aws ce get-anomaly-subscriptions --region us-east-1`. An email
+subscriber that reads anything but `CONFIRMED`, or an SNS subscription
+whose ARN reads `PendingConfirmation`, delivers nothing.
 
 ## Secrets
 

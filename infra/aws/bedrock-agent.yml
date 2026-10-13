@@ -14,8 +14,8 @@ Description: >-
   model invocation alone, a daily spend cap that warns and then, when
   armed, blocks invocation once a rolling 24-hour estimate from Bedrock
   token metrics reaches its limit, and an optional monthly spend ALERT that
-  fires once uncredited spend reaches its threshold - a coarse tripwire,
-  not a prompt signal that credit coverage lapsed. No credential value is
+  fires once monthly spend before credits reaches its threshold - a coarse
+  runaway tripwire that never blocks anything. No credential value is
   created or stored by this template - the API key is minted out of band
   and kept in
   1Password (see infra/aws/README.md). The identity is model-agnostic: it is
@@ -52,8 +52,8 @@ Parameters:
       carries no budget action, so it never stops spend, although Budgets
       could through an action that applies a deny policy. Its billing data
       also lags by up to a day, which is why the hard stop is the daily
-      spend cap (SpendCapUsd) instead. At the ratified 10000 it is a runaway
-      alarm, not a fine-grained signal that credit coverage lapsed.
+      spend cap (SpendCapUsd) instead. It counts spend before credits, and at
+      the ratified 10000 it is a runaway alarm, not a fine-grained signal.
     Type: 'String'
   EnvironmentName:
     Default: 'dropset'
@@ -118,10 +118,12 @@ Resources:
         CostTypes:
           # Every flag here is at its AWS default except IncludeRefund, which
           # is off so a late refund cannot retroactively pull a month back
-          # under a threshold that already alerted. IncludeCredit being on is
-          # what makes this track spend NET of credits - the whole point,
-          # since while credits cover the charge the figure stays near zero.
-          IncludeCredit: true
+          # under a threshold that already alerted, and IncludeCredit, which
+          # is off so the budget tracks spend BEFORE credits. Credits cover
+          # the whole bill, so a net figure stays at zero and never alerts.
+          # This is the "Actual daily costs" dashboard's measure, ignoring
+          # refunds.
+          IncludeCredit: false
           IncludeDiscount: true
           IncludeOtherSubscription: true
           IncludeRecurring: true
