@@ -70,13 +70,17 @@ ENDPOINT = linear_api.ENDPOINT
 IN_FLIGHT_TYPE = "started"
 
 # The shell verb each tab is told to run. `task resume <n>` resolves the number
-# to the `eng-<n>` worktree, continues that session there, and re-exports the
-# substrate that session launched on.
+# to its worktree — the bare `<n>`, or a pre-rename `eng-` / `ceo-` / `exp-` one
+# — continues that session there, and re-exports the substrate it launched on.
+# One verb serves every session kind: an architect or explore thread writes no
+# substrate marker, which is what makes the resume re-pin the advisor tier.
 RESUME_VERB = "task resume"
 
-# An `ENG-###` identifier, or the tag inside an iTerm session name. The name
-# carries a status glyph prefix ("◐ eng-914"), so this is a search, not a match.
-_TAG_RE = re.compile(r"\beng-(\d+)\b", re.IGNORECASE)
+# The tag inside an iTerm session name: the bare number every issue-keyed
+# session is named by now ("◐ 914"), or a pre-rename "eng-914" / "ceo-914" /
+# "exp-914". The name carries a status glyph prefix, so this is a search, not a
+# match — and the guards keep a day-keyed "plan-13" from reading as issue 13.
+_TAG_RE = re.compile(r"(?<![\w-])(?:(?:eng|ceo|exp)-)?(\d+)(?![\w-])", re.IGNORECASE)
 
 _IDENT_RE = re.compile(r"^ENG-(\d+)$", re.IGNORECASE)
 
@@ -179,7 +183,7 @@ def live_tags() -> set[str]:
     (Session, not tab: the two are equivalent for the one-pane tabs these
     helpers create, but the distinction matters if a tab is ever split.)
 
-    The name carries a status glyph — `"◐ eng-914"` — so this searches rather
+    The name carries a status glyph — `"◐ 914"` — so this searches rather
     than matches. A session whose name has no tag (a plain shell, a planning
     session) contributes nothing.
 

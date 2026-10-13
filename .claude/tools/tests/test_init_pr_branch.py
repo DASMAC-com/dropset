@@ -54,14 +54,23 @@ class NormalizeTag(unittest.TestCase):
     def test_valid_uppercase_normalized(self):
         self.assertEqual(ipb.normalize_tag("ENG-12"), "eng-12")
 
+    def test_a_bare_number_is_the_worktree_directory_form(self):
+        # Worktree directories are named by the bare number; the tag the
+        # branch and the PR scope carry is still `eng-###`.
+        self.assertEqual(ipb.normalize_tag("1510"), "eng-1510")
+
     def test_invalid(self):
         self.assertIsNone(ipb.normalize_tag("feature-x"))
         self.assertIsNone(ipb.normalize_tag("eng-"))
         self.assertIsNone(ipb.normalize_tag("eng-12a"))
+        self.assertIsNone(ipb.normalize_tag("ceo-12"))
         self.assertIsNone(ipb.normalize_tag(""))
 
 
 class NormalizeBranch(unittest.TestCase):
+    def test_a_bare_number_branch_gains_the_linked_prefix(self):
+        self.assertEqual(ipb.normalize_branch("worktree-1510"), ("eng-1510", True))
+
     def test_strips_worktree_prefix(self):
         self.assertEqual(ipb.normalize_branch("worktree-eng-603"), ("eng-603", True))
 

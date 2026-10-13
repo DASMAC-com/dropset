@@ -76,9 +76,9 @@ Long-horizon **design** conversations run in their own session, not
 in a planning session: `plan` keeps the board coherent, `architect`
 asks whether the thing on the board is the right thing to build. Same
 seat quality, different job — so different sessions, not a mode
-toggle. Launched with **`architect <topic>`** (model-pinned,
-idempotent, one resumable session per design thread, named
-`ceo-<topic>`). It bootstraps minimally — the Planning document and
+toggle. Launched with **`architect <n>`** (model-pinned,
+idempotent, one resumable session per governing issue, named
+`<n>`). It bootstraps minimally — the Planning document and
 the track umbrellas, nothing else — and makes **no scheduling
 writes** to the board: it files its own Linear tasks and moves its
 own governing issue to In Review, but places no edges,

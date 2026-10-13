@@ -54,10 +54,10 @@ class Grammar(unittest.TestCase):
             session_dispatch.validate(["plan", "bedrock"]), ["plan", "bedrock"]
         )
         self.assertEqual(
-            session_dispatch.validate(["architect", "fx", "bedrock"]),
-            ["architect", "fx", "bedrock"],
+            session_dispatch.validate(["architect", "1572", "bedrock"]),
+            ["architect", "1572", "bedrock"],
         )
-        for argv in (["plan", "local"], ["architect", "fx", "local"]):
+        for argv in (["plan", "local"], ["architect", "1572", "local"]):
             with self.subTest(argv=argv), self.assertRaises(ValueError):
                 session_dispatch.validate(argv)
 
@@ -127,13 +127,14 @@ class Grammar(unittest.TestCase):
             session_dispatch.validate(["explore", "resume", "feeds"])
         self.assertIn("retired", str(caught.exception))
 
-    def test_architect_needs_a_topic(self):
+    def test_architect_takes_the_governing_issue_number(self):
         self.assertEqual(
-            session_dispatch.validate(["architect", "volatility-telemetry"]),
-            ["architect", "volatility-telemetry"],
+            session_dispatch.validate(["architect", "1572"]), ["architect", "1572"]
         )
-        with self.assertRaises(ValueError):
-            session_dispatch.validate(["architect"])
+        # There is no topic form any more, and 0 is not an issue.
+        for argv in (["architect"], ["architect", "volatility"], ["architect", "0"]):
+            with self.subTest(argv=argv), self.assertRaises(ValueError):
+                session_dispatch.validate(argv)
 
     def test_verbs_that_take_no_arguments(self):
         for verb in ("plan", "housekeeping"):
@@ -311,15 +312,15 @@ class Dispatch(unittest.TestCase):
         out = io.StringIO()
         with redirect_stdout(out):
             rc = session_dispatch.run(
-                ["task", "anthropic", "1234", "+", "plan", "+", "architect", "fx"]
+                ["task", "anthropic", "1234", "+", "plan", "+", "architect", "56"]
             )
 
         self.assertEqual(rc, 0)
-        self.assertEqual(seen, [["task anthropic 1234", "plan", "architect fx"]])
+        self.assertEqual(seen, [["task anthropic 1234", "plan", "architect 56"]])
         text = out.getvalue()
         self.assertIn("task anthropic 1234 -> /dev/a", text)
         self.assertIn("plan -> /dev/b", text)
-        self.assertIn("architect fx -> /dev/c", text)
+        self.assertIn("architect 56 -> /dev/c", text)
 
     def test_one_bad_verb_in_a_batch_dispatches_nothing(self):
         # A partial batch is the bad outcome: the caller cannot tell which tabs

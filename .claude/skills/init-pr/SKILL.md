@@ -82,7 +82,9 @@ few rows and reuses the existing `Bash(gh pr list:*)` rule.
 ## Input
 
 An optional Linear tag like `eng-123`; otherwise infer it from the
-worktree directory name. If it doesn't match `eng-###`
+worktree directory name — the bare number (`123`), or `eng-123` in
+a pre-rename worktree; the helper normalizes either to `eng-123`,
+the form the branch and the PR scope carry. If it is neither
 (case-insensitive), stop and ask.
 
 **With no other context** — just the tag, no task instructions — the
@@ -185,12 +187,12 @@ python3 .claude/tools/init_pr_branch.py --tag <eng-###> --link-env
 
 ```json
 {
-  "tag": "eng-603",          // validated, lowercased
-  "tag_valid": true,         // false (+ non-zero exit) if not eng-###
+  "tag": "eng-603",          // validated; `603` or `eng-603` in
+  "tag_valid": true,         // false (+ non-zero exit) if neither
   "base_repo": "/…/dropset", // the refs/heads/main worktree, or null
-  "current_branch": "worktree-eng-603",
+  "current_branch": "worktree-603",
   "normalized_branch": "eng-603",
-  "rename_needed": true,     // true iff a `worktree-` prefix is stripped
+  "rename_needed": true,     // true iff a `worktree-` prefix is replaced
   "env_link": "created",     // frontend/.env.local
   "secrets_env_link": "exists",  // infra/localnet/secrets.local.env
   "frontend_node_modules": "absent",  // present / absent / no-frontend
@@ -254,8 +256,10 @@ untracked per-directory content, which step 3 handles.
      `--no-default-features` `.so` behind that fails ~15 teardown tests
      in a later scoped `cargo test`.
 
-1. **Normalize the branch name.** `claude -w <tag>` names the branch
-   `worktree-eng-###`. If `rename_needed` is `true`:
+1. **Normalize the branch name.** `task <n>` runs `claude -w <n>`,
+   which names the worktree directory `<n>` and the branch
+   `worktree-<n>`; the branch is renamed to `eng-<n>`, the form
+   Linear's GitHub integration links. If `rename_needed` is `true`:
 
    ```sh
    git branch -m <current_branch> <normalized_branch>

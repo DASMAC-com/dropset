@@ -69,9 +69,17 @@ class LiveTags(unittest.TestCase):
         with mock.patch.object(fr.iterm_api, "session_names", return_value=names):
             self.assertEqual(fr.live_tags(), {"914", "923"})
 
+    def test_bare_and_role_prefixed_names_are_read_too(self):
+        # The bare number is the name every issue-keyed session carries now;
+        # `ceo-` / `exp-` are the pre-rename architect and explore spellings.
+        names = ["◐ 1510", "◑ ceo-1572", "exp-1196"]
+        with mock.patch.object(fr.iterm_api, "session_names", return_value=names):
+            self.assertEqual(fr.live_tags(), {"1510", "1572", "1196"})
+
     def test_a_session_with_no_tag_contributes_nothing(self):
-        # A plain shell, or a planning session — neither is resumed by this.
-        names = ["Default", "◐ plan-21", "bash"]
+        # A plain shell, or a day-keyed session — neither is resumed by this,
+        # and `plan-21`'s number is a day, not issue 21.
+        names = ["Default", "◐ plan-21", "housekeeping-3", "bash"]
         with mock.patch.object(fr.iterm_api, "session_names", return_value=names):
             self.assertEqual(fr.live_tags(), set())
 

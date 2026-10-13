@@ -88,6 +88,19 @@ class ClassifyTests(unittest.TestCase):
         self.assertIn("eng-3: issue unresolvable", flags)
         self.assertIn("scratch: issue unresolvable", flags)
 
+    def test_a_never_renamed_worktree_branch_is_tied_to_its_issue(self):
+        # A read-only architect / explore session never runs `init-pr`, so its
+        # branch stays `worktree-<n>` — and the one rule must still reach it
+        # once the issue is Done, while it is In Review it survives.
+        eligible, flags = eligible_branches(
+            {"worktree-1572", "worktree-eng-9", "worktree-1600", "worktree-ceo-7"},
+            {},
+            {1572: "completed", 9: "canceled", 1600: "started"},
+        )
+        self.assertEqual(eligible, {"worktree-1572", "worktree-eng-9"})
+        # A pre-rename role-prefixed branch is grandfathered: reported, kept.
+        self.assertEqual(flags, ["worktree-ceo-7: issue unresolvable"])
+
 
 class ReportTests(unittest.TestCase):
     def test_defang_neutralizes_basenames_emphasis_and_code_spans(self):
@@ -336,6 +349,16 @@ class PassTests(unittest.TestCase):
         self.assertEqual(
             deletes, [["gh", "api", "-X", "DELETE", "/notifications/threads/t10"]]
         )
+
+    def test_the_prune_subset_runs_only_the_cleanup_steps(self):
+        # What `upkeep.py prune` drives for the housekeeping skill.
+        run = FakeRun(notifications=[("t10", 10)])
+        ctx = make_ctx(run)
+        run_pass(ctx, upkeep.PRUNE_STEPS)
+        self.assertEqual(
+            [s["step"] for s in ctx.steps], ["prs", "board", "prune", "notifications"]
+        )
+        self.assertEqual(ctx.data["eligible"], {"eng-10", "eng-12"})
 
     def test_linear_unreachable_cleans_nothing(self):
         def down(nums):

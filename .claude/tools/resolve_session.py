@@ -24,14 +24,16 @@ caller did.
 
 Usage::
 
-    python3 .claude/tools/resolve_session.py --tag eng-1051
+    python3 .claude/tools/resolve_session.py --tag 1051
 
 It prints one JSON object and never opens a session itself — deciding is this
-tool's job, launching is the shell verb's:
+tool's job, launching is the shell verb's. The worktree is the bare-number
+directory, or a pre-rename ``eng-`` / ``ceo-`` / ``exp-`` one when only that
+exists (see :func:`worktree_candidates`):
 
     {
-      "tag": "eng-1051",
-      "worktree": "/…/.claude/worktrees/eng-1051",
+      "tag": "1051",
+      "worktree": "/…/.claude/worktrees/1051",
       "worktree_exists": true,
       "mode": "resume",
       "session_id": "afce0c54-1874-4276-a77b-38df146d0000",
@@ -111,11 +113,23 @@ def slugify(path: Path) -> str:
     return "".join("-" if c in "/." else c for c in str(path))
 
 
-def normalize_tag(raw: str) -> str:
-    """``1051``, ``eng-1051`` and ``ENG-1051`` all name the same worktree.
+#: The prefixes an issue-keyed worktree was created under before the bare-number
+#: rename — `eng-` for `task` and issue-keyed `explore`, `ceo-` for `architect`,
+#: `exp-` for an older explore. Mirrors `_ds_worktree_of` in
+#: `.claude/shell/init.zsh`.
+LEGACY_PREFIXES = ("eng-", "ceo-", "exp-")
 
-    Matches what ``task resume`` and ``cdds`` already accept, so the tool and the verbs
-    agree on what a tag is.
+_ISSUE_TAG_RE = re.compile(r"\A(?:(?:eng|ceo|exp)-)?0*(\d+)\Z", re.ASCII)
+
+
+def normalize_tag(raw: str) -> str:
+    """``1051``, ``eng-1051``, ``ENG-1051`` and ``ceo-1051`` all name issue 1051,
+    so all normalize to the bare ``1051`` — the name every issue-keyed session
+    and worktree now carries. Anything else (a free-form ``exp-<name>``) passes
+    through lowercased.
+
+    Matches ``_ds_tag_of`` in the shell, so the tool and the verbs agree on what
+    a tag is.
     """
     tag = raw.strip().lower()
     if not tag:
@@ -125,7 +139,19 @@ def normalize_tag(raw: str) -> str:
     # practice, but rejecting it here keeps the tag a tag.
     if "/" in tag or os.sep in tag or tag in (".", "..") or ".." in tag.split("-"):
         raise ResolveSessionError(f"--tag must name a single worktree: {raw!r}")
-    return tag if tag.startswith("eng-") else f"eng-{tag}"
+    match = _ISSUE_TAG_RE.match(tag)
+    return str(int(match.group(1))) if match else tag
+
+
+def worktree_candidates(tag: str) -> list[str]:
+    """The directory names that may hold ``tag``'s worktree, preferred first:
+    the bare number, then each pre-rename spelling. Those are grandfathered,
+    not moved — a live transcript stamps its cwd into the old path — so this is
+    the seam that keeps an in-flight ``ceo-<n>`` thread reachable by number."""
+    bare = normalize_tag(tag)
+    if not bare.isdigit():
+        return [bare]
+    return [bare, *(p + bare for p in LEGACY_PREFIXES)]
 
 
 def _mtime(path: Path) -> float:
@@ -197,7 +223,9 @@ def stamps_into(transcript: Path, target: Path) -> bool:
 
 def resolve(tag: str, repo: Path) -> dict:
     """Decide how to reach the session for ``tag``. Pure filesystem inspection."""
-    worktree = repo / ".claude" / "worktrees" / tag
+    root = repo / ".claude" / "worktrees"
+    names = worktree_candidates(tag)
+    worktree = next((root / n for n in names if (root / n).is_dir()), root / names[0])
     verdict = {
         "tag": tag,
         "worktree": str(worktree),

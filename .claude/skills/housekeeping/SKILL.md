@@ -1,6 +1,6 @@
 ---
 name: housekeeping
-description: Use when you arrive, from the base repo root — one pass of mechanical repo upkeep. Fast-forwards main, upgrades the CLI, prunes the worktrees of merged PRs (refusing any with unpushed work) and dismisses their notifications, folds parked trim levers via trim-context, audits the settings files (allowlist cruft, guard-hook wiring, and a roughly monthly allowlist-additions pass), captures session metrics, and runs the purge dry-run. Runs no audit, reads no Planning document, and does no board analysis — that is `plan`'s. One-shot by default, closing with one batched AskUserQuestion for the destructive items; pass `interactive` for per-step gates, `cspell` for the dictionary check. Safe to repeat, e.g. `/loop 30m housekeeping`.
+description: Use when you arrive, from the base repo root — one pass of mechanical repo upkeep. Fast-forwards main, upgrades the CLI, prunes worktrees tied to neither an open PR nor an unfinished issue (refusing any with unpushed work) and dismisses their notifications, folds parked trim levers via trim-context, audits the settings files (allowlist cruft, guard-hook wiring, and a roughly monthly allowlist-additions pass), captures session metrics, and runs the purge dry-run. Runs no audit, reads no Planning document, and does no board analysis — that is `plan`'s. One-shot by default, closing with one batched AskUserQuestion for the destructive items; pass `interactive` for per-step gates, `cspell` for the dictionary check. Safe to repeat, e.g. `/loop 30m housekeeping`.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -16,9 +16,9 @@ fast-forwards `main` so the pass runs on the latest
 committed skills and upgrades the Claude Code CLI
 (best-effort), then:
 
-1. **Prune merged worktrees** — remove the local
-   worktree (and branch) of every PR that has
-   already merged.
+1. **Prune finished worktrees** — remove every local
+   worktree and branch tied to neither an open PR nor an
+   unfinished issue.
 1. **Fold the parked trim levers** — delegate to
    `trim-context`, which sweeps the `Trim levers`
    milestone and files **small themed propose-only**
@@ -370,174 +370,54 @@ only if the loop churn proves noisy. Upgrading the CLI is
 not a repo source edit, so it doesn't break the skill's
 "makes no source edits" guarantee.)
 
-**2. Prune merged worktrees.** Read the set of merged PRs
-**once**, field-selected, instead of one full-body MCP
-`list_pull_requests` per worktree branch (each of those
-returns the whole PR object, replayed every later turn —
-see `docs/conventions/context-economy.md`). `gh pr list`
-has a `merged` state filter the MCP lacks and `--json`
-selects just the three fields the decision needs; it's a
-`--json` **flag**, not a pipe, so it reduces to the
-already-pre-approved `Bash(gh pr list:*)` read-rule (see
-`docs/conventions/github-mcp.md`):
+**2. Prune finished worktrees and branches.** One committed
+command applies the **one survival rule**, the same one the
+model-free upkeep pass applies:
 
 ```sh
-gh pr list --state merged --json number,headRefName,mergedAt --limit 30
+python3 .claude/tools/upkeep.py prune --apply
 ```
 
-**Match the window to the question — 100 was a payload for
-nothing.** This step decides about the handful of worktrees
-that exist right now, and worktrees are **days old by
-construction**, so a 100-PR window pays for ~96 rows the
-decision never reads. Field-selecting was already right; the
-*width* was not. Widen it only if a real worktree's branch
-falls off the end.
+**A worktree or local branch survives iff it is tied to an
+open PR, or to an issue whose status TYPE is neither
+`completed` nor `canceled`.** Everything else is
+cleanup-eligible. PR-merged is deliberately **not** the test:
+a merged PR whose issue reads **In Review** is a session with
+outstanding follow-up — the team's Git workflow automation
+makes no transition on merge — and pruning it would recreate
+the worktree-loss incident. Matching status **types**, never
+state names, keeps a workflow rename from widening a step that
+deletes things, and a duplicate lands in a canceled-type state,
+so it is covered by construction.
 
-**Do not select a collection-valued field here** — adding
-`files` or `commits` to the `--json` list reintroduces the
-whole payload this call exists to avoid (measured at ~4.0k
-for a two-line answer across eleven PRs).
+What the command does, so the report reads right:
 
-**But PR-merged is not the prune criterion — the ISSUE'S
-STATUS TYPE is.** A merged PR whose Linear issue reads
-**In Review** is a session with outstanding follow-up — the
-team's Git workflow automation makes no transition on merge,
-so that state survives the merge and stays visible — and
-pruning its worktree would recreate the worktree-loss incident
-in a third variant. So intersect the merged set with the
-board:
+- reads the terminal and open PR sets and the PR
+  notifications, field-selected, in one `gh` call each;
+- ties each worktree and `eng-` / `worktree-<n>` branch to its
+  issue by number, and reads the status types in **one**
+  field-selected GraphQL call. The `worktree-<n>` form is what
+  a read-only architect or explore session leaves behind — it
+  never renames its branch — so its worktree is reclaimed once
+  ratification moves the issue to Done;
+- hands the eligible set to `prune_worktrees.py`, whose gate
+  still refuses any tree with uncommitted changes or unpushed
+  commits (bare `git worktree remove`, never `--force`). A
+  branch with no upstream is removed only when every commit on
+  it is already on `origin/main`;
+- dismisses each eligible PR's notification thread as
+  **done**, one at a time — never mark-all.
 
-- resolve each merged branch's `ENG-###` from its branch name,
-  then read the status type with **one field-selected
-  `list_issues`** — `fields: ["statusType"]`, plus `status` for
-  the report line — and prune only when the type is
-  **`completed`** or **`canceled`**. Marking an issue a
-  duplicate puts it in a **canceled-type state**, so it is
-  covered by construction — and the status type is the whole
-  test. Don't reach for `duplicateOf`: it is a *relation*, not
-  an issue field, so it neither appears in a `fields` selection
-  nor needs to (see `docs/conventions/linear-automation.md` →
-  the fold's cancels).
-
-  **Never a whole-issue read here.** This step used to say
-  only "read that issue's status type" without naming the
-  call, while the `gh pr list` half of the same step
-  field-selects three fields and explains why one paragraph
-  earlier — so the board half defaulted to the fattest read.
-  Measured: reading one issue whole cost ≈6.0k for a single
-  `statusType`, and a second **overflowed the tool-result cap**
-  (64.3KB, spilled to disk) so the field was not even
-  readable; the recovery `list_issues` then answered it for
-  ≈2.5k. That is ≈8.5k plus a disk spill to classify two
-  issues — and it scales the wrong way, since the longer an
-  issue's decision history the likelier a whole read
-  overflows, and long-running issues are exactly the ones that
-  reach a merged PR.
-
-- **Match on status TYPES, never state names.** A workflow
-  rename would otherwise silently widen the prune, and this
-  step deletes things.
-
-- **One guard:** a `canceled` issue whose PR is still **open**
-  is *skipped and flagged in the report*, never pruned
-  silently. Both worktree-loss incidents began as a
-  prune-while-PR-open.
-
-- A merged branch with **no resolvable issue** falls through
-  to `left` — report it rather than guessing.
-
-This also makes the fleet-resume launcher compose exactly: In
-Progress **or** In Review means resume it, so a
-merged-but-unfinished session reopens on machine start.
-
-Hand the surviving set to the prune helper, which does the
-deterministic git work — for every worktree **other than**
-the `refs/heads/main` base, remove the ones whose branch
-merged (bare `git worktree remove`, no `--force`, so a dirty
-or locked tree refuses and is recorded as skipped, not
-dropped), force-delete each removed branch (a squash/rebase
-tip isn't an ancestor of `main`, so `-d` would wrongly
-refuse; the PR is confirmed merged), then
-`git worktree prune` the stale admin entries. Pass the
-merged branches (run from the base repo root):
-
-```sh
-python3 .claude/tools/prune_worktrees.py --merged <branch> <branch> ...
-```
-
-Its JSON is the tally to report: `removed` (worktree + branch
-dropped), `branches_removed` (a stray branch, worktree already
-gone), `skipped` (dirty, locked or unpushed — the safe
-outcome), `left` (not in the merged set), `unmatched` (matches
-nothing). Preview with `--dry-run`. Closed-without-merge and
-dirty worktrees land in `skipped` / `left` for the user.
-
-**Then mark notifications for merged PRs done.** Merged PRs
-leave GitHub notifications that otherwise pile up with no
-easy bulk clear. Dismiss only the ones whose PR has
-**merged** — a robust catch-all that also covers auto-merged
-PRs and others' PRs the worktree sweep above never touches.
-
-**Read the sweep field-selected.** Only three fields are
-consumed — the thread id, the subject type, and the subject
-url — and the MCP getter embeds the **complete repository
-object** (every `*_url` template) once per notification,
-which measured **~3.7k for three rows**:
-
-```sh
-gh api /notifications --jq '.[] | {id, url: .subject.url}'
-```
-
-**And the merged set you already have IS the merged-at
-check.** For any notification whose PR number appears in the
-`gh pr list --state merged` result fetched moments ago,
-membership in that set *is* the confirmation — a per-PR read
-verifies something the session is already holding. In the
-measured pass all three notifications were already in the
-just-fetched merged set, so all three per-PR reads were
-redundant.
-
-Fall back to a per-PR read **only** for a notification whose
-number is outside that window (an older PR the 30-row list
-did not reach):
-
-```txt
-mcp__github__pull_request_read(
-  owner: "DASMAC-com",
-  repo: "dropset",
-  pullNumber: <number>,
-  method: "get",
-)
-```
-
-- merged (by set membership, or by a non-null `merged_at`
-  from the fallback read) → mark that one notification
-  **done**:
-
-  ```txt
-  mcp__github__dismiss_notification(
-    threadID: "<notification id>",
-    state: "done",
-  )
-  ```
-
-- `merged_at` is null (open or closed-unmerged), or the
-  subject isn't a PR → **leave it**.
-
-`state: "done"` is load-bearing, and it is the one argument
-this step gets asked about. `"read"` only clears the unread
-marker — the thread **stays in the GitHub inbox**, so a
-sweep that used it looked like a no-op to the human reading
-their notifications. `"done"` removes the thread, which is
-the correct terminal state here precisely because the step
-already gated on `merged_at`: a merged PR has nothing left
-to come back to. Say "done" (not "read") in the report line
-too, so the report matches what the inbox shows.
-
-**Never** call `mark_all_notifications_read` — that would
-clear unread mentions, review requests, and other non-merge
-notifications too. Only a confirmed-merged PR's
-notification is marked done.
+**Fail closed, and report what it held back.** Linear
+unreachable cleans **nothing**. A `canceled` issue whose PR
+is still open is **flagged**, never pruned — both
+worktree-loss incidents began as a prune-while-PR-open. A
+branch whose issue cannot be resolved is reported as
+`issue unresolvable` and kept: that includes the
+**grandfathered** pre-rename `ceo-<topic>` / `exp-<name>`
+worktrees, which are cleaned by hand as their threads close.
+Report the `prune` line's removed / held-back counts and every
+flag; preview first with the same command minus `--apply`.
 
 **3. Spelling-escape hygiene — run cspell, file the
 drift as one aggregated issue.** **Opt-in — run this step
@@ -1093,10 +973,10 @@ more useful than skipping the step and calling it deferred.
 - Claude Code CLI: upgraded (with the new version), already
   current, or the brew error if the upgrade couldn't run
   (never fatal).
-- Worktrees pruned (path + branch), and any left in
-  place with the reason (PR open/closed-unmerged, no
-  PR, or dirty tree); and how many merged-PR
-  notifications were marked **done**.
+- Worktrees and branches pruned, and any held back with
+  the reason (dirty, unpushed, or a flag such as
+  `issue unresolvable`); and how many PR notifications
+  were marked **done**.
 - Spelling-escape drift (only if the `cspell` flag was
   passed; otherwise note the step was skipped): the
   aggregated cspell issue —

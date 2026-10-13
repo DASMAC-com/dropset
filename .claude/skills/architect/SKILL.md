@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Run an architect session, launched with `architect <topic>` — a long-horizon design conversation asking whether the thing on the board is the right thing to build. Bootstraps from the Planning document and the track umbrellas only. Produces Linear tasks, plus an optional on-disk spec file the operator edits in place, with NEEDS- markers on open items. Makes no scheduling writes: it files its own tasks and moves only its own issue to In Review, then hands conclusions to planning through the Planning document's notes and a direct message. Runs in a temporary worktree but is READ-ONLY toward the repo — no commits, no PR.
+description: Run an architect session, launched with `architect <n>` on its governing issue — a long-horizon design conversation asking whether the thing on the board is the right thing to build. Bootstraps from the Planning document and the track umbrellas only. Produces Linear tasks, plus an optional on-disk spec file the operator edits in place, with NEEDS- markers on open items. Makes no scheduling writes: it files its own tasks and moves only its own issue to In Review, then hands conclusions to planning through the Planning document's notes and a direct message. Runs in a temporary worktree but is READ-ONLY toward the repo — no commits, no PR.
 user-invocable: true
 model: fable
 ---
@@ -26,15 +26,21 @@ unchanged.
 ## Where it runs
 
 **Its own worktree, on the mandated model, launched with
-`architect <topic>`.** The verb takes a topic and is
-**idempotent**: it creates the session if the named one is
-absent and resumes it if present. One verb, no resume twin —
-the same lesson that folded `explore`'s start/resume pair, and
-`explore` now shares both the worktree home and the
-idempotency.
+`architect <n>`**, where `<n>` is the thread's **governing
+issue** — the only argument; there is no topic form. A design
+thread is a board-tracked task like any other that happens to
+do read-only spec work, so a thread with no governing issue
+files or names one first. The verb is **idempotent**: it
+creates the session if absent and resumes it if present. One
+verb, no resume twin — the same lesson that folded `explore`'s
+start/resume pair, and `explore` now shares both the worktree
+home and the idempotency.
 
-The worktree is named **`ceo-<topic>`** and the verb creates it
-for you. **It is temporary working state and nothing more** —
+The session, its tab and its worktree are all the **bare
+number** (`1572`), the name every issue-keyed session carries.
+The launch passes `ENG-<n>` to this skill as its argument, so
+the governing issue is known from the first turn. **The
+worktree is temporary working state and nothing more** —
 somewhere to iterate a spec or plan file with the operator. Its
 contents are **expendable by construction**.
 
@@ -69,25 +75,28 @@ So if you find yourself reaching for `git commit` or
 also no PR title to satisfy, which is why this skill no longer
 says anything about an `ENG-###` scope.
 
-**The worktree name is deliberately not an `eng-###`.** An
-architect topic has no issue of its own, and the `ceo-` prefix
-is what keeps the fleet listing readable by role.
+**Keyed on the issue, the worktree is reclaimed for you.**
+The pruner removes it once ratification moves the issue to
+Done, and keeps it while the issue is In Progress or In Review
+— the lifecycle "temporary" promises, enforced. A pre-rename
+`ceo-<topic>` worktree is reported rather than deleted and is
+cleaned by hand when its thread closes.
 
 It runs the **advisor** tier, like `plan`: this session
 argues strategy, so it runs the top tier. If the shell arrived
 carrying Bedrock exports from an earlier `task` in the same
 tab, an anthropic launch clears them and says so.
 
-The session is named `ceo-<topic>`, so the fleet listing reads
-by role: `eng-*` implementers, `plan-*` planning, `ceo-*`
-architecture. The topic is load-bearing, not decoration —
-each long-horizon design thread gets its **own resumable
-session**, so parallel threads never share context and a
-volatility conversation cannot drift into a custody one.
+The issue number is load-bearing, not decoration — each
+long-horizon design thread gets its **own resumable session**,
+so parallel threads never share context and a volatility
+conversation cannot drift into a custody one. Resuming by
+number reaches it like any other session, so `fleet` does
+too.
 
 **There is no in-session model check.** `architect` pins the
 advisor tier at launch and refuses to start when it does not
-resolve; `architect <topic> bedrock` is the credit-pinch
+resolve; `architect <n> bedrock` is the credit-pinch
 override, as for `plan`.
 
 For an architect session specifically: doing long-horizon
