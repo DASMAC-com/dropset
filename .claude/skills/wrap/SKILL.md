@@ -178,12 +178,14 @@ Either yes runs one tool as the session's **last** tool call:
 python3 .claude/tools/close_session.py --state Done
 ```
 
-with `--keep-worktree` for the second option. **The state
+with `--keep-worktree` for the second option, and
+`--issue ENG-###` on a branch that is not `eng-###`. **The state
 write lands before any removal, never the reverse** — a
 worktree removed while its issue still reads In Review
 strands the session, which a later resume cannot recover.
 Never remove the worktree any other way. The tool re-checks
 git safety, the PR, and the worktree lock before writing
-anything; on a refusal, report its `refused` line as a
+anything, and removes only after Done or Canceled; on a
+refusal, report its `refused` line as a
 NOT CLEAR item. Exit 2 means Done landed but the removal did
 not; `upkeep` collects it.

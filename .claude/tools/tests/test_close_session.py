@@ -60,11 +60,15 @@ class FakeRun:
         self.unpushed = "0"
         self.upstream = True
         self.beyond_main = "0"
-        self.prs = [{"number": 503, "state": "MERGED"}]
+        self.head = "abc123"
+        self.prs = [{"number": 503, "state": "MERGED", "headRefOid": "abc123"}]
         self.gh_rc = 0
+        self.gh_out = None
         self.parents = {1000: 999, 999: SESSION_PID, SESSION_PID: 1}
         self.remove_rc = 0
         self.unlock_rc = 0
+        self.lock_rc = 0
+        self.branch_rc = 0
         self.__dict__.update(overrides)
         self.calls: list[list[str]] = []
 
@@ -74,7 +78,8 @@ class FakeRun:
             parent = self.parents.get(int(cmd[-1]))
             return (0, f"{parent}\n", "") if parent else (1, "", "")
         if cmd[0] == "gh":
-            return self.gh_rc, json.dumps(self.prs), "gh: boom"
+            out = json.dumps(self.prs) if self.gh_out is None else self.gh_out
+            return self.gh_rc, out, "gh: boom"
         args = cmd[1:]
         if args[:2] == ["-C", BASE]:
             sub = args[2:]
@@ -82,6 +87,10 @@ class FakeRun:
                 return self.unlock_rc, "", "unlock: no"
             if sub[:2] == ["worktree", "remove"]:
                 return self.remove_rc, "", "fatal: contains modified files"
+            if sub[:2] == ["worktree", "lock"]:
+                return self.lock_rc, "", "lock: no"
+            if sub[:2] == ["branch", "-D"]:
+                return self.branch_rc, "", "error: branch busy"
             return 0, "", ""
         if args == ["rev-parse", "--show-toplevel"]:
             return 0, self.cwd_top + "\n", ""
@@ -89,9 +98,11 @@ class FakeRun:
             return 0, self.porcelain, ""
         if args[2:] == ["status", "--porcelain"]:
             return 0, self.status, ""
+        if args[2:] == ["rev-parse", "HEAD"]:
+            return 0, self.head + "\n", ""
         if args[2:3] == ["rev-list"] and args[-1] == "origin/main..HEAD":
             return 0, self.beyond_main + "\n", ""
-        if args[:1] == ["rev-list"] or args[2:3] == ["rev-list"]:
+        if args[2:3] == ["rev-list"]:
             if not self.upstream:
                 return 128, "", "fatal: no upstream configured"
             return 0, self.unpushed + "\n", ""
@@ -131,12 +142,25 @@ class PureTests(unittest.TestCase):
             issue_for("worktree-ceo-1571", None)
         with self.assertRaises(Refusal):
             issue_for("eng-1", "FIN-1")
+        self.assertEqual(issue_for("eng-1669", "ENG-1669"), "ENG-1669")
+        with self.assertRaisesRegex(Refusal, "disagrees"):
+            issue_for("eng-1669", "ENG-1")
 
     def test_lock_reasons(self):
         locks = lock_reasons(PORCELAIN)
         self.assertIsNone(locks[BASE])
         self.assertEqual(locks[TREE], LOCK)
         self.assertEqual(lock_reasons("worktree /x\nlocked\n"), {"/x": ""})
+
+    def test_lock_reasons_keys_resolve_through_symlinks(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        real = os.path.join(tmp, "real")
+        os.mkdir(real)
+        link = os.path.join(tmp, "link")
+        os.symlink(real, link)
+        locks = lock_reasons(f"worktree {link}\nlocked {LOCK}\n")
+        self.assertEqual(locks, {os.path.realpath(real): LOCK})
 
     def test_lock_verdict(self):
         self.assertFalse(lock_verdict(None, set()))
@@ -203,29 +227,59 @@ class CloseTests(unittest.TestCase):
 
     def test_each_gate_refuses_before_the_write(self):
         cases = {
-            "uncommitted": {"status": " M a.py\n"},
-            "unpushed": {"unpushed": "2"},
-            "open PR": {"prs": [{"number": 503, "state": "OPEN"}]},
-            "gh failure": {"gh_rc": 1},
-            "foreign lock": {"parents": {1000: 1}},
-            "base checkout": {"cwd_top": BASE},
+            "uncommitted": ({"status": " M a.py\n"}, "uncommitted"),
+            "unpushed": ({"unpushed": "2"}, "2 unpushed commit(s)"),
+            "open PR": ({"prs": [{"number": 503, "state": "OPEN"}]}, "still open"),
+            "gh failure": ({"gh_rc": 1}, "could not read the branch's PRs"),
+            "gh garbage": ({"gh_out": "not json"}, "unreadable gh pr list"),
+            "gh non-list": ({"gh_out": "{}"}, "unreadable gh pr list"),
+            "foreign lock": ({"parents": {1000: 1}}, "another live process"),
+            "base checkout": ({"cwd_top": BASE}, "not the base checkout"),
         }
-        for name, fake in cases.items():
+        for name, (fake, why) in cases.items():
             with self.subTest(name):
                 rc, result, _, writer = run_close(**fake)
                 self.assertEqual(rc, 1, result)
-                self.assertIsNotNone(result["refused"])
+                self.assertIn(why, result["refused"])
                 self.assertEqual(writer.calls, [])
 
-    def test_no_upstream_passes_only_with_nothing_beyond_main(self):
+    def test_live_state_refuses_removal_unless_kept(self):
+        rc, result, _, writer = run_close(args=ns(state="In Review"))
+        self.assertEqual(rc, 1)
+        self.assertIn("--keep-worktree", result["refused"])
+        self.assertEqual(writer.calls, [])
+        rc, result, _, _ = run_close(args=ns(state="In Review", keep_worktree=True))
+        self.assertEqual(rc, 0, result)
+
+    def test_squash_merged_branch_with_upstream_is_not_held_to_main(self):
+        rc, result, _, _ = run_close(beyond_main="3")
+        self.assertEqual(rc, 0, result)
+
+    def test_no_upstream_passes_with_nothing_beyond_main(self):
         rc, result, _, _ = run_close(
-            args=ns(state="In Review", issue="ENG-1669"), upstream=False
+            args=ns(issue="ENG-1669"), upstream=False, head="def456"
         )
         self.assertEqual(rc, 0, result)
-        rc, result, _, writer = run_close(upstream=False, beyond_main="3")
-        self.assertEqual(rc, 1)
-        self.assertIn("3 commit(s) beyond origin/main", result["refused"])
-        self.assertEqual(writer.calls, [])
+
+    def test_no_upstream_passes_when_head_is_the_merged_pr_head(self):
+        rc, result, _, _ = run_close(upstream=False, beyond_main="3")
+        self.assertEqual(rc, 0, result)
+
+    def test_no_upstream_refuses_unproven_commits(self):
+        cases = {
+            "head differs": {"head": "def456"},
+            "head of an unmerged PR": {
+                "prs": [{"number": 503, "state": "CLOSED", "headRefOid": "abc123"}]
+            },
+        }
+        for name, fake in cases.items():
+            with self.subTest(name):
+                rc, result, _, writer = run_close(
+                    upstream=False, beyond_main="3", **fake
+                )
+                self.assertEqual(rc, 1, result)
+                self.assertIn("3 commit(s) beyond origin/main", result["refused"])
+                self.assertEqual(writer.calls, [])
 
     def test_no_pr_is_a_terminal_state(self):
         rc, result, _, _ = run_close(prs=[])
@@ -259,6 +313,23 @@ class CloseTests(unittest.TestCase):
             locks, [["git", "-C", BASE, "worktree", "lock", "--reason", LOCK, TREE]]
         )
         self.assertFalse(any(c[3:5] == ["branch", "-D"] for c in runner.calls))
+
+    def test_failed_lock_restore_is_reported(self):
+        rc, result, _, _ = run_close(remove_rc=1, lock_rc=1)
+        self.assertEqual(rc, 2)
+        self.assertIn("re-lock FAILED", " ".join(result["notes"]))
+
+    def test_failed_unlock_stops_before_remove(self):
+        rc, result, runner, _ = run_close(unlock_rc=1)
+        self.assertEqual(rc, 2)
+        self.assertIn("unlock failed", " ".join(result["notes"]))
+        self.assertFalse(any(c[3:5] == ["worktree", "remove"] for c in runner.calls))
+
+    def test_failed_branch_delete_is_noted(self):
+        rc, result, _, _ = run_close(branch_rc=1)
+        self.assertEqual(rc, 0, result)
+        self.assertTrue(result["removed"])
+        self.assertIn("git branch -D failed", " ".join(result["notes"]))
 
     def test_unlocked_tree_removes_without_unlocking(self):
         porcelain = PORCELAIN.replace(f"locked {LOCK}\n", "")
@@ -301,13 +372,17 @@ class RealGitRemoveTests(unittest.TestCase):
         return proc.returncode, proc.stdout, proc.stderr
 
     def test_unlocks_removes_and_deletes_branch(self):
-        self.assertIsNone(remove(self.run_git, self.base, self.tree, "eng-1", LOCK))
+        notes = []
+        self.assertIsNone(
+            remove(self.run_git, self.base, self.tree, "eng-1", LOCK, notes)
+        )
+        self.assertEqual(notes, [])
         self.assertFalse(os.path.exists(self.tree))
         rc, out, _ = self.run_git(["git", "-C", self.base, "branch", "--list", "eng-1"])
         self.assertEqual((rc, out.strip()), (0, ""))
 
     def test_still_locked_tree_is_refused_and_kept(self):
-        why = remove(self.run_git, self.base, self.tree, "eng-1", None)
+        why = remove(self.run_git, self.base, self.tree, "eng-1", None, [])
         self.assertIn("refused", why)
         self.assertTrue(os.path.isdir(self.tree))
 

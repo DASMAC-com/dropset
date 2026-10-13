@@ -14,22 +14,26 @@ operator finished by hand, in whichever order they happened to reach for.
 Usage (run from inside the worktree being closed):
 
     python3 .claude/tools/close_session.py --state Done
-    python3 .claude/tools/close_session.py --state 'In Review' --issue ENG-1571
-    python3 .claude/tools/close_session.py --state Done --keep-worktree
+    python3 .claude/tools/close_session.py --state Done --issue ENG-1571
+    python3 .claude/tools/close_session.py --state 'In Review' --keep-worktree
     python3 .claude/tools/close_session.py --state Done --dry-run
 
 ``--state`` is required and never guessed: an implementation session closes to
 Done, an ``architect`` / ``explore`` session hands off at In Review. The issue
 is read from an ``eng-###`` branch; any other branch (``worktree-ceo-…``) must
 pass ``--issue``. ``--keep-worktree`` is the report-only ending — the same gates
-and state write, with the removal left to the operator.
+and state write, with the removal left to the operator. It is **required** for
+any state other than Done / Canceled: removing a worktree whose issue still
+reads as live is the stranding this tool exists to prevent, and ``upkeep``
+would never collect it.
 
 Every gate runs **before** any write, and each fails closed:
 
 * the tree is clean and every commit is pushed — the pruner's own
   :func:`prune_worktrees.unsafe_reason`, except that a branch with no upstream
   passes when it carries nothing beyond ``origin/main`` (an architect worktree
-  never pushes, and has nothing to lose);
+  never pushes) or when HEAD is the recorded head of its merged PR (a
+  squash-merged branch whose remote was deleted on merge and pruned);
 * no PR on the branch is open (``gh pr list``; an unreadable list refuses);
 * the worktree's lock, when removing, is **this** session's: the harness locks
   a live session's worktree as ``claude session <name> (pid N …)``, and the
@@ -39,8 +43,8 @@ Every gate runs **before** any write, and each fails closed:
 Then the state is written through ``board_batch`` (zero-echo GraphQL); only on
 a confirmed write is the worktree unlocked, removed **without** ``--force``, and
 its branch deleted. A removal that fails after the write re-locks the tree and
-exits 2: the issue is already resolved, so ``upkeep``'s status-gated sweep is
-the backstop.
+exits 2: the issue is already resolved (removal only ever follows Done /
+Canceled), so ``upkeep``'s status-gated sweep is the backstop.
 
 Prints one JSON object ``{issue, state, worktree, branch, pr, dry_run,
 keep_worktree, refused, state_written, removed, notes}``. Exit 0 on a complete
@@ -77,6 +81,9 @@ ISSUE_RE = re.compile(r"^ENG-\d+$")
 LOCK_PID_RE = re.compile(r"\(pid (\d+)\b")
 NO_UPSTREAM_PREFIX = "no upstream"
 MAX_ANCESTRY = 64
+# Matched by name, lowercased: an unrecognized name fails closed into
+# requiring --keep-worktree.
+REMOVABLE_STATES = ("done", "canceled", "cancelled")
 
 Runner = Callable[[list[str], "str | None"], "tuple[int, str, str]"]
 
@@ -106,16 +113,20 @@ def first_line(text: str) -> str:
 
 
 def issue_for(branch: str, explicit: str | None) -> str:
-    """The ``ENG-###`` to close: ``--issue`` wins, else the branch name."""
+    """The ``ENG-###`` to close: the branch name, or ``--issue`` where the
+    branch names none. Both present and disagreeing is a refusal."""
+    m = ISSUE_BRANCH_RE.match(branch)
+    from_branch = f"ENG-{int(m.group(1))}" if m else None
     if explicit:
         ident = explicit.strip().upper()
         if not ISSUE_RE.match(ident):
             raise Refusal(f"--issue must look like ENG-###, got {explicit!r}")
+        if from_branch and ident != from_branch:
+            raise Refusal(f"--issue {ident} disagrees with branch {branch!r}")
         return ident
-    m = ISSUE_BRANCH_RE.match(branch)
-    if not m:
+    if not from_branch:
         raise Refusal(f"branch {branch!r} names no eng-### issue — pass --issue")
-    return f"ENG-{int(m.group(1))}"
+    return from_branch
 
 
 def lock_reasons(porcelain: str) -> dict[str, str | None]:
@@ -125,7 +136,9 @@ def lock_reasons(porcelain: str) -> dict[str, str | None]:
     current: str | None = None
     for line in porcelain.splitlines():
         if line.startswith("worktree "):
-            current = line[len("worktree ") :].strip()
+            # Resolved, like the cwd it is looked up by: a symlinked path
+            # (/tmp, /var) must not read as unlocked.
+            current = str(Path(line[len("worktree ") :].strip()).resolve())
             out[current] = None
         elif current is not None and (line == "locked" or line.startswith("locked ")):
             out[current] = line[len("locked") :].strip()
@@ -173,15 +186,20 @@ def ancestor_pids(run: Runner, start: int) -> set[int]:
     return seen
 
 
-def git_safety(run: Runner, path: str, branch: str) -> None:
-    """The pruner's uncommitted/unpushed gate, plus the no-upstream carve-out."""
+def git_safety(run: Runner, path: str, branch: str, prs: list[dict]) -> None:
+    """The pruner's uncommitted/unpushed gate, plus the two no-upstream
+    carve-outs: nothing to push, or HEAD already recorded as a merged PR's
+    head (its remote branch deleted on merge, then pruned by a fetch)."""
 
     def git(args: list[str]) -> tuple[int, str, str]:
         return run(["git", *args], None)
 
     reason = prune_worktrees.unsafe_reason(path, branch, git)
     if reason is not None and reason.startswith(NO_UPSTREAM_PREFIX):
-        # Never pushed is safe only when there is nothing to push.
+        rc, head, _ = git(["-C", path, "rev-parse", "HEAD"])
+        merged_heads = {p.get("headRefOid") for p in prs if p.get("state") == "MERGED"}
+        if rc == 0 and head.strip() and head.strip() in merged_heads:
+            return
         rc, out, _ = git(["-C", path, "rev-list", "--count", "origin/main..HEAD"])
         count = out.strip()
         if rc == 0 and count == "0":
@@ -199,7 +217,7 @@ def read_prs(run: Runner, branch: str) -> list[dict]:
     rc, out, err = run(
         [
             "gh", "pr", "list", "--repo", REPO, "--head", branch,
-            "--state", "all", "--json", "number,state",
+            "--state", "all", "--json", "number,state,headRefOid",
         ],
         None,
     )  # fmt: skip
@@ -255,9 +273,17 @@ def write_state(issue: str, state: str, dry_run: bool) -> None:
     )
 
 
-def remove(run: Runner, base: str, worktree: str, branch: str, lock: str | None):
+def remove(
+    run: Runner,
+    base: str,
+    worktree: str,
+    branch: str,
+    lock: str | None,
+    notes: list[str],
+):
     """Unlock (when ours), remove without ``--force``, delete the branch.
-    Returns ``None`` on success, else the reason the tree is still there."""
+    Returns ``None`` once the tree is gone, else the reason it is still there;
+    a failed branch delete or prune after that is appended to ``notes``."""
 
     def git(*args: str) -> tuple[int, str, str]:
         return run(["git", "-C", base, *args], None)
@@ -268,14 +294,19 @@ def remove(run: Runner, base: str, worktree: str, branch: str, lock: str | None)
             return f"unlock failed: {first_line(err)}"
     rc, _, err = git("worktree", "remove", worktree)
     if rc != 0:
+        why = f"worktree remove refused: {first_line(err)}"
         if lock is not None:
             # Restore the session's protection; the tree is still live.
-            git("worktree", "lock", "--reason", lock, worktree)
-        return f"worktree remove refused: {first_line(err)}"
+            l_rc, _, l_err = git("worktree", "lock", "--reason", lock, worktree)
+            if l_rc != 0:
+                why += f"; re-lock FAILED, tree left unlocked: {first_line(l_err)}"
+        return why
     # A squash-merged tip is not an ancestor of main, so -d would refuse; the
     # gates above proved every commit pushed.
-    git("branch", "-D", branch)
-    git("worktree", "prune")
+    for args in (("branch", "-D", branch), ("worktree", "prune")):
+        a_rc, _, a_err = git(*args)
+        if a_rc != 0:
+            notes.append(f"git {' '.join(args[:2])} failed: {first_line(a_err)}")
     return None
 
 
@@ -302,8 +333,17 @@ def close(
         worktree, branch, base, porcelain = locate(run)
         result.update(worktree=worktree, branch=branch)
         result["issue"] = issue_for(branch, args.issue)
-        git_safety(run, worktree, branch)
-        result["pr"] = pr_verdict(read_prs(run, branch))
+        if (
+            not args.keep_worktree
+            and args.state.strip().lower() not in REMOVABLE_STATES
+        ):
+            raise Refusal(
+                f"state {args.state!r} leaves the issue live, so the worktree "
+                "must stay — pass --keep-worktree"
+            )
+        prs = read_prs(run, branch)
+        git_safety(run, worktree, branch, prs)
+        result["pr"] = pr_verdict(prs)
         lock = None
         if not args.keep_worktree:
             reason = lock_reasons(porcelain).get(worktree)
@@ -316,8 +356,8 @@ def close(
 
     try:
         writer(result["issue"], args.state, args.dry_run)
-    except (board_batch.BoardBatchError, OSError, RuntimeError) as e:
-        result["refused"] = f"state write failed, nothing removed: {e}"
+    except Exception as e:  # noqa: BLE001 — any failure must stop the removal
+        result["refused"] = f"state write failed or unconfirmed, nothing removed: {e}"
         return 1, result
     if args.dry_run:
         result["notes"].append("dry run: gates passed, state name resolved")
@@ -327,7 +367,7 @@ def close(
     if args.keep_worktree:
         result["notes"].append("worktree kept; the operator removes it")
         return 0, result
-    why = remove(run, base, worktree, branch, lock)
+    why = remove(run, base, worktree, branch, lock, result["notes"])
     if why is not None:
         result["notes"].append(f"{why}; upkeep's status-gated sweep will collect it")
         return 2, result

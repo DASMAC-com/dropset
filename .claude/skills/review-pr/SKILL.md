@@ -3163,9 +3163,11 @@ migrations or generation inputs, and whether it spans crates.
    ```
 
    (append `--keep-worktree` for the second option). It refuses,
-   with nothing changed, on a dirty tree, an unpushed commit, an
-   open PR, or a lock another session holds; exit 2 means Done
-   landed and the removal did not, which `upkeep` collects.
+   with nothing changed, whenever it cannot prove the close safe
+   — a dirty tree, an unpushed commit, an open or unreadable PR,
+   a lock another session holds, a failed state write — and
+   names the reason in `refused`; exit 2 means Done landed and
+   the removal did not, which `upkeep` collects.
 
    Watch whether the PR lands or gets kicked back out with a
    **single** probe per check: the `gh api graphql` dequeue
