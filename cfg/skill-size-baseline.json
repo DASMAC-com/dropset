@@ -4,10 +4,6 @@
       "ceiling": 52355,
       "issue": "ENG-1509"
     },
-    ".claude/skills/plan/SKILL.md": {
-      "ceiling": 50727,
-      "issue": "ENG-1606"
-    },
     ".claude/skills/review-pr/SKILL.md": {
       "ceiling": 191567,
       "issue": "ENG-1604"
