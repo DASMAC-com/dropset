@@ -3610,8 +3610,8 @@ migrations or generation inputs, and whether it spans crates.
      answered through `close_session.py`, after every other
      item.
 
-   **That last item is detection, and it goes last on
-   purpose.** A stray change can come from anywhere — a fix
+   **The working-tree item is detection, and it goes last
+   before the close on purpose.** A stray change can come from anywhere — a fix
    made during the session-metrics step, a partially applied
    edit, a scratch file written into the repo instead of the
    scratchpad. Nothing else at the end of a review looks at
