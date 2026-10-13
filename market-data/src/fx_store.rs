@@ -88,6 +88,17 @@ pub const SOURCE_OANDA: &str = "oanda";
 pub const SOURCE_TWELVEDATA: &str = "twelvedata";
 pub const SOURCE_ALPHAVANTAGE: &str = "alphavantage";
 
+/// `cex_prices.source` for the crypto reference venue.
+///
+/// Kept beside the FX venues because it is the same table and the same join,
+/// but deliberately **not** in [`FX_STORE_SOURCES`]: it carries `*-USDC` basis
+/// series, not FX crosses, and only the estimator asks for it. Matches
+/// `market-data/src/bin/coinbase.rs`'s own `SOURCE` literally. The **candle**
+/// collector, not the ticker: the ticker writes `spot_ticks` and republishes a
+/// last print whether or not one happened, which is the aging problem the
+/// pinned markets exist to avoid.
+pub const SOURCE_COINBASE: &str = "coinbase";
+
 /// Every venue this reader asks for, in the order candidates are offered.
 ///
 /// Order is not priority — the engine resolves by consensus — it only decides

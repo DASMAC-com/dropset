@@ -373,7 +373,7 @@ pub const MARKETS: [MarketConfig; 9] = [
 /// forget. Joined on the base symbol, the same join
 /// `market-data/tests/estimator_roster_agreement.rs` uses.
 pub fn published_product(symbol: &str) -> Option<&'static str> {
-    dropset_market_data::estimator::MVP_MARKETS
+    dropset_market_data::estimator::PUBLISHED_MARKETS
         .iter()
         .map(|m| m.product_id)
         .find(|p| p.split_once('-').map(|(base, _)| base) == Some(symbol))

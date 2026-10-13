@@ -11,7 +11,7 @@
 //! source error forever — see the estimator module's failure-posture section.
 
 use dropset_feeds::connect;
-use dropset_market_data::estimator::{Estimator, EstimatorConfig, MVP_MARKETS};
+use dropset_market_data::estimator::{Estimator, EstimatorConfig, PUBLISHED_MARKETS};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
     // venue and introduces no product — every id it publishes was registered by
     // the collector that feeds it. Registering them again under a second source
     // label would put a consumer in the instruments dimension.
-    Estimator::new(pool, MVP_MARKETS.to_vec(), cfg.tick_interval)?
+    Estimator::new(pool, PUBLISHED_MARKETS.to_vec(), cfg.tick_interval)?
         .run()
         .await
 }
