@@ -311,7 +311,13 @@ body and deletes the file — **if there was a file at all**;
 where the design landed as Linear tasks, which is the common
 case, there is nothing to fold and that step is a no-op. Either
 way the worktree can go whenever, since its contents are
-expendable.
+expendable — but it goes **through the close tool**, on the
+operator's ratification in this tab, so Done lands before the
+removal (the branch is not `eng-###`, so name the issue):
+
+```sh
+python3 .claude/tools/close_session.py --state Done --issue ENG-###
+```
 
 This replaces a "the fold is the cleanup — close the PR and
 remove the worktree in one act" rule from the 09-11 shape. With
