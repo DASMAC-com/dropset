@@ -36,10 +36,9 @@ use std::time::{Duration, Instant};
 use common::{insert_bucket, insert_tick, start_pg};
 use dropset_feeds::now_secs;
 use dropset_market_data::estimator::{
-    Estimator, EstimatorMarket, Halt, Ticked, MAX_PUBLISH_RETRY_WINDOW, MVP_MARKETS,
-    SOURCE_COINBASE,
+    Estimator, EstimatorMarket, Halt, Ticked, MAX_PUBLISH_RETRY_WINDOW, PUBLISHED_MARKETS,
 };
-use dropset_market_data::fx_store::MAX_STORE_SILENCE;
+use dropset_market_data::fx_store::{MAX_STORE_SILENCE, SOURCE_COINBASE};
 use dropset_market_data::tick_store::{TickStoreReader, SOURCE_KRAKEN, USDC_USD_PRODUCT};
 use sqlx::{PgPool, Row};
 
@@ -86,7 +85,7 @@ async fn read_published(pool: &PgPool, product_id: &str) -> Option<PublishedRow>
     })
 }
 
-/// Write every leg fresh, as of `now`, for the whole MVP roster.
+/// Write every leg fresh, as of `now`, for the whole published roster.
 async fn seed_all_legs(pool: &PgPool, now: i64) {
     // FX anchors, from two tapes so the leg is corroborated rather than single.
     for (currency, rate) in [("EUR", 1.1400), ("AUD", 0.7200), ("CAD", 0.7300)] {
@@ -174,8 +173,12 @@ async fn a_full_tick_publishes_every_market() {
     let now = now_secs();
     seed_all_legs(&pool, now).await;
 
-    let mut estimator = Estimator::new(pool.clone(), MVP_MARKETS.to_vec(), Duration::from_secs(15))
-        .expect("the MVP roster is constructible");
+    let mut estimator = Estimator::new(
+        pool.clone(),
+        PUBLISHED_MARKETS.to_vec(),
+        Duration::from_secs(15),
+    )
+    .expect("the published roster is constructible");
     let outcome = estimator
         .tick_once()
         .await
@@ -186,7 +189,7 @@ async fn a_full_tick_publishes_every_market() {
         "the store answered, so this is not a cached tick"
     );
 
-    for market in MVP_MARKETS {
+    for market in PUBLISHED_MARKETS {
         let row = read_published(&pool, market.product_id)
             .await
             .unwrap_or_else(|| panic!("{} published no row", market.product_id));
@@ -263,7 +266,7 @@ async fn the_peg_leg_comes_from_the_tick_table() {
         if let Some(price) = peg {
             insert_tick(&pool, SOURCE_KRAKEN, USDC_USD_PRODUCT, now, price).await;
         }
-        let eurc: EstimatorMarket = MVP_MARKETS[0];
+        let eurc: EstimatorMarket = PUBLISHED_MARKETS[0];
         let mut estimator = Estimator::new(pool.clone(), vec![eurc], Duration::from_secs(15))
             .expect("constructible");
         estimator.tick_once().await.expect("must not halt");
@@ -317,7 +320,7 @@ async fn the_peg_leg_comes_from_the_tick_table() {
 async fn a_pinned_market_publishes_unverified() {
     let (_pg, pool) = start_pg().await;
     let now = now_secs();
-    let audd: EstimatorMarket = MVP_MARKETS[1];
+    let audd: EstimatorMarket = PUBLISHED_MARKETS[1];
     assert!(
         audd.pinned_basis.is_some(),
         "this test is about a pinned market"
@@ -359,7 +362,7 @@ async fn a_pinned_market_publishes_unverified() {
 async fn consecutive_ticks_accumulate_rows() {
     let (_pg, pool) = start_pg().await;
     let now = now_secs();
-    let eurc: EstimatorMarket = MVP_MARKETS[0];
+    let eurc: EstimatorMarket = PUBLISHED_MARKETS[0];
     insert_bucket(&pool, "oanda", "EUR-USD", now, 1.1400).await;
     insert_tick(&pool, SOURCE_KRAKEN, USDC_USD_PRODUCT, now, 0.9999).await;
 
@@ -379,10 +382,14 @@ async fn consecutive_ticks_accumulate_rows() {
     assert_eq!(count, 2, "each tick publishes its own row");
 }
 
-/// An estimator over EURC (`MVP_MARKETS[0]`) alone, ticking once a second.
+/// An estimator over EURC (`PUBLISHED_MARKETS[0]`) alone, ticking once a second.
 fn eurc_estimator(pool: &PgPool) -> Estimator {
-    Estimator::new(pool.clone(), vec![MVP_MARKETS[0]], Duration::from_secs(1))
-        .expect("constructible")
+    Estimator::new(
+        pool.clone(),
+        vec![PUBLISHED_MARKETS[0]],
+        Duration::from_secs(1),
+    )
+    .expect("constructible")
 }
 
 /// Past `fair_price`'s one-second key granularity, so the next tick's row takes
@@ -583,7 +590,7 @@ async fn an_unreadable_store_halts_at_the_silence_bound() {
 async fn a_cached_snapshot_ages_its_legs_out_on_the_receipt_floor() {
     let (_pg, pool) = start_pg().await;
     seed_all_legs(&pool, now_secs()).await;
-    let eurc = MVP_MARKETS[0];
+    let eurc = PUBLISHED_MARKETS[0];
     let mut estimator = eurc_estimator(&pool);
     assert!(
         eurc.config().leg_stale.tape <= MAX_STORE_SILENCE,
@@ -662,15 +669,19 @@ async fn a_cached_snapshot_ages_its_legs_out_on_the_receipt_floor() {
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn an_unfed_market_publishes_its_static_peg_degraded() {
     let (_pg, pool) = start_pg().await;
-    let mut estimator = Estimator::new(pool.clone(), MVP_MARKETS.to_vec(), Duration::from_secs(15))
-        .expect("constructible");
+    let mut estimator = Estimator::new(
+        pool.clone(),
+        PUBLISHED_MARKETS.to_vec(),
+        Duration::from_secs(15),
+    )
+    .expect("constructible");
     assert_eq!(
         estimator.tick_once().await,
         Ok(Ticked::Published),
         "an empty store is a successful read, so this is not a cached tick"
     );
 
-    for market in MVP_MARKETS {
+    for market in PUBLISHED_MARKETS {
         let row = read_published(&pool, market.product_id)
             .await
             .unwrap_or_else(|| panic!("{} published no row", market.product_id));

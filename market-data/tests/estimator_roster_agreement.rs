@@ -8,7 +8,7 @@
 //! maker bot depends on `dropset-market-data` for [`fx_store`], so this crate
 //! cannot depend on the maker — and the two rosters answer different questions:
 //! the maker's `MARKETS` carries mint keypairs, decimals and quoting parameters,
-//! while `MVP_MARKETS` carries the store series each leg reads.
+//! while `PUBLISHED_MARKETS` carries the store series each leg reads.
 //!
 //! [`fx_store`]: dropset_market_data::fx_store
 //!
@@ -45,7 +45,7 @@
 
 use std::collections::BTreeMap;
 
-use dropset_market_data::estimator::MVP_MARKETS;
+use dropset_market_data::estimator::PUBLISHED_MARKETS;
 
 /// The maker bot's roster source. Not a compiled dependency — see the module
 /// docs for why this is `include_str!` rather than a `use`.
@@ -101,10 +101,17 @@ fn option_f64(block: &str, name: &str) -> Result<Option<f64>, String> {
 
 /// The maker's roster, keyed by symbol.
 fn maker_markets() -> BTreeMap<String, MakerMarket> {
-    let markets = MAKER_CONFIG
+    let after = MAKER_CONFIG
         .split_once("pub const MARKETS:")
         .expect("the maker declares `pub const MARKETS`")
         .1;
+    // Bounded at the array's own close, so the last entry's block ends there
+    // rather than at end-of-file — otherwise a field missing from it would be
+    // read from whatever the file declares next.
+    let markets = after
+        .split_once("\n];")
+        .expect("the maker's `MARKETS` array closes with `];` at column 0")
+        .0;
     let mut out = BTreeMap::new();
     // Skip the segment before the first `MarketConfig {`, which is the type
     // annotation rather than an entry.
@@ -176,7 +183,7 @@ fn the_parse_found_the_makers_roster() {
 #[test]
 fn every_estimator_market_agrees_with_the_maker() {
     let makers = maker_markets();
-    for market in MVP_MARKETS {
+    for market in PUBLISHED_MARKETS {
         let symbol = base_symbol(market.product_id);
         let maker = makers.get(symbol).unwrap_or_else(|| {
             panic!(
@@ -211,7 +218,7 @@ fn every_estimator_market_agrees_with_the_maker() {
 /// the comparison would still hold while the leg mapping had gone incoherent.
 #[test]
 fn the_pin_and_the_crypto_series_stay_consistent() {
-    for market in MVP_MARKETS {
+    for market in PUBLISHED_MARKETS {
         assert_eq!(
             market.pinned_basis.is_some(),
             market.crypto_product.is_none(),

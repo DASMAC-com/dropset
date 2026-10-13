@@ -89,19 +89,10 @@ use sqlx::PgPool;
 use crate::fair_price::{publish, PublishError};
 use crate::fx_store::{
     fx_product_id, push_store_candidate, store_reading, store_unavailable, FxStoreRow,
-    FxStoreSource, FX_STORE_SOURCES,
+    FxStoreSource, FX_STORE_SOURCES, SOURCE_COINBASE,
 };
 use crate::session_fence::{read_spans, session_at, FenceSpans};
 use crate::tick_store::{TickStoreReader, TickStoreRow, SOURCE_KRAKEN, USDC_USD_PRODUCT};
-
-/// `cex_prices.source` for the crypto reference venue.
-///
-/// Matches `market-data/src/bin/coinbase.rs`'s own `SOURCE` literally — a join
-/// by string, so the two sides have to move together. The **candle** collector,
-/// not the ticker: the ticker writes `spot_ticks` and republishes a last print
-/// whether or not one happened, which is the aging problem the pinned markets
-/// exist to avoid.
-pub const SOURCE_COINBASE: &str = "coinbase";
 
 /// How long publishing may keep failing **transiently** before the estimator
 /// halts anyway.
@@ -186,7 +177,7 @@ impl EstimatorMarket {
 /// one carries store series. The overlap that *matters* is the basis pin, so the
 /// pins here are pinned against the maker's by
 /// `market-data/tests/estimator_roster_agreement.rs`.
-pub const MVP_MARKETS: [EstimatorMarket; 3] = [
+pub const PUBLISHED_MARKETS: [EstimatorMarket; 3] = [
     EstimatorMarket {
         product_id: "EURC-USDC",
         currency: "EUR",
@@ -656,10 +647,15 @@ impl Estimator {
 
     /// Compose every market and publish the whole tick in one transaction.
     ///
-    /// **One transaction, so the tick is atomic.** With a bare pool each market
-    /// is its own auto-commit round trip, so an interrupted tick leaves some
-    /// pairs written at `ts` and others absent — indistinguishable, to a reader,
-    /// from pairs the estimator skipped.
+    /// **One transaction, so the tick's published rows are atomic.** With a bare
+    /// pool each market is its own auto-commit round trip, so an interrupted
+    /// tick leaves some pairs written at `ts` and others absent —
+    /// indistinguishable, to a reader, from pairs the estimator skipped.
+    ///
+    /// The atomicity is the store's, not the engines'. Every market composed
+    /// before a failure has already advanced its engine — an observed-basis
+    /// market's basis EMA included — and a rolled-back tick rewinds none of it,
+    /// so that in-memory state has moved by one `dt` that no row records.
     async fn publish_tick(&mut self, now: Instant, dt: Duration) -> Result<(), PublishError> {
         // Destructured rather than reached through `self`, so the snapshot's
         // immutable borrow and the engine map's mutable one are disjoint field
@@ -980,11 +976,11 @@ mod tests {
     }
 
     fn eurc() -> EstimatorMarket {
-        MVP_MARKETS[0]
+        PUBLISHED_MARKETS[0]
     }
 
     fn audd() -> EstimatorMarket {
-        MVP_MARKETS[1]
+        PUBLISHED_MARKETS[1]
     }
 
     /// Exactly one of `crypto_product` and `pinned_basis` is set, for every
@@ -996,7 +992,7 @@ mod tests {
     /// asserts the same invariant over its own roster.
     #[test]
     fn a_market_pins_its_basis_exactly_when_it_has_no_crypto_leg() {
-        for m in MVP_MARKETS {
+        for m in PUBLISHED_MARKETS {
             assert_eq!(
                 m.crypto_product.is_none(),
                 m.pinned_basis.is_some(),
@@ -1014,7 +1010,7 @@ mod tests {
     /// gives nothing else a chance to see it.
     #[test]
     fn every_published_id_is_canonical() {
-        for m in MVP_MARKETS {
+        for m in PUBLISHED_MARKETS {
             let (base, quote) = m
                 .product_id
                 .split_once('-')
@@ -1039,7 +1035,7 @@ mod tests {
     /// a startup failure.
     #[test]
     fn every_market_resolves_an_fx_cross() {
-        for m in MVP_MARKETS {
+        for m in PUBLISHED_MARKETS {
             assert_eq!(
                 m.fx_product().as_deref(),
                 Some(format!("{}-USD", m.currency).as_str()),
@@ -1052,7 +1048,7 @@ mod tests {
     /// No two markets share a published id, which would fork a basis EMA.
     #[test]
     fn published_ids_are_unique() {
-        let mut ids: Vec<&str> = MVP_MARKETS.iter().map(|m| m.product_id).collect();
+        let mut ids: Vec<&str> = PUBLISHED_MARKETS.iter().map(|m| m.product_id).collect();
         let count = ids.len();
         ids.sort_unstable();
         ids.dedup();
