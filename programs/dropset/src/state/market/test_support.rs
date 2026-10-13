@@ -27,7 +27,7 @@ pub(crate) const BUF_BYTES: usize = 8192;
 pub(crate) const DATA_LEN: usize = 8 + Market::space_for(SECTORS);
 
 // A `Vault` widening outgrows the buffer at build time, not as a panic in
-// every slab test.
+// every slab test. 96 is the `RuntimeAccount` header (see `BUF_BYTES`).
 const _: () = assert!(96 + DATA_LEN <= BUF_BYTES);
 
 /// Build a fresh buffer with [`SECTORS`] zeroed sectors, empty

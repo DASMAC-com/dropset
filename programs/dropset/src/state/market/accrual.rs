@@ -435,11 +435,15 @@ mod tests {
         v.profile.bids[1].size_bps = 6_000u16.into();
         v.profile.asks[0].size_bps = 5_000u16.into();
         assert!(v.profile.side_size_sums().0 > BPS as u32);
+        // Stale flipped state on the side about to be thrown out.
+        v.remaining.bids[0].flip_size = 7u64.into();
 
         v.materialize_remaining();
 
         assert_eq!(v.remaining.bids[0].size.get(), 0);
         assert_eq!(v.remaining.bids[1].size.get(), 0);
+        // An over-cap side is re-centered too, not left with flipped state.
+        assert_eq!(v.remaining.bids[0].flip_size.get(), 0);
         assert_eq!(v.remaining.asks[0].size.get(), 500_000);
         // The oversized side's profile bytes are untouched — it self-heals
         // on the leader's next valid write.

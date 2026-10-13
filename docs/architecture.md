@@ -911,8 +911,9 @@ the leader.
 
 The byte-exact layout is owned by
 [`state/market/layout.rs`](../programs/dropset/src/state/market/layout.rs)
-(`LiquidityProfile`, `Level`) and canonicalized in the IDL: per-side
-arrays of `N_LEVELS` `Level`s, top of book first, each carrying
+(`LiquidityProfile`, `Level`) — the IDL carries only the profile blob's
+width, since the slab is opaque to it: per-side arrays of `N_LEVELS`
+`Level`s, top of book first, each carrying
 `price_offset`, `flip_spread_ppm`, `size_bps`, `expiry_offset_secs` and
 `expiry_offset_slots` in that order. The load-bearing invariants:
 
@@ -929,14 +930,20 @@ arrays of `N_LEVELS` `Level`s, top of book first, each carrying
   base atoms.
 - **Implicit direction.** `price_offset` is a ppm spread from
   `reference_price.price` whose sign is implicit: bids subtract, asks
-  add. The two expiry offsets are measured from their own datums. All
-  three materialize to absolute values at flush (see below).
-- **Flip in place.** A level flips when it fills: an ask's proceeds
-  rest as a bid at `price × (1 − flip_spread)`, a bid's as an ask at
-  `price × (1 + flip_spread)` — relative to the level's own absolute
-  price, never the reference, and with no new order or allocation, only
-  the level's second allowance (`flip_size`). A zero `flip_spread_ppm`
-  does not flip, byte-for-byte the behavior of a level without it.
+  add. The two expiry offsets are measured from their own datums, and
+  `flip_spread_ppm` from the level's own price. All four materialize to
+  absolute values at flush (see below).
+- **Flip in place.** A level is to flip when it fills: an ask's
+  proceeds rest as a bid at `price × (PPM − flip_spread_ppm) / PPM`, a
+  bid's as an ask at `price × (PPM + flip_spread_ppm) / PPM` — relative
+  to the level's own absolute price, never the reference, and with no
+  new order or allocation, only the level's second allowance
+  (`flip_size`). A zero `flip_spread_ppm` does not flip, byte-for-byte
+  the behavior of a level without it; the gate is the spread itself,
+  checked where a fill would credit `flip_size`, because the flush
+  formula is the identity at zero. **Status:** the fields are stored and
+  materialized at flush, but matching does not consume them yet, so
+  today no fill flips.
 
 ### Flush
 

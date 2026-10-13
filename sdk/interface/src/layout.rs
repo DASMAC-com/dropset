@@ -98,7 +98,8 @@ pub struct ReferencePrice {
 pub struct Level {
     pub price_offset: LeU32,
     /// Flip spread in ppm off this level's own absolute price. Zero does
-    /// not flip.
+    /// not flip — the gate is this field, not `Position::flip_price`,
+    /// which the flush materializes as the level's own price at zero.
     pub flip_spread_ppm: LeU32,
     pub size_bps: LeU16,
     /// Seconds after `reference_price.quote_unix` that this level dies.
@@ -163,11 +164,13 @@ pub struct Position {
     /// zero when the level has no life in this domain. A level matches
     /// only while **both** deadlines are in the future.
     pub expires_at_slot: LeU32,
-    /// Absolute price the level's proceeds rest at once it flips; the
-    /// sentinel when the flipped side does not rest.
+    /// Absolute price the level's proceeds rest at once it flips, or
+    /// `Price::ZERO` when the result escapes the encoding. Meaningful only
+    /// while [`Position::flip_size`] is nonzero.
     pub flip_price: LeU32,
-    /// Flipped allowance in atoms, on the leg opposite [`Position::size`].
-    /// Zeroed on every flush.
+    /// Flipped allowance in atoms, on the leg opposite [`Position::size`];
+    /// the single test for whether the flipped side rests. Zeroed on every
+    /// flush.
     pub flip_size: LeU64,
 }
 
@@ -274,6 +277,11 @@ const _: () = assert!(
     core::mem::offset_of!(Position, expires_at_slot)
         == core::mem::offset_of!(Position, expires_at_unix) + 4
 );
+// Flip fields pinned absolutely (mirror the on-chain pins): each shares a
+// width with a neighbor, so a swap would pass every size assert.
+const _: () = assert!(core::mem::offset_of!(Level, flip_spread_ppm) == 4);
+const _: () = assert!(core::mem::offset_of!(Position, flip_price) == 20);
+const _: () = assert!(core::mem::offset_of!(Position, flip_size) == 24);
 
 impl ReferencePrice {
     /// Decoded reference price (raw bits -> `Price`).
