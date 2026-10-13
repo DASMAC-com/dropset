@@ -711,6 +711,27 @@ reconfigured. CloudFormation cannot create dashboards, so to rebuild it, use
 the console steps above or `aws bcm-dashboards create-dashboard` with
 the same query.
 
+### Where alerts go
+
+All three go to the operator's one alert address, which is set in AWS
+and never committed. Only the daily figure ever cuts anything off. The
+other two only email.
+
+| Alert                                                             | Fires on                                                                  | Effect                     |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------- | -------------------------- |
+| `dropset-bedrock-spend-alerts` SNS topic (four CloudWatch alarms) | 24-hour Bedrock estimate at 25, 50, 75 and 100% of `SpendCapUsd`          | Email; 100% blocks the key |
+| `dropset-bedrock-agent-spend` budget                              | Monthly cost **before credits** past 80% actual or 100% forecast of limit | Email only                 |
+| Cost Anomaly Detection `Default-Services-Subscription` (console)  | Daily; an anomaly of at least \$100 **and** 40% on any service            | Email only                 |
+
+The budget counts the same cost as the dashboard, so free usage counts
+as \$0 and credits do not hide spend. Anomaly detection also sees spend
+before credits: it flagged the 2026-09-10 Opus 5 spike. That makes it
+the one alert that covers a non-Bedrock service starting to charge. It
+is not in any template. Check its subscriber with
+`aws ce get-anomaly-subscriptions --region us-east-1`. An email
+subscriber that reads anything but `CONFIRMED`, or an SNS subscription
+whose ARN reads `PendingConfirmation`, delivers nothing.
+
 ## Secrets
 
 Application secrets (database passwords, API keys) go in Secrets
