@@ -1,4 +1,5 @@
 # cspell:word SIGTTIN
+# cspell:word mktemp
 
 # Every target in this file is phony. Each `.PHONY:` declaration sits with its
 # own rule rather than in one central sorted block: a single sorted list makes
@@ -330,6 +331,24 @@ MAINNET_RPC_HINT := mainnet mode has no default endpoint; set it explicitly
 tui-mainnet:
 	$(call require-env,DROPSET_MAINNET_RPC_URL,$(MAINNET_RPC_HINT))
 	cargo run -p dropset-tui -- --cluster mainnet $(TUI_MAINNET_ARGS)
+
+# Film-the-startup variant of `tui-mainnet`: the same cockpit, with the two
+# things it insists on filled in so it launches with no arguments. The RPC
+# is an exported `DROPSET_MAINNET_RPC_URL` when there is one, else the public
+# mainnet-beta endpoint (enough for the genesis check; a provider keeps the
+# live panes fed), and `--wallet` is a fresh keypair generated into a temp
+# directory and deleted on every trappable exit. That wallet is unfunded and
+# there is no `--leader`, so nothing in the session can spend — it exists to
+# show the real-funds banner and the panel coming up, not to run the ceremony.
+PUBLIC_MAINNET_RPC := https://api.mainnet-beta.solana.com
+MAINNET_DEMO_RPC_URL ?= $(or $(DROPSET_MAINNET_RPC_URL),$(PUBLIC_MAINNET_RPC))
+.PHONY: mainnet-demo
+mainnet-demo:
+	@dir=$$(mktemp -d) || exit 1; w=$$dir/wallet.json; \
+	trap 'rm -rf "$$dir"' EXIT; trap 'exit 130' HUP INT TERM; \
+	solana-keygen new --no-bip39-passphrase --silent -o "$$w" >/dev/null && \
+	DROPSET_MAINNET_RPC_URL='$(MAINNET_DEMO_RPC_URL)' \
+		cargo run -p dropset-tui -- --cluster mainnet --wallet "$$w"
 
 # Headless rent reclamation — the same teardown the TUI's "Teardown & reclaim"
 # action runs, with no UI. Defaults to localnet; pass WALLET to override the
