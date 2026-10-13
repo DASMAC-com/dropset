@@ -1903,10 +1903,11 @@ custody of inventory.
 Emits `SetQuoteAuthorityEvent` (`market`, `sector_idx`, `vault_seq`,
 `leader`, `old_authority`, `new_authority`). The write is a one-field
 diff, but end-of-slot diffs coalesce a rotate-and-rotate-back within
-one slot into no change at all, and without the event a slab re-scan is
-the only way a maker discovers its own delegation moved. A rotation to
-the incumbent authority is allowed and emits with
-`old_authority == new_authority`.
+one slot into no change at all, so the event — not the account state —
+is how a maker learns its delegation moved. A rotation to the incumbent
+authority is allowed and emits with `old_authority == new_authority`:
+unlike `SetLeader`'s `SameLeader` gate there is no rejection, because
+the equal pair claims no change, and a consumer treats it as a no-op.
 
 ### SetLeader
 

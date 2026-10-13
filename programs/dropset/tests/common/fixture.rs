@@ -943,7 +943,7 @@ impl Fixture {
     }
 
     /// `set_quote_authority` — leader rotates a vault's quoting delegate.
-    /// Leader-only (signer + market, no registry).
+    /// Leader-only (signer + market + the event-CPI pair, no registry).
     pub fn set_quote_authority(
         &mut self,
         signer: &Keypair,

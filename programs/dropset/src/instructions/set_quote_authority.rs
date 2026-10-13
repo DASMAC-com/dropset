@@ -13,11 +13,10 @@
 //! no ladder, and no `market.nonce` flush to arm, so there is no
 //! matching-engine state to invalidate.
 //!
-//! It emits `SetQuoteAuthorityEvent` even though the effect is a one-field
-//! account diff: a rotate-and-rotate-back within one slot coalesces away in
-//! end-of-slot diffs, and without the event a slab re-scan is the only way
-//! the maker discovers its own delegation moved. This retires the earlier
-//! emits-nothing precedent rather than following it, as `set_leader` does.
+//! Like `set_leader`, it emits despite being a one-field diff: end-of-slot
+//! diffs coalesce a rotate-and-rotate-back within one slot into no change at
+//! all, so `SetQuoteAuthorityEvent` — not the account state — is how the
+//! maker learns its delegation moved.
 
 use anchor_lang_v2::{address_eq, prelude::*};
 
