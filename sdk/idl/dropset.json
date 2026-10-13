@@ -2475,6 +2475,44 @@
             "Market holding the target vault. `mut` for the authority write."
           ],
           "writable": true
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
         }
       ],
       "args": [
@@ -3585,6 +3623,19 @@
         131,
         179,
         105
+      ]
+    },
+    {
+      "name": "SetQuoteAuthorityEvent",
+      "discriminator": [
+        29,
+        44,
+        6,
+        38,
+        69,
+        146,
+        112,
+        138
       ]
     },
     {
@@ -4959,6 +5010,50 @@
           {
             "name": "min_leader_share",
             "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetQuoteAuthorityEvent",
+      "docs": [
+        "Emitted by `set_quote_authority` when a leader rotates a vault's quoting",
+        "delegate. An end-of-slot account diff coalesces a rotate-and-rotate-back",
+        "within one slot into nothing, so this record — not the diff — is how",
+        "the maker learns its delegation moved. Carries `leader` so an indexer",
+        "sees the full post-rotation authority pair, mirroring",
+        "`SetLeaderEvent`. See the spec's **SetQuoteAuthority**."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "sector_idx",
+            "type": "u32"
+          },
+          {
+            "name": "vault_seq",
+            "docs": [
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "leader",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_authority",
+            "type": "pubkey"
           }
         ]
       }

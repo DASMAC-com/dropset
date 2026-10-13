@@ -18,6 +18,10 @@ pub struct SetQuoteAuthority {
     pub signer: solana_pubkey::Pubkey,
     /// Market holding the target vault. `mut` for the authority write.
     pub market: solana_pubkey::Pubkey,
+    /// CHECK: Only the event authority can invoke self-CPI
+    pub event_authority: solana_pubkey::Pubkey,
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    pub program: solana_pubkey::Pubkey,
 }
 
 impl SetQuoteAuthority {
@@ -34,12 +38,20 @@ impl SetQuoteAuthority {
         args: SetQuoteAuthorityInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.signer,
             true,
         ));
         accounts.push(solana_instruction::AccountMeta::new(self.market, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.event_authority,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.program,
+            false,
+        ));
         accounts.extend_from_slice(remaining_accounts);
         let mut data = SetQuoteAuthorityInstructionData::new()
             .try_to_vec()
@@ -98,10 +110,14 @@ impl SetQuoteAuthorityInstructionArgs {
 ///
 ///   0. `[signer]` signer
 ///   1. `[writable]` market
+///   2. `[]` event_authority
+///   3. `[]` program
 #[derive(Clone, Debug, Default)]
 pub struct SetQuoteAuthorityBuilder {
     signer: Option<solana_pubkey::Pubkey>,
     market: Option<solana_pubkey::Pubkey>,
+    event_authority: Option<solana_pubkey::Pubkey>,
+    program: Option<solana_pubkey::Pubkey>,
     vault_idx: Option<u32>,
     new_authority: Option<Pubkey>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
@@ -121,6 +137,18 @@ impl SetQuoteAuthorityBuilder {
     #[inline(always)]
     pub fn market(&mut self, market: solana_pubkey::Pubkey) -> &mut Self {
         self.market = Some(market);
+        self
+    }
+    /// CHECK: Only the event authority can invoke self-CPI
+    #[inline(always)]
+    pub fn event_authority(&mut self, event_authority: solana_pubkey::Pubkey) -> &mut Self {
+        self.event_authority = Some(event_authority);
+        self
+    }
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    #[inline(always)]
+    pub fn program(&mut self, program: solana_pubkey::Pubkey) -> &mut Self {
+        self.program = Some(program);
         self
     }
     #[inline(always)]
@@ -153,6 +181,8 @@ impl SetQuoteAuthorityBuilder {
         let accounts = SetQuoteAuthority {
             signer: self.signer.expect("signer is not set"),
             market: self.market.expect("market is not set"),
+            event_authority: self.event_authority.expect("event_authority is not set"),
+            program: self.program.expect("program is not set"),
         };
         let args = SetQuoteAuthorityInstructionArgs {
             vault_idx: self.vault_idx.clone().expect("vault_idx is not set"),
@@ -172,6 +202,10 @@ pub struct SetQuoteAuthorityCpiAccounts<'a, 'b> {
     pub signer: &'b solana_account_info::AccountInfo<'a>,
     /// Market holding the target vault. `mut` for the authority write.
     pub market: &'b solana_account_info::AccountInfo<'a>,
+    /// CHECK: Only the event authority can invoke self-CPI
+    pub event_authority: &'b solana_account_info::AccountInfo<'a>,
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    pub program: &'b solana_account_info::AccountInfo<'a>,
 }
 
 /// `set_quote_authority` CPI instruction.
@@ -182,6 +216,10 @@ pub struct SetQuoteAuthorityCpi<'a, 'b> {
     pub signer: &'b solana_account_info::AccountInfo<'a>,
     /// Market holding the target vault. `mut` for the authority write.
     pub market: &'b solana_account_info::AccountInfo<'a>,
+    /// CHECK: Only the event authority can invoke self-CPI
+    pub event_authority: &'b solana_account_info::AccountInfo<'a>,
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    pub program: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
     pub __args: SetQuoteAuthorityInstructionArgs,
 }
@@ -196,6 +234,8 @@ impl<'a, 'b> SetQuoteAuthorityCpi<'a, 'b> {
             __program: program,
             signer: accounts.signer,
             market: accounts.market,
+            event_authority: accounts.event_authority,
+            program: accounts.program,
             __args: args,
         }
     }
@@ -222,13 +262,21 @@ impl<'a, 'b> SetQuoteAuthorityCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.signer.key,
             true,
         ));
         accounts.push(solana_instruction::AccountMeta::new(
             *self.market.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.event_authority.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.program.key,
             false,
         ));
         remaining_accounts.iter().for_each(|remaining_account| {
@@ -249,10 +297,12 @@ impl<'a, 'b> SetQuoteAuthorityCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(3 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(5 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.signer.clone());
         account_infos.push(self.market.clone());
+        account_infos.push(self.event_authority.clone());
+        account_infos.push(self.program.clone());
         remaining_accounts
             .iter()
             .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
@@ -271,6 +321,8 @@ impl<'a, 'b> SetQuoteAuthorityCpi<'a, 'b> {
 ///
 ///   0. `[signer]` signer
 ///   1. `[writable]` market
+///   2. `[]` event_authority
+///   3. `[]` program
 #[derive(Clone, Debug)]
 pub struct SetQuoteAuthorityCpiBuilder<'a, 'b> {
     instruction: Box<SetQuoteAuthorityCpiBuilderInstruction<'a, 'b>>,
@@ -282,6 +334,8 @@ impl<'a, 'b> SetQuoteAuthorityCpiBuilder<'a, 'b> {
             __program: program,
             signer: None,
             market: None,
+            event_authority: None,
+            program: None,
             vault_idx: None,
             new_authority: None,
             __remaining_accounts: Vec::new(),
@@ -298,6 +352,21 @@ impl<'a, 'b> SetQuoteAuthorityCpiBuilder<'a, 'b> {
     #[inline(always)]
     pub fn market(&mut self, market: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.market = Some(market);
+        self
+    }
+    /// CHECK: Only the event authority can invoke self-CPI
+    #[inline(always)]
+    pub fn event_authority(
+        &mut self,
+        event_authority: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.event_authority = Some(event_authority);
+        self
+    }
+    /// CHECK: Kept for v1-compatible account ordering and IDL shape
+    #[inline(always)]
+    pub fn program(&mut self, program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.program = Some(program);
         self
     }
     #[inline(always)]
@@ -362,6 +431,13 @@ impl<'a, 'b> SetQuoteAuthorityCpiBuilder<'a, 'b> {
             signer: self.instruction.signer.expect("signer is not set"),
 
             market: self.instruction.market.expect("market is not set"),
+
+            event_authority: self
+                .instruction
+                .event_authority
+                .expect("event_authority is not set"),
+
+            program: self.instruction.program.expect("program is not set"),
             __args: args,
         };
         instruction.invoke_signed_with_remaining_accounts(
@@ -376,6 +452,8 @@ struct SetQuoteAuthorityCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     signer: Option<&'b solana_account_info::AccountInfo<'a>>,
     market: Option<&'b solana_account_info::AccountInfo<'a>>,
+    event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
+    program: Option<&'b solana_account_info::AccountInfo<'a>>,
     vault_idx: Option<u32>,
     new_authority: Option<Pubkey>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.

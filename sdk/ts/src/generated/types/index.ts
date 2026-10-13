@@ -22,6 +22,7 @@ export * from './setLeaderEvent';
 export * from './setMarketFeeConfigEvent';
 export * from './setMaxPlatformFeeEvent';
 export * from './setMinLeaderShareEvent';
+export * from './setQuoteAuthorityEvent';
 export * from './setRegistryDefaultsEvent';
 export * from './setTakerFeeEvent';
 export * from './sweepResidualEvent';

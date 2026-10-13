@@ -80,6 +80,24 @@ pub struct SetLeaderEvent {
     pub quote_authority: Address,
 }
 
+/// Emitted by `set_quote_authority` when a leader rotates a vault's quoting
+/// delegate. An end-of-slot account diff coalesces a rotate-and-rotate-back
+/// within one slot into nothing, so this record — not the diff — is how
+/// the maker learns its delegation moved. Carries `leader` so an indexer
+/// sees the full post-rotation authority pair, mirroring
+/// `SetLeaderEvent`. See the spec's **SetQuoteAuthority**.
+#[event]
+pub struct SetQuoteAuthorityEvent {
+    pub market: Address,
+    pub sector_idx: u32,
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
+    pub vault_seq: u64,
+    pub leader: Address,
+    pub old_authority: Address,
+    pub new_authority: Address,
+}
+
 /// Emitted by `set_min_leader_share` when an admin retunes a vault's
 /// skin-in-the-game floor after creation. See the spec's
 /// **SetMinLeaderShare**.

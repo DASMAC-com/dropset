@@ -25,8 +25,8 @@ use dropset::{
     CloseMarketTreasuryEvent, CloseRegistryFeeVaultEvent, CloseVaultEvent, CreateVaultEvent,
     DepositEvent, FillEvent, FreezeVaultEvent, PlatformFeeEvent, RealizeEvent,
     SetDefaultFeeConfigEvent, SetLeaderEvent, SetMarketFeeConfigEvent, SetMaxPlatformFeeEvent,
-    SetMinLeaderShareEvent, SetRegistryDefaultsEvent, SetTakerFeeEvent, SweepResidualEvent,
-    WithdrawEvent,
+    SetMinLeaderShareEvent, SetQuoteAuthorityEvent, SetRegistryDefaultsEvent, SetTakerFeeEvent,
+    SweepResidualEvent, WithdrawEvent,
 };
 use litesvm::types::TransactionMetadata;
 
@@ -211,6 +211,31 @@ pub fn set_leader(meta: &TransactionMetadata) -> SetLeader {
         old_leader: c.pubkey(),
         new_leader: c.pubkey(),
         quote_authority: c.pubkey(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
+pub struct SetQuoteAuthority {
+    pub market: [u8; 32],
+    pub sector_idx: u32,
+    pub vault_seq: u64,
+    pub leader: [u8; 32],
+    pub old_authority: [u8; 32],
+    pub new_authority: [u8; 32],
+}
+
+pub fn set_quote_authority(meta: &TransactionMetadata) -> SetQuoteAuthority {
+    let body = one_body::<SetQuoteAuthorityEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = SetQuoteAuthority {
+        market: c.pubkey(),
+        sector_idx: c.u32(),
+        vault_seq: c.u64(),
+        leader: c.pubkey(),
+        old_authority: c.pubkey(),
+        new_authority: c.pubkey(),
     };
     c.finish();
     d

@@ -460,7 +460,9 @@ pub mod dropset {
         vault_idx: u32,
         new_authority: Address,
     ) -> Result<()> {
-        ctx.accounts.set_quote_authority(vault_idx, new_authority)
+        let event = ctx.accounts.set_quote_authority(vault_idx, new_authority)?;
+        emit_cpi!(event);
+        Ok(())
     }
 
     // ── Treasury residual sweep ──────────────────────────────────────

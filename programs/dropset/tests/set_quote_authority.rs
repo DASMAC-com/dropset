@@ -1,13 +1,14 @@
 //! `set_quote_authority` integration tests — leader-only quote-authority
-//! rotation. Covers the happy rotation, the functional hand-off (the new
-//! authority gains the quoting hot path and the old one loses it), the
+//! rotation. Covers the happy rotation and its event, the rotate-and-back
+//! pair a coalesced account diff would erase, the functional hand-off (the
+//! new authority gains the quoting hot path and the old one loses it), the
 //! self-rotation that revokes delegation, and the authority / zero-address
 //! / sector gates.
 
 mod common;
 
 use anchor_v2_testing::Signer;
-use common::fixture::Fixture;
+use common::{events, fixture::Fixture};
 use solana_pubkey::Pubkey;
 
 /// Bootstrap + one admin vault (sector 0) with `authority` as both leader
@@ -37,6 +38,73 @@ fn leader_rotates_quote_authority() {
     f.set_quote_authority(&leader, 0, new_authority)
         .expect("leader may rotate quote authority");
     assert_eq!(f.vault(0).quote_authority, new_authority.to_bytes().into());
+}
+
+#[test]
+fn rotation_emits_event() {
+    let mut f = fixture_with_vault();
+    let leader = f.authority.insecure_clone();
+    // Start from a delegate distinct from the leader, so the event's
+    // `leader` and `old_authority` slots can't pass by coinciding.
+    let old_authority = Pubkey::new_unique();
+    f.set_quote_authority(&leader, 0, old_authority)
+        .expect("delegate quoting");
+    let new_authority = Pubkey::new_unique();
+    let seq = f.vault(0).seq.get();
+
+    let meta = f
+        .set_quote_authority_meta(&leader, 0, new_authority)
+        .expect("leader may rotate quote authority");
+
+    let ev = events::set_quote_authority(&meta);
+    assert_eq!(ev.market, f.market.to_bytes());
+    assert_eq!(ev.sector_idx, 0);
+    assert_eq!(ev.vault_seq, seq);
+    assert_eq!(ev.leader, leader.pubkey().to_bytes());
+    assert_eq!(ev.old_authority, old_authority.to_bytes());
+    assert_eq!(ev.new_authority, new_authority.to_bytes());
+}
+
+#[test]
+fn rotate_and_back_emits_both_legs() {
+    // The case the event exists for: A → B → A leaves the account where it
+    // started, so a coalesced diff shows nothing. Each leg must still be on
+    // the record.
+    let mut f = fixture_with_vault();
+    let leader = f.authority.insecure_clone();
+    let delegate = Pubkey::new_unique();
+
+    let out = f
+        .set_quote_authority_meta(&leader, 0, delegate)
+        .expect("rotate out");
+    let back = f
+        .set_quote_authority_meta(&leader, 0, leader.pubkey())
+        .expect("rotate back");
+    assert_eq!(
+        f.vault(0).quote_authority,
+        leader.pubkey().to_bytes().into()
+    );
+
+    let out = events::set_quote_authority(&out);
+    assert_eq!(out.old_authority, leader.pubkey().to_bytes());
+    assert_eq!(out.new_authority, delegate.to_bytes());
+    let back = events::set_quote_authority(&back);
+    assert_eq!(back.old_authority, delegate.to_bytes());
+    assert_eq!(back.new_authority, leader.pubkey().to_bytes());
+}
+
+#[test]
+fn rotation_to_the_incumbent_emits_an_unchanged_pair() {
+    // Not rejected (unlike `set_leader`'s `SameLeader`): the event states
+    // `old == new` honestly rather than claiming a change.
+    let mut f = fixture_with_vault();
+    let leader = f.authority.insecure_clone();
+    let meta = f
+        .set_quote_authority_meta(&leader, 0, leader.pubkey())
+        .expect("re-stamping the incumbent is allowed");
+    let ev = events::set_quote_authority(&meta);
+    assert_eq!(ev.old_authority, ev.new_authority);
+    assert_eq!(ev.new_authority, leader.pubkey().to_bytes());
 }
 
 #[test]
