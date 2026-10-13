@@ -1423,8 +1423,8 @@ migrations or generation inputs, and whether it spans crates.
    If it is `false`, rebase onto `origin/<base>` and *then* run the
    suites, so the expensive builds run once, against the tree that
    will merge (`history.md` → "Suites before the rebase"). Switch to
-   `--split` only when the slices need regenerating — after that
-   rebase, for a re-spawn.
+   `--split` only when the slices need regenerating (after a rebase,
+   for a re-spawn).
 
    **Choose the targets from step 5's flags — read them, never
    re-derive them** — and record every skip with its reason in the

@@ -890,14 +890,15 @@ to move and by how much.
   One session added an `#[ignore]`d test, passed locally, and reddened
   CI at the cost of a full ~13-minute round trip.
 - **Half-applied build.** One measured session overlapped the local
-  suites with CI for zero extra wall-clock. A later run launched the
+  suites with CI for zero extra wall-clock. One run launched the
   suite as soon as it reached this step, applied lens fixes while it
   ran, and compiled a half-applied edit — the new field's type landed
   but not its call site — into a trait-bound error that read as a real
   defect: a wasted full-suite cycle, a misdiagnosis beat, and cargo
   file-lock contention with the foreground runs. Two more notes came
   from that same run. `wait_for_checks` returned `elapsed_seconds: 0`,
-  because the draft PR's CI had already settled at push time. And
+  because `init-pr`'s draft PR starts CI at push time and it had
+  already settled. And
   `runs_rust_suites` read `true` for a diff of three files under
   `.github` with no Rust at all — correct as a fail-open default, but the
   local suite was then mirroring a CI run on the same commit that the
