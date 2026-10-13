@@ -6,7 +6,8 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
+import { findEventAuthorityPda } from '../pdas';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -14,8 +15,8 @@ export const SET_QUOTE_AUTHORITY_DISCRIMINATOR = new Uint8Array([27]);
 
 export function getSetQuoteAuthorityDiscriminatorBytes() { return fixEncoderSize(getBytesEncoder(), 1).encode(SET_QUOTE_AUTHORITY_DISCRIMINATOR); }
 
-export type SetQuoteAuthorityInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountSigner extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
-Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountSigner extends string ? ReadonlySignerAccount<TAccountSigner> & AccountSignerMeta<TAccountSigner> : TAccountSigner, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, ...TRemainingAccounts]>;
+export type SetQuoteAuthorityInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountSigner extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
+Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountSigner extends string ? ReadonlySignerAccount<TAccountSigner> & AccountSignerMeta<TAccountSigner> : TAccountSigner, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
 
 export type SetQuoteAuthorityInstructionData = { discriminator: ReadonlyUint8Array; vaultIdx: number; newAuthority: Address;  };
 
@@ -33,21 +34,60 @@ export function getSetQuoteAuthorityInstructionDataCodec(): FixedSizeCodec<SetQu
     return combineCodec(getSetQuoteAuthorityInstructionDataEncoder(), getSetQuoteAuthorityInstructionDataDecoder());
 }
 
-export type SetQuoteAuthorityInput<TAccountSigner extends string = string, TAccountMarket extends string = string> =  {
+export type SetQuoteAuthorityAsyncInput<TAccountSigner extends string = string, TAccountMarket extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
   /** The vault's leader — the only signer this rotation accepts. */
 signer: TransactionSigner<TAccountSigner>;
 /** Market holding the target vault. `mut` for the authority write. */
 market: Address<TAccountMarket>;
+/** CHECK: Only the event authority can invoke self-CPI */
+eventAuthority?: Address<TAccountEventAuthority>;
+/** CHECK: Kept for v1-compatible account ordering and IDL shape */
+program: Address<TAccountProgram>;
 vaultIdx: SetQuoteAuthorityInstructionDataArgs["vaultIdx"];
 newAuthority: SetQuoteAuthorityInstructionDataArgs["newAuthority"];
 }
 
-export function getSetQuoteAuthorityInstruction<TAccountSigner extends string, TAccountMarket extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetQuoteAuthorityInput<TAccountSigner, TAccountMarket>, config?: { programAddress?: TProgramAddress } ): SetQuoteAuthorityInstruction<TProgramAddress, TAccountSigner, TAccountMarket> {
+export async function getSetQuoteAuthorityInstructionAsync<TAccountSigner extends string, TAccountMarket extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetQuoteAuthorityAsyncInput<TAccountSigner, TAccountMarket, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<SetQuoteAuthorityInstruction<TProgramAddress, TAccountSigner, TAccountMarket, TAccountEventAuthority, TAccountProgram>> {
   // Program address.
 const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
 
  // Original accounts.
-const originalAccounts = { signer: { value: input.signer ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true } }
+const originalAccounts = { signer: { value: input.signer ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
+const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
+
+
+// Original args.
+const args = { ...input,  };
+
+
+// Resolve default values.
+if (!accounts.eventAuthority.value) {
+accounts.eventAuthority.value = await findEventAuthorityPda();
+}
+
+const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
+return Object.freeze({ accounts: [getAccountMeta(accounts.signer), getAccountMeta(accounts.market), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getSetQuoteAuthorityInstructionDataEncoder().encode(args as SetQuoteAuthorityInstructionDataArgs), programAddress } as SetQuoteAuthorityInstruction<TProgramAddress, TAccountSigner, TAccountMarket, TAccountEventAuthority, TAccountProgram>);
+}
+
+export type SetQuoteAuthorityInput<TAccountSigner extends string = string, TAccountMarket extends string = string, TAccountEventAuthority extends string = string, TAccountProgram extends string = string> =  {
+  /** The vault's leader — the only signer this rotation accepts. */
+signer: TransactionSigner<TAccountSigner>;
+/** Market holding the target vault. `mut` for the authority write. */
+market: Address<TAccountMarket>;
+/** CHECK: Only the event authority can invoke self-CPI */
+eventAuthority: Address<TAccountEventAuthority>;
+/** CHECK: Kept for v1-compatible account ordering and IDL shape */
+program: Address<TAccountProgram>;
+vaultIdx: SetQuoteAuthorityInstructionDataArgs["vaultIdx"];
+newAuthority: SetQuoteAuthorityInstructionDataArgs["newAuthority"];
+}
+
+export function getSetQuoteAuthorityInstruction<TAccountSigner extends string, TAccountMarket extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetQuoteAuthorityInput<TAccountSigner, TAccountMarket, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): SetQuoteAuthorityInstruction<TProgramAddress, TAccountSigner, TAccountMarket, TAccountEventAuthority, TAccountProgram> {
+  // Program address.
+const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
+
+ // Original accounts.
+const originalAccounts = { signer: { value: input.signer ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
 const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
 
 
@@ -58,7 +98,7 @@ const args = { ...input,  };
 
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.signer), getAccountMeta(accounts.market)], data: getSetQuoteAuthorityInstructionDataEncoder().encode(args as SetQuoteAuthorityInstructionDataArgs), programAddress } as SetQuoteAuthorityInstruction<TProgramAddress, TAccountSigner, TAccountMarket>);
+return Object.freeze({ accounts: [getAccountMeta(accounts.signer), getAccountMeta(accounts.market), getAccountMeta(accounts.eventAuthority), getAccountMeta(accounts.program)], data: getSetQuoteAuthorityInstructionDataEncoder().encode(args as SetQuoteAuthorityInstructionDataArgs), programAddress } as SetQuoteAuthorityInstruction<TProgramAddress, TAccountSigner, TAccountMarket, TAccountEventAuthority, TAccountProgram>);
 }
 
 export type ParsedSetQuoteAuthorityInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[]> = { programAddress: Address<TProgram>;
@@ -67,11 +107,15 @@ accounts: {
 signer: TAccountMetas[0];
 /** Market holding the target vault. `mut` for the authority write. */
 market: TAccountMetas[1];
+/** CHECK: Only the event authority can invoke self-CPI */
+eventAuthority: TAccountMetas[2];
+/** CHECK: Kept for v1-compatible account ordering and IDL shape */
+program: TAccountMetas[3];
 };
 data: SetQuoteAuthorityInstructionData; };
 
 export function parseSetQuoteAuthorityInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>): ParsedSetQuoteAuthorityInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 2) {
+  if (instruction.accounts.length < 4) {
   // TODO: Coded error.
   throw new Error('Not enough accounts');
 }
@@ -81,5 +125,5 @@ const getNextAccount = () => {
   accountIndex += 1;
   return accountMeta;
 }
-  return { programAddress: instruction.programAddress, accounts: { signer: getNextAccount(), market: getNextAccount() }, data: getSetQuoteAuthorityInstructionDataDecoder().decode(instruction.data) };
+  return { programAddress: instruction.programAddress, accounts: { signer: getNextAccount(), market: getNextAccount(), eventAuthority: getNextAccount(), program: getNextAccount() }, data: getSetQuoteAuthorityInstructionDataDecoder().decode(instruction.data) };
 }

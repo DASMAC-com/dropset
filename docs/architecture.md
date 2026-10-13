@@ -1900,6 +1900,15 @@ delegation). Useful for rotating a hot wallet, delegating to a
 third-party MM firm, or moving quoting authority while keeping
 custody of inventory.
 
+Emits `SetQuoteAuthorityEvent` (`market`, `sector_idx`, `vault_seq`,
+`leader`, `old_authority`, `new_authority`). The write is a one-field
+diff, but end-of-slot diffs coalesce a rotate-and-rotate-back within
+one slot into no change at all, so the event — not the account state —
+is how a maker learns its delegation moved. A rotation to the incumbent
+authority is allowed and emits with `old_authority == new_authority`:
+unlike `SetLeader`'s `SameLeader` gate there is no rejection, because
+the equal pair claims no change, and a consumer treats it as a no-op.
+
 ### SetLeader
 
 Leader-only, and **co-signed by the incoming leader**. Writes
@@ -2671,12 +2680,11 @@ withdraw family — leader and force-withdraw variants included, each
 paired with a `Realize` when it crystallizes fees; the force-withdraw
 pair only on `admin-teardown` builds, inert on the immutable deploy),
 the per-leg `FillEvent` that is the take's only event, the
-vault-lifecycle changes (`CloseVault`, `FreezeVault`), the custody
-rotation `SetLeader` — a coalesced diff collapses an A → B → C
-rotation inside one slot to A → C, and since the leader holds the
-vault's inventory and `leader_shares`, who held custody when is
-economically material in a way the quoting delegate rotated by
-`SetQuoteAuthority` is not — the admin
+vault-lifecycle changes (`CloseVault`, `FreezeVault`), the two
+authority rotations `SetLeader` and `SetQuoteAuthority` — a coalesced
+diff collapses an A → B → C rotation inside one slot to A → C, and an
+A → B → A one to nothing, which loses who held custody when and hides
+from a maker that its own quoting delegation moved — the admin
 retuning levers (`SetMinLeaderShare`, `SetMarketFeeConfig`,
 `SetTakerFee`, `SetRegistryDefaults`), and `SweepResidual` — which emits
 on **every** call, including the zero-sweep case, because the three terms
@@ -2700,8 +2708,8 @@ account is gone.
 Everything whose entire effect is already
 recoverable from a single account diff emits **nothing**: the leader
 quote-refresh pair (`SetReferencePrice`, `SetLiquidityProfile`) on the
-hot path, the vault-config setters (`SetQuoteAuthority`,
-`SetAllowOutsideDepositors`, `SetOutsideDepositsApproved`), the registry
+hot path, the vault-config setters (`SetAllowOutsideDepositors`,
+`SetOutsideDepositsApproved`), the registry
 and market bootstrap
 (`Init`, `AddAdmin`, `RemoveAdmin`, `CreateMarket`), and the **purely**
 rent-returning teardown closes — `close_market` and `close_registry`,

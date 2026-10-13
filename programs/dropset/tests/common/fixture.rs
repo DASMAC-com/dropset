@@ -943,13 +943,25 @@ impl Fixture {
     }
 
     /// `set_quote_authority` — leader rotates a vault's quoting delegate.
-    /// Leader-only (signer + market, no registry, no event authority).
+    /// Leader-only (signer + market + the event-CPI pair, no registry).
     pub fn set_quote_authority(
         &mut self,
         signer: &Keypair,
         vault_idx: u32,
         new_authority: Pubkey,
     ) -> Result<(), String> {
+        self.set_quote_authority_meta(signer, vault_idx, new_authority)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::set_quote_authority`] but yields the transaction
+    /// metadata so a test can decode the emitted `SetQuoteAuthorityEvent`.
+    pub fn set_quote_authority_meta(
+        &mut self,
+        signer: &Keypair,
+        vault_idx: u32,
+        new_authority: Pubkey,
+    ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &SetQuoteAuthorityIx {
@@ -960,9 +972,11 @@ impl Fixture {
             vec![
                 AccountMeta::new_readonly(signer.pubkey(), true),
                 AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
             ],
         );
-        send_ixn(&mut self.svm, signer, ix)
+        send_ixn_meta(&mut self.svm, signer, ix)
     }
 
     /// `set_leader` — `leader` hands the vault to `new_leader`, which

@@ -38,8 +38,8 @@ use crate::types::{
     CloseMarketTreasuryEvent, CloseRegistryFeeVaultEvent, CloseVaultEvent, CreateVaultEvent,
     DepositEvent, FillEvent, FreezeVaultEvent, PlatformFeeEvent, RealizeEvent,
     SetDefaultFeeConfigEvent, SetLeaderEvent, SetMarketFeeConfigEvent, SetMaxPlatformFeeEvent,
-    SetMinLeaderShareEvent, SetRegistryDefaultsEvent, SetTakerFeeEvent, SweepResidualEvent,
-    WithdrawEvent,
+    SetMinLeaderShareEvent, SetQuoteAuthorityEvent, SetRegistryDefaultsEvent, SetTakerFeeEvent,
+    SweepResidualEvent, WithdrawEvent,
 };
 use borsh::BorshDeserialize;
 use solana_pubkey::Pubkey;
@@ -99,6 +99,8 @@ pub const SET_MAX_PLATFORM_FEE_EVENT_DISCRIMINATOR: [u8; 8] = [45, 40, 179, 93, 
 /// Discriminator for `SetMinLeaderShareEvent`.
 pub const SET_MIN_LEADER_SHARE_EVENT_DISCRIMINATOR: [u8; 8] =
     [159, 194, 164, 181, 227, 131, 179, 105];
+/// Discriminator for `SetQuoteAuthorityEvent`.
+pub const SET_QUOTE_AUTHORITY_EVENT_DISCRIMINATOR: [u8; 8] = [29, 44, 6, 38, 69, 146, 112, 138];
 /// Discriminator for `SetRegistryDefaultsEvent`.
 pub const SET_REGISTRY_DEFAULTS_EVENT_DISCRIMINATOR: [u8; 8] = [138, 35, 107, 189, 236, 175, 31, 9];
 /// Discriminator for `SetTakerFeeEvent`.
@@ -124,6 +126,7 @@ pub enum DropsetEvent {
     CloseVault(CloseVaultEvent),
     FreezeVault(FreezeVaultEvent),
     SetLeader(SetLeaderEvent),
+    SetQuoteAuthority(SetQuoteAuthorityEvent),
     Realize(RealizeEvent),
     SetMinLeaderShare(SetMinLeaderShareEvent),
     SetMarketFeeConfig(SetMarketFeeConfigEvent),
@@ -149,6 +152,7 @@ impl DropsetEvent {
             Self::CloseVault(_) => "CloseVaultEvent",
             Self::FreezeVault(_) => "FreezeVaultEvent",
             Self::SetLeader(_) => "SetLeaderEvent",
+            Self::SetQuoteAuthority(_) => "SetQuoteAuthorityEvent",
             Self::Realize(_) => "RealizeEvent",
             Self::SetMinLeaderShare(_) => "SetMinLeaderShareEvent",
             Self::SetMarketFeeConfig(_) => "SetMarketFeeConfigEvent",
@@ -249,6 +253,9 @@ pub fn try_decode_event_payload(payload: &[u8]) -> Result<DropsetEvent, DecodeEr
         CLOSE_VAULT_EVENT_DISCRIMINATOR => decode!(CloseVault, CloseVaultEvent),
         FREEZE_VAULT_EVENT_DISCRIMINATOR => decode!(FreezeVault, FreezeVaultEvent),
         SET_LEADER_EVENT_DISCRIMINATOR => decode!(SetLeader, SetLeaderEvent),
+        SET_QUOTE_AUTHORITY_EVENT_DISCRIMINATOR => {
+            decode!(SetQuoteAuthority, SetQuoteAuthorityEvent)
+        }
         REALIZE_EVENT_DISCRIMINATOR => decode!(Realize, RealizeEvent),
         SET_MIN_LEADER_SHARE_EVENT_DISCRIMINATOR => {
             decode!(SetMinLeaderShare, SetMinLeaderShareEvent)
@@ -417,6 +424,10 @@ mod tests {
             "SetMinLeaderShareEvent",
         ),
         (
+            SET_QUOTE_AUTHORITY_EVENT_DISCRIMINATOR,
+            "SetQuoteAuthorityEvent",
+        ),
+        (
             SET_REGISTRY_DEFAULTS_EVENT_DISCRIMINATOR,
             "SetRegistryDefaultsEvent",
         ),
@@ -444,7 +455,7 @@ mod tests {
     /// constants; deleting a `match disc` arm leaves this test green.
     /// That mutation is caught, but downstream, by the indexer's
     /// `every_event_payload_carries_every_field_the_idl_declares`, which
-    /// drives the decoder over all 17 events — so `cargo test -p
+    /// drives the decoder over every IDL event — so `cargo test -p
     /// dropset-sdk` alone does not pin dispatch, and this crate is
     /// publishable on its own.
     ///

@@ -11,17 +11,22 @@
 //! Like the other leader-only config setters (`set_allow_outside_depositors`,
 //! `close_vault`) this mutates a single header field: no reference price,
 //! no ladder, and no `market.nonce` flush to arm, so there is no
-//! matching-engine state to invalidate. Per the spec's **Events and
-//! emission** governing principle it emits **nothing** — the whole effect
-//! is recoverable from a one-field account diff.
+//! matching-engine state to invalidate.
+//!
+//! Like `set_leader`, it emits despite being a one-field diff: end-of-slot
+//! diffs coalesce a rotate-and-rotate-back within one slot into no change at
+//! all, so `SetQuoteAuthorityEvent` — not the account state — is how the
+//! maker learns its delegation moved.
 
 use anchor_lang_v2::{address_eq, prelude::*};
 
 use crate::{
     errors::DropsetError,
+    events::SetQuoteAuthorityEvent,
     state::{Market, VaultAccess},
 };
 
+#[event_cpi]
 #[derive(Accounts)]
 pub struct SetQuoteAuthority {
     /// The vault's leader — the only signer this rotation accepts.
@@ -32,8 +37,14 @@ pub struct SetQuoteAuthority {
 }
 
 impl SetQuoteAuthority {
+    /// Returns the [`SetQuoteAuthorityEvent`] payload for `lib.rs` to
+    /// dispatch through `emit_cpi!`.
     #[inline(always)]
-    pub fn set_quote_authority(&mut self, vault_idx: u32, new_authority: Address) -> Result<()> {
+    pub fn set_quote_authority(
+        &mut self,
+        vault_idx: u32,
+        new_authority: Address,
+    ) -> Result<SetQuoteAuthorityEvent> {
         // Reject the zero address — the same quote-brick guard
         // `create_vault` applies to the initial `quote_authority`. The
         // zero pubkey doubles as the free-list emptiness marker and has no
@@ -52,7 +63,7 @@ impl SetQuoteAuthority {
         // so it stays out of the `&mut` scope, and the mutable borrow
         // narrows to the single store below.
         let signer_addr = *self.signer.address();
-        {
+        let (vault_seq, old_authority) = {
             let vault = self.market.read_vault(vault_idx)?;
             // A free-list sector carries `leader == default`; reject it
             // first so the error names the real cause rather than
@@ -66,9 +77,18 @@ impl SetQuoteAuthority {
                 address_eq(&vault.leader, &signer_addr),
                 DropsetError::Unauthorized
             );
-        }
+            (vault.seq.get(), vault.quote_authority)
+        };
 
         self.market.mutate_vault(vault_idx)?.quote_authority = new_authority;
-        Ok(())
+
+        Ok(SetQuoteAuthorityEvent {
+            market: *self.market.address(),
+            sector_idx: vault_idx,
+            vault_seq,
+            leader: signer_addr,
+            old_authority,
+            new_authority,
+        })
     }
 }
