@@ -460,7 +460,8 @@ a panel with no build error anywhere.
 **FX leg: live tape vs daily fix** answers, per market and per tick,
 whether any live intraday tape was credited on the composite's FX leg —
 the per-market half of the question the go/no-go verdict answers per FX
-product. It is two rows:
+product. It is two rows from **two writers** on two clocks, so they
+can disagree tick for tick:
 
 - **Tape credited** is the estimator's own verdict, `fair_price`'s
   `fx_tape_live` (migration 0019), so the tape-or-fix classification is
@@ -468,12 +469,22 @@ product. It is two rows:
   heavier fix still reads `Live tape`. `No tape` covers both a fix-only
   leg and a leg with no contributor at all, so read it beside the
   **Composition regime / health** panel above: under `CryptoOnly` or
-  `Paused` it is structural, under `Normal` it is the fault. A gap means
-  the estimator stopped writing for the pair: both rows break after
-  three missed ticks rather than holding their last value.
-- **Heaviest FX source** names the source carrying the largest fusion
-  weight on the leg. A gap means every source was trimmed or none
-  answered; the full split is on the estimator card.
+  `Paused` it is structural, and under an `Uncorroborated` market with
+  only a daily fix it is the standing state. It is the signal when the
+  market's tape-bearing roster is otherwise healthy. A gap means the
+  estimator stopped writing for the pair.
+- **Heaviest FX source** is the maker's, from
+  `maker_leg_contributions`: the source carrying the largest fusion
+  weight on its FX leg. A gap means every source was trimmed or none
+  answered — or that the maker is not writing at all. The full split is
+  on **Fair price over its sources**.
+
+Neither row holds its last value across a stall. Each breaks once its
+own writer misses about three ticks at the default cadence (45 s for the
+estimator's 15 s, 15 s for the maker's 5 s), so a one- or two-tick
+blip still bridges. The thresholds are fixed in the panel, so an
+`ESTIMATOR_TICK_INTERVAL_SECS` raised well past 15 s fragments the top
+row and wants them raised to match.
 
 It pairs a market with its `fair_price` row by the base symbol of the
 product id (`EURC-USDC` → `EURC`), the same pairing the estimator card's
