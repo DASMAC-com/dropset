@@ -25,7 +25,7 @@ use anyhow::{bail, Result};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 
-// The mapped-port lookup every container-backed Postgres test in the workspace
+// The throwaway-Postgres start every container-backed test in the workspace
 // shares. Only dev-dependencies enable the feature.
 #[cfg(feature = "test-support")]
 pub mod testing;

@@ -34,7 +34,7 @@
 //! cargo test -p dropset-db-schema -- --ignored
 //! ```
 
-use dropset_db_schema::testing::mapped_port;
+use dropset_db_schema::testing::start_postgres;
 use dropset_db_schema::{
     connect, expected_version, migrate, require_schema, MIGRATOR, POSTGRES_IMAGE_TAG,
 };
@@ -42,17 +42,12 @@ use sqlx::PgPool;
 use std::collections::BTreeMap;
 use std::fs;
 use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
+use testcontainers_modules::testcontainers::ContainerAsync;
 
 /// Start a throwaway Postgres and return a connected pool, with **no** schema
 /// applied — each test decides what state to put it in.
 async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
-    let container = Postgres::default()
-        .with_tag(POSTGRES_IMAGE_TAG)
-        .start()
-        .await
-        .expect("start postgres container");
-    let port = mapped_port(&container).await;
+    let (container, port) = start_postgres().await;
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     let pool = connect(&url).await.expect("connect pool");
     (container, pool)
@@ -151,9 +146,12 @@ fn every_postgres_container_pins_the_image_tag() {
     let mut files = Vec::new();
     visit(root, &mut files);
 
-    let mut pinned_trees = std::collections::BTreeSet::new();
+    let mut walked_trees = std::collections::BTreeSet::new();
+    let mut pinned = 0;
     let mut violations = Vec::new();
     for path in &files {
+        let shown = path.strip_prefix(root).unwrap_or(path);
+        walked_trees.insert(shown.components().next().map(|c| c.as_os_str().to_owned()));
         let source = fs::read_to_string(path).expect("read source file");
         for (at, _) in source.match_indices(CONSTRUCTOR) {
             let line_start = source[..at].rfind('\n').map_or(0, |i| i + 1);
@@ -165,29 +163,38 @@ fn every_postgres_container_pins_the_image_tag() {
             // for this one.
             let rest = &source[at + CONSTRUCTOR.len()..];
             let statement = rest.split([';', '}']).next().unwrap_or(rest);
-            let shown = path.strip_prefix(root).unwrap_or(path);
             if statement.contains(PIN) {
-                pinned_trees.insert(shown.components().next().map(|c| c.as_os_str().to_owned()));
+                pinned += 1;
             } else {
                 let line = source[..at].matches('\n').count() + 1;
                 violations.push(format!("{}:{line}", shown.display()));
             }
         }
     }
-    // This file holds a pinned call of its own, so the walk always finds one;
-    // requiring hits in more than one top-level tree is what proves it is
-    // reaching the other crates' harnesses rather than passing vacuously.
+    // Every harness now starts its container through `testing::start_postgres`,
+    // so the one pinned call left is that helper's. Finding it proves the
+    // match still works; reaching the crates that use it proves the walk is not
+    // passing vacuously, by never visiting the files a copied harness would sit
+    // in.
     assert!(
-        pinned_trees.len() > 1,
-        "found pinned {CONSTRUCTOR} calls only in {pinned_trees:?} under {}; \
-         the walk is not reaching the other crates' test harnesses",
+        pinned > 0,
+        "found no pinned {CONSTRUCTOR} call under {}, not even the shared \
+         start helper's; the match no longer recognizes the pinned shape",
         root.display()
     );
+    for tree in ["feeds", "indexer", "market-data"] {
+        assert!(
+            walked_trees.contains(&Some(tree.into())),
+            "the walk under {} never reached {tree}/; it is not visiting the \
+             other crates' test harnesses",
+            root.display()
+        );
+    }
     assert!(
         violations.is_empty(),
         "{CONSTRUCTOR} without {PIN}POSTGRES_IMAGE_TAG) resolves to Postgres 11, \
-         which nothing here deploys. Chain the pin, or use the crate's shared \
-         start helper where one exists: {violations:?}"
+         which nothing here deploys. Use dropset_db_schema::testing::start_postgres, \
+         or chain the pin: {violations:?}"
     );
 }
 
@@ -868,7 +875,12 @@ async fn reader_role_can_read_everything_and_write_nothing() {
     let (pg, pool) = start_pg().await;
     migrate(&pool).await.expect("apply migrations");
 
-    let port = mapped_port(&pg).await;
+    // `start_pg` already resolved this port, so the mapping is published and a
+    // bare lookup cannot hit the race `start_postgres` absorbs.
+    let port = pg
+        .get_host_port_ipv4(5432)
+        .await
+        .expect("resolve mapped port");
     let url = format!("postgres://dropset_ro:dropset_ro@127.0.0.1:{port}/postgres");
     let reader = connect(&url)
         .await

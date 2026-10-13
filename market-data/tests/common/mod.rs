@@ -17,11 +17,11 @@
 // a file per consumer, which is the duplication this module removes.
 #![allow(dead_code)]
 
-use dropset_db_schema::testing::mapped_port;
-use dropset_db_schema::{connect, migrate, POSTGRES_IMAGE_TAG};
+use dropset_db_schema::testing::start_postgres;
+use dropset_db_schema::{connect, migrate};
 use sqlx::PgPool;
 use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
+use testcontainers_modules::testcontainers::ContainerAsync;
 
 /// A throwaway Postgres with every migration applied.
 ///
@@ -30,12 +30,7 @@ use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsyn
 /// database down before the first query and fails in a way that looks like a
 /// connection bug.
 pub async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
-    let container = Postgres::default()
-        .with_tag(POSTGRES_IMAGE_TAG)
-        .start()
-        .await
-        .expect("start postgres container");
-    let port = mapped_port(&container).await;
+    let (container, port) = start_postgres().await;
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     let pool = connect(&url).await.expect("connect pool");
     migrate(&pool).await.expect("apply migrations");
