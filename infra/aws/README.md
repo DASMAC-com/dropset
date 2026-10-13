@@ -262,8 +262,9 @@ then copy the value.
 **Rotation is yearly: mint with a 365-day expiry.** The expiry is the
 schedule, and a reminder fires about two months before it lands.
 Leak exposure on this key is bounded to credit burn rather than data,
-and the daily spend cap (below) bounds that burn and emails as it
-climbs. Those two controls are why a year-long key is acceptable here.
+and the daily spend cap (below) emails as that burn climbs and, while
+armed, bounds it. Those two controls are why a year-long key is
+acceptable here.
 Monthly rotation was the rule before the cap existed.
 
 Two things to know about that dialog:
@@ -303,7 +304,7 @@ Two things to know about that dialog:
   still a small n, and an absent event is weaker evidence than a present
   one, since the console could in principle attach through an API that
   logs under another name or under an AWS-internal principal this trail
-  does not capture. What all three windows establish is that management
+  does not capture. What every window establishes is that management
   events *were* being recorded throughout — `CreateUser`, `CreatePolicy`,
   `CreateServiceSpecificCredential` and both attach/detach pairs are all
   present — so a silent trail is not the explanation.
@@ -321,9 +322,11 @@ Two things to know about that dialog:
 silent from this repo's side. Nothing here warns you, and the launcher
 only makes the first failed call readable instead of opaque. The
 warning is a dated Linear reminder filed at each mint. IAM holds at
-most **two** Bedrock keys per user, so delete the previous key before
-minting, since an expired key may still count toward that limit. List
-the current credential, its status and its expiry date with:
+most **two** Bedrock keys per user, and an expired key may still count
+toward that limit. So when two are already listed, first delete the one
+that is expired or already replaced, never the live key: that one goes
+only after its replacement works (step 4 below). List the current
+credentials, their status and their expiry dates with:
 
 ```sh
 aws iam list-service-specific-credentials \
@@ -705,28 +708,32 @@ one:
 
 The dashboard is account-scoped, so every login with
 `bcm-dashboards:GetDashboard` and Cost Explorer read access sees it.
-PowerUser does. It cannot be put on Console Home: Console Home widgets
-are a fixed AWS set that can be added, moved, and resized, but not
-reconfigured. CloudFormation cannot create dashboards, so to rebuild it, use
-the console steps above or `aws bcm-dashboards create-dashboard` with
-the same query.
+PowerUser and the admin login both do. It cannot be put on Console
+Home: the Console Home docs allow adding, removing, moving and resizing
+AWS's own widgets, but give no way to reconfigure one or embed a
+dashboard. CloudFormation cannot create dashboards, so to rebuild it,
+use the settings above in the console or
+`aws bcm-dashboards create-dashboard` with the same query.
 
 ### Where alerts go
 
 All three go to the operator's one alert address, which is set in AWS
-and never committed. Only the daily figure ever cuts anything off. The
-other two only email.
+and never committed. Only the daily cap ever cuts anything off, and only
+while `SpendKillSwitchEnabled` is armed. The other two only email.
 
-| Alert                                                             | Fires on                                                                  | Effect                     |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------- | -------------------------- |
-| `dropset-bedrock-spend-alerts` SNS topic (four CloudWatch alarms) | 24-hour Bedrock estimate at 25, 50, 75 and 100% of `SpendCapUsd`          | Email; 100% blocks the key |
-| `dropset-bedrock-agent-spend` budget                              | Monthly cost **before credits** past 80% actual or 100% forecast of limit | Email only                 |
-| Cost Anomaly Detection `Default-Services-Subscription` (console)  | Daily; an anomaly of at least \$100 **and** 40% on any service            | Email only                 |
+| Alert                                                             | Fires on                                                                  | Effect                                                |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `dropset-bedrock-spend-alerts` SNS topic (four CloudWatch alarms) | 24-hour Bedrock estimate at 25, 50, 75 and 100% of `SpendCapUsd`          | Email; at 100%, when armed, the deny blocks every key |
+| `dropset-bedrock-agent-spend` budget                              | Monthly cost **before credits** past 80% actual or 100% forecast of limit | Email only                                            |
+| Cost Anomaly Detection `Default-Services-Subscription` (console)  | Daily; an anomaly of at least \$100 **and** 40% on any service            | Email only                                            |
 
-The budget counts the same cost as the dashboard, so free usage counts
-as \$0 and credits do not hide spend. Anomaly detection also sees spend
-before credits: it flagged the 2026-09-10 Opus 5 spike. That makes it
-the one alert that covers a non-Bedrock service starting to charge. It
+The budget counts the dashboard's before-credits cost (minus refunds),
+across every service, so free usage counts as \$0 and credits do not
+hide spend, but it fires only near its \$10,000 monthly limit. Anomaly
+detection also sees spend before credits: it flagged the 2026-09-10
+Opus 5 spike. That makes it the only alert likely to catch a sizable
+new charge on a non-Bedrock service. A charge of a few dollars a day
+fires neither, and shows up only on the dashboard. Anomaly detection
 is not in any template. Check its subscriber with
 `aws ce get-anomaly-subscriptions --region us-east-1`. An email
 subscriber that reads anything but `CONFIRMED`, or an SNS subscription

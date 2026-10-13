@@ -14,7 +14,7 @@ Description: >-
   model invocation alone, a daily spend cap that warns and then, when
   armed, blocks invocation once a rolling 24-hour estimate from Bedrock
   token metrics reaches its limit, and an optional monthly spend ALERT that
-  fires once monthly spend before credits reaches its threshold - a coarse
+  fires as monthly spend before credits nears its limit - a coarse
   runaway tripwire that never blocks anything. No credential value is
   created or stored by this template - the API key is minted out of band
   and kept in
@@ -121,7 +121,7 @@ Resources:
           # under a threshold that already alerted, and IncludeCredit, which
           # is off so the budget tracks spend BEFORE credits. Credits cover
           # the whole bill, so a net figure stays at zero and never alerts.
-          # This is the same measure as the "Actual daily costs" dashboard.
+          # This is the "Actual daily costs" dashboard's measure, minus refunds.
           IncludeCredit: false
           IncludeDiscount: true
           IncludeOtherSubscription: true
