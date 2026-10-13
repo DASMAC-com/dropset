@@ -3167,7 +3167,8 @@ migrations or generation inputs, and whether it spans crates.
    — a dirty tree, an unpushed commit, an open or unreadable PR,
    a lock another session holds, a failed state write — and
    names the reason in `refused`; exit 2 means Done landed and
-   the removal did not, which `upkeep` collects.
+   the removal did not — relay its note, which says when the
+   tree needs removing by hand.
 
    Watch whether the PR lands or gets kicked back out with a
    **single** probe per check: the `gh api graphql` dequeue

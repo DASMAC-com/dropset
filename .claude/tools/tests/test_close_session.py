@@ -21,6 +21,7 @@ from close_session import (
     issue_for,
     lock_reasons,
     lock_verdict,
+    pid_alive,
     pr_verdict,
     remove,
 )
@@ -126,10 +127,10 @@ class Writer:
             raise board_batch.BoardBatchError("no state named 'Bogus'")
 
 
-def run_close(args=None, writer=None, **fake):
+def run_close(args=None, writer=None, alive=lambda _pid: True, **fake):
     runner = FakeRun(**fake)
     writer = writer or Writer()
-    rc, result = close(args or ns(), run=runner, writer=writer, pid=1000)
+    rc, result = close(args or ns(), run=runner, writer=writer, pid=1000, alive=alive)
     return rc, result, runner, writer
 
 
@@ -166,9 +167,17 @@ class PureTests(unittest.TestCase):
         self.assertFalse(lock_verdict(None, set()))
         self.assertTrue(lock_verdict(LOCK, {SESSION_PID}))
         with self.assertRaisesRegex(Refusal, "another live process"):
-            lock_verdict(LOCK, {1, 2})
+            lock_verdict(LOCK, {1, 2}, alive=lambda _pid: True)
+        with self.assertRaisesRegex(Refusal, "stale lock from pid 4242"):
+            lock_verdict(LOCK, {1, 2}, alive=lambda _pid: False)
         with self.assertRaisesRegex(Refusal, "no session pid"):
             lock_verdict("", {SESSION_PID})
+
+    def test_pid_alive(self):
+        self.assertTrue(pid_alive(os.getpid()))
+        proc = subprocess.Popen(["true"])
+        proc.wait()
+        self.assertFalse(pid_alive(proc.pid))
 
     def test_pr_verdict(self):
         self.assertIsNone(pr_verdict([]))
@@ -380,6 +389,19 @@ class RealGitRemoveTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.tree))
         rc, out, _ = self.run_git(["git", "-C", self.base, "branch", "--list", "eng-1"])
         self.assertEqual((rc, out.strip()), (0, ""))
+
+    def test_removes_the_tree_its_caller_stands_in(self):
+        # The tool runs with its cwd inside the tree, and its later git calls
+        # inherit a cwd that no longer exists; `-C base` carries them.
+        here = os.getcwd()
+        os.chdir(self.tree)
+        self.addCleanup(os.chdir, here)
+        notes = []
+        self.assertIsNone(
+            remove(self.run_git, self.base, self.tree, "eng-1", LOCK, notes)
+        )
+        self.assertEqual(notes, [])
+        self.assertFalse(os.path.exists(self.tree))
 
     def test_still_locked_tree_is_refused_and_kept(self):
         why = remove(self.run_git, self.base, self.tree, "eng-1", None, [])

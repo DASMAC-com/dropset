@@ -43,13 +43,16 @@ Every gate runs **before** any write, and each fails closed:
 Then the state is written through ``board_batch`` (zero-echo GraphQL); only on
 a confirmed write is the worktree unlocked, removed **without** ``--force``, and
 its branch deleted. A removal that fails after the write re-locks the tree and
-exits 2: the issue is already resolved (removal only ever follows Done /
-Canceled), so ``upkeep``'s status-gated sweep is the backstop.
+exits 2. The issue is resolved by then, but ``upkeep``'s sweep is only a partial
+backstop: the pruner refuses a branch with no upstream (every architect close,
+and a pruned squash-merge) and skips a locked tree, so the exit-2 note says
+when the tree needs removing by hand.
 
 Prints one JSON object ``{issue, state, worktree, branch, pr, dry_run,
 keep_worktree, refused, state_written, removed, notes}``. Exit 0 on a complete
-close, 1 on a refusal or error with **nothing** changed, 2 when the state landed
-but the removal did not.
+close; 1 on a refusal or error before any removal — a gate refusal changes
+nothing, while a write reported "unconfirmed" may have landed; 2 when the state
+landed but the removal did not.
 
 The harness's ``ExitWorktree`` is deliberately not the mechanism: it documents
 itself as operating only on worktrees made by ``EnterWorktree`` in the same
@@ -145,18 +148,38 @@ def lock_reasons(porcelain: str) -> dict[str, str | None]:
     return out
 
 
-def lock_verdict(reason: str | None, ancestors: set[int]) -> bool:
+def pid_alive(pid: int) -> bool:
+    """Whether ``pid`` names a running process (a permission error counts)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def lock_verdict(
+    reason: str | None, ancestors: set[int], alive: Callable[[int], bool] = pid_alive
+) -> bool:
     """Whether removal must unlock first. Raises :class:`Refusal` on a lock this
-    process cannot prove is its own session's."""
+    process cannot prove is its own session's — a stale lock included, which
+    is reported as stale rather than lifted."""
     if reason is None:
         return False
     m = LOCK_PID_RE.search(reason)
     if not m:
         raise Refusal(f"worktree is locked with no session pid ({reason!r})")
-    if int(m.group(1)) not in ancestors:
+    pid = int(m.group(1))
+    if pid not in ancestors:
+        if alive(pid):
+            raise Refusal(
+                f"worktree is locked by another live process (pid {pid}), "
+                "not this session"
+            )
         raise Refusal(
-            f"worktree is locked by another live process (pid {m.group(1)}), "
-            "not this session"
+            f"worktree carries a stale lock from pid {pid}, which is not "
+            "running; unlock it by hand if no session owns this tree"
         )
     return True
 
@@ -315,6 +338,7 @@ def close(
     run: Runner = real_run,
     writer: Callable[[str, str, bool], None] = write_state,
     pid: int | None = None,
+    alive: Callable[[int], bool] = pid_alive,
 ) -> tuple[int, dict]:
     result: dict = {
         "issue": None,
@@ -348,7 +372,7 @@ def close(
         if not args.keep_worktree:
             reason = lock_reasons(porcelain).get(worktree)
             ancestors = ancestor_pids(run, os.getpid() if pid is None else pid)
-            if lock_verdict(reason, ancestors):
+            if lock_verdict(reason, ancestors, alive):
                 lock = reason
     except Refusal as e:
         result["refused"] = str(e)
@@ -369,7 +393,11 @@ def close(
         return 0, result
     why = remove(run, base, worktree, branch, lock, result["notes"])
     if why is not None:
-        result["notes"].append(f"{why}; upkeep's status-gated sweep will collect it")
+        result["notes"].append(
+            f"{why}; once this session exits, remove it by hand from the base "
+            f"checkout (git worktree remove {worktree}) — upkeep collects only "
+            "an unlocked tree whose branch has an upstream"
+        )
         return 2, result
     result["removed"] = True
     return 0, result

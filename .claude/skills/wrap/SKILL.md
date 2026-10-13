@@ -188,4 +188,5 @@ git safety, the PR, and the worktree lock before writing
 anything, and removes only after Done or Canceled; on a
 refusal, report its `refused` line as a
 NOT CLEAR item. Exit 2 means Done landed but the removal did
-not; `upkeep` collects it.
+not; relay the tool's note, which says when the tree needs
+removing by hand.
