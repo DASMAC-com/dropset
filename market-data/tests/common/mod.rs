@@ -46,12 +46,15 @@ pub async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
 
 /// The host port Docker mapped to the container's 5432.
 ///
-/// `start` can return before Docker has published the port mapping, and the
-/// lookup then fails with `PortNotExposed` even though the container is fine.
-/// It is a startup race rather than a broken container, and it lands on a
-/// different test each run, so it is absorbed here: each attempt re-inspects
-/// the container, and only that one error is retried — anything else is a real
-/// failure and panics on the spot.
+/// This lookup intermittently fails with `PortNotExposed`, on a different test
+/// each run. `start` has already waited for Postgres to report ready, so the
+/// likely cause is Docker publishing the port mapping late rather than a broken
+/// container — the flake has not been reproduced on demand. It is absorbed
+/// here: each attempt re-inspects the container, ten attempts 200ms apart
+/// (about 1.8s in all), and only that one error is retried — anything else is a
+/// real failure and panics on the spot. A `PortNotExposed` that outlasts every
+/// attempt is no longer a short race; read it as a container that died or
+/// never bound IPv4.
 async fn mapped_port(container: &ContainerAsync<Postgres>) -> u16 {
     const ATTEMPTS: u32 = 10;
     const BACKOFF: Duration = Duration::from_millis(200);
@@ -61,7 +64,7 @@ async fn mapped_port(container: &ContainerAsync<Postgres>) -> u16 {
             Err(TestcontainersError::PortNotExposed { .. }) if attempt < ATTEMPTS => {
                 tokio::time::sleep(BACKOFF).await;
             }
-            Err(e) => panic!("resolve mapped port (attempt {attempt}/{ATTEMPTS}): {e}"),
+            Err(e) => panic!("resolve mapped port (attempt {attempt}/{ATTEMPTS}): {e:?}"),
         }
     }
     unreachable!("the final attempt either returns or panics")
