@@ -187,8 +187,8 @@ python3 .claude/tools/init_pr_branch.py --tag <eng-###> --link-env
 
 ```json
 {
-  "tag": "eng-603",          // validated; `603` or `eng-603` in
-  "tag_valid": true,         // false (+ non-zero exit) if neither
+  "tag": "eng-603",          // from `603` or `eng-603`, lowercased
+  "tag_valid": true,         // false (+ non-zero exit) for anything else
   "base_repo": "/…/dropset", // the refs/heads/main worktree, or null
   "current_branch": "worktree-603",
   "normalized_branch": "eng-603",

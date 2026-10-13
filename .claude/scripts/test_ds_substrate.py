@@ -336,11 +336,23 @@ class VerbLaunch(SubstrateHarness):
         self.assertIn("RC=1", out)
         self.assertNotIn("MODEL=", out)
 
-    def test_architect_refuses_a_topic(self):
-        result, out = self._launch("architect pricing")
-        self.assertIn("RC=1", out)
-        self.assertNotIn("MODEL=", out)
-        self.assertIn("governing issue number", result.stderr)
+    def test_architect_refuses_a_topic_and_zero(self):
+        for verb in ("architect pricing", "architect 0"):
+            with self.subTest(verb=verb):
+                result, out = self._launch(verb)
+                self.assertIn("RC=1", out)
+                self.assertNotIn("MODEL=", out)
+                self.assertIn("governing issue number", result.stderr)
+
+    def test_a_pre_rename_worktree_is_reused_not_shadowed(self):
+        # A bare `<n>` created beside a live `eng-<n>` / `ceo-<n>` would win
+        # every later resume and orphan the old thread.
+        for name in ("eng-7", "ceo-12"):
+            (self.repo / ".claude" / "worktrees" / name).mkdir(parents=True)
+        result, out = self._launch("task 7", env=self._TOKEN)
+        self.assertIn("-w eng-7 -n 7", out, result.stderr)
+        result, out = self._launch("architect 12")
+        self.assertIn("-n 12 --permission-mode auto -w ceo-12", out, result.stderr)
 
     def test_resume_re_pins_a_task_session_on_its_recorded_substrate(self):
         result, out = self._launch(

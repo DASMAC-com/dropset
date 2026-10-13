@@ -136,7 +136,10 @@ def unpushed_reason(branch: str, git=_real_git, prefix: list[str] = ()) -> str |
         # so it never has one — and it is meant to be reclaimed once its issue
         # is Done. It is still safe when every commit on it is already on
         # `origin/main`: there is then nothing unpushed to lose. Anything else
-        # stays refused, since pushed state cannot be proven.
+        # stays refused, since pushed state cannot be proven. Gitignored files
+        # are NOT protected — the dirty check cannot see them and
+        # `git worktree remove` discards them — which the convention accepts:
+        # these sessions keep durable state in Linear, not in the tree.
         rc, out, _ = git([*prefix, "rev-list", "--count", f"origin/main..{branch}"])
         if rc == 0 and out.strip() == "0":
             return None

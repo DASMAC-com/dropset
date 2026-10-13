@@ -149,7 +149,7 @@ def worktree_candidates(tag: str) -> list[str]:
     not moved — a live transcript stamps its cwd into the old path — so this is
     the seam that keeps an in-flight ``ceo-<n>`` thread reachable by number."""
     bare = normalize_tag(tag)
-    if not bare.isdigit():
+    if not (bare.isascii() and bare.isdigit()):
         return [bare]
     return [bare, *(p + bare for p in LEGACY_PREFIXES)]
 

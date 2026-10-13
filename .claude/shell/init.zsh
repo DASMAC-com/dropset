@@ -652,7 +652,7 @@ _DS_SUBSTRATE_DIR="$_DS_REPO/.claude/session-substrate"
 # `exp-882` all print `882` — so every issue-keyed session, tab and worktree
 # directory is named by the number alone (operator ruling: the prefix is dead
 # screen estate, and the number is what the operator looks up). Anything else
-# passes through untouched, which keeps a free-form `exp-<name>` usable. Git
+# passes through lowercased, which keeps a free-form `exp-<name>` usable. Git
 # BRANCHES are the one place the `eng-` prefix survives: `init-pr` renames to
 # it, because Linear's GitHub integration links on that form.
 #
@@ -676,10 +676,12 @@ _ds_tag_of() {
 #
 # The bare tag first, then the spellings worktrees were created under before
 # the bare-number rename — `eng-<n>` for `task` and issue-keyed `explore`,
-# `ceo-<n>` for `architect`. Those directories are grandfathered rather than
-# moved: an in-flight session's transcript stamps its cwd into the old path, so
-# renaming the directory would orphan the conversation. This lookup is the
-# compatibility seam, and it retires itself as the old worktrees are pruned.
+# `ceo-<n>` for an `architect` launched with a numeric topic, `exp-<n>` for an
+# older explore. Those directories are grandfathered rather than moved: an
+# in-flight session's transcript stamps its cwd into the old path, so renaming
+# the directory would orphan the conversation. This lookup is the compatibility
+# seam, and it retires itself as the old worktrees are pruned. A worded
+# `ceo-<topic>` names no issue, so no number reaches it.
 _ds_worktree_of() {
   local tag="$1" dir
   local -a candidates=("$tag")
@@ -691,6 +693,15 @@ _ds_worktree_of() {
     fi
   done
   return 1
+}
+
+# Internal: the worktree a launch should pass to `claude -w` — the existing one
+# for this tag, pre-rename spellings included, or the bare tag when none exists.
+# Creating a bare `<n>` beside a live `eng-<n>` / `ceo-<n>` would split the
+# thread: every resume prefers the bare directory, so the old conversation
+# would go unreachable by number.
+_ds_launch_dir() {
+  _ds_worktree_of "$1" || print -r -- "$1"
 }
 
 # Internal: the substrate-marker key for a tag. A marker written before the
@@ -1108,7 +1119,8 @@ _ds_task_start() {
   # happened to quit — and never at all if the terminal were closed instead.
   _ds_substrate_write "$tag" "$substrate"
 
-  ANTHROPIC_MODEL="$model" claude -w "$tag" -n "$tag" --permission-mode auto \
+  ANTHROPIC_MODEL="$model" claude -w "$(_ds_launch_dir "$tag")" -n "$tag" \
+    --permission-mode auto \
     /init-pr
 }
 
@@ -1237,8 +1249,9 @@ _ds_task_resume() {
 # for issue-keyed sessions: the number is what the operator looks up in Linear,
 # so a prefix is screen estate that carries nothing.
 #
-# THE COST OF SHARING THE TAG: `<n>` names a worktree that two session
-# kinds can claim, with different substrates and different tiers, while the
+# THE COST OF SHARING THE TAG: `<n>` names a worktree that three session
+# kinds (`task`, `explore`, `architect`) can claim, with different substrates
+# and different tiers, while the
 # substrate marker keys on the tag alone. That is why nothing is written to it
 # below — and the marker's resulting ABSENCE is what tells `task resume <n>`
 # (and `fleet`, which types it) to re-pin the advisor tier on the anthropic
@@ -1353,7 +1366,7 @@ explore() {
   # a comment's "the substrate marker records it" claim true; the honest fix was
   # to correct the claim instead.
   _ds_session "$(_ds_topic_sid explore "$raw")" "$name" "$prompt" \
-    "$model" "$tag"
+    "$model" "$(_ds_launch_dir "$tag")"
 }
 
 # Start OR resume today's PLANNING session. The name is derived from the date.
@@ -1503,7 +1516,8 @@ housekeeping() {
 # names one first. The session id seeds on the number, and a number outlives a
 # day, so the thread stays resumable by construction — and a pre-rename thread
 # launched as `architect 1572` (name `ceo-1572`) keeps its id, since the old
-# topic seed was that same string.
+# topic seed was that same string, and its `ceo-1572` worktree, which
+# `_ds_launch_dir` reuses rather than creating a bare `1572` beside it.
 #
 # The advisor tier like `plan`, for the same reason: this session argues
 # strategy, and fidelity beats tokens. It writes nothing to the board — see the
@@ -1528,9 +1542,10 @@ housekeeping() {
 # which makes the worktree's contents expendable by construction. So the
 # protection no longer needs a PR to exist.
 #
-# Its worktree, being keyed on the issue, is reclaimed by the pruner once that
-# issue's status type is completed or canceled — the lifecycle "temporary" has
-# always promised, now enforced rather than left to a hand cleanup.
+# Its worktree, being keyed on the issue, is eligible for the pruner once that
+# issue's status type is completed or canceled. The pruner still refuses a dirty
+# tree, so one holding an untracked spec file — the usual case — is reported on
+# every pass and removed by hand.
 architect() {
   local tag model substrate
   if [[ -z "$1" || -n "$3" || ( -n "$2" && "$2" != (anthropic|bedrock) ) ]]
@@ -1549,7 +1564,7 @@ architect() {
   [[ -n "$substrate" ]] || return 1
   _ds_substrate_enter "$substrate" 'architect' || return 1
   _ds_session "$(_ds_topic_sid architect "$tag")" \
-    "$tag" "/architect ENG-$tag" "$model" "$tag"
+    "$tag" "/architect ENG-$tag" "$model" "$(_ds_launch_dir "$tag")"
 }
 
 # Resume the whole FLEET: one iTerm tab per in-flight Linear issue, each with

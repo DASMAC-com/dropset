@@ -58,12 +58,14 @@ class NormalizeTag(unittest.TestCase):
         # Worktree directories are named by the bare number; the tag the
         # branch and the PR scope carry is still `eng-###`.
         self.assertEqual(ipb.normalize_tag("1510"), "eng-1510")
+        self.assertEqual(ipb.normalize_tag("007"), "eng-7")
 
     def test_invalid(self):
         self.assertIsNone(ipb.normalize_tag("feature-x"))
         self.assertIsNone(ipb.normalize_tag("eng-"))
         self.assertIsNone(ipb.normalize_tag("eng-12a"))
         self.assertIsNone(ipb.normalize_tag("ceo-12"))
+        self.assertIsNone(ipb.normalize_tag("eng-0"))
         self.assertIsNone(ipb.normalize_tag(""))
 
 

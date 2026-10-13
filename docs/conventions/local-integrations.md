@@ -1164,9 +1164,9 @@ The named exceptions: `plan-<day>` and `housekeeping-<day>` keep
 their day-keyed names (they have no issue), a free-form explore
 keeps `exp-<name>`, and **git branches keep the `eng-` prefix**
 — `init-pr` renames `worktree-<n>` to `eng-<n>`, because Linear's
-GitHub integration links branches and PRs on that form. One owner
-does the normalizing: `_ds_tag_of` in the shell and
-`normalize_tag` in `resolve_session.py` both map `1196`,
+GitHub integration links branches and PRs on that form. Two
+mirrored normalizers agree on the rule: `_ds_tag_of` in the shell
+and `normalize_tag` in `resolve_session.py` both map `1196`,
 `eng-1196`, `ceo-1196` and `exp-1196` to `1196`.
 
 **Pre-rename worktrees are grandfathered, not moved.** A live
@@ -1190,9 +1190,11 @@ read-only session never renames its branch, so the pruner ties a
 and its never-pushed branch passes the unpushed-work gate when
 every commit on it is already on `origin/main`. So an architect
 or explore worktree is **protected while its issue is In
-Progress or In Review and reclaimed once ratification moves it
-to Done** — the lifecycle "temporary" promises, now enforced
-rather than left to a hand cleanup. The pre-rename `ceo-<topic>`
+Progress or In Review and eligible once ratification moves it
+to Done**. The pruner still refuses a dirty tree, so one
+holding an untracked spec file is reported on every pass and
+removed by hand; gitignored files are not protected at all.
+The pre-rename `ceo-<topic>`
 and `exp-<name>` worktrees match no issue: the pruner reports
 them as unresolvable and they are removed by hand as their
 threads close. A canceled issue whose PR is still open is always

@@ -135,14 +135,18 @@ def normalize_tag(tag: str) -> str | None:
     it as lowercase ``eng-###``, or ``None`` if it doesn't match.
     """
     match = _TAG_RE.match(tag.strip())
-    return f"eng-{match.group(1)}" if match else None
+    # Unpadded, as every other tool reads it; 0 is not an issue.
+    if not match or int(match.group(1)) == 0:
+        return None
+    return f"eng-{int(match.group(1))}"
 
 
 def normalize_branch(branch: str) -> tuple[str, bool]:
     """Return ``(normalized_branch, rename_needed)``.
 
     A ``worktree-<n>`` branch (the ``task`` default) becomes ``eng-<n>``, and an
-    older ``worktree-eng-<n>`` is stripped to the same; any other name is left
+    older ``worktree-eng-<n>`` is stripped to the same; any other
+    ``worktree-<x>`` loses only the prefix, and a name without it is left
     as-is. ``rename_needed`` is ``True`` only when the leading ``worktree-``
     prefix was actually present.
     """

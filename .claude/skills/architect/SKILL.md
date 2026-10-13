@@ -75,10 +75,13 @@ So if you find yourself reaching for `git commit` or
 also no PR title to satisfy, which is why this skill no longer
 says anything about an `ENG-###` scope.
 
-**Keyed on the issue, the worktree is reclaimed for you.**
-The pruner removes it once ratification moves the issue to
-Done, and keeps it while the issue is In Progress or In Review
-— the lifecycle "temporary" promises, enforced. A pre-rename
+**Keyed on the issue, the worktree is pruner-eligible.** It
+is kept while the issue is In Progress or In Review and
+becomes eligible once ratification moves the issue to Done.
+The pruner still refuses a dirty tree, so a worktree holding
+an untracked spec file is reported on every pass and removed
+by hand — nothing in it is lost, since Linear holds the
+record. A pre-rename
 `ceo-<topic>` worktree is reported rather than deleted and is
 cleaned by hand when its thread closes.
 

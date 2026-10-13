@@ -115,11 +115,12 @@ RESOLVED_TYPES = ("completed", "canceled")
 # A branch tied to an ENG issue: `eng-<n>` once `init-pr` has renamed it, or the
 # `worktree-<n>` that `claude -w <n>` creates and a read-only architect or
 # explore session never renames (`worktree-eng-<n>` before the bare-number
-# rename). Tying the last two to their issue is what lets the one rule reclaim
-# an architect worktree once its issue is Done. A pre-rename `worktree-ceo-*` /
-# `worktree-exp-*` branch matches nothing, so it is reported as unresolvable and
-# cleaned by hand — grandfathered, never guessed at.
-BRANCH_RE = re.compile(r"^(?:worktree-)?(?:eng-)?(\d+)$", re.ASCII)
+# rename). Tying the last two to their issue is what makes an architect
+# worktree eligible once its issue is completed or canceled — still behind the
+# pruner's dirty-tree refusal, which an untracked spec file trips. A pre-rename
+# `worktree-ceo-*` / `worktree-exp-*` branch matches nothing, so it is reported
+# as unresolvable and cleaned by hand — grandfathered, never guessed at.
+BRANCH_RE = re.compile(r"^(?:worktree-)?(?:eng-)?(\d+)$", re.IGNORECASE | re.ASCII)
 PR_URL_RE = re.compile(r"/repos/DASMAC-com/dropset/pulls/(\d+)$")
 
 Runner = Callable[[list[str], float, "str | None"], "tuple[int, str, str]"]
@@ -850,9 +851,11 @@ def run(argv: list[str]) -> int:
         return 0
 
     if args.cmd == "prune":
-        # Armed by the flag, not the environment: the caller is an attended
-        # session that has just shown the dry run and had it approved. No
-        # document write and no stamp — this is not the day's pass.
+        # Armed by the flag, not the environment: the caller is the
+        # `housekeeping` skill, whose prune step has always run in-pass. The
+        # gates that make that safe are the board rule and the pruner's
+        # dirty/unpushed refusal, not a prompt. No document write and no stamp
+        # — this is not the day's pass.
         ctx = Ctx(base=base, armed=args.apply, now=now, lookup=linear_lookup)
         ctx.data["trees"] = trees
         result = run_pass(ctx, PRUNE_STEPS)

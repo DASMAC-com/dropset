@@ -360,6 +360,11 @@ class PassTests(unittest.TestCase):
         )
         self.assertEqual(ctx.data["eligible"], {"eng-10", "eng-12"})
 
+    def test_every_prune_step_names_a_real_step(self):
+        # `run_pass(only=...)` skips unknown names silently, so a rename in
+        # STEPS would quietly drop a cleanup step from `upkeep.py prune`.
+        self.assertLessEqual(set(upkeep.PRUNE_STEPS), {n for n, _ in upkeep.STEPS})
+
     def test_linear_unreachable_cleans_nothing(self):
         def down(nums):
             raise RuntimeError("connection refused")

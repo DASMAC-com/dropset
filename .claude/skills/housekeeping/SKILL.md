@@ -125,8 +125,9 @@ two modes, and the default is the non-interrupting one:
   session-metrics unconditionally, the purge **dry-run**
   in-pass — with only the purge's destructive apply deferring
   to the closing gate. The deferred items are filed or
-  flagged in the report for a later attended pass — nothing is
-  ever deleted unattended. With the audit step gone,
+  flagged in the report for a later attended pass — nothing
+  beyond step 2's gated prune is deleted unattended. With the
+  audit step gone,
   **nothing** interrupts a one-shot pass at all: every step
   either acts mechanically or defers to the closing gate.
 
@@ -259,7 +260,8 @@ wrong place.
 
 It is safe to run repeatedly and makes **no source
 edits** of its own: its only writes are removing
-merged worktrees and filing / staging Linear issues
+finished worktrees and branches (step 2's survival rule),
+dismissing their notifications, and filing / staging Linear issues
 (it never edits a skill unattended). Trim levers are
 **parked issues** written through the zero-echo
 writer — the old "Session Metrics" inbox document is
@@ -394,7 +396,8 @@ What the command does, so the report reads right:
 
 - reads the terminal and open PR sets and the PR
   notifications, field-selected, in one `gh` call each;
-- ties each worktree and `eng-` / `worktree-<n>` branch to its
+- ties each worktree and `eng-<n>` / `worktree-<n>` /
+  `worktree-eng-<n>` branch to its
   issue by number, and reads the status types in **one**
   field-selected GraphQL call. The `worktree-<n>` form is what
   a read-only architect or explore session leaves behind — it
