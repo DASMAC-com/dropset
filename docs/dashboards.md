@@ -416,9 +416,12 @@ One sentence each; if a panel needs more, the panel is doing two jobs.
 - **Price by source** — the same pair from every venue that carries it;
   divergence between venues is the signal.
 - **Fair price over its sources** — what the maker will actually quote
-  from, which inputs composed it, and each input's share. Lives on the
-  maker dashboard, not the ingestion one: it reads maker tables, and a
-  panel whose writer does not exist renders blank by construction.
+  from, which inputs composed it, and each input's share, beside the
+  fair-value estimator's published fair. Lives on the maker dashboard,
+  not the ingestion one: most of it reads maker tables, and a panel
+  whose writer does not exist renders blank by construction. The
+  estimator line and the tick scatter are the exceptions, and render
+  with no maker running.
 - **Feed health / staleness** — age against the class bound, per
   source and product.
 - **Candle rows per minute by source** — cadence actually observed,
@@ -696,10 +699,14 @@ Both directions of drift are real, so both checks are worth running.
    rendered "No data", indistinguishable from a broken query. This is
    §4's rule with nothing implementing it, and it is the generalization
    of the item above. *Partly closed — the reading merged into the
-   estimator card on the maker dashboard, which now distinguishes "no
-   maker has ever written", where the market picker itself is empty,
-   from a picker pairing where a market is selected and the scatter is
-   not. The general rule still has nothing enforcing it.*
+   estimator card on the maker dashboard. That card used to distinguish
+   "no maker has ever written" by an empty market picker; the picker now
+   also lists markets the fair-value estimator has published, so on a
+   collectors-only stack it is populated, the fair-value estimator line
+   and the tick scatter render, and the maker-table series and panels are the
+   ones left blank.
+   An empty picker now means neither writer has published. The general
+   rule still has nothing enforcing it.*
 
 1. **§3's redundancy panel did not exist**, and no item on this list
    said so. *Closed — `Live venues per pair` is now built.* §3 claimed

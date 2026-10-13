@@ -2,4 +2,4 @@
 -- Source: maker-operations.json
 -- Regenerate: make dashboard-sql
 
-SELECT DISTINCT market FROM maker_telemetry WHERE ts > extract(epoch FROM now()) - 86400 ORDER BY 1
+SELECT market FROM maker_telemetry WHERE ts > extract(epoch FROM now()) - 86400 UNION SELECT split_part(product_id, '-', 1) FROM fair_price WHERE ts > extract(epoch FROM now()) - 86400 ORDER BY 1

@@ -33,6 +33,35 @@ WHERE $__unixEpochFilter(ts)
   AND market = ANY (ARRAY[${market:sqlstring}]::text[])
   AND fair IS NOT NULL
 UNION ALL
+-- The fair-value estimator's published fair, from its own table. It composes
+-- the way the maker does but runs as a separate process, so this line renders
+-- with no maker running -- which is why the Market picker lists the
+-- estimator's markets too. The table keys on product_id, so the arm maps it
+-- onto the picker's base-token vocabulary.
+SELECT
+  to_timestamp(ts) AS "time",
+  split_part(product_id, '-', 1) || ' fair (estimator)' AS metric,
+  fair AS value
+FROM fair_price
+WHERE $__unixEpochFilter(ts)
+  AND split_part(product_id, '-', 1) = ANY (ARRAY[${market:sqlstring}]::text[])
+  AND fair IS NOT NULL
+UNION ALL
+-- A product with no live leg publishes the STATIC PEG as a real price, at a
+-- degraded regime. Drawn as its own series, overlaying the estimator line, so a
+-- static print reads as the fallback constant rather than a composed mid.
+-- Lowercase 'static' is this table's spelling; maker_telemetry writes the
+-- Debug rendering 'Static' instead.
+SELECT
+  to_timestamp(ts) AS "time",
+  split_part(product_id, '-', 1) || ' fair (estimator, static peg)' AS metric,
+  fair AS value
+FROM fair_price
+WHERE $__unixEpochFilter(ts)
+  AND split_part(product_id, '-', 1) = ANY (ARRAY[${market:sqlstring}]::text[])
+  AND anchor = 'static'
+  AND fair IS NOT NULL
+UNION ALL
 -- The FX leg's two numbers, which is where the estimator is actually
 -- visible: `fused_value` is what the composition priced off and
 -- `value` is the fast median that guards dislocations.
