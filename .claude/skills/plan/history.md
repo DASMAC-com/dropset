@@ -63,19 +63,28 @@ retirement on the duplication argument alone.
 chain with an edge per issue (08-18), to one edge behind the
 batch (08-20), to one giant batch (09-02), to small edge-free
 batches with no in-flight assembly gate (operator rule,
-2026-09-11). Each step removed relations rather than adding them
-— the right direction for a mechanism whose risk is a spurious
-edge dropping an issue out of the available set. The in-flight
-precondition existed only to make the retired *wait for the one
-in flight* edge true by construction, so both went together, and
-with them the "exactly one meta issue in Next" property — now
-deliberately gone, its job taken by the file-disjoint promotion
+2026-09-11). The relation shapes went chain, then one edge, then
+none — each removing relations rather than adding them, the right
+direction for a mechanism whose risk is a spurious edge dropping
+an issue out of the available set. The in-flight precondition
+briefly outlived the edge it stood in for, making the retired
+*wait for the one in flight* edge true by construction; with the
+serialization itself abandoned, neither had anything left to
+encode. The "exactly one meta issue in Next" property went with
+them — deliberately, its job taken by the file-disjoint promotion
 bound. Contention between parallel batches is paid as a rebase,
 estimated (not measured) at order tens of cents in a short
-session, against the quadratic a long one costs — the
-**\$155–198 versus \$455** modeling is in
+session, against the quadratic a long one costs.
+
+**Why 4–5 parts.** The batch size rests on the measurement and the
+**\$155–198 versus \$455** modeling in
 `docs/conventions/context-economy.md` → "Session length is itself
-a cost lever". With assembly ungated, the never-fold-In-Progress
+a cost lever". The same 2026-09-11 rule retired the `Claude:`
+class's earlier no-size-bound exemption, so meta folds are bound
+like any other filing.
+
+**Ungated assembly and live specs.** With assembly ungated, the
+never-fold-In-Progress
 exclusion became load-bearing on its own: it is the only thing
 between an assembly and a live spec. One batch of mined levers
 landed as a new issue rather than on the prior batch for exactly
@@ -88,6 +97,8 @@ batch had grown to ~6.6k of folded parts and a one-screen
 addition paid for the whole history. An append has no anchor, so
 leaving the MCP `patch` path loses no ambiguity protection.
 
+**Vocabulary.** The operator's "Next" view was earlier called "Q".
+
 **Why housekeeping no longer proposes meta merges.** Its last
 board carve-out was retired once meta filings parked under the
 milestone and this bootstrap swept it whole: a second writer on
@@ -95,7 +106,9 @@ that pool would only race the assembly.
 
 ## Bounding the Planning document (step 1)
 
-The close-out rewrite bounds a planning session's own appends,
+The document's growth between rewrites is the same failure shape
+as the retired Session Metrics inbox. The close-out rewrite bounds
+a planning session's own appends,
 but nothing bounded what accumulated between sessions:
 `housekeeping` and implementation sessions appended post-close
 notes with no consolidation owner, and an abrupt close skipped

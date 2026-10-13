@@ -121,7 +121,8 @@ say that discipline out loud when the set has grown.
 open: …" — and **fire step 8's parked-findings offer now**, with
 them; it is numbered 8 because `audit-scope` cites it so.
 
-**Run the audit heartbeat — every full bootstrap.** The document
+**Run the audit heartbeat — every full bootstrap, unprompted.**
+The document
 carries a bounded **audit-state table**, one row per unit in
 `docs/conventions/audit-registry.md` (unit, last audited, finding
 count, outcome pointer). Act on it:
@@ -169,9 +170,11 @@ changes and fold each group into its lowest-numbered survivor via
   cost is roughly quadratic in length —
   `docs/conventions/context-economy.md` → "Session length is
   itself a cost lever". Cross-check against that doc's line band
-  (300–800 changed lines, floor ~150, split at 1,000): a batch
-  far under the floor may take another part **of the same
-  theme**, never an unrelated one.
+  (300–800 changed lines, floor ~150, split at 1,000); the parts
+  count is the primary bound. A batch far under the floor may
+  take another part **of the same theme** — never an unrelated
+  one, never padding. Which rule yields when they disagree: same
+  doc → "Which one yields in the interim".
 
 - **Fold strays, promote batches.** An already-assembled parked
   batch is a promotion candidate, never a fold input —
@@ -205,8 +208,9 @@ changes and fold each group into its lowest-numbered survivor via
   Anchored edits stay on `patch`.
 
 **Review every meta issue at every full bootstrap — parked, Next
-and Blocked.** It is a **necessity gate**: each ends doable,
-blocked, or killed. From the two listings:
+and Blocked — whether or not the document names a lane.** It is
+a **necessity gate**: each ends doable, blocked, or killed. From
+the two listings:
 
 1. Say the counts out loud.
 1. **Before assembly, kill on doubt**, per issue: one that cannot
@@ -257,9 +261,10 @@ component, never as an ordering — as prose in the document, never
 a `related` link. Step 2 uses them for merge proposals, step 8
 for parallel batches.
 
-**Then look for the two scheduling smells** in the same read: an
-edge whose blocker is already closed, and an unblocked Urgent
-issue sitting behind one.
+**Then look for the two scheduling smells, and act on what you
+find** — an edge whose blocker is already closed, and an
+unblocked Urgent issue sitting behind one. Both are visible in
+this read, and invisible until something looks.
 
 The whole board read costs ~2–3k tokens, against ~3k for one
 field-change echo — narrowing the read buys judgment, not tokens;
@@ -322,14 +327,15 @@ filing skill binds this session:
 - **Amend with `patch` ops**, never by re-sending a body; anchor
   on plain prose, never on a line carrying an `ENG-###` (stored
   as a mention node) or heavy bold / code spans. The payload
-  field is **`text`**, and the anchor must match the **stored**
+  field is **`text`**, not `content`, and the anchor must match the **stored**
   text.
 
 - **Fewest coherent PRs, each sized to a SHORT session** — never
   across apps, languages or deploy units, and a coherent set
   larger than a short session splits into sequential PRs of
-  roughly 4–5 findings. The `Claude:` class is bound too, so
-  `merge-tasks` warns on its oversized survivors as well.
+  roughly 4–5 findings. The `Claude:` class is bound too
+  (operator rule, 2026-09-11; `history.md`), so `merge-tasks`
+  warns on its oversized survivors as well.
 
 - **State a scope posture when staging an issue** — **hold**
   (build what is specified), **expand** (under-scoped; here is
@@ -367,7 +373,8 @@ filing skill binds this session:
 - **Buffer folds onto one issue; write them once.** Each echo
   returns the whole body, so a survivor costs most exactly when
   it is folded into most (one session: 97 `save_issue` calls,
-  ≈164k). Accumulate several folds and an amendment into a
+  ≈164k, its five costliest results all late folds onto one
+  survivor). Accumulate several folds and an amendment into a
   **single** `patch` call (up to 50 ops). See
   `docs/conventions/linear-automation.md` → "Partial edits".
 
@@ -468,9 +475,10 @@ writes no directive** (why: `history.md`). The table is
 state-shaped: a row is **replaced** when its unit is audited
 again, so its size is bounded by the registry, and the board
 holds the history. A table growing rows per audit has become the
-log it exists to avoid. Update a row only for an audit issue that
-was **completed** this cycle; one filed but unpulled changes
-nothing.
+log it exists to avoid. **Update the rows for whatever landed
+this cycle** — an audit issue pulled and completed sets its
+unit's date, count and pointer; one filed but unpulled changes
+nothing, since the row records what was audited, not scheduled.
 
 **7. Capture the session's token profile at close-out.** A
 planning session is a lever producer too. **Compute its id; never
@@ -532,5 +540,6 @@ belongs in this phase.
 - **It is not a one-shot** — a planning session spans hours or
   days.
 - **The board is this session's alone.** No other skill analyses
-  it or writes to the meta pool, so two can't reach conflicting
-  conclusions: one writer, one rhythm.
+  it, and none folds or merges the meta pool — the filing skills
+  only feed it — so two can't reach conflicting conclusions: one
+  folder, one rhythm (`history.md`).
