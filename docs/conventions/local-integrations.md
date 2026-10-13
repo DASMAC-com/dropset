@@ -1190,8 +1190,8 @@ read-only session never renames its branch, so the pruner ties a
 and its never-pushed branch passes the unpushed-work gate when
 every commit on it is already on `origin/main`. So an architect
 or explore worktree is **protected while its issue is In
-Progress or In Review and eligible once ratification moves it
-to Done**. The pruner still refuses a dirty tree, so one
+Progress or In Review and eligible once it is Done or
+canceled**. The pruner still refuses a dirty tree, so one
 holding an untracked spec file is reported on every pass and
 removed by hand; gitignored files are not protected at all.
 The pre-rename `ceo-<topic>`

@@ -154,7 +154,7 @@ def normalize_branch(branch: str) -> tuple[str, bool]:
     if branch.startswith(_WORKTREE_PREFIX):
         stripped = branch[len(_WORKTREE_PREFIX) :]
         if stripped.isascii() and stripped.isdigit():
-            stripped = f"eng-{stripped}"
+            stripped = f"eng-{int(stripped)}"
         return stripped, True
     return branch, False
 

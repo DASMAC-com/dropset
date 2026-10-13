@@ -72,6 +72,8 @@ class NormalizeTag(unittest.TestCase):
 class NormalizeBranch(unittest.TestCase):
     def test_a_bare_number_branch_gains_the_linked_prefix(self):
         self.assertEqual(ipb.normalize_branch("worktree-1510"), ("eng-1510", True))
+        # Unpadded, agreeing with `normalize_tag`.
+        self.assertEqual(ipb.normalize_branch("worktree-007"), ("eng-7", True))
 
     def test_strips_worktree_prefix(self):
         self.assertEqual(ipb.normalize_branch("worktree-eng-603"), ("eng-603", True))

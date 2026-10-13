@@ -699,7 +699,9 @@ _ds_worktree_of() {
 # for this tag, pre-rename spellings included, or the bare tag when none exists.
 # Creating a bare `<n>` beside a live `eng-<n>` / `ceo-<n>` would split the
 # thread: every resume prefers the bare directory, so the old conversation
-# would go unreachable by number.
+# would go unreachable by number. It does not know which session kind is
+# launching: with two pre-rename kinds on one number it takes the first in
+# `_ds_worktree_of`'s order, the same cross-kind sharing the bare `<n>` accepts.
 _ds_launch_dir() {
   _ds_worktree_of "$1" || print -r -- "$1"
 }
@@ -1516,8 +1518,9 @@ housekeeping() {
 # names one first. The session id seeds on the number, and a number outlives a
 # day, so the thread stays resumable by construction — and a pre-rename thread
 # launched as `architect 1572` (name `ceo-1572`) keeps its id, since the old
-# topic seed was that same string, and its `ceo-1572` worktree, which
-# `_ds_launch_dir` reuses rather than creating a bare `1572` beside it.
+# topic seed was that same string. Its resume passes no `-w`; should the create
+# branch be taken anyway, `_ds_launch_dir` reuses `ceo-1572` rather than
+# creating a bare `1572` beside it.
 #
 # The advisor tier like `plan`, for the same reason: this session argues
 # strategy, and fidelity beats tokens. It writes nothing to the board — see the
