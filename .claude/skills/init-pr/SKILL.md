@@ -405,11 +405,12 @@ untracked per-directory content, which step 3 handles.
 1. **Hand off to `/review-pr` when the work is ready.** Once the
    task is complete and every open question is resolved, ask via
    `AskUserQuestion` whether to run `/review-pr` now. **This question
-   is `review-pr`'s entry gate** — the chosen tier authorizes its
-   sub-agent fan-out, and it asks no separate spawn question (see its
-   "The entry gate" section). Compute the signals from a real diff,
-   **rebasing first** — a stale base makes the `files` array describe
-   main's commits, not the branch:
+   is `review-pr`'s entry gate** — a yes is the invocation, which
+   pre-approves the regular fan-out, and the reduced-tier option is
+   its abridged-tier opt-down (see its "The entry gate" section).
+   Compute the signals from a real diff, **rebasing first** — a stale
+   base makes the `files` array describe main's commits, not the
+   branch:
 
    ```sh
    git fetch origin main
