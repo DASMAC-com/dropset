@@ -27,7 +27,7 @@ merge-queue handoff.
 probe, and the repeated `gh pr checks` / field-selected `gh pr view`
 reads.
 
-## The entry gate: one question, tier and spawn together
+## The entry gate: one opt-down question
 
 Step 0, and the only interactive gate before the merge-queue handoff.
 **Invoking this skill pre-approves the regular sub-agent fan-out**, the
@@ -52,8 +52,8 @@ migrations or generation inputs, and whether it spans crates.
   whose full suite the operator had to talk down), so state the signals
   in the question. Above the threshold there is nothing to offer, so
   ask nothing and proceed.
-- A reduced tier still runs an independent cross-check; zero-agent
-  inline is a stop condition (step 5), not a tier.
+- The abridged tier still runs at least one independent sub-agent;
+  zero-agent inline is a stop condition (step 5), not a tier.
 - Tier scoping changes how many lenses run on a trivially small diff.
   It never trims the cross-check's depth or turn cap on an ordinary one
   — a proposal to trim that cap was rejected (closed record under the
@@ -738,9 +738,11 @@ migrations or generation inputs, and whether it spans crates.
    on-chain or SDK surface), and near-pure fixed cost on a **trivial**
    one (`history.md` → "Trivial-diff spend"). Size the diff from the
    verdict's `commits`, `diff_lines` and per-file `files`, then take the
-   first tier that fits. When in doubt, fan out: the scale-downs are for
-   the clearly narrow, not the merely-small-but-subtle. Name any tier
-   below the full one in the summary.
+   tier that fits; a diff confined to the meta-work surfaces takes the
+   meta-work tier, never the infra / ops one. When in doubt, fan out:
+   the scale-downs are for the clearly narrow, not the
+   merely-small-but-subtle. Name in the summary any tier below the full
+   one and every lens a gate below skips.
 
    - **Trivial short-circuit — one scoped reviewer, no cross-check.**
      Small and confined to one of: comment / doc / Markdown only, a
@@ -804,8 +806,9 @@ migrations or generation inputs, and whether it spans crates.
    direction (`history.md` → "Docs-path crate escalation").
 
    The four substantive lenses (correctness, security, style,
-   completeness) are unconditional only on the full tier; a tier above
-   that already narrowed them is not re-expanded by that default.
+   completeness) are unconditional only on the full tier, and even there
+   the security gate below applies; a tier above that already narrowed
+   them is not re-expanded by that default.
 
    **Gate the security lens on the diff's trust surface.** Spawn it only
    when the diff touches a program handler (a consensus-critical
@@ -916,7 +919,8 @@ migrations or generation inputs, and whether it spans crates.
    claim "there is now exactly one" is repo-scope by construction
    (`history.md` → "Straggler sweeps"). The source-search tool scopes
    out the generated families and never-search trees
-   (`--print-grep-excludes` prints them for a bare-`grep` fallback);
+   (`review_diff.py --print-grep-excludes` prints them for a
+   bare-`grep` fallback);
    hand its result set to the lenses:
 
    ```sh
@@ -975,7 +979,7 @@ migrations or generation inputs, and whether it spans crates.
    / **nit**.
 
    Spawn the lenses as parallel `Agent` calls in a single message, each
-   with the brief above.
+   with the brief above prepended.
 
    **While the fan-out is in flight, do not re-read git state, CI
    state, or agent liveness.** The harness notifies on completion and

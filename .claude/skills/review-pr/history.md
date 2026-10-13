@@ -532,7 +532,8 @@ the resident-size gate (`docs/conventions/context-economy.md` →
   files (≈1.7k) and then all seven were opened anyway; seven sessions
   answered a location question with a context sweep, one paying ≈3.6k
   for a three-line function, several noting the rule read as belonging
-  to this step; a refused sweep was never retried and its question — a
+  to this step; of two refused sweeps in one session the second was retried and
+  answered, the first never was, and its question — a
   page's time budget contradicting the ledger by four seconds — was the
   review's most consequential finding; and a host-side sweep for the
   bot's `leader` keypair got 92 matches across 36 files, mostly
@@ -554,8 +555,9 @@ the resident-size gate (`docs/conventions/context-economy.md` →
 - **Straggler sweeps.** Two real bugs were each found by one main-loop
   grep and by no lens: a new guard label (`WARNING 1e`) that already
   existed in another file for an unrelated invariant, missed by all five
-  lenses; and a predicate hoisted out of four open-coded sites with a
-  fifth, in a crate the diff didn't touch, left behind — a
+  lenses and found only incidentally by one `grep -rn "WARNING 1"`;
+  and a predicate hoisted out of four open-coded sites with a fifth, in
+  a crate the diff didn't touch, left behind — a
   silently-diverging copy of a consensus-critical matching gate. An
   unscoped hoisted grep once returned the regenerated SDK surface (a
   658-line generated instruction file) that no lens needed.

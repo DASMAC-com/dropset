@@ -11,7 +11,7 @@ That is the settled-and-repeated shape ``docs/conventions/skill-tooling.md``
 names, so it lives here and the skill drives it: six tool results collapse into
 one compact JSON object (per ``CLAUDE.md`` → "Context economy").
 
-The second reason it is a tool: three path lists that used to sit as prose in
+The second reason it is a tool: the path lists that used to sit as prose in
 the skill, re-typed by hand each run, are now **data with one owner** —
 
 * ``DIFF_EXCLUDES`` — the generated families kept out of the review diff.
