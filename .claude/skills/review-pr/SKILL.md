@@ -737,9 +737,10 @@ migrations or generation inputs, and whether it spans crates.
    real new logic (a new instruction, a non-trivial refactor, new
    on-chain or SDK surface), and near-pure fixed cost on a **trivial**
    one (`history.md` → "Trivial-diff spend"). Size the diff from the
-   verdict's `commits`, `diff_lines` and per-file `files`, then take the
-   tier that fits; a diff confined to the meta-work surfaces takes the
-   meta-work tier, never the infra / ops one. When in doubt, fan out:
+   verdict's `commits`, `diff_lines` and per-file `files`, check the
+   trivial short-circuit first, then take the tier that fits; a diff
+   confined to the meta-work surfaces never takes the infra / ops tier.
+   When in doubt, fan out:
    the scale-downs are for the clearly narrow, not the
    merely-small-but-subtle. Name in the summary any tier below the full
    one and every lens a gate below skips.
