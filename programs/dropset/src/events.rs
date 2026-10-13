@@ -63,6 +63,23 @@ pub struct FreezeVaultEvent {
     pub leader: Address,
 }
 
+/// Emitted by `set_leader` when a leader hands custody of their vault to
+/// a new key. Carries the unchanged `quote_authority` so an indexer sees
+/// the full post-rotation authority pair without a second read: the
+/// rotation deliberately leaves the quoting delegate where it was. See
+/// the spec's **SetLeader**.
+#[event]
+pub struct SetLeaderEvent {
+    pub market: Address,
+    pub sector_idx: u32,
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
+    pub vault_seq: u64,
+    pub old_leader: Address,
+    pub new_leader: Address,
+    pub quote_authority: Address,
+}
+
 /// Emitted by `set_min_leader_share` when an admin retunes a vault's
 /// skin-in-the-game floor after creation. See the spec's
 /// **SetMinLeaderShare**.

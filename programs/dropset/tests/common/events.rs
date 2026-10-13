@@ -24,7 +24,7 @@ use anchor_lang_v2::{bytemuck, event::EVENT_IX_TAG_LE, Discriminator};
 use dropset::{
     CloseMarketTreasuryEvent, CloseRegistryFeeVaultEvent, CloseVaultEvent, CreateVaultEvent,
     DepositEvent, FillEvent, FreezeVaultEvent, PlatformFeeEvent, RealizeEvent,
-    SetDefaultFeeConfigEvent, SetMarketFeeConfigEvent, SetMaxPlatformFeeEvent,
+    SetDefaultFeeConfigEvent, SetLeaderEvent, SetMarketFeeConfigEvent, SetMaxPlatformFeeEvent,
     SetMinLeaderShareEvent, SetRegistryDefaultsEvent, SetTakerFeeEvent, SweepResidualEvent,
     WithdrawEvent,
 };
@@ -186,6 +186,31 @@ pub fn freeze_vault(meta: &TransactionMetadata) -> FreezeVault {
         sector_idx: c.u32(),
         vault_seq: c.u64(),
         leader: c.pubkey(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
+pub struct SetLeader {
+    pub market: [u8; 32],
+    pub sector_idx: u32,
+    pub vault_seq: u64,
+    pub old_leader: [u8; 32],
+    pub new_leader: [u8; 32],
+    pub quote_authority: [u8; 32],
+}
+
+pub fn set_leader(meta: &TransactionMetadata) -> SetLeader {
+    let body = one_body::<SetLeaderEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = SetLeader {
+        market: c.pubkey(),
+        sector_idx: c.u32(),
+        vault_seq: c.u64(),
+        old_leader: c.pubkey(),
+        new_leader: c.pubkey(),
+        quote_authority: c.pubkey(),
     };
     c.finish();
     d

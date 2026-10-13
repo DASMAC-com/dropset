@@ -142,21 +142,12 @@ impl CreateVault {
             payer_addr
         };
 
-        // One live vault per leader per market. The maker bot keys its
-        // fills per market, not per vault, so a second live vault under
-        // the same leader would silently clobber its inventory
-        // accounting; this makes that invariant true by construction. Frozen and tombstoned vaults
-        // don't count — a stranded depositor on a tombstone (reclaimed
-        // only on the last draining withdraw) must not lock the leader
-        // out of the market, and a frozen leader may re-enter. Applies
-        // on the admin `leader_override` path too. O(slab) on a cold
-        // path: the active set is capped by `max_vaults_per_market`, and
-        // tombstoned and free sectors add to the slab beyond it.
+        // One live vault per leader per market — see
+        // `VaultAccess::leads_live_vault` for the rule and why frozen and
+        // tombstoned vaults don't count. Applies on the admin
+        // `leader_override` path too.
         require!(
-            !self.market.as_slice().iter().any(|v| v.is_occupied()
-                && !v.tombstoned.get()
-                && !v.frozen.get()
-                && address_eq(&v.leader, &leader)),
+            !self.market.leads_live_vault(&leader),
             DropsetError::LeaderAlreadyLeadsVault
         );
 

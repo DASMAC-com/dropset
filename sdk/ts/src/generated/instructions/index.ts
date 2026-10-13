@@ -23,6 +23,7 @@ export * from './init';
 export * from './removeAdmin';
 export * from './setAllowOutsideDepositors';
 export * from './setDefaultFeeConfig';
+export * from './setLeader';
 export * from './setLiquidityProfile';
 export * from './setMarketFeeConfig';
 export * from './setMaxPlatformFee';
