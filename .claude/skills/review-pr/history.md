@@ -682,3 +682,215 @@ than against silence.
 
 When proposing a trim against any of these, say which figure you expect
 to move and by how much.
+
+## Step 6: the cross-check
+
+- **Drift during the fan-out.** In one measured run the freshness gate
+  did catch drift, but only after four lenses had already adjudicated
+  the pre-drift diff, forcing a full re-run. One bare command and ~200
+  tokens buys the whole cross-check against that.
+- **Origin-prefixed base.** `--base origin/main` makes the tool build
+  `HEAD..origin/origin/main` and exit 2 with
+  `fatal: ambiguous argument`. This step once said `origin/<base>` and
+  was the only place
+  that did — steps 5 and 11 and every other freshness re-check passed
+  the bare form — on a path every non-trivial review takes, right after
+  the fan-out, when a session is most likely to copy the line as
+  written.
+- **Gate-only verdicts.** The full verdict serializes the whole `files`
+  array, which a "has the base moved" question does not use. Two of one
+  session's eight largest results were `review_diff` verdicts (≈2.5k
+  and ≈1.3k) across five runs, only two of which needed `--split`; one
+  printed a 13-entry `files` array to answer one bit. At the step-11
+  re-check, one run printed 70 entries for a diff that had just been
+  rebased away.
+- **Cross-check value.** On a cross-cutting diff one cross-check
+  produced the single best finding of its review — an ordering bug all
+  four primary lenses missed — while refuting two disproportionate
+  findings and downgrading four. Its fix-commit trigger comes from one
+  review where a fix commit updated the README, the migration, the
+  panel and the doc but left the alert file's own header saying "three
+  rules", and a README claim about the localnet database URL was
+  inverted by the same PR's compose file. Each lens saw only its own
+  slice, so neither was visible to any of them.
+- **Checks-to-run.** In that same review two of three blocking findings
+  came from following a lens's unresolved-check item rather than its
+  findings. Ruled on 2026-10-13 that the defense stays resident as one
+  line while this figure lives here.
+- **Cross-check cap.** The cross-check overran its stated cap (15 calls
+  against 12) while being the highest-value pass. Another run's
+  cross-check caught that a first-round fix had only half-closed its
+  own problem, and refuted a lens's test premise by reading `sqlx`'s
+  source. Capping it like a primary lens saves a little on the one pass
+  where the extra turns are the product.
+- **Refuted against the fixed text.** One cross-check refuted a finding
+  as a false positive because two lenses "converged on a quote that
+  does not exist", quoting the corrected line back as proof. The line
+  had been fixed after the lenses read it and before the cross-check
+  did, so the refutation was wrong — and so was the process caution it
+  derived from it, to distrust convergent findings.
+
+## Step 7: fixing
+
+- **Doc fix, new false claim.** A lens found a stub's doc comment
+  claiming an `Err` contract the code did not honor. The fix made the
+  code true and added a clause asserting credential exposure was
+  "impossible by construction", which was false: the HTTP client
+  carries secrets as query parameters, part of the request line. Only
+  the cross-check caught it — the hedge-is-not-verification failure
+  inside the review loop itself.
+- **By-file grouping.** On one measured session, grouping would have
+  replaced ~13 per-finding slice calls with two maps plus targeted
+  reads.
+- **Unwrapped cargo runs.** A bare `cargo check` cascade has landed
+  ~15k of `Compiling …` in context for a green result. A negative test
+  confirming a new parity-oracle guard cost ≈2.6k unwrapped, because
+  the runner printed the same panic eleven times — once per guarded
+  test — plus eleven `test result: FAILED` blocks; the same session's
+  two wrapped guard verifications cost ≈829 across eight calls, the
+  failing tail being the one `error[E0080]` line wanted. A suite-level
+  guard failure scales with the tests it covers, not its information
+  content, and the lever is redirection, not fewer runs.
+- **Inline-interpreter churn.** A `python3 -c` one-liner was emitted
+  six times in one session, each a file mutation with a first-class
+  alternative: two multi-occurrence renames (a symbol across 9 call
+  sites, a spelling fix across 3) and four test-perturbation
+  inject/revert pairs. Each printed one line, so the cost never shows
+  in a size-ranked sink table: it is six unfirmable approvals. Because
+  the shape is malformed rather than merely missing a glob, one occurrence
+  is enough to justify the rule.
+
+## Step 8: re-lint
+
+- **Fast-suite frequency.** One session ran the whole tools suite 53
+  times (≈12.0k of result bytes) in an edit-one-tool loop, most runs
+  re-buying established confidence. Step 4's measurement points against
+  narrowing the scope instead: the per-module discover run cost more
+  and missed two sibling tests the edits had just broken.
+
+## Step 9: generated artifacts
+
+- **Stale twice.** One run went stale twice — once from the original
+  work, once from a review fix that reworded a field comment after this
+  step had already run clean; both would have failed CI. Reading the
+  program tree as "code changes" when it includes doc comments is what
+  let it ship a stale IDL twice. The path gate exists because forcing
+  the gates on a four-file diff confined to `decks/` buys three
+  multi-minute builds to confirm a tautology.
+- **Redundant rebase rebuilds.** One review saw `main` move 15 commits
+  across three rebases and ran the full local suite three times; runs 2
+  and 3 were provably redundant, each delta TS-only, and the session
+  re-ran anyway because nothing licensed the skip. Another had two
+  mid-review rebases force three full lint sweeps, two complete
+  artifact-gate sets and three Rust suite runs, with
+  `rebase_overlap.py` reporting `runs_artifact_gates: true` while
+  `review_diff.py` reported `false` for the branch's own diff. Both
+  gate runs came back clean, twice — wall-clock spent proving something
+  already known.
+- **Per-workflow re-derivation.** On a diff confined to the excluded
+  trees (brand assets, decks, docs, frontend, markdown) the three Tests
+  jobs pass as no-ops in 5–10s, which tempted "CI skips everything".
+  One run re-derived the per-workflow answer from scratch at the cost
+  of a slice-read of `test.yml`, a read of `sdk.yml` and three greps.
+- **Partial regeneration.** A subset spot-check twice let a stale
+  artifact through to a required-CI failure, each a full CI round
+  trip: a `MarketHeader` that shrank two bytes left the conformance
+  vectors stale, and the `sdk/ts` fixture went stale on the same layout
+  change.
+
+## Step 10: audit registry
+
+- **Gate in prose only.** A market-calendar spec designated its
+  §6.1/§6.2 acceptance tests as re-runnable gates and none existed as a
+  file; the session ran fourteen ad-hoc `psql` calls, wrote every query
+  in the house style, and threw them all away. The same rule is why the
+  Grafana alert rules have `grafana_check.py`: they were a named gate
+  nothing in CI parsed.
+
+## Step 11: the test suite
+
+- **Suites before the rebase.** One session let the base advance twice
+  and paid `make test` 4×, `test-parity` 3×, `test-no-teardown` 3× and
+  `lint` 6× — every re-run legitimately required by a rebase, but the
+  ordering guaranteed there would be re-runs. `main` moved during the
+  review tail in two measured sessions; in one, the drift landed after
+  a completed `make test` / `make test-no-teardown` / `sdk/ts` pass and
+  invalidated all three. The same churn is why step 6 checkpoints the
+  findings catalogue.
+- **Unreachable suites.** A 45-file diff with zero Rust files, zero
+  program paths and `runs_artifact_gates: false` still read
+  `runs_rust_suites: true`, solely because `.dockerignore` is not on
+  `test.yml`'s exclude list — correctly, since it affects the Rust
+  services' Docker build context. Both suites ran against effectively
+  the base's code and could not have failed; the flag reads true for
+  any diff touching the dockerignore or any non-Rust path the filter
+  does not exclude. The fixture scan later found 48 fixtures, 31
+  unmatched by `RUST_REACHABLE`, in two classes:
+  `infra/localnet/docker-compose.yml`, CI-excluded and read by three
+  Rust files (two of them tests), and thirty CI-visible ones (every
+  store module's compiled-in query SQL, `sdk/idl/dropset.json`, the
+  `Makefile`) for which the old skip rule was skipping a local suite CI
+  was about to run against the very file the diff changed. A
+  `Makefile`-only diff now reports reachable because
+  `feeds/tests/parked_compose_agreement.rs` compiles it in; the old
+  verdict was wrong, not merely conservative.
+- **Fixture-coupled dequeue.** Measured 2026-09-11: the ENG-1308
+  dashboard PR was confined to the Grafana tree and docs, all four
+  PR-side Tests jobs passed in seconds as path-filtered no-ops, and the
+  merge group dequeued it on one real failure — a `market-data/tests/`
+  agreement test read the dashboard as a venue's supported-widths
+  source. ENG-1339 landed the same class of coupling while that review
+  ran. The queue stays the enforcing gate; the flag only moves the
+  discovery earlier.
+- **Missed trigger.** A session skipped a cheap suite its diff could
+  break: it edited `test.yml`'s `code` filter, which `review_diff.py`
+  mirrors under a tools-test parity assertion, but step 4's trigger for
+  that suite enumerates the tools and Grafana trees and the diff
+  touched neither. Cost: a full CI round trip and a re-push.
+- **Teardown-feature build.** The 15-test `Custom(6043)` failure cost
+  one run a confused diagnosis plus a full `make program` rebuild. The
+  root cause is the documented anchor-v2 limitation: instructions
+  cannot be compiled out, so the guard is a runtime one.
+- **Mutation verification.** One review paid four `make program`
+  builds for a single mutation (baseline, mutate, revert, restoring
+  the default-features `.so` after `test-no-teardown`), which is why
+  the cost is per build and batched. A bare
+  `cargo test -p dropset-feeds` silently skips all 122 http-gated venue
+  adapter
+  tests, and a crate-scoped clippy run reported five false dead-code
+  errors — the narrowed-package hazard on the test axis. Two new tests
+  passed with the code neutered on their first fixture: one appended
+  sibling items carrying no query, so with the branch disabled they
+  were read as rules and silently dropped; the other's prose lines
+  never reached the hazard (one lacked the trigger prefix, the other's
+  pseudo-header had spaces in the key). Another review found "no test
+  would fail if X were removed" three times, and under mutation two of
+  the three fixes were worthless as written: neutering a config field
+  left the new test green because it read the filter's variance before
+  the next prediction step and computed a gate ~600x too small, and
+  another test re-resolved its candidate set and never reached the
+  function it was named for. That session's top hardening candidate
+  was a test binary at 5.7k over 20 calls, labelled
+  `context (failures)`, a meaningful share of them these verifications —
+  and
+  they are why it did not ship three defects. The cross-check found
+  them only because the mutation results were in the catalogue.
+- **Forward-computed citations.** One cross-check computed a line
+  number from hunk offsets and got 255 where the real value was 252.
+  Fixes land after the fan-out and again after the cross-check, so a
+  branch editing source and a citing doc gets at least two shift
+  opportunities; one session derived its citations three times and the
+  second pass was wrong again.
+- **Ignored test reddened CI.** The Tests (Postgres) job runs
+  `cargo nextest run --run-ignored all` and the local targets do not.
+  One session added an `#[ignore]`d test, passed locally, and reddened
+  CI at the cost of a full ~13-minute round trip.
+- **Half-applied build.** One measured session overlapped the local
+  suites with CI for zero extra wall-clock, and `wait_for_checks`
+  returned `elapsed_seconds: 0` because the draft PR's CI had already
+  settled. Another launched the suite as soon as it reached this step,
+  applied lens fixes while it ran, and compiled a half-applied edit —
+  the new field's type landed but not its call site — into a
+  trait-bound error that read as a real defect: a wasted full-suite
+  cycle, a misdiagnosis beat, and cargo file-lock contention with the
+  foreground runs.
