@@ -113,6 +113,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
+# The container tests' shared mapped-port lookup (tests/common/mod.rs).
+dropset-db-schema = { path = "../db-schema", features = ["test-support"] }
 # `tests/instruments.rs` runs the roster-registration statement against a real
 # Postgres in a throwaway container, matching db-schema's own fence tests. It
 # earns the dependency because that statement is reachable from no other gate:

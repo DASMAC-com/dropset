@@ -1734,6 +1734,7 @@ name = "dropset-db-schema"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dropset-db-schema",
  "sqlx",
  "testcontainers-modules",
  "tokio",

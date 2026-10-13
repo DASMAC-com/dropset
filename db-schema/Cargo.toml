@@ -26,6 +26,10 @@ sqlx = { version = "0.8", default-features = false, features = [
   "macros",
   "migrate",
 ] }
+# Only for `test-support` (src/testing.rs); no deployed binary links it.
+testcontainers-modules = { version = "0.11", features = [
+  "postgres",
+], optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -36,8 +40,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # additive-only `>=` window, where a database ahead of the binary must still
 # pass. Those tests are `#[ignore]`d — they need a Docker daemon — but the
 # `Tests (Postgres)` job runs them, so they gate a merge. Run them locally
-# with `cargo test -p dropset-db-schema -- --ignored`.
-testcontainers-modules = { version = "0.11", features = ["postgres"] }
+# with `cargo test -p dropset-db-schema -- --ignored`. The self-dependency
+# turns on `test-support` for them; `required-features` would instead skip
+# the whole file silently on a plain `cargo test`.
+dropset-db-schema = { path = ".", features = ["test-support"] }
+
+[features]
+# The container-backed tests' shared mapped-port lookup (src/testing.rs). Every
+# crate with such tests enables it from its dev-dependencies.
+test-support = ["dep:testcontainers-modules", "tokio/time"]
 
 [package]
 description = "Versioned schema and migration runner for the shared Dropset database."

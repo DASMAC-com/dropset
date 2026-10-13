@@ -36,10 +36,7 @@ async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
         .start()
         .await
         .expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("resolve mapped port");
+    let port = dropset_db_schema::testing::mapped_port(&container).await;
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     let pool = connect(&url).await.expect("connect pool");
     dropset_db_schema::migrate(&pool)

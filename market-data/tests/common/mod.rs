@@ -17,13 +17,11 @@
 // a file per consumer, which is the duplication this module removes.
 #![allow(dead_code)]
 
+use dropset_db_schema::testing::mapped_port;
 use dropset_db_schema::{connect, migrate, POSTGRES_IMAGE_TAG};
 use sqlx::PgPool;
-use std::time::Duration;
 use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::{
-    runners::AsyncRunner, ContainerAsync, ImageExt, TestcontainersError,
-};
+use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
 
 /// A throwaway Postgres with every migration applied.
 ///
@@ -42,32 +40,6 @@ pub async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
     let pool = connect(&url).await.expect("connect pool");
     migrate(&pool).await.expect("apply migrations");
     (container, pool)
-}
-
-/// The host port Docker mapped to the container's 5432.
-///
-/// This lookup intermittently fails with `PortNotExposed`, on a different test
-/// each run. `start` has already waited for Postgres to report ready, so the
-/// likely cause is Docker publishing the port mapping late rather than a broken
-/// container — the flake has not been reproduced on demand. It is absorbed
-/// here: each attempt re-inspects the container, ten attempts 200ms apart
-/// (about 1.8s in all), and only that one error is retried — anything else is a
-/// real failure and panics on the spot. A `PortNotExposed` that outlasts every
-/// attempt is no longer a short race; read it as a container that died or
-/// never bound IPv4.
-async fn mapped_port(container: &ContainerAsync<Postgres>) -> u16 {
-    const ATTEMPTS: u32 = 10;
-    const BACKOFF: Duration = Duration::from_millis(200);
-    for attempt in 1..=ATTEMPTS {
-        match container.get_host_port_ipv4(5432).await {
-            Ok(port) => return port,
-            Err(TestcontainersError::PortNotExposed { .. }) if attempt < ATTEMPTS => {
-                tokio::time::sleep(BACKOFF).await;
-            }
-            Err(e) => panic!("resolve mapped port (attempt {attempt}/{ATTEMPTS}): {e:?}"),
-        }
-    }
-    unreachable!("the final attempt either returns or panics")
 }
 
 /// Insert one closed bucket into `cex_prices`.

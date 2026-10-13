@@ -34,6 +34,7 @@
 //! cargo test -p dropset-db-schema -- --ignored
 //! ```
 
+use dropset_db_schema::testing::mapped_port;
 use dropset_db_schema::{
     connect, expected_version, migrate, require_schema, MIGRATOR, POSTGRES_IMAGE_TAG,
 };
@@ -51,10 +52,7 @@ async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
         .start()
         .await
         .expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("resolve mapped port");
+    let port = mapped_port(&container).await;
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     let pool = connect(&url).await.expect("connect pool");
     (container, pool)
@@ -870,10 +868,7 @@ async fn reader_role_can_read_everything_and_write_nothing() {
     let (pg, pool) = start_pg().await;
     migrate(&pool).await.expect("apply migrations");
 
-    let port = pg
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("resolve mapped port");
+    let port = mapped_port(&pg).await;
     let url = format!("postgres://dropset_ro:dropset_ro@127.0.0.1:{port}/postgres");
     let reader = connect(&url)
         .await
