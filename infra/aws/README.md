@@ -259,11 +259,12 @@ In the IAM console: **Users** → `dropset-bedrock-agent` →
 **Amazon Bedrock** as the service → pick an expiration → **Generate**,
 then copy the value.
 
-**Rotation is monthly**, so the expiry chosen here is a backstop rather
-than the schedule — the operator re-mints on the monthly rhythm well
-before any of the offered expirations lands. Leak exposure on this key
-is bounded to credit burn rather than data, which is what keeps custody
-this simple; the cadence is the compensating control.
+**Rotation is yearly: mint with a 365-day expiry.** The expiry is the
+schedule, and a reminder fires about two months before it lands.
+Leak exposure on this key is bounded to credit burn rather than data,
+and the daily spend cap (below) bounds that burn and emails as it
+climbs. Those two controls are why a year-long key is acceptable here.
+Monthly rotation was the rule before the cap existed.
 
 Two things to know about that dialog:
 
@@ -278,7 +279,7 @@ Two things to know about that dialog:
   does not already grant.
 
   **Treat that as a check, not as a known fact.** The CloudTrail record
-  does not corroborate it, across **two** mints:
+  does not corroborate it, across **three** mints:
 
   - **2026-09-04 00:37:16 UTC** (the first). Over the 90-day window
     there is **no `AttachUserPolicy` for `AmazonBedrockLimitedAccess` at
@@ -291,12 +292,18 @@ Two things to know about that dialog:
     `{dropset-bedrock-invoke}` immediately after. The only attach in
     that window is CloudFormation's, 2.5 minutes *before* the mint; the
     only detach is the old stack's teardown, 12 minutes after.
+  - **2026-10-13 00:36:04 UTC** (the first rotation, minted in the
+    console as `dev-admin`). Attached policies were
+    `{dropset-bedrock-invoke}` before and after. There was no
+    `AttachUserPolicy`, `DetachUserPolicy` or `PutUserPolicy` in the
+    window, though the mint's own `CreateServiceSpecificCredential` is
+    present.
 
-  Read the bound on that honestly before acting on it. Two mints is
+  Read the bound on that honestly before acting on it. Three mints is
   still a small n, and an absent event is weaker evidence than a present
   one, since the console could in principle attach through an API that
   logs under another name or under an AWS-internal principal this trail
-  does not capture. What both windows establish is that management
+  does not capture. What all three windows establish is that management
   events *were* being recorded throughout — `CreateUser`, `CreatePolicy`,
   `CreateServiceSpecificCredential` and both attach/detach pairs are all
   present — so a silent trail is not the explanation.
@@ -310,11 +317,13 @@ Two things to know about that dialog:
   against `us-west-2` returns zero events for every one of these names
   and reads exactly like "it never happened".
 
-**Rotating it.** Rotate monthly. The key also expires on the date chosen
-at generation, and expiry is silent from this repo's side — nothing here
-warns you, and the launcher's only job is to make the first failed call
-legible rather than opaque. List the current credential, its status and
-its expiry date with:
+**Rotating it.** Rotate yearly, before the key's expiry. Expiry is
+silent from this repo's side. Nothing here warns you, and the launcher
+only makes the first failed call readable instead of opaque. The
+warning is a dated Linear reminder filed at each mint. IAM holds at
+most **two** Bedrock keys per user, so delete the previous key before
+minting, since an expired key may still count toward that limit. List
+the current credential, its status and its expiry date with:
 
 ```sh
 aws iam list-service-specific-credentials \
