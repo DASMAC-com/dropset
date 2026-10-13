@@ -46,6 +46,11 @@ fn leader_rotates_and_emits_event() {
     let mut f = fixture_with_vault();
     let leader = f.authority.insecure_clone();
     let next = new_key(&mut f);
+    // A delegate distinct from both leaders, so the event's
+    // `quote_authority` slot can't pass by coinciding with either.
+    let delegate = Pubkey::new_unique();
+    f.set_quote_authority(&leader, 0, delegate)
+        .expect("delegate quoting");
     let seq_before = f.vault(0).seq.get();
 
     let meta = f
@@ -63,7 +68,7 @@ fn leader_rotates_and_emits_event() {
     assert_eq!(ev.vault_seq, seq_before);
     assert_eq!(ev.old_leader, leader.pubkey().to_bytes());
     assert_eq!(ev.new_leader, next.pubkey().to_bytes());
-    assert_eq!(ev.quote_authority, leader.pubkey().to_bytes());
+    assert_eq!(ev.quote_authority, delegate.to_bytes());
 }
 
 #[test]
@@ -71,14 +76,14 @@ fn quote_authority_does_not_follow() {
     let mut f = fixture_with_vault();
     let leader = f.authority.insecure_clone();
     let next = new_key(&mut f);
+    let delegate = Pubkey::new_unique();
+    f.set_quote_authority(&leader, 0, delegate)
+        .expect("delegate quoting");
 
     f.set_leader(&leader, &next, 0).expect("rotate");
-    // Ratified: no auto-follow. The old key keeps quoting until the new
-    // leader rotates the delegate itself.
-    assert_eq!(
-        f.vault(0).quote_authority,
-        leader.pubkey().to_bytes().into()
-    );
+    // Ratified: no auto-follow. The delegate keeps quoting until the new
+    // leader rotates it.
+    assert_eq!(f.vault(0).quote_authority, delegate.to_bytes().into());
 }
 
 #[test]
@@ -115,6 +120,7 @@ fn leader_may_rotate_on_a_tombstoned_vault() {
     let mut f = fixture_with_vault();
     let leader = f.authority.insecure_clone();
     f.close_vault(&leader, 0).expect("leader closes vault");
+    assert!(f.vault(0).tombstoned.get());
 
     let next = new_key(&mut f);
     f.set_leader(&leader, &next, 0)
@@ -215,6 +221,38 @@ fn dust_on_the_depositor_address_does_not_block() {
 
     f.set_leader(&leader, &next, 0)
         .expect("a funded but unowned address is not a depositor position");
+}
+
+#[test]
+fn rejects_rotation_the_new_leader_did_not_sign() {
+    let mut f = fixture_with_vault();
+    let leader = f.authority.insecure_clone();
+    let next = Pubkey::new_unique();
+    let (pda, _) = common::fixture::vault_depositor_pda(&f.market, 0, &next);
+    // The co-signature is the liveness proof: without it, custody could be
+    // pushed onto a key nobody holds.
+    let ix = f.set_leader_ix(&leader.pubkey(), &next, &pda, false, 0);
+    f.send_ix(&leader, ix)
+        .expect_err("the incoming leader must co-sign");
+    assert_eq!(f.vault(0).leader, leader.pubkey().to_bytes().into());
+}
+
+#[test]
+fn rejects_a_substituted_depositor_account() {
+    let mut f = seeded_open();
+    let leader = f.authority.insecure_clone();
+    let alice = f.funded_depositor(200_000, 200_000);
+    f.deposit(&alice, 0, 50_000, 0, 200_000, 200_000)
+        .expect("outside deposit");
+
+    // Alice holds a position, and tries to dodge the depositor gate by
+    // passing someone else's (empty) PDA in place of her own. The seeds
+    // constraint must reject it before the handler's ownership test runs.
+    let (other_pda, _) = common::fixture::vault_depositor_pda(&f.market, 0, &Pubkey::new_unique());
+    let ix = f.set_leader_ix(&leader.pubkey(), &alice.pubkey(), &other_pda, true, 0);
+    common::send_ixn_signed_meta(&mut f.svm, &[&leader, &alice], ix)
+        .expect_err("the depositor PDA must be the new leader's own");
+    assert_eq!(f.vault(0).leader, leader.pubkey().to_bytes().into());
 }
 
 #[test]

@@ -966,7 +966,8 @@ impl Fixture {
     }
 
     /// `set_leader` — `leader` hands the vault to `new_leader`, which
-    /// co-signs. `leader` pays the fee.
+    /// co-signs. `leader` pays the fee. Returns `Err(debug-string)` on
+    /// program rejection.
     pub fn set_leader(
         &mut self,
         leader: &Keypair,
@@ -987,17 +988,12 @@ impl Fixture {
     ) -> Result<TransactionMetadata, String> {
         let (new_leader_depositor, _) =
             vault_depositor_pda(&self.market, vault_idx, &new_leader.pubkey());
-        let ix = Instruction::new_with_bytes(
-            PROGRAM_ID,
-            &SetLeaderIx { vault_idx }.data(),
-            vec![
-                AccountMeta::new_readonly(leader.pubkey(), true),
-                AccountMeta::new_readonly(new_leader.pubkey(), true),
-                AccountMeta::new(self.market, false),
-                AccountMeta::new_readonly(new_leader_depositor, false),
-                AccountMeta::new_readonly(event_authority(), false),
-                AccountMeta::new_readonly(PROGRAM_ID, false),
-            ],
+        let ix = self.set_leader_ix(
+            &leader.pubkey(),
+            &new_leader.pubkey(),
+            &new_leader_depositor,
+            true,
+            vault_idx,
         );
         // A same-key rotation signs once: a transaction cannot carry one
         // keypair twice.
@@ -1006,6 +1002,31 @@ impl Fixture {
         } else {
             send_ixn_signed_meta(&mut self.svm, &[leader, new_leader], ix)
         }
+    }
+
+    /// Build a `set_leader` instruction (not sent) with every meta
+    /// caller-chosen — lets a test drop the co-signature or pass the
+    /// wrong depositor PDA.
+    pub fn set_leader_ix(
+        &self,
+        leader: &Pubkey,
+        new_leader: &Pubkey,
+        new_leader_depositor: &Pubkey,
+        new_leader_signs: bool,
+        vault_idx: u32,
+    ) -> Instruction {
+        Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &SetLeaderIx { vault_idx }.data(),
+            vec![
+                AccountMeta::new_readonly(*leader, true),
+                AccountMeta::new_readonly(*new_leader, new_leader_signs),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(*new_leader_depositor, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        )
     }
 
     /// `set_min_leader_share` — admin retunes a vault's skin-in-the-game

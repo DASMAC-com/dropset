@@ -1182,8 +1182,10 @@ gate. Each of the three ways a key can end up as both is closed:
 - **Deposit** rejects the leader's signer, whose deposits go through
   `DepositLeader` and carry no PDA.
 - **CreateVault** cannot collide: a fresh sector has no depositor PDAs,
-  and a recycled one required them all closed by invariant I6 before
-  the reclaim.
+  and a recycled one has none left. The reclaim runs only once
+  `total_shares` reaches zero, which by invariant I6 means every
+  depositor's `shares` are zero, and `Withdraw` closes a `VaultDepositor`
+  as its shares hit zero.
 - **SetLeader** rejects a new leader whose `VaultDepositor` on the
   vault is live (`NewLeaderIsDepositor`).
 
@@ -1909,8 +1911,10 @@ accept time.
 
 The new leader must be:
 
-- non-zero — the zero address is the free-list emptiness marker, so a
-  zero leader would put a funded vault on the free list;
+- non-zero (`Unauthorized`) — the zero address is the free-list
+  emptiness marker, so a zero leader would put a funded vault on the
+  free list. Defensive only: no key signs for it, so the co-signature
+  already excludes it;
 - different from the current leader (`SameLeader`), so no event claims
   a hand-off that never happened;
 - not already the leader of a live vault on the market
@@ -2669,7 +2673,10 @@ pair only on `admin-teardown` builds, inert on the immutable deploy),
 the per-leg `FillEvent` that is the take's only event, the
 vault-lifecycle changes (`CloseVault`, `FreezeVault`), the custody
 rotation `SetLeader` — a coalesced diff collapses an A → B → C
-rotation inside one slot to A → C, losing who held custody when — the admin
+rotation inside one slot to A → C, and since the leader holds the
+vault's inventory and `leader_shares`, who held custody when is
+economically material in a way the quoting delegate rotated by
+`SetQuoteAuthority` is not — the admin
 retuning levers (`SetMinLeaderShare`, `SetMarketFeeConfig`,
 `SetTakerFee`, `SetRegistryDefaults`), and `SweepResidual` — which emits
 on **every** call, including the zero-sweep case, because the three terms
