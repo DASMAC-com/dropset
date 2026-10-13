@@ -403,6 +403,26 @@ the two vocabularies, so pairing them is yours to do.
 Either way it is isolated: the collectors and the maker are independent
 writers, and every ingestion panel on the other dashboard is unaffected.
 
+### Live tape versus daily fix
+
+**FX leg: live tape vs daily fix** answers, per market and per tick,
+which *kind* of source the composite actually rode — the per-market half
+of the question the ingestion dashboard's go/no-go table answers per FX
+product. It is two rows:
+
+- **Tape credited** is the estimator's own verdict, `fair_price`'s
+  `fx_tape_live` (migration 0019), so the tape-or-fix classification is
+  never restated in SQL. `No tape` covers both a fix-only leg and a leg
+  with no contributor at all, so read it beside the regime row above:
+  under `CryptoOnly` it is structural, under `Normal` it is the fault.
+- **Heaviest FX source** names the largest fusion weight on the leg. A
+  gap means every source was trimmed or none answered; the full split
+  is on the estimator card.
+
+It pairs a market with its `fair_price` row by the base symbol of the
+product id (`EURC-USDC` → `EURC`), the same pairing the estimator card's
+fair series uses.
+
 Four things that read wrong on first contact:
 
 - **A NULL is a fact, not a zero.** A tick can end at six points and

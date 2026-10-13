@@ -848,6 +848,119 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
+      "description": "Which kind of source this market's FX leg actually rode, tick by tick \u2014 the distinction whose absence once let every market price off weekend-suppressed daily fixes unnoticed. The top row is the estimator's own verdict (`fair_price.fx_tape_live`): `Live tape` means at least one intraday tape was credited in the value, not merely offered. `No tape` covers two cases the flag does not separate \u2014 a leg priced only by daily fixes, and a leg with no contributor at all (CryptoOnly over the FX weekend, or Paused) \u2014 so read it beside the regime panel above. `Not recorded` is a row from an estimator older than the flag, and a consumer treats it as no tape. The bottom row names the source carrying the largest fusion weight on the FX leg; a gap there means every FX source was trimmed or none answered. The weight split itself is on *Fair price over its sources*.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tape credited"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "Live tape": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "No tape": {
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "Not recorded": {
+                        "color": "text",
+                        "index": 2
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 39
+      },
+      "id": 17,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  to_timestamp(ts) AS \"time\",\n  CASE fx_tape_live\n    WHEN TRUE THEN 'Live tape'\n    WHEN FALSE THEN 'No tape'\n    ELSE 'Not recorded'\n  END AS \"tape credited\"\nFROM fair_price\nWHERE $__unixEpochFilter(ts)\n  AND split_part(product_id, '-', 1) = ANY (ARRAY[${market:sqlstring}]::text[])\nORDER BY ts",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT DISTINCT ON (ts)\n  to_timestamp(ts) AS \"time\",\n  source AS \"heaviest FX source\"\nFROM maker_leg_contributions\nWHERE $__unixEpochFilter(ts)\n  AND mechanism = 'fusion'\n  AND leg = 'fx'\n  AND weight > 0\n  AND market = ANY (ARRAY[${market:sqlstring}]::text[])\nORDER BY ts, weight DESC, source",
+          "refId": "B"
+        }
+      ],
+      "title": "FX leg: live tape vs daily fix \u2014 ${market}",
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
       "description": "The vault's two legs valued in USD, their total, and the launch baseline the drawdown floor is measured against. The legs crossing is the inventory skew's whole input; TVL falling toward `launch TVL` scaled by the floor fraction is what trips the TVL kill switch. NULL (a gap) means the tick never valued the vault \u2014 a failed read, a frozen vault, or a paused composition \u2014 which is not the same as an empty vault.",
       "fieldConfig": {
         "defaults": {
@@ -897,7 +1010,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 39
+        "y": 44
       },
       "id": 5,
       "options": {
@@ -986,7 +1099,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 39
+        "y": 44
       },
       "id": 6,
       "options": {
@@ -1075,7 +1188,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 48
+        "y": 53
       },
       "id": 7,
       "options": {
@@ -1164,7 +1277,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 48
+        "y": 53
       },
       "id": 8,
       "options": {
@@ -1301,7 +1414,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 57
+        "y": 62
       },
       "id": 9,
       "options": {
@@ -1440,7 +1553,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 66
+        "y": 71
       },
       "id": 11,
       "options": {
@@ -1497,7 +1610,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 75
+        "y": 80
       },
       "id": 10,
       "options": {
@@ -1587,7 +1700,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 83
+        "y": 88
       },
       "id": 12,
       "options": {
@@ -1703,7 +1816,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 89
+        "y": 94
       },
       "id": 15,
       "options": {
@@ -1759,7 +1872,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 98
+        "y": 103
       },
       "id": 16,
       "options": {
