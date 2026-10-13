@@ -11,82 +11,50 @@ model: fable
 
 # `plan`
 
-The working split is two session kinds. **Implementation**
-sessions run one deterministic spec to completion in a
-worktree: `/init-pr` → build → `/review-pr`. **Planning**
-sessions are their complement — they stage that work, keep
-the board coherent, and carry direction across days.
-
-This skill is the planning session's method. It exists so
-each new session doesn't reconstruct it from scratch.
+Implementation sessions run one deterministic spec to completion
+in a worktree (`/init-pr` → build → `/review-pr`). Planning
+sessions are their complement: they stage that work, keep the
+board coherent, and carry direction across days. This skill is
+their method. Measured incidents and retired designs behind the
+rules are in [`history.md`](history.md).
 
 ## The Planning document is the living state
 
-The session's memory between days is a **Linear document**
-titled "Planning", whose id is exported as
-`LINEAR_PLANNING_DOC_ID` in `~/.zshrc`. Resolve it with a
-bare `printenv` — its own call, per
-`docs/conventions/linear-automation.md`:
+The session's memory between days is the Linear document
+"Planning", whose id is `LINEAR_PLANNING_DOC_ID`. Resolve it with
+its own bare call (`docs/conventions/linear-automation.md`):
 
 ```sh
 printenv LINEAR_PLANNING_DOC_ID
 ```
 
-If it is unset, say so and stop rather than searching Linear
-for a document by title: a planning session that guesses its
-own state file will write decisions into the wrong place.
+If it is unset, say so and stop — never search Linear for it by
+title, or decisions land in the wrong place.
 
-**The skill maintains that document; it never becomes a
-second copy of it.** Nothing here restates the current phase,
-the standing decisions, or the sequencing — those live in the
-doc, they change weekly, and a copy in this file would be
-wrong within days. This file carries only the *method*.
-
-Two standing rules for the doc itself:
-
-- **Work items live in issues, never here.** The document
-  carries direction, sequencing, and vocabulary.
-- **It is not an append-accumulating log.** It carries the
-  **current state of play** and nothing else. Step 6 says
-  how that is maintained: incremental appends during the
-  session, consolidated away by a **wholesale rewrite** at
-  close-out.
+This file carries only the **method**; the phase, standing
+decisions and sequencing live in the document and change weekly.
+Work items live in issues, never in the document, and the
+document is **not** an append log: it carries the current state
+of play, kept so by step 6's close-out rewrite.
 
 ## Where it runs
 
-The **base repo**, never a worktree — a planning session
-touches the board, not a branch. Start *or* resume one with
-a bare **`plan`**:
-
-```sh
-plan
-```
-
-`plan` is **idempotent** — one verb, no new-vs-resume split.
-It creates or resumes today's `plan-<day-of-month>` (the 14th
-→ `plan-14`) on the **advisor** tier's model, re-pinned either
-way, with `/plan` as a new session's prompt so this skill
-bootstraps immediately. `plan bedrock` is the credit-pinch
-override; an anthropic launch clears inherited Bedrock
-exports. The verbs are documented in
+The **base repo**, never a worktree. Start or resume with a bare
+`plan` — idempotent; it creates or resumes today's
+`plan-<day-of-month>` on the advisor tier's model, with `/plan`
+as a new session's prompt. `plan bedrock` is the credit-pinch
+override. There is no in-session model check: the launcher pins
+the model and refuses an unresolved tier. Verbs:
 `docs/conventions/local-integrations.md`.
-
-**There is no in-session model check**: the launcher pins the
-model and refuses an unresolved tier. A session started with
-bare `claude` is unmanaged by design.
-
-For a planning session specifically, fidelity is a hard
-constraint on what may be *proposed* — see step 7.
 
 ## Cycling
 
 The hub's prefix only grows, so the session **cycles**: close
-out, exit, and the `plan` launcher relaunches it in the same
-tab under a fresh id and the same name. Compaction is a
-manual operator lever, never this mechanism.
+out, exit, and the `plan` launcher relaunches it in the same tab
+under a fresh id and the same name. Compaction is a manual
+operator lever, never this mechanism.
 
-- **The operator types `cycle`** → run the procedure now, no
-  ask.
+- **The operator types `cycle`** → run the procedure now, no ask.
 
 - **The trigger.** At each idle point — turn done, nothing
   queued, no consult half-answered — run:
@@ -95,60 +63,45 @@ manual operator lever, never this mechanism.
   python3 .claude/tools/plan_cycle.py check
   ```
 
-  On `"due": true` (a 250k prefix or 40 inbound messages),
-  ask once: cycle now? — yes recommended. On no, run
+  On `"due": true` (a 250k prefix or 40 inbound messages), ask
+  once: cycle now? — yes recommended. On no, run
   `plan_cycle.py snooze` (+50k tokens / +15 messages).
 
-- **The procedure.** A one-line FYI to every live worker
-  with an unanswered consult — planning is cycling, re-send
-  anything unanswered; then step 6's close-out rewrite, echo
-  verified; then `plan_cycle.py cycle`, which leaves the
-  marker and ends the client.
+- **The procedure.** A one-line FYI to every live worker with an
+  unanswered consult — planning is cycling, re-send anything
+  unanswered; then step 6's close-out rewrite, echo verified;
+  then `plan_cycle.py cycle`, which leaves the marker and ends
+  the client.
 
 - **The warm bootstrap.** A full bootstrap writes a
-  `Bootstrap stamp: <YYYY-MM-DD>` line to the document, and
-  every close-out rewrite keeps it. A bootstrap finding
-  today's date there is **warm**: read the document, run
-  `ListAgents`, surface the outstanding list — and skip the
-  once-a-day duties (the meta fold, the audit heartbeat, the
-  parked counts, step 8). No stamp means a full bootstrap.
+  `Bootstrap stamp: <YYYY-MM-DD>` line to the document, and every
+  close-out rewrite keeps it. A bootstrap finding today's date
+  there is **warm**: read the document, run `ListAgents`, surface
+  the outstanding list — and skip the once-a-day duties (the meta
+  fold, the audit heartbeat, the parked counts, step 8). No stamp
+  means a full bootstrap.
 
 ## Steps
 
-**1. Bootstrap, and surface the umbrellas unprompted.**
-Fetch the Planning doc with
-`mcp__claude_ai_Linear__get_document` (id = the resolved
-value) and read it first — it is the handoff from the last
-session, and everything below assumes it.
+**1. Bootstrap, and surface the umbrellas unprompted.** Fetch the
+Planning document with `mcp__claude_ai_Linear__get_document` and
+read it first — it is the last session's handoff.
 
-Then read the board. **The board has three tiers, and which
-tier an issue sits in is the whole scoping signal:**
+Then read the board. **Which tier an issue sits in is the whole
+scoping signal:**
 
-- **Backlog is the pullable set** — everything about to be
-  pulled into an agentic programming session. This is the
-  Queue, whose honesty is step 2's job. A genuinely
-  startable work item belongs here and nowhere else.
-- **Todo holds the live tracks** — the umbrellas and
-  initiatives, each a parent that accrues children. It is
-  **not** a staging area for work items. An item stranded in
-  Todo is invisible to the operator, who pulls from Backlog.
-- **A project milestone means parked** — as in *not this
-  phase*. The milestones are thematic parking lots that
-  Linear collapses out of the default view. Anything
-  carrying one is out of scope for a bootstrap read unless
-  the operator names it.
+- **Backlog is the pullable set** — the Queue (step 2). A
+  genuinely startable work item belongs here and nowhere else.
+- **Todo holds the live tracks** — umbrellas and initiatives,
+  parents that accrue children. Not a staging area: a work item
+  stranded in Todo is invisible to the operator.
+- **A project milestone means parked** — not this phase. Out of
+  scope for a bootstrap read unless the operator names it.
+  Structure is no proxy for this: child count was considered and
+  rejected (`history.md`).
 
-So the bootstrap reads the **un-milestoned Backlog** (the
-Queue) and the **un-milestoned Todo** (the live tracks).
-Linear's issue-list API has **no milestone filter**, so the
-drop is **client-side**: request the `projectMilestone`
-field and ignore every issue carrying one.
-
-Prefer the compact listing for this — it is the same
-information for a fraction of the echo. **Both tiers, two
-calls**: `list` defaults to the Backlog, so the Todo half —
-the live tracks you are about to say out loud — needs its
-own invocation.
+Linear's list API has no milestone filter, so the drop is
+client-side. Two calls, since `list` defaults to Backlog:
 
 ```sh
 python3 .claude/tools/board_batch.py list
@@ -159,189 +112,115 @@ python3 .claude/tools/board_batch.py list --state Todo \
   --include-milestoned --show-milestone
 ```
 
-The Todo call keeps the parked issues, tagged, for step 1's
-meta review; the Backlog call drops milestoned ones.
-Pull a full body only when a decision turns on it.
+The Todo call keeps parked issues, tagged, for the meta review
+below. Pull a full body only when a decision turns on it. Every
+un-milestoned Todo item is either **acted on** or **parked** —
+say that discipline out loud when the set has grown.
 
-**What keeps the Todo set small:** a planning session either
-**acts on** an un-milestoned Todo item or **parks** it.
-State that discipline out loud when the set has grown; it is
-the only thing that stops the bootstrap re-growing.
+**Then say the umbrellas out loud, unasked** — "these tracks are
+open: …" — and **fire step 8's parked-findings offer now**, with
+them; it is numbered 8 because `audit-scope` cites it so.
 
-**Then say the umbrellas out loud, without being asked** —
-"these meta tracks are open: …". The operator should not have
-to remember to ask which tracks exist; that is exactly the
-context the session was started to hold.
+**Run the audit heartbeat — every full bootstrap.** The document
+carries a bounded **audit-state table**, one row per unit in
+`docs/conventions/audit-registry.md` (unit, last audited, finding
+count, outcome pointer). Act on it:
 
-**And fire step 8's parked-findings offer here**, as part of
-this same bootstrap. It is written up as step 8 because
-`audit-scope` cites it by that name, but it
-**runs now** — a count and a prompt, alongside the umbrellas.
-Do not defer it to the end of the session.
+- **A unit is stale**, or it *just settled*, is *about to be
+  built on*, or is *suspect* → **file an audit issue**.
+- **Nothing qualifies** → **decline, and record the reason** in
+  the document. An unrecorded non-decision is the failure this
+  step exists to catch.
 
-**Run the audit heartbeat — every full bootstrap, unprompted.**
-The document carries a bounded **audit-state table**, one row
-per unit in `docs/conventions/audit-registry.md`: the unit,
-the date it was last audited, the finding count, and an
-outcome pointer (the issue numbers). Read it alongside the
-umbrellas and act on it:
+Staleness is judged against the **code**, not the calendar: a
+unit rewritten since its last audit is stale in the way that
+matters; one untouched because its subsystem is untouched is not
+urgent for being old.
 
-- **A unit crosses staleness**, or one of the standing
-  criteria fires — it *just settled*, is *about to be built
-  on*, or is *suspect* — → **file an audit issue** (step 4's
-  filing conventions, the shape described below).
-- **Nothing qualifies** → **decline explicitly, and record
-  the reason** in the document. "No audit this session,
-  because the roster is fresh and the feature phase is
-  rewriting three of the units" is a complete answer; silence
-  is not.
+**An audit issue** is a first-class **Backlog** task naming one
+registry **target** (subsystem, interface, or a random-target
+pass for breadth), its **scope**, its **rationale** (which
+criterion fired, with evidence), and its **sequencing** as prose.
+It competes in the queue like any capacity spend — an audit that
+cannot win that argument should not run this week. The pulling
+session runs it as one scoped `audit-scope` run, which that pull
+authorizes, fan-out included; findings file parked (`Todo` plus
+`Audit findings`).
 
-**The heartbeat is the guard against decay-by-neglect**, and
-it is the *only* thing that still makes audits happen without
-willpower. The daily directive bought that property at the
-cost of an invisible tax; the heartbeat keeps the property
-and makes each audit a deliberate, sequenced act. So the
-decline branch is not an escape hatch — an unrecorded
-non-decision is the failure this step exists to catch.
+It dispatches as **`explore <tag>`, never `task <tag>`**
+(operator rule, 2026-09-11) — a temporary worktree, no PR; see
+`docs/conventions/local-integrations.md` → "Architect and explore
+sessions: temporary worktree, no PR". **Name the verb in the
+sequencing prose**, since a later puller reads only the body. An
+audit sits **In Progress** until its findings are ratified and
+folded, so an old In Progress audit is live, not stalled.
 
-**What an audit issue looks like.** A first-class **Backlog**
-task in the key-custody shape — not a parked finding, not a
-directive:
+**Fold the `Claude meta` pool into SMALL THEMED batches — by
+default, unprompted.** Every `Claude:` filing lands parked (`Todo`
+plus `Claude meta`). The pool is that milestone **plus every
+open, unblocked, unpulled `Claude:` Backlog issue** (not In
+Progress or In Review) — without that clause an unpulled batch is
+duplicated rather than absorbed. Group by the surface each issue
+changes and fold each group into its lowest-numbered survivor via
+`/merge-tasks`. Routine bookkeeping; no per-fold proposal.
 
-- a **named target** from the audit registry (a subsystem, an
-  inter-subsystem interface, or a random-target pass when the
-  heartbeat wants breadth rather than depth);
-- the **scope** — what is in and what is out;
-- the **rationale** — which of the three criteria fired, and
-  the evidence for it;
-- the **sequencing** — what it should land after, as prose.
+- **Roughly 4–5 parts per batch** (operator rule, 2026-09-11):
+  five or fewer parts is one batch, fifteen is three. Session
+  cost is roughly quadratic in length —
+  `docs/conventions/context-economy.md` → "Session length is
+  itself a cost lever". Cross-check against that doc's line band
+  (300–800 changed lines, floor ~150, split at 1,000): a batch
+  far under the floor may take another part **of the same
+  theme**, never an unrelated one.
 
-The session that pulls it executes it as **one scoped
-`audit-scope` run**, and its findings file **parked** exactly
-as before (state `Todo` plus the **Audit findings**
-milestone). Pulling and invoking the issue **is** the
-authorization for that run's adversarial sub-agent fan-out.
+- **Fold strays, promote batches.** An already-assembled parked
+  batch is a promotion candidate, never a fold input —
+  `/merge-tasks` cannot split, so a re-fold only grows it.
 
-**An audit issue dispatches as `explore`-with-worktree, not
-as an implementation task** — operator rule, 2026-09-11. So
-when you dispatch one, the verb is `explore <tag>` (the
-worktree is implicit in the verb, and takes the issue's own
-tag for both worktree and branch), never `task <tag>`. An
-audit only looks and researches and produces a spec or filed
-findings, so it wants the seat rather than the implementation
-substrate; `explore` is already a seat role, so this needs no
-carve-out. The worktree is **temporary working state** and an
-audit opens no PR. The mechanism, the reasoning, and what
-the issue state does and does not protect are
-`docs/conventions/local-integrations.md` → "Architect and
-explore sessions: temporary worktree, no PR".
+- **Survivors file parked**; only the ones you promote go to
+  Backlog, Urgent. Assembling and promoting are two acts.
 
-Two consequences for this session specifically. **Say the
-dispatch verb in the issue's sequencing prose**, so the shape
-survives the gap between filing and pulling — an audit issue
-filed today may be pulled days later by a session that reads
-only the body. And **do not expect the issue to reach Done at
-its handoff**: an audit sits **In Progress** for as long as
-its findings loop is open and is ratified-and-folded before it
-closes, so a bootstrap that finds a weeks-old audit still In
-Progress is looking at a live session, not a stalled one.
+- **Nothing serializes batches** — no edge, no in-flight gate.
+  Several may be open at once; their file contention is paid as
+  a rebase. What bounds Next is promoting only a
+  **file-disjoint** set (step 8's selection procedure, on the
+  collision clusters), never a state check or a count.
 
-**An audit issue is a real capacity spend, so it competes in
-the queue like everything else.** That visibility is the
-point of the model: an audit that cannot win a priority
-argument against feature work is an audit that should not run
-this week, and the old daily default hid exactly that
-question.
+- **Assembly consumes the pool as of this bootstrap.** A later
+  stray waits for the next one.
 
-**Staleness is judged against the code, not the calendar
-alone.** A row whose target has since been rewritten wholesale
-is stale in the way that *matters* — the previous findings are
-against code that no longer exists — and is a strong
-candidate. A row untouched because its subsystem is untouched
-is not urgent merely for being old.
+- **Never fold an issue that is In Progress** — that mutates a
+  spec a session is implementing. **Never fold across the meta /
+  product boundary.**
 
-**Sweep the `Claude meta` milestone and assemble SMALL THEMED
-batches — by default, unprompted.** Every `Claude:` filing
-lands **parked** (state `Todo` plus the `Claude meta`
-milestone), so that milestone is the bulk of the pool. Group
-its issues by theme — the skill or convention surface each one
-changes — and fold every group into its own lowest-numbered
-survivor via `/merge-tasks`. Each survivor is filed **parked**
-(`Todo` plus `Claude meta`), exactly like the strays it was
-folded from; only the ones you then **promote** go to
-**Backlog, Urgent**. Routine bookkeeping; it does **not** need
-a per-fold proposal.
+- **Append to a batch with the zero-echo writer**, never
+  `save_issue`: the MCP echoes the whole accumulated body on
+  every write (one ~30-line append cost ≈6.6k).
 
-**Promoting a batch is BOTH halves, as for any parked issue:
-clear the `Claude meta` milestone *and* move Todo → Backlog.**
-Doing only the state half leaves a batch sitting in Backlog
-while still carrying a parking milestone — *parked and pullable
-at once*, per "Parked findings sit in Todo, never Backlog" in
-`CLAUDE.md` — and it silently corrupts the parked count you are
-about to say out loud.
+  ```sh
+  python3 .claude/tools/linear_issue.py append \
+    --id <ENG-###> --file <scratchpad>/addition.md
+  ```
 
-**An already-assembled parked batch is a PROMOTION CANDIDATE,
-not a fold input.** A later bootstrap re-considers it for
-promotion; it does **not** fold it again. This matters because
-`/merge-tasks` only merges — there is no split — so re-folding a
-parked batch could only ever *grow* it, past the 4–5-part bound
-and back toward the one-giant-batch form this rule exists to
-retire. So: fold **strays**, promote **batches**.
+  Anchored edits stay on `patch`.
 
-**Assembling and promoting are two different acts** — filing
-every batch Backlog/Urgent would flood Next and leave no
-remainder to park, making the disjoint-set bound below
-unreachable.
-
-**Each batch carries roughly 4–5 parts** (operator rule,
-2026-09-11, superseding the one-giant-batch form) — a pool of
-five or fewer parts is still **one** batch, while a pool of
-fifteen is three, not one. Session cost is roughly
-**quadratic in session length**,
-so a batch sized to a short session is the cheapest unit this
-board can hand out — the measurement, and the \$155–198 versus
-\$455 modeling behind it, is in
-`docs/conventions/context-economy.md` → "Session length is
-itself a cost lever".
-
-**Cross-check each batch against the line band.** The same
-convention gives a target of **300–800 changed lines** per PR,
-a floor around **150**, and a split trigger at **1,000**. The
-parts count is the primary bound and the band is a cross-check
-on it: a batch whose parts plainly come to far under the floor
-is a signal you could fold another part **of the same theme**
-in — never a reason to add an unrelated one, since the
-coherence floor still binds, and never a reason to pad. Detail,
-including which rule yields when the two disagree:
-`docs/conventions/context-economy.md` → "Which one yields in
-the interim".
-
-**Promote only a FILE-DISJOINT set — that is the bound, not a
-count.** Promoted batches are worked in parallel, so promote a
-set whose members appear in **no common cluster** (the
-procedure of "Select a parallelizable batch, using the
-collision clusters" below); where two would rewrite the same
-skill, promote one and leave the other parked. Meta is judged
-on collision clusters exactly as product work is.
-
-**Review every meta issue at EVERY bootstrap — parked, Next
-and Blocked — whether or not the document names a lane.** It
-is a **necessity gate**: each ends doable, blocked, or killed.
-Work from the bootstrap's two listings:
+**Review every meta issue at every full bootstrap — parked, Next
+and Blocked.** It is a **necessity gate**: each ends doable,
+blocked, or killed. From the two listings:
 
 1. Say the counts out loud.
-1. **Before assembly, kill on doubt**, per issue: one that
-   cannot name a concrete recurring cost larger than its
+1. **Before assembly, kill on doubt**, per issue: one that cannot
+   name a concrete recurring cost larger than its
    landing-plus-ratification cost goes on a kill list (titles
    first; read only a kill candidate's body).
-1. After assembly, group the batches by the surface each
-   rewrites (`review-pr`, `init-pr`, the shell init file, guard
-   hooks, tools, conventions, AWS) from **titles alone**. A
+1. After assembly, group the batches by the surface each rewrites
+   (`review-pr`, `init-pr`, the shell init file, guard hooks,
+   tools, conventions, AWS) from **titles alone**. A
    `[blocked by …]` row stays blocked behind its human-placed
    edge and is never slated.
-1. Mark each group **free**, or **in flight** when an In
-   Progress / In Review meta issue (`list --state`) already
-   rewrites that surface.
+1. Mark each group **free**, or **in flight** when an In Progress
+   / In Review meta issue (`list --state`) already rewrites that
+   surface.
 1. Offer the slate (from the free groups) and the kill list in
    step 8's `AskUserQuestion`, recommended set first.
 1. On a yes, promote each with both halves in one
@@ -351,640 +230,251 @@ Work from the bootstrap's two listings:
 1. Record promoted, killed, blocked, each held group with why,
    and the parked count under the `In-session notes` heading.
 
-**The pool also includes any open, UNPULLED batch — that
-clause is load-bearing.** Sweep the milestone **plus** every
-open, unblocked `Claude:`-prefixed Backlog issue that is not
-In Progress or In Review. Lowest number still survives, so a batch
-assembled yesterday and never pulled is swallowed by today's
-assembly.
+**Promotion is always BOTH halves** — clear the milestone *and*
+move Todo → Backlog. One half alone leaves an issue parked and
+pullable at once and corrupts the parked count.
 
-Without that clause an unpulled batch is **duplicated** rather
-than absorbed, and the history is worth knowing rather than
-rediscovering. The pool used to be a title scan of Backlog,
-which swallowed a prior unpulled batch as a side effect.
-Narrowing the pool to the milestone lost that, and no state
-check covers the gap — an unpulled batch sits in **Backlog**,
-which is neither In Progress nor In Review. So two bootstraps
-with no pull in between would leave two overlapping batches
-assembled from the same strays. Restoring the batch to the pool
-fixes it without adding a state to check.
+**Bound the Planning document.** It grows between close-out
+rewrites: other sessions append, and an abrupt close skips the
+rewrite. So:
 
-(This clause used to be justified by the "exactly one meta
-issue unblocked in Next" property. That property is retired —
-see below — but the clause survives on the duplication argument,
-which never depended on it.)
+- **If it carries foreign notes or a prior session's
+  unconsolidated notes, the bootstrap's first write is the
+  wholesale rewrite**, not another append.
+- **This session's incremental notes** live under one
+  `In-session notes` heading, so a rewrite sweeps one section.
+- **Non-planning sessions append only under**
+  `Notes for the next planning session` — stated wherever those
+  sessions are told to write here.
 
-It is a default because the alternative demonstrably does not
-hold: one bootstrap found **five** open meta tasks — three of
-them unchained filings from automated passes — and the fold
-had to be operator-prompted **twice** (first for three issues,
-then for all five). A later bootstrap found **seven** strays
-sitting unblocked in the operator's Next view, which is what
-moved meta filings onto the parking milestone in the first
-place.
+**Reconcile file collisions once, here — by reading.** This is
+the only session that reconciles overlap; the automated machinery
+and the `**Touches**:` field are retired, so judge from the prose
+you already hold. Record **collision clusters** per
+`docs/conventions/linear-automation.md` → "Overlap is a cluster,
+never an ordering" — per shared area, never by connected
+component, never as an ordering — as prose in the document, never
+a `related` link. Step 2 uses them for merge proposals, step 8
+for parallel batches.
 
-**Do NOT gate assembly on a meta issue being in flight**
-(operator rule, 2026-09-11, retiring the earlier
-precondition). Several small meta batches may be open and
-worked at once. They do contend on the same skill files, and
-that contention is settled by a **rebase**, estimated at order
-tens of cents inside a short session — where the serialization
-it replaces costs the quadratic. (An estimate, not a
-measurement; see
-`docs/conventions/context-economy.md` → "Session length is
-itself a cost lever".) So a bootstrap assembles from whatever is
-parked, whether or not something is already In Progress or In
-Review.
+**Then look for the two scheduling smells** in the same read: an
+edge whose blocker is already closed, and an unblocked Urgent
+issue sitting behind one.
 
-This does **not** reintroduce an edge. A batch still carries no
-blocking relation at all: the old precondition existed to make
-the retired *wait for the one in flight* edge true by
-construction, and with the serialization itself abandoned there
-is nothing left for either of them to encode. Say the parked
-count out loud either way.
+The whole board read costs ~2–3k tokens, against ~3k for one
+field-change echo — narrowing the read buys judgment, not tokens;
+the token lever is batching writes (step 4).
 
-What the retirement does cost is the "exactly one meta issue
-unblocked in Next" property, now deliberately gone rather than
-accidentally broken. The bound on Next comes from **promoting
-only a file-disjoint set** (above) — not from a state check,
-and not from a count.
+**2. Keep the Queue honest.** The Queue — the unblocked Backlog,
+which the operator calls **"Next"** — is the safe-to-start set:
+an implementation session pulls from it and runs to completion
+without re-planning, so every member must be startable *now*,
+with no refactor-later burden a later issue will undo.
 
-**Append to the batch through the zero-echo writer, never
-`save_issue`.** The batch is an **accumulator** by design, and
-the MCP echoes the whole stored body on every write — `patch`
-included — so the cost scales with the issue's accumulated
-size rather than with the size of the append. Measured: a
-~30-line append to an open `Claude:` batch cost **≈6.6k in one
-call**, the single largest result of that session by a factor
-of 3.5 over the next, because the batch had grown to roughly
-6.6k of folded parts and a one-screen addition paid for the
-whole history. Use:
+- An issue is in Next **iff** it is in Backlog with no live
+  blocking edge. "Put it in Next" means resolving or re-scoping
+  what blocks it — **never** silently dropping a real dependency.
+- **Priority within Next is the pull order** — the lever, not a
+  label.
+- **Edges and priorities are curated here**; implementation
+  sessions never place edges.
+- **`Claude:` meta-work is Urgent once unblocked** (operator
+  rule, 2026-08-17), so agent-infra is the next pull. Meta lands
+  as short batches (step 1), several possibly in flight, with no
+  edge and no exception to the proposal-per-edge rule.
 
-```sh
-python3 .claude/tools/linear_issue.py append \
-  --id <ENG-###> --file <scratchpad>/addition.md
-```
+An issue that isn't startable gets reordered behind what it
+depends on, re-scoped, or split so its first actionable unit is
+its own task. "Startable if you also do X first" is a scheduling
+bug.
 
-A body **append** has no anchor, so there is nothing for
-`patch`'s ambiguity abort to protect and nothing lost by
-leaving the MCP path — which is exactly the carve-out
-`docs/conventions/linear-automation.md` already licenses.
-Anchored edits still belong on `patch`.
+**Propose merge groups aggressively**, to minimize open PRs:
+Backlog clusters that would land as one PR (same subsystem,
+crate, language-domain) fold via `/merge-tasks`. Step 1's
+collision clusters are the raw material. The **coherence floor**
+binds: never across separate apps, languages, or deploy units.
 
-**Assembly consumes the pool as of THIS bootstrap.** A stray
-filed afterwards waits for the next assembly rather than
-joining a batch already born — otherwise a batch has no
-defined membership, and an issue could be folded into a spec
-whose session had already read its own scope.
-
-**Two hard exclusions:**
-
-- **Never fold an issue that is In Progress.** That mutates a
-  spec while a session is implementing it. This is why one
-  batch of mined levers landed as a *new* issue rather than on
-  the prior batch — that one was live in a worktree. With the
-  assembly precondition retired, this rule is now
-  **load-bearing on its own**: a bootstrap assembles while
-  other meta issues are in flight, so it is the only thing
-  standing between an assembly and a live spec. Fold from the
-  parked pool, and skip anything a session already holds.
-- **Never fold across the meta / product boundary.** The
-  coherence floor binds here as everywhere.
-
-**Bound the Planning document at the same time.** It grows
-without bound *between* close-out rewrites — the same failure
-shape as the retired Session Metrics inbox. The
-wholesale-rewrite-at-close-out convention bounds a planning
-session's own appends, and nothing bounded what accumulated in
-between: `housekeeping` and implementation sessions append
-post-close notes with no consolidation owner, an abrupt close
-skips the rewrite entirely, and one document reached the next
-bootstrap carrying **two post-close sections plus a full day
-of in-session notes**.
-
-So:
-
-- **If the document carries foreign notes, or a prior
-  session's unconsolidated in-session notes, the bootstrap's
-  first write is the wholesale rewrite** — not another append.
-  The close-out rewrite gate (step 6) stays as it is; this
-  adds one at the other end.
-- **A planning session's own incremental notes stay** — they
-  are the abrupt-close insurance — but they live under a
-  single `In-session notes` heading, so any rewrite sweeps
-  exactly one section.
-- **Non-planning sessions append only under one marked
-  heading**, `Notes for the next planning session`, never as
-  free-floating sections. That rule is stated wherever those
-  sessions are told to write here — the `architect` session's
-  close-out handoff, and any skill reporting into planning.
-
-Adopted operationally at plan-20, which performed the
-consolidating rewrite mid-session on the operator's flag; this
-is what stops the behavior depending on memory.
-
-**Reconcile file collisions once, here — by reading, not by
-running a tool.** This is the only session that reconciles
-overlap at all: the automated file-collision machinery is
-retired, and nothing records a collision link any more.
-Judge it from the board read you already have. You are
-holding enough of each issue's prose to know what the work
-actually is, which is the whole argument for doing it here —
-content beats the exact glob matching the retired tool did,
-and it is why that sweep was dropped rather than moved. (The
-declared-scope `**Touches**:` field went with it, so there is
-no shortcut: read what the issue is about.)
-
-Record the conclusions as **collision clusters** (see
-`docs/conventions/linear-automation.md` → "Overlap is a
-cluster, never an ordering"): group per shared area, never by
-connected component, and never as an ordering. Step 2 uses
-those clusters for merge proposals and step 8 uses them to
-pick a parallelizable batch. Write them into the document as
-prose — do **not** file a `related` link for one.
-
-**Then look for the two scheduling smells** and act on what
-you find — a dead edge holding an issue out of the available
-set is invisible until something looks for it. Read the
-blocking edges off the board directly: an edge whose blocker
-is already closed, and an unblocked Urgent issue sitting
-behind one, are both visible in the step-1 read.
-
-Two notes on cost, because they correct the obvious
-intuition. The whole board read is roughly **2–3k tokens**,
-while **one issue-save echo for a single field change is
-roughly 3k**. Narrowing the read buys **judgment** — a
-smaller, truer picture — not tokens. The token lever is
-batching *writes*, which is step 4's tool.
-
-*Rejected alternative, recorded so it is not re-derived:*
-filtering Todo to parents that have **no children** was
-considered and rejected — it inverts both real cases. The
-market-data umbrella is a parent *with* children and is the
-most important item on the board; a childless issue may be
-the most parked thing there is. Structure is not a proxy for
-currency. The milestone is a deliberate signal; child count
-is not.
-
-**2. Keep the Queue honest.** The Queue — the unblocked
-Backlog — is the **safe-to-start set**, and its meaning is
-load-bearing: an implementation session pulls from it and
-runs to completion without re-planning. So every unblocked
-issue must be genuinely startable *now*, without carrying
-refactor-later burden that a later issue is going to undo.
-
-**The operator calls this view "Next"** (earlier: "Q"). It is
-a Linear view over the same set this skill calls the Queue,
-so the two words name one thing and "put it in Next" needs no
-follow-up question. Four semantics follow, and they are the
-whole reason the vocabulary is worth writing down:
-
-- An issue appears in Next **iff** it is in Backlog with no
-  live blocking edge. So "add something to Next" means: make
-  it a Backlog task with nothing blocking it — by resolving
-  or re-scoping what blocks it, **never** by silently
-  dropping a real dependency.
-
-- **Priority within Next is the pull order.** The operator
-  launches an implementation session by pulling the
-  highest-priority item there, so setting a high priority in
-  Next *is* how a planning session decides what gets built
-  next. It is the lever, not a label.
-
-- **Blocking edges and priorities are curated here**, in the
-  planning session orchestrating those implementation
-  sessions. Implementation sessions never place edges (see
-  `CLAUDE.md` → "Blocking relations").
-
-- **`Claude:`-prefixed meta-work is always Urgent once
-  unblocked** (operator rule, 2026-08-17). When a meta issue
-  enters Next, set it Urgent, so agent-infra improvements are
-  the next pull rather than queuing behind product work.
-
-- **Small meta batches, none of them carrying an edge**
-  (operator rule, 2026-09-11, superseding the 09-02
-  one-batch form, the 08-20 one-edge form and the 08-18 chain
-  before it). At bootstrap, sweep the `Claude meta` milestone
-  and fold the parked strays into **themed batches of roughly
-  4–5 parts**. See "Sweep the `Claude meta` milestone" in
-  step 1 — that is where the fold happens; this entry records
-  what it means for the *board*: meta improvements land as
-  **short, pullable units**, and more than one of them may be
-  unblocked and in flight at a time.
-
-  **Nothing serializes them — no edge, no in-flight
-  precondition.** Several short sessions beat one long one by
-  enough that their file contention is paid as an occasional
-  **rebase**. What bounds Next is the step-1 promotion review's
-  **file-disjoint** slate.
-
-  So there is **no standing exception left** to the
-  proposal-per-edge rule. Each shape removed relations rather
-  than adding them — chain, then one edge, then none — which is
-  the right direction for a mechanism whose whole risk is a
-  spurious edge dropping an issue out of the available set.
-  This session remains the only place a human places an edge,
-  and **automated filers still place no edges, ever**
-  (`CLAUDE.md` → "Blocking relations").
-
-When an issue isn't: reorder it behind what it depends on,
-re-scope it, or split the first genuinely actionable unit
-into its own pullable task. An issue that is startable only
-"if you also do X first" is a scheduling bug, not a task.
-
-**Propose merge groups aggressively, to minimize open PRs.**
-Scan the Backlog for clusters that would land as a single PR
-— same subsystem, crate, or language-domain — and propose
-folding them via `/merge-tasks`. The collision clusters you
-recorded in step 1 are the raw material: a cluster whose
-members share files is usually a cluster that wants to be one
-PR.
-The **coherence floor** still binds — never fold across
-separate apps, languages, or deploy units.
-
-**3. Curate blocking edges — this is the one place they are
-placed.** Blocking edges mean **semantic rollout ordering**,
-and they are human-curated end to end: no automated writer
-files one, ever (see `docs/conventions/linear-automation.md`
-→ "Blocking relations"). Planning sessions are where they are
-placed, changed, and removed, because that is where somebody
-is actually deciding the order.
-
-Place the operator's decided edges in one batch:
+**3. Curate blocking edges — the one place they are placed.**
+Edges mean **semantic rollout ordering** and are human-curated
+end to end (`docs/conventions/linear-automation.md` → "Blocking
+relations"). Place the operator's decided edges in one batch:
 
 ```sh
 python3 .claude/tools/board_batch.py edges --pairs <file>
 ```
 
-Removing an operator-retired edge is the same command with
-`--remove`. **Rehearse either with `--dry-run` first** — a
-blocking edge drops an issue out of the available set, so a
-wrong one is expensive, and the flag is accepted in either
-position.
+`--remove` retires one. **Rehearse with `--dry-run` first** — a
+wrong edge drops an issue out of the available set. The
+subcommand takes an explicit pair list, has no discovery mode and
+refuses an empty one: it executes a human decision, never derives
+one.
 
-That subcommand is the **planning session's hands**, not a
-new writer: it takes an explicit pair list, has no discovery
-mode, and refuses an empty list. It executes a human's
-decision — it never derives one.
+Not edges: **file overlap** (a collision cluster — it costs a
+rebase, not an ordering); **coupling that belongs in one PR**
+(fold via `/merge-tasks`); **a suspicion** (prose in the body —
+an unsure edge costs more than a missing one).
 
-Three things that are **not** blocking edges, each with its
-own handling:
+**4. File and amend to house convention.** Every rule binding a
+filing skill binds this session:
 
-- **File overlap** — recorded as a collision cluster in your
-  own notes (step 1), never as a relation. It costs a rebase,
-  not an ordering.
-- **Coupling that belongs in one PR** — fold the issues into
-  one via `/merge-tasks`, don't relate them.
-- **A suspicion** — record it as prose in the body. An edge
-  you are not sure about costs more than a missing one: a
-  spurious edge silently drops an issue out of the available
-  set.
+- **Dedup first** — search the open Backlog.
 
-**4. File and amend to house convention.** A planning session
-does a lot of writing, and every rule that binds a filing
-skill binds it too:
+- **Amend with `patch` ops**, never by re-sending a body; anchor
+  on plain prose, never on a line carrying an `ENG-###` (stored
+  as a mention node) or heavy bold / code spans. The payload
+  field is **`text`**, and the anchor must match the **stored**
+  text.
 
-- **Dedup first** — search the open Backlog before filing.
+- **Fewest coherent PRs, each sized to a SHORT session** — never
+  across apps, languages or deploy units, and a coherent set
+  larger than a short session splits into sequential PRs of
+  roughly 4–5 findings. The `Claude:` class is bound too, so
+  `merge-tasks` warns on its oversized survivors as well.
 
-- **Amend with `patch` ops**, never by re-sending a body;
-  anchor on **plain prose**, never on a line carrying an
-  `ENG-###` (Linear stores it as a mention node) or heavy
-  bold / code spans. The op's payload field is **`text`**,
-  not `content`, and the anchor must match the **stored**
-  text, not the rendered body.
+- **State a scope posture when staging an issue** — **hold**
+  (build what is specified), **expand** (under-scoped; here is
+  what is missing), or **cut** (over-scoped; here is the smaller
+  thing). Default it from context and **say which you took**: an
+  unstated posture is hold by inertia, which silently endorses
+  whatever the filer wrote. It is one issue at staging time — the
+  whether-to-build-it question is `architect`'s.
 
-- **Fewest coherent PRs, each sized to a SHORT session** —
-  fold coupled findings, but never across separate apps,
-  languages, or deploy units, and never past what a short
-  session can carry. Coherence is a floor on what may be
-  separated, not a license to grow one issue without bound: a
-  coherent set larger than a short session splits into
-  **sequential** PRs of roughly 4–5 findings each.
+- **Todo / Backlog split** — tracks in Todo, pullable work in
+  Backlog (step 1).
 
-  **The `Claude:` meta class is bound too** — operator rule,
-  2026-09-11, retiring the no-size-bound exemption. Meta work
-  folds into small themed batches, several of which may be in
-  flight at once; the file contention that used to argue for
-  one-at-a-time is now paid as an occasional **rebase**,
-  because session cost is roughly quadratic in session length
-  (`docs/conventions/context-economy.md` → "Session length is
-  itself a cost lever"). `merge-tasks` therefore applies its
-  oversized-survivor warning to this class as well. The
-  coherence floor is untouched: meta never folds together with
-  product code.
+- **`Claude:` prefix** on meta-work titles (every edited path
+  under `.claude/**`, `CLAUDE.md`, `docs/conventions/**` or
+  `cfg/**`). Each such filing lands **parked** (`Todo` plus
+  `Claude meta`) in the creating call; only a promoted batch goes
+  to Backlog.
 
-- **State a scope posture when staging an issue.** For each
-  issue this session stages into the queue, commit to one:
+- **The `**Fingerprint**:` line is mandatory** — the dedup key,
+  its first token a **dotless domain token**, never a bare
+  `name.ext` (Linear linkifies it). It is the only structured
+  field. See `CLAUDE.md` → "Structured filing fields".
 
-  - **hold** — build what is specified, no more;
-  - **expand** — this is under-scoped for what it is trying
-    to achieve, and here is what it is missing;
-  - **cut** — this is over-scoped; here is the smaller thing
-    that gets the value.
-
-  Default it from context — the phase the roadmap is in, what
-  the operator has been asking for — and **say which you
-  took**. Naming it is the substantive part: an unstated
-  posture is **hold** by inertia, which is exactly the
-  bookkeeper's default and means scope is never actually
-  examined. A board orchestrator that only ever holds scope
-  is not neutral; it is silently endorsing whatever the
-  filing session happened to write.
-
-  **This is per-issue, at staging time, and it lives here
-  because the board does.** Scope is a staging decision and
-  board analysis is this session's monopoly, so putting the
-  challenge into an implementation session would break that
-  monopoly, and a separate skill would create a second place
-  that reasons about scope.
-
-  It is deliberately **not** the CEO-hat conversation. Long-
-  horizon design — whether this is the right thing to build at
-  all — is the `architect` session's job, in its own session
-  with its own launcher. This is the narrower act: one issue,
-  one posture, stated at the moment it is queued.
-
-- **Todo / Backlog split** — initiatives and meta work in
-  **Todo**; pullable work items in **Backlog**, which is what
-  the operator pulls from. See step 1 for the full three-tier
-  schema, milestones included.
-
-- **`Claude:` prefix** on meta-work titles (anything every
-  one of whose edited paths sits under `.claude/**`,
-  `CLAUDE.md`, or `docs/conventions/**`). A planning session
-  is where most meta-work gets filed, so this is the skill
-  that emits the prefix most often — and every such filing
-  lands **parked**: state `Todo` plus the `Claude meta`
-  milestone, in the creating call. The sole exception is the
-  batch issue an assembly produces, which goes to Backlog
-  because it is the thing meant to be pulled.
-
-- **The `**Fingerprint**:` line is mandatory**, exactly as
-  for every other filing skill — it is the dedup key, and its
-  first token is a **dotless domain token**, never a bare
-  `name.ext`, since Linear linkifies a hostname-valid
-  basename and corrupts the key. It is now the **only**
-  structured field: `**Touches**:` is retired and nothing
-  emits it. See `CLAUDE.md` → "Structured filing fields".
-
-- **Field-only writes go through the tool, not the MCP.**
-  Priority, state, parent, milestone, labels and assignee
-  change no body, yet `save_issue` echoes
-  the whole stored body back for each one. One session made
-  **17 field-only writes and paid ≈40k** for confirmations
-  that fit on 17 lines:
+- **Field-only writes go through the tool**, never `save_issue`,
+  which echoes the whole body for each (one session paid ≈40k for
+  17 field-only writes):
 
   ```sh
   python3 .claude/tools/board_batch.py fields --updates <file>
   ```
 
-  **Body edits stay on the MCP `patch` path** — that is not
-  an omission, see step 4's note in
-  `docs/conventions/linear-automation.md`.
+  Body edits stay on the MCP `patch` path
+  (`docs/conventions/linear-automation.md`).
 
-- **Buffer folds onto the same issue; write them once.**
-  Every `save_issue` echoes the issue's whole body back,
-  whatever the write said — so an aggregated survivor is
-  most expensive to touch exactly when it is being folded
-  into most. One planning session made **97 `save_issue`
-  calls for ≈164k**, its five costliest results all late
-  folds onto one survivor. When several folds and a body
-  amendment land on the same issue in one sitting,
-  accumulate them into a **single** call (a `patch` array
-  takes up to 50 ops) rather than writing each as it is
-  decided. See `docs/conventions/linear-automation.md` →
-  "Partial edits".
+- **Buffer folds onto one issue; write them once.** Each echo
+  returns the whole body, so a survivor costs most exactly when
+  it is folded into most (one session: 97 `save_issue` calls,
+  ≈164k). Accumulate several folds and an amendment into a
+  **single** `patch` call (up to 50 ops). See
+  `docs/conventions/linear-automation.md` → "Partial edits".
 
-- **File no relations.** There is no per-issue collision step
-  after `save_issue` — the automated file-overlap machinery is
-  retired. Overlap is your step-1 judgement, recorded as prose
-  clusters; blocking edges are step 3's job and yours alone.
+- **File no relations.** Overlap is step 1's prose; edges are
+  step 3's.
 
-- **A re-scope has to reach the whole body, not one
-  paragraph.** Appending "this also needs X" while the rest
-  of the issue still describes the narrower job leaves a spec
-  that contradicts itself, and the implementing session reads
-  it cold. This has happened in the sharper form the retired
-  `**Touches**:` field used to make visible: one issue's prose
-  said its scope was widening while the declared-scope line
-  still named a single file, and the shipped diff spanned four
-  areas. Losing the field lost the tell, not the failure — so
-  re-read the sections a re-scope contradicts and amend them
-  in the **same write**.
+- **A re-scope reaches the whole body**, not one paragraph —
+  re-read the sections it contradicts and amend them in the
+  **same write**, the `**Fingerprint**:` too when the issue's
+  subject changes (a stale key silently re-files).
 
-  Same for `**Fingerprint**:` when the re-scope changes what
-  the issue is fundamentally *about* — that is the dedup key,
-  and a stale one silently re-files.
+- **Tell an in-flight session when you amend its issue** — it
+  read the body once (step 5).
 
-- **Tell an in-flight session when you amend its issue.**
-  An implementation session reads the body once at the
-  start; anything appended afterwards is invisible to it
-  until its next echo, which costs it a write it could not
-  have batched (see `docs/conventions/linear-automation.md`
-  → "The write floor assumes the body is read once"). Step 5
-  is the mechanism — a message turns an invisible amendment
-  into a known one.
+- **Retiring a framing means sweeping the board for it now.**
+  Issue bodies that quote it do not retract themselves, and a
+  decision recorded only in the Planning document never reaches a
+  session that reads only its issue. Search the open board for
+  the retired language and strike it.
 
-- **Retiring a framing means sweeping the board for it, in
-  the same session.** A retired decision does not retract
-  itself from the issue bodies that already quote it, so
-  every session that later reads one of those bodies
-  re-emits the stale framing — and a planning session
-  correcting it downstream is pure rework. This is
-  load-bearing because of *what implementation sessions
-  actually read*: a decision recorded only in the Planning
-  document never reaches a session that reads only its
-  issue. So when a standing decision retires language,
-  search the open board for that language and strike it now,
-  rather than leaving it to be re-derived.
+**5. Coordinate with in-flight sessions.** When a decision
+invalidates an implementation session's ground truth — a
+re-scope, a changed sequencing, a retired approach — **message
+it** (find it with `ListAgents`) rather than letting review
+discover it. Message freely: it is cheap, and it prevents
+duplicated work. **When a session owns the issue, send it the
+amendment rather than writing the body yourself** — that skips
+the full-body echo, and the owner can judge it against what it
+has built.
 
-**5. Coordinate with in-flight sessions.** A planning
-decision can invalidate the ground truth an implementation
-session is working from — a re-scope, a changed sequencing, a
-retired approach. When that happens, **message the affected
-worktree session** rather than letting it discover the change
-at review time. Use `ListAgents` to find them.
-
-**When a session owns the issue, hand it the amendment — do
-not write the body yourself.** This avoids both costs at once:
-the full-body `save_issue` echo *and* the coordinating message
-that would otherwise have to tell that session what changed.
-Done twice in one planning session, and both times the message
-*was* the amendment.
-
-The surrounding datapoint is what makes this a refinement
-rather than a replacement: cross-session `SendMessage`
-coordination is **cheap** — eleven messages at roughly 0.5k
-each in that session — and it prevented duplicated work three
-times. So message freely; this rule only says that when the
-message is going to be sent anyway, it should carry the edit
-instead of a description of the edit.
-
-The owning session is also the one that can judge the
-amendment against what it has already built, which a planning
-session cannot see.
-
-**Starting one is the other half of this step.** When a task
-is unblocked and ready, this session may **raise the offer
-itself** — "1234 is unblocked; start it?" — and on the
-operator's yes, dispatch it:
+**Dispatching is the other half.** When a task is unblocked and
+ready, offer it ("1234 is unblocked; start it?") and on the
+operator's yes:
 
 ```sh
 python3 .claude/tools/session_dispatch.py task 1234
 ```
 
-That opens a **new tab in this session's own window** and types
-the verb, exactly as if the operator had typed it. The operator
-drives the fleet from **one window**, so a dispatched session
-lands beside the planning session that started it rather than
-as another window to hunt for (operator ruling, 2026-09-10).
-
-Several verbs go in one call, separated by a bare `+`, which
-costs one round trip rather than one per tab:
+It opens a **tab in this session's own window** (operator ruling,
+2026-09-10) and types the verb. Several verbs go in one call,
+separated by a bare `+`:
 
 ```sh
 python3 .claude/tools/session_dispatch.py task 1234 + plan
 ```
 
-The tool prints one `verb -> tty` line per dispatched verb and
-then a roll-call of every open session, which is the
-confirmation to relay — the ttys come from the call that made
-the tabs, so only the roll-call independently shows they exist.
+It prints one `verb -> tty` line each, then a roll-call of open
+sessions — the roll-call is the confirmation to relay.
 
-Five things about the boundary:
-
-- **The ask-then-yes IS the authorization**, the same class
-  as `fleet go`. There is no second gate inside the tool, and
-  it never dispatches unasked.
-- **The substrate choice stays at the call site.** Pass
-  `task anthropic 1234` for work that needs web research; the
-  dispatcher passes the word straight through and adds no
-  policy of its own. See the substrate rule in
+- **The ask-then-yes IS the authorization**, as for `fleet go`;
+  the tool never dispatches unasked.
+- **The substrate stays at the call site** — `task anthropic 1234`
+  for work needing web research; see
   `docs/conventions/local-integrations.md`.
-- **Best effort.** If iTerm's Python API is off, or macOS has
-  not granted Automation access, the tool fails loudly and
-  prints every verb it would have typed — so relay those lines
-  to the operator rather than retrying. `--dry-run` shows them
-  without opening anything.
-- **A batch is all-or-nothing on validation.** One bad verb
-  dispatches none of them, so fix the typo and re-run the whole
-  call; there is no half-dispatched batch to reconcile.
-- **Dispatching work that has a ratified spec FILE means
-  folding it in first.** This is the one boundary item that
-  writes something.
+- **Best effort.** If iTerm's Python API or Automation access is
+  off, the tool fails loudly and prints the verbs — relay them
+  rather than retrying. `--dry-run` shows them.
+- **A batch is all-or-nothing on validation** — fix the typo and
+  re-run the whole call.
+- **A ratified spec FILE is folded in first.** `architect` and
+  `explore` sessions are read-only toward the repo, and usually
+  their design landed as tasks, so there is nothing to fold. When
+  one iterated a spec file, it sits untracked in that session's
+  temporary worktree, which a dispatched implementer cannot read:
+  **copy it into the implementing issue's body, then delete the
+  file.** No PR to close, no branch to delete. Fold only a spec
+  its close-out note reports as **ratified**; one still in its
+  read-back loop is live work.
 
-**Folding a ratified spec at dispatch.** An `architect` or
-`explore` session is **read-only toward the repo** — no commits,
-no PR — and its durable output is Linear tasks (see
-`docs/conventions/local-integrations.md` → "Architect and
-explore sessions: temporary worktree, no PR"). Often there is
-nothing to fold at all, because the design landed as tasks and
-this step is a no-op.
+**6. Write back — incrementally, then rewritten at the gate.**
+Write after each major decision: planning sessions are often
+closed abruptly, and an unwritten decision is lost. A session
+that decides without writing back has dropped its main
+deliverable — the board shows *what*, only the document carries
+*why*.
 
-When such a session *did* iterate a spec **file**, it sits
-untracked in that session's temporary worktree, so a dispatched
-implementer **cannot see it** — a worktree session cannot read
-another worktree's files. So before dispatching: **copy the
-ratified spec into the implementing issue's body, then delete
-the file.** The issue body is where the implementer already
-reads, and it is the only copy that survives the worktree.
+**Gate the close-out; don't wait to be told.** When the operator
+signals wrap-up, or the conversation lulls after significant
+decisions, offer via `AskUserQuestion` — "close out now?
+(rewrites the Planning doc to the current state of play)" —
+recommended first.
 
-There is **no PR to close and no branch to delete**; the
-worktree's contents are expendable once the content is in
-Linear. (A 09-11 version of this rule made the fold a
-three-part act with a PR close in the middle. That is
-superseded, and the ordering hazard went with it.)
+**The close-out deliverable is the whole document, rewritten**,
+not an entry appended: superseded phases, dated addenda and the
+session's incremental notes disappear. A wholesale replacement
+re-parses on the round trip, so compose it:
 
-**Only fold a spec the session reported as ratified.** Its
-close-out note says which; a design still in its read-back loop
-is live work, and its issue sits In Progress or In Review
-precisely so this step leaves it alone.
-
-**6. Write back — incrementally, then rewritten at the
-gate.**
-
-**Prefer writing after each major decision** over composing
-one entry at the end. Planning sessions are frequently closed
-abruptly — the terminal is killed, the worktree is deleted —
-and an un-written decision is simply lost. Incremental
-write-back means an abrupt close costs nothing.
-
-**Then gate the close-out; don't wait to be told.** When the
-operator signals wrap-up, **or the conversation lulls after
-significant decisions**, fire an `AskUserQuestion` offering
-to close out — "close out now? (rewrites the Planning doc to
-the current state of play)" — with that as the recommended
-first option. The gate exists precisely because the
-write-back is otherwise the thing that gets forgotten.
-
-**The close-out deliverable is the whole document, rewritten
-— not an entry appended to it.** Superseded phases, dated
-addenda, and previous close-out entries simply **disappear**:
-the board and the issues carry history, the doc carries the
-**present**. The incremental appends made during the session
-are consolidated away by the same rewrite.
-
-Composing that replacement has one hazard worth stating,
-because a wholesale write is exactly where it bites. A full
-content replacement **re-parses** on the round trip, so the
-rewritten document is composed:
-
-- **without inline code spans** — use plain names, not
-  backticked ones; a code span can come back corrupted;
-- with **no emphasis span crossing a newline** — a bolded
-  run wrapping a line break stores garbled;
+- **without inline code spans** — plain names, not backticked;
+- with **no emphasis span crossing a newline**;
 - with **no machine-parsed field starting with a bare
-  hostname-valid `name.ext`** — the linkifier rewrites it
-  (the same rule as the fingerprint format in step 4).
+  hostname-valid `name.ext`**.
 
-The document's own header paragraph states this convention.
-**Keep the skill and that header consistent** when editing
-either.
+The document's header paragraph states this convention; **keep
+the two consistent** when editing either.
 
-**A session that decides without writing back has dropped its
-main deliverable.** The board shows *what* was decided; the
-doc is the only place that carries *why*, and why is what the
-next session needs.
+**The close-out carries the audit-state table forward — and
+writes no directive** (why: `history.md`). The table is
+state-shaped: a row is **replaced** when its unit is audited
+again, so its size is bounded by the registry, and the board
+holds the history. A table growing rows per audit has become the
+log it exists to avoid. Update a row only for an audit issue that
+was **completed** this cycle; one filed but unpulled changes
+nothing.
 
-**The close-out carries the audit-state table forward — it
-writes no directive.** The rewritten document carries the
-bounded table the bootstrap heartbeat reads: one row per unit
-in `docs/conventions/audit-registry.md`, each with the date it
-was last audited, the finding count, and an outcome pointer
-(the issue numbers).
-
-**It is state-shaped, never an append log.** A row is
-*replaced* when its unit is audited again; the table's size is
-bounded by the registry, not by how long the practice has run.
-The history lives on the board — the audit issues and their
-parked findings are the durable record, and the outcome
-pointer is how you get from a row to it. A table that has
-started growing rows per audit rather than per unit has become
-the unbounded log this design exists to avoid.
-
-**Update the rows for whatever landed this cycle**: an audit
-issue that a session pulled and completed updates its unit's
-row with the new date, count, and issue pointer. An audit
-issue filed but not yet pulled changes no row — the row
-records what was *audited*, not what was *scheduled*.
-
-**Why no directive**: audits are issue-shaped, so they
-compete in the queue — the retired directive's cost is in
-[`history.md`](history.md). The known risk of the issue
-model is cadence decay by neglect. The bootstrap heartbeat
-(step 1) is the guard, which is why its decline branch must
-record a reason.
-
-**7. Capture the session's token profile at close-out.** Run
-the committed metrics tool over the planning transcript, then
-file each lever it yields as a **parked lever issue**, the
-same as an implementation session — so the fold mines
-planning-session shapes too, rather than only review shapes:
-
-**COMPUTE this session's id; never list the projects
-directory to find it.** A daily verb's session id is
-deterministic — an md5 of `dropset-<kind>-<YYYYMMDD>`, plus
-`-c<N>` once cycled — so one call names it:
+**7. Capture the session's token profile at close-out.** A
+planning session is a lever producer too. **Compute its id; never
+list the projects directory** (`history.md`):
 
 ```sh
 python3 .claude/tools/resolve_session.py --daily-id plan
@@ -994,105 +484,53 @@ python3 .claude/tools/resolve_session.py --daily-id plan
 make session-metrics SESSION=<uuid>
 ```
 
-It reads the cycle counter itself; searching instead is
-expensive ([`history.md`](history.md)). Pass `--date YYYYMMDD`
-(and `--cycle N`) for an earlier session; `housekeeping` is the
-other daily kind.
+It reads the cycle counter itself; pass `--date YYYYMMDD` (and
+`--cycle N`) for an earlier session. Levers file through
+`.claude/tools/trim_levers.py` (probe, then `file` or
+`append-evidence`); `/session-metrics` does this for you.
 
-Levers file through `.claude/tools/trim_levers.py` (probe,
-then `file` or `append-evidence`), **not** into a document —
-that inbox is retired. Invoking `/session-metrics` does this
-for you; the point of naming it here is that a planning
-session is a producer too.
+**A planning-derived lever must be quality-preserving.** Fidelity
+is the point and is never traded for tokens: a cheaper fetch, a
+narrower echo, a hoisted survey or a removed re-read qualifies; a
+model downgrade, a skipped bootstrap read, or anything that thins
+the decision context does not. Such a lever is **filed and
+immediately closed with its reason** (or left closed if one is
+already parked), so the fingerprint probe stops the next fold
+re-deriving it.
 
-**One hard constraint on what may be proposed from it.**
-Planning sessions deliberately run the most capable models
-with generous context. **Fidelity is the point, and is never
-traded for tokens.** So a planning-derived lever must be
-**quality-preserving**: a cheaper bootstrap fetch, a narrower
-Linear echo, a repo survey hoisted into a sub-agent, a
-redundant re-read removed. Never a model downgrade, never a
-skipped bootstrap read, never anything that thins the
-decision context.
+**8. Offer the parked audit findings — don't wait to be asked.**
+`audit-scope` files confirmed findings under the **Audit
+findings** milestone: parked, searchable, costing a bootstrap
+nothing. This step is how planning absorbs them.
 
-A lever that would trade planning fidelity for tokens is not
-proposed — it is **filed and immediately closed with its
-reason**, or, if an equivalent lever is already parked, left
-closed. Recording the rejection on the board is what stops the
-next fold from re-deriving it, since the fingerprint probe
-searches resolved issues too.
+**At bootstrap, a count and a prompt, never a listing** — "N
+audit findings are parked — slate any in?", asked with step 1's
+meta slate and kill list. On a yes:
 
-**8. Offer the parked audit findings — don't wait to be
-asked.** `audit-scope` files its confirmed findings as real issues
-stamped with the **Audit findings** project milestone, which
-means they are **parked**: first-class open issues for dedup
-and search, but costing a bootstrap read nothing. The repo is
-continuously audited, so this step is
-how the planning flow continuously **absorbs** that output
-instead of letting it pile up unlooked-at.
-
-**Offer at bootstrap: a count and a prompt, never a
-listing.** "N audit findings are parked — slate any in?",
-asked with step 1's meta slate and kill list. The bodies stay
-unread unless the answer is yes.
-
-On a yes:
-
-- List the Audit findings milestone **field-selected**
-  (title and priority only).
+- List the milestone **field-selected** (title, priority).
 - **Select a parallelizable batch, using the collision
-  clusters.** The operator runs several worktree sessions at
-  once, so a promoted batch is only useful if its members can
-  be worked **simultaneously** — which means they must not
-  collide on files. Your step-1 clusters already answer this:
-  promote a set whose members appear in **no common
-  cluster**. Where two findings
-  do collide, either promote one and leave the other parked
-  for the next round, or fold them into a single issue under
-  the fewest-coherent-PRs rule. This is the selection
-  procedure, not advice.
-- **Sequence against the live tracks**, not as a free-floating
-  batch. A finding that touches a track's files while that
-  track is mid-flight should ride with it or wait for it. The
-  current phase decides *what* gets promoted; the umbrellas
-  decide *where it belongs*.
-- Fetch a body **only** for a finding actually being
-  promoted.
-- **Un-park it by clearing the milestone AND moving it Todo →
-  Backlog.** Promotion has **two** halves now, because parked
-  findings file in state `Todo` rather than `Backlog`:
-  clearing the milestone alone leaves the issue out of the
-  pullable set, and moving the state alone leaves it looking
-  parked. Do both, in one field-only write per issue through
-  `board_batch.py fields` (an MCP `save_issue` would echo the
-  whole body back for a two-field change). There is still no
-  re-filing and no new issue — the obvious wrong
-  implementation is to close the parked finding and file a
-  fresh copy; don't.
+  clusters.** Promoted issues are worked simultaneously, so
+  promote a set whose members share **no common cluster**. Where
+  two collide, promote one and park the other, or fold them under
+  the fewest-coherent-PRs rule. This is the selection procedure,
+  not advice.
+- **Sequence against the live tracks**: a finding touching a
+  mid-flight track's files rides with it or waits.
+- Fetch a body **only** for a finding being promoted.
+- **Promote with both halves** — clear the milestone and move
+  Todo → Backlog — in one `board_batch.py fields` write. Never
+  close it and file a fresh copy.
 
-**A planning session does not re-adjudicate a finding.**
-`audit-scope` cross-checks adversarially before filing, so
-a parked finding is **validated**. The only decision left is
-whether it belongs in the current phase. Re-validating would
-duplicate the expensive half of the audit inside the most
-expensive session in the rotation.
+**Do not re-adjudicate a finding.** `audit-scope` cross-checks
+adversarially before filing; the only question left is whether it
+belongs in this phase.
 
 ## Notes
 
-- **No source edits.** Like the other board skills, this one
-  writes to Linear and to the Planning document. It authors
-  no diff, and commits nothing.
-- **It is not a one-shot.** A planning session is a
-  conversation that spans hours or days; this skill describes
-  how to run one, not a pass to execute and exit.
-- **The board is this session's alone.** `housekeeping` no
-  longer analyses the board — no merge groups, no scheduling
-  smells (and no collision recording anywhere — that
-  machinery is retired) — precisely so the two can't
-  reach conflicting conclusions between planning sessions.
-  Its last carve-out, proposing merges among
-  `Claude:`-prefixed meta-work, is **also retired**: those
-  filings now park under the `Claude meta` milestone and this
-  session's bootstrap sweeps the whole milestone, so a second
-  writer on that pool would only race the assembly. One
-  writer, one rhythm.
+- **No source edits.** This skill writes to Linear and the
+  Planning document; it authors no diff and commits nothing.
+- **It is not a one-shot** — a planning session spans hours or
+  days.
+- **The board is this session's alone.** No other skill analyses
+  it or writes to the meta pool, so two can't reach conflicting
+  conclusions: one writer, one rhythm.

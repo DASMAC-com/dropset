@@ -31,6 +31,101 @@ working; the targeting was not — and because the parked pool
 drains only through the promotion step (step 8, which runs at
 bootstrap), over-filing costs the planning session directly.
 
+## Why tiers, not structure, scope the bootstrap (step 1)
+
+Filtering Todo to parents with **no children** was considered
+and rejected — it inverts both real cases. The market-data
+umbrella is a parent *with* children and the most important item
+on the board; a childless issue may be the most parked thing
+there is. The milestone is a deliberate signal; child count is
+not.
+
+## The meta fold (step 1)
+
+**Why it is a default.** One bootstrap found **five** open meta
+tasks — three of them unchained filings from automated passes —
+and the fold had to be operator-prompted **twice** (three issues,
+then all five). A later bootstrap found **seven** strays sitting
+unblocked in the operator's Next view, which is what moved meta
+filings onto the parking milestone.
+
+**Why the pool includes unpulled batches.** The pool was once a
+title scan of Backlog, which swallowed a prior unpulled batch as
+a side effect. Narrowing it to the milestone lost that, and no
+state check covers the gap — an unpulled batch sits in Backlog,
+neither In Progress nor In Review — so two bootstraps with no
+pull between would assemble two overlapping batches from the same
+strays. The clause was first justified by the "exactly one meta
+issue unblocked in Next" property; it survives that property's
+retirement on the duplication argument alone.
+
+**How serialization was retired.** The shape moved from a serial
+chain with an edge per issue (08-18), to one edge behind the
+batch (08-20), to one giant batch (09-02), to small edge-free
+batches with no in-flight assembly gate (operator rule,
+2026-09-11). Each step removed relations rather than adding them
+— the right direction for a mechanism whose risk is a spurious
+edge dropping an issue out of the available set. The in-flight
+precondition existed only to make the retired *wait for the one
+in flight* edge true by construction, so both went together, and
+with them the "exactly one meta issue in Next" property — now
+deliberately gone, its job taken by the file-disjoint promotion
+bound. Contention between parallel batches is paid as a rebase,
+estimated (not measured) at order tens of cents in a short
+session, against the quadratic a long one costs — the
+**\$155–198 versus \$455** modeling is in
+`docs/conventions/context-economy.md` → "Session length is itself
+a cost lever". With assembly ungated, the never-fold-In-Progress
+exclusion became load-bearing on its own: it is the only thing
+between an assembly and a live spec. One batch of mined levers
+landed as a new issue rather than on the prior batch for exactly
+that reason — the prior one was live in a worktree.
+
+**Why the zero-echo appender.** A ~30-line append to an open
+`Claude:` batch cost **≈6.6k in one call**, that session's
+largest result by a factor of **3.5** over the next, because the
+batch had grown to ~6.6k of folded parts and a one-screen
+addition paid for the whole history. An append has no anchor, so
+leaving the MCP `patch` path loses no ambiguity protection.
+
+**Why housekeeping no longer proposes meta merges.** Its last
+board carve-out was retired once meta filings parked under the
+milestone and this bootstrap swept it whole: a second writer on
+that pool would only race the assembly.
+
+## Bounding the Planning document (step 1)
+
+The close-out rewrite bounds a planning session's own appends,
+but nothing bounded what accumulated between sessions:
+`housekeeping` and implementation sessions appended post-close
+notes with no consolidation owner, and an abrupt close skipped
+the rewrite. One document reached the next bootstrap carrying
+**two post-close sections plus a full day of in-session notes**.
+The bootstrap-side rewrite was adopted at plan-20, which did the
+consolidating rewrite mid-session on the operator's flag.
+
+## Scope posture and re-scopes (step 4)
+
+The scope posture lives here rather than in an implementation
+session because scope is a staging decision and board analysis
+is this session's monopoly; a separate skill would add a second
+place that reasons about scope.
+
+A re-scope appended as one paragraph once left a spec
+contradicting itself: the prose said the scope was widening while
+the then-current `**Touches**:` line still named a single file,
+and the shipped diff spanned four areas. Retiring the field lost
+the tell, not the failure.
+
+## Coordinating with in-flight sessions (step 5)
+
+In one planning session, eleven cross-session messages at ~0.5k
+each prevented duplicated work three times; twice the message
+*was* the amendment, saving both the body echo and a description
+of the edit. A 09-11 form of the spec-fold rule was a three-part
+act with a PR close in the middle; specs no longer sit on a PR
+branch, so that act and its ordering hazard are gone.
+
 ## Cycling
 
 The cycle design (command, ask-gated trigger, same-tab
