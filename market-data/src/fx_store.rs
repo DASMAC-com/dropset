@@ -92,8 +92,9 @@ pub const SOURCE_ALPHAVANTAGE: &str = "alphavantage";
 ///
 /// Kept beside the FX venues because it is the same table and the same join,
 /// but deliberately **not** in [`FX_STORE_SOURCES`]: it carries `*-USDC` basis
-/// series, not FX crosses, and only the estimator asks for it. Matches
-/// `market-data/src/bin/coinbase.rs`'s own `SOURCE` literally. The **candle**
+/// series, not FX crosses, and only the estimator's store reader asks for it.
+/// Matches `market-data/src/bin/coinbase.rs`'s own `SOURCE` literally — a join
+/// by string, so the two sides have to move together. The **candle**
 /// collector, not the ticker: the ticker writes `spot_ticks` and republishes a
 /// last print whether or not one happened, which is the aging problem the
 /// pinned markets exist to avoid.

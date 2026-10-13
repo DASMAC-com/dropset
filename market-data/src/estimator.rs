@@ -652,10 +652,10 @@ impl Estimator {
     /// tick leaves some pairs written at `ts` and others absent —
     /// indistinguishable, to a reader, from pairs the estimator skipped.
     ///
-    /// The atomicity is the store's, not the engines'. Each market's `compose`
-    /// advances its basis EMA before the commit, and a rolled-back tick does not
-    /// rewind it — so the in-memory state has moved by one `dt` that no row
-    /// records.
+    /// The atomicity is the store's, not the engines'. Every market composed
+    /// before a failure has already advanced its engine — an observed-basis
+    /// market's basis EMA included — and a rolled-back tick rewinds none of it,
+    /// so that in-memory state has moved by one `dt` that no row records.
     async fn publish_tick(&mut self, now: Instant, dt: Duration) -> Result<(), PublishError> {
         // Destructured rather than reached through `self`, so the snapshot's
         // immutable borrow and the engine map's mutable one are disjoint field

@@ -85,7 +85,7 @@ async fn read_published(pool: &PgPool, product_id: &str) -> Option<PublishedRow>
     })
 }
 
-/// Write every leg fresh, as of `now`, for the whole MVP roster.
+/// Write every leg fresh, as of `now`, for the whole published roster.
 async fn seed_all_legs(pool: &PgPool, now: i64) {
     // FX anchors, from two tapes so the leg is corroborated rather than single.
     for (currency, rate) in [("EUR", 1.1400), ("AUD", 0.7200), ("CAD", 0.7300)] {
@@ -178,7 +178,7 @@ async fn a_full_tick_publishes_every_market() {
         PUBLISHED_MARKETS.to_vec(),
         Duration::from_secs(15),
     )
-    .expect("the MVP roster is constructible");
+    .expect("the published roster is constructible");
     let outcome = estimator
         .tick_once()
         .await
