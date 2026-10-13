@@ -334,17 +334,18 @@ tui-mainnet:
 
 # Film-the-startup variant of `tui-mainnet`: the same cockpit, with the two
 # things it insists on filled in so it launches with no arguments. The RPC
-# defaults to the public mainnet-beta endpoint (enough for the genesis check;
-# override `MAINNET_DEMO_RPC_URL` for a provider that keeps the live panes
-# fed), and `--wallet` is a fresh keypair generated into a temp directory and
-# deleted on every exit path. That wallet is unfunded and there is no
-# `--leader`, so nothing in the session can spend — it exists to show the
-# real-funds banner and the panel coming up, not to run the ceremony.
-MAINNET_DEMO_RPC_URL ?= https://api.mainnet-beta.solana.com
+# is an exported `DROPSET_MAINNET_RPC_URL` when there is one, else the public
+# mainnet-beta endpoint (enough for the genesis check; a provider keeps the
+# live panes fed), and `--wallet` is a fresh keypair generated into a temp
+# directory and deleted on every trappable exit. That wallet is unfunded and
+# there is no `--leader`, so nothing in the session can spend — it exists to
+# show the real-funds banner and the panel coming up, not to run the ceremony.
+PUBLIC_MAINNET_RPC := https://api.mainnet-beta.solana.com
+MAINNET_DEMO_RPC_URL ?= $(or $(DROPSET_MAINNET_RPC_URL),$(PUBLIC_MAINNET_RPC))
 .PHONY: mainnet-demo
 mainnet-demo:
-	@dir=$$(mktemp -d); w=$$dir/wallet.json; trap 'rm -rf "$$dir"' EXIT; \
-	trap 'exit 130' INT TERM; \
+	@dir=$$(mktemp -d) || exit 1; w=$$dir/wallet.json; \
+	trap 'rm -rf "$$dir"' EXIT; trap 'exit 130' HUP INT TERM; \
 	solana-keygen new --no-bip39-passphrase --silent -o "$$w" >/dev/null && \
 	DROPSET_MAINNET_RPC_URL='$(MAINNET_DEMO_RPC_URL)' \
 		cargo run -p dropset-tui -- --cluster mainnet --wallet "$$w"
