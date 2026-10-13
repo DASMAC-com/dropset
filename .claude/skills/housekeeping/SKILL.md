@@ -251,8 +251,9 @@ that pool would only race the bootstrap's assembly.
 
 This skill operates **across** worktrees — it
 removes them — so it must run from the **base
-repository**, never from inside a worktree (you
-can't remove the worktree you're standing in). The
+repository**, never from inside a worktree (a
+session closes its *own* worktree through
+`close_session.py`, not here). The
 first step verifies this and stops if you're in the
 wrong place.
 

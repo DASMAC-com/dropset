@@ -155,18 +155,10 @@ everything below it is recoverable and that one is not.
    If `review-pr` already ran it during the queue wait, say so
    and move on.
 
-1. **Worktree verdict.** State which way this worktree goes:
-
-   - **`housekeeping` will collect it on its own** — the PR
-     merged and the issue's status type is completed or
-     canceled, so the ordinary prune covers it. Nothing to do.
-   - **It needs a deliberate manual prune** — the
-     closed-not-merged case, which the merged-PR sweep never
-     touches.
-
-   Either way, confirm nothing in this worktree is
+1. **Worktree verdict.** Confirm nothing in this worktree is
    **load-bearing for an open PR** — an unmerged sibling
-   branch, or a file only this checkout has.
+   branch, or a file only this checkout has. The close itself
+   removes it (below), merged or closed-not-merged alike.
 
 ## The verdict
 
@@ -176,8 +168,25 @@ verb worth having — **each item is actioned or handed off
 before re-answering.** A wrap that reports the same list twice
 has become a status printer.
 
-Once the verdict is CLEAR, say plainly that the worktree can
-be removed, and stop. Do not offer to remove it: pruning is
-`housekeeping`'s job or the operator's, and a session removing
-the worktree it is standing in is the failure mode that rule
-exists to prevent.
+Once the verdict is CLEAR, close through one `AskUserQuestion`
+— the operator's answer in this tab is the ratification.
+Offer **"Mark Done and remove the worktree (Recommended)"**,
+then **"Mark Done, keep the worktree"**, then **"Not yet"**.
+Either yes runs one tool as the session's **last** tool call:
+
+```sh
+python3 .claude/tools/close_session.py --state Done
+```
+
+with `--keep-worktree` for the second option, and
+`--issue ENG-###` on a branch that is not `eng-###`. **The state
+write lands before any removal, never the reverse** — a
+worktree removed while its issue still reads In Review
+strands the session, which a later resume cannot recover.
+Never remove the worktree any other way. The tool re-checks
+git safety, the PR, and the worktree lock before writing
+anything, and removes only after Done or Canceled; on a
+refusal, report its `refused` line as a
+NOT CLEAR item. Exit 2 means Done landed but the removal did
+not; relay the tool's note, which says when the tree needs
+removing by hand.

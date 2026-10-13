@@ -3152,7 +3152,23 @@ migrations or generation inputs, and whether it spans crates.
    **Only an explicit approval moves it to Done.** The terminal
    step is an `AskUserQuestion` — *"all follow-up complete:
    metrics filed, feedback forwarded — mark Done?"* — and
-   nothing else sets that state.
+   nothing else sets that state. Offer **"Mark Done and remove
+   the worktree (Recommended)"** first and **"Mark Done, keep
+   the worktree"** second. Both run one tool, as this session's
+   **last** tool call — the state write lands before any
+   removal, never the reverse:
+
+   ```sh
+   python3 .claude/tools/close_session.py --state Done
+   ```
+
+   (append `--keep-worktree` for the second option). It refuses,
+   with nothing changed, whenever it cannot prove the close safe
+   — a dirty tree, an unpushed commit, an open or unreadable PR,
+   a lock another session holds, a failed state write — and
+   names the reason in `refused`; exit 2 means Done landed and
+   the removal did not — relay its note, which says when the
+   tree needs removing by hand.
 
    Watch whether the PR lands or gets kicked back out with a
    **single** probe per check: the `gh api graphql` dequeue
@@ -3593,9 +3609,12 @@ migrations or generation inputs, and whether it spans crates.
      carry, and the worktree is about to be pruned. Surface
      it and decide where it goes; never report the run
      complete with a dirty tree.
+   - [ ] **Close** — the terminal mark-Done question above,
+     answered through `close_session.py`, after every other
+     item.
 
-   **That last item is detection, and it goes last on
-   purpose.** A stray change can come from anywhere — a fix
+   **The working-tree item is detection, and it goes last
+   before the close on purpose.** A stray change can come from anywhere — a fix
    made during the session-metrics step, a partially applied
    edit, a scratch file written into the repo instead of the
    scratchpad. Nothing else at the end of a review looks at
