@@ -97,15 +97,16 @@ function nativeLevel(c: NativeLevelCase): NativeLevel {
   };
 }
 
-/** Decode one serialized relative level: u32 offset, u16 bps, then a u32
- * expiry offset per domain (LE). */
+/** Decode one serialized relative level: u32 offset, u32 flip spread, u16
+ * bps, then a u32 expiry offset per domain (LE). */
 function readLevel(view: DataView, index: number) {
   const o = index * LEVEL_BYTES;
   return {
     priceOffset: view.getUint32(o, true),
-    sizeBps: view.getUint16(o + 4, true),
-    expiryOffsetSecs: view.getUint32(o + 6, true),
-    expiryOffsetSlots: view.getUint32(o + 10, true),
+    flipSpreadPpm: view.getUint32(o + 4, true),
+    sizeBps: view.getUint16(o + 8, true),
+    expiryOffsetSecs: view.getUint32(o + 10, true),
+    expiryOffsetSlots: view.getUint32(o + 14, true),
   };
 }
 
@@ -127,6 +128,7 @@ test('quoting vectors match', () => {
     c.bids.forEach((exp, i) => {
       const got = readLevel(view, i);
       assert.equal(got.priceOffset, exp.price_offset, `bid[${i}] offset`);
+      assert.equal(got.flipSpreadPpm, 0, `bid[${i}] flip spread`);
       assert.equal(got.sizeBps, exp.size_bps, `bid[${i}] size_bps`);
       assert.equal(got.expiryOffsetSecs, exp.expiry_offset, `bid[${i}] expiry`);
       assert.equal(got.expiryOffsetSlots, exp.expiry_offset_slots, `bid[${i}] expiry slots`);
@@ -134,6 +136,7 @@ test('quoting vectors match', () => {
     c.asks.forEach((exp, i) => {
       const got = readLevel(view, N_LEVELS + i);
       assert.equal(got.priceOffset, exp.price_offset, `ask[${i}] offset`);
+      assert.equal(got.flipSpreadPpm, 0, `ask[${i}] flip spread`);
       assert.equal(got.sizeBps, exp.size_bps, `ask[${i}] size_bps`);
       assert.equal(got.expiryOffsetSecs, exp.expiry_offset, `ask[${i}] expiry`);
       assert.equal(got.expiryOffsetSlots, exp.expiry_offset_slots, `ask[${i}] expiry slots`);

@@ -79,6 +79,13 @@ pub struct Level {
     /// Spread from `reference_price.price` in ppm — direction is implicit
     /// from which side this level sits on (bids subtract, asks add).
     pub price_offset: PodU32,
+    /// Flip spread in ppm (`Ppm32`), relative to this level's own absolute
+    /// price, never the reference: once filled, an ask rests its proceeds
+    /// as a bid at `price × (1 − flip_spread)` and a bid as an ask at
+    /// `price × (1 + flip_spread)`. Materialized into
+    /// [`Position::flip_price`] at flush. **Zero does not flip** — the
+    /// level behaves exactly as one without the field.
+    pub flip_spread_ppm: PodU32,
     /// Per-flush allowance as bps of the matching inventory leg
     /// (`base_atoms` for asks, `quote_atoms` for bids). Σ per side ≤ 10000.
     pub size_bps: PodU16,
@@ -145,6 +152,18 @@ pub struct Position {
     /// [`Position::expires_at_unix`]; the level matches only while **both**
     /// deadlines are in the future.
     pub expires_at_slot: PodU32,
+    /// Absolute price the level's proceeds rest at once it flips
+    /// (`price × (PPM ∓ Level::flip_spread_ppm) / PPM`, asks minus, bids
+    /// plus, computed in decoded space and stored re-encoded). A result
+    /// the encoding cannot hold is stored as the sentinel, so the flipped
+    /// side does not rest.
+    pub flip_price: Price,
+    /// Flipped allowance in atoms, on the opposite leg from
+    /// [`Position::size`] (quote for an ask's flip, base for a bid's).
+    /// Credited with exactly the atoms inventory is credited on a fill;
+    /// **zeroed on every flush**, so a flush re-centers all flipped state
+    /// back onto the pct-of-inventory ladder.
+    pub flip_size: PodU64,
 }
 
 /// Per-vault remaining sizes, one entry per [`Level`].
@@ -482,10 +501,10 @@ impl MarketHeader {
 // again (localnet does this on every run). A deploy that must preserve
 // live accounts needs a real migration or a version gate before it
 // changes anything below.
-const _: () = assert!(core::mem::size_of::<Vault>() == 700);
+const _: () = assert!(core::mem::size_of::<Vault>() == 956);
 const _: () = assert!(core::mem::size_of::<MarketHeader>() == 261);
-const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 14);
-const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 20);
+const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 18);
+const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 32);
 
 // Field-offset guards: total-size asserts alone don't catch a reorder
 // that happens to preserve the byte count (e.g. swapping `_reserved`

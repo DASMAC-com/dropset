@@ -97,6 +97,9 @@ pub struct ReferencePrice {
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct Level {
     pub price_offset: LeU32,
+    /// Flip spread in ppm off this level's own absolute price. Zero does
+    /// not flip.
+    pub flip_spread_ppm: LeU32,
     pub size_bps: LeU16,
     /// Seconds after `reference_price.quote_unix` that this level dies.
     /// Zero is dead.
@@ -160,6 +163,12 @@ pub struct Position {
     /// zero when the level has no life in this domain. A level matches
     /// only while **both** deadlines are in the future.
     pub expires_at_slot: LeU32,
+    /// Absolute price the level's proceeds rest at once it flips; the
+    /// sentinel when the flipped side does not rest.
+    pub flip_price: LeU32,
+    /// Flipped allowance in atoms, on the leg opposite [`Position::size`].
+    /// Zeroed on every flush.
+    pub flip_size: LeU64,
 }
 
 #[repr(C)]
@@ -235,14 +244,14 @@ pub struct Vault {
 // this mirror) breaks the SDK build here rather than silently
 // misdecoding the slab.
 const _: () = assert!(core::mem::size_of::<MarketHeader>() == 261);
-const _: () = assert!(core::mem::size_of::<Vault>() == 700);
+const _: () = assert!(core::mem::size_of::<Vault>() == 956);
 // The size asserts cannot catch `seq` swapping with another `LeU64`.
 const _: () = assert!(core::mem::offset_of!(Vault, seq) == 72);
 // Sectors stay aligned across the slab: stride must be a multiple of the
 // on-chain Vault alignment (see VAULT_ALIGN / MarketView::load).
 const _: () = assert!(core::mem::size_of::<Vault>().is_multiple_of(VAULT_ALIGN));
-const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 14);
-const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 20);
+const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 18);
+const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 32);
 
 // ── Clock-datum adjacency pins (mirror the on-chain ones) ────────────
 //

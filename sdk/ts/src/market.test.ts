@@ -44,7 +44,7 @@ const DISCRIMINATOR = 8;
 const HEADER = 261;
 const LEN_AT = DISCRIMINATOR + HEADER; // 269
 const ITEMS_START = (LEN_AT + 4 + 3) & ~3; // 276
-const VAULT = 700;
+const VAULT = 956;
 
 // MarketHeader field offsets, relative to the start of the header (i.e.
 // after the discriminator). Only `head` / `activeCount` matter to the reader.
@@ -58,14 +58,14 @@ const V_REF_QUOTE_SLOT = 92;
 const V_REF_QUOTE_UNIX = 96;
 const V_BASE_ATOMS = 100;
 const V_QUOTE_ATOMS = 108;
-// Level is 14 bytes and Position 20, so each side's array is 112 / 160.
+// Level is 18 bytes and Position 32, so each side's array is 144 / 256.
 const V_PROFILE_BIDS = 156;
-const V_PROFILE_ASKS = 268;
-const V_REMAINING_BIDS = 380;
-const V_REMAINING_ASKS = 540;
-/** `Level` / `Position` strides — 14 and 20 bytes under dual-domain expiry. */
-const LEVEL = 14;
-const POSITION = 20;
+const V_PROFILE_ASKS = 300;
+const V_REMAINING_BIDS = 444;
+const V_REMAINING_ASKS = 700;
+/** `Level` / `Position` strides — 18 and 32 bytes with the flip fields. */
+const LEVEL = 18;
+const POSITION = 32;
 
 const NULL_SECTOR = 0xffff_ffff;
 
@@ -95,9 +95,10 @@ function writeProfileLevel(
   expiryOffsetSlots = NULL_SECTOR,
 ): void {
   dv.setUint32(offset, priceOffset, true);
-  dv.setUint16(offset + 4, sizeBps, true);
-  dv.setUint32(offset + 6, expiryOffsetSecs, true);
-  dv.setUint32(offset + 10, expiryOffsetSlots, true);
+  // offset + 4: `flip_spread_ppm`, left zero (the level does not flip).
+  dv.setUint16(offset + 8, sizeBps, true);
+  dv.setUint32(offset + 10, expiryOffsetSecs, true);
+  dv.setUint32(offset + 14, expiryOffsetSlots, true);
 }
 
 /** A one-vault, single-sector market. `configure` fills the vault sector. */

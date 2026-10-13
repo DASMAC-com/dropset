@@ -17,7 +17,7 @@ pub(crate) const SECTORS: u32 = 4;
 /// discriminator + `MarketHeader` + slab `len` field + `SECTORS`
 /// × `size_of::<Vault>()`. Rounded up to a constant that fits the
 /// largest test and stays on the stack comfortably.
-pub(crate) const BUF_BYTES: usize = 4096;
+pub(crate) const BUF_BYTES: usize = 8192;
 
 /// Total data-region bytes (everything after `RuntimeAccount`):
 /// `discriminator + MarketHeader + len_field + SECTORS * Vault`.
@@ -25,6 +25,10 @@ pub(crate) const BUF_BYTES: usize = 4096;
 /// header / len / alignment padding; add the 8-byte
 /// `#[account]` discriminator on top.
 pub(crate) const DATA_LEN: usize = 8 + Market::space_for(SECTORS);
+
+// A `Vault` widening outgrows the buffer at build time, not as a panic in
+// every slab test.
+const _: () = assert!(96 + DATA_LEN <= BUF_BYTES);
 
 /// Build a fresh buffer with [`SECTORS`] zeroed sectors, empty
 /// list heads, and the correct discriminator. Returns the buffer

@@ -121,6 +121,8 @@ fn level_to_relative(
     }
     Ok(Level {
         price_offset: (offset as u32).into(),
+        // A native book has no flip input yet, so its levels never flip.
+        flip_spread_ppm: 0u32.into(),
         size_bps: (size_bps as u16).into(),
         expiry_offset_secs: lvl.expiry_offset_secs.get().into(),
         expiry_offset_slots: lvl.expiry_offset_slots.get().into(),

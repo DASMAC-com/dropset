@@ -32,11 +32,12 @@ const codama = createFromRoot(rootNodeFromAnchor(idl));
 /** Levels per side of a `LiquidityProfile` — the program's `N_LEVELS`. */
 const N_LEVELS = 8;
 /**
- * On-wire width of one `Level`: `price_offset` u32, `size_bps` u16, and a
- * per-domain expiry offset each (`expiry_offset_secs` / `_slots`, u32).
- * Every field is alignment-1, so the struct is byte-packed.
+ * On-wire width of one `Level`: `price_offset` u32, `flip_spread_ppm` u32,
+ * `size_bps` u16, and a per-domain expiry offset each
+ * (`expiry_offset_secs` / `_slots`, u32). Every field is alignment-1, so
+ * the struct is byte-packed.
  */
-const LEVEL_BYTES = 4 + 2 + 4 + 4;
+const LEVEL_BYTES = 4 + 4 + 2 + 4 + 4;
 /** Serialized `LiquidityProfile`: both sides' level arrays, back to back. */
 const PROFILE_BYTES = 2 * N_LEVELS * LEVEL_BYTES;
 
@@ -84,11 +85,12 @@ codama.update(
       // LiquidityProfile the instruction expects.
       //
       // Derived here rather than written as a literal, because the value
-      // moved once already (160 → 224, when per-level expiry gained its
-      // second domain) and a stale literal here is a silent wire-format
-      // mismatch rather than a build break: 2 sides × 8 levels × a
-      // 14-byte Level (price_offset u32, size_bps u16, expiry_offset_secs
-      // u32, expiry_offset_slots u32).
+      // has moved twice already (160 → 224, when per-level expiry gained
+      // its second domain; 224 → 288, when each level gained its flip
+      // spread) and a stale literal here is a silent wire-format
+      // mismatch rather than a build break: 2 sides × 8 levels × an
+      // 18-byte Level (price_offset u32, flip_spread_ppm u32, size_bps
+      // u16, expiry_offset_secs u32, expiry_offset_slots u32).
       select: '[instructionArgumentNode]profileBytes',
       transform: (node) => ({
         ...node,
