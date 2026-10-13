@@ -1095,7 +1095,8 @@ migrations or generation inputs, and whether it spans crates.
    unconditional on a diff spanning crates or languages, where it
    earns its keep most reliably; and whenever the fan-out's own **fix
    commits** span artifact types (code, SQL, dashboard JSON, YAML,
-   prose), point it at the fix commits too — every other gate keys on
+   prose), run it **whatever the tier** and point it at the fix
+   commits too — every other gate keys on
    the original diff, and a defect a fix creates post-dates every lens
    report (`history.md` → "Cross-check value"). **Defend the
    checks-to-run list against any future trim**: most of one review's
@@ -1119,10 +1120,10 @@ migrations or generation inputs, and whether it spans crates.
      `cargo clippy --all-targets -- -D warnings` **plus** `rustdoc`
      (intra-doc links), Python `ruff check`, TS/JS `biome` / `tsc`.
      Name the hook covering **this** diff and say plainly when it
-     couldn't run; where the gate holds, **refute** an inherited
-     finding resting on such a claim rather than cold-reading a
-     transitive dependency. Hand it the same hoisted grep result set
-     the lenses got.
+     couldn't run. Where the gate holds, it must **not** cold-read a
+     transitive dependency to re-derive it, and should **refute** an
+     inherited finding resting on such a claim. Hand it the same
+     hoisted grep result set the lenses got.
    - **Adjudicate a stale-prose finding against the file as the lens
      saw it.** A fix may have landed between the two reads, so when a
      quote no longer matches, judge it against the version the lens
@@ -1173,12 +1174,15 @@ migrations or generation inputs, and whether it spans crates.
      (`search_source.py '<symbol>' --files-only`), fixed in one pass.
      Consecutive builds returning one error class at different sites
      mean the compiler is *enumerating* rather than *checking*.
-   - **Every confirming `cargo` run goes through the quiet runner**
+   - **Every inline quick-check confirming a fix goes through the
+     quiet runner** — usually `cargo` (`check`, a scoped `test`,
+     `clippy`), though the runner wraps any command
      (`python3 .claude/tools/run_quiet.py -- cargo check`, per
-     `CLAUDE.md` → "Context economy") — a **deliberate negative
-     test** included, where the failure is the point: what you want is
-     the one assertion line, not each guarded test's copy of it
-     (`history.md` → "Unwrapped cargo runs").
+     `CLAUDE.md` → "Context economy"). A **deliberate negative test**
+     proving a new guard fires is worth running, and is included: the
+     failure is the point, and what you want is the one assertion
+     line, not each guarded test's copy of it (`history.md` →
+     "Unwrapped cargo runs").
    - **Mutate files with `Edit` / `Write`, never an inline
      interpreter** (`python3 -c`). The shape cannot reduce to an
      allow-rule, so each repetition is an unfirmable prompt that no
@@ -1197,9 +1201,9 @@ migrations or generation inputs, and whether it spans crates.
    Apply step 4's fix-and-retry logic, scoped per-hook re-run
    included. The **full** `make lint` belongs to the two checkpoints
    (before committing, at the end), never to this loop. Run a fast
-   suite **whole, through the wrapper, at checkpoints only** — the
-   lever is frequency, not scope (`history.md` → "Fast-suite
-   frequency").
+   suite **whole, through the wrapper, at checkpoints rather than
+   after every edit** — the lever is frequency, not scope
+   (`history.md` → "Fast-suite frequency").
 
 1. **Regenerate committed generated artifacts
    (mirror the IDL / SDK / vectors / WASM CI gates).** CI fails the
@@ -1207,8 +1211,8 @@ migrations or generation inputs, and whether it spans crates.
    `test.yml` regenerates the **IDL**, and `sdk.yml` the **SDK
    clients**, the **conformance vectors** and the **committed WASM
    glue**, each via a `git diff --exit-code`. Refresh them here and
-   commit any diff. **Run this step again after any step-7 fix that
-   touches a generation input** — it is not one-shot (`history.md` →
+   commit any diff. **Run this step again after any step-7 / step-8
+   fix that touches a generation input** — it is not one-shot (`history.md` →
    "Stale twice").
 
    **First, the path gate.** Step 5's `runs_artifact_gates` answers
@@ -1228,19 +1232,22 @@ migrations or generation inputs, and whether it spans crates.
    inputs, so a crate the generators depend on transitively still
    trips it.
 
-   **A re-run forced by a rebase asks a narrower question** — *can
-   the base delta have staled anything?* Assert the gates once, skip
-   the rebuild and note it in the summary when either holds:
+   **A re-run forced by a rebase asks a narrower question.** The
+   first run over the author's own diff stands as above; when this
+   step re-runs only because `main` moved, the question is *can the
+   base delta have staled anything?* Assert the gates once, skip the
+   rebuild and note it in the summary when either holds:
 
-   - step 2's `rebase_overlap.py` reports `runs_artifact_gates: false`; or
-   - `review_diff.py`'s `runs_artifact_gates` is `false` **and**
-     `rebase_overlap.py`'s `base_files` shows the base delta's
-     commits carrying their **own** regenerated artifacts (they
-     merged through the queue, which regenerates them).
+   - step 2's `rebase_overlap.py` reports `runs_artifact_gates: false`
+     — the base delta touched no generation input; or
+   - `review_diff.py`'s `runs_artifact_gates` is `false` (this
+     branch touches no input) **and** `rebase_overlap.py`'s
+     `base_files` includes the regenerated artifacts alongside the
+     inputs that changed (the base's commits merged through the
+     queue, which regenerates them).
 
    The merge queue's fail-closed re-run covers the residual risk
-   (`history.md` → "Redundant rebase rebuilds"). Neither licenses a
-   skip when the branch itself touches a generation input.
+   (`history.md` → "Redundant rebase rebuilds").
 
    **Whether CI runs a gate is per-WORKFLOW, not per-diff.**
    `make idl`'s gate sits inside `test.yml`'s path-filtered job
@@ -1250,11 +1257,12 @@ migrations or generation inputs, and whether it spans crates.
    so applies to every PR (`history.md` → "Per-workflow
    re-derivation").
 
-   Otherwise: **run all four gates — even when the author says they
-   already regenerated** — since a subset spot-check has twice let a
-   stale artifact reach a required-CI failure (`history.md` →
-   "Partial regeneration"). Go in dependency order (program → IDL →
-   SDK), each through the quiet runner. **A target that appears to
+   Otherwise, when the diff *does* touch an input: **run all four
+   gates — even when the author says they already regenerated** —
+   since a subset spot-check has twice let a stale artifact reach a
+   required-CI failure (`history.md` → "Partial regeneration"). Go in
+   dependency order (program → IDL → SDK), each through the quiet
+   runner. **A target that appears to
    hang is the cargo build lock** until shown otherwise — a
    concurrent build in another worktree; the runner echoes cargo's
    `Blocking waiting for file lock …` live and flags it in its
@@ -1414,15 +1422,18 @@ migrations or generation inputs, and whether it spans crates.
 
    If it is `false`, rebase onto `origin/<base>` and *then* run the
    suites, so the expensive builds run once, against the tree that
-   will merge (`history.md` → "Suites before the rebase").
+   will merge (`history.md` → "Suites before the rebase"). Switch to
+   `--split` only when the slices need regenerating — after that
+   rebase, for a re-spawn.
 
    **Choose the targets from step 5's flags — read them, never
    re-derive them** — and record every skip with its reason in the
    summary:
 
    - **`runs_rust_suites`** mirrors `test.yml`'s `code` path filter
-     (the doc / frontend / decks / `.claude` / config surfaces
-     excluded, under `predicate-quantifier: every`) through
+     (frontend, decks, brand assets, docs, markdown, `.claude`, the
+     TS SDK and several non-test workflows excluded, under
+     `predicate-quantifier: every`) through
      `CODE_FILTER_EXCLUDES` in `review_diff.py` — change that when
      the workflow's filter changes. **`false` → skip both Rust
      targets**: CI isn't running them either. The filter is
@@ -1433,7 +1444,8 @@ migrations or generation inputs, and whether it spans crates.
      `runs_rust_suites` is `true`.** That flag fails open by design;
      this one measures whether the diff touches anything a `cargo`
      build consumes (a `.rs` file, a `Cargo.toml`, the lockfile, a
-     toolchain file, a `build.rs`, an `.s` source, a migration, a
+     toolchain file or `.cargo/config.toml`, a `build.rs`, an `.s`
+     source, a migration, a
      conformance vector, **or a fixture a Rust test compiles in with
      `include_str!`**). Mirroring buys something only when the local
      run could fail because of the diff (`history.md` → "Unreachable
@@ -1452,7 +1464,8 @@ migrations or generation inputs, and whether it spans crates.
      "Missed trigger").
    - **The CI-mirror carve-out**: when the diff is confined to
      `.github/**` and CI is already green on the head commit, treat
-     CI as the mirror and skip the local suite.
+     CI as the mirror and skip the local suite (`history.md` →
+     "Half-applied build").
    - When both flags are `true`, run both targets.
 
    Run them through the quiet runner, **`make test` first**:
@@ -1484,10 +1497,11 @@ migrations or generation inputs, and whether it spans crates.
      failure is the signal; a **lower** count means the invocation
      excluded the target, so the run is *inconclusive*. A
      feature-gated target needs `--all-features` (or the explicit
-     `--features`) — the default run is a different, empty one — and
-     a narrowed run narrows `--files` / `--test`, never the package
-     set. After adding tests, confirm `N passed` moved by the number
-     added.
+     `--features`) — the default run is a different, empty one. Take
+     the invocation CI uses; if you must narrow, narrow `--files` /
+     `--test`, never the package set. After adding tests, confirm
+     `N passed` moved by the number added. This holds for any
+     conditional compilation, not only cargo features.
    - **Expect the first fixture not to bite**; budget one rewrite per
      mutation-verified test.
    - **A mutation that passes means the TEST is wrong until proven
@@ -1507,7 +1521,8 @@ migrations or generation inputs, and whether it spans crates.
    "Forward-computed citations"; `docs/conventions/docs-and-style.md`).
 
    **When the diff adds or changes an `#[ignore]`d test, run the
-   Tests (Postgres) job's own command** — the targets above skip
+   Tests (Postgres) job's own command before pushing** — the targets
+   above skip
    ignored tests, so one can otherwise only ever fail in CI
    (`history.md` → "Ignored test reddened CI"):
 
@@ -1517,7 +1532,8 @@ migrations or generation inputs, and whether it spans crates.
 
    **One cargo target at a time per worktree** — a blocked build is
    **waited on, never raced**: two builds on one `target/` produced a
-   spurious `E0463 can't find crate for dropset_sdk` doctest failure.
+   spurious `E0463 can't find crate for dropset_sdk` doctest failure
+   (`history.md` → "Raced cargo builds").
 
    **Background the suites and wait on CI concurrently** — they test
    the same commit, so finishing them before step 18's CI wait

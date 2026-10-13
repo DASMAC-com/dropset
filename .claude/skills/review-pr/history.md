@@ -717,8 +717,9 @@ to move and by how much.
   came from following a lens's unresolved-check item rather than its
   findings. Ruled on 2026-10-13 that the defense stays resident as one
   line while this figure lives here.
-- **Cross-check cap.** The cross-check overran its stated cap (15 calls
-  against 12) while being the highest-value pass. Another run's
+- **Cross-check cap.** In that same review the cross-check overran its
+  stated cap (15 calls against 12) while being the highest-value pass.
+  One run's
   cross-check caught that a first-round fix had only half-closed its
   own problem, and refuted a lens's test premise by reading `sqlx`'s
   source. Capping it like a primary lens saves a little on the one pass
@@ -842,11 +843,12 @@ to move and by how much.
   source. ENG-1339 landed the same class of coupling while that review
   ran. The queue stays the enforcing gate; the flag only moves the
   discovery earlier.
-- **Missed trigger.** A session skipped a cheap suite its diff could
-  break: it edited `test.yml`'s `code` filter, which `review_diff.py`
-  mirrors under a tools-test parity assertion, but step 4's trigger for
-  that suite enumerates the tools and Grafana trees and the diff
-  touched neither. Cost: a full CI round trip and a re-push.
+- **Missed trigger.** The same session as the 45-file misfire skipped
+  a cheap suite its diff could break: it edited `test.yml`'s `code`
+  filter, which `review_diff.py` mirrors under a tools-test parity
+  assertion, but step 4's trigger for that suite enumerates the tools
+  and Grafana trees and the diff touched neither. Cost: a full CI round
+  trip and a re-push.
 - **Teardown-feature build.** The 15-test `Custom(6043)` failure cost
   one run a confused diagnosis plus a full `make program` rebuild. The
   root cause is the documented anchor-v2 limitation: instructions
@@ -858,7 +860,9 @@ to move and by how much.
   `cargo test -p dropset-feeds` silently skips all 122 http-gated venue
   adapter
   tests, and a crate-scoped clippy run reported five false dead-code
-  errors — the narrowed-package hazard on the test axis. Two new tests
+  errors — the narrowed-package hazard on the test axis. Checking the
+  test count is the assertion that turns a four-call diagnosis into
+  one. Two new tests
   passed with the code neutered on their first fixture: one appended
   sibling items carrying no query, so with the branch disabled they
   were read as rules and silently dropped; the other's prose lines
@@ -886,11 +890,20 @@ to move and by how much.
   One session added an `#[ignore]`d test, passed locally, and reddened
   CI at the cost of a full ~13-minute round trip.
 - **Half-applied build.** One measured session overlapped the local
-  suites with CI for zero extra wall-clock, and `wait_for_checks`
-  returned `elapsed_seconds: 0` because the draft PR's CI had already
-  settled. Another launched the suite as soon as it reached this step,
-  applied lens fixes while it ran, and compiled a half-applied edit —
-  the new field's type landed but not its call site — into a
-  trait-bound error that read as a real defect: a wasted full-suite
-  cycle, a misdiagnosis beat, and cargo file-lock contention with the
-  foreground runs.
+  suites with CI for zero extra wall-clock. A later run launched the
+  suite as soon as it reached this step, applied lens fixes while it
+  ran, and compiled a half-applied edit — the new field's type landed
+  but not its call site — into a trait-bound error that read as a real
+  defect: a wasted full-suite cycle, a misdiagnosis beat, and cargo
+  file-lock contention with the foreground runs. Two more notes came
+  from that same run. `wait_for_checks` returned `elapsed_seconds: 0`,
+  because the draft PR's CI had already settled at push time. And
+  `runs_rust_suites` read `true` for a diff of three files under
+  `.github` with no Rust at all — correct as a fail-open default, but the
+  local suite was then mirroring a CI run on the same commit that the
+  diff could not influence, which is the origin of the CI-mirror
+  carve-out.
+- **Raced cargo builds.** Launching a second `make test` while the
+  first sat on the cargo package-cache lock put two builds on one
+  `target/`, and produced a spurious `E0463` doctest failure plus a
+  wasted diagnosis and a re-run.
