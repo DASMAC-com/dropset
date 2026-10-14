@@ -651,6 +651,376 @@ class ModeSelectionTests(unittest.TestCase):
                 self.assertEqual(code, 1)
 
 
+ENQUEUED = "2026-10-13T12:00:00Z"
+ENQUEUED_EPOCH = wfc._parse_time(ENQUEUED)
+
+
+def snap(
+    gql="OPEN",
+    merged=False,
+    entry=None,
+    auto=None,
+    view="OPEN",
+    merged_at=None,
+    runs=(),
+):
+    return {
+        "gql_state": gql,
+        "gql_merged": merged,
+        "entry": entry,
+        "auto": auto,
+        "view_state": view,
+        "view_merged_at": merged_at,
+        "queue_runs": list(runs),
+    }
+
+
+def queue_run(
+    conclusion="",
+    status="completed",
+    created=ENQUEUED,
+    rid="7",
+    branch="gh-readonly-queue/main/pr-285-new",
+):
+    return {
+        "run_id": rid,
+        "head_branch": branch,
+        "name": "Tests",
+        "status": status,
+        "conclusion": conclusion,
+        "created_at": created,
+        "url": "",
+    }
+
+
+QUEUED = {"state": "QUEUED", "enqueuedAt": ENQUEUED}
+
+
+class QueueWatchTests(unittest.TestCase):
+    """``--queue``: one backgrounded command that exits only on a terminal
+    outcome, with a MERGED from either state source authoritative."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        real = wfc.queue_log_path_for
+        wfc.queue_log_path_for = lambda pr: Path(self.tmp.name) / f"q-{pr}.log"
+        self.addCleanup(setattr, wfc, "queue_log_path_for", real)
+
+    def _watch(self, snaps, interval=60, timeout=7200, since=None):
+        """Feed ``snaps`` one per poll (the last repeats); time advances only
+        through ``sleep``, so elapsed seconds are exact."""
+        now = [0.0]
+        calls = [0]
+
+        def probe(pr, repo):
+            item = snaps[min(calls[0], len(snaps) - 1)]
+            calls[0] += 1
+            if isinstance(item, Exception):
+                raise item
+            return json.loads(json.dumps(item))
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        return wfc.wait_queue(
+            285,
+            interval=interval,
+            timeout=timeout,
+            probe=probe,
+            sleep=sleep,
+            clock=lambda: now[0],
+            wall=lambda: ENQUEUED_EPOCH + now[0],
+            since=since,
+        )
+
+    def test_stays_silent_while_queued_then_reports_the_merge(self):
+        v = self._watch([snap(entry=QUEUED)] * 5 + [snap(gql="MERGED", merged=True)])
+        self.assertEqual(v["conclusion"], "merged")
+        self.assertTrue(v["settled"])
+        self.assertEqual(v["polls"], 6)
+        self.assertTrue(v["seen_queue_entry"])
+
+    def test_a_stale_entry_does_not_outrank_a_merge_on_the_other_source(self):
+        """The PR #420 shape: GraphQL still AWAITING_CHECKS, gh pr view MERGED."""
+        stale = {"state": "AWAITING_CHECKS", "enqueuedAt": ENQUEUED}
+        v = self._watch([snap(entry=stale, view="MERGED", merged_at=ENQUEUED)])
+        self.assertEqual(v["conclusion"], "merged")
+        self.assertEqual(v["polls"], 1)
+
+    def test_a_graphql_merge_wins_over_a_stale_view(self):
+        """The PR #424 shape: the opposite direction of staleness."""
+        v = self._watch([snap(gql="MERGED", merged=True, view="OPEN")])
+        self.assertEqual(v["conclusion"], "merged")
+
+    def test_a_failed_queue_run_dequeues_after_confirmation(self):
+        gone = snap(runs=[queue_run("failure")])
+        v = self._watch([snap(entry=QUEUED), gone, gone])
+        self.assertEqual(v["conclusion"], "dequeued")
+        self.assertEqual(v["polls"], 3)
+        self.assertEqual([r["run_id"] for r in v["failing_runs"]], ["7"])
+
+    def test_one_stale_read_cannot_turn_a_merge_into_a_dequeue(self):
+        gone = snap(runs=[queue_run("failure")])
+        v = self._watch([snap(entry=QUEUED), gone, snap(gql="MERGED", merged=True)])
+        self.assertEqual(v["conclusion"], "merged")
+
+    def test_an_unregistered_enqueue_reports_not_queued(self):
+        """No entry and no queue run ever: the enqueue did not take."""
+        v = self._watch([snap()])
+        self.assertEqual(v["conclusion"], "not_queued")
+        self.assertFalse(v["seen_queue_entry"])
+        self.assertGreaterEqual(v["elapsed_seconds"], wfc.NOT_QUEUED_AFTER_SECONDS)
+
+    def test_the_registration_window_is_not_a_dequeue(self):
+        """All-null for the first few seconds, then QUEUED, then merged."""
+        v = self._watch([snap(), snap(entry=QUEUED), snap(gql="MERGED", merged=True)])
+        self.assertEqual(v["conclusion"], "merged")
+
+    def test_an_unexplained_disappearance_waits_out_the_grace(self):
+        """Entry gone, every queue run green: maybe a stale merge, so wait."""
+        v = self._watch([snap(entry=QUEUED), snap(runs=[queue_run("success")])])
+        self.assertEqual(v["conclusion"], "dequeued")
+        self.assertEqual(v["failing_runs"], [])
+        self.assertGreaterEqual(v["elapsed_seconds"], wfc.AMBIGUOUS_GRACE_SECONDS)
+
+    def test_an_old_failed_run_from_a_prior_enqueue_is_ignored(self):
+        old = queue_run("failure", created="2026-10-13T11:00:00Z", rid="1")
+        v = self._watch([snap(entry=QUEUED, runs=[old])] * 3 + [snap(merged=True)])
+        self.assertEqual(v["conclusion"], "merged")
+        self.assertEqual(v["queue_runs"], [])
+
+    def test_closed_without_merge_is_not_a_merge(self):
+        v = self._watch([snap(entry=QUEUED), snap(gql="CLOSED", view="CLOSED")])
+        self.assertEqual(v["conclusion"], "closed")
+
+    def test_a_persistent_probe_failure_gives_up_loudly(self):
+        v = self._watch([wfc.WaitForChecksError("gh down")])
+        self.assertEqual(v["conclusion"], "probe_failed")
+        self.assertFalse(v["settled"])
+        self.assertEqual(v["polls"], wfc.MAX_PROBE_ERRORS)
+        self.assertIn("gh down", v["error"])
+
+    def test_a_transient_probe_failure_is_survived(self):
+        v = self._watch(
+            [wfc.WaitForChecksError("blip"), snap(entry=QUEUED), snap(merged=True)]
+        )
+        self.assertEqual(v["conclusion"], "merged")
+
+    def test_a_queue_that_never_resolves_times_out(self):
+        v = self._watch([snap(entry=QUEUED)], interval=60, timeout=600)
+        self.assertEqual(v["conclusion"], "timeout")
+        self.assertFalse(v["settled"])
+        self.assertEqual(v["elapsed_seconds"], 600)
+        self.assertEqual(v["polls"], 11)
+
+    def test_classic_auto_merge_keeps_the_watch_waiting(self):
+        """No queue on the repo: autoMergeRequest alone is the queued signal."""
+        auto = {"enabledAt": ENQUEUED}
+        v = self._watch([snap(auto=auto)] * 8 + [snap(merged=True)])
+        self.assertEqual(v["conclusion"], "merged")
+        self.assertTrue(v["seen_queue_entry"])
+
+    def test_auto_merge_never_outranks_a_failed_queue_run(self):
+        auto = {"enabledAt": ENQUEUED}
+        gone = snap(auto=auto, runs=[queue_run("failure")])
+        v = self._watch([snap(entry=QUEUED), gone, gone])
+        self.assertEqual(v["conclusion"], "dequeued")
+
+    def test_a_failure_on_an_older_queue_sha_is_not_a_dequeue(self):
+        """The queue rebuilt the group: the old SHA's cancelled run is noise."""
+        old = queue_run(
+            "cancelled", rid="1", branch="gh-readonly-queue/main/pr-285-old"
+        )
+        new = queue_run(
+            "success",
+            rid="2",
+            created="2026-10-13T12:05:00Z",
+            branch="gh-readonly-queue/main/pr-285-new",
+        )
+        stale = snap(runs=[old, new])
+        v = self._watch([snap(entry=QUEUED), stale, stale, snap(merged=True)])
+        self.assertEqual(v["conclusion"], "merged")
+
+    def test_a_probe_error_breaks_the_dequeue_confirmation(self):
+        gone = snap(runs=[queue_run("failure")])
+        blip = wfc.WaitForChecksError("blip")
+        # Without the reset, the second `gone` would be streak 2 → dequeued.
+        v = self._watch([snap(entry=QUEUED), gone, blip, gone, snap(merged=True)])
+        self.assertEqual(v["conclusion"], "merged")
+
+    def test_since_anchors_a_fresh_call_to_an_old_dequeue(self):
+        """A cron firing: no entry seen this call, the failed run 1000 s old."""
+        old = "2026-10-13T11:43:20Z"  # ENQUEUED - 1000 s
+        gone = snap(runs=[queue_run("failure", created=old)])
+        bare = self._watch([gone] * 6)
+        self.assertEqual(bare["conclusion"], "not_queued")
+        anchored = self._watch([gone] * 6, since="2026-10-13T11:40:00Z")
+        self.assertEqual(anchored["conclusion"], "dequeued")
+
+    def test_a_failed_final_poll_keeps_the_last_good_snapshot(self):
+        blip = wfc.WaitForChecksError("blip")
+        v = self._watch([snap(entry=QUEUED), blip], interval=60, timeout=60)
+        self.assertEqual(v["conclusion"], "timeout")
+        self.assertEqual(v["last"]["entry_state"], "QUEUED")
+
+    def test_a_timeout_reached_through_probe_errors_says_so(self):
+        blip = wfc.WaitForChecksError("blip")
+        v = self._watch([blip, snap(entry=QUEUED)] * 10, interval=60, timeout=120)
+        self.assertEqual(v["conclusion"], "timeout")
+        self.assertIn("blip", v["error"])
+
+    def test_the_run_window_floor_applies_without_an_anchor(self):
+        """No entry seen yet: a failure older than the window is ignored."""
+        ancient = queue_run("failure", created="2026-10-13T11:00:00Z")
+        v = self._watch(
+            [snap(runs=[ancient])] * 2 + [snap(entry=QUEUED), snap(merged=True)]
+        )
+        self.assertEqual(v["conclusion"], "merged")
+
+    def test_the_log_is_one_line_per_poll(self):
+        v = self._watch([snap(entry=QUEUED)] * 3 + [snap(merged=True)])
+        lines = Path(v["log_path"]).read_text().splitlines()
+        self.assertEqual(len(lines), 4)
+        self.assertEqual(json.loads(lines[0])["entry"], "QUEUED")
+
+
+class QueueProbeTests(unittest.TestCase):
+    """``probe_queue`` keeps only this PR's queue-branch runs."""
+
+    def test_filters_runs_to_this_prs_queue_branch(self):
+        replies = [
+            json.dumps(
+                {
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "state": "OPEN",
+                                "merged": False,
+                                "mergeQueueEntry": QUEUED,
+                                "autoMergeRequest": None,
+                            }
+                        }
+                    }
+                }
+            ),
+            json.dumps({"state": "OPEN", "mergedAt": None}),
+            json.dumps(
+                [
+                    {
+                        "databaseId": 1,
+                        "headBranch": "gh-readonly-queue/main/pr-285-abc",
+                    },
+                    {
+                        "databaseId": 2,
+                        "headBranch": "gh-readonly-queue/main/pr-2850-abc",
+                    },
+                    {"databaseId": 3, "headBranch": "eng-285"},
+                ]
+            ),
+        ]
+        seen = []
+        real = wfc._gh
+
+        def fake(args):
+            seen.append(args)
+            return 0, replies[len(seen) - 1], ""
+
+        wfc._gh = fake
+        try:
+            got = wfc.probe_queue(285, wfc.DEFAULT_REPO)
+        finally:
+            wfc._gh = real
+        self.assertEqual([r["run_id"] for r in got["queue_runs"]], ["1"])
+        self.assertEqual(got["entry"]["state"], "QUEUED")
+        self.assertIn("state,mergedAt", seen[1])
+        self.assertIn("merge_group", seen[2])
+
+    def test_a_null_pull_request_is_a_probe_error_not_a_crash(self):
+        reply = json.dumps({"data": {"repository": {"pullRequest": None}}})
+        real = wfc._gh
+        wfc._gh = lambda args: (0, reply, "")
+        try:
+            with self.assertRaises(wfc.WaitForChecksError):
+                wfc.probe_queue(285, wfc.DEFAULT_REPO)
+        finally:
+            wfc._gh = real
+
+    def test_a_failed_read_raises(self):
+        real = wfc._gh
+        wfc._gh = lambda args: (1, "", "HTTP 502")
+        try:
+            with self.assertRaises(wfc.WaitForChecksError):
+                wfc.probe_queue(285, wfc.DEFAULT_REPO)
+        finally:
+            wfc._gh = real
+
+
+class QueueModeCliTests(unittest.TestCase):
+    def _queue_mode(self, conclusion, extra=()):
+        seen = {}
+        real = wfc.wait_queue
+
+        def stub(pr, repo=None, interval=None, timeout=None, since=None):
+            seen.update(
+                pr=pr, repo=repo, interval=interval, timeout=timeout, since=since
+            )
+            return {"conclusion": conclusion, "pr": pr}
+
+        wfc.wait_queue = stub
+        try:
+            with redirect_stdout(io.StringIO()):
+                code = wfc.run(["wait_for_checks.py", "--queue", "285", *extra])
+        finally:
+            wfc.wait_queue = real
+        return code, seen
+
+    def test_queue_mode_uses_its_own_pacing_defaults(self):
+        code, seen = self._queue_mode("merged")
+        self.assertEqual(code, 0)
+        self.assertEqual(seen["pr"], 285)
+        self.assertEqual(seen["interval"], wfc.QUEUE_INTERVAL)
+        self.assertEqual(seen["timeout"], wfc.QUEUE_TIMEOUT)
+
+    def test_since_is_passed_through_and_validated(self):
+        _, seen = self._queue_mode("merged", ["--since", ENQUEUED])
+        self.assertEqual(seen["since"], ENQUEUED)
+        for argv in (
+            ["wait_for_checks.py", "--queue", "285", "--since", "yesterday"],
+            ["wait_for_checks.py", "--pr", "285", "--since", ENQUEUED],
+        ):
+            with self.subTest(argv=argv):
+                with self.assertRaises(wfc.WaitForChecksError):
+                    with redirect_stdout(io.StringIO()):
+                        wfc.run(argv)
+
+    def test_explicit_pacing_is_honored(self):
+        _, seen = self._queue_mode("merged", ["--interval", "30", "--timeout", "900"])
+        self.assertEqual((seen["interval"], seen["timeout"]), (30, 900))
+
+    def test_only_a_merge_exits_zero(self):
+        for conclusion in (
+            "dequeued",
+            "closed",
+            "not_queued",
+            "timeout",
+            "probe_failed",
+        ):
+            with self.subTest(conclusion=conclusion):
+                code, _ = self._queue_mode(conclusion)
+                self.assertEqual(code, 1)
+
+    def test_queue_combined_with_another_mode_is_refused(self):
+        with self.assertRaises(wfc.WaitForChecksError):
+            with redirect_stdout(io.StringIO()):
+                wfc.run(["wait_for_checks.py", "--queue", "285", "--pr", "285"])
+
+    def test_no_watch_is_refused_with_queue(self):
+        with self.assertRaises(wfc.WaitForChecksError):
+            with redirect_stdout(io.StringIO()):
+                wfc.run(["wait_for_checks.py", "--queue", "285", "--no-watch"])
+
+
 class ConflictingPrTests(unittest.TestCase):
     """`none` is ambiguous, and one of its two meanings is blocking.
 

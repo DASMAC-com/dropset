@@ -53,10 +53,12 @@ which drifted behind it twice:
   lateness is possible, never a false positive. Conclude "still
   queued" or "dequeued" only when **both** agree the PR is not merged;
   when neither says merged and the queue entry looks impossible for
-  the run state, wait and re-probe. `review-pr`'s outcome step carries
-  the per-PR evidence, and the invariant governs every branch there,
-  including the `AWAITING_CHECKS` one that otherwise polls a merged PR
-  indefinitely.
+  the run state, wait and re-probe. All three reads — the GraphQL
+  probe, the state read and the queue-branch `gh run list` — now run
+  inside `wait_for_checks.py --queue`, which applies the invariant on
+  every poll, including the `AWAITING_CHECKS` one that otherwise polls
+  a merged PR indefinitely; `review-pr`'s history ledger carries the
+  per-PR evidence.
 
 - **The CI-wait and PR-state reads** — `gh pr checks <number>` for the
   CI-wait poll, and `gh pr view <number> --json <fields>` for the

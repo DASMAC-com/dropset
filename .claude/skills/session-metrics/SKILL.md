@@ -1,6 +1,6 @@
 ---
 name: session-metrics
-description: Use at the end of a session (the `review-pr` handoff offers it), or standalone for any session id, to see where its tokens went and recommend concrete trims. Drives the committed `session_metrics.py` tool (`make session-metrics SESSION=<uuid>`), which ranks the costliest tools, largest results, sub-agent rollup, and repeated command shapes worth hardening without loading the transcript into context. Files each trim lever as its own parked Linear issue under the `Trim levers` milestone through the zero-echo `trim_levers.py` writer, appending evidence to a lever that already exists; `trim-context` folds them later.
+description: Use at the end of a session (`review-pr` runs it unprompted before its close), or standalone for any session id, to see where its tokens went and recommend concrete trims. Drives the committed `session_metrics.py` tool (`make session-metrics SESSION=<uuid>`), which ranks the costliest tools, largest results, sub-agent rollup, and repeated command shapes worth hardening without loading the transcript into context. Files each trim lever as its own parked Linear issue under the `Trim levers` milestone through the zero-echo `trim_levers.py` writer, appending evidence to a lever that already exists; `trim-context` folds them later.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -446,11 +446,10 @@ skipped because it matched a closed (rejected) one.
   its recommendations imply are folded — propose-only — by
   `trim-context` (run on its own or by `housekeeping`) and
   applied later by a human.
-- **Runs standalone or at handoff.** `review-pr` offers it at
-  its closing gate (recommended, via `AskUserQuestion`) — where
-  it is now the last interactive step — but it runs just as well
-  invoked by hand for any session id whose transcript is still
-  on disk.
+- **Runs standalone or at handoff.** `review-pr` runs it
+  unprompted, once, immediately before its close question after a
+  merge — no approval asked — but it runs just as well invoked by
+  hand for any session id whose transcript is still on disk.
 - **Approximate by design.** Result token counts are
   bytes ÷ 4 — adequate for *ranking* sinks, which is the
   decision the recommendations turn on. Treat the numbers as
