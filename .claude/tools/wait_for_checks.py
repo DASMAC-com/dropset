@@ -504,27 +504,38 @@ def probe_queue(pr: int, repo: str) -> dict:
         node = gql["data"]["repository"]["pullRequest"]
     except (KeyError, TypeError) as exc:
         raise WaitForChecksError("queue graphql probe returned no PR") from exc
+    if not isinstance(node, dict):
+        raise WaitForChecksError("queue graphql probe returned no PR")
     view = _gh_json(
         ["pr", "view", str(pr), "--repo", repo, "--json", "state,mergedAt"],
         "gh pr view",
     )
+    if not isinstance(view, dict):
+        raise WaitForChecksError("gh pr view did not return an object")
+    # `--event merge_group` narrows server-side, so the limit spans queue runs
+    # only rather than every push on a busy repo.
     runs = _gh_json(
         [
             "run",
             "list",
             "--repo",
             repo,
+            "--event",
+            "merge_group",
             "--limit",
-            "50",
+            "100",
             "--json",
             "databaseId,headBranch,name,status,conclusion,createdAt,url",
         ],
         "gh run list",
     )
+    if not isinstance(runs, list):
+        raise WaitForChecksError("gh run list did not return a list")
     marker = f"/pr-{pr}-"
     queue_runs = [
         {
             "run_id": str(r.get("databaseId", "")),
+            "head_branch": str(r.get("headBranch", "")),
             "name": r.get("name", ""),
             "status": r.get("status", ""),
             "conclusion": r.get("conclusion", ""),
@@ -545,6 +556,26 @@ def probe_queue(pr: int, repo: str) -> dict:
         "view_merged_at": view.get("mergedAt"),
         "queue_runs": queue_runs,
     }
+
+
+def _failing_on_latest(runs: list[dict]) -> list[dict]:
+    """Failed runs on this PR's NEWEST queue branch only.
+
+    The queue rebuilds a group on a new SHA and cancels the old group's runs,
+    so a failure or cancellation on an older ``pr-<n>-<sha>`` branch is no
+    evidence about the current entry — counting it once could turn a real
+    merge, read stale by both sources, into a dequeue.
+    """
+    if not runs:
+        return []
+    latest = max(runs, key=lambda r: _parse_time(r.get("created_at")) or 0.0)
+    branch = latest.get("head_branch")
+    return [
+        r
+        for r in runs
+        if r.get("head_branch") == branch
+        and r.get("conclusion") in FAILED_RUN_CONCLUSIONS
+    ]
 
 
 def wait_queue(
@@ -599,6 +630,8 @@ def wait_queue(
                 if probe_errors >= MAX_PROBE_ERRORS:
                     conclusion = "probe_failed"
                     break
+                # An unread poll breaks the "consecutive" in the confirmation.
+                dequeue_streak = 0
                 snap = {}
 
             if snap:
@@ -616,9 +649,7 @@ def wait_queue(
                     if (_parse_time(r.get("created_at")) or floor) >= floor
                 ]
                 snap["queue_runs"] = runs
-                failing = [
-                    r for r in runs if r.get("conclusion") in FAILED_RUN_CONCLUSIONS
-                ]
+                failing = _failing_on_latest(runs)
                 fh.write(
                     json.dumps(
                         {
@@ -646,14 +677,16 @@ def wait_queue(
                 if "CLOSED" in (snap.get("gql_state"), snap.get("view_state")):
                     conclusion = "closed"
                     break
-                if entry or snap.get("auto"):
+                # `autoMergeRequest` keeps classic auto-merge (no queue, so no
+                # queue runs) waiting, but never outranks a failed queue run.
+                if entry or (snap.get("auto") and not failing):
                     seen_entry = True
                     null_since = None
                     dequeue_streak = 0
                 else:
                     if null_since is None:
                         null_since = now
-                    if failing and (seen_entry or runs):
+                    if failing:
                         dequeue_streak += 1
                         if dequeue_streak >= DEQUEUE_CONFIRM_POLLS:
                             conclusion = "dequeued"
@@ -689,10 +722,10 @@ def wait_queue(
             "view_merged_at": snap.get("view_merged_at"),
         },
         "queue_runs": runs,
-        "failing_runs": [
-            r for r in runs if r.get("conclusion") in FAILED_RUN_CONCLUSIONS
-        ],
-        "error": error if conclusion == "probe_failed" else None,
+        "failing_runs": _failing_on_latest(runs),
+        # The last probe error, whatever the conclusion: a timeout reached
+        # through failed probes must not read as a quiet queue.
+        "error": error,
         "log_path": str(log),
     }
 

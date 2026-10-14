@@ -2040,7 +2040,10 @@ migrations or generation inputs, and whether it spans crates.
    task. **No approval and no question**; the enqueue-time "shall I
    file session metrics?" ask is retired (`history.md` → "Metrics
    ask retired"). If the PR is taken back out of the queue, nothing
-   files — the capture waits for the next close attempt.
+   files — the capture waits for the next close attempt. On every path
+   that ends without a merge (a declined enqueue, a `closed` PR, a
+   dequeue left for the user), say in the report that session metrics
+   were **not** captured this run.
 
    Invoke `/session-metrics`. It derives the session id from the
    scratchpad path, ranks the run's sinks and hardening candidates in
@@ -2086,18 +2089,24 @@ migrations or generation inputs, and whether it spans crates.
    while queued, and exits 0 only on `merged`. It owns the reasoning
    this step used to spell out
    (`docs/conventions/github-mcp.md` → "The merge-queue handoff"):
-   key on `mergeQueueEntry`, never `autoMergeRequest`; **a terminal
-   `MERGED` from either source is authoritative**, and nothing
-   concludes "dequeued" until both agree the PR is not merged; an
-   all-null probe is the registration window **or** a removal, and the
-   queue-branch runs tell them apart. Say once that the PR is queued,
-   then stay silent until the exit. Where a background command is unavailable,
-   fall back to a session-scoped cron running the same command about
-   every 5 minutes with a short `--timeout`, deleting itself on a
-   terminal verdict; if the classifier denies the cron, ask the
-   operator to approve it in this tab — never silently hand over the
-   wait. A resumed session re-runs the command; a fresh poll returns
-   the current snapshot.
+   key on `mergeQueueEntry` (`autoMergeRequest` only keeps a classic
+   auto-merge repo waiting, never outranking a failed queue run);
+   **a terminal `MERGED` from either source is authoritative**, and
+   nothing concludes "dequeued" until both agree the PR is not merged
+   (`history.md` → "The two sources disagree both ways"); an all-null
+   probe is the registration window **or** a removal, and the newest
+   queue SHA's runs tell them apart. Say once that the PR is queued,
+   then stay silent until the exit.
+
+   Where a background command is unavailable, fall back to a
+   session-scoped cron running the same command about every 12 minutes
+   with `--timeout 660` — above the tool's 600-second grace, so every
+   verdict is reachable within one firing — deleting itself on a
+   terminal verdict. A `timeout` from a cron firing is silent and the
+   cron stays. If the classifier denies the cron, ask the operator to
+   approve it in this tab; never silently hand over the wait. A resumed
+   session re-runs the command, and a fresh poll returns the current
+   snapshot.
 
    **The terminal-MERGED invariant also binds you**: if your own read
    says `MERGED`, never act on an older non-merged verdict, and never
@@ -2111,6 +2120,7 @@ migrations or generation inputs, and whether it spans crates.
 
    - **`closed`** → closed **without** merging: abandoned, not landed.
      Report it and skip the tail; the worktree may still be wanted.
+     The close is `/wrap`'s, which owns closed-not-merged endings.
 
    - **`not_queued`** → no entry and no queue run ever appeared: the
      enqueue did not take. Apply step 20's already-clean remedy and
@@ -2146,9 +2156,9 @@ migrations or generation inputs, and whether it spans crates.
      the tool's whole grace window — check the PR's timeline before
      re-enqueueing.
 
-   - **`timeout`** / **`probe_failed`** → report the `last` snapshot
-     (and `error`), then restart the watch; never report it as
-     queued-and-fine.
+   - **`timeout`** / **`probe_failed`** from the backgrounded watch →
+     report the `last` snapshot (and `error`), then restart the watch;
+     never report it as queued-and-fine.
 
    **The post-merge tail, on `merged` only — one batched sequence with
    a single operator touch at the very end.** Work it as a checklist;
@@ -2197,7 +2207,8 @@ migrations or generation inputs, and whether it spans crates.
      file written into the repo), nothing else at the end of a review
      reads tree state, and the evidence is deleted with the worktree.
      After `make clean` on purpose, since it can touch the tree.
-     Surface anything modified and decide where it goes.
+     Surface anything modified and decide where it goes; never report
+     the run complete with a dirty tree.
 
    - [ ] **Session metrics** — step 21, unprompted.
 
