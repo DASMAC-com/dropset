@@ -2813,7 +2813,8 @@ mod tests {
         assert!(fx_store::is_tape_source(fx_store::SOURCE_TWELVEDATA));
     }
 
-    /// Exactly the three MVP pairs demand a live tape. The rest must not, or
+    /// Exactly the MVP pairs demand a live tape — the three first-fill pairs
+    /// plus TGBP, the first mainnet market. The rest must not, or
     /// `make demo` stops resting books on the thin-roster pairs — which have
     /// no intraday source and never will.
     #[test]
@@ -2823,7 +2824,7 @@ mod tests {
             .filter(|m| m.requires_live_tape)
             .map(|m| m.symbol)
             .collect();
-        assert_eq!(required, ["EURC", "AUDD", "CADC"]);
+        assert_eq!(required, ["EURC", "TGBP", "AUDD", "CADC"]);
     }
 
     /// The store's rows reach the FX leg, and the leg is now six candidates

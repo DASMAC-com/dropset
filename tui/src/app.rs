@@ -173,6 +173,11 @@ pub struct App {
     /// accounts are shown — the "which bot's book am I looking at" selection,
     /// moved with `[` / `]`.
     pub(crate) selected_market: usize,
+    /// Whether the launch default ([`market::DEFAULT_MARKET_SYMBOL`]) is still
+    /// to be selected. Held until that market is discovered — a bootstrap
+    /// brings the markets up one at a time — and dropped the moment the
+    /// operator moves the selection, so it never overrides a deliberate pick.
+    default_selection_pending: bool,
     /// Whole units of the input token a probe swap spends — quote units on a
     /// Buy, base units on a Sell — editable by the taker via the amount input
     /// (`a`). Seeded from [`action::DEFAULT_PROBE_UNITS`].
@@ -286,6 +291,7 @@ impl App {
             roster_leader,
             identity,
             selected_market: 0,
+            default_selection_pending: true,
             swap_units: action::DEFAULT_PROBE_UNITS,
             swap_side: SwapSide::Buy,
             amount_input: None,
@@ -626,6 +632,7 @@ impl App {
         }
         let cur = self.selected_market.min(n - 1) as isize;
         self.selected_market = (cur + delta).rem_euclid(n as isize) as usize;
+        self.default_selection_pending = false;
         self.dirty = true;
     }
 
@@ -1264,6 +1271,22 @@ impl App {
             }
             self.last_refresh = Instant::now();
             self.dirty = false;
+            // After the poll, not before: the participant holdings it read
+            // belong to the old index, so a jump forces one more poll for the
+            // default market's own.
+            if self.default_selection_pending {
+                if let Some(idx) = accounts::market_index_for_symbol(
+                    &self.chain.markets,
+                    &self.mint_symbols,
+                    market::DEFAULT_MARKET_SYMBOL,
+                ) {
+                    self.default_selection_pending = false;
+                    if idx != self.selected_market {
+                        self.selected_market = idx;
+                        self.dirty = true;
+                    }
+                }
+            }
         }
     }
 

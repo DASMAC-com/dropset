@@ -176,7 +176,7 @@ fn the_parse_found_the_makers_roster() {
 /// Every estimator market appears in the maker's roster and agrees on all three
 /// overlapping fields.
 ///
-/// The estimator's roster is deliberately a **subset** — it publishes the three
+/// The estimator's roster is deliberately a **subset** — it publishes the four
 /// MVP pairs, while the maker quotes nine — so this iterates the estimator's and
 /// looks each up, rather than comparing the two sets for equality. A market the
 /// maker quotes and the estimator does not publish is the expected state today.

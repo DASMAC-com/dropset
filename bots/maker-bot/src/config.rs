@@ -1,3 +1,4 @@
+// cspell:word TGBPUSD
 //! Bot configuration — the knobs `docs/market-making.md` pins down.
 //!
 //! Defaults encode the spec verbatim: the tiered price feed and poll
@@ -87,7 +88,7 @@ pub struct MarketConfig {
     pub pyth_invert: bool,
     /// Coinbase product id for the token against USDC — the **primary** basis
     /// leg, in exactly the engine's units. `None` for a token Coinbase doesn't
-    /// list, which is all of the roster but EURC.
+    /// list, which is all of the roster but EURC and TGBP.
     pub coinbase_product: Option<&'static str>,
     /// Kraken pair name for the token against USD — the basis-leg secondary.
     /// `None` for a token Kraken doesn't list (every exotic).
@@ -161,8 +162,8 @@ pub struct MarketConfig {
 /// therefore quotes off the FX anchor with `pinned_basis`, reported as
 /// `Health::Unverified`.
 ///
-/// Note this is a symptom of a wider shape, not a quirk of MXNe: only EURC
-/// reaches a CEX, so for the other five index-priced markets the index tier
+/// Note this is a symptom of a wider shape, not a quirk of MXNe: only EURC and
+/// TGBP reach a CEX, so for the other four index-priced markets the index tier
 /// *is* the basis leg, unchecked by any second source. MXNe is merely the one
 /// thin enough for that to become visible. Corroborating across sources —
 /// median, dispersion
@@ -175,13 +176,18 @@ pub struct MarketConfig {
 /// price reads are not). Only EUR, GBP and AUD are published as `<ccy>/USD`;
 /// the rest are `USD/<ccy>` and carry `pyth_invert: true`.
 ///
-/// **Only EURC reaches a CEX as a wired basis leg.** Coinbase lists
-/// `EURC-USDC` and Kraken lists `EURC/USD`, so EURC composes on an observed
-/// basis; five of the others reach no CEX at all, so their basis leg has no
-/// primary tier and the CoinGecko / CoinMarketCap fallbacks carry it. That
-/// asymmetry is the roster's, not a gap in the wiring — but it does leave five
-/// markets resting their basis on one uncorroborated index reading, and three
-/// (MXNe, AUDD, CADC) on a pinned basis instead.
+/// **Only EURC and TGBP reach a CEX as a wired basis leg.** Coinbase lists
+/// `EURC-USDC` and `TGBP-USDC`, and Kraken lists `EURC/USD` and `TGBP/USD`, so
+/// both compose on an observed basis; four of the others reach no CEX at all,
+/// so their basis leg has no primary tier and the CoinGecko / CoinMarketCap
+/// fallbacks carry it. That asymmetry is the roster's, not a gap in the wiring —
+/// but it does leave four markets resting their basis on one uncorroborated
+/// index reading, and three (MXNe, AUDD, CADC) on a pinned basis instead.
+///
+/// TGBP's two books are thin — on 2026-10-13 each turned over roughly $10k a
+/// day, Kraken in 58 trades and Coinbase limit-only — which is the argument
+/// that pinned AUDD. It is observed anyway, by operator ruling: the basis
+/// filter smooths a quiet book, and the books are expected to deepen.
 ///
 /// **AUDD is the one deliberate omission, and it is not an oversight.**
 /// Coinbase does list `AUDD-USDC` — re-checked 2026-09-08, `online` with
@@ -235,13 +241,13 @@ pub const MARKETS: [MarketConfig; 9] = [
         currency: "GBP",
         pyth_feed_id: "84c2dde9633d93d1bcad84e7dc41c9d56578b7ec52fabedc1f335d673df0a7c1",
         pyth_invert: false,
-        coinbase_product: None,
-        kraken_pair: None,
+        coinbase_product: Some("TGBP-USDC"),
+        kraken_pair: Some("TGBPUSD"),
         coingecko_id: Some("tokenised-gbp"),
         coinmarketcap_id: Some(38935),
         pinned_basis: None,
         static_usd: 1.324,
-        requires_live_tape: false,
+        requires_live_tape: true,
     },
     MarketConfig {
         symbol: "ZARP",
@@ -1174,15 +1180,18 @@ mod tests {
     }
 
     /// The CEX tiers are opt-in per token and must not be invented: only EURC
-    /// is listed on Coinbase or Kraken, and every entry that does exist has to
-    /// name the market's own currency so a mis-pasted pair can't quote the
-    /// wrong token.
+    /// and TGBP are listed on Coinbase or Kraken, and every entry that does
+    /// exist has to name the market's own currency so a mis-pasted pair can't
+    /// quote the wrong token.
     #[test]
     fn cex_basis_tiers_are_only_claimed_where_the_token_is_listed() {
         for m in MARKETS {
             if m.symbol == "EURC" {
                 assert_eq!(m.coinbase_product, Some("EURC-USDC"));
                 assert_eq!(m.kraken_pair, Some("EURCUSD"));
+            } else if m.symbol == "TGBP" {
+                assert_eq!(m.coinbase_product, Some("TGBP-USDC"));
+                assert_eq!(m.kraken_pair, Some("TGBPUSD"));
             } else {
                 assert!(m.coinbase_product.is_none(), "{} on Coinbase?", m.symbol);
                 assert!(m.kraken_pair.is_none(), "{} on Kraken?", m.symbol);

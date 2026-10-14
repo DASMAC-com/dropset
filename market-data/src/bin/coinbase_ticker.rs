@@ -34,13 +34,17 @@ use std::time::Duration;
 /// is what distinguishes a print from a bucket.
 const SOURCE: &str = "coinbase";
 
-/// The two demo-roster tokens Coinbase lists against USDC.
+/// The three demo-roster tokens Coinbase lists against USDC.
 ///
-/// Both are rostered and both produce. `AUDD-USDC` is thinly traded: re-checked
-/// 2026-10-08, it traded in fewer than half the hours of the preceding four
-/// weeks. A ticker poll returns the last print whether or not one happened
-/// recently, so a fresh row here is not a fresh trade. `limit_only` constrains
-/// trading on the venue, not this collector.
+/// All are rostered and all produce. `TGBP-USDC` is thin too — on 2026-10-13 it
+/// turned over about $10k in a day, limit-only — and is rostered because the
+/// maker and the estimator compose its basis off it.
+///
+/// `AUDD-USDC` is thinly traded: re-checked 2026-10-08, it traded in fewer than
+/// half the hours of the preceding four weeks. A ticker poll returns the last
+/// print whether or not one happened recently, so a fresh row here is not a
+/// fresh trade. `limit_only` constrains trading on the venue, not this
+/// collector.
 ///
 /// History, because it explains the pair's gap in the stored series: it went
 /// quiet on 2026-08-17 and was then de-rostered by config. The venue went quiet
@@ -56,7 +60,7 @@ const SOURCE: &str = "coinbase";
 /// NGN, so that series could never arrive, whereas this product is listed and
 /// tradable and will produce whenever it trades. A listed-but-quiet pair is
 /// worth recording; an unlisted one is not.
-const DEFAULT_PRODUCTS: &str = "EURC-USDC,AUDD-USDC";
+const DEFAULT_PRODUCTS: &str = "EURC-USDC,TGBP-USDC,AUDD-USDC";
 
 const DEFAULTS: TickDefaults = TickDefaults {
     base_url: "https://api.exchange.coinbase.com",
