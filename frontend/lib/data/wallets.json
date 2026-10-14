@@ -3,19 +3,22 @@
     "key": "phantom",
     "name": "Phantom",
     "icon": "https://github.com/phantom.png?size=128",
-    "site": "https://phantom.com/download"
+    "site": "https://phantom.com/download",
+    "browse": "https://phantom.com/ul/browse/"
   },
   {
     "key": "solflare",
     "name": "Solflare",
     "icon": "https://github.com/solflare-wallet.png?size=128",
-    "site": "https://solflare.com/download"
+    "site": "https://solflare.com/download",
+    "browse": "https://solflare.com/ul/v1/browse/"
   },
   {
     "key": "backpack",
     "name": "Backpack",
     "icon": "https://backpack.app/icon/128x128.png",
-    "site": "https://backpack.app/download"
+    "site": "https://backpack.app/download",
+    "browse": "https://backpack.app/ul/v1/browse/"
   },
   {
     "key": "metamask",

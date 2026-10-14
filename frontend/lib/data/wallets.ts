@@ -21,6 +21,10 @@ export type KnownWallet = {
   // path. Read it through `walletIconUrl` to get the mirror-first resolution.
   icon: string;
   site: string;
+  // Prefix of the wallet's documented universal link that opens a page in its
+  // in-app browser (see `inWalletBrowseUrl`). Absent for a wallet that
+  // publishes none.
+  browse?: string;
 };
 
 const ICON_OVERRIDES = iconManifest as Record<string, string>;
@@ -73,6 +77,10 @@ export type PickerWallet = {
   // Present iff there's nothing to connect to → render a link to the wallet's
   // official site so the user can install it.
   site?: string;
+  // Present iff there's nothing to connect to AND the wallet has an in-app
+  // browser link → on mobile, render "Open in <wallet>" rather than the
+  // install link, since a phone browser can never inject the wallet itself.
+  browse?: string;
 };
 
 export type PickerWallets = {
@@ -121,6 +129,7 @@ export function buildPickerWallets(
       connectorId: connector?.id,
       // Only offer the install link when there's no connector to connect to.
       site: connector ? undefined : w.site,
+      browse: connector ? undefined : w.browse,
     };
   });
 
