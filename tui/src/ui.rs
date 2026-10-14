@@ -104,6 +104,52 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     draw_log(f, app, log);
     // Last, so it paints over the dashboard rather than under it.
     draw_leader_prompt(f, app, area);
+    draw_ceremony_prompt(f, app, area);
+}
+
+/// The mainnet ceremony prompt, centered over the dashboard while it is open:
+/// the step's plan — every address and amount it would write, read fresh —
+/// over the typed-`yes` line, in the same red real-funds border as the leader
+/// prompt.
+fn draw_ceremony_prompt(f: &mut Frame<'_>, app: &App, area: Rect) {
+    let Some(prompt) = &app.ceremony_prompt else {
+        return;
+    };
+    let input = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
+    let hint = Style::new().fg(Color::DarkGray);
+    let mut lines: Vec<Line> = prompt.plan.iter().map(|l| Line::from(l.as_str())).collect();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!("Type 'yes' to sign and send: {}\u{2588}", prompt.buf),
+        input,
+    )));
+    lines.push(Line::from(Span::styled("Enter ok · Esc cancel", hint)));
+    let width = area.width.min(100);
+    // Sized by wrapped rows, not lines: a plan line carrying two addresses
+    // wraps, and counting it as one would clip the `yes` line off the bottom.
+    let inner = usize::from(width.saturating_sub(2)).max(1);
+    let rows: usize = lines.iter().map(|l| l.width().div_ceil(inner).max(1)).sum();
+    let height = u16::try_from(rows + 2).unwrap_or(u16::MAX).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .title(format!(
+                    " {} — {} · REAL FUNDS ",
+                    prompt.action.label(),
+                    app.ctx.cluster.label().to_uppercase()
+                ))
+                .borders(Borders::ALL)
+                .border_style(Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        ),
+        rect,
+    );
 }
 
 /// The leader deposit / withdraw prompt, centered over the dashboard while it

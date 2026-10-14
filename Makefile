@@ -1,5 +1,5 @@
 # cspell:word SIGTTIN
-# cspell:word mktemp
+# cspell:word nocapture
 
 # Every target in this file is phony. Each `.PHONY:` declaration sits with its
 # own rule rather than in one central sorted block: a single sorted list makes
@@ -326,7 +326,9 @@ endef
 #
 #   * No `tui-prebuild` prerequisite. That runs `anchor build` and builds the
 #     bots, all of which serve deploying to and quoting on a throwaway ledger.
-#     Nothing is deployed from here — the program is published out of band.
+#     The cockpit's "Publish / upgrade program" step publishes the artifact
+#     already in target/deploy/ — build it with `make program` at the commit
+#     you mean to record, so nothing is compiled mid-ceremony.
 #   * No validator is spawned and no explorer image is warmed (the local
 #     explorer indexes the localnet; mainnet links go to the hosted one).
 #   * No `--bootstrap`. Auto-bootstrap is refused by the binary in mainnet
@@ -336,6 +338,10 @@ endef
 # silently, while an absent one fails here with a message. The binary then
 # verifies the endpoint's genesis hash really is mainnet-beta's and requires a
 # typed confirmation before drawing a frame.
+#
+# Keys are 1Password references, never files, e.g.
+# `TUI_MAINNET_ARGS="--wallet op://<vault>/<item>/<field> --leader op://…"`;
+# see `cargo run -p dropset-tui -- --help`.
 #
 # `make demo` and `make tui` are untouched.
 TUI_MAINNET_ARGS ?=
@@ -349,19 +355,27 @@ tui-mainnet:
 # things it insists on filled in so it launches with no arguments. The RPC
 # is an exported `DROPSET_MAINNET_RPC_URL` when there is one, else the public
 # mainnet-beta endpoint (enough for the genesis check; a provider keeps the
-# live panes fed), and `--wallet` is a fresh keypair generated into a temp
-# directory and deleted on every trappable exit. That wallet is unfunded and
-# there is no `--leader`, so nothing in the session can spend — it exists to
-# show the real-funds banner and the panel coming up, not to run the ceremony.
+# live panes fed), and `--wallet ephemeral` is a fresh keypair generated in
+# memory and never written anywhere. That wallet is unfunded and there is no
+# `--leader`, so nothing in the session can spend — it exists to show the
+# real-funds banner and the panel coming up, not to run the ceremony. Its
+# ceremony record goes to a scratch path rather than the operator's real one.
 PUBLIC_MAINNET_RPC := https://api.mainnet-beta.solana.com
 MAINNET_DEMO_RPC_URL ?= $(or $(DROPSET_MAINNET_RPC_URL),$(PUBLIC_MAINNET_RPC))
 .PHONY: mainnet-demo
 mainnet-demo:
-	@dir=$$(mktemp -d) || exit 1; w=$$dir/wallet.json; \
-	trap 'rm -rf "$$dir"' EXIT; trap 'exit 130' HUP INT TERM; \
-	solana-keygen new --no-bip39-passphrase --silent -o "$$w" >/dev/null && \
 	DROPSET_MAINNET_RPC_URL='$(MAINNET_DEMO_RPC_URL)' \
-		cargo run -p dropset-tui -- --cluster mainnet --wallet "$$w"
+		cargo run -p dropset-tui -- --cluster mainnet --wallet ephemeral \
+		--ceremony-log "$${TMPDIR:-/tmp}/dropset-mainnet-demo.log"
+
+# The publish ceremony end to end on a throwaway validator: publish, buffer
+# recovery, init, create-market, create-vault and the seed deposit, through
+# the same functions the mainnet menu runs, with the ceremony log attached.
+# Ignored by plain `cargo test` because it needs the validator and the
+# artifact; needs port 8899 free (stop any `make tui` first).
+.PHONY: tui-ceremony-e2e
+tui-ceremony-e2e: program
+	cargo test -p dropset-tui e2e:: -- --ignored --nocapture
 
 # Headless rent reclamation — the same teardown the TUI's "Teardown & reclaim"
 # action runs, with no UI. Defaults to localnet; pass WALLET to override the

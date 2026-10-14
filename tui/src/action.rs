@@ -28,12 +28,14 @@
 //! read refuses too, rather than reading as "absent".
 
 use crate::accounts::{self, ChainState, Phase, VaultSeat};
+use crate::ceremony::CeremonyLog;
 use crate::chain;
 use crate::cluster::Cluster;
 use crate::deploy;
 use crate::explorer;
 use crate::job::{self, JobEvent, Logger};
 use crate::market::{self, PairConfig};
+use crate::publish;
 use crate::teardown;
 use anyhow::{Context, Result};
 use dropset_sdk::clock::WallSpan;
@@ -68,6 +70,14 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Deploy,
+    /// Publish the program from memory-held keys — the first deploy or an
+    /// upgrade, whichever the chain calls for (see [`crate::publish`]). The
+    /// mainnet counterpart of [`Action::Deploy`], which shells out with key
+    /// files.
+    Publish,
+    /// Close every loader buffer the admin owns — the recovery step after a
+    /// publish that stopped between writing and deploying.
+    CloseBuffers,
     InitRegistry,
     CreateMarket,
     CreateVault,
@@ -146,22 +156,26 @@ pub const MENU: [Action; 12] = [
 
 /// The mainnet menu — every entry that is meaningful against real funds.
 ///
-/// The four ceremony steps and the explorer, then the leader stake commands.
-/// Each ceremony step is one-shot and existence-checked at execution time,
-/// references the real roster mints rather than minting any (see
-/// [`market::MAINNET_PAIRS`]), and signs vault steps with the
-/// operator-supplied leader; the leader commands send only after a typed
-/// `yes` over the exact amounts. Nothing here airdrops, deploys or discards a
-/// ledger.
+/// The ceremony in order — publish (or upgrade), the four account steps, the
+/// stranded-buffer recovery — then the explorer and the leader stake
+/// commands. Each ceremony step opens a typed-`yes` prompt over its plan, read
+/// fresh from the chain, before anything is signed (see
+/// [`Action::needs_ceremony_confirm`]); is existence-checked again at
+/// execution time; references the real roster mints rather than minting any
+/// (see [`market::MAINNET_PAIRS`]); and signs with 1Password-held keys. The
+/// leader commands send only after a typed `yes` over the exact amounts.
+/// Nothing here airdrops, builds or discards a ledger.
 ///
 /// Kept in sync with [`Action::available_on`] by a test rather than by care —
 /// two hand-maintained lists of the same fact drift, and the direction it
 /// would drift here is toward exposing a write.
-pub const MAINNET_MENU: [Action; 8] = [
+pub const MAINNET_MENU: [Action; 10] = [
+    Action::Publish,
     Action::InitRegistry,
     Action::CreateMarket,
     Action::CreateVault,
     Action::Deposit,
+    Action::CloseBuffers,
     Action::OpenExplorer,
     Action::LeaderDeposit,
     Action::LeaderWithdraw,
@@ -190,6 +204,8 @@ impl Action {
     pub fn label(self) -> &'static str {
         match self {
             Action::Deploy => "Deploy program",
+            Action::Publish => "Publish / upgrade program",
+            Action::CloseBuffers => "Close stranded buffers",
             Action::InitRegistry => "Init registry",
             Action::CreateMarket => "Create market",
             Action::CreateVault => "Create vault",
@@ -221,6 +237,10 @@ impl Action {
     pub fn enabled(self, phase: Phase, cluster: Cluster) -> bool {
         match self {
             Action::Deploy => phase == Phase::ProgramAbsent,
+            // Publishing is an upgrade once the program exists, and a buffer
+            // can be stranded at any phase; both decide their work from a
+            // fresh read, so the only gate is an endpoint that answers.
+            Action::Publish | Action::CloseBuffers => phase != Phase::NoValidator,
             Action::InitRegistry => phase == Phase::RegistryAbsent,
             Action::CreateMarket => phase == Phase::MarketAbsent,
             Action::CreateVault => phase == Phase::VaultAbsent,
@@ -281,10 +301,15 @@ impl Action {
             // Localnet-only by construction: these spawn a validator, deploy
             // through `anchor build`, airdrop the payer, or discard a ledger
             // that exists only on this machine. On mainnet the program is
-            // published out of band and there is nothing to throw away.
+            // published by `Publish` and there is nothing to throw away.
             // "Bootstrap all" belongs here too: it mints mock pairs and funds
             // the committed taker, and on mainnet each step is worth watching.
             Action::Deploy | Action::BootstrapAll | Action::Wipe => false,
+            // Publishing signs in memory with the 1Password-held admin and
+            // program keys, decides first-publish versus upgrade from the
+            // chain, and verifies the deployed bytes; the buffer recovery
+            // closes only buffers the admin itself owns.
+            Action::Publish | Action::CloseBuffers => true,
             // The ceremony. Mainnet-safe because each step re-reads the chain
             // and refuses when its account already exists, references the
             // real roster mints and never creates one, airdrops nothing, and
@@ -341,6 +366,8 @@ impl Action {
             Action::LeaderWithdraw => Some(LeaderOp::Withdraw),
             Action::RotateLeader
             | Action::Deploy
+            | Action::Publish
+            | Action::CloseBuffers
             | Action::InitRegistry
             | Action::CreateMarket
             | Action::CreateVault
@@ -387,6 +414,8 @@ impl Action {
             // Available on mainnet, so only reachable by a misuse the debug
             // assertion above catches in test builds.
             Action::OpenExplorer
+            | Action::Publish
+            | Action::CloseBuffers
             | Action::InitRegistry
             | Action::CreateMarket
             | Action::CreateVault
@@ -395,6 +424,46 @@ impl Action {
             | Action::LeaderWithdraw
             | Action::RotateLeader => "",
         }
+    }
+
+    /// Whether the action opens the ceremony prompt — its plan, read fresh,
+    /// under a typed `yes` — before anything is sent.
+    ///
+    /// Every mainnet ceremony step does, one prompt per step: nothing on the
+    /// real chain is a single keystroke. Localnet keeps its one-key steps,
+    /// because "Bootstrap all" chains them and the throwaway ledger is the
+    /// place to move fast.
+    ///
+    /// Exhaustive like every table here, so a new mainnet write must decide
+    /// its answer at compile time rather than default to "no prompt".
+    pub fn needs_ceremony_confirm(self, cluster: Cluster) -> bool {
+        let ceremony = match self {
+            Action::Publish
+            | Action::CloseBuffers
+            | Action::InitRegistry
+            | Action::CreateMarket
+            | Action::CreateVault
+            | Action::Deposit => true,
+            // The leader commands have their own typed-`yes` prompt; the rest
+            // read only or are unavailable on mainnet.
+            Action::Deploy
+            | Action::OpenExplorer
+            | Action::BootstrapAll
+            | Action::ProbeSwap
+            | Action::Teardown
+            | Action::Wipe
+            | Action::LeaderDeposit
+            | Action::LeaderWithdraw
+            | Action::RotateLeader
+            | Action::RepegUp
+            | Action::RepegDown
+            | Action::WidenSpread
+            | Action::TightenSpread
+            | Action::ThinFarSide
+            | Action::ResetLadder
+            | Action::ResetAllLadders => false,
+        };
+        cluster.is_mainnet() && ceremony
     }
 
     /// One-line reason the action is greyed out in `phase` on `cluster` (only
@@ -414,6 +483,8 @@ impl Action {
         }
         match self {
             Action::Deploy => "program already deployed",
+            // Only greyed while the endpoint is down, handled above.
+            Action::Publish | Action::CloseBuffers => "",
             Action::InitRegistry if phase == Phase::ProgramAbsent && cluster.is_mainnet() => {
                 "the program is not published on this cluster"
             }
@@ -484,6 +555,12 @@ pub struct JobContext {
     /// pairs name no leader file ([`market::LeaderKey::Operator`] — mainnet).
     /// `None` on localnet, whose pairs use the committed role keys.
     pub leader: Option<Keypair>,
+    /// The program keypair (`--program-key`), needed only by a first
+    /// [`Action::Publish`] — an upgrade is signed by the admin alone.
+    pub program_key: Option<Keypair>,
+    /// The ceremony record every write job appends to — always open on
+    /// mainnet, optional on localnet.
+    pub ceremony_log: Option<Arc<CeremonyLog>>,
     /// Lifecycle of the managed explorer container (an `explorer::state::*`
     /// value). The background starter and the "Open explorer" job both update
     /// it; the UI reads it; `App`'s `Drop` tears the container down unless it
@@ -523,6 +600,8 @@ pub fn dispatch(
     let wallet = ctx.wallet();
     let cluster = ctx.cluster;
     let operator_leader = ctx.leader.as_ref().map(Keypair::insecure_clone);
+    let program_key = ctx.program_key.as_ref().map(Keypair::insecure_clone);
+    let record = ctx.ceremony_log.clone();
     let explorer_state = ctx.explorer_state.clone();
     let explorer_lock = ctx.explorer_lock.clone();
     // The market the market-scoped jobs target — resolved now, on the event
@@ -542,14 +621,37 @@ pub fn dispatch(
                 deploy::deploy_program(log, &repo_root, &rpc_url, &wallet_path, &pubkey)
             });
         }
+        Action::Publish => {
+            job::spawn_recorded(tx, "Publish", record, move |log| {
+                let artifact = publish::Artifact::load(&repo_root)?;
+                log.log(format!(
+                    "binary sha256 {} at commit {}",
+                    artifact.sha256, artifact.head.commit
+                ));
+                publish::publish(
+                    &rpc_url,
+                    &artifact,
+                    cluster,
+                    &wallet,
+                    program_key.as_ref(),
+                    log,
+                )
+            });
+        }
+        Action::CloseBuffers => {
+            job::spawn_recorded(tx, "Close buffers", record, move |log| {
+                let client = chain::rpc(&rpc_url);
+                publish::close_buffers(&client, &wallet, log)
+            });
+        }
         Action::InitRegistry => {
-            job::spawn(tx, "Init registry", move |log| {
+            job::spawn_recorded(tx, "Init registry", record, move |log| {
                 let client = chain::rpc(&rpc_url);
                 do_init(&client, &wallet, cluster, log)?.one_shot()
             });
         }
         Action::CreateMarket => {
-            job::spawn(tx, "Create markets", move |log| {
+            job::spawn_recorded(tx, "Create markets", record, move |log| {
                 let client = chain::rpc(&rpc_url);
                 over_roster(cluster, "market", log, |config| {
                     do_create_market(&client, &wallet, &repo_root, cluster, config, log)
@@ -557,7 +659,7 @@ pub fn dispatch(
             });
         }
         Action::CreateVault => {
-            job::spawn(tx, "Create vaults", move |log| {
+            job::spawn_recorded(tx, "Create vaults", record, move |log| {
                 let client = chain::rpc(&rpc_url);
                 over_roster(cluster, "vault", log, |config| {
                     let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
@@ -566,7 +668,7 @@ pub fn dispatch(
             });
         }
         Action::Deposit => {
-            job::spawn(tx, "Seed deposits", move |log| {
+            job::spawn_recorded(tx, "Seed deposits", record, move |log| {
                 let client = chain::rpc(&rpc_url);
                 // Sequential, so localnet's per-market quote top-up is safe (no
                 // concurrent identical mints) — `MintBoth` lets each market
@@ -845,13 +947,141 @@ pub fn dispatch_leader(ctx: &JobContext, ticket: crate::leader::Ticket, tx: Send
     let wallet = ctx.wallet();
     let cluster = ctx.cluster;
     let operator_leader = ctx.leader.as_ref().map(Keypair::insecure_clone);
-    job::spawn(tx, ticket.op.label(), move |log| {
+    let record = ctx.ceremony_log.clone();
+    job::spawn_recorded(tx, ticket.op.label(), record, move |log| {
         let client = chain::rpc(&rpc_url);
         let config = market::config_for(&repo_root, cluster, &ticket.market.base_mint)
             .context("the selected market is not in this cluster's roster")?;
         let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
         crate::leader::execute(&client, &wallet, &leader, &repo_root, cluster, &ticket, log)
     });
+}
+
+/// The plan a ceremony step shows under its typed-`yes` prompt — the dry run:
+/// every address the step would touch and what it would do there, read fresh
+/// from the chain, with nothing signed.
+///
+/// Refuses (`Err`) when the step has nothing to do or cannot proceed, so the
+/// operator is never asked to confirm a no-op. The step re-checks everything
+/// again when it runs; this is what the operator reads, not what guards.
+pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
+    let client = chain::rpc(&ctx.rpc_url);
+    let admin = ctx.wallet.pubkey();
+    let roster = market::roster(ctx.cluster);
+    let mut lines = Vec::new();
+    let mut work = 0usize;
+    match action {
+        Action::Publish => {
+            let artifact = publish::Artifact::load(&ctx.repo_root)?;
+            let program_key = ctx.program_key.as_ref().map(Keypair::pubkey);
+            let plan = publish::plan(
+                &publish::client(&ctx.rpc_url),
+                &artifact,
+                ctx.cluster,
+                &admin,
+                program_key.as_ref(),
+            )?;
+            if plan.mode == publish::Mode::Current {
+                anyhow::bail!(
+                    "the program already holds sha256 {} — nothing to publish",
+                    plan.sha256
+                );
+            }
+            return Ok(plan.lines());
+        }
+        Action::CloseBuffers => {
+            for (buffer, lamports) in publish::stranded_buffers(&client, &admin)? {
+                lines.push(format!("close {buffer}  ({})", publish::sol(lamports)));
+                work += 1;
+            }
+            if work == 0 {
+                anyhow::bail!("no stranded buffers owned by the admin {admin}");
+            }
+            lines.insert(0, format!("rent returns to the admin {admin}"));
+        }
+        Action::InitRegistry => {
+            if accounts::registry_fresh(&client)?.is_some() {
+                anyhow::bail!("the registry is already initialized");
+            }
+            // Mainnet-only, like every ceremony prompt: localnet mints a mock.
+            let fee_mint = format!("{} (USDC)", market::MAINNET_USDC);
+            let fee = chain::create_fee_atoms(ctx.cluster);
+            lines.push(format!("registry:      {}", chain::registry_pda()));
+            lines.push(format!(
+                "genesis admin: {admin} (must be the upgrade authority)"
+            ));
+            lines.push(format!("fee mint:      {fee_mint}"));
+            lines.push(format!(
+                "create fee:    {} USDC per vault ({fee} atoms)",
+                crate::leader::human(fee, 6)
+            ));
+            work = 1;
+        }
+        Action::CreateMarket => {
+            for config in roster {
+                let (base, quote) = market::pair_mints(&ctx.repo_root, config)?;
+                let address = chain::market_pda(&base, &quote);
+                let exists = chain::fetch_fresh(&client, &address, "market")?.is_some();
+                lines.push(format!(
+                    "{}: market {address} — {}",
+                    config.base.symbol,
+                    if exists { "exists, skipped" } else { "CREATE" }
+                ));
+                if !exists {
+                    lines.push(format!("    base {base} · quote {quote}"));
+                    work += 1;
+                }
+            }
+        }
+        Action::CreateVault | Action::Deposit => {
+            for config in roster {
+                let symbol = config.base.symbol;
+                let leader = market::leader(&ctx.repo_root, config, ctx.leader.as_ref())?.pubkey();
+                let (base, quote) = market::pair_mints(&ctx.repo_root, config)?;
+                let address = chain::market_pda(&base, &quote);
+                // A missing market or vault is refused here because the step
+                // itself errors on it, stopping the roster pass part-way.
+                let Some(seats) = accounts::vault_seats_fresh(&client, &address)? else {
+                    anyhow::bail!("{symbol}: no market yet — create the markets first");
+                };
+                let line = match (action, deposit_seat(&seats, &leader)) {
+                    (Action::CreateVault, DepositSeat::NoVault) => {
+                        work += 1;
+                        format!("{symbol}: CREATE vault on {address}, leader {leader} (fee waived)")
+                    }
+                    (Action::CreateVault, _) => {
+                        format!("{symbol}: leader already has a vault — skipped")
+                    }
+                    (_, DepositSeat::Fund(seat)) => {
+                        work += 1;
+                        let (base_atoms, quote_atoms) = market::seed_deposit(config);
+                        format!(
+                            "{symbol}: SEED vault #{} from leader {leader}: {} {symbol} + {} {}",
+                            seat.seq,
+                            crate::leader::human(base_atoms, config.base.decimals),
+                            crate::leader::human(quote_atoms, config.quote.decimals),
+                            config.quote.symbol
+                        )
+                    }
+                    (_, DepositSeat::Seeded(_)) => format!("{symbol}: already seeded — skipped"),
+                    (_, DepositSeat::NoVault) => {
+                        anyhow::bail!("{symbol}: no vault yet — create the vaults first")
+                    }
+                    (_, DepositSeat::Ambiguous(n)) => {
+                        anyhow::bail!(
+                            "{symbol}: leader {leader} leads {n} vaults — refusing to guess"
+                        )
+                    }
+                };
+                lines.push(line);
+            }
+        }
+        other => anyhow::bail!("{} has no ceremony plan", other.label()),
+    }
+    if work == 0 {
+        anyhow::bail!("nothing to do — every roster target is already done");
+    }
+    Ok(lines)
 }
 
 /// Resolve the selected market's `(address, base_mint, vault_idx)` for an
@@ -1134,7 +1364,7 @@ fn fund_taker(
 /// create something that is already there, and a red line says so. The
 /// roster loops and "Bootstrap all" are resumable, so for them it is a skip.
 #[derive(Debug, PartialEq, Eq)]
-enum Outcome {
+pub(crate) enum Outcome {
     /// The step sent its transaction(s); the summary says what landed.
     Done(String),
     /// The account the step would create already exists, so nothing was sent.
@@ -1208,7 +1438,7 @@ fn over_roster(
 /// The fee mint is per cluster. Localnet mints a throwaway mock (its address
 /// is read back from the registry, so it never needs to be stable). Mainnet
 /// charges the per-vault fee in real USDC, verified to exist and never created.
-fn do_init(
+pub(crate) fn do_init(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
     cluster: Cluster,
@@ -1228,7 +1458,9 @@ fn do_init(
         chain::create_spl_mint(client, wallet).context("create fee mint")?
     };
     log.log(format!("fee mint: {fee_mint}"));
-    let ix = chain::build_init_ix(&wallet.pubkey(), &fee_mint);
+    let fee_atoms = chain::create_fee_atoms(cluster);
+    log.log(format!("create fee: {fee_atoms} atoms"));
+    let ix = chain::build_init_ix(&wallet.pubkey(), &fee_mint, fee_atoms);
     // Trailing rent top-up for the registry PDA — see RENT_TOPUP_LAMPORTS.
     let topup = chain::system_transfer_ix(
         &wallet.pubkey(),
@@ -1238,7 +1470,28 @@ fn do_init(
     chain::send_logged(client, wallet, &[wallet], &[ix, topup], "init", log)
         .context("send init")?;
     log.accounts_changed();
-    Ok(Outcome::Done("Registry initialized".into()))
+    // Read the registry back: the record states what the chain holds. The
+    // genesis admin needs no read — `init` itself refuses a payer that is not
+    // the upgrade authority, and names the payer as admin.
+    let registry =
+        accounts::registry_fresh(client)?.context("the registry is not readable after init")?;
+    if registry.fee_mint != fee_mint || registry.fee_atoms != fee_atoms {
+        anyhow::bail!(
+            "the registry holds fee {} atoms of {}, not the {fee_atoms} of {fee_mint} sent",
+            registry.fee_atoms,
+            registry.fee_mint
+        );
+    }
+    log.record(
+        "init-verified",
+        &[
+            ("registry", &registry.address.to_string()),
+            ("genesis_admin", &wallet.pubkey().to_string()),
+            ("fee_mint", &fee_mint.to_string()),
+            ("fee_atoms", &fee_atoms.to_string()),
+        ],
+    );
+    Ok(Outcome::Done("Registry initialized and read back".into()))
 }
 
 /// Create `config`'s market: make its mints usable, then `create_market`
@@ -1247,7 +1500,7 @@ fn do_init(
 /// Refuses (`AlreadyThere`) when the market PDA exists, checked **before**
 /// anything else so a repeat creates no mints either. On mainnet the mints are
 /// only verified, never created (see [`market::ensure_pair_mints`]).
-fn do_create_market(
+pub(crate) fn do_create_market(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
     repo_root: &Path,
@@ -1315,7 +1568,7 @@ fn do_create_market(
 /// `force_withdraw_leader` would alias them. The fee source likewise must
 /// differ from the payer.
 #[allow(clippy::too_many_arguments)]
-fn do_create_vault(
+pub(crate) fn do_create_vault(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
     repo_root: &Path,
@@ -1418,7 +1671,7 @@ fn deposit_seat(seats: &[VaultSeat], leader: &Pubkey) -> DepositSeat {
 /// an empty vault like any other. A leader with no vault, or with more than
 /// one, is refused outright.
 #[allow(clippy::too_many_arguments)]
-fn do_deposit(
+pub(crate) fn do_deposit(
     client: &solana_client::rpc_client::RpcClient,
     wallet: &Keypair,
     repo_root: &Path,
@@ -1606,8 +1859,10 @@ mod tests {
     /// Kept complete by [`all_actions_lists_every_variant`], not by care — the
     /// `[Action; 17]` length annotation does not change when a variant is
     /// added, so nothing else would notice the list going stale.
-    const ALL_ACTIONS: [Action; 20] = [
+    const ALL_ACTIONS: [Action; 22] = [
         Action::Deploy,
+        Action::Publish,
+        Action::CloseBuffers,
         Action::InitRegistry,
         Action::CreateMarket,
         Action::CreateVault,
@@ -1641,12 +1896,14 @@ mod tests {
     #[test]
     fn mainnet_exposes_only_the_ceremony_and_the_confirm_gated_leader_stake() {
         // The load-bearing assertion of the whole mode: on mainnet the only
-        // reachable writes are the four one-shot ceremony steps and the
+        // reachable writes are the confirm-gated ceremony steps and the
         // leader's own stake, which sends only after a typed `yes` over the
         // exact amounts (the reserved rotation is listed but never enabled).
         // A later change that exposes anything else — a mock-minting
         // bootstrap, a committed-key demo control — fails here.
         let ceremony = [
+            Action::Publish,
+            Action::CloseBuffers,
             Action::InitRegistry,
             Action::CreateMarket,
             Action::CreateVault,
@@ -1666,6 +1923,28 @@ mod tests {
                 "{:?} mainnet availability",
                 a.label()
             );
+            // Every ceremony write on mainnet opens its plan under a typed
+            // `yes`; nothing on localnet does, and nothing else ever does.
+            assert_eq!(
+                a.needs_ceremony_confirm(M),
+                ceremony.contains(&a),
+                "{:?} mainnet confirm",
+                a.label()
+            );
+            assert!(!a.needs_ceremony_confirm(L), "{:?}", a.label());
+        }
+    }
+
+    #[test]
+    fn publish_and_buffer_recovery_need_only_an_answering_endpoint() {
+        for a in [Action::Publish, Action::CloseBuffers] {
+            for phase in PHASES {
+                assert_eq!(
+                    a.enabled(phase, M),
+                    phase != Phase::NoValidator,
+                    "{phase:?}"
+                );
+            }
         }
     }
 
@@ -1870,7 +2149,7 @@ mod tests {
     #[test]
     fn all_actions_lists_every_variant() {
         // The completeness guard the MENU check above cannot be: MENU holds 12
-        // of the 20 variants, so a new shortcut-only action would be absent from
+        // of the 22 variants, so a new shortcut-only action would be absent from
         // both MENU and ALL_ACTIONS and silently escape all four cluster-gate
         // tests — a variant reachable only by a shortcut. PR 2 and PR 3 of this
         // series add exactly that shape.
@@ -1879,11 +2158,13 @@ mod tests {
         // one arm and no wildcard, so adding a variant fails to compile here
         // until someone edits this test; the count pins the fixture's size at
         // the enum's size; and the pairwise check rules out duplicates.
-        // Twenty distinct variants drawn from a twenty-variant enum is all of
-        // them.
+        // Twenty-two distinct variants drawn from a twenty-two-variant enum is
+        // all of them.
         fn is_known(a: Action) -> bool {
             match a {
                 Action::Deploy
+                | Action::Publish
+                | Action::CloseBuffers
                 | Action::InitRegistry
                 | Action::CreateMarket
                 | Action::CreateVault
@@ -1907,7 +2188,7 @@ mod tests {
         }
         assert_eq!(
             ALL_ACTIONS.len(),
-            20,
+            22,
             "ALL_ACTIONS must list every Action variant"
         );
         for (i, a) in ALL_ACTIONS.iter().enumerate() {

@@ -292,29 +292,41 @@ pub fn confirm() -> Result<()> {
 /// scrollback rather than painted over by the first frame.
 ///
 /// Each key is labelled by its **role**, not by where it came from: `admin` is
-/// the `--wallet` keypair — the registry's genesis admin and the payer of
-/// every ceremony transaction — and `leader` is the operator-supplied vault
-/// leader that signs the vault steps. Both are confirmed along with everything
-/// else; a `None` leader says plainly that those steps will refuse.
-pub fn confirm_mainnet_entry(rpc_url: &str, admin: &str, leader: Option<&str>) -> Result<()> {
+/// the `--wallet` keypair — the registry's genesis admin, the program's upgrade
+/// authority and the payer of every ceremony transaction — `leader` is the
+/// operator-supplied vault leader that signs the vault steps, and `program` is
+/// the key a first publish creates the program at. All are confirmed along
+/// with everything else; a `None` says plainly which steps will refuse.
+pub fn confirm_mainnet_entry(
+    rpc_url: &str,
+    admin: &str,
+    leader: Option<&str>,
+    program: Option<&str>,
+    ceremony_log: &str,
+) -> Result<()> {
     let host = host_of(rpc_url).unwrap_or_else(|| "<unparsed>".to_string());
     eprintln!();
     eprintln!("  ╔══════════════════════════════════════════════════════════╗");
     eprintln!("  ║  ⚠  MAINNET-BETA — REAL FUNDS                            ║");
     eprintln!("  ╚══════════════════════════════════════════════════════════╝");
     eprintln!("   RPC host: {host}");
-    eprintln!("   admin:    {admin}  (--wallet; registry admin + fee payer)");
+    eprintln!("   admin:    {admin}  (--wallet; registry admin, upgrade authority, payer)");
     match leader {
         Some(leader) => {
             eprintln!("   leader:   {leader}  (--leader; leads every roster vault)")
         }
         None => eprintln!("   leader:   (none — create-vault and deposit will refuse)"),
     }
+    match program {
+        Some(program) => eprintln!("   program:  {program}  (--program-key; first publish)"),
+        None => eprintln!("   program:  (none — a first publish will refuse; upgrades need none)"),
+    }
+    eprintln!("   record:   {ceremony_log}");
     eprintln!(
         "   Genesis verified as mainnet-beta. Every action in this session\n   \
          moves real money and nothing is reversible. No validator is\n   \
-         spawned, nothing is deployed, and the localnet bootstrap and wipe\n   \
-         are unavailable."
+         spawned, nothing is built, and every ceremony step shows its plan\n   \
+         under its own typed confirmation."
     );
     confirm()
 }

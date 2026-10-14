@@ -357,7 +357,7 @@ pub fn leader(
         LeaderKey::Operator => operator.map(Keypair::insecure_clone).with_context(|| {
             format!(
                 "the {} leader is operator-supplied on this cluster — relaunch with \
-                 --leader <keypair>",
+                 --leader op://…",
                 config.base.symbol
             )
         }),

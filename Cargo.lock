@@ -1909,6 +1909,7 @@ name = "dropset-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "borsh",
  "bs58",
  "bytemuck",
@@ -1920,11 +1921,13 @@ dependencies = [
  "open",
  "ratatui",
  "serde_json",
+ "sha2 0.10.9",
  "solana-client",
  "solana-commitment-config",
  "solana-instruction",
  "solana-keypair",
  "solana-loader-v3-interface",
+ "solana-message",
  "solana-native-token",
  "solana-pubkey 3.0.0",
  "solana-signature",

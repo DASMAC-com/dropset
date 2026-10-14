@@ -8,24 +8,28 @@
 //!
 //! On **mainnet** (`--cluster mainnet`, `make tui-mainnet`) it is the same
 //! panel pointed at a chain it does not own: no validator is spawned, nothing
-//! is deployed, and the localnet bootstrap and wipe are unavailable. Entry is
+//! is built, and the localnet bootstrap and wipe are unavailable. Entry is
 //! guarded three ways, each catching something the others cannot — the
 //! endpoint must be named explicitly by environment variable, its genesis hash
 //! must actually be mainnet-beta's, and the operator must type `yes` to a
 //! real-funds banner.
 //!
-//! On mainnet the menu offers the one-shot ceremony — init, create-market,
-//! create-vault, deposit — and nothing else (see
-//! [`action::Action::available_on`]). Each step re-checks the chain and
-//! refuses when its account already exists, and references the real roster
-//! mints rather than minting any. The vault steps sign with the leader the
-//! operator names with `--leader`; the admin is `--wallet`.
+//! On mainnet the menu offers the ceremony — publish (or upgrade), init,
+//! create-market, create-vault, deposit, close stranded buffers — and nothing
+//! else (see [`action::Action::available_on`]). Each step shows its plan
+//! under its own typed `yes`, re-checks the chain and refuses when its work
+//! is already done, and references the real roster mints rather than minting
+//! any. Every key — admin `--wallet`, `--leader`, `--program-key` — is a
+//! 1Password reference resolved in memory, and every write is appended to the
+//! ceremony log.
 //!
 //! ```text
-//! dropset-tui [--cluster <localnet|mainnet>] [--wallet <path>] [--leader <path>] [--bootstrap]
+//! dropset-tui [--cluster <localnet|mainnet>] [--wallet <key>] [--leader <key>]
+//!             [--program-key <key>] [--ceremony-log <path>] [--bootstrap]
 //! ```
 
 use anyhow::{anyhow, bail, Result};
+use dropset_tui::ceremony::{self, CeremonyLog};
 use dropset_tui::cluster::{self, Cluster};
 use dropset_tui::{action, app, chain, explorer, wallet};
 use solana_signer::Signer;
@@ -44,7 +48,22 @@ fn main() -> Result<()> {
         .parent()
         .ok_or_else(|| anyhow!("locate repo root from crate dir"))?
         .to_path_buf();
-    let (wallet, wallet_path) = wallet::load(args.wallet.as_deref(), &repo_root)?;
+    // Localnet reads the committed key files; mainnet resolves 1Password
+    // references in memory and has no default admin (the default is the
+    // committed localnet one).
+    let (wallet, wallet_path) = if args.cluster.is_mainnet() {
+        let arg = args.wallet.as_deref().ok_or_else(|| {
+            anyhow!(
+                "mainnet needs --wallet: a 1Password reference (op://…), or `{}` for a \
+                 watch-only session",
+                wallet::EPHEMERAL_WALLET
+            )
+        })?;
+        let kp = wallet::resolve_key(arg, "--wallet", args.cluster)?;
+        (kp, arg.to_string())
+    } else {
+        wallet::load(args.wallet.as_deref(), &repo_root)?
+    };
 
     // Refuse rather than ignore. Silently dropping the flag would leave the
     // operator believing the turnkey path ran, and "nothing happened" is
@@ -68,8 +87,8 @@ fn main() -> Result<()> {
         Some(_) if !args.cluster.is_mainnet() => bail!(
             "--leader is mainnet-only — the localnet roster leads with its committed role key"
         ),
-        Some(path) => {
-            let kp = wallet::load_leader(path)?;
+        Some(arg) => {
+            let kp = wallet::resolve_key(arg, "--leader", args.cluster)?;
             if kp.pubkey() == wallet.pubkey() {
                 bail!("--leader must differ from --wallet: the program rejects one key as both admin and leader");
             }
@@ -77,25 +96,71 @@ fn main() -> Result<()> {
         }
     };
 
-    // A committed keypair's secret is public, so on mainnet neither role may
-    // be one. This also makes `--wallet` mandatory there: the default is the
-    // committed localnet admin.
+    // The program key signs only a first publish. Mainnet-only: localnet
+    // deploys with the committed program keypair through `make program`.
+    let program_key = match &args.program_key {
+        None => None,
+        Some(_) if !args.cluster.is_mainnet() => {
+            bail!("--program-key is mainnet-only — localnet deploys the committed program keypair")
+        }
+        Some(arg) => {
+            let kp = wallet::resolve_key(arg, "--program-key", args.cluster)?;
+            // Refused now rather than at deploy, where creating the program
+            // account would fail only after every buffer write was paid for.
+            let other = leader.as_ref().map(Signer::pubkey);
+            if kp.pubkey() == wallet.pubkey() || Some(kp.pubkey()) == other {
+                bail!("--program-key must differ from --wallet and --leader");
+            }
+            Some(kp)
+        }
+    };
+
+    // A committed keypair's secret is public, so on mainnet no role may be one.
     if args.cluster.is_mainnet() {
         let committed = wallet::committed_pubkeys(&repo_root);
         wallet::refuse_committed(&wallet.pubkey(), "--wallet", &committed)?;
         if let Some(leader) = &leader {
             wallet::refuse_committed(&leader.pubkey(), "--leader", &committed)?;
         }
+        if let Some(program) = &program_key {
+            wallet::refuse_committed(&program.pubkey(), "--program-key", &committed)?;
+        }
     }
+
+    // The ceremony record: always kept on mainnet, opt-in on localnet. Opened
+    // before the banner so a log that cannot be written refuses the session
+    // rather than surfacing after a write has landed unrecorded.
+    let log_path = match &args.ceremony_log {
+        Some(path) => Some(PathBuf::from(path)),
+        None if args.cluster.is_mainnet() => {
+            Some(ceremony::default_path(args.cluster).ok_or_else(|| {
+                anyhow!(
+                    "no ceremony log path — set {} or pass --ceremony-log",
+                    ceremony::CEREMONY_LOG_ENV
+                )
+            })?)
+        }
+        None => None,
+    };
+    let ceremony_log = log_path
+        .map(|path| CeremonyLog::open(&path, &repo_root, args.cluster).map(Arc::new))
+        .transpose()?;
 
     let rpc_url = args.cluster.rpc_url()?;
     if args.cluster.is_mainnet() {
         args.cluster.verify_genesis(&chain::rpc(&rpc_url))?;
         let leader_label = leader.as_ref().map(|k| k.pubkey().to_string());
+        let program_label = program_key.as_ref().map(|k| k.pubkey().to_string());
+        let log_label = ceremony_log
+            .as_ref()
+            .map(|l| l.path().display().to_string())
+            .unwrap_or_default();
         cluster::confirm_mainnet_entry(
             &rpc_url,
             &wallet.pubkey().to_string(),
             leader_label.as_deref(),
+            program_label.as_deref(),
+            &log_label,
         )?;
     }
 
@@ -106,6 +171,8 @@ fn main() -> Result<()> {
         wallet_path,
         wallet,
         leader,
+        program_key,
+        ceremony_log,
         // Mainnet never starts the managed container — it indexes the localnet.
         // The distinction is load-bearing (it stops `App`'s `Drop` tearing down
         // a container this session never brought up), so it lives in a tested
@@ -120,16 +187,28 @@ fn print_help() {
     println!(
         "dropset-tui — control-plane TUI for the Dropset eCLOB\n\n\
          USAGE:\n    \
-         dropset-tui [--cluster <localnet|mainnet>] [--wallet <path>] [--leader <path>] [--bootstrap]\n\n\
+         dropset-tui [--cluster <localnet|mainnet>] [--wallet <key>] [--leader <key>]\n                \
+         [--program-key <key>] [--ceremony-log <path>] [--bootstrap]\n\n\
          OPTIONS:\n        \
-         --cluster <name>    localnet (default) or mainnet\n    \
-         -w, --wallet <path>     admin keypair (default: keys/BBBB.json)\n        \
-         --leader <path>     mainnet only: vault leader keypair for create-vault / deposit\n        \
-         --bootstrap         localnet only: run \"Bootstrap all\" once at launch\n    \
-         -h, --help              show this help\n\n\
+         --cluster <name>        localnet (default) or mainnet\n    \
+         -w, --wallet <key>          admin keypair (default on localnet: keys/BBBB.json)\n        \
+         --leader <key>          mainnet only: vault leader for create-vault / deposit\n        \
+         --program-key <key>     mainnet only: program keypair, for a first publish\n        \
+         --ceremony-log <path>   append-only record of every write (mainnet default:\n                                \
+         ${} or ~/.dropset/ceremony-mainnet-beta.log)\n        \
+         --bootstrap             localnet only: run \"Bootstrap all\" once at launch\n    \
+         -h, --help                  show this help\n\n\
+         KEYS:\n    \
+         Localnet keys are keypair files. Mainnet keys are 1Password references\n    \
+         (op://vault/item/field, read with `op read`; set {} to pick the\n    \
+         account) — files are refused. `--wallet {}` is a fresh unfunded key.\n\n\
          MAINNET:\n    \
          Set {} to the JSON-RPC endpoint — there is deliberately no default.\n    \
-         Entry verifies the genesis hash and requires a typed confirmation.",
+         Entry verifies the genesis hash and requires a typed confirmation, and\n    \
+         every ceremony step shows its plan under its own typed confirmation.",
+        ceremony::CEREMONY_LOG_ENV,
+        wallet::OP_ACCOUNT_ENV,
+        wallet::EPHEMERAL_WALLET,
         cluster::MAINNET_RPC_ENV
     );
 }
@@ -157,6 +236,8 @@ struct Args {
     cluster: Cluster,
     wallet: Option<String>,
     leader: Option<String>,
+    program_key: Option<String>,
+    ceremony_log: Option<String>,
     bootstrap: bool,
     help: bool,
 }
@@ -167,6 +248,8 @@ impl Args {
             cluster: Cluster::Localnet,
             wallet: None,
             leader: None,
+            program_key: None,
+            ceremony_log: None,
             bootstrap: false,
             help: false,
         };
@@ -175,6 +258,8 @@ impl Args {
                 "--cluster" => a.cluster = Cluster::parse(&value(&mut it, "--cluster")?)?,
                 "--wallet" | "-w" => a.wallet = Some(value(&mut it, "--wallet")?),
                 "--leader" => a.leader = Some(value(&mut it, "--leader")?),
+                "--program-key" => a.program_key = Some(value(&mut it, "--program-key")?),
+                "--ceremony-log" => a.ceremony_log = Some(value(&mut it, "--ceremony-log")?),
                 "--bootstrap" => a.bootstrap = true,
                 "--help" | "-h" => a.help = true,
                 // A bare path stays supported as the wallet, which is how the
@@ -211,6 +296,23 @@ mod tests {
         assert_eq!(a.wallet.as_deref(), Some("/w.json"));
         assert!(parse(&["--leader"]).is_err());
         assert!(parse(&["--leader", "--bootstrap"]).is_err());
+    }
+
+    #[test]
+    fn ceremony_flags_take_values() {
+        let a = parse(&[
+            "--cluster",
+            "mainnet",
+            "--program-key",
+            "op://v/program/key",
+            "--ceremony-log",
+            "/tmp/c.log",
+        ])
+        .unwrap();
+        assert_eq!(a.program_key.as_deref(), Some("op://v/program/key"));
+        assert_eq!(a.ceremony_log.as_deref(), Some("/tmp/c.log"));
+        assert!(parse(&["--program-key"]).is_err());
+        assert!(parse(&["--ceremony-log", "--bootstrap"]).is_err());
     }
 
     #[test]

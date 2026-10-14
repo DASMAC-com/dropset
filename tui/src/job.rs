@@ -3,10 +3,12 @@
 //! stream [`JobEvent`]s back over an `mpsc` channel, so the synchronous
 //! event loop never blocks on an RPC round-trip or an `anchor build`.
 
+use crate::ceremony::CeremonyLog;
 use anyhow::{bail, Context, Result};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::thread;
 
 /// A message from a running background job to the event loop.
@@ -57,6 +59,8 @@ enum Sink {
 #[derive(Clone)]
 pub struct Logger {
     sink: Sink,
+    /// The ceremony record this job's writes are appended to, if any.
+    record: Option<Arc<CeremonyLog>>,
 }
 
 impl Logger {
@@ -65,13 +69,38 @@ impl Logger {
     pub fn new(tx: Sender<JobEvent>) -> Self {
         Self {
             sink: Sink::Channel(tx),
+            record: None,
         }
     }
 
     /// Build a headless `Logger` that prints to stdout — for the standalone
     /// `dropset-teardown` binary, which has no TUI event loop.
     pub fn stdout() -> Self {
-        Self { sink: Sink::Stdout }
+        Self {
+            sink: Sink::Stdout,
+            record: None,
+        }
+    }
+
+    /// This logger, also appending to the ceremony `record`.
+    pub fn with_record(mut self, record: Option<Arc<CeremonyLog>>) -> Self {
+        self.record = record;
+        self
+    }
+
+    /// Append `step` to the ceremony record, when this job keeps one. A failed
+    /// append is reported in the log rather than failing the job: by the time
+    /// there is something to record, the transaction has already landed.
+    pub fn record(&self, step: &str, fields: &[(&str, &str)]) {
+        if let Some(record) = &self.record {
+            if let Err(e) = record.append(step, fields) {
+                let line: Vec<String> = fields.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                self.log(format!(
+                    "CEREMONY LOG NOT WRITTEN — {e:#} — record by hand: step={step} {}",
+                    line.join(" ")
+                ));
+            }
+        }
     }
 
     /// Append a line to the log pane (or stdout, headless).
@@ -115,7 +144,19 @@ pub fn spawn<F>(tx: Sender<JobEvent>, label: &'static str, body: F)
 where
     F: FnOnce(&Logger) -> anyhow::Result<String> + Send + 'static,
 {
-    let logger = Logger::new(tx.clone());
+    spawn_recorded(tx, label, None, body);
+}
+
+/// [`spawn`], with the job's writes appended to the ceremony `record`.
+pub fn spawn_recorded<F>(
+    tx: Sender<JobEvent>,
+    label: &'static str,
+    record: Option<Arc<CeremonyLog>>,
+    body: F,
+) where
+    F: FnOnce(&Logger) -> anyhow::Result<String> + Send + 'static,
+{
+    let logger = Logger::new(tx.clone()).with_record(record);
     thread::spawn(move || {
         let done = match body(&logger) {
             Ok(summary) => JobEvent::Done { ok: true, summary },
