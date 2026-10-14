@@ -259,12 +259,13 @@ class VerbLaunch(SubstrateHarness):
     def test_task_launches_the_executor_tier_on_bedrock(self):
         result, out = self._launch("task 7", env=self._TOKEN)
         self.assertIn("MODEL=work-model[1m] USE=1", out, result.stderr)
-        self.assertIn("-w eng-7", out)
+        # The bare number names the worktree and the session alike.
+        self.assertIn("-w 7 -n 7", out)
 
     def test_task_anthropic_and_the_retired_local_alias(self):
         # The marker the launch writes is read raw: `_ds_substrate_read` would
         # map a stale `seat` to anthropic too, so it cannot tell them apart.
-        marker = 'print -r -- "MARK=$(<$_DS_SUBSTRATE_DIR/eng-7)"'
+        marker = 'print -r -- "MARK=$(<$_DS_SUBSTRATE_DIR/7)"'
         result, out = self._launch(f"task anthropic 7; {marker}")
         self.assertIn("MODEL=work-model[1m] USE=unset", out, result.stderr)
         self.assertIn("MARK=anthropic", out)
@@ -296,7 +297,18 @@ class VerbLaunch(SubstrateHarness):
             env={**self._TOKEN, "DS_MODEL_ADVISOR_SUBSTRATE": "bedrock"},
         )
         self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
-        self.assertIn("-w eng-12", out)
+        self.assertIn("-n 12 --permission-mode auto -w 12", out)
+        # The prefixed spelling names the same issue, worktree and session.
+        result, out = self._launch("explore eng-12")
+        self.assertIn("-n 12 --permission-mode auto -w 12", out, result.stderr)
+
+    def test_free_form_explore_keeps_its_exp_name(self):
+        result, out = self._launch("explore pricing-survey")
+        self.assertIn(
+            "-n exp-pricing-survey --permission-mode auto -w exp-pricing-survey",
+            out,
+            result.stderr,
+        )
 
     def test_a_refused_plan_bedrock_login_leaves_no_bedrock_env(self):
         result, out = self._launch(
@@ -313,18 +325,46 @@ class VerbLaunch(SubstrateHarness):
         )
         self.assertIn("MODEL=work-model[1m] USE=unset", out, result.stderr)
 
-    def test_architect_takes_the_override_after_the_topic(self):
-        result, out = self._launch("architect pricing bedrock", env=self._TOKEN)
+    def test_architect_takes_the_override_after_the_number(self):
+        result, out = self._launch("architect 12 bedrock", env=self._TOKEN)
         self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
-        result, out = self._launch("architect pricing")
+        result, out = self._launch("architect 12")
         self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
-        result, out = self._launch("architect pricing local")
+        # Session, worktree and governing issue all come from the one number.
+        self.assertIn("-n 12 --permission-mode auto -w 12 /architect ENG-12", out)
+        result, out = self._launch("architect 12 local")
         self.assertIn("RC=1", out)
         self.assertNotIn("MODEL=", out)
 
+    def test_architect_refuses_a_topic_and_zero(self):
+        for verb in ("architect pricing", "architect 0"):
+            with self.subTest(verb=verb):
+                result, out = self._launch(verb)
+                self.assertIn("RC=1", out)
+                self.assertNotIn("MODEL=", out)
+                self.assertIn("governing issue number", result.stderr)
+
+    def test_a_pre_rename_worktree_is_reused_not_shadowed(self):
+        # A bare `<n>` created beside a live `eng-<n>` / `ceo-<n>` would win
+        # every later resume and orphan the old thread.
+        for name in ("eng-7", "ceo-12"):
+            (self.repo / ".claude" / "worktrees" / name).mkdir(parents=True)
+        result, out = self._launch("task 7", env=self._TOKEN)
+        self.assertIn("-w eng-7 -n 7", out, result.stderr)
+        result, out = self._launch("architect 12")
+        self.assertIn("-n 12 --permission-mode auto -w ceo-12", out, result.stderr)
+
     def test_resume_re_pins_a_task_session_on_its_recorded_substrate(self):
         result, out = self._launch(
-            "_ds_substrate_write eng-8 bedrock; task resume 8", env=self._TOKEN
+            "_ds_substrate_write 8 bedrock; task resume 8", env=self._TOKEN
+        )
+        self.assertIn("MODEL=work-model[1m] USE=1", out, result.stderr)
+
+    def test_resume_reads_a_pre_rename_marker(self):
+        # A Bedrock session launched before the rename recorded under `eng-8`;
+        # losing it would silently resume that session on the seat.
+        result, out = self._launch(
+            "_ds_substrate_write eng-8 bedrock; task resume eng-8", env=self._TOKEN
         )
         self.assertIn("MODEL=work-model[1m] USE=1", out, result.stderr)
 
@@ -421,6 +461,39 @@ class ModelsVerb(SubstrateHarness):
         # A non-`claude-*`, non-Bedrock id is an alias, reported not failed.
         self.assertIn("skip   executor work-model[1m]", out)
         self.assertIn("RC=1", out)
+
+
+class TagAndWorktree(SubstrateHarness):
+    """`_ds_tag_of` / `_ds_worktree_of` — the bare-number name, and the seam
+    that still reaches a worktree created under a retired prefix."""
+
+    def test_every_issue_spelling_is_the_bare_number(self):
+        result = self._zsh(
+            "for t in 882 eng-882 ENG-882 ceo-882 exp-882 0882 exp-pricing; "
+            "do _ds_tag_of $t; done"
+        )
+        self.assertEqual(
+            result.stdout.split(), ["882"] * 6 + ["exp-pricing"], result.stderr
+        )
+
+    def _trees(self, *names):
+        for name in names:
+            (self.repo / ".claude" / "worktrees" / name).mkdir(parents=True)
+
+    def test_the_bare_directory_wins(self):
+        self._trees("5", "eng-5")
+        result = self._zsh("_ds_worktree_of 5")
+        self.assertEqual(result.stdout.strip(), "5")
+
+    def test_a_pre_rename_directory_is_reached(self):
+        # The fleet-resume miss: an architect thread lives in `ceo-<n>`.
+        self._trees("ceo-6", "eng-7")
+        result = self._zsh("_ds_worktree_of 6; _ds_worktree_of 7")
+        self.assertEqual(result.stdout.split(), ["ceo-6", "eng-7"])
+
+    def test_no_directory_is_non_zero(self):
+        result = self._zsh('_ds_worktree_of 9; print -r -- "rc=$?"')
+        self.assertEqual(result.stdout.strip(), "rc=1")
 
 
 class MarkerRoundTrip(SubstrateHarness):

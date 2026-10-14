@@ -71,7 +71,11 @@ class FakeGit:
         local_branches=(),
         refs_fail=False,
         delete_fails=(),
+        on_main=(),
     ):
+        # Branches with no upstream whose every commit is on `origin/main` —
+        # the never-pushed architect worktree.
+        self.on_main = set(on_main)
         self.refs_fail = refs_fail
         self.delete_fails = set(delete_fails)
         self.porcelain = porcelain
@@ -94,6 +98,9 @@ class FakeGit:
             return 1, "", "error: cannot delete\nhint: second line\n"
 
         if args[0] == "rev-list":
+            if args[2].startswith("origin/main.."):
+                branch = args[2].split("..", 1)[1]
+                return 0, "0\n" if branch in self.on_main else "1\n", ""
             branch = args[2].split("@", 1)[0]
             if branch in self.no_upstream:
                 return 128, "", "no upstream configured"
@@ -111,6 +118,8 @@ class FakeGit:
                 )
             if args[2] == "rev-list":
                 branch = path.rsplit("/", 1)[-1]
+                if args[4].startswith("origin/main.."):
+                    return 0, "0\n" if branch in self.on_main else "1\n", ""
                 if branch in self.no_upstream:
                     return 128, "", "no upstream configured"
                 return 0, "%s\n" % self.unpushed.get(branch, 0), ""
@@ -151,6 +160,14 @@ class SafetyGateTests(unittest.TestCase):
         out = prune({"eng-701"}, dry_run=False, git=git)
         self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-701"])
         self.assertIn("upstream", out["skipped"][0]["reason"])
+
+    def test_a_never_pushed_branch_with_nothing_beyond_main_is_removed(self):
+        # The read-only architect worktree: no upstream by design, and no
+        # commit of its own, so there is nothing unpushed to lose.
+        git = FakeGit(PORCELAIN, no_upstream=["eng-701"], on_main=["eng-701"])
+        out = prune({"eng-701"}, dry_run=False, git=git)
+        self.assertEqual([r["branch"] for r in out["removed"]], ["eng-701"])
+        self.assertEqual(out["skipped"], [])
 
     def test_an_unreadable_status_is_skipped(self):
         class Broken(FakeGit):

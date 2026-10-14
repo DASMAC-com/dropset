@@ -20,8 +20,8 @@ Usage (run from inside the worktree being closed):
 
 ``--state`` is required and never guessed: an implementation session closes to
 Done, an ``architect`` / ``explore`` session hands off at In Review. The issue
-is read from an ``eng-###`` branch; any other branch (``worktree-ceo-…``) must
-pass ``--issue``. ``--keep-worktree`` is the report-only ending — the same gates
+is read from an ``eng-###`` or ``worktree-###`` branch; any other branch (a
+pre-rename ``worktree-ceo-…``) must pass ``--issue``. ``--keep-worktree`` is the report-only ending — the same gates
 and state write, with the removal left to the operator. It is **required** for
 any state other than Done / Canceled: removing a worktree whose issue still
 reads as live is the stranding this tool exists to prevent, and ``upkeep``
@@ -79,7 +79,12 @@ import prune_worktrees
 
 REPO = "DASMAC-com/dropset"
 TIMEOUT = 60
-ISSUE_BRANCH_RE = re.compile(r"^(?:worktree-)?eng-(\d+)$", re.IGNORECASE)
+# `eng-<n>` once `init-pr` renamed it, or the `worktree-<n>` a read-only
+# architect / explore session never renames — the same set `upkeep.BRANCH_RE`
+# ties to an issue.
+ISSUE_BRANCH_RE = re.compile(
+    r"^(?:worktree-)?(?:eng-)?(\d+)$", re.IGNORECASE | re.ASCII
+)
 ISSUE_RE = re.compile(r"^ENG-\d+$")
 LOCK_PID_RE = re.compile(r"\(pid (\d+)\b")
 NO_UPSTREAM_PREFIX = "no upstream"

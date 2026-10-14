@@ -1105,18 +1105,18 @@ clean cut with **no aliases** — the family is small and every launcher
 is the operator's own muscle memory, so a half-migration leaving both
 names alive was the outcome to avoid.
 
-| Verb                    | Job                                        | Substrate              | Tier             |
-| ----------------------- | ------------------------------------------ | ---------------------- | ---------------- |
-| `task <n>`              | worktree session on Linear task n          | executor's (Bedrock)   | executor         |
-| `task anthropic <n>`    | same, when the work needs web research     | anthropic              | executor         |
-| `task resume [n]`       | resume by number (bare = the picker)       | as recorded            | re-pinned        |
-| `explore <n\|name>`     | research / audit, read-only, temp worktree | anthropic, always      | advisor          |
-| `plan [bedrock]`        | daily planning session                     | advisor's, or override | advisor          |
-| `housekeeping`          | upkeep; also the 5-hour-window opener      | anthropic, always      | executor's model |
-| `architect <topic> [b]` | design thread, read-only, temp worktree    | advisor's, or override | advisor          |
-| `fleet [go]`            | batch resume                               | per-window             | re-pinned        |
-| `models [check]`        | print the tier table; `check` it for free  | —                      | —                |
-| `cdds [n]`              | not a session verb — navigation            | —                      | —                |
+| Verb                 | Job                                        | Substrate              | Tier             |
+| -------------------- | ------------------------------------------ | ---------------------- | ---------------- |
+| `task <n>`           | worktree session on Linear task n          | executor's (Bedrock)   | executor         |
+| `task anthropic <n>` | same, when the work needs web research     | anthropic              | executor         |
+| `task resume [n]`    | resume by number (bare = the picker)       | as recorded            | re-pinned        |
+| `explore <n\|name>`  | research / audit, read-only, temp worktree | anthropic, always      | advisor          |
+| `plan [bedrock]`     | daily planning session                     | advisor's, or override | advisor          |
+| `housekeeping`       | upkeep; also the 5-hour-window opener      | anthropic, always      | executor's model |
+| `architect <n> [b]`  | design thread, read-only, temp worktree    | advisor's, or override | advisor          |
+| `fleet [go]`         | batch resume                               | per-window             | re-pinned        |
+| `models [check]`     | print the tier table; `check` it for free  | —                      | —                |
+| `cdds [n]`           | not a session verb — navigation            | —                      | —                |
 
 `[b]` is the same optional `anthropic` / `bedrock` word `plan` takes.
 `task local <n>` still works for now, printing a line naming its
@@ -1131,7 +1131,7 @@ board, not a branch.
 
 #### Architect and explore sessions: temporary worktree, no PR
 
-**`architect <topic>` and every `explore <n|name>` task — audits
+**`architect <n>` and every `explore <n|name>` task — audits
 included — run in their own worktree, but that worktree is
 TEMPORARY WORKING STATE and the session is READ-ONLY toward the
 repo: no commits, no PR.** Durable state is captured in
@@ -1145,46 +1145,69 @@ through.
 Operator ruling, **2026-09-14**, superseding the 09-11 shape
 recorded on ENG-1367.
 
-**What names the worktree:**
+**What names the worktree — the bare issue number.** Every
+issue-keyed session, its tab and its worktree directory are named
+by the number alone (operator rulings 2026-09-16 and 2026-10-05:
+the prefix is dead screen estate, and the number is what the
+operator looks up in Linear). `architect` takes the governing
+issue as its **only** argument — there is no topic form, so a
+design thread with no issue files or names one first.
 
 | Launch                 | Worktree           | Session name       |
 | ---------------------- | ------------------ | ------------------ |
-| `explore 1196`         | `eng-1196`         | `exp-1196`         |
+| `task 1196`            | `1196`             | `1196`             |
+| `explore 1196`         | `1196`             | `1196`             |
 | `explore skills-audit` | `exp-skills-audit` | `exp-skills-audit` |
-| `architect volatility` | `ceo-volatility`   | `ceo-volatility`   |
+| `architect 1572`       | `1572`             | `1572`             |
 
-**A number keys the worktree to the Linear issue, and that is
-the substantive call** — `explore 1196` lands in `eng-1196`,
-not `exp-1196`, so the session inherits the **addressing**
-mechanisms already keyed on `eng-###`: `cdds 1196` reaches it,
-and `fleet` reaches it. A worktree named anything else would be
-invisible to both. The session's *display* name stays
-role-prefixed so the fleet listing reads by role: `eng-*`
-implementers, `plan-*` planning, `ceo-*` architecture, `exp-*`
-research.
+The named exceptions: `plan-<day>` and `housekeeping-<day>` keep
+their day-keyed names (they have no issue), a free-form explore
+keeps `exp-<name>`, and **git branches keep the `eng-` prefix**
+— `init-pr` renames `worktree-<n>` to `eng-<n>`, because Linear's
+GitHub integration links branches and PRs on that form. Two
+mirrored normalizers agree on the rule: `_ds_tag_of` in the shell
+and `normalize_tag` in `resolve_session.py` both map `1196`,
+`eng-1196`, `ceo-1196` and `exp-1196` to `1196`.
 
-**It does NOT inherit automatic pruning, and that is worth
-stating because it is the obvious thing to assume.**
-`housekeeping` derives its prune candidates from branches with a
-**merged PR**, and only *then* intersects that set with the
-issue's status type. These sessions open no PR, so an
-`exp-<name>`, `ceo-<topic>` or issue-keyed `eng-<n>` explore
-worktree is **never a candidate** and is never reclaimed
-automatically. Each is a full checkout, and accumulated checkouts
-have a measured cost here (a bare recursive grep under
-`.claude/` once timed out at 120s walking every checkout's
-`target/`). So these worktrees want **removing by hand** when a
-thread is finished — nothing is lost by doing so, since their
-contents are expendable by construction.
+**Pre-rename worktrees are grandfathered, not moved.** A live
+transcript stamps its cwd into the old path, so renaming an
+`eng-<n>` / `ceo-<n>` / `exp-<n>` directory would orphan its
+conversation. `cdds`, `task resume` (and so `fleet`) and
+`resolve_session.py` look for the bare directory first and then
+each old spelling, which is the compatibility seam; a substrate
+marker written under `eng-<n>` is still read. Before this, `fleet`
+typed `task resume 1572` for an In Review architect thread, the
+resolver looked only for `eng-1572`, and the `ceo-1572` worktree
+the thread lived in was never reached.
 
-**Two costs of sharing that tag with `task <n>`, both worth
+**Pruning is one rule for every session kind.** A worktree or
+local branch survives iff it is tied to an **open PR**, or to an
+issue whose **status type** is neither completed nor canceled;
+everything else is cleanup-eligible (`upkeep.py`, which the
+`housekeeping` skill drives through `upkeep.py prune`). A
+read-only session never renames its branch, so the pruner ties a
+`worktree-<n>` branch to issue `<n>` as well as an `eng-<n>` one,
+and its never-pushed branch passes the unpushed-work gate when
+every commit on it is already on `origin/main`. So an architect
+or explore worktree is **protected while its issue is In
+Progress or In Review and eligible once it is Done or
+canceled**. The pruner still refuses a dirty tree, so one
+holding an untracked spec file is reported on every pass and
+removed by hand; gitignored files are not protected at all.
+The pre-rename `ceo-<topic>`
+and `exp-<name>` worktrees match no issue: the pruner reports
+them as unresolvable and they are removed by hand as their
+threads close. A canceled issue whose PR is still open is always
+flagged, never pruned.
+
+**Two costs of sharing the number with `task <n>`, both worth
 knowing before relying on the inheritance:**
 
 - **`fleet` reaches such a session through `task resume <n>`**,
   which re-pins the tier as well as the substrate: an untagged
   worktree — no marker — resumes on the **advisor** tier, so an
-  issue-keyed explore session comes back on the right model.
-  (This closed the first part of ENG-1402.)
+  issue-keyed explore or architect session comes back on the
+  right model. (This closed the first part of ENG-1402.)
 - **No substrate marker is written for an explore session**, and
   that is deliberate rather than an omission. The marker keys on
   the **worktree tag alone**, which `task <n>` also writes — so
@@ -1194,9 +1217,9 @@ knowing before relying on the inheritance:**
   marker already reads as anthropic and as the advisor tier,
   which is what this verb runs.
 
-Both are the same root: `eng-<n>` stopped being a single-owner
-namespace. It now names a worktree two session kinds can claim,
-with different substrates and different pins.
+Both are the same root: `<n>` is not a single-owner namespace. It
+names a worktree several session kinds can claim, with different
+substrates and different pins.
 
 There is **no branch to rename and no PR to open** — the worktree does
 arrive on a `worktree-<tag>` branch, as any git worktree must; these
@@ -1552,7 +1575,7 @@ running.
 
 **The substrate override** is the two substrate names and nothing else,
 as an optional literal word: `task anthropic <n>`, `plan bedrock`,
-`architect <topic> bedrock`. The one that will actually get used is the
+`architect <n> bedrock`. The one that will actually get used is the
 advisor tier onto Bedrock in a credit pinch. **Retention:** a
 Fable-class model on Bedrock falls under the account's standing AWS
 human-review opt-in, which is a condition of Fable access and cannot be
@@ -1698,7 +1721,8 @@ drives the real zsh functions.
   better at the call site.
 
 - **`task resume <n>`** — resume a worktree session by number: takes a
-  bare `<n>`, resolves it to the `eng-<n>` worktree, and resumes that
+  bare `<n>`, resolves it to the `<n>` worktree (or a pre-rename
+  `eng-<n>` / `ceo-<n>` / `exp-<n>` one), and resumes that
   session's most recent conversation there, **on the substrate it
   launched with and its tier's model**. The number-to-worktree
   resolution is the whole point — you resume `task resume 814`, not a
@@ -1715,7 +1739,7 @@ drives the real zsh functions.
 
   **A bare number keys it to a Linear issue**, and both spellings agree:
   `explore 1196` and `explore eng-1196` normalize to the same worktree
-  (`eng-1196`), session name (`exp-1196`) and session id, as do
+  and session name (both `1196`) and the same session id, as do
   `explore 0123` and `explore 123`. That normalization happens *before*
   the issue-keyed branch is chosen — an earlier revision decided the
   branch first, so `explore eng-1196` fell through to the free-form path
@@ -1865,31 +1889,32 @@ drives the real zsh functions.
   model — upkeep, not board decisions — but always on the anthropic
   substrate, since opening the subscription window is its point.
 
-- **`architect <topic>`** — start **or resume** an **architect** session on
-  one topic: the CEO hat, and the complement to `plan` rather than a
-  variant of it. Same tier, same optional substrate word (after the
-  topic), same idempotency; the different halves
-  are the briefing (`/architect`), what it may write — **nothing to the
-  board** — and **where it runs**, which is now its own temporary
-  worktree `ceo-<topic>` rather than the base repo (see "Architect and
-  explore sessions: temporary worktree, no PR").
+- **`architect <n>`** — start **or resume** an **architect** session on
+  the design thread governed by issue `<n>`, its only argument: the CEO
+  hat, and the complement to `plan` rather than a variant of it. Same
+  tier, same optional substrate word (after the number), same
+  idempotency; the different halves are the briefing
+  (`/architect ENG-<n>`), what it may write — **nothing to the board**
+  — and **where it runs**, its own temporary worktree `<n>` rather than
+  the base repo (see "Architect and explore sessions: temporary
+  worktree, no PR").
 
-  It keys on the **topic, not the date**, which is the one substantive
+  It keys on the **issue, not the date**, which is the one substantive
   difference from `plan` / `housekeeping`: a design thread outlives a day, so
   `_ds_topic_sid` omits the date from the seed. Putting the date in
   would silently start a fresh conversation each morning and lose the
-  thread — the failure the verb exists to prevent. Each topic gets its
-  own resumable session, so parallel threads never share context.
+  thread — the failure the verb exists to prevent. Each issue gets its
+  own resumable session, so parallel threads never share context, and a
+  pre-rename `architect 1572` thread keeps its id, since its topic seed
+  was that same string.
 
-  The display name is `ceo-<topic>`, which makes the fleet listing read
-  by role: `eng-*` implementers, `plan-*` planning, `ceo-*`
-  architecture, `exp-*` research. The topic is validated to lowercase
-  letters, digits and dashes, since it reaches a session name, a
-  **worktree**, a **branch** and a filename — the worktree home is what
-  makes that shape binding rather than merely tidy. The branch exists
-  because `claude -w` creates a git worktree and a git worktree always
-  carries one (it arrives as `worktree-<tag>`); what these sessions
-  never do is **rename, commit to, or push** it.
+  The session, tab and worktree are all the bare number, like every
+  issue-keyed session; a topic is refused with a pointer to file or
+  name the issue first. The branch exists because `claude -w` creates a
+  git worktree and a git worktree always carries one (it arrives as
+  `worktree-<n>`); what these sessions never do is **rename, commit to,
+  or push** it — which is why the pruner ties `worktree-<n>` to its
+  issue too.
 
   All four standing verbs share one core, `_ds_session`, which takes
   an already-computed id — `plan` and `housekeeping` hand it a daily id,

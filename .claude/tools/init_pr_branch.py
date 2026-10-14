@@ -6,11 +6,12 @@ Given the ``git worktree list --porcelain`` output, the current branch name, and
 a tag, it resolves three things the skill no longer has to hand-parse:
 
 * **base-repo path** — the worktree whose branch is ``refs/heads/main``;
-* **branch normalization** — strip a leading ``worktree-`` prefix so
-  ``worktree-eng-603`` becomes the bare ``eng-603`` that matches the Linear
-  issue, reporting whether a rename is needed;
-* **tag validation** — the resolved tag must match ``eng-###``
-  (case-insensitive), normalized to lowercase.
+* **branch normalization** — replace a leading ``worktree-`` prefix so
+  ``worktree-603`` (or an older ``worktree-eng-603``) becomes the ``eng-603``
+  that matches the Linear issue, reporting whether a rename is needed;
+* **tag validation** — the resolved tag must be ``###`` (the bare-number
+  worktree directory) or ``eng-###``, case-insensitive, normalized to
+  lowercase ``eng-###``.
 
 It also reports three **measured facts** the skill would otherwise have to
 predict, each read-only and so present on every run: whether this worktree has
@@ -69,11 +70,14 @@ import shutil
 import subprocess
 from collections.abc import Callable
 
-# A worktree tag: `eng-` followed by digits, case-insensitive.
-_TAG_RE = re.compile(r"^eng-\d+$", re.IGNORECASE)
+# A worktree tag: digits, optionally after `eng-`, case-insensitive. The bare
+# number is what the worktree directory is named now; `eng-###` is the older
+# spelling, and both normalize to `eng-###`.
+_TAG_RE = re.compile(r"\A(?:eng-)?(\d+)\Z", re.IGNORECASE | re.ASCII)
 
-# The `task` helper names worktree branches `worktree-eng-###`; the bare
-# `eng-###` is what matches the Linear issue identifier.
+# `claude -w <n>` names the branch `worktree-<n>` (`worktree-eng-###` before the
+# bare-number rename); `eng-###` is what Linear's GitHub integration links on,
+# so the branch keeps that prefix even though the directory does not.
 _WORKTREE_PREFIX = "worktree-"
 
 # The files `--link-env` mirrors, relative to a repo root. Both are gitignored,
@@ -127,25 +131,30 @@ def parse_base_repo(porcelain: str) -> str | None:
 
 
 def normalize_tag(tag: str) -> str | None:
-    """Validate ``tag`` against ``eng-###`` (case-insensitive) and return it
-    lowercased, or ``None`` if it doesn't match.
+    """Validate ``tag`` as ``###`` or ``eng-###`` (case-insensitive) and return
+    it as lowercase ``eng-###``, or ``None`` if it doesn't match.
     """
-    tag = tag.strip()
-    if _TAG_RE.match(tag):
-        return tag.lower()
-    return None
+    match = _TAG_RE.match(tag.strip())
+    # Unpadded, as every other tool reads it; 0 is not an issue.
+    if not match or int(match.group(1)) == 0:
+        return None
+    return f"eng-{int(match.group(1))}"
 
 
 def normalize_branch(branch: str) -> tuple[str, bool]:
     """Return ``(normalized_branch, rename_needed)``.
 
-    A ``worktree-eng-###`` branch (the ``task`` default) is stripped to the bare
-    ``eng-###``; any other name is left as-is. ``rename_needed`` is ``True`` only
-    when the leading ``worktree-`` prefix was actually present.
+    A ``worktree-<n>`` branch (the ``task`` default) becomes ``eng-<n>``, and an
+    older ``worktree-eng-<n>`` is stripped to the same; any other
+    ``worktree-<x>`` loses only the prefix, and a name without it is left
+    as-is. ``rename_needed`` is ``True`` only when the leading ``worktree-``
+    prefix was actually present.
     """
     branch = branch.strip()
     if branch.startswith(_WORKTREE_PREFIX):
         stripped = branch[len(_WORKTREE_PREFIX) :]
+        if stripped.isascii() and stripped.isdigit():
+            stripped = f"eng-{int(stripped)}"
         return stripped, True
     return branch, False
 

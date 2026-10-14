@@ -70,13 +70,18 @@ ENDPOINT = linear_api.ENDPOINT
 IN_FLIGHT_TYPE = "started"
 
 # The shell verb each tab is told to run. `task resume <n>` resolves the number
-# to the `eng-<n>` worktree, continues that session there, and re-exports the
-# substrate that session launched on.
+# to its worktree — the bare `<n>`, or a pre-rename `eng-` / `ceo-` / `exp-` one
+# — continues that session there, and re-exports the substrate it launched on.
+# One verb serves every session kind: an architect or explore thread writes no
+# substrate marker, which is what makes the resume re-pin the advisor tier.
 RESUME_VERB = "task resume"
 
-# An `ENG-###` identifier, or the tag inside an iTerm session name. The name
-# carries a status glyph prefix ("◐ eng-914"), so this is a search, not a match.
-_TAG_RE = re.compile(r"\beng-(\d+)\b", re.IGNORECASE)
+# The tag an iTerm session name IS: the bare number every issue-keyed session
+# is named by now ("◐ 914"), or a pre-rename "eng-914" / "ceo-914" / "exp-914",
+# after an optional status glyph. Matched against the WHOLE name, never searched
+# for: a search reads the numbers in "Python 3.12" or "10:30" as live issues and
+# silently skips resuming them. A day-keyed "plan-13" does not match either.
+_TAG_RE = re.compile(r"\A\W*(?:(?:eng|ceo|exp)-)?(\d+)\s*\Z", re.IGNORECASE | re.ASCII)
 
 _IDENT_RE = re.compile(r"^ENG-(\d+)$", re.IGNORECASE)
 
@@ -179,9 +184,10 @@ def live_tags() -> set[str]:
     (Session, not tab: the two are equivalent for the one-pane tabs these
     helpers create, but the distinction matters if a tab is ever split.)
 
-    The name carries a status glyph — `"◐ eng-914"` — so this searches rather
-    than matches. A session whose name has no tag (a plain shell, a planning
-    session) contributes nothing.
+    The name carries a status glyph — `"◐ 914"` — which the match skips. A
+    session whose name is not a tag (a plain shell, a planning session, a title
+    that merely contains a number) contributes nothing, and a padded `eng-0914`
+    reads as `914`, the form `tag_of` produces.
 
     An iTerm that cannot be reached yields an EMPTY set rather than an error,
     and the direction of that failure is deliberate: an empty set means nothing
@@ -196,7 +202,7 @@ def live_tags() -> set[str]:
     except iterm_api.ItermUnavailable as exc:
         print(f"fleet-resume: cannot read live sessions ({exc})", file=sys.stderr)
         return set()
-    return {m.group(1) for m in _TAG_RE.finditer("\n".join(names))}
+    return {str(int(m.group(1))) for name in names if (m := _TAG_RE.match(str(name)))}
 
 
 def resume_command(tag: str) -> str:

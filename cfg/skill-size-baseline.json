@@ -1,7 +1,7 @@
 {
   "exceptions": {
     ".claude/skills/housekeeping/SKILL.md": {
-      "ceiling": 52355,
+      "ceiling": 52239,
       "issue": "ENG-1509"
     },
     ".claude/skills/review-pr/SKILL.md": {

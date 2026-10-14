@@ -7,6 +7,10 @@ Usage (from the base repo root; a worktree is refused):
 
     python3 .claude/tools/upkeep.py run [--json] [--no-doc]
     python3 .claude/tools/upkeep.py ran-today
+    python3 .claude/tools/upkeep.py prune [--apply] [--json]
+
+``prune`` runs steps 4–7 alone, disarmed unless ``--apply`` — the
+``housekeeping`` skill's prune step, so both passes apply the one rule below.
 
 ``run`` executes ten steps in order, each under its own timeout and each
 **best-effort**: a failure is a report line, never an abort of later steps.
@@ -108,7 +112,15 @@ OPEN_PR_LIMIT = 100
 NOTIFICATIONS_PATH = "/notifications?all=true&per_page=50"
 
 RESOLVED_TYPES = ("completed", "canceled")
-BRANCH_RE = re.compile(r"^eng-(\d+)$")
+# A branch tied to an ENG issue: `eng-<n>` once `init-pr` has renamed it, or the
+# `worktree-<n>` that `claude -w <n>` creates and a read-only architect or
+# explore session never renames (`worktree-eng-<n>` before the bare-number
+# rename). Tying the last two to their issue is what makes an architect
+# worktree eligible once its issue is completed or canceled — still behind the
+# pruner's dirty-tree refusal, which an untracked spec file trips. A pre-rename
+# `worktree-ceo-*` / `worktree-exp-*` branch matches nothing, so it is reported
+# as unresolvable and cleaned by hand — grandfathered, never guessed at.
+BRANCH_RE = re.compile(r"^(?:worktree-)?(?:eng-)?(\d+)$", re.IGNORECASE | re.ASCII)
 PR_URL_RE = re.compile(r"/repos/DASMAC-com/dropset/pulls/(\d+)$")
 
 Runner = Callable[[list[str], float, "str | None"], "tuple[int, str, str]"]
@@ -623,8 +635,16 @@ STEPS = (
 )
 
 
-def run_pass(ctx: Ctx) -> dict:
+# The cleanup half alone — the `prune` subcommand, which is what the
+# `housekeeping` skill's prune step drives, so the interactive pass and this one
+# apply ONE survival rule rather than two that drift.
+PRUNE_STEPS = ("prs", "board", "prune", "notifications")
+
+
+def run_pass(ctx: Ctx, only: tuple[str, ...] | None = None) -> dict:
     for name, fn in STEPS:
+        if only is not None and name not in only:
+            continue
         try:
             fn(ctx)
         except Exception as e:  # noqa: BLE001 — best-effort: a crash is a line
@@ -807,6 +827,17 @@ def run(argv: list[str]) -> int:
         "--no-doc", action="store_true", help="skip the Planning document write"
     )
     sub.add_parser("ran-today", help="did a pass run today? (no network read)")
+    p_prune = sub.add_parser(
+        "prune",
+        help="only the cleanup steps (PR set, board, prune, notifications); "
+        "a dry run unless --apply",
+    )
+    p_prune.add_argument(
+        "--apply", action="store_true", help="remove and dismiss for real"
+    )
+    p_prune.add_argument(
+        "--json", action="store_true", help="print the structured result"
+    )
     args = parser.parse_args(argv[1:])
 
     base, trees, why = check_base(real_run, os.getcwd())
@@ -817,6 +848,18 @@ def run(argv: list[str]) -> int:
 
     if args.cmd == "ran-today":
         print(json.dumps(ran_today(stamp_path(base), now)))
+        return 0
+
+    if args.cmd == "prune":
+        # Armed by the flag, not the environment: the caller is the
+        # `housekeeping` skill, whose prune step has always run in-pass. The
+        # gates that make that safe are the board rule and the pruner's
+        # dirty/unpushed refusal, not a prompt. No document write and no stamp
+        # — this is not the day's pass.
+        ctx = Ctx(base=base, armed=args.apply, now=now, lookup=linear_lookup)
+        ctx.data["trees"] = trees
+        result = run_pass(ctx, PRUNE_STEPS)
+        print(json.dumps(result, indent=2) if args.json else render(result))
         return 0
 
     ctx = Ctx(

@@ -78,14 +78,22 @@ class SlugAndTagTests(unittest.TestCase):
     def test_slugify_replaces_slashes_and_dots(self):
         self.assertEqual(slugify(Path("/a/b.c/d")), "-a-b-c-d")
 
-    def test_a_bare_number_gets_the_prefix(self):
-        self.assertEqual(normalize_tag("1051"), "eng-1051")
+    def test_a_bare_number_is_the_tag(self):
+        self.assertEqual(normalize_tag("1051"), "1051")
 
-    def test_an_already_prefixed_tag_is_unchanged(self):
-        self.assertEqual(normalize_tag("eng-1051"), "eng-1051")
+    def test_every_prefixed_spelling_is_the_bare_number(self):
+        for raw in ("eng-1051", "ENG-1051", "ceo-1051", "exp-1051", "01051"):
+            with self.subTest(raw=raw):
+                self.assertEqual(normalize_tag(raw), "1051")
 
-    def test_an_uppercase_tag_is_normalized(self):
-        self.assertEqual(normalize_tag("ENG-1051"), "eng-1051")
+    def test_a_free_form_name_passes_through(self):
+        self.assertEqual(normalize_tag("exp-pricing"), "exp-pricing")
+
+    def test_candidates_put_the_bare_directory_first(self):
+        self.assertEqual(
+            rs.worktree_candidates("eng-7"), ["7", "eng-7", "ceo-7", "exp-7"]
+        )
+        self.assertEqual(rs.worktree_candidates("exp-pricing"), ["exp-pricing"])
 
     def test_an_empty_tag_is_refused(self):
         with self.assertRaises(ResolveSessionError):
@@ -166,6 +174,22 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(v["mode"], "resume")
         self.assertEqual(v["session_id"], "afce0c54")
         self.assertEqual(v["run_from"], str(self.fx.repo))
+
+    def test_a_pre_rename_architect_worktree_is_reached_by_number(self):
+        # The live miss: `task resume 1572` (typed by `fleet`) looked only for
+        # `eng-1572` while the architect thread lived in `ceo-1572`, under the
+        # worktree's own slug.
+        wt = self.fx.worktree("ceo-1572")
+        self.fx.transcript(wt, "thread", [str(wt)])
+        v = resolve("1572", self.fx.repo)
+        self.assertEqual(v["mode"], "continue")
+        self.assertEqual(v["run_from"], str(wt))
+
+    def test_the_bare_worktree_wins_over_a_legacy_one(self):
+        bare = self.fx.worktree("31")
+        self.fx.worktree("eng-31")
+        self.fx.transcript(bare, "own", [str(bare)])
+        self.assertEqual(resolve("eng-31", self.fx.repo)["worktree"], str(bare))
 
     def test_a_worktree_transcript_wins_over_a_base_one(self):
         wt = self.fx.worktree("eng-7")

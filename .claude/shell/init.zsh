@@ -234,19 +234,20 @@ _ds_pull_impl() {
 # base repo, which is the worst way to fail: every later edit then targets the
 # base copy the worktree build never sees, the exact slip the worktree
 # edit-path guard exists to catch downstream. Accepts `1077` or `eng-1077`,
-# matching `task resume`.
+# matching `task resume`, and reaches a pre-rename `eng-` / `ceo-` / `exp-`
+# directory through `_ds_worktree_of`.
 cdds() {
   cd "$_DS_REPO" || return 1
   _ds_pull
   [[ -z "$1" ]] && return 0
 
-  local tag="eng-${1#eng-}"
-  local worktree="$_DS_REPO/.claude/worktrees/$tag"
-  if [[ ! -d "$worktree" ]]; then
-    print -u2 "cdds: no worktree at $worktree"
+  local tag dir
+  tag="$(_ds_tag_of "$1")"
+  if ! dir="$(_ds_worktree_of "$tag")"; then
+    print -u2 "cdds: no worktree for $tag under $_DS_REPO/.claude/worktrees"
     return 1
   fi
-  cd "$worktree"
+  cd "$_DS_REPO/.claude/worktrees/$dir"
 }
 
 # Internal: the same move, for helpers that must launch from the base repo
@@ -488,7 +489,7 @@ _ds_daily_session() {
 #
 # Split out from `_ds_daily_session` so a session keyed by something other than
 # the date can reuse it unchanged. `plan` and `housekeeping` key on the day; `architect` keys
-# on a TOPIC, because a design thread outlives a day and resuming it tomorrow is
+# on its ISSUE, because a design thread outlives a day and resuming it tomorrow is
 # the whole point. Everything below the id — the idempotency, the model pin
 # riding both branches, the permission mode — is identical for both, and the
 # operator's stated abstraction is that these launchers differ only in the
@@ -551,7 +552,7 @@ _ds_session() {
     # state only this change makes reachable — before it, neither verb had a
     # worktree, so resuming in the base repo was always right. Say it out loud
     # rather than letting it read as a normal reopen.
-    if [[ -n "$worktree" && ! -d "$_DS_REPO/.claude/worktrees/$worktree" ]]; then
+    if [[ -n "$worktree" ]] && ! _ds_worktree_of "$worktree" >/dev/null; then
       print -u2 "dropset: worktree $worktree is gone — resuming in the base" \
         "checkout. Re-creating it restores TRACKED files only; an untracked" \
         "spec file written there is not recoverable, so work from Linear."
@@ -646,9 +647,16 @@ _ds_topic_sid() {
 # Where a session's substrate choice is recorded. See `_ds_substrate_write`.
 _DS_SUBSTRATE_DIR="$_DS_REPO/.claude/session-substrate"
 
-# Internal: normalize a worktree tag. A bare number gets the `eng-` prefix, so
-# `task 882` and `task eng-882` agree; anything else passes through untouched,
-# which is what keeps a deliberate non-`eng` worktree name usable.
+# Internal: normalize a worktree tag. An issue reference becomes its BARE
+# NUMBER — `882`, `eng-882`, and the retired role spellings `ceo-882` and
+# `exp-882` all print `882` — so every issue-keyed session, tab and worktree
+# directory is named by the number alone (operator ruling: the prefix is dead
+# screen estate, and the number is what the operator looks up). Anything else
+# passes through lowercased, which keeps a free-form `exp-<name>` usable. Git
+# BRANCHES are the one place the `eng-` prefix survives: `init-pr` renames to
+# it, because Linear's GitHub integration links on that form.
+#
+# `10#` forces base ten, so a padded `0123` names issue 123, not octal 83.
 #
 # ONE owner, because the start and resume sides MUST agree. They did not: the
 # start side let a non-`eng` name through literally while the resume side did
@@ -658,8 +666,55 @@ _DS_SUBSTRATE_DIR="$_DS_REPO/.claude/session-substrate"
 # the direction the design calls silent. Deriving both from here makes the
 # agreement structural rather than something two call sites have to remember.
 _ds_tag_of() {
+  local tag="${1:l}"
+  [[ "$tag" == (eng|ceo|exp)-<-> ]] && tag="${tag#*-}"
+  [[ "$tag" == <-> ]] && tag=$(( 10#$tag ))
+  print -r -- "$tag"
+}
+
+# Internal: the worktree directory that holds a tag, or non-zero when none does.
+#
+# The bare tag first, then the spellings worktrees were created under before
+# the bare-number rename — `eng-<n>` for `task` and issue-keyed `explore`,
+# `ceo-<n>` for an `architect` launched with a numeric topic, `exp-<n>` for an
+# older explore. Those directories are grandfathered rather than moved: an
+# in-flight session's transcript stamps its cwd into the old path, so renaming
+# the directory would orphan the conversation. This lookup is the compatibility
+# seam, and it retires itself as the old worktrees are pruned. A worded
+# `ceo-<topic>` names no issue, so no number reaches it.
+_ds_worktree_of() {
+  local tag="$1" dir
+  local -a candidates=("$tag")
+  [[ "$tag" == <-> ]] && candidates+=("eng-$tag" "ceo-$tag" "exp-$tag")
+  for dir in "${candidates[@]}"; do
+    if [[ -d "$_DS_REPO/.claude/worktrees/$dir" ]]; then
+      print -r -- "$dir"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Internal: the worktree a launch should pass to `claude -w` — the existing one
+# for this tag, pre-rename spellings included, or the bare tag when none exists.
+# Creating a bare `<n>` beside a live `eng-<n>` / `ceo-<n>` would split the
+# thread: every resume prefers the bare directory, so the old conversation
+# would go unreachable by number. It does not know which session kind is
+# launching: with two pre-rename kinds on one number it takes the first in
+# `_ds_worktree_of`'s order, the same cross-kind sharing the bare `<n>` accepts.
+_ds_launch_dir() {
+  _ds_worktree_of "$1" || print -r -- "$1"
+}
+
+# Internal: the substrate-marker key for a tag. A marker written before the
+# rename sits under `eng-<n>`; reading it there keeps a pre-rename Bedrock
+# session resuming on Bedrock instead of silently moving to the seat.
+_ds_marker_key() {
   local tag="$1"
-  [[ "$tag" == <-> ]] && tag="eng-$tag"
+  if [[ "$tag" == <-> && ! -f "$_DS_SUBSTRATE_DIR/$tag" \
+    && -f "$_DS_SUBSTRATE_DIR/eng-$tag" ]]; then
+    tag="eng-$tag"
+  fi
   print -r -- "$tag"
 }
 
@@ -787,8 +842,8 @@ _ds_substrate_read() {
 # Which tier a `task resume <n>` re-pins. Prints `executor` or `advisor`.
 #
 # Only `task` writes a marker, so a marker's PRESENCE is the tier record:
-# present means an executor session, absent means the issue-keyed `explore` that
-# shares the `eng-<n>` tag and writes none (see that verb for why it must not).
+# present means an executor session, absent means the issue-keyed `explore` or
+# `architect` that shares the `<n>` tag and writes none (see `explore` for why).
 # This is what lets a resume restore the model and not just the substrate,
 # without a second marker that could disagree with the first.
 _ds_resume_tier() {
@@ -982,9 +1037,9 @@ _ds_seat_guard() {
 # inference, only the subscription, so it is retired and kept briefly as an
 # alias that says so.
 #
-# Creates the `eng-###` worktree directory whose branch arrives named
-# `worktree-eng-###` — there is no CLI flag to drop the prefix, so `init-pr`
-# renames it.
+# Creates the bare-number worktree directory (`task 882` → `882`) whose branch
+# arrives named `worktree-882` — there is no CLI flag to choose the branch, so
+# `init-pr` renames it to `eng-882`, the form Linear's GitHub integration links.
 #
 # Three things ride the launch, and each was a parity gap when this helper was
 # committed — the operator's own profile had been passing all three, and the
@@ -1066,13 +1121,16 @@ _ds_task_start() {
   # happened to quit — and never at all if the terminal were closed instead.
   _ds_substrate_write "$tag" "$substrate"
 
-  ANTHROPIC_MODEL="$model" claude -w "$tag" -n "$tag" --permission-mode auto \
+  ANTHROPIC_MODEL="$model" claude -w "$(_ds_launch_dir "$tag")" -n "$tag" \
+    --permission-mode auto \
     /init-pr
 }
 
-# Resume a worktree session by number: `task resume 814` resolves to the
-# `eng-814` worktree and continues its most recent conversation there, on the
-# substrate that session launched with. The number-to-worktree resolution is
+# Resume a worktree session by number: `task resume 814` resolves to the `814`
+# worktree — or a pre-rename `eng-814` / `ceo-814` / `exp-814` one — and
+# continues its most recent conversation there, on the substrate that session
+# launched with. So `fleet`, which types this verb for every in-flight issue,
+# reaches an architect or explore thread too, not only a task. The number-to-worktree resolution is
 # the whole point — you resume a number, not a UUID.
 #
 # **Where the session actually lives is not guessable from the directory**, which
@@ -1120,9 +1178,11 @@ _ds_task_resume() {
   # mid-conversation. Order matters: either step can refuse, and resolving
   # after the `cd` below would leave the operator relocated into the worktree
   # with no session and no explanation of the move.
-  substrate="$(_ds_substrate_read "$tag")"
+  local key
+  key="$(_ds_marker_key "$tag")"
+  substrate="$(_ds_substrate_read "$key")"
   { read -r model; read -r substrate; } <<< \
-    "$(_ds_tier "$(_ds_resume_tier "$tag")" "$substrate")"
+    "$(_ds_tier "$(_ds_resume_tier "$key")" "$substrate")"
   [[ -n "$substrate" ]] || return 1
   _ds_substrate_enter "$substrate" 'task resume' || return 1
 
@@ -1167,8 +1227,8 @@ _ds_task_resume() {
 # Start OR resume an EXPLORE session — research, audits, and any other task
 # whose deliverable is a spec or a findings document rather than a code change.
 #
-#   explore <n>       an explore task with a Linear issue: worktree `eng-<n>`
-#   explore <name>    one without: worktree `exp-<name>`
+#   explore <n>       an explore task with a Linear issue: worktree and name `<n>`
+#   explore <name>    one without: worktree and name `exp-<name>`
 #
 # **It runs in its own worktree, and it is IDEMPOTENT** — both reverse what this
 # verb shipped with, and both are the same operator ruling that moved
@@ -1181,20 +1241,19 @@ _ds_task_resume() {
 # which is durable, so nothing of value is lost when the worktree goes.
 #
 # A NUMBER KEYS THE WORKTREE TO THE ISSUE, deliberately, and this is the
-# substantive naming call. `explore 1196` lands in `eng-1196` — not `exp-1196` —
-# so an explore session inherits every mechanism already keyed on `eng-###`:
-# `cdds 1196` reaches it, `housekeeping` prunes it on the issue's status type,
-# and an absent substrate marker correctly reads as seat. A worktree named
-# anything else is invisible to the first two.
-# Note the rationale is those named benefits — addressability — and NOT
-# "protecting the worktree": its contents are expendable by construction, and
-# framing the eng-keying as protection would make the worktree sound precious,
-# which the convention doc explicitly warns against. The session's DISPLAY name
-# stays `exp-<n>` so the fleet listing still reads by role: `eng-*`
-# implementers, `plan-*`, `ceo-*` architecture, `exp-*` research.
+# substantive naming call. `explore 1196` lands in `1196`, named `1196` — the
+# same bare number `task` uses — so an explore session inherits every mechanism
+# keyed on the issue: `cdds 1196` and `task resume 1196` reach it, and the
+# pruner reclaims it on the issue's status type. Note the rationale is
+# addressability and NOT "protecting the worktree": its contents are expendable
+# by construction, and the convention doc warns against making it sound
+# precious. The role-prefixed display names (`exp-<n>`, `ceo-<n>`) are retired
+# for issue-keyed sessions: the number is what the operator looks up in Linear,
+# so a prefix is screen estate that carries nothing.
 #
-# THE COST OF SHARING THE TAG: `eng-<n>` now names a worktree that two session
-# kinds can claim, with different substrates and different tiers, while the
+# THE COST OF SHARING THE TAG: `<n>` names a worktree that three session
+# kinds (`task`, `explore`, `architect`) can claim, with different substrates
+# and different tiers, while the
 # substrate marker keys on the tag alone. That is why nothing is written to it
 # below — and the marker's resulting ABSENCE is what tells `task resume <n>`
 # (and `fleet`, which types it) to re-pin the advisor tier on the anthropic
@@ -1208,7 +1267,7 @@ _ds_task_resume() {
 # on session ID, a name is not one, so a bare name PRE-FILTERED THE INTERACTIVE
 # PICKER. Keying on `_ds_topic_sid` computes an id the way `architect` does,
 # which is what makes the fix possible. A name is now REQUIRED for the same
-# reason `architect` requires a topic: it names a worktree.
+# reason `architect` requires an issue number: it names a worktree.
 #
 # This folds two older verbs into one: the unnamed form and the named form were
 # separate launchers with identical bodies bar one flag. The idempotency above
@@ -1239,41 +1298,26 @@ explore() {
     return 1
   fi
   # The name reaches a session name, a worktree and a branch, so hold it to the
-  # shape a branch would take — the same validation `architect` applies to its
-  # topic, and binding for the same reason.
+  # shape a branch would take, which the worktree home makes binding rather
+  # than merely tidy.
   if [[ ! "$raw" =~ '^[a-z0-9][a-z0-9-]*$' ]]; then
     print -u2 'explore: name must be lowercase letters, digits and dashes'
     return 1
   fi
 
-  # NORMALIZE AN ISSUE REFERENCE TO ITS BARE NUMBER FIRST, before the branch
-  # below reads it. `eng-1196` and `1196` name one issue and must produce one
-  # worktree, one session name and one session id — exactly the agreement
-  # `_ds_tag_of`'s comment establishes for `task 882` / `task eng-882`.
-  #
-  # Deciding the branch before normalizing is what broke that: the shape
-  # validation admits `eng-1196`, but the `<->` test below does not match it, so
-  # it fell through to the free-form branch and produced worktree
-  # `exp-eng-1196` with no bootstrap prompt — invisible to `cdds 1196`, to
-  # `fleet`, and to status-type pruning, which are the very mechanisms the
-  # eng-keying exists to inherit. The comment claiming it went "through the ONE
-  # tag owner" was true of the tag and false of the branch decision.
-  #
-  # `10#` forces base ten. Without it `$(( 0123 ))` is octal 83, so a padded
-  # number would silently name a different issue than it reads as. Stripping the
-  # padding also keeps `explore 0123` and `explore 123` on one worktree and one
-  # session id instead of two.
-  if [[ "$raw" == <-> || "$raw" == eng-<-> ]]; then
-    raw=$(( 10#${raw#eng-} ))
-    if (( raw == 0 )); then
-      print -u2 'explore: 0 is not a Linear issue number'
-      return 1
-    fi
+  # NORMALIZE AN ISSUE REFERENCE TO ITS BARE NUMBER FIRST, through the ONE tag
+  # owner `task` uses, before the branch below reads it. `eng-1196` and `1196`
+  # name one issue and must produce one worktree, one session name and one
+  # session id. Deciding the branch before normalizing once sent `eng-1196`
+  # down the free-form path to a worktree `exp-eng-1196` with no bootstrap
+  # prompt — invisible to `cdds`, `fleet` and status-type pruning alike.
+  raw="$(_ds_tag_of "$raw")"
+  if [[ "$raw" == 0 ]]; then
+    print -u2 'explore: 0 is not a Linear issue number'
+    return 1
   fi
 
-  # A bare number is an issue-keyed explore task, so it goes through the ONE
-  # tag owner `task` uses rather than force-prefixing here — see `_ds_tag_of`
-  # for what a second spelling of this cost last time.
+  # A bare number is an issue-keyed explore task.
   #
   # THE ISSUE-KEYED FORM CARRIES A BOOTSTRAP PROMPT, and it has to. A session
   # launched with no initial prompt SITS IDLE until a human types something,
@@ -1289,7 +1333,7 @@ explore() {
   # launch shape exists to prevent.
   local prompt=''
   if [[ "$raw" == <-> ]]; then
-    tag="$(_ds_tag_of "$raw")"
+    tag="$raw" name="$raw"
     prompt="Bootstrap this explore task from Linear issue ENG-$raw. Read that"
     prompt+=" issue as the spec, mark it In Progress, and verify its claims and"
     prompt+=" any file:line citations against HEAD before acting on them."
@@ -1303,16 +1347,15 @@ explore() {
   else
     # Free-form: the operator names the subject in their first message, so
     # inventing one here would only be a guess to correct.
-    tag="exp-$raw"
+    tag="exp-$raw" name="exp-$raw"
   fi
-  name="exp-$raw"
 
   local model substrate
   { read -r model; read -r substrate; } <<< "$(_ds_tier advisor anthropic)"
   [[ -n "$substrate" ]] || return 1
   _ds_substrate_enter "$substrate" 'explore' || return 1
   # NO SUBSTRATE MARKER IS WRITTEN HERE, DELIBERATELY, and the reason is the
-  # whole hazard of keying this worktree to `eng-<n>`: the marker is keyed on the
+  # whole hazard of keying this worktree to `<n>`: the marker is keyed on the
   # WORKTREE TAG ALONE, and `_ds_task_start` writes that same key. So
   # `task 1196` (bedrock) followed by `explore 1196` would flip the marker to
   # `seat`, and the next `task resume 1196` — or `fleet`, which types exactly
@@ -1325,7 +1368,7 @@ explore() {
   # a comment's "the substrate marker records it" claim true; the honest fix was
   # to correct the claim instead.
   _ds_session "$(_ds_topic_sid explore "$raw")" "$name" "$prompt" \
-    "$model" "$tag"
+    "$model" "$(_ds_launch_dir "$tag")"
 }
 
 # Start OR resume today's PLANNING session. The name is derived from the date.
@@ -1459,23 +1502,32 @@ housekeeping() {
     "$model"
 }
 
-# Start OR resume an ARCHITECT session on one topic — the CEO hat. Same seat
-# quality as `plan` and the same idempotency; a different job.
+# Start OR resume an ARCHITECT session on one design thread — the CEO hat. Same
+# seat quality as `plan` and the same idempotency; a different job.
 #
-# Takes a TOPIC and keys the session on it, so each long-horizon design thread
-# gets its own resumable session and parallel threads never share context:
+# Takes the thread's GOVERNING ISSUE NUMBER as its only argument (operator
+# direction — there is no topic argument), and keys the session on it, so each
+# long-horizon thread gets its own resumable session and parallel threads never
+# share context:
 #
-#   architect volatility-telemetry
+#   architect 1572
 #
-# The name is `ceo-<topic>`, which makes the fleet listing read by role —
-# `eng-*` implementers, `plan-*` planning, `ceo-*` architecture.
+# A design thread is a board-tracked task like any other that happens to do
+# read-only spec work, so it is named like one: the session, the tab and the
+# worktree are all the bare number. A thread with no governing issue files or
+# names one first. The session id seeds on the number, and a number outlives a
+# day, so the thread stays resumable by construction — and a pre-rename thread
+# launched as `architect 1572` (name `ceo-1572`) keeps its id, since the old
+# topic seed was that same string. Its resume passes no `-w`; should the create
+# branch be taken anyway, `_ds_launch_dir` reuses `ceo-1572` rather than
+# creating a bare `1572` beside it.
 #
 # The advisor tier like `plan`, for the same reason: this session argues
 # strategy, and fidelity beats tokens. It writes nothing to the board — see the
-# skill. It takes the same optional substrate word after the topic
-# (`architect <topic> bedrock`), with the same retention line as `plan`.
+# skill. It takes the same optional substrate word after the number
+# (`architect <n> bedrock`), with the same retention line as `plan`.
 #
-# **It runs in its own worktree, named `ceo-<topic>`, and that worktree is
+# **It runs in its own worktree, named `<n>`, and that worktree is
 # TEMPORARY WORKING STATE** — somewhere to iterate a spec or plan file with the
 # operator, nothing more (operator ruling, 2026-09-14). The session is
 # **read-only toward the repo: no commits, no PR.** Durable state lives in
@@ -1493,30 +1545,29 @@ housekeeping() {
 # which makes the worktree's contents expendable by construction. So the
 # protection no longer needs a PR to exist.
 #
-# The worktree name is deliberately NOT an `eng-###`: an architect topic has no
-# issue of its own, and the `ceo-` prefix keeps the fleet listing readable by
-# role.
+# Its worktree, being keyed on the issue, is eligible for the pruner once that
+# issue's status type is completed or canceled. The pruner still refuses a dirty
+# tree, so one holding an untracked spec file — the usual case — is reported on
+# every pass and removed by hand.
 architect() {
-  local topic="$1" model substrate
-  if [[ -z "$topic" || -n "$3" || ( -n "$2" && "$2" != (anthropic|bedrock) ) ]]
+  local tag model substrate
+  if [[ -z "$1" || -n "$3" || ( -n "$2" && "$2" != (anthropic|bedrock) ) ]]
   then
-    print -u2 'Usage: architect <topic> [anthropic|bedrock]' \
-      '  (e.g. architect volatility-telemetry)'
+    print -u2 'Usage: architect <n> [anthropic|bedrock]' \
+      '  (n is the governing Linear issue, e.g. architect 1572)'
     return 1
   fi
-  # A topic reaches a session name, a WORKTREE name, a branch and a filename, so
-  # keep it to the shape a branch would take rather than sanitizing something
-  # surprising later. The worktree home is what makes the branch shape binding
-  # rather than merely tidy.
-  if [[ ! "$topic" =~ '^[a-z0-9][a-z0-9-]*$' ]]; then
-    print -u2 'architect: topic must be lowercase letters, digits and dashes'
+  tag="$(_ds_tag_of "$1")"
+  if [[ "$tag" != <-> || "$tag" == 0 ]]; then
+    print -u2 'architect: takes the governing issue number, not a topic —' \
+      'file or name the issue first'
     return 1
   fi
   { read -r model; read -r substrate; } <<< "$(_ds_tier advisor "$2")"
   [[ -n "$substrate" ]] || return 1
   _ds_substrate_enter "$substrate" 'architect' || return 1
-  _ds_session "$(_ds_topic_sid architect "$topic")" \
-    "ceo-$topic" /architect "$model" "ceo-$topic"
+  _ds_session "$(_ds_topic_sid architect "$tag")" \
+    "$tag" "/architect ENG-$tag" "$model" "$(_ds_launch_dir "$tag")"
 }
 
 # Resume the whole FLEET: one iTerm tab per in-flight Linear issue, each with

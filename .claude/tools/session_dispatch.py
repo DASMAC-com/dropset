@@ -110,7 +110,7 @@ def validate(argv: list[str]) -> list[str]:
         # A name is REQUIRED (it names a worktree) and the `resume` twin is
         # retired, since `explore <n|name>` now resumes an existing session
         # itself. `_NAME` admits a bare number, which is the issue-keyed form an
-        # audit dispatch uses — `explore 1196` lands in the `eng-1196` worktree.
+        # audit dispatch uses — `explore 1196` lands in the `1196` worktree.
         if args and args[0] == "resume":
             raise ValueError(
                 "`explore resume` is retired — dispatch `explore <n|name>`, "
@@ -129,12 +129,14 @@ def validate(argv: list[str]) -> list[str]:
         return ["explore", args[0]]
 
     if verb == "architect":
-        if not 1 <= len(args) <= 2 or not _NAME.match(args[0]):
-            raise ValueError("`architect` takes one lowercase topic")
+        # The governing issue's number is the only argument — there is no topic
+        # form — so a design thread is named, tabbed and worktree'd like a task.
+        if not 1 <= len(args) <= 2 or not _TAG.match(args[0]):
+            raise ValueError("`architect` takes the governing issue's number")
+        if re.fullmatch(r"(?:eng-)?0+", args[0], re.ASCII):
+            raise ValueError("`architect` needs a real issue number; 0 is not one")
         if len(args) == 2 and args[1] not in _SUBSTRATES:
-            raise ValueError(
-                "`architect <topic>` takes only anthropic or bedrock after it"
-            )
+            raise ValueError("`architect <n>` takes only anthropic or bedrock after it")
         return ["architect", *args]
 
     if verb == "fleet":
