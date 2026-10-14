@@ -216,8 +216,8 @@ pub fn plan_deposit(stake: &VaultStake, quote_in: u64) -> Result<Plan> {
         quote_in,
     )
     .map_err(|e| match e {
-        // Zero shares out reports as overflow; say what it means here.
-        BasketError::MathOverflow => anyhow::anyhow!("the amount is too small to buy one share"),
+        BasketError::ZeroShares => anyhow::anyhow!("the amount is too small to buy one share"),
+        BasketError::EmptyLeg => anyhow::anyhow!("the vault holds no quote to price this against"),
         other => anyhow::anyhow!("the deposit does not size: {other:?}"),
     })?;
     Ok(Plan::Deposit {

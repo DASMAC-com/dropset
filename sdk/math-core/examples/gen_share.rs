@@ -11,8 +11,10 @@
 //! seeding `isqrt`, single-leg deposit sizing, the pro-rata withdrawal
 //! slice, the perf-fee mint, realized-PnL crystallization, and the
 //! shares-weighted cost-basis merge. These run on-chain; the off-chain
-//! TS SDK fork (`sdk/ts/src/share.ts`) reuses the exact arithmetic, so
-//! both forks must reproduce these vectors bit-for-bit.
+//! TS SDK fork (`sdk/ts/src/share.ts`) is a hand port held to them only by
+//! these vectors, so both forks must reproduce them bit-for-bit — guarded
+//! edge cases included, since a guard added to one fork alone would pass
+//! every vector that does not reach it.
 //!
 //! u64 / i64 / u128 fields are serialized as JSON **strings** — consensus
 //! values reach `u64::MAX` / `i64::MAX`, beyond JS's 2^53 safe-integer
@@ -24,10 +26,11 @@ use dropset_math_core::share::{
     compute_pro_rata_slice, crystallize_pnl, isqrt_u128, merge_entry_basis, realize_perf_fee,
     single_leg_basket, BasketError, CrystallizeError,
 };
+use dropset_math_core::{PPM, Q32_SHIFT};
 use serde_json::{json, Map, Value};
 
 /// Q32.32 representation of `1.0` — the seeded value-per-share / HWM.
-const Q32_32_ONE: u64 = 1u64 << 32;
+const Q32_32_ONE: u64 = 1u64 << Q32_SHIFT;
 
 /// Serialize any integer as a JSON string (the precision-safe wire form).
 fn s<T: std::fmt::Display>(x: T) -> Value {
@@ -43,6 +46,8 @@ fn basket_err(e: BasketError) -> &'static str {
         BasketError::SingleLegRequired => "SingleLegRequired",
         BasketError::MathOverflow => "MathOverflow",
         BasketError::BasketSlippage => "BasketSlippage",
+        BasketError::EmptyLeg => "EmptyLeg",
+        BasketError::ZeroShares => "ZeroShares",
     }
 }
 
@@ -130,6 +135,14 @@ fn single_leg_cases() -> Vec<Value> {
         slb_case(100, 1_000, 1_000, 100, 0, 50, u64::MAX),
         // A leg too small to buy a whole share floors to zero.
         slb_case(100, 1_000_000, 1_000_000, 1, 0, u64::MAX, u64::MAX),
+        // Base drained to zero by a swap: depositing base is rejected...
+        slb_case(100, 0, 1_000, 10, 0, u64::MAX, u64::MAX),
+        // ...while depositing quote sizes with a zero base basket.
+        slb_case(100, 0, 1_000, 0, 100, u64::MAX, u64::MAX),
+        // The mirror drain of quote.
+        slb_case(100, 1_000, 0, 0, 10, u64::MAX, u64::MAX),
+        // An unseeded vault floors to zero shares before any divide.
+        slb_case(0, 1_000, 1_000, 10, 0, u64::MAX, u64::MAX),
     ]
 }
 
@@ -155,6 +168,8 @@ fn pro_rata_cases() -> Vec<Value> {
         pro_rata_case(25, 100, 0, 4_000),
         // u128 intermediates: full-drain at the atom ceiling round-trips.
         pro_rata_case(u64::MAX, u64::MAX, u64::MAX, u64::MAX),
+        // Empty vault: a zero divisor slices to nothing.
+        pro_rata_case(0, 0, 1_000, 2_000),
     ]
 }
 
@@ -202,6 +217,33 @@ fn realize_cases() -> Vec<Value> {
         // Drained leg: total_shares > 0 but base·quote == 0 → L == 0 no-op
         // (a distinct branch from the unseeded total_shares == 0 case above).
         realize_case(0, 100, 100, 100, Q32_32_ONE, 100_000),
+        // Fee rate above 100% clamps to PPM so 1 − f cannot underflow.
+        realize_case(400, 400, 100, 100, Q32_32_ONE, 3 * PPM as u32),
+        // L = u64::MAX at VPS 2.0: the numerator is ~2^146, past u128.
+        realize_case(
+            u64::MAX,
+            u64::MAX,
+            u64::MAX / 2,
+            u64::MAX / 2,
+            Q32_32_ONE,
+            100_000,
+        ),
+        // One share against L = 1e10: VPS exceeds u64 in Q32.32, so the
+        // stored HWM saturates instead of wrapping below the prior 1e19.
+        realize_case(
+            10_000_000_000,
+            10_000_000_000,
+            1,
+            1,
+            10_000_000_000_000_000_000,
+            0,
+        ),
+        // total_shares 10 below u64::MAX: the mint is capped at the shared
+        // headroom so total and leader shares move by the same delta.
+        realize_case(u64::MAX, u64::MAX, u64::MAX - 10, 0, 0, 100_000),
+        // f == 100% against a zero HWM zeroes the denominator; the HWM
+        // advance is kept.
+        realize_case(400, 400, 100, 100, 0, PPM as u32),
     ]
 }
 
@@ -282,6 +324,9 @@ fn crystallize_cases() -> Vec<Value> {
         crystallize_case(20, 10, 100, 0, 0, one, one, 0, 0, 0),
         // slice_quote near u64::MAX → deltas saturate at i64::MAX.
         crystallize_case(1, 2, 0, 0, u64::MAX, one, one, 0, 0, 0),
+        // Empty position: `shares == shares_in == 0` is rejected rather
+        // than dividing the released basis by zero.
+        crystallize_case(0, 0, 100, 0, 0, one, one, 0, 0, 0),
     ]
 }
 
@@ -352,6 +397,8 @@ fn merge_cases() -> Vec<Value> {
             price(99_999_999, 15),
             price(99_999_999, 15),
         ),
+        // Both weights zero: the prior basis is returned unchanged.
+        merge_case(0, 0, Q32_32_ONE, 2 * Q32_32_ONE, one, two),
     ]
 }
 

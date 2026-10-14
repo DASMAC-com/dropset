@@ -1,29 +1,38 @@
 //! Pure, consensus-critical share / NAV / PnL accounting kernels.
 //!
 //! These are the scalar formulas behind the program's deposit, withdraw,
-//! and perf-fee accrual paths — the seeding `isqrt`, single-leg deposit
-//! sizing, the pro-rata withdrawal slice, the performance-fee mint, the
-//! realized-PnL crystallization, and the shares-weighted cost-basis merge.
-//! They all **run on-chain** (the program calls them through thin
-//! `&mut Vault` / `&mut VaultDepositorHeader` wrappers that read state, call
-//! the kernel, and write state back), so a bug here is a consensus bug.
+//! and perf-fee accrual paths — seven kernels: the seeding `isqrt`,
+//! single-leg deposit sizing, the skin-in-the-game floor predicate, the
+//! pro-rata withdrawal slice, the performance-fee mint, the realized-PnL
+//! crystallization, and the shares-weighted cost-basis merge. They all
+//! **run on-chain**, so a bug here is a consensus bug. The program reaches
+//! them three ways: [`realize_perf_fee`], [`crystallize_pnl`] and
+//! [`merge_entry_basis`] through `&mut Vault` / `&mut VaultDepositorHeader`
+//! wrappers that read state, call the kernel, and write state back;
+//! [`single_leg_basket`] through a scalar wrapper that only maps the error;
+//! and [`isqrt_u128`], [`compute_pro_rata_slice`] and
+//! [`min_leader_share_ok`] re-exported unchanged and called from handlers.
 //!
-//! They live here, alongside [`crate::price`] and [`crate::matching_math`],
-//! so the off-chain TS SDK fork (`sdk/ts/src/share.ts`), held to these
-//! kernels by the share conformance vectors, reuses the exact same
-//! arithmetic instead of re-deriving NAV/PnL math that would drift from
-//! the engine. Anything typed
+//! Every kernel is a total function: each divisor is guarded, and every
+//! precondition a caller is expected to uphold is stated on the kernel and
+//! is either checked (returning a typed error) or clamped, never left to
+//! panic. Callers' own guards are defense in depth, not the only line.
+//!
+//! The off-chain TS SDK (`sdk/ts/src/share.ts`) is a hand port of six of
+//! these — every kernel except [`min_leader_share_ok`], which is on-chain
+//! only — held to them solely by the share conformance vectors, so
+//! behavior outside the pinned vectors is unguarded. Anything typed
 //! against the on-chain `Vault` / `VaultDepositorHeader` (Anchor `Pod`
 //! wrappers) stays in the program; only the pure scalar formula lives here,
 //! keeping this module solana-free and WASM-compatible.
 
 use crate::price::Price;
-use crate::PPM;
+use crate::{PPM, Q32_SHIFT};
 
-/// Integer square root via Newton's method, on `u128` to give the
-/// matching-engine math headroom. Used for the seeding-deposit share
-/// formula `total_shares := isqrt(base × quote)` and for `Realize`
-/// (`L = isqrt(base × quote)`).
+/// Integer square root via Newton's method, on `u128` because every caller
+/// passes a `base × quote` product of two `u64` atom counts. Used for the
+/// seeding-deposit share formula `total_shares := isqrt(base × quote)` and
+/// for `Realize` (`L = isqrt(base × quote)`).
 #[inline]
 pub fn isqrt_u128(n: u128) -> u128 {
     if n < 2 {
@@ -48,10 +57,17 @@ pub fn isqrt_u128(n: u128) -> u128 {
 pub enum BasketError {
     /// Neither or both legs supplied — exactly one is required.
     SingleLegRequired,
-    /// Derived `shares_out` is zero or overflows `u64`.
+    /// Derived `shares_out` overflows `u64`.
     MathOverflow,
     /// The rounded-up basket exceeds the caller's `max_*_in` bound.
     BasketSlippage,
+    /// The supplied leg is empty in the vault (its atom count is zero), so
+    /// the vault's ratio prices it at nothing. Deposit the other leg; a
+    /// drained leg is restored only by a swap crediting it back.
+    EmptyLeg,
+    /// Derived `shares_out` floors to zero — the deposit is too small to
+    /// buy one whole share.
+    ZeroShares,
 }
 
 /// Single-leg subsequent-deposit sizing — spec invariant I1
@@ -67,9 +83,17 @@ pub enum BasketError {
 /// under-collects. Both finals are bounded by the caller's `max_*_in`
 /// (returning [`BasketError::BasketSlippage`] otherwise).
 ///
-/// Returns `(shares_out, base_in_final, quote_in_final)`. Requires
-/// `total_shares > 0` — callers reject seeding before this point (the
-/// seeding share formula is the `isqrt` basket, not this path).
+/// Returns `(shares_out, base_in_final, quote_in_final)`. Callers reject
+/// seeding before this point (the seeding share formula is the `isqrt`
+/// basket, not this path); a `total_shares == 0` input floors `shares_out`
+/// to zero and returns [`BasketError::ZeroShares`] rather than dividing by
+/// it.
+///
+/// A vault whose supplied leg holds zero atoms — reachable permissionlessly
+/// when a swap fills a level sized at the whole leg — returns
+/// [`BasketError::EmptyLeg`]. The other leg still deposits (its derived
+/// basket on the empty side is zero), so a drained leg **cannot be topped
+/// up by any deposit**; only a swap crediting it back restores it.
 #[allow(clippy::too_many_arguments)]
 pub fn single_leg_basket(
     total_shares: u64,
@@ -86,12 +110,19 @@ pub fn single_leg_basket(
     let ts = total_shares as u128;
     let b = base_atoms as u128;
     let q = quote_atoms as u128;
-    let shares_out_u128 = if base_in > 0 {
-        ((base_in as u128) * ts) / b
+    let (leg_in, leg_atoms) = if base_in > 0 {
+        (base_in as u128, b)
     } else {
-        ((quote_in as u128) * ts) / q
+        (quote_in as u128, q)
     };
-    if shares_out_u128 == 0 || shares_out_u128 > u64::MAX as u128 {
+    if leg_atoms == 0 {
+        return Err(BasketError::EmptyLeg);
+    }
+    let shares_out_u128 = (leg_in * ts) / leg_atoms;
+    if shares_out_u128 == 0 {
+        return Err(BasketError::ZeroShares);
+    }
+    if shares_out_u128 > u64::MAX as u128 {
         return Err(BasketError::MathOverflow);
     }
     // Basket = ceil(shares_out × leg / total_shares). u128 intermediates;
@@ -115,6 +146,9 @@ pub fn single_leg_basket(
 /// min_leader_share / PPM`, evaluated as the cross-multiplied
 /// `leader_shares_after × PPM ≥ min_leader_share × total_shares_after`
 /// in `u128` so neither side overflows at u64 share scales.
+///
+/// On-chain only: the TS fork carries no counterpart and the share vectors
+/// do not pin it.
 ///
 /// Shared by `deposit` (outside) and `withdraw_leader` so the floor is
 /// single-sourced — a future `>` vs `≥` / rounding / rescale edit can't
@@ -150,7 +184,8 @@ pub fn min_leader_share_ok(
 /// slices.
 ///
 /// `total_shares > 0` is the caller's precondition — every path rejects
-/// an empty vault upstream. Each result is bounded by its atom input
+/// an empty vault upstream — and an empty vault slices to `(0, 0)` rather
+/// than dividing by zero. Each result is bounded by its atom input
 /// (`shares_in ≤ total_shares`), so both fit back into `u64`.
 pub fn compute_pro_rata_slice(
     shares_in: u64,
@@ -158,6 +193,9 @@ pub fn compute_pro_rata_slice(
     base_atoms: u64,
     quote_atoms: u64,
 ) -> (u64, u64) {
+    if total_shares == 0 {
+        return (0, 0);
+    }
     let ts = total_shares as u128;
     let s_in = shares_in as u128;
     let slice_base = (s_in * (base_atoms as u128)) / ts;
@@ -190,11 +228,22 @@ pub struct RealizeResult {
 /// `tombstoned` pin the HWM and skip accrual entirely — read on-chain flags
 /// and stay in the wrapper; this kernel sees only the scalar share state.
 /// It is a no-op (returns the inputs unchanged) when `total_shares == 0`,
-/// `L == 0`, or `VPS <= HWM`.
+/// `L == 0`, or `VPS <= HWM`. Otherwise HWM advances whether or not shares
+/// are minted: at a zero fee, a sub-quantum gain, a zero denominator
+/// (`f == 100%` against a zero HWM), or an `m` that floors to zero.
 ///
-/// `L`, `HWM`, and the intermediate share math run in `u128` to keep the
-/// perf-fee formula precise without overflow on realistic atom scales. The
-/// final `m` is clamped back into `u64`.
+/// `perf_fee_rate` is in PPM and must be `≤ PPM`; the program's one writer
+/// enforces that, and the kernel clamps a larger rate to `PPM` so `1 − f`
+/// cannot underflow.
+///
+/// `L`, `HWM`, and the intermediate share math run in `u128`. The
+/// numerator `f · s · (L − hwm·s)` can exceed `u128` once `L` passes
+/// roughly `1.2e17` at a 10% fee, so it is divided through a full-width
+/// `mul_div_floor` rather than formed directly. `m` is capped at the
+/// headroom both share counts have left below `u64::MAX`, so
+/// `total_shares` and `leader_shares` always move by exactly
+/// `shares_minted`. The stored HWM saturates at `u64::MAX` and never moves
+/// below the incoming `hwm`, so the ratchet is monotone by construction.
 pub fn realize_perf_fee(
     base_atoms: u64,
     quote_atoms: u64,
@@ -214,7 +263,7 @@ pub fn realize_perf_fee(
     if s == 0 {
         return noop;
     }
-    let f_ppm = perf_fee_rate as u128;
+    let f_ppm = (perf_fee_rate as u128).min(PPM as u128);
     let b = base_atoms as u128;
     let q = quote_atoms as u128;
     let l = isqrt_u128(b.saturating_mul(q));
@@ -222,13 +271,13 @@ pub fn realize_perf_fee(
         return noop;
     }
     // `vps` in Q32.32, same encoding as `hwm`.
-    let vps = (l << 32) / (s as u128);
+    let vps = (l << Q32_SHIFT) / (s as u128);
     if vps <= hwm as u128 {
         return noop;
     }
     // Advance HWM up to VPS without minting (no fee, or sub-quantum gain).
     let advanced = RealizeResult {
-        hwm_after: vps as u64,
+        hwm_after: ratchet_hwm(vps, hwm),
         ..noop
     };
     if f_ppm == 0 {
@@ -243,30 +292,80 @@ pub fn realize_perf_fee(
     // numerator and denominator.
     let s_u = s as u128;
     let hwm_u = hwm as u128;
-    let hwm_s = (hwm_u * s_u) >> 32; // back to atom scale
+    let hwm_s = (hwm_u * s_u) >> Q32_SHIFT; // back to atom scale
     if l <= hwm_s {
         // VPS rose by sub-quantum (rounding error) — skip.
         return advanced;
     }
-    let num = f_ppm * s_u * (l - hwm_s);
     let one_minus_f = PPM as u128 - f_ppm;
     let denom = one_minus_f * l + f_ppm * hwm_s;
     if denom == 0 {
-        return noop;
+        // Only `f == 100%` against a zero HWM: VPS still exceeds the HWM,
+        // so the advance is earned even though no fee is computable.
+        return advanced;
     }
-    let m = (num / denom).min(u64::MAX as u128) as u64;
+    // `f · s` fits u128 (`2^20 · 2^64`); only the third factor can push
+    // the product past it.
+    let m_wide = mul_div_floor(f_ppm * s_u, l - hwm_s, denom).unwrap_or(u128::MAX);
+    // Cap at the headroom both counts share, so neither saturates alone.
+    let headroom = (u64::MAX - s).min(u64::MAX.saturating_sub(leader_shares));
+    let m = m_wide.min(headroom as u128) as u64;
     if m == 0 {
         return advanced;
     }
-    let s_after = s.saturating_add(m);
-    let leader_after = leader_shares.saturating_add(m);
-    let hwm_after = ((l << 32) / s_after as u128) as u64;
+    let s_after = s + m;
     RealizeResult {
         shares_minted: m,
-        hwm_after,
+        hwm_after: ratchet_hwm((l << Q32_SHIFT) / s_after as u128, hwm),
         total_shares_after: s_after,
-        leader_shares_after: leader_after,
+        leader_shares_after: leader_shares + m,
     }
+}
+
+/// The HWM to store for a Q32.32 `vps` computed in `u128`: saturated into
+/// `u64` (a wrapping cast could land it below the previous mark and make
+/// the band between fee-eligible twice) and floored at the incoming `hwm`.
+#[inline]
+fn ratchet_hwm(vps: u128, hwm: u64) -> u64 {
+    (vps.min(u64::MAX as u128) as u64).max(hwm)
+}
+
+/// `floor(a × b / d)` with a full 256-bit intermediate product, or `None`
+/// when the quotient does not fit `u128`. Requires `d > 0`. Takes the
+/// single `checked_mul` fast path whenever the product fits, so the wide
+/// long division runs only at extreme atom scales.
+fn mul_div_floor(a: u128, b: u128, d: u128) -> Option<u128> {
+    if let Some(p) = a.checked_mul(b) {
+        return Some(p / d);
+    }
+    // 128 × 128 → 256 schoolbook product over 64-bit limbs.
+    const LO: u128 = u64::MAX as u128;
+    let (a1, a0) = (a >> 64, a & LO);
+    let (b1, b0) = (b >> 64, b & LO);
+    let p00 = a0 * b0;
+    let p01 = a0 * b1;
+    let p10 = a1 * b0;
+    let p11 = a1 * b1;
+    let mid = (p00 >> 64) + (p01 & LO) + (p10 & LO);
+    let lo = (p00 & LO) | (mid << 64);
+    let hi = p11 + (p01 >> 64) + (p10 >> 64) + (mid >> 64);
+    if hi >= d {
+        return None;
+    }
+    // Restoring long division of `hi:lo` by `d`; `rem < d` on entry to
+    // every step, and the shifted-out top bit means `rem + 2^128 ≥ d`.
+    let mut rem = hi;
+    let mut quot = 0u128;
+    for i in (0..128).rev() {
+        let carry = rem >> 127;
+        rem = (rem << 1) | ((lo >> i) & 1);
+        quot <<= 1;
+        if carry == 1 || rem >= d {
+            rem = rem.wrapping_sub(d);
+            quot |= 1;
+        }
+    }
+    Some(quot)
 }
 
 /// Why a [`crystallize_pnl`] call failed. Mapped back onto the program's
@@ -274,9 +373,13 @@ pub fn realize_perf_fee(
 /// unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrystallizeError {
-    /// `shares_in` exceeds the position's `shares`.
+    /// `shares_in` exceeds the position's `shares`, or the position holds
+    /// no shares at all.
     InsufficientShares,
-    /// An intermediate `u128` product or subtraction overflowed.
+    /// Defense in depth — unreachable for any `u64` input: a `u64 × u64`
+    /// product always fits `u128`, and `released_basis ≤ net_deposits`
+    /// whenever `shares_in ≤ shares`. Kept so the two checked operations
+    /// fail typed rather than panic if either bound is ever loosened.
     MathOverflow,
 }
 
@@ -315,9 +418,13 @@ pub struct CrystallizeResult {
 /// [`Price::quote_for_base`] — both produce a quote-atom value, so the
 /// deltas are well-typed in quote-denominated units. All math is in
 /// `u128`/`i128` to avoid intermediate overflow; the signed accumulators
-/// clamp into `i64`. `entry_vps`, `entry_ref_price`, and `gross_deposited`
-/// are intentionally untouched by the caller — a proportional reduction
-/// preserves the shares-weighted averages.
+/// clamp into `i64`. `entry_ref_price` is read, never returned: a
+/// proportional reduction preserves the shares-weighted entry basis, so
+/// the wrapper leaves the header's entry fields as they were.
+///
+/// Requires `shares > 0`: an empty position returns
+/// [`CrystallizeError::InsufficientShares`] for any `shares_in`, including
+/// zero, rather than dividing the released basis by zero.
 #[allow(clippy::too_many_arguments)]
 pub fn crystallize_pnl(
     shares_in: u64,
@@ -331,7 +438,7 @@ pub fn crystallize_pnl(
     realized_yield: i64,
     realized_pnl: i64,
 ) -> Result<CrystallizeResult, CrystallizeError> {
-    if shares < shares_in {
+    if shares == 0 || shares < shares_in {
         return Err(CrystallizeError::InsufficientShares);
     }
     let s_in = shares_in as u128;
@@ -386,6 +493,11 @@ pub fn crystallize_pnl(
 /// `entry_ref` routes through [`Price::weighted_average`] (a custom
 /// decimal-float that must decode / average / re-encode). See the spec's
 /// **Depositor positions and cost basis → Top-off**.
+///
+/// Requires `prior_shares + shares_out > 0`. The sole caller takes a
+/// separate first-deposit arm at `prior_shares == 0`, so the merge always
+/// sees a non-empty prior position; an all-zero input returns the prior
+/// basis unchanged rather than dividing by zero.
 pub fn merge_entry_basis(
     prior_shares: u64,
     shares_out: u64,
@@ -397,6 +509,9 @@ pub fn merge_entry_basis(
     let s = prior_shares as u128;
     let ds = shares_out as u128;
     let denom = s + ds;
+    if denom == 0 {
+        return (entry_vps_prev, entry_ref_prev);
+    }
     let entry_vps_new = (s * (entry_vps_prev as u128) + ds * (vps_after as u128)) / denom;
     let entry_ref_new = entry_ref_prev.weighted_average(ref_now, s, ds);
     (entry_vps_new as u64, entry_ref_new)
@@ -407,7 +522,7 @@ mod tests {
     use super::*;
 
     /// Q32.32 representation of `1.0` — the seeded value-per-share.
-    const Q32_32_ONE: u64 = 1u64 << 32;
+    const Q32_32_ONE: u64 = 1u64 << Q32_SHIFT;
 
     // ── compute_pro_rata_slice ──────────────────────────────────────
 
@@ -431,6 +546,12 @@ mod tests {
         // 1 of 3 shares against 10 atoms → floor(10/3) = 3, leaving the
         // 1-atom remainder in the vault for the other depositors.
         assert_eq!(compute_pro_rata_slice(1, 3, 10, 10), (3, 3));
+    }
+
+    #[test]
+    fn pro_rata_slice_empty_vault_slices_nothing() {
+        // A zero divisor slices to nothing rather than panicking.
+        assert_eq!(compute_pro_rata_slice(0, 0, 1_000, 2_000), (0, 0));
     }
 
     #[test]
@@ -490,7 +611,37 @@ mod tests {
         // A leg too small to buy a whole share floors to zero.
         assert_eq!(
             single_leg_basket(100, 1_000_000, 1_000_000, 1, 0, u64::MAX, u64::MAX),
-            Err(BasketError::MathOverflow)
+            Err(BasketError::ZeroShares)
+        );
+    }
+
+    #[test]
+    fn single_leg_rejects_drained_leg_and_admits_the_other() {
+        // A swap drained `base_atoms` to exactly zero. Depositing base
+        // would divide by it; it is rejected typed instead.
+        assert_eq!(
+            single_leg_basket(100, 0, 1_000, 10, 0, u64::MAX, u64::MAX),
+            Err(BasketError::EmptyLeg)
+        );
+        // The quote leg still deposits, deriving a zero base basket — so
+        // the drained leg is not refilled by any deposit.
+        assert_eq!(
+            single_leg_basket(100, 0, 1_000, 0, 100, u64::MAX, u64::MAX),
+            Ok((10, 0, 100))
+        );
+        // The mirror drain of `quote_atoms` is rejected the same way.
+        assert_eq!(
+            single_leg_basket(100, 1_000, 0, 0, 10, u64::MAX, u64::MAX),
+            Err(BasketError::EmptyLeg)
+        );
+    }
+
+    #[test]
+    fn single_leg_unseeded_vault_floors_to_zero_shares() {
+        // `total_shares == 0` never reaches the basket's divide.
+        assert_eq!(
+            single_leg_basket(0, 1_000, 1_000, 10, 0, u64::MAX, u64::MAX),
+            Err(BasketError::ZeroShares)
         );
     }
 
@@ -567,6 +718,70 @@ mod tests {
         assert!(r.hwm_after > Q32_32_ONE);
         assert_eq!(r.leader_shares_after, 100);
         assert_eq!(r.total_shares_after, 100);
+    }
+
+    #[test]
+    fn realize_clamps_fee_rate_above_ppm() {
+        // A rate above 100% would underflow `1 − f`; it is clamped to PPM
+        // and so behaves exactly like a 100% fee.
+        let over = realize_perf_fee(400, 400, 100, 100, Q32_32_ONE, 3 * PPM as u32);
+        let full = realize_perf_fee(400, 400, 100, 100, Q32_32_ONE, PPM as u32);
+        assert_eq!(over, full);
+    }
+
+    #[test]
+    fn realize_wide_numerator_does_not_overflow() {
+        // L = u64::MAX and s = L / 2 at VPS 2.0: `f · s · (L − hwm·s)` is
+        // ~2^146 at a 10% fee, far past u128. It must mint, not panic.
+        let s = u64::MAX / 2;
+        let r = realize_perf_fee(u64::MAX, u64::MAX, s, s, Q32_32_ONE, 100_000);
+        assert!(r.shares_minted > 0);
+        assert_eq!(r.total_shares_after - s, r.shares_minted);
+        assert_eq!(r.leader_shares_after - s, r.shares_minted);
+    }
+
+    #[test]
+    fn realize_saturates_vps_into_hwm_instead_of_wrapping() {
+        // One share against L = 10^10 is VPS 10^10, i.e. 10^10 << 32 in
+        // Q32.32 — past u64. A wrapping cast would store ~6.06e18, below
+        // the prior HWM of 1e19; the stored HWM must saturate instead.
+        let hwm = 10_000_000_000_000_000_000u64;
+        let r = realize_perf_fee(10_000_000_000, 10_000_000_000, 1, 1, hwm, 0);
+        assert_eq!(r.hwm_after, u64::MAX);
+        assert!(r.hwm_after >= hwm);
+    }
+
+    #[test]
+    fn realize_moves_both_share_counts_by_the_same_delta_near_ceiling() {
+        // `total_shares` within a few shares of u64::MAX: independent
+        // saturating adds would grow the leader by more than the total.
+        // The mint is capped at the shared headroom instead.
+        let s = u64::MAX - 10;
+        let r = realize_perf_fee(u64::MAX, u64::MAX, s, 0, 0, 100_000);
+        assert_eq!(r.shares_minted, 10);
+        assert_eq!(r.total_shares_after, u64::MAX);
+        assert_eq!(r.leader_shares_after, r.shares_minted);
+    }
+
+    #[test]
+    fn realize_zero_denominator_still_advances_hwm() {
+        // `f == 100%` against a zero HWM zeroes the denominator. VPS is
+        // above the HWM, so the advance is kept rather than discarded.
+        let r = realize_perf_fee(400, 400, 100, 100, 0, PPM as u32);
+        assert_eq!(r.shares_minted, 0);
+        assert_eq!(r.hwm_after, 4 * Q32_32_ONE);
+    }
+
+    #[test]
+    fn mul_div_floor_matches_exact_division() {
+        assert_eq!(mul_div_floor(6, 7, 4), Some(10));
+        assert_eq!(mul_div_floor(1 << 100, 1 << 100, 1 << 80), Some(1 << 120));
+        assert_eq!(mul_div_floor(u128::MAX, 2, 4), Some((1 << 127) - 1));
+        assert_eq!(
+            mul_div_floor(u128::MAX, u128::MAX, u128::MAX),
+            Some(u128::MAX)
+        );
+        assert_eq!(mul_div_floor(u128::MAX, u128::MAX, 1), None);
     }
 
     // ── crystallize_pnl ─────────────────────────────────────────────
@@ -650,6 +865,16 @@ mod tests {
     }
 
     #[test]
+    fn crystallize_rejects_empty_position() {
+        // `shares == shares_in == 0` passes the overdraw test but would
+        // divide the released basis by zero.
+        assert_eq!(
+            crystallize_pnl(0, 0, 100, 0, 0, price_one(), price_one(), 0, 0, 0),
+            Err(CrystallizeError::InsufficientShares)
+        );
+    }
+
+    #[test]
     fn crystallize_saturates_at_i64_ceiling() {
         // A slice_quote near u64::MAX yields a pnl/yield delta far beyond
         // i64::MAX (zero basis, flat reference). The accumulators and the
@@ -712,5 +937,15 @@ mod tests {
         // (999 + 2) / 1000 of Q32_32_ONE, floored.
         let expected = (999 * (Q32_32_ONE as u128) + 2 * (Q32_32_ONE as u128)) / 1000;
         assert_eq!(entry_vps, expected as u64);
+    }
+
+    #[test]
+    fn merge_entry_basis_zero_weight_keeps_prior_basis() {
+        // No prior shares and no fresh shares: nothing to weight, so the
+        // prior basis is returned rather than dividing by zero.
+        assert_eq!(
+            merge_entry_basis(0, 0, Q32_32_ONE, 2 * Q32_32_ONE, price_one(), price_two()),
+            (Q32_32_ONE, price_one())
+        );
     }
 }

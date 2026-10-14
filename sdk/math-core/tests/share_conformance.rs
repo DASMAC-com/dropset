@@ -39,6 +39,8 @@ fn basket_err(e: BasketError) -> &'static str {
         BasketError::SingleLegRequired => "SingleLegRequired",
         BasketError::MathOverflow => "MathOverflow",
         BasketError::BasketSlippage => "BasketSlippage",
+        BasketError::EmptyLeg => "EmptyLeg",
+        BasketError::ZeroShares => "ZeroShares",
     }
 }
 

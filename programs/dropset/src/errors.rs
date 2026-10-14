@@ -119,4 +119,8 @@ pub enum DropsetError {
     SameLeader,
     #[msg("new leader holds a depositor position on this vault")]
     NewLeaderIsDepositor,
+    #[msg("vault holds none of the supplied deposit leg; deposit the other leg")]
+    EmptyLeg,
+    #[msg("deposit is too small to mint one whole share")]
+    ZeroShares,
 }

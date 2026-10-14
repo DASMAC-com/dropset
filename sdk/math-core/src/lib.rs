@@ -25,7 +25,8 @@
 //!
 //! Correctness is pinned to the on-chain engine by the shared conformance
 //! vectors in `sdk/conformance`, verified in both Rust and TS — the TS
-//! `price.ts` is the one remaining intentional cross-language re-impl.
+//! `price.ts` and `share.ts` are intentional hand ports, held to this
+//! crate only by those vectors.
 
 pub mod clock;
 pub mod matching_math;
@@ -42,6 +43,12 @@ pub const PPM: u64 = 1_000_000;
 /// Basis-points denominator (`10_000 = 100%`) — the scale for per-level
 /// flush sizes.
 pub const BPS: u64 = 10_000;
+
+/// Fractional-bit width of the Q32.32 fixed point that value-per-share and
+/// the high-water mark are stored in: `x << Q32_SHIFT` lifts an atom-scale
+/// value into Q32.32, and `>> Q32_SHIFT` brings it back. Distinct from the
+/// program's `Q32_32_ONE`, which is `1.0` in this encoding.
+pub const Q32_SHIFT: u32 = 32;
 
 #[cfg(feature = "wasm")]
 pub mod wasm;

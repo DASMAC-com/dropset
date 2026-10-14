@@ -9,8 +9,12 @@
 //! - `access` — [`VaultAccess`]: bounds-checked sector borrows.
 //! - `dll` — [`VaultDll`] / [`DllList`]: the doubly-linked-list surgery
 //!   over the active / tombstone / free sector lists.
-//! - `accrual` — perf-fee realization ([`realize_in_place`]) and
-//!   single-leg subsequent-deposit sizing ([`single_leg_basket`]).
+//! - `accrual` — the thin wrappers over `dropset-math-core` kernels:
+//!   perf-fee realization ([`realize_in_place`]), single-leg
+//!   subsequent-deposit sizing ([`single_leg_basket`]), and the quote
+//!   flush ([`Vault::materialize_remaining`]).
+//! - `inventory` — the deposit's checked inventory + share mutation
+//!   ([`apply_deposit_inventory`]), which wraps no kernel.
 //! - `quote_write` / `reference_price` / `liquidity_profile` — the two
 //!   solana-free quote-write kernels the hand-written sBPF entrypoint
 //!   mirrors ([`stamp_reference_price`], [`write_liquidity_profile`]), over
@@ -25,6 +29,7 @@ use anchor_lang_v2::accounts::Slab;
 mod access;
 mod accrual;
 mod dll;
+mod inventory;
 mod layout;
 mod liquidity_profile;
 mod quote_write;
@@ -33,6 +38,7 @@ mod reference_price;
 pub use access::*;
 pub use accrual::*;
 pub use dll::*;
+pub use inventory::*;
 pub use layout::*;
 pub use liquidity_profile::*;
 pub use quote_write::err;
@@ -43,9 +49,10 @@ pub use reference_price::*;
 // `crate::state::{isqrt_u128, compute_pro_rata_slice, min_leader_share_ok}`
 // call site keeps resolving, and the on-chain program runs byte-identical
 // math to the off-chain consumers. The perf-fee accrual and single-leg
-// sizing keep a thin wrapper in `accrual` (one maps the math-core error
-// back onto `DropsetError`, the other reads/writes `&mut Vault` state
-// around the pure formula).
+// sizing keep a thin wrapper in `accrual` (one reads/writes `&mut Vault`
+// state around the pure formula, the other maps the math-core error back
+// onto `DropsetError`); the depositor-side kernels are wrapped on
+// `VaultDepositorHeader`.
 pub use dropset_math_core::share::{compute_pro_rata_slice, isqrt_u128, min_leader_share_ok};
 
 /// Number of bid / ask levels in a [`LiquidityProfile`]. Chosen small for
@@ -70,7 +77,11 @@ pub const FLUSH_BIT: u64 = 1u64 << 63;
 /// (`L / total_shares`); the first depositor's basket implies
 /// `L = total_shares` (since `total_shares := isqrt(b·q) == L`), so the
 /// initial VPS is exactly 1.0.
-pub const Q32_32_ONE: u64 = 1u64 << 32;
+pub const Q32_32_ONE: u64 = 1u64 << Q32_SHIFT;
+
+// The Q32.32 shift width itself, re-exported for the same single-source
+// reason as `BPS` / `PPM` below.
+pub use dropset_math_core::Q32_SHIFT;
 
 // The parts-per-million and basis-points denominators are re-exported
 // from math-core rather than redeclared, for the same reason as the

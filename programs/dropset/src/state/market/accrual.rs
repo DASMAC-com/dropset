@@ -1,26 +1,29 @@
 //! Thin program-side wrappers around the solana-free
-//! [`dropset_math_core`] kernels — each reads/writes `&mut Vault` state
-//! around a pure formula, so the layering contract holds and handlers stop
-//! touching the physical slab layout:
-//! - perf-fee realization ([`realize_in_place`], which honors the on-chain
-//!   `frozen` / `tombstoned` flags);
-//! - single-leg subsequent-deposit sizing ([`single_leg_basket`], which
-//!   maps the kernel's [`BasketError`] back onto [`DropsetError`]);
+//! [`dropset_math_core`] kernels — three of them, each around a pure
+//! formula:
+//! - perf-fee realization ([`realize_in_place`], which reads and writes
+//!   `&mut Vault` and honors the on-chain `frozen` / `tombstoned` flags);
+//! - single-leg subsequent-deposit sizing ([`single_leg_basket`], a scalar
+//!   wrapper that touches no vault state and only maps the kernel's
+//!   [`BasketError`] back onto [`DropsetError`]);
 //! - flush materialization ([`Vault::materialize_remaining`], which
 //!   rebuilds [`Vault::remaining`] from [`Vault::profile`] + current
 //!   inventory via the [`matching_math`](dropset_math_core::matching_math)
-//!   kernels and clears `FLUSH_BIT`).
+//!   kernels and clears `FLUSH_BIT`), so the swap handler no longer
+//!   open-codes the flush loop.
 //!
 //! The pure formulas live in `dropset-math-core` so the off-chain NAV and
-//! simulator consumers reuse them.
+//! simulator consumers reuse them. The deposit's inventory mutation wraps
+//! no kernel and lives in the sibling `inventory` module.
 
 use anchor_lang_v2::prelude::*;
 use dropset_math_core::matching_math::{flip_level_price, flush_level_price, level_fill_atoms};
 use dropset_math_core::share::{self, BasketError};
 
 use crate::errors::DropsetError;
+use crate::Price;
 
-use super::{Vault, BPS, FLUSH_BIT, N_LEVELS};
+use super::{Level, Position, ReferencePrice, Vault, BPS, FLUSH_BIT, N_LEVELS};
 
 /// Outcome of a `realize_in_place` call — returned so callers can emit
 /// a `RealizeEvent` only when `m > 0`.
@@ -51,9 +54,10 @@ pub struct RealizeOutcome {
 /// later fee-rate change can't claw back past historical highs — this
 /// is **not** a no-op: the higher HWM is written through to the vault.
 ///
-/// `L`, `HWM`, and the intermediate share math run in `u128` to keep
-/// the perf-fee formula precise without overflow on realistic atom
-/// scales. The final `m` is clamped back into `u64`.
+/// The arithmetic — the wide numerator, the shared-headroom cap on the
+/// mint, and the saturating, monotone HWM — is documented once, on the
+/// [`share::realize_perf_fee`] kernel; this wrapper adds only the flag
+/// guards and the write-through.
 pub fn realize_in_place(vault: &mut Vault) -> RealizeOutcome {
     let hwm = vault.hwm.get();
     // Frozen / tombstoned vaults pin the HWM at freeze / close time and
@@ -138,59 +142,72 @@ impl Vault {
         // state back onto the pct-of-inventory ladder; `flip_price` is
         // derived from the level's own fresh price, never the reference.
         for i in 0..N_LEVELS {
+            // Bids are sized off the quote leg, asks off the base leg; the
+            // per-call pairing of leg, side flag and gate is the whole
+            // difference between the two sides.
             let bid = self.profile.bids[i];
+            materialize_level(
+                &mut self.remaining.bids[i],
+                &bid,
+                ref_price,
+                &reference,
+                quote_atoms,
+                false,
+                bids_ok,
+            );
             let ask = self.profile.asks[i];
-            let bid_price = flush_level_price(ref_price, bid.price_offset.get(), false);
-            self.remaining.bids[i].price = bid_price;
-            self.remaining.bids[i].flip_price =
-                flip_level_price(bid_price, bid.flip_spread_ppm.get(), false);
-            self.remaining.bids[i].flip_size = 0.into();
-            self.remaining.bids[i].size = if bids_ok {
-                level_fill_atoms(bid.size_bps.get(), quote_atoms).unwrap_or(0)
-            } else {
-                0
-            }
-            .into();
-            let (bid_wall, bid_slot) = bid.deadlines(&reference);
-            self.remaining.bids[i].set_deadlines(bid_wall, bid_slot);
-            let ask_price = flush_level_price(ref_price, ask.price_offset.get(), true);
-            self.remaining.asks[i].price = ask_price;
-            self.remaining.asks[i].flip_price =
-                flip_level_price(ask_price, ask.flip_spread_ppm.get(), true);
-            self.remaining.asks[i].flip_size = 0.into();
-            self.remaining.asks[i].size = if asks_ok {
-                level_fill_atoms(ask.size_bps.get(), base_atoms).unwrap_or(0)
-            } else {
-                0
-            }
-            .into();
-            let (ask_wall, ask_slot) = ask.deadlines(&reference);
-            self.remaining.asks[i].set_deadlines(ask_wall, ask_slot);
+            materialize_level(
+                &mut self.remaining.asks[i],
+                &ask,
+                ref_price,
+                &reference,
+                base_atoms,
+                true,
+                asks_ok,
+            );
         }
         self.reference_price.stamp = (stamp & !FLUSH_BIT).into();
     }
 }
 
-/// Single-leg subsequent-deposit sizing — spec invariant I1
-/// (VPS-preserving). Shared by `deposit` (outside) and
-/// `deposit_leader`'s non-seeding top-up arm so the rounding direction
-/// and slippage semantics stay identical across both; a divergence here
-/// is a silent value-leak, not a compile error.
+/// One side's half of a flush step: price `src` off the reference, derive
+/// its flip price off that fresh price and zero its flipped allowance, size
+/// it as `size_bps` of `leg_atoms` (or zero when its side failed the
+/// `Σ ≤ BPS` gate), and stamp both absolute deadlines. Factored out so the
+/// bid and ask halves cannot be edited one side at a time;
+/// `#[inline(always)]` keeps the codegen of the former open-coded pair.
+#[inline(always)]
+fn materialize_level(
+    dst: &mut Position,
+    src: &Level,
+    ref_price: Price,
+    reference: &ReferencePrice,
+    leg_atoms: u64,
+    is_ask: bool,
+    side_ok: bool,
+) {
+    let price = flush_level_price(ref_price, src.price_offset.get(), is_ask);
+    dst.price = price;
+    dst.flip_price = flip_level_price(price, src.flip_spread_ppm.get(), is_ask);
+    dst.flip_size = 0.into();
+    dst.size = if side_ok {
+        level_fill_atoms(src.size_bps.get(), leg_atoms).unwrap_or(0)
+    } else {
+        0
+    }
+    .into();
+    let (wall, slot) = src.deadlines(reference);
+    dst.set_deadlines(wall, slot);
+}
+
+/// Single-leg subsequent-deposit sizing, shared by `deposit` (outside) and
+/// `deposit_leader`'s non-seeding top-up arm. The sizing rules — rounding
+/// direction, slippage bound, and the empty-leg and zero-share rejections —
+/// are documented once, on the [`share::single_leg_basket`] kernel this
+/// wraps.
 ///
-/// Exactly one leg is supplied (`base_in XOR quote_in`); the matching
-/// leg is derived from the vault's current ratio. Shares are **floored**
-/// (`shares_out = leg × total_shares / atoms`) and the basket is rounded
-/// **up** (`ceil(shares_out × atoms / total_shares)`) so the vault never
-/// under-collects. Both finals are bounded by the caller's `max_*_in`
-/// (`BasketSlippage`).
-///
-/// Returns `(shares_out, base_in_final, quote_in_final)`. Requires
-/// `total_shares > 0` — callers reject seeding before this point (the
-/// seeding share formula is the `isqrt` basket, not this path).
-///
-/// Thin wrapper over the solana-free [`share::single_leg_basket`] kernel,
-/// mapping its [`BasketError`] back onto the program's `DropsetError` so the
-/// on-chain error surface is unchanged.
+/// Maps each [`BasketError`] one-to-one onto the `DropsetError` of the same
+/// name.
 pub fn single_leg_basket(
     total_shares: u64,
     base_atoms: u64,
@@ -214,37 +231,11 @@ pub fn single_leg_basket(
             BasketError::SingleLegRequired => DropsetError::SingleLegRequired,
             BasketError::MathOverflow => DropsetError::MathOverflow,
             BasketError::BasketSlippage => DropsetError::BasketSlippage,
+            BasketError::EmptyLeg => DropsetError::EmptyLeg,
+            BasketError::ZeroShares => DropsetError::ZeroShares,
         }
         .into()
     })
-}
-
-/// Apply a deposit's post-transfer inventory + total-share mutation to
-/// the vault: add the transferred legs onto `base_atoms` / `quote_atoms`
-/// and mint `shares_out` into `total_shares`. Returns
-/// `(new_total_shares, new_base_atoms, new_quote_atoms)`.
-///
-/// Shared by `deposit` (outside) and `deposit_leader` so the inventory /
-/// share write block stays byte-identical across both paths — a
-/// divergence here is a silent value-leak, not a compile error (the same
-/// hazard [`single_leg_basket`] is factored out for). The leg amounts are
-/// the seeding / single-leg finals the caller already computed. The
-/// leader-only `leader_shares` bump stays in `deposit_leader` — the
-/// outside path leaves `leader_shares` untouched — so it is deliberately
-/// not part of this shared mutation.
-pub fn apply_deposit_inventory(
-    vault: &mut Vault,
-    base_in_final: u64,
-    quote_in_final: u64,
-    shares_out: u64,
-) -> (u64, u64, u64) {
-    let new_base = vault.base_atoms.get() + base_in_final;
-    let new_quote = vault.quote_atoms.get() + quote_in_final;
-    let new_total = vault.total_shares.get() + shares_out;
-    vault.base_atoms = new_base.into();
-    vault.quote_atoms = new_quote.into();
-    vault.total_shares = new_total.into();
-    (new_total, new_base, new_quote)
 }
 
 // ── realize_in_place wrapper ─────────────────────────────────────
