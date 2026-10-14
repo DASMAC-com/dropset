@@ -52,17 +52,25 @@ re-prints the entire job tree on every refresh, and one such call emitted
 **64.6KB**, overflowed the tool-result cap, was persisted to disk, and still
 needed the terminal state re-probed afterwards.
 
+A third mode, ``--queue <pr>``, watches an **enqueued PR** through to merged or
+dequeued, including the window before any queue run exists (where ``--run`` has
+no id to take). It polls both PR-state sources and the PR's queue-branch runs,
+prints nothing until a terminal outcome, and is meant to run as one backgrounded
+command so its exit wakes the session. See :func:`wait_queue`.
+
 Usage::
 
     python3 .claude/tools/wait_for_checks.py --pr 285
     python3 .claude/tools/wait_for_checks.py --pr 285 --interval 30 --timeout 1800
     python3 .claude/tools/wait_for_checks.py --run 1234567890
+    python3 .claude/tools/wait_for_checks.py --queue 285
 
-Options: exactly one of ``--pr`` / ``--run``, ``--repo`` (default
+Options: exactly one of ``--pr`` / ``--run`` / ``--queue``, ``--repo`` (default
 ``DASMAC-com/dropset``),
-``--interval`` (seconds between gh's own refreshes, default 30; honored in
-**both** modes), ``--timeout``
-(seconds before giving up on the watch, default 3600), ``--no-watch`` (skip the
+``--interval`` (seconds between refreshes, default 30, or 60 under
+``--queue``; honored in **every** mode), ``--timeout``
+(seconds before giving up on the watch, default 3600, or 7200 under
+``--queue``), ``--no-watch`` (skip the
 watch and just read the current state once — a resumed session where the
 background task is gone; checks mode only).
 
@@ -106,8 +114,25 @@ or, under ``--run``::
       "log_path": "/…/wait-for-run-1234567890.log"
     }
 
-Exit code is 0 when ``conclusion`` is ``pass``, else 1 — so a caller that only
-checks the status still cannot mistake a red build for green.
+or, under ``--queue``::
+
+    {
+      "pr": 285,
+      "mode": "queue",
+      "conclusion": "merged",    // merged | dequeued | closed | not_queued |
+                                 // timeout | probe_failed
+      "settled": true,
+      "elapsed_seconds": 1310,
+      "polls": 22,
+      "seen_queue_entry": true,
+      "last": {"gql_state": "MERGED", "entry_state": null, …},
+      "queue_runs": [{"run_id": "…", "name": "…", "conclusion": "…", …}],
+      "failing_runs": [],
+      "log_path": "/…/wait-for-queue-285.log"
+    }
+
+Exit code is 0 when ``conclusion`` is ``pass`` (or ``merged``), else 1 — so a
+caller that only checks the status still cannot mistake a red build for green.
 
 Standard library only. A Python skill-tool under ``.claude/tools/`` —
 deliberately **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill
@@ -125,6 +150,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 DEFAULT_REPO = "DASMAC-com/dropset"
@@ -369,6 +395,304 @@ def wait_run(
         "settled": settled,
         "elapsed_seconds": elapsed,
         "exit_code": code,
+        "log_path": str(log),
+    }
+
+
+def queue_log_path_for(pr: int) -> Path:
+    """Where a ``--queue`` watch's one-line-per-poll log goes."""
+    base = Path(tempfile.gettempdir()) / "claude-wait-checks"
+    base.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return base / f"wait-for-queue-{pr}.log"
+
+
+# One GraphQL read answers "landed?", "still queued?" and "dequeued?" at once.
+# `mergeQueueEntry` is the queue signal: on a merge-queue repo a genuinely
+# queued PR reports `autoMergeRequest: null`, so keying on the latter announced
+# a dequeue on every run. `autoMergeRequest` stays for classic auto-merge.
+QUEUE_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      state
+      merged
+      mergeQueueEntry { state enqueuedAt }
+      autoMergeRequest { enabledAt }
+    }
+  }
+}
+"""
+
+# Queue state moves on the scale of a whole CI run behind other branches, so a
+# poll a minute is ample; each poll is three small reads, written to the log.
+QUEUE_INTERVAL = 60
+
+# A queue wait sits behind every branch ahead of it, so it gets a longer outer
+# bound than one CI run does.
+QUEUE_TIMEOUT = 7200
+
+# All-null with no queue-branch run for this long means the enqueue never took.
+# Registration lands within seconds of a good enqueue, so this is generous.
+NOT_QUEUED_AFTER_SECONDS = 180
+
+# All-null after the entry demonstrably existed, with no failed queue run to
+# explain it. Both state sources were once stale together for several minutes
+# after a real merge, so wait this long before calling it a dequeue.
+AMBIGUOUS_GRACE_SECONDS = 600
+
+# A dequeue backed by a failed queue run must hold on this many consecutive
+# polls, so one stale read of both sources cannot turn a merge into a dequeue.
+DEQUEUE_CONFIRM_POLLS = 2
+
+# With no queue entry seen yet to anchor on, how far back a queue-branch run
+# may have been created and still count as this enqueue's.
+RUN_WINDOW_SECONDS = 900
+
+# Consecutive probe failures before the watch gives up rather than spinning.
+MAX_PROBE_ERRORS = 3
+
+# Run conclusions that dequeue a PR. Keyed on the conclusion, not `status`.
+FAILED_RUN_CONCLUSIONS = frozenset(
+    {"failure", "cancelled", "timed_out", "startup_failure", "action_required"}
+)
+
+
+def _parse_time(text: str | None) -> float | None:
+    """An ISO-8601 GitHub timestamp as epoch seconds, or ``None``."""
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _gh_json(args: list[str], what: str):
+    code, out, err = _gh(args)
+    if code != 0:
+        raise WaitForChecksError(f"{what} failed: {err.strip() or f'exit {code}'}")
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise WaitForChecksError(f"decoding {what}: {exc}") from exc
+
+
+def probe_queue(pr: int, repo: str) -> dict:
+    """One snapshot of a queued PR: both state sources plus its queue runs.
+
+    Two sources because they disagree in **both** directions: GraphQL once read
+    ``MERGED`` while ``gh pr view`` still said ``OPEN``, and once still read
+    ``AWAITING_CHECKS`` after ``gh pr view`` said ``MERGED``.
+    """
+    owner, _, name = repo.partition("/")
+    gql = _gh_json(
+        [
+            "api",
+            "graphql",
+            "-f",
+            f"owner={owner}",
+            "-f",
+            f"name={name}",
+            "-F",
+            f"number={pr}",
+            "-f",
+            f"query={QUEUE_QUERY}",
+        ],
+        "queue graphql probe",
+    )
+    try:
+        node = gql["data"]["repository"]["pullRequest"]
+    except (KeyError, TypeError) as exc:
+        raise WaitForChecksError("queue graphql probe returned no PR") from exc
+    view = _gh_json(
+        ["pr", "view", str(pr), "--repo", repo, "--json", "state,mergedAt"],
+        "gh pr view",
+    )
+    runs = _gh_json(
+        [
+            "run",
+            "list",
+            "--repo",
+            repo,
+            "--limit",
+            "50",
+            "--json",
+            "databaseId,headBranch,name,status,conclusion,createdAt,url",
+        ],
+        "gh run list",
+    )
+    marker = f"/pr-{pr}-"
+    queue_runs = [
+        {
+            "run_id": str(r.get("databaseId", "")),
+            "name": r.get("name", ""),
+            "status": r.get("status", ""),
+            "conclusion": r.get("conclusion", ""),
+            "created_at": r.get("createdAt", ""),
+            "url": r.get("url", ""),
+        }
+        for r in runs
+        if isinstance(r, dict)
+        and str(r.get("headBranch", "")).startswith("gh-readonly-queue/")
+        and marker in str(r.get("headBranch", ""))
+    ]
+    return {
+        "gql_state": node.get("state"),
+        "gql_merged": bool(node.get("merged")),
+        "entry": node.get("mergeQueueEntry"),
+        "auto": node.get("autoMergeRequest"),
+        "view_state": view.get("state"),
+        "view_merged_at": view.get("mergedAt"),
+        "queue_runs": queue_runs,
+    }
+
+
+def wait_queue(
+    pr: int,
+    repo: str = DEFAULT_REPO,
+    interval: int = QUEUE_INTERVAL,
+    timeout: int = QUEUE_TIMEOUT,
+    probe=probe_queue,
+    sleep=time.sleep,
+    clock=time.monotonic,
+    wall=time.time,
+):
+    """Watch an enqueued PR until it merges or leaves the queue.
+
+    Built to run as **one backgrounded command** right after a verified
+    enqueue: it prints nothing until a terminal outcome, so the harness's
+    exit notification is the session's wake-up. That replaces re-probing
+    across turns, which nothing woke the session for, and a session-scoped
+    cron, which the Bedrock auto-mode classifier can deny as persistence.
+
+    ``conclusion`` is ``merged`` (exit 0), or ``dequeued`` / ``closed`` /
+    ``not_queued`` / ``timeout`` / ``probe_failed`` (exit 1). A terminal
+    ``MERGED`` from **either** source wins; nothing else concludes until both
+    sources agree the PR is not merged.
+    """
+    log = queue_log_path_for(pr)
+    started = clock()
+    started_wall = wall()
+    seen_entry = False
+    anchor: float | None = None
+    null_since: float | None = None
+    dequeue_streak = 0
+    probe_errors = 0
+    polls = 0
+    snap: dict = {}
+    conclusion = "timeout"
+    error = None
+
+    fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fh:
+        while True:
+            now = clock()
+            polls += 1
+            try:
+                snap = probe(pr, repo)
+                probe_errors = 0
+            except WaitForChecksError as exc:
+                probe_errors += 1
+                error = str(exc)
+                fh.write(json.dumps({"t": int(now - started), "error": error}) + "\n")
+                fh.flush()
+                if probe_errors >= MAX_PROBE_ERRORS:
+                    conclusion = "probe_failed"
+                    break
+                snap = {}
+
+            if snap:
+                entry = snap.get("entry")
+                runs = snap.get("queue_runs", [])
+                enqueued = _parse_time((entry or {}).get("enqueuedAt"))
+                if enqueued is not None and (anchor is None or enqueued < anchor):
+                    anchor = enqueued
+                floor = (
+                    anchor if anchor is not None else started_wall - RUN_WINDOW_SECONDS
+                )
+                runs = [
+                    r
+                    for r in runs
+                    if (_parse_time(r.get("created_at")) or floor) >= floor
+                ]
+                snap["queue_runs"] = runs
+                failing = [
+                    r for r in runs if r.get("conclusion") in FAILED_RUN_CONCLUSIONS
+                ]
+                fh.write(
+                    json.dumps(
+                        {
+                            "t": int(now - started),
+                            "gql": snap.get("gql_state"),
+                            "entry": (entry or {}).get("state"),
+                            "view": snap.get("view_state"),
+                            "runs": len(runs),
+                            "failing": len(failing),
+                        }
+                    )
+                    + "\n"
+                )
+                fh.flush()
+
+                merged = (
+                    snap.get("gql_merged")
+                    or snap.get("gql_state") == "MERGED"
+                    or snap.get("view_state") == "MERGED"
+                    or bool(snap.get("view_merged_at"))
+                )
+                if merged:
+                    conclusion = "merged"
+                    break
+                if "CLOSED" in (snap.get("gql_state"), snap.get("view_state")):
+                    conclusion = "closed"
+                    break
+                if entry or snap.get("auto"):
+                    seen_entry = True
+                    null_since = None
+                    dequeue_streak = 0
+                else:
+                    if null_since is None:
+                        null_since = now
+                    if failing and (seen_entry or runs):
+                        dequeue_streak += 1
+                        if dequeue_streak >= DEQUEUE_CONFIRM_POLLS:
+                            conclusion = "dequeued"
+                            break
+                    else:
+                        dequeue_streak = 0
+                        if seen_entry or runs:
+                            if now - null_since >= AMBIGUOUS_GRACE_SECONDS:
+                                conclusion = "dequeued"
+                                break
+                        elif now - null_since >= NOT_QUEUED_AFTER_SECONDS:
+                            conclusion = "not_queued"
+                            break
+
+            if clock() - started + interval > timeout:
+                break
+            sleep(interval)
+
+    runs = snap.get("queue_runs", [])
+    return {
+        "pr": pr,
+        "repo": repo,
+        "mode": "queue",
+        "conclusion": conclusion,
+        "settled": conclusion not in ("timeout", "probe_failed"),
+        "elapsed_seconds": int(clock() - started),
+        "polls": polls,
+        "seen_queue_entry": seen_entry,
+        "last": {
+            "gql_state": snap.get("gql_state"),
+            "entry_state": (snap.get("entry") or {}).get("state"),
+            "view_state": snap.get("view_state"),
+            "view_merged_at": snap.get("view_merged_at"),
+        },
+        "queue_runs": runs,
+        "failing_runs": [
+            r for r in runs if r.get("conclusion") in FAILED_RUN_CONCLUSIONS
+        ],
+        "error": error if conclusion == "probe_failed" else None,
         "log_path": str(log),
     }
 
@@ -688,18 +1012,30 @@ def run(argv: list[str]) -> int:
         dest="run_id",
         help="workflow run id to watch instead of a PR's checks (queue mode)",
     )
+    parser.add_argument(
+        "--queue",
+        dest="queue_pr",
+        type=int,
+        help="enqueued PR number to watch until it merges or leaves the queue",
+    )
     parser.add_argument("--repo", default=DEFAULT_REPO, help="owner/repo")
     parser.add_argument(
         "--interval",
         type=int,
-        default=DEFAULT_INTERVAL,
-        help=f"seconds between gh's refreshes (default {DEFAULT_INTERVAL})",
+        default=None,
+        help=(
+            f"seconds between refreshes (default {DEFAULT_INTERVAL}; "
+            f"{QUEUE_INTERVAL} with --queue)"
+        ),
     )
     parser.add_argument(
         "--timeout",
         type=int,
-        default=DEFAULT_TIMEOUT,
-        help=f"seconds before giving up on the watch (default {DEFAULT_TIMEOUT})",
+        default=None,
+        help=(
+            f"seconds before giving up on the watch (default {DEFAULT_TIMEOUT}; "
+            f"{QUEUE_TIMEOUT} with --queue)"
+        ),
     )
     parser.add_argument(
         "--no-watch",
@@ -708,32 +1044,45 @@ def run(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv[1:])
 
-    if (args.pr is None) == (args.run_id is None):
-        # Requiring exactly one keeps the two modes from silently ranking each
-        # other: a caller that passed both would otherwise watch whichever the
+    modes = [args.pr, args.run_id, args.queue_pr]
+    if sum(m is not None for m in modes) != 1:
+        # Requiring exactly one keeps the modes from silently ranking each
+        # other: a caller that passed two would otherwise watch whichever the
         # code happens to check first and report a verdict about the other thing.
-        raise WaitForChecksError("pass exactly one of --pr or --run")
+        raise WaitForChecksError("pass exactly one of --pr, --run or --queue")
 
-    if args.run_id is not None:
+    if args.queue_pr is not None:
         if args.no_watch:
-            raise WaitForChecksError("--no-watch is meaningless with --run")
-        verdict = wait_run(
-            args.run_id,
+            raise WaitForChecksError("--no-watch is meaningless with --queue")
+        verdict = wait_queue(
+            args.queue_pr,
             repo=args.repo,
-            timeout=args.timeout,
-            interval=args.interval,
+            interval=QUEUE_INTERVAL if args.interval is None else args.interval,
+            timeout=QUEUE_TIMEOUT if args.timeout is None else args.timeout,
         )
     else:
-        verdict = wait(
-            args.pr,
-            repo=args.repo,
-            interval=args.interval,
-            timeout=args.timeout,
-            watch=not args.no_watch,
-        )
+        interval = DEFAULT_INTERVAL if args.interval is None else args.interval
+        timeout = DEFAULT_TIMEOUT if args.timeout is None else args.timeout
+        if args.run_id is not None:
+            if args.no_watch:
+                raise WaitForChecksError("--no-watch is meaningless with --run")
+            verdict = wait_run(
+                args.run_id,
+                repo=args.repo,
+                timeout=timeout,
+                interval=interval,
+            )
+        else:
+            verdict = wait(
+                args.pr,
+                repo=args.repo,
+                interval=interval,
+                timeout=timeout,
+                watch=not args.no_watch,
+            )
     json.dump(verdict, sys.stdout, indent=2)
     sys.stdout.write("\n")
-    return 0 if verdict["conclusion"] == "pass" else 1
+    return 0 if verdict["conclusion"] in ("pass", "merged") else 1
 
 
 def main() -> int:
