@@ -401,7 +401,7 @@ So:
 
 - **In Review** covers *both* PR-under-review **and**
   merged-with-follow-up-outstanding. A session still owes work after its
-  merge — session metrics, perms firming, post-merge tidy, feedback to
+  merge — session metrics, post-merge tidy, feedback to
   hand to a planning session — and that work is invisible if the issue
   reads Done.
 - **Done means operator-ratified complete.** Never merely merged.

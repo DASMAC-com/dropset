@@ -22,9 +22,9 @@ transition. The operator was hand-typing the question at the
 end of every session and reading the answer out of the
 transcript; this makes it a checklist with a verdict.
 
-**`review-pr` covers the happy path** — its merge-queue
-handoff already runs session metrics while the PR sits in the
-queue, and its outcome watch reports the merge. So this verb
+**`review-pr` covers the happy path** — it watches its
+queued PR to merged, then files session metrics unprompted and
+asks the one close question. So this verb
 exists for the **ragged endings**:
 
 - a session that kept talking after its PR landed;
