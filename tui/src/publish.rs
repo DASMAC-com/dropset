@@ -51,6 +51,11 @@ use std::time::Duration;
 /// The upgradeable BPF loader (v3).
 pub const LOADER_V3_ID: Pubkey = pubkey!("BPFLoaderUpgradeab1e11111111111111111111111");
 
+/// The `enable_loader_v4` feature gate (agave-feature-set). The loader probe
+/// reads it on every publish: v3 is the ratified deploy target while v4 is
+/// inactive, and an activation is the signal that v3 deploys are on notice.
+pub const LOADER_V4_FEATURE: Pubkey = pubkey!("2aQJYqER2aKyb3cZw22v4SL2xMX7vwXBRWfvS4pTrtED");
+
 /// The artifact published: the default build `make program` leaves behind —
 /// the ASM fast path, with `admin-teardown` on.
 pub const ARTIFACT: &str = "target/deploy/dropset.so";
@@ -133,6 +138,8 @@ pub struct Plan {
     pub lamports: u64,
     pub balance: u64,
     pub authority: Pubkey,
+    /// The loader probe's reading (see [`loader_v4_status`]).
+    pub loader_v4: &'static str,
 }
 
 impl Plan {
@@ -159,7 +166,28 @@ impl Plan {
                 sol(self.lamports),
                 sol(self.balance)
             ),
+            format!("loader:    v3 (enable_loader_v4: {})", self.loader_v4),
         ]
+    }
+}
+
+/// The loader probe: whether the `enable_loader_v4` feature is unscheduled,
+/// pending, or active. A feature account holds bincode `Option<u64>` — the
+/// activation slot once activated.
+pub fn loader_v4_status(client: &RpcClient) -> Result<&'static str> {
+    Ok(
+        match chain::fetch_fresh(client, &LOADER_V4_FEATURE, "loader-v4 feature")? {
+            None => "not scheduled",
+            Some(account) => feature_status(&account.data),
+        },
+    )
+}
+
+/// [`loader_v4_status`]'s decode, separated so it is testable without a chain.
+fn feature_status(data: &[u8]) -> &'static str {
+    match data.first() {
+        Some(1) => "ACTIVE — v3 deploys are on notice",
+        _ => "pending activation",
     }
 }
 
@@ -226,6 +254,7 @@ pub fn plan(
         lamports,
         balance,
         authority: *authority,
+        loader_v4: loader_v4_status(client)?,
     })
 }
 
@@ -331,6 +360,8 @@ pub fn publish(
             ("buffer", &buffer.pubkey().to_string()),
             ("sha256", &plan.sha256),
             ("bytes", &plan.len.to_string()),
+            ("commit", &plan.commit),
+            ("loader_v4", plan.loader_v4),
         ],
     );
 
@@ -689,6 +720,14 @@ mod tests {
             };
             assert!(m.bytes_match(&header), "{m:?}");
         }
+    }
+
+    #[test]
+    fn the_loader_probe_reads_the_activation_option() {
+        assert_eq!(feature_status(&[0]), "pending activation");
+        let mut active = vec![1];
+        active.extend_from_slice(&42u64.to_le_bytes());
+        assert!(feature_status(&active).starts_with("ACTIVE"));
     }
 
     #[test]

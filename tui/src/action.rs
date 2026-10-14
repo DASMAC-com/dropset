@@ -1453,7 +1453,28 @@ pub(crate) fn do_init(
     chain::send_logged(client, wallet, &[wallet], &[ix, topup], "init", log)
         .context("send init")?;
     log.accounts_changed();
-    Ok(Outcome::Done("Registry initialized".into()))
+    // Read the registry back: the record states what the chain holds. The
+    // genesis admin needs no read — `init` itself refuses a payer that is not
+    // the upgrade authority, and names the payer as admin.
+    let registry =
+        accounts::registry_fresh(client)?.context("the registry is not readable after init")?;
+    if registry.fee_mint != fee_mint || registry.fee_atoms != fee_atoms {
+        anyhow::bail!(
+            "the registry holds fee {} atoms of {}, not the {fee_atoms} of {fee_mint} sent",
+            registry.fee_atoms,
+            registry.fee_mint
+        );
+    }
+    log.record(
+        "init-verified",
+        &[
+            ("registry", &registry.address.to_string()),
+            ("genesis_admin", &wallet.pubkey().to_string()),
+            ("fee_mint", &fee_mint.to_string()),
+            ("fee_atoms", &fee_atoms.to_string()),
+        ],
+    );
+    Ok(Outcome::Done("Registry initialized and read back".into()))
 }
 
 /// Create `config`'s market: make its mints usable, then `create_market`

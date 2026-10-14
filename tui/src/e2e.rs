@@ -135,6 +135,7 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
         "step=publish-verified",
         "step=close-buffer",
         "step=init",
+        "step=init-verified",
         "step=create_market",
         "step=create_vault",
     ] {
