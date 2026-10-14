@@ -7,7 +7,8 @@
 //! [`DROPSET_ID`]), and mainnet uses a key whose secret lives only in
 //! 1Password, its public half committed at `keys/dropset-mainnet.pubkey`.
 //! The program crate's `mainnet` feature selects the matching
-//! `declare_id!`; `tests/program_id.rs` pins all three copies together.
+//! `declare_id!`; `tests/program_id.rs` pins that literal, the key file and
+//! [`DROPSET_MAINNET_ID`] together.
 //!
 //! The Codama-generated builders hardcode [`DROPSET_ID`], and a cargo
 //! feature cannot switch them, since features unify across one binary
@@ -29,7 +30,7 @@ pub const DROPSET_MAINNET_ID: Pubkey = pubkey!("FXv1Dsy4CL5UvvkAAcPmzHZCvaotJMi9
 pub enum Deployment {
     /// The committed localnet vanity id, [`DROPSET_ID`].
     Localnet,
-    /// The 1Password-held mainnet id, [`DROPSET_MAINNET_ID`].
+    /// The mainnet id, [`DROPSET_MAINNET_ID`].
     Mainnet,
 }
 
@@ -73,13 +74,16 @@ pub fn vault_depositor_pda(
 }
 
 /// The `emit_cpi!` event authority PDA, seeded on `"__event_authority"`.
+/// Address only: no instruction takes its bump.
 pub fn event_authority(program_id: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(&[b"__event_authority"], program_id).0
 }
 
 /// Point a generated instruction at `program_id`.
 ///
-/// Rewrites the instruction's program id and every account meta that the
+/// The input is assumed to be as a generated builder emits it, aimed at
+/// [`DROPSET_ID`]; an instruction already aimed elsewhere is not mapped
+/// back. Rewrites the instruction's program id and every account meta that the
 /// builder filled from [`DROPSET_ID`]: the `program` account `emit_cpi!`
 /// reads, the placeholder for an absent optional account, and the localnet
 /// event authority. Other PDAs are the caller's to derive with the
@@ -104,10 +108,15 @@ pub fn retarget(mut ix: Instruction, program_id: &Pubkey) -> Instruction {
 
 /// Whether a program binary embeds `program_id` and not [`DROPSET_ID`].
 ///
+/// An advisory wrong-cluster build detector, not a deploy gate: it says
+/// nothing about build features, or about whether the keypair a deploy
+/// signs with is the one for `program_id`; the publish step checks that.
+///
 /// A raw 32-byte scan of the `.so`, not ELF-aware: `declare_id!` puts the
 /// id in read-only data, so a build for the wrong cluster shows up as the
-/// wrong id present, or the localnet id still there. For `DROPSET_ID`
-/// itself this is just "embeds it".
+/// wrong id present, or the localnet id still there. It fails safe: an id
+/// the compiler did not lay out as 32 contiguous bytes reads as absent.
+/// For `DROPSET_ID` itself this is just "embeds it".
 pub fn embeds_program_id(binary: &[u8], program_id: &Pubkey) -> bool {
     let embeds = |key: &Pubkey| binary.windows(32).any(|window| window == key.as_ref());
     embeds(program_id) && (*program_id == DROPSET_ID || !embeds(&DROPSET_ID))
@@ -166,6 +175,33 @@ mod tests {
         assert!(!embeds_program_id(&with(&[]), &target));
         assert!(!embeds_program_id(&with(&[&target, &DROPSET_ID]), &target));
         assert!(embeds_program_id(&with(&[&DROPSET_ID]), &DROPSET_ID));
+    }
+
+    #[test]
+    fn pdas_match_the_generated_ts_helpers() {
+        // Reference addresses from the IDL-generated TS `find*Pda` helpers
+        // under the localnet id, for base = the token program, quote = the
+        // clock sysvar, vault index 258 and depositor = base.
+        let base = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+        let quote = pubkey!("SysvarC1ock11111111111111111111111111111111");
+        let market = market_pda(&DROPSET_ID, &base, &quote).0;
+        assert_eq!(
+            registry_pda(&DROPSET_ID).0,
+            pubkey!("4AJ5raZiphprYuDpURY2L872VajxaeJTrnuzNoegq5pe"),
+        );
+        assert_eq!(
+            market,
+            pubkey!("HYSgcQyn9A4KZcHpNX66DsViPtBd83ky7uZQGcwiUiTQ")
+        );
+        assert_eq!(
+            event_authority(&DROPSET_ID),
+            // cspell:disable-next-line
+            pubkey!("AzuJgpibLcuvGQwdtWPMu9jaeDQobh6694eySB2Xzkvx"),
+        );
+        assert_eq!(
+            vault_depositor_pda(&DROPSET_ID, &market, 258, &base).0,
+            pubkey!("J79enZn3RrUspGLYqJKtNa5CuxifSDCsePzEV2e2tinF"),
+        );
     }
 
     #[test]

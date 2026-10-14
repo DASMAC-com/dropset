@@ -197,7 +197,7 @@ export function eventAccountKeys(tx: EventTransaction): readonly string[] | null
  */
 export function collectFillEvents(
   tx: EventTransaction,
-  config: { programAddress?: Address } = {},
+  config: { programAddress?: Address | undefined } = {},
 ): FillEvent[] {
   const { programAddress = DROPSET_PROGRAM_ADDRESS } = config;
   if (tx.meta?.err != null) return [];

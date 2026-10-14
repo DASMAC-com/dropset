@@ -32,8 +32,8 @@ pub use dropset_math_core::clock::{self, SlotSpan, SlotTime, WallSpan, WallTime}
 
 // The program id is per cluster: localnet keeps the committed vanity key
 // (`keys/AAAA.json`), and the `mainnet` feature selects the mainnet key,
-// whose public half is `keys/dropset-mainnet.pubkey` (a parity test in the
-// SDK pins the two together). The localnet declaration must stay FIRST:
+// whose public half is `keys/dropset-mainnet.pubkey` (the SDK's
+// `tests/program_id.rs` pins this literal, that file and its constant). The localnet declaration must stay FIRST:
 // `anchor keys sync` and anchor's pre-build id check read only the first
 // `declare_id!` in this file, so this order is what keeps them comparing
 // against `keys/AAAA.json` and leaving the mainnet literal alone.

@@ -155,7 +155,9 @@ program-parity: check-toolchain program-keypair
 	anchor build
 
 # Build the mainnet program: the `mainnet` feature selects the mainnet
-# declare_id! (keys/dropset-mainnet.pubkey), everything else as `program`.
+# declare_id! (keys/dropset-mainnet.pubkey), everything else as `program`,
+# so `admin-teardown` stays on (an early-mainnet build, per its Cargo.toml
+# comment; the final immutable deploy drops it).
 # The artifact is MOVED to dropset_mainnet.so so no localnet test or deploy
 # can pick it up as dropset.so; run `make program` again for localnet. No
 # secret is read here: the mainnet keypair lives only in 1Password and is

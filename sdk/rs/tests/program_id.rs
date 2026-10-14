@@ -1,6 +1,7 @@
-//! Pins the three committed copies of each program id together: the
-//! program's per-cluster `declare_id!`s, the SDK constants, and the key
-//! files under `keys/`.
+//! Pins the committed copies of each program id together: the program's
+//! per-cluster `declare_id!`s, the SDK constants, and (for mainnet) the
+//! public key file `keys/dropset-mainnet.pubkey`. The localnet keypair
+//! `keys/AAAA.json` is held to its `declare_id!` by anchor's own id check.
 
 use std::fs;
 use std::path::PathBuf;
@@ -51,6 +52,12 @@ fn localnet_id_is_declared_first() {
         declared_under(&lib_rs, "#[cfg(not(feature = \"mainnet\"))]"),
         DROPSET_ID.to_string(),
     );
-    let (_, first) = lib_rs.split_once("declare_id!(\"").expect("a declare_id!");
-    assert!(first.starts_with(&DROPSET_ID.to_string()));
+    // Mirror anchor's line-anchored match, so a comment quoting a
+    // declaration cannot count.
+    let declarations: Vec<&str> = lib_rs
+        .lines()
+        .filter_map(|line| line.strip_prefix("declare_id!(\""))
+        .collect();
+    assert_eq!(declarations.len(), 2, "one declare_id! per cluster");
+    assert!(declarations[0].starts_with(&DROPSET_ID.to_string()));
 }
