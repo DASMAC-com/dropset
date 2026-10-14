@@ -19,6 +19,7 @@ import {
 import { PUBLIC_RPC_URL, PUBLIC_WS_URL } from "./env";
 import { useAppEvent } from "./events";
 import { registerMetaMaskConnect } from "./wallet/metamask";
+import { registerMobileWalletAdapter } from "./wallet/mobile";
 
 // Benign wallet-connect outcomes — the user dismissed the wallet modal or the
 // relay/QR handshake timed out. Not errors worth surfacing; the UI already
@@ -92,15 +93,18 @@ export function Providers({ children }: { children: ReactNode }) {
   // A connector set seen while it wasn't safe to swap the client, deferred
   // until it is (see below). Null when there's nothing pending.
   const pendingRef = useRef<readonly WalletConnector[] | null>(null);
-  // True while the user is mid-pick OR a connect is in flight. Swapping the
-  // client during either races the connect: the session lands on the old
-  // (destroyed) client while React rebinds to the new one, so the header
-  // stays "Connect Wallet" until a reload. The picker drives this flag via
-  // the `walletPickerOpen` event, which is asserted from picker-open through
-  // connect-resolution (the SolanaClient store doesn't reliably hold
-  // "connecting" during an external SDK's relay flow, so isIdle alone
-  // wouldn't keep us safe past `modal.close()`).
-  const pickerOpenRef = useRef(false);
+  // True while a connect is in flight. Swapping the client then races the
+  // connect: the session lands on the old (destroyed) client while React
+  // rebinds to the new one, so the header stays "Connect Wallet" until a
+  // reload. The picker drives this flag via the `walletConnecting` event,
+  // asserted synchronously from the row's click through connect-resolution
+  // (the SolanaClient store doesn't reliably hold "connecting" during an
+  // external SDK's relay flow, so isIdle alone wouldn't keep us safe past
+  // `modal.close()`). An open-but-idle picker deliberately does NOT block a
+  // swap: a wallet that registers late (MetaMask's relay on mobile) must
+  // reach the picker the user is already looking at, or its row renders as
+  // an install link until the picker is closed and reopened.
+  const connectingRef = useRef(false);
 
   const rebuild = useCallback((connectors: readonly WalletConnector[]) => {
     // SolanaProvider only auto-destroys a client it created itself; since we
@@ -113,16 +117,15 @@ export function Providers({ children }: { children: ReactNode }) {
     setClient(next);
   }, []);
 
-  // Safe to swap the client only when no connection is live or in flight AND
-  // the picker isn't open (the user could be about to click a wallet).
+  // Safe to swap the client only when no connection is live or in flight.
   const canRebuild = useCallback(
-    (c: SolanaClient): boolean => isIdle(c) && !pickerOpenRef.current,
+    (c: SolanaClient): boolean => isIdle(c) && !connectingRef.current,
     [],
   );
 
   // Apply a deferred connector set when it becomes safe. Reads clientRef so it
   // always targets the live client; callable from the store subscription and
-  // the picker-close event.
+  // the connect-settled event.
   const flush = useCallback(() => {
     const c = clientRef.current;
     const pending = pendingRef.current;
@@ -134,17 +137,19 @@ export function Providers({ children }: { children: ReactNode }) {
     rebuild(pending);
   }, [canRebuild, rebuild]);
 
-  useAppEvent("walletPickerOpen", (open) => {
-    pickerOpenRef.current = open;
-    // Picker just closed → a connector set deferred while it was open can now
-    // be applied (if the wallet is also idle).
-    if (!open) flush();
+  useAppEvent("walletConnecting", (connecting) => {
+    connectingRef.current = connecting;
+    // Connect just settled → a connector set deferred while it was in flight
+    // can now be applied (if the wallet is also idle).
+    if (!connecting) flush();
   });
 
   useEffect(() => {
-    // Register MetaMask Connect so it joins the Wallet Standard registry; the
-    // watcher below then surfaces it like any other discovered wallet.
+    // Register MetaMask Connect and, on Android, the Mobile Wallet Adapter so
+    // they join the Wallet Standard registry; the watcher below then surfaces
+    // them like any other discovered wallet.
     void registerMetaMaskConnect();
+    void registerMobileWalletAdapter();
   }, []);
 
   useEffect(() => {
@@ -156,7 +161,7 @@ export function Providers({ children }: { children: ReactNode }) {
       keyRef.current = nextKey;
       // Rebuilding the client drops any active connection and races an
       // in-flight connect, so only swap when it's safe; otherwise defer until
-      // the wallet is idle and the picker is closed.
+      // the wallet is idle and no connect is in flight.
       if (canRebuild(clientRef.current)) {
         rebuild(connectors);
       } else {
