@@ -30,7 +30,17 @@ pub use dropset_math_core::Price;
 // out through typed accessors (see `state::market::layout`).
 pub use dropset_math_core::clock::{self, SlotSpan, SlotTime, WallSpan, WallTime};
 
+// The program id is per cluster: localnet keeps the committed vanity key
+// (`keys/AAAA.json`), and the `mainnet` feature selects the mainnet key,
+// whose public half is `keys/dropset-mainnet.pubkey` (a parity test in the
+// SDK pins the two together). The localnet declaration must stay FIRST:
+// `anchor keys sync` and anchor's pre-build id check read only the first
+// `declare_id!` in this file, so this order is what keeps them comparing
+// against `keys/AAAA.json` and leaving the mainnet literal alone.
+#[cfg(not(feature = "mainnet"))]
 declare_id!("AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV");
+#[cfg(feature = "mainnet")]
+declare_id!("FXv1Dsy4CL5UvvkAAcPmzHZCvaotJMi9TfYLraj99KUL");
 
 // Link the hand-written sBPF entrypoint (`src/asm/entrypoint.s`, expanded
 // into `$OUT_DIR/combined.s` by `build.rs`). It short-circuits the two

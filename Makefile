@@ -154,6 +154,18 @@ program-parity: check-toolchain program-keypair
 	cp target/deploy/dropset.so target/deploy/dropset_ref.so
 	anchor build
 
+# Build the mainnet program: the `mainnet` feature selects the mainnet
+# declare_id! (keys/dropset-mainnet.pubkey), everything else as `program`.
+# The artifact is MOVED to dropset_mainnet.so so no localnet test or deploy
+# can pick it up as dropset.so; run `make program` again for localnet. No
+# secret is read here: the mainnet keypair lives only in 1Password and is
+# used by the publish step, never by the build (anchor's id check still
+# compares the first, localnet declare_id! against keys/AAAA.json).
+.PHONY: program-mainnet
+program-mainnet: check-toolchain program-keypair
+	anchor build --no-idl -- --features mainnet
+	mv target/deploy/dropset.so target/deploy/dropset_mainnet.so
+
 .PHONY: debugger
 debugger: program
 	anchor debugger
