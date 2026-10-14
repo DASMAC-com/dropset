@@ -510,14 +510,17 @@ _ds_daily_session() {
 # passing it on the resume branch would ask for a second one every time a
 # long-lived thread is reopened. The asymmetry is the point, not an oversight.
 #
-# The slug below needs no worktree case, which is worth stating because the
-# obvious reading is that it does: `claude -w <tag>` runs from the BASE repo, so
-# Claude Code files the transcript under the base repo's project slug even
-# though every `cwd` stamp inside it points into the worktree, and no project
-# directory for the worktree ever exists. `_ds_task_resume` documents the same
-# fact from the other side — it is why resuming such a session by id from the
-# base repo is the only form that reaches it. So `$PWD` here is already right
-# for both kinds of launch, and deriving a worktree slug would break the probe.
+# THE EXISTENCE CHECK IS BY ID, NOT BY SLUG. It used to build one path from the
+# base repo's slug, on the belief that `claude -w <tag>` files its transcript
+# there. Current Claude Code files it under the WORKTREE's slug instead
+# (measured: a `-w` session's transcript sits only under
+# `…-claude-worktrees-<tag>`), so every reopen of a worktree-launched architect
+# or explore session missed, took the create branch, and re-ran the bootstrap
+# prompt on top of the existing history. The id is a UUID we computed, so a
+# glob over every project directory answers "does this session exist" without
+# knowing the filing rule — older sessions filed under the base slug included.
+# A worktree-slug hit resumes from inside the worktree, the directory Claude
+# Code addresses it by; anything else resumes from the base checkout as before.
 _ds_session() {
   local sid="$1" name="$2" prompt="$3" model="$4" worktree="$5"
 
@@ -526,8 +529,8 @@ _ds_session() {
     return 1
   fi
 
-  local slug transcript
-  local -a worktree_flag prompt_arg
+  local wt_dir
+  local -a worktree_flag prompt_arg found
   [[ -n "$worktree" ]] && worktree_flag=(-w "$worktree")
   # An ARRAY rather than a bare "$prompt", so a verb with no bootstrap skill to
   # run passes no positional at all. Spelled directly, an empty prompt reaches
@@ -537,14 +540,19 @@ _ds_session() {
   _ds_base || return 1
   _ds_secrets
 
-  # The transcript path Claude Code writes: the project slug replaces every `/`
-  # and `.` in the cwd with `-` — the same rule
-  # .claude/tools/resolve_session.py's `slugify` encodes for finding a
-  # transcript back.
-  slug="${PWD//[\/.]/-}"
-  transcript="$HOME/.claude/projects/$slug/$sid.jsonl"
+  # `(N)` makes a miss an empty array rather than a glob error. The config dir
+  # follows `CLAUDE_CONFIG_DIR` the way resolve_session.py's `claude_home` does.
+  found=("${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$sid".jsonl(N))
 
-  if [[ -f "$transcript" ]]; then
+  if (( ${#found} )); then
+    # The project slug replaces every `/` and `.` in the cwd with `-` — the
+    # rule resolve_session.py's `slugify` encodes. `$PWD` is the base checkout
+    # here (`_ds_base`), so this is the worktree path Claude Code slugged.
+    [[ -n "$worktree" ]] && wt_dir="$PWD/.claude/worktrees/$worktree"
+    if [[ -n "$wt_dir" && -d "$wt_dir" \
+      && "${found[1]:h:t}" == "${wt_dir//[\/.]/-}" ]]; then
+      cd "$wt_dir" || return 1
+    fi
     # A resume passes no `-w`, so a worktree that has since been pruned is NOT
     # re-created: the session reopens with its cwd in the base checkout while
     # every path in its history points into a directory that no longer exists.
@@ -815,10 +823,18 @@ _ds_substrate_enter() {
 # so every path returns 0. The cost of a missing marker is the conservative
 # default — anthropic substrate, and (see `_ds_resume_tier`) the advisor tier's
 # model rather than the executor's — which is the next function.
+#
+# An optional $3 tier (`advisor`) is written to `<key>.tier`; omitting it
+# removes any such file, so the last launch on a key decides its resume tier.
 _ds_substrate_write() {
-  local key="$1" substrate="$2"
+  local key="$1" substrate="$2" tier="$3"
   mkdir -p "$_DS_SUBSTRATE_DIR" 2>/dev/null || return 0
   print -r -- "$substrate" >| "$_DS_SUBSTRATE_DIR/$key" 2>/dev/null
+  if [[ -n "$tier" ]]; then
+    print -r -- "$tier" >| "$_DS_SUBSTRATE_DIR/$key.tier" 2>/dev/null
+  else
+    rm -f "$_DS_SUBSTRATE_DIR/$key.tier" 2>/dev/null
+  fi
   return 0
 }
 
@@ -841,13 +857,20 @@ _ds_substrate_read() {
 
 # Which tier a `task resume <n>` re-pins. Prints `executor` or `advisor`.
 #
-# Only `task` writes a marker, so a marker's PRESENCE is the tier record:
-# present means an executor session, absent means the issue-keyed `explore` or
-# `architect` that shares the `<n>` tag and writes none (see `explore` for why).
-# This is what lets a resume restore the model and not just the substrate,
-# without a second marker that could disagree with the first.
+# A `<key>.tier` file reading `advisor` wins: `architect` writes one beside its
+# substrate marker, so `architect <n> bedrock` resumes on Bedrock AND on the
+# advisor model. Otherwise a marker's PRESENCE is the tier record — present
+# means an executor session (`task`, which clears any `.tier` it finds), absent
+# means the issue-keyed `explore` that writes none (see `explore` for why).
+# The tier lives in its own file because session_metrics.py reads the marker
+# as one bare word, so a second field in it would break that reader.
 _ds_resume_tier() {
-  if [[ -f "$_DS_SUBSTRATE_DIR/$1" ]]; then
+  local tier=''
+  [[ -f "$_DS_SUBSTRATE_DIR/$1.tier" ]] \
+    && tier="$(cat "$_DS_SUBSTRATE_DIR/$1.tier" 2>/dev/null)"
+  if [[ "$tier" == advisor ]]; then
+    print -r -- 'advisor'
+  elif [[ -f "$_DS_SUBSTRATE_DIR/$1" ]]; then
     print -r -- 'executor'
   else
     print -r -- 'advisor'
@@ -1134,16 +1157,12 @@ _ds_task_start() {
 # the whole point — you resume a number, not a UUID.
 #
 # **Where the session actually lives is not guessable from the directory**, which
-# is why this delegates. `task` runs `claude -w <tag>` from the BASE repo, so
-# Claude Code files that session's transcript under the base repo's project slug
-# even though every `cwd` stamp in it points into the worktree — and no project
-# directory for the worktree ever exists. This used to `cd` into the
-# worktree and run `claude --continue` on the assumption that per-directory
-# addressing selects the session; for a `-w`-launched session it selects nothing
-# and reports "no conversation found" while the session sits intact under
-# another slug. Sessions that had been resumed from inside their worktree once
-# before DID have a worktree-slug transcript, which masked the bug and made it
-# look intermittent.
+# is why this delegates. Older Claude Code filed a `claude -w <tag>` session's
+# transcript under the BASE repo's project slug, with every `cwd` stamp pointing
+# into the worktree, so a bare `claude --continue` inside the worktree found
+# nothing. Current Claude Code files it under the worktree's own slug instead
+# (measured 2026-10-13), which the resolver's `continue` mode reaches; both
+# layouts are still on disk, so the resolver handles both.
 #
 # `resolve_session.py` decides which of the three addressing forms reaches the
 # session; this verb only launches. `fleet` types `task resume`, so fleet
@@ -1563,9 +1582,29 @@ architect() {
       'file or name the issue first'
     return 1
   fi
-  { read -r model; read -r substrate; } <<< "$(_ds_tier advisor "$2")"
+  # A reopen with no substrate word keeps the one this thread recorded, so
+  # `architect <n> bedrock` followed by a bare `architect <n>` does not switch
+  # provider mid-conversation. An explicit word still wins and is re-recorded.
+  local override="$2" executor_owned=''
+  if [[ -z "$override" \
+    && "$(_ds_resume_tier "$tag")" == advisor && -f "$_DS_SUBSTRATE_DIR/$tag" ]]
+  then
+    override="$(_ds_substrate_read "$tag")"
+  fi
+  [[ "$(_ds_resume_tier "$tag")" == executor ]] && executor_owned=1
+  { read -r model; read -r substrate; } <<< "$(_ds_tier advisor "$override")"
   [[ -n "$substrate" ]] || return 1
   _ds_substrate_enter "$substrate" 'architect' || return 1
+  # Recorded so `task resume <n>` and `fleet` bring the thread back on its own
+  # substrate and the advisor tier. A marker a `task` session wrote on the same
+  # number is left alone: clobbering it would resume the IMPLEMENTATION
+  # session on the wrong tier — the hazard `explore` documents.
+  if [[ -n "$executor_owned" ]]; then
+    print -u2 "architect: $tag carries a task session's substrate marker —" \
+      'leaving it, so a task resume of it re-pins the executor tier.'
+  else
+    _ds_substrate_write "$tag" "$substrate" advisor
+  fi
   _ds_session "$(_ds_topic_sid architect "$tag")" \
     "$tag" "/architect ENG-$tag" "$model" "$(_ds_launch_dir "$tag")"
 }

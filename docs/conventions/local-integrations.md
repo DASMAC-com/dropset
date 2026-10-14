@@ -1927,12 +1927,18 @@ drives the real zsh functions.
   `_ds_session` takes the worktree tag as an optional last argument, and
   **the `-w` flag rides the create branch only.** `-w` *creates* a
   worktree, so passing it on resume would ask for a second one every
-  time a long-lived thread is reopened. The transcript-path probe needs
-  no worktree case, which is worth stating because the obvious reading
-  is that it does: `claude -w <tag>` runs from the **base** repo, so
-  Claude Code files the transcript under the base repo's project slug
-  even though every `cwd` stamp inside it points into the worktree.
-  That is the same fact `task resume` depends on from the other side.
+  time a long-lived thread is reopened. **The existence check is by
+  session id, not by slug**: it globs every project directory for
+  `<id>.jsonl`, because current Claude Code files a `-w` session under
+  the **worktree's** slug while older ones sit under the base repo's.
+  A slug-built probe missed the former and re-ran the bootstrap prompt
+  on every reopen. A worktree-slug hit resumes from inside the worktree.
+
+  `architect` records its substrate in the marker **and** an `advisor`
+  tier beside it (`<n>.tier`), so `architect <n> bedrock` comes back on
+  Bedrock and the advisor model through `task resume`, `fleet`, and a
+  bare `architect <n>` reopen alike. It never overwrites a marker a
+  `task` session wrote on the same number.
 
 - **`fleet [go]`** — resume the whole **fleet**: one iTerm tab per
   in-flight Linear issue, each with `task resume <n>` typed **and Enter
