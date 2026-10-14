@@ -390,6 +390,34 @@ class PassTests(unittest.TestCase):
         self.assertIn("purge", names)
         self.assertIn("memory", names)
 
+    def _skill_size_step(self, rc, out):
+        base_run = FakeRun()
+
+        def run(cmd, timeout, cwd=None):
+            if len(cmd) > 1 and Path(cmd[1]).name == "skill_size.py":
+                return rc, out, ""
+            return base_run(cmd, timeout, cwd)
+
+        ctx = make_ctx(run)
+        run_pass(ctx)
+        return next(s for s in ctx.steps if s["step"] == "skill-size")
+
+    def test_skill_size_lists_only_the_subjects_past_the_watch_line(self):
+        out = (
+            "!  96.2%     30,784 /    32,000  skills/plan/SKILL.md\n"
+            "   75.0%     24,000 /    32,000  CLAUDE.md\n"
+        )
+        step = self._skill_size_step(1, out)
+        self.assertTrue(step["ok"])
+        self.assertEqual(
+            step["near"], ["96.2%     30,784 /    32,000  skills/plan/SKILL.md"]
+        )
+
+    def test_a_skill_size_exit_one_with_no_flagged_row_is_a_failure(self):
+        step = self._skill_size_step(1, "")
+        self.assertFalse(step["ok"])
+        self.assertIn("failed", step["line"])
+
     def test_cruft_and_memory_lines_count_findings_not_totals(self):
         base_run = FakeRun()
 

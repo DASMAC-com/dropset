@@ -33,7 +33,8 @@ refuses the whole pass, since every later step assumes it.
     whose unpushed-work gate still applies);
  7. dismiss the eligible PRs' notifications, one thread at a time (never
     mark-all);
- 8. convention-reference check, hook-wiring check, allowlist cruft, and the
+ 8. convention-reference check, hook-wiring check, the skill-size watch line
+    (``skill_size --utilization``), allowlist cruft, and the
     monthly refresh gate — mining recent transcripts when due and stamping the
     marker whatever the yield, writing no allow-rule;
  9. the memory scan gate, then the memory audit when due;
@@ -526,6 +527,20 @@ def step_checks(ctx: Ctx) -> None:
         )
         ctx.record("hook-wiring", f"{len(inert)} inert guard(s)", inert=inert)
 
+    # Exit 1 is the watch line being crossed, a finding rather than a failure —
+    # but only when the tool printed the rows that say so; an exit 1 with no
+    # flagged row is a broken run, and must not read as "nothing near".
+    rc, out, err = ctx.tool("skill_size.py", "--utilization")
+    near = [ln[1:].strip() for ln in out.splitlines() if ln.startswith("!")]
+    if rc == 0 or (rc == 1 and near):
+        ctx.record(
+            "skill-size",
+            f"{len(near)} resident file(s) near their byte limit",
+            near=near,
+        )
+    else:
+        ctx.record("skill-size", f"skill-size check failed: {first_line(err)}", False)
+
     cruft = _json_tool(ctx, "allowlist", "allowlist.py", "cruft")
     if cruft is not None:
         ctx.record(
@@ -679,6 +694,7 @@ def defang(text: str) -> str:
 
 
 LIST_KEYS = (
+    "near",
     "flags",
     "skipped",
     "unmatched",
