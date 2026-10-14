@@ -14,8 +14,8 @@ recipe that produced them, so nobody has to re-measure them.
 ## The toolchain
 
 - **anchor-cli 1.2.1** (crates.io) defaults to **platform-tools v1.57** and
-  **arch v3**, overridable with `--arch` / `--tools-version` or the
-  `ANCHOR_BUILD_SBF_ARCH` environment variable. It recognizes the
+  **arch v3**, overridable with `--arch` (or the `ANCHOR_BUILD_SBF_ARCH`
+  environment variable) and `--tools-version`. It recognizes the
   `anchor-lang-v2` / `anchor-spl-v2` crate pair in its manifest detection.
 - **The build is held at v0** by the Makefile's exported
   `ANCHOR_BUILD_SBF_ARCH`. The tests' litesvm and the local validator run

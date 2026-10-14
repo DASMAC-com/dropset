@@ -49,14 +49,13 @@ clean:
 # The exact anchor-cli the program is built and its IDL generated with —
 # interface.md § SDK, CI discipline, which is the canonical statement of how
 # the program is built. The Tests workflow's ANCHOR_VERSION mirrors it, and a
-# drift fails check-anchor there.
+# drift fails check-anchor there. Bump that workflow's PLATFORM_TOOLS_VERSION
+# with it, to the new CLI's default platform-tools release.
 ANCHOR_CLI_VERSION := 1.2.1
-# That CLI builds sBPF v3 by default, but the Agave 3.1 runtime the tests
-# and the local validator run cannot load its v3 ELF ("invalid file
-# header"), so every `anchor build` here is held at v0 until the Agave 4.x
-# runtime lands. The CLI reads this variable in place of `--arch`, and the
-# export reaches the TUI's own `anchor build` because every `tui*` target
-# launches it from a recipe.
+# The v0 hold that interface.md § SDK, CI discipline describes: the CLI
+# reads this variable in place of `--arch`. The export reaches every
+# `anchor build` a recipe runs, including the TUI's own, since every target
+# that runs `cargo run -p dropset-tui` launches it from a recipe.
 export ANCHOR_BUILD_SBF_ARCH := v0
 
 # Required toolchain: anchor-cli at ANCHOR_CLI_VERSION, the Solana SBF
@@ -70,7 +69,7 @@ check-toolchain: check-anchor check-sbf check-solana
 
 .PHONY: check-anchor
 check-anchor:
-	@anchor --version | grep -qx "anchor-cli $(ANCHOR_CLI_VERSION)" \
+	@anchor --version | grep -qxF "anchor-cli $(ANCHOR_CLI_VERSION)" \
 		|| { echo "anchor-cli $(ANCHOR_CLI_VERSION) required"; exit 1; }
 
 .PHONY: check-sbf

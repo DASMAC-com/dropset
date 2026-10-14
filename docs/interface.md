@@ -431,7 +431,8 @@ event codecs, PDA helpers). CI discipline:
   test runtime and validator move to Agave 4.x, since Agave 3.1 cannot load
   that v3 ELF. The exact pin rather than latest stable is deliberate: the CLI
   generates the IDL, so its version is part of the IDL-diff baseline below.
-  The two move independently, and a crate bump is now a rename — the
+  The crate pin and the CLI pin move independently, and a crate bump is now
+  a rename — the
   `anchor-next` tip has renamed `anchor-lang-v2` to `anchor-lang` — so it is
   its own decision, never a side effect of a CLI bump. The measured
   toolchain facts and the probe recipe behind this bullet are in

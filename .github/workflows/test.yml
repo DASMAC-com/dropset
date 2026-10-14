@@ -3,16 +3,18 @@
 # cspell:word dorny
 env:
   # The stable crates.io anchor-cli, mirroring the Makefile's
-  # ANCHOR_CLI_VERSION (check-anchor fails on a drift), and the platform-tools
-  # release that version builds with by default — pre-installed so the
-  # toolchain cache carries it. How the program is built: interface.md § SDK,
-  # CI discipline.
+  # ANCHOR_CLI_VERSION (check-anchor fails on a drift). How the program is
+  # built: interface.md § SDK, CI discipline.
   ANCHOR_VERSION: '1.2.1'
   # Incremental compilation output isn't sccache-cacheable; disable it on CI so
   # every rustc unit is a content-addressable sccache object instead.
   CARGO_INCREMENTAL: '0'
-  # Route sccache at GitHub's own Actions cache (no S3/external service).
+  # The platform-tools release ANCHOR_VERSION builds with by default (its
+  # DEFAULT_TOOLS_VERSION), pre-installed so the toolchain cache carries it.
+  # Nothing checks the two agree: bump this with ANCHOR_VERSION, or every
+  # build silently downloads the new release.
   PLATFORM_TOOLS_VERSION: 'v1.57'
+  # Route sccache at GitHub's own Actions cache (no S3/external service).
   SCCACHE_GHA_ENABLED: 'true'
   SOLANA_VERSION: 'v3.1.9'
 jobs:
