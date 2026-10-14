@@ -215,9 +215,9 @@ pub const MARKET_CADC: PairConfig = fx_market("CADC", "keys/CADC.json", 6, 0.724
 
 /// The market the TUI selects on launch: tGBP-USDC, the market planned as the
 /// first on mainnet and the one the operator drives. The list itself stays
-/// alphabetical — this
-/// moves only the initial cursor, and a cluster that does not carry the market
-/// keeps the first one selected.
+/// alphabetical — this moves only the cursor, which follows the market until
+/// the operator first moves it; a cluster that does not carry the market keeps
+/// the first one selected.
 pub const DEFAULT_MARKET_SYMBOL: &str = MARKET_TGBP.base.symbol;
 
 /// Every localnet pair the bootstrap can bring up.

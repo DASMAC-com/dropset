@@ -812,10 +812,10 @@ mod tests {
     }
 
     /// Markets arriving one at a time in bootstrap order shift the default's
-    /// index — every later arrival that sorts ahead of it moves it down — so
-    /// the index is only right if it is re-resolved after each poll, which is
-    /// what the TUI does while it follows the default. A one-shot lookup taken
-    /// at the first sighting would be left pointing at a neighbor.
+    /// index — every later arrival that sorts ahead of it moves it down. This
+    /// pins that premise and that a fresh lookup always finds the right market;
+    /// it is the reason the TUI re-resolves after every poll rather than once
+    /// at first sighting, which this test does not itself exercise.
     #[test]
     fn the_default_market_index_moves_as_earlier_sorting_markets_arrive() {
         // Bootstrap order, as `market::PAIRS` walks it.

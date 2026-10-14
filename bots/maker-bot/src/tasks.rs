@@ -2815,9 +2815,8 @@ mod tests {
 
     /// Exactly the MVP pairs demand a live tape — the three first-fill pairs
     /// plus TGBP, the market planned as the first on mainnet. The rest must
-    /// not, or
-    /// `make demo` stops resting books on the thin-roster pairs — which have
-    /// no intraday source and never will.
+    /// not, or `make demo` stops resting books on the thin-roster pairs —
+    /// which have no intraday source and never will.
     #[test]
     fn only_the_mvp_pairs_require_a_live_tape() {
         let required: Vec<_> = crate::config::MARKETS

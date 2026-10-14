@@ -196,8 +196,9 @@ pub struct MarketConfig {
 /// again. It is left unwired here for the MVP on two grounds. First, the
 /// operator's re-scope is explicit that for the first fills the FX anchor times
 /// the 1:1 redemption peg is enough for AUDD and CADC, and only EURC used a
-/// stored Coinbase basis (TGBP has since joined it). Second, the product is thinly traded, and a ticker
-/// poll returns the last print whether or not one happened recently — so a
+/// stored Coinbase basis (TGBP has since joined it). Second, the product is
+/// thinly traded, and a ticker poll returns the last print whether or not one
+/// happened recently — so a
 /// stale print aged from receipt would read fresh and *corroborate* the basis
 /// leg with a number nobody traded. Wiring it is the v2 upgrade, and it wants
 /// the publication-vs-receipt aging the FX tiers now use, not a bare ticker.
