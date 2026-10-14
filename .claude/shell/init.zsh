@@ -626,8 +626,8 @@ _ds_topic_sid() {
 # pairing in Claude's own docs: the advisor tier decides, the executor tier
 # carries the work out, and the helper tier does the minor non-repo jobs that
 # merit neither (a Sonnet-class model is the natural value). A family name
-# (opus, haiku) drifts the first time the role changes family, and Claude Code owns those as
-# its own alias slots; a substrate name ("seat") breaks the first time the top
+# (opus, haiku) drifts the first time the role changes family, and Claude
+# Code owns those as its own alias slots; a substrate name ("seat") breaks the first time the top
 # model leaves the subscription. The verb → tier table is the code below, and
 # the tier → model + substrate table is the operator's untracked runtime config:
 #
@@ -843,8 +843,8 @@ _ds_substrate_enter() {
 # default — anthropic substrate, and (see `_ds_resume_tier`) the advisor tier's
 # model rather than the executor's — which is the next function.
 #
-# An optional $3 tier (`advisor` | `helper`) is written to `<key>.tier`; omitting it
-# removes any such file, so the last launch that writes the marker decides
+# An optional $3 tier (`advisor` | `helper`) is written to `<key>.tier`;
+# omitting it removes any such file, so the last launch that writes the marker decides
 # its resume tier.
 _ds_substrate_write() {
   local key="$1" substrate="$2" tier="$3"
@@ -1476,8 +1476,10 @@ _ds_upkeep() {
 #
 # THE WORKTREE IS THE BARE NUMBER, like every issue-keyed session, so `cdds`,
 # `fleet`, the pruner and the close tool reach it with no new prefix. A chore
-# and a task are separate Linear issues (operator ruling), so they never share
-# a number, and the marker below can be written unconditionally.
+# and a task are separate Linear issues (operator ruling), so they should never
+# share a number — but that is discipline, not a guarantee, so a `task`
+# session's marker is left alone exactly as `architect` leaves it: clobbering
+# it would resume a PR-bearing task on the helper model, silently.
 #
 # The marker carries a `helper` tier, so `task resume <n>` — and `fleet`, which
 # types it — re-pins the helper model on the recorded substrate. A reopen with
@@ -1503,12 +1505,17 @@ chore() {
   { read -r model; read -r substrate; } <<< "$(_ds_tier helper "$override")"
   [[ -n "$substrate" ]] || return 1
   _ds_substrate_enter "$substrate" 'chore' || return 1
-  _ds_substrate_write "$tag" "$substrate" helper
+  if [[ "$(_ds_resume_tier "$tag")" == executor ]]; then
+    print -u2 "chore: $tag carries a task session's substrate marker —" \
+      'leaving it, so a task resume of it re-pins the executor tier.'
+  else
+    _ds_substrate_write "$tag" "$substrate" helper
+  fi
 
   # Written out, as `explore`'s is, because there is no skill to name — and it
   # states the read-only posture rather than trusting the issue body to.
-  local prompt="Bootstrap this chore from Linear issue ENG-$tag. Read that issue"
-  prompt+=" as the spec and mark it In Progress. This session is READ-ONLY"
+  local prompt="Bootstrap this chore from Linear issue ENG-$tag. Read that"
+  prompt+=" issue as the spec and mark it In Progress. This session is READ-ONLY"
   prompt+=" toward the repo: no commits, no PR, no init-pr. The worktree is"
   prompt+=" temporary and expendable; the deliverable lands outside the repo or"
   prompt+=" on the issue, and anything repo-bound is filed as a follow-up task."
@@ -1795,8 +1802,8 @@ fleet() {
 # profile: a first-party `claude-*` becomes `us.anthropic.<id>`, and any window
 # suffix is dropped. An advisor, executor or helper alias (`fable`, `opus`)
 # cannot be checked: Claude Code resolves it, not Bedrock, so it is reported
-# rather than failed. A background alias fails instead: Claude Code resolves `haiku` THROUGH
-# this slot, so an alias here is circular.
+# rather than failed. A background alias fails instead: Claude Code resolves
+# `haiku` THROUGH this slot, so an alias here is circular.
 models() {
   if [[ -n "$1" && "$1" != check ]]; then
     print -u2 'Usage: models [check]'

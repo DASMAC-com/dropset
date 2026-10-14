@@ -151,6 +151,7 @@ class Grammar(unittest.TestCase):
             ["chore", "0"],
             ["chore", "keygen"],
             ["chore", "resume", "1843"],
+            ["chore", "local", "1843"],
             ["chore", "1843", "bedrock"],
         ):
             with self.subTest(argv=argv), self.assertRaises(ValueError):

@@ -345,6 +345,18 @@ class VerbLaunch(SubstrateHarness):
                 result, out = self._launch(verb, env=self._TOKEN)
                 self.assertIn("MODEL=help-model[1m] USE=unset", out, result.stderr)
 
+    def test_chore_leaves_a_task_sessions_marker_alone(self):
+        # A mistyped `chore <live-task>` must not re-pin the task's resume
+        # onto the helper model.
+        marker = 'print -r -- "MARK=$(<$_DS_SUBSTRATE_DIR/12)"'
+        result, out = self._launch(
+            f"_ds_substrate_write 12 bedrock; chore anthropic 12; {marker}"
+        )
+        self.assertIn("MARK=bedrock", out, result.stderr)
+        self.assertIn("task session's substrate marker", result.stderr)
+        result, out = self._launch("task resume 12", env=self._TOKEN)
+        self.assertIn("MODEL=work-model[1m] USE=1", out, result.stderr)
+
     def test_chore_refuses_a_name_zero_and_extra_words(self):
         for verb in ("chore", "chore pricing", "chore 0", "chore 7 8", "chore local 7"):
             with self.subTest(verb=verb):

@@ -1272,7 +1272,7 @@ knowing before relying on the inheritance:**
   which re-pins the tier as well as the substrate: an untagged
   worktree — no marker — resumes on the **advisor** tier, so an
   issue-keyed explore session comes back on the right model. An
-  architect session gets there through its `<n>.tier` file instead,
+  architect or chore session gets there through its `<n>.tier` file instead,
   and keeps its recorded substrate. (This closed the first part of
   ENG-1402.)
 - **No substrate marker is written for an explore session**, and
@@ -1297,9 +1297,11 @@ states the read-only posture and ends the session with
 `close_session.py --state 'In Review' --keep-worktree`. Unlike
 `explore` it **does** write a substrate marker, with a `helper`
 `.tier` beside it, so `task resume <n>` and `fleet` re-pin the
-helper model on the recorded substrate. That is safe because a
-chore and a task are separate Linear issues (operator ruling,
-2026-10-14), so they never share a number. It is idempotent like
+helper model on the recorded substrate. A chore and a task are
+separate Linear issues (operator ruling, 2026-10-14), so they should
+never share a number; since that is discipline rather than a
+guarantee, a `task` session's marker is left alone, exactly as
+`architect` leaves it. It is idempotent like
 `explore`, so it takes no `resume` word.
 
 There is **no branch to rename and no PR to open** — the worktree does
@@ -1689,12 +1691,13 @@ window, and a seat session resumed onto Bedrock quietly spends credits
 on attended work. Neither errors. **An absent marker reads as
 `anthropic`**, the conservative default, which is also correct for
 every session predating markers (the retired `seat` value reads the
-same). `task` and `architect` write a marker, and a marker's
-**presence** is the tier record unless an `advisor` `<key>.tier` file
-sits beside it: present resumes the executor tier, absent the advisor
-tier — which is what lets `task resume <n>` bring an issue-keyed
-explore session back on the right model. `architect` writes that
-`.tier` file, and a `task` launch removes it; the tier is a separate
+same). `task`, `architect` and `chore` write a marker, and a marker's
+**presence** is the tier record unless a `<key>.tier` file sits
+beside it (`advisor` from `architect`, `helper` from `chore`):
+present resumes the executor tier, absent the advisor tier — which is
+what lets `task resume <n>` bring an issue-keyed explore session back
+on the right model. `architect` and `chore` write that `.tier` file,
+and a `task` launch removes it; the tier is a separate
 file because `session_metrics.py` reads the marker as one bare word.
 The bare `task resume` picker cannot know
 which session will be chosen, so it resumes unpinned.
