@@ -87,7 +87,7 @@ function resetFor(owner: string | null): void {
   if (hadData) bump();
 }
 
-// Queue `mints` for `owner`. Without `force`, a mint already fetched or in
+// Queue `mints` for `owner`. Without `force`, a mint already loaded or in
 // flight is skipped; `force` fetches it again regardless (after a swap lands).
 function request(
   rpc: Rpc,
@@ -97,7 +97,10 @@ function request(
 ): void {
   resetFor(owner);
   for (const mint of mints) {
-    if (force || (!fetched.has(mint) && !pending.has(mint))) queued.add(mint);
+    // A failed mint is retried even if an earlier fetch had loaded it, so a
+    // failed swap-success refetch can't pin its error until a reload.
+    const stale = !fetched.has(mint) || failed.has(mint);
+    if (force || (stale && !pending.has(mint))) queued.add(mint);
   }
   if (queued.size === 0) return;
   const scheduled = queuedFor !== null;
@@ -212,8 +215,9 @@ async function fetchMints(
   } catch (e) {
     if (cacheOwner !== ownerStr) return;
     const msg = getErrorMessage(e);
-    // Release the mints so a later request (a remount) retries them, and
-    // record the failure against each one this fetch still speaks for.
+    // Release the mints and record the failure against each one this fetch
+    // still speaks for; a later request (a remount, a picker open) retries
+    // a failed mint.
     mints.forEach((mint, i) => {
       if (!current(i)) return;
       pending.delete(mint);
@@ -293,7 +297,9 @@ export function useAllBalances(scope: readonly string[]): UseAllBalances {
   });
 
   const failure =
-    ownerStr === null ? undefined : scope.find((mint) => failed.has(mint));
+    ownerStr === null || cacheOwner !== ownerStr
+      ? undefined
+      : scope.find((mint) => failed.has(mint));
   return {
     balanceFor: (mint: string): MaybeBalance =>
       ownerStr === null ? undefined : balances.get(mint),
