@@ -1,8 +1,13 @@
 ---
-description: 'Install Solana toolchain and anchor-cli v2'
+description: 'Install Solana toolchain and anchor-cli'
 inputs:
-  anchor-revision:
-    description: 'anchor-cli revision (git commit hash) to install'
+  anchor-version:
+    description: 'Exact crates.io anchor-cli version to install (e.g. 1.2.1)'
+    required: true
+  platform-tools-version:
+    description: >-
+      platform-tools release the pinned anchor-cli builds with by default
+      (e.g. v1.57), pre-installed so the toolchain cache carries it
     required: true
   solana-version:
     description: 'Solana CLI version to install (e.g. v3.1.9)'
@@ -11,7 +16,8 @@ name: 'Install toolchain'
 runs:
   steps:
   - env:
-      ANCHOR_REVISION: '${{ inputs.anchor-revision }}'
+      ANCHOR_VERSION: '${{ inputs.anchor-version }}'
+      PLATFORM_TOOLS_VERSION: '${{ inputs.platform-tools-version }}'
       RUNNER_ARCH: '${{ runner.arch }}'
       RUNNER_OS: '${{ runner.os }}'
       SOLANA_VERSION: '${{ inputs.solana-version }}'
@@ -66,7 +72,8 @@ runs:
     run: >-
       ${{ github.action_path }}/scripts/install-tools.sh
       "${{ inputs.solana-version }}"
-      "${{ inputs.anchor-revision }}"
+      "${{ inputs.anchor-version }}"
+      "${{ inputs.platform-tools-version }}"
     shell: 'sh'
   # Same check the probe just ran, re-run to prove the install fixed what the
   # probe found — and to fail the job loudly if it didn't. Skipped when the
