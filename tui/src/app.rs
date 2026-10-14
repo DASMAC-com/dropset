@@ -111,6 +111,15 @@ pub enum LeaderPrompt {
     Confirm { ticket: Box<Ticket>, buf: String },
 }
 
+/// The open ceremony prompt: a mainnet ceremony step's plan — its dry run,
+/// read fresh from the chain — under the typed-`yes` line. One per step, so a
+/// publish, an init and each roster pass are each confirmed on their own.
+pub struct CeremonyPrompt {
+    pub action: Action,
+    pub plan: Vec<String>,
+    pub buf: String,
+}
+
 /// The longest confirmation word the prompt accepts — room for `yes` and a
 /// typo, not for a paste.
 const MAX_CONFIRM_CHARS: usize = 8;
@@ -188,6 +197,8 @@ pub struct App {
     /// The open leader deposit / withdraw prompt, if any. Like
     /// `amount_input`, it takes every keystroke while open.
     pub(crate) leader_prompt: Option<LeaderPrompt>,
+    /// The open ceremony prompt, if any — takes every keystroke while open.
+    pub(crate) ceremony_prompt: Option<CeremonyPrompt>,
     /// The per-market maker-bot child processes the operator starts and stops.
     pub(crate) bots: BotManager,
     /// The per-market taker-bot child processes — opt-in, off by default. The
@@ -290,6 +301,7 @@ impl App {
             swap_side: SwapSide::Buy,
             amount_input: None,
             leader_prompt: None,
+            ceremony_prompt: None,
             bots: BotManager::new(),
             takers: BotManager::new(),
             click_targets: Vec::new(),
@@ -553,6 +565,10 @@ impl App {
         }
         if self.leader_prompt.is_some() {
             self.handle_leader_key(k);
+            return Flow::Continue;
+        }
+        if self.ceremony_prompt.is_some() {
+            self.handle_ceremony_key(k);
             return Flow::Continue;
         }
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
@@ -1001,6 +1017,59 @@ impl App {
         action::dispatch_leader(&self.ctx, ticket, self.tx.clone());
     }
 
+    /// Edit the open ceremony prompt: Enter sends only on the exact word `yes`,
+    /// Esc closes it with nothing sent.
+    fn handle_ceremony_key(&mut self, k: KeyEvent) {
+        let Some(prompt) = self.ceremony_prompt.as_mut() else {
+            return;
+        };
+        match k.code {
+            KeyCode::Esc => {
+                let label = prompt.action.label();
+                self.ceremony_prompt = None;
+                self.log(LogKind::Info, format!("{label} cancelled — nothing sent."));
+            }
+            KeyCode::Backspace => {
+                prompt.buf.pop();
+            }
+            KeyCode::Enter => {
+                if let Some(prompt) = self.ceremony_prompt.take() {
+                    self.confirm_ceremony(prompt.action, &prompt.buf);
+                }
+            }
+            KeyCode::Char(c) if prompt.buf.len() < MAX_CONFIRM_CHARS => prompt.buf.push(c),
+            _ => {}
+        }
+    }
+
+    /// Start `action` if `word` is exactly `yes`, re-checking what an open
+    /// prompt could have outlived — and the chain's genesis hash itself, read
+    /// again now, so the last thing before a mainnet write is proof of which
+    /// chain it goes to.
+    fn confirm_ceremony(&mut self, action: Action, word: &str) {
+        let label = action.label();
+        if !is_confirmation(word) {
+            self.log(
+                LogKind::Err,
+                format!("{label} — not confirmed; nothing sent"),
+            );
+            return;
+        }
+        if let Some(reason) = self.identity.write_refusal() {
+            self.log(LogKind::Err, format!("{label} — {reason}"));
+            return;
+        }
+        if let Err(e) = self.ctx.cluster.verify_genesis(&self.client) {
+            self.log(LogKind::Err, format!("{label} — {e:#}"));
+            return;
+        }
+        if self.job_running {
+            self.log(LogKind::Err, "A job is already running.".to_string());
+            return;
+        }
+        self.start_job(action);
+    }
+
     /// The active cluster's menu — what the panel draws and what the number
     /// keys index. Mainnet's is shorter, so every bound must come from here
     /// rather than from the localnet menu's length.
@@ -1108,6 +1177,27 @@ impl App {
             self.log(LogKind::Err, "A job is already running.".to_string());
             return;
         }
+        if action.needs_ceremony_confirm(self.ctx.cluster) {
+            // Planning reads the chain on this thread, as sizing a leader
+            // ticket does: the operator is about to read the result, and a
+            // frame that waits is better than a prompt over a stale plan.
+            match action::ceremony_plan(action, &self.ctx) {
+                Ok(plan) => {
+                    self.ceremony_prompt = Some(CeremonyPrompt {
+                        action,
+                        plan,
+                        buf: String::new(),
+                    })
+                }
+                Err(e) => self.log(LogKind::Err, format!("{} — {e:#}", action.label())),
+            }
+            return;
+        }
+        self.start_job(action);
+    }
+
+    /// Mark a job running and dispatch `action` to it.
+    fn start_job(&mut self, action: Action) {
         self.job_running = true;
         self.log(LogKind::Info, format!("\u{25b6} {}", action.label()));
         action::dispatch(

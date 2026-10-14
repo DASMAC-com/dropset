@@ -46,6 +46,21 @@ pub const CLOCK_SYSVAR_ID: Pubkey = pubkey!("SysvarC1ock111111111111111111111111
 /// admin path the TUI uses, so it never actually charges the wallet.
 pub const CREATE_MARKET_FEE_ATOMS: u64 = 1_000 * 1_000_000;
 
+/// $100,000 in USDC atoms — the mainnet per-`CreateVault` fee. Prohibitive by
+/// design: admins are fee-waived, so this is the registration lock that keeps
+/// strangers from opening vaults, and one who pays it is revenue rather than a
+/// hazard. Adjustable after `init`.
+pub const MAINNET_CREATE_FEE_ATOMS: u64 = 100_000 * 1_000_000;
+
+/// The create fee `init` stamps on `cluster`.
+pub fn create_fee_atoms(cluster: crate::cluster::Cluster) -> u64 {
+    if cluster.is_mainnet() {
+        MAINNET_CREATE_FEE_ATOMS
+    } else {
+        CREATE_MARKET_FEE_ATOMS
+    }
+}
+
 /// SPL Token Mint account size (bytes).
 const MINT_LEN: usize = 82;
 
@@ -114,10 +129,10 @@ pub fn program_data() -> Pubkey {
 
 // ── Bootstrap instruction builders ───────────────────────────────────
 
-/// `init` — create the registry, charging the per-`CreateVault` fee in
-/// `fee_mint`. `payer` is the genesis admin (must equal the program's
-/// upgrade authority).
-pub fn build_init_ix(payer: &Pubkey, fee_mint: &Pubkey) -> Instruction {
+/// `init` — create the registry, charging the per-`CreateVault` fee of
+/// `fee_atoms` in `fee_mint`. `payer` is the genesis admin (must equal the
+/// program's upgrade authority).
+pub fn build_init_ix(payer: &Pubkey, fee_mint: &Pubkey, fee_atoms: u64) -> Instruction {
     let registry = registry_pda();
     Init {
         payer: *payer,
@@ -131,7 +146,7 @@ pub fn build_init_ix(payer: &Pubkey, fee_mint: &Pubkey) -> Instruction {
     }
     .instruction(InitInstructionArgs {
         genesis_admin: *payer,
-        fee_atoms: CREATE_MARKET_FEE_ATOMS,
+        fee_atoms,
     })
 }
 
@@ -892,6 +907,7 @@ pub fn send_logged(
 ) -> Result<String> {
     let (sig, cu) = send_measured(client, payer, signers, ixs)?;
     log.log(format!("{label}: {sig}"));
+    log.record(label, &[("signature", &sig)]);
     if let Some(units) = cu {
         log.cu(label.to_string(), units, sig.clone());
     }
@@ -1018,7 +1034,7 @@ mod tests {
         let fee_mint = Pubkey::new_unique();
         let registry = registry_pda();
         let fee_vault = associated_token_address(&registry, &fee_mint, &SPL_TOKEN_PROGRAM_ID);
-        let ix = build_init_ix(&payer, &fee_mint);
+        let ix = build_init_ix(&payer, &fee_mint, CREATE_MARKET_FEE_ATOMS);
         assert_eq!(ix.program_id, DROPSET_ID);
         assert_eq!(
             metas(&ix),
@@ -1033,6 +1049,13 @@ mod tests {
                 (SYSTEM_PROGRAM_ID, false, false),
             ]
         );
+    }
+
+    #[test]
+    fn mainnet_stamps_the_prohibitive_create_fee() {
+        use crate::cluster::Cluster;
+        assert_eq!(create_fee_atoms(Cluster::Localnet), CREATE_MARKET_FEE_ATOMS);
+        assert_eq!(create_fee_atoms(Cluster::Mainnet), 100_000_000_000);
     }
 
     /// Pins the `create_market` ordering against `fixture::bootstrap`'s

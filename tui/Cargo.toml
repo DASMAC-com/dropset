@@ -56,6 +56,9 @@ solana-commitment-config = "3"
 solana-instruction = "3"
 solana-keypair = "3"
 solana-loader-v3-interface = { version = "6", features = ["bincode"] }
+# The publish path's buffer writes, sent through `solana-client`'s parallel
+# send-and-confirm (the same machinery `solana program deploy` uses).
+solana-message = "3"
 solana-native-token = "3"
 solana-pubkey = "3"
 solana-signer = "3"
@@ -65,12 +68,17 @@ solana-signer = "3"
 solana-signature = "3"
 solana-transaction = "3"
 solana-transaction-status-client-types = "3"
+# The publish record's binary digest — the sha256 the ceremony log carries.
+sha2 = "0.10"
 tempfile = "3"
 
 # Build a `FillEvent`'s borsh body when exercising the fill decoder's
 # emitting-program check (fills.rs tests). Not needed at runtime — the SDK's
 # `decode_event_payload` owns the decode.
 [dev-dependencies]
+# Measure a full buffer-write transaction against the packet limit
+# (publish.rs tests).
+bincode = "1"
 borsh = "1"
 # Read the frontend's currency data to pin each localnet mint's decimals
 # against the mainnet figure the app scales by (market.rs tests). Test-only:
