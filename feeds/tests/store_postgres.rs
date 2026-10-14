@@ -26,20 +26,12 @@ use dropset_feeds::{
 };
 use sqlx::PgPool;
 use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
+use testcontainers_modules::testcontainers::ContainerAsync;
 
 /// Start a throwaway Postgres and return a connected pool. The container is
 /// returned so the caller keeps it alive for the test's duration.
 async fn start_pg() -> (ContainerAsync<Postgres>, PgPool) {
-    let container = Postgres::default()
-        .with_tag(dropset_db_schema::POSTGRES_IMAGE_TAG)
-        .start()
-        .await
-        .expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("resolve mapped port");
+    let (container, port) = dropset_db_schema::testing::start_postgres().await;
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     let pool = connect(&url).await.expect("connect pool");
     dropset_db_schema::migrate(&pool)
