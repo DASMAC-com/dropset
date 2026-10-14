@@ -9,21 +9,27 @@ source "$SCRIPT_DIR/iterm-colors.sh"
 
 TTY_PATH=$(resolve_tty) || exit 0
 TTY_NAME=$(basename "$TTY_PATH")
-PID_FILE="$MONITOR_PID_PREFIX$TTY_NAME.pid"
 
-# Don't start a second monitor for this TTY.
-if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-  exit 0
-fi
+# Don't start a second monitor for this TTY. Unlike the old early exit, a live
+# monitor no longer skips the reseed below: a resumed session must not inherit
+# a stale arm or sentinel just because its monitor survived.
+ensure_monitor "$TTY_PATH"
 
-nohup "$SCRIPT_DIR/iterm-monitor.sh" "$TTY_PATH" &>/dev/null &
-echo "$!" >"$PID_FILE"
+# SessionStart also fires on `compact`, which is the SAME session carrying on:
+# reseeding there would turn a green tab neutral and drop a live arm or
+# selector sentinel mid-turn. The payload's `source` names the case.
+PAYLOAD=""
+[ -t 0 ] || PAYLOAD="$(cat)" # a hand run from a terminal has no payload
+SOURCE_RE='"source"[[:space:]]*:[[:space:]]*"compact"'
+[[ "$PAYLOAD" =~ $SOURCE_RE ]] && exit 0
 
 # Seed the neutral state so the monitor paints something immediately, and drop
-# both per-TTY sentinels a crashed prior session may have left here (see
+# the per-TTY sentinels a crashed prior session may have left here (see
 # iterm-paint.sh). The sticky-green one would otherwise suppress this session's
 # first real permission prompt; the permission-wait one would make a brand new
-# session's first heal check read a dead prompt's timestamp.
+# session's first heal check read a dead prompt's timestamp; a leftover
+# debounce arm would promote a dead prompt to yellow.
 echo "$STATE_NEUTRAL" >"$STATE_PREFIX$TTY_NAME"
 rm -f "$STATE_PREFIX$TTY_NAME.askq"
 rm -f "$STATE_PREFIX$TTY_NAME.permwait"
+rm -f "$(perm_pending_path "$TTY_NAME")"

@@ -643,7 +643,7 @@ tab isn't focused.
 All live in `.claude/scripts/` and are dependency-free bash:
 
 - `iterm-colors.sh` — shared palette and the SetColors emit helpers,
-  sourced by the rest. The four states and the `PAINT_WINDOW_BG` toggle
+  sourced by the rest. The five states and the `PAINT_WINDOW_BG` toggle
   (off by default: only the tab is tinted) live here; edit this file to
   recolor everything. Two things propagate differently:
   `iterm-monitor.sh` re-reads the palette on each state change, so a
@@ -663,7 +663,9 @@ All live in `.claude/scripts/` and are dependency-free bash:
   re-reads the palette on each state change, so edits to
   `iterm-colors.sh` apply to a running session without a restart.
 - `iterm-start.sh` / `iterm-stop.sh` — SessionStart / SessionEnd:
-  start/stop the monitor and set the initial / cleared state.
+  start/stop the monitor and set the initial / cleared state. (The
+  painter also restarts a missing monitor on any hook; see "Deploying to
+  `~/.claude`".)
 - `iterm-attend.sh` — the "attend" toggle (bound to a keyboard
   shortcut): flips the tab between the green mark and neutral, like
   mark-as-unread. Two optional flags let a caller mark a tab it does
@@ -697,7 +699,11 @@ event on stdin, makes the color a deterministic function of the event:
   anything else → neutral.
 - `Notification` with `notification_type` `permission_prompt` → yellow;
   any other notification leaves the tab unchanged.
-- `Stop` → green. `PostToolUse` / `UserPromptSubmit` → neutral.
+- `Stop` → green, **unless** the payload's `background_tasks` or
+  `session_crons` is non-empty → slate (see "Self-waiting is quiet"
+  below). `PostToolUse` / `UserPromptSubmit` → neutral.
+
+Every yellow above is **debounced**, not painted on the spot.
 
 `AskUserQuestion` **does** fire a companion `Notification`
 (`permission_prompt`) — from the harness's side the selector is a block
@@ -723,7 +729,9 @@ repaints.** The painter's only neutral-painting events are `PostToolUse`,
 `PreToolUse` guard blocks *after* the operator has already approved it
 runs none of them. The measured wedge is exactly that: approve, a guard
 denies, the tool errors red, and the tab stays yellow over a session that
-wants nothing. So painting a `permission_prompt` yellow also refreshes a
+wants nothing. So every `permission_prompt` the painter receives (each
+one *arms* the debounce below, and the first arm is what the monitor later
+promotes to yellow) also refreshes a
 per-tty `.permwait` sentinel, and the monitor clears the tint once that
 sentinel goes stale.
 
@@ -760,6 +768,60 @@ which has never been measured. The test pins the value and its override
 rather than asserting the value is right; the failure direction is the
 argument for it, and measuring the re-fire interval is the follow-up
 that would actually close it.
+
+**A yellow waits a few seconds before it shows.** The auto permission-mode
+classifier answers most prompts itself, but `permission_prompt` fires as
+soon as it starts deciding — so the tab flashed yellow, the reorderer
+jumped it to the front, and it cleared a moment later. The operator, aiming at
+the first green tab, kept landing on a yellow one that flickered away. So the
+painter only **arms** a yellow (a per-tty `.permpending` sentinel), and the
+monitor **promotes** it to the state file once it has outlived
+`ITERM_PERM_DEBOUNCE_SECONDS` (default 5s); any other paint cancels the arm.
+The reorderer reads the state file, which is untouched until promotion, so a
+prompt the classifier resolves never moves a tab at all. A re-fire neither
+restarts the timer nor re-arms a yellow already showing, and an edit tool's
+arm keeps its timestamp when the prompt that follows adds its message. The
+cost is a genuine prompt surfacing a few seconds late, which a prompt waiting
+for a human absorbs.
+
+### Self-waiting is quiet
+
+A session that ends its turn on a CI watch, a sub-agent fan-out or its own
+scheduled wake-up will resume by itself, and green — "reply wanted" — told
+the operator otherwise. The `Stop` payload lists exactly this
+(`background_tasks`, `session_crons`), so a `Stop` with either non-empty
+paints the **slate** `STATE_WAITING`, which the reorderer sorts with the
+neutral tabs. A harness that sends neither field reads as not waiting, which
+is the old green: silencing a session that needed a reply would be the worse
+error. The gap is a session that has anything long-lived in either list —
+a recurring `/loop` cron, a dev server left running in the background —
+**and** ends on a plain-text question: every such `Stop` reads slate, and
+its `idle_prompt` is dropped, until the job resumes the session. The house
+rule that a decision goes through `AskUserQuestion`, which paints its own
+green, keeps that gap narrow.
+
+**The OS notification follows the same split, once the harness hands it
+over.** A hook cannot suppress Claude Code's own notification, so the only
+way to stop a self-waiting session notifying is to switch the harness's
+channel off and send it from here, where the two classes can be told apart.
+That switch is user-local and one-time: set notifications to disabled in
+`/config`, which is the `preferredNotifChannel` value
+`notifications_disabled`.
+
+`painter_owns_notifications` looks for that value in `~/.claude.json`, so
+through `/config` alone the two never both fire: until it is set the harness
+notifies exactly as before and the painter sends nothing. Where `/config`
+stores it is **unverified** — if the setting is written elsewhere the
+detection reads "not owned" (the safe direction: no double notification, just
+the old behavior). Exporting `ITERM_PAINTER_NOTIFY=1` hands it over by hand,
+and does so unconditionally, so set it only once the harness channel really is
+off or both will fire (`0` forces it back). Once it
+is set, the painter sends an iTerm OSC 9 notification for the needs-operator
+class only: a permission prompt when its debounce promotes it, an
+`AskUserQuestion` selector once (not on every re-fire), an elicitation or
+`agent_needs_input`, and `idle_prompt` **unless the tab is slate**. Covered by
+`.claude/scripts/test_iterm_attention.py`, which drives the real painter
+through an `ITERM_TTY_PATH` override of the tty walk.
 
 ### FIFO attention ordering
 
@@ -2003,6 +2065,19 @@ drives the real zsh functions.
   something — is what the failure path guards, and it was never what the
   window-per-session rule bought.
 
+  **Neither caller moves the operator's view.** iTerm selects every tab
+  it creates, so a dispatch or a fleet resume used to pull the operator
+  out of whatever session they were reading. Typing needs no focus —
+  `async_send_text` reaches an unselected session — so `open_tabs`
+  captures the window's selected tab before creating anything,
+  re-selects it after every create (the steal then lasts one round trip,
+  not the batch) and once more on the way out, failure path included,
+  without raising the window. A refused re-select is reported as
+  `focus_restored: false` and never fails the batch: the commands were
+  typed, and a not-ok answer would put them in the retry set and double
+  them. Since both callers go through `open_tabs`, so would any future
+  one.
+
   **No AppleScript.** iTerm is driven through its Python API via the
   shared `.claude/tools/iterm_api.py`, the one owner of iTerm automation
   in this repo. This tool and `session_dispatch.py` were the only two
@@ -2143,13 +2218,45 @@ The wiring above uses `$CLAUDE_PROJECT_DIR`, which resolves to the active
 checkout — convenient, but it only colors sessions *inside a checkout
 that has these scripts*. To get the coloring in **every** Claude Code
 session regardless of directory, deploy the integration **globally**:
-copy the `iterm-*.sh` scripts (and `iterm-reorder.py`) into
-`~/.claude/scripts/`, and wire the hooks in `~/.claude/settings.json`
-using **absolute** `~/.claude/scripts/…` paths instead of
-`$CLAUDE_PROJECT_DIR`. The reorderer goes live per "FIFO attention
-ordering" above (drop `iterm-reorder.py` in the iTerm2 `AutoLaunch/`
-folder; it needs iTerm2's **Python Runtime** installed — Scripts →
-Manage → Install Python Runtime — and the API enabled).
+wire the hooks in `~/.claude/settings.json` using **absolute**
+`~/.claude/scripts/…` paths instead of `$CLAUDE_PROJECT_DIR`, and make
+those paths **symlinks into the base checkout**, never copies:
+
+```sh
+python3 .claude/tools/iterm_deploy.py          # report; exit 1 if not linked
+python3 .claude/tools/iterm_deploy.py --apply  # link, then restart monitors
+```
+
+**The deploy is a pointer, the same shape as `init.zsh`.** The local
+config holds only a link and the code is whatever the base checkout's
+`main` has, so a fast-forward (which `housekeeping` does) *is* the deploy.
+This used to say "copy", and a copy is the measured failure: a deploy
+made once by hand ran three months and several merged fixes behind
+`main`, so the operator kept seeing flicker a merged fix had already
+removed. `--apply` moves each copy into a timestamped
+`.pre-symlink-<stamp>/` backup beside it rather than deleting it. It
+links `iterm-reorder.py` into iTerm2's `AutoLaunch/` folder too, where
+that folder exists (the reorderer needs iTerm2's **Python Runtime** —
+Scripts → Manage → Install Python Runtime — and the API enabled; it
+finds the palette through the link, since it resolves its own path).
+Whether iTerm2's AutoLaunch follows a symlink is **unverified**; if the
+reorderer does not appear under Scripts → AutoLaunch after a deploy, start
+it from the Scripts menu by hand, and fall back to a copy only if that
+fails — the drift a copy reintroduces is what this tool's check reports.
+Where the deploy directory is itself a link into the checkout, every
+target reads `is-source` and is left untouched, since it already runs the
+committed code.
+
+Two long-lived processes keep running the code they started with, which
+is why a link alone is not the whole deploy. `--apply` stops the per-tty
+**monitors**. That is safe because the painter restarts a missing monitor on
+its session's next hook (`ensure_monitor`), and it has to, since only a
+monitor promotes a debounced yellow. It also stops the **reorderer**, which
+iTerm does not relaunch, so start it again from Scripts → AutoLaunch. A
+later fast-forward that changes either one needs the same restart, which
+`iterm_deploy.py --restart` does without relinking anything; the hooks
+themselves re-read the scripts on every event. `iterm-start.sh` skips its
+reseed on a `compact` SessionStart, which is the same session carrying on.
 
 Migrating from an **older, differently-named** script family (a rename,
 e.g. an `iterm-bg-*` set) has four gotchas, none of which a plain
@@ -2175,8 +2282,7 @@ The monitor is long-lived and used to cache the palette; it now re-reads
 happens:
 
 - `iterm-restart-monitors.sh` — stop every running monitor and drop its
-  pid file. A monitor restarts on the next SessionStart; a live session
-  repaints on its next hook event.
+  pid file. Each session's next hook starts a fresh one and repaints.
 - `iterm-reset-windows.sh` — clear our coloring back to the profile
   default on every TTY with a leftover state file (e.g. a session that
   exited without its SessionEnd hook firing).

@@ -23,6 +23,7 @@ audc
 audd
 audm
 autocorrelated
+autolaunch
 awsmcp
 backgrounded
 barchart
@@ -166,6 +167,7 @@ myrc
 newtypes
 nextest
 nohup
+notif
 numstat
 oanda
 officedocument
@@ -190,6 +192,7 @@ permissioned
 permissioning
 permissionless
 permissionlessly
+permpending
 permwait
 pgrep
 pids

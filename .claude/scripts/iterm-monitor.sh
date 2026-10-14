@@ -25,6 +25,14 @@ LAST=""
 HEAL_EVERY=100
 TICK=0
 
+# The debounce promotion (`promote_pending_permission`, also in iterm-colors.sh)
+# runs faster, because its lateness is visible: a genuine prompt surfaces up to
+# one interval after the debounce elapses. The per-tick test is a builtin `-f`,
+# so the `stat`/`date` spawns are paid only while a yellow is actually armed.
+PROMOTE_EVERY=10
+PENDING_FILE="$(perm_pending_path "$TTY_BASE")"
+PID_FILE="$MONITOR_PID_PREFIX$TTY_BASE.pid"
+
 while true; do
   COLOR=$(cat "$STATE_FILE" 2>/dev/null)
   if [ -n "$COLOR" ] && [ "$COLOR" != "$LAST" ]; then
@@ -38,7 +46,16 @@ while true; do
   # Always clear attention requests (Claude Code may set them mid-poll).
   printf '\033]1337;RequestAttention=no\a' >"$TTY_PATH" 2>/dev/null
   TICK=$((TICK + 1))
+  if [ -f "$PENDING_FILE" ] && [ "$((TICK % PROMOTE_EVERY))" -eq 0 ]; then
+    promote_pending_permission "$TTY_BASE" "$TTY_PATH"
+  fi
   if [ "$((TICK % HEAL_EVERY))" -eq 0 ]; then
+    # Exit once the pid file no longer names this process. Two hooks racing
+    # through `ensure_monitor` can each start one, and the loser — which no
+    # restart could find — would otherwise poll for ever.
+    OWNER=""
+    [ -f "$PID_FILE" ] && read -r OWNER <"$PID_FILE"
+    [ "$OWNER" = "$$" ] || exit 0
     heal_stale_permission "$TTY_BASE"
   fi
   sleep 0.03
