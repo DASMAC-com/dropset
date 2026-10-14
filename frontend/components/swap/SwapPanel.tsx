@@ -249,8 +249,11 @@ export function SwapPanel() {
   //
   // DFlow keeps its extra precondition on top: its /order rejects a missing
   // fee account, so the fee is only charged once that ATA exists.
+  //
+  // A zero rate is no fee: no row is shown, since the quoted amount is then
+  // exactly what the taker receives.
   const feeBps =
-    canSwap && (aggregatorRoute ? feeVaultExists : true)
+    canSwap && (aggregatorRoute ? feeVaultExists : true) && quote.platformFeeBps
       ? quote.platformFeeBps
       : null;
 
