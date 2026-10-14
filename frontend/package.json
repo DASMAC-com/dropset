@@ -17,6 +17,7 @@
     "lucide-react": "^1.14.0",
     "motion": "^12.38.0",
     "next": "16.2.6",
+    "qrcode.react": "^4.2.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-globe.gl": "^2.37.1",

@@ -64,7 +64,6 @@ dashlist
 dasmac
 dedup
 dedups
-deeplink
 depeg
 deque
 desync
@@ -208,6 +207,7 @@ psql
 pubkeys
 pullable
 pytest
+qrcode
 rasterizing
 ratatui
 raydium

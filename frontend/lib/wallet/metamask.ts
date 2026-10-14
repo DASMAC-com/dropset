@@ -1,6 +1,5 @@
 import { useSyncExternalStore } from "react";
 import { PUBLIC_RPC_URL } from "../env";
-import { isMobile } from "../ua";
 
 // MetaMask Connect (the relay-based SDK, distinct from the MetaMask browser
 // extension) only becomes discoverable once a dapp initializes it: calling
@@ -50,7 +49,7 @@ export function registerMetaMaskConnect(): Promise<void> {
   if (registration) return registration;
   registration = (async () => {
     const { createSolanaClient } = await import("@metamask/connect-solana");
-    const client = await createSolanaClient({
+    await createSolanaClient({
       dapp: {
         name: "Dropset",
         url: window.location.origin,
@@ -66,16 +65,6 @@ export function registerMetaMaskConnect(): Promise<void> {
       // dapp-side connection regressions; cost to us is zero.
       analytics: { enabled: true },
     });
-    // On desktop without the extension, show the SDK's scannable QR install
-    // modal. Its defaults (preferExtension true, showInstallModal false) send
-    // that case to the `metamask://` deeplink instead, which a desktop browser
-    // has no handler for, so the tap does nothing. Not on mobile: there the
-    // deeplink is the right route and the modal is only a QR code the phone
-    // would have to scan itself. `createSolanaClient` doesn't forward `ui`
-    // options, so set them on the singleton core it returns.
-    if (!isMobile()) {
-      client.core.mergeOptions({ ui: { showInstallModal: true } });
-    }
     registrationReady = true;
     notifyRegistrationListeners();
   })().catch((error) => {

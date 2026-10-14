@@ -15,6 +15,7 @@ import {
   X,
 } from "@/components/icons";
 import { WalletIcon } from "@/components/ui/WalletIcon";
+import { PhoneHandoff } from "@/components/wallet/PhoneHandoff";
 import { COPY_FEEDBACK_DURATION_MS } from "@/lib/data/timings";
 import { buildPickerWallets, type PickerWallet } from "@/lib/data/wallets";
 import { emit, useAppEvent } from "@/lib/events";
@@ -173,17 +174,7 @@ export function WalletButton() {
           className={`${rowClass} disabled:opacity-50`}
         >
           {renderIcon(w)}
-          <span className="flex-1">
-            <span className="block font-medium text-foreground">{w.name}</span>
-            {/* On a phone the relay opens the MetaMask app by deeplink; with
-                no app installed iOS drops the link silently, so say up front
-                what the tap needs rather than leaving a dead end. */}
-            {isMetaMaskRelayRow && mobile && (
-              <span className="mt-0.5 block text-muted-fg text-xs">
-                Opens the MetaMask app — install it first if you haven't.
-              </span>
-            )}
-          </span>
+          <span className="flex-1 font-medium text-foreground">{w.name}</span>
           {badge}
         </button>
       );
@@ -299,6 +290,10 @@ export function WalletButton() {
               </div>
             )}
           </div>
+
+          {/* Desktop only: a phone already has the "Open in" rows above. The
+              picker never renders during SSR, so window is safe here. */}
+          {!mobile && <PhoneHandoff />}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
