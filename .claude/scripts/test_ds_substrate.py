@@ -404,8 +404,9 @@ class VerbLaunch(SubstrateHarness):
     _CWD_STUB = 'claude() { print -r -- "CWD=$PWD ARGS=$*"; }; cd "$_DS_REPO"; '
 
     def test_a_copy_under_both_slugs_still_resumes_from_the_worktree(self):
-        # The base slug sorts first, so testing only the first glob hit would
-        # resume a once-resumed-inside session from the base checkout.
+        # Glob order is not a contract (here the worktree copy sorts first, as
+        # `-` precedes `/`), so this pins the order-independent match: a
+        # quoted `(M)` filter over the joined array failed exactly this case.
         (self.repo / ".claude" / "worktrees" / "ceo-12").mkdir(parents=True)
         result, out = self._launch(
             self._CWD_STUB + 'wt="$PWD/.claude/worktrees/ceo-12"; '

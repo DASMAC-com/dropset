@@ -520,7 +520,9 @@ _ds_daily_session() {
 # glob over every project directory answers "does this session exist" without
 # knowing the filing rule — older sessions filed under the base slug included.
 # A worktree-slug hit resumes from inside the worktree, the directory Claude
-# Code addresses it by; anything else resumes from the base checkout as before.
+# Code addresses it by; anything else resumes from the base checkout as before
+# (whether `--resume <id>` from there reaches a copy under some THIRD slug is
+# unverified, but the create branch on an existing id was no better).
 _ds_session() {
   local sid="$1" name="$2" prompt="$3" model="$4" worktree="$5"
 
