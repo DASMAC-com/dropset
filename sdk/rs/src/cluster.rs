@@ -83,12 +83,12 @@ pub fn event_authority(program_id: &Pubkey) -> Pubkey {
 ///
 /// The input is assumed to be as a generated builder emits it, aimed at
 /// [`DROPSET_ID`]; an instruction already aimed elsewhere is not mapped
-/// back. Rewrites the instruction's program id and every account meta that the
-/// builder filled from [`DROPSET_ID`]: the `program` account `emit_cpi!`
-/// reads, the placeholder for an absent optional account, and the localnet
-/// event authority. Other PDAs are the caller's to derive with the
-/// matching id, since the builders take them as inputs. A no-op for
-/// [`DROPSET_ID`] itself.
+/// back. Rewrites the instruction's program id and every account meta
+/// that the builder filled from [`DROPSET_ID`]: the `program` account
+/// `emit_cpi!` reads, the placeholder for an absent optional account, and
+/// the localnet event authority. Other PDAs are the caller's to derive
+/// with the matching id, since the builders take them as inputs. A no-op
+/// for [`DROPSET_ID`] itself.
 pub fn retarget(mut ix: Instruction, program_id: &Pubkey) -> Instruction {
     if *program_id == DROPSET_ID {
         return ix;
