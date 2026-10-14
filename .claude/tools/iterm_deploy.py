@@ -8,12 +8,15 @@ integration: a measured deploy was three months and several fixes behind
 `main`, and the operator saw the flicker a merged fix had already removed.
 This makes them symlinks into the base checkout instead — the same shape as
 `.claude/shell/init.zsh`, where the local config holds only a pointer and the
-code is whatever `main` has. A fast-forward of the base checkout is then the
-whole deploy.
+code is whatever `main` has. A fast-forward of the base checkout then deploys
+every hook at once; only the two long-lived processes — the per-tty monitors
+and the reorderer — keep running the code they started with until restarted.
 
 Usage:
-  iterm_deploy.py            # report each target; exit 1 if any is not linked
-  iterm_deploy.py --apply    # replace copies with links, then restart monitors
+  iterm_deploy.py              # report each target; exit 1 if any is not linked
+  iterm_deploy.py --apply      # replace copies with links, then restart monitors
+  iterm_deploy.py --restart    # after a fast-forward that changed the monitor or
+                               # reorderer: restart them, relinking nothing
 
 `--apply` never deletes a copy: it moves it into a timestamped backup directory
 beside it. A stray symlink is only a pointer and is simply replaced.
@@ -130,6 +133,11 @@ def orphans(source: Path, scripts_dir: Path) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--restart",
+        action="store_true",
+        help="stop the monitors and reorderer even if nothing was relinked",
+    )
     parser.add_argument("--source", type=Path, help="default: the base checkout")
     parser.add_argument("--scripts-dir", type=Path, default=SCRIPTS_DIR)
     parser.add_argument("--autolaunch-dir", type=Path, default=AUTOLAUNCH_DIR)
@@ -148,29 +156,35 @@ def main(argv: list[str] | None = None) -> int:
         print(f"iterm_deploy: no iterm-* scripts under {args.source}", file=sys.stderr)
         return 2
     report: dict = {"source": str(args.source)}
-    if args.apply:
+    if args.apply or args.restart:
         # Restarts are gated on what this run CHANGED, so a repeat --apply on a
         # linked tree stops nothing — the reorderer especially, which the
         # operator would then have to start again by hand for no reason.
+        # --restart forces both, for a fast-forward that changed their code.
         changed = [
             link for link, src in pairs if status(link, src) not in LINKED_STATES
         ]
-        report["backups"] = apply(pairs, time.strftime("%Y%m%d-%H%M%S"))
+        if args.apply:
+            report["backups"] = apply(pairs, time.strftime("%Y%m%d-%H%M%S"))
+        else:
+            changed = []
         # The monitors are long-lived and keep running the loop they started
         # with. Stopping them is safe because the painter restarts a missing
-        # monitor on its session's next hook (see `ensure_monitor`).
+        # monitor on its session's next hook (see `ensure_monitor`) — bar a
+        # yellow armed in the last few seconds of a session that then sits
+        # idle, which waits for that session's next hook to surface.
         restart = args.scripts_dir / RESTART
         if (
-            any(link.parent == args.scripts_dir for link in changed)
-            and restart.exists()
-        ):
+            args.restart or any(link.parent == args.scripts_dir for link in changed)
+        ) and restart.exists():
             done = subprocess.run(
                 [str(restart)], capture_output=True, text=True, check=False
             )
             report["monitors"] = (
                 done.stdout.strip() or done.stderr.strip() or f"exit {done.returncode}"
             )
-        if args.autolaunch_dir / REORDERER in changed:
+        reorderer = args.autolaunch_dir / REORDERER
+        if reorderer in changed or (args.restart and reorderer.is_symlink()):
             # The running reorderer is the old code too. iTerm does not
             # relaunch an AutoLaunch script that exits, so it is stopped here
             # and started again by hand — one menu click, where restarting

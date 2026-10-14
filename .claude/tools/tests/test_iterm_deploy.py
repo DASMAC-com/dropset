@@ -176,6 +176,23 @@ class Main(DeployHarness):
             self.kill_calls(), [["pkill", "-f", "AutoLaunch/iterm-reorder[.]py"]]
         )
 
+    def test_restart_stops_the_reorderer_on_a_linked_tree(self):
+        """After a fast-forward that changed its code, nothing is relinked, so
+        only --restart reaches the long-lived process."""
+        self.autolaunch.mkdir()
+        self.run_main("--apply")
+        self.assertEqual(self.run_main("--restart"), 0)
+        self.assertEqual(
+            self.kill_calls(), [["pkill", "-f", "AutoLaunch/iterm-reorder[.]py"]]
+        )
+
+    def test_restart_alone_links_nothing(self):
+        self.scripts.mkdir(parents=True)
+        copy = self.scripts / "iterm-paint.sh"
+        copy.write_text("july copy", encoding="utf-8")
+        self.run_main("--restart")
+        self.assertFalse(copy.is_symlink())
+
     def test_a_repeat_apply_on_a_linked_tree_stops_nothing(self):
         self.autolaunch.mkdir()
         self.run_main("--apply")

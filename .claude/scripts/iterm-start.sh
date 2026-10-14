@@ -15,6 +15,14 @@ TTY_NAME=$(basename "$TTY_PATH")
 # a stale arm or sentinel just because its monitor survived.
 ensure_monitor "$TTY_PATH"
 
+# SessionStart also fires on `compact`, which is the SAME session carrying on:
+# reseeding there would turn a green tab neutral and drop a live arm or
+# selector sentinel mid-turn. The payload's `source` names the case.
+PAYLOAD=""
+[ -t 0 ] || PAYLOAD="$(cat)" # a hand run from a terminal has no payload
+SOURCE_RE='"source"[[:space:]]*:[[:space:]]*"compact"'
+[[ "$PAYLOAD" =~ $SOURCE_RE ]] && exit 0
+
 # Seed the neutral state so the monitor paints something immediately, and drop
 # the per-TTY sentinels a crashed prior session may have left here (see
 # iterm-paint.sh). The sticky-green one would otherwise suppress this session's

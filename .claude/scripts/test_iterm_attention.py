@@ -383,6 +383,37 @@ class AMissingMonitorIsRestarted(Harness):
         self.assertFalse(self.pid_file.exists())
 
 
+class SessionStartReseeds(Harness):
+    """SessionStart fires on `compact` too, which is the same session carrying
+    on — so a reseed there would turn a green tab neutral mid-session."""
+
+    def start(self, source: str):
+        result = subprocess.run(
+            ["bash", str(SCRIPTS / "iterm-start.sh")],
+            input=json.dumps({"hook_event_name": "SessionStart", "source": source}),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=self.env,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def setUp(self):
+        super().setUp()
+        self.state.write_text(STATE_REPLY, encoding="utf-8")
+        self.pending.write_text("live arm", encoding="utf-8")
+
+    def test_a_compact_keeps_the_state_and_the_arm(self):
+        self.start("compact")
+        self.assertEqual(self.read(self.state), STATE_REPLY)
+        self.assertTrue(self.pending.exists())
+
+    def test_a_resume_reseeds_and_drops_the_arm(self):
+        self.start("resume")
+        self.assertEqual(self.read(self.state), STATE_NEUTRAL)
+        self.assertFalse(self.pending.exists())
+
+
 class AnOrphanedMonitorExits(Harness):
     def test_a_monitor_the_pid_file_does_not_name_exits(self):
         """Two hooks racing through `ensure_monitor` can each start one; the

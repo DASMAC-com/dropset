@@ -2253,8 +2253,10 @@ is why a link alone is not the whole deploy. `--apply` stops the per-tty
 its session's next hook (`ensure_monitor`), and it has to, since only a
 monitor promotes a debounced yellow. It also stops the **reorderer**, which
 iTerm does not relaunch, so start it again from Scripts → AutoLaunch. A
-later change to either needs the same restart; the hooks themselves
-re-read the scripts on every event.
+later fast-forward that changes either one needs the same restart, which
+`iterm_deploy.py --restart` does without relinking anything; the hooks
+themselves re-read the scripts on every event. `iterm-start.sh` skips its
+reseed on a `compact` SessionStart, which is the same session carrying on.
 
 Migrating from an **older, differently-named** script family (a rename,
 e.g. an `iterm-bg-*` set) has four gotchas, none of which a plain

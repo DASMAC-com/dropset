@@ -197,6 +197,9 @@ fi
 #     needs approval is the edit tool's PreToolUse (no message) THEN the
 #     permission_prompt (with one), so the message is added to the arm while
 #     its mtime is carried over.
+# Direct mode (`iterm-paint.sh <hex>`) goes through the same two branches, so a
+# direct yellow arms too, and any direct paint — the attend toggle's — cancels
+# an arm, which reads as the operator acknowledging it.
 if [ "$COLOR" = "$STATE_PERMISSION" ]; then
   [ "$(cat "$(state_file_path "$TTY_BASE")" 2>/dev/null)" = "$STATE_PERMISSION" ] && exit 0
   PENDING="$(perm_pending_path "$TTY_BASE")"
