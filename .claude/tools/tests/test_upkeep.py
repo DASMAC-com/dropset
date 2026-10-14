@@ -617,6 +617,25 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(upkeep.run(["upkeep.py", "run", "--if-stale"]), 0)
             self.assertIn("already ran today", out.getvalue())
 
+    def test_prune_ignores_the_run_only_stamp_gate(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            upkeep.check_base = lambda run, cwd: (base, [], "")
+            upkeep.write_stamp(base, datetime.now(timezone.utc), False)
+            seen = []
+            upkeep.run_pass = lambda ctx, only=None: (
+                seen.append(only)
+                or {
+                    "ran_at": "t",
+                    "armed": False,
+                    "steps": [],
+                }
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(upkeep.run(["upkeep.py", "prune"]), 0)
+            self.assertEqual(seen, [upkeep.PRUNE_STEPS])
+
     def test_if_stale_runs_a_pass_whose_stamp_is_from_another_day(self):
         with tempfile.TemporaryDirectory() as d:
             base = Path(d)

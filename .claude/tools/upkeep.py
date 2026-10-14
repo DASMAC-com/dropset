@@ -856,7 +856,7 @@ def run(argv: list[str]) -> int:
     if args.cmd == "ran-today":
         print(json.dumps(ran_today(stamp_path(base), now)))
         return 0
-    if args.if_stale:
+    if args.cmd == "run" and args.if_stale:
         seen = ran_today(stamp_path(base), now)
         if seen["ran_today"]:
             print(f"upkeep: already ran today ({seen['last_run']}); skipped")
