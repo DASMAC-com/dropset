@@ -12,6 +12,7 @@
  */
 
 export * from './clock';
+export * from './cluster';
 export * from './dflow';
 export * from './events';
 export * from './generated';

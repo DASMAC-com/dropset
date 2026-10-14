@@ -101,6 +101,12 @@ default = ["admin-teardown", "asm-entrypoint"]
 # enabled" warning on every build is that removal, not a gap: the feature
 # it asks for no longer exists, and the generated IDL is complete.
 idl-build = ["dropset-math-core/idl-build"]
+# Mainnet build: selects the mainnet `declare_id!` (the public key in
+# `keys/dropset-mainnet.pubkey`; the secret lives only in 1Password) in place
+# of the committed localnet vanity id. Off by default, so localnet builds,
+# the IDL and the generated SDK keep `keys/AAAA.json`'s address; built by
+# `make program-mainnet`.
+mainnet = []
 no-entrypoint = []
 no-log-ix-name = []
 profile = ["anchor-v2-testing/profile"]

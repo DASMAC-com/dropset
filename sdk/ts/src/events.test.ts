@@ -14,6 +14,10 @@ import { test } from 'node:test';
 import { address, getBase58Decoder, getBase58Encoder } from '@solana/kit';
 
 import {
+  DROPSET_MAINNET_PROGRAM_ADDRESS,
+  dropsetProgramAddress,
+} from './cluster';
+import {
   collectFillEvents,
   decodeFillEventPayload,
   EVENT_DISCRIMINATOR_LEN,
@@ -156,6 +160,17 @@ test('collects only events our program emitted', () => {
     txWith(envelope(sampleEvent()), { programIdIndex: 0 }),
   );
   assert.deepStrictEqual(fills, []);
+});
+
+test('collects against the program id it is given', () => {
+  // A mainnet emission: trusted under the mainnet id, not under the default
+  // localnet one.
+  const tx = txWith(envelope(sampleEvent()), {
+    accountKeys: [SOME_ADDRESS, DROPSET_MAINNET_PROGRAM_ADDRESS],
+  });
+  const programAddress = dropsetProgramAddress('mainnet');
+  assert.strictEqual(collectFillEvents(tx, { programAddress }).length, 1);
+  assert.deepStrictEqual(collectFillEvents(tx), []);
 });
 
 test('drops events with an out-of-range program index', () => {

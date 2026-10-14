@@ -42,6 +42,21 @@ check agree. The rest are signer accounts the TUI and bots fund and
 drive. Need more participants (extra takers or makers)? Grind the next
 prefix (`GGGG`, `HHHH`, …) into this directory.
 
+## The mainnet program id
+
+`dropset-mainnet.pubkey` is the one non-localnet key here, and it is
+**public-key only**: the mainnet program id (`FXv1…`). Its keypair is
+held in 1Password and never enters the repo, a build, or an agent
+session; only the publish step reads it, by its 1Password reference.
+
+The program crate's `mainnet` feature selects this id's `declare_id!`
+(`make program-mainnet`, artifact `target/deploy/dropset_mainnet.so`),
+and the SDKs expose it as `DROPSET_MAINNET_ID` (Rust) and
+`DROPSET_MAINNET_PROGRAM_ADDRESS` (TS), resolved per cluster through
+`Deployment::program_id` / `dropsetProgramAddress`. Parity tests in both
+SDKs pin those copies to this file, so changing the id means editing the
+file, the feature-gated `declare_id!` and both SDK constants together.
+
 ## The mock token mints
 
 The localnet market bootstrap also uses **fixed mint keypairs**, so each

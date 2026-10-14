@@ -21,6 +21,7 @@
 // form Codama renders; allow `io_other_error` here rather than editing
 // generated files `make sdk` would overwrite.
 pub mod adapters;
+pub mod cluster;
 pub mod events;
 #[allow(clippy::io_other_error)]
 #[allow(unused_imports)]
@@ -50,3 +51,5 @@ pub use generated::{accounts, errors, instructions, programs, shared, types};
 // The generated instruction builders reference the program id as
 // `crate::DROPSET_ID`, so flatten the program constants to the crate root.
 pub use generated::programs::DROPSET_ID;
+// That constant is the localnet id; the per-cluster lookup is `cluster`.
+pub use cluster::{Deployment, DROPSET_MAINNET_ID};
