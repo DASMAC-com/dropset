@@ -707,7 +707,7 @@ class QueueWatchTests(unittest.TestCase):
         wfc.queue_log_path_for = lambda pr: Path(self.tmp.name) / f"q-{pr}.log"
         self.addCleanup(setattr, wfc, "queue_log_path_for", real)
 
-    def _watch(self, snaps, interval=60, timeout=7200):
+    def _watch(self, snaps, interval=60, timeout=7200, since=None):
         """Feed ``snaps`` one per poll (the last repeats); time advances only
         through ``sleep``, so elapsed seconds are exact."""
         now = [0.0]
@@ -731,6 +731,7 @@ class QueueWatchTests(unittest.TestCase):
             sleep=sleep,
             clock=lambda: now[0],
             wall=lambda: ENQUEUED_EPOCH + now[0],
+            since=since,
         )
 
     def test_stays_silent_while_queued_then_reports_the_merge(self):
@@ -844,8 +845,24 @@ class QueueWatchTests(unittest.TestCase):
     def test_a_probe_error_breaks_the_dequeue_confirmation(self):
         gone = snap(runs=[queue_run("failure")])
         blip = wfc.WaitForChecksError("blip")
-        v = self._watch([snap(entry=QUEUED), gone, blip, snap(merged=True)])
+        # Without the reset, the second `gone` would be streak 2 → dequeued.
+        v = self._watch([snap(entry=QUEUED), gone, blip, gone, snap(merged=True)])
         self.assertEqual(v["conclusion"], "merged")
+
+    def test_since_anchors_a_fresh_call_to_an_old_dequeue(self):
+        """A cron firing: no entry seen this call, the failed run 1000 s old."""
+        old = "2026-10-13T11:43:20Z"  # ENQUEUED - 1000 s
+        gone = snap(runs=[queue_run("failure", created=old)])
+        bare = self._watch([gone] * 6)
+        self.assertEqual(bare["conclusion"], "not_queued")
+        anchored = self._watch([gone] * 6, since="2026-10-13T11:40:00Z")
+        self.assertEqual(anchored["conclusion"], "dequeued")
+
+    def test_a_failed_final_poll_keeps_the_last_good_snapshot(self):
+        blip = wfc.WaitForChecksError("blip")
+        v = self._watch([snap(entry=QUEUED), blip], interval=60, timeout=60)
+        self.assertEqual(v["conclusion"], "timeout")
+        self.assertEqual(v["last"]["entry_state"], "QUEUED")
 
     def test_a_timeout_reached_through_probe_errors_says_so(self):
         blip = wfc.WaitForChecksError("blip")
@@ -944,8 +961,10 @@ class QueueModeCliTests(unittest.TestCase):
         seen = {}
         real = wfc.wait_queue
 
-        def stub(pr, repo=None, interval=None, timeout=None):
-            seen.update(pr=pr, repo=repo, interval=interval, timeout=timeout)
+        def stub(pr, repo=None, interval=None, timeout=None, since=None):
+            seen.update(
+                pr=pr, repo=repo, interval=interval, timeout=timeout, since=since
+            )
             return {"conclusion": conclusion, "pr": pr}
 
         wfc.wait_queue = stub
@@ -962,6 +981,18 @@ class QueueModeCliTests(unittest.TestCase):
         self.assertEqual(seen["pr"], 285)
         self.assertEqual(seen["interval"], wfc.QUEUE_INTERVAL)
         self.assertEqual(seen["timeout"], wfc.QUEUE_TIMEOUT)
+
+    def test_since_is_passed_through_and_validated(self):
+        _, seen = self._queue_mode("merged", ["--since", ENQUEUED])
+        self.assertEqual(seen["since"], ENQUEUED)
+        for argv in (
+            ["wait_for_checks.py", "--queue", "285", "--since", "yesterday"],
+            ["wait_for_checks.py", "--pr", "285", "--since", ENQUEUED],
+        ):
+            with self.subTest(argv=argv):
+                with self.assertRaises(wfc.WaitForChecksError):
+                    with redirect_stdout(io.StringIO()):
+                        wfc.run(argv)
 
     def test_explicit_pacing_is_honored(self):
         _, seen = self._queue_mode("merged", ["--interval", "30", "--timeout", "900"])

@@ -587,6 +587,7 @@ def wait_queue(
     sleep=time.sleep,
     clock=time.monotonic,
     wall=time.time,
+    since: str | None = None,
 ):
     """Watch an enqueued PR until it merges or leaves the queue.
 
@@ -600,12 +601,17 @@ def wait_queue(
     ``not_queued`` / ``timeout`` / ``probe_failed`` (exit 1). A terminal
     ``MERGED`` from **either** source wins; nothing else concludes until both
     sources agree the PR is not merged.
+
+    ``since`` (the enqueue time, ISO-8601) anchors the run window when no
+    entry has been seen in *this* call — which is every firing of a cron
+    fallback. Without it a fresh call keeps only runs from the last
+    :data:`RUN_WINDOW_SECONDS`, so an older dequeue reads as ``not_queued``.
     """
     log = queue_log_path_for(pr)
     started = clock()
     started_wall = wall()
     seen_entry = False
-    anchor: float | None = None
+    anchor: float | None = _parse_time(since)
     null_since: float | None = None
     dequeue_streak = 0
     probe_errors = 0
@@ -619,9 +625,11 @@ def wait_queue(
         while True:
             now = clock()
             polls += 1
+            fresh = False
             try:
                 snap = probe(pr, repo)
                 probe_errors = 0
+                fresh = True
             except WaitForChecksError as exc:
                 probe_errors += 1
                 error = str(exc)
@@ -631,10 +639,10 @@ def wait_queue(
                     conclusion = "probe_failed"
                     break
                 # An unread poll breaks the "consecutive" in the confirmation.
+                # The last good snapshot is kept for the verdict's report.
                 dequeue_streak = 0
-                snap = {}
 
-            if snap:
+            if fresh:
                 entry = snap.get("entry")
                 runs = snap.get("queue_runs", [])
                 enqueued = _parse_time((entry or {}).get("enqueuedAt"))
@@ -1051,6 +1059,11 @@ def run(argv: list[str]) -> int:
         type=int,
         help="enqueued PR number to watch until it merges or leaves the queue",
     )
+    parser.add_argument(
+        "--since",
+        help="with --queue: the enqueue time (ISO-8601), anchoring the run "
+        "window for a fresh call such as a cron firing",
+    )
     parser.add_argument("--repo", default=DEFAULT_REPO, help="owner/repo")
     parser.add_argument(
         "--interval",
@@ -1083,15 +1096,20 @@ def run(argv: list[str]) -> int:
         # other: a caller that passed two would otherwise watch whichever the
         # code happens to check first and report a verdict about the other thing.
         raise WaitForChecksError("pass exactly one of --pr, --run or --queue")
+    if args.since is not None and args.queue_pr is None:
+        raise WaitForChecksError("--since is meaningful only with --queue")
 
     if args.queue_pr is not None:
         if args.no_watch:
             raise WaitForChecksError("--no-watch is meaningless with --queue")
+        if args.since is not None and _parse_time(args.since) is None:
+            raise WaitForChecksError(f"--since is not an ISO-8601 time: {args.since}")
         verdict = wait_queue(
             args.queue_pr,
             repo=args.repo,
             interval=QUEUE_INTERVAL if args.interval is None else args.interval,
             timeout=QUEUE_TIMEOUT if args.timeout is None else args.timeout,
+            since=args.since,
         )
     else:
         interval = DEFAULT_INTERVAL if args.interval is None else args.interval

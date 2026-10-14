@@ -2100,13 +2100,15 @@ migrations or generation inputs, and whether it spans crates.
 
    Where a background command is unavailable, fall back to a
    session-scoped cron running the same command about every 12 minutes
-   with `--timeout 660` — above the tool's 600-second grace, so every
-   verdict is reachable within one firing — deleting itself on a
-   terminal verdict. A `timeout` from a cron firing is silent and the
-   cron stays. If the classifier denies the cron, ask the operator to
-   approve it in this tab; never silently hand over the wait. A resumed
-   session re-runs the command, and a fresh poll returns the current
-   snapshot.
+   with `--timeout 660` — above the tool's 600-second grace — and
+   `--since <the enqueue time, UTC ISO-8601>`, which every firing needs:
+   each one is a fresh call, and without the anchor a dequeue older
+   than the tool's 15-minute run window reads as `not_queued`. It
+   deletes itself on a terminal verdict; a `timeout` from a cron firing
+   is silent and the cron stays. If the classifier denies the cron, ask
+   the operator to approve it in this tab; never silently hand over the
+   wait. A resumed session re-runs the command, and a fresh poll
+   returns the current snapshot.
 
    **The terminal-MERGED invariant also binds you**: if your own read
    says `MERGED`, never act on an older non-merged verdict, and never
@@ -2124,9 +2126,9 @@ migrations or generation inputs, and whether it spans crates.
 
    - **`not_queued`** → no entry and no queue run ever appeared: the
      enqueue did not take. Apply step 20's already-clean remedy and
-     restart the watch. On a *resumed* watch, a dequeue older than the
-     tool's run window reads the same — check `gh run list` before
-     re-enqueueing.
+     restart the watch. On any fresh call without `--since` (a resumed
+     watch), a dequeue older than the tool's run window reads the same —
+     check `gh run list` before re-enqueueing.
 
    - **`dequeued`** → diagnose from the **queue branch's** runs, never
      the PR's own checks: the queue builds `main` plus this PR on
