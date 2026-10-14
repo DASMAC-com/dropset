@@ -427,11 +427,15 @@ event codecs, PDA helpers). CI discipline:
   The **tooling** is the stable crates.io `anchor-cli`, pinned to an
   **exact** version (the Makefile's `ANCHOR_CLI_VERSION`, mirrored by the
   Tests workflow's `ANCHOR_VERSION`), which builds an **sBPF v3** ELF by
-  default. The exact pin rather than latest stable is deliberate: the CLI
+  default — held at v0 by the Makefile's `ANCHOR_BUILD_SBF_ARCH` until the
+  test runtime and validator move to Agave 4.x, since Agave 3.1 cannot load
+  that v3 ELF. The exact pin rather than latest stable is deliberate: the CLI
   generates the IDL, so its version is part of the IDL-diff baseline below.
   The two move independently, and a crate bump is now a rename — the
   `anchor-next` tip has renamed `anchor-lang-v2` to `anchor-lang` — so it is
-  its own decision, never a side effect of a CLI bump.
+  its own decision, never a side effect of a CLI bump. The measured
+  toolchain facts and the probe recipe behind this bullet are in
+  [program-build.md](program-build.md).
 - **Gate CI on a diff of the full regenerated IDL.** `metadata.spec` is the
   Anchor **IDL-spec toolchain** version (constant once the CLI is pinned) and
   `metadata.version` is the program crate version — so an equality check on a

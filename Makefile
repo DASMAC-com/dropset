@@ -51,6 +51,13 @@ clean:
 # the program is built. The Tests workflow's ANCHOR_VERSION mirrors it, and a
 # drift fails check-anchor there.
 ANCHOR_CLI_VERSION := 1.2.1
+# That CLI builds sBPF v3 by default, but the Agave 3.1 runtime the tests
+# and the local validator run cannot load its v3 ELF ("invalid file
+# header"), so every `anchor build` here is held at v0 until the Agave 4.x
+# runtime lands. The CLI reads this variable in place of `--arch`, and the
+# export reaches the TUI's own `anchor build` because every `tui*` target
+# launches it from a recipe.
+export ANCHOR_BUILD_SBF_ARCH := v0
 
 # Required toolchain: anchor-cli at ANCHOR_CLI_VERSION, the Solana SBF
 # toolchain, and a solana-cli / solana-test-validator on the 3.1 minor —
@@ -1180,9 +1187,9 @@ tools-tests:
 		-s .claude/tools/tests -t .claude/tools -p 'test_*.py'
 	python3 -m unittest discover -s .claude/scripts -p 'test_*.py'
 
-# The stable crates.io anchor-cli, at the exact ANCHOR_CLI_VERSION; it builds
-# sBPF v3 by default. How it relates to the program crate's anchor-lang-v2
-# pin: interface.md § SDK, CI discipline.
+# The stable crates.io anchor-cli, at the exact ANCHOR_CLI_VERSION. How it
+# relates to the program crate's anchor-lang-v2 pin: interface.md § SDK, CI
+# discipline.
 .PHONY: install-anchor
 install-anchor:
 	CARGO_PROFILE_RELEASE_LTO=off cargo install anchor-cli \
