@@ -419,6 +419,10 @@ python3 .claude/tools/session_dispatch.py task 1234 + plan
 It prints one `verb -> tty` line each, then a roll-call of open
 sessions — the roll-call is the confirmation to relay.
 
+A **minor non-repo job** (a key file, a local deploy, a one-off
+probe) dispatches as **`chore <n>`**, not `task <n>`: the helper
+tier, no PR, In Review at handoff.
+
 - **The ask-then-yes IS the authorization**, as for `fleet go`;
   the tool never dispatches unasked.
 - **The substrate stays at the call site** — `task anthropic 1234`

@@ -59,6 +59,8 @@ _SUITE_OWNED_ENV = (
     "DS_MODEL_ADVISOR_SUBSTRATE",
     "DS_MODEL_EXECUTOR",
     "DS_MODEL_EXECUTOR_SUBSTRATE",
+    "DS_MODEL_HELPER",
+    "DS_MODEL_HELPER_SUBSTRATE",
     "DS_OP_ACCOUNT",
     "DS_OP_BEDROCK_REF",
     "ENABLE_PROMPT_CACHING_1H",
@@ -104,6 +106,7 @@ class SubstrateHarness(unittest.TestCase):
 _CONFIG = {
     "DS_MODEL_ADVISOR": "judge-model[1m]",
     "DS_MODEL_EXECUTOR": "work-model[1m]",
+    "DS_MODEL_HELPER": "help-model[1m]",
     "DS_MODEL_BACKGROUND": "bg-profile-id",
 }
 
@@ -125,6 +128,8 @@ class TierResolution(SubstrateHarness):
         self.assertEqual(lines, ["judge-model[1m]", "anthropic"])
         result, lines = self._tier("executor")
         self.assertEqual(lines, ["work-model[1m]", "bedrock"])
+        result, lines = self._tier("helper")
+        self.assertEqual(lines, ["help-model[1m]", "bedrock"])
 
     def test_an_unset_model_refuses_and_names_the_variable(self):
         # No committed fallback: an unset tier must not launch on some id the
@@ -132,6 +137,7 @@ class TierResolution(SubstrateHarness):
         for tier, var in (
             ("advisor", "DS_MODEL_ADVISOR"),
             ("executor", "DS_MODEL_EXECUTOR"),
+            ("helper", "DS_MODEL_HELPER"),
         ):
             with self.subTest(tier=tier):
                 result, lines = self._tier(tier, env={var: ""})
@@ -314,6 +320,38 @@ class VerbLaunch(SubstrateHarness):
             result.stderr,
         )
 
+    def test_chore_launches_the_helper_tier_on_bedrock_in_a_bare_worktree(self):
+        result, out = self._launch("chore eng-7", env=self._TOKEN)
+        self.assertIn("MODEL=help-model[1m] USE=1", out, result.stderr)
+        self.assertIn("-n 7 --permission-mode auto -w 7", out)
+        # No init-pr: the bootstrap is the written read-only prompt.
+        self.assertNotIn("/init-pr", out)
+        self.assertIn("READ-ONLY toward the repo", out)
+        self.assertIn("--state 'In Review' --keep-worktree", out)
+
+    def test_chore_takes_task_s_substrate_words(self):
+        result, out = self._launch("chore anthropic 7")
+        self.assertIn("MODEL=help-model[1m] USE=unset", out, result.stderr)
+        result, out = self._launch(
+            "chore bedrock 7",
+            env={**self._TOKEN, "DS_MODEL_HELPER_SUBSTRATE": "anthropic"},
+        )
+        self.assertIn("MODEL=help-model[1m] USE=1", out, result.stderr)
+
+    def test_chore_anthropic_survives_every_resume_path(self):
+        self._launch("chore anthropic 7")
+        for verb in ("chore 7", "task resume 7"):
+            with self.subTest(verb=verb):
+                result, out = self._launch(verb, env=self._TOKEN)
+                self.assertIn("MODEL=help-model[1m] USE=unset", out, result.stderr)
+
+    def test_chore_refuses_a_name_zero_and_extra_words(self):
+        for verb in ("chore", "chore pricing", "chore 0", "chore 7 8", "chore local 7"):
+            with self.subTest(verb=verb):
+                result, out = self._launch(verb, env=self._TOKEN)
+                self.assertIn("RC=1", out)
+                self.assertNotIn("MODEL=", out)
+
     def test_a_refused_plan_bedrock_login_leaves_no_bedrock_env(self):
         result, out = self._launch(
             "_ds_aws_login() { return 1; }; plan bedrock; "
@@ -489,6 +527,7 @@ class ModelsVerb(SubstrateHarness):
         result, out = self._models("")
         self.assertIn("advisor  judge-model[1m]  (anthropic)", out, result.stderr)
         self.assertIn("executor  work-model[1m]  (bedrock)", out)
+        self.assertIn("helper  help-model[1m]  (bedrock)", out)
         self.assertIn("background  bg-profile-id", out)
         self.assertNotIn("AWS ", out)
         self.assertIn("RC=0", out)
@@ -505,12 +544,14 @@ class ModelsVerb(SubstrateHarness):
             env={
                 "DS_MODEL_ADVISOR": "claude-known-judge[1m]",
                 "DS_MODEL_EXECUTOR": "us.anthropic.known-work",
+                "DS_MODEL_HELPER": "claude-known-help[1m]",
                 "DS_MODEL_BACKGROUND": "claude-known-bg[1m]",
                 "DS_AWS_PROFILE": "admin",
             },
         )
         self.assertIn("ok     advisor us.anthropic.claude-known-judge", out)
         self.assertIn("ok     executor us.anthropic.known-work", out)
+        self.assertIn("ok     helper us.anthropic.claude-known-help", out)
         # Background is mapped too, the way Claude Code maps it.
         self.assertIn(
             "--inference-profile-identifier us.anthropic.claude-known-bg", out
@@ -614,6 +655,10 @@ class MarkerRoundTrip(SubstrateHarness):
         self.assertEqual(
             result.stdout.split(), ["advisor", "bedrock", "bedrock", "executor"]
         )
+
+    def test_a_helper_tier_file_is_read_back(self):
+        result = self._zsh("_ds_substrate_write 6 bedrock helper; _ds_resume_tier 6")
+        self.assertEqual(result.stdout.strip(), "helper")
 
     def test_bedrock_round_trips(self):
         result = self._zsh(
@@ -920,6 +965,7 @@ class VerbSurface(unittest.TestCase):
         for verb in (
             "task",
             "explore",
+            "chore",
             "plan",
             "housekeeping",
             "architect",
