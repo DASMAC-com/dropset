@@ -620,12 +620,17 @@ impl Swap {
         // construction.
         //
         // Pre-sized to its bound — two entries (own and flipped) per level
-        // per sector — in one allocation: the runtime's bump allocator
-        // never reclaims, so growing by doubling would leak every
-        // outgrown buffer into the 32 KiB heap the per-leg fill
-        // bookkeeping below also draws on.
+        // per active vault — in one allocation: the runtime's bump
+        // allocator never reclaims, so growing by doubling would leak
+        // every outgrown buffer into the 32 KiB heap the per-leg fill
+        // bookkeeping below also draws on. Sized by `active_count`, never
+        // the slab length: tombstoned and free sectors sit in the slab
+        // too and are not walked, so a slab-sized reservation would let
+        // dead sectors exhaust the heap. Clamped to the slab so a corrupt
+        // count can only under-reserve, which a `push` regrows past.
+        let active_vaults = (self.market.active_count.get() as usize).min(self.market.len());
         let mut heap: alloc::vec::Vec<HeapEntry> =
-            alloc::vec::Vec::with_capacity(2 * N_LEVELS * self.market.len());
+            alloc::vec::Vec::with_capacity(2 * N_LEVELS * active_vaults);
         let mut cur = head;
         // Bound the walk by `market.len()` so a corrupt `next` ptr
         // that creates a cycle can't burn CU indefinitely. Each live
@@ -721,7 +726,10 @@ impl Swap {
                         // so it governs both counters. The gate is
                         // `matching_math::level_is_live`, shared with the
                         // off-chain simulator so displayed depth equals
-                        // filled depth.
+                        // filled depth — for own counters; the simulator
+                        // does not yet read the flipped ones, so it
+                        // under-reports depth (the safe direction) until
+                        // the readers learn to flip.
                         if !level_is_live(
                             price,
                             size,
@@ -746,8 +754,8 @@ impl Swap {
             }
             cur = next_sector;
         }
-        // Sort by (price_key, nonce, sector_idx, level_idx) — best
-        // price first; on ties, older quote (lower nonce) wins; on
+        // Sort by (price_key, nonce, sector_idx, level_idx, flipped) —
+        // best price first; on ties, older quote (lower nonce) wins; on
         // further ties, lower sector_idx wins; finally lower
         // level_idx, and the level's own counter before its flipped one.
         // This is the spec's price-time priority over a single

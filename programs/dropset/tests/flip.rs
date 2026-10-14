@@ -154,12 +154,12 @@ fn a_bid_fill_flips_and_the_round_trip_grows_the_level_by_the_spread() {
 
     let after = f.vault(0).remaining.bids[0];
     assert_eq!(after.flip_size.get(), 0);
-    // Pinned exactly: the level regains dq x (1 + r), toward zero.
+    // Pinned exactly: the level regains dq × (1 + r), toward zero.
     assert_eq!(after.size.get(), SEED_QUOTE - dq + credited);
     let ideal = (dq as u128 * (PPM + SPREAD as u128) / PPM) as u64;
     assert!(
         credited <= ideal && ideal - credited <= 3,
-        "regained {credited}, ideal dq x (1 + r) = {ideal}"
+        "regained {credited}, ideal dq × (1 + r) = {ideal}"
     );
     assert!(after.size.get() > SEED_QUOTE);
     assert_custody(&f, 2);
@@ -342,7 +342,13 @@ const COMPUTE_BUDGET_ID: Pubkey =
     Pubkey::from_str_const("ComputeBudget111111111111111111111111111111");
 /// The per-transaction ceiling a `SetComputeUnitLimit` can request.
 const MAX_TX_CU: u32 = 1_400_000;
+/// The compute-budget program's `SetComputeUnitLimit` discriminant.
+const SET_COMPUTE_UNIT_LIMIT: u8 = 2;
 const VAULTS: u32 = 10;
+/// Floor on the measured take — one tie group of ten legs, the deepest
+/// step that fits today — so a change that eats into the heap headroom
+/// fails here rather than on the first deep sweep in production.
+const MIN_LEGS: usize = 10;
 
 /// Send `ix` behind a `SetComputeUnitLimit` at the transaction ceiling,
 /// so the measurement reports what the take costs rather than where the
@@ -353,7 +359,7 @@ fn send_at_max_cu(
     payer: &Keypair,
     ix: Instruction,
 ) -> Result<TransactionMetadata, String> {
-    let mut data = vec![2u8];
+    let mut data = vec![SET_COMPUTE_UNIT_LIMIT];
     data.extend_from_slice(&MAX_TX_CU.to_le_bytes());
     let limit = Instruction::new_with_bytes(COMPUTE_BUDGET_ID, &data, vec![]);
     let blockhash = f.svm.latest_blockhash();
@@ -442,14 +448,14 @@ fn a_fully_flipped_ten_vault_book_measures_the_largest_take() {
         legs >= MIN_LEGS,
         "a take fills at least {MIN_LEGS} legs, got {legs}"
     );
-    assert!(cu < MAX_TX_CU as u64);
+    // What stops the whole-book take is the heap, as the doc above claims —
+    // not compute, and not a fault in the flipped path.
+    assert!(
+        stopped_by.contains("heap"),
+        "the whole-book take should fail on the heap, failed on: {stopped_by}"
+    );
     assert_custody(&f, N_LEVELS as u64 + 1);
 }
-
-/// Floor on the measured take — one tie group of ten legs, the deepest
-/// step that fits today — so a change that eats into the heap headroom
-/// fails here rather than on the first deep sweep in production.
-const MIN_LEGS: usize = 10;
 
 /// Every price a Buy would meet on the book, ascending: each vault's own
 /// asks and each bid level's flipped ask.

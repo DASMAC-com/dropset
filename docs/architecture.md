@@ -2473,7 +2473,10 @@ On every taker instruction:
    never moves: what one direction can drain is bounded by the flush
    allowance. A fill against a flipped counter emits an ordinary
    `FillEvent` at `flip_price` on that level; the event format is
-   unchanged.
+   unchanged. A consumer tells the counter apart by comparing
+   `fill_price` with the level's `price` and `flip_price`: on a Buy,
+   `(sector_idx, level_idx)` names either `asks[level_idx]` or the
+   flipped side of `bids[level_idx]`.
 
    Because the `Vec`
    is sorted best-price-first, the first entry whose price crosses the
@@ -2549,9 +2552,14 @@ design:
 - **Capacity.** A take reads two counters per level, so the book is
   bounded at `2 × max_vaults_per_market × N_LEVELS` entries. At the
   default cap (2 × 10 vaults × `N_LEVELS = 8` = 160 entries × ~40 B ≈
-  **6.4 KiB**) it fits the **32 KiB default program heap** on its own.
-  The book is the matcher's only heap structure sized by the market; the
-  rest is sized by the fill (see next).
+  **6.25 KiB**) it fits the **32 KiB default program heap** on its own.
+  The book is the matcher's only heap structure sized by the market,
+  reserved per **active** vault (`active_count`, never the slab length,
+  which also counts tombstoned and free sectors); the rest is sized by
+  the fill (see next). At ~640 B per active vault the book alone
+  exhausts the default heap near **50 active vaults**, and the fill
+  buffers bring that lower, so a `max_vaults_per_market` raised far
+  past the default cannot rely on a frame request to fit.
 - **The fill, not the book, binds.** Each filled leg buffers a 208 B
   `FillEvent` for `lib.rs` to emit, plus a rollback snapshot, and both
   grow by doubling. That buffer exhausts the heap well before compute
