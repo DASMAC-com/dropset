@@ -303,7 +303,9 @@ impl Deposit {
             // and `single_leg_basket` guards `shares_out > 0`, hence
             // `new_total ≥ 2`. No zero-divisor guard needed here — the
             // seeding case it would cover is unreachable from `deposit`.
-            let vps_after = ((l_after << Q32_SHIFT) / new_total as u128) as u64;
+            // Saturated rather than truncated into u64, as the HWM is.
+            let vps_after =
+                ((l_after << Q32_SHIFT) / new_total as u128).min(u64::MAX as u128) as u64;
             // Decoded reference price for cost-basis math.
             let ref_now_price = crate::Price::from_bits(ref_price_bits);
             // Quote-denominated lot value: `quote_in + base_in × ref`

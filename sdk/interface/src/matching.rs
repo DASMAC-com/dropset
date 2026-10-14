@@ -532,8 +532,7 @@ fn flush_side_sum_exceeds_bps(v: &Vault, is_buy: bool) -> bool {
 /// Resolve a single level's `(price, size, wall_deadline, slot_deadline)`
 /// for the chosen side: materialize from the `LiquidityProfile` if a
 /// flush is armed (mirroring `Vault::materialize_remaining`), else read
-/// the stored
-/// `remaining` state.
+/// the stored `remaining` state.
 ///
 /// The two reference datums are no longer parameters. They are read from
 /// `v.reference_price` through `Level::deadlines`, which takes the

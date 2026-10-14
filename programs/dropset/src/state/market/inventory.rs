@@ -73,8 +73,7 @@ mod tests {
 
     #[test]
     fn apply_deposit_inventory_overflow_is_typed_and_writes_nothing() {
-        // A single-atom vault with a near-ceiling share count: the share
-        // add overflows. It must fail typed, leaving the vault untouched.
+        // A near-ceiling share count: the share add overflows. It must fail typed, leaving the vault untouched.
         let mut v = Vault::zeroed();
         v.base_atoms = 2u64.into();
         v.quote_atoms = 1u64.into();

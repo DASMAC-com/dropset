@@ -9,8 +9,7 @@
 //! - flush materialization ([`Vault::materialize_remaining`], which
 //!   rebuilds [`Vault::remaining`] from [`Vault::profile`] + current
 //!   inventory via the [`matching_math`](dropset_math_core::matching_math)
-//!   kernels and clears `FLUSH_BIT`), so the swap handler no longer
-//!   open-codes the flush loop.
+//!   kernels and clears `FLUSH_BIT`).
 //!
 //! The pure formulas live in `dropset-math-core` so the off-chain NAV and
 //! simulator consumers reuse them. The deposit's inventory mutation wraps
@@ -175,7 +174,8 @@ impl Vault {
 /// it as `size_bps` of `leg_atoms` (or zero when its side failed the
 /// `Σ ≤ BPS` gate), and stamp both absolute deadlines. Factored out so the
 /// bid and ask halves cannot be edited one side at a time;
-/// `#[inline(always)]` keeps the codegen of the former open-coded pair.
+/// `#[inline(always)]` is meant to keep the codegen of the former
+/// open-coded pair.
 #[inline(always)]
 fn materialize_level(
     dst: &mut Position,

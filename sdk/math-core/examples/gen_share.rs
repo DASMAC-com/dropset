@@ -244,6 +244,9 @@ fn realize_cases() -> Vec<Value> {
         // f == 100% against a zero HWM zeroes the denominator; the HWM
         // advance is kept.
         realize_case(400, 400, 100, 100, 0, PPM as u32),
+        // f == 100%: the floored hwm·s lands the post-mint VPS one quantum
+        // below the prior mark; the stored HWM is floored at that mark.
+        realize_case(9, 9, 3, 3, Q32_32_ONE + 1, PPM as u32),
     ]
 }
 

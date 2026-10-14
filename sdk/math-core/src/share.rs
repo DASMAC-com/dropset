@@ -13,10 +13,11 @@
 //! and [`isqrt_u128`], [`compute_pro_rata_slice`] and
 //! [`min_leader_share_ok`] re-exported unchanged and called from handlers.
 //!
-//! Every kernel is a total function: each divisor is guarded, and every
-//! precondition a caller is expected to uphold is stated on the kernel and
-//! is either checked (returning a typed error) or clamped, never left to
-//! panic. Callers' own guards are defense in depth, not the only line.
+//! Every kernel is a total function: each divisor is guarded and no input
+//! panics. A precondition a caller is expected to uphold is stated on the
+//! kernel, and its violation either fails typed, clamps, or truncates as
+//! that kernel documents. Callers' own guards are defense in depth, not the
+//! only line.
 //!
 //! The off-chain TS SDK (`sdk/ts/src/share.ts`) is a hand port of six of
 //! these — every kernel except [`min_leader_share_ok`], which is on-chain
@@ -230,7 +231,8 @@ pub struct RealizeResult {
 /// It is a no-op (returns the inputs unchanged) when `total_shares == 0`,
 /// `L == 0`, or `VPS <= HWM`. Otherwise HWM advances whether or not shares
 /// are minted: at a zero fee, a sub-quantum gain, a zero denominator
-/// (`f == 100%` against a zero HWM), or an `m` that floors to zero.
+/// (`f == 100%` against an HWM that rounds to zero at atom scale,
+/// `hwm × s < 2^32`), or an `m` that floors to zero.
 ///
 /// `perf_fee_rate` is in PPM and must be `≤ PPM`; the program's one writer
 /// enforces that, and the kernel clamps a larger rate to `PPM` so `1 − f`
@@ -238,7 +240,8 @@ pub struct RealizeResult {
 ///
 /// `L`, `HWM`, and the intermediate share math run in `u128`. The
 /// numerator `f · s · (L − hwm·s)` can exceed `u128` once `L` passes
-/// roughly `1.2e17` at a 10% fee, so it is divided through a full-width
+/// roughly `1.2e17` at a 10% fee and VPS 2.0 over an HWM of 1.0 (higher
+/// nearer VPS 1.0), so it is divided through a full-width
 /// `mul_div_floor` rather than formed directly. `m` is capped at the
 /// headroom both share counts have left below `u64::MAX`, so
 /// `total_shares` and `leader_shares` always move by exactly
@@ -300,7 +303,8 @@ pub fn realize_perf_fee(
     let one_minus_f = PPM as u128 - f_ppm;
     let denom = one_minus_f * l + f_ppm * hwm_s;
     if denom == 0 {
-        // Only `f == 100%` against a zero HWM: VPS still exceeds the HWM,
+        // Only `f == 100%` against an HWM that rounds to zero at atom
+        // scale (`hwm × s < 2^32`): VPS still exceeds the HWM,
         // so the advance is earned even though no fee is computable.
         return advanced;
     }
@@ -770,6 +774,18 @@ mod tests {
         let r = realize_perf_fee(400, 400, 100, 100, 0, PPM as u32);
         assert_eq!(r.shares_minted, 0);
         assert_eq!(r.hwm_after, 4 * Q32_32_ONE);
+    }
+
+    #[test]
+    fn realize_post_mint_hwm_never_drops_below_prior_mark() {
+        // At a 100% fee the post-mint VPS is `2^32 · hwm_s / s`, and the
+        // floored `hwm_s` can land it a quantum below the incoming HWM:
+        // here L = 9, s = 3, hwm_s = 3, m = 6, so post-mint VPS is exactly
+        // 1.0 against a prior mark of 1.0 + 1 quantum. The stored HWM must
+        // stay at the prior mark rather than step back.
+        let r = realize_perf_fee(9, 9, 3, 3, Q32_32_ONE + 1, PPM as u32);
+        assert_eq!(r.shares_minted, 6);
+        assert_eq!(r.hwm_after, Q32_32_ONE + 1);
     }
 
     #[test]
