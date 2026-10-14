@@ -1392,6 +1392,7 @@ explore() {
 # still receives the signal — a trap, unlike an ignore, is reset across exec.
 _ds_upkeep() {
   setopt localoptions localtraps
+  local rc interrupted=''
   if [[ "$DS_SKIP_UPKEEP" == 1 ]]; then
     print -u2 'dropset: DS_SKIP_UPKEEP=1 — skipping the upkeep pass.'
     return 0
@@ -1400,11 +1401,17 @@ _ds_upkeep() {
     print -u2 'dropset: no base checkout to run the upkeep pass in — skipping.'
     return 0
   fi
+  # Before the secrets fetch, so a hung `op read` is covered too.
+  trap 'interrupted=1' INT
   _ds_secrets
-  trap 'print -u2 "dropset: upkeep interrupted — launching anyway."' INT
-  python3 "$_DS_REPO/.claude/tools/upkeep.py" run --if-stale ||
-    print -u2 "dropset: the upkeep pass failed (exit $?) — launching anyway;" \
+  python3 "$_DS_REPO/.claude/tools/upkeep.py" run --if-stale
+  rc=$?
+  if [[ -n "$interrupted" ]]; then
+    print -u2 'dropset: upkeep interrupted — launching anyway.'
+  elif (( rc != 0 )); then
+    print -u2 "dropset: the upkeep pass failed (exit $rc) — launching anyway;" \
       'DS_SKIP_UPKEEP=1 skips it.'
+  fi
   return 0
 }
 

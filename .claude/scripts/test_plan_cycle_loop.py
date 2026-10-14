@@ -168,7 +168,12 @@ _UPKEEP_SCRIPT = """
 source "$INIT" 2>/dev/null
 _DS_REPO="$REPO"
 _ds_secrets() { : }
-python3() { print -r -- "$*" >> "$CALLS"; return ${PASS_RC:-0} }
+python3() {
+  print -r -- "$*" >> "$CALLS"
+  # A Ctrl-C reaches the whole foreground group; signal the shell as a tty would.
+  [[ -n "$INTERRUPT" ]] && { kill -INT $$; return 130 }
+  return ${PASS_RC:-0}
+}
 _ds_upkeep
 """
 
@@ -201,10 +206,17 @@ class UpkeepHelper(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertIn("failed (exit 3)", proc.stderr)
 
+    def test_ctrl_c_skips_the_pass_and_still_returns_zero(self):
+        proc, _ = self._upkeep(INTERRUPT="1")
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("upkeep interrupted", proc.stderr)
+        self.assertNotIn("failed", proc.stderr)
+
     def test_the_off_switch_runs_nothing(self):
         proc, calls = self._upkeep(DS_SKIP_UPKEEP="1")
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(calls, "")
+        self.assertIn("DS_SKIP_UPKEEP=1", proc.stderr)
 
 
 if __name__ == "__main__":
