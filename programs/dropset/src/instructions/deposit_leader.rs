@@ -178,11 +178,16 @@ impl DepositLeader {
         let (new_total, new_leader_shares, new_base_atoms, new_quote_atoms) = {
             let v = self.market.mutate_vault(vault_idx)?;
             let (new_total, new_base_atoms, new_quote_atoms) =
-                apply_deposit_inventory(v, base_in_final, quote_in_final, shares_out);
+                apply_deposit_inventory(v, base_in_final, quote_in_final, shares_out)?;
             // Leader path: the leader's own stake grows by the minted
             // shares (the outside `deposit` path leaves `leader_shares`
             // untouched, so this bump is not part of the shared helper).
-            let new_leader_shares = v.leader_shares.get() + shares_out;
+            // Checked like the shared adds: overflow fails typed.
+            let new_leader_shares = v
+                .leader_shares
+                .get()
+                .checked_add(shares_out)
+                .ok_or(DropsetError::MathOverflow)?;
             v.leader_shares = new_leader_shares.into();
             if is_seeding {
                 // `hwm` is owned by `create_vault`, which stamps it to

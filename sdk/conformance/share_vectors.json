@@ -93,6 +93,19 @@
       "shares_in": "1",
       "slice_base": "0",
       "slice_quote": "18446744073709551615"
+    },
+    {
+      "entry_ref_bits": 2157483648,
+      "err": "InsufficientShares",
+      "net_deposits": "100",
+      "realized_fx": "0",
+      "realized_pnl": "0",
+      "realized_yield": "0",
+      "ref_now_bits": 2157483648,
+      "shares": "0",
+      "shares_in": "0",
+      "slice_base": "0",
+      "slice_quote": "0"
     }
   ],
   "isqrt": [
@@ -173,6 +186,16 @@
       "ref_now_bits": 4260749567,
       "shares_out": "18446744073709551615",
       "vps_after": "8589934592"
+    },
+    {
+      "entry_ref_new_bits": 2157483648,
+      "entry_ref_prev_bits": 2157483648,
+      "entry_vps_new": "4294967296",
+      "entry_vps_prev": "4294967296",
+      "prior_shares": "0",
+      "ref_now_bits": 2167483648,
+      "shares_out": "0",
+      "vps_after": "8589934592"
     }
   ],
   "pro_rata_slice": [
@@ -215,6 +238,14 @@
       "slice_base": "18446744073709551615",
       "slice_quote": "18446744073709551615",
       "total_shares": "18446744073709551615"
+    },
+    {
+      "base_atoms": "1000",
+      "quote_atoms": "2000",
+      "shares_in": "0",
+      "slice_base": "0",
+      "slice_quote": "0",
+      "total_shares": "0"
     }
   ],
   "realize_perf_fee": [
@@ -277,6 +308,78 @@
       "shares_minted": "0",
       "total_shares": "100",
       "total_shares_after": "100"
+    },
+    {
+      "base_atoms": "400",
+      "hwm": "4294967296",
+      "hwm_after": "4294967296",
+      "leader_shares": "100",
+      "leader_shares_after": "400",
+      "perf_fee_rate": 3000000,
+      "quote_atoms": "400",
+      "shares_minted": "300",
+      "total_shares": "100",
+      "total_shares_after": "400"
+    },
+    {
+      "base_atoms": "18446744073709551615",
+      "hwm": "4294967296",
+      "hwm_after": "8160437862",
+      "leader_shares": "9223372036854775807",
+      "leader_shares_after": "9708812670373448217",
+      "perf_fee_rate": 100000,
+      "quote_atoms": "18446744073709551615",
+      "shares_minted": "485440633518672410",
+      "total_shares": "9223372036854775807",
+      "total_shares_after": "9708812670373448217"
+    },
+    {
+      "base_atoms": "10000000000",
+      "hwm": "10000000000000000000",
+      "hwm_after": "18446744073709551615",
+      "leader_shares": "1",
+      "leader_shares_after": "1",
+      "perf_fee_rate": 0,
+      "quote_atoms": "10000000000",
+      "shares_minted": "0",
+      "total_shares": "1",
+      "total_shares_after": "1"
+    },
+    {
+      "base_atoms": "18446744073709551615",
+      "hwm": "0",
+      "hwm_after": "4294967296",
+      "leader_shares": "0",
+      "leader_shares_after": "10",
+      "perf_fee_rate": 100000,
+      "quote_atoms": "18446744073709551615",
+      "shares_minted": "10",
+      "total_shares": "18446744073709551605",
+      "total_shares_after": "18446744073709551615"
+    },
+    {
+      "base_atoms": "400",
+      "hwm": "0",
+      "hwm_after": "17179869184",
+      "leader_shares": "100",
+      "leader_shares_after": "100",
+      "perf_fee_rate": 1000000,
+      "quote_atoms": "400",
+      "shares_minted": "0",
+      "total_shares": "100",
+      "total_shares_after": "100"
+    },
+    {
+      "base_atoms": "9",
+      "hwm": "4294967297",
+      "hwm_after": "4294967297",
+      "leader_shares": "3",
+      "leader_shares_after": "9",
+      "perf_fee_rate": 1000000,
+      "quote_atoms": "9",
+      "shares_minted": "6",
+      "total_shares": "3",
+      "total_shares_after": "9"
     }
   ],
   "single_leg_basket": [
@@ -341,12 +444,56 @@
     {
       "base_atoms": "1000000",
       "base_in": "1",
-      "err": "MathOverflow",
+      "err": "ZeroShares",
       "max_base_in": "18446744073709551615",
       "max_quote_in": "18446744073709551615",
       "quote_atoms": "1000000",
       "quote_in": "0",
       "total_shares": "100"
+    },
+    {
+      "base_atoms": "0",
+      "base_in": "10",
+      "err": "EmptyLeg",
+      "max_base_in": "18446744073709551615",
+      "max_quote_in": "18446744073709551615",
+      "quote_atoms": "1000",
+      "quote_in": "0",
+      "total_shares": "100"
+    },
+    {
+      "base_atoms": "0",
+      "base_in": "0",
+      "max_base_in": "18446744073709551615",
+      "max_quote_in": "18446744073709551615",
+      "ok": {
+        "base_in_final": "0",
+        "quote_in_final": "100",
+        "shares_out": "10"
+      },
+      "quote_atoms": "1000",
+      "quote_in": "100",
+      "total_shares": "100"
+    },
+    {
+      "base_atoms": "1000",
+      "base_in": "0",
+      "err": "EmptyLeg",
+      "max_base_in": "18446744073709551615",
+      "max_quote_in": "18446744073709551615",
+      "quote_atoms": "0",
+      "quote_in": "10",
+      "total_shares": "100"
+    },
+    {
+      "base_atoms": "1000",
+      "base_in": "10",
+      "err": "ZeroShares",
+      "max_base_in": "18446744073709551615",
+      "max_quote_in": "18446744073709551615",
+      "quote_atoms": "1000",
+      "quote_in": "0",
+      "total_shares": "0"
     }
   ]
 }

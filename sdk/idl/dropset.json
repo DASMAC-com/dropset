@@ -3951,6 +3951,16 @@
       "code": 6051,
       "name": "NewLeaderIsDepositor",
       "msg": "new leader holds a depositor position on this vault"
+    },
+    {
+      "code": 6052,
+      "name": "EmptyLeg",
+      "msg": "vault holds none of the supplied deposit leg; deposit the other leg"
+    },
+    {
+      "code": 6053,
+      "name": "ZeroShares",
+      "msg": "deposit is too small to mint one whole share"
     }
   ],
   "types": [

@@ -168,6 +168,12 @@ pub enum DropsetError {
     /// 6051 - new leader holds a depositor position on this vault
     #[error("new leader holds a depositor position on this vault")]
     NewLeaderIsDepositor = 0x17A3,
+    /// 6052 - vault holds none of the supplied deposit leg; deposit the other leg
+    #[error("vault holds none of the supplied deposit leg; deposit the other leg")]
+    EmptyLeg = 0x17A4,
+    /// 6053 - deposit is too small to mint one whole share
+    #[error("deposit is too small to mint one whole share")]
+    ZeroShares = 0x17A5,
 }
 
 impl From<DropsetError> for solana_program_error::ProgramError {

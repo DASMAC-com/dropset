@@ -510,9 +510,11 @@ fn collect_side_levels(
 /// True when the flush profile's *collected* side (`is_buy` ⇒ asks) sums
 /// past `BPS` — `Σ size_bps > BPS` on that side, which subsumes any single
 /// level `> BPS`. The on-chain matcher zeroes such a side's `remaining` at
-/// flush time (see `swap.rs`), dropping it from matching without aborting
-/// the take, so the simulator mirrors that by skipping this vault's
-/// contribution on the collected side.
+/// flush time (`Vault::materialize_remaining`), dropping it from matching
+/// without aborting the take, so the simulator mirrors that by skipping
+/// this vault's contribution on the collected side. The sums come from
+/// [`LiquidityProfile::size_bps_sums`](crate::layout::LiquidityProfile::size_bps_sums),
+/// the same helper the client-side pre-submit check uses.
 ///
 /// This gate is **load-bearing**, not a corruption backstop. Nothing bounds
 /// the sum at write time — `set_liquidity_profile` stores the profile raw,
@@ -522,19 +524,15 @@ fn collect_side_levels(
 /// on-chain and by this mirror off-chain; removing it would show depth the
 /// engine zeroes.
 fn flush_side_sum_exceeds_bps(v: &Vault, is_buy: bool) -> bool {
-    let side = if is_buy {
-        &v.profile.asks
-    } else {
-        &v.profile.bids
-    };
-    let sum: u32 = side.iter().map(|l| l.size_bps.get() as u32).sum();
+    let (bid_sum, ask_sum) = v.profile.size_bps_sums();
+    let sum = if is_buy { ask_sum } else { bid_sum };
     sum > BPS as u32
 }
 
 /// Resolve a single level's `(price, size, wall_deadline, slot_deadline)`
 /// for the chosen side: materialize from the `LiquidityProfile` if a
-/// flush is armed (mirroring `swap.rs`), else read the stored
-/// `remaining` state.
+/// flush is armed (mirroring `Vault::materialize_remaining`), else read
+/// the stored `remaining` state.
 ///
 /// The two reference datums are no longer parameters. They are read from
 /// `v.reference_price` through `Level::deadlines`, which takes the

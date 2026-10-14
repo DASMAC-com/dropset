@@ -29,7 +29,7 @@ use crate::{
     events::{DepositEvent, RealizeEvent},
     state::{
         apply_deposit_inventory, isqrt_u128, min_leader_share_ok, realize_in_place,
-        single_leg_basket, Market, VaultAccess,
+        single_leg_basket, Market, VaultAccess, Q32_SHIFT,
     },
     VaultDepositorHeader,
 };
@@ -242,9 +242,13 @@ impl Deposit {
         // `leader_shares / total_shares >= min_leader_share / PPM`.
         // Always enforced here — this handler is outside-only by
         // construction, so `leader_shares` is unchanged and the new
-        // total is `total_shares + shares_out`.
+        // total is `total_shares + shares_out` — checked, so an overflow
+        // fails typed here rather than aborting.
+        let total_after = total_shares
+            .checked_add(shares_out)
+            .ok_or(DropsetError::MathOverflow)?;
         require!(
-            min_leader_share_ok(leader_shares, total_shares + shares_out, min_leader_share),
+            min_leader_share_ok(leader_shares, total_after, min_leader_share),
             DropsetError::MinLeaderShareViolated
         );
 
@@ -277,7 +281,7 @@ impl Deposit {
         let (new_total, new_leader_shares, new_base_atoms, new_quote_atoms) = {
             let v = self.market.mutate_vault(vault_idx)?;
             let (new_total, new_base_atoms, new_quote_atoms) =
-                apply_deposit_inventory(v, base_in_final, quote_in_final, shares_out);
+                apply_deposit_inventory(v, base_in_final, quote_in_final, shares_out)?;
             // Outside path: `Vault.leader_shares` is unchanged — the
             // depositor's shares-out lands on the `VaultDepositor` PDA
             // below.
@@ -299,7 +303,9 @@ impl Deposit {
             // and `single_leg_basket` guards `shares_out > 0`, hence
             // `new_total ≥ 2`. No zero-divisor guard needed here — the
             // seeding case it would cover is unreachable from `deposit`.
-            let vps_after = ((l_after << 32) / new_total as u128) as u64;
+            // Saturated rather than truncated into u64, as the HWM is.
+            let vps_after =
+                ((l_after << Q32_SHIFT) / new_total as u128).min(u64::MAX as u128) as u64;
             // Decoded reference price for cost-basis math.
             let ref_now_price = crate::Price::from_bits(ref_price_bits);
             // Quote-denominated lot value: `quote_in + base_in × ref`
