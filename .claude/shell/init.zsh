@@ -826,7 +826,8 @@ _ds_substrate_enter() {
 #
 # The key is a parameter rather than a hard-coded tag because a base-repo
 # session would key on its computed session id — but **no verb does that
-# today**, and the only two call sites both pass a worktree tag. Said plainly
+# today**, and every call site (`task`, `architect`, `chore`) passes a
+# worktree tag. Said plainly
 # because the earlier wording here described session-id keying as if it
 # shipped, which it does not: every base-repo verb is seat-only, so none of
 # them has a substrate worth recording.
