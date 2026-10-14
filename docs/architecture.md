@@ -2474,7 +2474,9 @@ On every taker instruction:
    allowance. A fill against a flipped counter emits an ordinary
    `FillEvent` at `flip_price` on that level; the event format is
    unchanged. A consumer tells the counter apart by comparing
-   `fill_price` with the level's `price` and `flip_price`: on a Buy,
+   `fill_price` with the level's `price` and `flip_price` (ambiguous
+   only where the two coincide, when either reading prices the fill
+   identically): on a Buy,
    `(sector_idx, level_idx)` names either `asks[level_idx]` or the
    flipped side of `bids[level_idx]`.
 
