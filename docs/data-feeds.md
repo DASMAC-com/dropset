@@ -1005,8 +1005,8 @@ omission rather than an absence: Coinbase does list `AUDD-USDC`, but it is
 thin enough that a ticker poll returns the last print whether or not one
 happened, so it is left unwired for the MVP and AUDD quotes on a pinned basis
 alongside CADC and MXNe. TGBP's books are comparably thin, and it is wired
-anyway by operator ruling: as the first mainnet market its books are expected
-to deepen, and an observed basis is preferred over a pin.
+anyway by operator ruling: as the market planned as the first on mainnet its
+books are expected to deepen, and an observed basis is preferred over a pin.
 
 Two decode details Pyth forces, both handled in the adapter. It publishes each
 cross **one way only**, and for most roster currencies that is `USD/<ccy>`

@@ -2814,7 +2814,8 @@ mod tests {
     }
 
     /// Exactly the MVP pairs demand a live tape — the three first-fill pairs
-    /// plus TGBP, the first mainnet market. The rest must not, or
+    /// plus TGBP, the market planned as the first on mainnet. The rest must
+    /// not, or
     /// `make demo` stops resting books on the thin-roster pairs — which have
     /// no intraday source and never will.
     #[test]

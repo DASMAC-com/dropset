@@ -87,8 +87,9 @@ pub struct MarketConfig {
     /// inverted direction.
     pub pyth_invert: bool,
     /// Coinbase product id for the token against USDC — the **primary** basis
-    /// leg, in exactly the engine's units. `None` for a token Coinbase doesn't
-    /// list, which is all of the roster but EURC and TGBP.
+    /// leg, in exactly the engine's units. `None` for every token but EURC and
+    /// TGBP: Coinbase lists none of the others except AUDD, which is left
+    /// unwired deliberately (see [`MARKETS`]).
     pub coinbase_product: Option<&'static str>,
     /// Kraken pair name for the token against USD — the basis-leg secondary.
     /// `None` for a token Kraken doesn't list (every exotic).
@@ -184,18 +185,18 @@ pub struct MarketConfig {
 /// but it does leave four markets resting their basis on one uncorroborated
 /// index reading, and three (MXNe, AUDD, CADC) on a pinned basis instead.
 ///
-/// TGBP's two books are thin — on 2026-10-13 each turned over roughly $10k a
-/// day, Kraken in 58 trades and Coinbase limit-only — which is the argument
-/// that pinned AUDD. It is observed anyway, by operator ruling: the basis
-/// filter smooths a quiet book, and the books are expected to deepen.
+/// TGBP's two books are thin — on 2026-10-13 each turned over $10–14k a day,
+/// Kraken in 58 trades and Coinbase limit-only — which is the argument that
+/// pinned AUDD. It is observed anyway, by operator ruling: the basis EMA
+/// smooths a quiet book, and the books are expected to deepen.
 ///
 /// **AUDD is the one deliberate omission, and it is not an oversight.**
 /// Coinbase does list `AUDD-USDC` — re-checked 2026-09-08, `online` with
 /// `trading_disabled: false`, and the market-data ticker collector rosters it
 /// again. It is left unwired here for the MVP on two grounds. First, the
 /// operator's re-scope is explicit that for the first fills the FX anchor times
-/// the 1:1 redemption peg is enough for AUDD and CADC, and only EURC uses a
-/// stored Coinbase basis. Second, the product is thinly traded, and a ticker
+/// the 1:1 redemption peg is enough for AUDD and CADC, and only EURC used a
+/// stored Coinbase basis (TGBP has since joined it). Second, the product is thinly traded, and a ticker
 /// poll returns the last print whether or not one happened recently — so a
 /// stale print aged from receipt would read fresh and *corroborate* the basis
 /// leg with a number nobody traded. Wiring it is the v2 upgrade, and it wants

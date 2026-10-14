@@ -9,11 +9,11 @@
 //! here is what lets a peg dislocation be read after the fact rather than only
 //! watched live.
 //!
-//! The default roster collects the two legs the maker already subscribes to —
-//! `USDC-USD` and `EURC-USD` — plus three the store wants and no consumer
-//! reads yet: `EURC-EUR`, token against its own fiat and the closest live
-//! keyless stand-in for an issuer redemption rate; `EURC-USDC`, a second
-//! venue's print of the MVP pair; and `QCAD-USD`, the CAD-stablecoin
+//! The default roster collects the three legs the maker already subscribes
+//! to — `USDC-USD`, `EURC-USD` and `TGBP-USD` — plus three the store wants and
+//! no consumer reads yet: `EURC-EUR`, token against its own fiat and the
+//! closest live keyless stand-in for an issuer redemption rate; `EURC-USDC`, a
+//! second venue's print of the MVP pair; and `QCAD-USD`, the CAD-stablecoin
 //! class tripwire. They are collected anyway because the poll is batched, so
 //! they cost no extra request, and what they record cannot be reconstructed
 //! after the fact. Kraken's keyless OHLC serves only a rolling

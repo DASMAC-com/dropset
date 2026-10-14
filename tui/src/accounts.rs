@@ -811,6 +811,44 @@ mod tests {
         assert_eq!(market_index_for_symbol(&markets, &symbols, "CADC"), None);
     }
 
+    /// Markets arriving one at a time in bootstrap order shift the default's
+    /// index — every later arrival that sorts ahead of it moves it down — so
+    /// the index is only right if it is re-resolved after each poll, which is
+    /// what the TUI does while it follows the default. A one-shot lookup taken
+    /// at the first sighting would be left pointing at a neighbor.
+    #[test]
+    fn the_default_market_index_moves_as_earlier_sorting_markets_arrive() {
+        // Bootstrap order, as `market::PAIRS` walks it.
+        let arrivals = [
+            "EURC", "VCHF", "TGBP", "ZARP", "MXNe", "XSGD", "IDRX", "AUDD", "CADC",
+        ];
+        let symbols: Vec<(Pubkey, &'static str)> = arrivals
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (Pubkey::new_from_array([i as u8 + 1; 32]), *s))
+            .collect();
+        let mut markets = Vec::new();
+        let mut first_sighting = None;
+        for (i, symbol) in arrivals.iter().enumerate() {
+            markets.push(market(1, i as u8 + 1));
+            sort_markets_by_symbol(&mut markets, &symbols);
+            let idx = market_index_for_symbol(&markets, &symbols, "TGBP");
+            if *symbol == "TGBP" {
+                first_sighting = idx;
+            }
+            if let Some(idx) = idx {
+                assert_eq!(markets[idx].base_mint, symbols[2].0, "after {symbol}");
+            }
+        }
+        // Alphabetical: AUDD CADC EURC IDRX MXNe TGBP VCHF XSGD ZARP.
+        assert_eq!(market_index_for_symbol(&markets, &symbols, "TGBP"), Some(5));
+        assert_ne!(
+            first_sighting,
+            Some(5),
+            "the first sighting's index went stale, which is why it is re-resolved"
+        );
+    }
+
     /// The order must be total, so two runs over differently-shuffled input
     /// agree. Without this the sort could look right on one arrangement and
     /// still leave the list shifting between polls, which is the actual

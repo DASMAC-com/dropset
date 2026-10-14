@@ -213,8 +213,9 @@ pub const MARKET_IDRX: PairConfig = fx_market("IDRX", "keys/idrx.json", 2, 0.000
 pub const MARKET_AUDD: PairConfig = fx_market("AUDD", "keys/AUDD.json", 6, 0.7214);
 pub const MARKET_CADC: PairConfig = fx_market("CADC", "keys/CADC.json", 6, 0.7244);
 
-/// The market the TUI selects on launch: tGBP-USDC, the first mainnet market
-/// and the one the operator drives. The list itself stays alphabetical — this
+/// The market the TUI selects on launch: tGBP-USDC, the market planned as the
+/// first on mainnet and the one the operator drives. The list itself stays
+/// alphabetical — this
 /// moves only the initial cursor, and a cluster that does not carry the market
 /// keeps the first one selected.
 pub const DEFAULT_MARKET_SYMBOL: &str = MARKET_TGBP.base.symbol;

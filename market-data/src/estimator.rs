@@ -41,12 +41,14 @@
 //!
 //! # Two markets are pinned, and that is the operator's re-scope
 //!
-//! EURC and TGBP compose on an **observed** basis. TGBP's books are as thin as
+//! EURC and TGBP compose on an **observed** basis. TGBP's books are thin, like
 //! AUDD's, but it is observed by operator ruling rather than pinned: the basis
-//! EMA smooths a quiet book, and the books are expected to deepen as the first
-//! mainnet market draws flow. AUDD and CADC quote off the FX
-//! anchor times a pinned 1:1 redemption peg, because the re-scope for the first
-//! fills says the FX composite alone is enough for them — and because neither
+//! EMA smooths a quiet book, and the books are expected to deepen once the
+//! market planned as the first on mainnet draws flow.
+//!
+//! AUDD and CADC quote off the FX anchor times a pinned 1:1 redemption peg,
+//! because the re-scope for the first fills says the FX composite alone is
+//! enough for them — and because neither
 //! has a candle series fit to compose from: CADC was never listed, and
 //! `AUDD-USDC` trades too thinly (the ticker collector's `DEFAULT_PRODUCTS`
 //! records the measurement). Pinning is honest where composing off a book that
