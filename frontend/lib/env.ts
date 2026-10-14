@@ -24,7 +24,10 @@ export const FALLBACK_WS_URL = required(
 // The optional keyed primary (Helius for the demo). Deleting both from the
 // hosting env returns a deploy to the standing endpoint alone. The key ships in
 // the bundle, so it must be origin-restricted in the provider's dashboard;
-// see .env.example.
+// see .env.example. Only the app's own runtime uses it (lib/rpc.ts): a
+// single-URL consumer such as the MetaMask connector keeps the standing
+// endpoint, since it may call from an origin the restriction refuses and
+// cannot fail over.
 const primaryRpc = process.env.NEXT_PUBLIC_PRIMARY_RPC_URL?.trim();
 const primaryWs = process.env.NEXT_PUBLIC_PRIMARY_WS_URL?.trim();
 if (!primaryRpc !== !primaryWs) {
@@ -34,9 +37,6 @@ if (!primaryRpc !== !primaryWs) {
 }
 export const PRIMARY_RPC_URL = primaryRpc ? mainnet(primaryRpc) : null;
 export const PRIMARY_WS_URL = primaryWs || null;
-
-// The endpoint a single-URL consumer (the MetaMask connector) should use.
-export const PUBLIC_RPC_URL = PRIMARY_RPC_URL ?? FALLBACK_RPC_URL;
 
 // Which Solana cluster the app targets. Defaults to mainnet (production);
 // set NEXT_PUBLIC_CLUSTER=localnet to point at a local validator. Localnet

@@ -253,7 +253,9 @@ export function SwapPanel() {
   // A zero rate is no fee: no row is shown, since the quoted amount is then
   // exactly what the taker receives.
   const feeBps =
-    canSwap && (aggregatorRoute ? feeVaultExists : true) && quote.platformFeeBps
+    canSwap &&
+    (aggregatorRoute ? feeVaultExists : true) &&
+    (quote.platformFeeBps ?? 0) > 0
       ? quote.platformFeeBps
       : null;
 

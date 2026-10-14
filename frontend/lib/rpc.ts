@@ -48,9 +48,10 @@ export function assertEndpointMatchesCluster(
 
 // A transport that sends to `primary` and retries a failed call on
 // `fallback`. A transport throws only when the provider fails (network error,
-// non-2xx such as a 429); a JSON-RPC error comes back as a normal response,
-// so a rejected transaction is never replayed on the second provider. A
-// caller's abort is respected, never retried.
+// any non-2xx: a 429, or a 403 from the key's origin restriction); a JSON-RPC
+// error comes back as a normal response, so a rejected transaction is never
+// replayed on the second provider. A caller's abort is respected, never
+// retried.
 export function createFailoverTransport(
   primary: RpcTransport,
   fallback: RpcTransport,
@@ -80,19 +81,21 @@ export function createFailoverTransport(
 }
 
 // The app's RPC runtime: the keyed primary when one is configured, with the
-// standing endpoint behind it, else the standing endpoint alone. Subscriptions take
-// the primary's websocket when there is one; they do not fail over, but the
-// one consumer (the trades tape) already re-subscribes after a drop.
+// standing endpoint behind it, else the standing endpoint alone.
+// Subscriptions take the primary's websocket when there is one; they do not
+// fail over, but the one consumer (the trades tape) already re-subscribes
+// after a drop.
 export function createAppRuntime(): SolanaClientRuntime {
+  const primary = PRIMARY_RPC_URL;
   const fallback = createDefaultRpcTransport({ url: FALLBACK_RPC_URL });
-  const transport = PRIMARY_RPC_URL
+  const transport = primary
     ? createFailoverTransport(
-        createDefaultRpcTransport({ url: PRIMARY_RPC_URL }),
+        createDefaultRpcTransport({ url: primary }),
         fallback,
         {
           onFailover: (error) =>
             console.warn(
-              `[rpc] ${endpointHost(PRIMARY_RPC_URL ?? "")} failed; using ${endpointHost(FALLBACK_RPC_URL)} for ${PRIMARY_COOLDOWN_MS / 1000}s`,
+              `[rpc] ${endpointHost(primary)} failed; using ${endpointHost(FALLBACK_RPC_URL)} for ${PRIMARY_COOLDOWN_MS / 1000}s`,
               error,
             ),
         },
@@ -124,7 +127,9 @@ export const genesisMatchesCluster = (seen: string, cluster: Cluster) =>
     : seen !== MAINNET_GENESIS_HASH;
 
 // Whether the endpoint really serves the cluster the build targets, asked of
-// the chain itself once per page load.
+// the chain itself. Memoized per page load on the first caller's rpc (the
+// endpoints are the same for every client the page builds); a failed read is
+// asked again by the next caller.
 let clusterVerified: Promise<boolean> | null = null;
 export function verifyCluster(
   rpc: SolanaClientRuntime["rpc"],

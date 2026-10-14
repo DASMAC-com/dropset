@@ -9,7 +9,7 @@
 // fallback: a public HTTPS origin is blocked from fetching loopback in Brave
 // and Safari, so it just stalls on "loading". `tui/src/explorer.rs` builds the
 // same URLs for the TUI's links and documents that block at length.
-import { IS_LOCALNET, PUBLIC_RPC_URL } from "./env";
+import { FALLBACK_RPC_URL, IS_LOCALNET } from "./env";
 
 const SOLSCAN = "https://solscan.io";
 
@@ -24,7 +24,7 @@ const LOCAL_EXPLORER = "http://localhost:3100";
 
 // The custom-cluster suffix that points the local explorer at our validator.
 const customCluster = () =>
-  `?cluster=custom&customUrl=${encodeURIComponent(PUBLIC_RPC_URL)}`;
+  `?cluster=custom&customUrl=${encodeURIComponent(FALLBACK_RPC_URL)}`;
 
 export const explorerAddressUrl = (address: string) =>
   IS_LOCALNET

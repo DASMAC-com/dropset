@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { PUBLIC_RPC_URL } from "../env";
+import { FALLBACK_RPC_URL } from "../env";
 
 // MetaMask Connect (the relay-based SDK, distinct from the MetaMask browser
 // extension) only becomes discoverable once a dapp initializes it: calling
@@ -56,7 +56,10 @@ export function registerMetaMaskConnect(): Promise<void> {
         iconUrl: `${window.location.origin}/favicon.png`,
       },
       // Reuse the app's mainnet RPC so this doesn't need its own Infura key.
-      api: { supportedNetworks: { mainnet: PUBLIC_RPC_URL } },
+      // The standing endpoint, never the keyed primary: the SDK hands this
+      // to the wallet's session, which may call from an origin the key's
+      // restriction refuses, and it cannot fail over.
+      api: { supportedNetworks: { mainnet: FALLBACK_RPC_URL } },
       // Analytics is on. The SDK ships only connection / wallet-action
       // counters (no wallet address, no IP, no PII) to MetaMask's analytics
       // endpoint, and only after the user actually triggers a flow — not on

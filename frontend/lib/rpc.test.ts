@@ -70,6 +70,7 @@ describe("endpoint checks", () => {
       "http://127.0.0.1:8899",
       "http://localhost:8899",
       "http://[::1]:8899",
+      "http://0.0.0.0:8899",
     ]) {
       expect(() =>
         assertEndpointMatchesCluster("NEXT_PUBLIC_RPC_URL", url, "mainnet"),
@@ -109,5 +110,47 @@ describe("endpoint checks", () => {
       true,
     );
     expect(genesisMatchesCluster(MAINNET_GENESIS_HASH, "localnet")).toBe(false);
+  });
+});
+
+// The test env leaves NEXT_PUBLIC_CLUSTER unset, so these run as mainnet.
+// Each test loads a fresh module so the page-load memo starts empty.
+describe("verifyCluster", () => {
+  const fakeRpc = (send: () => Promise<string>) =>
+    ({ getGenesisHash: () => ({ send }) }) as unknown as Parameters<
+      typeof import("./rpc").verifyCluster
+    >[0];
+  const fresh = async () => {
+    vi.resetModules();
+    return (await import("./rpc")).verifyCluster;
+  };
+
+  it("reads the genesis once per page load", async () => {
+    const verifyCluster = await fresh();
+    const send = vi.fn(async () => MAINNET_GENESIS_HASH);
+    await expect(verifyCluster(fakeRpc(send))).resolves.toBe(true);
+    await expect(verifyCluster(fakeRpc(send))).resolves.toBe(true);
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a chain that is not the build's cluster", async () => {
+    const verifyCluster = await fresh();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(
+      verifyCluster(fakeRpc(async () => "FreshLocalGenesis1111")),
+    ).resolves.toBe(false);
+    expect(error).toHaveBeenCalledOnce();
+    error.mockRestore();
+  });
+
+  it("asks again after a failed read", async () => {
+    const verifyCluster = await fresh();
+    const failing = fakeRpc(async () => {
+      throw new Error("HTTP 503");
+    });
+    await expect(verifyCluster(failing)).rejects.toThrow("HTTP 503");
+    const send = vi.fn(async () => MAINNET_GENESIS_HASH);
+    await expect(verifyCluster(fakeRpc(send))).resolves.toBe(true);
+    expect(send).toHaveBeenCalledOnce();
   });
 });

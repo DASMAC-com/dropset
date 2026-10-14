@@ -21,8 +21,6 @@ import {
   FALLBACK_RPC_URL,
   FALLBACK_WS_URL,
   PRIMARY_RPC_URL,
-  PRIMARY_WS_URL,
-  PUBLIC_RPC_URL,
 } from "./env";
 import { useAppEvent } from "./events";
 import {
@@ -81,9 +79,11 @@ if (typeof window !== "undefined") {
 }
 
 const makeClient = (connectors: readonly WalletConnector[]): SolanaClient => {
+  // The standing endpoint here serves only createClient's own warm-up read,
+  // which runs before the runtime below replaces it.
   const client = createClient({
-    endpoint: PUBLIC_RPC_URL,
-    websocketEndpoint: PRIMARY_WS_URL ?? FALLBACK_WS_URL,
+    endpoint: FALLBACK_RPC_URL,
+    websocketEndpoint: FALLBACK_WS_URL,
     walletConnectors: connectors,
     logger,
   });

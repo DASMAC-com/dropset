@@ -40,7 +40,13 @@ let cacheOwner: string | null = null;
 // (otherwise the stale-owner write would land into the cache for whoever's
 // connected now).
 let activeOwner: string | null = null;
-let lastFetchError: string | null = null;
+// The error from each mint's latest failed fetch, cleared by its next
+// success. Per mint, so a failed picker fetch doesn't block a swap whose
+// pair balances loaded, and an unrelated success doesn't hide a pair failure.
+const failed = new Map<string, string>();
+// The delayed swap-success refetch, scheduled once however many consumers
+// hear the event (each timer would otherwise flush on its own task).
+let delayedRefetch: number | undefined;
 // Per-mint request sequence, so an older fetch landing after a newer one
 // (a mount-time fetch overtaken by a swap-success force refetch) can't write
 // a stale balance.
@@ -76,7 +82,7 @@ function resetFor(owner: string | null): void {
   pending.clear();
   queued.clear();
   latestFor.clear();
-  lastFetchError = null;
+  failed.clear();
   cacheOwner = owner;
   if (hadData) bump();
 }
@@ -143,17 +149,19 @@ async function fetchMints(
       latestFor.get(mint) === requestIds[i]
     );
   };
-  const owner = address(ownerStr);
-  const atas = await Promise.all(mints.map((m) => deriveAta(owner, m)));
   // Chunked because many RPC providers cap getMultipleAccounts at a small
   // array size (e.g. PublicNode rejects >10 with 403). Batch size of 0 = no
   // chunking (single call).
-  const size = GET_MULTIPLE_ACCOUNTS_BATCH_SIZE || atas.length;
-  const chunks: Address[][] = [];
-  for (let i = 0; i < atas.length; i += size) {
-    chunks.push(atas.slice(i, i + size));
-  }
+  const size = GET_MULTIPLE_ACCOUNTS_BATCH_SIZE || mints.length;
   try {
+    // Derived inside the try so a failure here releases the mints too,
+    // rather than leaving them pending for the owner's life.
+    const owner = address(ownerStr);
+    const atas = await Promise.all(mints.map((m) => deriveAta(owner, m)));
+    const chunks: Address[][] = [];
+    for (let i = 0; i < atas.length; i += size) {
+      chunks.push(atas.slice(i, i + size));
+    }
     const responses = await Promise.all(
       chunks.map((chunk) =>
         rpc
@@ -175,11 +183,11 @@ async function fetchMints(
       );
     }
     if (cacheOwner !== ownerStr) return;
-    lastFetchError = null;
     accounts.forEach((account, i) => {
       const mint = mints[i];
       if (mint === undefined || !current(i)) return;
       pending.delete(mint);
+      failed.delete(mint);
       fetched.add(mint);
       if (!account) {
         balances.set(mint, null);
@@ -203,11 +211,14 @@ async function fetchMints(
     bump();
   } catch (e) {
     if (cacheOwner !== ownerStr) return;
-    // Release the mints so a later request (remount, refresh) retries them.
-    mints.forEach((mint, i) => {
-      if (current(i)) pending.delete(mint);
-    });
     const msg = getErrorMessage(e);
+    // Release the mints so a later request (a remount) retries them, and
+    // record the failure against each one this fetch still speaks for.
+    mints.forEach((mint, i) => {
+      if (!current(i)) return;
+      pending.delete(mint);
+      failed.set(mint, msg);
+    });
     // PublicNode (and likely other Cloudflare-fronted RPCs) returns 403
     // with this exact substring when the params array exceeds their
     // per-call cap. Surface a concrete fix instead of a generic error.
@@ -219,10 +230,9 @@ async function fetchMints(
     } else {
       console.error("Balance fetch failed:", e);
     }
-    // Leaving the mints unfetched keeps isReady=false, so callers that hide
-    // on loading don't display misleading zero balances. Consumers that
-    // want to surface the failure should read `error`.
-    lastFetchError = msg;
+    // A first fetch that fails leaves its mints unfetched, keeping
+    // isReady=false so callers that hide on loading don't display misleading
+    // zero balances. Consumers that want to surface the failure read `error`.
     bump();
   }
 }
@@ -232,9 +242,9 @@ export type UseAllBalances = {
   balanceFor: (mint: string) => MaybeBalance;
   // True once every mint in this consumer's scope has loaded.
   isReady: boolean;
-  // Non-null when the most recent fetch failed; cleared on next success.
+  // Non-null when the latest fetch of a mint in this consumer's scope
+  // failed; cleared by that mint's next success.
   error: string | null;
-  refresh: () => void;
 };
 
 // Wallet balances from the shared cache, fetching the mints in `scope` (the
@@ -264,22 +274,26 @@ export function useAllBalances(scope: readonly string[]): UseAllBalances {
 
   // After a swap lands, re-fetch everything loaded so far — once now and once
   // ~1.5 s later to absorb RPC propagation lag between confirmation status
-  // and account state. Every mounted consumer hears the event; the queue
-  // merges their requests into one fetch. Snapshot `ownerStr` and re-check
-  // `activeOwner` at fire time so a wallet swap between the swap-success
-  // event and the delayed refetch doesn't write the old owner's balances into
-  // the new owner's cache.
+  // and account state. Every mounted consumer hears the event: the queue
+  // merges their immediate requests into one fetch, and the delayed one is
+  // scheduled once. Snapshot `ownerStr` and re-check `activeOwner` at fire
+  // time so a wallet swap between the swap-success event and the delayed
+  // refetch doesn't write the old owner's balances into the new owner's
+  // cache.
   useAppEvent("swapSucceeded", () => {
     const owner = ownerStr;
     if (!owner) return;
-    const refetch = () => {
-      if (activeOwner !== owner) return;
-      request(client.runtime.rpc, owner, [...fetched, ...scope], true);
-    };
-    refetch();
-    window.setTimeout(refetch, BALANCE_REFETCH_DELAY_MS);
+    const rpc = client.runtime.rpc;
+    request(rpc, owner, [...fetched, ...scope], true);
+    if (delayedRefetch !== undefined) return;
+    delayedRefetch = window.setTimeout(() => {
+      delayedRefetch = undefined;
+      if (activeOwner === owner) request(rpc, owner, [...fetched], true);
+    }, BALANCE_REFETCH_DELAY_MS);
   });
 
+  const failure =
+    ownerStr === null ? undefined : scope.find((mint) => failed.has(mint));
   return {
     balanceFor: (mint: string): MaybeBalance =>
       ownerStr === null ? undefined : balances.get(mint),
@@ -287,9 +301,6 @@ export function useAllBalances(scope: readonly string[]): UseAllBalances {
       ownerStr !== null &&
       cacheOwner === ownerStr &&
       scope.every((mint) => fetched.has(mint)),
-    error: ownerStr === null ? null : lastFetchError,
-    refresh: () => {
-      if (ownerStr) request(client.runtime.rpc, ownerStr, scope, true);
-    },
+    error: failure === undefined ? null : (failed.get(failure) ?? null),
   };
 }

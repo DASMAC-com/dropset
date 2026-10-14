@@ -299,7 +299,9 @@ function useClusterVerified(): boolean {
     let timer: number | undefined;
     const check = () =>
       verifyCluster(client.runtime.rpc).then(
-        (ok) => !cancelled && setVerified(ok),
+        (ok) => {
+          if (!cancelled) setVerified(ok);
+        },
         () => {
           if (!cancelled)
             timer = window.setTimeout(check, ORDER_BOOK_REFRESH_MS);
