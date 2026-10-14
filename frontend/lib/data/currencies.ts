@@ -280,9 +280,10 @@ export const DEFAULT_FROM: TokenSide = {
   currency: "USD" as IsoCurrencyCode,
   stablecoin: "USDC",
 };
+// tGBP is the first mainnet market, so USDC into tGBP is what loads.
 export const DEFAULT_TO: TokenSide = {
-  currency: "EUR" as IsoCurrencyCode,
-  stablecoin: "EURC",
+  currency: "GBP" as IsoCurrencyCode,
+  stablecoin: "TGBP",
 };
 
 // Canonical slug → pair resolver used by both the store factory (initial

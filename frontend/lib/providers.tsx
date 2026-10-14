@@ -16,8 +16,20 @@ import {
   useRef,
   useState,
 } from "react";
-import { PUBLIC_RPC_URL, PUBLIC_WS_URL } from "./env";
+import {
+  CLUSTER,
+  FALLBACK_RPC_URL,
+  FALLBACK_WS_URL,
+  PRIMARY_RPC_URL,
+  PRIMARY_WS_URL,
+  PUBLIC_RPC_URL,
+} from "./env";
 import { useAppEvent } from "./events";
+import {
+  assertEndpointMatchesCluster,
+  createAppRuntime,
+  providerNote,
+} from "./rpc";
 import { registerMetaMaskConnect } from "./wallet/metamask";
 
 // Benign wallet-connect outcomes — the user dismissed the wallet modal or the
@@ -50,13 +62,39 @@ const logger: ClientLogger = ({ level, message, data }) => {
   fn(`[solana] ${message}`, data ?? {});
 };
 
-const makeClient = (connectors: readonly WalletConnector[]): SolanaClient =>
-  createClient({
+// Fail fast on an endpoint that contradicts the cluster flag, and name the
+// live provider once per page load.
+if (typeof window !== "undefined") {
+  assertEndpointMatchesCluster(
+    "NEXT_PUBLIC_RPC_URL",
+    FALLBACK_RPC_URL,
+    CLUSTER,
+  );
+  if (PRIMARY_RPC_URL) {
+    assertEndpointMatchesCluster(
+      "NEXT_PUBLIC_PRIMARY_RPC_URL",
+      PRIMARY_RPC_URL,
+      CLUSTER,
+    );
+  }
+  console.info(providerNote());
+}
+
+const makeClient = (connectors: readonly WalletConnector[]): SolanaClient => {
+  const client = createClient({
     endpoint: PUBLIC_RPC_URL,
-    websocketEndpoint: PUBLIC_WS_URL,
+    websocketEndpoint: PRIMARY_WS_URL ?? FALLBACK_WS_URL,
     walletConnectors: connectors,
     logger,
   });
+  // Install the failover runtime over the single-endpoint one. Passing it as
+  // `rpcClient` is not enough: createClient's own initial `setCluster` swaps
+  // `runtime.rpc` for a fresh single-endpoint client before returning. Every
+  // hook and the client's own actions read the shared `runtime` object, so
+  // replacing its members here reaches all of them.
+  Object.assign(client.runtime, createAppRuntime());
+  return client;
+};
 
 // Identity of a connector set, independent of object identity, so we only
 // rebuild the client when the available wallets actually change.
