@@ -5,7 +5,7 @@ composed from the committed helpers that skill drove one call at a time.
 
 Usage (from the base repo root; a worktree is refused):
 
-    python3 .claude/tools/upkeep.py run [--json] [--no-doc]
+    python3 .claude/tools/upkeep.py run [--json] [--no-doc] [--if-stale]
     python3 .claude/tools/upkeep.py ran-today
     python3 .claude/tools/upkeep.py prune [--apply] [--json]
 
@@ -51,7 +51,9 @@ prints to stdout (the standalone interface, and the fallback when Linear is
 unreachable); ``--json`` prints the structured twin instead. A local stamp beside
 the allowlist refresh marker answers ``ran-today`` with no network read; it is
 written only when the report reached the document, so a ``--no-doc`` preview or
-a failed write never answers it. A refused splice (heading repeated, end line
+a failed write never answers it. ``run --if-stale`` consults that stamp first
+and skips the pass when it already answers yes — the form the ``plan`` launcher
+calls, so a same-day relaunch costs no second pass. A refused splice (heading repeated, end line
 gone) is permanent until the section is fixed by hand, and shows in the document
 as a stale run timestamp.
 
@@ -826,6 +828,11 @@ def run(argv: list[str]) -> int:
     p_run.add_argument(
         "--no-doc", action="store_true", help="skip the Planning document write"
     )
+    p_run.add_argument(
+        "--if-stale",
+        action="store_true",
+        help="skip the pass when today's run is already stamped",
+    )
     sub.add_parser("ran-today", help="did a pass run today? (no network read)")
     p_prune = sub.add_parser(
         "prune",
@@ -849,6 +856,11 @@ def run(argv: list[str]) -> int:
     if args.cmd == "ran-today":
         print(json.dumps(ran_today(stamp_path(base), now)))
         return 0
+    if args.if_stale:
+        seen = ran_today(stamp_path(base), now)
+        if seen["ran_today"]:
+            print(f"upkeep: already ran today ({seen['last_run']}); skipped")
+            return 0
 
     if args.cmd == "prune":
         # Armed by the flag, not the environment: the caller is the

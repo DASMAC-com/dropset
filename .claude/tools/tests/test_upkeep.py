@@ -606,6 +606,38 @@ class CliTests(unittest.TestCase):
             self.assertIn("planning document: not written: Linear down", out.getvalue())
             self.assertFalse(upkeep.stamp_path(base).exists())
 
+    def test_if_stale_skips_a_pass_already_stamped_today(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            upkeep.check_base = lambda run, cwd: (base, [], "")
+            upkeep.run_pass = lambda ctx: self.fail("a stamped day ran again")
+            upkeep.write_stamp(base, datetime.now(timezone.utc), False)
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(upkeep.run(["upkeep.py", "run", "--if-stale"]), 0)
+            self.assertIn("already ran today", out.getvalue())
+
+    def test_if_stale_runs_a_pass_whose_stamp_is_from_another_day(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            upkeep.check_base = lambda run, cwd: (base, [], "")
+            ran = []
+            upkeep.run_pass = lambda ctx: (
+                ran.append(1)
+                or {
+                    "ran_at": "t",
+                    "armed": False,
+                    "steps": [],
+                }
+            )
+            upkeep.write_report = lambda report: None
+            old = datetime.now(timezone.utc) - timedelta(days=2)
+            upkeep.write_stamp(base, old, False)
+            with contextlib.redirect_stdout(io.StringIO()):
+                upkeep.run(["upkeep.py", "run", "--if-stale"])
+            self.assertEqual(ran, [1])
+
 
 if __name__ == "__main__":
     unittest.main()

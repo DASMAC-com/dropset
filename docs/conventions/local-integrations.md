@@ -1815,6 +1815,23 @@ drives the real zsh functions.
   own tools still compute its id after midnight. A later bare `plan`
   resumes the day's latest cycle.
 
+  **It runs the upkeep pass before the client starts.** After the
+  AWS gate and before the cycle loop, `plan` resolves the session
+  secrets and runs `.claude/tools/upkeep.py run --if-stale` in the
+  operator's terminal: fast-forward, CLI upgrade, the prune of
+  completed or canceled issues' worktrees, notification dismissal,
+  the settings checks and the purge dry-run. A hung step sits
+  visibly in the terminal rather than inside a session, and a failed
+  login stops the morning there, before anything is dispatched. The
+  report lands under the Planning document's upkeep heading, which
+  the bootstrap reads; the destructive items (allowlist cruft,
+  permission-refresh additions, the purge apply) wait for the
+  planning tab's one consolidated `AskUserQuestion`, so upkeep never
+  costs a tab visit. `--if-stale` makes a same-day reopen free — the
+  tool stamps only a run whose report reached the document — and a
+  cycle relaunch never repeats it. `DS_SKIP_UPKEEP=1` skips it; a
+  failed pass warns and the launch proceeds.
+
   Four things it makes deterministic, each of which used to be a
   manual step the operator could forget:
 

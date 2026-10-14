@@ -38,6 +38,7 @@ _DS_REPO="$REPO" _DS_SUBSTRATE_DIR="$STATE"
 _ds_tier() { print -r -- model; print -r -- anthropic }
 _ds_substrate_enter() { : }
 _ds_aws_login() { : }
+_ds_upkeep() { print -r -- upkeep >> "$STATE/upkeep-calls" }
 if [[ -n "$MIDNIGHT" ]]; then
   # The clock rolls from the 10th to the 11th once the first client exits.
   date() {
@@ -106,6 +107,12 @@ class CycleLoop(unittest.TestCase):
         self.assertEqual(self._plan(cycles=0).returncode, 0)
         self.assertEqual(len(self._launches()), 1)
         self.assertFalse((self.state / f"plan-cycle-{self.day}").exists())
+
+    def test_upkeep_runs_once_before_the_loop_not_per_cycle(self):
+        self.assertEqual(self._plan(cycles=2).returncode, 0)
+        self.assertEqual(len(self._launches()), 3)
+        upkeep = (self.state / "upkeep-calls").read_text().splitlines()
+        self.assertEqual(upkeep, ["upkeep"])
 
     def test_a_cycle_relaunches_under_a_fresh_id_and_the_same_name(self):
         result = self._plan(cycles=1)
