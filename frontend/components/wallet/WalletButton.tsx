@@ -62,18 +62,6 @@ export function WalletButton() {
   // is open, which would let the overlay drop too early.
   const [connecting, setConnecting] = useState(false);
 
-  // Tell Providers while a connect is in flight so it won't swap the
-  // SolanaClient (reactive wallet discovery rebuilds it on connector-set
-  // changes) mid-handshake. A swap mid-connect lands the session on an
-  // orphaned client and leaves the header stuck on "Connect Wallet" until a
-  // refresh. The row's click handler asserts this synchronously, before
-  // `modal.connect`, so no rebuild can slip into the render gap; this effect
-  // releases it once the attempt settles. An open picker alone does not hold
-  // the guard, so a late-registering wallet reaches the open picker.
-  useEffect(() => {
-    if (!connecting) emit("walletConnecting", false);
-  }, [connecting]);
-
   // Drop the connection if the user switches accounts in their wallet
   // extension — the store doesn't track in-place account changes on its own.
   useWalletAccountWatch();
@@ -163,13 +151,26 @@ export function WalletButton() {
             // the rejection (user dismissed, transport timed out) — it's
             // surfaced via status, and an uncaught reject would otherwise become
             // an unhandledRejection.
+            //
+            // `walletConnecting` tells Providers a connect is in flight so it
+            // won't swap the SolanaClient (reactive wallet discovery rebuilds
+            // it on connector-set changes) mid-handshake: a swap mid-connect
+            // lands the session on an orphaned client and leaves the header
+            // stuck on "Connect Wallet" until a refresh. It is asserted before
+            // `modal.connect` and released in the same `.finally` that clears
+            // `connecting`, so the pair can't drift apart. An open picker alone
+            // does not hold the guard, so a late-registering wallet reaches
+            // the open picker.
             modal.close();
             emit("walletConnecting", true);
             setConnecting(true);
             void modal
               .connect(connectorId)
               .catch(() => {})
-              .finally(() => setConnecting(false));
+              .finally(() => {
+                setConnecting(false);
+                emit("walletConnecting", false);
+              });
           }}
           className={`${rowClass} disabled:opacity-50`}
         >
@@ -185,23 +186,17 @@ export function WalletButton() {
     // Safari (no extensions, no Mobile Wallet Adapter), and Phantom leads the
     // curated order so it is the first thing an iPhone user sees. The
     // universal link falls through to the wallet's download page when the
-    // app is missing.
-    const browseUrl =
-      mobile && typeof window !== "undefined"
-        ? inWalletBrowseUrl(
-            w.browse,
-            window.location.href,
-            window.location.origin,
-          )
-        : undefined;
+    // app is missing. Same tab on purpose: the link hands off to the app.
+    const browseUrl = mobile
+      ? inWalletBrowseUrl(
+          w.browse,
+          window.location.href,
+          window.location.origin,
+        )
+      : undefined;
     if (browseUrl) {
       return (
-        <a
-          key={w.id}
-          href={browseUrl}
-          rel="noopener noreferrer"
-          className={`${rowClass} no-underline`}
-        >
+        <a key={w.id} href={browseUrl} className={`${rowClass} no-underline`}>
           {renderIcon(w)}
           <span className="flex-1">
             <span className="block font-medium text-foreground">
@@ -217,9 +212,11 @@ export function WalletButton() {
     }
     // Nothing to connect to → link out to the wallet's official site so the
     // user can install it (then it shows up as detected on next open). On
-    // mobile this row reads as a connect attempt to many users (Phantom is a
-    // common confusion — tapping the row opens the Phantom app via a
-    // universal link but never sends a connect request), so on a mobile UA we
+    // mobile this is now only the wallets with no in-app browser link
+    // (MetaMask before its relay registers, Coinbase). The row reads as a
+    // connect attempt to many users — tapping it can open the wallet's app
+    // via a universal link but never sends a connect request — so on a mobile
+    // UA we
     // surface an explicit "Install" affordance with an external-link glyph
     // and a hint line so the user knows the row is a download, not a connect.
     return (

@@ -16,12 +16,15 @@ let registration: Promise<void> | null = null;
 /**
  * Register the Mobile Wallet Adapter with the Wallet Standard registry.
  * Idempotent and client-only: the package is dynamically imported so it never
- * runs during SSR and stays out of the main bundle. `registerMwa` itself
- * no-ops outside a supported environment (anything but Android Chrome), so
- * calling this unconditionally is safe.
+ * runs during SSR and stays out of the main bundle. Android only: MWA's local
+ * association exists nowhere else, and without a remote host configured
+ * `registerMwa` registers nothing elsewhere but still logs a warning, so
+ * other platforms skip the download entirely.
  */
 export function registerMobileWalletAdapter(): Promise<void> {
   if (registration) return registration;
+  if (typeof navigator === "undefined" || !/Android/i.test(navigator.userAgent))
+    return Promise.resolve();
   registration = (async () => {
     const {
       createDefaultAuthorizationCache,
@@ -33,6 +36,7 @@ export function registerMobileWalletAdapter(): Promise<void> {
       appIdentity: {
         name: "Dropset",
         uri: window.location.origin,
+        // Relative on purpose: MWA resolves `icon` against `uri`.
         icon: "/favicon.png",
       },
       authorizationCache: createDefaultAuthorizationCache(),

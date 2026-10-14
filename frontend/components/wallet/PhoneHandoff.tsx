@@ -19,8 +19,8 @@ const BROWSE_WALLETS = KNOWN_WALLETS.filter((w) => w.browse);
  * render it only after hydration, since it reads `window.location`.
  */
 export function PhoneHandoff() {
-  const [key, setKey] = useState(BROWSE_WALLETS[0]?.key);
-  const wallet = BROWSE_WALLETS.find((w) => w.key === key);
+  const [selectedKey, setSelectedKey] = useState(BROWSE_WALLETS[0]?.key);
+  const wallet = BROWSE_WALLETS.find((w) => w.key === selectedKey);
   const url = wallet
     ? inWalletBrowseUrl(
         wallet.browse,
@@ -45,10 +45,10 @@ export function PhoneHandoff() {
           <button
             key={w.key}
             type="button"
-            onClick={() => setKey(w.key)}
-            aria-pressed={w.key === key}
+            onClick={() => setSelectedKey(w.key)}
+            aria-pressed={w.key === selectedKey}
             className={`rounded-md px-2 py-1 text-xs transition-colors ${
-              w.key === key
+              w.key === selectedKey
                 ? "bg-muted text-foreground"
                 : "text-muted-fg hover:bg-muted"
             }`}
