@@ -371,9 +371,10 @@ mod tests {
         assert_eq!(v.remaining.bids[1].size.get(), 0);
         assert_eq!(v.remaining.asks[1].size.get(), 0);
         // A zero flip spread leaves every pre-flip field above exactly as it
-        // was; the new fields hold the level's own price and no allowance.
+        // was; the new fields hold the unmatchable sentinel and no
+        // allowance, so they are all-zero bytes.
         for p in v.remaining.bids.iter().chain(v.remaining.asks.iter()) {
-            assert_eq!(p.flip_price, p.price);
+            assert_eq!(p.flip_price, Price::ZERO);
             assert_eq!(p.flip_size.get(), 0);
         }
     }
@@ -403,8 +404,8 @@ mod tests {
         assert_eq!(bid.flip_price, flush_level_price(bid.price, 1_000, true));
         assert_eq!(ask.flip_price, flush_level_price(ask.price, 2_000, false));
         assert!(bid.flip_price > bid.price && ask.flip_price < ask.price);
-        // A zero spread materializes the level's own price.
-        assert_eq!(v.remaining.bids[1].flip_price, v.remaining.bids[1].price);
+        // A zero spread materializes the unmatchable sentinel.
+        assert_eq!(v.remaining.bids[1].flip_price, Price::ZERO);
         // The flush re-centers: every flipped allowance is zeroed.
         for i in 0..N_LEVELS {
             assert_eq!(v.remaining.bids[i].flip_size.get(), 0);

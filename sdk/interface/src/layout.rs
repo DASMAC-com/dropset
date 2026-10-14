@@ -98,8 +98,9 @@ pub struct ReferencePrice {
 pub struct Level {
     pub price_offset: LeU32,
     /// Flip spread in ppm off this level's own absolute price. Zero does
-    /// not flip — the gate is this field, not `Position::flip_price`,
-    /// which the flush materializes as the level's own price at zero.
+    /// not flip: the flush materializes `Position::flip_price` as
+    /// `Price::ZERO`, and a fill credits the flipped side only while that
+    /// price is matchable.
     pub flip_spread_ppm: LeU32,
     pub size_bps: LeU16,
     /// Seconds after `reference_price.quote_unix` that this level dies.
@@ -165,8 +166,8 @@ pub struct Position {
     /// only while **both** deadlines are in the future.
     pub expires_at_slot: LeU32,
     /// Absolute price the level's proceeds rest at once it flips, or
-    /// `Price::ZERO` when the result escapes the encoding. Meaningful only
-    /// while [`Position::flip_size`] is nonzero.
+    /// `Price::ZERO` when the spread is zero or the result escapes the
+    /// encoding. Meaningful only while [`Position::flip_size`] is nonzero.
     pub flip_price: LeU32,
     /// Flipped allowance in atoms, on the leg opposite [`Position::size`];
     /// the single test for whether the flipped side rests. Zeroed on every

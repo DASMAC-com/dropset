@@ -45,13 +45,19 @@ pub fn flush_level_price(reference: Price, offset_ppm: u32, is_ask: bool) -> Pri
 /// *below* it (`price × (PPM − spread) / PPM`) and a filled bid's as an
 /// ask *above* it (`price × (PPM + spread) / PPM`) — so this is
 /// [`flush_level_price`] with the direction inverted, sharing its
-/// decoded-space arithmetic and sentinel handling. A zero spread returns
-/// `level_price` unchanged.
+/// decoded-space arithmetic and sentinel handling.
 ///
-/// A result the encoding cannot hold falls to [`Price::ZERO`], which is
-/// not [`Price::is_matchable`], so the flipped side does not rest.
+/// **A zero spread returns [`Price::ZERO`]**, not the identity: the
+/// matcher credits a level's flipped side only while its flip price is
+/// [`Price::is_matchable`], so writing the sentinel here is what keeps a
+/// zero-spread level from resting a same-price reverse order after a fill.
+/// A result the encoding cannot hold falls to the same sentinel, so that
+/// flipped side does not rest either.
 #[inline]
 pub fn flip_level_price(level_price: Price, flip_spread_ppm: u32, is_ask: bool) -> Price {
+    if flip_spread_ppm == 0 {
+        return Price::ZERO;
+    }
     flush_level_price(level_price, flip_spread_ppm, !is_ask)
 }
 
@@ -218,9 +224,9 @@ mod tests {
             flip_level_price(level, 500, false).significand(),
             10_855_425
         );
-        // Zero spread is the identity on a live price.
-        assert_eq!(flip_level_price(level, 0, true), level);
-        assert_eq!(flip_level_price(level, 0, false), level);
+        // Zero spread does not flip: the sentinel, never the level's price.
+        assert_eq!(flip_level_price(level, 0, true), Price::ZERO);
+        assert_eq!(flip_level_price(level, 0, false), Price::ZERO);
     }
 
     #[test]

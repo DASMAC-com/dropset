@@ -5,12 +5,14 @@
 //!
 //! Walks the market's active DLL from `market.head` via `Vault.next`,
 //! flushes per-vault on `FLUSH_BIT`, and collects every live level
-//! into a `Vec<HeapEntry>` on the program heap. Sorts by
-//! `(price_key, nonce, sector_idx, level_idx)` so the spec's
-//! cross-vault price-time priority falls out of a single
-//! `sort_by_key`, then walks the sorted vec filling the taker
+//! into a `Vec<HeapEntry>` on the program heap — both each consumed-side
+//! level's own `size` and each opposite-side level's flipped
+//! `flip_size`. Sorts by `(price_key, nonce, sector_idx, level_idx,
+//! flipped)` so the spec's cross-vault price-time priority falls out of
+//! a single `sort_by_key`, then walks the sorted vec filling the taker
 //! leg-by-leg until `amount_in` is exhausted, the limit price is
-//! crossed, or the heap is drained.
+//! crossed, or the heap is drained. Every fill flips: it debits the
+//! consumed counter and credits the same level's other one.
 //!
 //! `min_out` adds an SDK-composability soft-revert: if the
 //! achievable net output (after taker fee) is below the caller's
@@ -91,8 +93,8 @@ impl SwapSide {
     /// A `Buy` taker consumes the resting **ask** side (pays quote, gets
     /// base); a `Sell` taker consumes the **bid** side (pays base, gets
     /// quote). This single predicate drives level selection, the
-    /// snapshot's `is_ask_side`, and which `remaining[*]` slot the fill
-    /// decrements.
+    /// inventory and fee legs, and — together with an entry's `flipped`
+    /// flag — which `remaining[*]` array a fill touches.
     #[inline]
     fn consumes_asks(self) -> bool {
         matches!(self, SwapSide::Buy)
@@ -118,7 +120,7 @@ impl SwapSide {
     }
 
     /// True when `price` is worse than the taker's `limit`, so the leg
-    /// must be skipped. Because `levels` is sorted best-first, the first
+    /// must be skipped. Because the heap is sorted best-first, the first
     /// crossing leg means every later one crosses too, so the caller
     /// `break`s. A `Buy` crosses when the ask exceeds the limit; a
     /// `Sell` crosses when the bid falls below it. The open-ended
@@ -515,12 +517,20 @@ struct HeapEntry {
     sector_idx: u32,
     /// Level index within the source vault.
     level_idx: u32,
-    /// Materialized level size at heap-build time, used directly as
-    /// the per-leg level cap (`cap_by_level`) in the fill loop. Each
-    /// `(vault, level)` pair is pushed once and visited once, so the
-    /// snapshot needs no re-read; only the vault inventory
-    /// (`base_atoms`/`quote_atoms`) is re-read per leg to reflect
-    /// prior-leg decrements.
+    /// Which counter this entry consumes: `false` is the level's own
+    /// `size` on the taker's consumed side, `true` is the **flipped**
+    /// side of the opposite array's level — its `flip_size`, priced at
+    /// its `flip_price`. A Buy reads asks' `size` and bids' `flip_size`;
+    /// a Sell the mirror. Also the last sort component, so a level whose
+    /// two counters land at one price orders deterministically.
+    flipped: bool,
+    /// The consumed counter at heap-build time, used directly as the
+    /// per-leg level cap (`cap_by_level`) in the fill loop. Each
+    /// `(vault, level, counter)` entry is pushed once and visited once,
+    /// so the snapshot needs no re-read: a fill credits only the
+    /// level's *other* counter, which sits on the side this taker does
+    /// not consume. Only the vault inventory (`base_atoms`/`quote_atoms`)
+    /// is re-read per leg to reflect prior-leg decrements.
     size: u64,
 }
 
@@ -608,7 +618,19 @@ impl Swap {
         // push the chosen side's live levels onto an ephemeral heap.
         // Tombstoned vaults sit on a separate DLL and are skipped by
         // construction.
-        let mut heap: alloc::vec::Vec<HeapEntry> = alloc::vec::Vec::new();
+        //
+        // Pre-sized to its bound — two entries (own and flipped) per level
+        // per active vault — in one allocation: the runtime's bump
+        // allocator never reclaims, so growing by doubling would leak
+        // every outgrown buffer into the 32 KiB heap the per-leg fill
+        // bookkeeping below also draws on. Sized by `active_count`, never
+        // the slab length: tombstoned and free sectors sit in the slab
+        // too and are not walked, so a slab-sized reservation would let
+        // dead sectors exhaust the heap. Clamped to the slab so a corrupt
+        // count can only under-reserve, which a `push` regrows past.
+        let active_vaults = (self.market.active_count.get() as usize).min(self.market.len());
+        let mut heap: alloc::vec::Vec<HeapEntry> =
+            alloc::vec::Vec::with_capacity(2 * N_LEVELS * active_vaults);
         let mut cur = head;
         // Bound the walk by `market.len()` so a corrupt `next` ptr
         // that creates a cycle can't burn CU indefinitely. Each live
@@ -674,69 +696,71 @@ impl Swap {
                 self.market.mutate_vault(cur)?.materialize_remaining();
                 flushed_sectors.push(cur);
             }
-            // Collect live levels of the chosen side from this vault.
+            // Collect this vault's live entries on the taker's side: each
+            // consumed-side level's own `size` at its `price`, plus each
+            // opposite-side level's flipped `flip_size` at its
+            // `flip_price` — a filled ask rests its proceeds as a bid, a
+            // filled bid as an ask.
             let nonce = stamp & !FLUSH_BIT;
             {
                 let v = self.market.read_vault(cur)?;
                 for i in 0..N_LEVELS {
-                    let lvl = if side.consumes_asks() {
-                        v.remaining.asks[i]
+                    let (own, opposite) = if side.consumes_asks() {
+                        (v.remaining.asks[i], v.remaining.bids[i])
                     } else {
-                        v.remaining.bids[i]
+                        (v.remaining.bids[i], v.remaining.asks[i])
                     };
-                    let size = lvl.size.get();
-                    let price = lvl.price;
-                    // Live only inside BOTH deadlines — the min of the two
-                    // leader-supplied bounds. Zero in either domain is
-                    // dead, which materialization already encoded as a
-                    // zero deadline, so each domain is one compare.
-                    // `is_live_at` is domain-typed, so the two conjuncts
-                    // cannot be crossed over (see `crate::clock`). The
-                    // gate is `matching_math::level_is_live`, shared with
-                    // the off-chain simulator so displayed depth equals
-                    // filled depth.
-                    if !level_is_live(
-                        price,
-                        size,
-                        lvl.wall_deadline(),
-                        lvl.slot_deadline(),
-                        now_unix,
-                        now_slot,
-                    ) {
-                        continue;
+                    for (flipped, lvl) in [(false, own), (true, opposite)] {
+                        let (price, size) = if flipped {
+                            (lvl.flip_price, lvl.flip_size.get())
+                        } else {
+                            (lvl.price, lvl.size.get())
+                        };
+                        // Live only inside BOTH deadlines — the min of the
+                        // two leader-supplied bounds. Zero in either domain
+                        // is dead, which materialization already encoded as
+                        // a zero deadline, so each domain is one compare.
+                        // `is_live_at` is domain-typed, so the two
+                        // conjuncts cannot be crossed over (see
+                        // `crate::clock`). A level has one deadline pair,
+                        // so it governs both counters. The gate is
+                        // `matching_math::level_is_live`, shared with the
+                        // off-chain simulator so displayed depth equals
+                        // filled depth — for own counters; the simulator
+                        // does not yet read the flipped ones, so it
+                        // under-reports depth (the safe direction) until
+                        // the readers learn to flip.
+                        if !level_is_live(
+                            price,
+                            size,
+                            lvl.wall_deadline(),
+                            lvl.slot_deadline(),
+                            now_unix,
+                            now_slot,
+                        ) {
+                            continue;
+                        }
+                        heap.push(HeapEntry {
+                            price_key: side.price_sort_key(price),
+                            price,
+                            nonce,
+                            sector_idx: cur,
+                            level_idx: i as u32,
+                            flipped,
+                            size,
+                        });
                     }
-                    let price_key = side.price_sort_key(price);
-                    heap.push(HeapEntry {
-                        price_key,
-                        price,
-                        nonce,
-                        sector_idx: cur,
-                        level_idx: i as u32,
-                        size,
-                    });
                 }
             }
             cur = next_sector;
         }
-        // Sort by (price_key, nonce, sector_idx, level_idx) — best
-        // price first; on ties, older quote (lower nonce) wins; on
+        // Sort by (price_key, nonce, sector_idx, level_idx, flipped) —
+        // best price first; on ties, older quote (lower nonce) wins; on
         // further ties, lower sector_idx wins; finally lower
-        // level_idx. This is the spec's price-time priority over a
-        // single materialized snapshot of the book.
-        heap.sort_by_key(|e| (e.price_key, e.nonce, e.sector_idx, e.level_idx));
-        let live_count = heap.len();
-        let levels: alloc::vec::Vec<(u32, u32, Price, u64, u32)> = heap
-            .iter()
-            .map(|e| {
-                (
-                    e.sector_idx,
-                    e.level_idx,
-                    e.price,
-                    e.size,
-                    e.nonce.min(u32::MAX as u64) as u32,
-                )
-            })
-            .collect();
+        // level_idx, and the level's own counter before its flipped one.
+        // This is the spec's price-time priority over a single
+        // materialized snapshot of the book.
+        heap.sort_by_key(|e| (e.price_key, e.nonce, e.sector_idx, e.level_idx, e.flipped));
 
         // Build the market PDA signer seeds (for the return-leg CPI).
         let signer_seeds_inner: [&[u8]; 3] =
@@ -755,16 +779,19 @@ impl Swap {
         let mut fill_events: alloc::vec::Vec<FillEvent> = alloc::vec::Vec::new();
         // Snapshots taken BEFORE each leg mutates state, so that a
         // failed `min_out` check can restore the per-vault inventory
-        // and per-level `remaining.size` to exactly the pre-swap
-        // values. Walked in reverse so overlapping snapshots of the
-        // same `sector_idx` resolve to the earliest captured state.
+        // and both of the touched level's counters (`size` and
+        // `flip_size` — a fill debits one and credits the other) to
+        // exactly the pre-swap values. Walked in reverse so overlapping
+        // snapshots of the same `sector_idx` resolve to the earliest
+        // captured state.
         struct LegSnapshot {
             sector_idx: u32,
             level_idx: u32,
-            is_ask_side: bool,
+            on_asks: bool,
             base_before: u64,
             quote_before: u64,
             size_before: u64,
+            flip_size_before: u64,
         }
         let mut snapshots: alloc::vec::Vec<LegSnapshot> = alloc::vec::Vec::new();
         let nonce_at_start = self.market.nonce.get();
@@ -787,9 +814,17 @@ impl Swap {
         // partial fill behind.
         let mut nonce_overflow = false;
 
-        for &(sector_idx, level_idx, price, level_size, _nonce) in levels.iter().take(live_count) {
+        for &HeapEntry {
+            sector_idx,
+            level_idx,
+            flipped,
+            price,
+            size: level_size,
+            ..
+        } in heap.iter()
+        {
             // Limit-price filter — also the review's "early-exit when
-            // the best level can't fill" gate (WARNING 1a). `levels`
+            // the best level can't fill" gate (WARNING 1a). The heap
             // is sorted best-price-first, so the first level that
             // crosses the taker's limit means every remaining level
             // crosses too: `break` bails before any snapshot or fill
@@ -853,25 +888,27 @@ impl Swap {
             let fee_u64 = fee.min(u64::MAX as u128) as u64;
 
             // Snapshot the pre-leg state so the `min_out` soft-revert
-            // at the end can roll back every mutation cleanly. The
-            // consumed side (asks on a Buy, bids on a Sell) is the only
-            // level array this leg touches, so it's the only one to
-            // record.
+            // at the end can roll back every mutation cleanly. One level
+            // is touched per leg — the consumed-side array's for an own
+            // entry, the opposite array's for a flipped one — and both of
+            // its counters move, so both are recorded.
             let is_ask_side = side.consumes_asks();
+            let on_asks = is_ask_side != flipped;
             {
                 let v = self.market.read_vault(sector_idx)?;
-                let size_before = if is_ask_side {
-                    v.remaining.asks[level_idx as usize].size.get()
+                let lvl = if on_asks {
+                    v.remaining.asks[level_idx as usize]
                 } else {
-                    v.remaining.bids[level_idx as usize].size.get()
+                    v.remaining.bids[level_idx as usize]
                 };
                 snapshots.push(LegSnapshot {
                     sector_idx,
                     level_idx,
-                    is_ask_side,
+                    on_asks,
                     base_before: v.base_atoms.get(),
                     quote_before: v.quote_atoms.get(),
-                    size_before,
+                    size_before: lvl.size.get(),
+                    flip_size_before: lvl.flip_size.get(),
                 });
             }
 
@@ -890,9 +927,26 @@ impl Swap {
             // treasury sends the taker `output - fee` while the vault
             // gives up `output`, and the gap is the unattributed
             // residual (exact-in residue, unsolicited transfers) that
-            // `sweep_residual` collects. The level's remaining size shrinks by
+            // `sweep_residual` collects. The consumed counter shrinks by
             // the gross output fill, since the fee slice was still
             // liquidity the taker consumed.
+            //
+            // **The flip.** The same level's *other* counter is credited
+            // with exactly the input atoms inventory was credited, so the
+            // proceeds rest on the opposite side at once, on every
+            // partial fill: an ask fill of `dx` base for `dq` quote does
+            // `size -= dx, flip_size += dq`, and a fill of that flipped
+            // bid for `dq'` quote does `flip_size -= dq'`,
+            // `size += dq' / flip_price`. Equal atoms move on both
+            // ledgers, so the level's allowance never outgrows the
+            // inventory backing it. The forward credit is gated on
+            // `flip_price` being matchable — the flush writes
+            // `Price::ZERO` there at a zero spread, so a non-flipping
+            // level keeps `flip_size == 0` and its bytes are unchanged.
+            // The reverse credit needs no gate: a flipped entry exists
+            // only where that forward credit ran. Neither credit can be
+            // consumed later in this swap — it lands on the side the
+            // taker is not consuming.
             let output_atoms = side.output_atoms(fill_base, fill_quote);
             let input_atoms = side.input_atoms(fill_base, fill_quote);
             let (new_base, new_quote) = {
@@ -913,12 +967,20 @@ impl Swap {
                 };
                 v.base_atoms = b.into();
                 v.quote_atoms = q.into();
-                let level = if is_ask_side {
+                let level = if on_asks {
                     &mut v.remaining.asks[level_idx as usize]
                 } else {
                     &mut v.remaining.bids[level_idx as usize]
                 };
-                level.size = level.size.get().saturating_sub(output_atoms).into();
+                if flipped {
+                    level.flip_size = level.flip_size.get().saturating_sub(output_atoms).into();
+                    level.size = level.size.get().saturating_add(input_atoms).into();
+                } else {
+                    level.size = level.size.get().saturating_sub(output_atoms).into();
+                    if level.flip_price.is_matchable() {
+                        level.flip_size = level.flip_size.get().saturating_add(input_atoms).into();
+                    }
+                }
                 (b, q)
             };
 
@@ -1022,11 +1084,13 @@ impl Swap {
                 let v = self.market.mutate_vault(snap.sector_idx)?;
                 v.base_atoms = snap.base_before.into();
                 v.quote_atoms = snap.quote_before.into();
-                if snap.is_ask_side {
-                    v.remaining.asks[snap.level_idx as usize].size = snap.size_before.into();
+                let level = if snap.on_asks {
+                    &mut v.remaining.asks[snap.level_idx as usize]
                 } else {
-                    v.remaining.bids[snap.level_idx as usize].size = snap.size_before.into();
-                }
+                    &mut v.remaining.bids[snap.level_idx as usize]
+                };
+                level.size = snap.size_before.into();
+                level.flip_size = snap.flip_size_before.into();
             }
             // Re-arm `FLUSH_BIT` on every vault we flushed during
             // the matching walk. Without this, a leader's pending
