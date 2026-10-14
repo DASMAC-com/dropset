@@ -41,10 +41,15 @@
 //!
 //! # Two markets are pinned, and that is the operator's re-scope
 //!
-//! Only EURC composes on an **observed** basis. AUDD and CADC quote off the FX
-//! anchor times a pinned 1:1 redemption peg, because the re-scope for the first
-//! fills says the FX composite alone is enough for them — and because neither
-//! has a candle series fit to compose from: CADC was never listed, and
+//! EURC and TGBP compose on an **observed** basis. TGBP's books are thin, like
+//! AUDD's, but it is observed by operator ruling rather than pinned: the basis
+//! EMA smooths a quiet book, and the books are expected to deepen once the
+//! market planned as the first on mainnet draws flow.
+//!
+//! AUDD and CADC quote off the FX anchor times a pinned 1:1 redemption peg,
+//! because the re-scope for the first fills says the FX composite alone is
+//! enough for them — and because neither has a candle series fit to compose
+//! from: CADC was never listed, and
 //! `AUDD-USDC` trades too thinly (the ticker collector's `DEFAULT_PRODUCTS`
 //! records the measurement). Pinning is honest where composing off a book that
 //! goes quiet between trades would *corroborate* the leg with a last close
@@ -168,7 +173,7 @@ impl EstimatorMarket {
     }
 }
 
-/// The published roster — the three MVP pairs, at ~$100 top-of-book.
+/// The published roster — the four MVP pairs, at ~$100 top-of-book.
 ///
 /// Deliberately **not** derived from the maker bot's own `MARKETS`: this crate
 /// cannot depend on that one (the dependency runs the other way, since the maker
@@ -177,7 +182,7 @@ impl EstimatorMarket {
 /// one carries store series. The overlap that *matters* is the basis pin, so the
 /// pins here are pinned against the maker's by
 /// `market-data/tests/estimator_roster_agreement.rs`.
-pub const PUBLISHED_MARKETS: [EstimatorMarket; 3] = [
+pub const PUBLISHED_MARKETS: [EstimatorMarket; 4] = [
     EstimatorMarket {
         product_id: "EURC-USDC",
         currency: "EUR",
@@ -188,6 +193,16 @@ pub const PUBLISHED_MARKETS: [EstimatorMarket; 3] = [
         crypto_product: Some("EURC-USDC"),
         pinned_basis: None,
         static_usd: 1.14,
+    },
+    EstimatorMarket {
+        product_id: "TGBP-USDC",
+        currency: "GBP",
+        // Coinbase lists `TGBP-USDC` and the candle collector rosters it. The
+        // book is thin, so a minute with no trade leaves no candle — the gap
+        // the candle collector's roster note already expects of AUDD.
+        crypto_product: Some("TGBP-USDC"),
+        pinned_basis: None,
+        static_usd: 1.324,
     },
     EstimatorMarket {
         product_id: "AUDD-USDC",
@@ -980,7 +995,7 @@ mod tests {
     }
 
     fn audd() -> EstimatorMarket {
-        PUBLISHED_MARKETS[1]
+        PUBLISHED_MARKETS[2]
     }
 
     /// Exactly one of `crypto_product` and `pinned_basis` is set, for every

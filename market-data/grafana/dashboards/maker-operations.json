@@ -1925,8 +1925,8 @@
       {
         "current": {
           "selected": true,
-          "text": "EURC",
-          "value": "EURC"
+          "text": "TGBP",
+          "value": "TGBP"
         },
         "datasource": {
           "type": "postgres",

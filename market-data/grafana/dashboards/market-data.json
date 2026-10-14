@@ -1463,11 +1463,13 @@
         "current": {
           "selected": true,
           "text": [
+            "GBP-USD",
             "EUR-USD",
             "AUD-USD",
             "CAD-USD"
           ],
           "value": [
+            "GBP-USD",
             "EUR-USD",
             "AUD-USD",
             "CAD-USD"
@@ -1478,7 +1480,7 @@
           "uid": "dropset-postgres"
         },
         "definition": "SELECT product_id FROM instruments WHERE asset_class = ANY (ARRAY[${class:sqlstring}]::text[]) ORDER BY 1",
-        "description": "Every product any collector is configured to poll, from the instruments dimension, narrowed to the selected Class. Registry-driven rather than a scan of the measurement tables, which matters three ways: it covers both tiers by construction - most of the roster is tick-only, since only EURC reaches a CEX candle endpoint - a newly added pair appears before its first row lands, and it costs one small-table read instead of a DISTINCT over two unbounded tables on every dashboard load. The class filter uses the sqlstring formatter inside an ARRAY, not a regex inside a quoted literal: the regex formatter does not escape quotes, and ARRAY[] stays valid SQL when nothing is selected where IN () is a syntax error. Defaults to the three MVP FX pairs rather than All, and that default is load-bearing rather than taste: the OHLC panel repeats over this variable at full width, so All renders one full-width chart per instrument. At 33 instruments that is 33 stacked charts pushing roughly 330 grid rows between the top of the dashboard and everything under it - including Tick coverage and Source coverage, which are the only two panels where a tick-only venue such as Kraken appears at all. Most of those charts are also empty, since the default candle source carries candles for a single product. Drill-down is unaffected: the drop-down still offers every product and All.",
+        "description": "Every product any collector is configured to poll, from the instruments dimension, narrowed to the selected Class. Registry-driven rather than a scan of the measurement tables, which matters three ways: it covers both tiers by construction - most of the roster is tick-only, since only the EURC, TGBP and AUDD token pairs reach a CEX candle endpoint - a newly added pair appears before its first row lands, and it costs one small-table read instead of a DISTINCT over two unbounded tables on every dashboard load. The class filter uses the sqlstring formatter inside an ARRAY, not a regex inside a quoted literal: the regex formatter does not escape quotes, and ARRAY[] stays valid SQL when nothing is selected where IN () is a syntax error. Defaults to the four MVP FX pairs rather than All, GBP-USD first because tGBP-USDC is the market planned as the first on mainnet, and that default is load-bearing rather than taste: the OHLC panel repeats over this variable at full width, so All renders one full-width chart per instrument. At 33 instruments that is 33 stacked charts pushing roughly 330 grid rows between the top of the dashboard and everything under it - including Tick coverage and Source coverage, which are the only two panels where a tick-only venue such as Kraken appears at all. Most of those charts are also empty, since the default candle source carries candles for a single product. Drill-down is unaffected: the drop-down still offers every product and All.",
         "includeAll": true,
         "label": "Product",
         "multi": true,
@@ -1530,7 +1532,7 @@
           "uid": "dropset-postgres"
         },
         "definition": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
-        "description": "The single source the candlestick panel draws. Candles from two venues cannot share one set of bars.\n\nThis default is paired with the Product default and must stay paired: the panel filters on BOTH, so a source carrying none of the defaulted products paints nothing at all. oanda carries all three MVP anchors \u2014 EUR-USD, AUD-USD and CAD-USD \u2014 so the panel paints on first load; coinbase, the previous default, carries candles for EURC-USDC alone and would leave every repeat empty.\n\nCAD-USD renders on this dashboard: it joined the keyed roster and three sources now write its candles, two of them intraday. So an empty CAD-USD panel is a fault to chase, not an expected state.",
+        "description": "The single source the candlestick panel draws. Candles from two venues cannot share one set of bars.\n\nThis default is paired with the Product default and must stay paired: the panel filters on BOTH, so a source carrying none of the defaulted products paints nothing at all. oanda carries all four MVP anchors \u2014 GBP-USD, EUR-USD, AUD-USD and CAD-USD \u2014 so the panel paints on first load; coinbase, the previous default, carries candles only for the token pairs (EURC-USDC, TGBP-USDC, AUDD-USDC) and would leave every repeat empty.\n\nCAD-USD renders on this dashboard: it joined the keyed roster and three sources now write its candles, two of them intraday. So an empty CAD-USD panel is a fault to chase, not an expected state.",
         "includeAll": false,
         "label": "Candle source",
         "multi": false,

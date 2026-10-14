@@ -28,8 +28,9 @@
 //!   only decides which sources survive a set larger than the engine will hold,
 //!   and nothing else.
 //! - **The crypto/USD index sources are still the weakest input**, for the
-//!   reflexivity reason in §1 fm5 — but only EURC is listed on Coinbase or
-//!   Kraken, so for the other index-priced markets they are the *only* input.
+//!   reflexivity reason in §1 fm5 — but only EURC and TGBP are wired to
+//!   Coinbase and Kraken, so for the other index-priced markets they are the
+//!   *only* input.
 //!   Those markets now compose as `Regime::Uncorroborated` and report
 //!   `Health::Unverified`: still quoted, no longer described as corroborated.
 //! - **One market has no source at all.** MXNe reaches none of them (see

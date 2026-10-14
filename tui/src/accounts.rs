@@ -584,6 +584,21 @@ fn sort_markets_by_symbol(markets: &mut [MarketView], mint_symbols: &[(Pubkey, &
     });
 }
 
+/// The index of the market whose base mint carries `symbol`, in the order
+/// `sort_markets_by_symbol` leaves the list — `None` when no such market has
+/// been discovered (yet, or on this cluster at all).
+pub fn market_index_for_symbol(
+    markets: &[MarketView],
+    mint_symbols: &[(Pubkey, &'static str)],
+    symbol: &str,
+) -> Option<usize> {
+    let mint = mint_symbols
+        .iter()
+        .find(|(_, s)| *s == symbol)
+        .map(|(m, _)| m)?;
+    markets.iter().position(|m| m.base_mint == *mint)
+}
+
 fn read_markets(
     client: &RpcClient,
     now_slot: SlotTime,
@@ -772,6 +787,65 @@ mod tests {
                 Pubkey::new_from_array([3; 32]), // EURC
                 Pubkey::new_from_array([4; 32]), // unknown, last
             ]
+        );
+    }
+
+    /// The launch default is found by symbol in the sorted list, and a symbol
+    /// with no discovered market (or no mint at all) finds nothing rather than
+    /// falling back to some other index.
+    #[test]
+    fn a_market_is_found_by_symbol_in_the_sorted_list() {
+        let symbols: Vec<(Pubkey, &'static str)> = vec![
+            (Pubkey::new_from_array([1; 32]), "AUDD"),
+            (Pubkey::new_from_array([2; 32]), "TGBP"),
+            (Pubkey::new_from_array([3; 32]), "EURC"),
+        ];
+        let mut markets = vec![market(1, 2), market(1, 3), market(1, 1)];
+        sort_markets_by_symbol(&mut markets, &symbols);
+        assert_eq!(market_index_for_symbol(&markets, &symbols, "TGBP"), Some(2));
+        assert_eq!(market_index_for_symbol(&markets, &symbols, "AUDD"), Some(0));
+        assert_eq!(
+            market_index_for_symbol(&markets[..2], &symbols, "TGBP"),
+            None
+        );
+        assert_eq!(market_index_for_symbol(&markets, &symbols, "CADC"), None);
+    }
+
+    /// Markets arriving one at a time in bootstrap order shift the default's
+    /// index — every later arrival that sorts ahead of it moves it down. This
+    /// pins that premise and that a fresh lookup always finds the right market;
+    /// it is the reason the TUI re-resolves after every poll rather than once
+    /// at first sighting, which this test does not itself exercise.
+    #[test]
+    fn the_default_market_index_moves_as_earlier_sorting_markets_arrive() {
+        // Bootstrap order, as `market::PAIRS` walks it.
+        let arrivals = [
+            "EURC", "VCHF", "TGBP", "ZARP", "MXNe", "XSGD", "IDRX", "AUDD", "CADC",
+        ];
+        let symbols: Vec<(Pubkey, &'static str)> = arrivals
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (Pubkey::new_from_array([i as u8 + 1; 32]), *s))
+            .collect();
+        let mut markets = Vec::new();
+        let mut first_sighting = None;
+        for (i, symbol) in arrivals.iter().enumerate() {
+            markets.push(market(1, i as u8 + 1));
+            sort_markets_by_symbol(&mut markets, &symbols);
+            let idx = market_index_for_symbol(&markets, &symbols, "TGBP");
+            if *symbol == "TGBP" {
+                first_sighting = idx;
+            }
+            if let Some(idx) = idx {
+                assert_eq!(markets[idx].base_mint, symbols[2].0, "after {symbol}");
+            }
+        }
+        // Alphabetical: AUDD CADC EURC IDRX MXNe TGBP VCHF XSGD ZARP.
+        assert_eq!(market_index_for_symbol(&markets, &symbols, "TGBP"), Some(5));
+        assert_ne!(
+            first_sighting,
+            Some(5),
+            "the first sighting's index went stale, which is why it is re-resolved"
         );
     }
 

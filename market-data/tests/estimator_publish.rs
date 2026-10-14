@@ -88,13 +88,19 @@ async fn read_published(pool: &PgPool, product_id: &str) -> Option<PublishedRow>
 /// Write every leg fresh, as of `now`, for the whole published roster.
 async fn seed_all_legs(pool: &PgPool, now: i64) {
     // FX anchors, from two tapes so the leg is corroborated rather than single.
-    for (currency, rate) in [("EUR", 1.1400), ("AUD", 0.7200), ("CAD", 0.7300)] {
+    for (currency, rate) in [
+        ("EUR", 1.1400),
+        ("GBP", 1.3240),
+        ("AUD", 0.7200),
+        ("CAD", 0.7300),
+    ] {
         let product = format!("{currency}-USD");
         insert_bucket(pool, "oanda", &product, now, rate).await;
         insert_bucket(pool, "twelvedata", &product, now, rate + 0.0002).await;
     }
-    // EURC's crypto reference — the one observed basis on the roster.
+    // The crypto references of the two observed-basis markets.
     insert_bucket(pool, SOURCE_COINBASE, "EURC-USDC", now, 1.1410).await;
+    insert_bucket(pool, SOURCE_COINBASE, "TGBP-USDC", now, 1.3250).await;
     // The peg leg, in the OTHER table. This is the row the whole second reader
     // exists for.
     insert_tick(pool, SOURCE_KRAKEN, USDC_USD_PRODUCT, now, 0.9999).await;
@@ -205,8 +211,9 @@ async fn a_full_tick_publishes_every_market() {
         );
         // **No MVP market composes as `ok`, with every leg fresh**, and that is a
         // roster fact rather than a defect — worth asserting so it is a decision
-        // on the record rather than a surprise on a dashboard. EURC's basis rests
-        // on one venue, so it is `uncorroborated`; AUDD and CADC are `fx_pinned`.
+        // on the record rather than a surprise on a dashboard. EURC's and TGBP's
+        // bases rest on one venue each, so they are `uncorroborated`; AUDD and
+        // CADC are `fx_pinned`.
         // Both gate as `unverified`: quoted, and not described as corroborated.
         assert_eq!(
             row.health, "unverified",
@@ -320,7 +327,7 @@ async fn the_peg_leg_comes_from_the_tick_table() {
 async fn a_pinned_market_publishes_unverified() {
     let (_pg, pool) = start_pg().await;
     let now = now_secs();
-    let audd: EstimatorMarket = PUBLISHED_MARKETS[1];
+    let audd: EstimatorMarket = PUBLISHED_MARKETS[2];
     assert!(
         audd.pinned_basis.is_some(),
         "this test is about a pinned market"

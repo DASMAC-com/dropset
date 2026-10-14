@@ -112,7 +112,7 @@ services:
       # below have to be widened together too. Pinned byte-identical by
       # `every_shared_override_group_agrees` in
       # `market-data/tests/roster_compose_agreement.rs`.
-      PRODUCT_IDS: '${PRODUCT_IDS:-EURC-USDC,AUDD-USDC}'
+      PRODUCT_IDS: '${PRODUCT_IDS:-EURC-USDC,TGBP-USDC,AUDD-USDC}'
       RUST_LOG: 'info'
     restart: 'unless-stopped'
   coinbase-ticker:
@@ -137,7 +137,7 @@ services:
       # Must stay byte-identical to `coinbase`'s default above — see the comment
       # there for why the shared override variable makes that a requirement
       # rather than a convention.
-      PRODUCT_IDS: '${PRODUCT_IDS:-EURC-USDC,AUDD-USDC}'
+      PRODUCT_IDS: '${PRODUCT_IDS:-EURC-USDC,TGBP-USDC,AUDD-USDC}'
       RUST_LOG: 'info'
     restart: 'unless-stopped'
   erapi:
@@ -464,10 +464,10 @@ services:
     # the `USDC/USD` peg — Coinbase Exchange lists no such product and
     # Binance.US quotes an administered flat 1.00. Collecting it is what lets a
     # peg dislocation be read after the fact rather than only watched live. The
-    # default roster is the two legs the maker already subscribes to, plus
+    # default roster is the three legs the maker already subscribes to, plus
     # `EURC/EUR` — token against its own fiat, the closest keyless stand-in for
-    # an issuer redemption rate. No model leg reads that third pair yet; it is
-    # recorded because Kraken's keyless OHLC serves only a rolling window, so
+    # an issuer redemption rate. No model leg reads that redemption pair yet; it
+    # is recorded because Kraken's keyless OHLC serves only a rolling window, so
     # tick resolution is unrecoverable afterwards (see the binary's module
     # header).
     #
@@ -492,7 +492,7 @@ services:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
       POLL_INTERVAL_SECS: '${TICK_POLL_INTERVAL_SECS:-15}'
       PRODUCT_IDS: >-
-        ${KRAKEN_PRODUCT_IDS:-USDC-USD,EURC-USD,EURC-EUR,EURC-USDC,
+        ${KRAKEN_PRODUCT_IDS:-USDC-USD,EURC-USD,TGBP-USD,EURC-EUR,EURC-USDC,
         QCAD-USD}
       RUST_LOG: 'info'
     restart: 'unless-stopped'

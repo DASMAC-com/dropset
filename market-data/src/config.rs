@@ -36,7 +36,7 @@ const DEFAULT_POLL_INTERVAL_SECS: u64 = 15;
 /// `market-data/tests/roster_compose_agreement.rs` reads it, pinning this
 /// default against the one `infra/localnet/docker-compose.yml` writes for the
 /// same service — two copies whose divergence is otherwise silent.
-const DEFAULT_PRODUCTS: &str = "EURC-USDC,AUDD-USDC";
+const DEFAULT_PRODUCTS: &str = "EURC-USDC,TGBP-USDC,AUDD-USDC";
 
 #[derive(Clone, Debug)]
 pub struct Config {

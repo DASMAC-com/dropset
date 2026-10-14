@@ -15,18 +15,19 @@ sized to that. See `docs/data-feeds.md` for the ingestion framework and
 
 ## 1. The rule that governs every per-pair panel
 
-Every per-pair panel shows **all three MVP FX pairs**, always:
+Every per-pair panel shows **all four MVP FX pairs**, always:
 
 | Market    | FX pair (the anchor) | Basis (the venue leg)       |
 | --------- | -------------------- | --------------------------- |
+| TGBP/USDC | GBP/USD              | observed — Coinbase, Kraken |
 | EURC/USDC | EUR/USD              | observed — Coinbase, Kraken |
 | AUDD/USDC | AUD/USD              | observed — Coinbase         |
 | CADC/USDC | CAD/USD              | **assumed 1.0** — see §3.1  |
 
 Two rules follow, and they are deliberately not the same rule:
 
-- **A missing FX pair is a defect.** If a panel cannot show EUR/USD,
-  AUD/USD and CAD/USD, the panel is wrong — not the market. There is no
+- **A missing FX pair is a defect.** If a panel cannot show GBP/USD,
+  EUR/USD, AUD/USD and CAD/USD, the panel is wrong — not the market. There is no
   legitimate state in which an MVP anchor is absent.
 - **A pair with no observable basis venue shows the declared
   assumed-peg**, rendered *visually distinct from a faulted source*. An
