@@ -22,6 +22,11 @@ caller did.
 `fleet` types `task resume`, so fleet resume inherits the same miss for every
 `-w`-launched session that has never been resumed from inside its worktree.
 
+**That filing rule has since changed.** Current Claude Code files a `-w`
+session under the *worktree's* slug (measured 2026-10-13), which the
+``continue`` mode below already reaches. Both layouts remain on disk, so both
+paths stay; neither is dead code.
+
 Usage::
 
     python3 .claude/tools/resolve_session.py --tag 1051
@@ -186,8 +191,9 @@ def transcripts_in(slug_dir: Path) -> list[Path]:
 def stamps_into(transcript: Path, target: Path) -> bool:
     """True when this transcript's ``cwd`` stamps point at ``target``.
 
-    This is the actual identification: a `-w`-launched session is filed under
-    the base slug, so the slug says nothing and the stamps say everything. A
+    This is the actual identification: a `-w`-launched session filed under the
+    base slug (the older layout) says nothing by its slug, and the stamps say
+    everything. A
     malformed or unreadable line is skipped rather than fatal — a transcript
     being written to right now can end mid-record, and that is the common case
     for a live session, which is exactly the one worth resuming.
@@ -247,8 +253,9 @@ def resolve(tag: str, repo: Path) -> dict:
 
     projects = claude_home() / "projects"
 
-    # The fast path, unchanged: a worktree with its own transcript is exactly
-    # what `--continue` addresses.
+    # The fast path: a worktree with its own transcript is exactly what
+    # `--continue` addresses — and, since Claude Code began filing `-w` sessions
+    # under the worktree's slug, the usual case rather than the exception.
     own = transcripts_in(projects / slugify(worktree))
     if own:
         verdict["mode"] = "continue"
@@ -259,9 +266,9 @@ def resolve(tag: str, repo: Path) -> dict:
         )
         return verdict
 
-    # The miss this tool exists for. Check the base slug first — that is where
-    # `task` files a `-w` session — then every other project dir, since a session
-    # could have been launched from somewhere else entirely.
+    # The miss this tool exists for. Check the base slug first — where older
+    # Claude Code filed a `-w` session — then every other project dir, since a
+    # session could have been launched from somewhere else entirely.
     base_slug = projects / slugify(repo)
     searched = [base_slug]
     others = (

@@ -1268,8 +1268,10 @@ knowing before relying on the inheritance:**
 - **`fleet` reaches such a session through `task resume <n>`**,
   which re-pins the tier as well as the substrate: an untagged
   worktree — no marker — resumes on the **advisor** tier, so an
-  issue-keyed explore or architect session comes back on the
-  right model. (This closed the first part of ENG-1402.)
+  issue-keyed explore session comes back on the right model. An
+  architect session gets there through its `<n>.tier` file instead,
+  and keeps its recorded substrate. (This closed the first part of
+  ENG-1402.)
 - **No substrate marker is written for an explore session**, and
   that is deliberate rather than an omission. The marker keys on
   the **worktree tag alone**, which `task <n>` also writes — so
@@ -1666,11 +1668,14 @@ window, and a seat session resumed onto Bedrock quietly spends credits
 on attended work. Neither errors. **An absent marker reads as
 `anthropic`**, the conservative default, which is also correct for
 every session predating markers (the retired `seat` value reads the
-same). Only `task` writes a marker, so a marker's **presence** is also
-the tier record: present resumes the executor tier, absent the advisor
+same). `task` and `architect` write a marker, and a marker's
+**presence** is the tier record unless an `advisor` `<key>.tier` file
+sits beside it: present resumes the executor tier, absent the advisor
 tier — which is what lets `task resume <n>` bring an issue-keyed
-explore session back on the right model without a second marker that
-could disagree with the first. The bare `task resume` picker cannot know
+explore session back on the right model. `architect` writes that
+`.tier` file, and a `task` launch removes it; the tier is a separate
+file because `session_metrics.py` reads the marker as one bare word.
+The bare `task resume` picker cannot know
 which session will be chosen, so it resumes unpinned.
 
 **Two guards, pointing opposite ways.** A Bedrock launch **hard-gates**
@@ -1989,12 +1994,18 @@ drives the real zsh functions.
   `_ds_session` takes the worktree tag as an optional last argument, and
   **the `-w` flag rides the create branch only.** `-w` *creates* a
   worktree, so passing it on resume would ask for a second one every
-  time a long-lived thread is reopened. The transcript-path probe needs
-  no worktree case, which is worth stating because the obvious reading
-  is that it does: `claude -w <tag>` runs from the **base** repo, so
-  Claude Code files the transcript under the base repo's project slug
-  even though every `cwd` stamp inside it points into the worktree.
-  That is the same fact `task resume` depends on from the other side.
+  time a long-lived thread is reopened. **The existence check is by
+  session id, not by slug**: it globs every project directory for
+  `<id>.jsonl`, because current Claude Code files a `-w` session under
+  the **worktree's** slug while older ones sit under the base repo's.
+  A slug-built probe missed the former and re-ran the bootstrap prompt
+  on every reopen. A worktree-slug hit resumes from inside the worktree.
+
+  `architect` records its substrate in the marker **and** an `advisor`
+  tier beside it (`<n>.tier`), so `architect <n> bedrock` comes back on
+  Bedrock and the advisor model through `task resume`, `fleet`, and a
+  bare `architect <n>` reopen alike. It never overwrites a marker a
+  `task` session wrote on the same number.
 
 - **`fleet [go]`** — resume the whole **fleet**: one iTerm tab per
   in-flight Linear issue, each with `task resume <n>` typed **and Enter

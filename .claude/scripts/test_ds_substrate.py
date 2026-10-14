@@ -73,6 +73,7 @@ class SubstrateHarness(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.repo = Path(self._tmp.name) / "repo"
         (self.repo / ".claude").mkdir(parents=True)
+        self.claude_home = Path(self._tmp.name) / "claude-home"
 
     def _zsh(self, body, *, env=None):
         """Source the real init against a scratch `_DS_REPO`, then run `body`."""
@@ -85,6 +86,9 @@ class SubstrateHarness(unittest.TestCase):
         child_env = {**os.environ}
         for name in _SUITE_OWNED_ENV:
             child_env.pop(name, None)
+        # `_ds_session` globs the projects tree for a session id, so a case must
+        # never see the operator's real transcripts.
+        child_env["CLAUDE_CONFIG_DIR"] = str(self.claude_home)
         child_env.update(env or {})
         return subprocess.run(
             ["zsh", "-c", script],
@@ -326,15 +330,98 @@ class VerbLaunch(SubstrateHarness):
         self.assertIn("MODEL=work-model[1m] USE=unset", out, result.stderr)
 
     def test_architect_takes_the_override_after_the_number(self):
-        result, out = self._launch("architect 12 bedrock", env=self._TOKEN)
-        self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
         result, out = self._launch("architect 12")
         self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
         # Session, worktree and governing issue all come from the one number.
         self.assertIn("-n 12 --permission-mode auto -w 12 /architect ENG-12", out)
+        result, out = self._launch("architect 12 bedrock", env=self._TOKEN)
+        self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
         result, out = self._launch("architect 12 local")
         self.assertIn("RC=1", out)
         self.assertNotIn("MODEL=", out)
+
+    def test_architect_bedrock_survives_every_resume_path(self):
+        # The third defect: the override wrote no marker, so a resume came back
+        # on the anthropic advisor tier.
+        self._launch("architect 12 bedrock", env=self._TOKEN)
+        for verb in ("architect 12", "task resume 12"):
+            with self.subTest(verb=verb):
+                result, out = self._launch(verb, env=self._TOKEN)
+                self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
+        # An explicit word still wins.
+        result, out = self._launch("architect 12 anthropic")
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+
+    def test_architect_leaves_a_task_sessions_marker_alone(self):
+        marker = 'print -r -- "MARK=$(<$_DS_SUBSTRATE_DIR/12)"'
+        result, out = self._launch(
+            f"_ds_substrate_write 12 bedrock; architect 12 anthropic; {marker}"
+        )
+        self.assertIn("MARK=bedrock", out, result.stderr)
+        self.assertIn("task session's substrate marker", result.stderr)
+        result, out = self._launch("task resume 12", env=self._TOKEN)
+        self.assertIn("MODEL=work-model[1m] USE=1", out, result.stderr)
+
+    def test_a_task_launch_takes_the_tier_back(self):
+        self._launch("architect 12")
+        result, out = self._launch("task 12; task resume 12", env=self._TOKEN)
+        self.assertEqual(out.count("MODEL=work-model[1m] USE=1"), 2, out)
+
+    def _transcript(self, slug_of):
+        """Write a transcript for `architect 12`'s id under `slug_of`'s slug."""
+        return (
+            "sid=$(_ds_topic_sid architect 12); "
+            f'slug="${{{slug_of}//[\\/.]/-}}"; '
+            'mkdir -p "$CLAUDE_CONFIG_DIR/projects/$slug"; '
+            ': >| "$CLAUDE_CONFIG_DIR/projects/$slug/$sid.jsonl"; '
+            'print -r -- "SID=$sid"; '
+        )
+
+    def test_a_reopen_under_the_base_slug_resumes_with_no_prompt(self):
+        result, out = self._launch(
+            f'cd "$_DS_REPO"; {self._transcript("PWD")}architect 12'
+        )
+        sid = next(ln[4:] for ln in out.splitlines() if ln.startswith("SID="))
+        self.assertIn(f"ARGS=--resume {sid} --permission-mode auto", out)
+        self.assertNotIn("/architect", out)
+        self.assertNotIn("--session-id", out)
+
+    def test_a_reopen_under_the_worktree_slug_resumes_from_the_worktree(self):
+        # The first defect: the probe built only the base-slug path, missed a
+        # `-w` session filed under its worktree's slug, and re-ran the
+        # bootstrap on top of the existing history.
+        wt = self.repo / ".claude" / "worktrees" / "ceo-12"
+        wt.mkdir(parents=True)
+        result, out = self._launch(
+            'claude() { print -r -- "CWD=$PWD ARGS=$*"; }; cd "$_DS_REPO"; '
+            'wt="$PWD/.claude/worktrees/ceo-12"; '
+            f"{self._transcript('wt')}architect 12"
+        )
+        sid = next(ln[4:] for ln in out.splitlines() if ln.startswith("SID="))
+        self.assertIn(f"/worktrees/ceo-12 ARGS=--resume {sid}", out, result.stderr)
+        self.assertNotIn("/architect", out)
+
+    _CWD_STUB = 'claude() { print -r -- "CWD=$PWD ARGS=$*"; }; cd "$_DS_REPO"; '
+
+    def test_a_copy_under_both_slugs_still_resumes_from_the_worktree(self):
+        # Glob order is not a contract (here the worktree copy sorts first, as
+        # `-` precedes `/`), so this pins the order-independent match: a
+        # quoted `(M)` filter over the joined array failed exactly this case.
+        (self.repo / ".claude" / "worktrees" / "ceo-12").mkdir(parents=True)
+        result, out = self._launch(
+            self._CWD_STUB + 'wt="$PWD/.claude/worktrees/ceo-12"; '
+            f"{self._transcript('PWD')}{self._transcript('wt')}architect 12"
+        )
+        self.assertIn("/worktrees/ceo-12 ARGS=--resume", out, result.stderr)
+
+    def test_a_base_slug_copy_beside_a_live_worktree_stays_in_the_base(self):
+        (self.repo / ".claude" / "worktrees" / "ceo-12").mkdir(parents=True)
+        result, out = self._launch(
+            self._CWD_STUB + f"{self._transcript('PWD')}architect 12"
+        )
+        line = next(ln for ln in out.splitlines() if ln.startswith("CWD="))
+        self.assertNotIn("/worktrees/", line, result.stderr)
+        self.assertIn("ARGS=--resume", line)
 
     def test_architect_refuses_a_topic_and_zero(self):
         for verb in ("architect pricing", "architect 0"):
@@ -515,6 +602,18 @@ class MarkerRoundTrip(SubstrateHarness):
             "_ds_resume_tier eng-998"
         )
         self.assertEqual(result.stdout.split(), ["executor", "advisor"])
+
+    def test_an_advisor_tier_file_beats_marker_presence(self):
+        # The marker stays one bare word for session_metrics.py; the tier rides
+        # beside it, and a tier-less rewrite (a `task` launch) drops it again.
+        result = self._zsh(
+            "_ds_substrate_write 6 bedrock advisor; _ds_resume_tier 6; "
+            '_ds_substrate_read 6; print -r -- "$(<$_DS_SUBSTRATE_DIR/6)"; '
+            "_ds_substrate_write 6 bedrock; _ds_resume_tier 6"
+        )
+        self.assertEqual(
+            result.stdout.split(), ["advisor", "bedrock", "bedrock", "executor"]
+        )
 
     def test_bedrock_round_trips(self):
         result = self._zsh(
