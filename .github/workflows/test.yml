@@ -190,7 +190,9 @@ jobs:
     # artifacts and never restores the SBF target, so without this the .so is
     # recompiled from scratch every run. The key is content-addressed over
     # every input that determines the binary (program + math-core sources, the
-    # lockfile, the workspace/build config, and the pinned toolchain), so an
+    # lockfile, the workspace/build config — the Makefile included, since its
+    # ANCHOR_BUILD_SBF_ARCH picks the sBPF version — and the pinned
+    # toolchain), so an
     # exact hit means the cached .so is valid and the build step below is
     # skipped; any program change misses and rebuilds. Restored after
     # rust-cache so it lands on top of the restored target/.
@@ -203,7 +205,7 @@ jobs:
         key: 'sbf-default-${{ runner.os }}-${{ env.SOLANA_VERSION }}-${{
               env.ANCHOR_VERSION }}-${{ hashFiles(''programs/dropset/**'',
               ''sdk/math-core/**'', ''Cargo.lock'', ''Cargo.toml'',
-              ''Anchor.toml'') }}'
+              ''Anchor.toml'', ''Makefile'') }}'
         path: 'target/deploy/dropset.so'
     # target/deploy/ is git-ignored, so materialize the program keypair from
     # its canonical home (keys/AAAA.json) before the build and tests run.
@@ -335,7 +337,7 @@ jobs:
         key: 'sbf-no-teardown-${{ runner.os }}-${{ env.SOLANA_VERSION }}-${{
               env.ANCHOR_VERSION }}-${{ hashFiles(''programs/dropset/**'',
               ''sdk/math-core/**'', ''Cargo.lock'', ''Cargo.toml'',
-              ''Anchor.toml'') }}'
+              ''Anchor.toml'', ''Makefile'') }}'
         path: 'target/deploy/dropset.so'
     # target/deploy/ is git-ignored, so materialize the program keypair from
     # its canonical home (keys/AAAA.json) before the build and tests run.
@@ -444,7 +446,7 @@ jobs:
         key: 'sbf-parity-${{ runner.os }}-${{ env.SOLANA_VERSION }}-${{
               env.ANCHOR_VERSION }}-${{ hashFiles(''programs/dropset/**'',
               ''sdk/math-core/**'', ''Cargo.lock'', ''Cargo.toml'',
-              ''Anchor.toml'') }}'
+              ''Anchor.toml'', ''Makefile'') }}'
         path: |
           target/deploy/dropset.so
           target/deploy/dropset_ref.so
