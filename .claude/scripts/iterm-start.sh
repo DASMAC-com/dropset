@@ -20,10 +20,12 @@ nohup "$SCRIPT_DIR/iterm-monitor.sh" "$TTY_PATH" &>/dev/null &
 echo "$!" >"$PID_FILE"
 
 # Seed the neutral state so the monitor paints something immediately, and drop
-# both per-TTY sentinels a crashed prior session may have left here (see
+# the per-TTY sentinels a crashed prior session may have left here (see
 # iterm-paint.sh). The sticky-green one would otherwise suppress this session's
 # first real permission prompt; the permission-wait one would make a brand new
-# session's first heal check read a dead prompt's timestamp.
+# session's first heal check read a dead prompt's timestamp; a leftover
+# debounce arm would promote a dead prompt to yellow.
 echo "$STATE_NEUTRAL" >"$STATE_PREFIX$TTY_NAME"
 rm -f "$STATE_PREFIX$TTY_NAME.askq"
 rm -f "$STATE_PREFIX$TTY_NAME.permwait"
+rm -f "$(perm_pending_path "$TTY_NAME")"

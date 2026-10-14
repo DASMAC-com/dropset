@@ -643,7 +643,7 @@ tab isn't focused.
 All live in `.claude/scripts/` and are dependency-free bash:
 
 - `iterm-colors.sh` — shared palette and the SetColors emit helpers,
-  sourced by the rest. The four states and the `PAINT_WINDOW_BG` toggle
+  sourced by the rest. The five states and the `PAINT_WINDOW_BG` toggle
   (off by default: only the tab is tinted) live here; edit this file to
   recolor everything. Two things propagate differently:
   `iterm-monitor.sh` re-reads the palette on each state change, so a
@@ -697,7 +697,11 @@ event on stdin, makes the color a deterministic function of the event:
   anything else → neutral.
 - `Notification` with `notification_type` `permission_prompt` → yellow;
   any other notification leaves the tab unchanged.
-- `Stop` → green. `PostToolUse` / `UserPromptSubmit` → neutral.
+- `Stop` → green, **unless** the payload's `background_tasks` or
+  `session_crons` is non-empty → slate (see "Self-waiting is quiet"
+  below). `PostToolUse` / `UserPromptSubmit` → neutral.
+
+Every yellow above is **debounced**, not painted on the spot.
 
 `AskUserQuestion` **does** fire a companion `Notification`
 (`permission_prompt`) — from the harness's side the selector is a block
@@ -760,6 +764,57 @@ which has never been measured. The test pins the value and its override
 rather than asserting the value is right; the failure direction is the
 argument for it, and measuring the re-fire interval is the follow-up
 that would actually close it.
+
+**A yellow waits a few seconds before it shows.** The auto permission-mode
+classifier answers most prompts itself, but `permission_prompt` fires as
+soon as it starts deciding — so the tab flashed yellow, the reorderer
+jumped it to the front, and it cleared a moment later. The operator, aiming at
+the first green tab, kept landing on a yellow one that flickered away. So the
+painter only **arms** a yellow (a per-tty `.permpending` sentinel), and the
+monitor **promotes** it to the state file once it has outlived
+`ITERM_PERM_DEBOUNCE_SECONDS` (default 5s); any other paint cancels the arm.
+The reorderer reads the state file, which is untouched until promotion, so a
+prompt the classifier resolves never moves a tab at all. A re-fire neither
+restarts the timer nor re-arms a yellow already showing, and an edit tool's
+arm keeps its timestamp when the prompt that follows adds its message. The
+cost is a genuine prompt surfacing a few seconds late, which a prompt waiting
+for a human absorbs.
+
+### Self-waiting is quiet
+
+A session that ends its turn on a CI watch, a sub-agent fan-out or its own
+scheduled wake-up will resume by itself, and green — "reply wanted" — told
+the operator otherwise. The `Stop` payload lists exactly this
+(`background_tasks`, `session_crons`), so a `Stop` with either non-empty
+paints the **slate** `STATE_WAITING`, which the reorderer sorts with the
+neutral tabs. A harness that sends neither field reads as not waiting, which
+is the old green: silencing a session that needed a reply would be the worse
+error. The one gap is a session that both leaves a background job running
+**and** asks a plain-text question; it reads slate until the job resumes it.
+The house rule that a decision goes through `AskUserQuestion`, which paints
+its own green, keeps that gap narrow.
+
+**The OS notification follows the same split, once the harness hands it
+over.** A hook cannot suppress Claude Code's own notification, so the only
+way to stop a self-waiting session notifying is to switch the harness's
+channel off and send it from here, where the two classes can be told apart.
+That switch is user-local and one-time: set notifications to disabled in
+`/config`, which is the `preferredNotifChannel` value
+`notifications_disabled`.
+
+`painter_owns_notifications` looks for that value in `~/.claude.json`, so the
+two can never both fire: until it is set the harness notifies exactly as
+before and the painter sends nothing. Where `/config` stores it is
+**unverified** — if the setting is written elsewhere the detection reads "not
+owned" (the safe direction: no double notification, just the old behavior),
+and exporting `ITERM_PAINTER_NOTIFY=1` hands it over by hand (`0` forces it
+back). Once it
+is set, the painter sends an iTerm OSC 9 notification for the needs-operator
+class only: a permission prompt when its debounce promotes it, an
+`AskUserQuestion` selector once (not on every re-fire), an elicitation or
+`agent_needs_input`, and `idle_prompt` **unless the tab is slate**. Covered by
+`.claude/scripts/test_iterm_attention.py`, which drives the real painter
+through an `ITERM_TTY_PATH` override of the tty walk.
 
 ### FIFO attention ordering
 
@@ -2002,6 +2057,19 @@ drives the real zsh functions.
   That hazard — a launch verb typed into a session already running
   something — is what the failure path guards, and it was never what the
   window-per-session rule bought.
+
+  **Neither caller moves the operator's view.** iTerm selects every tab
+  it creates, so a dispatch or a fleet resume used to pull the operator
+  out of whatever session they were reading. Typing needs no focus —
+  `async_send_text` reaches an unselected session — so `open_tabs`
+  captures the window's selected tab before creating anything,
+  re-selects it after every create (the steal then lasts one round trip,
+  not the batch) and once more on the way out, failure path included,
+  without raising the window. A refused re-select is reported as
+  `focus_restored: false` and never fails the batch: the commands were
+  typed, and a not-ok answer would put them in the retry set and double
+  them. Since both callers go through `open_tabs`, so would any future
+  one.
 
   **No AppleScript.** iTerm is driven through its Python API via the
   shared `.claude/tools/iterm_api.py`, the one owner of iTerm automation

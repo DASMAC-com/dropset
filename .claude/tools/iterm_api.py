@@ -381,6 +381,63 @@ def _first_session(container):
     return getattr(tab, "current_session", None) if tab is not None else None
 
 
+async def _reselect(tab) -> bool:
+    """Re-select the tab the operator was on. Best effort; True on success.
+
+    ``async_create_tab`` selects the tab it creates, so a dispatch used to yank
+    the operator out of whatever session they were reading. Typing needs no
+    focus — ``async_send_text`` reaches an unselected session — so the only
+    thing the selection ever bought was the steal. ``order_window_front=False``
+    because the window is already where it was; raising it would be a second,
+    smaller steal.
+
+    A failure here must not fail the batch: the commands were typed, and
+    reporting not-ok would put them in the caller's retry set and double them.
+    So it is swallowed and only counted, never raised.
+    """
+    if tab is None:
+        return True
+    try:
+        await tab.async_select(order_window_front=False)
+    except Exception:  # noqa: BLE001 - a lost focus is not a lost command
+        return False
+    return True
+
+
+async def _open_and_type(window, original, commands, ttys, untyped) -> None:
+    """The ``open_tabs`` loop: one tab per command, typed, focus handed back.
+
+    Mutates ``ttys`` / ``untyped`` in place. The driver published both into its
+    result before calling, which is what lets a mid-batch failure report them.
+    """
+    for index, command in enumerate(commands):
+        tab = await window.async_create_tab()
+        # Straight back, before typing: the steal then lasts one round trip
+        # rather than the whole batch, since typing needs no selection.
+        await _reselect(original)
+        session = _first_session(tab) if tab is not None else None
+        if session is None:
+            # Positional: record the gap rather than dropping the entry, so
+            # the caller can name which tab it could not reach. The index
+            # also goes in `untyped` — nothing was sent to this tab, so a
+            # caller that treated the entry as done would silently drop the
+            # command. `_first_session` returning None is a real, measured
+            # case, not a theoretical one; see its docstring.
+            ttys.append(None)
+            untyped.append(index)
+            continue
+        await session.async_send_text(command + "\n")
+        # Appended BEFORE the tty is read, then filled in. The text is
+        # already typed at this point, so the entry has to exist even if the
+        # read raises — truncating here would put an already-typed command
+        # back into the retry set. Note the placeholder is the same VALUE the
+        # branch above appends but not the same MEANING: there it marks a tab
+        # that ran nothing, here one that ran and whose tty is unknown. That
+        # is exactly why `untyped` exists.
+        ttys.append(None)
+        ttys[-1] = await session.async_get_variable("tty")
+
+
 async def _driver_body(connection, request, result):  # pragma: no cover
     import iterm2
 
@@ -402,6 +459,9 @@ async def _driver_body(connection, request, result):  # pragma: no cover
     if op == "open_tabs":
         app = await iterm2.async_get_app(connection)
         window = app.current_terminal_window
+        # Captured BEFORE any tab exists, since every create moves the
+        # selection. A window this process creates has nothing to restore.
+        original = window.current_tab if window is not None else None
         if window is None:
             window = await iterm2.Window.async_create(connection)
         if window is None:
@@ -424,29 +484,12 @@ async def _driver_body(connection, request, result):  # pragma: no cover
         # separately rather than being inferred from a falsy entry.
         untyped = []
         result["untyped"] = untyped
-        for index, command in enumerate(request["commands"]):
-            tab = await window.async_create_tab()
-            session = _first_session(tab) if tab is not None else None
-            if session is None:
-                # Positional: record the gap rather than dropping the entry, so
-                # the caller can name which tab it could not reach. The index
-                # also goes in `untyped` — nothing was sent to this tab, so a
-                # caller that treated the entry as done would silently drop the
-                # command. `_first_session` returning None is a real, measured
-                # case, not a theoretical one; see its docstring.
-                ttys.append(None)
-                untyped.append(index)
-                continue
-            await session.async_send_text(command + "\n")
-            # Appended BEFORE the tty is read, then filled in. The text is
-            # already typed at this point, so the entry has to exist even if the
-            # read raises — truncating here would put an already-typed command
-            # back into the retry set. Note the placeholder is the same VALUE the
-            # branch above appends but not the same MEANING: there it marks a tab
-            # that ran nothing, here one that ran and whose tty is unknown. That
-            # is exactly why `untyped` exists.
-            ttys.append(None)
-            ttys[-1] = await session.async_get_variable("tty")
+        try:
+            await _open_and_type(window, original, request["commands"], ttys, untyped)
+        finally:
+            # Once more on the way out, failure path included: a batch that
+            # broke mid-loop must not leave the operator on a half-made tab.
+            result["focus_restored"] = await _reselect(original)
 
         # A tab that was opened and typed nothing is NOT a success, and saying so
         # here is what makes the `untyped` list reach a caller at all. `open_tabs`

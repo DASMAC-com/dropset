@@ -28,6 +28,23 @@ json_field() { # $1 = field name, $2 = payload
   fi
 }
 
+# True when the payload carries a NON-EMPTY array under field $1. The closing
+# quote must follow the name directly, so the same words quoted inside an
+# escaped string (`last_assistant_message`) cannot match.
+json_nonempty_array() { # $1 = field name, $2 = payload
+  local re="\"$1\"[[:space:]]*:[[:space:]]*\\[[[:space:]]*[^][:space:]]"
+  [[ "$2" =~ $re ]]
+}
+
+# A Stop whose session will resume by itself: a background task (a CI watch, a
+# sub-agent fan-out, a merge-queue poll) or a scheduled wake-up is still in
+# flight. Both lists are on the Stop payload. An older harness that sends
+# neither reads as "not waiting", which is the old green — never a silenced
+# session that needed a reply.
+stop_is_self_waiting() { # $1 = payload
+  json_nonempty_array background_tasks "$1" || json_nonempty_array session_crons "$1"
+}
+
 # Map a hook event to a state color. Prints nothing for events that should not
 # repaint (e.g. a non-permission Notification), so the caller leaves the tab as
 # it is.
@@ -44,7 +61,16 @@ color_for_event() { # $1 = payload
       esac
       ;;
     PostToolUse | UserPromptSubmit) printf '%s' "$STATE_NEUTRAL" ;;
-    Stop) printf '%s' "$STATE_REPLY" ;;
+    Stop)
+      # Green asks for the operator, so it is kept for a session that will not
+      # move without one. A self-waiting session gets the quiet slate, which
+      # the reorderer sorts with the neutral tabs rather than to the front.
+      if stop_is_self_waiting "$1"; then
+        printf '%s' "$STATE_WAITING"
+      else
+        printf '%s' "$STATE_REPLY"
+      fi
+      ;;
     Notification)
       notification_type="$(json_field notification_type "$1")"
       # A permission_prompt is yellow. The harness ALSO fires this for an
@@ -83,20 +109,49 @@ if [ -z "$COLOR" ]; then
   PAYLOAD="$(cat)"
   COLOR="$(color_for_event "$PAYLOAD")"
 fi
-[ -z "$COLOR" ] && exit 0
+
+EVENT="$(json_field hook_event_name "$PAYLOAD")"
+NOTIFICATION_TYPE="$(json_field notification_type "$PAYLOAD")"
+MESSAGE="$(json_field message "$PAYLOAD")"
+
+# Notifications that do not repaint. When this integration owns notifications
+# (see painter_owns_notifications), these are the ones it delivers — the
+# needs-operator class. idle_prompt is the harness's "still waiting for you"
+# nudge, and it is exactly the one a self-waiting session must not send, so it
+# is dropped while the tab is slate. Every other type (auth_success,
+# agent_completed, quota_*) asks nothing of the operator.
+if [ -z "$COLOR" ]; then
+  [ "$EVENT" = "Notification" ] || exit 0
+  TTY_PATH=$(resolve_tty) || exit 0
+  TTY_BASE="$(basename "$TTY_PATH")"
+  case "$NOTIFICATION_TYPE" in
+    idle_prompt)
+      [ "$(cat "$(state_file_path "$TTY_BASE")" 2>/dev/null)" = "$STATE_WAITING" ] && exit 0
+      notify_operator "$MESSAGE" >"$TTY_PATH"
+      ;;
+    elicitation_dialog | elicitation_url_dialog | agent_needs_input)
+      notify_operator "$MESSAGE" >"$TTY_PATH"
+      ;;
+  esac
+  exit 0
+fi
 
 # Record the state (for the monitor and the attend toggle) and paint it now.
 TTY_PATH=$(resolve_tty) || exit 0
 TTY_BASE="$(basename "$TTY_PATH")"
 
-EVENT="$(json_field hook_event_name "$PAYLOAD")"
-
 # Suppress the AskUserQuestion companion permission_prompt yellow while the
 # green sentinel says the selector is still awaiting a reply. This fires for
-# every re-fired notification until the sentinel is cleared below.
+# every re-fired notification until the sentinel is cleared below. The FIRST
+# companion still notifies — a selector is the plainest needs-operator case
+# there is — and marks the sentinel so a re-fire does not notify again.
 if [ "$EVENT" = "Notification" ] && [ "$COLOR" = "$STATE_PERMISSION" ] &&
-  [ "$(json_field notification_type "$PAYLOAD")" = "permission_prompt" ] &&
+  [ "$NOTIFICATION_TYPE" = "permission_prompt" ] &&
   askq_sentinel_present "$TTY_BASE"; then
+  if [ ! -s "$(askq_sentinel_path "$TTY_BASE")" ]; then
+    echo notified >"$(askq_sentinel_path "$TTY_BASE")"
+    notify_operator "$MESSAGE" >"$TTY_PATH"
+  fi
   exit 0
 fi
 
@@ -128,6 +183,29 @@ if [ "$EVENT" = "Notification" ] && [ "$COLOR" = "$STATE_PERMISSION" ]; then
 elif [ "$COLOR" != "$STATE_PERMISSION" ]; then
   rm -f "$(perm_wait_path "$TTY_BASE")"
 fi
+
+# A yellow is ARMED, never painted here: the monitor promotes it once it has
+# outlived PERM_DEBOUNCE_SECONDS (see iterm-colors.sh for the flicker this
+# stops). Two rules keep the debounce from restarting forever:
+#   * a yellow already on screen is left alone — a re-fire is not a new prompt;
+#   * an existing arm keeps its timestamp. The common order for an edit that
+#     needs approval is the edit tool's PreToolUse (no message) THEN the
+#     permission_prompt (with one), so the message is added to the arm while
+#     its mtime is carried over.
+if [ "$COLOR" = "$STATE_PERMISSION" ]; then
+  [ "$(cat "$(state_file_path "$TTY_BASE")" 2>/dev/null)" = "$STATE_PERMISSION" ] && exit 0
+  PENDING="$(perm_pending_path "$TTY_BASE")"
+  if [ ! -f "$PENDING" ]; then
+    printf '%s' "$MESSAGE" >"$PENDING"
+  elif [ ! -s "$PENDING" ] && [ -n "$MESSAGE" ]; then
+    touch -r "$PENDING" "$PENDING.ref"
+    printf '%s' "$MESSAGE" >"$PENDING"
+    touch -r "$PENDING.ref" "$PENDING"
+    rm -f "$PENDING.ref"
+  fi
+  exit 0
+fi
+rm -f "$(perm_pending_path "$TTY_BASE")"
 
 echo "$COLOR" >"$STATE_PREFIX$TTY_BASE"
 emit_set_colors "$COLOR" >"$TTY_PATH"

@@ -6,11 +6,13 @@ positional guarantee `open_tabs` makes to its callers, and `_first_session`'s
 handling of a freshly created window. The driver half needs a live iTerm2 and is
 deliberately not faked — a mock of the API would only assert that this module's
 idea of the API is self-consistent, which is the one thing that cannot fail in a
-useful way.
+useful way. The one exception is the focus hand-back, whose contract IS the
+order of calls (create, re-select, type), which a recording fake pins exactly.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 from pathlib import Path
@@ -589,6 +591,107 @@ class FirstSession(unittest.TestCase):
         wanted = self._Session()
         tab = self._tab(sessions=None, current=wanted)
         self.assertIs(iterm_api._first_session(tab), wanted)
+
+
+class FocusIsHandedBack(unittest.TestCase):
+    """A dispatch must not move the operator's view.
+
+    `async_create_tab` selects the tab it makes, so the operator lost whatever
+    session they were reading mid-read. These fakes record every selection and
+    every typed line, which is the whole observable contract.
+    """
+
+    def setUp(self):
+        self.log = []
+
+    def _session(self, name):
+        log = self.log
+
+        class Session:
+            async def async_send_text(self, text):
+                log.append(("type", name, text))
+
+            async def async_get_variable(self, _name):
+                return f"/dev/{name}"
+
+        return Session()
+
+    def _tab(self, name, *, fails=False):
+        log = self.log
+        tab = type("Tab", (), {})()
+        tab.sessions = [self._session(name)]
+
+        async def async_select(order_window_front=True):
+            if fails:
+                raise RuntimeError("select refused")
+            log.append(("select", name, order_window_front))
+
+        tab.async_select = async_select
+        return tab
+
+    def _window(self, names):
+        log = self.log
+        made = iter(names)
+        test = self
+
+        class Window:
+            async def async_create_tab(self):
+                name = next(made)
+                log.append(("create", name))
+                return test._tab(name)
+
+        return Window()
+
+    def test_the_original_tab_is_reselected_after_every_create(self):
+        original = self._tab("home")
+        ttys, untyped = [], []
+        asyncio.run(
+            iterm_api._open_and_type(
+                self._window(["a", "b"]), original, ["A", "B"], ttys, untyped
+            )
+        )
+        self.assertEqual(
+            self.log,
+            [
+                ("create", "a"),
+                ("select", "home", False),
+                ("type", "a", "A\n"),
+                ("create", "b"),
+                ("select", "home", False),
+                ("type", "b", "B\n"),
+            ],
+        )
+        self.assertEqual(ttys, ["/dev/a", "/dev/b"])
+        self.assertEqual(untyped, [])
+
+    def test_reselect_never_raises_the_window(self):
+        # Raising it would be a second, smaller steal; the window is already
+        # where it was.
+        self.assertTrue(asyncio.run(iterm_api._reselect(self._tab("home"))))
+        self.assertEqual(self.log, [("select", "home", False)])
+
+    def test_a_refused_reselect_is_counted_not_raised(self):
+        # The commands were typed. Raising would put them in the retry set and
+        # double them, which is far worse than a lost focus.
+        self.assertFalse(
+            asyncio.run(iterm_api._reselect(self._tab("home", fails=True)))
+        )
+
+    def test_nothing_to_restore_is_a_no_op_success(self):
+        # A window this process created had no prior selection.
+        self.assertTrue(asyncio.run(iterm_api._reselect(None)))
+
+    def test_a_refused_reselect_still_types_every_command(self):
+        original = self._tab("home", fails=True)
+        ttys, untyped = [], []
+        asyncio.run(
+            iterm_api._open_and_type(
+                self._window(["a", "b"]), original, ["A", "B"], ttys, untyped
+            )
+        )
+        typed = [entry for entry in self.log if entry[0] == "type"]
+        self.assertEqual(len(typed), 2)
+        self.assertEqual(ttys, ["/dev/a", "/dev/b"])
 
 
 if __name__ == "__main__":
