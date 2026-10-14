@@ -76,6 +76,7 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
         sha256: publish::sha256_hex(&changed),
         bytes: changed,
         head: crate::ceremony::git_head(&root).unwrap(),
+        built_at: artifact.built_at,
     };
     let plan = publish::plan(&publish::client(&url), &changed, L, &admin.pubkey(), None).unwrap();
     assert_eq!(plan.mode, Mode::Upgrade);
@@ -138,8 +139,10 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
         "step=init-verified",
         "step=create_market",
         "step=create_vault",
+        "step=deposit_leader",
     ] {
         assert!(body.contains(step), "{step} missing from:\n{body}");
     }
     assert!(body.contains(&format!("sha256={}", artifact.sha256)));
+    assert!(body.contains(&format!("commit={}", artifact.head.commit)));
 }

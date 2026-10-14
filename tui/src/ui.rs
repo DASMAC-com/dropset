@@ -125,7 +125,11 @@ fn draw_ceremony_prompt(f: &mut Frame<'_>, app: &App, area: Rect) {
     )));
     lines.push(Line::from(Span::styled("Enter ok · Esc cancel", hint)));
     let width = area.width.min(100);
-    let height = (lines.len() as u16 + 2).min(area.height);
+    // Sized by wrapped rows, not lines: a plan line carrying two addresses
+    // wraps, and counting it as one would clip the `yes` line off the bottom.
+    let inner = usize::from(width.saturating_sub(2)).max(1);
+    let rows: usize = lines.iter().map(|l| l.width().div_ceil(inner).max(1)).sum();
+    let height = u16::try_from(rows + 2).unwrap_or(u16::MAX).min(area.height);
     let rect = Rect {
         x: area.x + (area.width - width) / 2,
         y: area.y + (area.height - height) / 2,

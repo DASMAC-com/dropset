@@ -1,7 +1,8 @@
 //! The ceremony record: an append-only log of every write a mainnet session
 //! makes, kept by the operator **outside the repo**.
 //!
-//! One line per event — the step, the commit the binary was built from, and
+//! One line per event — the step, the checked-out commit (which the mainnet
+//! publish plan holds the binary to: clean tree, artifact newer), and
 //! whatever the step produced (addresses, the deployed binary's sha256, each
 //! transaction signature) — as tab-separated `key=value` pairs, so it greps
 //! and diffs without a parser. It is opened at launch, before the first frame,
@@ -43,21 +44,32 @@ impl CeremonyLog {
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create ceremony log dir {}", parent.display()))?;
-        let dir = parent
+        // Judged before anything is created, against the nearest directory
+        // that exists, and against the file itself when it is already there
+        // (a symlink into the repo resolves to where it points).
+        let mut existing = parent;
+        while !existing.exists() {
+            existing = existing.parent().unwrap_or(Path::new("."));
+        }
+        let mut judged = vec![existing
             .canonicalize()
-            .with_context(|| format!("resolve {}", parent.display()))?;
-        let root = repo_root
-            .canonicalize()
-            .unwrap_or_else(|_| repo_root.to_path_buf());
-        if dir.starts_with(&root) {
+            .with_context(|| format!("resolve {}", existing.display()))?];
+        if let Ok(file) = path.canonicalize() {
+            judged.push(file);
+        }
+        let roots = repo_roots(repo_root)?;
+        if judged
+            .iter()
+            .any(|p| roots.iter().any(|r| p.starts_with(r)))
+        {
             bail!(
                 "the ceremony log {} is inside the repo — keep it outside the working tree \
                  (set {CEREMONY_LOG_ENV})",
                 path.display()
             );
         }
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create ceremony log dir {}", parent.display()))?;
         let file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -107,12 +119,37 @@ pub fn default_path(cluster: Cluster) -> Option<PathBuf> {
     Some(PathBuf::from(home).join(format!(".dropset/ceremony-{}.log", cluster.label())))
 }
 
+/// Every checkout a log must stay out of: this one, and — when it is a git
+/// worktree — the main checkout that holds the shared `.git`, one `git add -A`
+/// away just the same.
+fn repo_roots(repo_root: &Path) -> Result<Vec<PathBuf>> {
+    let root = repo_root
+        .canonicalize()
+        .with_context(|| format!("resolve the repo root {}", repo_root.display()))?;
+    let mut roots = vec![root];
+    let common = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .output();
+    if let Some(out) = common.ok().filter(|o| o.status.success()) {
+        let dir = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+        if let Some(main) = dir.parent().and_then(|p| p.canonicalize().ok()) {
+            roots.push(main);
+        }
+    }
+    Ok(roots)
+}
+
 /// The commit `repo_root` is checked out at.
 pub struct GitHead {
     pub commit: String,
     /// Tracked files differ from the commit, so the commit alone does not
     /// describe what was built.
     pub dirty: bool,
+    /// The commit's committer time, unix seconds — what an artifact's mtime
+    /// is held against to tell a build at this commit from an older one.
+    pub time: u64,
 }
 
 /// Read `repo_root`'s `HEAD` and whether its tracked files are modified.
@@ -132,6 +169,9 @@ pub fn git_head(repo_root: &Path) -> Result<GitHead> {
     Ok(GitHead {
         commit: git(&["rev-parse", "HEAD"])?,
         dirty: !git(&["status", "--porcelain", "--untracked-files=no"])?.is_empty(),
+        time: git(&["log", "-1", "--format=%ct"])?
+            .parse()
+            .context("parse the commit time")?,
     })
 }
 
@@ -190,11 +230,24 @@ mod tests {
         assert!(line.starts_with("ts=7\tcluster="), "{line}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn refuses_a_log_inside_the_repo_and_appends_outside_it() {
         let root = repo_root();
-        let inside = root.join("target/ceremony-test.log");
+        // Refused without creating the directory it names.
+        let inside = root.join("target/no-such-dir-ceremony/ceremony.log");
         assert!(CeremonyLog::open(&inside, &root, Cluster::Localnet).is_err());
+        assert!(!root.join("target/no-such-dir-ceremony").exists());
+        // A symlink pointing into the repo is judged by where it points.
+        let link_dir = tempfile::tempdir().unwrap();
+        let link = link_dir.path().join("ceremony.log");
+        let target = root.join("target/ceremony-link-target.log");
+        std::fs::create_dir_all(root.join("target")).unwrap();
+        std::fs::write(&target, "").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let refused = CeremonyLog::open(&link, &root, Cluster::Localnet).is_err();
+        std::fs::remove_file(&target).ok();
+        assert!(refused);
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested/ceremony.log");

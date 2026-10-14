@@ -88,20 +88,32 @@ pub struct Artifact {
     pub bytes: Vec<u8>,
     /// Lower-case hex SHA-256 of `bytes`.
     pub sha256: String,
+    /// The checkout's `HEAD` when the artifact was loaded — the commit the
+    /// record names. The mainnet plan refuses unless the tree is clean and
+    /// the artifact was written after that commit, so the name is earned.
     pub head: GitHead,
+    /// The artifact's mtime, unix seconds.
+    pub built_at: u64,
 }
 
 impl Artifact {
-    /// Read [`ARTIFACT`] under `repo_root` and the commit it was built at.
+    /// Read [`ARTIFACT`] under `repo_root`, its mtime, and the checkout's
+    /// `HEAD`.
     pub fn load(repo_root: &Path) -> Result<Self> {
         let path = repo_root.join(ARTIFACT);
         let bytes = std::fs::read(&path)
             .with_context(|| format!("read {} — run `make program` first", path.display()))?;
-        let head = ceremony::git_head(repo_root).context("read the build commit")?;
+        let built_at = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs());
+        let head = ceremony::git_head(repo_root).context("read the checkout's commit")?;
         Ok(Self {
             sha256: sha256_hex(&bytes),
             bytes,
             head,
+            built_at,
         })
     }
 }
@@ -210,6 +222,13 @@ pub fn plan(
         bail!(
             "the working tree has uncommitted changes — commit them and rebuild, so the \
              recorded commit describes the binary"
+        );
+    }
+    if cluster.is_mainnet() && artifact.built_at < artifact.head.time {
+        bail!(
+            "{ARTIFACT} predates the checked-out commit {} — run `make program` so the \
+             recorded commit describes the binary",
+            artifact.head.commit
         );
     }
     let deployed = deployed(client)?;

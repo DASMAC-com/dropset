@@ -103,7 +103,16 @@ fn main() -> Result<()> {
         Some(_) if !args.cluster.is_mainnet() => {
             bail!("--program-key is mainnet-only — localnet deploys the committed program keypair")
         }
-        Some(arg) => Some(wallet::resolve_key(arg, "--program-key", args.cluster)?),
+        Some(arg) => {
+            let kp = wallet::resolve_key(arg, "--program-key", args.cluster)?;
+            // Refused now rather than at deploy, where creating the program
+            // account would fail only after every buffer write was paid for.
+            let other = leader.as_ref().map(Signer::pubkey);
+            if kp.pubkey() == wallet.pubkey() || Some(kp.pubkey()) == other {
+                bail!("--program-key must differ from --wallet and --leader");
+            }
+            Some(kp)
+        }
     };
 
     // A committed keypair's secret is public, so on mainnet no role may be one.

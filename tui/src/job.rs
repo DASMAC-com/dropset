@@ -94,8 +94,10 @@ impl Logger {
     pub fn record(&self, step: &str, fields: &[(&str, &str)]) {
         if let Some(record) = &self.record {
             if let Err(e) = record.append(step, fields) {
+                let line: Vec<String> = fields.iter().map(|(k, v)| format!("{k}={v}")).collect();
                 self.log(format!(
-                    "CEREMONY LOG NOT WRITTEN — {e:#} — copy this line by hand"
+                    "CEREMONY LOG NOT WRITTEN — {e:#} — record by hand: step={step} {}",
+                    line.join(" ")
                 ));
             }
         }

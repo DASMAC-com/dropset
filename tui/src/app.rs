@@ -1008,6 +1008,11 @@ impl App {
             self.log(LogKind::Err, format!("{label} — {reason}"));
             return;
         }
+        // The same last-moment proof of chain the ceremony prompt takes.
+        if let Err(e) = self.ctx.cluster.verify_genesis(&self.client) {
+            self.log(LogKind::Err, format!("{label} — {e:#}"));
+            return;
+        }
         if self.job_running {
             self.log(LogKind::Err, "A job is already running.".to_string());
             return;

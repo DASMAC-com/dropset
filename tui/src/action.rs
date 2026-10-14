@@ -433,17 +433,37 @@ impl Action {
     /// real chain is a single keystroke. Localnet keeps its one-key steps,
     /// because "Bootstrap all" chains them and the throwaway ledger is the
     /// place to move fast.
+    ///
+    /// Exhaustive like every table here, so a new mainnet write must decide
+    /// its answer at compile time rather than default to "no prompt".
     pub fn needs_ceremony_confirm(self, cluster: Cluster) -> bool {
-        cluster.is_mainnet()
-            && matches!(
-                self,
-                Action::Publish
-                    | Action::CloseBuffers
-                    | Action::InitRegistry
-                    | Action::CreateMarket
-                    | Action::CreateVault
-                    | Action::Deposit
-            )
+        let ceremony = match self {
+            Action::Publish
+            | Action::CloseBuffers
+            | Action::InitRegistry
+            | Action::CreateMarket
+            | Action::CreateVault
+            | Action::Deposit => true,
+            // The leader commands have their own typed-`yes` prompt; the rest
+            // read only or are unavailable on mainnet.
+            Action::Deploy
+            | Action::OpenExplorer
+            | Action::BootstrapAll
+            | Action::ProbeSwap
+            | Action::Teardown
+            | Action::Wipe
+            | Action::LeaderDeposit
+            | Action::LeaderWithdraw
+            | Action::RotateLeader
+            | Action::RepegUp
+            | Action::RepegDown
+            | Action::WidenSpread
+            | Action::TightenSpread
+            | Action::ThinFarSide
+            | Action::ResetLadder
+            | Action::ResetAllLadders => false,
+        };
+        cluster.is_mainnet() && ceremony
     }
 
     /// One-line reason the action is greyed out in `phase` on `cluster` (only
@@ -974,17 +994,17 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
                 lines.push(format!("close {buffer}  ({})", publish::sol(lamports)));
                 work += 1;
             }
+            if work == 0 {
+                anyhow::bail!("no stranded buffers owned by the admin {admin}");
+            }
             lines.insert(0, format!("rent returns to the admin {admin}"));
         }
         Action::InitRegistry => {
             if accounts::registry_fresh(&client)?.is_some() {
                 anyhow::bail!("the registry is already initialized");
             }
-            let fee_mint = if ctx.cluster.is_mainnet() {
-                format!("{} (USDC)", market::MAINNET_USDC)
-            } else {
-                "a fresh mock mint".to_string()
-            };
+            // Mainnet-only, like every ceremony prompt: localnet mints a mock.
+            let fee_mint = format!("{} (USDC)", market::MAINNET_USDC);
             let fee = chain::create_fee_atoms(ctx.cluster);
             lines.push(format!("registry:      {}", chain::registry_pda()));
             lines.push(format!(
@@ -993,7 +1013,7 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
             lines.push(format!("fee mint:      {fee_mint}"));
             lines.push(format!(
                 "create fee:    {} USDC per vault ({fee} atoms)",
-                human(fee, 6)
+                crate::leader::human(fee, 6)
             ));
             work = 1;
         }
@@ -1019,9 +1039,10 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
                 let leader = market::leader(&ctx.repo_root, config, ctx.leader.as_ref())?.pubkey();
                 let (base, quote) = market::pair_mints(&ctx.repo_root, config)?;
                 let address = chain::market_pda(&base, &quote);
+                // A missing market or vault is refused here because the step
+                // itself errors on it, stopping the roster pass part-way.
                 let Some(seats) = accounts::vault_seats_fresh(&client, &address)? else {
-                    lines.push(format!("{symbol}: no market yet — skipped"));
-                    continue;
+                    anyhow::bail!("{symbol}: no market yet — create the markets first");
                 };
                 let line = match (action, deposit_seat(&seats, &leader)) {
                     (Action::CreateVault, DepositSeat::NoVault) => {
@@ -1037,13 +1058,15 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
                         format!(
                             "{symbol}: SEED vault #{} from leader {leader}: {} {symbol} + {} {}",
                             seat.seq,
-                            human(base_atoms, config.base.decimals),
-                            human(quote_atoms, config.quote.decimals),
+                            crate::leader::human(base_atoms, config.base.decimals),
+                            crate::leader::human(quote_atoms, config.quote.decimals),
                             config.quote.symbol
                         )
                     }
                     (_, DepositSeat::Seeded(_)) => format!("{symbol}: already seeded — skipped"),
-                    (_, DepositSeat::NoVault) => format!("{symbol}: no vault yet — skipped"),
+                    (_, DepositSeat::NoVault) => {
+                        anyhow::bail!("{symbol}: no vault yet — create the vaults first")
+                    }
                     (_, DepositSeat::Ambiguous(n)) => {
                         anyhow::bail!(
                             "{symbol}: leader {leader} leads {n} vaults — refusing to guess"
@@ -1056,15 +1079,9 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
         other => anyhow::bail!("{} has no ceremony plan", other.label()),
     }
     if work == 0 {
-        anyhow::bail!("nothing to do — every target already exists");
+        anyhow::bail!("nothing to do — every roster target is already done");
     }
     Ok(lines)
-}
-
-/// `atoms` of a `decimals`-place token, as a display amount.
-fn human(atoms: u64, decimals: u8) -> String {
-    let value = atoms as f64 / 10f64.powi(i32::from(decimals));
-    format!("{value:.places$}", places = usize::from(decimals.min(6)))
 }
 
 /// Resolve the selected market's `(address, base_mint, vault_idx)` for an

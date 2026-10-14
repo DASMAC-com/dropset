@@ -171,7 +171,7 @@ fn plan_lines(
 /// `atoms` at `decimals`, as a decimal string — exact, no float. A decimals
 /// count past `u64`'s range (no real mint) falls back to raw atoms rather
 /// than panicking in the middle of drawing the confirmation.
-fn human(atoms: u64, decimals: u8) -> String {
+pub(crate) fn human(atoms: u64, decimals: u8) -> String {
     let Some(scale) = 10u64.checked_pow(u32::from(decimals)) else {
         return format!("{atoms} atoms");
     };

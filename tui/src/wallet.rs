@@ -27,7 +27,7 @@ pub const OP_REFERENCE_PREFIX: &str = "op://";
 
 /// The `--wallet` value that asks for a fresh in-memory keypair, generated at
 /// launch and never written anywhere — an unfunded identity for a session that
-/// only watches (`make mainnet-demo`).
+/// only watches (`make mainnet-demo`). Refused for every other role.
 pub const EPHEMERAL_WALLET: &str = "ephemeral";
 
 /// Optional environment variable naming the 1Password account `op` reads
@@ -96,7 +96,12 @@ pub fn resolve_key(arg: &str, role: &str, cluster: Cluster) -> Result<Keypair> {
     let is_reference = arg.starts_with(OP_REFERENCE_PREFIX);
     match cluster {
         Cluster::Mainnet if is_reference => op_read_keypair("op", arg, role),
-        Cluster::Mainnet if arg == EPHEMERAL_WALLET => Ok(Keypair::new()),
+        // Watch-only admin only. A throwaway leader would let the admin-signed
+        // create-vault open a real vault nobody can ever lead again.
+        Cluster::Mainnet if arg == EPHEMERAL_WALLET && role == "--wallet" => Ok(Keypair::new()),
+        Cluster::Mainnet if arg == EPHEMERAL_WALLET => bail!(
+            "{role} cannot be `{EPHEMERAL_WALLET}` — only a watch-only --wallet may be thrown away"
+        ),
         Cluster::Mainnet => bail!(
             "{role} on mainnet must be a 1Password reference ({OP_REFERENCE_PREFIX}vault/item/field) \
              — key files are refused on a real cluster"
@@ -112,8 +117,9 @@ pub fn resolve_key(arg: &str, role: &str, cluster: Cluster) -> Result<Keypair> {
 /// keypair.
 ///
 /// The secret travels from `op`'s stdout straight into the decoder and the
-/// buffer is zeroed afterwards; nothing about it is ever formatted into an
-/// error. `op`'s own stderr is passed through on failure — it names the
+/// buffers are overwritten afterwards — best effort, since copies made while
+/// the output was read are not reached — and nothing about it is ever
+/// formatted into an error. `op`'s own stderr is passed through on failure — it names the
 /// reference and the reason (signed out, no such item), never the value.
 fn op_read_keypair(program: &str, reference: &str, role: &str) -> Result<Keypair> {
     let mut cmd = Command::new(program);
@@ -146,12 +152,20 @@ fn op_read_keypair(program: &str, reference: &str, role: &str) -> Result<Keypair
     })
 }
 
-/// Decode a stored keypair in either form an operator would paste into a
-/// 1Password field: the `solana-keygen` JSON byte array, or the base58 string
-/// wallets export. The error names the shape that failed, never the bytes.
+/// Decode a stored keypair in any form an operator would paste into a
+/// 1Password field: the `solana-keygen` JSON byte array, the 128-character
+/// hex of those 64 bytes (secret then public — how the program key is
+/// stored), or the base58 string wallets export. The error names the shape
+/// that failed, never the bytes.
 fn decode_keypair(raw: &[u8]) -> std::result::Result<Keypair, &'static str> {
     let text = std::str::from_utf8(raw).map_err(|_| "not UTF-8")?.trim();
-    let mut bytes = if let Some(inner) = text.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
+    let is_hex = text.len() == 128 && text.bytes().all(|b| b.is_ascii_hexdigit());
+    let mut bytes = if is_hex {
+        (0..64)
+            .map(|i| u8::from_str_radix(&text[2 * i..2 * i + 2], 16))
+            .collect::<std::result::Result<Vec<u8>, _>>()
+            .map_err(|_| "malformed hex")?
+    } else if let Some(inner) = text.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
         inner
             .split(',')
             .map(|b| b.trim().parse::<u8>())
@@ -236,6 +250,13 @@ mod tests {
         let a = resolve_key(EPHEMERAL_WALLET, "--wallet", Cluster::Mainnet).unwrap();
         let b = resolve_key(EPHEMERAL_WALLET, "--wallet", Cluster::Mainnet).unwrap();
         assert_ne!(a.pubkey(), b.pubkey());
+        // A role that signs or leads something durable never is.
+        for role in ["--leader", "--program-key"] {
+            assert!(
+                resolve_key(EPHEMERAL_WALLET, role, Cluster::Mainnet).is_err(),
+                "{role}"
+            );
+        }
     }
 
     #[test]
@@ -251,6 +272,21 @@ mod tests {
             decode_keypair(b58.as_bytes()).unwrap().pubkey(),
             kp.pubkey()
         );
+        let hex: String = kp.to_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            decode_keypair(hex.as_bytes()).unwrap().pubkey(),
+            kp.pubkey()
+        );
+        let upper = hex.to_uppercase();
+        assert_eq!(
+            decode_keypair(upper.as_bytes()).unwrap().pubkey(),
+            kp.pubkey()
+        );
+        // A public half that does not match its secret half is refused.
+        let mut forged = kp.to_bytes();
+        forged[40] ^= 1;
+        let forged: String = forged.iter().map(|b| format!("{b:02x}")).collect();
+        assert!(decode_keypair(forged.as_bytes()).is_err());
         assert!(decode_keypair(b"[1,2,3]").is_err());
         assert!(decode_keypair(b"[1,2,999]").is_err());
         assert!(decode_keypair(b"not-a-key!").is_err());
