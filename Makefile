@@ -59,11 +59,12 @@ ANCHOR_CLI_VERSION := 1.2.1
 export ANCHOR_BUILD_SBF_ARCH := v0
 
 # Required toolchain: anchor-cli at ANCHOR_CLI_VERSION, the Solana SBF
-# toolchain, and a solana-cli / solana-test-validator on the 3.1 minor —
-# matching the SDK's solana-client 3.1 so its `fetch` RpcClient and the local
-# validator agree on wire/RPC (see sdk/rs/Cargo.toml). One prerequisite per
-# tool keeps each recipe body small enough to wrap under the Makefile
-# linter's length cap.
+# toolchain, and a solana-cli / solana-test-validator at Agave 4.3 or later —
+# the release mainnet runs, so localnet gets its 200ms slots and Alpenglow.
+# A minimum, not an exact match: the SDK's solana-client 3.1 talks to it over
+# JSON-RPC, which is the contract, so the crates need not track the binary
+# (see sdk/rs/Cargo.toml). One prerequisite per tool keeps each recipe body
+# small enough to wrap under the Makefile linter's length cap.
 .PHONY: check-toolchain
 check-toolchain: check-anchor check-sbf check-solana
 
@@ -78,12 +79,15 @@ check-sbf:
 		|| { echo "cargo build-sbf not found (install Solana toolchain)"; \
 			exit 1; }
 
+# Matches a ` MAJOR.MINOR.PATCH` version of 4.3 or later.
+SOLANA_MIN_VERSION_RE := ( 4\.([3-9]|[1-9][0-9])| [5-9]\.| [1-9][0-9]+\.)
+
 .PHONY: check-solana
 check-solana:
-	@solana --version | grep -q " 3\.1\." \
-		|| { echo "solana-cli 3.1.x required"; exit 1; }
-	@solana-test-validator --version | grep -q " 3\.1\." \
-		|| { echo "solana-test-validator 3.1.x required"; exit 1; }
+	@solana --version | grep -qE "$(SOLANA_MIN_VERSION_RE)" \
+		|| { echo "solana-cli 4.3 or later required"; exit 1; }
+	@solana-test-validator --version | grep -qE "$(SOLANA_MIN_VERSION_RE)" \
+		|| { echo "solana-test-validator 4.3 or later required"; exit 1; }
 
 # Tooling for the non-on-chain subsystems, gated per-consumer (not folded
 # into check-toolchain, which stays the on-chain build path) so a target only

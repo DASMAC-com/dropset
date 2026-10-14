@@ -16,7 +16,9 @@ env:
   PLATFORM_TOOLS_VERSION: 'v1.57'
   # Route sccache at GitHub's own Actions cache (no S3/external service).
   SCCACHE_GHA_ENABLED: 'true'
-  SOLANA_VERSION: 'v3.1.9'
+  # The Agave release mainnet runs; the Makefile's check-solana takes it as a
+  # minimum, since the SDK's 3.1 client crates reach it over JSON-RPC.
+  SOLANA_VERSION: 'v4.3.0'
 jobs:
   # Decide whether the changed files can affect the Rust test suite. On a
   # pull_request the filter below marks a PR `code`-relevant unless EVERY
