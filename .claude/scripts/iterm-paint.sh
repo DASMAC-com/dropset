@@ -139,6 +139,7 @@ fi
 # Record the state (for the monitor and the attend toggle) and paint it now.
 TTY_PATH=$(resolve_tty) || exit 0
 TTY_BASE="$(basename "$TTY_PATH")"
+ensure_monitor "$TTY_PATH"
 
 # Suppress the AskUserQuestion companion permission_prompt yellow while the
 # green sentinel says the selector is still awaiting a reply. This fires for

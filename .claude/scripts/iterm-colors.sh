@@ -175,6 +175,26 @@ notify_operator() {
   printf '\033]9;%s\a' "$text"
 }
 
+# Start this tty's monitor unless one is alive. $1 = tty path; the caller has
+# set SCRIPT_DIR. Builtins only on the alive path (`read`, `kill -0`), because
+# the painter calls this on every hook.
+#
+# The painter calls it, not only SessionStart, because the debounce made a
+# missing monitor dangerous rather than cosmetic: a yellow is only ARMED by the
+# painter and nothing but the monitor promotes it, so a session whose monitor
+# died — or was stopped to pick up new code, which `iterm_deploy.py` does —
+# would never surface a genuine permission prompt. Only a real tty (a character
+# device) gets one; anything else has nothing to paint.
+ensure_monitor() {
+  local tty_path="$1" pid_file pid=""
+  [ -c "$tty_path" ] || return 0
+  pid_file="$MONITOR_PID_PREFIX${tty_path##*/}.pid"
+  [ -f "$pid_file" ] && read -r pid <"$pid_file"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0
+  nohup "$SCRIPT_DIR/iterm-monitor.sh" "$tty_path" &>/dev/null &
+  echo "$!" >"$pid_file"
+}
+
 # Map a state hex to the *tab* tint hex (or the literal "default" for no tint).
 bg_to_tab() {
   case "$1" in

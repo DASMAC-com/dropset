@@ -2211,13 +2211,36 @@ The wiring above uses `$CLAUDE_PROJECT_DIR`, which resolves to the active
 checkout — convenient, but it only colors sessions *inside a checkout
 that has these scripts*. To get the coloring in **every** Claude Code
 session regardless of directory, deploy the integration **globally**:
-copy the `iterm-*.sh` scripts (and `iterm-reorder.py`) into
-`~/.claude/scripts/`, and wire the hooks in `~/.claude/settings.json`
-using **absolute** `~/.claude/scripts/…` paths instead of
-`$CLAUDE_PROJECT_DIR`. The reorderer goes live per "FIFO attention
-ordering" above (drop `iterm-reorder.py` in the iTerm2 `AutoLaunch/`
-folder; it needs iTerm2's **Python Runtime** installed — Scripts →
-Manage → Install Python Runtime — and the API enabled).
+wire the hooks in `~/.claude/settings.json` using **absolute**
+`~/.claude/scripts/…` paths instead of `$CLAUDE_PROJECT_DIR`, and make
+those paths **symlinks into the base checkout**, never copies:
+
+```sh
+python3 .claude/tools/iterm_deploy.py          # report; exit 1 if not linked
+python3 .claude/tools/iterm_deploy.py --apply  # link, then restart monitors
+```
+
+**The deploy is a pointer, the same shape as `init.zsh`.** The local
+config holds only a link and the code is whatever the base checkout's
+`main` has, so a fast-forward (which `housekeeping` does) *is* the deploy.
+This used to say "copy", and a copy is the measured failure: a deploy
+made once by hand ran three months and several merged fixes behind
+`main`, so the operator kept seeing flicker a merged fix had already
+removed. `--apply` moves each copy into a timestamped
+`.pre-symlink-<stamp>/` backup beside it rather than deleting it. It
+links `iterm-reorder.py` into iTerm2's `AutoLaunch/` folder too, where
+that folder exists (the reorderer needs iTerm2's **Python Runtime** —
+Scripts → Manage → Install Python Runtime — and the API enabled; it
+finds the palette through the link, since it resolves its own path).
+
+Two long-lived processes keep running the code they started with, which
+is why a link alone is not the whole deploy. `--apply` stops the per-tty
+**monitors**. That is safe because the painter restarts a missing monitor on
+its session's next hook (`ensure_monitor`), and it has to, since only a
+monitor promotes a debounced yellow. It also stops the **reorderer**, which
+iTerm does not relaunch, so start it again from Scripts → AutoLaunch. A
+later change to either needs the same restart; the hooks themselves
+re-read the scripts on every event.
 
 Migrating from an **older, differently-named** script family (a rename,
 e.g. an `iterm-bg-*` set) has four gotchas, none of which a plain
@@ -2243,8 +2266,7 @@ The monitor is long-lived and used to cache the palette; it now re-reads
 happens:
 
 - `iterm-restart-monitors.sh` — stop every running monitor and drop its
-  pid file. A monitor restarts on the next SessionStart; a live session
-  repaints on its next hook event.
+  pid file. Each session's next hook starts a fresh one and repaints.
 - `iterm-reset-windows.sh` — clear our coloring back to the profile
   default on every TTY with a leftover state file (e.g. a session that
   exited without its SessionEnd hook firing).

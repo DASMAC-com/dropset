@@ -23,6 +23,7 @@ audc
 audd
 audm
 autocorrelated
+autolaunch
 awsmcp
 backgrounded
 barchart

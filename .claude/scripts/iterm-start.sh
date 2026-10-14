@@ -9,15 +9,11 @@ source "$SCRIPT_DIR/iterm-colors.sh"
 
 TTY_PATH=$(resolve_tty) || exit 0
 TTY_NAME=$(basename "$TTY_PATH")
-PID_FILE="$MONITOR_PID_PREFIX$TTY_NAME.pid"
 
-# Don't start a second monitor for this TTY.
-if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-  exit 0
-fi
-
-nohup "$SCRIPT_DIR/iterm-monitor.sh" "$TTY_PATH" &>/dev/null &
-echo "$!" >"$PID_FILE"
+# Don't start a second monitor for this TTY. Unlike the old early exit, a live
+# monitor no longer skips the reseed below: a resumed session must not inherit
+# a stale arm or sentinel just because its monitor survived.
+ensure_monitor "$TTY_PATH"
 
 # Seed the neutral state so the monitor paints something immediately, and drop
 # the per-TTY sentinels a crashed prior session may have left here (see

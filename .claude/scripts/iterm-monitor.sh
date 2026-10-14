@@ -31,6 +31,7 @@ TICK=0
 # so the `stat`/`date` spawns are paid only while a yellow is actually armed.
 PROMOTE_EVERY=10
 PENDING_FILE="$(perm_pending_path "$TTY_BASE")"
+PID_FILE="$MONITOR_PID_PREFIX$TTY_BASE.pid"
 
 while true; do
   COLOR=$(cat "$STATE_FILE" 2>/dev/null)
@@ -49,6 +50,12 @@ while true; do
     promote_pending_permission "$TTY_BASE" "$TTY_PATH"
   fi
   if [ "$((TICK % HEAL_EVERY))" -eq 0 ]; then
+    # Exit once the pid file no longer names this process. Two hooks racing
+    # through `ensure_monitor` can each start one, and the loser — which no
+    # restart could find — would otherwise poll for ever.
+    OWNER=""
+    [ -f "$PID_FILE" ] && read -r OWNER <"$PID_FILE"
+    [ "$OWNER" = "$$" ] || exit 0
     heal_stale_permission "$TTY_BASE"
   fi
   sleep 0.03
