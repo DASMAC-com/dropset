@@ -41,6 +41,8 @@ AUTOLAUNCH_DIR = (
 )
 REORDERER = "iterm-reorder.py"
 RESTART = "iterm-restart-monitors.sh"
+#: States that already run the committed code, so nothing is left to deploy.
+LINKED_STATES = ("linked", "is-source")
 
 
 def base_checkout() -> Path | None:
@@ -74,20 +76,33 @@ def targets(source: Path, scripts_dir: Path, autolaunch_dir: Path) -> list[tuple
 
 
 def status(link: Path, source: Path) -> str:
-    """`linked` / `wrong-link` / `stale-copy` / `missing`."""
+    """`linked` / `wrong-link` / `stale-copy` / `missing` / `is-source`.
+
+    `is-source` is a target that IS the committed file — the deploy directory
+    (or a parent of it) is itself a link into the checkout, or `--scripts-dir`
+    names the source. Its leaf is no symlink, so it would otherwise read as a
+    stale copy, and "backing it up" would move the committed file out of the
+    repo and leave a link pointing at itself.
+    """
     if link.is_symlink():
         return "linked" if link.resolve() == source.resolve() else "wrong-link"
     if link.exists():
+        if link.resolve() == source.resolve():
+            return "is-source"
         return "stale-copy"
     return "missing"
 
 
 def apply(pairs: list[tuple], stamp: str) -> list[str]:
-    """Link every target that is not linked. Returns the backup paths written."""
+    """Link every target that is not linked. Returns the backup paths written.
+
+    An `is-source` target is left untouched: that layout already runs the
+    committed code, which is all a link would buy.
+    """
     backups = []
     for link, source in pairs:
         state = status(link, source)
-        if state == "linked":
+        if state in ("linked", "is-source"):
             continue
         if state == "stale-copy":
             backup_dir = link.parent / f".pre-symlink-{stamp}"
@@ -128,31 +143,51 @@ def main(argv: list[str] | None = None) -> int:
         args.source = base / ".claude" / "scripts"
 
     pairs = targets(args.source, args.scripts_dir, args.autolaunch_dir)
+    if not pairs:
+        # An empty set would pass the all-linked test vacuously.
+        print(f"iterm_deploy: no iterm-* scripts under {args.source}", file=sys.stderr)
+        return 2
     report: dict = {"source": str(args.source)}
     if args.apply:
+        # Restarts are gated on what this run CHANGED, so a repeat --apply on a
+        # linked tree stops nothing — the reorderer especially, which the
+        # operator would then have to start again by hand for no reason.
+        changed = [
+            link for link, src in pairs if status(link, src) not in LINKED_STATES
+        ]
         report["backups"] = apply(pairs, time.strftime("%Y%m%d-%H%M%S"))
         # The monitors are long-lived and keep running the loop they started
         # with. Stopping them is safe because the painter restarts a missing
         # monitor on its session's next hook (see `ensure_monitor`).
         restart = args.scripts_dir / RESTART
-        if restart.exists():
+        if (
+            any(link.parent == args.scripts_dir for link in changed)
+            and restart.exists()
+        ):
             done = subprocess.run(
                 [str(restart)], capture_output=True, text=True, check=False
             )
-            report["monitors"] = done.stdout.strip()
+            report["monitors"] = (
+                done.stdout.strip() or done.stderr.strip() or f"exit {done.returncode}"
+            )
+        if args.autolaunch_dir / REORDERER in changed:
+            # The running reorderer is the old code too. iTerm does not
+            # relaunch an AutoLaunch script that exits, so it is stopped here
+            # and started again by hand — one menu click, where restarting
+            # iTerm would cost every tab. The pattern is anchored on the
+            # AutoLaunch path so an editor or pager holding the file is spared.
+            stopped = subprocess.run(
+                ["pkill", "-f", f"AutoLaunch/{REORDERER.replace('.', '[.]')}"],
+                check=False,
+            )
+            report["reorderer_stopped"] = stopped.returncode == 0
+            report["next"] = (
+                f"start the reorderer: iTerm2 Scripts menu > AutoLaunch > {REORDERER}"
+            )
     report["targets"] = {str(link): status(link, src) for link, src in pairs}
     report["orphans"] = orphans(args.source, args.scripts_dir)
-    if args.apply and any(str(link).endswith(REORDERER) for link, _ in pairs):
-        # The running reorderer is the old code too. iTerm does not relaunch an
-        # AutoLaunch script that exits, so it is stopped here and started again
-        # by hand — one menu click, where restarting iTerm would cost every tab.
-        stopped = subprocess.run(["pkill", "-f", REORDERER], check=False)
-        report["reorderer_stopped"] = stopped.returncode == 0
-        report["next"] = (
-            f"start the reorderer: iTerm2 Scripts menu > AutoLaunch > {REORDERER}"
-        )
     print(json.dumps(report, indent=2))
-    return 0 if all(s == "linked" for s in report["targets"].values()) else 1
+    return 0 if all(s in LINKED_STATES for s in report["targets"].values()) else 1
 
 
 if __name__ == "__main__":

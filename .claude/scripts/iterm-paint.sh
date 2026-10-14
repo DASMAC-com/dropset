@@ -39,8 +39,12 @@ json_nonempty_array() { # $1 = field name, $2 = payload
 # A Stop whose session will resume by itself: a background task (a CI watch, a
 # sub-agent fan-out, a merge-queue poll) or a scheduled wake-up is still in
 # flight. Both lists are on the Stop payload. An older harness that sends
-# neither reads as "not waiting", which is the old green — never a silenced
-# session that needed a reply.
+# neither reads as "not waiting", which is the old green.
+#
+# The known cost: anything long-lived in either list — a recurring `/loop`
+# cron, a dev server left running in the background — makes EVERY Stop slate,
+# including one that ends on a plain-text question. AskUserQuestion still
+# paints its own green, which is the house route for a decision.
 stop_is_self_waiting() { # $1 = payload
   json_nonempty_array background_tasks "$1" || json_nonempty_array session_crons "$1"
 }

@@ -692,6 +692,8 @@ class FocusIsHandedBack(unittest.TestCase):
         typed = [entry for entry in self.log if entry[0] == "type"]
         self.assertEqual(len(typed), 2)
         self.assertEqual(ttys, ["/dev/a", "/dev/b"])
+        # Nothing may land in the retry set, or a caller would double it.
+        self.assertEqual(untyped, [])
 
 
 if __name__ == "__main__":

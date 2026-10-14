@@ -64,24 +64,20 @@ class Harness(unittest.TestCase):
             if not k.startswith("ITERM_") and k != "CLAUDE_CONFIG_FILE"
         }
         self.env["ITERM_TTY_PATH"] = str(self.tty)
-        # Never the operator's real ~/.claude.json.
+        # Never a live session's state or pid files, nor the real ~/.claude.json.
+        self.env["ITERM_STATE_PREFIX"] = self.prefix
+        self.pid_prefix = str(root / "iterm-monitor-")
+        self.env["ITERM_MONITOR_PID_PREFIX"] = self.pid_prefix
         self.env["CLAUDE_CONFIG_FILE"] = str(root / "claude.json")
 
     def _prefixed(self, body: str) -> str:
-        # STATE_PREFIX is set after sourcing, since the file assigns it.
-        return f'source "{COLORS}"; STATE_PREFIX="{self.prefix}"; {body}'
+        return f'source "{COLORS}"; {body}'
 
     def paint(self, payload: dict, *, notify: bool = False):
         """Run the real painter in hook mode on `payload`."""
         env = {**self.env, "ITERM_PAINTER_NOTIFY": "1" if notify else "0"}
-        # The painter sources the palette itself, so the prefix override has to
-        # reach it through a wrapper that re-points it after that source.
-        script = (
-            f'source() {{ builtin source "$@"; STATE_PREFIX="{self.prefix}"; }}; '
-            f'. "{PAINT}"'
-        )
         return subprocess.run(
-            ["bash", "-c", script],
+            ["bash", str(PAINT)],
             input=json.dumps(payload),
             capture_output=True,
             text=True,
@@ -172,12 +168,19 @@ class TheMonitorPromotes(Harness):
         super().setUp()
         self.state.write_text(STATE_NEUTRAL, encoding="utf-8")
 
-    def promote(self, *, debounce="5", notify="0"):
+    def promote(self, *, debounce="5", notify="0", now: int | None = None):
+        # `now` pins the clock by shadowing `date`, so a boundary test measures
+        # exactly the age it sets rather than whatever second it lands in.
+        clock = f"date() {{ echo {now}; }}; " if now is not None else ""
         return self.shell(
-            f'PERM_DEBOUNCE_SECONDS="{debounce}"; '
+            f'{clock}PERM_DEBOUNCE_SECONDS="{debounce}"; '
             f'promote_pending_permission "{self.tty_base}" "{self.tty}"',
             ITERM_PAINTER_NOTIFY=notify,
         )
+
+    def _arm_at(self, stamp: int, message=""):
+        self.pending.write_text(message, encoding="utf-8")
+        os.utime(self.pending, (stamp, stamp))
 
     def test_an_arm_that_outlived_the_debounce_turns_yellow(self):
         self.pending.write_text("", encoding="utf-8")
@@ -188,10 +191,19 @@ class TheMonitorPromotes(Harness):
         self.assertFalse(self.pending.exists())
 
     def test_the_boundary_promotes_at_exactly_the_debounce(self):
-        self.pending.write_text("", encoding="utf-8")
-        self.age(self.pending, 5)
-        self.promote(debounce="5")
+        """`-ge`, not `-gt`, pinned on a fixed clock."""
+        stamp = int(time.time()) - 100
+        self._arm_at(stamp)
+        result = self.promote(debounce="5", now=stamp + 5)
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.read(self.state), STATE_PERMISSION)
+
+    def test_one_second_short_of_the_debounce_waits(self):
+        stamp = int(time.time()) - 100
+        self._arm_at(stamp)
+        self.promote(debounce="5", now=stamp + 4)
+        self.assertEqual(self.read(self.state), STATE_NEUTRAL)
+        self.assertTrue(self.pending.exists())
 
     def test_a_fresh_arm_waits(self):
         self.pending.write_text("", encoding="utf-8")
@@ -204,13 +216,17 @@ class TheMonitorPromotes(Harness):
         self.age(self.pending, 6)
         self.promote(notify="1")
         self.assertEqual(self.tty_output(), f"{OSC9}go approve\a")
+        self.assertEqual(self.read(self.state), STATE_PERMISSION)
+        self.assertFalse(self.pending.exists())
 
     def test_an_edit_arm_promotes_silently(self):
-        # The harness never notified for the edit-tool yellow either.
+        # The harness never notified for the edit-tool yellow either. The
+        # state assertion is what stops a promotion that did nothing passing.
         self.pending.write_text("", encoding="utf-8")
         self.age(self.pending, 6)
         self.promote(notify="1")
         self.assertEqual(self.tty_output(), "")
+        self.assertEqual(self.read(self.state), STATE_PERMISSION)
 
 
 class StopIsQuietWhileSelfWaiting(Harness):
@@ -316,6 +332,71 @@ class NotificationOwnership(Harness):
             "notify_operator \"$(printf 'a\\033b\\007c')\"", ITERM_PAINTER_NOTIFY="1"
         )
         self.assertEqual(result.stdout, f"{OSC9}abc\a")
+
+
+class AMissingMonitorIsRestarted(Harness):
+    """Only a monitor promotes an armed yellow, so a session without one would
+    never surface a genuine prompt — which is why the painter, not just
+    SessionStart, makes sure one is running. `/dev/null` stands in for the tty
+    because the guard admits only a character device."""
+
+    def setUp(self):
+        super().setUp()
+        self.fake_dir = Path(self._tmp.name) / "fake-scripts"
+        self.fake_dir.mkdir()
+        self.marker = Path(self._tmp.name) / "monitor-started"
+        fake = self.fake_dir / "iterm-monitor.sh"
+        fake.write_text(f'#!/bin/bash\necho "$1" >>"{self.marker}"\n', encoding="utf-8")
+        fake.chmod(0o755)
+        self.pid_file = Path(f"{self.pid_prefix}null.pid")
+
+    def ensure(self, tty="/dev/null"):
+        result = self.shell(f'SCRIPT_DIR="{self.fake_dir}"; ensure_monitor "{tty}"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def started(self) -> bool:
+        for _ in range(40):  # the spawn is backgrounded
+            if self.marker.exists():
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_none_running_starts_one_and_records_its_pid(self):
+        self.ensure()
+        self.assertTrue(self.started())
+        self.assertTrue(self.read(self.pid_file).isdigit())
+
+    def test_a_live_monitor_is_left_alone(self):
+        self.pid_file.write_text(f"{os.getpid()}\n", encoding="utf-8")
+        self.ensure()
+        self.assertFalse(self.started())
+
+    def test_a_dead_pid_is_replaced(self):
+        dead = subprocess.run(["bash", "-c", "echo $$"], capture_output=True, text=True)
+        self.pid_file.write_text(dead.stdout, encoding="utf-8")
+        self.ensure()
+        self.assertTrue(self.started())
+
+    def test_a_non_tty_gets_no_monitor(self):
+        self.ensure(tty=str(self.tty))
+        self.assertFalse(self.started())
+        self.assertFalse(self.pid_file.exists())
+
+
+class AnOrphanedMonitorExits(Harness):
+    def test_a_monitor_the_pid_file_does_not_name_exits(self):
+        """Two hooks racing through `ensure_monitor` can each start one; the
+        loser, which no restart could find, must not poll for ever."""
+        Path(f"{self.pid_prefix}null.pid").write_text("1\n", encoding="utf-8")
+        result = subprocess.run(
+            ["bash", str(SCRIPTS / "iterm-monitor.sh"), "/dev/null"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=self.env,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class DebounceDefault(unittest.TestCase):

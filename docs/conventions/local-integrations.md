@@ -663,7 +663,9 @@ All live in `.claude/scripts/` and are dependency-free bash:
   re-reads the palette on each state change, so edits to
   `iterm-colors.sh` apply to a running session without a restart.
 - `iterm-start.sh` / `iterm-stop.sh` — SessionStart / SessionEnd:
-  start/stop the monitor and set the initial / cleared state.
+  start/stop the monitor and set the initial / cleared state. (The
+  painter also restarts a missing monitor on any hook; see "Deploying to
+  `~/.claude`".)
 - `iterm-attend.sh` — the "attend" toggle (bound to a keyboard
   shortcut): flips the tab between the green mark and neutral, like
   mark-as-unread. Two optional flags let a caller mark a tab it does
@@ -727,7 +729,9 @@ repaints.** The painter's only neutral-painting events are `PostToolUse`,
 `PreToolUse` guard blocks *after* the operator has already approved it
 runs none of them. The measured wedge is exactly that: approve, a guard
 denies, the tool errors red, and the tab stays yellow over a session that
-wants nothing. So painting a `permission_prompt` yellow also refreshes a
+wants nothing. So every `permission_prompt` the painter receives (each
+one *arms* the debounce below, and the first arm is what the monitor later
+promotes to yellow) also refreshes a
 per-tty `.permwait` sentinel, and the monitor clears the tint once that
 sentinel goes stale.
 
@@ -789,10 +793,12 @@ the operator otherwise. The `Stop` payload lists exactly this
 paints the **slate** `STATE_WAITING`, which the reorderer sorts with the
 neutral tabs. A harness that sends neither field reads as not waiting, which
 is the old green: silencing a session that needed a reply would be the worse
-error. The one gap is a session that both leaves a background job running
-**and** asks a plain-text question; it reads slate until the job resumes it.
-The house rule that a decision goes through `AskUserQuestion`, which paints
-its own green, keeps that gap narrow.
+error. The gap is a session that has anything long-lived in either list —
+a recurring `/loop` cron, a dev server left running in the background —
+**and** ends on a plain-text question: every such `Stop` reads slate, and
+its `idle_prompt` is dropped, until the job resumes the session. The house
+rule that a decision goes through `AskUserQuestion`, which paints its own
+green, keeps that gap narrow.
 
 **The OS notification follows the same split, once the harness hands it
 over.** A hook cannot suppress Claude Code's own notification, so the only
@@ -802,13 +808,14 @@ That switch is user-local and one-time: set notifications to disabled in
 `/config`, which is the `preferredNotifChannel` value
 `notifications_disabled`.
 
-`painter_owns_notifications` looks for that value in `~/.claude.json`, so the
-two can never both fire: until it is set the harness notifies exactly as
-before and the painter sends nothing. Where `/config` stores it is
-**unverified** — if the setting is written elsewhere the detection reads "not
-owned" (the safe direction: no double notification, just the old behavior),
-and exporting `ITERM_PAINTER_NOTIFY=1` hands it over by hand (`0` forces it
-back). Once it
+`painter_owns_notifications` looks for that value in `~/.claude.json`, so
+through `/config` alone the two never both fire: until it is set the harness
+notifies exactly as before and the painter sends nothing. Where `/config`
+stores it is **unverified** — if the setting is written elsewhere the
+detection reads "not owned" (the safe direction: no double notification, just
+the old behavior). Exporting `ITERM_PAINTER_NOTIFY=1` hands it over by hand,
+and does so unconditionally, so set it only once the harness channel really is
+off or both will fire (`0` forces it back). Once it
 is set, the painter sends an iTerm OSC 9 notification for the needs-operator
 class only: a permission prompt when its debounce promotes it, an
 `AskUserQuestion` selector once (not on every re-fire), an elicitation or
@@ -2232,6 +2239,13 @@ links `iterm-reorder.py` into iTerm2's `AutoLaunch/` folder too, where
 that folder exists (the reorderer needs iTerm2's **Python Runtime** —
 Scripts → Manage → Install Python Runtime — and the API enabled; it
 finds the palette through the link, since it resolves its own path).
+Whether iTerm2's AutoLaunch follows a symlink is **unverified**; if the
+reorderer does not appear under Scripts → AutoLaunch after a deploy, start
+it from the Scripts menu by hand, and fall back to a copy only if that
+fails — the drift a copy reintroduces is what this tool's check reports.
+Where the deploy directory is itself a link into the checkout, every
+target reads `is-source` and is left untouched, since it already runs the
+committed code.
 
 Two long-lived processes keep running the code they started with, which
 is why a link alone is not the whole deploy. `--apply` stops the per-tty

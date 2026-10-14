@@ -29,9 +29,10 @@ STATE_MARK="082a0c"       # attend mark -> green
 STATE_WAITING="141c26"    # stopped, resumes by itself -> slate (no action)
 
 # Where per-TTY state and monitor pid files live. Every script derives its file
-# paths from these, so a rename only happens here.
-STATE_PREFIX="/tmp/iterm-color-"
-MONITOR_PID_PREFIX="/tmp/iterm-monitor-"
+# paths from these, so a rename only happens here. The env overrides exist for
+# the tests, which must never touch a live session's files.
+STATE_PREFIX="${ITERM_STATE_PREFIX:-/tmp/iterm-color-}"
+MONITOR_PID_PREFIX="${ITERM_MONITOR_PID_PREFIX:-/tmp/iterm-monitor-}"
 # The $ITERM_SESSION_ID (UUID) -> tty map written by shell startup (see the
 # local-integrations convention doc); read by the attend toggle.
 SESSION_TTY_PREFIX="/tmp/iterm-session-tty-"
@@ -139,6 +140,9 @@ promote_pending_permission() {
   now=$(date +%s)
   [ "$((now - mtime))" -ge "$PERM_DEBOUNCE_SECONDS" ] || return 0
   message="$(cat "$sentinel" 2>/dev/null)"
+  # Not atomic against the painter: a cancel landing between this `rm` and the
+  # state write below leaves yellow showing until the session's next hook
+  # repaints. The window is one process spawn wide, and it self-corrects.
   rm -f "$sentinel"
   echo "$STATE_PERMISSION" >"$(state_file_path "$tty_base")"
   [ -n "$message" ] && [ -n "$tty_path" ] && notify_operator "$message" >"$tty_path"
@@ -188,6 +192,10 @@ notify_operator() {
 ensure_monitor() {
   local tty_path="$1" pid_file pid=""
   [ -c "$tty_path" ] || return 0
+  # A pid file whose pid was recycled by an unrelated process would pass
+  # `kill -0` and suppress the monitor. Accepted: the files live in /tmp, which
+  # a reboot clears, and a reboot is when pids realistically wrap; checking the
+  # process's command would cost a spawn on every hook.
   pid_file="$MONITOR_PID_PREFIX${tty_path##*/}.pid"
   [ -f "$pid_file" ] && read -r pid <"$pid_file"
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0

@@ -9,9 +9,11 @@ operator's live integration.
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import iterm_deploy
 
@@ -105,11 +107,25 @@ class Orphans(DeployHarness):
         self.assertTrue(old.exists())
 
 
-class CheckMode(DeployHarness):
-    def test_check_exits_1_until_linked_and_writes_nothing(self):
-        self.scripts.mkdir(parents=True)
-        copy = self.scripts / "iterm-paint.sh"
-        copy.write_text("july copy", encoding="utf-8")
+class IsSource(DeployHarness):
+    def test_a_deploy_dir_that_is_the_checkout_is_never_backed_up(self):
+        """The data-loss case: with the deploy dir itself a link into the
+        checkout, every target IS a committed file, and "backing it up" would
+        move it out of the repo and leave a link pointing at itself."""
+        self.scripts.parent.mkdir(parents=True)
+        self.scripts.symlink_to(self.source)
+        pairs = self.pairs()
+        self.assertEqual({iterm_deploy.status(*p) for p in pairs}, {"is-source"})
+        self.assertEqual(iterm_deploy.apply(pairs, "stamp"), [])
+        self.assertEqual(
+            (self.source / "iterm-paint.sh").read_text(encoding="utf-8"),
+            "# iterm-paint.sh\n",
+        )
+        self.assertFalse((self.source / "iterm-paint.sh").is_symlink())
+
+
+class Main(DeployHarness):
+    def run_main(self, *extra):
         argv = [
             "--source",
             str(self.source),
@@ -117,14 +133,54 @@ class CheckMode(DeployHarness):
             str(self.scripts),
             "--autolaunch-dir",
             str(self.autolaunch),
+            *extra,
         ]
-        with open(os.devnull, "w", encoding="utf-8") as sink:
-            stdout, iterm_deploy.sys.stdout = iterm_deploy.sys.stdout, sink
-            try:
-                self.assertEqual(iterm_deploy.main(argv), 1)
-            finally:
-                iterm_deploy.sys.stdout = stdout
+        self.calls = []
+
+        def fake_run(cmd, **_kwargs):
+            self.calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="stopped 0", stderr="")
+
+        with (
+            open(os.devnull, "w", encoding="utf-8") as sink,
+            mock.patch.object(iterm_deploy.subprocess, "run", fake_run),
+            mock.patch.object(iterm_deploy.sys, "stdout", sink),
+        ):
+            return iterm_deploy.main(argv)
+
+    def kill_calls(self):
+        return [c for c in self.calls if c[0] == "pkill"]
+
+    def test_check_exits_1_until_linked_and_writes_nothing(self):
+        self.scripts.mkdir(parents=True)
+        copy = self.scripts / "iterm-paint.sh"
+        copy.write_text("july copy", encoding="utf-8")
+        self.assertEqual(self.run_main(), 1)
         self.assertFalse(copy.is_symlink(), "a dry run must not touch anything")
+        self.assertEqual(self.calls, [], "a dry run must stop nothing")
+
+    def test_an_empty_source_is_an_error_not_a_vacuous_pass(self):
+        self.source = self.source.parent / "empty"
+        self.source.mkdir()
+        self.assertEqual(self.run_main(), 2)
+
+    def test_apply_stops_the_reorderer_only_where_autolaunch_exists(self):
+        self.assertEqual(self.run_main("--apply"), 0)
+        self.assertEqual(self.kill_calls(), [])
+
+    def test_apply_stops_the_reorderer_by_its_autolaunch_path(self):
+        # Anchored, so an editor or pager holding the file is spared.
+        self.autolaunch.mkdir()
+        self.run_main("--apply")
+        self.assertEqual(
+            self.kill_calls(), [["pkill", "-f", "AutoLaunch/iterm-reorder[.]py"]]
+        )
+
+    def test_a_repeat_apply_on_a_linked_tree_stops_nothing(self):
+        self.autolaunch.mkdir()
+        self.run_main("--apply")
+        self.assertEqual(self.run_main("--apply"), 0)
+        self.assertEqual(self.calls, [])
 
 
 if __name__ == "__main__":
