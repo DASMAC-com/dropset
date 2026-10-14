@@ -1,10 +1,12 @@
 "use client";
 
 import { type BookLevel, decodePrice } from "@dropset/sdk";
-import { useMemo } from "react";
-import { IS_LOCALNET } from "@/lib/env";
+import { useSolanaClient } from "@solana/react-hooks";
+import { useEffect, useMemo, useState } from "react";
+import { ORDER_BOOK_REFRESH_MS } from "@/lib/data/timings";
 import type { BookToken, OrderBookState } from "@/lib/hooks/useOrderBook";
 import { useOrderBook } from "@/lib/hooks/useOrderBook";
+import { verifyCluster } from "@/lib/rpc";
 import { useSwapStore } from "@/lib/store";
 import {
   formatAmount,
@@ -260,17 +262,20 @@ function OrderBookView({
 //
 // The trades tape sits directly below the ladder, sharing this panel's
 // market/book gating: it is the same instrument seen live rather than at rest.
-// Localnet-only for now — the tape's per-row links resolve against the local
-// explorer, and enabling it on mainnet rides with the env-promotion work.
+//
+// Nothing renders until the endpoint's genesis hash matches the cluster the
+// build targets, so a mainnet build never shows a book read off a localnet
+// program (or the reverse).
 export function OrderBookPanel({ className }: { className?: string }) {
   const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
   const toStablecoin = useSwapStore((s) => s.to.stablecoin);
   const sameToken = fromStablecoin === toStablecoin;
+  const verified = useClusterVerified();
 
   const { status, view, market, base, quote } = useOrderBook(
     fromStablecoin,
     toStablecoin,
-    !sameToken,
+    verified && !sameToken,
   );
 
   if (status !== "ready" || !view || !base || !quote) return null;
@@ -278,7 +283,35 @@ export function OrderBookPanel({ className }: { className?: string }) {
   return (
     <div className={`flex flex-col gap-3 ${className ?? ""}`}>
       <OrderBookView view={view} base={base} quote={quote} />
-      <Trades market={market} base={base} quote={quote} enabled={IS_LOCALNET} />
+      <Trades market={market} base={base} quote={quote} enabled />
     </div>
   );
+}
+
+// True once the endpoint's genesis read matches the build's cluster. A
+// failed read retries on the order book's own cadence rather than pinning the
+// panel hidden.
+function useClusterVerified(): boolean {
+  const client = useSolanaClient();
+  const [verified, setVerified] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const check = () =>
+      verifyCluster(client.runtime.rpc).then(
+        (ok) => {
+          if (!cancelled) setVerified(ok);
+        },
+        () => {
+          if (!cancelled)
+            timer = window.setTimeout(check, ORDER_BOOK_REFRESH_MS);
+        },
+      );
+    void check();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [client]);
+  return verified;
 }

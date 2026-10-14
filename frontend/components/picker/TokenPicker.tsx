@@ -20,6 +20,7 @@ import { isOnSide as predicateIsOnSide } from "@/lib/ui/tokenSelection";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { PickerBalanceCell } from "./PickerBalanceCell";
 import { StableTokenIdentity } from "./StableTokenIdentity";
+import { WarmCatalogueInfo } from "./WarmCatalogueInfo";
 
 export function TokenPicker({ side }: { side: Side }) {
   const currency = useSwapStore((s) => s[side].currency);
@@ -218,6 +219,7 @@ export function TokenPicker({ side }: { side: Side }) {
           <Dialog.Title className="sr-only">
             Select {side === "from" ? "From" : "To"} token
           </Dialog.Title>
+          <WarmCatalogueInfo />
           <div className="flex items-center gap-2 border-border border-b px-3 py-2">
             <Search size={14} className="shrink-0 text-muted-fg" />
             <input

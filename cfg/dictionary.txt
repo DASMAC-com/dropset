@@ -116,6 +116,7 @@ générale
 headshot
 headshots
 healthcheck
+helius
 heredocs
 hexdigit
 hpack

@@ -10,9 +10,10 @@ import { useInfoLookup } from "@/lib/hooks/useUsdQuote";
 // the wallet is disconnected or the initial balance fetch hasn't resolved
 // — keeps the row free of placeholder noise during the brief load.
 //
-// All instances share one RPC fetch via `useAllBalances` and one Jupiter
-// cache via `useInfoLookup`, so adding more consumers doesn't multiply
-// network calls.
+// Each cell asks for its own mint only when the picker opens (the rows are
+// not mounted while it is closed); `useAllBalances` merges the cells'
+// requests into one chunked fetch, and `useInfoLookup` reads one shared
+// Jupiter cache, so adding more consumers doesn't multiply network calls.
 //
 // No `ml-auto` — both pickers wrap StableTokenIdentity whose name column is
 // flex-1, which already pushes this cell to the right. Omitting the auto
@@ -32,7 +33,7 @@ export function PickerBalanceCell({
   decimals: number;
   symbol: string;
 }) {
-  const { balanceFor } = useAllBalances();
+  const { balanceFor } = useAllBalances([mint]);
   const lookup = useInfoLookup();
   const raw = balanceFor(mint);
   if (raw === undefined) return null;

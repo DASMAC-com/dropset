@@ -10,13 +10,33 @@ function required(name: string, value: string | undefined): string {
   return value;
 }
 
-export const PUBLIC_RPC_URL = mainnet(
+// The standing free endpoint (PublicNode on mainnet, the local validator on
+// localnet). Required: it serves every call when no primary is set, and is
+// the fallback behind one that is.
+export const FALLBACK_RPC_URL = mainnet(
   required("NEXT_PUBLIC_RPC_URL", process.env.NEXT_PUBLIC_RPC_URL),
 );
-export const PUBLIC_WS_URL = required(
+export const FALLBACK_WS_URL = required(
   "NEXT_PUBLIC_WS_URL",
   process.env.NEXT_PUBLIC_WS_URL,
 );
+
+// The optional keyed primary (Helius for the demo). Deleting both from the
+// hosting env returns a deploy to the standing endpoint alone. The key ships in
+// the bundle, so it must be origin-restricted in the provider's dashboard;
+// see .env.example. Only the app's own runtime uses it (lib/rpc.ts): a
+// single-URL consumer such as the MetaMask connector keeps the standing
+// endpoint, since it may call from an origin the restriction refuses and
+// cannot fail over.
+const primaryRpc = process.env.NEXT_PUBLIC_PRIMARY_RPC_URL?.trim();
+const primaryWs = process.env.NEXT_PUBLIC_PRIMARY_WS_URL?.trim();
+if (!primaryRpc !== !primaryWs) {
+  throw new Error(
+    "Set NEXT_PUBLIC_PRIMARY_RPC_URL and NEXT_PUBLIC_PRIMARY_WS_URL together, or neither.",
+  );
+}
+export const PRIMARY_RPC_URL = primaryRpc ? mainnet(primaryRpc) : null;
+export const PRIMARY_WS_URL = primaryWs || null;
 
 // Which Solana cluster the app targets. Defaults to mainnet (production);
 // set NEXT_PUBLIC_CLUSTER=localnet to point at a local validator. Localnet
@@ -46,7 +66,8 @@ export const JUPITER_SEARCH_URL =
   "https://lite-api.jup.ag/tokens/v2/search";
 
 // Max accounts per `getMultipleAccounts` call. Required, provider-specific
-// (PublicNode caps at 10 on their free tier).
+// (PublicNode caps at 10 on their free tier). With a primary set, a call can
+// land on either provider, so this must fit the fallback's cap.
 const parsedBatchSize = Number.parseInt(
   required(
     "NEXT_PUBLIC_GET_MULTIPLE_ACCOUNTS_BATCH_SIZE",
