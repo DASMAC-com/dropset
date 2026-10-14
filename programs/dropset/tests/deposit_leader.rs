@@ -76,6 +76,34 @@ fn single_leg_top_up_grows_leader_and_total_equally() {
 }
 
 #[test]
+fn drained_leg_rejects_typed_and_other_leg_still_deposits() {
+    // `seeded` quotes one ask level at `size_bps = 10_000` — the whole base
+    // leg — so a Buy covering it lands `base_atoms` at exactly zero. Any
+    // taker can do this; no reserve floor exists in the swap path.
+    let mut f = Fixture::seeded(1_000_000, 1_085_000);
+    let taker = f.funded_depositor(0, 10_000_000);
+    f.swap(&taker, 0, 10_000_000, dropset::Price::INFINITY.as_u32(), 1)
+        .expect("a Buy drains the full-leg ask");
+    assert_eq!(f.vault(0).base_atoms.get(), 0, "base leg drained to zero");
+
+    // Depositing the drained leg used to divide by zero inside the share
+    // kernel (an opaque abort); it now fails typed.
+    let err = f
+        .deposit_leader(0, 1_000, 0, 1_000, 1_000_000)
+        .expect_err("a deposit into the empty leg is rejected");
+    common::assert_program_error(&err, dropset::DropsetError::EmptyLeg);
+
+    // The other leg still sizes, with a zero basket on the drained side —
+    // so no deposit refills it; only a swap crediting base back does.
+    let before = f.vault(0);
+    f.deposit_leader(0, 0, 1_000, 0, 1_000)
+        .expect("the quote leg still deposits");
+    let after = f.vault(0);
+    assert_eq!(after.base_atoms.get(), 0, "deposit does not refill base");
+    assert!(after.total_shares.get() > before.total_shares.get());
+}
+
+#[test]
 fn rejects_non_leader_signer() {
     // Open the vault for a *different* leader via the admin override,
     // then have `authority` (not the leader) attempt the deposit.
