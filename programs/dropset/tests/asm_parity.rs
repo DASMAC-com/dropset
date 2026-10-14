@@ -742,7 +742,7 @@ fn profile_cu(mut f: Fixture) -> u64 {
 /// cheaper — asserted so a regression that erodes the saving fails the test.
 /// The profile row is also the `sol_memcpy_`-versus-chunked measurement: the
 /// syscall is metered at `max(10, len / 250)` CU — 10 CU at `PROFILE_BYTES`
-/// (224) — against ~56 for the 28 8-byte load/store pairs a hand-rolled copy
+/// (288) — against ~72 for the 36 8-byte load/store pairs a hand-rolled copy
 /// of that width would need. Run with `--nocapture` (or read the
 /// make-test-parity log) to see the table.
 #[test]

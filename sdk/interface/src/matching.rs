@@ -609,6 +609,8 @@ mod tests {
             size: size.into(),
             expires_at_unix: u32::MAX.into(),
             expires_at_slot: u32::MAX.into(),
+            flip_price: 0.into(),
+            flip_size: 0.into(),
         }
     }
 
@@ -882,6 +884,7 @@ mod tests {
     fn level_bounded(offset_ppm: u32, size_bps: u16, secs: u32, slots: u32) -> Level {
         Level {
             price_offset: offset_ppm.into(),
+            flip_spread_ppm: 0.into(),
             size_bps: size_bps.into(),
             expiry_offset_secs: secs.into(),
             expiry_offset_slots: slots.into(),

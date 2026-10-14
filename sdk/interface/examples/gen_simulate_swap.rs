@@ -73,6 +73,8 @@ fn position(significand: u32, exp: i8, size: u64) -> Position {
         size: size.into(),
         expires_at_unix: WALL_DEADLINE.into(),
         expires_at_slot: SLOT_DEADLINE.into(),
+        flip_price: 0.into(),
+        flip_size: 0.into(),
     }
 }
 
@@ -188,6 +190,8 @@ fn position_at(significand: u32, exp: i8, size: u64) -> Position {
         size: size.into(),
         expires_at_unix: WALL_DEADLINE.into(),
         expires_at_slot: SLOT_DEADLINE.into(),
+        flip_price: 0.into(),
+        flip_size: 0.into(),
     }
 }
 
@@ -257,6 +261,7 @@ fn flush_market_data() -> Vec<u8> {
     // side, well inside the per-side ceiling.
     let level = |offset_ppm: u32, size_bps: u16| Level {
         price_offset: offset_ppm.into(),
+        flip_spread_ppm: 0.into(),
         size_bps: size_bps.into(),
         expiry_offset_secs: WALL_DEADLINE.into(),
         expiry_offset_slots: SLOT_DEADLINE.into(),

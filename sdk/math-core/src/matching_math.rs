@@ -40,6 +40,21 @@ pub fn flush_level_price(reference: Price, offset_ppm: u32, is_ask: bool) -> Pri
     Price::from_scaled(scaled as u64, exp).unwrap_or(Price::ZERO)
 }
 
+/// Materialize a level's flip price from its own absolute `level_price`
+/// and its `flip_spread_ppm`. A filled ask's proceeds rest as a bid
+/// *below* it (`price × (PPM − spread) / PPM`) and a filled bid's as an
+/// ask *above* it (`price × (PPM + spread) / PPM`) — so this is
+/// [`flush_level_price`] with the direction inverted, sharing its
+/// decoded-space arithmetic and sentinel handling. A zero spread returns
+/// `level_price` unchanged.
+///
+/// A result the encoding cannot hold falls to [`Price::ZERO`], which is
+/// not [`Price::is_matchable`], so the flipped side does not rest.
+#[inline]
+pub fn flip_level_price(level_price: Price, flip_spread_ppm: u32, is_ask: bool) -> Price {
+    flush_level_price(level_price, flip_spread_ppm, !is_ask)
+}
+
 /// A level's materialized size in atoms: `size_bps` of the matching
 /// inventory leg (`base_atoms` for asks, `quote_atoms` for bids).
 ///
@@ -192,6 +207,33 @@ mod tests {
             flush_level_price(Price::INFINITY, 500, false),
             Price::INFINITY
         );
+    }
+
+    #[test]
+    fn flip_price_crosses_back_over_the_level() {
+        let level = Price::encode(10_850_000, 0).unwrap();
+        // An ask flips to a bid below it, a bid to an ask above it.
+        assert_eq!(flip_level_price(level, 500, true).significand(), 10_844_575);
+        assert_eq!(
+            flip_level_price(level, 500, false).significand(),
+            10_855_425
+        );
+        // Zero spread is the identity on a live price.
+        assert_eq!(flip_level_price(level, 0, true), level);
+        assert_eq!(flip_level_price(level, 0, false), level);
+    }
+
+    #[test]
+    fn flip_price_escaping_the_encoding_is_unmatchable() {
+        // The largest representable price: a bid flipping above it escapes.
+        let top = Price::new(99_999_999, 31).unwrap();
+        assert!(top.is_matchable());
+        let flipped = flip_level_price(top, 500, false);
+        assert_eq!(flipped, Price::ZERO);
+        assert!(!flipped.is_matchable());
+        // An ask flipping by the whole price escapes downward.
+        let level = Price::encode(50_000_000, 0).unwrap();
+        assert!(!flip_level_price(level, PPM as u32, true).is_matchable());
     }
 
     #[test]

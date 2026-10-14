@@ -613,9 +613,11 @@ A level rests only while **both** are in the future. See **Expiry — the
 dual gate** below.
 
 **`Remaining` / `Position` — materialized levels.** Per-side arrays of
-`N_LEVELS` `Position`s (absolute `price`, atom-sized `size`, and one
+`N_LEVELS` `Position`s (absolute `price`, atom-sized `size`, one
 absolute deadline per expiry domain — `expires_at_unix` in unix seconds,
-`expires_at_slot` in slots), computed from `profile` + inventory by
+`expires_at_slot` in slots — and the flip pair: the absolute
+`flip_price` a filled level's proceeds rest at and the `flip_size`
+allowance they rest with), computed from `profile` + inventory by
 the first taker after a flush (see **LiquidityProfile → Flush** for the
 formulas); subsequent takers read them directly and decrement `size` on
 fills.
@@ -889,7 +891,8 @@ restored.
 ## LiquidityProfile
 
 Each level carries a `price_offset` in **ppm** (1_000_000 = 100%)
-from `reference_price.price`, a `size_bps` as fraction of vault
+from `reference_price.price`, a `flip_spread_ppm` (also ppm, off the
+level's *own* absolute price), a `size_bps` as fraction of vault
 inventory in **basis points** (10000 = 100%), and one expiry offset
 per domain — `expiry_offset_secs` after `quote_unix` and
 `expiry_offset_slots` after `quote_slot`. The two scales differ on
@@ -908,10 +911,11 @@ the leader.
 
 The byte-exact layout is owned by
 [`state/market/layout.rs`](../programs/dropset/src/state/market/layout.rs)
-(`LiquidityProfile`, `Level`) and canonicalized in the IDL: per-side
-arrays of `N_LEVELS` `Level`s, each a
-`(price_offset, size_bps, expiry_offset_secs, expiry_offset_slots)`
-tuple, top of book first. The load-bearing invariants:
+(`LiquidityProfile`, `Level`) — the IDL carries only the profile blob's
+width, since the slab is opaque to it: per-side arrays of `N_LEVELS`
+`Level`s, top of book first, each carrying
+`price_offset`, `flip_spread_ppm`, `size_bps`, `expiry_offset_secs` and
+`expiry_offset_slots` in that order. The load-bearing invariants:
 
 - **Per-side size cap.** `Σ size_bps ≤ 10000` per side. The sum at
   exactly `10000` fully commits that leg; a lower sum leaves a reserve.
@@ -926,8 +930,20 @@ tuple, top of book first. The load-bearing invariants:
   base atoms.
 - **Implicit direction.** `price_offset` is a ppm spread from
   `reference_price.price` whose sign is implicit: bids subtract, asks
-  add. The two expiry offsets are measured from their own datums. All
-  three materialize to absolute values at flush (see below).
+  add. The two expiry offsets are measured from their own datums, and
+  `flip_spread_ppm` from the level's own price. All four materialize to
+  absolute values at flush (see below).
+- **Flip in place.** A level is to flip when it fills: an ask's
+  proceeds rest as a bid at `price × (PPM − flip_spread_ppm) / PPM`, a
+  bid's as an ask at `price × (PPM + flip_spread_ppm) / PPM` — relative
+  to the level's own absolute price, never the reference, and with no
+  new order or allocation, only the level's second allowance
+  (`flip_size`). A zero `flip_spread_ppm` does not flip, byte-for-byte
+  the behavior of a level without it; the gate is the spread itself,
+  checked where a fill would credit `flip_size`, because the flush
+  formula is the identity at zero. **Status:** the fields are stored and
+  materialized at flush, but matching does not consume them yet, so
+  today no fill flips.
 
 ### Flush
 
@@ -945,6 +961,9 @@ asks_remaining[i].expires_at_unix = deadline(ref.quote_unix,
                                              a.expiry_offset_secs)
 asks_remaining[i].expires_at_slot = deadline(ref.quote_slot,
                                              a.expiry_offset_slots)
+asks_remaining[i].flip_price = asks_remaining[i].price
+                             × (PPM −sat a.flip_spread_ppm) / PPM
+asks_remaining[i].flip_size  = 0
 
 bids_remaining[i].size       = quote_atoms × b.size_bps / 10000  // quote
 bids_remaining[i].price      = ref.price × (PPM −sat b.price_offset) / PPM
@@ -952,7 +971,18 @@ bids_remaining[i].expires_at_unix = deadline(ref.quote_unix,
                                              b.expiry_offset_secs)
 bids_remaining[i].expires_at_slot = deadline(ref.quote_slot,
                                              b.expiry_offset_slots)
+bids_remaining[i].flip_price = bids_remaining[i].price
+                             × (PPM + b.flip_spread_ppm) / PPM
+bids_remaining[i].flip_size  = 0
 ```
+
+**A flush re-centers the flips.** `flip_price` is computed in decoded
+space off the level's freshly materialized `price`, exactly like `price`
+off the reference, and stored re-encoded; a result the encoding cannot
+hold falls to the `ZERO` sentinel, which is not matchable, so that flipped
+side does not rest. `flip_size` is zeroed on every flush, so whatever has
+flipped since the last one is folded back into inventory and re-laddered
+by `size_bps`.
 
 **Zero is dead, in either domain.** `deadline` maps a zero offset to
 zero rather than to the bare datum, so "no life in this domain" survives
@@ -1578,14 +1608,14 @@ and current inventory.
 handled in the hand-written sBPF entrypoint (`src/asm/entrypoint.s`) in
 the default `asm-entrypoint` build, sharing that file's preamble with
 its sibling and diverging only at the payload: one `sol_memcpy_` of the
-224-byte profile blob from the instruction data into `Vault.profile`,
-metered at `max(10, len / 250)` compute units versus roughly 56 for a
+288-byte profile blob from the instruction data into `Vault.profile`,
+metered at `max(10, len / 250)` compute units versus roughly 72 for a
 hand-rolled chunked copy. It mirrors the solana-free
 `write_liquidity_profile` kernel
 (`state/market/liquidity_profile.rs`) byte-for-byte, over the shared
 `quote_write` half. On litesvm the fast path costs ~59 CU versus ~324
 for the Rust entrypoint — a ~82% saving, and only 12 CU more than the
-two-store `SetReferencePrice` path despite writing 224 bytes.
+two-store `SetReferencePrice` path despite writing 288 bytes.
 `tests/asm_parity.rs` deploys the reference build beside it and asserts
 both write the same bytes to the same offsets — including that the write
 moves *nothing* outside `market.nonce`, the target sector's
@@ -1595,14 +1625,14 @@ The fast path does **not** bound the instruction-data length before the
 copy — a settled decision, not an outstanding gap, since these paths
 trust the market maker to call them correctly. Surplus bytes are a
 non-event: every read is a fixed width at a fixed offset — `vault_idx` at
-`+1`, then the 224-byte blob at `+5`, a maximum extent of
-`ix_data + 229` — so nothing scans and bytes past that are never read. A
+`+1`, then the 288-byte blob at `+5`, a maximum extent of
+`ix_data + 293` — so nothing scans and bytes past that are never read. A
 truncated call does diverge from the reference
 build (which rejects it at deserialization), but only ever harms its own
-caller: under 197 bytes it faults and the caller's own transaction fails;
-at 197–228 it copies the trailing program-id bytes — public data — into
+caller: under 261 bytes it faults and the caller's own transaction fails;
+at 261–292 it copies the trailing program-id bytes — public data — into
 the caller's own ladder and succeeds silently. Every SDK builder emits
-the full 229 bytes.
+the full 293 bytes.
 
 Neither case can be turned into an injection. The copy length is a
 constant, never payload-derived, and the destination is the fixed

@@ -15,7 +15,7 @@
 //! simulator consumers reuse them.
 
 use anchor_lang_v2::prelude::*;
-use dropset_math_core::matching_math::{flush_level_price, level_fill_atoms};
+use dropset_math_core::matching_math::{flip_level_price, flush_level_price, level_fill_atoms};
 use dropset_math_core::share::{self, BasketError};
 
 use crate::errors::DropsetError;
@@ -134,11 +134,17 @@ impl Vault {
         let (bid_sum, ask_sum) = self.profile.side_size_sums();
         let bids_ok = bid_sum <= BPS as u32;
         let asks_ok = ask_sum <= BPS as u32;
+        // Every flush zeroes `flip_size`, so it re-centers all flipped
+        // state back onto the pct-of-inventory ladder; `flip_price` is
+        // derived from the level's own fresh price, never the reference.
         for i in 0..N_LEVELS {
             let bid = self.profile.bids[i];
             let ask = self.profile.asks[i];
-            self.remaining.bids[i].price =
-                flush_level_price(ref_price, bid.price_offset.get(), false);
+            let bid_price = flush_level_price(ref_price, bid.price_offset.get(), false);
+            self.remaining.bids[i].price = bid_price;
+            self.remaining.bids[i].flip_price =
+                flip_level_price(bid_price, bid.flip_spread_ppm.get(), false);
+            self.remaining.bids[i].flip_size = 0.into();
             self.remaining.bids[i].size = if bids_ok {
                 level_fill_atoms(bid.size_bps.get(), quote_atoms).unwrap_or(0)
             } else {
@@ -147,8 +153,11 @@ impl Vault {
             .into();
             let (bid_wall, bid_slot) = bid.deadlines(&reference);
             self.remaining.bids[i].set_deadlines(bid_wall, bid_slot);
-            self.remaining.asks[i].price =
-                flush_level_price(ref_price, ask.price_offset.get(), true);
+            let ask_price = flush_level_price(ref_price, ask.price_offset.get(), true);
+            self.remaining.asks[i].price = ask_price;
+            self.remaining.asks[i].flip_price =
+                flip_level_price(ask_price, ask.flip_spread_ppm.get(), true);
+            self.remaining.asks[i].flip_size = 0.into();
             self.remaining.asks[i].size = if asks_ok {
                 level_fill_atoms(ask.size_bps.get(), base_atoms).unwrap_or(0)
             } else {
@@ -370,6 +379,46 @@ mod tests {
         // Empty levels flush to zero size.
         assert_eq!(v.remaining.bids[1].size.get(), 0);
         assert_eq!(v.remaining.asks[1].size.get(), 0);
+        // A zero flip spread leaves every pre-flip field above exactly as it
+        // was; the new fields hold the level's own price and no allowance.
+        for p in v.remaining.bids.iter().chain(v.remaining.asks.iter()) {
+            assert_eq!(p.flip_price, p.price);
+            assert_eq!(p.flip_size.get(), 0);
+        }
+    }
+
+    #[test]
+    fn materialize_remaining_derives_flip_price_and_zeroes_flip_size() {
+        let reference = Price::from_value(2.0).unwrap();
+        let mut v = Vault::zeroed();
+        v.reference_price.price = reference;
+        v.reference_price.stamp = FLUSH_BIT.into();
+        v.profile.bids[0].price_offset = 500u32.into();
+        v.profile.bids[0].flip_spread_ppm = 1_000u32.into();
+        v.profile.asks[0].price_offset = 500u32.into();
+        v.profile.asks[0].flip_spread_ppm = 2_000u32.into();
+        // Flipped state left over from before the flush, on every level.
+        for i in 0..N_LEVELS {
+            v.remaining.bids[i].flip_size = 7u64.into();
+            v.remaining.asks[i].flip_size = 9u64.into();
+        }
+
+        v.materialize_remaining();
+
+        // Flip price is off the level's own price, not the reference: a
+        // bid flips to an ask above it, an ask to a bid below it.
+        let bid = v.remaining.bids[0];
+        let ask = v.remaining.asks[0];
+        assert_eq!(bid.flip_price, flush_level_price(bid.price, 1_000, true));
+        assert_eq!(ask.flip_price, flush_level_price(ask.price, 2_000, false));
+        assert!(bid.flip_price > bid.price && ask.flip_price < ask.price);
+        // A zero spread materializes the level's own price.
+        assert_eq!(v.remaining.bids[1].flip_price, v.remaining.bids[1].price);
+        // The flush re-centers: every flipped allowance is zeroed.
+        for i in 0..N_LEVELS {
+            assert_eq!(v.remaining.bids[i].flip_size.get(), 0);
+            assert_eq!(v.remaining.asks[i].flip_size.get(), 0);
+        }
     }
 
     #[test]
@@ -386,11 +435,15 @@ mod tests {
         v.profile.bids[1].size_bps = 6_000u16.into();
         v.profile.asks[0].size_bps = 5_000u16.into();
         assert!(v.profile.side_size_sums().0 > BPS as u32);
+        // Stale flipped state on the side about to be thrown out.
+        v.remaining.bids[0].flip_size = 7u64.into();
 
         v.materialize_remaining();
 
         assert_eq!(v.remaining.bids[0].size.get(), 0);
         assert_eq!(v.remaining.bids[1].size.get(), 0);
+        // An over-cap side is re-centered too, not left with flipped state.
+        assert_eq!(v.remaining.bids[0].flip_size.get(), 0);
         assert_eq!(v.remaining.asks[0].size.get(), 500_000);
         // The oversized side's profile bytes are untouched — it self-heals
         // on the leader's next valid write.

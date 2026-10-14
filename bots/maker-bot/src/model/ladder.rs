@@ -175,13 +175,14 @@ mod tests {
     }
 
     /// The serialized ladder is exactly the width the instruction arg
-    /// declares — 2 sides × 8 levels × a 14-byte `Level` (`price_offset`
-    /// u32, `size_bps` u16, and one u32 expiry offset per domain).
+    /// declares — 2 sides × 8 levels × an 18-byte `Level` (`price_offset`
+    /// u32, `flip_spread_ppm` u32, `size_bps` u16, and one u32 expiry
+    /// offset per domain).
     #[test]
     fn serializes_to_the_profile_width() {
         let p = build_profile(&DEFAULT_LADDER);
         assert_eq!(to_bytes(&p).len(), PROFILE_BYTES);
-        assert_eq!(PROFILE_BYTES, 2 * N_LEVELS * 14);
+        assert_eq!(PROFILE_BYTES, 2 * N_LEVELS * 18);
     }
 
     #[test]

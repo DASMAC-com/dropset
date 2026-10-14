@@ -26,11 +26,11 @@ const BPS = 10_000n;
 /** Common scale for the integer price ratio — mirrors Rust's `SCALE`. */
 const SCALE = 1_000_000_000n;
 /**
- * On-wire width of one `Level`: `price_offset` u32, `size_bps` u16, and
- * one u32 expiry offset per domain (wall and slot). Every field is
- * alignment-1, so the struct is byte-packed.
+ * On-wire width of one `Level`: `price_offset` u32, `flip_spread_ppm` u32,
+ * `size_bps` u16, and one u32 expiry offset per domain (wall and slot).
+ * Every field is alignment-1, so the struct is byte-packed.
  */
-export const LEVEL_BYTES = 14;
+export const LEVEL_BYTES = 18;
 /** Serialized `LiquidityProfile` length: both sides' level arrays. */
 export const PROFILE_BYTES = 2 * N_LEVELS * LEVEL_BYTES;
 
@@ -108,9 +108,11 @@ function levelToRelative(
 
 function writeLevel(view: DataView, offset: number, l: RelLevel): void {
   view.setUint32(offset, l.priceOffset, true);
-  view.setUint16(offset + 4, l.sizeBps, true);
-  view.setUint32(offset + 6, l.expiryOffsetSecs, true);
-  view.setUint32(offset + 10, l.expiryOffsetSlots, true);
+  // `flip_spread_ppm`: a native book has no flip input yet, so it never flips.
+  view.setUint32(offset + 4, 0, true);
+  view.setUint16(offset + 8, l.sizeBps, true);
+  view.setUint32(offset + 10, l.expiryOffsetSecs, true);
+  view.setUint32(offset + 14, l.expiryOffsetSlots, true);
 }
 
 /**

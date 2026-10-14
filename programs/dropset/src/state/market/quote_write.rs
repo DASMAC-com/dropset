@@ -7,7 +7,7 @@
 //! Both kernels open with the *same* preamble — bounds-check the target
 //! sector, compare the signer against its `quote_authority`, then bump the
 //! market nonce and arm `FLUSH_BIT` — and diverge only in the payload they
-//! write afterwards (three `u32` stores versus a 224-byte profile copy). That
+//! write afterwards (three `u32` stores versus a 288-byte profile copy). That
 //! preamble lives here once, mirroring how `src/asm/entrypoint.s` shares a
 //! single assembly preamble across its two discriminator branches: the Rust
 //! reference and the assembly stay aligned in structure, not just in the

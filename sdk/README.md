@@ -27,11 +27,12 @@ builders, account/event codecs, PDA helpers. Regenerate with
 `make idl && make sdk`. Two codegen fix-ups live in `codama/generate.mjs`:
 `Price` is remapped to its real `u32` wire form (the on-chain type isn't
 `IdlType`, so it surfaces as a fieldless struct), and
-`set_liquidity_profile`'s `profile_bytes` is restored to `[u8; 224]`
+`set_liquidity_profile`'s `profile_bytes` is restored to `[u8; 288]`
 (anchor-next can't const-eval `PROFILE_BYTES`). That width is asserted on
 chain as `PROFILE_SIZE` and derived — not hard-coded — in
-`codama/generate.mjs`; it has moved once already (160 → 224, when per-level
-expiry gained its second domain), so treat any literal restatement of it,
+`codama/generate.mjs`; it has moved twice already (160 → 224, when per-level
+expiry gained its second domain; 224 → 288, when each level gained its flip
+spread), so treat any literal restatement of it,
 this sentence included, as something to re-check against the on-chain assert.
 
 **B. Book math (`math-core` + `interface`).** The consensus arithmetic —

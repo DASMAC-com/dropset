@@ -79,6 +79,17 @@ pub struct Level {
     /// Spread from `reference_price.price` in ppm — direction is implicit
     /// from which side this level sits on (bids subtract, asks add).
     pub price_offset: PodU32,
+    /// Flip spread in ppm, relative to this level's own absolute price,
+    /// never the reference: a filled ask's proceeds are to rest as a bid at
+    /// `price × (PPM − flip_spread_ppm) / PPM`, a filled bid's as an ask at
+    /// `price × (PPM + flip_spread_ppm) / PPM`. Materialized into
+    /// [`Position::flip_price`] at flush; matching does not consume it yet.
+    ///
+    /// **Zero does not flip.** The flush formula is the identity at zero, so
+    /// `flip_price` alone cannot say so: the gate is this field, checked
+    /// where a fill would credit [`Position::flip_size`], which then stays
+    /// zero for a non-flipping level.
+    pub flip_spread_ppm: PodU32,
     /// Per-flush allowance as bps of the matching inventory leg
     /// (`base_atoms` for asks, `quote_atoms` for bids). Σ per side ≤ 10000.
     pub size_bps: PodU16,
@@ -145,6 +156,21 @@ pub struct Position {
     /// [`Position::expires_at_unix`]; the level matches only while **both**
     /// deadlines are in the future.
     pub expires_at_slot: PodU32,
+    /// Absolute price the level's proceeds rest at once it flips
+    /// (`price × (PPM ∓ Level::flip_spread_ppm) / PPM`, asks minus, bids
+    /// plus, computed in decoded space and stored re-encoded). A result
+    /// the encoding cannot hold is stored as [`Price::ZERO`], which is not
+    /// matchable, so that flipped side does not rest. Meaningful only while
+    /// [`Position::flip_size`] is nonzero.
+    pub flip_price: Price,
+    /// Flipped allowance in atoms, on the opposite leg from
+    /// [`Position::size`] (quote for an ask's flip, base for a bid's), and
+    /// the single test for whether the flipped side rests. Once matching
+    /// consumes it, a fill on a level with a nonzero
+    /// [`Level::flip_spread_ppm`] credits it with exactly the atoms
+    /// inventory is credited. **Zeroed on every flush**, so a flush
+    /// re-centers all flipped state back onto the pct-of-inventory ladder.
+    pub flip_size: PodU64,
 }
 
 /// Per-vault remaining sizes, one entry per [`Level`].
@@ -482,10 +508,10 @@ impl MarketHeader {
 // again (localnet does this on every run). A deploy that must preserve
 // live accounts needs a real migration or a version gate before it
 // changes anything below.
-const _: () = assert!(core::mem::size_of::<Vault>() == 700);
+const _: () = assert!(core::mem::size_of::<Vault>() == 956);
 const _: () = assert!(core::mem::size_of::<MarketHeader>() == 261);
-const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 14);
-const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 20);
+const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 18);
+const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 32);
 
 // Field-offset guards: total-size asserts alone don't catch a reorder
 // that happens to preserve the byte count (e.g. swapping `_reserved`
@@ -559,6 +585,14 @@ const _: () = assert!(
     core::mem::offset_of!(Position, expires_at_slot)
         == core::mem::offset_of!(Position, expires_at_unix) + 4
 );
+
+// The flip fields are pinned absolutely: each shares a width with a
+// neighbor (`flip_spread_ppm` with `price_offset`, `flip_price` with the
+// deadlines), so a swap keeps every size assert green while the SDK
+// builders, which write the profile by offset, silently mis-target.
+const _: () = assert!(core::mem::offset_of!(Level, flip_spread_ppm) == 4);
+const _: () = assert!(core::mem::offset_of!(Position, flip_price) == 20);
+const _: () = assert!(core::mem::offset_of!(Position, flip_size) == 24);
 
 #[cfg(test)]
 mod tests {

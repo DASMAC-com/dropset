@@ -18,7 +18,7 @@
 # the Rust kernels share `quote_write.rs`, and diverge only at the payload:
 # `set_reference_price` stores three u32s (as a word plus a fused
 # double-word — see the note at that label), `set_liquidity_profile` copies
-# the 224-byte profile blob with `sol_memcpy_`. Neither validates its payload —
+# the 288-byte profile blob with `sol_memcpy_`. Neither validates its payload —
 # matching skips an invalid price, and an over-cap ladder side is dropped at
 # flush time.
 #
@@ -73,7 +73,7 @@
 # base_atoms begins.
 .equ IX_QUOTE_UNIX_OFF, 13        # u32
 # set_liquidity_profile payload
-.equ IX_PROFILE_OFF, 5            # [u8; 224], past disc(1) + vault_idx(4)
+.equ IX_PROFILE_OFF, 5            # [u8; 288], past disc(1) + vault_idx(4)
 
 # --- account 0: signer ---
 .equ SIGNER_IS_SIGNER_OFF, 9      # acct0_base(8) + header is_signer(1)
@@ -94,8 +94,8 @@
 .equ MARKET_NONCE_OFF, MARKET_DATA_OFF + 8       # MarketHeader.nonce (u64)
 .equ MARKET_LEN_OFF, MARKET_DATA_OFF + 269       # slab len (u32)
 .equ SLAB_ITEMS_OFF, 276                         # first Vault, within data
-.equ VAULT_SIZE, 700
-.equ PROFILE_SIZE, 224                           # size_of::<LiquidityProfile>()
+.equ VAULT_SIZE, 956
+.equ PROFILE_SIZE, 288                           # size_of::<LiquidityProfile>()
 
 # --- Vault field offsets ---
 .equ VAULT_QUOTE_AUTHORITY_OFF, 40
@@ -128,8 +128,8 @@
 # SURPLUS ix data is a non-event: every read is a fixed width at a fixed
 # offset, so nothing scans and no read is length-derived. The shared
 # preamble takes vault_idx at +1; disc 5 then reads three more u32s (max
-# extent ix_data + 17) and disc 6 the 224-byte blob at +5 (max extent
-# ix_data + 229). Bytes past that are simply never read.
+# extent ix_data + 17) and disc 6 the 288-byte blob at +5 (max extent
+# ix_data + 293). Bytes past that are simply never read.
 #
 # A TRUNCATED payload only ever harms its own caller, but the two
 # discriminators fail differently and disc 5 is the quieter of the two.
@@ -148,11 +148,11 @@
 #
 # Disc 6 is the noisy case. The reference build
 # rejects one at anchor deserialization; here a short disc-6 call makes the
-# 224-byte copy read past the ix-data region. The input region ends at
-# ix_data + len + program_id(32), so a length under 197 faults
-# (AccessViolation, the caller's own tx fails) while 197-228 copies the
+# 288-byte copy read past the ix-data region. The input region ends at
+# ix_data + len + program_id(32), so a length under 261 faults
+# (AccessViolation, the caller's own tx fails) while 261-292 copies the
 # trailing program-id bytes — public data — into the caller's own ladder
-# and succeeds silently. Every SDK builder emits the full 229 bytes.
+# and succeeds silently. Every SDK builder emits the full 293 bytes.
 #
 # Neither case can be turned into an injection. The copy length is the
 # PROFILE_SIZE constant, never payload-derived. The destination is the
@@ -275,7 +275,7 @@ quote_write:
     # separately.
     #
     # The STORE is the weaker claim: &vault is only 4-aligned (VAULT_SIZE
-    # 700 and SLAB_ITEMS_OFF 276 are both ≡ 4 mod 8, so every even sector
+    # 956 and SLAB_ITEMS_OFF 276 are both ≡ 4 mod 8, so every even sector
     # sits at a 4-aligned address), which means the stxdw at RP_STAMP_OFF
     # above has always been a 4-aligned 8-byte store.
     #
