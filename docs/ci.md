@@ -130,9 +130,11 @@ nor the Solana-toolchain layer:
   onto the nextest steps. This is what covers the workspace crates and test
   binaries that rust-cache prunes.
 - **The SBF `.so` cache**, one entry per feature set — content-addressed over
-  the program sources. An exact hit skips `cargo build-sbf` entirely.
-- **The Solana toolchain cache**, one entry — keyed on the pinned Solana and
-  anchor versions.
+  the program sources and the build config, the Makefile included (it picks
+  the sBPF version), so any Makefile edit misses it. An exact hit skips
+  `cargo build-sbf` entirely.
+- **The Solana toolchain cache**, one entry — keyed on the pinned Solana,
+  anchor-cli and platform-tools versions.
 
 Cache entries are readable from the ref that saved them and from the default
 branch. `test.yml` runs on `push: main`, so the shared entry exists on the

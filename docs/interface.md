@@ -417,14 +417,28 @@ ______________________________________________________________________
 
 Two independent codegen spines:
 
-**(A) IDL → clients.** `anchor-next` emits the IDL → **Codama** generates the
+**(A) IDL → clients.** `anchor-cli` emits the IDL → **Codama** generates the
 TypeScript (`@solana/kit`) and Rust clients (instruction builders, account /
 event codecs, PDA helpers). CI discipline:
 
-- **Pin `anchor-next` to an exact rev**, and **pin `anchor-cli` (the IDL
-  generator) to the same rev** — otherwise the IDL-diff baseline drifts.
+- **How the program is built** — the one canonical statement, which the
+  Makefile and CI point at rather than restate. The **program crate** depends
+  on `anchor-lang-v2` from the `anchor-next` branch, pinned by the lockfile.
+  The **tooling** is the stable crates.io `anchor-cli`, pinned to an
+  **exact** version (the Makefile's `ANCHOR_CLI_VERSION`, mirrored by the
+  Tests workflow's `ANCHOR_VERSION`), which builds an **sBPF v3** ELF by
+  default — held at v0 by the Makefile's `ANCHOR_BUILD_SBF_ARCH` until the
+  test runtime and validator move to Agave 4.x, since Agave 3.1 cannot load
+  that v3 ELF. The exact pin rather than latest stable is deliberate: the CLI
+  generates the IDL, so its version is part of the IDL-diff baseline below.
+  The crate pin and the CLI pin move independently, and a crate bump is now
+  a rename — the
+  `anchor-next` tip has renamed `anchor-lang-v2` to `anchor-lang` — so it is
+  its own decision, never a side effect of a CLI bump. The measured
+  toolchain facts and the probe recipe behind this bullet are in
+  [program-build.md](program-build.md).
 - **Gate CI on a diff of the full regenerated IDL.** `metadata.spec` is the
-  Anchor **IDL-spec toolchain** version (constant once the rev is pinned) and
+  Anchor **IDL-spec toolchain** version (constant once the CLI is pinned) and
   `metadata.version` is the program crate version — so an equality check on a
   single metadata string catches **neither** field/type/discriminator changes;
   diff the whole document.

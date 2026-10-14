@@ -97,6 +97,9 @@ default = ["admin-teardown", "asm-entrypoint"]
 # features (e3cf7608 V2: Remove idl-build from Anchor crates), so this
 # only flips the cfg locally — plus forwards to math-core, where the
 # `Price` type's `IdlType` impl lives, so `anchor idl build` still emits it.
+# The stable anchor-cli's "`idl-build` feature of `anchor-spl-v2` is not
+# enabled" warning on every build is that removal, not a gap: the feature
+# it asks for no longer exists, and the generated IDL is complete.
 idl-build = ["dropset-math-core/idl-build"]
 no-entrypoint = []
 no-log-ix-name = []

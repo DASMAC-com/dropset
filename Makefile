@@ -46,18 +46,31 @@ clean:
 
 # === Toolchain & prerequisite checks ===
 
-# Required toolchain: anchor-cli 2.x, the Solana SBF toolchain, and a
-# solana-cli / solana-test-validator on the 3.1 minor — matching the SDK's
-# solana-client 3.1 so its `fetch` RpcClient and the local validator agree
-# on wire/RPC (see sdk/rs/Cargo.toml). One prerequisite per tool keeps each
-# recipe body small enough to wrap under the Makefile linter's length cap.
+# The exact anchor-cli the program is built and its IDL generated with —
+# interface.md § SDK, CI discipline, which is the canonical statement of how
+# the program is built. The Tests workflow's ANCHOR_VERSION mirrors it, and a
+# drift fails check-anchor there. Bump that workflow's PLATFORM_TOOLS_VERSION
+# with it, to the new CLI's default platform-tools release.
+ANCHOR_CLI_VERSION := 1.2.1
+# The v0 hold that interface.md § SDK, CI discipline describes: the CLI
+# reads this variable in place of `--arch`. The export reaches every
+# `anchor build` a recipe runs, including the TUI's own, since every target
+# that runs `cargo run -p dropset-tui` launches it from a recipe.
+export ANCHOR_BUILD_SBF_ARCH := v0
+
+# Required toolchain: anchor-cli at ANCHOR_CLI_VERSION, the Solana SBF
+# toolchain, and a solana-cli / solana-test-validator on the 3.1 minor —
+# matching the SDK's solana-client 3.1 so its `fetch` RpcClient and the local
+# validator agree on wire/RPC (see sdk/rs/Cargo.toml). One prerequisite per
+# tool keeps each recipe body small enough to wrap under the Makefile
+# linter's length cap.
 .PHONY: check-toolchain
 check-toolchain: check-anchor check-sbf check-solana
 
 .PHONY: check-anchor
 check-anchor:
-	@anchor --version | grep -q " 2\." \
-		|| { echo "anchor-cli 2.x required"; exit 1; }
+	@anchor --version | grep -qxF "anchor-cli $(ANCHOR_CLI_VERSION)" \
+		|| { echo "anchor-cli $(ANCHOR_CLI_VERSION) required"; exit 1; }
 
 .PHONY: check-sbf
 check-sbf:
@@ -177,9 +190,9 @@ test-parity: check-nextest program-parity
 
 # === SDK & codegen ===
 
-# Regenerate the checked-in IDL from the program. Pin anchor-cli to the
-# same anchor-next rev as the program crate (see install-anchor-v2) so
-# the IDL-diff baseline doesn't drift — interface.md § SDK, CI discipline.
+# Regenerate the checked-in IDL from the program, with the exactly pinned
+# anchor-cli (ANCHOR_CLI_VERSION) that is part of the IDL-diff baseline —
+# interface.md § SDK, CI discipline.
 # Depend on program-keypair (like program: does) so the canonical
 # keys/AAAA.json is staged before the build — otherwise anchor syncs
 # declare_id! and the IDL `address` to a throwaway build keypair.
@@ -1173,10 +1186,10 @@ tools-tests:
 		-s .claude/tools/tests -t .claude/tools -p 'test_*.py'
 	python3 -m unittest discover -s .claude/scripts -p 'test_*.py'
 
-# https://github.com/solana-foundation/anchor/tree/anchor-next/lang-v2
-.PHONY: install-anchor-v2
-install-anchor-v2:
-	CARGO_PROFILE_RELEASE_LTO=off cargo install \
-		--git https://github.com/solana-foundation/anchor.git \
-		--branch anchor-next \
-		anchor-cli --force
+# The stable crates.io anchor-cli, at the exact ANCHOR_CLI_VERSION. How it
+# relates to the program crate's anchor-lang-v2 pin: interface.md § SDK, CI
+# discipline.
+.PHONY: install-anchor
+install-anchor:
+	CARGO_PROFILE_RELEASE_LTO=off cargo install anchor-cli \
+		--version $(ANCHOR_CLI_VERSION) --locked --force
