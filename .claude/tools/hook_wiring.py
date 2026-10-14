@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """hook_wiring.py — report committed guard hooks that cannot fire.
 
-Scope is the **guard** hooks: every ``.py`` under ``.claude/hooks/``. The
-iTerm2 tab-color scripts live in ``.claude/scripts/`` and are deliberately
-outside it, so read every "every committed hook" claim about this tool — here
-or in the conventions — as *every committed guard hook*.
+Scope is the **guard** hooks: every ``.py`` under ``.claude/hooks/``, so read
+every "every committed hook" claim about this tool — here or in the
+conventions — as *every committed guard hook*. The iTerm2 tab-color scripts
+under ``.claude/scripts/`` get a separate, narrower check (see "iTerm pointer
+drift" below): their *wiring* is not inspected, only whether the deployed
+files are still links into the checkout.
 
 A guard script under ``.claude/hooks/`` does **nothing** until a ``PreToolUse``
 entry in a settings file points at it. The scripts are committed; the wiring
@@ -38,6 +40,18 @@ install wiring and a CI runner has none to inspect; the check has to run on the
 machine that owns the settings. ``housekeeping`` is the natural driver — it
 already runs day-to-day upkeep from the base repo, where the settings resolve.
 
+**iTerm pointer drift.** The live iTerm integration is meant to be pure
+pointers — ``~/.claude/scripts/iterm-*`` and the AutoLaunch reorderer are
+symlinks into the base checkout, made by ``iterm_deploy.py --apply`` — because
+the hand-made copies they replaced ran three months behind ``main`` with nobody
+noticing. Nothing re-checked that after a deploy, so a copy dropped back in by
+hand would silently re-open the same gap. This reports every deployed file
+that is not a link to its committed script (a copy, a wrong or dangling link,
+a committed script never linked) and every ``iterm-*`` file with no committed
+counterpart, using ``iterm_deploy``'s own classification so the two tools
+cannot disagree about what "linked" means. A directory holding no ``iterm-*``
+file at all means the integration is not deployed there, which is not drift.
+
 **This tool reports; it never writes.** Wiring a guard grants a hook the right
 to block tool calls, which is the operator's decision, not an agent's — the
 same posture as the rest of the local-integrations story. Output names the
@@ -49,8 +63,9 @@ Usage::
     python3 .claude/tools/hook_wiring.py --json     # machine-readable
 
 Exit status is grep-shaped, so a caller can branch on it without parsing:
-``0`` when every committed guard hook can fire, ``1`` when at least one cannot
-(unwired, mismatched, or misdirected), and ``2`` when the scan itself could
+``0`` when every committed guard hook can fire and no iTerm file has drifted,
+``1`` when at least one guard cannot (unwired, mismatched, or misdirected) or
+an iTerm file has drifted, and ``2`` when the scan itself could
 not run (no main checkout, unreadable settings). A clean scan and a broken
 scan must never look alike — that is the failure this tool exists to prevent,
 and it would be ironic to reproduce it.
@@ -72,6 +87,7 @@ import sys
 from pathlib import Path
 
 import firm_core
+import iterm_deploy
 
 # Every settings file that can carry a `hooks` key, in the order Claude Code
 # layers them. All three are git-ignored or user-local, so none is guaranteed to
@@ -84,6 +100,21 @@ import firm_core
 # that would train the reader to ignore this tool.
 REPO_SETTINGS = ("settings.json", "settings.local.json")
 USER_SETTINGS = Path.home() / ".claude" / "settings.json"
+
+# Where the iTerm integration is deployed. Read at call time rather than bound
+# as defaults, so a test can point them at a scratch directory and never see
+# the developer's real deployment.
+ITERM_SCRIPTS_DIR = iterm_deploy.SCRIPTS_DIR
+ITERM_AUTOLAUNCH_DIR = iterm_deploy.AUTOLAUNCH_DIR
+
+# What each drift state means, for the report.
+ITERM_DRIFT_REASONS = {
+    "stale-copy": "a regular file, not a link into the checkout",
+    "wrong-link": "a link that does not resolve to its committed script",
+    "missing": "a committed script that was never linked here",
+    "orphan": "no committed counterpart",
+    "dangling-link": "a link to nothing",
+}
 
 # Hook events that can point at a guard script. `PreToolUse` is the one this
 # repo's guards use, but a script wired to any event is wired — reporting a
@@ -326,7 +357,49 @@ def committed_hooks(repo: Path) -> list[str]:
     )
 
 
-def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
+def iterm_drift(repo: Path, scripts_dir: Path, autolaunch_dir: Path) -> dict:
+    """``{"deployed": bool, "drift": {path: state}}`` for the iTerm integration.
+
+    Only a directory already holding an ``iterm-*`` file counts as deployed: an
+    absent or empty one means the operator never set the integration up there,
+    and reporting every committed script ``missing`` would cry wolf on every
+    machine without iTerm.
+    """
+    source = repo / ".claude" / "scripts"
+    deployed = [
+        d
+        for d in (scripts_dir, autolaunch_dir)
+        if d.is_dir() and any(d.glob("iterm-*"))
+    ]
+    if not source.is_dir() or not deployed:
+        return {"deployed": bool(deployed), "drift": {}}
+
+    pairs = [
+        (link, src)
+        for link, src in iterm_deploy.targets(source, scripts_dir, autolaunch_dir)
+        if link.parent in deployed
+    ]
+    drift = {}
+    for link, src in pairs:
+        state = iterm_deploy.status(link, src)
+        if state not in iterm_deploy.LINKED_STATES:
+            drift[str(link)] = state
+    expected = {link for link, _ in pairs}
+    for directory in deployed:
+        for path in sorted(directory.glob("iterm-*")):
+            if path in expected:
+                continue
+            dangling = path.is_symlink() and not path.exists()
+            drift[str(path)] = "dangling-link" if dangling else "orphan"
+    return {"deployed": True, "drift": dict(sorted(drift.items()))}
+
+
+def scan(
+    repo: Path,
+    user_settings: Path = USER_SETTINGS,
+    iterm_scripts_dir: Path | None = None,
+    iterm_autolaunch_dir: Path | None = None,
+) -> dict:
     """Report which committed hooks are wired, and by which settings file.
 
     Matching is by **base name in executable position** within a hook's command
@@ -394,6 +467,11 @@ def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
         "misdirected": misdirected,
         "unwired": unwired,
         "scanned_settings": [source for source, entries in sources.items() if entries],
+        "iterm": iterm_drift(
+            repo,
+            iterm_scripts_dir or ITERM_SCRIPTS_DIR,
+            iterm_autolaunch_dir or ITERM_AUTOLAUNCH_DIR,
+        ),
     }
 
 
@@ -440,6 +518,23 @@ def render(result: dict) -> str:
     else:
         lines.append("")
         lines.append("hook-wiring | every committed guard hook is wired")
+
+    iterm = result["iterm"]
+    lines.append("")
+    if iterm["drift"]:
+        for path, state in iterm["drift"].items():
+            lines.append(f"  DRIFT    {path}  — {ITERM_DRIFT_REASONS[state]}")
+        lines.append("")
+        lines.append(
+            f"iterm | {len(iterm['drift'])} deployed iTerm file(s) are not a link "
+            "into the checkout. `python3 .claude/tools/iterm_deploy.py --apply` "
+            "from the base repo links the committed scripts again; an orphan or "
+            "dangling link is the operator's to remove. Nothing was written."
+        )
+    elif iterm["deployed"]:
+        lines.append("iterm | every deployed iTerm file links into the checkout")
+    else:
+        lines.append("iterm | the iTerm integration is not deployed on this machine")
     return "\n".join(lines)
 
 
@@ -486,7 +581,7 @@ def run(argv: list[str]) -> int:
         print(json.dumps(result, indent=2))
     else:
         print(render(result))
-    return 1 if inert_count(result) else 0
+    return 1 if inert_count(result) or result["iterm"]["drift"] else 0
 
 
 def main() -> int:

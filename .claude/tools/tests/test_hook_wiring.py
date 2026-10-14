@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -46,6 +47,16 @@ class RepoFixture(unittest.TestCase):
         # A user-settings path that does not exist, so tests never read the
         # developer's real ~/.claude/settings.json and pick up its wiring.
         self.no_user = self.repo / "absent-user-settings.json"
+        # Likewise the iTerm deploy dirs: absent unless a test builds them.
+        self.iterm_scripts = self.repo / "home-scripts"
+        self.autolaunch = self.repo / "AutoLaunch"
+        for name, path in (
+            ("ITERM_SCRIPTS_DIR", self.iterm_scripts),
+            ("ITERM_AUTOLAUNCH_DIR", self.autolaunch),
+        ):
+            patcher = mock.patch.object(hw, name, path)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def _write(self, name, data):
         (self.repo / ".claude" / name).write_text(json.dumps(data), encoding="utf-8")
@@ -512,6 +523,140 @@ class CliTests(RepoFixture):
                 sys.argv = original
         self.assertEqual(code, 2)
         self.assertIn("hook-wiring:", err.getvalue())
+
+
+class ItermDriftTests(RepoFixture):
+    """The deployed iTerm files must stay pure pointers into the checkout."""
+
+    def setUp(self):
+        super().setUp()
+        self.source = self.repo / ".claude" / "scripts"
+        self.source.mkdir()
+        for name in ("iterm-paint.sh", "iterm-reorder.py"):
+            (self.source / name).write_text("", encoding="utf-8")
+        # Not part of the integration, so never expected to be deployed.
+        (self.source / "test_iterm_heal.py").write_text("", encoding="utf-8")
+
+    def _deploy(self):
+        self.iterm_scripts.mkdir()
+        self.autolaunch.mkdir()
+        for name in ("iterm-paint.sh", "iterm-reorder.py"):
+            (self.iterm_scripts / name).symlink_to(self.source / name)
+        (self.autolaunch / "iterm-reorder.py").symlink_to(
+            self.source / "iterm-reorder.py"
+        )
+
+    def _drift(self):
+        return hw.scan(self.repo, self.no_user)["iterm"]
+
+    def test_a_fully_linked_deployment_has_no_drift(self):
+        self._deploy()
+        self.assertEqual(self._drift(), {"deployed": True, "drift": {}})
+
+    def test_no_deployment_is_not_drift(self):
+        self.assertEqual(self._drift(), {"deployed": False, "drift": {}})
+
+    def test_a_copy_is_drift(self):
+        """The measured failure: a hand copy that silently ran months stale."""
+        self._deploy()
+        (self.iterm_scripts / "iterm-paint.sh").unlink()
+        (self.iterm_scripts / "iterm-paint.sh").write_text("old", encoding="utf-8")
+        self.assertEqual(
+            self._drift()["drift"],
+            {str(self.iterm_scripts / "iterm-paint.sh"): "stale-copy"},
+        )
+
+    def test_a_copy_in_autolaunch_is_drift(self):
+        self._deploy()
+        (self.autolaunch / "iterm-reorder.py").unlink()
+        (self.autolaunch / "iterm-reorder.py").write_text("old", encoding="utf-8")
+        self.assertEqual(
+            self._drift()["drift"],
+            {str(self.autolaunch / "iterm-reorder.py"): "stale-copy"},
+        )
+
+    def test_a_newly_committed_script_not_yet_linked_is_drift(self):
+        self._deploy()
+        (self.source / "iterm-attend.sh").write_text("", encoding="utf-8")
+        self.assertEqual(
+            self._drift()["drift"],
+            {str(self.iterm_scripts / "iterm-attend.sh"): "missing"},
+        )
+
+    def test_a_link_to_a_deleted_script_is_dangling(self):
+        self._deploy()
+        gone = self.repo / "gone" / "iterm-old.sh"
+        (self.iterm_scripts / "iterm-old.sh").symlink_to(gone)
+        self.assertEqual(
+            self._drift()["drift"],
+            {str(self.iterm_scripts / "iterm-old.sh"): "dangling-link"},
+        )
+
+    def test_an_uncommitted_file_is_an_orphan(self):
+        self._deploy()
+        (self.iterm_scripts / "iterm-bg-old.sh").write_text("", encoding="utf-8")
+        self.assertEqual(
+            self._drift()["drift"],
+            {str(self.iterm_scripts / "iterm-bg-old.sh"): "orphan"},
+        )
+
+    def test_a_link_into_another_checkout_is_drift(self):
+        """A link into a worktree vanishes with the worktree."""
+        self._deploy()
+        other = self.repo / "worktree" / "iterm-paint.sh"
+        other.parent.mkdir()
+        other.write_text("", encoding="utf-8")
+        (self.iterm_scripts / "iterm-paint.sh").unlink()
+        (self.iterm_scripts / "iterm-paint.sh").symlink_to(other)
+        self.assertEqual(
+            self._drift()["drift"],
+            {str(self.iterm_scripts / "iterm-paint.sh"): "wrong-link"},
+        )
+
+    def test_a_deploy_dir_that_is_itself_a_link_into_the_source_is_clean(self):
+        self.iterm_scripts.symlink_to(self.source)
+        self.assertEqual(self._drift(), {"deployed": True, "drift": {}})
+
+    def test_drift_exits_one_and_names_the_file(self):
+        self._deploy()
+        (self.iterm_scripts / "iterm-paint.sh").unlink()
+        (self.iterm_scripts / "iterm-paint.sh").write_text("old", encoding="utf-8")
+        self._write(
+            "settings.local.json",
+            _settings([WIRING, "python3 .claude/hooks/no_git_grep.py"]),
+        )
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = hw.run(["hook_wiring.py", "--repo", str(self.repo)])
+        self.assertEqual(code, 1)
+        self.assertIn("DRIFT", out.getvalue())
+        self.assertIn("iterm-paint.sh", out.getvalue())
+        self.assertIn("every committed guard hook is wired", out.getvalue())
+
+    def test_a_clean_deployment_exits_zero(self):
+        self._deploy()
+        self._write(
+            "settings.local.json",
+            _settings([WIRING, "python3 .claude/hooks/no_git_grep.py"]),
+        )
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = hw.run(["hook_wiring.py", "--repo", str(self.repo)])
+        self.assertEqual(code, 0)
+        self.assertIn(
+            "every deployed iTerm file links into the checkout", out.getvalue()
+        )
+
+    def test_the_check_writes_nothing(self):
+        self._deploy()
+        (self.iterm_scripts / "iterm-paint.sh").unlink()
+        (self.iterm_scripts / "iterm-paint.sh").write_text("old", encoding="utf-8")
+        hw.scan(self.repo, self.no_user)
+        self.assertFalse((self.iterm_scripts / "iterm-paint.sh").is_symlink())
+        self.assertEqual(
+            sorted(p.name for p in self.iterm_scripts.iterdir()),
+            ["iterm-paint.sh", "iterm-reorder.py"],
+        )
 
 
 if __name__ == "__main__":

@@ -58,8 +58,16 @@ which stays the operator's decision. `housekeeping` runs it each pass
 (its step 7b) so the gap cannot re-open silently.
 
 Its scope is the **guard** hooks — every `.py` under `.claude/hooks/`.
-The iTerm2 tab-color scripts live in `.claude/scripts/` and are outside
-it by design, so a clean report says nothing about them.
+The iTerm2 tab-color scripts live in `.claude/scripts/` and their
+*wiring* is outside it by design. What it does check for them is
+**pointer drift**: every deployed `iterm-*` file (in `~/.claude/scripts/`
+and iTerm2's `AutoLaunch/`) must be a link to its committed script in
+the base checkout, so it reports a copy, a wrong or dangling link, a
+committed script never linked, and an `iterm-*` file with no committed
+counterpart — each as a `DRIFT` line, exit 1. A directory with no
+`iterm-*` file is "not deployed", not drift. The fix is
+`iterm_deploy.py --apply` (see "Deploying to `~/.claude`" below); the
+check, like the rest, writes nothing.
 
 **Wired is not the same as able to fire**, and the report separates
 three ways a committed guard stays inert:
@@ -2270,10 +2278,13 @@ links `iterm-reorder.py` into iTerm2's `AutoLaunch/` folder too, where
 that folder exists (the reorderer needs iTerm2's **Python Runtime** —
 Scripts → Manage → Install Python Runtime — and the API enabled; it
 finds the palette through the link, since it resolves its own path).
-Whether iTerm2's AutoLaunch follows a symlink is **unverified**; if the
-reorderer does not appear under Scripts → AutoLaunch after a deploy, start
-it from the Scripts menu by hand, and fall back to a copy only if that
-fails — the drift a copy reintroduces is what this tool's check reports.
+Starting the reorderer from Scripts → AutoLaunch runs it **through the
+link** (verified 2026-10-14: the process runs the AutoLaunch path, which
+resolves into the checkout), so no launcher stub is needed. Whether iTerm2
+also follows the link when it auto-launches at startup is not yet
+observed; if the reorderer is not running after an iTerm restart, start it
+from the Scripts menu by hand. Never fall back to a copy — that is the
+drift `make hook-wiring` reports.
 Where the deploy directory is itself a link into the checkout, every
 target reads `is-source` and is left untouched, since it already runs the
 committed code.
