@@ -3,7 +3,6 @@
   "git": {
     "deploymentEnabled": {
       "**": false,
-      "eng-694": true,
       "main": true
     }
   }
