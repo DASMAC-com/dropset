@@ -29,7 +29,7 @@ recipe that produced them, so nobody has to re-measure them.
 - **Before this pin**, CI built the CLI from anchor-next at rev `2a191379`
   (June 3). Both anchor-next and the 2.0 branch at rc.2 hard-code
   `--tools-version v1.52` and never pass `--arch`, so they can only build v0.
-  The Anchor maintainer confirmed by 2026-10-13 that the stable v1 CLI
+  The Anchor maintainer confirmed on 2026-10-13 that the stable v1 CLI
   releases are the ones to use, v2 programs included. The program crate is
   unaffected: it stays on `anchor-lang-v2` from anchor-next, which the
   lockfile pins at `e056cc17` (June 23).

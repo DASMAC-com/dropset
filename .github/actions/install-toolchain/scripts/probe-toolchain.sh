@@ -7,10 +7,9 @@ set -e
 # such an entry used to skip the install and fail the toolchain check on
 # every run from then on, permanently: the key only changes when
 # SOLANA_VERSION / ANCHOR_VERSION / PLATFORM_TOOLS_VERSION change, so nothing
-# ever reinstalls. Probing
-# with `make check-toolchain` keeps one definition of a usable toolchain, and
-# catches a binary that is present but broken or on the wrong version, not
-# only an absent one.
+# ever reinstalls. Probing with `make check-toolchain` keeps one definition of
+# a usable toolchain, and catches a binary that is present but broken or on
+# the wrong version, not only an absent one.
 echo 'Probing the restored toolchain; a failure here only means reinstall.'
 if make check-toolchain; then
 	complete='true'
