@@ -80,7 +80,7 @@ export function createFailoverTransport(
 }
 
 // The app's RPC runtime: the keyed primary when one is configured, with the
-// free endpoint behind it, else the free endpoint alone. Subscriptions take
+// standing endpoint behind it, else the standing endpoint alone. Subscriptions take
 // the primary's websocket when there is one; they do not fail over, but the
 // one consumer (the trades tape) already re-subscribes after a drop.
 export function createAppRuntime(): SolanaClientRuntime {

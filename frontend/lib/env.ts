@@ -10,9 +10,9 @@ function required(name: string, value: string | undefined): string {
   return value;
 }
 
-// The free endpoint (PublicNode on mainnet, the local validator on localnet).
-// Required: it serves every call when no primary is set, and is the fallback
-// behind one that is.
+// The standing free endpoint (PublicNode on mainnet, the local validator on
+// localnet). Required: it serves every call when no primary is set, and is
+// the fallback behind one that is.
 export const FALLBACK_RPC_URL = mainnet(
   required("NEXT_PUBLIC_RPC_URL", process.env.NEXT_PUBLIC_RPC_URL),
 );
@@ -22,7 +22,7 @@ export const FALLBACK_WS_URL = required(
 );
 
 // The optional keyed primary (Helius for the demo). Deleting both from the
-// hosting env returns a deploy to the free endpoint alone. The key ships in
+// hosting env returns a deploy to the standing endpoint alone. The key ships in
 // the bundle, so it must be origin-restricted in the provider's dashboard;
 // see .env.example.
 const primaryRpc = process.env.NEXT_PUBLIC_PRIMARY_RPC_URL?.trim();
