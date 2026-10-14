@@ -82,5 +82,6 @@ user- and model-invocable), but the flow never offers it on its own;
   `AskUserQuestion` TUI selector — not a free-text prompt — and where a
   sensible default exists, put it **first** and label it
   "(Recommended)". This is the shared pattern behind the
-  init-pr → review-pr handoff and review-pr's closing
-  session-metrics gate.
+  init-pr → review-pr handoff and review-pr's merge-queue and
+  mark-Done gates. (Session metrics is deliberately **not** a gate:
+  `review-pr` files it unprompted, just before the close question.)

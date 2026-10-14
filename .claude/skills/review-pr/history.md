@@ -908,3 +908,180 @@ to move and by how much.
   first sat on the cargo package-cache lock put two builds on one
   `target/`, and produced a spurious `E0463` doctest failure plus a
   wasted diagnosis and a re-run.
+
+## Step 14: the attribution scan
+
+- **Harness attribution conflict.** A harness-level instruction
+  telling every session to append exactly a co-author trailer and a
+  generated-with footer was confirmed live fleet-wide on 2026-09-11.
+  The Bash guard cannot see the title, body or comments, which all go
+  through the GitHub MCP, so the scan is the only mechanical check on
+  that path.
+
+## Step 18: the CI wait
+
+- **Worktree deleted under a wait.** It happened **twice**; the second
+  time lost a verified-but-uncommitted fix, and reconstructing it cost
+  a fresh whole-file `Read` (≈1.3k), a re-`Edit`, a re-verify and a
+  full cold-worktree rebuild. The checkpoint rule existed and did not
+  fire because signing was down (a locked 1Password agent) and the
+  failure was treated as a retryable nuisance. Separately, a rebase
+  resumed after a pause failed part-way with
+  `failed to fill whole buffer`, leaving the worktree mid-rebase to
+  abort and re-run after an operator unlock — cheap only because the
+  branch happened to be pushed already. Hunting whatever sweeper
+  deletes worktrees is its own open question; the survivable-state
+  rule holds regardless of the cause.
+- **`--watch` exists.** An earlier version of the step asserted
+  "there's no streaming `--watch`, so poll". That was false:
+  `gh pr checks <n> --watch --interval 30` is a single bare command
+  under the existing `Bash(gh pr checks:*)` rule. Believing otherwise
+  cost one run three calls for a 2m7s wait and another two for
+  ~10.5 minutes, and two more runs recorded byte-identical all-pending
+  snapshots. The loop / `jq` prohibition was the half that was right.
+- **Bare watch cost.** Two direct `gh pr checks --watch` calls cost
+  **≈4.6k** in one session for one bit of signal; the tool's same
+  wait has run **≈208 tokens across three calls**, ~20× less. A later
+  session measured **~20 refreshes producing a 265-line result** — its
+  single largest, ≈6.2k — to say "CI finished". A bare `gh run watch`
+  on the queue run emitted **64.6KB**, overflowed the tool-result cap,
+  was persisted to disk, and the terminal state still had to be
+  re-probed afterwards — that session's largest result, fetched twice.
+- **Conflicting `none`.** A CONFLICTING PR read as `none` cost one
+  session ~20 minutes and ~16 polls, including an
+  amend-and-force-push nudge at an event that could never fire. It
+  corrected an earlier version of the step that read `none` as
+  treat-as-green unconditionally; the tool now probes `mergeable` on
+  `none` and reports `conflicting`.
+- **Registration race.** Started right after a push, the wait once
+  returned in **1 second** with `none`, `counts: {}`, `settled: true`
+  and `mergeable: "MERGEABLE"` while four runs were already starting
+  and `Semantic PR` had completed on that SHA; followed literally, the
+  step would have declared a CI-unverified commit green. The tool now
+  re-reads a `none` over a few short rounds before believing it, and
+  an exhausted `none` still reports `none` rather than `timeout`.
+- **Settled-pending.** gh's `--watch` exits on its own census of the
+  check set, so a single post-watch read once reported `settled: true`
+  alongside `conclusion: "pending"` twice in a row — ~14 minutes of
+  dead wall-clock on a PR where nothing was wrong. The tool now
+  re-enters the watch on a pending read (`watch_rounds`).
+- **Tail landed in the epilogue.** A `tail_lines: 22` fetch cost 813
+  tokens and returned only post-job cleanup (git credential
+  unsetting, submodule config, "Cleaning up orphan processes"); the
+  step-conclusions read cost ~100 tokens and found the failing step
+  first try. Reproduced while writing the rule: a 45-line tail on a
+  `make tools-tests` failure was all epilogue. Step names alone have
+  closed diagnoses — "Platform-fee vaults exist" failing with
+  everything before it green, and `make tools-tests` failing with
+  every hook step skipped (so *not a hook*). Taking the tail path on a
+  test runner wastes ≈1.6k per occurrence. On the `Lint` job, one run
+  paid `get_job_logs` at tail=120 and again at tail=400 to relearn
+  that the failing batch sits above any tail.
+- **Empty-stdout scan.** A 38-job scan over `gh api` job logs
+  reported zero matches having inspected **zero logs** — every fetch
+  had failed on the escape-sequence refusal — and nearly became a
+  wrong review finding.
+
+## Step 20: In Review and the enqueue
+
+- **Migration collisions.** Two in-flight PRs really did each add an
+  `0003`. Until ENG-1336 the collision tool matched a pushed branch's
+  migration against its own open PR and exited non-zero on every run,
+  blocking every migration-carrying enqueue; it fired at least five
+  times across three sessions in one day, each interpreted by hand.
+  The step once prescribed two commands with no sanctioned way to
+  connect them (a redirect or pipe is a blocked compound, and
+  re-emitting the listing through `Write` cost ~4.0k for two lines),
+  so the open-PR read moved inside the tool, as
+  `review_diff.py --overlap` already did.
+- **Rebase race.** `main` lands roughly every 20 minutes and a full
+  local re-verify costs about the same. One review lost **two full
+  cycles**: `main` landed 4 commits during the lens fan-out and 3 more
+  during a 1289-second CI wait, and the second batch invalidated a
+  completely green local suite plus that CI run. The standing "enqueue
+  early, verify in parallel" lesson had been recorded but never wired
+  into the gate.
+- **State-write echo.** The MCP state write echoes the whole body —
+  ≈3.6k on a consolidated issue, at its largest by the handoff. A
+  retry loop chasing a stale echo cost five body-echoing
+  `save_issue` / `get_issue` round-trips on PR #207.
+- **Silent enqueue.** Under this harness `gh pr merge --auto` prints
+  nothing; one run read the silence as a failed enqueue.
+- **Exit 0, never queued.** A session followed the step exactly: CI
+  9/9 green, the enqueue exited 0 with no output, and the PR was never
+  queued — `mergeQueueEntry: null` on two probes minutes apart, no
+  `gh-readonly-queue/main/pr-374-*` branch ever created, and REST
+  reporting `auto_merge: null` with `mergeable_state: "clean"`. It sat
+  idle until enqueued a second way. The step had warned only that the
+  MCP `merge_pull_request` bypasses the queue, leaving no safe
+  non-`--auto` option until the already-clean remedy was named.
+
+## Step 21: session metrics
+
+- **firm-perms retired.** The capture gate used to carry a second
+  question, whether to run a `firm-perms` sweep. Measured 2026-09-10:
+  across 176 transcripts that skill was never once invoked by an
+  operator, 19 of 102 of its runs made no allowlist call, and 418 of
+  its 475 coverage checks were its own sweep machinery; 53 of 60
+  firming calls were direct `allowlist.py add` calls outside any
+  firm-perms run. The tool stayed and the verb went.
+- **Metrics ask retired.** Operator ruling 2026-10-13, via planning:
+  session metrics is neither an ask nor an enqueue-time step. It had
+  been an `AskUserQuestion` fired while the PR sat in the queue, on
+  the theory that a later prompt fires into an absent user. It now
+  files unprompted, exactly once, immediately before the close
+  question, so the capture covers the whole task, and the watch, the
+  capture and the close are one tail with a single operator touch.
+  `close_session.py`'s own ruling is the same.
+
+## Step 22: the merge-queue outcome
+
+- **Queue wait handed to the operator.** Raised 2026-10-08 and
+  recurring across PRs: sessions enqueued, ended the turn, and asked
+  the operator to say when it merged. The step said to re-issue the
+  GraphQL probe "as a fresh tool call across turns", but nothing woke
+  the session — a queue run takes ~20 minutes to appear behind other
+  branches, and `--run` needs a run id that does not exist in the
+  awaiting-checks window. One session hand-built a session-scoped cron
+  watch (cron b0560531) that worked, but the Bedrock auto-mode
+  classifier denied the same cron on another session's PR as
+  unauthorized persistence, so the structural fix became the
+  backgrounded `--queue` mode, with the cron kept as the fallback.
+- **The probe's three traps, now inside the tool.** Keying on
+  `autoMergeRequest` was a false positive that announced "taken out of
+  the queue" on every run, since a queued PR on a merge-queue repo
+  reports it null (and a `CLEAN` `mergeStateStatus`).
+  `mergeQueueEntry` is exposed by neither the MCP `get` nor
+  `gh pr view --json`, hence GraphQL. A probe fired the instant a
+  good enqueue returned read all-null, and a re-probe seconds later
+  read `QUEUED` — the timing twin of the `autoMergeRequest` trap.
+- **The two sources disagree both ways.** Measured on three PRs within
+  about an hour on 2026-09-11. **PR #424**: GraphQL said `MERGED` while
+  `gh pr view` at the same moment said `OPEN`, so the then-prescribed
+  tiebreak was itself the stale source. **PR #420**: GraphQL still
+  read `AWAITING_CHECKS` after all four queue runs were green while
+  `gh pr view` said `MERGED` — taken alone, "still queued; keep
+  polling" on a merged PR. **PR #425**: both stale together for
+  several minutes. Hence the invariant, not a lag direction.
+- **Post-merge write-back retired.** An earlier revision watched for
+  the integration's auto-Done and wrote the issue back to In Review,
+  because merge and completion are different events. The team setting
+  now makes no transition on merge, so the write-back — a full-body
+  echo in every implementation session — was dropped, along with the
+  ordering against an auto-transition and the gap where a session died
+  before the write-back ran.
+- **Notification list cost.** `mcp__github__list_notifications`
+  returned **3.7k tokens in one call** — that session's 6th-largest
+  result — because it embeds the complete repository object, every
+  `*_url` template, once per notification, three times over. The
+  lookup was missed when the field-selected `gh` carve-out was
+  written. A `git show <ref>:<path>` re-read of a landed file measured
+  ~3.8k.
+- **Diverted tail.** One session enqueued, then spent many turns in a
+  three-party negotiation about Linear blocking edges (the user plus a
+  peer planning session) and never came back; the user had to ask for
+  the closing steps. Every step behaved correctly; the sequence ended
+  early and silently. The rule recurred three times in one session in
+  its general shape — a correct rule stated in one phase failing to
+  fire in another — which is why the narrow forms are restated at
+  their call sites.

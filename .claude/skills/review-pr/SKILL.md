@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff re-check the PR still merges cleanly before moving the issue In Review and offering to enqueue the PR, capture session metrics (the last interactive step) while it sits in the queue, and report whether it merges or gets taken back out.
+description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff re-check the PR still merges cleanly before moving the issue In Review and offering to enqueue the PR, then watch the queue itself through to merged or dequeued and, on a merge, run the post-merge tail — session metrics filed unprompted, then one mark-Done-and-close question.
 user-invocable: true
 ---
 
@@ -86,7 +86,7 @@ migrations or generation inputs, and whether it spans crates.
    from then on, never a per-command patch. Step 2's rebase and step 5's
    `base_fresh` gate both miss this: they compare against a fresh
    `origin/<base>`, and it is the base itself that is stale. (A review
-   that missed it went green and turned `CONFLICTING` only at step 15,
+   that missed it went green and turned `CONFLICTING` only at step 16,
    costing ≈25 min of rebase and full re-runs; `history.md` → "Merged
    stacked base".)
 
@@ -1571,89 +1571,55 @@ migrations or generation inputs, and whether it spans crates.
      **blocking** issue. Never mark the PR ready
      with a failing or unverified test target.
 
-1. **Push the branch.** The step-1 rebase rewrote
-   history, so push with lease — this lands the rebased
-   history together with any review-fix commits, and
-   refuses to clobber a concurrent push:
+1. **Push the branch.** The step-1 rebase rewrote history, so push
+   with lease — it lands the rebased history with any review-fix
+   commits and refuses to clobber a concurrent push:
 
    ```sh
    git push --force-with-lease
    ```
 
 1. **Update the PR title and description.** Invoke
-   `/pr-title-description` to ensure the title
-   and body reflect the final state of the branch
-   (after lint and review fixes).
+   `/pr-title-description` so both reflect the branch's final state
+   (after lint and review fixes). **No Linear tags in the body or in
+   any PR comment this skill posts** (`CLAUDE.md` → "Keep Linear tags
+   out of PR bodies and comments"); the title's `ENG-###` scope is the
+   one exception, and the terminal `AskUserQuestion` prompts below
+   print the tag deliberately, as terminal chrome.
 
-   **No Linear tags in the body or in any PR comment**
-   (per `CLAUDE.md` → "Keep Linear tags out of PR bodies
-   and comments"): `pr-title-description` already keeps
-   them out of the body, and any comment this skill posts
-   on the PR must do the same — refer to other work by
-   title or a plain GitHub link, never `ENG-###`. The
-   `ENG-###` scope in the **title** is the one exception
-   (required by `Semantic PR`). This rule does **not**
-   touch the terminal `AskUserQuestion` prompts below,
-   which deliberately print the tag + PR number as
-   terminal chrome.
-
-1. **Scan the final PR body for AI attribution.** The
-   rule is absolute (`CLAUDE.md` → "Commits and PRs"): no
-   `Co-Authored-By:` trailer naming Claude or Anthropic,
-   no "Generated with Claude Code" footer, in the title,
-   the description, or any comment this skill posts.
-
-   Ask the guard rather than eyeballing it, so there is
-   one owner of the patterns. Write the stored body to a
-   scratchpad file and scan it:
+1. **Scan the final PR body for AI attribution.** The rule is
+   absolute (`CLAUDE.md` → "Commits and PRs"): no Claude / Anthropic
+   `Co-Authored-By:` trailer and no "Generated with Claude Code"
+   footer, in the title, the description, or any comment this skill
+   posts. Ask the guard, so the patterns have one owner — write the
+   stored body to a scratchpad file and scan it:
 
    ```sh
    python3 .claude/hooks/no_ai_attribution.py --scan <scratchpad>/body.md
    ```
 
-   Exit 0 is clean; **exit 1 means attribution is
-   present** — strip it, re-run `/pr-title-description`,
-   and re-scan. (Exit 2 is a usage error such as a missing
-   path, so a typo cannot read as a clean bill of health.)
+   Exit 0 is clean; **exit 1 means attribution is present** — strip
+   it, re-run `/pr-title-description`, re-scan. Exit 2 is a usage
+   error (a missing path), so a typo cannot read as clean. It is a
+   step, not a habit, because the `PreToolUse` guard sees only Bash
+   while the title, body and comments go through the GitHub MCP —
+   against a live harness instruction to append both
+   (`history.md` → "Harness attribution conflict"). This is the
+   *opposite* posture from the standing lens, which correctly does
+   **not** report absence as a finding: this step checks the
+   convention **held**.
 
-   **Why this is a step rather than a habit.** The
-   `PreToolUse` guard that enforces the rule inspects
-   **Bash** commands, and both the title/description write
-   and this skill's comments go through the **GitHub
-   MCP** — so nothing mechanical sees them. Meanwhile a
-   harness-level instruction telling every session to
-   append exactly these two things was confirmed live
-   fleet-wide on 2026-09-11. Treat it as an active
-   conflict to resolve in the convention's favour.
+1. **Verify the PR title passes `Semantic PR`.** The workflow needs a
+   Conventional-Commits type, a scope matching `^ENG-[0-9]+$`, and a
+   subject matching `^[A-Z].*$` — `feat(ENG-451): Add …`. If it
+   doesn't conform, re-run `/pr-title-description`. It also sets
+   `validateSingleCommit`: with exactly one commit on the branch, that
+   commit's message must match the title — squash or reword.
 
-   Note this is the *opposite* posture from the standing
-   lens, which correctly tells reviewers **not** to report
-   the absence of AI attribution as a finding. Absence is
-   the settled convention and needs no comment; this step
-   checks the convention **held**.
-
-1. **Verify the PR title passes `Semantic PR`.**
-   The `semantic-pr` workflow rejects the PR unless
-   the title has a Conventional-Commits type, a
-   scope matching `^ENG-[0-9]+$`, and a subject
-   matching `^[A-Z].*$` (capitalized first letter).
-   Confirm the final title looks like
-   `feat(ENG-451): Add …`; if it doesn't conform,
-   re-run `/pr-title-description` to fix it. The
-   workflow also sets `validateSingleCommit`, so if
-   the branch has exactly one commit, that commit's
-   message must itself match the title — squash or
-   reword so they agree.
-
-1. **Confirm the PR still merges cleanly.** Step 2
-   already rebased onto `origin/<base>`, so this is normally
-   clean — but the base can advance again during a
-   long review, so confirm rather than assume. Fetch
-   the latest base, then ask GitHub with a
-   **field-selected** `gh pr view` — only the two merge
-   fields, so this one-shot read doesn't pull the full PR
-   object into context (per `CLAUDE.md` → "Context
-   economy" / "GitHub via MCP"):
+1. **Confirm the PR still merges cleanly.** The base can advance again
+   during a long review. Fetch it, then read only the two merge fields
+   (`docs/conventions/github-mcp.md` → "The CI-wait and PR-state
+   reads"):
 
    ```sh
    git fetch origin <base>
@@ -1663,50 +1629,31 @@ migrations or generation inputs, and whether it spans crates.
    gh pr view <number> --json mergeable,mergeStateStatus
    ```
 
-   `mergeable` is the tri-state conflict signal
-   (`MERGEABLE` / `CONFLICTING` / `UNKNOWN`);
-   `mergeStateStatus` is the detail (`CLEAN`, `BLOCKED`,
-   `BEHIND`, `UNSTABLE`, `HAS_HOOKS`, `DIRTY`, …). Key the
-   decision on `mergeable`, which is the gh equivalent of
-   the MCP `mergeable_state`:
+   **The mergeability tri-state** — key on `mergeable`, the gh twin of
+   the MCP `mergeable_state`; this step and step 20 both branch on it:
 
-   - `mergeable: "CONFLICTING"` (or `mergeStateStatus: "DIRTY"`) → the
-     PR has merge conflicts. Catalogue this as a **blocking** issue
-     and do **not** mark the PR ready. Tell the user to rebase onto
-     `origin/<base>` and resolve the conflicts (this skill does not
-     auto-resolve them — the argument for why that stays absolute even
-     for a trivial-looking sorted-list collision is in step 2), then
-     re-run `/review-pr`.
-   - `mergeable: "UNKNOWN"` → GitHub hasn't finished
-     computing mergeability yet. Wait a few seconds and
-     re-run the `gh pr view` call until it settles.
-   - `mergeable: "MERGEABLE"` (any `mergeStateStatus` —
-     `CLEAN`, `BLOCKED`, `BEHIND`, `UNSTABLE`,
-     `HAS_HOOKS`) → **no merge conflict** — proceed to the
-     gate. `BLOCKED` / `UNSTABLE` just mean branch
-     protection, the required checks, or human review
-     haven't cleared yet (expected for a draft PR
-     mid-review); `BEHIND` means the base moved (the step-2
-     rebase already handled it). None of these are a
-     conflict, and the gate + CI wait below cover them.
+   - `CONFLICTING` (or `mergeStateStatus: "DIRTY"`) → **blocking**.
+     Don't mark the PR ready; tell the user to rebase onto
+     `origin/<base>`, resolve, and re-run `/review-pr`. This skill
+     **never auto-resolves a conflict** — step 2 argues why that holds
+     even for a trivial sorted-list collision.
+   - `UNKNOWN` → GitHub is still computing; re-read after a few seconds
+     until it settles.
+   - `MERGEABLE`, any `mergeStateStatus` → no conflict. `BLOCKED` /
+     `UNSTABLE` mean protection, checks or review are outstanding (a
+     draft mid-review); `BEHIND` means the base moved, which step 2
+     handled.
 
-1. **Gate.** Mark the PR ready only when **every**
-   local CI-mirroring check is green: **zero blocking
-   issues** (including every Linear checklist item
-   addressed), `make lint` passes — real violations
-   resolved, with any hook that couldn't run locally
-   (e.g. `biome` / `tsc` without frontend deps) noted as
-   unverifiable, not gated — the generated
-   artifacts are fresh and committed (IDL — or honestly
-   reported unverifiable if the toolchain is absent — SDK
-   clients, conformance vectors), `make test` and
-   `make test-no-teardown` pass (or are honestly
-   reported as unverifiable locally), the **`sdk/ts` node
-   suite passes** (always runnable — no toolchain), the title
-   passes `Semantic PR`, and `mergeable` is not
-   `CONFLICTING` (no merge conflict). Take the PR out of draft
-   with
-   `mcp__github__update_pull_request` (`draft: false`):
+1. **Gate.** Mark the PR ready only when **every** local CI-mirroring
+   check is green: **zero blocking issues** (every Linear checklist
+   item addressed); `make lint` passes, with a hook that couldn't run
+   locally (`biome` / `tsc` without frontend deps) noted as
+   unverifiable, not gated; the generated artifacts are fresh and
+   committed (IDL — or honestly reported unverifiable without the
+   toolchain — SDK clients, conformance vectors); `make test` and
+   `make test-no-teardown` pass or are honestly reported unverifiable;
+   the **`sdk/ts` node suite passes** (always runnable); the title
+   passes `Semantic PR`; and `mergeable` is not `CONFLICTING`. Then:
 
    ```txt
    mcp__github__update_pull_request(
@@ -1717,88 +1664,51 @@ migrations or generation inputs, and whether it spans crates.
    )
    ```
 
-   Marking it ready (out of draft) is what lets the
-   human enable GitHub's **"Merge when ready"**
-   auto-merge while the real CI finishes. But ready is
-   **not** the end of this skill: the Linear issue stays
-   **In Progress** (it does *not* move to In Review here),
-   and the run does **not** report success, until the
-   actual CI is green and the review summary is in front
-   of the human — the next steps. In Review comes later
-   still, at the merge-queue handoff.
+   Ready lets the human enable "Merge when ready" while CI finishes,
+   but it does **not** end the run: success is reported only once real
+   CI is green and the summary is printed. **The Linear state** for
+   the rest of the run: **In Progress** through the gate, the CI wait
+   and the summary; **In Review** only at the step-20 handoff; and
+   nothing after that writes a state except the operator-approved
+   close (`CLAUDE.md` → "The Linear state tracks the session, not the
+   PR").
 
-   If any blocking issue remains — an unaddressed
-   Linear checklist item, failing or unverified
-   tests, a non-conforming title, or a merge
-   conflict with `main` — do **not** mark the PR ready.
-   Leave it in draft and the issue in its current state,
-   **skip the CI wait below**, and report the blockers.
+   On any remaining blocker — an unaddressed checklist item, failing
+   or unverified tests, a non-conforming title, a conflict — leave the
+   PR in draft and the issue where it is, **skip the CI wait**, and
+   report the blockers.
 
-1. **Wait for GitHub CI to pass.** The issue stays
-   **In Progress** throughout this step — it does *not*
-   move to In Review at CI-green; that transition belongs
-   to the merge-queue handoff a few steps down, once the
-   review summary is in front of the human. The local
-   checks only *mirror* CI;
-   the authoritative signal is the real run on the
-   pushed commits — and when the toolchain was absent
-   locally (tests / IDL reported unverifiable), CI is
-   the *only* signal. This repo runs CI on the PR even
-   while it was a draft (that's how `init-pr` warms the
-   caches), so the checks are already in flight.
+1. **Wait for GitHub CI to pass.** Local checks only *mirror* CI; the
+   real run on the pushed commits is authoritative, and the only signal
+   when the toolchain was absent locally. `init-pr`'s draft PR started
+   it at push time, so it is already in flight.
 
-   **Before any long unattended wait, make the working state
-   survivable.** This step and the step-5 fan-out are the two
-   places this session sits idle for many minutes, and a
-   worktree has been deleted underneath a review **twice** —
-   the second time losing a verified-but-uncommitted fix.
-   Reconstructing it cost a fresh whole-file `Read` (≈1.3k), a
-   re-`Edit`, a re-verify, and a full cold-worktree rebuild.
+   **Make the working state survivable before any long unattended
+   wait** — this one and the step-5 fan-out. A worktree has been
+   deleted under a review, losing a verified-but-uncommitted fix, and
+   the checkpoint rule that should have saved it did not fire because
+   signing was down (`history.md` → "Worktree deleted under a wait").
+   So:
 
-   The checkpoint-commit rule already existed and did not fire,
-   because **signing was down** (a locked 1Password agent) and
-   the failure was treated as a retryable nuisance. So:
+   - **A signing failure is an unpushed-state alarm**, not a nuisance:
+     the checkpoint did not happen. Get signing working before
+     starting a wait.
 
-   - **Treat a signing failure as an unpushed-state alarm**,
-     not a nuisance. It means the checkpoint did **not**
-     happen, so the work exists in exactly one deletable
-     place. Stop and get signing working before starting a
-     wait.
+   - **Probe signing BEFORE the wait** by making the checkpoint commit
+     immediately before it (and before the step-5 fan-out). `init-pr`
+     step 0b cannot cover this: the agent locks while the session sits
+     idle, which is what a long wait produces.
 
-   - **Probe signing BEFORE the wait, not only on failure.**
-     The alarm above is reactive: it fires once a commit has
-     already failed. `init-pr` step 0b pre-checks signing at
-     bootstrap, and that cannot cover this case — the agent
-     locks while the session sits *idle*, which is exactly what
-     a long unattended wait produces. So make the checkpoint
-     commit immediately before entering the wait (and before
-     the step-5 fan-out, the other long idle stretch), and if
-     it cannot be signed, resolve that first rather than
-     starting a wait with unpushed work.
-
-     Measured: a rebase resumed after a pause failed part-way
-     with `failed to fill whole buffer`, leaving the worktree
-     mid-rebase to be aborted and re-run after an operator
-     unlock. That cost little **only because the branch
-     happened to be pushed already** — luck of timing, not
-     design.
-
-   - **Write the working diff to the scratchpad** before the
-     wait, so recovery is one `git apply` even if the commit
-     could not be made:
+   - **Write the working diff to the scratchpad**, so recovery is one
+     `git apply` even if the commit could not be made:
 
      ```sh
      python3 .claude/tools/review_diff.py --base <base> \
        --out <scratchpad>/pre-wait.diff
      ```
 
-   (Distinct from hunting whatever sweeper deletes the
-   worktree — that is its own open question. This is the
-   survivable-state discipline, which holds regardless of the
-   cause.)
-
-   **Wait with the tool — don't poll.** One call blocks until
-   the checks settle and prints one compact verdict:
+   **Wait with the tool — never poll.** One call blocks until the
+   checks settle and prints one compact verdict:
 
    ```sh
    python3 .claude/tools/wait_for_checks.py --pr <number>
@@ -1806,241 +1716,99 @@ migrations or generation inputs, and whether it spans crates.
 
    ```json
    {
-     "conclusion": "pass",    // pass | fail | pending | none | timeout
+     "conclusion": "pass",  // pass fail pending none conflicting timeout
      "settled": true,
      "elapsed_seconds": 127,
      "watch_rounds": 1,       // >1 means a check registered late
      "counts": {"pass": 12, "fail": 0, "skipping": 3},
      "failing": [{"name": "…", "workflow": "…", "link": "…", "run_id": "…"}],
-     "pending_checks": [],    // names still outstanding, when any are
+     "pending_checks": [],
      "log_path": "…/wait-for-checks-<number>.log"
    }
    ```
 
-   Internally it is a **bounded** pair of `gh` calls — and no
-   model-driven loop: `gh pr checks --watch --interval 30` (gh
-   does the pacing and exits when the checks settle; its
-   live-updating table goes to `log_path`, never into context)
-   followed by one `gh pr checks --json` read that *is* the
-   verdict. That JSON read, not gh's exit code, is the authority
-   — `gh` overloads non-zero across "a check failed", "checks
-   still pending", and "there are no checks at all", and a review
-   has to tell those apart. When that read still says pending,
-   the pair repeats (see `watch_rounds` below) rather than
-   reporting a settled pending. `failing` already carries each
-   failed check's `run_id`, so the failure branch below needs no
-   URL parsing. The tool exits 0 only on `pass`.
+   Inside, gh paces a `gh pr checks --watch` whose live table goes to
+   `log_path`, then one `--json` read *is* the verdict — not gh's exit
+   code, which overloads "failed", "pending" and "no checks". It exits
+   0 only on `pass`, and `failing` carries each `run_id`.
 
-   **Correction to an earlier version of this step, which
-   asserted "there's no streaming `--watch`, so poll".** That
-   was false: `gh pr checks <n> --watch --interval 30` exists,
-   works, and is a *single bare command* that reduces to the
-   existing `Bash(gh pr checks:*)` allow-rule. Believing
-   otherwise cost real churn — one run covered a 2m7s wait in
-   three calls and another a ~10.5-minute wait in two, and two
-   further runs recorded byte-identical all-pending snapshots,
-   which is exactly the replay-on-every-turn waste the
-   context-economy rule exists to prevent.
+   **The never-poll rule, for every wait in this skill** (this one,
+   the step-20 mergeability re-read, the step-22 queue watch): no
+   shell `while … sleep … done` loop and no `jq` filter — compounds
+   that cannot reduce to an allow-rule. Never a **bare**
+   `gh pr checks --watch` or `gh run watch` either: called directly
+   each re-prints its whole table every refresh into one tool result,
+   replayed on every later turn, and the cost grows with CI's length
+   (`history.md` → "Bare watch cost"). `--watch` is right only inside
+   the tool. Without the tool, the acceptable substitutes are a
+   narrowed one-line-per-poll read or a backgrounded watcher whose
+   exit status alone is read.
 
-   What remains true is the prohibition on a shell
-   `while … sleep … done` loop and on `jq` filtering: those are
-   compounds that can't reduce to an allow-rule, and foreground
-   `sleep` is blocked anyway. It was only the `--watch` half of
-   that rule that was wrong.
+   **Say once, then silent** — the same rule for the step-22 queue
+   watch: tell the human once that CI is in flight, then say nothing
+   until the verdict. If the session was interrupted and the wait is
+   gone, run the tool with `--no-watch` for one current read, then
+   plain to resume.
 
-   **But never call `gh pr checks --watch` yourself.** The
-   flag is correct *inside* the tool, which redirects gh's
-   live-updating table to `log_path`; called directly it
-   re-prints the **entire check table on every refresh
-   interval** into a single tool result, and that result is
-   then replayed on every later turn. Two such direct calls
-   cost **≈4.6k** in one session for what resolves to one
-   bit of signal. The tool's equivalent — the same wait,
-   with the table on disk — has run **≈208 tokens across
-   three calls**, a ~20× reduction. The rule is therefore
-   specific rather than general: `--watch` is not banned,
-   *bare* `--watch` is. Same for any other verbose-by-refresh
-   command — the wrapper rule in
-   `docs/conventions/context-economy.md` is written around
-   build cascades, but a watcher is the same shape by a
-   different mechanism.
+   Branch on `conclusion` — it is exhaustive:
 
-   **The cost scales with refresh count, so it gets worse the
-   longer CI takes.** A later session measured the same shape
-   at **~20 refreshes producing a 265-line result — its single
-   largest, ≈6.2k** — to convey the one bit "CI finished".
-   If for some reason you are not using `wait_for_checks.py`,
-   the two acceptable substitutes are:
+   - **`none`** with `blocked_by_conflict: false` → no checks apply (a
+     path-filtered diff); treat it as green. The tool re-reads a
+     `none` over a few short rounds before believing it, because a
+     wait started right after a push can beat the runs' registration,
+     and `none` fails **open** where `pending` fails safe
+     (`history.md` → "Registration race"). If a `none` still looks
+     wrong, one `gh run list --branch <branch>` filtered to the head
+     SHA tells the two apart.
+   - **`conflicting`** → **blocking**: a CONFLICTING PR gets no
+     `pull_request` run at all, so nothing will ever arrive. Rebase,
+     push, re-run the wait. Never green.
+   - **`timeout`** → the bound (default one hour) or the re-watch
+     rounds ran out with checks unsettled; a `none` arriving after any
+     `pending` round reports this too. It never claims `pass` from a
+     snapshot it stopped waiting on — treat it as unverified, and read
+     `pending_checks`.
+   - **`pending`** → only from a `--no-watch` read (under `--watch` a
+     pending read re-enters the watch). Re-run the tool plain.
+     `watch_rounds` > 1 means a check registered after gh's census —
+     routine, and the reason the tool re-enters rather than believing
+     one read.
+   - **`pass`** → ready and CI-green; print the summary.
+   - **`fail`** → catalogue each `failing` entry as **blocking**, with
+     its name and `link`, then diagnose as follows.
 
-   - a **narrowed poll** that prints one line per poll — the
-     status rollup counting non-completed checks, not the
-     table; or
-   - a **backgrounded** watcher whose output is never read,
-     only its exit status.
+   **Read the failing job's STEP CONCLUSIONS before any log** — bounded
+   by step count, not log volume:
 
-   What is never acceptable is a streaming table in a tool
-   result.
+   ```sh
+   gh api repos/DASMAC-com/dropset/actions/runs/<run_id>/jobs \
+     --jq '.jobs[] | "\(.conclusion)\t\(.id)\t\(.name)"'
+   ```
 
-   Tell the human **once**, up front, that CI is in flight and
-   you're standing by, then stay silent until the verdict. Three
-   operational notes:
+   ```sh
+   gh api repos/DASMAC-com/dropset/actions/jobs/<job_id> \
+     --jq '.steps[] | "\(.conclusion)\t\(.name)"'
+   ```
 
-   - **Fallback for a resumed session.** If the session was
-     interrupted and the background wait is gone, run the tool
-     with `--no-watch` for a single current-state read, then
-     re-run it plain to resume waiting. A model-driven re-call
-     on the next turn is fine as a fallback; it is just not the
-     prescription.
+   A tail is an offset guess, and the post-steps epilogue fills the
+   last several dozen lines (`history.md` → "Tail landed in the
+   epilogue"). The step's **name** often is the diagnosis, says whether
+   a log is cascade-shaped or single-command, and separates "ran and
+   failed" from "never ran". **Route on what the failing step IS:**
 
-   - **`conclusion: "none"`** means the head commit has no
-     checks at all — but that is **two** situations, and only
-     one of them is benign. Either no checks apply (a
-     path-filtered diff), **or** the PR is CONFLICTING and no
-     `pull_request` workflow run can be created at all: the
-     merge ref does not exist, so there is no run, no error,
-     and nothing to distinguish it from CI that has not
-     started. That cost one session ~20 minutes and ~16 polls,
-     including an amend-and-force-push nudge at an event which
-     could never have fired. The tool now probes `mergeable`
-     on this verdict and reports the cause, so:
-
-     - **`none`** with `blocked_by_conflict: false` → no
-       checks apply. Note it and treat it as green.
-     - **`conclusion: "conflicting"`** → **blocking**. Rebase
-       onto the base, push, and re-run the wait. Do not treat
-       it as green, and do not wait: nothing will ever arrive.
-
-     This corrected an earlier version of this step which said
-     `none` means treat-as-green unconditionally. It does not.
-
-     **A third situation, now handled in the tool: the
-     registration race.** Started in the tool call right after
-     a push, the wait once returned in **1 second** with
-     `none`, `counts: {}`, `settled: true` and
-     `mergeable: "MERGEABLE"` — while four runs were in fact
-     already starting and `Semantic PR` had completed on that
-     exact SHA. Following the guidance literally would have
-     treated a CI-unverified commit as green.
-
-     `none` is the **more dangerous** of the two retryable
-     reads: `pending` fails safe (keep waiting) while `none`
-     fails **open** (declare green). So the tool now re-reads a
-     `none` over a few short rounds before believing it, the
-     way it already did for `pending`, and an exhausted `none`
-     still reports `none` rather than `timeout` — the rounds
-     established an absence, which is an answer. You should
-     therefore not see the race any more; if a `none` ever
-     looks wrong, the way to tell them apart is one
-     `gh run list --branch <branch>` filtered to the head SHA,
-     the same evidence the merge-queue probe uses for its own
-     all-null ambiguous case.
-
-   - **`conclusion: "timeout"`** means the watch hit its bound
-     (default one hour), or exhausted its re-watch rounds, with
-     the checks still unsettled. The one exception is an
-     absence observed from the first round onward, which stays
-     `none` — but a `none` that arrives *after* any `pending`
-     round is checks-disappearing rather than checks-absent,
-     and reports `timeout` like everything else unsettled. It
-     reports the counts it
-     observed but deliberately never claims `pass` off a
-     snapshot it stopped waiting on — treat it as unverified,
-     not green. Its `pending_checks` names what was still out.
-
-   - **`watch_rounds` > 1** means a check registered *after* gh
-     had taken its census — routine on a PR touching a path some
-     workflow watches with its own trigger set, and not a
-     problem in itself. It is worth knowing because it used to
-     be the failure this step could not see: gh's `--watch`
-     exits on its own view of the check set, so a single
-     post-watch read once reported `settled: true` alongside
-     `conclusion: "pending"` twice in a row, ~14 minutes of dead
-     wall-clock on a PR where nothing was wrong. The tool now
-     re-enters the watch instead of believing that read.
-
-   Then branch on `conclusion` — it is exhaustive, so there is
-   no unhandled case: `pass` and `fail` below, plus `none` and
-   `timeout` per the notes above, and `pending`. Under `--watch`
-   the tool will not return `pending`: a read that still says
-   pending re-enters the watch, and exhausting that bound
-   reports `timeout` instead. So a `pending` verdict means the
-   read was taken with `--no-watch` — re-run the tool plain to
-   wait it out.
-
-   - **`pass`** → the PR is now ready **and** CI-green. Leave
-     the Linear issue **In Progress** (it moves to In Review at
-     the merge-queue handoff, not here) and proceed to print the
-     review summary — the human reviews that summary, then
-     approves enqueueing.
-
-   - **`fail`** → the PR is not actually clean, so don't leave
-     it reading as merge-ready. Catalogue each entry of the
-     verdict's `failing` array as **blocking**, naming the check
-     and its `link`.
-
-     **Read the failing job's STEP CONCLUSIONS first — before
-     fetching any log.** One field-selected call, bounded by
-     the number of steps rather than by log volume:
+   - **A test runner or anything with its own trailing summary**
+     (`make tools-tests`, `cargo nextest`, `pnpm test`) → skip
+     `get_job_logs`: the summary prints after the failure and the
+     epilogue after that. Capture the log through the quiet runner
+     and Grep it:
 
      ```sh
-     gh api repos/DASMAC-com/dropset/actions/runs/<run_id>/jobs \
-       --jq '.jobs[] | "\(.conclusion)\t\(.id)\t\(.name)"'
+     python3 .claude/tools/run_quiet.py -- \
+       gh run view <run-id> --repo DASMAC-com/dropset --log-failed
      ```
 
-     ```sh
-     gh api repos/DASMAC-com/dropset/actions/jobs/<job_id> \
-       --jq '.steps[] | "\(.conclusion)\t\(.name)"'
-     ```
-
-     A tail is an **offset guess**, and a job's post-steps
-     epilogue reliably occupies the last several dozen lines, so
-     a small tail lands in cleanup rather than in the failure.
-     Measured: a `tail_lines: 22` fetch cost 813 tokens and
-     returned **only** post-job cleanup — git credential
-     unsetting, submodule config, "Cleaning up orphan
-     processes" — with zero lines of the failing step. The
-     steps read costs ~100 tokens and identified the failing
-     step first try. (Reproduced again while writing this: a
-     45-line tail on a `make tools-tests` failure returned
-     nothing but the epilogue.)
-
-     Three things follow from having the step's **name**:
-
-     1. Often the name alone is the diagnosis and no log is
-        needed — "Platform-fee vaults exist" failing with
-        everything before it green was complete on its own, and
-        `make tools-tests` failing while every hook step was
-        skipped said immediately that the failure was *not a
-        hook*.
-     1. When a log **is** needed, the name says whether it is
-        cascade-shaped (a per-file lint cascade, where the rule
-        below applies) or a single-command step whose tail is
-        genuinely where the error lives.
-     1. It distinguishes "the step ran and failed" from "the
-        step never ran", which a tail cannot show.
-
-     **Route on what the failing step IS, because a tail does
-     not always contain the failure.** The step-conclusion read
-     you just did already supplies the discriminator — the step's
-     name — so this needs no extra information:
-
-     - **A test runner, or any command with its own trailing
-       summary** (`make tools-tests`, `cargo nextest`,
-       `pnpm test`) → skip `get_job_logs` entirely. A test runner
-       prints its summary *after* the failure detail, and the
-       post-job cleanup after that, so `tail_lines` returns the
-       **epilogue** rather than the failure. Go straight to
-       `gh run view <run-id> --log-failed` through the quiet
-       runner, then grep the captured log. Cost of getting this
-       wrong is one wasted ≈1.6k fetch per occurrence, and it
-       recurs on any CI failure whose failing step is a test
-       target.
-     - **A single command whose last output is its error** → the
-       `tail_lines` path below is fine.
-
-     Then, with the step known, fetch the log over the MCP
-     (this failure path stays on the MCP — `get_job_logs` caps
-     its output with `tail_lines`):
+   - **A single command whose last output is its error** → the MCP
+     tail is fine:
 
      ```txt
      mcp__github__get_job_logs(
@@ -2053,794 +1821,356 @@ migrations or generation inputs, and whether it spans crates.
      )
      ```
 
-     **If the failed check is the pre-commit `Lint` job, do
-     NOT re-fetch a larger tail.** That job runs the hooks
-     over `--all-files`, so its log is a per-file cascade and
-     the failing hook's batch (e.g. cspell) sits **above**
-     even a 400-line tail — a bigger `tail_lines` just re-buys
-     the same passing-batch noise (one run paid `get_job_logs`
-     at tail=120 then tail=400 to relearn this). Instead,
-     **reproduce the failing hook locally over the whole tree
-     and trust its exit code** — the local run surfaces the
-     actual offending files, which the CI tail does not:
+   - **The pre-commit `Lint` job** → never re-fetch a larger tail: it
+     runs `--all-files`, so the failing batch sits above any tail.
+     Reproduce the hook locally and trust its exit code:
 
      ```sh
      python3 .claude/tools/run_quiet.py -- \
        python3 .claude/tools/lint_paths.py -- <hook-id>
      ```
 
-     Drive it through `lint_paths.py`, **not** a bare
-     `pre-commit run <hook-id> --all-files`: `--all-files`
-     enumerates via `git ls-files`, so a file this branch added
-     but never `git add`ed is invisible to it — and that is
-     precisely the file CI is failing on, since CI's checkout
-     has it committed. A bare `--all-files` reproduce would come
-     back green and send you back to the CI log.
+     Through `lint_paths.py`, **not** bare
+     `pre-commit run <hook-id> --all-files`, which enumerates via
+     `git ls-files` and so cannot see an un-`git add`ed file — exactly
+     the one CI's checkout fails on. `run_quiet` names the offending
+     files (PR #235). Skip a hook that can't run here, as step 4 does.
+     **A red CI `Lint` with a GREEN local reproduce is probably
+     toolchain skew**, not a flake — a clippy failure in a file this
+     branch never touched almost certainly is. Confirm it on another
+     recent branch's `Lint` job; **never "fix" it by editing unrelated
+     code** — pin or report the toolchain.
 
-     `run_quiet` already indexes the failing hook and prints
-     its offending-file tail (PR #235), so a non-zero exit
-     names the violation directly. Skip any hook that can't
-     run in this worktree (`biome` / `tsc` without frontend
-     deps) — treat it as unverifiable, exactly as the lint
-     step does, rather than chasing it in the CI log.
+   **Never `gh api` a job log**: Actions logs are colorized and
+   `gh api` refuses escape sequences without its allow flag, so the
+   fetch returns **empty stdout**. Always distinguish *fetch failed*
+   from *fetched and found nothing* (`history.md` → "Empty-stdout
+   scan").
 
-     **A red CI `Lint` with a GREEN local reproduce is
-     probably toolchain skew, not a transient.** This branch
-     used to read the pair as "CI is flaky", and that is the
-     wrong first hypothesis: a newer clippy in CI than in this
-     worktree is *structurally consistent* with exactly that
-     pair. The tell is strong — **a clippy failure in a file
-     this branch never touched is almost certainly skew.**
+   Then re-draft the PR, which also cancels a pending "Merge when
+   ready", leave the issue where it is, report the failures, and do
+   **not** report the run finished — the user fixes them and re-runs
+   `/review-pr`:
 
-     Confirm it rather than guessing: query the same `Lint`
-     job on another recent branch. If it is red there too, the
-     branch is not the cause.
+   ```txt
+   mcp__github__update_pull_request(
+     owner: "DASMAC-com",
+     repo: "dropset",
+     pullNumber: <number>,
+     draft: true,
+   )
+   ```
 
-     **Never "fix" it by editing unrelated code.** Silencing a
-     skew warning in a file the diff does not own puts an
-     unrelated change into this PR and hides the real signal.
-     Pin or report the toolchain instead.
+1. **Print the review summary.** With CI green, print it now —
+   *before* the merge-queue prompt, so the human sees the full picture
+   at the moment they decide. The queue outcome is not known yet; it
+   is reported by step 22.
 
-     **The log-capture path that actually works** — and the
-     trap beside it. `gh run view --log-failed` wrapped in the
-     quiet runner, then Grep the captured log:
-
-     ```sh
-     python3 .claude/tools/run_quiet.py -- \
-       gh run view <run-id> --repo DASMAC-com/dropset --log-failed
-     ```
-
-     Do **not** reach for `gh api` on a job log: `gh api`
-     refuses a response carrying terminal escape sequences
-     unless the allow flag is passed, and Actions logs are
-     colorized — so the fetch fails with **empty stdout**. A
-     scan that reads that as "no matches" measures nothing:
-     one 38-job scan reported zero matches having inspected
-     **zero logs**, and nearly became a wrong review finding.
-     Whatever you use, distinguish *fetch failed* from
-     *fetched and found nothing* — never fold a transport
-     failure into a zero count.
-
-     Then convert the PR back to draft — which also
-     cancels any pending "Merge when ready" — and leave
-     the Linear issue in its current state (do **not**
-     move it to In Review):
-
-     ```txt
-     mcp__github__update_pull_request(
-       owner: "DASMAC-com",
-       repo: "dropset",
-       pullNumber: <number>,
-       draft: true,
-     )
-     ```
-
-     Report the failures and do **not** report the run
-     as finished; the user fixes them and re-runs
-     `/review-pr`.
-
-1. **Print the review summary.** With CI green, print the
-   structured summary now — *before* the merge-queue
-   prompt — so the human reviews the full picture at the
-   moment they decide whether to enqueue. The
-   session-metrics capture and the merge-queue outcome aren't
-   known yet (both resolve in the steps below); they're
-   surfaced separately as they land, not folded in here.
-
-   - Linear coverage: the resolved tag, and each
-     checklist item marked addressed / partial /
-     missing (or "no Linear task checked" if none
+   - Linear coverage: the resolved tag, and each checklist item marked
+     addressed / partial / missing (or "no Linear task checked" if none
      was resolvable).
-   - Fan-out: which tier the diff took (full, small
-     single-crate, move-refactor / other reduced-fan-out,
-     meta-work, or trivial short-circuit) and, for a
-     scaled-down run, which lenses were skipped and why
-     (security lens skipped — no trust surface; style skipped
-     — meta-work; cross-check skipped; freshness skipped —
-     surface gate; **a lens skipped on yield** — name it, and
-     never let a yield skip be silent).
-   - In-flight overlap: open PRs whose files intersect this
-     diff (from `review_diff.py --overlap`), and what was
-     decided about them — waited, or proceeded with the
-     re-run cost accepted. Or that there were none, or that
-     the probe could not run.
-   - Lint status: pass, fail with details, or which
-     hooks were unverifiable locally (deps not
-     installed) and why that's safe for this diff.
-   - Generated artifacts: IDL / SDK clients /
-     conformance vectors — regenerated clean, committed a
-     refresh, or (IDL only) unverifiable without the
-     toolchain.
-   - Test status: `make test` and
-     `make test-no-teardown` — pass, fail, or
-     unverified locally (toolchain absent) — plus the
-     `sdk/ts` node suite (always runnable): pass or fail.
+   - Fan-out: which tier the diff took (full, small single-crate,
+     move-refactor / other reduced-fan-out, meta-work, or trivial
+     short-circuit) and, for a scaled-down run, which lenses were
+     skipped and why (security lens skipped — no trust surface; style
+     skipped — meta-work; cross-check skipped; freshness skipped —
+     surface gate; **a lens skipped on yield** — name it, and never let
+     a yield skip be silent).
+   - In-flight overlap: open PRs whose files intersect this diff (from
+     `review_diff.py --overlap`), and what was decided about them —
+     waited, or proceeded with the re-run cost accepted. Or that there
+     were none, or that the probe could not run.
+   - Lint status: pass, fail with details, or which hooks were
+     unverifiable locally (deps not installed) and why that's safe for
+     this diff.
+   - Generated artifacts: IDL / SDK clients / conformance vectors —
+     regenerated clean, committed a refresh, or (IDL only)
+     unverifiable without the toolchain.
+   - Test status: `make test` and `make test-no-teardown` — pass,
+     fail, or unverified locally (toolchain absent) — plus the `sdk/ts`
+     node suite (always runnable): pass or fail.
    - Title status: passes `Semantic PR` or not.
-   - Merge status: `mergeable` — `CONFLICTING` vs.
-     `MERGEABLE` (no conflict).
-   - CI status: all GitHub checks green, or "no checks"
-     treated as green — by this point CI has passed (a
-     failure would have stopped the run at the CI wait).
-   - Linear status: currently **In Progress**; it moves to
-     **In Review** at the merge-queue handoff that follows
-     (or stays put if no tag was resolvable).
-   - `CLAUDE.md` + `docs/conventions/` freshness: in sync,
-     or each stale rule / dangling skill reference the diff
-     outdated, with the suggested correction — or **skipped**
-     (the surface gate didn't fire: the diff touched no
-     `CLAUDE.md` / `docs/conventions/` / `.github/` surface
-     and added no new top-level tree).
-   - CI skip-list freshness: the `test.yml` `code`-filter
-     exclude-list is in sync, or each test-irrelevant tree
-     the diff added/renamed that should be excluded, with
-     the suggested one-line edit (warning only) — or
-     **skipped** (surface gate didn't fire, as above).
+   - Merge status: `mergeable` — `CONFLICTING` vs. `MERGEABLE` (no
+     conflict).
+   - CI status: all GitHub checks green, or "no checks" treated as
+     green — by this point CI has passed (a failure would have stopped
+     the run at the CI wait).
+   - Linear status: currently **In Progress**; it moves to **In
+     Review** at the merge-queue handoff that follows (or stays put if
+     no tag was resolvable).
+   - `CLAUDE.md` + `docs/conventions/` freshness: in sync, or each
+     stale rule / dangling skill reference the diff outdated, with the
+     suggested correction — or **skipped** (the surface gate didn't
+     fire: the diff touched no `CLAUDE.md` / `docs/conventions/` /
+     `.github/` surface and added no new top-level tree).
+   - CI skip-list freshness: the `test.yml` `code`-filter exclude-list
+     is in sync, or each test-irrelevant tree the diff added/renamed
+     that should be excluded, with the suggested one-line edit (warning
+     only) — or **skipped** (surface gate didn't fire, as above).
    - Issues found / fixed / remaining.
-   - Remaining warnings and nits for human review,
-     each with `file:line` and rationale.
+   - Remaining warnings and nits for human review, each with
+     `file:line` and rationale.
    - Whether the PR was marked ready.
 
-1. **Move the issue to In Review and offer to add the PR
-   to the merge queue.** Run this step **only** when the
-   CI wait took the **all-checks-green** path and the
-   review summary above has been printed — the PR is
-   ready, CI is green, and the human has the full picture
-   in front of them. (If CI failed, no checks ran, or the
-   gate was never reached, skip this entirely.)
+1. **Move the issue to In Review and offer to add the PR to the merge
+   queue.** Only when the CI wait took the **all-checks-green** path
+   and the summary is printed; otherwise skip this entirely.
 
-   **This handoff goes through `AskUserQuestion` —
-   unconditionally, never silently.** It is a skill-to-skill
-   handoff (per `CLAUDE.md` → "The PR workflow and skill
-   handoffs"), so **both** actions it performs are gated on
-   the TUI selector, not a free-text question and not an
-   unprompted state change: (a) the **In Review** move and
-   (b) the **enqueue** offer are one gated handoff — the
-   `AskUserQuestion` below is what authorizes advancing the
-   issue and enqueueing. Do **not** advance the issue to In
-   Review and then enqueue without surfacing the selector,
-   and do **not** substitute a plain-text "shall I enqueue?"
-   for it. The recommended default ("yes, add it to the merge
-   queue") goes **first** in the options. The only paths that
-   skip the selector are the non-happy ones spelled out below
-   (a `CONFLICTING`/`UNKNOWN` mergeability re-check, or no
-   resolvable tag).
+   **The handoff is one `AskUserQuestion`, unconditionally** (the
+   skill-handoff convention, `docs/conventions/commits-and-prs.md`):
+   it authorizes both the In Review move and the enqueue. Never
+   advance the issue and enqueue without it, and never substitute a
+   plain-text "shall I enqueue?". The only paths that skip it are the
+   non-happy ones below.
 
-   **First, re-check mergeability — a PR that was
-   `MERGEABLE` at the ready gate can turn `CONFLICTING`
-   while CI ran, if the base advanced.** So before moving the
-   issue and before the prompt, re-read the conflict signal
-   (the same read the ready gate used):
+   **First, re-read mergeability** — a PR `MERGEABLE` at the gate can
+   turn `CONFLICTING` while CI ran:
 
    ```sh
    gh pr view <number> --json mergeable,mergeStateStatus
    ```
 
-   - `mergeable: "CONFLICTING"`
-     (or `mergeStateStatus: "DIRTY"`) → **do not** offer to
-     enqueue and **do not** advance the issue. Report the
-     conflict, tell the human to rebase onto `origin/<base>`
-     to resolve it (this skill does not auto-resolve — see
-     step 2 for why that holds even here), and leave
-     the issue **In Progress**. Stop here — the enqueue offer
-     is off the table until the rebase clears the conflict.
-   - `mergeable: "UNKNOWN"` → GitHub hasn't finished
-     computing mergeability; re-poll a few times (a short
-     wait between reads) before deciding rather than
-     offering blindly. If it stays `UNKNOWN`, say so and
-     hold rather than enqueue.
-   - `mergeable` not conflicting (`MERGEABLE`) → proceed to
-     the In Review move and the enqueue prompt below.
+   Apply step 16's tri-state, with the stakes raised: on `CONFLICTING`
+   neither enqueue nor advance the issue — report it, tell the human to
+   rebase, leave the issue In Progress, and stop. On an `UNKNOWN` that
+   survives a few spaced re-reads, say so and hold. Only `MERGEABLE`
+   proceeds.
 
-   **If this branch adds a migration, check for a cross-branch
-   number collision before enqueueing.** The in-tree ascend
-   guard and the schema-fence tests only ever see **one** tree,
-   and they start from an **empty** database — so a duplicate
-   number is invisible until both files coexist, which first
-   happens on the merge queue's merge-group branch. Until then
-   both PRs ride green.
-
-   The dequeue is the cheap half. The shared dev Postgres may
-   already have one branch's number applied, and an applied
-   migration is **immutable** (sqlx records a checksum), so
-   renumbering the **wrong** branch wedges the shared database
-   — and the only fixes are manual surgery or a wipe that
-   destroys collected market data outside the venues' backfill
-   windows. Two in-flight PRs really did each add an `0003`.
-
-   One call — the tool does the open-PR read itself:
+   **If this branch adds a migration, check for a cross-branch number
+   collision before enqueueing.** The ascend guard and the schema-fence
+   tests see one tree from an empty database, so a duplicate number is
+   invisible until both files meet on the merge-group branch — and an
+   applied migration is **immutable**, so renumbering the **wrong**
+   branch wedges the shared dev Postgres, fixable only by manual
+   surgery or a wipe that destroys collected market data
+   (`history.md` → "Migration collisions"). One call; the tool does
+   the open-PR read itself:
 
    ```sh
    python3 .claude/tools/migration_collisions.py --others-from-gh
    ```
 
-   It compares **numbers, not filenames** — `0003_telemetry.sql`
-   and `0003_roster.sql` collide — and exits non-zero on a
-   collision, so a caller checking only the status cannot
-   enqueue through one.
+   It compares **numbers, not filenames**. **Gate on all three exit
+   statuses:** `1` is a collision; `0` is any other status, including
+   `nothing_claimed`; `2` means the tool **could not answer** (bad
+   input, a `gh` failure, a truncated listing, a pathspec matching
+   nothing) — a **hold, not a pass**. Gating on non-zero reports an
+   operational failure as a collision; gating on `== 1` enqueues
+   through an unanswered question. Never adapt to the guard by ignoring
+   its exit status.
 
-   **Gate on the exit status — all three of them.** `1` is a
-   `status: "collision"`. `0` is any other status, including
-   `nothing_claimed`. `2` means the tool **could not answer** —
-   bad input, a `gh` failure, a truncated listing, a pathspec
-   matching nothing — and is a **hold, not a pass**. Neither
-   naive reading is safe: gating on *non-zero* reports an
-   operational failure as a collision, and gating on *== 1*
-   enqueues straight through an unanswered question.
+   Read the summary line: it says how this branch's own PR was
+   excluded from the comparison. Three cases block, for two reasons. A
+   **detached HEAD** (no branch to resolve) and an exclusion that
+   **matched nothing** (this PR open under a different head ref) fail
+   **closed** — the self-match survives, so a collision naming one PR
+   whose file matches this branch's is *probably* that self-match, a
+   hint to confirm, not an identity. A **fork** PR sharing this
+   branch's name is never treated as ours; its collision is **real** —
+   don't wave it through. `--self-branch` overrides the resolution and
+   the summary records it. `--others <file>.json` serves a caller
+   already holding the inventory and keeps tests network-free.
 
-   That the clean-tree case exits `0` is worth stating because a
-   non-zero exit could not be trusted until ENG-1336: a pushed
-   branch's own PR is in the open-PR listing, so the tool matched
-   the branch's migration **against itself** and exited non-zero
-   on every run, blocking every enqueue on a
-   migration-carrying branch. It fired at least five times
-   across three sessions in one day, each interpreted by hand.
+   **On a collision, stop and coordinate the renumber: the branch whose
+   number is already applied to the shared dev DB keeps it; the other
+   renumbers.** No migration → `nothing_claimed`, exit 0 — an empty
+   verdict, not a clear one, which is why `init-pr` reads
+   `next_free_number` from the same call.
 
-   Read the summary line rather than working around it — it says
-   in every case how this branch's own PR was treated, so the
-   reported open-PR count is the number actually compared. Do
-   **not** adapt to a blocking guard by ignoring its exit status:
-   that deletes the protection, and the failure it guards against
-   is recoverable only by manual surgery or a data-destroying
-   wipe.
+   **A rebase-forced re-run may enqueue BEFORE re-verifying.** `main`
+   lands about as often as a full local re-verify takes, so re-running
+   locally after every rebase invites the next one (`history.md` →
+   "Rebase race"). When the **only** reason for a re-run is a rebase,
+   push, enqueue, and let the queue verify — it re-runs the whole Rust
+   suite against the merged result, fail-closed. All three conditions
+   required: the branch's own diff is **unchanged** since the last
+   green local pass; `rebase_overlap.py` reports **no overlap** between
+   the base delta and this branch's files; and `runs_rust_suites` on
+   that report says the queue's suite covers the delta. Otherwise
+   verify locally. Say in the summary that the re-verify was skipped
+   and why.
 
-   Three cases are reported rather than hidden, and all three
-   block — but for **two different reasons**, so read which:
-
-   - a **detached HEAD**, where the branch cannot be resolved, so
-     no exclusion is attempted; and
-   - an exclusion that **matched nothing**, which is what happens
-     if this branch's PR is open under a different head ref.
-
-   Those two fail **closed**: the self-match survives into the
-   comparison, so the line says a collision naming one PR whose
-   file matches this branch's is *probably* that self-match — a
-   hint, not an identity, since a genuine second-branch collision
-   presents the same way. Confirm before dismissing it.
-
-   - a **fork** PR sharing this branch's name, which is never
-     treated as ours, because a head ref arrives unqualified.
-
-   That one is different: the self-match *is* correctly excluded,
-   and what blocks is a third party's **real** collision. The
-   line names the fork PR so it is not dismissed as a self-match
-   — do not wave it through.
-
-   `--self-branch` overrides the resolution and the summary
-   records when it was used, since that flag can turn a collision
-   into a clear verdict.
-
-   **This step used to prescribe two commands with no way to
-   connect them**, and every sanctioned route across the gap is
-   closed: a `>` redirect is a compound the shell guard blocks,
-   a pipe likewise, and capturing the listing to re-emit it
-   with `Write` routes every open PR's file list through
-   context — the ~4.0k-for-two-lines cost the tool exists to
-   avoid. So the read moved inside the tool, which is how
-   `review_diff.py --overlap` already solves the identical
-   problem; the two steps should not disagree about it.
-   `--others <file>.json` remains for a caller that already
-   holds the inventory, and keeps the compare network-free for
-   tests.
-
-   **On a collision, stop and coordinate the renumber
-   deliberately.** The tiebreak, and its direction is the whole
-   point: **the branch whose number is already applied to the
-   shared dev DB keeps it; the other renumbers.** Renumbering
-   the applied one is the move that wedges the database.
-
-   Skip this entirely when the branch adds no migration — the
-   tool reports `nothing_claimed` and exits zero. Note that is
-   **not** a clear verdict, just an empty one; nothing was
-   compared, which is exactly right here and is why `init-pr`
-   reads `next_free_number` from the same call instead.
-
-   **A rebase-forced re-run may enqueue BEFORE re-verifying.**
-   The normal gate is "everything green locally, then
-   enqueue". That gate cannot win a race it is structurally
-   losing: `main` lands roughly **every 20 minutes** and a full
-   local re-verify costs about the same, so a base that moves
-   during the review invalidates the pass you just finished,
-   and the re-run invites the next move. One review lost **two
-   full cycles** to exactly this — `main` landed 4 commits
-   during the lens fan-out and 3 more during a 1289-second CI
-   wait, and the second batch invalidated a completely green
-   local suite *plus* that CI run.
-
-   So when the **only** reason for a re-run is a rebase, and
-   the base delta is already covered by the queue's own suite:
-   **push, enqueue, and let the queue verify.** The merge queue
-   re-runs the whole Rust suite on its own queue branch against
-   the merged result — that is the actual gate, and it is
-   fail-closed. Re-running it locally first proves nothing the
-   queue will not prove, on a tree that is already stale.
-
-   Three conditions, all required, so this cannot become a
-   general license to skip verification:
-
-   - the branch's own diff is **unchanged** since the last
-     green local pass (no new fix commits — only the rebase);
-   - `rebase_overlap.py` reports **no overlap** between the
-     base delta and this branch's files; and
-   - the queue's suite covers the base delta —
-     `runs_rust_suites` on that same report.
-
-   If any of those fails, verify locally first as usual. And
-   say in the summary that the local re-verify was skipped and
-   why, so the queue result is read as the gate it is.
-
-   (This is the standing "enqueue early, verify in parallel"
-   principle, which was recorded as a lesson but never wired
-   into this gate.)
-
-   This prompt is the handoff: per `CLAUDE.md`, **In
-   Review** means "okay for the human to look at the PR
-   and approve enqueueing it." So move the Linear issue
-   (the tag resolved in step 3) to **In Review** here —
-   with, or just before, the prompt — not earlier. Skip
-   only if no tag was resolvable:
-
-   This is a **state-only** write, so it goes through the
-   zero-echo path rather than the MCP:
+   Then move the issue (the step-3 tag) to **In Review**, with or just
+   before the prompt — skip only if no tag resolved. A state-only write
+   takes the zero-echo path
+   (`docs/conventions/linear-automation.md` → "Field-only writes go
+   through `board_batch.py`, not the MCP"); the session has held the
+   body since step 3:
 
    ```sh
    python3 .claude/tools/board_batch.py state \
      --id <ENG-###> --state "In Review"
    ```
 
-   It prints one line. The MCP equivalent echoes the entire
-   stored body back to transmit one enum — measured at ≈3.6k
-   on a consolidated issue, and this is the write that pays it
-   at its worst, since the body is at its largest by the
-   handoff. Unlike `init-pr`'s bootstrap write, nothing here
-   needs the body: the session has held it since step 3, so
-   the echo buys nothing at all.
+   **One write, no retry loop**: if it disagrees, verify once, report
+   the discrepancy and move on (`history.md` → "State-write echo").
 
-   **One write, no retry loop.** If the response echo comes
-   back still showing In Progress, do **not** re-issue the
-   write chasing it (that loop cost five body-echoing
-   `save_issue`/`get_issue` round-trips on PR #207) — verify
-   once and, if it still disagrees, report the discrepancy
-   and move on. The transition is idempotent; a silent echo
-   is not worth another full-body round-trip.
+   Ask with `AskUserQuestion`, printing **both identifiers** — the
+   Linear tag (`ENG-536`) and the PR number (`#138`) — with "yes, add
+   it to the merge queue" **first** and "skip, I'll merge by hand"
+   second.
 
-   Then ask with `AskUserQuestion` — always this tool, so
-   the human gets the little TUI pop-up selector and picks
-   "yes, add it to the merge queue" (or "skip, I'll merge
-   by hand") right in the terminal instead of typing a
-   reply. In the question text, **clearly print both
-   identifiers the human needs to pull up the PR**: the
-   Linear tag (e.g. `ENG-536`) and the GitHub PR number
-   (e.g. `#138`) — so it's unambiguous which PR they're
-   approving.
-
-   - **If the user approves**, add it to the merge queue.
-     Enqueueing is the one `gh` **write** the skill makes
-     (the dequeue probe in the final step is the one `gh`
-     **read**): the MCP server exposes no auto-merge /
-     merge-queue tool (`merge_pull_request` does an
-     *immediate* merge, which bypasses the queue), so use
-     `gh pr merge` with `--auto`, which enables "Merge
-     when ready" / enqueues behind the required checks:
+   - **On approve**, enqueue — the skill's one `gh` **write**; the MCP
+     has no merge-queue tool and `merge_pull_request` merges
+     immediately, bypassing the queue:
 
      ```sh
      gh pr merge <number> --auto
      ```
 
-     **Pass no merge-strategy flag** (no `--squash` /
-     `--merge` / `--rebase`). This repo is governed by a
-     GitHub **merge queue**, which sets the strategy itself;
-     an explicit `--squash` conflicts with it and `gh` warns
-     that the merge strategy for `main` is set by the merge
-     queue. The enqueue still takes (exit 0), but the flag is
-     pure noise — omit it and let the queue decide.
+     **Pass no strategy flag** — the merge queue sets it, and a
+     `--squash` only warns. **Expect no output at all**: stdout is not
+     a TTY, so a silent exit 0 is the success shape. **But exit 0 is
+     NOT proof of enqueue** — it shows auto-merge was *enabled*, and a
+     PR has gone 9/9 green, exited 0 and never been queued
+     (`history.md` → "Exit 0, never queued"). Step 22's watch is the
+     verification: its `not_queued` verdict is exactly that case.
+     **The already-clean remedy, which is not a bypass:** where
+     `merge_queue` is an active branch rule (checkable once with
+     `gh api repos/{owner}/{repo}/rules/branches/main --jq '[.[] | .type]'`),
+     a plain `gh pr merge <n>` **enqueues** rather than merging, so it
+     is the correct fallback when `--auto` did not take.
 
-     **Confirm the enqueue from the `gh` exit, not from a
-     polled field.** A zero exit means "Merge when ready"
-     is now enabled — the enqueue took. (The hosted GitHub
-     MCP's `pull_request_read` `get` response does **not**
-     carry `auto_merge`, so there is no MCP field to poll
-     for the enqueue; the `gh` exit is the signal.) Report
-     the enqueue and move on — the queue *outcome* (landed
-     vs. taken out) lands asynchronously and is surfaced by
-     the final step, after the session-metrics capture; do
-     **not** block here waiting for the merge.
+   - **On decline**, leave the PR ready and the issue In Review, and
+     note they can merge it (or enable "Merge when ready") themselves.
 
-     **And expect no output at all.** Under this harness
-     `gh pr merge --auto` prints **nothing** — stdout is not a
-     TTY, so the "Merge when ready" confirmation `gh` shows
-     interactively never appears. There is no reply text to
-     read back, and one run read the silence as a failed
-     enqueue.
+1. **Capture session metrics** — unprompted, once, as the second-last
+   act of the step-22 tail: after a confirmed merge, immediately
+   **before** the close question, so the capture covers the whole
+   task. **No approval and no question**; the enqueue-time "shall I
+   file session metrics?" ask is retired (`history.md` → "Metrics
+   ask retired"). If the PR is taken back out of the queue, nothing
+   files — the capture waits for the next close attempt.
 
-     **But exit 0 is NOT proof of enqueue — verify once.** It
-     confirms auto-merge was *enabled*, which is not the same
-     as a queue entry existing. Measured: a session followed
-     this step exactly, CI went 9/9 green, the enqueue exited 0
-     with no output — the documented success
-     shape — and the PR was **never queued**:
-     `mergeQueueEntry: null` on two probes minutes apart, **no**
-     `gh-readonly-queue/main/pr-374-*` branch ever created, and
-     REST independently reporting `auto_merge: null` with
-     `mergeable_state: "clean"`. It sat idle until enqueued a
-     second way, and without a verification step this would
-     have been reported to the operator as queued.
+   Invoke `/session-metrics`. It derives the session id from the
+   scratchpad path, ranks the run's sinks and hardening candidates in
+   its own process (the transcript never enters context), and files
+   each trim lever as a **parked issue** under `Trim levers` through
+   the zero-echo `trim_levers.py` writer, appending evidence to a lever
+   that already exists. It authors no source edit. If the milestone is
+   missing, the writer says so — note it in the report. **Ground it in
+   this run:** carry the wasteful payloads you noticed (a whole-file
+   Read, a verbose log, a repeated PR read) into it, per
+   `docs/conventions/context-economy.md` → "Track consumption ideas as
+   you go", so its levers are concrete.
 
-     So after the documented settle delay, probe once for
-     `mergeQueueEntry`, and treat a null entry **with no
-     queue-branch run** as *the enqueue did not take* rather
-     than as the registration race. The skill already owns both
-     halves of that reasoning — the settle window and the
-     `gh run list` check, a few steps down — it simply
-     never applied them to a **fresh** enqueue, only to a
-     suspected dequeue.
+1. **Surface the merge-queue outcome.** Only if the enqueue was
+   approved. **Watch the queue yourself: "come back and tell me when
+   it merged" is never an acceptable ending for a queued PR** — the
+   enqueue yes authorizes the watch, and the wait is never handed to
+   the human (`history.md` → "Queue wait handed to the operator").
 
-     **The already-clean remedy, which is not a bypass.** On a
-     repo where `merge_queue` is an active branch rule —
-     checkable once with
-     `gh api repos/{owner}/{repo}/rules/branches/main --jq '[.[] | .type]'`
-     — a plain `gh pr merge <n>` **enqueues** rather than
-     merging directly, because the rule forbids a non-queue
-     merge. That is the correct fallback for an already-clean
-     PR whose `--auto` did not take. Worth naming because this
-     step previously warned only that the MCP
-     `merge_pull_request` bypasses the queue, which left a
-     reader with no safe non-`--auto` option at all.
-
-   - **If the user declines**, leave the PR ready and the
-     issue In Review, and note that they can merge it (or
-     enable "Merge when ready") themselves.
-
-1. **Capture session metrics** (while the PR sits in the
-   queue). A review run is long and tool-heavy, so it is the
-   natural moment to account for where its tokens went and
-   bank trim recommendations for the skill suite. Run it
-   **after** the enqueue, **not** gated on the merge landing
-   — the merge resolves asynchronously in the queue, so this
-   is productive work to do while it does — and regardless of
-   the merge outcome (it analyzes the session, not the PR).
-   It is now the **last interactive step**: the permission-
-   firming step that used to follow it is retired (see below).
-
-   **Ask first, via `AskUserQuestion`.** This is a
-   skill-to-skill handoff, so gate it on the same TUI selector
-   the merge-queue prompt uses (per `CLAUDE.md` → "The PR
-   workflow and skill handoffs"): whether to capture session
-   metrics now, offering "yes, run /session-metrics"
-   (**first**, the recommended default) and "skip".
-
-   **This used to be one call carrying TWO questions** — the
-   second being whether to run a `firm-perms` sweep. That
-   skill is retired, measured 2026-09-10: across 176
-   transcripts it was never once invoked by an operator, 19 of
-   102 of its runs made no allowlist call at all, and 418 of
-   its 475 coverage checks were its own sweep machinery rather
-   than a result. The firming that does happen is a direct
-   `allowlist.py add` call, 53 of 60 of which happened outside
-   any firm-perms run. So the tool stayed and the verb went;
-   this gate lost its second half with it.
-
-   Keep the single prompt at this point in the sequence. The
-   reason the pair was batched still holds for the one that
-   remains: the merge resolves asynchronously and actively
-   invites other work, so a prompt firing later fires into an
-   absent user.
-
-   - On **decline**, skip this step and note in the report
-     that session metrics were **not** captured this run.
-   - On **approve**, invoke `/session-metrics`. It derives
-     this session's id from the scratchpad path, runs the
-     `session_metrics.py` tool to rank the run's token sinks
-     and hardening candidates (the transcript is read in the
-     tool's own process, so it never enters context), then
-     files each trim lever it identifies as its own **parked
-     issue** under the `Trim levers` milestone, through the
-     zero-echo `trim_levers.py` writer — appending this
-     session's evidence to a lever that already exists rather
-     than duplicating it. `trim-context` folds those later. It
-     authors no source edit, so it's safe to run regardless of
-     the gate or CI outcome. If the `Trim levers` milestone
-     does not exist, the writer says so by name — note that in
-     the report.
-
-   **Ground the recommendations in this run.** As the review
-   progressed you may have noticed wasteful payloads (a
-   whole-file Read, a verbose build log, a repeated full PR
-   read, an inlined-diff fan-out). Per
-   `docs/conventions/context-economy.md` → "Track consumption
-   ideas as you go", carry those observations into
-   `/session-metrics` so its prose names concrete levers, not
-   just the tool's raw sink ranking.
-
-1. **Surface the merge-queue outcome** (separately). Run
-   this **only** if the user approved the enqueue (skip it
-   if they declined — there's nothing queued to watch). The
-   merge lands asynchronously, so this is its own note,
-   printed after the session-metrics capture and after the
-   review summary above — the summary couldn't know this
-   outcome yet.
-
-   **The `gh api graphql` dequeue probe below runs unattended**,
-   during the queue wait, so confirm the
-   `Bash(gh api graphql:*)` allow-rule it reduces to is
-   present rather than letting it prompt an absent user. This
-   used to be handled by pre-firming the shape in the retired
-   permission-firming step; the hazard outlived the step.
-
-   **The Linear status is settled at enqueue.** After enqueue
-   the PR sits in the queue asynchronously
-   (`mergeQueueEntry.state: AWAITING_CHECKS`), and the
-   Linear/GitHub integration makes **no state transition on
-   merge** — that is a team setting, not a skill behavior. So
-   the **In Review** state written at the enqueue handoff is
-   the state the issue holds through the merge and after it,
-   and it is accurate to read or report at any point.
-
-   **There is deliberately no post-merge write here.** An
-   earlier revision of this step observed the integration's
-   auto-**Done** and wrote the issue *back* to In Review,
-   because merge and completion are different events and an
-   auto-Done hides exactly the sessions that still owe
-   follow-up — session metrics, post-merge tidy, and feedback
-   that has to reach a planning session.
-   The team setting now states that convention natively, so
-   the write-back was retired: it spent a full-body Linear
-   echo in every implementation session to restore a state
-   that nothing had moved.
-
-   Two consequences follow, and both remove machinery rather
-   than add it. Nothing races this step, so no ordering
-   against an auto-transition is needed. And the residual gap
-   that revision accepted — a session dying before the
-   write-back ran, leaving the issue auto-Done with nobody to
-   re-mark it — is gone, because nothing sets Done at all now.
-
-   Then run the existing tail — post-merge tidy, session
-   metrics — and close with an explicit **follow-up ledger**:
-   every operator-facing item either addressed, handed to a
-   planning session, or filed as a task. Name them.
-
-   **Only an explicit approval moves it to Done.** The terminal
-   step is an `AskUserQuestion` — *"all follow-up complete:
-   metrics filed, feedback forwarded — mark Done?"* — and
-   nothing else sets that state. Offer **"Mark Done and remove
-   the worktree (Recommended)"** first and **"Mark Done, keep
-   the worktree"** second. Both run one tool, as this session's
-   **last** tool call — the state write lands before any
-   removal, never the reverse:
+   Immediately after the enqueue, start **one backgrounded** command
+   (`run_in_background`) — the harness re-invokes the session when it
+   exits, and that is the wake-up:
 
    ```sh
-   python3 .claude/tools/close_session.py --state Done
-   ```
-
-   (append `--keep-worktree` for the second option). It refuses,
-   with nothing changed, whenever it cannot prove the close safe
-   — a dirty tree, an unpushed commit, an open or unreadable PR,
-   a lock another session holds, a failed state write — and
-   names the reason in `refused`; exit 2 means Done landed and
-   the removal did not — relay its note, which says when the
-   tree needs removing by hand.
-
-   Watch whether the PR lands or gets kicked back out with a
-   **single** probe per check: the `gh api graphql` dequeue
-   probe below already selects `state` and `merged` **and**
-   the merge-queue fields, so it answers "landed?", "still
-   queued?", and "dequeued?" in one read — the old
-   `pull_request_read` `get` poll that used to run first was
-   redundant (it carried the full PR object every poll just
-   to read `state`/`merged`) and is dropped (per `CLAUDE.md`
-   → "Context economy").
-
-   **Prefer blocking on the queue's own run over re-probing.**
-   Once `mergeQueueEntry` names the `gh-readonly-queue/…`
-   branch's check run, one command waits it out — the same
-   tool as the CI wait, in its run mode:
-
-   ```sh
-   python3 .claude/tools/wait_for_checks.py --run <run-id>
+   python3 .claude/tools/wait_for_checks.py --queue <number>
    ```
 
    ```json
    {
-     "run_id": "1234567890",
-     "conclusion": "pass",     // pass | fail | timeout
-     "settled": true,
-     "elapsed_seconds": 214,
-     "exit_code": 0,
-     "log_path": "…/wait-for-run-1234567890.log"
+     // merged dequeued closed not_queued timeout probe_failed
+     "conclusion": "merged",
+     "seen_queue_entry": true,
+     "last": {"gql_state": "MERGED", "view_state": "MERGED", …},
+     "queue_runs": [{"run_id": "…", "name": "…", "conclusion": "…"}],
+     "failing_runs": [],
+     "log_path": "…/wait-for-queue-<number>.log"
    }
    ```
 
-   gh paces it and exits when the run settles, so nothing is
-   polled, and its `--exit-status` makes a failed queue run
-   non-zero — a dequeue can't read as a merge. Then issue the
-   graphql probe **once** to read the terminal state.
+   It polls the GraphQL `mergeQueueEntry` probe, the
+   `gh pr view --json state,mergedAt` read, and this PR's
+   `gh-readonly-queue/…/pr-<number>-…` runs each minute, stays silent
+   while queued, and exits 0 only on `merged`. It owns the reasoning
+   this step used to spell out
+   (`docs/conventions/github-mcp.md` → "The merge-queue handoff"):
+   key on `mergeQueueEntry`, never `autoMergeRequest`; **a terminal
+   `MERGED` from either source is authoritative**, and nothing
+   concludes "dequeued" until both agree the PR is not merged; an
+   all-null probe is the registration window **or** a removal, and the
+   queue-branch runs tell them apart. Say once that the PR is queued,
+   then stay silent until the exit. Where a background command is unavailable,
+   fall back to a session-scoped cron running the same command about
+   every 5 minutes with a short `--timeout`, deleting itself on a
+   terminal verdict; if the classifier denies the cron, ask the
+   operator to approve it in this tab — never silently hand over the
+   wait. A resumed session re-runs the command; a fresh poll returns
+   the current snapshot.
 
-   **Don't shell `gh run watch` directly.** Like
-   `gh pr checks --watch`, it is verbose-by-refresh: it
-   re-prints the **whole job tree** on every refresh into one
-   tool result. One bare call emitted **64.6KB**, overflowed
-   the tool-result cap, was persisted to disk, and the
-   terminal state still had to be re-probed by graphql
-   afterwards — that session's largest single result,
-   effectively fetched twice. The tool routes the tree to
-   `log_path` and hands back the verdict; `Read` the log by
-   slice only if the run actually failed.
+   **The terminal-MERGED invariant also binds you**: if your own read
+   says `MERGED`, never act on an older non-merged verdict, and never
+   re-read a file at the merge ref to confirm the change landed — the
+   verdict is the confirmation.
 
-   Fall back to re-issuing the graphql probe as a fresh tool
-   call across turns when there is no run id to watch — the
-   registration window below, or a queue entry that never
-   produced a run. Either way: **never** a shell
-   `while … sleep … done` loop or a `jq` filter. Say once,
-   up front, that the PR is queued and you're standing by;
-   then stay silent until a **terminal** outcome (merged,
-   or taken out of the queue), pinging the human only then.
-   Every probe is resumable — a fresh call returns the current
-   snapshot.
+   Branch on `conclusion`:
 
-   **Give the queue entry a settle window: the first probe
-   waits.** GitHub does not register the merge-queue entry
-   synchronously with the enqueue, so a probe fired the
-   instant a **successful** `gh pr merge --auto` returns
-   (exit 0) reports:
+   - **`merged`** → report it; the Linear issue **stays In Review** and
+     nothing here writes a state. Then run the post-merge tail below.
 
-   ```json
-   {
-     "state": "OPEN",
-     "merged": false,
-     "mergeQueueEntry": null,
-     "autoMergeRequest": null
-   }
-   ```
+   - **`closed`** → closed **without** merging: abandoned, not landed.
+     Report it and skip the tail; the worktree may still be wanted.
 
-   — all-null on a PR that isn't registered **yet**; a
-   re-probe seconds later returns
-   `mergeQueueEntry: {"state": "QUEUED"}`. So don't fire the
-   *first* probe immediately — there is no run id to watch yet,
-   so this is the fallback case: let a turn pass before probing.
-   Exit 0 from `gh pr merge --auto` confirms only that
-   auto-merge was **enabled**, not that the queue entry exists.
+   - **`not_queued`** → no entry and no queue run ever appeared: the
+     enqueue did not take. Apply step 20's already-clean remedy and
+     restart the watch. On a *resumed* watch, a dequeue older than the
+     tool's run window reads the same — check `gh run list` before
+     re-enqueueing.
 
-   This is the **timing twin** of the `autoMergeRequest`
-   false positive described next. That one was fixed by
-   keying on `mergeQueueEntry` instead — but inside the
-   registration window *both* fields are null, so the
-   "both null" test does **not** save you here. Never treat
-   the first post-enqueue probe as authoritative.
+   - **`dequeued`** → diagnose from the **queue branch's** runs, never
+     the PR's own checks: the queue builds `main` plus this PR on
+     `gh-readonly-queue/<base>/pr-<number>-<sha>`, so a failure there
+     dequeues the PR while every PR check stays green. The tool reads
+     those runs on every poll because concluding without them once
+     cost a blind re-enqueue: on PR #311 the first probe *was* a
+     terminal dequeue — the queue's full run set had completed and
+     `SDK` failed transiently while all 8 PR checks stayed green — and
+     the re-enqueue was right only by luck. Key on **job**
+     conclusions (a run can read `in_progress` with a job already
+     failed), then pull the failing job with the step-18 failure path.
+     Split by what failed:
 
-   This is the one `gh` **read** the skill makes (mirror of
-   the enqueue write). The signal that distinguishes "still
-   queued" from "silently removed" is the PR's
-   **`mergeQueueEntry`**: it is non-null exactly while the PR
-   sits in the merge queue and flips to `null` the moment it
-   leaves. **Do not** key on `autoMergeRequest` for that — on
-   a merge-queue repo a genuinely-queued PR reports
-   `autoMergeRequest: null` (and a `CLEAN` `mergeStateStatus`,
-   not `QUEUED`), so the old `autoMergeRequest`-null test was
-   a **false positive** that announced "taken out of the
-   queue" on every run. `mergeQueueEntry` isn't exposed by
-   the MCP `get` (nor by `gh pr view --json`), so query it
-   over GraphQL, where the same query also returns `state`,
-   `merged`, and `autoMergeRequest` (the last keeps the
-   **classic-auto-merge** path — repos with no merge queue —
-   working).
+     - **Transient infrastructure** — a toolchain, network or cache
+       failure **before any test ran**, e.g.
+       `Cache not found for input keys: toolchain-solana-…` then
+       `Failed to install platform-tools` → re-enqueue, saying why,
+       and restart the watch.
+     - **A real `main`-integration conflict** — an assertion, compile
+       error or lint violation on the queue branch → do **not**
+       re-enqueue. Catalogue it as blocking, re-draft, and tell the
+       user to rebase on `main` and re-run `/review-pr`.
 
-   Keep the command globbable: the query body has braces and
-   quotes that trip the brace-with-quote guard, so write it
-   to a file with the **Write** tool rather than inlining it,
-   then pass the PR number as a typed variable and the file
-   on a stable command line (per the file-handoff rule in
-   `CLAUDE.md`). The query (write it to e.g.
-   `/tmp/mq-probe.graphql`):
+     Report the removal either way, naming the job. An empty
+     `failing_runs` means the entry vanished with every run green for
+     the tool's whole grace window — check the PR's timeline before
+     re-enqueueing.
 
-   ```graphql
-   query($number: Int!) {
-     repository(owner: "DASMAC-com", name: "dropset") {
-       pullRequest(number: $number) {
-         state
-         merged
-         mergeQueueEntry { state }
-         autoMergeRequest { enabledAt }
-       }
-     }
-   }
-   ```
+   - **`timeout`** / **`probe_failed`** → report the `last` snapshot
+     (and `error`), then restart the watch; never report it as
+     queued-and-fine.
 
-   ```sh
-   gh api graphql -F number=<number> -F query=@/tmp/mq-probe.graphql
-   ```
+   **The post-merge tail, on `merged` only — one batched sequence with
+   a single operator touch at the very end.** Work it as a checklist;
+   **a diversion does not discharge it** — another skill, a peer
+   session's message, a fresh request or a long wait closes nothing
+   (`history.md` → "Diverted tail"). Come back and finish it, or say
+   which item you are skipping and why. An unanswered
+   `AskUserQuestion` is a deferral the user chose; an unasked one is a
+   dropped step.
 
-   This reduces to a `Bash(gh api graphql:*)` allow-rule —
-   only `<number>` varies; the brace-heavy query rides in the
-   file, not the command line.
-
-   **One invariant governs every branch below: a terminal
-   `MERGED` from EITHER source is authoritative.** This probe
-   and the `gh pr view` state read disagree in **both**
-   directions — neither is reliably the fresher one — so no
-   branch here may be taken on this probe alone once the other
-   source says merged. Merge is terminal and neither source
-   reports it spuriously; only *lateness* is possible, never a
-   false positive. Conclude "still queued" or "dequeued" **only
-   when both sources agree the PR is not merged**, and when
-   neither says merged but the queue entry looks impossible for
-   the run state you can see, **wait and re-probe** rather than
-   diagnosing from a stale entry.
-
-   This binds the `AWAITING_CHECKS` branch as much as the
-   all-null one, which is the half that is easy to miss: on
-   **PR #420** this probe still read
-   `mergeQueueEntry.state: AWAITING_CHECKS` after all four
-   queue-branch runs were green, while `gh pr view` already
-   said `MERGED` with a timestamp. Taken alone, that lands on
-   "still queued; keep polling" — and polls a PR that had
-   already merged. The evidence for all three measured
-   variants is with the all-null branch below.
-
-   Branch on the single result:
-
-   - `merged: true` (or `state: "MERGED"` / `"CLOSED"`) → it
-     landed; report the merge — **but read `merged` before
-     saying so.** This branch is keyed on `CLOSED` too, and a
-     `CLOSED` PR with `merged: false` was **abandoned, not
-     landed**: report that instead, and skip the post-merge
-     tidy below (there is nothing to dismiss and the worktree
-     may still be wanted). The invariant above speaks only of
-     `MERGED`, deliberately. **The Linear issue stays In
-     Review, and nothing here writes a state.** Linear's
-     GitHub integration makes **no** transition on merge (a
-     team setting), and `Done` means operator-ratified — never
-     merely merged (`CLAUDE.md` → "The Linear state tracks the
-     session, not the PR"). This bullet used to say the
-     integration would have moved the issue to Done and to
-     report that it did; that described the old
-     auto-transition, which the team setting retired along
-     with the post-merge write-back that used to undo it. Key
-     on `merged` / `state`.
-     Then **mark this PR's own GitHub notification done** so
-     it doesn't linger (the immediate companion to
-     `housekeeping`'s merged-PR notification sweep): find the
-     thread whose `subject.url` ends in this PR's number and
-     dismiss it — never `mark_all_notifications_read`.
-
-     **Read the thread id with a field-selected `gh`, not the
-     full-object MCP call.** This lookup needs exactly one
-     value, and `mcp__github__list_notifications` returned
-     **3.7k tokens in a single call** for it — the 6th-largest
-     result of one session — because it embeds the complete
-     repository object (every `*_url` template) once per
-     notification, repeated for each of three. That is the
-     same reasoning this skill already applies to the
-     field-selected `gh pr view` and `gh pr checks` reads,
-     and the notification lookup
-     was simply missed when that carve-out was written, so it
-     is a **documented `gh` exception** (per
-     `docs/conventions/github-mcp.md`) on the same grounds:
+   - [ ] **Dismiss this PR's notification**, `state: "done"`. Read the
+     thread id with a field-selected `gh` (a documented exception,
+     `docs/conventions/github-mcp.md`) — the MCP list embeds a full
+     repository object per notification (`history.md` → "Notification
+     list cost"):
 
      ```sh
      gh api /notifications --jq '.[] | {id, url: .subject.url}'
      ```
 
-     Then dismiss over the MCP, which is a small write:
+     Pick the thread whose `subject.url` ends in this PR's number, then
+     dismiss it — never `mark_all_notifications_read`:
 
      ```txt
      mcp__github__dismiss_notification(
@@ -2849,254 +2179,54 @@ migrations or generation inputs, and whether it spans crates.
      )
      ```
 
-     Whichever transport you use, the payload is a
-     **fixed cost, read once**: never re-fetch the list to
-     re-find the id.
+     `"done"`, **not** `"read"`, which leaves the thread in the inbox.
+     The list is a fixed cost read once — never re-fetch it. No match
+     (already cleared) → skip.
 
-     `state: "done"`, **not** `"read"` — `"read"` only clears
-     the unread marker and the thread stays in the GitHub
-     inbox, which is exactly the lingering-notification
-     complaint this step exists to answer. A merged PR has
-     nothing left to come back to, so `"done"` is the right
-     terminal state. Doing it here rather than deferring to
-     the next `housekeeping` pass is the point: otherwise the
-     flow finishes and the notification sits until morning.
-
-     If no notification matches (already cleared), skip it.
-
-     **The merge probe IS the confirmation — do not re-read a
-     file to check the change landed.** The probe already
-     returned `merged: true` / `state: "MERGED"`, which is the
-     authoritative answer to "did it land"; re-opening a file
-     at the merge ref adds no information over it, and is the
-     same re-fetch-what-you-already-know shape the conventions
-     name elsewhere.
-
-     If you genuinely want the landed content — to inspect a
-     merge resolution, say — slice it:
-     `python3 .claude/tools/show_at_ref.py <ref> <path>`, or
-     grep it. **Never `git show <ref>:<path>`**, which prints
-     the whole blob (~3.8k measured); `--no-patch` suppresses a
-     *diff*, not a blob dump.
-
-     Worth noting the general shape, because it recurred three
-     times in one session: a correct rule stated in one phase
-     of a long skill fails to fire in another where it is
-     needed. The cheap structural answer is to restate the
-     narrow form **at the call site**, which is what the
-     paragraph above is, rather than adding another general
-     statement next to the existing ones.
-
-     Finally, **reclaim this worktree's disk**. Now the PR
-     has landed, its worktree is dead weight until
-     `housekeeping` prunes it — and if that prune is delayed
-     (or the tree is left dirty and skipped), its multi-GB
-     Rust `target/` and pnpm `node_modules` sit around. Nuke
-     them with the `clean` target, which reduces to a
-     `Bash(make clean:*)` allow-rule:
+   - [ ] **Reclaim the worktree's disk** — the multi-GB `target/` and
+     `node_modules` are dead weight until `housekeeping` prunes it:
 
      ```sh
      make clean
      ```
 
-     Run this **only** on a confirmed merge — a still-queued
-     or dequeued PR keeps its build tree for a possible
-     re-run.
+     Only on a confirmed merge; a dequeued PR keeps its build tree.
 
-   - `state: "OPEN"` with `mergeQueueEntry` non-null (or, on
-     a classic-auto-merge repo, `autoMergeRequest` non-null)
-     → still queued; keep polling — **unless the state read
-     already says `MERGED`**, per the invariant above. This is
-     the PR #420 shape, and it is the branch on which "keep
-     polling" is most obviously wrong: a stale non-null entry
-     reads exactly like a live one.
+   - [ ] **Working tree clean** — `git status --short` is empty. A
+     stray change can come from anywhere (a partial edit, a scratch
+     file written into the repo), nothing else at the end of a review
+     reads tree state, and the evidence is deleted with the worktree.
+     After `make clean` on purpose, since it can touch the tree.
+     Surface anything modified and decide where it goes.
 
-   - `state: "OPEN"` with both `mergeQueueEntry` **and**
-     `autoMergeRequest` null → **not conclusive on its own.**
-     Per the settle window above, this is also what the
-     registration gap looks like: the PR that was never
-     registered and the PR that was registered and kicked out
-     read *identically* on this probe.
+   - [ ] **Session metrics** — step 21, unprompted.
 
-     **First rule out that it already MERGED — and read the
-     rule as an INVARIANT, not a direction.** This step used
-     to say "GraphQL lags the merge" and prescribe the
-     `gh pr view` state read as the tiebreak. That is the
-     wrong *shape* of rule: it names one source as the stale
-     one, and which source is stale is **not fixed**.
-
-     The invariant that does hold: **a terminal `MERGED` from
-     EITHER source is authoritative.** Merge is terminal and
-     neither source reports it spuriously — only *lateness* is
-     possible, never a false positive. So conclude "still
-     queued" or "dequeued" **only when BOTH sources agree the
-     PR is not merged.**
-
-     Every all-null test below — the `gh run list` evidence,
-     the earlier-non-null rule, the two-consecutive rule —
-     reads a null entry as a removal, so following them on a
-     PR that merged concludes "kicked out of the queue" and
-     sends the next session diagnosing a CI failure that does
-     not exist.
-
-     One read gets the second source, and it is already inside
-     the `gh` carve-out for polled PR-state reads
-     (`docs/conventions/github-mcp.md`):
+   - [ ] **Close** — the follow-up ledger, then the one question.
+     Name every operator-facing item as addressed, handed to a
+     planning session, or filed as a task. Then ask via
+     `AskUserQuestion` — *"all follow-up complete: metrics filed,
+     feedback forwarded — mark Done?"* — offering **"Mark Done and
+     remove the worktree (Recommended)"** first and **"Mark Done, keep
+     the worktree"** second. Only this approval moves the issue to
+     Done. Both run one tool as the session's **last** tool call, so
+     the state write lands before any removal:
 
      ```sh
-     gh pr view <number> --json state,mergedAt
+     python3 .claude/tools/close_session.py --state Done
      ```
 
-     Measured on three PRs within about an hour
-     (2026-09-11) — and note the first two point **opposite
-     ways**, which is the whole reason the rule is an
-     invariant:
+     (`--keep-worktree` for the second option). It refuses with
+     nothing changed when it cannot prove the close safe — a dirty
+     tree, an unpushed commit, an open or unreadable PR, a lock another
+     session holds, a failed state write — naming the reason in
+     `refused`. Exit 2 means Done landed and the removal did not; relay
+     its note.
 
-     - **PR #424** — GraphQL reported `state: MERGED`,
-       `merged: true` and a null queue entry, while
-       `gh pr view` *at the same moment* still said `OPEN`
-       with a null `mergedAt`. So the **prescribed tiebreak was
-       itself the stale source**, which is what proves the lag
-       direction is not fixed. (Note #424 would not have gone
-       wrong via *this* branch — a probe returning
-       `merged: true` takes the landed branch above and never
-       consults the tiebreak. What it refutes is the tiebreak's
-       premise, which is why the fix is the hoisted invariant
-       rather than a repair to this bullet's branch.)
-     - **PR #420** — GraphQL still read
-       `mergeQueueEntry.state: AWAITING_CHECKS` after all four
-       queue-branch runs were green, while `gh pr view`
-       already said `MERGED` with a timestamp. GraphQL was
-       **behind**, exactly as the old text assumed.
-     - **PR #425** — **both** reads stale together, for
-       several minutes. When neither says merged and the queue
-       entry looks impossible for the run state you can see,
-       **wait and re-probe**; never diagnose from a stale
-       entry.
-
-     `state: "MERGED"` **or** a non-null `mergedAt` **or**
-     GraphQL's own `MERGED` → it merged; take the merged path
-     and stop. Only once **both** sources say not-merged do
-     the removal tests below mean anything.
-
-     **Resolve the remaining ambiguity with one `gh run list`
-     — before concluding anything.** The queue branch is the evidence:
-     if a run set for `pr-<number>-` exists, the entry
-     demonstrably existed, so an all-null probe now means it
-     **left**. If no such run set exists, the PR was never
-     registered and this is the window. One read settles it,
-     where waiting for a second probe only settles it slowly:
-
-     ```sh
-     gh run list --limit 20 --json headBranch,name,status,conclusion,url
-     ```
-
-     Pick the entry whose `headBranch` carries the
-     `pr-<number>-` prefix. A bare `gh run list` reduces to a
-     `Bash(gh run list:*)` allow-rule, so this costs one
-     allow-listed call.
-
-     This call used to sit **after** the branch below, as part
-     of diagnosing a removal already concluded — which meant a
-     run that read all-null as "not registered yet" never
-     reached it. On PR #311 that first probe *was* a terminal
-     dequeue: the PR had enqueued normally, the queue branch's
-     full run set had already completed, and `SDK` failed
-     transiently and kicked it out — while all 8 checks on the
-     PR itself stayed green, exactly as the note below warns.
-     The cost of concluding without this read was a blind
-     re-enqueue on a wrong diagnosis. It happened to be the
-     right action, because the failure was transient
-     infrastructure — but that was luck, not reasoning.
-
-     Failing that evidence, fall back to the slower tests:
-     treat it as terminal only when an **earlier** probe in
-     this watch already returned a non-null `mergeQueueEntry`,
-     or when **two consecutive** all-null probes, spaced by the
-     pacing delay, have returned. Until then it is the
-     registration window: keep polling, and stay silent.
-
-     **Diagnose the removal from the queue branch's CI, not
-     from the PR's checks.** This is why the run list above is
-     the right evidence in the first place. The queue does not
-     re-run the PR branch's checks — it builds a temporary
-     branch (`gh-readonly-queue/<base>/pr-<number>-<sha>`,
-     i.e. `main` with this PR merged into it) and runs CI
-     *there*. A failure on that branch dequeues the PR while
-     leaving **every** check on the PR itself green, so
-     `gh pr checks <number>` reports "nothing failed" on a PR
-     that was demonstrably kicked out.
-
-     Key on **job** conclusions, not the parent run's
-     `status`: a run can still read `in_progress` while one of
-     its jobs has already failed and triggered the dequeue.
-     Once the failing job is identified, pull it with the
-     same `get_job_logs` call as the CI-wait failure path
-     (`failed_only: true`, `tail_lines: 100`).
-
-     Then split the response by **what** failed — the two
-     causes want opposite handling:
-
-     - **Transient infrastructure** — a toolchain, network,
-       or cache failure **before any test executed** (e.g.
-       `Cache not found for input keys: toolchain-solana-…`
-       followed by `Failed to install platform-tools`).
-       Nothing is wrong with the code. Re-enqueue, and say
-       that's what you're doing and why.
-     - **A real `main`-integration conflict** — a test
-       assertion failure, compile error, or lint violation on
-       the queue branch. This is exactly what the queue
-       exists to catch, and it means the PR conflicts
-       semantically with code that landed after its last
-       rebase. Do **not** re-enqueue. Catalogue it as
-       blocking, re-draft the PR, and tell the user to rebase
-       on `main` and re-run `/review-pr`.
-
-     Report the removal either way, naming the queue-branch
-     job that caused it.
-
-   **Once this step resolves, the run is not over.** Each
-   remaining closing step is already gated on its own
-   `AskUserQuestion` — the prompts are not missing. What is
-   missing is anything ensuring the tail runs **at all** when
-   the flow diverts after the enqueue, which is common: the
-   merge resolves asynchronously, so the wait actively
-   invites other work. One session enqueued, then spent many
-   turns in a three-party negotiation about Linear blocking
-   edges (the user plus a peer planning session) and never
-   came back; the user had to ask for the closing steps
-   explicitly. Every individual step behaved correctly. The
-   sequence just ended early, and silently.
-
-   So restate the remainder as a checklist and work it:
-
-   - [ ] **Session metrics** captured (the step above) — the
-     last interactive step.
-   - [ ] **Post-merge tidy**, on a merge: the notification
-     dismissed `state: "done"`, and `make clean` run.
-   - [ ] **Working tree clean** — `git status --short` is
-     empty. Anything still modified is work the merge did not
-     carry, and the worktree is about to be pruned. Surface
-     it and decide where it goes; never report the run
-     complete with a dirty tree.
-   - [ ] **Close** — the terminal mark-Done question above,
-     answered through `close_session.py`, after every other
-     item.
-
-   **The working-tree item is detection, and it goes last
-   before the close on purpose.** A stray change can come from anywhere — a fix
-   made during the session-metrics step, a partially applied
-   edit, a scratch file written into the repo instead of the
-   scratchpad. Nothing else at the end of a review looks at
-   tree state: `git status` is read at step 2 and never
-   again, so the blast radius is total and the evidence is
-   deleted with the worktree. It runs after the post-merge
-   tidy because `make clean` can itself touch the tree.
-
-   **A diversion does not discharge them.** Another skill, a
-   message from a peer session, a fresh user request, or a
-   long queue wait — none of those close the review. Come
-   back and finish the checklist, or say explicitly which
-   item you are skipping and why. An unanswered
-   `AskUserQuestion` is a deferral the user chose; an
-   unasked one is a step that was dropped.
+   If you want the landed content anyway — a merge resolution, say —
+   slice it with `python3 .claude/tools/show_at_ref.py <ref> <path>`;
+   **never `git show <ref>:<path>`**, which prints the whole blob
+   (`--no-patch` suppresses a diff, not a blob). That restates a
+   general rule **at the call site on purpose**: a correct rule stated
+   in one phase of a long skill has repeatedly failed to fire in
+   another, and the cheap fix is the narrow form where it is needed —
+   so a later de-duplication pass must leave it.
