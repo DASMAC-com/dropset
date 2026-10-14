@@ -83,12 +83,12 @@ pub struct Level {
     /// never the reference: a filled ask's proceeds are to rest as a bid at
     /// `price × (PPM − flip_spread_ppm) / PPM`, a filled bid's as an ask at
     /// `price × (PPM + flip_spread_ppm) / PPM`. Materialized into
-    /// [`Position::flip_price`] at flush; matching does not consume it yet.
+    /// [`Position::flip_price`] at flush.
     ///
-    /// **Zero does not flip.** The flush formula is the identity at zero, so
-    /// `flip_price` alone cannot say so: the gate is this field, checked
-    /// where a fill would credit [`Position::flip_size`], which then stays
-    /// zero for a non-flipping level.
+    /// **Zero does not flip.** The flush writes [`Price::ZERO`] into
+    /// `flip_price` rather than the identity, and a fill credits
+    /// [`Position::flip_size`] only while `flip_price` is matchable, so a
+    /// zero-spread level never rests a same-price reverse order.
     pub flip_spread_ppm: PodU32,
     /// Per-flush allowance as bps of the matching inventory leg
     /// (`base_atoms` for asks, `quote_atoms` for bids). Σ per side ≤ 10000.
@@ -158,18 +158,18 @@ pub struct Position {
     pub expires_at_slot: PodU32,
     /// Absolute price the level's proceeds rest at once it flips
     /// (`price × (PPM ∓ Level::flip_spread_ppm) / PPM`, asks minus, bids
-    /// plus, computed in decoded space and stored re-encoded). A result
-    /// the encoding cannot hold is stored as [`Price::ZERO`], which is not
-    /// matchable, so that flipped side does not rest. Meaningful only while
-    /// [`Position::flip_size`] is nonzero.
+    /// plus, computed in decoded space and stored re-encoded). A zero
+    /// spread, or a result the encoding cannot hold, is stored as
+    /// [`Price::ZERO`], which is not matchable, so that flipped side does
+    /// not rest. Meaningful only while [`Position::flip_size`] is nonzero.
     pub flip_price: Price,
     /// Flipped allowance in atoms, on the opposite leg from
     /// [`Position::size`] (quote for an ask's flip, base for a bid's), and
-    /// the single test for whether the flipped side rests. Once matching
-    /// consumes it, a fill on a level with a nonzero
-    /// [`Level::flip_spread_ppm`] credits it with exactly the atoms
-    /// inventory is credited. **Zeroed on every flush**, so a flush
-    /// re-centers all flipped state back onto the pct-of-inventory ladder.
+    /// the single test for whether the flipped side rests. A fill against
+    /// `size` credits it with exactly the atoms inventory is credited (while
+    /// `flip_price` is matchable); a fill against it credits `size` back the
+    /// same way. **Zeroed on every flush**, so a flush re-centers all
+    /// flipped state back onto the pct-of-inventory ladder.
     pub flip_size: PodU64,
 }
 

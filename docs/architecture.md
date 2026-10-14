@@ -933,17 +933,16 @@ width, since the slab is opaque to it: per-side arrays of `N_LEVELS`
   add. The two expiry offsets are measured from their own datums, and
   `flip_spread_ppm` from the level's own price. All four materialize to
   absolute values at flush (see below).
-- **Flip in place.** A level is to flip when it fills: an ask's
-  proceeds rest as a bid at `price × (PPM − flip_spread_ppm) / PPM`, a
-  bid's as an ask at `price × (PPM + flip_spread_ppm) / PPM` — relative
-  to the level's own absolute price, never the reference, and with no
-  new order or allocation, only the level's second allowance
-  (`flip_size`). A zero `flip_spread_ppm` does not flip, byte-for-byte
-  the behavior of a level without it; the gate is the spread itself,
-  checked where a fill would credit `flip_size`, because the flush
-  formula is the identity at zero. **Status:** the fields are stored and
-  materialized at flush, but matching does not consume them yet, so
-  today no fill flips.
+- **Flip in place.** A level flips when it fills: an ask's proceeds
+  rest as a bid at `price × (PPM − flip_spread_ppm) / PPM`, a bid's as
+  an ask at `price × (PPM + flip_spread_ppm) / PPM` — relative to the
+  level's own absolute price, never the reference, and with no new
+  order or allocation, only the level's second allowance (`flip_size`).
+  See **Order matching → Book construction** for how a fill credits it.
+  A zero `flip_spread_ppm` does not flip, byte-for-byte the behavior of
+  a level without it: the flush writes the `ZERO` sentinel into
+  `flip_price`, and a fill credits `flip_size` only while `flip_price`
+  is matchable.
 
 ### Flush
 
@@ -961,7 +960,8 @@ asks_remaining[i].expires_at_unix = deadline(ref.quote_unix,
                                              a.expiry_offset_secs)
 asks_remaining[i].expires_at_slot = deadline(ref.quote_slot,
                                              a.expiry_offset_slots)
-asks_remaining[i].flip_price = asks_remaining[i].price
+asks_remaining[i].flip_price = ZERO if a.flip_spread_ppm == 0
+                          else asks_remaining[i].price
                              × (PPM −sat a.flip_spread_ppm) / PPM
 asks_remaining[i].flip_size  = 0
 
@@ -971,18 +971,22 @@ bids_remaining[i].expires_at_unix = deadline(ref.quote_unix,
                                              b.expiry_offset_secs)
 bids_remaining[i].expires_at_slot = deadline(ref.quote_slot,
                                              b.expiry_offset_slots)
-bids_remaining[i].flip_price = bids_remaining[i].price
+bids_remaining[i].flip_price = ZERO if b.flip_spread_ppm == 0
+                          else bids_remaining[i].price
                              × (PPM + b.flip_spread_ppm) / PPM
 bids_remaining[i].flip_size  = 0
 ```
 
 **A flush re-centers the flips.** `flip_price` is computed in decoded
 space off the level's freshly materialized `price`, exactly like `price`
-off the reference, and stored re-encoded; a result the encoding cannot
-hold falls to the `ZERO` sentinel, which is not matchable, so that flipped
-side does not rest. `flip_size` is zeroed on every flush, so whatever has
-flipped since the last one is folded back into inventory and re-laddered
-by `size_bps`.
+off the reference, and stored re-encoded; a zero spread, or a result the
+encoding cannot hold, falls to the `ZERO` sentinel, which is not
+matchable, so that flipped side does not rest. Writing the sentinel at a
+zero spread rather than the identity is what keeps a non-flipping level
+from resting a same-price reverse order after a fill, and leaves its
+flip fields all-zero bytes. `flip_size` is zeroed on every flush, so
+whatever has flipped since the last one is folded back into inventory
+and re-laddered by `size_bps`.
 
 **Zero is dead, in either domain.** `deadline` maps a zero offset to
 zero rather than to the bare datum, so "no life in this domain" survives
@@ -2388,14 +2392,19 @@ On every taker instruction:
    stored `LiquidityProfile` bytes are left untouched, so a leader's
    ladder self-heals on their next valid `SetLiquidityProfile`.
 
-1. Iterate the relevant side of `remaining` (asks for a buy taker,
-   bids for a sell taker).
+1. Iterate both sides of `remaining`, reading **two counters** for a
+   taker: the consumed side's own `size` at its `price` (asks for a buy
+   taker, bids for a sell taker), and the opposite side's flipped
+   `flip_size` at its `flip_price` — a filled bid rests as an ask a
+   buyer meets, a filled ask as a bid a seller meets. Each level has
+   one deadline pair, which governs both counters.
 
-1. **Collect** each live level as a
-   `(price_key, price, stamp & !FLUSH_BIT, sector_idx, level_idx, size)`
-   entry, pushing it onto a `Vec` allocated on the program heap and
-   skipping levels where `remaining.size == 0`, either deadline has
-   passed (`now_slot >= remaining.expires_at_slot` or
+1. **Collect** each live counter as an entry — `price_key`, `price`,
+   `stamp & !FLUSH_BIT`, `sector_idx`, `level_idx`, the `flipped` flag
+   naming which counter it is, and `size` — pushing it onto a `Vec`
+   allocated on the program heap and skipping counters where the size
+   is zero, either deadline has passed
+   (`now_slot >= remaining.expires_at_slot` or
    `now_unix >= remaining.expires_at_unix`), or the price is a sentinel
    (`ZERO` / `INFINITY` / invalid). `price_key` is the `u32` sort key:
    `price.as_u32()` for asks (lowest price is best) and
@@ -2407,14 +2416,15 @@ On every taker instruction:
    nonce.
 
 1. **Sort** the collected `Vec` once by
-   `(price_key, nonce, sector_idx, level_idx)`: best price first, then
-   oldest quote (lowest nonce) on equal-price ties, then lowest sector
-   and level index as a final deterministic tiebreak. A single
+   `(price_key, nonce, sector_idx, level_idx, flipped)`: best price
+   first, then oldest quote (lowest nonce) on equal-price ties, then
+   lowest sector and level index, and a level's own counter before its
+   flipped one, as a final deterministic tiebreak. A single
    `sort_by_key` over this materialized snapshot reproduces the spec's
    cross-vault price-time priority. A binary min-heap with `pop_min`
    was the originally-researched structure (see **Implementation notes**
    below), but at `N_LEVELS = 8` the whole book is at most
-   `max_vaults_per_market × 8` entries, so one sort of a flat `Vec` is
+   `max_vaults_per_market × 16` entries, so one sort of a flat `Vec` is
    simpler than maintaining heap order and carries no meaningful CU cost
    at this scale; the heap design is retained only as a rejected
    alternative.
@@ -2423,7 +2433,10 @@ On every taker instruction:
    Units depend on side:
    ask `level.size` is in base, bid `level.size` is in quote (see
    **LiquidityProfile → Flush**), so the min runs in whichever unit
-   the maker's leg is denominated in.
+   the maker's leg is denominated in. A flipped counter is denominated
+   like the side it rests on — an ask's `flip_size` is a bid's quote, a
+   bid's an ask's base — so below, `level.size` and `level.price` read
+   as the entry's counter and its price.
 
    - **Asks** (taker buying base):
      `fill_base = min(taker_unfilled_base, level.size, base_atoms)`;
@@ -2439,17 +2452,37 @@ On every taker instruction:
    vault holds, and the debit is the **gross** output leg — the taker
    fee is not left in the vault. (An entry with `vault_leg == 0` yields
    a zero fill; the loop moves on.) Decrement the taker's unfilled
-   amount, decrement the level's `Vault.remaining.<side>[i].size` by
-   the fill, and add the taker fee (from `market.taker_fee`) to the
+   amount, decrement the consumed counter by the gross output fill, and
+   add the taker fee (from `market.taker_fee`) to the
    output leg's `accrued_<leg>_fee_atoms` on the header — see **MarketHeader →
-   Fee model**. Because the `Vec`
+   Fee model**.
+
+   **Every fill flips.** The same level's *other* counter is credited
+   with exactly the input atoms inventory was credited, on every
+   partial fill. An ask fill of `dx` base for `dq` quote does
+   `size -= dx`, `flip_size += dq`; a fill of that flipped bid for
+   `dq'` quote does `flip_size -= dq'`, `size += dq' / flip_price`. A
+   partially filled level therefore quotes both sides at once. The
+   forward credit runs only while `flip_price` is matchable, so a
+   zero-spread level never flips; the reverse credit needs no gate,
+   since a flipped counter exists only where the forward one ran.
+   Neither credit is visible to the rest of the take — it lands on the
+   side this taker does not consume. Equal atoms move on both ledgers,
+   so a vault's resting allowance per leg never exceeds the inventory
+   backing it, and the unquoted remainder the flush left on each leg
+   never moves: what one direction can drain is bounded by the flush
+   allowance. A fill against a flipped counter emits an ordinary
+   `FillEvent` at `flip_price` on that level; the event format is
+   unchanged.
+
+   Because the `Vec`
    is sorted best-price-first, the first entry whose price crosses the
    taker's limit lets the walk `break` immediately — every later entry
    crosses too. Continue until the taker is filled, a level crosses
    the limit price, or the `Vec` is exhausted.
 
 1. **Tear down.** The `Vec` buffer is freed with the transaction;
-   debited inventory, `Vault.remaining.size` decrements, the cleared
+   debited inventory, the `size` and `flip_size` moves, the cleared
    `FLUSH_BIT` on any flushed vault, the `accrued_<leg>_fee_atoms` increments,
    and `market.nonce` persist to
    chain. Takers bump `market.nonce` per fill but never touch
@@ -2508,24 +2541,33 @@ known until the active-DLL walk finishes, and even a worst-case buffer
 would overflow the ~4 KiB SBPF stack frame. These constraints bound the
 design:
 
-- **Entry size.** Each collected entry (step 5 above) is ~32 B at
+- **Entry size.** Each collected entry (step 5 above) is ~40 B at
   8-byte alignment — the `price_key` (`u32`) plus the original `price`
   (kept for the fill math, so the sort reads the key and never decodes a
   `Price` twice), the masked `nonce` (`u64`), `sector_idx` / `level_idx`
-  (`u32` each), and `size` (`u64`).
-- **Capacity.** The book is bounded at `max_vaults_per_market × N_LEVELS`
-  entries. At the default cap (10 vaults × `N_LEVELS = 8` = 80 entries ×
-  ~32 B ≈ **2.5 KiB**) it sits comfortably inside the **32 KiB default
-  program heap** — no `RequestHeapFrame` is needed. Only a market
-  configured near the `u8` vault ceiling (255 × 8 × 32 B ≈ 64 KiB) would
-  exceed the default heap and need a frame request (8 CU per extra
-  32 KiB page).
+  (`u32` each), the `flipped` flag, and `size` (`u64`).
+- **Capacity.** A take reads two counters per level, so the book is
+  bounded at `2 × max_vaults_per_market × N_LEVELS` entries. At the
+  default cap (2 × 10 vaults × `N_LEVELS = 8` = 160 entries × ~40 B ≈
+  **6.4 KiB**) it fits the **32 KiB default program heap** on its own.
+  The book is the matcher's only heap structure sized by the market; the
+  rest is sized by the fill (see next).
+- **The fill, not the book, binds.** Each filled leg buffers a 208 B
+  `FillEvent` for `lib.rs` to emit, plus a rollback snapshot, and both
+  grow by doubling. That buffer exhausts the heap well before compute
+  runs out: on a fully flipped ten-vault book a single take completes
+  ten legs but not twenty, at roughly a tenth of the 1.4M-CU transaction
+  ceiling. The same ceiling held before flips existed, so it is a
+  property of per-leg event buffering, not of the doubled book.
+  `tests/flip.rs` measures it and pins the floor; the figures are
+  recorded on the reverse-orders issue rather than here, since they move
+  with every matcher change. `RequestHeapFrame` does not help without a
+  custom `#[global_allocator]` (see the research note below).
 - **Bump allocator, no reclaim.** The runtime's default allocator is a
   bump allocator whose `dealloc` is a no-op, so each `Vec` doubling
-  permanently leaks the old buffer for the rest of the instruction —
-  tolerable here only because the entry count is small and bounded. If
-  the book ever grew large, pre-size with
-  `Vec::with_capacity(vaults × N_LEVELS)` for one up-front allocation.
+  permanently leaks the old buffer for the rest of the instruction. The
+  book is therefore pre-sized to its bound in one allocation, and is
+  walked in place rather than copied.
 - **Tear-down is free.** The `Vec` is dropped when the VM tears down the
   entire heap region at instruction return — zero work, zero CU.
 
@@ -2554,7 +2596,8 @@ leader-vs-leader pre-pass.
 
 The take instruction accepts a `min_out: u64` for SDK
 composability. The matcher snapshots every touched sector's
-inventory + per-level `remaining.size` + `market.nonce` + both
+inventory + both counters (`size` and `flip_size`) of each touched
+level + `market.nonce` + both
 `accrued_<leg>_fee_atoms` counters before
 mutating, runs the full fill loop, then checks whether the
 achievable net output — after **both** the taker fee and the
@@ -2868,6 +2911,26 @@ For most operating regimes (1) suffices. (2) and (3) are levers for
 when the leader has a directional view or specifically wants to
 accelerate rebalancing past what pct-of-inventory provides on its
 own.
+
+### Passive persistence — the flip spread as the maker's fee
+
+A level with a non-zero `flip_spread_ppm` keeps quoting without the
+leader touching it. Every fill rests its proceeds on the opposite side
+of the same level, `flip_spread_ppm` back across the level's own price,
+so flow that runs through a level and back is served twice from one
+allowance. Nothing re-quotes between those fills: the book persists
+through a leader's silence for as long as the level's deadlines allow,
+and the next flush folds whatever has flipped back into inventory and
+re-ladders it by `size_bps`.
+
+The flip spread is what the maker charges for that round trip, and it
+accrues in the level itself rather than as a fee counter: a full cycle
+leaves an ask level holding `dx / (1 − r)` base where it gave up `dx`,
+and a bid level `dq × (1 + r)` quote where it gave up `dq` (both toward
+zero, with `r` the spread as a fraction), so each round trip grows the
+level by the captured spread — that growth is the earning. It shows up
+in depositor returns the same way any spread capture does, as `L` and
+VPS growth (see **APR / yield accounting**).
 
 ### APR / yield accounting
 
