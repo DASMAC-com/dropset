@@ -273,16 +273,24 @@ export const sortByVolumeDesc = <T extends { mint: string }>(
     return vb - va;
   });
 
-// Warm and keep-warm the Jupiter token-info cache for every supported
-// stablecoin. Mounts of /swap and /currencies both rely on this — keeping
-// the warm-on-mount + setInterval pattern in one place means a future
-// change (e.g. cancel on tab hidden) lands once, not at every consumer.
-export const useTokenInfoRefresh = (): void => {
+// Warm and keep-warm the Jupiter token-info cache for `mints`: the swap pair
+// on /swap, the whole catalogue on /currencies and in an open picker. The
+// keyless API rate-limits per IP, which a conference crowd shares, so the
+// swap page never refreshes mints it isn't showing. Ticks skip while the
+// tab is hidden.
+export const useTokenInfoRefresh = (mints: readonly string[]): void => {
+  // Keyed on the joined list so an inline array doesn't restart the timer.
+  const key = mints.join(",");
   useEffect(() => {
-    prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
+    const list = key ? key.split(",") : [];
+    prefetchAllTokenInfo(list);
     const id = window.setInterval(() => {
-      prefetchAllTokenInfo(ALL_STABLECOIN_MINTS);
+      if (document.visibilityState === "visible") prefetchAllTokenInfo(list);
     }, TOKEN_INFO_REFRESH_MS);
     return () => window.clearInterval(id);
-  }, []);
+  }, [key]);
 };
+
+// The whole catalogue, for the consumers that list it.
+export const useCatalogueInfoRefresh = (): void =>
+  useTokenInfoRefresh(ALL_STABLECOIN_MINTS);

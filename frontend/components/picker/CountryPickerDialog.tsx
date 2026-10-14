@@ -8,6 +8,7 @@ import { useSwapStore } from "@/lib/store";
 import { CurrencyGroupHeader } from "./CurrencyGroupHeader";
 import { PickerBalanceCell } from "./PickerBalanceCell";
 import { StableTokenIdentity } from "./StableTokenIdentity";
+import { WarmCatalogueInfo } from "./WarmCatalogueInfo";
 
 export type ClickContext = {
   countryName: string;
@@ -77,6 +78,7 @@ export function CountryPickerDialog({
               : ""
           }`}
         >
+          <WarmCatalogueInfo />
           <div className="flex items-center gap-2 border-border border-b px-3 py-2">
             <Dialog.Title className="min-w-0 flex-1 truncate text-foreground text-sm">
               {ctx?.countryName ?? ""}

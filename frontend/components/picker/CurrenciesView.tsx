@@ -33,9 +33,9 @@ import { flashBg, useFlashOnChanges } from "@/lib/hooks/useFlashOnChange";
 import {
   sortByVolumeDesc,
   type TokenInfo,
+  useCatalogueInfoRefresh,
   useInfoLookup,
   useTokenInfo,
-  useTokenInfoRefresh,
 } from "@/lib/hooks/useUsdQuote";
 import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useFlagColor } from "@/lib/ui/flagColor";
@@ -488,7 +488,7 @@ function CurrenciesInner() {
   // page is open. Cache writes call notify(), which re-renders every row via
   // `useSyncExternalStore`; <NumberFlow> animates the digits that actually
   // changed.
-  useTokenInfoRefresh();
+  useCatalogueInfoRefresh();
 
   // Mirror the current search into the URL — fuzzy mode writes `q`, strict
   // mode (set only by an initial `?symbol=` from the picker) writes `symbol`.

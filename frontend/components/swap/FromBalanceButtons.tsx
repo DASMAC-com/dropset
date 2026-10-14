@@ -17,7 +17,7 @@ export function FromBalanceButtons() {
   const { connected } = useWalletConnection();
   const mint = stablecoinMint(stablecoin);
   const decimals = stablecoinDecimals(stablecoin);
-  const { balanceFor, isReady } = useAllBalances();
+  const { balanceFor, isReady } = useAllBalances([mint]);
 
   const [open, setOpen] = useState(false);
 

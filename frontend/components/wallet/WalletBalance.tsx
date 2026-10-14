@@ -10,7 +10,7 @@ export function WalletBalance({ stablecoin }: { stablecoin: string }) {
   const { connected } = useWalletConnection();
   const mint = stablecoinMint(stablecoin);
   const decimals = stablecoinDecimals(stablecoin);
-  const { balanceFor, isReady, error } = useAllBalances();
+  const { balanceFor, isReady, error } = useAllBalances([mint]);
   const raw = balanceFor(mint);
 
   if (!connected) return null;

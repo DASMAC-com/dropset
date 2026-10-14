@@ -97,10 +97,9 @@ export function SwapPanel() {
     gotoSwap(from.stablecoin, to.stablecoin);
   });
 
-  // One batched Jupiter call on mount warms every stablecoin's USD price so
-  // switching tokens doesn't flash "$—" while a per-mint fetch resolves, then
-  // a 10 s interval keeps prices fresh while the page is open.
-  useTokenInfoRefresh();
+  // Keep the pair's USD prices fresh on a 10 s interval. Only the pair: the
+  // rest of the catalogue warms when a picker opens.
+  useTokenInfoRefresh([fromMint, toMint]);
 
   const isConnecting = status === "connecting";
   const hasAmount = Number(amount) > 0;
@@ -109,7 +108,7 @@ export function SwapPanel() {
     balanceFor,
     isReady: balancesReady,
     error: balancesError,
-  } = useAllBalances();
+  } = useAllBalances([fromMint, toMint]);
   // Balance fetch failed (e.g. RPC rejected the request). Without a known
   // balance, we can't safely run the insufficient-funds check — block the
   // swap entirely rather than let an under-funded tx fail at simulation.
