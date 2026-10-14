@@ -1173,7 +1173,7 @@ names alive was the outcome to avoid.
 | `task anthropic <n>` | same, when the work needs web research     | anthropic              | executor         |
 | `task resume [n]`    | resume by number (bare = the picker)       | as recorded            | re-pinned        |
 | `explore <n\|name>`  | research / audit, read-only, temp worktree | anthropic, always      | advisor          |
-| `plan [bedrock]`     | daily planning session                     | advisor's, or override | advisor          |
+| `plan [bedrock]`     | upkeep pass, then daily planning session   | advisor's, or override | advisor          |
 | `housekeeping`       | upkeep; also the 5-hour-window opener      | anthropic, always      | executor's model |
 | `architect <n> [b]`  | design thread, read-only, temp worktree    | advisor's, or override | advisor          |
 | `fleet [go]`         | batch resume                               | per-window             | re-pinned        |
@@ -1881,6 +1881,26 @@ drives the real zsh functions.
   `DS_PLAN_DATE` (the launch day) into the client, so the session's
   own tools still compute its id after midnight. A later bare `plan`
   resumes the day's latest cycle.
+
+  **It runs the upkeep pass before the client starts.** After the
+  AWS gate and before the cycle loop, `plan` resolves the session
+  secrets and runs `.claude/tools/upkeep.py run --if-stale` in the
+  operator's terminal: fast-forward, CLI upgrade, the prune of
+  completed or canceled issues' worktrees and the dismissal of their
+  notifications (both dry runs unless the runtime config exports
+  `DS_UPKEEP_ARMED=1`), the settings checks and the purge dry-run. A
+  hung step sits visibly in the terminal rather than inside a
+  session, and Ctrl-C there skips the pass rather than the launch;
+  the AWS gate runs first, so a refused login stops the morning
+  before anything else runs. The
+  report lands under the Planning document's upkeep heading, which
+  the bootstrap reads; the destructive items (allowlist cruft,
+  permission-refresh additions, the purge apply) wait for the
+  planning tab's one consolidated `AskUserQuestion`, so upkeep never
+  costs a tab visit. `--if-stale` makes a same-day reopen free — the
+  tool stamps only a run whose report reached the document — and a
+  cycle relaunch never repeats it. `DS_SKIP_UPKEEP=1` skips it; a
+  failed pass warns and the launch proceeds.
 
   Four things it makes deterministic, each of which used to be a
   manual step the operator could forget:

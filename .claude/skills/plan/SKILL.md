@@ -78,7 +78,8 @@ operator lever, never this mechanism.
   close-out rewrite keeps it. A bootstrap finding today's date
   there is **warm**: read the document, run `ListAgents`, surface
   the outstanding list — and skip the once-a-day duties (the meta
-  fold, the audit heartbeat, the parked counts, step 8). No stamp
+  fold, the audit heartbeat, the parked counts, the upkeep
+  report, step 8). No stamp
   means a full bootstrap.
 
 ## Steps
@@ -86,6 +87,26 @@ operator lever, never this mechanism.
 **1. Bootstrap, and surface the umbrellas unprompted.** Fetch the
 Planning document with `mcp__claude_ai_Linear__get_document` and
 read it first — it is the last session's handoff.
+
+**Say the upkeep report's highlights, with the parked counts.**
+The `plan` launcher ran `.claude/tools/upkeep.py` before this
+session started and spliced its report under the document's
+machine-written `Upkeep report` heading, so the fetch above holds
+it; never re-run the pass here. Say what was pruned and dismissed
+(or would have been, unarmed), each refusal (unpushed work, an
+open PR — reported, never retried), and any inert guard,
+dangling reference or file near its size cap. A run stamp
+older than today means the pass did not reach the document —
+say so. Its **destructive items**
+are operator-only and ride step 8's `AskUserQuestion`:
+
+- **allowlist cruft** — remove the approved entries from
+  `<base>/.claude/settings.local.json` with the Edit tool, then
+  an exit-code-only parse check;
+- **permission-refresh candidates**, when listed —
+  `allowlist.py add` per approved rule;
+- **the transcript-purge apply** — `/purge-conversations`, this
+  yes being its approval.
 
 Then read the board. **Which tier an issue sits in is the whole
 scoping signal:**
@@ -266,10 +287,6 @@ find** — an edge whose blocker is already closed, and an
 unblocked Urgent issue sitting behind one. Both are visible in
 this read, and invisible until something looks.
 
-The whole board read costs ~2–3k tokens, against ~3k for one
-field-change echo — narrowing the read buys judgment, not tokens;
-the token lever is batching writes (step 4).
-
 **2. Keep the Queue honest.** The Queue — the unblocked Backlog,
 which the operator calls **"Next"** — is the safe-to-start set:
 an implementation session pulls from it and runs to completion
@@ -309,10 +326,7 @@ python3 .claude/tools/board_batch.py edges --pairs <file>
 ```
 
 `--remove` retires one. **Rehearse with `--dry-run` first** — a
-wrong edge drops an issue out of the available set. The
-subcommand takes an explicit pair list, has no discovery mode and
-refuses an empty one: it executes a human decision, never derives
-one.
+wrong edge drops an issue out of the available set.
 
 Not edges: **file overlap** (a collision cluster — it costs a
 rebase, not an ordering); **coupling that belongs in one PR**
@@ -330,12 +344,8 @@ filing skill binds this session:
   field is **`text`**, not `content`, and the anchor must match the **stored**
   text.
 
-- **Fewest coherent PRs, each sized to a SHORT session** — never
-  across apps, languages or deploy units, and a coherent set
-  larger than a short session splits into sequential PRs of
-  roughly 4–5 findings. The `Claude:` class is bound too
-  (operator rule, 2026-09-11; `history.md`), so `merge-tasks`
-  warns on its oversized survivors as well.
+- **Fewest coherent PRs, each sized to a SHORT session**
+  (`CLAUDE.md`), the `Claude:` class included (`history.md`).
 
 - **State a scope posture when staging an issue** — **hold**
   (build what is specified), **expand** (under-scoped; here is
@@ -345,23 +355,13 @@ filing skill binds this session:
   whatever the filer wrote. It is one issue at staging time — the
   whether-to-build-it question is `architect`'s.
 
-- **Todo / Backlog split** — tracks in Todo, pullable work in
-  Backlog (step 1).
-
-- **`Claude:` prefix** on meta-work titles (every edited path
-  under `.claude/**`, `CLAUDE.md`, `docs/conventions/**` or
-  `cfg/**`). Each such filing lands **parked** (`Todo` plus
-  `Claude meta`) in the creating call; only a promoted batch goes
-  to Backlog.
-
-- **The `**Fingerprint**:` line is mandatory** — the dedup key,
-  its first token a **dotless domain token**, never a bare
-  `name.ext` (Linear linkifies it). It is the only structured
-  field. See `CLAUDE.md` → "Structured filing fields".
+- **The Todo / Backlog split** (step 1), **the `Claude:` prefix
+  with its parked landing**, and **the mandatory
+  `**Fingerprint**:` line** — as `CLAUDE.md` states them. **File
+  no relations**: overlap is step 1's prose, edges step 3's.
 
 - **Field-only writes go through the tool**, never `save_issue`,
-  which echoes the whole body for each (one session paid ≈40k for
-  17 field-only writes):
+  which echoes the whole body for each:
 
   ```sh
   python3 .claude/tools/board_batch.py fields --updates <file>
@@ -372,14 +372,9 @@ filing skill binds this session:
 
 - **Buffer folds onto one issue; write them once.** Each echo
   returns the whole body, so a survivor costs most exactly when
-  it is folded into most (one session: 97 `save_issue` calls,
-  ≈164k, its five costliest results all late folds onto one
-  survivor). Accumulate several folds and an amendment into a
+  it is folded into most. Accumulate several folds and an amendment into a
   **single** `patch` call (up to 50 ops). See
   `docs/conventions/linear-automation.md` → "Partial edits".
-
-- **File no relations.** Overlap is step 1's prose; edges are
-  step 3's.
 
 - **A re-scope reaches the whole body**, not one paragraph —
   re-read the sections it contradicts and amend them in the
@@ -479,6 +474,9 @@ log it exists to avoid. **Update the rows for whatever landed
 this cycle** — an audit issue pulled and completed sets its
 unit's date, count and pointer; one filed but unpulled changes
 nothing, since the row records what was audited, not scheduled.
+**Carry the upkeep report forward verbatim** — its heading
+through its `End of upkeep report.` line: the tool splices only
+between the two and refuses a section whose end line is gone.
 
 **7. Capture the session's token profile at close-out.** A
 planning session is a lever producer too. **Compute its id; never
@@ -513,7 +511,8 @@ nothing. This step is how planning absorbs them.
 
 **At bootstrap, a count and a prompt, never a listing** — "N
 audit findings are parked — slate any in?", asked with step 1's
-meta slate and kill list. On a yes:
+meta slate, kill list and upkeep items — the bootstrap's one
+consolidated question. On a yes:
 
 - List the milestone **field-selected** (title, priority).
 - **Select a parallelizable batch, using the collision

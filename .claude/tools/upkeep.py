@@ -5,7 +5,7 @@ composed from the committed helpers that skill drove one call at a time.
 
 Usage (from the base repo root; a worktree is refused):
 
-    python3 .claude/tools/upkeep.py run [--json] [--no-doc]
+    python3 .claude/tools/upkeep.py run [--json] [--no-doc] [--if-stale]
     python3 .claude/tools/upkeep.py ran-today
     python3 .claude/tools/upkeep.py prune [--apply] [--json]
 
@@ -33,7 +33,8 @@ refuses the whole pass, since every later step assumes it.
     whose unpushed-work gate still applies);
  7. dismiss the eligible PRs' notifications, one thread at a time (never
     mark-all);
- 8. convention-reference check, hook-wiring check, allowlist cruft, and the
+ 8. convention-reference check, hook-wiring check, the skill-size watch line
+    (``skill_size --utilization``), allowlist cruft, and the
     monthly refresh gate — mining recent transcripts when due and stamping the
     marker whatever the yield, writing no allow-rule;
  9. the memory scan gate, then the memory audit when due;
@@ -51,7 +52,9 @@ prints to stdout (the standalone interface, and the fallback when Linear is
 unreachable); ``--json`` prints the structured twin instead. A local stamp beside
 the allowlist refresh marker answers ``ran-today`` with no network read; it is
 written only when the report reached the document, so a ``--no-doc`` preview or
-a failed write never answers it. A refused splice (heading repeated, end line
+a failed write never answers it. ``run --if-stale`` consults that stamp first
+and skips the pass when it already answers yes — the form the ``plan`` launcher
+calls, so a same-day relaunch costs no second pass. A refused splice (heading repeated, end line
 gone) is permanent until the section is fixed by hand, and shows in the document
 as a stale run timestamp.
 
@@ -524,6 +527,20 @@ def step_checks(ctx: Ctx) -> None:
         )
         ctx.record("hook-wiring", f"{len(inert)} inert guard(s)", inert=inert)
 
+    # Exit 1 is the watch line being crossed, a finding rather than a failure —
+    # but only when the tool printed the rows that say so; an exit 1 with no
+    # flagged row is a broken run, and must not read as "nothing near".
+    rc, out, err = ctx.tool("skill_size.py", "--utilization")
+    near = [ln[1:].strip() for ln in out.splitlines() if ln.startswith("!")]
+    if rc == 0 or (rc == 1 and near):
+        ctx.record(
+            "skill-size",
+            f"{len(near)} resident file(s) near their byte limit",
+            near=near,
+        )
+    else:
+        ctx.record("skill-size", f"skill-size check failed: {first_line(err)}", False)
+
     cruft = _json_tool(ctx, "allowlist", "allowlist.py", "cruft")
     if cruft is not None:
         ctx.record(
@@ -677,6 +694,7 @@ def defang(text: str) -> str:
 
 
 LIST_KEYS = (
+    "near",
     "flags",
     "skipped",
     "unmatched",
@@ -826,6 +844,11 @@ def run(argv: list[str]) -> int:
     p_run.add_argument(
         "--no-doc", action="store_true", help="skip the Planning document write"
     )
+    p_run.add_argument(
+        "--if-stale",
+        action="store_true",
+        help="skip the pass when today's run is already stamped",
+    )
     sub.add_parser("ran-today", help="did a pass run today? (no network read)")
     p_prune = sub.add_parser(
         "prune",
@@ -849,6 +872,11 @@ def run(argv: list[str]) -> int:
     if args.cmd == "ran-today":
         print(json.dumps(ran_today(stamp_path(base), now)))
         return 0
+    if args.cmd == "run" and args.if_stale:
+        seen = ran_today(stamp_path(base), now)
+        if seen["ran_today"]:
+            print(f"upkeep: already ran today ({seen['last_run']}); skipped")
+            return 0
 
     if args.cmd == "prune":
         # Armed by the flag, not the environment: the caller is the

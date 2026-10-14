@@ -38,6 +38,7 @@ _DS_REPO="$REPO" _DS_SUBSTRATE_DIR="$STATE"
 _ds_tier() { print -r -- model; print -r -- anthropic }
 _ds_substrate_enter() { : }
 _ds_aws_login() { : }
+_ds_upkeep() { print -r -- upkeep >> "$STATE/upkeep-calls" }
 if [[ -n "$MIDNIGHT" ]]; then
   # The clock rolls from the 10th to the 11th once the first client exits.
   date() {
@@ -107,6 +108,12 @@ class CycleLoop(unittest.TestCase):
         self.assertEqual(len(self._launches()), 1)
         self.assertFalse((self.state / f"plan-cycle-{self.day}").exists())
 
+    def test_upkeep_runs_once_before_the_loop_not_per_cycle(self):
+        self.assertEqual(self._plan(cycles=2).returncode, 0)
+        self.assertEqual(len(self._launches()), 3)
+        upkeep = (self.state / "upkeep-calls").read_text().splitlines()
+        self.assertEqual(upkeep, ["upkeep"])
+
     def test_a_cycle_relaunches_under_a_fresh_id_and_the_same_name(self):
         result = self._plan(cycles=1)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -153,6 +160,63 @@ class CycleLoop(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("not cycling", result.stderr)
         self.assertEqual(len(self._launches()), 1)
+
+
+#: The real `_ds_upkeep`, with `python3` and the secrets fetch stubbed: the
+#: helper must return 0 whatever the pass does, and skip it on the off switch.
+_UPKEEP_SCRIPT = """
+source "$INIT" 2>/dev/null
+_DS_REPO="$REPO"
+_ds_secrets() { : }
+python3() {
+  print -r -- "$*" >> "$CALLS"
+  # A Ctrl-C reaches the whole foreground group; signal the shell as a tty would.
+  [[ -n "$INTERRUPT" ]] && { kill -INT $$; return 130 }
+  return ${PASS_RC:-0}
+}
+_ds_upkeep
+"""
+
+
+@unittest.skipUnless(ZSH, _NEEDS_ZSH)
+class UpkeepHelper(unittest.TestCase):
+    def _upkeep(self, **extra: str) -> tuple[subprocess.CompletedProcess, str]:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        calls = Path(tmp.name) / "calls"
+        calls.touch()
+        env = {k: v for k, v in os.environ.items() if k != "DS_SKIP_UPKEEP"}
+        env |= {"INIT": str(INIT), "REPO": str(REPO), "CALLS": str(calls), **extra}
+        proc = subprocess.run(
+            [ZSH, "-c", _UPKEEP_SCRIPT],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        return proc, calls.read_text()
+
+    def test_runs_the_pass_with_the_stamp_gate(self):
+        proc, calls = self._upkeep()
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("upkeep.py run --if-stale", calls)
+
+    def test_a_failed_pass_warns_and_still_returns_zero(self):
+        proc, _ = self._upkeep(PASS_RC="3")
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("failed (exit 3)", proc.stderr)
+
+    def test_ctrl_c_skips_the_pass_and_still_returns_zero(self):
+        proc, _ = self._upkeep(INTERRUPT="1")
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("upkeep interrupted", proc.stderr)
+        self.assertNotIn("failed", proc.stderr)
+
+    def test_the_off_switch_runs_nothing(self):
+        proc, calls = self._upkeep(DS_SKIP_UPKEEP="1")
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(calls, "")
+        self.assertIn("DS_SKIP_UPKEEP=1", proc.stderr)
 
 
 if __name__ == "__main__":

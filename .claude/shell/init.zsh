@@ -1,5 +1,7 @@
 #!/usr/bin/env zsh
 # cspell:word subshell
+# cspell:word localoptions
+# cspell:word localtraps
 #
 # Dropset session helpers — source this from ~/.zshrc:
 #
@@ -1404,6 +1406,48 @@ explore() {
     "$model" "$(_ds_launch_dir "$tag")"
 }
 
+# Internal: the model-free morning upkeep pass (.claude/tools/upkeep.py), run in
+# the operator's terminal before a planning client starts, so a hung step is
+# visible here rather than buried in a session. The tool writes the Planning
+# document's upkeep heading, which the bootstrap reads; destructive items wait
+# for the planning tab's one consolidated question.
+#
+# Secrets first: the pass reads the board and the PR set. `--if-stale` makes a
+# same-day reopen free — the tool's own stamp answers "ran today", and it stamps
+# only a run whose report reached the document. DS_SKIP_UPKEEP=1 is the off
+# switch. A failure WARNS and the launch proceeds: upkeep is best-effort, and a
+# planning session must never be held hostage to it.
+#
+# The local INT trap is what makes Ctrl-C on a hung step mean "skip upkeep"
+# rather than "abort plan": without it interactive zsh abandons the calling
+# function when a foreground child dies by SIGINT, and since an interrupted
+# pass writes no stamp, every retry would hang on the same step. The child
+# still receives the signal — a trap, unlike an ignore, is reset across exec.
+_ds_upkeep() {
+  setopt localoptions localtraps
+  local rc interrupted=''
+  if [[ "$DS_SKIP_UPKEEP" == 1 ]]; then
+    print -u2 'dropset: DS_SKIP_UPKEEP=1 — skipping the upkeep pass.'
+    return 0
+  fi
+  if ! cd "$_DS_REPO"; then
+    print -u2 'dropset: no base checkout to run the upkeep pass in — skipping.'
+    return 0
+  fi
+  # Before the secrets fetch, so a hung `op read` is covered too.
+  trap 'interrupted=1' INT
+  _ds_secrets
+  python3 "$_DS_REPO/.claude/tools/upkeep.py" run --if-stale
+  rc=$?
+  if [[ -n "$interrupted" ]]; then
+    print -u2 'dropset: upkeep interrupted — launching anyway.'
+  elif (( rc != 0 )); then
+    print -u2 "dropset: the upkeep pass failed (exit $rc) — launching anyway;" \
+      'DS_SKIP_UPKEEP=1 skips it.'
+  fi
+  return 0
+}
+
 # Start OR resume today's PLANNING session. The name is derived from the date.
 #
 #   plan             the advisor tier on its configured substrate (anthropic)
@@ -1443,6 +1487,10 @@ explore() {
 #
 # `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not `plan-05`.
 #
+# THE UPKEEP PASS runs next, BEFORE the client starts — see `_ds_upkeep`. It sits
+# after the AWS gate so a refused login stops the morning at this terminal before
+# anything else runs, and outside the cycle loop so a relaunch never repeats it.
+#
 # THE CYCLE LOOP. A planning session that cycles (the `plan` skill's "Cycling")
 # closes out, writes `plan-cycle-pending` beside the substrate markers and ends
 # its own client; this loop sees the marker and relaunches IN THIS TAB — no tab
@@ -1471,6 +1519,7 @@ plan() {
     _ds_substrate_unset
     return 1
   fi
+  _ds_upkeep
   day="$(date +%Y%m%d)" name="plan-$(date +%-d)"
   counter="$_DS_SUBSTRATE_DIR/plan-cycle-$day"
   while true; do

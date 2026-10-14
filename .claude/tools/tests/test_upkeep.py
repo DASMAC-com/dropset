@@ -390,6 +390,34 @@ class PassTests(unittest.TestCase):
         self.assertIn("purge", names)
         self.assertIn("memory", names)
 
+    def _skill_size_step(self, rc, out):
+        base_run = FakeRun()
+
+        def run(cmd, timeout, cwd=None):
+            if len(cmd) > 1 and Path(cmd[1]).name == "skill_size.py":
+                return rc, out, ""
+            return base_run(cmd, timeout, cwd)
+
+        ctx = make_ctx(run)
+        run_pass(ctx)
+        return next(s for s in ctx.steps if s["step"] == "skill-size")
+
+    def test_skill_size_lists_only_the_subjects_past_the_watch_line(self):
+        out = (
+            "!  96.2%     30,784 /    32,000  skills/plan/SKILL.md\n"
+            "   75.0%     24,000 /    32,000  CLAUDE.md\n"
+        )
+        step = self._skill_size_step(1, out)
+        self.assertTrue(step["ok"])
+        self.assertEqual(
+            step["near"], ["96.2%     30,784 /    32,000  skills/plan/SKILL.md"]
+        )
+
+    def test_a_skill_size_exit_one_with_no_flagged_row_is_a_failure(self):
+        step = self._skill_size_step(1, "")
+        self.assertFalse(step["ok"])
+        self.assertIn("failed", step["line"])
+
     def test_cruft_and_memory_lines_count_findings_not_totals(self):
         base_run = FakeRun()
 
@@ -605,6 +633,57 @@ class CliTests(unittest.TestCase):
                 upkeep.run(["upkeep.py", "run"])
             self.assertIn("planning document: not written: Linear down", out.getvalue())
             self.assertFalse(upkeep.stamp_path(base).exists())
+
+    def test_if_stale_skips_a_pass_already_stamped_today(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            upkeep.check_base = lambda run, cwd: (base, [], "")
+            upkeep.run_pass = lambda ctx: self.fail("a stamped day ran again")
+            upkeep.write_stamp(base, datetime.now(timezone.utc), False)
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(upkeep.run(["upkeep.py", "run", "--if-stale"]), 0)
+            self.assertIn("already ran today", out.getvalue())
+
+    def test_prune_ignores_the_run_only_stamp_gate(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            upkeep.check_base = lambda run, cwd: (base, [], "")
+            upkeep.write_stamp(base, datetime.now(timezone.utc), False)
+            seen = []
+            upkeep.run_pass = lambda ctx, only=None: (
+                seen.append(only)
+                or {
+                    "ran_at": "t",
+                    "armed": False,
+                    "steps": [],
+                }
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(upkeep.run(["upkeep.py", "prune"]), 0)
+            self.assertEqual(seen, [upkeep.PRUNE_STEPS])
+
+    def test_if_stale_runs_a_pass_whose_stamp_is_from_another_day(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            upkeep.check_base = lambda run, cwd: (base, [], "")
+            ran = []
+            upkeep.run_pass = lambda ctx: (
+                ran.append(1)
+                or {
+                    "ran_at": "t",
+                    "armed": False,
+                    "steps": [],
+                }
+            )
+            upkeep.write_report = lambda report: None
+            old = datetime.now(timezone.utc) - timedelta(days=2)
+            upkeep.write_stamp(base, old, False)
+            with contextlib.redirect_stdout(io.StringIO()):
+                upkeep.run(["upkeep.py", "run", "--if-stale"])
+            self.assertEqual(ran, [1])
 
 
 if __name__ == "__main__":
