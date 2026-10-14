@@ -529,7 +529,7 @@ _ds_session() {
     return 1
   fi
 
-  local wt_dir
+  local wt_dir wt_slug
   local -a worktree_flag prompt_arg found
   [[ -n "$worktree" ]] && worktree_flag=(-w "$worktree")
   # An ARRAY rather than a bare "$prompt", so a verb with no bootstrap skill to
@@ -548,9 +548,14 @@ _ds_session() {
     # The project slug replaces every `/` and `.` in the cwd with `-` — the
     # rule resolve_session.py's `slugify` encodes. `$PWD` is the base checkout
     # here (`_ds_base`), so this is the worktree path Claude Code slugged.
+    # Every hit is tested, not the first: a session once resumed from inside
+    # its worktree can have a copy under BOTH slugs, and glob order is not a
+    # contract. `(I)` matches per element; a quoted `(M)…:#` would match the
+    # JOINED array as one string and miss whenever the base copy sorts last.
     [[ -n "$worktree" ]] && wt_dir="$PWD/.claude/worktrees/$worktree"
+    wt_slug="${wt_dir//[\/.]/-}"
     if [[ -n "$wt_dir" && -d "$wt_dir" \
-      && "${found[1]:h:t}" == "${wt_dir//[\/.]/-}" ]]; then
+      && ${found[(I)*/$wt_slug/$sid.jsonl]} -gt 0 ]]; then
       cd "$wt_dir" || return 1
     fi
     # A resume passes no `-w`, so a worktree that has since been pruned is NOT
@@ -825,7 +830,8 @@ _ds_substrate_enter() {
 # model rather than the executor's — which is the next function.
 #
 # An optional $3 tier (`advisor`) is written to `<key>.tier`; omitting it
-# removes any such file, so the last launch on a key decides its resume tier.
+# removes any such file, so the last launch that writes the marker decides
+# its resume tier.
 _ds_substrate_write() {
   local key="$1" substrate="$2" tier="$3"
   mkdir -p "$_DS_SUBSTRATE_DIR" 2>/dev/null || return 0
@@ -1386,6 +1392,12 @@ explore() {
   # correct for a seat-only verb. An intermediate revision did write it, to make
   # a comment's "the substrate marker records it" claim true; the honest fix was
   # to correct the claim instead.
+  #
+  # One residue: `architect <n>` DOES write a marker (with an advisor `.tier`),
+  # so an `explore <n>` on a number an architect thread already holds inherits
+  # that thread's substrate on `task resume <n>`. The two would share one
+  # worktree anyway, and `task resume` reaches one session per worktree, so it
+  # is accepted rather than coded around.
   _ds_session "$(_ds_topic_sid explore "$raw")" "$name" "$prompt" \
     "$model" "$(_ds_launch_dir "$tag")"
 }

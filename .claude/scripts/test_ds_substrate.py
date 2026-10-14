@@ -401,6 +401,27 @@ class VerbLaunch(SubstrateHarness):
         self.assertIn(f"/worktrees/ceo-12 ARGS=--resume {sid}", out, result.stderr)
         self.assertNotIn("/architect", out)
 
+    _CWD_STUB = 'claude() { print -r -- "CWD=$PWD ARGS=$*"; }; cd "$_DS_REPO"; '
+
+    def test_a_copy_under_both_slugs_still_resumes_from_the_worktree(self):
+        # The base slug sorts first, so testing only the first glob hit would
+        # resume a once-resumed-inside session from the base checkout.
+        (self.repo / ".claude" / "worktrees" / "ceo-12").mkdir(parents=True)
+        result, out = self._launch(
+            self._CWD_STUB + 'wt="$PWD/.claude/worktrees/ceo-12"; '
+            f"{self._transcript('PWD')}{self._transcript('wt')}architect 12"
+        )
+        self.assertIn("/worktrees/ceo-12 ARGS=--resume", out, result.stderr)
+
+    def test_a_base_slug_copy_beside_a_live_worktree_stays_in_the_base(self):
+        (self.repo / ".claude" / "worktrees" / "ceo-12").mkdir(parents=True)
+        result, out = self._launch(
+            self._CWD_STUB + f"{self._transcript('PWD')}architect 12"
+        )
+        line = next(ln for ln in out.splitlines() if ln.startswith("CWD="))
+        self.assertNotIn("/worktrees/", line, result.stderr)
+        self.assertIn("ARGS=--resume", line)
+
     def test_architect_refuses_a_topic_and_zero(self):
         for verb in ("architect pricing", "architect 0"):
             with self.subTest(verb=verb):
