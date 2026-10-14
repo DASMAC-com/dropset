@@ -1111,7 +1111,7 @@ names alive was the outcome to avoid.
 | `task anthropic <n>` | same, when the work needs web research     | anthropic              | executor         |
 | `task resume [n]`    | resume by number (bare = the picker)       | as recorded            | re-pinned        |
 | `explore <n\|name>`  | research / audit, read-only, temp worktree | anthropic, always      | advisor          |
-| `plan [bedrock]`     | daily planning session                     | advisor's, or override | advisor          |
+| `plan [bedrock]`     | upkeep pass, then daily planning session   | advisor's, or override | advisor          |
 | `housekeeping`       | upkeep; also the 5-hour-window opener      | anthropic, always      | executor's model |
 | `architect <n> [b]`  | design thread, read-only, temp worktree    | advisor's, or override | advisor          |
 | `fleet [go]`         | batch resume                               | per-window             | re-pinned        |
