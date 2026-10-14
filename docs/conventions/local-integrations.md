@@ -1819,10 +1819,13 @@ drives the real zsh functions.
   AWS gate and before the cycle loop, `plan` resolves the session
   secrets and runs `.claude/tools/upkeep.py run --if-stale` in the
   operator's terminal: fast-forward, CLI upgrade, the prune of
-  completed or canceled issues' worktrees, notification dismissal,
-  the settings checks and the purge dry-run. A hung step sits
-  visibly in the terminal rather than inside a session, and a failed
-  login stops the morning there, before anything is dispatched. The
+  completed or canceled issues' worktrees and the dismissal of their
+  notifications (both dry runs unless the runtime config exports
+  `DS_UPKEEP_ARMED=1`), the settings checks and the purge dry-run. A
+  hung step sits visibly in the terminal rather than inside a
+  session, and Ctrl-C there skips the pass rather than the launch;
+  the AWS gate runs first, so a refused login stops the morning
+  before anything else runs. The
   report lands under the Planning document's upkeep heading, which
   the bootstrap reads; the destructive items (allowlist cruft,
   permission-refresh additions, the purge apply) wait for the

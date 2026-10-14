@@ -1,5 +1,7 @@
 #!/usr/bin/env zsh
 # cspell:word subshell
+# cspell:word localoptions
+# cspell:word localtraps
 #
 # Dropset session helpers — source this from ~/.zshrc:
 #
@@ -1382,15 +1384,27 @@ explore() {
 # only a run whose report reached the document. DS_SKIP_UPKEEP=1 is the off
 # switch. A failure WARNS and the launch proceeds: upkeep is best-effort, and a
 # planning session must never be held hostage to it.
+#
+# The local INT trap is what makes Ctrl-C on a hung step mean "skip upkeep"
+# rather than "abort plan": without it interactive zsh abandons the calling
+# function when a foreground child dies by SIGINT, and since an interrupted
+# pass writes no stamp, every retry would hang on the same step. The child
+# still receives the signal — a trap, unlike an ignore, is reset across exec.
 _ds_upkeep() {
+  setopt localoptions localtraps
   if [[ "$DS_SKIP_UPKEEP" == 1 ]]; then
     print -u2 'dropset: DS_SKIP_UPKEEP=1 — skipping the upkeep pass.'
     return 0
   fi
-  cd "$_DS_REPO" || return 0
+  if ! cd "$_DS_REPO"; then
+    print -u2 'dropset: no base checkout to run the upkeep pass in — skipping.'
+    return 0
+  fi
   _ds_secrets
+  trap 'print -u2 "dropset: upkeep interrupted — launching anyway."' INT
   python3 "$_DS_REPO/.claude/tools/upkeep.py" run --if-stale ||
-    print -u2 "dropset: the upkeep pass failed (exit $?) — launching anyway."
+    print -u2 "dropset: the upkeep pass failed (exit $?) — launching anyway;" \
+      'DS_SKIP_UPKEEP=1 skips it.'
   return 0
 }
 

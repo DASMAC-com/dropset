@@ -357,7 +357,8 @@ filing skill binds this session:
 
 - **The Todo / Backlog split** (step 1), **the `Claude:` prefix
   with its parked landing**, and **the mandatory
-  `**Fingerprint**:` line** — as `CLAUDE.md` states them.
+  `**Fingerprint**:` line** — as `CLAUDE.md` states them. **File
+  no relations**: overlap is step 1's prose, edges step 3's.
 
 - **Field-only writes go through the tool**, never `save_issue`,
   which echoes the whole body for each:
