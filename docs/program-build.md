@@ -26,11 +26,13 @@ recipe that produced them, so nobody has to re-measure them.
 - **The gate that flip satisfies** is SIMD-0500: a validator refuses to
   deploy, upgrade or finalize any ELF older than sBPF v3. It is listed for
   Agave 4.4.
-- **Before this pin**, the CLI was built from anchor-next at a git rev.
-  Both anchor-next and the 2.0 branch at rc.2 hard-code
+- **Before this pin**, CI built the CLI from anchor-next at rev `2a191379`
+  (June 3). Both anchor-next and the 2.0 branch at rc.2 hard-code
   `--tools-version v1.52` and never pass `--arch`, so they can only build v0.
-  The program crate is unaffected: it stays on `anchor-lang-v2` from
-  anchor-next, pinned by the lockfile.
+  The Anchor maintainer confirmed by 2026-10-13 that the stable v1 CLI
+  releases are the ones to use, v2 programs included. The program crate is
+  unaffected: it stays on `anchor-lang-v2` from anchor-next, which the
+  lockfile pins at `e056cc17` (June 23).
 
 ## Reading an ELF
 
