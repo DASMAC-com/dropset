@@ -27,7 +27,7 @@
 //!   unattended runs).
 
 use anyhow::{anyhow, bail, Result};
-use dropset_tui::cluster;
+use dropset_tui::cluster::{self, Cluster};
 use dropset_tui::job::Logger;
 use dropset_tui::{chain, teardown, validator, wallet};
 use solana_signer::Signer;
@@ -63,8 +63,17 @@ fn main() -> Result<()> {
         confirm(&rpc_url, &keypair.pubkey().to_string())?;
     }
 
+    // The program id is per cluster, and the chain says which one this is:
+    // closing against the localnet id on mainnet would sign for whatever
+    // program sits at that publicly-keyed address.
+    let target = if chain::genesis_hash(&client)? == cluster::MAINNET_GENESIS_HASH {
+        Cluster::Mainnet
+    } else {
+        Cluster::Localnet
+    };
+
     let log = Logger::stdout();
-    let summary = teardown::run(&client, &keypair, &log)?;
+    let summary = teardown::run(&client, target, &keypair, &log)?;
     println!("{summary}");
     Ok(())
 }

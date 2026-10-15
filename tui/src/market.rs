@@ -274,7 +274,7 @@ pub fn roster_markets(repo_root: &Path, cluster: Cluster) -> Vec<Pubkey> {
     roster(cluster)
         .iter()
         .filter_map(|c| pair_mints(repo_root, c).ok())
-        .map(|(base, quote)| chain::market_pda(&base, &quote))
+        .map(|(base, quote)| chain::market_pda(cluster, &base, &quote))
         .collect()
 }
 
@@ -570,6 +570,7 @@ pub enum Funding {
 #[allow(clippy::too_many_arguments)]
 pub fn seed_vault(
     client: &RpcClient,
+    cluster: Cluster,
     wallet: &Keypair,
     leader: &Keypair,
     config: &PairConfig,
@@ -621,7 +622,10 @@ pub fn seed_vault(
         &ladder_at_spread_bps(DEFAULT_SPREAD_BPS),
         config.expiry_offset_secs,
     );
-    let ix = set_liquidity_profile_ix(leader.pubkey(), market.address, vault_idx, bytes);
+    let ix = chain::retarget(
+        cluster,
+        set_liquidity_profile_ix(leader.pubkey(), market.address, vault_idx, bytes),
+    );
     chain::send_logged(
         client,
         wallet,
@@ -657,6 +661,7 @@ pub fn seed_vault(
         base_atoms, config.base.symbol, quote_atoms, config.quote.symbol
     ));
     let ix = chain::build_deposit_leader_ix(
+        cluster,
         &leader.pubkey(),
         &market.address,
         &market.base_mint,

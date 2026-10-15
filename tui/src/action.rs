@@ -623,7 +623,7 @@ pub fn dispatch(
         }
         Action::Publish => {
             job::spawn_recorded(tx, "Publish", record, move |log| {
-                let artifact = publish::Artifact::load(&repo_root)?;
+                let artifact = publish::Artifact::load(&repo_root, cluster)?;
                 log.log(format!(
                     "binary sha256 {} at commit {}",
                     artifact.sha256, artifact.head.commit
@@ -798,11 +798,11 @@ pub fn dispatch(
         Action::Teardown => {
             job::spawn(tx, "Teardown", move |log| {
                 let client = chain::rpc(&rpc_url);
-                teardown::run(&client, &wallet, log)
+                teardown::run(&client, cluster, &wallet, log)
             });
         }
         Action::OpenExplorer => {
-            let targets = explorer_targets(state, selected);
+            let targets = explorer_targets(state, cluster, selected);
             job::spawn(tx, "Open explorer", move |log| {
                 // Mainnet short-circuits before the Docker block, and both
                 // halves of that matter. The managed container indexes the
@@ -972,7 +972,7 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
     let mut work = 0usize;
     match action {
         Action::Publish => {
-            let artifact = publish::Artifact::load(&ctx.repo_root)?;
+            let artifact = publish::Artifact::load(&ctx.repo_root, ctx.cluster)?;
             let program_key = ctx.program_key.as_ref().map(Keypair::pubkey);
             let plan = publish::plan(
                 &publish::client(&ctx.rpc_url),
@@ -1000,13 +1000,16 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
             lines.insert(0, format!("rent returns to the admin {admin}"));
         }
         Action::InitRegistry => {
-            if accounts::registry_fresh(&client)?.is_some() {
+            if accounts::registry_fresh(&client, ctx.cluster)?.is_some() {
                 anyhow::bail!("the registry is already initialized");
             }
             // Mainnet-only, like every ceremony prompt: localnet mints a mock.
             let fee_mint = format!("{} (USDC)", market::MAINNET_USDC);
             let fee = chain::create_fee_atoms(ctx.cluster);
-            lines.push(format!("registry:      {}", chain::registry_pda()));
+            lines.push(format!(
+                "registry:      {}",
+                chain::registry_pda(ctx.cluster)
+            ));
             lines.push(format!(
                 "genesis admin: {admin} (must be the upgrade authority)"
             ));
@@ -1020,7 +1023,7 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
         Action::CreateMarket => {
             for config in roster {
                 let (base, quote) = market::pair_mints(&ctx.repo_root, config)?;
-                let address = chain::market_pda(&base, &quote);
+                let address = chain::market_pda(ctx.cluster, &base, &quote);
                 let exists = chain::fetch_fresh(&client, &address, "market")?.is_some();
                 lines.push(format!(
                     "{}: market {address} — {}",
@@ -1038,10 +1041,11 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
                 let symbol = config.base.symbol;
                 let leader = market::leader(&ctx.repo_root, config, ctx.leader.as_ref())?.pubkey();
                 let (base, quote) = market::pair_mints(&ctx.repo_root, config)?;
-                let address = chain::market_pda(&base, &quote);
+                let address = chain::market_pda(ctx.cluster, &base, &quote);
                 // A missing market or vault is refused here because the step
                 // itself errors on it, stopping the roster pass part-way.
-                let Some(seats) = accounts::vault_seats_fresh(&client, &address)? else {
+                let Some(seats) = accounts::vault_seats_fresh(&client, ctx.cluster, &address)?
+                else {
                     anyhow::bail!("{symbol}: no market yet — create the markets first");
                 };
                 let line = match (action, deposit_seat(&seats, &leader)) {
@@ -1137,13 +1141,18 @@ fn do_repeg(
     // A re-peg is a fresh quote, so it re-stamps the wall-clock datum too
     // — otherwise the new price would inherit the old quote's remaining
     // level life.
-    let ix = set_reference_price_ix(
-        leader.pubkey(),
-        market,
-        vault_idx,
-        price,
-        slot,
-        dropset_sdk::time::now_unix(),
+    // Localnet only, like `do_reshape`: the cluster gate keeps the eCLOB
+    // controls off mainnet.
+    let ix = chain::retarget(
+        Cluster::Localnet,
+        set_reference_price_ix(
+            leader.pubkey(),
+            market,
+            vault_idx,
+            price,
+            slot,
+            dropset_sdk::time::now_unix(),
+        ),
     );
     chain::send_logged(
         client,
@@ -1234,7 +1243,10 @@ fn do_reshape(
         ),
         other => unreachable!("do_reshape received a non-reshape action: {other:?}"),
     };
-    let ix = set_liquidity_profile_ix(leader.pubkey(), market, vault_idx, bytes);
+    let ix = chain::retarget(
+        Cluster::Localnet,
+        set_liquidity_profile_ix(leader.pubkey(), market, vault_idx, bytes),
+    );
     chain::send_logged(
         client,
         wallet,
@@ -1250,8 +1262,12 @@ fn do_reshape(
 
 /// `(label, address)` pairs to open in the explorer for the current state —
 /// the program, the registry, and the *selected* market's accounts.
-fn explorer_targets(state: &ChainState, selected: usize) -> Vec<(&'static str, Pubkey)> {
-    let mut targets = vec![("program", dropset_sdk::DROPSET_ID)];
+fn explorer_targets(
+    state: &ChainState,
+    cluster: Cluster,
+    selected: usize,
+) -> Vec<(&'static str, Pubkey)> {
+    let mut targets = vec![("program", cluster.program_id())];
     if let Some(reg) = &state.registry {
         targets.push(("registry", reg.address));
         targets.push(("registry fee vault", reg.fee_vault));
@@ -1444,7 +1460,7 @@ pub(crate) fn do_init(
     cluster: Cluster,
     log: &Logger,
 ) -> Result<Outcome> {
-    if accounts::registry_fresh(client)?.is_some() {
+    if accounts::registry_fresh(client, cluster)?.is_some() {
         return Ok(Outcome::AlreadyThere(
             "the registry is already initialized".into(),
         ));
@@ -1460,11 +1476,11 @@ pub(crate) fn do_init(
     log.log(format!("fee mint: {fee_mint}"));
     let fee_atoms = chain::create_fee_atoms(cluster);
     log.log(format!("create fee: {fee_atoms} atoms"));
-    let ix = chain::build_init_ix(&wallet.pubkey(), &fee_mint, fee_atoms);
+    let ix = chain::build_init_ix(cluster, &wallet.pubkey(), &fee_mint, fee_atoms);
     // Trailing rent top-up for the registry PDA — see RENT_TOPUP_LAMPORTS.
     let topup = chain::system_transfer_ix(
         &wallet.pubkey(),
-        &chain::registry_pda(),
+        &chain::registry_pda(cluster),
         chain::RENT_TOPUP_LAMPORTS,
     );
     chain::send_logged(client, wallet, &[wallet], &[ix, topup], "init", log)
@@ -1473,8 +1489,8 @@ pub(crate) fn do_init(
     // Read the registry back: the record states what the chain holds. The
     // genesis admin needs no read — `init` itself refuses a payer that is not
     // the upgrade authority, and names the payer as admin.
-    let registry =
-        accounts::registry_fresh(client)?.context("the registry is not readable after init")?;
+    let registry = accounts::registry_fresh(client, cluster)?
+        .context("the registry is not readable after init")?;
     if registry.fee_mint != fee_mint || registry.fee_atoms != fee_atoms {
         anyhow::bail!(
             "the registry holds fee {} atoms of {}, not the {fee_atoms} of {fee_mint} sent",
@@ -1508,9 +1524,10 @@ pub(crate) fn do_create_market(
     config: &PairConfig,
     log: &Logger,
 ) -> Result<Outcome> {
-    let registry = accounts::registry_fresh(client)?.context("registry not found — init first")?;
+    let registry =
+        accounts::registry_fresh(client, cluster)?.context("registry not found — init first")?;
     let (base_mint, quote_mint) = market::pair_mints(repo_root, config)?;
-    let market_address = chain::market_pda(&base_mint, &quote_mint);
+    let market_address = chain::market_pda(cluster, &base_mint, &quote_mint);
     if chain::fetch_fresh(client, &market_address, "market")?.is_some() {
         return Ok(Outcome::AlreadyThere(format!(
             "the {} market already exists ({market_address})",
@@ -1524,6 +1541,7 @@ pub(crate) fn do_create_market(
     // payer, or anchor-v2 rejects it as a duplicate mutable account.
     let fee_source = Keypair::new().pubkey();
     let ix = chain::build_create_market_ix(
+        cluster,
         &wallet.pubkey(),
         &fee_source,
         &base_mint,
@@ -1534,7 +1552,7 @@ pub(crate) fn do_create_market(
     // Trailing rent top-up for the market PDA — see RENT_TOPUP_LAMPORTS.
     let topup = chain::system_transfer_ix(
         &wallet.pubkey(),
-        &chain::market_pda(&base_mint, &quote_mint),
+        &chain::market_pda(cluster, &base_mint, &quote_mint),
         chain::RENT_TOPUP_LAMPORTS,
     );
     chain::send_logged(
@@ -1583,13 +1601,14 @@ pub(crate) fn do_create_vault(
             wallet.pubkey()
         );
     }
-    let registry = accounts::registry_fresh(client)?.context("registry not found — init first")?;
+    let registry =
+        accounts::registry_fresh(client, cluster)?.context("registry not found — init first")?;
     // Address this config's own market by its PDA — the roster brings up many
     // markets, so the first-found one in `ChainState` isn't necessarily this
     // pair's.
     let (base_mint, quote_mint) = market::pair_mints(repo_root, config)?;
-    let market_address = chain::market_pda(&base_mint, &quote_mint);
-    let seats = accounts::vault_seats_fresh(client, &market_address)?
+    let market_address = chain::market_pda(cluster, &base_mint, &quote_mint);
+    let seats = accounts::vault_seats_fresh(client, cluster, &market_address)?
         .context("market not found — create the market first")?;
     if let Some(seat) = existing_seat(&seats, &leader.pubkey()) {
         return Ok(Outcome::AlreadyThere(format!(
@@ -1603,6 +1622,7 @@ pub(crate) fn do_create_vault(
     let fee_source = Keypair::new().pubkey();
     log.log(format!("vault leader: {}", leader.pubkey()));
     let ix = chain::build_create_vault_ix(
+        cluster,
         &wallet.pubkey(),
         &fee_source,
         &market_address,
@@ -1682,8 +1702,8 @@ pub(crate) fn do_deposit(
     log: &Logger,
 ) -> Result<Outcome> {
     let (base_mint, quote_mint) = market::pair_mints(repo_root, config)?;
-    let market_address = chain::market_pda(&base_mint, &quote_mint);
-    let seats = accounts::vault_seats_fresh(client, &market_address)?
+    let market_address = chain::market_pda(cluster, &base_mint, &quote_mint);
+    let seats = accounts::vault_seats_fresh(client, cluster, &market_address)?
         .context("market not found — create the market first")?;
     let seat = match deposit_seat(&seats, &leader.pubkey()) {
         DepositSeat::Fund(seat) => seat,
@@ -1707,10 +1727,10 @@ pub(crate) fn do_deposit(
     ensure_funded(client, &wallet.pubkey(), cluster, log)?;
     // The treasuries and decimals `seed_vault` needs. A failed read here is
     // after the existence check, so it can only abort, never double-send.
-    let market = accounts::read_market_at(client, market_address)
+    let market = accounts::read_market_at(client, cluster, market_address)
         .context("could not read the market back — refusing")?;
     market::seed_vault(
-        client, wallet, leader, config, &market, seat.idx, funding, log,
+        client, cluster, wallet, leader, config, &market, seat.idx, funding, log,
     )?;
     log.accounts_changed();
     Ok(Outcome::Done(format!(
@@ -1756,8 +1776,8 @@ fn do_probe_swap(
     // Deterministic and stated beats arbitrary and mis-stated; wire the map
     // through if the two ever need to agree.
     let market = match target {
-        Some(address) => accounts::read_market_at(client, address),
-        None => accounts::poll(client, &wallet.pubkey(), None, 0, &[])
+        Some(address) => accounts::read_market_at(client, Cluster::Localnet, address),
+        None => accounts::poll(client, Cluster::Localnet, &wallet.pubkey(), None, 0, &[])
             .markets
             .into_iter()
             .next(),
@@ -1814,6 +1834,7 @@ fn do_probe_swap(
     };
     log.log(format!("probe swap: {taker_pk} {verb} with {units} units"));
     let ix = chain::build_swap_ix(
+        Cluster::Localnet,
         &taker_pk,
         &market.address,
         &market.base_mint,

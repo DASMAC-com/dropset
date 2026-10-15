@@ -363,7 +363,7 @@ impl App {
         }
         // Watch the program's fills so the recent-fills pane fills in as swaps
         // land — survives a wipe by reconnecting to the respawned validator.
-        fills::spawn(self.ctx.rpc_url.clone(), self.tx.clone());
+        fills::spawn(self.ctx.rpc_url.clone(), self.ctx.cluster, self.tx.clone());
         let backend = CrosstermBackend::new(io::stdout());
         let terminal = Terminal::new(backend)?;
         let mut guard = TerminalGuard::new(terminal);
@@ -1339,6 +1339,7 @@ impl App {
         if self.dirty || self.last_refresh.elapsed() >= REFRESH_INTERVAL {
             self.chain = accounts::poll(
                 &self.client,
+                self.ctx.cluster,
                 &self.ctx.wallet.pubkey(),
                 self.swapper.as_ref(),
                 self.selected_market,

@@ -10,8 +10,10 @@
 //! orderings in `programs/dropset/tests/common/fixture.rs` so a transposed
 //! field (base where quote belongs) is caught at `cargo test`, not on chain.
 
+use crate::cluster::Cluster;
 use crate::job::Logger;
 use anyhow::{Context, Result};
+use dropset_sdk::cluster;
 use dropset_sdk::instructions::{
     CloseMarket, CloseMarketTreasury, CloseRegistry, CloseRegistryFeeVault, CreateMarket,
     CreateVault, CreateVaultInstructionArgs, DepositLeader, DepositLeaderInstructionArgs,
@@ -19,7 +21,6 @@ use dropset_sdk::instructions::{
     ForceWithdrawLeaderInstructionArgs, Init, InitInstructionArgs, Swap, SwapInstructionArgs,
     WithdrawLeader, WithdrawLeaderInstructionArgs,
 };
-use dropset_sdk::DROPSET_ID;
 use dropset_util::localnet::{create_ata_idempotent_ix, mint_to_ix};
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
@@ -105,26 +106,52 @@ pub fn genesis_hash(client: &RpcClient) -> Result<String> {
 }
 
 // ── PDA / ATA derivations ────────────────────────────────────────────
+//
+// Every derivation takes the `cluster`, because the program id is per
+// cluster ([`Cluster::program_id`]): a PDA derived from the committed
+// localnet id would silently point at localnet on mainnet, and the
+// instruction `retarget` does not rewrite caller-derived PDAs.
 
 /// The singleton registry PDA — seeds `[b"registry"]`.
-pub fn registry_pda() -> Pubkey {
-    Pubkey::find_program_address(&[b"registry"], &DROPSET_ID).0
+pub fn registry_pda(cluster: Cluster) -> Pubkey {
+    cluster::registry_pda(&cluster.program_id()).0
 }
 
 /// The market PDA for a `(base, quote)` mint pair — seeds `[base, quote]`.
-pub fn market_pda(base: &Pubkey, quote: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(&[base.as_ref(), quote.as_ref()], &DROPSET_ID).0
+pub fn market_pda(cluster: Cluster, base: &Pubkey, quote: &Pubkey) -> Pubkey {
+    cluster::market_pda(&cluster.program_id(), base, quote).0
+}
+
+/// A vault depositor's PDA — seeds `[b"vault_depositor", market, idx, owner]`.
+pub fn vault_depositor_pda(
+    cluster: Cluster,
+    market: &Pubkey,
+    vault_idx: u32,
+    owner: &Pubkey,
+) -> Pubkey {
+    cluster::vault_depositor_pda(&cluster.program_id(), market, vault_idx, owner).0
 }
 
 /// The self-CPI event-authority PDA — seeds `[b"__event_authority"]`.
-pub fn event_authority() -> Pubkey {
-    Pubkey::find_program_address(&[b"__event_authority"], &DROPSET_ID).0
+pub fn event_authority(cluster: Cluster) -> Pubkey {
+    cluster::event_authority(&cluster.program_id())
 }
 
 /// The program's upgradeable-loader `ProgramData` PDA — read by `init` to
 /// authenticate the upgrade authority.
-pub fn program_data() -> Pubkey {
-    get_program_data_address(&DROPSET_ID)
+pub fn program_data(cluster: Cluster) -> Pubkey {
+    get_program_data_address(&cluster.program_id())
+}
+
+/// Aim a generated instruction at `cluster`'s program. Every SDK builder —
+/// the Codama ones and `dropset_sdk::quoting`'s alike — emits the localnet
+/// id, so each one the cockpit signs passes through here. This rewrites what
+/// the generated code fills from that id itself: the instruction's program
+/// id, the `program` account, the placeholder for an absent optional account
+/// and the localnet event authority. Every other PDA is the caller's to
+/// derive for `cluster`, as the builders below do.
+pub fn retarget(cluster: Cluster, ix: Instruction) -> Instruction {
+    cluster::retarget(ix, &cluster.program_id())
 }
 
 // ── Bootstrap instruction builders ───────────────────────────────────
@@ -132,12 +159,17 @@ pub fn program_data() -> Pubkey {
 /// `init` — create the registry, charging the per-`CreateVault` fee of
 /// `fee_atoms` in `fee_mint`. `payer` is the genesis admin (must equal the
 /// program's upgrade authority).
-pub fn build_init_ix(payer: &Pubkey, fee_mint: &Pubkey, fee_atoms: u64) -> Instruction {
-    let registry = registry_pda();
-    Init {
+pub fn build_init_ix(
+    cluster: Cluster,
+    payer: &Pubkey,
+    fee_mint: &Pubkey,
+    fee_atoms: u64,
+) -> Instruction {
+    let registry = registry_pda(cluster);
+    let ix = Init {
         payer: *payer,
         registry,
-        program_data: program_data(),
+        program_data: program_data(cluster),
         fee_mint: *fee_mint,
         fee_vault: associated_token_address(&registry, fee_mint, &SPL_TOKEN_PROGRAM_ID),
         token_program: SPL_TOKEN_PROGRAM_ID,
@@ -147,7 +179,8 @@ pub fn build_init_ix(payer: &Pubkey, fee_mint: &Pubkey, fee_atoms: u64) -> Instr
     .instruction(InitInstructionArgs {
         genesis_admin: *payer,
         fee_atoms,
-    })
+    });
+    retarget(cluster, ix)
 }
 
 /// `create_market` for a fresh `(base, quote)` pair. `fee_mint` /
@@ -157,6 +190,7 @@ pub fn build_init_ix(payer: &Pubkey, fee_mint: &Pubkey, fee_atoms: u64) -> Instr
 /// rejects the same key in two mutable slots
 /// (`ConstraintDuplicateMutableAccount`).
 pub fn build_create_market_ix(
+    cluster: Cluster,
     payer: &Pubkey,
     fee_source: &Pubkey,
     base_mint: &Pubkey,
@@ -164,9 +198,9 @@ pub fn build_create_market_ix(
     fee_mint: &Pubkey,
     fee_token_program: &Pubkey,
 ) -> Instruction {
-    let registry = registry_pda();
-    let market = market_pda(base_mint, quote_mint);
-    CreateMarket {
+    let registry = registry_pda(cluster);
+    let market = market_pda(cluster, base_mint, quote_mint);
+    let ix = CreateMarket {
         payer: *payer,
         registry,
         base_mint: *base_mint,
@@ -183,7 +217,8 @@ pub fn build_create_market_ix(
         system_program: SYSTEM_PROGRAM_ID,
         associated_token_program: ATA_PROGRAM_ID,
     }
-    .instruction()
+    .instruction();
+    retarget(cluster, ix)
 }
 
 /// `create_vault` on `market` via the admin path (fee waived). The vault is
@@ -194,6 +229,7 @@ pub fn build_create_market_ix(
 /// `payer`. `fee_mint` / `fee_token_program` are the market's stamped fee
 /// config.
 pub fn build_create_vault_ix(
+    cluster: Cluster,
     payer: &Pubkey,
     fee_source: &Pubkey,
     market: &Pubkey,
@@ -201,8 +237,8 @@ pub fn build_create_vault_ix(
     fee_token_program: &Pubkey,
     leader: &Pubkey,
 ) -> Instruction {
-    let registry = registry_pda();
-    CreateVault {
+    let registry = registry_pda(cluster);
+    let ix = CreateVault {
         payer: *payer,
         registry,
         market: *market,
@@ -211,15 +247,16 @@ pub fn build_create_vault_ix(
         payer_fee_source: *fee_source,
         registry_fee_treasury: associated_token_address(&registry, fee_mint, fee_token_program),
         system_program: SYSTEM_PROGRAM_ID,
-        event_authority: event_authority(),
-        program: DROPSET_ID,
+        event_authority: event_authority(cluster),
+        program: cluster.program_id(),
     }
     .instruction(CreateVaultInstructionArgs {
         perf_fee_rate: DEFAULT_PERF_FEE_RATE,
         quote_authority: *leader,
         allow_outside_depositors: false,
         leader_override: *leader,
-    })
+    });
+    retarget(cluster, ix)
 }
 
 /// `deposit_leader` — the vault's `leader` (signer) moves atoms from its own
@@ -231,6 +268,7 @@ pub fn build_create_vault_ix(
 /// ratio, refusing when either final exceeds its `max_*_in` bound.
 #[allow(clippy::too_many_arguments)]
 pub fn build_deposit_leader_ix(
+    cluster: Cluster,
     leader: &Pubkey,
     market: &Pubkey,
     base_mint: &Pubkey,
@@ -241,7 +279,7 @@ pub fn build_deposit_leader_ix(
     (base_in, quote_in): (u64, u64),
     (max_base_in, max_quote_in): (u64, u64),
 ) -> Instruction {
-    DepositLeader {
+    let ix = DepositLeader {
         signer: *leader,
         market: *market,
         base_mint: *base_mint,
@@ -254,8 +292,8 @@ pub fn build_deposit_leader_ix(
         market_quote_treasury: *quote_treasury,
         system_program: SYSTEM_PROGRAM_ID,
         associated_token_program: ATA_PROGRAM_ID,
-        event_authority: event_authority(),
-        program: DROPSET_ID,
+        event_authority: event_authority(cluster),
+        program: cluster.program_id(),
     }
     .instruction(DepositLeaderInstructionArgs {
         vault_idx,
@@ -263,7 +301,8 @@ pub fn build_deposit_leader_ix(
         quote_in,
         max_base_in,
         max_quote_in,
-    })
+    });
+    retarget(cluster, ix)
 }
 
 /// `withdraw_leader` — the vault's `leader` (signer) burns `shares_in` of
@@ -274,6 +313,7 @@ pub fn build_deposit_leader_ix(
 /// [`build_force_withdraw_leader_ix`]: no admin, no registry account.
 #[allow(clippy::too_many_arguments)]
 pub fn build_withdraw_leader_ix(
+    cluster: Cluster,
     leader: &Pubkey,
     market: &Pubkey,
     base_mint: &Pubkey,
@@ -285,7 +325,7 @@ pub fn build_withdraw_leader_ix(
     min_base_out: u64,
     min_quote_out: u64,
 ) -> Instruction {
-    WithdrawLeader {
+    let ix = WithdrawLeader {
         signer: *leader,
         market: *market,
         base_mint: *base_mint,
@@ -298,15 +338,16 @@ pub fn build_withdraw_leader_ix(
         market_quote_treasury: *quote_treasury,
         associated_token_program: ATA_PROGRAM_ID,
         system_program: SYSTEM_PROGRAM_ID,
-        event_authority: event_authority(),
-        program: DROPSET_ID,
+        event_authority: event_authority(cluster),
+        program: cluster.program_id(),
     }
     .instruction(WithdrawLeaderInstructionArgs {
         vault_idx,
         shares_in,
         min_base_out,
         min_quote_out,
-    })
+    });
+    retarget(cluster, ix)
 }
 
 /// `swap` — a taker take against the market's live book. `side` is `0` for a
@@ -317,6 +358,7 @@ pub fn build_withdraw_leader_ix(
 /// to exercise — and measure the CU of — a real take against the seeded vault.
 #[allow(clippy::too_many_arguments)]
 pub fn build_swap_ix(
+    cluster: Cluster,
     taker: &Pubkey,
     market: &Pubkey,
     base_mint: &Pubkey,
@@ -328,7 +370,7 @@ pub fn build_swap_ix(
     limit_price_bits: u32,
     min_out: u64,
 ) -> Instruction {
-    Swap {
+    let ix = Swap {
         taker: *taker,
         market: *market,
         base_mint: *base_mint,
@@ -348,8 +390,8 @@ pub fn build_swap_ix(
         platform_fee_ata: None,
         associated_token_program: ATA_PROGRAM_ID,
         system_program: SYSTEM_PROGRAM_ID,
-        event_authority: event_authority(),
-        program: DROPSET_ID,
+        event_authority: event_authority(cluster),
+        program: cluster.program_id(),
     }
     .instruction(SwapInstructionArgs {
         side,
@@ -357,7 +399,8 @@ pub fn build_swap_ix(
         limit_price_bits,
         min_out,
         platform_fee_bps: 0,
-    })
+    });
+    retarget(cluster, ix)
 }
 
 // ── Teardown instruction builders ────────────────────────────────────
@@ -367,6 +410,7 @@ pub fn build_swap_ix(
 /// depositors; the TUI's own bootstrap never creates one.
 #[allow(clippy::too_many_arguments)]
 pub fn build_force_withdraw_depositor_ix(
+    cluster: Cluster,
     admin: &Pubkey,
     market: &Pubkey,
     base_mint: &Pubkey,
@@ -376,17 +420,9 @@ pub fn build_force_withdraw_depositor_ix(
     vault_idx: u32,
     owner: &Pubkey,
 ) -> Instruction {
-    let registry = registry_pda();
-    let (vault_depositor, _) = Pubkey::find_program_address(
-        &[
-            b"vault_depositor",
-            market.as_ref(),
-            &vault_idx.to_le_bytes(),
-            owner.as_ref(),
-        ],
-        &DROPSET_ID,
-    );
-    ForceWithdrawDepositor {
+    let registry = registry_pda(cluster);
+    let vault_depositor = vault_depositor_pda(cluster, market, vault_idx, owner);
+    let ix = ForceWithdrawDepositor {
         admin: *admin,
         registry,
         market: *market,
@@ -402,16 +438,18 @@ pub fn build_force_withdraw_depositor_ix(
         market_quote_treasury: *quote_treasury,
         associated_token_program: ATA_PROGRAM_ID,
         system_program: SYSTEM_PROGRAM_ID,
-        event_authority: event_authority(),
-        program: DROPSET_ID,
+        event_authority: event_authority(cluster),
+        program: cluster.program_id(),
     }
-    .instruction(ForceWithdrawDepositorInstructionArgs { vault_idx })
+    .instruction(ForceWithdrawDepositorInstructionArgs { vault_idx });
+    retarget(cluster, ix)
 }
 
 /// `force_withdraw_leader` — admin drains `leader`'s stake on `vault_idx`,
 /// reclaiming the sector to the free list on a full drain.
 #[allow(clippy::too_many_arguments)]
 pub fn build_force_withdraw_leader_ix(
+    cluster: Cluster,
     admin: &Pubkey,
     market: &Pubkey,
     base_mint: &Pubkey,
@@ -421,9 +459,9 @@ pub fn build_force_withdraw_leader_ix(
     vault_idx: u32,
     leader: &Pubkey,
 ) -> Instruction {
-    ForceWithdrawLeader {
+    let ix = ForceWithdrawLeader {
         admin: *admin,
-        registry: registry_pda(),
+        registry: registry_pda(cluster),
         market: *market,
         leader: *leader,
         base_mint: *base_mint,
@@ -436,10 +474,11 @@ pub fn build_force_withdraw_leader_ix(
         market_quote_treasury: *quote_treasury,
         associated_token_program: ATA_PROGRAM_ID,
         system_program: SYSTEM_PROGRAM_ID,
-        event_authority: event_authority(),
-        program: DROPSET_ID,
+        event_authority: event_authority(cluster),
+        program: cluster.program_id(),
     }
-    .instruction(ForceWithdrawLeaderInstructionArgs { vault_idx })
+    .instruction(ForceWithdrawLeaderInstructionArgs { vault_idx });
+    retarget(cluster, ix)
 }
 
 /// `close_market_treasury` — drain the leg's treasury ATA to
@@ -447,6 +486,7 @@ pub fn build_force_withdraw_leader_ix(
 /// then close it, refunding its rent to `rent_recipient`. `token_recipient`
 /// must be a token account for `mint`; the rent recipient is any address.
 pub fn build_close_market_treasury_ix(
+    cluster: Cluster,
     admin: &Pubkey,
     market: &Pubkey,
     mint: &Pubkey,
@@ -454,53 +494,57 @@ pub fn build_close_market_treasury_ix(
     token_recipient: &Pubkey,
     rent_recipient: &Pubkey,
 ) -> Instruction {
-    CloseMarketTreasury {
+    let ix = CloseMarketTreasury {
         admin: *admin,
-        registry: registry_pda(),
+        registry: registry_pda(cluster),
         market: *market,
         mint: *mint,
         token_program: SPL_TOKEN_PROGRAM_ID,
         treasury: *treasury,
         token_recipient: *token_recipient,
         rent_recipient: *rent_recipient,
-        event_authority: event_authority(),
-        program: DROPSET_ID,
+        event_authority: event_authority(cluster),
+        program: cluster.program_id(),
     }
-    .instruction()
+    .instruction();
+    retarget(cluster, ix)
 }
 
 /// `close_market` — close the market PDA + vault slab, refunding rent to
 /// `rent_recipient` and decrementing `registry.market_count`.
 pub fn build_close_market_ix(
+    cluster: Cluster,
     admin: &Pubkey,
     market: &Pubkey,
     base_treasury: &Pubkey,
     quote_treasury: &Pubkey,
     rent_recipient: &Pubkey,
 ) -> Instruction {
-    CloseMarket {
+    let ix = CloseMarket {
         admin: *admin,
-        registry: registry_pda(),
+        registry: registry_pda(cluster),
         market: *market,
         base_treasury: *base_treasury,
         quote_treasury: *quote_treasury,
         rent_recipient: *rent_recipient,
     }
-    .instruction()
+    .instruction();
+    retarget(cluster, ix)
 }
 
 /// `close_registry_fee_vault` — drain the registry's fee ATA for
 /// `(fee_mint, token_program)` to `token_recipient` (the collected
 /// market-creation fees), then close it, refunding rent to `rent_recipient`.
 pub fn build_close_registry_fee_vault_ix(
+    cluster: Cluster,
     admin: &Pubkey,
     fee_mint: &Pubkey,
     fee_token_program: &Pubkey,
     token_recipient: &Pubkey,
     rent_recipient: &Pubkey,
 ) -> Instruction {
-    let registry = registry_pda();
-    CloseRegistryFeeVault {
+    let registry = registry_pda(cluster);
+    let ix = CloseRegistryFeeVault {
         admin: *admin,
         registry,
         fee_mint: *fee_mint,
@@ -508,21 +552,27 @@ pub fn build_close_registry_fee_vault_ix(
         fee_vault: associated_token_address(&registry, fee_mint, fee_token_program),
         token_recipient: *token_recipient,
         rent_recipient: *rent_recipient,
-        event_authority: event_authority(),
-        program: DROPSET_ID,
+        event_authority: event_authority(cluster),
+        program: cluster.program_id(),
     }
-    .instruction()
+    .instruction();
+    retarget(cluster, ix)
 }
 
 /// `close_registry` — close the registry PDA, refunding rent to
 /// `rent_recipient`. Rejected unless `market_count == 0`.
-pub fn build_close_registry_ix(admin: &Pubkey, rent_recipient: &Pubkey) -> Instruction {
-    CloseRegistry {
+pub fn build_close_registry_ix(
+    cluster: Cluster,
+    admin: &Pubkey,
+    rent_recipient: &Pubkey,
+) -> Instruction {
+    let ix = CloseRegistry {
         admin: *admin,
-        registry: registry_pda(),
+        registry: registry_pda(cluster),
         rent_recipient: *rent_recipient,
     }
-    .instruction()
+    .instruction();
+    retarget(cluster, ix)
 }
 
 // ── Mock mint creation + send ────────────────────────────────────────
@@ -930,6 +980,8 @@ fn measure_cu(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dropset_sdk::cluster::DROPSET_MAINNET_ID;
+    use dropset_sdk::DROPSET_ID;
 
     fn mint_account(owner: Pubkey, decimals: u8, initialized: bool) -> FreshAccount {
         let mut data = vec![0u8; MINT_LEN];
@@ -1017,12 +1069,91 @@ mod tests {
             .collect()
     }
 
+    /// The fixture orderings below are pinned on localnet, where the ids
+    /// match `programs/dropset/tests/common/fixture.rs`.
+    const L: Cluster = Cluster::Localnet;
+
     #[test]
     fn registry_pda_is_canonical() {
         assert_eq!(
-            registry_pda(),
+            registry_pda(L),
             Pubkey::find_program_address(&[b"registry"], &DROPSET_ID).0
         );
+        assert_eq!(
+            registry_pda(Cluster::Mainnet),
+            Pubkey::find_program_address(&[b"registry"], &DROPSET_MAINNET_ID).0
+        );
+    }
+
+    /// Every builder, on mainnet: aimed at the mainnet id, and carrying no
+    /// account derived from the localnet id — neither the id itself, nor its
+    /// event authority, registry, `ProgramData` or any market PDA. A builder
+    /// that derived one PDA from the committed constant would sign for
+    /// localnet's address on mainnet.
+    #[test]
+    fn mainnet_builders_reference_only_the_mainnet_program() {
+        let m = Cluster::Mainnet;
+        let k = |n: u8| Pubkey::new_from_array([n; 32]);
+        let (a, base, quote, mint) = (k(1), k(2), k(3), k(4));
+        let market = market_pda(m, &base, &quote);
+        let ixs = [
+            build_init_ix(m, &a, &mint, 1),
+            build_create_market_ix(m, &a, &k(5), &base, &quote, &mint, &SPL_TOKEN_PROGRAM_ID),
+            build_create_vault_ix(m, &a, &k(5), &market, &mint, &SPL_TOKEN_PROGRAM_ID, &k(6)),
+            build_deposit_leader_ix(
+                m,
+                &a,
+                &market,
+                &base,
+                &quote,
+                &k(7),
+                &k(8),
+                0,
+                (1, 1),
+                (1, 1),
+            ),
+            build_withdraw_leader_ix(m, &a, &market, &base, &quote, &k(7), &k(8), 0, 1, 0, 0),
+            build_swap_ix(m, &a, &market, &base, &quote, &k(7), &k(8), 0, 1, 0, 0),
+            build_force_withdraw_depositor_ix(
+                m,
+                &a,
+                &market,
+                &base,
+                &quote,
+                &k(7),
+                &k(8),
+                0,
+                &k(9),
+            ),
+            build_force_withdraw_leader_ix(m, &a, &market, &base, &quote, &k(7), &k(8), 0, &k(9)),
+            build_close_market_treasury_ix(m, &a, &market, &base, &k(7), &k(9), &a),
+            build_close_market_ix(m, &a, &market, &k(7), &k(8), &a),
+            build_close_registry_fee_vault_ix(m, &a, &mint, &SPL_TOKEN_PROGRAM_ID, &k(9), &a),
+            build_close_registry_ix(m, &a, &a),
+        ];
+        let localnet = [
+            DROPSET_ID,
+            event_authority(L),
+            registry_pda(L),
+            program_data(L),
+            market_pda(L, &base, &quote),
+            vault_depositor_pda(L, &market_pda(L, &base, &quote), 0, &k(9)),
+            vault_depositor_pda(L, &market, 0, &k(9)),
+        ];
+        for ix in &ixs {
+            assert_eq!(ix.program_id, DROPSET_MAINNET_ID);
+            for meta in &ix.accounts {
+                assert!(
+                    !localnet.contains(&meta.pubkey),
+                    "a mainnet instruction carries the localnet-derived {}",
+                    meta.pubkey
+                );
+            }
+        }
+        // The emit_cpi pair is the mainnet one wherever a builder carries it.
+        let swap = metas(&ixs[5]);
+        assert!(swap.contains(&(event_authority(m), false, false)));
+        assert!(swap.contains(&(DROPSET_MAINNET_ID, false, false)));
     }
 
     /// Pins the `init` account ordering against `fixture::init_ixn`:
@@ -1032,16 +1163,16 @@ mod tests {
     fn init_ordering_matches_fixture() {
         let payer = Pubkey::new_unique();
         let fee_mint = Pubkey::new_unique();
-        let registry = registry_pda();
+        let registry = registry_pda(L);
         let fee_vault = associated_token_address(&registry, &fee_mint, &SPL_TOKEN_PROGRAM_ID);
-        let ix = build_init_ix(&payer, &fee_mint, CREATE_MARKET_FEE_ATOMS);
+        let ix = build_init_ix(L, &payer, &fee_mint, CREATE_MARKET_FEE_ATOMS);
         assert_eq!(ix.program_id, DROPSET_ID);
         assert_eq!(
             metas(&ix),
             vec![
                 (payer, true, true),
                 (registry, false, true),
-                (program_data(), false, false),
+                (program_data(L), false, false),
                 (fee_mint, false, false),
                 (fee_vault, false, true),
                 (SPL_TOKEN_PROGRAM_ID, false, false),
@@ -1068,9 +1199,10 @@ mod tests {
         let base = Pubkey::new_unique();
         let quote = Pubkey::new_unique();
         let fee_mint = Pubkey::new_unique();
-        let registry = registry_pda();
-        let market = market_pda(&base, &quote);
+        let registry = registry_pda(L);
+        let market = market_pda(L, &base, &quote);
         let ix = build_create_market_ix(
+            L,
             &payer,
             &fee_source,
             &base,
@@ -1125,8 +1257,9 @@ mod tests {
         let market = Pubkey::new_unique();
         let fee_mint = Pubkey::new_unique();
         let leader = Pubkey::new_unique();
-        let registry = registry_pda();
+        let registry = registry_pda(L);
         let ix = build_create_vault_ix(
+            L,
             &payer,
             &fee_source,
             &market,
@@ -1149,7 +1282,7 @@ mod tests {
                     true
                 ),
                 (SYSTEM_PROGRAM_ID, false, false),
-                (event_authority(), false, false),
+                (event_authority(L), false, false),
                 (DROPSET_ID, false, false),
             ]
         );
@@ -1173,6 +1306,7 @@ mod tests {
         let base_treasury = Pubkey::new_unique();
         let quote_treasury = Pubkey::new_unique();
         let ix = build_deposit_leader_ix(
+            L,
             &leader,
             &market,
             &base_mint,
@@ -1206,7 +1340,7 @@ mod tests {
                 (quote_treasury, false, true),
                 (SYSTEM_PROGRAM_ID, false, false),
                 (ATA_PROGRAM_ID, false, false),
-                (event_authority(), false, false),
+                (event_authority(L), false, false),
                 (DROPSET_ID, false, false),
             ]
         );
@@ -1226,6 +1360,7 @@ mod tests {
         let base_treasury = Pubkey::new_unique();
         let quote_treasury = Pubkey::new_unique();
         let ix = build_withdraw_leader_ix(
+            L,
             &leader,
             &market,
             &base_mint,
@@ -1260,7 +1395,7 @@ mod tests {
                 (quote_treasury, false, true),
                 (ATA_PROGRAM_ID, false, false),
                 (SYSTEM_PROGRAM_ID, false, false),
-                (event_authority(), false, false),
+                (event_authority(L), false, false),
                 (DROPSET_ID, false, false),
             ]
         );

@@ -15,11 +15,11 @@
 //! discriminator are public). The `[tag][discriminator][body]` decode is the
 //! shared SDK codec ([`dropset_sdk::events`]).
 
+use crate::cluster::Cluster;
 use crate::job::JobEvent;
 use anyhow::{anyhow, Context, Result};
 use dropset_sdk::events::{decode_event_payload, emitted_by, strip_event_tag, DropsetEvent};
 use dropset_sdk::types::FillEvent;
-use dropset_sdk::DROPSET_ID;
 use dropset_util::rpc::ws_url_from_rpc;
 use solana_client::pubsub_client::PubsubClient;
 use solana_client::rpc_client::RpcClient;
@@ -46,22 +46,23 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 /// (the respawned validator serves the same URL) without the event loop doing
 /// anything. Forwards each decoded fill as a [`JobEvent::Fill`]; when the
 /// event loop's receiver is gone (the TUI is quitting) the thread returns.
-pub fn spawn(rpc_url: String, tx: Sender<JobEvent>) {
+/// Only `cluster`'s program's events count.
+pub fn spawn(rpc_url: String, cluster: Cluster, tx: Sender<JobEvent>) {
     std::thread::Builder::new()
         .name("dropset-tui-fills".into())
         .spawn(move || {
             let ws_url = ws_url_from_rpc(&rpc_url);
             let rpc = crate::chain::rpc(&rpc_url);
-            run(&ws_url, &rpc, &tx);
+            run(&ws_url, &rpc, &cluster.program_id(), &tx);
         })
         .ok();
 }
 
 /// Subscribe, forward fills, and reconnect on websocket drop until the event
 /// loop's receiver is gone (TUI quitting).
-fn run(ws_url: &str, rpc: &RpcClient, tx: &Sender<JobEvent>) {
+fn run(ws_url: &str, rpc: &RpcClient, program: &Pubkey, tx: &Sender<JobEvent>) {
     loop {
-        match subscribe_and_forward(ws_url, rpc, tx) {
+        match subscribe_and_forward(ws_url, rpc, program, tx) {
             Ok(true) => return, // receiver dropped — TUI is quitting
             Ok(false) => {}     // websocket closed — reconnect
             Err(_) => {}        // subscribe failed (validator not up / wiped)
@@ -73,10 +74,15 @@ fn run(ws_url: &str, rpc: &RpcClient, tx: &Sender<JobEvent>) {
 /// Open one logs subscription and forward every decoded fill until it closes.
 /// Returns `Ok(true)` if the event loop's receiver was dropped (stop), or
 /// `Ok(false)` if the websocket closed (reconnect).
-fn subscribe_and_forward(ws_url: &str, rpc: &RpcClient, tx: &Sender<JobEvent>) -> Result<bool> {
+fn subscribe_and_forward(
+    ws_url: &str,
+    rpc: &RpcClient,
+    program: &Pubkey,
+    tx: &Sender<JobEvent>,
+) -> Result<bool> {
     let (_subscription, notifications) = PubsubClient::logs_subscribe(
         ws_url,
-        RpcTransactionLogsFilter::Mentions(vec![DROPSET_ID.to_string()]),
+        RpcTransactionLogsFilter::Mentions(vec![program.to_string()]),
         RpcTransactionLogsConfig {
             commitment: Some(CommitmentConfig::confirmed()),
         },
@@ -93,7 +99,7 @@ fn subscribe_and_forward(ws_url: &str, rpc: &RpcClient, tx: &Sender<JobEvent>) -
             continue;
         };
         // A decode failure is non-fatal: skip the transaction and keep watching.
-        let (fills, cu) = decode_fills(rpc, &signature).unwrap_or_default();
+        let (fills, cu) = decode_fills(rpc, program, &signature).unwrap_or_default();
         if fills.is_empty() {
             continue;
         }
@@ -130,12 +136,16 @@ fn subscribe_and_forward(ws_url: &str, rpc: &RpcClient, tx: &Sender<JobEvent>) -
 }
 
 /// Fetch the transaction and decode every `FillEvent` inner instruction our
-/// program emitted, verifying each event's emitting program is `DROPSET_ID`
+/// program emitted, verifying each event's emitting program is `program`
 /// (resolved against the transaction's full account-key list) before trusting
 /// its bytes — the tag and discriminator are both public. Also returns the
 /// transaction's actual compute-units-consumed, so a swap's cost lands in the
 /// CU pane whoever sent it (the probe swap or a taker bot).
-fn decode_fills(rpc: &RpcClient, signature: &Signature) -> Result<(Vec<FillEvent>, Option<u64>)> {
+fn decode_fills(
+    rpc: &RpcClient,
+    program: &Pubkey,
+    signature: &Signature,
+) -> Result<(Vec<FillEvent>, Option<u64>)> {
     let confirmed = rpc
         .get_transaction_with_config(
             signature,
@@ -170,14 +180,18 @@ fn decode_fills(rpc: &RpcClient, signature: &Signature) -> Result<(Vec<FillEvent
     ) else {
         return Ok((Vec::new(), cu));
     };
-    Ok((collect_fills(&inner_sets, &account_keys), cu))
+    Ok((collect_fills(&inner_sets, &account_keys, program), cu))
 }
 
 /// Walk the inner-instruction sets and collect every `FillEvent` our program
 /// emitted. Split out so the emitting-program check is unit-testable without an
 /// [`RpcClient`]: `account_keys` is the already-resolved full key list that
 /// each instruction's `program_id_index` addresses into.
-fn collect_fills(inner_sets: &[UiInnerInstructions], account_keys: &[Pubkey]) -> Vec<FillEvent> {
+fn collect_fills(
+    inner_sets: &[UiInnerInstructions],
+    account_keys: &[Pubkey],
+    program: &Pubkey,
+) -> Vec<FillEvent> {
     let mut fills = Vec::new();
     for set in inner_sets {
         for instruction in &set.instructions {
@@ -188,7 +202,7 @@ fn collect_fills(inner_sets: &[UiInnerInstructions], account_keys: &[Pubkey]) ->
             // Only events emitted by our own program count — the tag and
             // discriminator are public, so the emitting program id is what
             // `emit_cpi!`'s self-CPI authenticates.
-            if !emitted_by(account_keys, compiled.program_id_index, &DROPSET_ID) {
+            if !emitted_by(account_keys, compiled.program_id_index, program) {
                 continue;
             }
             // Inner-instruction data is base58 even under base64 tx encoding.
@@ -228,6 +242,8 @@ fn full_account_keys(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dropset_sdk::cluster::DROPSET_MAINNET_ID;
+    use dropset_sdk::DROPSET_ID;
     use solana_transaction_status_client_types::UiCompiledInstruction;
 
     /// A `FillEvent` with recognizable field values.
@@ -284,9 +300,12 @@ mod tests {
                 compiled_event_ix(0, &event), // genuine: our self-CPI
             ],
         }];
-        let fills = collect_fills(&inner_sets, &account_keys);
+        let fills = collect_fills(&inner_sets, &account_keys, &DROPSET_ID);
         assert_eq!(fills.len(), 1);
         assert_eq!(fills[0].market, market);
+        // On mainnet the localnet id is just another program: its events,
+        // genuine on localnet, are not the mainnet program's.
+        assert!(collect_fills(&inner_sets, &account_keys, &DROPSET_MAINNET_ID).is_empty());
     }
 
     /// An out-of-range `program_id_index` resolves to no account, so the event
@@ -299,6 +318,6 @@ mod tests {
             index: 0,
             instructions: vec![compiled_event_ix(7, &event)],
         }];
-        assert!(collect_fills(&inner_sets, &account_keys).is_empty());
+        assert!(collect_fills(&inner_sets, &account_keys, &DROPSET_ID).is_empty());
     }
 }

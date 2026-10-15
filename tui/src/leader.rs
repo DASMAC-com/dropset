@@ -257,8 +257,14 @@ pub fn plan_withdraw(stake: &VaultStake, percent: u64) -> Result<Plan> {
 
 /// The one vault `leader` leads on `market`, read fresh — refusing none or
 /// several, since guessing which stake to move is not this command's call.
-fn led_seat(client: &RpcClient, market: &Pubkey, leader: &Pubkey) -> Result<VaultSeat> {
-    let seats = accounts::vault_seats_fresh(client, market)?.context("market not found")?;
+fn led_seat(
+    client: &RpcClient,
+    cluster: Cluster,
+    market: &Pubkey,
+    leader: &Pubkey,
+) -> Result<VaultSeat> {
+    let seats =
+        accounts::vault_seats_fresh(client, cluster, market)?.context("market not found")?;
     match accounts::seats_led_by(&seats, leader)[..] {
         [seat] => Ok(seat),
         [] => bail!("leader {leader} leads no vault on this market"),
@@ -282,7 +288,7 @@ pub fn prepare(
 ) -> Result<Ticket> {
     let config = market::config_for(repo_root, cluster, &market.base_mint)
         .context("the selected market is not in this cluster's roster")?;
-    let seat = led_seat(client, &market.address, leader)?;
+    let seat = led_seat(client, cluster, &market.address, leader)?;
     let plan = match op {
         LeaderOp::Deposit => {
             let atoms = 10u64
@@ -323,7 +329,7 @@ pub fn execute(
     if leader.pubkey() != ticket.leader {
         bail!("the signing leader is not the one confirmed — nothing was sent");
     }
-    let now = led_seat(client, &ticket.market.address, &ticket.leader)?;
+    let now = led_seat(client, cluster, &ticket.market.address, &ticket.leader)?;
     if (now.idx, now.seq) != (ticket.seat.idx, ticket.seat.seq) {
         bail!(
             "vault #{} is no longer at sector {} — nothing was sent; re-run to re-size",
@@ -350,6 +356,7 @@ pub fn execute(
                 log,
             )?;
             chain::build_deposit_leader_ix(
+                cluster,
                 &ticket.leader,
                 &m.address,
                 &m.base_mint,
@@ -367,6 +374,7 @@ pub fn execute(
             min_quote_out,
             ..
         } => chain::build_withdraw_leader_ix(
+            cluster,
             &ticket.leader,
             &m.address,
             &m.base_mint,

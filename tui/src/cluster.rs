@@ -44,7 +44,9 @@
 use crate::chain;
 use crate::validator;
 use anyhow::{anyhow, bail, Result};
+use dropset_sdk::cluster::Deployment;
 use solana_client::rpc_client::RpcClient;
+use solana_pubkey::Pubkey;
 use std::io::{IsTerminal, Write};
 
 /// Solana mainnet-beta's genesis hash — the chain's permanent identity, and
@@ -91,6 +93,21 @@ impl Cluster {
     /// Whether this session drives real funds.
     pub fn is_mainnet(self) -> bool {
         self == Cluster::Mainnet
+    }
+
+    /// The program deployment this cluster runs.
+    pub fn deployment(self) -> Deployment {
+        match self {
+            Cluster::Localnet => Deployment::Localnet,
+            Cluster::Mainnet => Deployment::Mainnet,
+        }
+    }
+
+    /// The program id deployed on this cluster. Every PDA, owner check and
+    /// instruction the cockpit builds goes through this, never through the
+    /// committed `DROPSET_ID`, which is the localnet id only.
+    pub fn program_id(self) -> Pubkey {
+        self.deployment().program_id()
     }
 
     /// Display name, for banners and log lines.

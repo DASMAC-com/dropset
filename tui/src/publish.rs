@@ -27,6 +27,7 @@ use crate::chain::{self, describe_rpc_error};
 use crate::cluster::Cluster;
 use crate::job::Logger;
 use anyhow::{anyhow, bail, Context, Result};
+use dropset_sdk::cluster::embeds_program_id;
 use dropset_sdk::DROPSET_ID;
 use solana_client::rpc_client::RpcClient;
 use solana_client::rpc_config::{
@@ -56,9 +57,23 @@ pub const LOADER_V3_ID: Pubkey = pubkey!("BPFLoaderUpgradeab1e111111111111111111
 /// inactive, and an activation is the signal that v3 deploys are on notice.
 pub const LOADER_V4_FEATURE: Pubkey = pubkey!("2aQJYqER2aKyb3cZw22v4SL2xMX7vwXBRWfvS4pTrtED");
 
-/// The artifact published: the default build `make program` leaves behind —
-/// the ASM fast path, with `admin-teardown` on.
+/// The localnet artifact: the default build `make program` leaves behind —
+/// the ASM fast path, with `admin-teardown` on, embedding the localnet id.
 pub const ARTIFACT: &str = "target/deploy/dropset.so";
+
+/// The mainnet artifact `make program-mainnet` leaves behind: the same build
+/// with the `mainnet` feature, so it embeds the mainnet id — `admin-teardown`
+/// still on, as every early-mainnet build. A distinct file, so no localnet
+/// consumer can pick it up as [`ARTIFACT`].
+pub const MAINNET_ARTIFACT: &str = "target/deploy/dropset_mainnet.so";
+
+/// The artifact `cluster` publishes, and the target that builds it.
+pub fn artifact_for(cluster: Cluster) -> (&'static str, &'static str) {
+    match cluster {
+        Cluster::Localnet => (ARTIFACT, "make program"),
+        Cluster::Mainnet => (MAINNET_ARTIFACT, "make program-mainnet"),
+    }
+}
 
 /// Program bytes per `Write` transaction. A one-signer write carries 220 bytes
 /// of envelope, so this leaves headroom under the 1,232-byte packet; a test
@@ -85,6 +100,8 @@ const TAG_PROGRAMDATA: u8 = 3;
 
 /// The binary about to be published, and where it came from.
 pub struct Artifact {
+    /// The repo-relative path it was read from ([`artifact_for`]).
+    pub path: &'static str,
     pub bytes: Vec<u8>,
     /// Lower-case hex SHA-256 of `bytes`.
     pub sha256: String,
@@ -97,12 +114,13 @@ pub struct Artifact {
 }
 
 impl Artifact {
-    /// Read [`ARTIFACT`] under `repo_root`, its mtime, and the checkout's
-    /// `HEAD`.
-    pub fn load(repo_root: &Path) -> Result<Self> {
-        let path = repo_root.join(ARTIFACT);
+    /// Read `cluster`'s artifact ([`artifact_for`]) under `repo_root`, its
+    /// mtime, and the checkout's `HEAD`.
+    pub fn load(repo_root: &Path, cluster: Cluster) -> Result<Self> {
+        let (relative, build) = artifact_for(cluster);
+        let path = repo_root.join(relative);
         let bytes = std::fs::read(&path)
-            .with_context(|| format!("read {} — run `make program` first", path.display()))?;
+            .with_context(|| format!("read {} — run `{build}` first", path.display()))?;
         let built_at = std::fs::metadata(&path)
             .and_then(|m| m.modified())
             .ok()
@@ -110,6 +128,7 @@ impl Artifact {
             .map_or(0, |d| d.as_secs());
         let head = ceremony::git_head(repo_root).context("read the checkout's commit")?;
         Ok(Self {
+            path: relative,
             sha256: sha256_hex(&bytes),
             bytes,
             head,
@@ -140,6 +159,10 @@ struct Deployed {
 /// A publish run, sized and checked — what the confirm prompt shows.
 pub struct Plan {
     pub mode: Mode,
+    /// The cluster's program id — what the run creates or upgrades.
+    pub program: Pubkey,
+    /// The artifact's repo-relative path.
+    pub artifact: &'static str,
     pub sha256: String,
     pub commit: String,
     pub len: usize,
@@ -164,9 +187,9 @@ impl Plan {
         };
         vec![
             verb.to_string(),
-            format!("program:   {DROPSET_ID}"),
+            format!("program:   {}", self.program),
             format!("authority: {} (payer + upgrade authority)", self.authority),
-            format!("binary:    {ARTIFACT}, {} bytes", self.len),
+            format!("binary:    {}, {} bytes", self.artifact, self.len),
             format!("sha256:    {}", self.sha256),
             format!("commit:    {}", self.commit),
             format!(
@@ -207,10 +230,11 @@ fn feature_status(data: &[u8]) -> &'static str {
 /// sending nothing.
 ///
 /// Refuses — before anything is signed — a program that is immutable or owned
-/// by another authority, a binary larger than the deployed capacity, a first
-/// publish without the matching program key, an admin that cannot afford it,
-/// and on mainnet a binary built from a modified tree (its commit would not
-/// describe it).
+/// by another authority, a binary larger than the deployed capacity, a binary
+/// built for another cluster's program id, a first publish whose program key
+/// is not `cluster`'s program id, an admin that cannot afford it, and on
+/// mainnet a binary built from a modified tree (its commit would not describe
+/// it).
 pub fn plan(
     client: &RpcClient,
     artifact: &Artifact,
@@ -226,14 +250,23 @@ pub fn plan(
     }
     if cluster.is_mainnet() && artifact.built_at < artifact.head.time {
         bail!(
-            "{ARTIFACT} predates the checked-out commit {} — run `make program` so the \
-             recorded commit describes the binary",
-            artifact.head.commit
+            "{} predates the checked-out commit {} — run `{}` so the recorded commit \
+             describes the binary",
+            artifact.path,
+            artifact.head.commit,
+            artifact_for(cluster).1
         );
     }
-    let deployed = deployed(client)?;
+    let program = cluster.program_id();
+    let deployed = deployed(client, cluster)?;
     let len = artifact.bytes.len();
-    let mode = classify(deployed.as_ref(), &artifact.bytes, authority, program_key)?;
+    let mode = classify(
+        deployed.as_ref(),
+        &artifact.bytes,
+        &program,
+        authority,
+        program_key,
+    )?;
     let rent = |size: usize| -> Result<u64> {
         client
             .get_minimum_balance_for_rent_exemption(size)
@@ -265,6 +298,8 @@ pub fn plan(
     }
     Ok(Plan {
         mode,
+        program,
+        artifact: artifact.path,
         sha256: artifact.sha256.clone(),
         commit: artifact.head.commit.clone(),
         len,
@@ -278,33 +313,41 @@ pub fn plan(
 }
 
 /// The decision [`plan`] makes, separated so it is testable without a chain.
+/// `program` is the cluster's program id.
 fn classify(
     deployed: Option<&Deployed>,
     bytes: &[u8],
+    program: &Pubkey,
     authority: &Pubkey,
     program_key: Option<&Pubkey>,
 ) -> Result<Mode> {
+    // The id compiled into the binary by `declare_id!` must be the cluster's,
+    // on a first publish and an upgrade alike: a localnet build upgraded into
+    // the mainnet program would reject every account it owns.
+    if !embeds_program_id(bytes, program) {
+        let says = |id: &Pubkey| {
+            if embeds(bytes, id) {
+                "embeds"
+            } else {
+                "does not embed"
+            }
+        };
+        bail!(
+            "the binary was not built for this cluster's program id {program} (it {} it, and \
+             {} the localnet id {DROPSET_ID}) — rebuild the cluster's artifact",
+            says(program),
+            says(&DROPSET_ID),
+        );
+    }
     let Some(deployed) = deployed else {
-        // Two ids must agree with the key: the one this client derives every
-        // PDA from, and the one compiled into the binary by `declare_id!`
-        // (present as its raw 32 bytes). The second is what catches a build
-        // made for a different cluster's id.
+        // The program key must be the cluster's id — the one this client
+        // derives every PDA from, and the one the binary embeds. On mainnet
+        // that is the 1Password-held key, checked here before anything signs.
         return match program_key {
-            Some(key) if *key == DROPSET_ID && embeds(bytes, key) => Ok(Mode::First),
+            Some(key) if key == program => Ok(Mode::First),
             Some(key) => bail!(
-                "the program key is {key}, but the binary {} it and this client's program \
-                 id is {DROPSET_ID} (the binary {} that) — a first publish must use the key \
-                 the binary was built for",
-                if embeds(bytes, key) {
-                    "embeds"
-                } else {
-                    "does not embed"
-                },
-                if embeds(bytes, &DROPSET_ID) {
-                    "embeds"
-                } else {
-                    "does not embed"
-                },
+                "the program key is {key}, but this cluster's program id is {program} — a \
+                 first publish must use the cluster's program key"
             ),
             None => bail!("the program is not deployed — a first publish needs --program-key"),
         };
@@ -330,7 +373,9 @@ fn classify(
 }
 
 /// Whether the binary `bytes` contain `id`'s 32 raw bytes — how `declare_id!`
-/// leaves the program id in the artifact.
+/// leaves the program id in the artifact. Only words the refusal; the check
+/// itself is the SDK's `embeds_program_id`, which also rejects a binary still
+/// carrying the localnet id.
 fn embeds(bytes: &[u8], id: &Pubkey) -> bool {
     let needle = id.as_ref();
     bytes.windows(needle.len()).any(|w| w == needle)
@@ -375,7 +420,7 @@ pub fn publish(
         "publish-start",
         &[
             ("mode", &format!("{:?}", plan.mode)),
-            ("program", &DROPSET_ID.to_string()),
+            ("program", &plan.program.to_string()),
             ("buffer", &buffer.pubkey().to_string()),
             ("sha256", &plan.sha256),
             ("bytes", &plan.len.to_string()),
@@ -462,7 +507,7 @@ pub fn publish(
         }
         Mode::Upgrade => {
             let ix = loader::upgrade(
-                &DROPSET_ID,
+                &plan.program,
                 &buffer.pubkey(),
                 &admin.pubkey(),
                 &admin.pubkey(),
@@ -476,7 +521,8 @@ pub fn publish(
 
     // Dump the program back and compare: the record states what the chain
     // holds, not what was sent.
-    let live = deployed(&client)?.context("the program is not readable after deploying")?;
+    let live =
+        deployed(&client, cluster)?.context("the program is not readable after deploying")?;
     if !holds(&live.code, bytes) {
         bail!("the deployed bytes do not match the binary — investigate before anything else");
     }
@@ -490,7 +536,7 @@ pub fn publish(
     log.record(
         "publish-verified",
         &[
-            ("program", &DROPSET_ID.to_string()),
+            ("program", &plan.program.to_string()),
             ("sha256", &deployed_sha),
             ("capacity", &live.code.len().to_string()),
             ("authority", &admin.pubkey().to_string()),
@@ -525,12 +571,13 @@ fn write_messages(buffer: &Pubkey, authority: &Pubkey, bytes: &[u8]) -> Vec<Mess
         .collect()
 }
 
-/// Read the program's `ProgramData`, `None` when the program does not exist.
-fn deployed(client: &RpcClient) -> Result<Option<Deployed>> {
-    if chain::fetch_fresh(client, &DROPSET_ID, "program")?.is_none() {
+/// Read `cluster`'s program's `ProgramData`, `None` when the program does not
+/// exist.
+fn deployed(client: &RpcClient, cluster: Cluster) -> Result<Option<Deployed>> {
+    if chain::fetch_fresh(client, &cluster.program_id(), "program")?.is_none() {
         return Ok(None);
     }
-    let account = chain::fetch_fresh(client, &chain::program_data(), "program data")?
+    let account = chain::fetch_fresh(client, &chain::program_data(cluster), "program data")?
         .context("the program exists but its ProgramData does not")?;
     parse_programdata(&account.data).map(Some)
 }
@@ -626,6 +673,7 @@ pub fn sol(lamports: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dropset_sdk::cluster::DROPSET_MAINNET_ID;
 
     fn programdata(authority: Option<Pubkey>, code: &[u8]) -> Vec<u8> {
         let mut data = vec![TAG_PROGRAMDATA, 0, 0, 0];
@@ -656,49 +704,106 @@ mod tests {
         assert!(parse_programdata(&[TAG_BUFFER; 60]).is_err());
     }
 
+    /// A stand-in binary that embeds `ids` the way `declare_id!` does.
+    fn elf(ids: &[&Pubkey]) -> Vec<u8> {
+        let mut bin = vec![7u8; 8];
+        for id in ids {
+            bin.extend_from_slice(id.as_ref());
+            bin.push(1);
+        }
+        bin
+    }
+
     #[test]
     fn the_chain_decides_first_upgrade_or_nothing() {
         let admin = Pubkey::new_unique();
-        let bin = [1u8, 2, 3];
-        // Nothing deployed: only the build's own program key may create it,
+        let p = DROPSET_ID;
+        let bin = elf(&[&p]);
+        // Nothing deployed: only the cluster's own program key may create it,
         // and only from a binary that embeds that id.
-        let mut elf = vec![7u8; 8];
-        elf.extend_from_slice(DROPSET_ID.as_ref());
         assert_eq!(
-            classify(None, &elf, &admin, Some(&DROPSET_ID)).unwrap(),
+            classify(None, &bin, &p, &admin, Some(&p)).unwrap(),
             Mode::First
         );
         let other_build = format!(
             "{:#}",
-            classify(None, &bin, &admin, Some(&DROPSET_ID)).unwrap_err()
+            classify(None, &[1, 2, 3], &p, &admin, Some(&p)).unwrap_err()
         );
         assert!(other_build.contains("does not embed"), "{other_build}");
-        assert!(classify(None, &elf, &admin, Some(&Pubkey::new_unique())).is_err());
-        assert!(classify(None, &elf, &admin, None).is_err());
+        assert!(classify(None, &bin, &p, &admin, Some(&Pubkey::new_unique())).is_err());
+        assert!(classify(None, &bin, &p, &admin, None).is_err());
 
         let at = |code: &[u8]| Deployed {
             authority: Some(admin),
             code: code.to_vec(),
         };
+        let padded = [&bin[..], &[0, 0]].concat();
+        let larger = vec![9u8; bin.len() + 1];
         // The same bytes, zero-padded, are already there.
         assert_eq!(
-            classify(Some(&at(&[1, 2, 3, 0, 0])), &bin, &admin, None).unwrap(),
+            classify(Some(&at(&padded)), &bin, &p, &admin, None).unwrap(),
             Mode::Current
         );
         // Different bytes that fit are an upgrade, with no program key needed.
         assert_eq!(
-            classify(Some(&at(&[9, 9, 9, 9])), &bin, &admin, None).unwrap(),
+            classify(Some(&at(&larger)), &bin, &p, &admin, None).unwrap(),
             Mode::Upgrade
         );
         // A binary larger than the capacity is refused, not truncated.
-        assert!(classify(Some(&at(&[9, 9])), &bin, &admin, None).is_err());
+        assert!(classify(Some(&at(&[9, 9])), &bin, &p, &admin, None).is_err());
         // Someone else's program, or an immutable one, is never touched.
-        assert!(classify(Some(&at(&[9, 9, 9])), &bin, &Pubkey::new_unique(), None).is_err());
+        let other = Pubkey::new_unique();
+        assert!(classify(Some(&at(&larger)), &bin, &p, &other, None).is_err());
         let frozen = Deployed {
             authority: None,
-            code: vec![9, 9, 9],
+            code: larger.clone(),
         };
-        assert!(classify(Some(&frozen), &bin, &admin, None).is_err());
+        assert!(classify(Some(&frozen), &bin, &p, &admin, None).is_err());
+    }
+
+    /// Mainnet publishes the mainnet build with the 1Password-held key, and
+    /// nothing else: a first publish needs a key equal to the mainnet id, and
+    /// a localnet build is refused on a first publish and an upgrade alike.
+    #[test]
+    fn mainnet_publishes_only_the_mainnet_build_with_the_mainnet_key() {
+        let admin = Pubkey::new_unique();
+        let m = Cluster::Mainnet.program_id();
+        assert_eq!(m, DROPSET_MAINNET_ID);
+        let mainnet_build = elf(&[&m]);
+        assert_eq!(
+            classify(None, &mainnet_build, &m, &admin, Some(&m)).unwrap(),
+            Mode::First
+        );
+        // The localnet key, whose secret is public, cannot publish mainnet.
+        let wrong_key = format!(
+            "{:#}",
+            classify(None, &mainnet_build, &m, &admin, Some(&DROPSET_ID)).unwrap_err()
+        );
+        assert!(wrong_key.contains("program key"), "{wrong_key}");
+        // A localnet build, or one carrying both ids, is never published to
+        // the mainnet program.
+        let deployed = Deployed {
+            authority: Some(admin),
+            code: vec![0; 256],
+        };
+        for bin in [elf(&[&DROPSET_ID]), elf(&[&m, &DROPSET_ID])] {
+            assert!(classify(None, &bin, &m, &admin, Some(&m)).is_err());
+            let refusal = format!(
+                "{:#}",
+                classify(Some(&deployed), &bin, &m, &admin, None).unwrap_err()
+            );
+            assert!(refusal.contains("not built for"), "{refusal}");
+        }
+        // The mainnet build is never published to localnet either.
+        assert!(classify(None, &mainnet_build, &DROPSET_ID, &admin, Some(&DROPSET_ID)).is_err());
+    }
+
+    #[test]
+    fn each_cluster_publishes_its_own_artifact() {
+        assert_eq!(artifact_for(Cluster::Localnet).0, ARTIFACT);
+        assert_eq!(artifact_for(Cluster::Mainnet).0, MAINNET_ARTIFACT);
+        assert_ne!(ARTIFACT, MAINNET_ARTIFACT);
+        assert_eq!(artifact_for(Cluster::Mainnet).1, "make program-mainnet");
     }
 
     #[test]
