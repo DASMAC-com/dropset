@@ -321,7 +321,7 @@ impl Outcome {
 }
 
 /// Noise about the nominal: steps of up to ±1000 ppm, one in ten a jump of
-/// up to ±2500 that sweeps several levels at once, reflected at ±5000 so
+/// up to ±2500 that can sweep two or more levels at once, reflected at ±5000 so
 /// the walk stays well inside the ladder's 8000 ppm span and keeps crossing
 /// back through the nominal. Then walked home taking every crossing entry
 /// whole, so the book ends
@@ -353,9 +353,13 @@ fn a_random_walk_about_the_nominal_grows_the_vault_by_the_flip_spread() {
             delta
         })
         .collect();
-    while delta != 0 {
+    // At least one step home, so the last step is never a clipped one.
+    loop {
         delta -= delta.signum() * delta.abs().min(500);
         path.push(delta);
+        if delta == 0 {
+            break;
+        }
     }
     assert!(
         crossings >= 10,
@@ -378,9 +382,12 @@ fn a_random_walk_about_the_nominal_grows_the_vault_by_the_flip_spread() {
     assert!(t.partial_takes > 0);
     assert!(t.fee > 0, "the flip spread earned nothing");
     assert!(out.at_nominal > 0, "the vault did not grow at the nominal");
-    // Walked home, the offset edge has round-tripped away: what the vault
-    // keeps is the flip spread, to within a second-order residue (each
-    // return leg is a little larger than the leg it reverses).
+    // Walked home and settled, every flipped entry has been taken, so the
+    // offset edge has round-tripped away and what the vault keeps is the
+    // flip spread. The residue is second order: a bid round trip leaves
+    // none, and an ask round trip leaves at most the fee times the filled
+    // ask's offset (each return leg is a little larger than the leg it
+    // reverses), which REFLECT caps at 0.5% — inside this 1% bound.
     let spread = out.at_nominal - t.fee;
     assert!(
         spread.abs() * 100 < t.fee,
