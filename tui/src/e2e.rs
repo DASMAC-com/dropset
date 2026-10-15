@@ -62,7 +62,11 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
     let log = Logger::stdout().with_record(Some(record));
 
     // Publish: a first deploy, verified on-chain, then a refused re-run.
-    let artifact = Artifact::load(&root).unwrap();
+    let artifact = Artifact::load(&root, L).unwrap();
+    assert_eq!(artifact.path, publish::ARTIFACT);
+    // The localnet deployment is the committed key's: what every PDA below
+    // is derived from.
+    assert_eq!(program.pubkey(), L.program_id());
     let published = publish::publish(&url, &artifact, L, &admin, Some(&program), &log).unwrap();
     assert!(published.contains(&artifact.sha256), "{published}");
     let again = publish::publish(&url, &artifact, L, &admin, Some(&program), &log).unwrap_err();
@@ -73,6 +77,7 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
     let mut changed = artifact.bytes.clone();
     *changed.last_mut().unwrap() ^= 0xFF;
     let changed = Artifact {
+        path: artifact.path,
         sha256: publish::sha256_hex(&changed),
         bytes: changed,
         head: crate::ceremony::git_head(&root).unwrap(),
@@ -128,6 +133,23 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
         assert!(matches!(step().unwrap(), Outcome::Done(_)));
         assert!(matches!(step().unwrap(), Outcome::AlreadyThere(_)));
     }
+
+    // Everything landed at the localnet deployment's addresses, owned by its
+    // program: the registry, and the market with its seeded vault.
+    let registry = crate::accounts::registry_fresh(&client, L)
+        .unwrap()
+        .unwrap();
+    assert_eq!(registry.address, chain::registry_pda(L));
+    let (base, quote) = market::pair_mints(&root, config).unwrap();
+    let market_address = chain::market_pda(L, &base, &quote);
+    let owner = client.get_account(&market_address).unwrap().owner;
+    assert_eq!(owner, L.program_id());
+    let seats = crate::accounts::vault_seats_fresh(&client, L, &market_address)
+        .unwrap()
+        .unwrap();
+    assert!(seats
+        .iter()
+        .any(|s| s.leader == leader.pubkey() && s.seeded));
 
     // The record carries the publish, the recovery and every signature.
     let body = std::fs::read_to_string(&record_path).unwrap();

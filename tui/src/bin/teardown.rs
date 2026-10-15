@@ -4,9 +4,12 @@
 //! action does, but with no UI: discover whatever live accounts exist, drain
 //! and close them in the spec's dependency order, and refund all rent to the
 //! wallet. The program is left deployed (teardown resets only on-chain state).
-//! Built to run in automation or against a real cluster, so it takes an
-//! explicit `--rpc-url` and guards any non-localnet target behind an
-//! interactive confirmation.
+//! Built to run in automation or against mainnet, so it takes an explicit
+//! `--rpc-url` and guards any non-localnet target behind an interactive
+//! confirmation. The program id is per cluster, so the target is read from
+//! the chain's genesis hash ([`Cluster::of_genesis`]): mainnet, or a loopback
+//! endpoint taken as localnet; a remote endpoint to any other chain is
+//! refused, since no deployment lives there.
 //!
 //! A loopback `--rpc-url` skips that prompt, so it is additionally held to a
 //! genesis check ([`cluster::ensure_not_mainnet`]): host classification cannot
@@ -27,7 +30,7 @@
 //!   unattended runs).
 
 use anyhow::{anyhow, bail, Result};
-use dropset_tui::cluster;
+use dropset_tui::cluster::{self, Cluster};
 use dropset_tui::job::Logger;
 use dropset_tui::{chain, teardown, validator, wallet};
 use solana_signer::Signer;
@@ -50,21 +53,31 @@ fn main() -> Result<()> {
         .unwrap_or_else(|| validator::DEFAULT_RPC_URL.to_string());
     let client = chain::rpc(&rpc_url);
 
-    // A real cluster is irreversible, so make the operator confirm unless they
-    // opted out with --yes (or the target is the throwaway localnet).
-    if cluster::is_localnet(&rpc_url) {
-        // The prompt was just skipped on the strength of the URL alone, and a
+    let loopback = cluster::is_localnet(&rpc_url);
+    if loopback {
+        // The prompt is skipped below on the strength of the URL alone, and a
         // URL cannot see through an SSH tunnel or a local proxy — so ask the
         // chain what it is before closing every market, vault and the registry.
         // This is the one path where the cheap check is not merely incomplete
         // but actively wrong, and the cost of being wrong is unrecoverable.
         cluster::ensure_not_mainnet(&client)?;
-    } else if !args.yes {
-        confirm(&rpc_url, &keypair.pubkey().to_string())?;
+    }
+
+    // The program id is per cluster, and the chain says which one this is
+    // (see `Cluster::of_genesis`), resolved before the prompt so the operator
+    // confirms the program the closes will be signed against.
+    let target = Cluster::of_genesis(&chain::genesis_hash(&client)?, loopback)?;
+
+    // A real cluster is irreversible, so make the operator confirm unless they
+    // opted out with --yes (or the target is the throwaway localnet). Keyed
+    // on the resolved target, not the URL, so mainnet is prompted however it
+    // was reached.
+    if target.is_mainnet() && !args.yes {
+        confirm(&rpc_url, &keypair.pubkey().to_string(), target)?;
     }
 
     let log = Logger::stdout();
-    let summary = teardown::run(&client, &keypair, &log)?;
+    let summary = teardown::run(&client, target, &keypair, &log)?;
     println!("{summary}");
     Ok(())
 }
@@ -73,10 +86,12 @@ fn main() -> Result<()> {
 /// Prints to stderr so a piped stdout (the teardown log) stays clean; the
 /// typed-`yes` read itself is [`cluster::confirm`], shared with the TUI's
 /// mainnet entry gate.
-fn confirm(rpc_url: &str, wallet: &str) -> Result<()> {
+fn confirm(rpc_url: &str, wallet: &str, target: Cluster) -> Result<()> {
     eprintln!("⚠  Non-localnet teardown — this is irreversible.");
-    eprintln!("   RPC:    {rpc_url}");
-    eprintln!("   wallet: {wallet}");
+    eprintln!("   RPC:     {rpc_url}");
+    eprintln!("   cluster: {}", target.label());
+    eprintln!("   program: {}", target.program_id());
+    eprintln!("   wallet:  {wallet}");
     eprintln!(
         "   Drains and CLOSES every live market, vault, treasury, and the\n   \
          registry, reclaiming all rent to the wallet. The program is left\n   \

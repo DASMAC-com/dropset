@@ -13,6 +13,7 @@
 // cspell:word keypairs
 
 use crate::chain;
+use crate::cluster::Cluster;
 use anyhow::{anyhow, bail, Context, Result};
 use dropset_sdk::accounts::{
     fetch_maybe_registry_header, VaultDepositorHeader, MARKET_HEADER_DISCRIMINATOR,
@@ -23,7 +24,6 @@ use dropset_sdk::layout::{MarketView as SlabView, Vault};
 use dropset_sdk::matching::{resting_levels, BookLevel, SwapSide};
 use dropset_sdk::price::Price;
 use dropset_sdk::shared::MaybeAccount;
-use dropset_sdk::DROPSET_ID;
 use solana_client::rpc_client::RpcClient;
 use solana_pubkey::Pubkey;
 
@@ -266,8 +266,10 @@ impl ChainState {
 /// accounts pane (`None` skips that — the bootstrap jobs that poll only for
 /// registry pass `None`). `selected` picks which discovered market's
 /// participants (leader / swapper holdings) to read for the accounts pane.
+/// Every program address is `cluster`'s ([`Cluster::program_id`]).
 pub fn poll(
     client: &RpcClient,
+    cluster: Cluster,
     wallet: &Pubkey,
     swapper: Option<&Pubkey>,
     selected: usize,
@@ -284,17 +286,17 @@ pub fn poll(
         return state;
     }
 
-    // Program account at DROPSET_ID is owned by the loader and executable
+    // The cluster's program account is owned by the loader and executable
     // once deployed.
     state.program_deployed = client
-        .get_account(&DROPSET_ID)
+        .get_account(&cluster.program_id())
         .map(|a| a.executable)
         .unwrap_or(false);
     if !state.program_deployed {
         return state;
     }
 
-    state.registry = read_registry(client);
+    state.registry = read_registry(client, cluster);
     if state.registry.is_none() {
         return state;
     }
@@ -304,6 +306,7 @@ pub fn poll(
     // clock, matching what the engine gates on.
     state.markets = read_markets(
         client,
+        cluster,
         SlotTime::new(slot.unwrap_or(0).min(u32::MAX as u64) as u32),
         dropset_sdk::time::now_unix_u32(),
         None,
@@ -390,8 +393,8 @@ fn read_participant(client: &RpcClient, owner: &Pubkey, market: &MarketView) -> 
 
 /// Decode the registry via the SDK's typed `fetch_*` path, deriving its
 /// stamped fee vault and reading that vault's lamports.
-fn read_registry(client: &RpcClient) -> Option<RegistryView> {
-    let address = chain::registry_pda();
+fn read_registry(client: &RpcClient, cluster: Cluster) -> Option<RegistryView> {
+    let address = chain::registry_pda(cluster);
     let MaybeAccount::Exists(decoded) = fetch_maybe_registry_header(client, &address).ok()? else {
         return None;
     };
@@ -431,12 +434,13 @@ pub fn read_reference_price(client: &RpcClient, market: &Pubkey, vault_idx: u32)
 
 /// Load a specific market by address, for the multi-market bootstrap which
 /// seeds each pair's own market PDA rather than whichever turns up first.
-pub fn read_market_at(client: &RpcClient, address: Pubkey) -> Option<MarketView> {
+pub fn read_market_at(client: &RpcClient, cluster: Cluster, address: Pubkey) -> Option<MarketView> {
     // Expiry is dual-domain, so the book filter needs both clocks: the
     // chain's slot and the host's wall clock.
     let slot = client.get_slot().ok()?;
     read_markets(
         client,
+        cluster,
         SlotTime::new(slot.min(u32::MAX as u64) as u32),
         dropset_sdk::time::now_unix_u32(),
         Some(address),
@@ -485,11 +489,11 @@ fn is_seeded(v: &Vault) -> bool {
 /// The registry, read **fresh** for a pre-flight check: `Ok(None)` only when
 /// the account is genuinely absent, and an error — never `None` — when the read
 /// fails. See [`chain::fetch_fresh`] for why the distinction is load-bearing.
-pub fn registry_fresh(client: &RpcClient) -> Result<Option<RegistryView>> {
-    if chain::fetch_fresh(client, &chain::registry_pda(), "registry")?.is_none() {
+pub fn registry_fresh(client: &RpcClient, cluster: Cluster) -> Result<Option<RegistryView>> {
+    if chain::fetch_fresh(client, &chain::registry_pda(cluster), "registry")?.is_none() {
         return Ok(None);
     }
-    read_registry(client)
+    read_registry(client, cluster)
         .map(Some)
         .context("the registry exists but could not be read back — refusing")
 }
@@ -500,11 +504,15 @@ pub fn registry_fresh(client: &RpcClient) -> Result<Option<RegistryView>> {
 /// A direct read of the one account rather than [`read_market_at`]'s
 /// program-wide scan, which both folds a failure into `None` and costs a
 /// `get_program_accounts` on mainnet for what is a single-account question.
-pub fn vault_seats_fresh(client: &RpcClient, market: &Pubkey) -> Result<Option<Vec<VaultSeat>>> {
+pub fn vault_seats_fresh(
+    client: &RpcClient,
+    cluster: Cluster,
+    market: &Pubkey,
+) -> Result<Option<Vec<VaultSeat>>> {
     let Some(account) = chain::fetch_fresh(client, market, "market")? else {
         return Ok(None);
     };
-    if account.owner != DROPSET_ID {
+    if account.owner != cluster.program_id() {
         bail!(
             "{market} is owned by {}, not the Dropset program",
             account.owner
@@ -605,11 +613,12 @@ pub fn market_index_for_symbol(
 
 fn read_markets(
     client: &RpcClient,
+    cluster: Cluster,
     now_slot: SlotTime,
     now_unix: WallTime,
     target: Option<Pubkey>,
 ) -> Vec<MarketView> {
-    let Ok(accounts) = client.get_program_accounts(&DROPSET_ID) else {
+    let Ok(accounts) = client.get_program_accounts(&cluster.program_id()) else {
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -992,8 +1001,8 @@ mod tests {
     #[test]
     fn fresh_reads_refuse_on_an_unreachable_endpoint() {
         let client = chain::rpc("http://127.0.0.1:1");
-        assert!(registry_fresh(&client).is_err());
-        assert!(vault_seats_fresh(&client, &Pubkey::new_unique()).is_err());
+        assert!(registry_fresh(&client, Cluster::Localnet).is_err());
+        assert!(vault_seats_fresh(&client, Cluster::Localnet, &Pubkey::new_unique()).is_err());
     }
 
     #[test]

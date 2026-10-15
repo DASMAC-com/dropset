@@ -1,5 +1,3 @@
-// cspell:word retarget
-
 //! Per-cluster program ids.
 //!
 //! The program is deployed at a different address per cluster: localnet

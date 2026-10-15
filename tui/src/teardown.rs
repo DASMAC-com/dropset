@@ -12,6 +12,7 @@
 
 use crate::accounts::{self, MarketView};
 use crate::chain;
+use crate::cluster::Cluster;
 use crate::job::Logger;
 use anyhow::{Context, Result};
 use solana_client::rpc_client::RpcClient;
@@ -36,12 +37,14 @@ use solana_signer::Signer;
 /// new logic is shipped by upgrading in place. After teardown the phase reads
 /// `RegistryAbsent`, so `init` runs straight away against the still-deployed
 /// program. Use the TUI's `Wipe` for a true clean slate.
-pub fn run(client: &RpcClient, wallet: &Keypair, log: &Logger) -> Result<String> {
+///
+/// Every account it closes is `cluster`'s program's.
+pub fn run(client: &RpcClient, cluster: Cluster, wallet: &Keypair, log: &Logger) -> Result<String> {
     let admin = wallet.pubkey();
     // No symbol map: this closes every market it finds, so their order is
     // immaterial — and this runs headless (`dropset-teardown`), with no
     // repo root to resolve the checked-in mint keypairs from anyway.
-    let state = accounts::poll(client, &admin, None, 0, &[]);
+    let state = accounts::poll(client, cluster, &admin, None, 0, &[]);
     let before = client.get_balance(&admin).unwrap_or(0);
 
     // The `rent_recipient` of every close instruction must differ from the
@@ -56,7 +59,7 @@ pub fn run(client: &RpcClient, wallet: &Keypair, log: &Logger) -> Result<String>
         log.log("No market to tear down.");
     } else {
         for market in &state.markets {
-            teardown_market(client, wallet, market, &sink_key, log)?;
+            teardown_market(client, cluster, wallet, market, &sink_key, log)?;
         }
     }
 
@@ -75,6 +78,7 @@ pub fn run(client: &RpcClient, wallet: &Keypair, log: &Logger) -> Result<String>
                 &registry.fee_token_program,
             );
             let ix = chain::build_close_registry_fee_vault_ix(
+                cluster,
                 &admin,
                 &registry.fee_mint,
                 &registry.fee_token_program,
@@ -86,7 +90,7 @@ pub fn run(client: &RpcClient, wallet: &Keypair, log: &Logger) -> Result<String>
             log.log(format!("  {sig}"));
 
             log.log("close_registry");
-            let ix = chain::build_close_registry_ix(&admin, &sink_key);
+            let ix = chain::build_close_registry_ix(cluster, &admin, &sink_key);
             let sig = chain::send(client, wallet, &[wallet], &[ix]).context("close_registry")?;
             log.log(format!("  {sig}"));
             log.accounts_changed();
@@ -116,6 +120,7 @@ pub fn run(client: &RpcClient, wallet: &Keypair, log: &Logger) -> Result<String>
 /// `close_market`, sending reclaimed rent to `rent_recipient`.
 fn teardown_market(
     client: &RpcClient,
+    cluster: Cluster,
     wallet: &Keypair,
     market: &MarketView,
     rent_recipient: &Pubkey,
@@ -127,6 +132,7 @@ fn teardown_market(
             "force_withdraw_depositor sector {sector} owner {owner}"
         ));
         let ix = chain::build_force_withdraw_depositor_ix(
+            cluster,
             &admin,
             &market.address,
             &market.base_mint,
@@ -150,6 +156,7 @@ fn teardown_market(
             "force_withdraw_leader sector {sector} leader {leader}"
         ));
         let ix = chain::build_force_withdraw_leader_ix(
+            cluster,
             &admin,
             &market.address,
             &market.base_mint,
@@ -180,6 +187,7 @@ fn teardown_market(
         let (token_recipient, create_ata) =
             chain::ata_with_create_ix(&admin, &admin, &mint, &chain::SPL_TOKEN_PROGRAM_ID);
         let ix = chain::build_close_market_treasury_ix(
+            cluster,
             &admin,
             &market.address,
             &mint,
@@ -194,6 +202,7 @@ fn teardown_market(
 
     log.log("close_market");
     let ix = chain::build_close_market_ix(
+        cluster,
         &admin,
         &market.address,
         &market.base_treasury,

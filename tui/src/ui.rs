@@ -10,7 +10,6 @@ use crate::app::{swap_side_label, App, LeaderPrompt, LogKind};
 use crate::book;
 use crate::cluster::Cluster;
 use crate::explorer;
-use dropset_sdk::DROPSET_ID;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -567,7 +566,12 @@ fn draw_alerts(f: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn draw_accounts(f: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let rows = build_account_rows(&app.chain, &app.mint_symbols, app.selected_market);
+    let rows = build_account_rows(
+        &app.chain,
+        app.ctx.cluster,
+        &app.mint_symbols,
+        app.selected_market,
+    );
     // Register each address-bearing row as a click target over its inner-row
     // rect, so a left-click anywhere on the row opens that account in the
     // explorer. The inner area sits one cell in from the border on every side.
@@ -611,14 +615,17 @@ fn draw_accounts(f: &mut Frame<'_>, app: &mut App, area: Rect) {
 /// `selected` picks which discovered market's accounts to show.
 fn build_account_rows(
     chain: &ChainState,
+    cluster: Cluster,
     symbols: &[(Pubkey, &'static str)],
     selected: usize,
 ) -> Vec<(Line<'static>, Option<Pubkey>)> {
-    // The program id is fixed and meaningful even before deploy, so its row is
-    // always clickable; absent registry/market rows have no real address.
+    // The cluster's program id is fixed and meaningful even before deploy, so
+    // its row is always clickable; absent registry/market rows have no real
+    // address.
+    let program = cluster.program_id();
     let mut rows: Vec<(Line<'static>, Option<Pubkey>)> = vec![(
-        account_line("program", chain.program_deployed, &DROPSET_ID, None),
-        Some(DROPSET_ID),
+        account_line("program", chain.program_deployed, &program, None),
+        Some(program),
     )];
 
     match &chain.registry {
