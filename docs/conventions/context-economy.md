@@ -228,7 +228,10 @@ fingerprint, from the band its declared size falls in:
 | split-at-1,000 or more | \$100–160   | over the ceiling; split       |
 
 A declared size between two rows (150–300, 800–1,000) takes the
-nearer band and says so; past 1,000 the issue splits at staging.
+nearer band, the higher on a tie, and says so. Past 1,000 the issue
+splits at staging, unless it is an accepted test-heavy or
+prose-deletion overage that a split would leave inert; that takes
+the last row.
 **The rate basis is Opus 5.5 on Bedrock**, and the bands re-seed at
 the next rate swap. A band, never a point: the measured spread inside
 one line band ran $39 to $140. Bands bind **Bedrock workers only**. A

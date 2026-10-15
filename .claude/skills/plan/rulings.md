@@ -29,9 +29,10 @@ the document's state sections.
 
 1. **Tier names are advisor / executor / helper / background.**
    Advisor: `plan`, `architect`, `explore`, on the Anthropic
-   subscription. Executor: task workers and `housekeeping`, on
-   Bedrock. Helper: `chore` sessions, Sonnet-class, Bedrock by
-   default, pinned with the 1M suffix in the runtime config.
+   subscription. Executor: task workers on Bedrock, and
+   `housekeeping`, which stays on the seat. Helper: `chore`
+   sessions, Sonnet-class, Bedrock by default, pinned with the 1M
+   suffix in the runtime config.
    Model ids live only in the operator's runtime config; unset
    refuses the launch.
 

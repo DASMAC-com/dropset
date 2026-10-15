@@ -61,8 +61,9 @@ Above them, a header of one line plus the `Bootstrap stamp`.
 
 **A new ruling is a reviewed change**, never a document edit:
 file a `Claude:` issue carrying its text, which a worker lands as
-a PR to `rulings.md` — an operator-named exception to any meta
-freeze — and carry it under `In-session notes` until it lands.
+a PR to `rulings.md` — under a meta freeze, only once the
+operator names it — and carry it under `In-session notes` until
+it lands.
 
 ## Where it runs
 
@@ -185,7 +186,8 @@ python3 .claude/tools/board_batch.py view
 session would hold, with its blocker, in the dispatch ask; on the
 operator's yes it gets a blocking edge in the same breath,
 through step 3's `edges` (dry run first): a hold is an edge or it
-does not exist. Every
+does not exist. A row the operator neither dispatches nor holds
+stays in Next as dispatchable. Every
 un-milestoned Todo item is either **acted on** or **parked** —
 say that discipline out loud when the set has grown.
 
@@ -355,9 +357,9 @@ with no refactor-later burden a later issue will undo.
 - **A hold is an edge or it does not exist** (ruling 2). An issue
   held behind an in-flight surface or a sequencing reason gets a
   blocking edge on that blocker at dispatch time, so it shows as
-  Blocked, not Next. Remove one on a re-sequence; a completed
-  blocker no longer blocks in the board tool's marker, and an edge
-  `view` still shows Blocked after its blocker is done is removed.
+  Blocked, not Next. A completed blocker stops blocking on its
+  own; removing a hold edge on a re-sequence is the operator's
+  call too, asked in the same dispatch ask and run through step 3.
 - **`Claude:` meta-work is Urgent once unblocked** (operator
   rule, 2026-08-17), so agent-infra is the next pull. Meta lands
   as short batches (step 1), several possibly in flight, with no

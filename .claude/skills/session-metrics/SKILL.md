@@ -240,7 +240,7 @@ it is the evidence the recommendations are grounded in. (Add
 
 **Then append the measured leg to the session's own issue** —
 the `ENG-###` its branch or worktree names; none for a session
-with no issue. One parseable line, written to a scratchpad
+with no issue. One line in a fixed form, written to a scratchpad
 file and appended zero-echo:
 
 ```sh

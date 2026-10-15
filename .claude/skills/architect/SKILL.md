@@ -108,7 +108,7 @@ pin prevents.
 
 ## Bootstrap: minimal, deliberately
 
-Read **two sources**, each cheap:
+Read **these**, each one cheap read:
 
 1. **The Planning document** (`LINEAR_PLANNING_DOC_ID`), plus
    the committed standing decisions and rulings in

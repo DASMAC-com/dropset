@@ -1458,10 +1458,9 @@ Blocked instead. This amends only *what a planning-placed edge may
 mean* — semantic ordering **or** a planning hold. An automated filer
 still never places an edge, and file overlap a filer notices is still
 never one. A hold placed on the operator's yes, in the dispatch ask,
-stays human-directed. A completed blocker no longer counts in the board
-tool's blocked marker, so removal is needed on a re-sequence, or where
-the operator's own view still shows an issue Blocked after its blocker
-is done.
+stays human-directed, and so does removing one: a completed blocker
+stops blocking on its own, so removal is needed only on a re-sequence,
+asked in the same dispatch ask.
 
 **There is no standing edge class any more — the meta batch's edge is
 retired, and so is the goal it served.** The edge existed to keep
