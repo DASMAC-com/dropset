@@ -88,16 +88,14 @@ bounds**, not as one curve:
 † derived from the total, not measured per-line.
 
 The rows are priced at the **Opus 5** Bedrock rates verified that day.
-The fleet now runs Opus 5.5, whose rate is **projected** at 1.10x the
-first-party list price and unverified until the first Opus 5.5 fleet
-day is reconciled in Cost Explorer by usage type — the public Price
-List API carries no current Anthropic model, so it cannot be read
-programmatically. Against Opus 5 that is about 0.8x on input, output and
-cache writes but **0.4x on cache reads**, which dominate these sessions,
-so a session's blended ratio sits well below 0.8x. Each model's rate and
-its verified-or-projected standing live in one place,
-`session_metrics.py`'s `RATES_BY_MODEL`; read the line band as a shape,
-not as current dollars.
+The fleet now runs Opus 5.5, whose rate (1.10x the first-party list
+price) was **verified** on the 2026-10-13 fleet day by usage type in
+Cost Explorer — see "Reconciling against the bill" below. Against Opus 5
+that is about 0.8x on input, output and cache writes but **0.4x on cache
+reads**, which dominate these sessions, so a session's blended ratio
+sits well below 0.8x. Each model's rate and its verified-or-projected
+standing live in one place, `session_metrics.py`'s `RATES_BY_MODEL`;
+read the line band as a shape, not as current dollars.
 
 **The LOWER bound is per-line, and it is what "smaller is not
 monotonically cheaper" means.** There is a per-PR overhead floor of
@@ -220,6 +218,40 @@ not re-litigated per session:
   PRs and the levers below are the ratified levers instead.
 - **The Bedrock auto-mode classifier's ~7% overhead is accepted burn.**
   It buys the substrate routing and is not a target for trimming.
+  (Re-measured on Opus 5.5 at about 8% of the bill; see below.)
+
+### Reconciling against the bill
+
+`.claude/tools/fleet_cost.py` closes the loop between what sessions
+report and what AWS charges, over **complete UTC days** on both sides
+(D-2 settled, D-1 provisional — Cost Explorer lags up to a day).
+`reconcile` prices every transcript, sub-agents included, once per
+message id, against the billed gross; `spend-cap` checks the daily
+spend cap's CloudWatch estimate against the same bill. What it encodes,
+all measured 2026-10-14 over the 10-08, 10-09 and 10-13 fleet days:
+
+- **The bill is one Marketplace service per model**, named
+  `Claude <Family> <version> (Amazon Bedrock Edition)`, under record type
+  `Usage`. The bare `Amazon Bedrock` service reads zero every day, a
+  convincing false negative. Each model swap adds a service — the old
+  two-name filter (Opus 5, Sonnet 5) would have missed every Opus 5.5
+  dollar — so the tool takes every service with the edition suffix.
+- **The Opus 5.5 rates are exact**: billed quantity per usage type times
+  `RATES_BY_MODEL` reproduced the 10-13 bill to the cent.
+- **Transcripts run about 8% under the bill** (8.3, 8.1, 8.3 percent),
+  and the gap is the classifier: almost entirely fresh input and output,
+  while both cache tiers match within about 2%. Since the Opus 5.5 swap
+  it bills inside the session model's own service, not as a separate
+  Sonnet line, so the September "Sonnet at 7% of Opus" multiplier is
+  retired. The tool carries the measured share as `CLASSIFIER_OVERHEAD`
+  and flags drift **after** it, past 15%.
+- **The spend-cap estimate tracks the bill within about 1%**, slightly
+  above it (it prices every model at Opus rates), so the cap neither
+  leaks nor trips early on an Opus 5.5 fleet.
+- **Substrate comes from the launch marker.** A worktree session with no
+  marker is reported as `unattributed` and kept out of the total. The
+  blind spot is `plan bedrock`, a base-repo launch that writes no marker
+  and so surfaces only as bill-side drift.
 
 ## Resident size has a hard cap
 

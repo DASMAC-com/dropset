@@ -742,14 +742,13 @@ class Costing(unittest.TestCase):
         cost = sm.Cost.price(totals, "claude-opus-5")
         self.assertGreater(cost.cache_read, cost.output)
 
-    def test_opus_5_5_prices_at_its_projected_row(self):
+    def test_opus_5_5_prices_at_its_verified_row(self):
         cost = sm.Cost.price(self.MILLION_EACH, "claude-opus-5-5")
         self.assertAlmostEqual(cost.input, 4.40, places=6)
         self.assertAlmostEqual(cost.output, 22.00, places=6)
         self.assertAlmostEqual(cost.cache_write, 8.80, places=6)
         self.assertAlmostEqual(cost.cache_read, 0.22, places=6)
-        # Projected, not billed: the headline must not call it verified.
-        self.assertIsNone(sm.RATES_BY_MODEL["claude-opus-5-5"].verified)
+        self.assertEqual(sm.RATES_BY_MODEL["claude-opus-5-5"].verified, "2026-10-13")
 
     def test_an_unknown_model_refuses_by_name(self):
         with self.assertRaises(sm.UnpricedModel) as caught:
@@ -1041,9 +1040,11 @@ class SubstrateRendering(unittest.TestCase):
 
     def test_a_projected_rate_is_named_as_unverified(self):
         agg = sm.SessionAggregator()
-        agg.ingest_main_line(assistant('{"output_tokens":1000}', "", "claude-opus-5-5"))
+        agg.ingest_main_line(
+            assistant('{"output_tokens":1000}', "", "claude-haiku-5-5")
+        )
         md = sm.to_markdown(agg.finish(sm.SUBSTRATE_BEDROCK), "abcd1234")
-        self.assertIn("`claude-opus-5-5` projected, unverified", md)
+        self.assertIn("`claude-haiku-5-5` projected, unverified", md)
         self.assertNotIn("verified 20", md)
 
     def test_an_unpriced_bedrock_session_names_the_model_and_no_figure(self):
@@ -1065,10 +1066,12 @@ class SubstrateRendering(unittest.TestCase):
         # session as fully verified — the mislabel the standing exists to stop.
         agg = sm.SessionAggregator()
         agg.ingest_main_line(assistant('{"output_tokens":1000}', "", "claude-opus-5"))
-        agg.ingest_main_line(assistant('{"output_tokens":1000}', "", "claude-opus-5-5"))
+        agg.ingest_main_line(
+            assistant('{"output_tokens":1000}', "", "claude-haiku-5-5")
+        )
         md = sm.to_markdown(agg.finish(sm.SUBSTRATE_BEDROCK), "abcd1234")
         self.assertIn("`claude-opus-5` verified 2026-09-11", md)
-        self.assertIn("`claude-opus-5-5` projected, unverified", md)
+        self.assertIn("`claude-haiku-5-5` projected, unverified", md)
 
     def test_a_seat_session_on_an_unpriced_model_still_reports_no_figure(self):
         # The normal seat case: its model has no Bedrock row, so the costs are

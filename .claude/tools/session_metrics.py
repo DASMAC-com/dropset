@@ -146,13 +146,14 @@ class Rates:
 # billed model, or an unexplained line shows up as drift between the billed day
 # and the sum of the fleet's transcript-priced estimates.
 #
-# Opus 5.5 is seeded at 1.10x the first-party list price, the Bedrock premium
-# Opus 5 carried. The public Price List API carries no current Anthropic model,
-# so it cannot be read programmatically; it stays unverified until the first
-# Opus 5.5 fleet day is reconciled against Cost Explorer by usage type.
+# Opus 5.5 was seeded at 1.10x the first-party list price, the Bedrock premium
+# Opus 5 carried, and verified against Cost Explorer by usage type on the
+# 2026-10-13 fleet day: that day's billed quantity per tier times these four
+# rates reproduced the bill to the cent. The public Price List API carries no
+# current Anthropic model, so that by-usage-type read is the only check.
 RATES_BY_MODEL: dict[str, Rates] = {
     "claude-opus-5": Rates(5.50, 27.50, 0.55, 11.00, verified="2026-09-11"),
-    "claude-opus-5-5": Rates(4.40, 22.00, 0.22, 8.80, verified=None),
+    "claude-opus-5-5": Rates(4.40, 22.00, 0.22, 8.80, verified="2026-10-13"),
     # The background tier. Same derivation as the Opus 5.5 row from the
     # first-party list price ($0.10 / $0.50, cache read 0.1x and 1h write 2x
     # input), at the up-to-100K-prompt tier, which background calls stay in.
