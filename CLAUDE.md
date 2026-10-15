@@ -177,8 +177,9 @@ is a **Linear-title signal only — never a PR title** (PR titles keep
 **A `Claude:` filing lands PARKED, never in Backlog** — state `Todo`
 plus the **`Claude meta`** milestone, in the creating call: the
 filer-safe substitute for the blocking edge no filer may place, keeping
-strays out of the operator's "Next" view. Only a **promoted** batch
-issue leaves parking; an assembled batch not promoted stays parked, and
+strays out of the operator's "Next" view. A **promoted** batch issue is
+the one meta issue not parked; an assembled batch not promoted stays
+parked, and
 promoting it later is the usual two halves (clear the milestone **and**
 move Todo → Backlog).
 
@@ -290,7 +291,8 @@ path, whose full-body echo compounds on an accumulator.
 `trim-context` is the periodic **fold**: sweep the milestone,
 fold into **small themed `Claude:` tasks of roughly 4–5 levers
 each** — a small pool is one task, a large one splits by
-surface — and close the originals. A rejected
+surface — and close the originals (the coherence floor still
+governs audit findings and product filings). A rejected
 lever is **closed with its reason**, and
 dedup-against-resolved makes that permanent. The old inbox
 document is retired — it outgrew the tool-result cap between
@@ -492,7 +494,8 @@ written into a config file. Both settings files are git-ignored, so all
 of it is opt-in. `settings.local.json` is **one shared file resolved
 through worktrees to the main checkout**, so wiring it once makes it
 live everywhere. A committed guard is **inert until wired**:
-`make hook-wiring` (also run by `housekeeping`) names every guard that
+`make hook-wiring` (also run by `housekeeping` each pass) names every
+guard that
 cannot fire — unwired, under a `matcher` that never selects its tools,
 or pointed at a missing path — and writes nothing. The **session
 helpers** (`cdds`, `task`, `explore`, `chore`, `plan`, `housekeeping`,
@@ -575,9 +578,10 @@ make a link resolve — degrade it to a code span, or re-path it.
 `cspell:word` escape (one word per directive). The dictionary carries
 `merge=union`, so **never hand-resolve a
 conflict in it** — the `--unique` sorter hook re-sorts and de-duplicates
-at the next `make lint` (a deleted word it resurrects does not heal).
-For the same merge-conflict reason each Makefile target declares its
-own `.PHONY` beside its rule, never in one central sorted block.
+at the next `make lint`, not at commit time (a deleted word it
+resurrects does not heal). A sorted list generates merge conflicts, so
+each Makefile target declares its own `.PHONY` beside its rule, never
+in one central sorted block.
 **Never copy a claim out of an applied migration into prose** — the
 runner hashes the raw bytes, so a shipped migration (comments included)
 can never be corrected. Reference the migration and state the *current*
