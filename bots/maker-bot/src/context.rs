@@ -140,6 +140,10 @@ pub struct Context {
     pub last_set_price: Option<f64>,
     /// Inventory skew (bps) applied at the last stamp.
     pub last_skew_bps: f64,
+    /// The fair mid (before skew) the last stamp was taken at — what the passive walk
+    /// trigger measures from. `None` for a reference this run did not stamp
+    /// (an adopted one), which the tick recovers by un-skewing it.
+    pub last_set_mid: Option<f64>,
     /// When the hot path last fired. Seeded at construction from the persisted
     /// record (see [`Context::new`]) rather than from process start, so the
     /// staleness check that ages off it measures the resting book's real age
@@ -238,6 +242,7 @@ impl Context {
             fills_active: false,
             last_set_price: None,
             last_skew_bps: 0.0,
+            last_set_mid: None,
             last_set_at,
             last_profile_at: now,
             profile_kind: ProfileKind::Unknown,

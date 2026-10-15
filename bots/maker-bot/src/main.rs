@@ -46,8 +46,8 @@ use dropset_feeds::{
 };
 use dropset_maker_bot::cluster::{self, Cluster};
 use dropset_maker_bot::config::{
-    published_product, BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MAINNET_USDC,
-    MARKETS, QUOTE_KEYPAIR_FILE, USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
+    published_product, BotConfig, FeedConfig, MarketConfig, StrategyMode, DEFAULT_LEADER_KEY,
+    MAINNET_USDC, MARKETS, QUOTE_KEYPAIR_FILE, USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
 };
 use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::fair_price::{FairPriceRow, FairPriceSource};
@@ -258,6 +258,9 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     println!("[strategy] {:?} mode", cfg.strategy.mode);
     for warning in ladder::shape_warnings(&cfg.strategy.ladder, cfg.strategy.mode) {
         eprintln!("[strategy] ladder: {warning}");
+    }
+    if args.recenter && cfg.strategy.mode == StrategyMode::Active {
+        eprintln!("[strategy] --recenter has no effect without --passive: active mode re-centers continuously");
     }
     let client = chain::rpc(&cfg.rpc_url);
     // Guard before loading the key, funding, or signing anything: the chain

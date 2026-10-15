@@ -34,6 +34,12 @@ pub fn apply_skew(mid: f64, skew_bps: f64) -> f64 {
     mid * (1.0 + skew_bps / 10_000.0)
 }
 
+/// Invert [`apply_skew`]: recover the mid a reference was stamped at, given
+/// the skew it carried.
+pub fn remove_skew(reference: f64, skew_bps: f64) -> f64 {
+    reference / (1.0 + skew_bps / 10_000.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -49,6 +55,14 @@ mod tests {
         Inventory {
             base_value_usd: 50.0 + dev_usd,
             quote_value_usd: 50.0 - dev_usd,
+        }
+    }
+
+    #[test]
+    fn remove_skew_inverts_apply_skew() {
+        for skew in [-20.0, 0.0, 7.5, 20.0] {
+            let back = remove_skew(apply_skew(0.73, skew), skew);
+            assert!((back - 0.73).abs() < 1e-12, "skew {skew}: {back}");
         }
     }
 

@@ -754,7 +754,9 @@ re-centers when **any** of:
 
 1. Price has walked beyond the inner K levels on one side
    (`recenter_inner_levels`, default 2: past 10 bps on the default
-   ladder).
+   ladder). The walk is the fair **mid** against the mid at the last
+   stamp, never the skewed reference, so an inventory-skew shift (which
+   the book's own flip fills cause) does not re-center a calm market.
 1. Per-side imbalance enters the reshape band (> 30%). Passive answers
    this with one skewed re-center as the imbalance enters the band, not
    a reshape.
@@ -890,13 +892,14 @@ nothing has to be rebuilt.
 **Passive mode suspends the staleness kills.** The reference being old
 is the design, so no age bound applies, at startup or on the no-feed
 pause. The startup check asks instead whether price is still inside the
-covered range. The bot adopts the live on-chain reference as its last
-stamp, and the re-center trigger (§3) stamps only if price has walked
+inner re-center levels. The bot adopts the live on-chain reference as
+its last stamp (un-skewed at the current inventory skew to recover its
+mid), and the re-center trigger (§3) stamps only if price has walked
 past the inner levels; inside them, a restart writes nothing. The armed
 profile is adopted the same way when it matches the configured ladder,
-since re-writing it would re-center. The running kill switches (peg,
-anchor breach, TVL floor, critical imbalance) keep their halt, kill
-stamp first.
+since re-writing it would re-center. Every kill-switch halt (store
+silence, no live tape, peg, anchor breach, TVL floor, critical
+imbalance) keeps its action, kill stamp first.
 
 On a halt the kill stamp goes **first**, ahead of zeroing the profile.
 Standing down takes two instructions and the bot's cycle budget is one,

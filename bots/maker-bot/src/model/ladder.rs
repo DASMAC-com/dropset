@@ -42,8 +42,9 @@ pub fn build_profile(ladder: &[LadderLevel]) -> LiquidityProfile {
 /// protocol checks none of this, and staying a good LP is the maker's call, so
 /// the bot logs these at startup and quotes the ladder it was given.
 ///
-/// Active mode has nothing to say. A passive ladder is checked for the three
-/// ways it can quote against itself:
+/// Active mode has nothing to say. A passive ladder is checked for being empty
+/// (it covers no range, so every tick reads as a walk and re-centers) and for
+/// the three ways its shape goes wrong:
 ///
 /// * **Grow-outward sizes.** A flipped level keeps its size and only changes
 ///   direction, so a rung larger than the one inside it ends up next to the
@@ -58,6 +59,9 @@ pub fn build_profile(ladder: &[LadderLevel]) -> LiquidityProfile {
 pub fn shape_warnings(ladder: &[LadderLevel], mode: StrategyMode) -> Vec<String> {
     if mode == StrategyMode::Active {
         return Vec::new();
+    }
+    if ladder.is_empty() {
+        return vec!["the passive ladder is empty: every tick would re-center".to_string()];
     }
     let mut warnings = Vec::new();
     let mut inner_offset = 0;
@@ -77,9 +81,14 @@ pub fn shape_warnings(ladder: &[LadderLevel], mode: StrategyMode) -> Vec<String>
                 "L{rung} has no flip spread: once filled it stays dark until a re-center"
             ));
         } else if lvl.flip_spread_ppm > spacing {
+            let crossed = if i == 0 {
+                "the reference"
+            } else {
+                "the next level in"
+            };
             warnings.push(format!(
                 "L{rung} flip spread {} ppm exceeds its {spacing} ppm spacing: the flipped \
-                 side would quote through the next level in",
+                 side would quote through {crossed}",
                 lvl.flip_spread_ppm
             ));
         }
@@ -210,6 +219,23 @@ mod tests {
         let warnings = shape_warnings(&grown, StrategyMode::Passive);
         assert_eq!(warnings.len(), 3, "{warnings:?}");
         assert!(warnings.iter().all(|w| w.contains("grow-outward")));
+        // Uniform sizes are the no-view option, not a grow-outward shape.
+        let uniform: Vec<_> = ladder
+            .iter()
+            .map(|l| LadderLevel {
+                size_bps: 2_500,
+                ..*l
+            })
+            .collect();
+        assert!(shape_warnings(&uniform, StrategyMode::Passive).is_empty());
+    }
+
+    #[test]
+    fn an_empty_passive_ladder_is_warned() {
+        let warnings = shape_warnings(&[], StrategyMode::Passive);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("empty"));
+        assert!(shape_warnings(&[], StrategyMode::Active).is_empty());
     }
 
     #[test]
@@ -221,6 +247,7 @@ mod tests {
         let warnings = shape_warnings(&ladder, StrategyMode::Passive);
         assert_eq!(warnings.len(), 2, "{warnings:?}");
         assert!(warnings[0].starts_with("L1 flip spread"));
+        assert!(warnings[0].ends_with("through the reference"));
         assert!(warnings[1].starts_with("L2 has no flip spread"));
         // Exactly the spacing is allowed.
         ladder[0].flip_spread_ppm = ladder[0].offset_ppm;

@@ -535,8 +535,8 @@ pub enum StrategyMode {
     /// Set a flipping book and leave it: re-center only on a trigger (price
     /// walked past the inner levels, an imbalance past the reshape band, or an
     /// operator `--recenter`), never on a heartbeat. The stamped reference
-    /// being old is the design, so the staleness kills are suspended; the
-    /// running halts (peg, anchor breach, TVL floor) keep their actions.
+    /// being old is the design, so the staleness kills are suspended; every
+    /// kill-switch halt keeps its action.
     Passive,
 }
 

@@ -1680,6 +1680,7 @@ fn send_kill_stamp(
     // against it is small) and the vault would sit dark with a live ladder until
     // the next heartbeat, up to `ref_heartbeat` after the cause had cleared.
     ctx.last_set_price = None;
+    ctx.last_set_mid = None;
     let evidence = age.map_or_else(
         || "no fresh-quote evidence".to_string(),
         |age| format!("last live quote {}s old", age.as_secs()),
@@ -1999,22 +2000,15 @@ fn quote_market_inner(
         .reference(reference, skew_bps)
         .outcome(Outcome::Decided(action));
 
-    // Passive mode answers an imbalance by re-centering — the skewed stamp
-    // below, once, as the imbalance enters the band — rather than by
-    // reshaping, which would itself re-center through the flush it arms. The
-    // halts keep their actions in both modes.
-    let passive = cfg.strategy.mode == StrategyMode::Passive;
-    let in_band = matches!(action, Action::Reshape(_) | Action::FreezeSide(_));
-    if !in_band {
+    // Passive mode answers an imbalance with one skewed re-center (the hot
+    // path below) rather than a reshape; see `triggers::cold_decision`.
+    let cold = triggers::cold_decision(action, cfg.strategy.mode, ctx.imbalance_in_band);
+    if !cold.in_band {
         ctx.imbalance_in_band = false;
     }
-    let cold = match action {
-        Action::Reshape(_) | Action::FreezeSide(_) if passive => Action::Quote,
-        other => other,
-    };
 
     // Cold path first — at most one ix per cycle.
-    match cold {
+    match cold.action {
         Action::Halt(reason) => return stand_down(ctx, cfg, &vault, now, ts, reason),
         Action::FreezeSide(side) => {
             if ctx.profile_kind != ProfileKind::FrozenSide(side) {
@@ -2045,7 +2039,15 @@ fn quote_market_inner(
         since_last_set: now.duration_since(ctx.last_set_at),
         skew_bps,
         last_skew_bps: ctx.last_skew_bps,
-        imbalance_entered: in_band && !ctx.imbalance_in_band,
+        mid,
+        // An adopted reference carries the skew it was stamped with, which
+        // this run never saw; inventory has only moved by fills since, so
+        // this tick's skew is the closest estimate of it.
+        last_mid: ctx.last_set_mid.or_else(|| {
+            ctx.last_set_price
+                .map(|stamped| skew::remove_skew(stamped, skew_bps))
+        }),
+        imbalance_entered: cold.entered,
         operator_recenter: ctx.recenter_requested,
     };
     if triggers::should_set_reference(&trig, &cfg.strategy) {
@@ -2063,9 +2065,10 @@ fn quote_market_inner(
         record_write(ctx, ts, WRITE_REFERENCE, &sent);
         ctx.last_set_price = Some(reference);
         ctx.last_skew_bps = skew_bps;
+        ctx.last_set_mid = Some(mid);
         ctx.last_set_at = now;
         // Consumed only on a landed stamp, so a failed send retries next tick.
-        ctx.imbalance_in_band = in_band;
+        ctx.imbalance_in_band = cold.in_band;
         ctx.recenter_requested = false;
         // A live reference re-arms whatever the kill stamp took dark, so the
         // episode is over.

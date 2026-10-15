@@ -16,6 +16,7 @@
 //! market gets zero stamps.
 
 use crate::config::{StrategyConfig, StrategyMode};
+use crate::model::killswitch::Action;
 use std::time::Duration;
 
 /// Inputs to the `SetReferencePrice` decision for one tick.
@@ -31,6 +32,13 @@ pub struct RefTrigger {
     pub skew_bps: f64,
     /// The inventory skew (bps) applied at the last stamp.
     pub last_skew_bps: f64,
+    /// Passive only: this tick's fair mid, before skew.
+    pub mid: f64,
+    /// Passive only: the fair mid (before skew) the last stamp was taken at. The walk
+    /// trigger compares mids rather than skewed references, so an inventory
+    /// skew shift — which the book's own flip fills cause — never re-centers
+    /// a calm market by itself.
+    pub last_mid: Option<f64>,
     /// Passive only: the inventory imbalance has just entered the reshape
     /// band — the rising edge, so a vault that stays imbalanced re-centers
     /// once rather than every tick.
@@ -45,21 +53,61 @@ pub fn should_set_reference(t: &RefTrigger, strat: &StrategyConfig) -> bool {
         // Nothing stamped yet — establish the reference.
         return true;
     };
-    let drift_bps = (t.candidate - last).abs() / last * 10_000.0;
     match strat.mode {
         StrategyMode::Active => {
+            let drift_bps = (t.candidate - last).abs() / last * 10_000.0;
             drift_bps > strat.ref_drift_bps
                 || t.since_last_set >= strat.ref_heartbeat
                 || (t.skew_bps - t.last_skew_bps).abs() > strat.ref_skew_change_bps
         }
         StrategyMode::Passive => {
-            // 1 bp = 100 ppm. An empty ladder covers nothing, so any drift is
-            // outside it.
-            let walked = strat
-                .recenter_offset_ppm()
-                .is_none_or(|bound| drift_bps * 100.0 > f64::from(bound));
+            // 1 bp = 100 ppm. An empty ladder covers nothing, and an unknown
+            // last mid gives nothing to measure from, so either reads as walked.
+            let walked = match (strat.recenter_offset_ppm(), t.last_mid) {
+                (Some(bound), Some(last_mid)) => {
+                    let walk_bps = (t.mid - last_mid).abs() / last_mid * 10_000.0;
+                    walk_bps * 100.0 > f64::from(bound)
+                }
+                _ => true,
+            };
             walked || t.imbalance_entered || t.operator_recenter
         }
+    }
+}
+
+/// The cold-path action and imbalance edge for one tick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ColdDecision {
+    /// The action the cold path acts on.
+    pub action: Action,
+    /// The kill switch put the imbalance in the reshape band this tick.
+    pub in_band: bool,
+    /// Passive only: the imbalance entered the band since the last landed
+    /// stamp — a re-center trigger.
+    pub entered: bool,
+}
+
+/// Map the kill-switch action onto what the cold path does under `mode`.
+///
+/// Passive mode answers an imbalance in the reshape band (`Reshape` or
+/// `FreezeSide`) with one skewed re-center as it enters the band, not a
+/// reshape: a profile write would itself re-center through the flush it arms,
+/// on every tick the shape differed. So passive quotes the standard ladder
+/// through it. Halts keep their action in both modes. `was_in_band` says the
+/// band has already been answered — set by a landed stamp, cleared once the
+/// imbalance leaves the band — so a vault that stays imbalanced re-centers
+/// once rather than every tick.
+pub fn cold_decision(action: Action, mode: StrategyMode, was_in_band: bool) -> ColdDecision {
+    let in_band = matches!(action, Action::Reshape(_) | Action::FreezeSide(_));
+    let passive = mode == StrategyMode::Passive;
+    ColdDecision {
+        action: if passive && in_band {
+            Action::Quote
+        } else {
+            action
+        },
+        in_band,
+        entered: passive && in_band && !was_in_band,
     }
 }
 
@@ -90,6 +138,8 @@ mod tests {
             since_last_set: Duration::from_secs(1),
             skew_bps: 0.0,
             last_skew_bps: 0.0,
+            mid: 0.73,
+            last_mid: Some(0.73),
             imbalance_entered: false,
             operator_recenter: false,
         }
@@ -105,18 +155,71 @@ mod tests {
         t.since_last_set = Duration::from_secs(30 * 24 * 3600);
         t.skew_bps = 15.0;
         // +9 bps: inside the passive bound (two inner rungs, 10 bps out).
-        t.candidate = 0.73 * 1.0009;
+        t.mid = 0.73 * 1.0009;
+        t.candidate = t.mid;
         assert!(!should_set_reference(&t, &passive()));
     }
 
     #[test]
     fn passive_re_centers_once_price_walks_past_the_inner_levels() {
+        // Four inner rungs put the bound at 20 bps, clear of the active 10 bps
+        // drift trigger, so this can only pass on the passive bound.
+        let strat = StrategyConfig {
+            recenter_inner_levels: 4,
+            ..passive()
+        };
         let mut t = base();
-        // The passive bound is the second rung, 10 bps out.
-        t.candidate = 0.73 * 1.0011;
+        t.mid = 0.73 * 1.0011;
+        assert!(!should_set_reference(&t, &strat), "11 bps is inside 20");
+        t.mid = 0.73 * 1.0021;
+        assert!(should_set_reference(&t, &strat));
+        t.mid = 0.73 * (1.0 - 0.0021);
+        assert!(should_set_reference(&t, &strat));
+    }
+
+    #[test]
+    fn a_skew_shift_alone_never_re_centers_a_passive_book() {
+        // The book's own flip fills move inventory and so the skew: the
+        // skewed candidate moves 20 bps while the market does not.
+        let mut t = base();
+        t.skew_bps = 20.0;
+        t.candidate = 0.73 * 1.002;
+        assert!(!should_set_reference(&t, &passive()));
+    }
+
+    #[test]
+    fn an_unknown_last_mid_reads_as_walked() {
+        let mut t = base();
+        t.last_mid = None;
         assert!(should_set_reference(&t, &passive()));
-        t.candidate = 0.73 * (1.0 - 0.0011);
-        assert!(should_set_reference(&t, &passive()));
+    }
+
+    #[test]
+    fn passive_answers_an_imbalance_once_with_a_re_center_not_a_reshape() {
+        use crate::model::killswitch::HaltReason;
+        use crate::model::ladder::Side;
+        let passive = StrategyMode::Passive;
+        for action in [Action::Reshape(Side::Bid), Action::FreezeSide(Side::Ask)] {
+            // Entering the band: quote through it, and trigger once.
+            let d = cold_decision(action, passive, false);
+            assert_eq!(d.action, Action::Quote);
+            assert!(d.in_band && d.entered);
+            // Still in the band, already answered: no second trigger.
+            assert!(!cold_decision(action, passive, true).entered);
+            // Active reshapes as before and never triggers a re-center.
+            let a = cold_decision(action, StrategyMode::Active, false);
+            assert_eq!(a.action, action);
+            assert!(!a.entered);
+        }
+        // Halts pass through in both modes, and are out of band.
+        let halt = Action::Halt(HaltReason::TvlFloor);
+        let d = cold_decision(halt, passive, true);
+        assert_eq!(d.action, halt);
+        assert!(!d.in_band && !d.entered);
+        assert_eq!(
+            cold_decision(Action::Quote, passive, false).action,
+            Action::Quote
+        );
     }
 
     #[test]
@@ -133,6 +236,7 @@ mod tests {
     fn passive_establishes_a_reference_when_none_is_live() {
         let mut t = base();
         t.last_set = None;
+        t.last_mid = None;
         assert!(should_set_reference(&t, &passive()));
     }
 
