@@ -18,7 +18,7 @@ The container services reach the host validator over
 `dropset-tui` starts the validator (Agave 4.3 or later, per
 `make check-solana`) on **Alpenglow** consensus with **200ms slots**,
 matching mainnet. Set `DROPSET_LOCALNET_ALPENGLOW=0` to start it on
-Tower consensus instead; the slot pace stays at 200ms either way.
+Tower consensus instead, where slots run nearer 250ms.
 
 A single node starts Alpenglow at genesis, so the localnet cannot
 rehearse mainnet's Tower-to-Alpenglow switch.
