@@ -160,6 +160,26 @@ everything below it is recoverable and that one is not.
    branch, or a file only this checkout has. The close itself
    removes it (below), merged or closed-not-merged alike.
 
+### A session with no PR
+
+`architect`, `explore` and `chore` sessions open no PR by design, so
+check 2 is **skipped, not failed**. Check 1 shrinks to: nothing
+committed beyond `origin/main`, and any untracked spec file already
+captured in Linear, since the worktree's contents are expendable.
+Check 3's resting state is **In Review** with the durable state on
+the issue. The close below is unchanged for `architect` / `explore`.
+A **`chore`** has no worktree at all — it runs in the base checkout,
+which `plan`, `housekeeping` and other chores share — so check 7 is
+skipped, and check 1 becomes `git status --short` in the base
+checkout: it should be clean, and any dirt is named (an item if this
+session made it, otherwise reported as unattributed). The close is
+the same one question below, but a yes is a state write alone, never
+`close_session.py` (which refuses the base checkout):
+
+```sh
+python3 .claude/tools/board_batch.py state --id ENG-### --state Done
+```
+
 ## The verdict
 
 **CLEAR TO CLOSE** only when every check passes. Otherwise

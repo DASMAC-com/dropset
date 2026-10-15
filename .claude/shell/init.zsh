@@ -911,6 +911,7 @@ _ds_resume_tier() {
 # answers for free, so the ratified "provider answering" half is served by
 # making that first failure legible rather than by pre-flighting it. Set
 # `DS_BEDROCK_PROBE=1` to pay for the pre-flight when diagnosing a launch.
+# `chore` is the exception that probes the model itself (`_ds_model_probe`).
 #
 # The MODEL is not exported here: the launching verb hands it to `claude` for
 # that one command, the same way on both substrates (see `_ds_session`).
@@ -980,6 +981,51 @@ _ds_bedrock_env() {
     fi
   fi
   return 0
+}
+
+# Internal: a model id's Bedrock inference-profile id — a first-party
+# `claude-*` becomes `us.anthropic.<id>` and any window suffix is dropped.
+# Prints nothing for an alias (`fable`, `opus`), which Claude Code resolves and
+# Bedrock cannot.
+_ds_bedrock_profile() {
+  local profile="${1%%\[*}"
+  [[ "$profile" == claude-* ]] && profile="us.anthropic.$profile"
+  [[ "$profile" == *anthropic.* ]] && print -r -- "$profile"
+}
+
+# Internal: ask Bedrock whether `$1` actually ANSWERS for this shell's agent
+# key, by sending it a one-token request. Non-zero means DO NOT LAUNCH, with
+# the error printed. Run after `_ds_bedrock_env`.
+#
+# This is the live half `_ds_bedrock_env` deliberately leaves out, paid for
+# where it earns its keep: the first chore (1843) opened a tab whose every turn
+# failed with a 403 — the agent identity lacked the Marketplace actions that
+# enable the helper model — so the session never read its issue and only looked
+# alive. `models check` cannot see that: a control-plane read passes for a model
+# the account may not invoke. A Converse call with `maxTokens: 1` costs a few
+# input tokens, not the eight cents a Claude Code turn costs.
+#
+# The header rides stdin (`-H @-`), not argv, so `ps` never shows the token;
+# `print` is a builtin, so no child's argv carries it either.
+_ds_model_probe() {
+  local profile out code
+  profile="$(_ds_bedrock_profile "$1")"
+  if [[ -z "$profile" ]]; then
+    print -ru2 -- "dropset: '$1' is an alias, so it cannot be probed — skipping."
+    return 0
+  fi
+  out="$(print -r -- "Authorization: Bearer $AWS_BEARER_TOKEN_BEDROCK" \
+    | curl -sS --max-time 15 -H @- -w '\n%{http_code}' -X POST \
+      -H 'Content-Type: application/json' \
+      -d '{"messages":[{"role":"user","content":[{"text":"ok"}]}],"inferenceConfig":{"maxTokens":1}}' \
+      "https://bedrock-runtime.$AWS_REGION.amazonaws.com/model/$profile/converse" 2>&1)"
+  code="${out##*$'\n'}"
+  if [[ "$code" != 200 ]]; then
+    print -ru2 -- "dropset: $profile does not answer on Bedrock (HTTP $code) —" \
+      'refusing to open a session that would fail every turn:'
+    print -ru2 -- "  ${out%$'\n'*}"
+    return 1
+  fi
 }
 
 # Clear the Bedrock exports from the calling shell.
@@ -1221,6 +1267,12 @@ _ds_task_resume() {
   # with no session and no explanation of the move.
   local key
   key="$(_ds_marker_key "$tag")"
+  # A chore has no worktree to resolve, so its own verb resumes it — by the id
+  # it computed, on the recorded substrate, model probe included.
+  if [[ "$(_ds_resume_tier "$key")" == helper ]]; then
+    chore "$tag"
+    return
+  fi
   substrate="$(_ds_substrate_read "$key")"
   { read -r model; read -r substrate; } <<< \
     "$(_ds_tier "$(_ds_resume_tier "$key")" "$substrate")"
@@ -1468,22 +1520,31 @@ _ds_upkeep() {
 #   chore bedrock <n>     the helper tier on Bedrock, whatever the config says
 #
 # The gap it fills: `task` is the executor tier plus a bootstrap PR, `explore`
-# is the advisor tier on the seat, and nothing was both cheap and PR-less. It
-# takes `explore`'s shape — a temporary, expendable worktree, the session
-# READ-ONLY toward the repo, anything repo-bound filed as a follow-up task, In
-# Review at handoff and Done only on the operator's word — and `task`'s
-# argument shapes. Idempotent like `explore`, so there is no `resume` word.
+# is the advisor tier on the seat, and nothing was both cheap and PR-less. The
+# session is READ-ONLY toward the repo, files anything repo-bound as a
+# follow-up task, and goes to In Review at handoff, Done only on the operator's
+# word; it takes `task`'s argument shapes. Idempotent like `explore`, so there
+# is no `resume` word.
 #
-# THE WORKTREE IS THE BARE NUMBER, like every issue-keyed session, so `cdds`,
-# `fleet`, the pruner and the close tool reach it with no new prefix. A chore
-# and a task are separate Linear issues (operator ruling), so they should never
-# share a number — but that is discipline, not a guarantee, so a `task`
-# session's marker is left alone exactly as `architect` leaves it: clobbering
-# it would resume a PR-bearing task on the helper model, silently.
+# NO WORKTREE: it launches in the base checkout. A chore never produces a PR,
+# so a worktree would protect nothing and cost a checkout, a branch and a prune
+# entry. The prompt is just `/chore <n>` — the skill bootstraps and the Linear
+# issue is the whole brief, so this verb carries no prose of its own.
+#
+# A Bedrock launch — a resume included — PROBES THE MODEL first
+# (`_ds_model_probe`) and refuses on anything but an answer (an alias, which
+# Bedrock cannot resolve, is skipped with a note): a tab that fails every turn
+# is worse than no tab.
+#
+# A chore and a task are separate Linear issues (operator ruling), so they
+# should never share a number — but that is discipline, not a guarantee, so a
+# `task` session's marker is left alone exactly as `architect` leaves it:
+# clobbering it would resume a PR-bearing task on the helper model, silently.
 #
 # The marker carries a `helper` tier, so `task resume <n>` — and `fleet`, which
-# types it — re-pins the helper model on the recorded substrate. A reopen with
-# no substrate word keeps that recorded substrate, as `architect` does.
+# types it — hands back to this verb, which resumes by its computed id. A
+# reopen with no substrate word keeps the recorded substrate, as `architect`
+# does.
 chore() {
   local override='' tag model substrate
   if [[ "$1" == (anthropic|bedrock) ]]; then
@@ -1505,26 +1566,17 @@ chore() {
   { read -r model; read -r substrate; } <<< "$(_ds_tier helper "$override")"
   [[ -n "$substrate" ]] || return 1
   _ds_substrate_enter "$substrate" 'chore' || return 1
+  if [[ "$substrate" == bedrock ]] && ! _ds_model_probe "$model"; then
+    _ds_substrate_unset
+    return 1
+  fi
   if [[ "$(_ds_resume_tier "$tag")" == executor ]]; then
     print -u2 "chore: $tag carries a task session's substrate marker —" \
       'leaving it, so a task resume of it re-pins the executor tier.'
   else
     _ds_substrate_write "$tag" "$substrate" helper
   fi
-
-  # Written out, as `explore`'s is, because there is no skill to name — and it
-  # states the read-only posture rather than trusting the issue body to.
-  local prompt="Bootstrap this chore from Linear issue ENG-$tag. Read that"
-  prompt+=" issue as the spec and mark it In Progress. This session is READ-ONLY"
-  prompt+=" toward the repo: no commits, no PR, no init-pr. The worktree is"
-  prompt+=" temporary and expendable; the deliverable lands outside the repo or"
-  prompt+=" on the issue, and anything repo-bound is filed as a follow-up task."
-  prompt+=" At handoff, move the issue to In Review (only the operator marks it"
-  prompt+=" Done) by ending with: python3 .claude/tools/close_session.py"
-  prompt+=" --state 'In Review' --keep-worktree. The full shape is in"
-  prompt+=" docs/conventions/local-integrations.md."
-  _ds_session "$(_ds_topic_sid chore "$tag")" "$tag" "$prompt" "$model" \
-    "$(_ds_launch_dir "$tag")"
+  _ds_session "$(_ds_topic_sid chore "$tag")" "$tag" "/chore $tag" "$model" ''
 }
 
 # Start OR resume today's PLANNING session. The name is derived from the date.
@@ -1832,8 +1884,8 @@ models() {
     "helper:$DS_MODEL_HELPER" "background:$DS_MODEL_BACKGROUND"; do
     tier="${entry%%:*}" model="${entry#*:}"
     [[ -n "$model" ]] || continue
-    profile="${model%%\[*}"
-    if [[ "$profile" != claude-* && "$profile" != *anthropic.* ]]; then
+    profile="$(_ds_bedrock_profile "$model")"
+    if [[ -z "$profile" ]]; then
       if [[ "$tier" == background ]]; then
         print -r -- "FAIL   $tier $model — an alias; this slot needs a model id"
         rc=1
@@ -1842,7 +1894,6 @@ models() {
       fi
       continue
     fi
-    [[ "$profile" == claude-* ]] && profile="us.anthropic.$profile"
     if env -u AWS_BEARER_TOKEN_BEDROCK aws bedrock get-inference-profile \
       "${profile_flag[@]}" --region "${DS_BEDROCK_REGION:-us-west-2}" \
       --inference-profile-identifier "$profile" >/dev/null 2>&1; then
