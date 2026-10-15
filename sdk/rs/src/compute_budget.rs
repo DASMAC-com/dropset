@@ -15,14 +15,14 @@
 //!
 //! - the costliest take that fills without stranding dust: a cold book
 //!   (every vault flushed in the same transaction) taken to the heap
-//!   ceiling, sixteen legs, about 183k CU on a sell and 181k on a buy,
+//!   ceiling, sixteen legs, about 178k CU on a sell and 181k on a buy,
 //!   under the 200k a bare `swap` gets;
 //! - a one-atom sell on a fully flipped book (160 entries walked, nothing
-//!   filled): about 388k CU, under [`SWAP_COMPUTE_UNIT_LIMIT`];
+//!   filled): about 390k CU, under [`SWAP_COMPUTE_UNIT_LIMIT`];
 //! - a take that fills to the heap ceiling and is then stranded with one
 //!   atom pays both, an **estimated** 470k. It needs a last leg whose level
 //!   cap lands just so, which the measured book never produced, so no test
-//!   pins it; it is the case the headroom above 388k is for.
+//!   pins it; it is the case the headroom above 390k is for.
 //!
 //! Raising the vault cap scales all of these, by up to sixteen entries a
 //! vault, so a cap change re-runs those tests first.
