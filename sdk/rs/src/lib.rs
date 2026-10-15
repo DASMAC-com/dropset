@@ -22,6 +22,7 @@
 // generated files `make sdk` would overwrite.
 pub mod adapters;
 pub mod cluster;
+pub mod compute_budget;
 pub mod events;
 #[allow(clippy::io_other_error)]
 #[allow(unused_imports)]
@@ -53,3 +54,4 @@ pub use generated::{accounts, errors, instructions, programs, shared, types};
 pub use generated::programs::DROPSET_ID;
 // That constant is the localnet id; the per-cluster lookup is `cluster`.
 pub use cluster::{Deployment, DROPSET_MAINNET_ID};
+pub use compute_budget::SWAP_COMPUTE_UNIT_LIMIT;

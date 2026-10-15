@@ -1625,12 +1625,12 @@ fn platform_fee_multi_leg_fill_stays_inside_the_cu_budget() {
     // creates the destination ATA, so measure exactly that and pin it under
     // the default per-instruction budget.
     //
-    // The 200k figure is the Solana default a caller gets without a
-    // `SetComputeUnitLimit`, so staying under it is what lets a plain
-    // frontend swap work with no budget instruction at all — the property
-    // worth a regression test rather than the precise CU count, which moves
-    // with every matcher change.
-    const DEFAULT_CU_BUDGET: u64 = 200_000;
+    // The 200k figure is what one instruction gets without a
+    // `SetComputeUnitLimit`, the tightest default a swap can run under, so
+    // staying under it is what lets a bare-swap caller leave the budget alone
+    // — the property worth a regression test rather than the precise CU
+    // count, which moves with every matcher change.
+    const DEFAULT_CU_BUDGET: u64 = common::DEFAULT_INSTRUCTION_CU;
 
     let free_cu = {
         let mut f = Fixture::seeded_two_ask_levels();

@@ -43,6 +43,11 @@ pub const PAYER_FUNDING_LAMPORTS: u64 = 100 * LAMPORTS_PER_SOL;
 /// Covers txn fees only.
 pub const SIGNER_FUNDING_LAMPORTS: u64 = LAMPORTS_PER_SOL;
 
+/// The compute a transaction gets per non-builtin instruction when it sets
+/// no `SetComputeUnitLimit` — so all a bare `swap` gets.
+#[allow(dead_code)]
+pub const DEFAULT_INSTRUCTION_CU: u64 = 200_000;
+
 /// Real upgradeable-loader deploy (`create_buffer` → chunked `Write`s →
 /// `DeployWithMaxDataLen`) with `authority` as the upgrade authority.
 pub fn deploy_with_authority(authority: &Keypair) -> LiteSVM {

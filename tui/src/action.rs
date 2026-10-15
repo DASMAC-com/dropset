@@ -1846,7 +1846,8 @@ fn do_probe_swap(
         limit_price.as_u32(),
         0, // accept any output (probe)
     );
-    chain::send_logged(client, &taker, &[&taker], &[ix], "swap", log).context("swap")?;
+    let limit = chain::build_swap_compute_limit_ix();
+    chain::send_logged(client, &taker, &[&taker], &[limit, ix], "swap", log).context("swap")?;
     log.accounts_changed();
     Ok("Swap probe filled — see the CU pane".into())
 }
