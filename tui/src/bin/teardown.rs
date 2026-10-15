@@ -8,7 +8,8 @@
 //! `--rpc-url` and guards any non-localnet target behind an interactive
 //! confirmation. The program id is per cluster, so the target is read from
 //! the chain's genesis hash ([`Cluster::of_genesis`]): mainnet, or a loopback
-//! localnet, and nothing else — another chain has no deployment.
+//! endpoint taken as localnet; a remote endpoint to any other chain is
+//! refused, since no deployment lives there.
 //!
 //! A loopback `--rpc-url` skips that prompt, so it is additionally held to a
 //! genesis check ([`cluster::ensure_not_mainnet`]): host classification cannot
@@ -68,8 +69,10 @@ fn main() -> Result<()> {
     let target = Cluster::of_genesis(&chain::genesis_hash(&client)?, loopback)?;
 
     // A real cluster is irreversible, so make the operator confirm unless they
-    // opted out with --yes (or the target is the throwaway localnet).
-    if !loopback && !args.yes {
+    // opted out with --yes (or the target is the throwaway localnet). Keyed
+    // on the resolved target, not the URL, so mainnet is prompted however it
+    // was reached.
+    if target.is_mainnet() && !args.yes {
         confirm(&rpc_url, &keypair.pubkey().to_string(), target)?;
     }
 

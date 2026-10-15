@@ -113,9 +113,13 @@ impl Cluster {
     /// The cluster a headless tool targets, from the chain's `genesis` hash
     /// and whether its endpoint is `loopback`: mainnet by its hash, localnet
     /// only on a loopback endpoint (a test validator's genesis is fresh per
-    /// ledger, so no hash names it). Any other chain — devnet, testnet — is
-    /// refused: neither deployment lives there, and the localnet id's key is
-    /// public, so whatever sits at that address there is anyone's program.
+    /// ledger, so no hash names it). Any other chain reached over a remote
+    /// endpoint — devnet, testnet — is refused: neither deployment lives
+    /// there, and the localnet id's key is public, so whatever sits at that
+    /// address there is anyone's program. The bound: a loopback endpoint is
+    /// trusted to be a local validator, so a tunnel from loopback to devnet
+    /// reads as localnet (mainnet over a tunnel is caught separately, by
+    /// [`ensure_not_mainnet`]).
     pub fn of_genesis(genesis: &str, loopback: bool) -> Result<Self> {
         if genesis == MAINNET_GENESIS_HASH {
             Ok(Cluster::Mainnet)
