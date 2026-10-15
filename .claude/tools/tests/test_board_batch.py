@@ -778,8 +778,10 @@ class ViewTests(unittest.TestCase):
         rc, printed, calls = self._run_view([{"id": "v1", "name": "Next"}], nodes)
         self.assertEqual(rc, 0)
         self.assertIn("Live", printed)
-        # The view's own filter is the authority; no client-side drop.
+        # The view's own filter is the authority; no client-side drop, and a
+        # parked row is marked so the drift is visible.
         self.assertIn("Parked", printed)
+        self.assertIn("[Claude meta]", printed)
         self.assertEqual(calls[0][1], {"name": "Next"})
         self.assertEqual(calls[1][1]["id"], "v1")
 

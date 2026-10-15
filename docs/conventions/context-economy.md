@@ -227,6 +227,8 @@ fingerprint, from the band its declared size falls in:
 | 300–800                | \$50–100    | the target band               |
 | split-at-1,000 or more | \$100–160   | over the ceiling; split       |
 
+A declared size between two rows (150–300, 800–1,000) takes the
+nearer band and says so; past 1,000 the issue splits at staging.
 **The rate basis is Opus 5.5 on Bedrock**, and the bands re-seed at
 the next rate swap. A band, never a point: the measured spread inside
 one line band ran $39 to $140. Bands bind **Bedrock workers only**. A
@@ -245,7 +247,7 @@ session:
 and for a seat session:
 
 ```text
-**Token profile**: 41M cache-read, 119 turns, peak prefix 319k
+**Token profile**: 41M cache-read, 119 turns, peak prefix 319k, 2026-10-14
 ```
 
 **Only Bedrock bands verify in dollars**: deduplicated transcript

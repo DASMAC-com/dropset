@@ -252,8 +252,8 @@ A Bedrock session writes the first form, a seat session the
 second and **never a dollar figure**:
 
 ```text
-**Cost actual**: $<dollars>, <turns> turns, peak prefix <k>, <YYYY-MM-DD>
-**Token profile**: <cache-read> cache-read, <turns> turns, peak prefix <k>
+**Cost actual**: $<usd>, <n> turns, peak prefix <k>, <YYYY-MM-DD>
+**Token profile**: <cr> cache-read, <n> turns, peak prefix <k>, <YYYY-MM-DD>
 ```
 
 A second session on the issue appends a second line rather

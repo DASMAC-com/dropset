@@ -50,17 +50,19 @@ exactly these headings, in this order, and nothing else:
 1. **Collision clusters** (step 1).
 1. **Audit state** — the bounded table (step 1).
 1. **Session-metrics state** (step 7).
-1. **In-session notes** — this session's incremental writes, and
-   any ruling not yet landed in `rulings.md`.
+1. **In-session notes** — this session's incremental writes;
+   after a close-out, only the rulings not yet landed in
+   `rulings.md`.
 1. **Notes for the next planning session** — the only heading
-   other sessions write under; it holds the machine-written
-   upkeep report.
+   other sessions write under. The upkeep tool's machine-written
+   report is its level-2 subsection, carried verbatim.
 
 Above them, a header of one line plus the `Bootstrap stamp`.
 
 **A new ruling is a reviewed change**, never a document edit:
-file a `Claude:` issue carrying its text, a PR to `rulings.md`,
-and carry it under `In-session notes` until it lands.
+file a `Claude:` issue carrying its text, which a worker lands as
+a PR to `rulings.md` — an operator-named exception to any meta
+freeze — and carry it under `In-session notes` until it lands.
 
 ## Where it runs
 
@@ -179,8 +181,9 @@ view, filtered by Linear rather than reconstructed:
 python3 .claude/tools/board_batch.py view
 ```
 
-**Verify Next against the holds.** Any row there this session
-decides not to dispatch gets a blocking edge in the same breath,
+**Verify Next against the holds.** Name every row there this
+session would hold, with its blocker, in the dispatch ask; on the
+operator's yes it gets a blocking edge in the same breath,
 through step 3's `edges` (dry run first): a hold is an edge or it
 does not exist. Every
 un-milestoned Todo item is either **acted on** or **parked** —
@@ -233,6 +236,7 @@ Progress or In Review) — without that clause an unpulled batch is
 duplicated rather than absorbed. Group by the surface each issue
 changes and fold each group into its lowest-numbered survivor via
 `/merge-tasks`. Routine bookkeeping; no per-fold proposal.
+Promotion stays subject to any freeze in `rulings.md`.
 
 - **Roughly 4–5 parts per batch** (operator rule, 2026-09-11):
   five or fewer parts is one batch, fifteen is three. Session
@@ -351,8 +355,9 @@ with no refactor-later burden a later issue will undo.
 - **A hold is an edge or it does not exist** (ruling 2). An issue
   held behind an in-flight surface or a sequencing reason gets a
   blocking edge on that blocker at dispatch time, so it shows as
-  Blocked, not Next. Remove one only on a re-sequence: the board
-  tool already treats a completed blocker as non-blocking.
+  Blocked, not Next. Remove one on a re-sequence; a completed
+  blocker no longer blocks in the board tool's marker, and an edge
+  `view` still shows Blocked after its blocker is done is removed.
 - **`Claude:` meta-work is Urgent once unblocked** (operator
   rule, 2026-08-17), so agent-infra is the next pull. Meta lands
   as short batches (step 1), several possibly in flight, with no
@@ -373,7 +378,7 @@ binds: never across separate apps, languages, or deploy units.
 Edges mean **semantic rollout ordering** or **this session's own
 dispatch hold** (step 2), and are human-curated end to end
 (`docs/conventions/linear-automation.md` → "Blocking
-relations"). Place the decided edges in one batch:
+relations"). Place the operator's decided edges in one batch:
 
 ```sh
 python3 .claude/tools/board_batch.py edges --pairs <file>

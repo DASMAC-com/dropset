@@ -17,7 +17,8 @@ ids, never a committed token):
   line each. Roughly 600 tokens where the MCP equivalent measured ~11k.
 * ``view [--name NAME]`` — the same compact listing of the operator's named
   custom view (default ``Next``), resolved by name and filtered by Linear, so
-  the planning session sees exactly what the operator sees.
+  the planning session sees the same issue set the operator sees (sorted by
+  number, like ``list``, not in the view's own order).
 * ``fields --updates FILE`` — every non-body **issue field**: priority, state,
   parent, milestone, labels, assignee. Takes an explicit map of issue number
   to field values and prints one line per issue.
@@ -1090,8 +1091,10 @@ def run(argv: list[str]) -> int:
     if args.cmd in ("list", "view"):
         if args.cmd == "view":
             # No client-side milestone drop: the view's own filter is the point.
+            # Milestones are shown so a parked issue the filter lets through is
+            # visible, which is the drift this read exists to catch.
             issues = fetch_view_issues(api_key, args.name)
-            lines = format_listing(issues)
+            lines = format_listing(issues, show_milestone=True)
         else:
             states = None if args.state == "all" else [args.state]
             issues = fetch_issues(api_key, project_id, states)

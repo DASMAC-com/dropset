@@ -29,7 +29,7 @@ the document's state sections.
 
 1. **Tier names are advisor / executor / helper / background.**
    Advisor: `plan`, `architect`, `explore`, on the Anthropic
-   subscription. Executor: task workers and the fold worker, on
+   subscription. Executor: task workers and `housekeeping`, on
    Bedrock. Helper: `chore` sessions, Sonnet-class, Bedrock by
    default, pinned with the 1M suffix in the runtime config.
    Model ids live only in the operator's runtime config; unset
@@ -86,7 +86,8 @@ the document's state sections.
 1. **Planning is read-only toward the repo.** A planning session
    writes Linear state only; a fast-forward of the base checkout
    is not a planning edit. Edits to the operator's runtime config
-   on the operator's word are outside the repo and allowed.
+   on the operator's word are outside the repo and allowed, and so
+   are memory notes, which live outside it.
 
 1. **The deploy ceremony is code.** Committed commands with
    deterministic 1Password secret references; the agent never
@@ -101,7 +102,8 @@ the document's state sections.
 
 1. **Housekeeping never costs a tab visit.** Upkeep runs as a tool
    inside the plan launch with its report in the bootstrap;
-   destructive items are asked once in the planning tab. Where the
+   destructive items are asked once in the planning tab; the
+   trim-lever fold reports by message and self-closes. Where the
    trim-lever fold lives now that upkeep moved into the launch,
    and what retires with the `housekeeping` verb, is an open
    design question carried in the document until it is ratified.
@@ -110,7 +112,8 @@ the document's state sections.
    self-waiting.** A yellow tab is a trigger problem, not a window
    problem: it turns yellow only for a request actually waiting on
    the operator, never for classifier-approved requests in rapid
-   succession.
+   succession. The debounce is an environment variable with a
+   5-second default.
 
 1. **No hardcoded 200ms.** Expiry defaults derive from the
    observed slot pace.
@@ -199,20 +202,22 @@ the document's state sections.
    with one consolidated ask; ratification and gate approvals are
    per-tab. Run `fleet resume` **before** dispatching new tasks. A
    session resumed outside its verb has no secrets.
-1. **The antichain practice**: dispatch file-disjoint sets; every
+1. **The antichain practice**: dispatch file-disjoint sets, and
+   publish the dispatchable antichain at every bootstrap; every
    hold is a visible edge.
 1. **Messaging is the event-driven backbone.** When a session owns
    the issue, the message is the amendment; when the owning
    session is gone, the amendment goes on the body. A peer message
    is never the operator's approval.
-1. **Cost**: the spend cap is the standing fleet guard, and the
-   fleet cost tool reconciles telemetry against the bill.
+1. **Cost**: the spend cap is the standing fleet guard, and
+   `fleet_cost.py` reconciles telemetry against the bill.
 1. **Weekly skills audit**: considered weekly through the audit
    heartbeat, with the tier question asked first and the
    tool-usage lens.
 1. **Verbs**: `task`, `task anthropic`, `task resume`, `chore`,
    `chore anthropic`, `explore`, `plan`, `plan cycle`, `architect`
-   (bare number, idempotent), `fleet`. Audit issues dispatch as
+   (bare number, idempotent), `fleet`, and `housekeeping` until its
+   retirement is ratified (ruling 16). Audit issues dispatch as
    `explore`.
 1. **Announce a fleet-wide toolchain change** (a global anchor or
    solana install) to every program-building session by message
@@ -252,7 +257,8 @@ line here is struck.
 - **Storage** (`docs/data-feeds.md`): a single canonical product
   id; reciprocation once, at intake; Postgres is the
   daylight-saving authority; applied migrations are immutable;
-  harnesses pinned to Postgres 16 with the tag-pin guard.
+  harnesses pinned to Postgres 16 with the tag-pin guard; the
+  mapped-port retry is shared.
 - **Candidate primacy and feeds** (`docs/data-feeds.md`): OANDA
   tape trusted, Twelve Data untrusted, Pyth parked dark; Kraken
   pair status gates order placement, not market data;
@@ -260,7 +266,8 @@ line here is struck.
   coverage of every feed or a visible scope-out.
 - **Surfaces** (`docs/dashboards.md`): Grafana reads; the TUI
   writes plus command-safety state; dashboard JSON is
-  single-writer; the frontend deploys on Vercel with RPC, WS and
+  single-writer; port 3200 bind-mounts the base repo; the frontend
+  deploys on Vercel with RPC, WS and
   batch size from env; the platform fee is off (zero renders no
   fee line).
 - **Program and timing** (`docs/architecture.md`): loader v3; quote
@@ -271,7 +278,8 @@ line here is struck.
   orders flip every consumed atom in the same fill, no
   half-flips; a single take is heap-bounded at about 10 legs;
   swap clients set a compute-unit limit.
-- **Mints**: tGBP is classic SPL, 9 decimals; GBPA is Token-2022
+- **Mints** (no product doc records these yet; this line is the
+  record until one does): tGBP is classic SPL, 9 decimals; GBPA is Token-2022
   with a permanent delegate, a transfer-hook slot and a fee
   config, roster-only until the program supports Token-2022; the
   program's CPI path serves classic SPL only.
