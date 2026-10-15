@@ -357,14 +357,20 @@ pub fn build_withdraw_leader_ix(
 /// leaves the active list, so matching never visits it again, while its
 /// sector, inventory and share ledger stay put for withdrawals. Permanent,
 /// and it reclaims no rent — the account is the market's, not the vault's.
-pub fn build_close_vault_ix(leader: &Pubkey, market: &Pubkey, vault_idx: u32) -> Instruction {
-    CloseVault {
+pub fn build_close_vault_ix(
+    cluster: Cluster,
+    leader: &Pubkey,
+    market: &Pubkey,
+    vault_idx: u32,
+) -> Instruction {
+    let ix = CloseVault {
         signer: *leader,
         market: *market,
-        event_authority: event_authority(),
-        program: DROPSET_ID,
+        event_authority: event_authority(cluster),
+        program: cluster.program_id(),
     }
-    .instruction(CloseVaultInstructionArgs { vault_idx })
+    .instruction(CloseVaultInstructionArgs { vault_idx });
+    retarget(cluster, ix)
 }
 
 /// `swap` — a taker take against the market's live book. `side` is `0` for a

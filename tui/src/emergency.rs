@@ -33,7 +33,6 @@ use crate::market::{self, PairConfig};
 use anyhow::{anyhow, bail, Context, Result};
 use dropset_sdk::layout::{MarketView as SlabView, Vault};
 use dropset_sdk::quoting::{set_liquidity_profile_ix, PROFILE_BYTES};
-use dropset_sdk::DROPSET_ID;
 use solana_client::rpc_client::RpcClient;
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
@@ -105,13 +104,14 @@ pub struct MarketSeats {
 /// out by itself.
 pub fn leader_seats(
     client: &RpcClient,
+    cluster: Cluster,
     market: &Pubkey,
     leader: &Pubkey,
 ) -> Result<Option<MarketSeats>> {
     let Some(account) = chain::fetch_fresh(client, market, "market")? else {
         return Ok(None);
     };
-    if account.owner != DROPSET_ID {
+    if account.owner != cluster.program_id() {
         bail!(
             "{market} is owned by {}, not the Dropset program",
             account.owner
@@ -206,8 +206,8 @@ pub fn plan(
         let symbol = config.base.symbol;
         let leader = market::leader(repo_root, config, operator_leader)?.pubkey();
         let (base, quote) = market::pair_mints(repo_root, config)?;
-        let address = chain::market_pda(&base, &quote);
-        let Some(found) = leader_seats(client, &address, &leader)? else {
+        let address = chain::market_pda(cluster, &base, &quote);
+        let Some(found) = leader_seats(client, cluster, &address, &leader)? else {
             lines.push(format!("{symbol}: no market — skipped"));
             continue;
         };
@@ -283,8 +283,8 @@ pub fn execute(
         let symbol = config.base.symbol;
         let leader = market::leader(repo_root, config, operator_leader)?;
         let (base, quote) = market::pair_mints(repo_root, config)?;
-        let address = chain::market_pda(&base, &quote);
-        let found = match leader_seats(client, &address, &leader.pubkey()) {
+        let address = chain::market_pda(cluster, &base, &quote);
+        let found = match leader_seats(client, cluster, &address, &leader.pubkey()) {
             Ok(Some(found)) => found,
             Ok(None) => continue,
             Err(e) => {
@@ -303,6 +303,7 @@ pub fn execute(
                 }
                 s => instructions(
                     s,
+                    cluster,
                     wallet,
                     &leader.pubkey(),
                     &address,
@@ -339,10 +340,12 @@ pub fn execute(
     Ok(format!("{} landed on {sent} vault(s)", op.instruction()))
 }
 
-/// The transaction for a sending `step` on `seat`.
+/// The transaction for a sending `step` on `seat`, addressed to `cluster`'s
+/// program.
 #[allow(clippy::too_many_arguments)]
 fn instructions(
     step: Step,
+    cluster: Cluster,
     wallet: &Keypair,
     leader: &Pubkey,
     market: &Pubkey,
@@ -352,13 +355,16 @@ fn instructions(
     seat: &Seat,
 ) -> Vec<Instruction> {
     match step {
-        Step::Kill => vec![set_liquidity_profile_ix(
-            *leader,
-            *market,
-            seat.idx,
-            [0u8; PROFILE_BYTES],
+        // The SDK builder addresses the committed program id, so it passes
+        // through `retarget` like every other quoting write — without it, the
+        // kill would go to a program that does not exist on mainnet.
+        Step::Kill => vec![chain::retarget(
+            cluster,
+            set_liquidity_profile_ix(*leader, *market, seat.idx, [0u8; PROFILE_BYTES]),
         )],
-        Step::Close => vec![chain::build_close_vault_ix(leader, market, seat.idx)],
+        Step::Close => vec![chain::build_close_vault_ix(
+            cluster, leader, market, seat.idx,
+        )],
         Step::Drain(Plan::Withdraw {
             shares_in,
             min_base_out,
@@ -368,6 +374,7 @@ fn instructions(
             let mut ixs =
                 leader::leader_ata_creates(&wallet.pubkey(), leader, base_mint, quote_mint);
             ixs.push(chain::build_withdraw_leader_ix(
+                cluster,
                 leader,
                 market,
                 base_mint,
@@ -509,6 +516,49 @@ mod tests {
         assert!(found[0].quoting && !found[0].tombstoned);
         assert!(!found[1].quoting && found[1].tombstoned);
         assert_eq!(found[0].quote_authority, me);
+    }
+
+    #[test]
+    fn every_emergency_write_is_addressed_to_the_clusters_program() {
+        // The kill's SDK builder stamps the committed program id; a missing
+        // retarget would compile and send the mainnet kill nowhere.
+        let me = Pubkey::new_unique();
+        let wallet = Keypair::new();
+        let found = MarketSeats {
+            base_treasury: Pubkey::new_unique(),
+            quote_treasury: Pubkey::new_unique(),
+            seats: vec![],
+        };
+        let closed = Seat {
+            tombstoned: true,
+            ..seat(me)
+        };
+        for cluster in [Cluster::Localnet, Cluster::Mainnet] {
+            for s in [
+                step(Op::Kill, &seat(me), &me),
+                step(Op::Close, &seat(me), &me),
+                step(Op::Drain, &closed, &me),
+            ] {
+                let ixs = instructions(
+                    s,
+                    cluster,
+                    &wallet,
+                    &me,
+                    &Pubkey::new_unique(),
+                    &Pubkey::new_unique(),
+                    &Pubkey::new_unique(),
+                    &found,
+                    &seat(me),
+                );
+                // The drain's ATA creates ride in front; the write is last.
+                let write = ixs.last().unwrap();
+                assert_eq!(
+                    write.program_id,
+                    cluster.program_id(),
+                    "{s:?} on {cluster:?}"
+                );
+            }
+        }
     }
 
     #[test]
