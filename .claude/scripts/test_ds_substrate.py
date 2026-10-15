@@ -232,6 +232,10 @@ class VerbLaunch(SubstrateHarness):
         ' USE=${CLAUDE_CODE_USE_BEDROCK-unset} ARGS=$*"; }; '
         "_ds_base() { :; }; _ds_secrets() { :; }; _ds_aws_login() { :; }; "
         "_ds_pull() { :; }; "
+        # The model probe's transport: argv and stdin logged apart, so a case
+        # can tell where the token went; the reply is the env's to choose.
+        'curl() { print -r -- "ARGV=$* STDIN=$(cat)" >> "$_DS_REPO/curl.log"; '
+        'printf \'%s\\n%s\' "${PROBE_BODY:-ok}" "${PROBE_CODE:-200}"; }; '
     )
     _AFTER = '; print -r -- "RC=$?"; print -r -- "AFTER=${ANTHROPIC_MODEL-unset}"'
     _TOKEN = {"AWS_BEARER_TOKEN_BEDROCK": "placeholder-key"}
@@ -320,14 +324,70 @@ class VerbLaunch(SubstrateHarness):
             result.stderr,
         )
 
-    def test_chore_launches_the_helper_tier_on_bedrock_in_a_bare_worktree(self):
+    def test_chore_launches_the_helper_tier_on_bedrock_with_no_worktree(self):
         result, out = self._launch("chore eng-7", env=self._TOKEN)
         self.assertIn("MODEL=help-model[1m] USE=1", out, result.stderr)
-        self.assertIn("-n 7 --permission-mode auto -w 7", out)
-        # No init-pr: the bootstrap is the written read-only prompt.
+        # The skill is the whole prompt, and nothing creates a worktree.
+        self.assertIn("-n 7 --permission-mode auto /chore 7", out)
+        self.assertNotIn("-w", out)
         self.assertNotIn("/init-pr", out)
-        self.assertIn("READ-ONLY toward the repo", out)
-        self.assertIn("--state 'In Review' --keep-worktree", out)
+
+    #: A first-party-shaped placeholder, so the probe maps it to a profile
+    #: rather than skipping it as an alias.
+    _PROBED = {"DS_MODEL_HELPER": "claude-help-model[1m]"}
+
+    def _curl_log(self):
+        log = self.repo / "curl.log"
+        return log.read_text() if log.exists() else ""
+
+    def test_a_bedrock_chore_probes_the_model_before_launching(self):
+        result, out = self._launch("chore 7", env={**self._TOKEN, **self._PROBED})
+        self.assertIn("MODEL=claude-help-model[1m] USE=1", out, result.stderr)
+        log = self._curl_log()
+        # The Bedrock profile, window suffix dropped, asked for one token.
+        self.assertIn("/model/us.anthropic.claude-help-model/converse", log)
+        self.assertIn('"maxTokens":1', log)
+        # The key rides stdin, never argv, where `ps` would show it.
+        argv, stdin = log.split(" STDIN=", 1)
+        self.assertNotIn("placeholder-key", argv)
+        self.assertIn("Authorization: Bearer placeholder-key", stdin)
+
+    def test_a_model_that_does_not_answer_launches_nothing(self):
+        # The 1843 failure: a tab that 403s on every turn.
+        denied = "Model access is denied due to aws-marketplace:Subscribe"
+        result, out = self._launch(
+            "chore 7 || print -r -- REFUSED; "
+            'print -r -- "USE_AFTER=${CLAUDE_CODE_USE_BEDROCK-unset}"',
+            env={
+                **self._TOKEN,
+                **self._PROBED,
+                "PROBE_CODE": "403",
+                "PROBE_BODY": denied,
+            },
+        )
+        self.assertIn("REFUSED", out)
+        self.assertNotIn("MODEL=", out)
+        self.assertIn("USE_AFTER=unset", out)
+        self.assertIn("HTTP 403", result.stderr)
+        self.assertIn(denied, result.stderr)
+        # Refused before the marker, so a resume cannot inherit the attempt.
+        self.assertFalse((self.repo / ".claude/session-substrate/7").exists())
+
+    def test_an_anthropic_chore_and_an_alias_are_not_probed(self):
+        result, out = self._launch("chore anthropic 7", env=self._PROBED)
+        self.assertIn("MODEL=claude-help-model[1m] USE=unset", out, result.stderr)
+        result, out = self._launch("chore 8", env=self._TOKEN)
+        self.assertIn("MODEL=help-model[1m] USE=1", out, result.stderr)
+        self.assertIn("is an alias, so it cannot be probed", result.stderr)
+        self.assertEqual(self._curl_log(), "")
+
+    def test_task_resume_hands_a_chore_back_to_its_own_verb(self):
+        # `fleet` types `task resume <n>`; a chore has no worktree to resolve,
+        # so it must reopen by the chore's own id, not the picker.
+        self._launch("chore anthropic 7")
+        result, out = self._launch("task resume 7")
+        self.assertIn("/chore 7", out, result.stderr)
+        self.assertNotIn("--resume 7", out)
 
     def test_chore_takes_task_s_substrate_words(self):
         result, out = self._launch("chore anthropic 7")

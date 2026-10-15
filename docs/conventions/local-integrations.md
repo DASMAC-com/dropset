@@ -1182,7 +1182,7 @@ names alive was the outcome to avoid.
 | `task anthropic <n>` | same, when the work needs web research     | anthropic              | executor         |
 | `task resume [n]`    | resume by number (bare = the picker)       | as recorded            | re-pinned        |
 | `explore <n\|name>`  | research / audit, read-only, temp worktree | anthropic, always      | advisor          |
-| `chore [s] <n>`      | minor non-repo job, read-only, no PR       | helper's (Bedrock)     | helper           |
+| `chore [s] <n>`      | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper           |
 | `plan [bedrock]`     | upkeep pass, then daily planning session   | advisor's, or override | advisor          |
 | `housekeeping`       | upkeep; also the 5-hour-window opener      | anthropic, always      | executor's model |
 | `architect <n> [b]`  | design thread, read-only, temp worktree    | advisor's, or override | advisor          |
@@ -1204,9 +1204,9 @@ board, not a branch.
 
 #### Architect and explore sessions: temporary worktree, no PR
 
-**`architect <n>`, every `explore <n|name>` task — audits
-included — and every `chore <n>` run in their own worktree, but
-that worktree is TEMPORARY WORKING STATE and the session is READ-ONLY toward the
+**`architect <n>` and every `explore <n|name>` task — audits
+included — run in their own worktree, but that worktree is
+TEMPORARY WORKING STATE and the session is READ-ONLY toward the
 repo: no commits, no PR.** Durable state is captured in
 **Linear**; a spec file is **optional**, and anything repo-bound
 lands later via a **follow-up worker task**. This is the
@@ -1232,7 +1232,7 @@ design thread with no issue files or names one first.
 | `explore 1196`         | `1196`             | `1196`             |
 | `explore skills-audit` | `exp-skills-audit` | `exp-skills-audit` |
 | `architect 1572`       | `1572`             | `1572`             |
-| `chore 1843`           | `1843`             | `1843`             |
+| `chore 1843`           | none (base)        | `1843`             |
 
 The named exceptions: `plan-<day>` and `housekeeping-<day>` keep
 their day-keyed names (they have no issue), a free-form explore
@@ -1281,9 +1281,10 @@ knowing before relying on the inheritance:**
   which re-pins the tier as well as the substrate: an untagged
   worktree — no marker — resumes on the **advisor** tier, so an
   issue-keyed explore session comes back on the right model. An
-  architect or chore session gets there through its `<n>.tier` file instead,
-  and keeps its recorded substrate. (This closed the first part of
-  ENG-1402.)
+  architect session gets there through its `<n>.tier` file instead,
+  and keeps its recorded substrate; a `helper` `.tier` hands the
+  resume to `chore <n>`, since a chore has no worktree to resolve.
+  (This closed the first part of ENG-1402.)
 - **No substrate marker is written for an explore session**, and
   that is deliberate rather than an omission. The marker keys on
   the **worktree tag alone**, which `task <n>` also writes — so
@@ -1301,12 +1302,23 @@ substrates and different pins.
 whose deliverable lands outside the repo (a key file, a local
 deploy, a one-off probe), on the **helper** tier, Bedrock by
 default with `chore anthropic <n>` as the web-research escape. It
-skips `init-pr` and the bootstrap PR; its written bootstrap prompt
-states the read-only posture and ends the session with
-`close_session.py --state 'In Review' --keep-worktree`. Unlike
-`explore` it **does** write a substrate marker, with a `helper`
-`.tier` beside it, so `task resume <n>` and `fleet` re-pin the
-helper model on the recorded substrate. A chore and a task are
+shares this section's read-only posture but **not the worktree**:
+it never produces a PR, so it launches in the **base checkout**
+with no worktree, branch or `init-pr`, and its only prompt is
+`/chore <n>` — the `chore` skill bootstraps from the issue, which is
+the whole brief, and closes by moving it to In Review with
+`board_batch.py state` (`close_session.py` refuses the base
+checkout). **A Bedrock launch probes the model first** — one
+`maxTokens: 1` Converse call with the agent key — and refuses with
+Bedrock's own error on anything but an answer: the first chore's tab
+403'd on every turn (the agent identity lacked the Marketplace
+actions that enable the helper model) and only looked alive.
+`models check` cannot catch that, since a control-plane read passes
+for a model the account may not invoke. Unlike `explore` it **does**
+write a substrate marker, with a `helper` `.tier` beside it, so
+`task resume <n>` — and so `fleet` — hands back to `chore <n>`,
+which resumes by its computed id on the recorded substrate. A chore
+and a task are
 separate Linear issues (operator ruling, 2026-10-14), so they should
 never share a number; since that is discipline rather than a
 guarantee, a `task` session's marker is left alone, exactly as
@@ -1886,12 +1898,12 @@ drives the real zsh functions.
   rather than documented.
 
 - **`chore [anthropic|bedrock] <n>`** — start **or resume** a chore
-  session on issue `n`, on the **helper** tier: the bare-number worktree,
-  a computed id like `explore`'s, a written read-only bootstrap prompt
-  in place of `/init-pr`, and a `helper` substrate marker so a resume
-  keeps both model and provider. A reopen with no word keeps the
-  recorded substrate. See "Architect and explore sessions: temporary
-  worktree, no PR" above for the shape it shares.
+  session on issue `n`, on the **helper** tier: the base checkout and
+  no worktree, a computed id like `explore`'s, `/chore <n>` in place of
+  `/init-pr`, a model probe before a Bedrock launch, and a `helper`
+  substrate marker so a resume keeps both model and provider. A reopen
+  with no word keeps the recorded substrate. See "Architect and
+  explore sessions: temporary worktree, no PR" above for the shape.
 
 - **`plan [anthropic|bedrock]`** — start **or resume** a **planning**
   session. It derives the session name `plan-<day-of-month>` from
