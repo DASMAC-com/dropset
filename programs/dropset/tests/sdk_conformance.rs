@@ -22,7 +22,7 @@
 mod common;
 
 use anchor_v2_testing::{Keypair, Signer};
-use common::fixture::{dual_expiry_profile, ladder_profile, Fixture};
+use common::fixture::{dual_expiry_profile, flip_profile, ladder_profile, Fixture};
 
 use dropset_sdk::clock::{SlotTime, WallTime};
 use dropset_sdk::layout::MarketView;
@@ -340,6 +340,45 @@ fn sdk_simulate_swap_multi_level_sell() {
         "expected a fill across both bid levels, got {}",
         q.legs
     );
+}
+
+/// Flipped counters, pinned differentially. Every fill on a flipping level
+/// rests its proceeds on the opposite side, and the SDK must see that depth
+/// exactly as the engine matches it, so each take below runs through
+/// `predict_and_execute` against the bytes the previous one left behind.
+///
+/// The ask and bid both sit 0.5% off the reference with a 0.2% flip spread,
+/// so each flipped counter rests *ahead* of the opposite side's own level:
+/// a flipped bid at ~+0.3%, a flipped ask at ~−0.3%. The second and third
+/// takes are sized to fill that flipped counter whole and bite into the own
+/// level behind it, so a simulator that skipped flips, mis-sorted them or
+/// mis-sized them disagrees on the output.
+#[test]
+fn sdk_simulate_swap_matches_onchain_on_flipped_counters() {
+    let profile = flip_profile(
+        &[(5_000, 5_000, u32::MAX)],
+        &[(5_000, 5_000, u32::MAX)],
+        2_000,
+    );
+    let mut f = Fixture::seeded_with(1_000_000, 1_085_000, profile);
+    let taker = f.funded_depositor(1_000_000, 1_000_000);
+
+    // A partial buy of the own ask flips its quote proceeds into a bid.
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, 200_000, Price::INFINITY);
+    assert_eq!(q.legs, 1);
+    let ask = f.vault(0).remaining.asks[0];
+    assert!(ask.size.get() > 0 && ask.flip_size.get() > 0, "both sides");
+
+    // The sell fills that flipped bid, then the level's own bid behind it,
+    // whose base proceeds flip into an ask.
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Sell, 300_000, Price::ZERO);
+    assert_eq!(q.legs, 2, "the flipped bid, then the own bid");
+    assert_eq!(f.vault(0).remaining.asks[0].flip_size.get(), 0);
+    assert!(f.vault(0).remaining.bids[0].flip_size.get() > 0);
+
+    // And the buy back fills that flipped ask ahead of the own ask.
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, 400_000, Price::INFINITY);
+    assert_eq!(q.legs, 2, "the flipped ask, then the own ask");
 }
 
 /// Cross-**vault** price-time priority, pinned differentially.

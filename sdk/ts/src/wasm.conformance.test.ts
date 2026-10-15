@@ -150,15 +150,24 @@ test('committed wasm simulate_swap matches the conformance vectors', () => {
 // `ask_sizes` while leaving `ask_prices` untouched — and a transposed side
 // mapping swaps the ask and bid arrays wholesale.
 test('committed wasm resting_book matches the conformance books', () => {
-  // Pin the set, not a floor: with `length > 0`, four of the five books
+  // Pin the set, not a floor: with `length > 0`, six of the seven books
   // could vanish on a regeneration and this would still pass — including
   // `far_out_live`, the only place the far-out level's *resting* presence is
-  // observed. Two of the five are captured at a dead clock and so compare
-  // empty arrays, which is signal only because the live siblings are here
-  // to contrast with.
+  // observed, and `flipped_live`, the only place a flipped counter's is. Two
+  // of the seven are captured at a dead clock and so compare empty arrays,
+  // which is signal only because the live siblings are here to contrast
+  // with.
   assert.deepEqual(
     vectors.books.map((b) => b.name).sort(),
-    ['far_out_live', 'flush_live', 'primary_live', 'primary_slot_dead', 'primary_wall_dead'],
+    [
+      'far_out_live',
+      'flipped_flush_live',
+      'flipped_live',
+      'flush_live',
+      'primary_live',
+      'primary_slot_dead',
+      'primary_wall_dead',
+    ],
     'expected book set',
   );
   for (const b of vectors.books) {

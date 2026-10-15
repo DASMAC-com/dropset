@@ -725,11 +725,8 @@ impl Swap {
                         // `crate::clock`). A level has one deadline pair,
                         // so it governs both counters. The gate is
                         // `matching_math::level_is_live`, shared with the
-                        // off-chain simulator so displayed depth equals
-                        // filled depth — for own counters; the simulator
-                        // does not yet read the flipped ones, so it
-                        // under-reports depth (the safe direction) until
-                        // the readers learn to flip.
+                        // off-chain simulator, which collects the same two
+                        // counters, so displayed depth equals filled depth.
                         if !level_is_live(
                             price,
                             size,

@@ -28,6 +28,7 @@ type NativeLevelCase = {
   size: number;
   expiry_offset: number;
   expiry_offset_slots: number;
+  flip_spread_ppm: number;
 };
 type LevelCase = NativeLevelCase & {
   price_offset: number;
@@ -94,6 +95,9 @@ function nativeLevel(c: NativeLevelCase): NativeLevel {
     size: BigInt(c.size),
     expiryOffsetSecs: wallSpan(c.expiry_offset),
     expiryOffsetSlots: slotSpan(c.expiry_offset_slots),
+    // A zero spread is left off, so the vectors also pin the omitted field
+    // defaulting to a level that does not flip.
+    ...(c.flip_spread_ppm === 0 ? {} : { flipSpreadPpm: c.flip_spread_ppm }),
   };
 }
 
@@ -128,7 +132,7 @@ test('quoting vectors match', () => {
     c.bids.forEach((exp, i) => {
       const got = readLevel(view, i);
       assert.equal(got.priceOffset, exp.price_offset, `bid[${i}] offset`);
-      assert.equal(got.flipSpreadPpm, 0, `bid[${i}] flip spread`);
+      assert.equal(got.flipSpreadPpm, exp.flip_spread_ppm, `bid[${i}] flip spread`);
       assert.equal(got.sizeBps, exp.size_bps, `bid[${i}] size_bps`);
       assert.equal(got.expiryOffsetSecs, exp.expiry_offset, `bid[${i}] expiry`);
       assert.equal(got.expiryOffsetSlots, exp.expiry_offset_slots, `bid[${i}] expiry slots`);
@@ -136,7 +140,7 @@ test('quoting vectors match', () => {
     c.asks.forEach((exp, i) => {
       const got = readLevel(view, N_LEVELS + i);
       assert.equal(got.priceOffset, exp.price_offset, `ask[${i}] offset`);
-      assert.equal(got.flipSpreadPpm, 0, `ask[${i}] flip spread`);
+      assert.equal(got.flipSpreadPpm, exp.flip_spread_ppm, `ask[${i}] flip spread`);
       assert.equal(got.sizeBps, exp.size_bps, `ask[${i}] size_bps`);
       assert.equal(got.expiryOffsetSecs, exp.expiry_offset, `ask[${i}] expiry`);
       assert.equal(got.expiryOffsetSlots, exp.expiry_offset_slots, `ask[${i}] expiry slots`);

@@ -57,6 +57,10 @@ pub struct NativeLevel {
     /// dead; use [`SlotSpan::UNBOUNDED`] to leave a level bounded only
     /// in wall time.
     pub expiry_offset_slots: SlotSpan,
+    /// Flip spread in ppm off this level's own `price`: once filled, its
+    /// proceeds rest on the opposite side that far back toward the
+    /// reference. `0` does not flip.
+    pub flip_spread_ppm: u32,
 }
 
 /// A native book: absolute-price bid/ask ladders, top-of-book first. At
@@ -121,8 +125,7 @@ fn level_to_relative(
     }
     Ok(Level {
         price_offset: (offset as u32).into(),
-        // A native book has no flip input yet, so its levels never flip.
-        flip_spread_ppm: 0u32.into(),
+        flip_spread_ppm: lvl.flip_spread_ppm.into(),
         size_bps: (size_bps as u16).into(),
         expiry_offset_secs: lvl.expiry_offset_secs.get().into(),
         expiry_offset_slots: lvl.expiry_offset_slots.get().into(),
@@ -250,12 +253,14 @@ mod tests {
                 size: 100_000,                                // of 1_000_000 base -> 1000 bps
                 expiry_offset_secs: WallSpan::new(150),
                 expiry_offset_slots: SlotSpan::UNBOUNDED,
+                flip_spread_ppm: 0,
             }],
             bids: vec![NativeLevel {
                 price: Price::encode(99_000_000, -1).unwrap(), // 0.99 -> -10000 ppm
                 size: 200_000,                                 // of 1_000_000 quote -> 2000 bps
                 expiry_offset_secs: WallSpan::new(150),
                 expiry_offset_slots: SlotSpan::UNBOUNDED,
+                flip_spread_ppm: 0,
             }],
         };
         let p = book.to_profile(reference, 1_000_000, 1_000_000).unwrap();
@@ -284,6 +289,7 @@ mod tests {
                 size: 1,
                 expiry_offset_secs: WallSpan::DEAD,
                 expiry_offset_slots: SlotSpan::DEAD,
+                flip_spread_ppm: 0,
             }],
             ..Default::default()
         };
@@ -303,6 +309,7 @@ mod tests {
             size: 600_000,
             expiry_offset_secs: WallSpan::DEAD,
             expiry_offset_slots: SlotSpan::DEAD,
+            flip_spread_ppm: 0,
         };
         let book = NativeBook {
             asks: vec![
@@ -331,12 +338,14 @@ mod tests {
                     size: 600_000,
                     expiry_offset_secs: WallSpan::DEAD,
                     expiry_offset_slots: SlotSpan::DEAD,
+                    flip_spread_ppm: 0,
                 },
                 NativeLevel {
                     price: Price::encode(10_200_000, 0).unwrap(),
                     size: 400_000,
                     expiry_offset_secs: WallSpan::DEAD,
                     expiry_offset_slots: SlotSpan::DEAD,
+                    flip_spread_ppm: 0,
                 },
             ],
             ..Default::default()
@@ -358,6 +367,7 @@ mod tests {
                 size: 999_999,
                 expiry_offset_secs: WallSpan::DEAD,
                 expiry_offset_slots: SlotSpan::DEAD,
+                flip_spread_ppm: 0,
             }],
             ..Default::default()
         };
@@ -375,6 +385,7 @@ mod tests {
                     size: 1,
                     expiry_offset_secs: WallSpan::DEAD,
                     expiry_offset_slots: SlotSpan::DEAD,
+                    flip_spread_ppm: 0,
                 })
                 .collect(),
             ..Default::default()

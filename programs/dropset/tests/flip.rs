@@ -6,10 +6,9 @@
 
 mod common;
 
-use anchor_lang_v2::bytemuck;
 use anchor_v2_testing::{Keypair, Message, Signer, VersionedMessage, VersionedTransaction};
-use common::fixture::{ladder_profile, simple_profile, Fixture, PROFILE_BYTES};
-use dropset::{FillEvent, LiquidityProfile, Price, Vault, N_LEVELS};
+use common::fixture::{flip_profile, simple_profile, Fixture, PROFILE_BYTES};
+use dropset::{FillEvent, Price, Vault, N_LEVELS};
 use litesvm::types::TransactionMetadata;
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
@@ -21,24 +20,6 @@ const SELL: u8 = 1;
 /// The flip spread every flipping profile here quotes, in ppm.
 const SPREAD: u32 = 2_000;
 const PPM: u128 = 1_000_000;
-
-/// [`ladder_profile`] with every listed level quoting `spread_ppm`.
-fn flip_profile(
-    asks: &[(u32, u16, u32)],
-    bids: &[(u32, u16, u32)],
-    spread_ppm: u32,
-) -> [u8; PROFILE_BYTES] {
-    let mut profile: LiquidityProfile = bytemuck::pod_read_unaligned(&ladder_profile(asks, bids));
-    for level in profile.asks.iter_mut().take(asks.len()) {
-        level.flip_spread_ppm = spread_ppm.into();
-    }
-    for level in profile.bids.iter_mut().take(bids.len()) {
-        level.flip_spread_ppm = spread_ppm.into();
-    }
-    let mut bytes = [0u8; PROFILE_BYTES];
-    bytes.copy_from_slice(bytemuck::bytes_of(&profile));
-    bytes
-}
 
 /// One ask and one bid, ±0.5% off the reference, each the whole leg.
 fn two_sided() -> [u8; PROFILE_BYTES] {

@@ -51,6 +51,7 @@ fn native_level(v: &Value) -> NativeLevel {
         // would otherwise pass.
         expiry_offset_secs: WallSpan::new(u32_of(v, "expiry_offset")),
         expiry_offset_slots: SlotSpan::new(u32_of(v, "expiry_offset_slots")),
+        flip_spread_ppm: u32_of(v, "flip_spread_ppm"),
     }
 }
 
@@ -95,6 +96,11 @@ fn quoting_vectors() {
                 u32_of(v, "expiry_offset_slots"),
                 "ask[{i}] expiry slots"
             );
+            assert_eq!(
+                lvl.flip_spread_ppm.get(),
+                u32_of(v, "flip_spread_ppm"),
+                "ask[{i}] flip spread"
+            );
         }
         for (i, v) in bids.iter().enumerate() {
             let lvl = &profile.bids[i];
@@ -117,6 +123,11 @@ fn quoting_vectors() {
                 lvl.expiry_offset_slots.get(),
                 u32_of(v, "expiry_offset_slots"),
                 "bid[{i}] expiry slots"
+            );
+            assert_eq!(
+                lvl.flip_spread_ppm.get(),
+                u32_of(v, "flip_spread_ppm"),
+                "bid[{i}] flip spread"
             );
         }
     }

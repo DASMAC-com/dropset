@@ -37,6 +37,7 @@ use dropset_interface::layout::{
     FLUSH_BIT, NULL_SECTOR, VAULT_ALIGN,
 };
 use dropset_interface::matching::{resting_levels, simulate_swap, SwapSide};
+use dropset_interface::matching_math::flip_level_price;
 use dropset_interface::price::Price;
 use serde_json::{json, Value};
 
@@ -273,11 +274,74 @@ fn flush_market_data() -> Vec<u8> {
     serialize_market(&header, &[v])
 }
 
+/// Give `p` a flipped counter: `flip_size` atoms on the leg opposite its
+/// own `size`, resting at its own price moved `spread_ppm` back toward the
+/// reference — the price the engine's flush materializes.
+fn flip(p: &mut Position, spread_ppm: u32, is_ask: bool, flip_size: u64) {
+    let price = Price::from_bits(p.price.get());
+    p.flip_price = flip_level_price(price, spread_ppm, is_ask).as_u32().into();
+    p.flip_size = flip_size.into();
+}
+
+/// A vault whose `remaining` carries **flipped counters** — the state a
+/// book is in between flushes once takers have filled it. Each level
+/// rests a second counter on the side opposite its array: a filled ask's
+/// quote proceeds as a bid at its `flip_price`, a filled bid's base
+/// proceeds as an ask. A reader that ignores `flip_size` misses depth on
+/// both sides here, so every case and book against it fails.
+///
+/// - `asks[0]` is **partially flipped**: own base left at 1.0904 *and* a
+///   flipped bid at 0.1% under it, so one level quotes both sides.
+/// - The bid side is **fully flipped**: neither bid has own size left,
+///   so every bid's depth sits on the ask side, and a Sell meets only
+///   `asks[0]`'s flipped bid.
+/// - `bids[1]`'s flip rests at exactly `asks[1]`'s price, so the book pins
+///   the final sort key: a level's own counter before a flipped one at the
+///   same price, nonce, sector and index.
+/// - `asks[1]` has a zero spread, stored as all-zero flip bytes, which the
+///   engine never matches.
+fn flipped_vault(stamp: u64) -> Vault {
+    let mut v = vault(stamp, NULL_SECTOR, NULL_SECTOR, [1u8; 32]);
+    v.remaining.asks[0] = position(10_904_000, 0, 600_000);
+    flip(&mut v.remaining.asks[0], 1_000, true, 436_160);
+    v.remaining.asks[1] = position(11_393_000, 0, 500_000);
+    v.remaining.bids[0] = position(10_796_000, 0, 0);
+    flip(&mut v.remaining.bids[0], 2_000, false, 1_000_000);
+    v.remaining.bids[1] = position(10_416_000, 0, 0);
+    v.remaining.bids[1].flip_price = v.remaining.asks[1].price;
+    v.remaining.bids[1].flip_size = 200_000u64.into();
+    v
+}
+
+fn flipped_market_data() -> Vec<u8> {
+    serialize_market(&market_header(1), &[flipped_vault(1)])
+}
+
+/// [`flipped_vault`] with its flush bit armed over a plain ladder. The
+/// engine re-centers at a flush, zeroing every `flip_size`, so the stale
+/// flipped counters left in `remaining` must not rest: the book is the
+/// profile's alone.
+fn flipped_flush_market_data() -> Vec<u8> {
+    let mut v = flipped_vault(1u64 | FLUSH_BIT);
+    let level = |offset_ppm: u32| Level {
+        price_offset: offset_ppm.into(),
+        flip_spread_ppm: 1_000.into(),
+        size_bps: 2_500.into(),
+        expiry_offset_secs: WALL_DEADLINE.into(),
+        expiry_offset_slots: SLOT_DEADLINE.into(),
+    };
+    v.profile.asks[0] = level(5_000);
+    v.profile.bids[0] = level(5_000);
+    serialize_market(&market_header(1), &[v])
+}
+
 /// The market a case quotes against. `PRIMARY` is the two-vault book in
 /// `market_data`; the others are the extra buffers in `markets`.
 const PRIMARY: &str = "primary";
 const FAR_OUT: &str = "far_out";
 const FLUSH: &str = "flush";
+const FLIPPED: &str = "flipped";
+const FLIPPED_FLUSH: &str = "flipped_flush";
 
 /// One swap input + the `Quote` the native matcher returns for it. Which
 /// market a case quotes against comes from the group it is emitted in, not
@@ -381,6 +445,11 @@ fn main() {
     let far_out_view = MarketView::load(&far_out_data).expect("far-out market decodes");
     let flush_data = flush_market_data();
     let flush_view = MarketView::load(&flush_data).expect("flush market decodes");
+    let flipped_data = flipped_market_data();
+    let flipped_view = MarketView::load(&flipped_data).expect("flipped market decodes");
+    let flipped_flush_data = flipped_flush_market_data();
+    let flipped_flush_view =
+        MarketView::load(&flipped_flush_data).expect("flipped flush market decodes");
 
     let cases = [
         // Buy that clears all four ask levels — cross-*vault* price-time
@@ -627,6 +696,50 @@ fn main() {
             platform_fee_bps: 0,
         },
     ];
+    // ── Flipped counters ────────────────────────────────────────────────
+    // A Buy walks the flipped bids (resting as asks) interleaved with the
+    // own asks; a Sell meets only `asks[0]`'s flipped bid, since the bid
+    // side is fully flipped. One level has one deadline pair, so the slot
+    // kill takes both counters with it. Against the flush-armed copy the
+    // stale flips do not rest.
+    let flipped_cases = [
+        Case {
+            name: "flipped_buy_walks_own_and_flipped",
+            side: SwapSide::Buy,
+            amount_in: 3_000_000,
+            limit: Price::INFINITY,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
+            platform_fee_bps: 0,
+        },
+        Case {
+            name: "flipped_sell_fills_a_flipped_bid",
+            side: SwapSide::Sell,
+            amount_in: 300_000,
+            limit: Price::ZERO,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
+            platform_fee_bps: 0,
+        },
+        Case {
+            name: "flipped_expiry_slot_dead_kills_both_counters",
+            side: SwapSide::Buy,
+            amount_in: 3_000_000,
+            limit: Price::INFINITY,
+            now_slot: SLOT_DEADLINE,
+            now_unix: LIVE_UNIX,
+            platform_fee_bps: 0,
+        },
+    ];
+    let flipped_flush_cases = [Case {
+        name: "flipped_flush_buy_rests_no_stale_flip",
+        side: SwapSide::Buy,
+        amount_in: 3_000_000,
+        limit: Price::INFINITY,
+        now_slot: LIVE_SLOT,
+        now_unix: LIVE_UNIX,
+        platform_fee_bps: 0,
+    }];
     let cases: Vec<Value> = cases
         .iter()
         .map(|c| case_json(&view, PRIMARY, c))
@@ -636,6 +749,16 @@ fn main() {
                 .map(|c| case_json(&far_out_view, FAR_OUT, c)),
         )
         .chain(flush_cases.iter().map(|c| case_json(&flush_view, FLUSH, c)))
+        .chain(
+            flipped_cases
+                .iter()
+                .map(|c| case_json(&flipped_view, FLIPPED, c)),
+        )
+        .chain(
+            flipped_flush_cases
+                .iter()
+                .map(|c| case_json(&flipped_flush_view, FLIPPED_FLUSH, c)),
+        )
         .collect();
     // ── Expected resting books ──────────────────────────────────────────
     // One live clock per market, plus each expiry domain against the
@@ -672,6 +795,18 @@ fn main() {
             now_slot: LIVE_SLOT,
             now_unix: LIVE_UNIX,
         },
+        BookCase {
+            name: "flipped_live",
+            market: FLIPPED,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
+        },
+        BookCase {
+            name: "flipped_flush_live",
+            market: FLIPPED_FLUSH,
+            now_slot: LIVE_SLOT,
+            now_unix: LIVE_UNIX,
+        },
     ];
     let books: Vec<Value> = books
         .iter()
@@ -679,17 +814,21 @@ fn main() {
             let v = match b.market {
                 FAR_OUT => &far_out_view,
                 FLUSH => &flush_view,
+                FLIPPED => &flipped_view,
+                FLIPPED_FLUSH => &flipped_flush_view,
                 _ => &view,
             };
             book_json(v, b)
         })
         .collect();
     let doc = json!({
-        "_comment": "Generated by `cargo run -p dropset-interface --example gen_simulate_swap`. Do not edit by hand. `market_data` is the primary market account's raw bytes (incl. the 8-byte discriminator) — two active vaults whose levels interleave in price, so a fill walks across vaults and the cross-vault price-time sort is pinned rather than assumed. `markets` holds the extra fixture buffers in the same format, and each case's `market` field names which buffer it quotes against: \"primary\" means `market_data`, otherwise it is a key in `markets`. The `far_out` market rests an absurdly-priced level behind an honest one on EACH side, pinning that such a level ends the walk and takes nothing rather than absorbing the taker's unspent budget; the `flush` market has its vault's flush bit armed, so its levels are materialized from a relative LiquidityProfile instead of read from `remaining`. Each case lists a swap input (side 0=buy/1=sell, amount_in, limit_price_bits, now_slot, now_unix, platform_fee_bps) and the Quote the native matcher returns. `books` carries five expected resting books — the four parallel arrays wasm::resting_book returns — one at a live clock per market, plus the primary book at each expiry domain's deadline where both sides come back empty. It is the ONLY place the cross-vault ordering is asserted directly: a Quote cannot see it, since two levels at one price fill to the same totals in either order, whereas here the sizes ride in the same order as the prices, so an inverted nonce tie-break reorders the size array. Sizes are base-denominated on both sides. Level expiry is dual-domain: a level rests only while it is inside BOTH its slot deadline and its wall-clock deadline, so the `expiry_*` cases pin each bound independently plus the boundary in each domain. A case whose platform_fee_bps exceeds the market's max_platform_fee expects an all-zero Quote: the engine rejects that swap, so the simulator refuses to quote it rather than clamping the rate. Verified against the WASM binding in sdk/interface/tests/wasm_conformance.rs (wasm::simulate_swap == native matcher); the native matcher is pinned to the on-chain engine by programs/dropset/tests/sdk_conformance.rs.",
+        "_comment": "Generated by `cargo run -p dropset-interface --example gen_simulate_swap`. Do not edit by hand. `market_data` is the primary market account's raw bytes (incl. the 8-byte discriminator) — two active vaults whose levels interleave in price, so a fill walks across vaults and the cross-vault price-time sort is pinned rather than assumed. `markets` holds the extra fixture buffers in the same format, and each case's `market` field names which buffer it quotes against: \"primary\" means `market_data`, otherwise it is a key in `markets`. The `far_out` market rests an absurdly-priced level behind an honest one on EACH side, pinning that such a level ends the walk and takes nothing rather than absorbing the taker's unspent budget; the `flush` market has its vault's flush bit armed, so its levels are materialized from a relative LiquidityProfile instead of read from `remaining`. The `flipped` market's `remaining` carries flipped counters (a partially flipped ask quoting both sides, a fully flipped bid side, a zero-spread level, and a flip tied on price with an own level, which must order after it), so a reader that ignores flip_size misses depth on both sides; `flipped_flush` is the same vault with its flush bit armed, where the stale flips must not rest. Each case lists a swap input (side 0=buy/1=sell, amount_in, limit_price_bits, now_slot, now_unix, platform_fee_bps) and the Quote the native matcher returns. `books` carries seven expected resting books — the four parallel arrays wasm::resting_book returns — one at a live clock per market, plus the primary book at each expiry domain's deadline where both sides come back empty. It is the ONLY place the cross-vault ordering is asserted directly: a Quote cannot see it, since two levels at one price fill to the same totals in either order, whereas here the sizes ride in the same order as the prices, so an inverted nonce tie-break reorders the size array. Sizes are base-denominated on both sides. Level expiry is dual-domain: a level rests only while it is inside BOTH its slot deadline and its wall-clock deadline, so the `expiry_*` cases pin each bound independently plus the boundary in each domain. A case whose platform_fee_bps exceeds the market's max_platform_fee expects an all-zero Quote: the engine rejects that swap, so the simulator refuses to quote it rather than clamping the rate. Verified against the WASM binding in sdk/interface/tests/wasm_conformance.rs (wasm::simulate_swap == native matcher); the native matcher is pinned to the on-chain engine by programs/dropset/tests/sdk_conformance.rs.",
         "market_data": data,
         "markets": {
             FAR_OUT: far_out_data,
             FLUSH: flush_data,
+            FLIPPED: flipped_data,
+            FLIPPED_FLUSH: flipped_flush_data,
         },
         "cases": cases,
         "books": books,

@@ -4,7 +4,8 @@
 //! programs/dropset/src/instructions/swap.rs: walk the active DLL,
 //! materialize each vault's live levels (flushing from the
 //! `LiquidityProfile` when `FLUSH_BIT` is armed, else reading
-//! `remaining`), sort by cross-vault price-time priority, then fill the
+//! `remaining`, flipped counters included), sort by cross-vault
+//! price-time priority, then fill the
 //! taker leg-by-leg until the input is exhausted or the limit price is
 //! crossed.
 //!
@@ -94,6 +95,12 @@ struct Lvl {
     nonce: u64,
     sector: u32,
     level: u32,
+    /// `false` for the consumed side's own `size`, `true` for the opposite
+    /// array's flipped `flip_size` at the same index. The last sort
+    /// component, so a level's own counter orders before its flipped one.
+    flipped: bool,
+    /// Allowance on the taker's output leg: base atoms on a Buy (an ask's
+    /// `size`, a bid's `flip_size`), quote atoms on a Sell.
     size: u64,
 }
 
@@ -317,7 +324,10 @@ pub fn simulate_swap(
         // **gross** output leg (the fee slice is booked to the market's
         // `accrued_<leg>_fee_atoms`, not retained by the vault), so a
         // multi-level fill against one vault runs out of inventory at
-        // exactly the point the engine does.
+        // exactly the point the engine does. The engine also credits the
+        // filled level's *other* counter with the input atoms (the flip);
+        // that credit lands on the side this take is not consuming, so no
+        // later leg can read it and it is not modelled here.
         let entry = inv.get_mut(&lvl.sector).unwrap();
         if is_buy {
             entry.0 = entry.0.saturating_sub(fill_base);
@@ -415,7 +425,8 @@ pub fn resting_levels(
 /// Collect the live, matchable levels of one side (`is_buy` ⇒ asks) across
 /// all active vaults, sorted into cross-vault price-time priority: best
 /// price first; on ties, older quote (lower nonce) wins, then lower sector,
-/// then lower level. Shared by [`simulate_swap`] (which then fills against
+/// then lower level, then a level's own counter before its flipped one.
+/// Shared by [`simulate_swap`] (which then fills against
 /// the levels) and [`resting_levels`] (which exposes them) so the canonical
 /// book reconstruction lives in one place.
 ///
@@ -474,36 +485,48 @@ fn collect_side_levels(
         let quote_atoms = v.quote_atoms.get();
 
         for i in 0..N_LEVELS {
-            let (price, size, wall_deadline, slot_deadline) =
-                level_state(v, i, is_buy, flush, reference, base_atoms, quote_atoms);
-            // The same gate `swap.rs` applies, shared through
-            // `matching_math`: a level is live only inside its wall deadline
-            // AND its slot deadline, non-empty and at a matchable price. The
-            // deadlines are domain-typed, so a transposed pair does not
-            // compile (see `crate::clock`).
-            if !level_is_live(
-                price,
-                size,
-                wall_deadline,
-                slot_deadline,
-                now_unix,
-                now_slot,
-            ) {
-                continue;
+            let own = level_state(v, i, is_buy, flush, reference, base_atoms, quote_atoms);
+            // Both counters of every level, as `swap.rs` collects them: the
+            // consumed side's own `size`, plus the opposite side's flipped
+            // `flip_size` at its `flip_price` (a filled bid's proceeds rest
+            // as an ask, and the mirror). A flush zeroes every `flip_size`,
+            // so only a vault with no flush armed rests a flipped counter.
+            let flip = (!flush).then(|| flipped_state(v, i, is_buy));
+            for (flipped, state) in [(false, Some(own)), (true, flip)] {
+                let Some((price, size, wall_deadline, slot_deadline)) = state else {
+                    continue;
+                };
+                // The same gate `swap.rs` applies, shared through
+                // `matching_math`: a level is live only inside its wall
+                // deadline AND its slot deadline, non-empty and at a
+                // matchable price. A level has one deadline pair, so it
+                // governs both counters. The deadlines are domain-typed, so a
+                // transposed pair does not compile (see `crate::clock`).
+                if !level_is_live(
+                    price,
+                    size,
+                    wall_deadline,
+                    slot_deadline,
+                    now_unix,
+                    now_slot,
+                ) {
+                    continue;
+                }
+                let key = sort_key(price, is_buy);
+                levels.push(Lvl {
+                    key,
+                    price,
+                    nonce,
+                    sector,
+                    level: i as u32,
+                    flipped,
+                    size,
+                });
             }
-            let key = sort_key(price, is_buy);
-            levels.push(Lvl {
-                key,
-                price,
-                nonce,
-                sector,
-                level: i as u32,
-                size,
-            });
         }
     }
 
-    levels.sort_by_key(|e| (e.key, e.nonce, e.sector, e.level));
+    levels.sort_by_key(|e| (e.key, e.nonce, e.sector, e.level, e.flipped));
     Some(levels)
 }
 
@@ -583,6 +606,26 @@ fn level_state(
     }
 }
 
+/// Resolve the flipped counter level `i` rests on the chosen side: the
+/// *opposite* array's stored `flip_size` at its `flip_price` (`is_buy` ⇒
+/// `bids[i]`, whose filled proceeds rest as an ask), under that level's own
+/// deadline pair. Read from `remaining` only — a flush zeroes `flip_size`,
+/// so the caller skips this for a vault with a flush armed. A zero-spread
+/// level stores `Price::ZERO` here, which the liveness gate rejects.
+fn flipped_state(v: &Vault, i: usize, is_buy: bool) -> (Price, u64, WallTime, SlotTime) {
+    let p = if is_buy {
+        v.remaining.bids[i]
+    } else {
+        v.remaining.asks[i]
+    };
+    (
+        Price::from_bits(p.flip_price.get()),
+        p.flip_size.get(),
+        p.wall_deadline(),
+        p.slot_deadline(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{resting_levels, simulate_swap, BookLevel, Quote, SwapSide};
@@ -622,6 +665,12 @@ mod tests {
     /// ×1.0M, 1.1393 ×0.8M base) and two bids (1.0796 ×2.0M, 1.0416 ×1.5M
     /// quote). Same shape as `examples/gen_simulate_swap.rs`.
     fn market_data() -> Vec<u8> {
+        market_data_with(|_| {})
+    }
+
+    /// [`market_data`] with `edit` applied to its one vault before
+    /// serializing.
+    fn market_data_with(edit: impl FnOnce(&mut Vault)) -> Vec<u8> {
         let mut header = MarketHeader::zeroed();
         header.head = 0u32.into();
         header.tombstone_head = NULL_SECTOR.into();
@@ -650,6 +699,7 @@ mod tests {
         v.remaining.asks[1] = position(11_393_000, 800_000);
         v.remaining.bids[0] = position(10_796_000, 2_000_000);
         v.remaining.bids[1] = position(10_416_000, 1_500_000);
+        edit(&mut v);
 
         let vaults = [v];
         let mut buf = Vec::new();
@@ -661,6 +711,87 @@ mod tests {
         }
         buf.extend_from_slice(cast_slice(&vaults));
         buf
+    }
+
+    /// A flipped counter rests on the side opposite its array, at its
+    /// `flip_price`, and a take fills it like any other level: a filled
+    /// bid's base proceeds quote as an ask, a filled ask's quote proceeds
+    /// as a bid. A `Price::ZERO` flip price (the zero-spread sentinel) does
+    /// not rest whatever `flip_size` says.
+    #[test]
+    fn flipped_counters_rest_on_the_opposite_side_and_fill() {
+        let flip = |p: &mut Position, significand: u32, size: u64| {
+            p.flip_price = Price::encode(significand, 0).unwrap().as_u32().into();
+            p.flip_size = size.into();
+        };
+        let data = market_data_with(|v| {
+            // bids[0]'s proceeds rest as an ask between the two own asks.
+            flip(&mut v.remaining.bids[0], 10_950_000, 300_000);
+            // asks[0]'s proceeds rest as a bid between the two own bids.
+            flip(&mut v.remaining.asks[0], 10_600_000, 500_000);
+            // The sentinel never rests.
+            v.remaining.bids[1].flip_size = 9_999u64.into();
+        });
+        let view = MarketView::load(&data).unwrap();
+        let px = |s| Price::encode(s, 0).unwrap();
+        let asks = resting_levels(&view, SwapSide::Buy, NOW_SLOT, NOW_WALL);
+        assert_eq!(
+            asks.iter().map(|l| (l.price, l.size)).collect::<Vec<_>>(),
+            vec![
+                (px(10_904_000), 1_000_000),
+                (px(10_950_000), 300_000),
+                (px(11_393_000), 800_000),
+            ]
+        );
+        let bids = resting_levels(&view, SwapSide::Sell, NOW_SLOT, NOW_WALL);
+        assert_eq!(
+            bids.iter().map(|l| l.price).collect::<Vec<_>>(),
+            vec![px(10_796_000), px(10_600_000), px(10_416_000)]
+        );
+
+        // A buy that clears the best ask and stops inside the flipped one
+        // takes base from both, in that order.
+        let spend = px(10_904_000).quote_for_base(1_000_000) as u64
+            + px(10_950_000).quote_for_base(100_000) as u64;
+        let q = simulate_swap(
+            &view,
+            SwapSide::Buy,
+            spend,
+            Price::INFINITY,
+            NOW_SLOT,
+            NOW_WALL,
+            0,
+        );
+        assert_eq!(q.legs, 2);
+        assert_eq!(q.out_amount, 1_100_000);
+        assert_eq!(q.in_amount, spend);
+    }
+
+    /// An armed flush zeroes every `flip_size` on-chain, so the simulator
+    /// ignores whatever stale flipped state `remaining` still holds.
+    #[test]
+    fn an_armed_flush_rests_no_flipped_counter() {
+        let data = market_data_flush(2_000, 2_000);
+        let before = resting_levels(
+            &MarketView::load(&data).unwrap(),
+            SwapSide::Buy,
+            NOW_SLOT,
+            NOW_WALL,
+        );
+        assert_eq!(before.len(), 1);
+        // Stamp a live flip into the one vault's stored bid, which is the
+        // buffer's tail.
+        let mut flipped = data.clone();
+        let off = flipped.len() - core::mem::size_of::<Vault>();
+        let v: &mut Vault = bytemuck::from_bytes_mut(&mut flipped[off..]);
+        v.remaining.bids[0] = position(10_950_000, 0);
+        v.remaining.bids[0].flip_price = Price::encode(10_950_000, 0).unwrap().as_u32().into();
+        v.remaining.bids[0].flip_size = 300_000u64.into();
+        let after = MarketView::load(&flipped).unwrap();
+        assert_eq!(
+            resting_levels(&after, SwapSide::Buy, NOW_SLOT, NOW_WALL),
+            before
+        );
     }
 
     /// Asks come back best-first (lowest price), base-denominated, exactly
