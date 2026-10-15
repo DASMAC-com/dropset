@@ -15,8 +15,8 @@
 //! [`Address::default()`] sentinel (or their own pubkey) — any other
 //! value is rejected with [`DropsetError::LeaderOverrideNotAllowed`].
 //!
-//! A leader may lead at most one live vault per market: if any sector
-//! that is neither frozen nor tombstoned already carries the resolved
+//! A leader may lead at most one open vault per market: if any sector
+//! that is frozen, or not tombstoned, already carries the resolved
 //! leader, the call fails with [`DropsetError::LeaderAlreadyLeadsVault`],
 //! on the override path included.
 
@@ -142,12 +142,12 @@ impl CreateVault {
             payer_addr
         };
 
-        // One live vault per leader per market — see
-        // `VaultAccess::leads_live_vault` for the rule and why frozen and
-        // tombstoned vaults don't count. Applies on the admin
+        // One open vault per leader per market — see
+        // `VaultAccess::leads_open_vault` for the rule and why frozen
+        // vaults count and unfrozen tombstones don't. Applies on the admin
         // `leader_override` path too.
         require!(
-            !self.market.leads_live_vault(&leader),
+            !self.market.leads_open_vault(&leader),
             DropsetError::LeaderAlreadyLeadsVault
         );
 

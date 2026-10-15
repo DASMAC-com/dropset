@@ -240,13 +240,48 @@ fn same_leader_may_lead_a_vault_on_a_second_market() {
 }
 
 #[test]
-fn leader_may_reenter_once_its_vault_is_frozen() {
+fn frozen_leader_may_not_reenter() {
     let mut f = Fixture::seeded(1_000_000, 1_000_000);
     let admin = f.authority.insecure_clone();
     f.freeze_vault(&admin, 0).expect("freeze");
     assert!(f.vault(0).frozen.get());
 
+    let err = f
+        .create_vault(1, f.authority.pubkey(), false, Pubkey::default())
+        .expect_err("a frozen vault counts against the leader");
+    common::assert_program_error(&err, DropsetError::LeaderAlreadyLeadsVault);
+    assert_eq!(f.market_header().active_count.get(), 1);
+}
+
+#[test]
+fn closing_a_frozen_vault_does_not_lift_the_block() {
+    let mut f = Fixture::seeded(1_000_000, 1_000_000);
+    let leader = f.authority.insecure_clone();
+    f.freeze_vault(&leader, 0).expect("freeze");
+    f.close_vault(&leader, 0)
+        .expect("tombstone the frozen vault");
+    assert!(f.vault(0).tombstoned.get());
+
+    let err = f
+        .create_vault(1, f.authority.pubkey(), false, Pubkey::default())
+        .expect_err("tombstoning must not launder a freeze");
+    common::assert_program_error(&err, DropsetError::LeaderAlreadyLeadsVault);
+}
+
+#[test]
+fn frozen_leader_may_reenter_once_the_sector_is_reclaimed() {
+    let mut f = Fixture::seeded(1_000_000, 1_000_000);
+    let leader = f.authority.insecure_clone();
+    f.freeze_vault(&leader, 0).expect("freeze");
+
+    // The `min_leader_share` floor is bypassed once frozen, so the leader
+    // may drain to zero, which reclaims the sector and zeroes its leader.
+    let shares = f.vault(0).leader_shares.get();
+    f.withdraw_leader(0, shares, 0, 0)
+        .expect("full exit reclaims");
+    assert_eq!(f.market_header().free_head.get(), 0, "sector 0 is free");
+
     f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
-        .expect("a frozen vault does not count against the leader");
-    assert_eq!(f.market_header().active_count.get(), 2);
+        .expect("a reclaimed sector no longer counts against the leader");
+    assert_eq!(f.market_header().active_count.get(), 1);
 }

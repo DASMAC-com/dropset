@@ -49,22 +49,27 @@ pub trait VaultAccess {
     /// small number.
     fn leg_vault_sum(&self, is_base: bool) -> u128;
 
-    /// True when `leader` leads a **live** vault on this market — an
-    /// occupied sector that is neither frozen nor tombstoned.
+    /// True when `leader` leads an **open** vault on this market — an
+    /// occupied sector that is frozen or not tombstoned.
     ///
-    /// The one-live-vault-per-leader rule. The maker bot keys its fills
-    /// per market, not per vault, so a second live vault under the same
-    /// leader would silently clobber its inventory accounting. Frozen and
-    /// tombstoned vaults don't count — a stranded depositor on a tombstone
-    /// (reclaimed only on the last draining withdraw) must not lock the
-    /// leader out of the market, and a frozen leader may re-enter.
+    /// The one-vault-per-leader rule. The maker bot keys its fills per
+    /// market, not per vault, so a second vault under the same leader
+    /// would silently clobber its inventory accounting. A frozen vault
+    /// counts, so a leader frozen for misbehaving can't open a fresh
+    /// vault on the same market and keep quoting for the price of a create
+    /// fee — tombstoned or not, since `close_vault` doesn't refuse a
+    /// frozen vault and would otherwise launder the freeze. An unfrozen
+    /// tombstone doesn't count: a stranded depositor on it (reclaimed only
+    /// on the last draining withdraw) must not lock a leader who closed
+    /// voluntarily out of the market. A reclaimed sector (leader zeroed)
+    /// frees the leader either way.
     ///
     /// Shared by the two paths that can seat a key as a leader —
     /// `create_vault` (the override path included) and `set_leader` — so
     /// the rule can't drift between them. O(slab) on a cold path: the
     /// active set is capped by `max_vaults_per_market`, and tombstoned and
     /// free sectors add to the slab beyond it.
-    fn leads_live_vault(&self, leader: &Address) -> bool;
+    fn leads_open_vault(&self, leader: &Address) -> bool;
 }
 
 impl VaultAccess for Market {
@@ -95,11 +100,10 @@ impl VaultAccess for Market {
         sum
     }
 
-    fn leads_live_vault(&self, leader: &Address) -> bool {
+    fn leads_open_vault(&self, leader: &Address) -> bool {
         self.as_slice().iter().any(|v| {
             v.is_occupied()
-                && !v.tombstoned.get()
-                && !v.frozen.get()
+                && (v.frozen.get() || !v.tombstoned.get())
                 && address_eq(&v.leader, leader)
         })
     }
