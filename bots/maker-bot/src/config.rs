@@ -388,12 +388,17 @@ pub fn published_product(symbol: &str) -> Option<&'static str> {
 }
 
 /// One rung of the quote ladder: a ppm offset from the reference price, a
-/// fraction of the inventory leg in bps, and a per-level expiry in each
-/// of the two domains the engine gates on.
+/// fraction of the inventory leg in bps, a flip spread, and a per-level
+/// expiry in each of the two domains the engine gates on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LadderLevel {
     /// Offset from `reference_price`, in ppm (bids subtract, asks add).
     pub offset_ppm: u32,
+    /// Flip spread, in ppm off this level's own price: once filled, the
+    /// proceeds rest on the opposite side that far back toward the reference.
+    /// `0` does not flip — the active ladder's setting, since an active bot
+    /// re-stamps faster than a flip would earn.
+    pub flip_spread_ppm: u32,
     /// Fraction of the inventory leg, in bps (10000 = 100%).
     pub size_bps: u16,
     /// Seconds after the quote's `quote_unix` wall-clock datum at which
@@ -446,29 +451,94 @@ pub struct LadderLevel {
 pub const DEFAULT_LADDER: [LadderLevel; 4] = [
     LadderLevel {
         offset_ppm: 5_000,
+        flip_spread_ppm: 0,
         size_bps: 4_000,
         expiry_offset_secs: WallSpan::new(36),
         expiry_offset_slots: SlotSpan::new(240),
     },
     LadderLevel {
         offset_ppm: 10_000,
+        flip_spread_ppm: 0,
         size_bps: 3_000,
         expiry_offset_secs: WallSpan::new(120),
         expiry_offset_slots: SlotSpan::new(750),
     },
     LadderLevel {
         offset_ppm: 20_000,
+        flip_spread_ppm: 0,
         size_bps: 2_000,
         expiry_offset_secs: WallSpan::new(480),
         expiry_offset_slots: SlotSpan::new(3_000),
     },
     LadderLevel {
         offset_ppm: 50_000,
+        flip_spread_ppm: 0,
         size_bps: 1_000,
         expiry_offset_secs: WallSpan::new(2_880),
         expiry_offset_slots: SlotSpan::UNBOUNDED,
     },
 ];
+
+/// The passive ladder's level spacing: 5 bps between adjacent rungs, the
+/// first rung 5 bps off the reference.
+pub const PASSIVE_SPACING_PPM: u32 = 500;
+
+/// The passive ladder's flip spread: 2 bps, inside the 5 bps spacing, so a
+/// filled level's flipped side never crosses the next rung in (§2). That is
+/// the maker's whole earn per round trip — the taker fee is protocol revenue
+/// — so 2 bps is the economics of a 1 bp concentrated-liquidity pool.
+pub const PASSIVE_FLIP_SPREAD_PPM: u32 = 200;
+const _: () = assert!(PASSIVE_FLIP_SPREAD_PPM <= PASSIVE_SPACING_PPM);
+
+/// One passive rung at the standard spacing and flip spread. Neither expiry
+/// domain is bounded: a passive book is meant to be walked away from, so
+/// nothing but a re-center or a kill switch ends it.
+const fn passive_level(rung: u32, size_bps: u16) -> LadderLevel {
+    LadderLevel {
+        offset_ppm: rung * PASSIVE_SPACING_PPM,
+        flip_spread_ppm: PASSIVE_FLIP_SPREAD_PPM,
+        size_bps,
+        expiry_offset_secs: WallSpan::UNBOUNDED,
+        expiry_offset_slots: SlotSpan::UNBOUNDED,
+    }
+}
+
+/// The passive-mode ladder (§2): a **bell**, largest at the center and
+/// shrinking outward, packed tight — eight rungs from 5 to 40 bps against
+/// [`DEFAULT_LADDER`]'s four from 50 to 500, because a passive book earns
+/// only its flip spread and has to sit where the flow is.
+///
+/// A flipped level keeps its size and only changes direction, so after price
+/// walks through a grow-outward ladder the large outer rungs end up flipped
+/// next to the market and the small inner ones far from it: the shape inverts
+/// on every move. A bell is the shape that survives a flip, because the size
+/// near the market stays largest whichever way the levels have turned.
+/// `Σ size_bps = 10000` per side.
+pub const DEFAULT_PASSIVE_LADDER: [LadderLevel; 8] = [
+    passive_level(1, 2_000),
+    passive_level(2, 1_800),
+    passive_level(3, 1_500),
+    passive_level(4, 1_300),
+    passive_level(5, 1_100),
+    passive_level(6, 900),
+    passive_level(7, 800),
+    passive_level(8, 600),
+];
+
+/// Whether the bot re-quotes continuously or sets a book and leaves it (§3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StrategyMode {
+    /// Track the market: re-stamp on drift, skew shifts and a 30 s heartbeat,
+    /// and kill the book once it outlives the staleness bound.
+    #[default]
+    Active,
+    /// Set a flipping book and leave it: re-center only on a trigger (price
+    /// walked past the inner levels, an imbalance past the reshape band, or an
+    /// operator `--recenter`), never on a heartbeat. The stamped reference
+    /// being old is the design, so the staleness kills are suspended; every
+    /// kill-switch halt keeps its action.
+    Passive,
+}
 
 /// The price feeds (§1): poll cadences and base URLs for the sources the
 /// fair-value engine composes its legs from. The per-token identifiers live on
@@ -558,8 +628,13 @@ pub struct FeedConfig {
 /// Quoting strategy parameters (§2–§3).
 #[derive(Clone, Debug)]
 pub struct StrategyConfig {
+    /// Active or passive quoting.
+    pub mode: StrategyMode,
     /// The quote ladder.
     pub ladder: Vec<LadderLevel>,
+    /// Passive re-center trigger: re-center once the reference has walked past
+    /// this many inner levels on one side. Ignored in active mode.
+    pub recenter_inner_levels: usize,
     /// Linear inventory skew: shift the reference by this many bps per 1% of
     /// TVL of signed inventory deviation (§2 override of the formal A-S skew).
     /// Keyed to fractional deviation so one calibration holds at any vault
@@ -714,7 +789,9 @@ impl Default for FeedConfig {
 impl Default for StrategyConfig {
     fn default() -> Self {
         Self {
+            mode: StrategyMode::Active,
             ladder: DEFAULT_LADDER.to_vec(),
+            recenter_inner_levels: 2,
             skew_bps_per_pct_tvl: 0.5,
             skew_cap_bps: 20.0,
             ref_drift_bps: 10.0,
@@ -723,6 +800,29 @@ impl Default for StrategyConfig {
             profile_heartbeat: Duration::from_secs(24 * 3600),
             reshape_accumulating_scale: 0.5,
         }
+    }
+}
+
+impl StrategyConfig {
+    /// Switch to passive mode on its bell ladder. The ladder changes with the
+    /// mode because the right ladder differs by mode (§2): passive wants
+    /// tight spacing, flip spreads and unbounded expiry, none of which suit
+    /// a bot that re-stamps every 30 s.
+    pub fn into_passive(self) -> Self {
+        Self {
+            mode: StrategyMode::Passive,
+            ladder: DEFAULT_PASSIVE_LADDER.to_vec(),
+            ..self
+        }
+    }
+
+    /// The passive re-center bound, in ppm: the offset of the deepest of the
+    /// [`Self::recenter_inner_levels`] inner rungs. `None` for an empty ladder.
+    pub fn recenter_offset_ppm(&self) -> Option<u32> {
+        let k = self
+            .recenter_inner_levels
+            .clamp(1, self.ladder.len().max(1));
+        self.ladder.get(k - 1).map(|l| l.offset_ppm)
     }
 }
 
@@ -852,6 +952,48 @@ mod tests {
             assert!(w[1].expiry_offset_secs > w[0].expiry_offset_secs);
             assert!(w[1].expiry_offset_slots > w[0].expiry_offset_slots);
         }
+    }
+
+    /// The passive ladder fills the level cap, commits the full leg, and is a
+    /// bell: offsets widen outward while sizes shrink, so the center is the
+    /// largest rung (§2 per-mode shape rule).
+    #[test]
+    fn passive_ladder_is_a_full_leg_bell() {
+        let total: u32 = DEFAULT_PASSIVE_LADDER
+            .iter()
+            .map(|l| l.size_bps as u32)
+            .sum();
+        assert_eq!(total, 10_000);
+        assert_eq!(DEFAULT_PASSIVE_LADDER.len(), 8);
+        for w in DEFAULT_PASSIVE_LADDER.windows(2) {
+            assert!(w[1].offset_ppm > w[0].offset_ppm);
+            assert!(w[1].size_bps < w[0].size_bps);
+        }
+    }
+
+    /// Switching to passive swaps the ladder with the mode and leaves every
+    /// other strategy knob alone; the re-center bound is the deepest inner
+    /// rung's offset, clamped to the ladder.
+    #[test]
+    fn into_passive_swaps_the_ladder_and_bounds_the_recenter() {
+        let active = StrategyConfig::default();
+        assert_eq!(active.mode, StrategyMode::Active);
+        let passive = StrategyConfig::default().into_passive();
+        assert_eq!(passive.mode, StrategyMode::Passive);
+        assert_eq!(passive.ladder, DEFAULT_PASSIVE_LADDER.to_vec());
+        assert_eq!(passive.skew_cap_bps, active.skew_cap_bps);
+        // Two inner rungs at 5 bps spacing: re-center past 10 bps.
+        assert_eq!(passive.recenter_offset_ppm(), Some(1_000));
+        let wide = StrategyConfig {
+            recenter_inner_levels: 99,
+            ..passive.clone()
+        };
+        assert_eq!(wide.recenter_offset_ppm(), Some(4_000));
+        let empty = StrategyConfig {
+            ladder: Vec::new(),
+            ..passive
+        };
+        assert_eq!(empty.recenter_offset_ppm(), None);
     }
 
     /// The staleness bound sits between the two cadences it has to respect: it

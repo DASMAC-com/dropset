@@ -25,6 +25,9 @@
 //!                          (default keys/EEEE.json). Refused on mainnet, where
 //!                          the key is the `dropset/maker-leader` secret
 //!   --market <symbol>      quote only this market (repeatable); default: all
+//!   --passive              set a flipping bell-ladder book and leave it,
+//!                          re-centering only on a trigger (default: active)
+//!   --recenter             passive only: re-center once on the first tick
 //!   --dry-run              poll feeds and print the intended quotes, then exit
 //!   --drop <tier>          dry-run only: suppress pyth | coinbase | kraken |
 //!                          coingecko | cmc | fx | erapi
@@ -43,13 +46,14 @@ use dropset_feeds::{
 };
 use dropset_maker_bot::cluster::{self, Cluster};
 use dropset_maker_bot::config::{
-    published_product, BotConfig, FeedConfig, MarketConfig, DEFAULT_LEADER_KEY, MAINNET_USDC,
-    MARKETS, QUOTE_KEYPAIR_FILE, USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
+    published_product, BotConfig, FeedConfig, MarketConfig, StrategyMode, DEFAULT_LEADER_KEY,
+    MAINNET_USDC, MARKETS, QUOTE_KEYPAIR_FILE, USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
 };
 use dropset_maker_bot::context::Context as BotContext;
 use dropset_maker_bot::fair_price::{FairPriceRow, FairPriceSource};
 use dropset_maker_bot::fx_store::{self, FxStoreSource};
 use dropset_maker_bot::model::fair_mid::build_legs;
+use dropset_maker_bot::model::ladder;
 use dropset_maker_bot::quote_state::QuoteStateStore;
 use dropset_maker_bot::session_fence::SessionFenceSource;
 use dropset_maker_bot::tasks::{
@@ -121,6 +125,10 @@ struct Args {
     /// runs one instance per market by passing a single `--market`, so an
     /// operator can start / stop each market's bot independently.
     markets: Vec<String>,
+    /// `--recenter`: the operator's re-center command. A passive bot never
+    /// re-centers on a restart by itself, so restarting with this flag is how
+    /// an operator asks for one.
+    recenter: bool,
 }
 
 impl Args {
@@ -171,6 +179,7 @@ fn parse_args(cfg: &mut BotConfig) -> Result<Args> {
     let mut dry_run = false;
     let mut drop = Vec::new();
     let mut markets = Vec::new();
+    let mut recenter = false;
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -210,6 +219,8 @@ fn parse_args(cfg: &mut BotConfig) -> Result<Args> {
                 }
             }
             "--dry-run" => dry_run = true,
+            "--passive" => cfg.strategy = cfg.strategy.clone().into_passive(),
+            "--recenter" => recenter = true,
             _ => {}
         }
     }
@@ -220,6 +231,7 @@ fn parse_args(cfg: &mut BotConfig) -> Result<Args> {
         dry_run,
         drop,
         markets,
+        recenter,
     })
 }
 
@@ -242,6 +254,13 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
             "mainnet mode needs --ws <url>: deriving it from --rpc drops the \
              URL path, and with it any API key a provider carries there"
         ));
+    }
+    println!("[strategy] {:?} mode", cfg.strategy.mode);
+    for warning in ladder::shape_warnings(&cfg.strategy.ladder, cfg.strategy.mode) {
+        eprintln!("[strategy] ladder: {warning}");
+    }
+    if args.recenter && cfg.strategy.mode == StrategyMode::Active {
+        eprintln!("[strategy] --recenter has no effect without --passive: active mode re-centers continuously");
     }
     let client = chain::rpc(&cfg.rpc_url);
     // Guard before loading the key, funding, or signing anything: the chain
@@ -353,6 +372,9 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
             quote_state.for_market(addrs.market, market.symbol),
             telemetry.clone(),
         ));
+    }
+    for ctx in &mut contexts {
+        ctx.recenter_requested = args.recenter;
     }
     if contexts.is_empty() {
         return Err(if mainnet {
@@ -1316,6 +1338,7 @@ mod tests {
             dry_run: false,
             drop: Vec::new(),
             markets: markets.iter().map(|s| s.to_string()).collect(),
+            recenter: false,
         }
     }
 
