@@ -11,8 +11,9 @@ The bootstrap for a **chore** — a minor job whose deliverable lands
 on the issue itself. The `chore <n>` verb launches the helper tier
 with `/chore <n>` as its only prompt; the Linear issue is the whole
 brief, and this skill only kicks it off. The verb's shape — substrate,
-marker, the model probe — is in `docs/conventions/local-integrations.md`
-→ "Architect and explore sessions: temporary worktree, no PR".
+marker, the model probe — is the `chore <n>` paragraph of
+`docs/conventions/local-integrations.md` → "Architect and explore
+sessions: temporary worktree, no PR".
 
 ## The posture
 
@@ -63,5 +64,6 @@ marker, the model probe — is in `docs/conventions/local-integrations.md`
    ```
 
    There is no worktree to keep or remove, so `close_session.py` (which
-   refuses the base checkout) is not the close. Say the session's cost
+   refuses the base checkout) is not the close; the operator's Done
+   comes later, through `wrap`'s chore branch. Say the session's cost
    at close, as every session does.

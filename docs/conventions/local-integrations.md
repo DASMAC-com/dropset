@@ -1308,9 +1308,10 @@ with no worktree, branch or `init-pr`, and its only prompt is
 `/chore <n>` — the `chore` skill bootstraps from the issue, which is
 the whole brief, and closes by moving it to In Review with
 `board_batch.py state` (`close_session.py` refuses the base
-checkout). **A Bedrock launch probes the model first** — one
-`maxTokens: 1` Converse call with the agent key — and refuses with
-Bedrock's own error on anything but an answer: the first chore's tab
+checkout). **A Bedrock launch, resumes included, probes the model
+first** — one `maxTokens: 1` Converse call with the agent key — and
+refuses with the error on anything but an answer (an alias, which
+Bedrock cannot resolve, is skipped with a note): the first chore's tab
 403'd on every turn (the agent identity lacked the Marketplace
 actions that enable the helper model) and only looked alive.
 `models check` cannot catch that, since a control-plane read passes

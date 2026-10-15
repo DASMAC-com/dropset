@@ -371,7 +371,8 @@ class VerbLaunch(SubstrateHarness):
         self.assertIn("HTTP 403", result.stderr)
         self.assertIn(denied, result.stderr)
         # Refused before the marker, so a resume cannot inherit the attempt.
-        self.assertFalse((self.repo / ".claude/session-substrate/7").exists())
+        for name in ("7", "7.tier"):
+            self.assertFalse((self.repo / ".claude/session-substrate" / name).exists())
 
     def test_an_anthropic_chore_and_an_alias_are_not_probed(self):
         result, out = self._launch("chore anthropic 7", env=self._PROBED)
@@ -388,6 +389,8 @@ class VerbLaunch(SubstrateHarness):
         result, out = self._launch("task resume 7")
         self.assertIn("/chore 7", out, result.stderr)
         self.assertNotIn("--resume 7", out)
+        # On the substrate it recorded, not the helper tier's Bedrock default.
+        self.assertIn("MODEL=help-model[1m] USE=unset", out)
 
     def test_chore_takes_task_s_substrate_words(self):
         result, out = self._launch("chore anthropic 7")

@@ -995,7 +995,7 @@ _ds_bedrock_profile() {
 
 # Internal: ask Bedrock whether `$1` actually ANSWERS for this shell's agent
 # key, by sending it a one-token request. Non-zero means DO NOT LAUNCH, with
-# Bedrock's own error printed. Run after `_ds_bedrock_env`.
+# the error printed. Run after `_ds_bedrock_env`.
 #
 # This is the live half `_ds_bedrock_env` deliberately leaves out, paid for
 # where it earns its keep: the first chore (1843) opened a tab whose every turn
@@ -1005,7 +1005,8 @@ _ds_bedrock_profile() {
 # the account may not invoke. A Converse call with `maxTokens: 1` costs a few
 # input tokens, not the eight cents a Claude Code turn costs.
 #
-# The token rides curl's stdin config, not argv, so `ps` never shows it.
+# The header rides stdin (`-H @-`), not argv, so `ps` never shows the token;
+# `print` is a builtin, so no child's argv carries it either.
 _ds_model_probe() {
   local profile out code
   profile="$(_ds_bedrock_profile "$1")"
@@ -1013,8 +1014,8 @@ _ds_model_probe() {
     print -ru2 -- "dropset: '$1' is an alias, so it cannot be probed — skipping."
     return 0
   fi
-  out="$(print -r -- "header = \"Authorization: Bearer $AWS_BEARER_TOKEN_BEDROCK\"" \
-    | curl -sS -K - -w '\n%{http_code}' -X POST \
+  out="$(print -r -- "Authorization: Bearer $AWS_BEARER_TOKEN_BEDROCK" \
+    | curl -sS --max-time 15 -H @- -w '\n%{http_code}' -X POST \
       -H 'Content-Type: application/json' \
       -d '{"messages":[{"role":"user","content":[{"text":"ok"}]}],"inferenceConfig":{"maxTokens":1}}' \
       "https://bedrock-runtime.$AWS_REGION.amazonaws.com/model/$profile/converse" 2>&1)"
@@ -1530,8 +1531,10 @@ _ds_upkeep() {
 # entry. The prompt is just `/chore <n>` — the skill bootstraps and the Linear
 # issue is the whole brief, so this verb carries no prose of its own.
 #
-# A Bedrock launch PROBES THE MODEL first (`_ds_model_probe`) and refuses on
-# anything but an answer: a tab that fails every turn is worse than no tab.
+# A Bedrock launch — a resume included — PROBES THE MODEL first
+# (`_ds_model_probe`) and refuses on anything but an answer (an alias, which
+# Bedrock cannot resolve, is skipped with a note): a tab that fails every turn
+# is worse than no tab.
 #
 # A chore and a task are separate Linear issues (operator ruling), so they
 # should never share a number — but that is discipline, not a guarantee, so a
