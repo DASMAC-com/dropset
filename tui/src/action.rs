@@ -32,6 +32,7 @@ use crate::ceremony::CeremonyLog;
 use crate::chain;
 use crate::cluster::Cluster;
 use crate::deploy;
+use crate::emergency;
 use crate::explorer;
 use crate::job::{self, JobEvent, Logger};
 use crate::market::{self, PairConfig};
@@ -99,6 +100,14 @@ pub enum Action {
     /// arrives with its program change, and a builder guessed at its account
     /// shape now would be rework by construction. Never enabled.
     RotateLeader,
+    // The kill switch — see [`crate::emergency`]. A full stop takes them in
+    // this order: kill, close, then drain.
+    /// Zero every level on the leader's vaults — the reversible stop.
+    KillLadders,
+    /// Tombstone the leader's vaults — the permanent stop.
+    CloseVaults,
+    /// Withdraw the leader's whole stake from its closed or frozen vaults.
+    DrainLeader,
     // eCLOB demo controls — keybinds, not menu entries.
     RepegUp,
     RepegDown,
@@ -166,10 +175,14 @@ pub const MENU: [Action; 12] = [
 /// leader commands send only after a typed `yes` over the exact amounts.
 /// Nothing here airdrops, builds or discards a ledger.
 ///
+/// The emergency actions close the list, past the number keys, so adding
+/// them moved no existing key; the kill itself is also on `K` (see
+/// `App::handle_key`), one keystroke from its prompt.
+///
 /// Kept in sync with [`Action::available_on`] by a test rather than by care —
 /// two hand-maintained lists of the same fact drift, and the direction it
 /// would drift here is toward exposing a write.
-pub const MAINNET_MENU: [Action; 10] = [
+pub const MAINNET_MENU: [Action; 13] = [
     Action::Publish,
     Action::InitRegistry,
     Action::CreateMarket,
@@ -180,6 +193,9 @@ pub const MAINNET_MENU: [Action; 10] = [
     Action::LeaderDeposit,
     Action::LeaderWithdraw,
     Action::RotateLeader,
+    Action::KillLadders,
+    Action::CloseVaults,
+    Action::DrainLeader,
 ];
 
 /// The menu for `cluster`, in display order.
@@ -218,6 +234,9 @@ impl Action {
             Action::LeaderDeposit => "Leader deposit",
             Action::LeaderWithdraw => "Leader withdraw",
             Action::RotateLeader => "Rotate leader",
+            Action::KillLadders => "EMERGENCY: kill ladders",
+            Action::CloseVaults => "EMERGENCY: close vaults",
+            Action::DrainLeader => "EMERGENCY: drain leader",
             Action::RepegUp => "Re-peg +5 bps",
             Action::RepegDown => "Re-peg -5 bps",
             Action::WidenSpread => "Widen spread",
@@ -239,8 +258,14 @@ impl Action {
             Action::Deploy => phase == Phase::ProgramAbsent,
             // Publishing is an upgrade once the program exists, and a buffer
             // can be stranded at any phase; both decide their work from a
-            // fresh read, so the only gate is an endpoint that answers.
-            Action::Publish | Action::CloseBuffers => phase != Phase::NoValidator,
+            // fresh read, so the only gate is an endpoint that answers. The
+            // emergency actions likewise: each plans from its own read, and a
+            // kill switch greyed by an unrelated phase is no kill switch.
+            Action::Publish
+            | Action::CloseBuffers
+            | Action::KillLadders
+            | Action::CloseVaults
+            | Action::DrainLeader => phase != Phase::NoValidator,
             Action::InitRegistry => phase == Phase::RegistryAbsent,
             Action::CreateMarket => phase == Phase::MarketAbsent,
             Action::CreateVault => phase == Phase::VaultAbsent,
@@ -324,6 +349,10 @@ impl Action {
             // operator types `yes` over the exact amounts and bounds. The
             // reserved rotation is listed so it is visible — and stays greyed.
             Action::LeaderDeposit | Action::LeaderWithdraw | Action::RotateLeader => true,
+            // The kill switch — what this mode exists to keep working when the
+            // maker's host does not. Signed by the operator's `--leader`, and
+            // each sends only after a typed `yes` over its fresh plan.
+            Action::KillLadders | Action::CloseVaults | Action::DrainLeader => true,
             // Spends real money, signed by a committed taker role key that has
             // no mainnet counterpart.
             Action::ProbeSwap => false,
@@ -365,6 +394,9 @@ impl Action {
             Action::LeaderDeposit => Some(LeaderOp::Deposit),
             Action::LeaderWithdraw => Some(LeaderOp::Withdraw),
             Action::RotateLeader
+            | Action::KillLadders
+            | Action::CloseVaults
+            | Action::DrainLeader
             | Action::Deploy
             | Action::Publish
             | Action::CloseBuffers
@@ -422,7 +454,10 @@ impl Action {
             | Action::Deposit
             | Action::LeaderDeposit
             | Action::LeaderWithdraw
-            | Action::RotateLeader => "",
+            | Action::RotateLeader
+            | Action::KillLadders
+            | Action::CloseVaults
+            | Action::DrainLeader => "",
         }
     }
 
@@ -443,7 +478,10 @@ impl Action {
             | Action::InitRegistry
             | Action::CreateMarket
             | Action::CreateVault
-            | Action::Deposit => true,
+            | Action::Deposit
+            | Action::KillLadders
+            | Action::CloseVaults
+            | Action::DrainLeader => true,
             // The leader commands have their own typed-`yes` prompt; the rest
             // read only or are unavailable on mainnet.
             Action::Deploy
@@ -484,7 +522,11 @@ impl Action {
         match self {
             Action::Deploy => "program already deployed",
             // Only greyed while the endpoint is down, handled above.
-            Action::Publish | Action::CloseBuffers => "",
+            Action::Publish
+            | Action::CloseBuffers
+            | Action::KillLadders
+            | Action::CloseVaults
+            | Action::DrainLeader => "",
             Action::InitRegistry if phase == Phase::ProgramAbsent && cluster.is_mainnet() => {
                 "the program is not published on this cluster"
             }
@@ -930,6 +972,21 @@ pub fn dispatch(
                 Ok(format!("Reset {total} ladders to the default shape"))
             });
         }
+        Action::KillLadders | Action::CloseVaults | Action::DrainLeader => {
+            let op = emergency_op(action);
+            job::spawn_recorded(tx, action.label(), record, move |log| {
+                let client = chain::rpc(&rpc_url);
+                emergency::execute(
+                    op,
+                    &client,
+                    &wallet,
+                    &repo_root,
+                    cluster,
+                    operator_leader.as_ref(),
+                    log,
+                )
+            });
+        }
         // Wipe is handled by the event loop (owns the validator). The leader
         // commands open its amount → confirm prompt instead, and dispatch
         // through [`dispatch_leader`] once the operator types `yes`; the
@@ -998,6 +1055,17 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
                 anyhow::bail!("no stranded buffers owned by the admin {admin}");
             }
             lines.insert(0, format!("rent returns to the admin {admin}"));
+        }
+        Action::KillLadders | Action::CloseVaults | Action::DrainLeader => {
+            // Refuses on its own terms when nothing would be sent.
+            return emergency::plan(
+                emergency_op(action),
+                &client,
+                &ctx.repo_root,
+                ctx.cluster,
+                &admin,
+                ctx.leader.as_ref(),
+            );
         }
         Action::InitRegistry => {
             if accounts::registry_fresh(&client, ctx.cluster)?.is_some() {
@@ -1086,6 +1154,17 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
         anyhow::bail!("nothing to do — every roster target is already done");
     }
     Ok(lines)
+}
+
+/// The [`emergency::Op`] an emergency action sends. Only called from those
+/// actions' own arms.
+fn emergency_op(action: Action) -> emergency::Op {
+    match action {
+        Action::KillLadders => emergency::Op::Kill,
+        Action::CloseVaults => emergency::Op::Close,
+        Action::DrainLeader => emergency::Op::Drain,
+        other => unreachable!("{other:?} is not an emergency action"),
+    }
 }
 
 /// Resolve the selected market's `(address, base_mint, vault_idx)` for an
@@ -1879,9 +1958,9 @@ mod tests {
     /// of this comment claimed the wider scope and was wrong.
     ///
     /// Kept complete by [`all_actions_lists_every_variant`], not by care — the
-    /// `[Action; 17]` length annotation does not change when a variant is
+    /// array's length annotation does not change when a variant is
     /// added, so nothing else would notice the list going stale.
-    const ALL_ACTIONS: [Action; 22] = [
+    const ALL_ACTIONS: [Action; 25] = [
         Action::Deploy,
         Action::Publish,
         Action::CloseBuffers,
@@ -1897,6 +1976,9 @@ mod tests {
         Action::LeaderDeposit,
         Action::LeaderWithdraw,
         Action::RotateLeader,
+        Action::KillLadders,
+        Action::CloseVaults,
+        Action::DrainLeader,
         Action::RepegUp,
         Action::RepegDown,
         Action::WidenSpread,
@@ -1918,11 +2000,12 @@ mod tests {
     #[test]
     fn mainnet_exposes_only_the_ceremony_and_the_confirm_gated_leader_stake() {
         // The load-bearing assertion of the whole mode: on mainnet the only
-        // reachable writes are the confirm-gated ceremony steps and the
-        // leader's own stake, which sends only after a typed `yes` over the
-        // exact amounts (the reserved rotation is listed but never enabled).
-        // A later change that exposes anything else — a mock-minting
-        // bootstrap, a committed-key demo control — fails here.
+        // reachable writes are the confirm-gated ceremony steps (the kill
+        // switch among them) and the leader's own stake, which sends only
+        // after a typed `yes` over the exact amounts (the reserved rotation is
+        // listed but never enabled). A later change that exposes anything
+        // else — a mock-minting bootstrap, a committed-key demo control —
+        // fails here.
         let ceremony = [
             Action::Publish,
             Action::CloseBuffers,
@@ -1930,6 +2013,9 @@ mod tests {
             Action::CreateMarket,
             Action::CreateVault,
             Action::Deposit,
+            Action::KillLadders,
+            Action::CloseVaults,
+            Action::DrainLeader,
         ];
         let leader_stake = [
             Action::LeaderDeposit,
@@ -2171,7 +2257,7 @@ mod tests {
     #[test]
     fn all_actions_lists_every_variant() {
         // The completeness guard the MENU check above cannot be: MENU holds 12
-        // of the 22 variants, so a new shortcut-only action would be absent from
+        // of the 25 variants, so a new shortcut-only action would be absent from
         // both MENU and ALL_ACTIONS and silently escape all four cluster-gate
         // tests — a variant reachable only by a shortcut. PR 2 and PR 3 of this
         // series add exactly that shape.
@@ -2180,8 +2266,8 @@ mod tests {
         // one arm and no wildcard, so adding a variant fails to compile here
         // until someone edits this test; the count pins the fixture's size at
         // the enum's size; and the pairwise check rules out duplicates.
-        // Twenty-two distinct variants drawn from a twenty-two-variant enum is
-        // all of them.
+        // Twenty-five distinct variants drawn from a twenty-five-variant enum
+        // is all of them.
         fn is_known(a: Action) -> bool {
             match a {
                 Action::Deploy
@@ -2199,6 +2285,9 @@ mod tests {
                 | Action::LeaderDeposit
                 | Action::LeaderWithdraw
                 | Action::RotateLeader
+                | Action::KillLadders
+                | Action::CloseVaults
+                | Action::DrainLeader
                 | Action::RepegUp
                 | Action::RepegDown
                 | Action::WidenSpread
@@ -2210,7 +2299,7 @@ mod tests {
         }
         assert_eq!(
             ALL_ACTIONS.len(),
-            22,
+            25,
             "ALL_ACTIONS must list every Action variant"
         );
         for (i, a) in ALL_ACTIONS.iter().enumerate() {

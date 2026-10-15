@@ -610,6 +610,12 @@ impl App {
             // amount → typed-`yes` prompt; the same entries are in the menu.
             KeyCode::Char('+') => self.run_action(Action::LeaderDeposit),
             KeyCode::Char('-') => self.run_action(Action::LeaderWithdraw),
+            // The kill switch, one keystroke from its typed-`yes` prompt.
+            // Mainnet only: localnet runs its writes without a prompt, so
+            // there a stray `K` would zero every demo ladder on the spot.
+            KeyCode::Char('K') if self.ctx.cluster.is_mainnet() => {
+                self.run_action(Action::KillLadders)
+            }
             // eCLOB demo (selected market): reprice the anchor (whole-book
             // shift) vs reshape the ladder (shape change at a fixed peg).
             KeyCode::Char('>') | KeyCode::Char('.') => self.run_action(Action::RepegUp),
