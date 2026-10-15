@@ -613,6 +613,50 @@ class ItermDriftTests(RepoFixture):
             {str(self.iterm_scripts / "iterm-paint.sh"): "wrong-link"},
         )
 
+    def test_deleting_the_lone_autolaunch_reorderer_is_drift(self):
+        """Emptying AutoLaunch must not read as "never deployed there" — the
+        deploy tool links into it whenever it exists, and reports this the
+        same way."""
+        self._deploy()
+        (self.autolaunch / "iterm-reorder.py").unlink()
+        self.assertEqual(
+            self._drift()["drift"],
+            {str(self.autolaunch / "iterm-reorder.py"): "missing"},
+        )
+
+    def test_autolaunch_with_only_other_scripts_is_not_a_deployment(self):
+        self.autolaunch.mkdir()
+        (self.autolaunch / "someone-elses.py").write_text("", encoding="utf-8")
+        self.assertEqual(self._drift(), {"deployed": False, "drift": {}})
+
+    def test_a_dangling_link_at_a_committed_name_is_a_wrong_link(self):
+        self._deploy()
+        (self.iterm_scripts / "iterm-paint.sh").unlink()
+        (self.iterm_scripts / "iterm-paint.sh").symlink_to(self.repo / "gone.sh")
+        self.assertEqual(
+            self._drift()["drift"],
+            {str(self.iterm_scripts / "iterm-paint.sh"): "wrong-link"},
+        )
+
+    def test_a_deployment_with_no_source_dir_is_an_error_not_clean(self):
+        self._deploy()
+        for path in self.source.iterdir():
+            path.unlink()
+        self.source.rmdir()
+        with self.assertRaises(hw.HookWiringError):
+            hw.scan(self.repo, self.no_user)
+
+    def test_an_unreadable_deploy_dir_is_a_scan_error(self):
+        with mock.patch.object(hw, "iterm_drift", side_effect=PermissionError("x")):
+            with self.assertRaises(hw.HookWiringError):
+                hw.scan(self.repo, self.no_user)
+
+    def test_no_deployment_says_so(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            hw.run(["hook_wiring.py", "--repo", str(self.repo)])
+        self.assertIn("not deployed on this machine", out.getvalue())
+
     def test_a_deploy_dir_that_is_itself_a_link_into_the_source_is_clean(self):
         self.iterm_scripts.symlink_to(self.source)
         self.assertEqual(self._drift(), {"deployed": True, "drift": {}})

@@ -64,8 +64,9 @@ The iTerm2 tab-color scripts live in `.claude/scripts/` and their
 and iTerm2's `AutoLaunch/`) must be a link to its committed script in
 the base checkout, so it reports a copy, a wrong or dangling link, a
 committed script never linked, and an `iterm-*` file with no committed
-counterpart — each as a `DRIFT` line, exit 1. A directory with no
-`iterm-*` file is "not deployed", not drift. The fix is
+counterpart — each as a `DRIFT` line, exit 1. With no `iterm-*` file
+in either folder the integration is "not deployed", not drift; once
+either holds one, every target the deploy tool would link is checked. The fix is
 `iterm_deploy.py --apply` (see "Deploying to `~/.claude`" below); the
 check, like the rest, writes nothing.
 

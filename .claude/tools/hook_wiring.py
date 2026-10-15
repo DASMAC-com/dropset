@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""hook_wiring.py — report committed guard hooks that cannot fire.
+"""hook_wiring.py — report committed guard hooks that cannot fire, and iTerm drift.
 
 Scope is the **guard** hooks: every ``.py`` under ``.claude/hooks/``, so read
 every "every committed hook" claim about this tool — here or in the
@@ -49,8 +49,9 @@ hand would silently re-open the same gap. This reports every deployed file
 that is not a link to its committed script (a copy, a wrong or dangling link,
 a committed script never linked) and every ``iterm-*`` file with no committed
 counterpart, using ``iterm_deploy``'s own classification so the two tools
-cannot disagree about what "linked" means. A directory holding no ``iterm-*``
-file at all means the integration is not deployed there, which is not drift.
+cannot disagree about what "linked" means. With no ``iterm-*`` file in either
+folder the integration is not deployed on this machine, which is not drift;
+once either holds one, every target the deploy tool would link is checked.
 
 **This tool reports; it never writes.** Wiring a guard grants a hook the right
 to block tool calls, which is the operator's decision, not an agent's — the
@@ -360,32 +361,34 @@ def committed_hooks(repo: Path) -> list[str]:
 def iterm_drift(repo: Path, scripts_dir: Path, autolaunch_dir: Path) -> dict:
     """``{"deployed": bool, "drift": {path: state}}`` for the iTerm integration.
 
-    Only a directory already holding an ``iterm-*`` file counts as deployed: an
-    absent or empty one means the operator never set the integration up there,
-    and reporting every committed script ``missing`` would cry wolf on every
-    machine without iTerm.
+    The integration counts as deployed once **either** directory holds an
+    ``iterm-*`` file; with neither, the operator never set it up here, and
+    reporting every committed script ``missing`` would cry wolf on every
+    machine without iTerm. Once deployed, every target ``iterm_deploy.py``
+    would link is checked — so deleting the lone AutoLaunch reorderer reads as
+    ``missing``, exactly as the deploy tool's own report says, rather than as
+    a folder that was never set up.
     """
     source = repo / ".claude" / "scripts"
-    deployed = [
-        d
-        for d in (scripts_dir, autolaunch_dir)
-        if d.is_dir() and any(d.glob("iterm-*"))
-    ]
-    if not source.is_dir() or not deployed:
-        return {"deployed": bool(deployed), "drift": {}}
+    present = [d for d in (scripts_dir, autolaunch_dir) if d.is_dir()]
+    if not any(any(d.glob("iterm-*")) for d in present):
+        return {"deployed": False, "drift": {}}
+    if not source.is_dir():
+        # Deployed against a checkout with nothing to point at: every entry
+        # would be an orphan, and a clean report here would be false.
+        raise HookWiringError(
+            f"iTerm files are deployed but {source} does not exist — nothing "
+            "to compare them against"
+        )
 
-    pairs = [
-        (link, src)
-        for link, src in iterm_deploy.targets(source, scripts_dir, autolaunch_dir)
-        if link.parent in deployed
-    ]
+    pairs = iterm_deploy.targets(source, scripts_dir, autolaunch_dir)
     drift = {}
     for link, src in pairs:
         state = iterm_deploy.status(link, src)
         if state not in iterm_deploy.LINKED_STATES:
             drift[str(link)] = state
     expected = {link for link, _ in pairs}
-    for directory in deployed:
+    for directory in present:
         for path in sorted(directory.glob("iterm-*")):
             if path in expected:
                 continue
@@ -394,12 +397,7 @@ def iterm_drift(repo: Path, scripts_dir: Path, autolaunch_dir: Path) -> dict:
     return {"deployed": True, "drift": dict(sorted(drift.items()))}
 
 
-def scan(
-    repo: Path,
-    user_settings: Path = USER_SETTINGS,
-    iterm_scripts_dir: Path | None = None,
-    iterm_autolaunch_dir: Path | None = None,
-) -> dict:
+def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
     """Report which committed hooks are wired, and by which settings file.
 
     Matching is by **base name in executable position** within a hook's command
@@ -460,6 +458,13 @@ def scan(
         else:
             unwired.append(script)
 
+    try:
+        iterm = iterm_drift(repo, ITERM_SCRIPTS_DIR, ITERM_AUTOLAUNCH_DIR)
+    except OSError as exc:
+        # An unreadable deploy dir is a scan that could not run (exit 2),
+        # never a traceback and never a clean answer.
+        raise HookWiringError(f"could not read the iTerm deploy dirs: {exc}") from exc
+
     return {
         "repo": str(repo),
         "wired": wired,
@@ -467,11 +472,7 @@ def scan(
         "misdirected": misdirected,
         "unwired": unwired,
         "scanned_settings": [source for source, entries in sources.items() if entries],
-        "iterm": iterm_drift(
-            repo,
-            iterm_scripts_dir or ITERM_SCRIPTS_DIR,
-            iterm_autolaunch_dir or ITERM_AUTOLAUNCH_DIR,
-        ),
+        "iterm": iterm,
     }
 
 
