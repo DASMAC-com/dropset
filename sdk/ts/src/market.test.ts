@@ -46,7 +46,7 @@ const DISCRIMINATOR = 8;
 const HEADER = 261;
 const LEN_AT = DISCRIMINATOR + HEADER; // 269
 const ITEMS_START = (LEN_AT + 4 + 3) & ~3; // 276
-const VAULT = 956;
+const VAULT = 1088;
 
 // MarketHeader field offsets, relative to the start of the header (i.e.
 // after the discriminator). Only `head` / `activeCount` matter to the reader.
@@ -54,17 +54,17 @@ const H_HEAD = 8;
 const H_ACTIVE_COUNT = 20;
 
 // Vault field offsets (relative to the sector start).
-const V_REF_STAMP = 80;
-const V_REF_PRICE = 88;
-const V_REF_QUOTE_SLOT = 92;
-const V_REF_QUOTE_UNIX = 96;
-const V_BASE_ATOMS = 100;
-const V_QUOTE_ATOMS = 108;
+const V_REF_STAMP = 112;
+const V_REF_PRICE = 120;
+const V_REF_QUOTE_SLOT = 124;
+const V_REF_QUOTE_UNIX = 128;
+const V_BASE_ATOMS = 132;
+const V_QUOTE_ATOMS = 140;
 // Level is 18 bytes and Position 32, so each side's array is 144 / 256.
-const V_PROFILE_BIDS = 156;
-const V_PROFILE_ASKS = 300;
-const V_REMAINING_BIDS = 444;
-const V_REMAINING_ASKS = 700;
+const V_PROFILE_BIDS = 288;
+const V_PROFILE_ASKS = 432;
+const V_REMAINING_BIDS = 576;
+const V_REMAINING_ASKS = 832;
 /** `Level` / `Position` strides — 18 and 32 bytes with the flip fields. */
 const LEVEL = 18;
 const POSITION = 32;

@@ -48,7 +48,7 @@ use anchor_lang_v2::{
 
 use crate::{FeeConfig, Price, SlotSpan, SlotTime, WallSpan, WallTime};
 
-use super::N_LEVELS;
+use super::{N_LEVELS, VAULT_NAME_LEN};
 
 /// Reference-price record stamped onto every vault. See the spec's
 /// **Vault → ReferencePrice**.
@@ -203,6 +203,11 @@ pub struct Vault {
     /// Previous sector in the current DLL, or [`super::NULL_SECTOR`] at
     /// the head. Free-list sectors leave this unused.
     pub prev: PodU32,
+    /// Display name: printable ASCII (`0x20..=0x7E`), zero-padded to
+    /// [`VAULT_NAME_LEN`]; all-zero means unset. A label only — the
+    /// vault's identity is [`Vault::seq`]. Unique per market,
+    /// case-insensitive, among occupied sectors.
+    pub name: [u8; VAULT_NAME_LEN],
     /// Leader pubkey. `Address::default()` means "on the free list".
     pub leader: Address,
     /// Authority for quote-mutating ix; always populated. See the spec's
@@ -250,14 +255,17 @@ pub struct Vault {
     /// floor is taught to honor it. Set in `close_vault` alongside the
     /// list move;
     /// cleared implicitly when the sector is reclaimed and reused
-    /// (`allocate_sector` zeroes the whole struct). `PodBool` so the
-    /// field is alignment-1 and slots into the former `_reserved`
-    /// space without shifting any other offset.
+    /// (`allocate_sector` zeroes the whole struct).
     pub tombstoned: PodBool,
-    /// Explicit reserved bytes so [`Vault`] stays Pod-friendly (no
-    /// implicit padding) and leaves a small slot for future flag
-    /// additions without changing the on-chain size.
-    pub _reserved: [u8; 4],
+    /// True when an admin has locked [`Vault::name`] via
+    /// `OverrideVaultName`, refusing the leader's `SetVaultName`. Set by
+    /// `FreezeVault`, cleared by `CloseVault`.
+    pub name_locked: PodBool,
+    /// The vault's single general reserve, always zero. Sized at roughly
+    /// double the nameable post-launch carves (about ten percent of the
+    /// struct), and 3 mod 4 so [`Vault::profile`] lands on a 4-byte
+    /// boundary. A carve takes alignment-1 wrappers from its front.
+    pub _reserved: [u8; 103],
     /// Bids / asks ladder as offsets from the reference price.
     pub profile: LiquidityProfile,
     /// Materialized per-level state (computed at flush time).
@@ -508,7 +516,7 @@ impl MarketHeader {
 // again (localnet does this on every run). A deploy that must preserve
 // live accounts needs a real migration or a version gate before it
 // changes anything below.
-const _: () = assert!(core::mem::size_of::<Vault>() == 956);
+const _: () = assert!(core::mem::size_of::<Vault>() == 1088);
 const _: () = assert!(core::mem::size_of::<MarketHeader>() == 261);
 const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 18);
 const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 32);
@@ -517,7 +525,8 @@ const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 32);
 // that happens to preserve the byte count (e.g. swapping `_reserved`
 // with another byte array). Pin the load-bearing offsets so the build
 // breaks on any field reorder that would shift the on-chain layout —
-// `next`/`prev` are dispatched directly by the DLL ops, `leader`
+// `next`/`prev` are dispatched directly by the DLL ops, `name` and
+// `name_locked` are walked by the uniqueness check, `leader`
 // doubles as the emptiness marker, `_reserved` is the only field
 // whose contents are intentionally zeroed, and `profile` is pinned by
 // the hand-written `entrypoint.s` — its `sol_memcpy_` destination is a
@@ -525,10 +534,12 @@ const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 32);
 // silent ASM/Rust divergence rather than a build break.
 const _: () = assert!(core::mem::offset_of!(Vault, next) == 0);
 const _: () = assert!(core::mem::offset_of!(Vault, prev) == 4);
-const _: () = assert!(core::mem::offset_of!(Vault, leader) == 8);
-const _: () = assert!(core::mem::offset_of!(Vault, tombstoned) == 151);
-const _: () = assert!(core::mem::offset_of!(Vault, _reserved) == 152);
-const _: () = assert!(core::mem::offset_of!(Vault, profile) == 156);
+const _: () = assert!(core::mem::offset_of!(Vault, name) == 8);
+const _: () = assert!(core::mem::offset_of!(Vault, leader) == 40);
+const _: () = assert!(core::mem::offset_of!(Vault, tombstoned) == 183);
+const _: () = assert!(core::mem::offset_of!(Vault, name_locked) == 184);
+const _: () = assert!(core::mem::offset_of!(Vault, _reserved) == 185);
+const _: () = assert!(core::mem::offset_of!(Vault, profile) == 288);
 // `quote_authority` is the authorization field and `reference_price` is the
 // fused store's target, so both are load-bearing in the same sense as the
 // pins above. They are pinned here, absolutely, because `asm_offsets.rs`
@@ -537,11 +548,11 @@ const _: () = assert!(core::mem::offset_of!(Vault, profile) == 156);
 // whose bytes a coordinated reorder would silently re-interpret. Pinning
 // `ReferencePrice.stamp` at 0 additionally closes a compensating pair:
 // `asm_offsets.rs` checks `reference_price + stamp` as a sum, which a
-// 76-plus-4 reorder would satisfy. `seq` is pinned beside them because it
+// 108-plus-4 reorder would satisfy. `seq` is pinned beside them because it
 // is the vault's identity, which a reorder would silently re-interpret.
-const _: () = assert!(core::mem::offset_of!(Vault, quote_authority) == 40);
-const _: () = assert!(core::mem::offset_of!(Vault, seq) == 72);
-const _: () = assert!(core::mem::offset_of!(Vault, reference_price) == 80);
+const _: () = assert!(core::mem::offset_of!(Vault, quote_authority) == 72);
+const _: () = assert!(core::mem::offset_of!(Vault, seq) == 104);
+const _: () = assert!(core::mem::offset_of!(Vault, reference_price) == 112);
 const _: () = assert!(core::mem::offset_of!(ReferencePrice, stamp) == 0);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, head) == 8);
 const _: () = assert!(core::mem::offset_of!(MarketHeader, tombstone_head) == 12);

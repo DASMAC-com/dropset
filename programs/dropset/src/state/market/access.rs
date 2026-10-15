@@ -6,7 +6,7 @@ use anchor_lang_v2::{address_eq, prelude::*};
 
 use crate::errors::DropsetError;
 
-use super::{Market, Vault};
+use super::{names_collide, Market, Vault, VAULT_NAME_LEN};
 
 /// Typed, bounds-checked access to the [`Vault`] sectors in the slab
 /// tail. Centralizes the `u32`-index range check every handler used to
@@ -65,6 +65,17 @@ pub trait VaultAccess {
     /// active set is capped by `max_vaults_per_market`, and tombstoned and
     /// free sectors add to the slab beyond it.
     fn leads_live_vault(&self, leader: &Address) -> bool;
+
+    /// True when an occupied sector other than `except` carries a name
+    /// that collides with `name` under [`super::names_collide`] — the
+    /// per-market uniqueness rule. Active and tombstoned vaults both
+    /// count (a frozen vault's name is already blank); an unset `name`
+    /// never collides. `except` is the sector being renamed, so a vault
+    /// may re-case its own name; [`super::NULL_SECTOR`] on create.
+    ///
+    /// Shared by every name writer, walking the slab the way
+    /// [`Self::leads_live_vault`] does.
+    fn name_taken(&self, name: &[u8; VAULT_NAME_LEN], except: u32) -> bool;
 }
 
 impl VaultAccess for Market {
@@ -102,6 +113,13 @@ impl VaultAccess for Market {
                 && !v.frozen.get()
                 && address_eq(&v.leader, leader)
         })
+    }
+
+    fn name_taken(&self, name: &[u8; VAULT_NAME_LEN], except: u32) -> bool {
+        self.as_slice()
+            .iter()
+            .enumerate()
+            .any(|(i, v)| i as u32 != except && v.is_occupied() && names_collide(name, &v.name))
     }
 }
 

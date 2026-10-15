@@ -13,6 +13,9 @@
 //! Leader-only: rejects when `signer != vault.leader`. A vault that is
 //! already tombstoned is rejected (`VaultAlreadyTombstoned`); a
 //! free-list sector is rejected as empty.
+//!
+//! The close also blanks `Vault.name` and clears `name_locked`, releasing
+//! the name for the market.
 
 use anchor_lang_v2::{address_eq, prelude::*};
 
@@ -69,6 +72,7 @@ impl CloseVault {
         // `freeze_vault` sets `vault.frozen`; cleared implicitly on
         // reclaim+reuse, since `allocate_sector` re-zeroes the struct.
         let active_count_after = self.market.tombstone_sector(vault_idx)?;
+        let name = self.market.mutate_vault(vault_idx)?.blank_name(false);
 
         Ok(CloseVaultEvent {
             market: *self.market.address(),
@@ -76,6 +80,7 @@ impl CloseVault {
             vault_seq,
             leader,
             active_count_after,
+            name,
         })
     }
 }

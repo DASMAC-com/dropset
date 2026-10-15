@@ -14,6 +14,9 @@
 //! `CreateVaultEvent` would otherwise attribute the new occupant's fills
 //! to the previous one. `(market, sector_idx, vault_seq)` is the stable
 //! vault identity.
+//!
+//! Every event that writes `Vault::name` carries the name as text, padding
+//! stripped, with the empty string meaning unset.
 
 use anchor_lang_v2::prelude::*;
 
@@ -33,6 +36,8 @@ pub struct CreateVaultEvent {
     pub perf_fee_rate: u32,
     pub min_leader_share: u32,
     pub allow_outside_depositors: bool,
+    /// The name stamped at creation; empty when unset.
+    pub name: String,
 }
 
 /// Emitted by `close_vault` when a leader moves their vault from the
@@ -48,6 +53,8 @@ pub struct CloseVaultEvent {
     pub leader: Address,
     /// Active-DLL length after the move.
     pub active_count_after: u32,
+    /// The name the close blanked (and unlocked); empty when it was unset.
+    pub name: String,
 }
 
 /// Emitted by `freeze_vault` when an admin freezes a vault. The vault
@@ -61,6 +68,40 @@ pub struct FreezeVaultEvent {
     /// identifies a vault across sector reuse; `sector_idx` alone does not.
     pub vault_seq: u64,
     pub leader: Address,
+    /// The name the freeze blanked (and locked); empty when it was unset.
+    pub name: String,
+}
+
+/// Emitted by `set_vault_name` when a leader renames their vault. A
+/// rename to the incumbent emits `old_name == new_name`; treat that as a
+/// no-op. See the spec's **SetVaultName**.
+#[event]
+pub struct SetVaultNameEvent {
+    pub market: Address,
+    pub sector_idx: u32,
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
+    pub vault_seq: u64,
+    pub leader: Address,
+    pub old_name: String,
+    pub new_name: String,
+}
+
+/// Emitted by `override_vault_name` when an admin rewrites a vault's name
+/// (blank allowed) and sets or clears its lock. See the spec's
+/// **OverrideVaultName**.
+#[event]
+pub struct OverrideVaultNameEvent {
+    pub market: Address,
+    pub sector_idx: u32,
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
+    pub vault_seq: u64,
+    pub admin: Address,
+    /// The lock state written: true refuses the leader's `set_vault_name`.
+    pub lock: bool,
+    pub old_name: String,
+    pub new_name: String,
 }
 
 /// Emitted by `set_leader` when a leader hands custody of their vault to

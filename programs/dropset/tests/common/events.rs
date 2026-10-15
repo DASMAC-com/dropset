@@ -23,10 +23,11 @@
 use anchor_lang_v2::{bytemuck, event::EVENT_IX_TAG_LE, Discriminator};
 use dropset::{
     CloseMarketTreasuryEvent, CloseRegistryFeeVaultEvent, CloseVaultEvent, CreateVaultEvent,
-    DepositEvent, FillEvent, FreezeVaultEvent, PlatformFeeEvent, RealizeEvent,
-    SetDefaultFeeConfigEvent, SetLeaderEvent, SetMarketFeeConfigEvent, SetMaxPlatformFeeEvent,
-    SetMinLeaderShareEvent, SetQuoteAuthorityEvent, SetRegistryDefaultsEvent, SetTakerFeeEvent,
-    SweepResidualEvent, WithdrawEvent,
+    DepositEvent, FillEvent, FreezeVaultEvent, OverrideVaultNameEvent, PlatformFeeEvent,
+    RealizeEvent, SetDefaultFeeConfigEvent, SetLeaderEvent, SetMarketFeeConfigEvent,
+    SetMaxPlatformFeeEvent, SetMinLeaderShareEvent, SetQuoteAuthorityEvent,
+    SetRegistryDefaultsEvent, SetTakerFeeEvent, SetVaultNameEvent, SweepResidualEvent,
+    WithdrawEvent,
 };
 use litesvm::types::TransactionMetadata;
 
@@ -106,6 +107,11 @@ impl<'a> Cursor<'a> {
     fn bool(&mut self) -> bool {
         self.take(1)[0] != 0
     }
+    /// Borsh `String`: a `u32` byte length, then the UTF-8 bytes.
+    fn string(&mut self) -> String {
+        let len = self.u32() as usize;
+        String::from_utf8(self.take(len).to_vec()).unwrap()
+    }
     /// Assert the whole body was consumed — catches a wire-format drift
     /// (an added / reordered / wrong-width field) that a field-by-field
     /// read would otherwise mask.
@@ -128,6 +134,7 @@ pub struct CreateVault {
     pub perf_fee_rate: u32,
     pub min_leader_share: u32,
     pub allow_outside_depositors: bool,
+    pub name: String,
 }
 
 pub fn create_vault(meta: &TransactionMetadata) -> CreateVault {
@@ -142,6 +149,7 @@ pub fn create_vault(meta: &TransactionMetadata) -> CreateVault {
         perf_fee_rate: c.u32(),
         min_leader_share: c.u32(),
         allow_outside_depositors: c.bool(),
+        name: c.string(),
     };
     c.finish();
     d
@@ -154,6 +162,7 @@ pub struct CloseVault {
     pub vault_seq: u64,
     pub leader: [u8; 32],
     pub active_count_after: u32,
+    pub name: String,
 }
 
 pub fn close_vault(meta: &TransactionMetadata) -> CloseVault {
@@ -165,6 +174,7 @@ pub fn close_vault(meta: &TransactionMetadata) -> CloseVault {
         vault_seq: c.u64(),
         leader: c.pubkey(),
         active_count_after: c.u32(),
+        name: c.string(),
     };
     c.finish();
     d
@@ -176,6 +186,7 @@ pub struct FreezeVault {
     pub sector_idx: u32,
     pub vault_seq: u64,
     pub leader: [u8; 32],
+    pub name: String,
 }
 
 pub fn freeze_vault(meta: &TransactionMetadata) -> FreezeVault {
@@ -186,6 +197,59 @@ pub fn freeze_vault(meta: &TransactionMetadata) -> FreezeVault {
         sector_idx: c.u32(),
         vault_seq: c.u64(),
         leader: c.pubkey(),
+        name: c.string(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
+pub struct SetVaultName {
+    pub market: [u8; 32],
+    pub sector_idx: u32,
+    pub vault_seq: u64,
+    pub leader: [u8; 32],
+    pub old_name: String,
+    pub new_name: String,
+}
+
+pub fn set_vault_name(meta: &TransactionMetadata) -> SetVaultName {
+    let body = one_body::<SetVaultNameEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = SetVaultName {
+        market: c.pubkey(),
+        sector_idx: c.u32(),
+        vault_seq: c.u64(),
+        leader: c.pubkey(),
+        old_name: c.string(),
+        new_name: c.string(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
+pub struct OverrideVaultName {
+    pub market: [u8; 32],
+    pub sector_idx: u32,
+    pub vault_seq: u64,
+    pub admin: [u8; 32],
+    pub lock: bool,
+    pub old_name: String,
+    pub new_name: String,
+}
+
+pub fn override_vault_name(meta: &TransactionMetadata) -> OverrideVaultName {
+    let body = one_body::<OverrideVaultNameEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = OverrideVaultName {
+        market: c.pubkey(),
+        sector_idx: c.u32(),
+        vault_seq: c.u64(),
+        admin: c.pubkey(),
+        lock: c.bool(),
+        old_name: c.string(),
+        new_name: c.string(),
     };
     c.finish();
     d
