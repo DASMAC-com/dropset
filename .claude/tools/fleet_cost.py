@@ -107,12 +107,17 @@ SPEND_CAP_METRICS = {
     "CacheWriteInputTokenCount": "TokenRateCacheWrite",
 }
 DEFAULT_TOLERANCE = 0.15
+# Below this many dollars on both sides of a comparison, a day is reported but
+# never judged: a quiet day carrying only cents of harness calls would otherwise
+# read as 100 percent background or drift and flag. A fleet day is hundreds.
+MIN_JUDGED_DOLLARS = 5.0
 # The share of a day's matched bill no transcript records: the auto-mode
 # permission classifier, which since the Opus 5.5 swap runs on the session's
 # own model and so bills inside the same service rather than as a background
 # line of its own. Measured 2026-10-08, 10-09 and 10-13 at 8.3, 8.1 and 8.3
-# percent, with the gap almost entirely fresh input and output (a stateless call
-# per tool use) while both cache tiers matched within about 2 percent. The
+# percent, with the gap mostly fresh input and output (about 85 percent of the
+# missing dollars; a stateless call per tool use) while both cache tiers matched
+# within about 2 percent. The
 # Opus 5.5 rates were verified the same day: billed quantity times
 # `RATES_BY_MODEL` reproduced the bill to the cent. Drift is flagged AFTER this
 # is applied, so a metering bug of the same size cannot hide inside it;
@@ -195,6 +200,9 @@ class Meter:
     sessions: dict[tuple[str, str], set[str]] = field(default_factory=dict)
     seen: set[str] = field(default_factory=set)
     parse_errors: int = 0
+    # Transcripts that vanished or became unreadable mid-walk (a purge running
+    # beside a live fleet), skipped rather than allowed to abort the run.
+    unreadable: int = 0
 
     def ingest(
         self, line: str, substrate: str, issue: str | None, session: str
@@ -266,7 +274,11 @@ def walk(projects: Path, days: list[str]) -> Meter:
                     continue
             except OSError:
                 continue
-            cwd = _read_cwd(transcript)
+            try:
+                cwd = _read_cwd(transcript)
+            except OSError:
+                meter.unreadable += 1
+                continue
             substrate, issue = classify(cwd), issue_of(cwd)
             session = transcript.stem
             files = [
@@ -274,8 +286,11 @@ def walk(projects: Path, days: list[str]) -> Meter:
                 *sorted((project / session / "subagents").glob("*.jsonl")),
             ]
             for path in files:
-                for line in sm._read_lines(path):
-                    meter.ingest(line, substrate, issue, session)
+                try:
+                    for line in sm._read_lines(path):
+                        meter.ingest(line, substrate, issue, session)
+                except OSError:
+                    meter.unreadable += 1
     return meter
 
 
@@ -365,6 +380,11 @@ def aws(args: list[str]) -> dict:
         raise AwsError(f"aws {args[0]} {args[1]}: output is not JSON") from exc
 
 
+# What reading a field off a response of the wrong shape raises: a missing key
+# or index, a non-dict body (`AttributeError` on `.get`), a non-numeric amount.
+SHAPE_ERRORS = (AttributeError, KeyError, IndexError, TypeError, ValueError)
+
+
 def _shape_error(what: str, exc: Exception) -> AwsError:
     """A response missing a field this tool reads. Raised as `AwsError` so it
     exits 2 rather than escaping as a traceback, whose status 1 would read as a
@@ -411,7 +431,7 @@ def fetch_billed(days: list[str]) -> dict[str, dict[str, float]]:
     )
     try:
         billed = parse_billed(response)
-    except (KeyError, IndexError, TypeError, ValueError) as exc:
+    except SHAPE_ERRORS as exc:
         raise _shape_error("Cost Explorer", exc) from exc
     return {day: billed.get(day, {}) for day in days}
 
@@ -425,7 +445,7 @@ def fetch_estimate(days: list[str]) -> dict[str, float]:
             for p in stacks["Stacks"][0]["Parameters"]
             if p["ParameterKey"] in SPEND_CAP_METRICS.values()
         }
-    except (KeyError, IndexError, TypeError, ValueError) as exc:
+    except SHAPE_ERRORS as exc:
         raise _shape_error(SPEND_CAP_STACK, exc) from exc
     missing = sorted(set(SPEND_CAP_METRICS.values()) - set(params))
     if missing:
@@ -455,7 +475,7 @@ def fetch_estimate(days: list[str]) -> dict[str, float]:
     )
     try:
         return estimate_from(response, params, days)
-    except (KeyError, IndexError, TypeError, ValueError) as exc:
+    except SHAPE_ERRORS as exc:
         raise _shape_error("CloudWatch", exc) from exc
 
 
@@ -509,7 +529,8 @@ def reconcile_day(summary: dict, billed: dict[str, float], tolerance: float) -> 
     expected = metered / (1 - CLASSIFIER_OVERHEAD)
     d = drift(expected, matched)
     gross = matched + unpriced + background
-    flagged = (
+    judged = max(gross, metered) >= MIN_JUDGED_DOLLARS
+    flagged = judged and (
         (d is not None and abs(d) > tolerance)
         or (matched == 0 and metered > 0)
         or (gross > 0 and background / gross > tolerance)
@@ -529,11 +550,13 @@ def reconcile_day(summary: dict, billed: dict[str, float], tolerance: float) -> 
 def spend_cap_day(estimate: float, gross: float, tolerance: float) -> dict:
     """The cap's estimate against the billed gross for one day. Billed past the
     estimate by more than ``tolerance`` means the cap leaks; the estimate past
-    billed by more than it means the cap trips early.
+    billed by more than it means the cap trips early — including an estimate
+    against a zero bill, which `reconcile_day` flags the same way.
     """
     d = drift(estimate, gross)
-    leaking = gross > estimate * (1 + tolerance)
-    early = d is not None and d > tolerance
+    judged = max(estimate, gross) >= MIN_JUDGED_DOLLARS
+    leaking = judged and gross > estimate * (1 + tolerance)
+    early = judged and (gross == 0 or (d is not None and d > tolerance))
     verdict = "cap LEAKING" if leaking else "trips EARLY" if early else "ok"
     return {
         "estimate": estimate,
@@ -641,12 +664,16 @@ def main(argv: list[str] | None = None) -> int:
                             flag_mark(rec["flagged"], day == provisional),
                         )
                     )
+                summary["provisional"] = day == provisional
                 report["days"][day] = summary
             issues = issue_costs(meter, days)
             report["issues"] = issues
+            report["unreadable_transcripts"] = meter.unreadable
             if issues:
                 top = ", ".join(f"{i} {money(c)}" for i, c in issues[: args.top])
                 lines.append(f"costliest issues: {top}")
+            if meter.unreadable:
+                lines.append(f"skipped {meter.unreadable} unreadable transcript(s)")
         else:
             estimate = fetch_estimate(days)
             billed = fetch_billed(days)
@@ -660,7 +687,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"billed {money(cap['billed'])}  {pct(cap['drift'])}  "
                     f"{cap['verdict']}{flag_mark(False, day == provisional)}"
                 )
-                report["days"][day] = cap
+                report["days"][day] = {**cap, "provisional": day == provisional}
     except AwsError as exc:
         print(f"fleet_cost: {exc}", file=sys.stderr)
         return 2

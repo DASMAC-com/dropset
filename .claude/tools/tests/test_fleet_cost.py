@@ -142,6 +142,13 @@ class WalkTest(unittest.TestCase):
         self.assertEqual(rec["billed_background"], 0.0)
         self.assertFalse(rec["flagged"])
 
+    def test_a_transcript_unreadable_mid_walk_is_counted_not_fatal(self) -> None:
+        # As if a purge removed every file between the glob and the open.
+        with mock.patch.object(fc.sm, "_read_lines", side_effect=OSError("gone")):
+            meter = fc.walk(self.projects, [DAY])
+        self.assertEqual(meter.unreadable, 6)
+        self.assertEqual(meter.by_day, {})
+
     def test_main_meters_a_past_day_and_refuses_today(self) -> None:
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(fc.sm, "claude_home", return_value=self.home):
@@ -244,12 +251,25 @@ class UnitTest(unittest.TestCase):
         self.assertAlmostEqual(rec["billed_background"], 190.0)
         self.assertTrue(rec["flagged"])
 
+    def test_reconcile_does_not_judge_a_quiet_day(self) -> None:
+        # Cents of harness calls and no sessions: all background, but too small
+        # to mean anything.
+        summary = {"bedrock_by_service": {}, "unpriced": []}
+        rec = fc.reconcile_day(
+            summary, {"Claude Haiku 5.5 (Amazon Bedrock Edition)": 0.5}, 0.15
+        )
+        self.assertFalse(rec["flagged"])
+
     def test_spend_cap_verdicts(self) -> None:
         cases = [
             ((192.44, 190.88), "ok", False),
             ((100.0, 130.0), "cap LEAKING", True),
             ((130.0, 100.0), "trips EARLY", True),
-            ((5.0, 0.0), "ok", False),
+            # A real estimate against no bill trips early, as reconcile flags it.
+            ((50.0, 0.0), "trips EARLY", True),
+            # Below the judging floor, a day is reported but never flagged.
+            ((2.0, 0.0), "ok", False),
+            ((0.5, 3.0), "ok", False),
         ]
         for (estimate, gross), verdict, flagged in cases:
             cap = fc.spend_cap_day(estimate, gross, 0.15)
