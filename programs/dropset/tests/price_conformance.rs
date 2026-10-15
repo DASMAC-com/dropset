@@ -15,13 +15,15 @@
 //! Scope: the funds-moving paths the program exposes — encoding *validity*
 //! (`is_valid`, which gates order-book ordering), the raw-bits round-trip,
 //! and the `quote_for_base` / `base_for_quote` ratio math the matcher uses
-//! to convert fills between legs. The vectors' `decode.value` (a decoded
+//! to convert fills between legs, plus the `flip_level_price` a flush
+//! materializes for a flipping level. The vectors' `decode.value` (a decoded
 //! `f64`) and `encode` (`from_value`, an SDK-only convenience) are not
 //! re-checked here: the program's `to_f64` is `#[cfg(test)]`-only and it has
 //! no `from_value`, and the decoded value is already exercised end-to-end by
 //! the ratio vectors (which decode the significand/exponent internally).
 
 use dropset::Price;
+use dropset_math_core::matching_math::flip_level_price;
 use serde_json::Value;
 
 fn vectors() -> Value {
@@ -67,5 +69,18 @@ fn base_for_quote_vectors() {
         let p = Price::from_bits(u32_of(c, "bits"));
         let got = p.base_for_quote(u64_of(c, "quote")).min(u64::MAX as u128) as u64;
         assert_eq!(got, u64_of(c, "expected"));
+    }
+}
+
+/// The flip price the flush materializes into `Position::flip_price`,
+/// through the kernel the program's flush calls. Like the ratio replays
+/// this is the generator's own code, so what it guards is that the flush
+/// keeps calling the shared kernel rather than a copy.
+#[test]
+fn flip_level_price_vectors() {
+    for c in vectors()["flip_level_price"].as_array().unwrap() {
+        let p = Price::from_bits(u32_of(c, "bits"));
+        let got = flip_level_price(p, u32_of(c, "spread_ppm"), c["is_ask"].as_bool().unwrap());
+        assert_eq!(got.as_u32(), u32_of(c, "expected"), "{c}");
     }
 }

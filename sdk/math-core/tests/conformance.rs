@@ -10,6 +10,7 @@
 //! is not a second one: the program re-exports this crate's `Price`, so
 //! that replay runs the same code as this one.
 
+use dropset_math_core::matching_math::flip_level_price;
 use dropset_math_core::price::Price;
 use serde_json::Value;
 
@@ -98,5 +99,25 @@ fn base_for_quote_vectors() {
         let p = Price::from_bits(u32_of(c, "bits"));
         let got = p.base_for_quote(u64_of(c, "quote")).min(u64::MAX as u128) as u64;
         assert_eq!(got, u64_of(c, "expected"));
+    }
+}
+
+#[test]
+fn flip_level_price_vectors() {
+    let cases = vectors()["flip_level_price"].as_array().unwrap().clone();
+    assert!(!cases.is_empty(), "flip_level_price vectors present");
+    for c in &cases {
+        let p = Price::from_bits(u32_of(c, "bits"));
+        let spread = u32_of(c, "spread_ppm");
+        let is_ask = c["is_ask"].as_bool().unwrap();
+        let got = flip_level_price(p, spread, is_ask);
+        assert_eq!(got.as_u32(), u32_of(c, "expected"), "{c}");
+        // Independent of the generator: zero never flips, and a matchable
+        // flip rests back toward the reference — under an ask, over a bid.
+        if spread == 0 {
+            assert_eq!(got, Price::ZERO, "zero spread is the sentinel: {c}");
+        } else if got.is_matchable() {
+            assert!(if is_ask { got < p } else { got > p }, "direction: {c}");
+        }
     }
 }
