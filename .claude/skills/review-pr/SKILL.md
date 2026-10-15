@@ -260,6 +260,16 @@ migrations or generation inputs, and whether it spans crates.
      **blocking** (step 7), quoting the checklist text and the deciding
      `file:line` or absence.
 
+   - **"This will not fit in one PR" is not a second PR.** When the
+     missing scope would carry the diff past the split line
+     (`docs/conventions/context-economy.md`), **never open a second PR
+     on the same issue**. Finish this PR as a self-contained unit,
+     **message the live planning session** the remainder split into
+     pullable units, and end the session at this PR. Planning files
+     the follow-ups and re-points the edges to the chain's tail
+     (`docs/conventions/commits-and-prs.md`). Record the split as a
+     PR-body deferral, which makes it addressed.
+
 1. **Run lint**, always through the quiet runner — the cspell hook alone
    dumps a ~450-line cascade on failure:
 

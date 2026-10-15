@@ -31,11 +31,39 @@ printenv LINEAR_PLANNING_DOC_ID
 If it is unset, say so and stop — never search Linear for it by
 title, or decisions land in the wrong place.
 
-This file carries only the **method**; the phase, standing
-decisions and sequencing live in the document and change weekly.
-Work items live in issues, never in the document, and the
-document is **not** an append log: it carries the current state
-of play, kept so by step 6's close-out rewrite.
+**The document is ephemeral state only.** Every standing
+instruction is committed: the method here, the operator's
+rulings, fleet doctrine and standing decisions in
+[`rulings.md`](rulings.md). Work items live in issues. The
+document is **not** an append log; step 6's rewrite produces
+exactly these headings, in this order, and nothing else:
+
+1. **Discuss with operator** — a single blank checkbox the
+   operator fills before a session (Enter in Linear adds the
+   next).
+1. **Current direction and checkpoints** — the phase, the live
+   tracks, the operator-named exceptions to any freeze, and the
+   next bootstrap's first moves.
+1. **Operator actions outstanding** — numbered, kept current.
+1. **Fleet state and chains** — in flight, in review, queued,
+   held with reasons, and the parked counts.
+1. **Collision clusters** (step 1).
+1. **Audit state** — the bounded table (step 1).
+1. **Session-metrics state** (step 7).
+1. **In-session notes** — this session's incremental writes;
+   after a close-out, only the rulings not yet landed in
+   `rulings.md`.
+1. **Notes for the next planning session** — the only heading
+   other sessions write under. The upkeep tool's machine-written
+   report is its level-2 subsection, carried verbatim.
+
+Above them, a header of one line plus the `Bootstrap stamp`.
+
+**A new ruling is a reviewed change**, never a document edit:
+file a `Claude:` issue carrying its text, which a worker lands as
+a PR to `rulings.md` — under a meta freeze, only once the
+operator names it — and carry it under `In-session notes` until
+it lands.
 
 ## Where it runs
 
@@ -76,7 +104,8 @@ operator lever, never this mechanism.
 - **The warm bootstrap.** A full bootstrap writes a
   `Bootstrap stamp: <YYYY-MM-DD>` line to the document, and every
   close-out rewrite keeps it. A bootstrap finding today's date
-  there is **warm**: read the document, run `ListAgents`, surface
+  there is **warm**: read `rulings.md` and the document, run
+  `ListAgents`, surface
   the outstanding list — and skip the once-a-day duties (the meta
   fold, the audit heartbeat, the parked counts, the upkeep
   report, step 8). No stamp
@@ -84,9 +113,19 @@ operator lever, never this mechanism.
 
 ## Steps
 
-**1. Bootstrap, and surface the umbrellas unprompted.** Fetch the
-Planning document with `mcp__claude_ai_Linear__get_document` and
-read it first — it is the last session's handoff.
+**1. Bootstrap, and surface the umbrellas unprompted.** Read
+[`rulings.md`](rulings.md) first — the rules this session obeys.
+Then fetch the Planning document with
+`mcp__claude_ai_Linear__get_document` — the last session's
+handoff — and, warm or full:
+
+- **Act on each `Discuss with operator` item first**, before the
+  board.
+- **Surface `Operator actions outstanding` unprompted**, itemized
+  and numbered, so the operator answers all of it in one message.
+  Never leave it waiting for the operator to open the document.
+- **Verify overnight landings with `git log`** and the In Review
+  listing, never the Done column; release chains as blockers land.
 
 **Say the upkeep report's highlights, with the parked counts.**
 The `plan` launcher ran `.claude/tools/upkeep.py` before this
@@ -134,7 +173,21 @@ python3 .claude/tools/board_batch.py list --state Todo \
 ```
 
 The Todo call keeps parked issues, tagged, for the meta review
-below. Pull a full body only when a decision turns on it. Every
+below. Pull a full body only when a decision turns on it.
+
+**Then read Next as the operator sees it** — their named Linear
+view, filtered by Linear rather than reconstructed:
+
+```sh
+python3 .claude/tools/board_batch.py view
+```
+
+**Verify Next against the holds.** Name every row there this
+session would hold, with its blocker, in the dispatch ask; on the
+operator's yes it gets a blocking edge in the same breath,
+through step 3's `edges` (dry run first): a hold is an edge or it
+does not exist. A row the operator neither dispatches nor holds
+stays in Next as dispatchable. Every
 un-milestoned Todo item is either **acted on** or **parked** —
 say that discipline out loud when the set has grown.
 
@@ -185,6 +238,7 @@ Progress or In Review) — without that clause an unpulled batch is
 duplicated rather than absorbed. Group by the surface each issue
 changes and fold each group into its lowest-numbered survivor via
 `/merge-tasks`. Routine bookkeeping; no per-fold proposal.
+Promotion stays subject to any freeze in `rulings.md`.
 
 - **Roughly 4–5 parts per batch** (operator rule, 2026-09-11):
   five or fewer parts is one batch, fifteen is three. Session
@@ -300,6 +354,12 @@ with no refactor-later burden a later issue will undo.
   label.
 - **Edges and priorities are curated here**; implementation
   sessions never place edges.
+- **A hold is an edge or it does not exist** (ruling 2). An issue
+  held behind an in-flight surface or a sequencing reason gets a
+  blocking edge on that blocker at dispatch time, so it shows as
+  Blocked, not Next. A completed blocker stops blocking on its
+  own; removing a hold edge on a re-sequence is the operator's
+  call too, asked in the same dispatch ask and run through step 3.
 - **`Claude:` meta-work is Urgent once unblocked** (operator
   rule, 2026-08-17), so agent-infra is the next pull. Meta lands
   as short batches (step 1), several possibly in flight, with no
@@ -317,8 +377,9 @@ collision clusters are the raw material. The **coherence floor**
 binds: never across separate apps, languages, or deploy units.
 
 **3. Curate blocking edges — the one place they are placed.**
-Edges mean **semantic rollout ordering** and are human-curated
-end to end (`docs/conventions/linear-automation.md` → "Blocking
+Edges mean **semantic rollout ordering** or **this session's own
+dispatch hold** (step 2), and are human-curated end to end
+(`docs/conventions/linear-automation.md` → "Blocking
 relations"). Place the operator's decided edges in one batch:
 
 ```sh
@@ -328,8 +389,9 @@ python3 .claude/tools/board_batch.py edges --pairs <file>
 `--remove` retires one. **Rehearse with `--dry-run` first** — a
 wrong edge drops an issue out of the available set.
 
-Not edges: **file overlap** (a collision cluster — it costs a
-rebase, not an ordering); **coupling that belongs in one PR**
+Not edges: **file overlap** on its own, as a filer would record
+it (a collision cluster — it costs a rebase, not an ordering);
+**coupling that belongs in one PR**
 (fold via `/merge-tasks`); **a suspicion** (prose in the body —
 an unsure edge costs more than a missing one).
 
@@ -354,6 +416,14 @@ filing skill binds this session:
   unstated posture is hold by inertia, which silently endorses
   whatever the filer wrote. It is one issue at staging time — the
   whether-to-build-it question is `architect`'s.
+
+- **Count the declared parts against the scope band** and stamp
+  a **`**Cost band**:`** line beside the fingerprint — a dollar
+  range, a line band and the substrate, from
+  `docs/conventions/context-economy.md` → "Cost bands". A band,
+  never a point. A seat-bound issue (`architect`, `explore`)
+  states its seat and a token profile instead: dollar bands bind
+  Bedrock workers only.
 
 - **The Todo / Backlog split** (step 1), **the `Claude:` prefix
   with its parked landing**, and **the mandatory
@@ -399,6 +469,15 @@ duplicated work. **When a session owns the issue, send it the
 amendment rather than writing the body yourself** — that skips
 the full-body echo, and the owner can judge it against what it
 has built.
+
+**A mid-flight split message is a filing act** (ruling 7). A
+worker that finds its issue too big for one PR finishes the
+first, self-contained PR and messages the remainder here as
+pullable units. File each, insert it into the lane, and
+**re-point the issue's dependents' blocking edges to the chain's
+tail**, so the operator's Done on the first issue does not
+release work that needs the whole. The re-point is this
+session's write, never the worker's.
 
 **Dispatching is the other half.** When a task is unblocked and
 ready, offer it ("1234 is unblocked; start it?") and on the
@@ -456,18 +535,25 @@ decisions, offer via `AskUserQuestion` — "close out now?
 (rewrites the Planning doc to the current state of play)" —
 recommended first.
 
-**The close-out deliverable is the whole document, rewritten**,
-not an entry appended: superseded phases, dated addenda and the
-session's incremental notes disappear. A wholesale replacement
-re-parses on the round trip, so compose it:
+**The close-out deliverable is the whole document, rewritten**
+to the ephemeral shape above and nothing else: superseded
+phases, dated addenda and the session's incremental notes
+disappear, and no ruling, doctrine or method text survives
+outside `In-session notes`. **Restore `Discuss with operator`
+to a single blank checkbox**, once its items are acted on, and
+**bring `Operator actions outstanding` current**, so the next
+bootstrap surfaces something true. **Read the document back**
+after the write: a write against a stale snapshot silently saves
+the stale base. A wholesale replacement re-parses on the round
+trip, so compose it:
 
 - **without inline code spans** — plain names, not backticked;
 - with **no emphasis span crossing a newline**;
 - with **no machine-parsed field starting with a bare
   hostname-valid `name.ext`**.
 
-The document's header paragraph states this convention; **keep
-the two consistent** when editing either.
+These rules live here only; the document's one-line header
+points at this skill rather than restating them.
 
 **The close-out carries the audit-state table forward — and
 writes no directive** (why: `history.md`). The table is
@@ -516,7 +602,11 @@ nothing. This step is how planning absorbs them.
 **At bootstrap, a count and a prompt, never a listing** — "N
 audit findings are parked — slate any in?", asked with step 1's
 meta slate, kill list and upkeep items — the bootstrap's one
-consolidated question. On a yes:
+consolidated question. **The `Follow-ups` milestone gets the same
+line** ("N follow-ups are parked — slate any in?"), so
+`review-pr`'s deferred items never sit indefinitely; bodies stay
+unread unless yes, and promotion is the same two-halves write.
+On a yes:
 
 - List the milestone **field-selected** (title, priority).
 - **Select a parallelizable batch, using the collision

@@ -387,6 +387,15 @@ untracked per-directory content, which step 3 handles.
      each against `HEAD`; the stable key is the `**Fingerprint**`
      slug, never a line number.
 
+   - **Check the declared parts against the scope band** (4–5 parts,
+     300–800 lines, split at 1,000;
+     `docs/conventions/context-economy.md`). Over it, ask via
+     `AskUserQuestion` before implementing: message the live
+     planning session the split now, or keep one PR — only for a
+     test-heavy or prose-deletion overage, where a split would ship
+     inert code. **Never a second PR on this
+     issue** later (`docs/conventions/commits-and-prs.md`).
+
    Present the description and checklist as the plan of work. The
    user's own instructions win.
 

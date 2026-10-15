@@ -208,6 +208,58 @@ reports its own spend makes the ceiling checkable, and makes a long
 session visible while it is still running rather than in a mining pass
 weeks later.
 
+### Cost bands
+
+The loop has two durable, machine-parsed legs per issue: a
+**prediction** at staging and a **measured report** at close
+(ratified 2026-10-05).
+
+**At staging** the `plan` skill stamps one line beside the
+fingerprint, from the band its declared size falls in:
+
+```text
+**Cost band**: $50–100, 300–800 lines, Bedrock
+```
+
+| Line band              | Dollar band | Why                           |
+| ---------------------- | ----------- | ----------------------------- |
+| under 150              | \$35–50     | the roughly \$40 per-PR floor |
+| 300–800                | \$50–100    | the target band               |
+| split-at-1,000 or more | \$100–160   | over the ceiling; split       |
+
+A declared size between two rows (150–300, 800–1,000) takes the
+nearer band, the higher on a tie, and says so. Past 1,000 the issue
+splits at staging, unless it is an accepted test-heavy or
+prose-deletion overage that a split would leave inert; that takes
+the last row.
+**The rate basis is Opus 5.5 on Bedrock**, and the bands re-seed at
+the next rate swap. A band, never a point: the measured spread inside
+one line band ran $39 to $140. Bands bind **Bedrock workers only**. A
+seat-bound issue (`architect`, `explore`) states its seat and token
+profile instead, because the subscription's internal pricing is
+opaque and a seat dollar figure would be invented.
+
+**At close** `session-metrics` appends one line through the zero-echo
+issue writer (`.claude/tools/linear_issue.py append`) — for a Bedrock
+session:
+
+```text
+**Cost actual**: $72, 140 turns, peak prefix 310k, 2026-10-15
+```
+
+and for a seat session:
+
+```text
+**Token profile**: 41M cache-read, 119 turns, peak prefix 319k, 2026-10-14
+```
+
+**Only Bedrock bands verify in dollars**: deduplicated transcript
+pricing tracks the Bedrock bill, about 8% under it — the classifier's
+share — per "Reconciling against the bill" below. A seat session's
+check is the self-consistency of its token profile. Two sessions on
+one issue append two lines; a consumer sums them and says so.
+`fleet_cost.py reconcile` is the bill-side check on the measured lines.
+
 ### The ratified cost posture
 
 Two rulings resting on the same measurement, recorded here so they are

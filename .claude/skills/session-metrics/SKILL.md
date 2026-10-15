@@ -238,6 +238,28 @@ The summary is small and safe to hold in context. Read it —
 it is the evidence the recommendations are grounded in. (Add
 `ARGS=--json` if you want the structured form instead.)
 
+**Then append the measured leg to the session's own issue** —
+the `ENG-###` its branch or worktree names; none for a session
+with no issue. One line in a fixed form, written to a scratchpad
+file and appended zero-echo:
+
+```sh
+python3 .claude/tools/linear_issue.py append \
+  --id <ENG-###> --file <scratchpad>/cost-line.md
+```
+
+A Bedrock session writes the first form, a seat session the
+second and **never a dollar figure**:
+
+```text
+**Cost actual**: $<usd>, <n> turns, peak prefix <k>, <YYYY-MM-DD>
+**Token profile**: <cr> cache-read, <n> turns, peak prefix <k>, <YYYY-MM-DD>
+```
+
+A second session on the issue appends a second line rather
+than editing the first. Format and band table:
+`docs/conventions/context-economy.md` → "Cost bands".
+
 **3. There is no inbox document to resolve.** Levers are filed
 as **parked issues**, and the writer
 (`.claude/tools/trim_levers.py`) reads `LINEAR_API_KEY`,
