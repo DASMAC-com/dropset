@@ -75,6 +75,14 @@ export const BALANCE_REFETCH_DELAY_MS = 1_500;
 // the node the way the alpha viz's 500 ms poll did.
 export const ORDER_BOOK_REFRESH_MS = 1_000;
 
+// ───────────── Vaults ─────────────
+
+// Re-read cadence for the live vaults table: one market-account resolve per
+// roster pair, plus one batched depositor read when a wallet is connected.
+// Reserves move with every fill, but a vaults table is browsed, not traded
+// from, so it refreshes far slower than the book.
+export const VAULTS_REFRESH_MS = 15_000;
+
 // ───────────── Expiry gate clock ─────────────
 
 // How far the visitor's device clock may sit from cluster time before the

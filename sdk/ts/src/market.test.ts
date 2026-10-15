@@ -26,8 +26,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
+import { getAddressDecoder } from '@solana/kit';
+
 import { slotTime, wallTime } from './clock';
-import { decodeDropsetMarketView } from './market';
+import { decodeDropsetMarketView, decodeDropsetVaults } from './market';
 import { baseForQuote, priceFromParts } from './price';
 import { initSimulator } from './simulate';
 
@@ -384,6 +386,61 @@ test('oversized flush side is skipped, the healthy side still materializes', () 
   assert.equal(view.asks.length, 0, 'oversized ask side contributes no depth');
   const bidPrice = enc(10_844_575);
   assert.deepEqual(view.bids, [{ price: bidPrice, size: baseForQuote(bidPrice, 500_000n) }]);
+});
+
+// Vault share / flag offsets for the vaults reader (`layout.rs` order:
+// leader at 8, `seq` at 72 — pinned there by a const assert — then the
+// reserves, shares, hwm, perf fee, leader floor and the flag bytes).
+const V_LEADER = 8;
+const V_SEQ = 72;
+const V_TOTAL_SHARES = 116;
+const V_LEADER_SHARES = 124;
+const V_MIN_LEADER_SHARE = 144;
+const V_FROZEN = 148;
+const V_ALLOW_OUTSIDE = 149;
+const V_OUTSIDE_APPROVED = 150;
+
+test('the vaults reader returns each active vault with its shares and deposit flags', () => {
+  const data = buildMarket((dv, b) => {
+    for (let i = 0; i < 32; i++) dv.setUint8(b + V_LEADER + i, 7);
+    dv.setBigUint64(b + V_SEQ, 3n, true);
+    dv.setBigUint64(b + V_BASE_ATOMS, 1_000_000n, true);
+    dv.setBigUint64(b + V_QUOTE_ATOMS, 1_250_000n, true);
+    dv.setBigUint64(b + V_TOTAL_SHARES, 900_000n, true);
+    dv.setBigUint64(b + V_LEADER_SHARES, 600_000n, true);
+    dv.setUint32(b + V_MIN_LEADER_SHARE, 100_000, true);
+    dv.setUint8(b + V_ALLOW_OUTSIDE, 1);
+  });
+  const [vault, ...rest] = decodeDropsetVaults(data);
+  assert.equal(rest.length, 0);
+  assert.deepEqual(vault, {
+    index: 0,
+    seq: 3n,
+    leader: getAddressDecoder().decode(new Uint8Array(32).fill(7)),
+    baseAtoms: 1_000_000n,
+    quoteAtoms: 1_250_000n,
+    totalShares: 900_000n,
+    leaderShares: 600_000n,
+    minLeaderSharePpm: 100_000,
+    frozen: false,
+    allowOutsideDepositors: true,
+    outsideDepositsApproved: false,
+  });
+
+  // The flags are independent bytes: flip the other two and re-read.
+  const dv = new DataView(data.buffer);
+  dv.setUint8(ITEMS_START + V_FROZEN, 1);
+  dv.setUint8(ITEMS_START + V_OUTSIDE_APPROVED, 1);
+  const [flipped] = decodeDropsetVaults(data);
+  assert.equal(flipped!.frozen, true);
+  assert.equal(flipped!.outsideDepositsApproved, true);
+});
+
+test('the vaults reader refuses a corrupt active list', () => {
+  // `next` points past the one-sector slab: the engine aborts over this, so
+  // the reader must not hand back a truncated list.
+  const data = buildMarket((dv, b) => dv.setUint32(b, 5, true));
+  assert.throws(() => decodeDropsetVaults(data), /corrupt/);
 });
 
 test('a buffer too short to hold the header is rejected', () => {

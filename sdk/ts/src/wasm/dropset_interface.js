@@ -135,6 +135,146 @@ export class RestingBook {
 if (Symbol.dispose) RestingBook.prototype[Symbol.dispose] = RestingBook.prototype.free;
 
 /**
+ * The market's active vaults, as parallel flat arrays in active-list order.
+ *
+ * Same boundary shape as [`RestingBook`]: one typed array per field rather
+ * than one JS object per vault. `indices[i]` is vault `i`'s sector index —
+ * the `vault_idx` the `deposit` / `withdraw` instructions take — and every
+ * other array is aligned with it. `leaders` is the 32-byte leader keys
+ * concatenated, so vault `i`'s key is `leaders[32 * i .. 32 * i + 32]`.
+ */
+export class VaultSlab {
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(VaultSlab.prototype);
+        obj.__wbg_ptr = ptr;
+        VaultSlabFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        VaultSlabFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_vaultslab_free(ptr, 0);
+    }
+    /**
+     * `1` when the leader has opted in to outside depositors.
+     * @returns {Uint8Array}
+     */
+    get allow_outside_depositors() {
+        const ret = wasm.vaultslab_allow_outside_depositors(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * Base reserve in atoms.
+     * @returns {BigUint64Array}
+     */
+    get base_atoms() {
+        const ret = wasm.vaultslab_base_atoms(this.__wbg_ptr);
+        var v1 = getArrayU64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * `1` when the vault is frozen.
+     * @returns {Uint8Array}
+     */
+    get frozen() {
+        const ret = wasm.vaultslab_frozen(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * Sector indices (the instructions' `vault_idx`).
+     * @returns {Uint32Array}
+     */
+    get indices() {
+        const ret = wasm.vaultslab_indices(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * The leader's own shares.
+     * @returns {BigUint64Array}
+     */
+    get leader_shares() {
+        const ret = wasm.vaultslab_leader_shares(this.__wbg_ptr);
+        var v1 = getArrayU64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * Leader keys, 32 bytes per vault, concatenated.
+     * @returns {Uint8Array}
+     */
+    get leaders() {
+        const ret = wasm.vaultslab_leaders(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * Floor on the leader's share of the vault, in ppm.
+     * @returns {Uint32Array}
+     */
+    get min_leader_shares() {
+        const ret = wasm.vaultslab_min_leader_shares(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * `1` when the admin has approved outside deposits.
+     * @returns {Uint8Array}
+     */
+    get outside_deposits_approved() {
+        const ret = wasm.vaultslab_outside_deposits_approved(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * Quote reserve in atoms.
+     * @returns {BigUint64Array}
+     */
+    get quote_atoms() {
+        const ret = wasm.vaultslab_quote_atoms(this.__wbg_ptr);
+        var v1 = getArrayU64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * Per-market vault numbers: with the market, each vault's identity.
+     * @returns {BigUint64Array}
+     */
+    get seq_numbers() {
+        const ret = wasm.vaultslab_seq_numbers(this.__wbg_ptr);
+        var v1 = getArrayU64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * Shares outstanding, the leader's included.
+     * @returns {BigUint64Array}
+     */
+    get total_shares() {
+        const ret = wasm.vaultslab_total_shares(this.__wbg_ptr);
+        var v1 = getArrayU64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+}
+if (Symbol.dispose) VaultSlab.prototype[Symbol.dispose] = VaultSlab.prototype.free;
+
+/**
  * `quote / price`, rounded toward zero (saturated to u64).
  * @param {number} bits
  * @param {bigint} quote
@@ -255,6 +395,26 @@ export function simulate_swap(market_data, side, amount_in, limit_price_bits, no
     }
     return Quote.__wrap(ret[0]);
 }
+
+/**
+ * Read a market account's active vaults from its raw data (including the
+ * 8-byte discriminator) — the slab half a vaults UI needs, decoded by the
+ * same `MarketView::load` the engine's mirror uses.
+ *
+ * A corrupt active list is an error rather than a truncated list: the
+ * program would abort over it, so a UI must not offer a deposit into it.
+ * @param {Uint8Array} market_data
+ * @returns {VaultSlab}
+ */
+export function vaults(market_data) {
+    const ptr0 = passArray8ToWasm0(market_data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.vaults(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return VaultSlab.__wrap(ret[0]);
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
@@ -287,6 +447,9 @@ const QuoteFinalization = (typeof FinalizationRegistry === 'undefined')
 const RestingBookFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_restingbook_free(ptr >>> 0, 1));
+const VaultSlabFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_vaultslab_free(ptr >>> 0, 1));
 
 function getArrayU32FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
@@ -296,6 +459,11 @@ function getArrayU32FromWasm0(ptr, len) {
 function getArrayU64FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getBigUint64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
+}
+
+function getArrayU8FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
 }
 
 let cachedBigUint64ArrayMemory0 = null;

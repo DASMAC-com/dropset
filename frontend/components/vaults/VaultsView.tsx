@@ -24,20 +24,24 @@ import {
   type VaultPosition,
 } from "@/lib/data/positions";
 import {
+  depositClosedReason,
   type FxPairGroup,
   type GroupedVault,
   groupMetric,
+  groupVaultMarkets,
   type MetricKey,
-  VAULT_FX_GROUPS,
+  MOCK_VAULT_FX_GROUPS,
   type Vault,
   type VaultMarket,
   vaultApr24h,
   vaultMetric,
   vaultReserveRatio,
 } from "@/lib/data/vaults";
+import { SHOW_MOCK_VAULTS } from "@/lib/env";
 import { emit, useAppEvent } from "@/lib/events";
 import { EXPLORER_NAME, explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
+import { useChainVaults } from "@/lib/hooks/useChainVaults";
 import { groupedRowClassName } from "@/lib/ui/groupedRows";
 import { pnlTone } from "@/lib/ui/pnlTone";
 import { replaceUrlParams, useGoToSwapPair } from "@/lib/ui/swapUrl";
@@ -49,13 +53,8 @@ const APR_TOOLTIP =
 // `sortKey` props type-check against `sort` / `onToggle`.
 const VaultSortHeader = SortableHeader<MetricKey>;
 
-// Every vault paired with the FX group it belongs to — used for the ungrouped
-// view and for search, which matches against group-level fields (nickname, FX
-// label) as well as the per-vault ones.
-const ALL_WITH_GROUP: { group: FxPairGroup; entry: GroupedVault }[] =
-  VAULT_FX_GROUPS.flatMap((group) =>
-    group.vaults.map((entry) => ({ group, entry })),
-  );
+// The mock rows, shown only behind the flag, as their own section.
+const MOCK_GROUPS: FxPairGroup[] = SHOW_MOCK_VAULTS ? MOCK_VAULT_FX_GROUPS : [];
 
 // Shared null-sinking, case-insensitive comparator (see SortableHeader).
 const cmpMetric = compareSortValues;
@@ -196,10 +195,15 @@ function FxGroupHeading({
             <span>
               TVL <NumberFlow value={group.tvl} format={FORMATS.usdCompact} />
             </span>
-            <span>
-              Vol{" "}
-              <NumberFlow value={group.volume24h} format={FORMATS.usdCompact} />
-            </span>
+            {group.volume24h !== null && (
+              <span>
+                Vol{" "}
+                <NumberFlow
+                  value={group.volume24h}
+                  format={FORMATS.usdCompact}
+                />
+              </span>
+            )}
             <span>
               {count} {count === 1 ? "vault" : "vaults"}
             </span>
@@ -236,6 +240,7 @@ function VaultRow({
 }) {
   const { market, vault } = entry;
   const goToSwapPair = useGoToSwapPair();
+  const closedReason = depositClosedReason(vault);
 
   const action = !connected
     ? {
@@ -253,14 +258,12 @@ function VaultRow({
         }
       : {
           label: "Deposit",
-          disabled: vault.frozen || !vault.outsideDepositsApproved,
+          disabled: closedReason !== null,
           onClick: () => onManage(market, vault),
         };
   const actionTitle =
     action.label === "Deposit" && action.disabled
-      ? vault.frozen
-        ? "This vault is frozen, so deposits are closed"
-        : "Outside deposits aren't approved for this vault"
+      ? (closedReason ?? undefined)
       : undefined;
 
   return (
@@ -399,8 +402,67 @@ function FilterChip({
 // URL params so a filtered view is a shareable deep link to a vault.
 type Pin = { base: string; quote: string; leader: string };
 
+// A full-width message row in the table body.
+function MessageRow({ colSpan, text }: { colSpan: number; text: string }) {
+  return (
+    <tr>
+      <td
+        colSpan={colSpan}
+        className="px-3 py-6 text-center text-muted-fg text-sm"
+      >
+        {text}
+      </td>
+    </tr>
+  );
+}
+
+// The heading above the mock section, so its rows never read as live ones.
+function MockSectionHeading({ colSpan }: { colSpan: number }) {
+  return (
+    <tr className="bg-background">
+      <td
+        colSpan={colSpan}
+        className="border-border border-t px-3 pt-10 pb-1 text-muted-fg text-xs"
+      >
+        <span className="font-medium text-amber-400">Demo vaults.</span> Mock
+        data, not on-chain.
+      </td>
+    </tr>
+  );
+}
+
+// Filter + sort one section's groups: grouped (each group's vaults filtered
+// and sorted, then the groups sorted, dropping any left empty) and flat (every
+// vault in the section, filtered and sorted as one list).
+function arrangeSection(
+  sectionGroups: FxPairGroup[],
+  keep: (group: FxPairGroup, entry: GroupedVault) => boolean,
+  cmpGroup: (a: FxPairGroup, b: FxPairGroup) => number,
+  cmpVault: (a: GroupedVault, b: GroupedVault) => number,
+): {
+  groups: { group: FxPairGroup; vaults: GroupedVault[] }[];
+  flat: GroupedVault[];
+} {
+  const groups = [...sectionGroups]
+    .sort(cmpGroup)
+    .map((group) => ({
+      group,
+      vaults: group.vaults.filter((entry) => keep(group, entry)).sort(cmpVault),
+    }))
+    .filter((g) => g.vaults.length > 0);
+  const flat = sectionGroups
+    .flatMap((group) => group.vaults.filter((entry) => keep(group, entry)))
+    .sort(cmpVault);
+  return { groups, flat };
+}
+
 function VaultsInner() {
   const { connected } = useWalletConnection();
+  const chain = useChainVaults();
+  const liveGroups = useMemo(
+    () => groupVaultMarkets(chain.markets),
+    [chain.markets],
+  );
   const searchParams = useSearchParams();
   const [groupByPair, setGroupByPair] = useState(true);
   const [query, setQuery] = useState("");
@@ -455,14 +517,18 @@ function VaultsInner() {
     [pin.base, pin.quote, pin.leader],
   );
 
-  // A connected wallet is treated as the mock depositor, so the seeded
-  // positions surface. Disconnected → no positions. The accessor is the data
-  // seam; a real fetch keyed on the connected pubkey drops in here later.
-  const owner = connected ? MOCK_OWNER : null;
+  // A live vault's position is the connected wallet's VaultDepositor account.
+  // On a mock row a connected wallet stands in for the mock depositor, so the
+  // seeded positions surface; disconnected → no positions either way.
+  const mockOwner = connected ? MOCK_OWNER : null;
   const positionFor = useCallback(
-    (vaultPubkey: string): VaultPosition | null =>
-      owner ? userPosition(owner, vaultPubkey) : null,
-    [owner],
+    (vault: Vault): VaultPosition | null =>
+      vault.chain
+        ? (chain.positions.get(vault.vaultPubkey) ?? null)
+        : mockOwner
+          ? userPosition(mockOwner, vault.vaultPubkey)
+          : null,
+    [mockOwner, chain.positions],
   );
 
   // The connected user's position value in a vault (0 if none) — the sort key
@@ -470,7 +536,7 @@ function VaultsInner() {
   // Memoized so the sort useMemos below have a stable dependency.
   const positionValue = useCallback(
     (vault: Vault): number => {
-      const p = positionFor(vault.vaultPubkey);
+      const p = positionFor(vault);
       return p
         ? positionPnl(p, vault, vaultReserveRatio(vault) ?? p.entryRefPrice)
             .currentValue
@@ -528,40 +594,21 @@ function VaultsInner() {
 
   const q = query.trim().toLowerCase();
 
-  // Grouped: filter + sort each group's vaults, then sort and keep the groups
-  // that still have a match.
-  const groups = useMemo(() => {
+  // The live and mock sections are arranged separately so sorting never
+  // interleaves mock rows among live ones.
+  const [live, mock] = useMemo(() => {
     const { key, direction } = effective;
-    return [...VAULT_FX_GROUPS]
-      .sort((a, b) =>
-        cmpMetric(groupSortValue(a, key), groupSortValue(b, key), direction),
-      )
-      .map((group) => ({
-        group,
-        vaults: group.vaults
-          .filter((entry) => matchesQuery(q, group, entry) && matchesPin(entry))
-          .sort((a, b) =>
-            cmpMetric(
-              vaultSortValue(a, key),
-              vaultSortValue(b, key),
-              direction,
-            ),
-          ),
-      }))
-      .filter((g) => g.vaults.length > 0);
-  }, [effective, q, matchesPin, groupSortValue, vaultSortValue]);
-
-  // Ungrouped: one flat, filtered + sorted list of every vault.
-  const flatVaults = useMemo(() => {
-    const { key, direction } = effective;
-    return ALL_WITH_GROUP.filter(
-      ({ group, entry }) => matchesQuery(q, group, entry) && matchesPin(entry),
-    )
-      .map(({ entry }) => entry)
-      .sort((a, b) =>
-        cmpMetric(vaultSortValue(a, key), vaultSortValue(b, key), direction),
-      );
-  }, [effective, q, matchesPin, vaultSortValue]);
+    const keep = (group: FxPairGroup, entry: GroupedVault) =>
+      matchesQuery(q, group, entry) && matchesPin(entry);
+    const cmpGroup = (a: FxPairGroup, b: FxPairGroup) =>
+      cmpMetric(groupSortValue(a, key), groupSortValue(b, key), direction);
+    const cmpVault = (a: GroupedVault, b: GroupedVault) =>
+      cmpMetric(vaultSortValue(a, key), vaultSortValue(b, key), direction);
+    return [
+      arrangeSection(liveGroups, keep, cmpGroup, cmpVault),
+      arrangeSection(MOCK_GROUPS, keep, cmpGroup, cmpVault),
+    ] as const;
+  }, [liveGroups, effective, q, matchesPin, groupSortValue, vaultSortValue]);
 
   const onManage = (market: VaultMarket, vault: Vault) =>
     setDialog({ market, vault });
@@ -586,14 +633,64 @@ function VaultsInner() {
   // vault (across groups or the flat list), like /currencies' f/t lone-result
   // picks. The dialog itself shows Connect / Deposit / Manage as appropriate.
   useAppEvent("vaultsManageOnlyResult", () => {
-    const entries = groupByPair ? groups.flatMap((g) => g.vaults) : flatVaults;
+    const entries = [...live.flat, ...mock.flat];
     const only = entries.length === 1 ? entries[0] : null;
     if (only) setDialog({ market: only.market, vault: only.vault });
   });
 
   // Columns: Pair, Leader, Your Position, Manage, APR, TVL, 24h Vol.
   const colSpan = 7;
-  const hasResults = groupByPair ? groups.length > 0 : flatVaults.length > 0;
+
+  // One section's rows: FX headings over their vaults when grouped, else the
+  // flat list.
+  const sectionRows = (section: typeof live) =>
+    groupByPair
+      ? section.groups.flatMap(({ group, vaults }) => [
+          <FxGroupHeading
+            key={`h-${group.key}`}
+            group={group}
+            colSpan={colSpan}
+          />,
+          ...vaults.map((entry, i) => (
+            <VaultRow
+              key={entry.vault.vaultPubkey}
+              entry={entry}
+              grouped
+              connected={connected}
+              position={positionFor(entry.vault)}
+              pinned={isPinnedVault(entry)}
+              rowIndex={i}
+              groupSize={vaults.length}
+              onManage={onManage}
+              onPin={togglePinVault}
+            />
+          )),
+        ])
+      : section.flat.map((entry, i) => (
+          <VaultRow
+            key={entry.vault.vaultPubkey}
+            entry={entry}
+            grouped={false}
+            connected={connected}
+            position={positionFor(entry.vault)}
+            pinned={isPinnedVault(entry)}
+            rowIndex={i}
+            groupSize={section.flat.length}
+            onManage={onManage}
+            onPin={togglePinVault}
+          />
+        ));
+
+  // What the live section says when it has no rows: still loading, the chain
+  // unreachable, nothing on-chain at all, or vaults the filters hide.
+  const liveEmptyText =
+    chain.status === "loading"
+      ? "Loading vaults…"
+      : chain.status === "error"
+        ? "Couldn't read vaults from the chain. Retrying…"
+        : liveGroups.length === 0
+          ? "No vaults on-chain yet"
+          : "No vaults match";
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-3 pb-16">
@@ -631,8 +728,7 @@ function VaultsInner() {
             </label>
           </div>
           <p className="text-muted-fg text-xs">
-            <span className="font-medium text-amber-400">Preview.</span> All
-            figures shown are mock data.
+            Read live from the chain. TVL uses indicative token prices.
           </p>
         </div>
         {/* Active URL pin (?base=&quote=&leader=) shown as removable chips on
@@ -711,53 +807,15 @@ function VaultsInner() {
               </tr>
             </thead>
             <tbody>
-              {!hasResults ? (
-                <tr>
-                  <td
-                    colSpan={colSpan}
-                    className="px-3 py-6 text-center text-muted-fg text-sm"
-                  >
-                    No vaults match
-                  </td>
-                </tr>
-              ) : groupByPair ? (
-                groups.flatMap(({ group, vaults }) => [
-                  <FxGroupHeading
-                    key={`h-${group.key}`}
-                    group={group}
-                    colSpan={colSpan}
-                  />,
-                  ...vaults.map((entry, i) => (
-                    <VaultRow
-                      key={entry.vault.vaultPubkey}
-                      entry={entry}
-                      grouped
-                      connected={connected}
-                      position={positionFor(entry.vault.vaultPubkey)}
-                      pinned={isPinnedVault(entry)}
-                      rowIndex={i}
-                      groupSize={vaults.length}
-                      onManage={onManage}
-                      onPin={togglePinVault}
-                    />
-                  )),
-                ])
+              {live.flat.length > 0 ? (
+                sectionRows(live)
               ) : (
-                flatVaults.map((entry, i) => (
-                  <VaultRow
-                    key={entry.vault.vaultPubkey}
-                    entry={entry}
-                    grouped={false}
-                    connected={connected}
-                    position={positionFor(entry.vault.vaultPubkey)}
-                    pinned={isPinnedVault(entry)}
-                    rowIndex={i}
-                    groupSize={flatVaults.length}
-                    onManage={onManage}
-                    onPin={togglePinVault}
-                  />
-                ))
+                <MessageRow colSpan={colSpan} text={liveEmptyText} />
               )}
+              {mock.flat.length > 0 && [
+                <MockSectionHeading key="mock-heading" colSpan={colSpan} />,
+                ...sectionRows(mock),
+              ]}
             </tbody>
           </table>
         </div>
@@ -766,7 +824,7 @@ function VaultsInner() {
         <VaultActionDialog
           market={dialog.market}
           vault={dialog.vault}
-          position={positionFor(dialog.vault.vaultPubkey)}
+          position={positionFor(dialog.vault)}
           open={true}
           onOpenChange={(open) => {
             if (!open) setDialog(null);

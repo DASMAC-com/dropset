@@ -5,7 +5,9 @@
  * The reusable on-chain read primitive behind the order-book viz. A market
  * is a single account, so a live poll is one `getAccountInfo`:
  * {@link fetchDropsetMarketView} fetches it (plus the current slot, for
- * expiry filtering) and returns `{ header, bids, asks }`.
+ * expiry filtering) and returns `{ header, bids, asks }`. The same bytes also
+ * carry the vaults themselves — reserves, shares and deposit flags — which
+ * {@link decodeDropsetVaults} reads for a vaults UI.
  *
  * The account is stored as `Slab<MarketHeader, Vault>`: an 8-byte Anchor
  * discriminator, a fixed `MarketHeader`, a `u32` slab length, alignment
@@ -40,6 +42,7 @@
 import {
   assertAccountExists,
   fetchEncodedAccount,
+  getAddressDecoder,
   type Address,
   type FetchAccountConfig,
   type ReadonlyUint8Array,
@@ -48,7 +51,12 @@ import {
 import { type SlotTime, slotTime, type WallTime, wallTime } from './clock';
 import { getMarketHeaderDecoder, getMarketHeaderSize, type MarketHeader } from './generated';
 import { initSimulator } from './simulate';
-import { resting_book as wasmRestingBook, type RestingBook } from './wasm/dropset_interface';
+import {
+  resting_book as wasmRestingBook,
+  vaults as wasmVaults,
+  type RestingBook,
+  type VaultSlab,
+} from './wasm/dropset_interface';
 import type { PriceBits } from './price';
 
 /**
@@ -141,6 +149,84 @@ export function decodeDropsetMarketView(
     // The WASM `RestingBook` owns linear memory; the getters above copy out
     // of it, so it can be released as soon as both sides are marshalled.
     book.free();
+  }
+}
+
+/**
+ * One active vault, as the slab stores it. `index` is the sector index the
+ * `deposit` / `withdraw` instructions take as `vaultIdx`; `seq` is the
+ * vault's stable per-market number, which survives a rotation where the
+ * index may not.
+ */
+export type VaultSummary = {
+  index: number;
+  seq: bigint;
+  leader: Address;
+  baseAtoms: bigint;
+  quoteAtoms: bigint;
+  totalShares: bigint;
+  leaderShares: bigint;
+  /** Floor on the leader's share of the vault, in ppm. */
+  minLeaderSharePpm: number;
+  frozen: boolean;
+  /** The leader has opted in to outside depositors. */
+  allowOutsideDepositors: boolean;
+  /** The admin has approved outside deposits. */
+  outsideDepositsApproved: boolean;
+};
+
+/**
+ * Decode a market account's full data buffer (including the 8-byte
+ * discriminator) into its active vaults, in active-list order.
+ *
+ * Read through the same WASM binding as the book, for the same reason: the
+ * slab layout lives only in `layout.rs`. A deposit is open to an outside
+ * depositor only when the vault is unfrozen **and** both deposit flags are
+ * set — the program checks all three.
+ *
+ * {@link initSimulator} must have resolved first. Throws
+ * {@link MarketLayoutError} when the bytes aren't a well-formed market slab
+ * or the active list is corrupt.
+ */
+export function decodeDropsetVaults(data: ReadonlyUint8Array): VaultSummary[] {
+  let slab: VaultSlab;
+  try {
+    slab = wasmVaults(data as Uint8Array);
+  } catch (e) {
+    throw new MarketLayoutError(e instanceof Error ? e.message : String(e));
+  }
+  try {
+    const indices = slab.indices;
+    const seqNumbers = slab.seq_numbers;
+    const leaders = slab.leaders;
+    const baseAtoms = slab.base_atoms;
+    const quoteAtoms = slab.quote_atoms;
+    const totalShares = slab.total_shares;
+    const leaderShares = slab.leader_shares;
+    const minLeaderShares = slab.min_leader_shares;
+    const frozen = slab.frozen;
+    const allow = slab.allow_outside_depositors;
+    const approved = slab.outside_deposits_approved;
+    const addressDecoder = getAddressDecoder();
+    const out: VaultSummary[] = new Array(indices.length);
+    for (let i = 0; i < indices.length; i++) {
+      out[i] = {
+        index: indices[i]!,
+        seq: seqNumbers[i]!,
+        leader: addressDecoder.decode(leaders.subarray(32 * i, 32 * i + 32)),
+        baseAtoms: baseAtoms[i]!,
+        quoteAtoms: quoteAtoms[i]!,
+        totalShares: totalShares[i]!,
+        leaderShares: leaderShares[i]!,
+        minLeaderSharePpm: minLeaderShares[i]!,
+        frozen: frozen[i] !== 0,
+        allowOutsideDepositors: allow[i] !== 0,
+        outsideDepositsApproved: approved[i] !== 0,
+      };
+    }
+    return out;
+  } finally {
+    slab.free();
   }
 }
 
