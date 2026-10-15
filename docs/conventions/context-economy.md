@@ -249,11 +249,11 @@ and for a seat session:
 ```
 
 **Only Bedrock bands verify in dollars**: deduplicated transcript
-pricing matched the Bedrock bill within 7% from 2026-09-12 on. A seat
-session's check is the self-consistency of its token profile. Two
-sessions on one issue append two lines; a consumer sums them and says
-so. The fleet cost reconciliation tool is the consumer, checking both
-against the bill.
+pricing tracks the Bedrock bill, about 8% under it — the classifier's
+share — per "Reconciling against the bill" below. A seat session's
+check is the self-consistency of its token profile. Two sessions on
+one issue append two lines; a consumer sums them and says so.
+`fleet_cost.py reconcile` is the bill-side check on the measured lines.
 
 ### The ratified cost posture
 

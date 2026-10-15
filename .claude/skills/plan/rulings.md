@@ -162,10 +162,10 @@ the document's state sections.
    document's operator-actions list by hand.
 
 1. **Cost telemetry is reconciled against the bill.**
-   Session-reported costs are projections; the fleet cost tool
-   reconciles them per complete UTC day against Cost Explorer
-   with a drift flag, attributed per issue, seat sessions listed
-   separately.
+   Session-reported costs are projections;
+   `.claude/tools/fleet_cost.py` reconciles them per complete
+   UTC day against Cost Explorer with a drift flag, attributed
+   per issue, seat sessions listed separately.
 
 1. **A chore is specified in Linear.** Every chore gets a spec
    issue; a skill kicks the session off and it reads the Linear
