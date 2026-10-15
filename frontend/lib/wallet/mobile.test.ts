@@ -70,6 +70,7 @@ describe("registerMobileWalletAdapter", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("registers once on Android, however often it is called", async () => {

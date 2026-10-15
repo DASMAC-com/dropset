@@ -52,9 +52,9 @@ export function WalletButton() {
   // Desktop: which wallet row has its phone-handoff QR expanded, if any. One
   // at a time, and collapsed again whenever the picker closes so it reopens
   // as a plain wallet list.
-  const [handoffKey, setHandoffKey] = useState<string | null>(null);
+  const [handoffId, setHandoffId] = useState<string | null>(null);
   useEffect(() => {
-    if (!modal.isOpen) setHandoffKey(null);
+    if (!modal.isOpen) setHandoffId(null);
   }, [modal.isOpen]);
 
   // MetaMask's relay SDK initializes asynchronously (dynamic import +
@@ -107,21 +107,32 @@ export function WalletButton() {
   // On desktop, a wallet with an in-app browser link gets a small toggle
   // beside its row that expands that wallet's QR underneath, so someone else
   // can scan the page into their phone. The toggle is a sibling, not a
-  // child: the row is itself a button or a link, which can't nest one.
+  // child: the row is itself a button or a link, which can't nest one. A row
+  // with no link gets an empty slot of the toggle's width instead, so every
+  // desktop row is the same width and the badges line up down the list.
   const renderEntry = (w: PickerWallet) => {
     const row = renderRow(w);
-    if (mobile || !w.browse) return row;
-    const open = handoffKey === w.id;
+    if (mobile) return row;
+    if (!w.browse) {
+      return (
+        <div key={w.id} className="flex items-center gap-1">
+          {row}
+          <span aria-hidden className="w-[30px] shrink-0" />
+        </div>
+      );
+    }
+    const open = handoffId === w.id;
+    const hint = `Show a QR code to open this page in ${w.name} on a phone`;
     return (
       <div key={w.id}>
         <div className="flex items-center gap-1">
           {row}
           <button
             type="button"
-            onClick={() => setHandoffKey(open ? null : w.id)}
+            onClick={() => setHandoffId(open ? null : w.id)}
             aria-expanded={open}
-            aria-label={`Show a QR code to open this page in ${w.name} on a phone`}
-            title={`On a phone? Scan to open in ${w.name}`}
+            aria-label={hint}
+            title={hint}
             className={`shrink-0 rounded-md p-2 transition-colors hover:bg-muted hover:text-foreground ${
               open ? "bg-muted text-foreground" : "text-muted-fg"
             }`}
