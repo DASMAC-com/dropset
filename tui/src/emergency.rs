@@ -228,11 +228,22 @@ pub fn plan(
     let mut first_refusal = None;
     for config in market::roster(cluster) {
         let symbol = config.base.symbol;
-        let leader = market::leader(repo_root, config, operator_leader)?.pubkey();
-        let (base, quote) = market::pair_mints(repo_root, config)?;
+        // One market's failure to resolve or read must not hold the prompt
+        // back from every other market's stop: it is a line in the plan, and
+        // the job tries again. With nothing else to send, the first such
+        // reason is what the refusal names (a missing `--leader` included).
+        let resolved = market::leader(repo_root, config, operator_leader)
+            .and_then(|leader| Ok((leader.pubkey(), market::pair_mints(repo_root, config)?)));
+        let (leader, (base, quote)) = match resolved {
+            Ok(resolved) => resolved,
+            Err(e) => {
+                let reason = format!("{symbol}: {e:#}");
+                lines.push(reason.clone());
+                first_refusal.get_or_insert(reason);
+                continue;
+            }
+        };
         let address = chain::market_pda(cluster, &base, &quote);
-        // One market's failed read must not hold the prompt back from every
-        // other market's stop: it is a line in the plan, and the job re-reads.
         let found = match leader_seats(client, cluster, &address, &leader) {
             Ok(Some(found)) => found,
             Ok(None) => {
@@ -472,8 +483,8 @@ mod tests {
 
     #[test]
     fn kill_refuses_a_vault_whose_quote_authority_is_another_key() {
-        // The program would reject the leader's signature; refusing here says
-        // which key would work instead of a bare on-chain error.
+        // The program would reject the leader's signature; refusing here
+        // points at close instead of a bare on-chain error.
         let me = Pubkey::new_unique();
         let delegated = SectorSeat {
             quote_authority: Pubkey::new_unique(),

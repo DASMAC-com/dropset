@@ -67,6 +67,6 @@ re-running one is always safe.
 
 Launch as above, press `K`, read the plan, and press Esc. Nothing is signed.
 Do the same for close; **never type `yes` in a rehearsal** — close is
-permanent. Drain on a live vault opens no prompt: its red log line
-refusing an active vault is the expected answer. Rehearse before every
+permanent. With every vault still live, drain opens no prompt: its red log
+line refusing an active vault is the expected answer. Rehearse before every
 live demo.
