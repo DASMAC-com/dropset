@@ -2040,13 +2040,7 @@ fn quote_market_inner(
         skew_bps,
         last_skew_bps: ctx.last_skew_bps,
         mid,
-        // An adopted reference carries the skew it was stamped with, which
-        // this run never saw; inventory has only moved by fills since, so
-        // this tick's skew is the closest estimate of it.
-        last_mid: ctx.last_set_mid.or_else(|| {
-            ctx.last_set_price
-                .map(|stamped| skew::remove_skew(stamped, skew_bps))
-        }),
+        last_mid: seed_adopted_mid(ctx, skew_bps),
         imbalance_entered: cold.entered,
         operator_recenter: ctx.recenter_requested,
     };
@@ -2090,6 +2084,22 @@ fn quote_market_inner(
         );
     }
     Ok(())
+}
+
+/// The mid the last stamp was taken at, seeding it for an adopted reference.
+///
+/// An adopted reference carries the skew it was stamped with, which this run
+/// never saw. On the first tick after a restart inventory has not moved, so
+/// un-skewing at that tick's skew recovers the mid — and the estimate is
+/// written once, not re-derived, because a later tick's skew has moved with
+/// the book's own fills and would turn a skew shift back into a walk.
+fn seed_adopted_mid(ctx: &mut Context, skew_bps: f64) -> Option<f64> {
+    if ctx.last_set_mid.is_none() {
+        ctx.last_set_mid = ctx
+            .last_set_price
+            .map(|stamped| skew::remove_skew(stamped, skew_bps));
+    }
+    ctx.last_set_mid
 }
 
 /// Stand this market down for `reason`: take the resting book dark, and zero
@@ -2483,6 +2493,23 @@ mod tests {
         assert_eq!(ctx.last_set_price, None);
         assert_eq!(ctx.profile_kind, ProfileKind::Unknown);
         assert!(standard_arm_due(&ctx, &cfg, Instant::now()));
+    }
+
+    /// The adopted reference's mid is estimated once, at the first tick's
+    /// skew, and then held: a later skew shift from the book's own fills must
+    /// not move the baseline the passive walk measures from.
+    #[test]
+    fn an_adopted_mid_is_seeded_once_and_held() {
+        let dir = std::env::temp_dir().join("dropset-passive-seed");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut ctx = offline_ctx(&dir);
+        assert_eq!(seed_adopted_mid(&mut ctx, 0.0), None, "nothing stamped");
+
+        ctx.last_set_price = Some(skew::apply_skew(0.73, 10.0));
+        let seeded = seed_adopted_mid(&mut ctx, 10.0).expect("seeded");
+        assert!((seeded - 0.73).abs() < 1e-12);
+        // Skew moves 20 bps with the mid unchanged: the baseline holds.
+        assert_eq!(seed_adopted_mid(&mut ctx, -10.0), Some(seeded));
     }
 
     /// A pinned market has no observation to validate, so the check must not

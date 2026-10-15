@@ -893,8 +893,8 @@ nothing has to be rebuilt.
 is the design, so no age bound applies, at startup or on the no-feed
 pause. The startup check asks instead whether price is still inside the
 inner re-center levels. The bot adopts the live on-chain reference as
-its last stamp (un-skewed at the current inventory skew to recover its
-mid), and the re-center trigger (§3) stamps only if price has walked
+its last stamp (un-skewed once, at the first tick's inventory skew, to
+recover its mid), and the re-center trigger (§3) stamps only if price has walked
 past the inner levels; inside them, a restart writes nothing. The armed
 profile is adopted the same way when it matches the configured ladder,
 since re-writing it would re-center. Every kill-switch halt (store

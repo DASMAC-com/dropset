@@ -94,7 +94,8 @@ pub struct ColdDecision {
 /// reshape: a profile write would itself re-center through the flush it arms,
 /// on every tick the shape differed. So passive quotes the standard ladder
 /// through it. Halts keep their action in both modes. `was_in_band` says the
-/// band has already been answered — set by a landed stamp, cleared once the
+/// band has already been answered — set by any landed stamp (a re-center for
+/// any reason re-skews the book against the imbalance), cleared once the
 /// imbalance leaves the band — so a vault that stays imbalanced re-centers
 /// once rather than every tick.
 pub fn cold_decision(action: Action, mode: StrategyMode, was_in_band: bool) -> ColdDecision {
