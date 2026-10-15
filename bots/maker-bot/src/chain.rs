@@ -205,6 +205,7 @@ pub fn read_vault(
                 // that fails it, so this must not drift from the matcher.
                 reference_valid: reference.is_matchable(),
                 frozen: vault.frozen != 0,
+                profile: vault.profile,
             });
         }
     }

@@ -1382,6 +1382,7 @@ mod tests {
             reference_price: 1.14,
             reference_valid,
             frozen,
+            profile: bytemuck::Zeroable::zeroed(),
         }
     }
 

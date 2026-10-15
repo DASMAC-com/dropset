@@ -18,6 +18,7 @@ use crate::model::ladder::Side;
 use crate::quote_state::QuoteState;
 use crate::telemetry::Telemetry;
 use dropset_fair_value::{FairValueConfig, FairValueEngine};
+use dropset_sdk::layout::LiquidityProfile;
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -52,6 +53,10 @@ pub struct VaultSnapshot {
     /// invalidation — so there is nothing for `model::invalidate` to kill.
     pub reference_valid: bool,
     pub frozen: bool,
+    /// The ladder armed on-chain. Read so a passive restart can adopt a
+    /// matching profile instead of re-writing it, since the write would arm a
+    /// flush and re-center every flipped level.
+    pub profile: LiquidityProfile,
 }
 
 /// Which ladder shape the bot believes is armed on-chain. Tracked so the cold
@@ -153,6 +158,12 @@ pub struct Context {
     pub reference_invalidated: bool,
     /// The profile shape the bot believes is armed.
     pub profile_kind: ProfileKind,
+    /// Passive only: whether last tick's inventory imbalance sat in the
+    /// reshape band, so entering it is detected as an edge and re-centers once.
+    pub imbalance_in_band: bool,
+    /// Passive only: an operator re-center is pending (`--recenter`), cleared
+    /// by the stamp that honours it.
+    pub recenter_requested: bool,
     /// Inventory `(base_atoms, quote_atoms)` at the previous tick — used by
     /// the fallback fill detection (a change the bot didn't cause is a fill)
     /// only when the event subscription is absent.
@@ -230,6 +241,8 @@ impl Context {
             last_set_at,
             last_profile_at: now,
             profile_kind: ProfileKind::Unknown,
+            imbalance_in_band: false,
+            recenter_requested: false,
             last_inventory: None,
             position: None,
             telemetry,

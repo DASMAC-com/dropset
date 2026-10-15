@@ -557,12 +557,17 @@ Relevant protocol facts (see **architecture.md → LiquidityProfile** and
 - Each `Level` is:
 
   ```text
-  { price_offset: Ppm32, size_bps: u16,
+  { price_offset: Ppm32, flip_spread_ppm: u32, size_bps: u16,
     expiry_offset_secs: u32, expiry_offset_slots: u32 }
   ```
 
 - `price_offset` is ppm from `reference_price.price` — bids subtract,
   asks add.
+
+- `flip_spread_ppm` is ppm off the level's own price: once filled, the
+  proceeds rest on the opposite side that far back toward the reference.
+  `0` does not flip. Every flush re-centers, zeroing the flipped
+  allowances.
 
 - `size_bps` is fraction of the **inventory leg**: `quote_atoms` for
   bids (USDC), `base_atoms` for asks (the token).
@@ -597,6 +602,51 @@ Properties:
 - Effective spread widens by level beyond the top: cumulative VWAP
   half-spread to clear the whole \$100 leg is
   `(40·50 + 30·100 + 20·200 + 10·500)/100 = 140 bps`.
+
+### The shape differs by mode
+
+The bot runs in one of two modes (`--passive` selects the second; the
+demo runs active):
+
+- **Active** re-quotes continuously, on the ladder above. Its levels do
+  not flip (`flip_spread_ppm = 0`), since a bot that re-stamps every
+  30 s re-centers faster than a flip could earn.
+- **Passive** sets a flipping book and leaves it. Its ladder must be a
+  **bell**: largest at the center, shrinking outward.
+
+The reason is that a flipped level keeps its size and only changes
+direction. Walk price through a grow-outward ladder (small and tight,
+large and wide) and the big outer rungs end up flipped next to the
+market while the small inner ones sit far from it: the shape inverts on
+every move. A bell survives the flip, because the size near the market
+stays largest whichever way the levels have turned. Uniform sizing is
+the no-view alternative.
+
+The passive default is eight rungs at 5 bps spacing:
+
+| Level | `price_offset` | `size_bps` | `flip_spread_ppm` |
+| ----- | -------------- | ---------- | ----------------- |
+| 1     | 500 ppm        | 2000       | 200 (2 bps)       |
+| 2     | 1_000 ppm      | 1800       | 200               |
+| 3     | 1_500 ppm      | 1500       | 200               |
+| 4     | 2_000 ppm      | 1300       | 200               |
+| 5     | 2_500 ppm      | 1100       | 200               |
+| 6     | 3_000 ppm      | 900        | 200               |
+| 7     | 3_500 ppm      | 800        | 200               |
+| 8     | 4_000 ppm      | 600        | 200               |
+
+**Flip-spread guidance:** keep a level's flip spread at most its
+spacing to the next rung in (for L1, its distance to the reference).
+After a fill the market is `spacing + flip_spread` wide, and a wider
+flip quotes the flipped side through the rung inside it. The flip
+spread is the maker's whole earn per round trip (there is no maker
+rebate; the taker fee is protocol revenue), so 2 bps is the economics
+of a 1 bp concentrated-liquidity pool.
+
+This is guidance, not a protocol check: staying a good LP is the
+maker's call. The bot logs a warning at startup for a passive ladder
+that grows outward, has a non-flipping level, or flips past its spacing,
+and quotes the ladder anyway.
 
 ### Justification (Avellaneda–Stoikov)
 
@@ -695,6 +745,25 @@ next take. Call when **any** of:
 
 Expected: **1–3 calls per day** per market.
 
+### Passive cadence: trigger-only re-centering
+
+Both writes above arm a flush, and a flush re-centers every flipped
+level. So in passive mode either write **is** a re-center, and passive
+mode has **no heartbeat** on either path. One `SetReferencePrice`
+re-centers when **any** of:
+
+1. Price has walked beyond the inner K levels on one side
+   (`recenter_inner_levels`, default 2: past 10 bps on the default
+   ladder).
+1. Per-side imbalance enters the reshape band (> 30%). Passive answers
+   this with one skewed re-center as the imbalance enters the band, not
+   a reshape.
+1. The operator asks for one (`--recenter` on restart).
+
+A calm market gets zero stamps, so the leader can walk away for good.
+`SetLiquidityProfile` fires only when the armed shape is not the
+configured one: on first deploy, after a halt, or after a ladder change.
+
 ### Per-level expiry — two offsets
 
 Expiry is **dual-domain** (architecture.md → **Expiry — the dual gate**):
@@ -704,12 +773,20 @@ expressed in slots at the ~0.4 s/slot pace mainnet then ran at; the
 nominal lives are unchanged, but they now hold **through a halt**, where
 slots stop ticking and wall time does not.
 
-| Level | secs  | wall-clock | slots    |
-| ----- | ----- | ---------- | -------- |
-| 1     | 36    | ~36 s      | 2        |
-| 2     | 120   | ~2 min     | 30       |
-| 3     | 480   | ~8 min     | 300      |
-| 4     | 2_880 | ~48 min    | no bound |
+| Level | secs  | wall-clock | slots    | passive (wall / slots) |
+| ----- | ----- | ---------- | -------- | ---------------------- |
+| 1     | 36    | ~36 s      | 2        | no bound / no bound    |
+| 2     | 120   | ~2 min     | 30       | no bound / no bound    |
+| 3     | 480   | ~8 min     | 300      | no bound / no bound    |
+| 4     | 2_880 | ~48 min    | no bound | no bound / no bound    |
+| 5-8   | —     | —          | —        | no bound / no bound    |
+
+**Passive expiry.** The wall offset is at whatever horizon the leader
+chooses, up to effectively unbounded (the default), and the slot offset
+is unbounded. One deadline pair per level governs both its sides; there
+is no second expiry for a flipped side. Passive is passive wherever it
+sits. The heartbeat invariant below is active-only, since passive has
+no heartbeat to outlive.
 
 Top-of-book expires fast so a dead bot doesn't bleed against stale
 prices; deep levels live longer because they rarely fill and we don't
@@ -809,6 +886,17 @@ nothing has to be rebuilt.
 | Startup, last live quote inside the bound         | No; go straight to quoting                         |
 | Running, no usable feed for longer than the bound | Yes, instead of holding the reference indefinitely |
 | Running, kill-switch halt                         | Yes, **first** — ahead of zeroing the profile      |
+
+**Passive mode suspends the staleness kills.** The reference being old
+is the design, so no age bound applies, at startup or on the no-feed
+pause. The startup check asks instead whether price is still inside the
+covered range. The bot adopts the live on-chain reference as its last
+stamp, and the re-center trigger (§3) stamps only if price has walked
+past the inner levels; inside them, a restart writes nothing. The armed
+profile is adopted the same way when it matches the configured ladder,
+since re-writing it would re-center. The running kill switches (peg,
+anchor breach, TVL floor, critical imbalance) keep their halt, kill
+stamp first.
 
 On a halt the kill stamp goes **first**, ahead of zeroing the profile.
 Standing down takes two instructions and the bot's cycle budget is one,

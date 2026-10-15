@@ -7,7 +7,7 @@
 //! balance. Inventory drift is handled by skewing the reference price instead
 //! (see [`super::skew`]), and only a large imbalance reshapes the ladder.
 
-use crate::config::LadderLevel;
+use crate::config::{LadderLevel, StrategyMode};
 use anyhow::Result;
 use bytemuck::Zeroable;
 use dropset_sdk::layout::{LiquidityProfile, BPS, N_LEVELS};
@@ -28,12 +28,64 @@ pub fn build_profile(ladder: &[LadderLevel]) -> LiquidityProfile {
     for (i, lvl) in ladder.iter().take(N_LEVELS).enumerate() {
         for side in [&mut profile.bids, &mut profile.asks] {
             side[i].price_offset = lvl.offset_ppm.into();
+            side[i].flip_spread_ppm = lvl.flip_spread_ppm.into();
             side[i].size_bps = lvl.size_bps.into();
             side[i].expiry_offset_secs = lvl.expiry_offset_secs.get().into();
             side[i].expiry_offset_slots = lvl.expiry_offset_slots.get().into();
         }
     }
     profile
+}
+
+/// Shape guidance for a ladder under `mode` (§2), as one human-readable line
+/// per problem — empty when the ladder is sound. Guidance, not a gate: the
+/// protocol checks none of this, and staying a good LP is the maker's call, so
+/// the bot logs these at startup and quotes the ladder it was given.
+///
+/// Active mode has nothing to say. A passive ladder is checked for the three
+/// ways it can quote against itself:
+///
+/// * **Grow-outward sizes.** A flipped level keeps its size and only changes
+///   direction, so a rung larger than the one inside it ends up next to the
+///   market after a move — the shape inverts. A passive ladder should be a
+///   bell (or uniform, the no-view option).
+/// * **No flip spread.** A passive level that does not flip sits filled and
+///   dark until the next re-center, which may never come.
+/// * **Flip spread past the spacing.** After a fill the market is
+///   `spacing + flip_spread` wide; a flip spread past the gap to the next rung
+///   in quotes the flipped side through that rung (and the innermost rung's
+///   past the reference).
+pub fn shape_warnings(ladder: &[LadderLevel], mode: StrategyMode) -> Vec<String> {
+    if mode == StrategyMode::Active {
+        return Vec::new();
+    }
+    let mut warnings = Vec::new();
+    let mut inner_offset = 0;
+    for (i, lvl) in ladder.iter().enumerate() {
+        let rung = i + 1;
+        if i > 0 && lvl.size_bps > ladder[i - 1].size_bps {
+            warnings.push(format!(
+                "L{rung} ({} bps) is larger than L{i} ({} bps): a grow-outward passive \
+                 ladder inverts after every move — use a bell or uniform shape",
+                lvl.size_bps,
+                ladder[i - 1].size_bps
+            ));
+        }
+        let spacing = lvl.offset_ppm.saturating_sub(inner_offset);
+        if lvl.flip_spread_ppm == 0 {
+            warnings.push(format!(
+                "L{rung} has no flip spread: once filled it stays dark until a re-center"
+            ));
+        } else if lvl.flip_spread_ppm > spacing {
+            warnings.push(format!(
+                "L{rung} flip spread {} ppm exceeds its {spacing} ppm spacing: the flipped \
+                 side would quote through the next level in",
+                lvl.flip_spread_ppm
+            ));
+        }
+        inner_offset = lvl.offset_ppm;
+    }
+    warnings
 }
 
 /// Zero one side of a profile — the §4 "freeze the heavy side" reshape, where
@@ -113,7 +165,68 @@ pub fn checked_bytes(profile: &LiquidityProfile) -> Result<[u8; PROFILE_BYTES]> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::DEFAULT_LADDER;
+    use crate::config::{DEFAULT_LADDER, DEFAULT_PASSIVE_LADDER};
+
+    #[test]
+    fn carries_each_levels_flip_spread_onto_both_sides() {
+        let p = build_profile(&DEFAULT_PASSIVE_LADDER);
+        for (i, lvl) in DEFAULT_PASSIVE_LADDER.iter().enumerate() {
+            assert_eq!(p.bids[i].flip_spread_ppm.get(), lvl.flip_spread_ppm);
+            assert_eq!(p.asks[i].flip_spread_ppm.get(), lvl.flip_spread_ppm);
+        }
+        // The active ladder does not flip.
+        let active = build_profile(&DEFAULT_LADDER);
+        assert!(active.bids.iter().all(|l| l.flip_spread_ppm.get() == 0));
+    }
+
+    #[test]
+    fn the_shipped_ladders_raise_no_shape_warnings() {
+        assert!(shape_warnings(&DEFAULT_PASSIVE_LADDER, StrategyMode::Passive).is_empty());
+        // Active is never checked, though its flip-less levels would fail the
+        // passive rule.
+        assert!(shape_warnings(&DEFAULT_LADDER, StrategyMode::Active).is_empty());
+        assert!(!shape_warnings(&DEFAULT_LADDER, StrategyMode::Passive).is_empty());
+    }
+
+    #[test]
+    fn a_grow_outward_passive_ladder_is_warned() {
+        let ladder: Vec<_> = DEFAULT_LADDER
+            .iter()
+            .map(|l| LadderLevel {
+                flip_spread_ppm: 1_000,
+                ..*l
+            })
+            .collect();
+        // DEFAULT_LADDER's sizes shrink outward, so as given it passes...
+        let warnings = shape_warnings(&ladder, StrategyMode::Passive);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        // ...and with its sizes reversed onto the same offsets it grows
+        // outward at every step.
+        let mut grown = ladder.clone();
+        grown.reverse();
+        for (lvl, src) in grown.iter_mut().zip(&ladder) {
+            lvl.offset_ppm = src.offset_ppm;
+        }
+        let warnings = shape_warnings(&grown, StrategyMode::Passive);
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert!(warnings.iter().all(|w| w.contains("grow-outward")));
+    }
+
+    #[test]
+    fn a_passive_flip_spread_must_be_set_and_inside_the_spacing() {
+        let mut ladder = DEFAULT_PASSIVE_LADDER.to_vec();
+        // L1's spacing is its distance to the reference.
+        ladder[0].flip_spread_ppm = ladder[0].offset_ppm + 1;
+        ladder[1].flip_spread_ppm = 0;
+        let warnings = shape_warnings(&ladder, StrategyMode::Passive);
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(warnings[0].starts_with("L1 flip spread"));
+        assert!(warnings[1].starts_with("L2 has no flip spread"));
+        // Exactly the spacing is allowed.
+        ladder[0].flip_spread_ppm = ladder[0].offset_ppm;
+        ladder[1].flip_spread_ppm = ladder[1].offset_ppm - ladder[0].offset_ppm;
+        assert!(shape_warnings(&ladder, StrategyMode::Passive).is_empty());
+    }
 
     #[test]
     fn builds_symmetric_profile_from_default_ladder() {

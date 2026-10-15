@@ -22,7 +22,7 @@
 
 use crate::chain;
 use crate::config::{
-    published_product, BotConfig, MarketConfig, USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
+    published_product, BotConfig, MarketConfig, StrategyMode, USDC_COINGECKO_ID, USDC_KRAKEN_PAIR,
 };
 use crate::context::{Context, ProfileKind, VaultSnapshot};
 use crate::fair_price::{FairPriceRow, FairPriceSnapshot, MAX_PUBLISHED_FAIR_AGE};
@@ -1603,11 +1603,51 @@ fn invalidate_stale_quotes(markets: &mut [Context], cfg: &BotConfig) {
         if vault.frozen {
             continue;
         }
+        if cfg.strategy.mode == StrategyMode::Passive {
+            adopt_passive_book(ctx, cfg, &vault);
+            continue;
+        }
         let age = ctx.quote_state.age(now);
         if let Err(e) = invalidate_resting_book(ctx, cfg, &vault, age, InvalidateReason::Startup) {
             eprintln!("[{}][invalidate] kill stamp failed: {e}", ctx.cfg.symbol);
         }
     }
+}
+
+/// The passive startup check, in place of the stale-kill: a passive book's
+/// reference being old is the design, so the question is only whether price is
+/// still inside the range it covers.
+///
+/// Adopting the live on-chain reference as the last stamp hands that question
+/// to the first tick's re-center trigger, which stamps only if price has walked
+/// past the inner levels — so a restart inside the range writes nothing. The
+/// armed profile is adopted the same way when it is the configured one, since
+/// re-writing it would arm a flush and re-center every flipped level. A dark
+/// reference (never stamped, or killed) is not adopted, so the first tick
+/// establishes one.
+fn adopt_passive_book(ctx: &mut Context, cfg: &BotConfig, vault: &VaultSnapshot) {
+    if vault.reference_valid {
+        ctx.last_set_price = Some(vault.reference_price);
+    }
+    let configured = ladder::build_profile(&cfg.strategy.ladder);
+    let adopted = ladder::to_bytes(&configured) == ladder::to_bytes(&vault.profile);
+    if adopted {
+        ctx.profile_kind = ProfileKind::Standard;
+    }
+    println!(
+        "[{}][passive] startup: reference {}, profile {}",
+        ctx.cfg.symbol,
+        if vault.reference_valid {
+            format!("{:.8} adopted", vault.reference_price)
+        } else {
+            "dark — the first tick stamps one".to_string()
+        },
+        if adopted {
+            "adopted"
+        } else {
+            "differs — the first tick re-arms it"
+        }
+    );
 }
 
 /// Send the kill stamp **unconditionally** and note it. The gated entry point is
@@ -1877,6 +1917,12 @@ fn quote_market_inner(
         // Ages off `last_set_at` (monotonic) rather than the persisted record:
         // within a run the bot knows exactly when it last stamped, and an
         // `Instant` can't be walked backwards by a clock adjustment.
+        //
+        // Not in passive mode, where the last stamp may be days old by design:
+        // an age bound would kill a healthy passive book on any feed blip.
+        if cfg.strategy.mode == StrategyMode::Passive {
+            return Ok(());
+        }
         invalidate_resting_book(
             ctx,
             cfg,
@@ -1953,8 +1999,22 @@ fn quote_market_inner(
         .reference(reference, skew_bps)
         .outcome(Outcome::Decided(action));
 
+    // Passive mode answers an imbalance by re-centering — the skewed stamp
+    // below, once, as the imbalance enters the band — rather than by
+    // reshaping, which would itself re-center through the flush it arms. The
+    // halts keep their actions in both modes.
+    let passive = cfg.strategy.mode == StrategyMode::Passive;
+    let in_band = matches!(action, Action::Reshape(_) | Action::FreezeSide(_));
+    if !in_band {
+        ctx.imbalance_in_band = false;
+    }
+    let cold = match action {
+        Action::Reshape(_) | Action::FreezeSide(_) if passive => Action::Quote,
+        other => other,
+    };
+
     // Cold path first — at most one ix per cycle.
-    match action {
+    match cold {
         Action::Halt(reason) => return stand_down(ctx, cfg, &vault, now, ts, reason),
         Action::FreezeSide(side) => {
             if ctx.profile_kind != ProfileKind::FrozenSide(side) {
@@ -1985,6 +2045,8 @@ fn quote_market_inner(
         since_last_set: now.duration_since(ctx.last_set_at),
         skew_bps,
         last_skew_bps: ctx.last_skew_bps,
+        imbalance_entered: in_band && !ctx.imbalance_in_band,
+        operator_recenter: ctx.recenter_requested,
     };
     if triggers::should_set_reference(&trig, &cfg.strategy) {
         let slot = chain::current_slot(&ctx.client)?;
@@ -2002,6 +2064,9 @@ fn quote_market_inner(
         ctx.last_set_price = Some(reference);
         ctx.last_skew_bps = skew_bps;
         ctx.last_set_at = now;
+        // Consumed only on a landed stamp, so a failed send retries next tick.
+        ctx.imbalance_in_band = in_band;
+        ctx.recenter_requested = false;
         // A live reference re-arms whatever the kill stamp took dark, so the
         // episode is over.
         ctx.reference_invalidated = false;
@@ -2152,6 +2217,7 @@ fn profile_heartbeat_due(ctx: &Context, cfg: &BotConfig, now: Instant) -> bool {
     triggers::should_set_profile_heartbeat(
         now.duration_since(ctx.last_profile_at),
         cfg.strategy.profile_heartbeat,
+        cfg.strategy.mode,
     )
 }
 
@@ -2337,6 +2403,7 @@ mod tests {
             reference_price: 1.14,
             reference_valid,
             frozen: false,
+            profile: bytemuck::Zeroable::zeroed(),
         }
     }
 
@@ -2385,6 +2452,34 @@ mod tests {
         )
         .expect("a fresh quote returns before any send"));
         assert!(!ctx.reference_invalidated, "no episode was opened");
+    }
+
+    /// A passive restart adopts what is live rather than re-writing it: the
+    /// on-chain reference becomes the last stamp (so only the re-center trigger
+    /// can fire a stamp), and the profile is adopted only when it is the
+    /// configured ladder — otherwise the first tick re-arms it.
+    #[test]
+    fn a_passive_restart_adopts_the_live_book() {
+        let dir = std::env::temp_dir().join("dropset-passive-adopt");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut cfg = BotConfig::default();
+        cfg.strategy = cfg.strategy.into_passive();
+
+        let mut ctx = offline_ctx(&dir);
+        let mut vault = snapshot(true);
+        vault.profile = ladder::build_profile(&cfg.strategy.ladder);
+        adopt_passive_book(&mut ctx, &cfg, &vault);
+        assert_eq!(ctx.last_set_price, Some(vault.reference_price));
+        assert_eq!(ctx.profile_kind, ProfileKind::Standard);
+        assert!(!standard_arm_due(&ctx, &cfg, Instant::now()));
+
+        // A dark reference and a foreign profile are both left for the first
+        // tick to establish.
+        let mut ctx = offline_ctx(&dir);
+        adopt_passive_book(&mut ctx, &cfg, &snapshot(false));
+        assert_eq!(ctx.last_set_price, None);
+        assert_eq!(ctx.profile_kind, ProfileKind::Unknown);
+        assert!(standard_arm_due(&ctx, &cfg, Instant::now()));
     }
 
     /// A pinned market has no observation to validate, so the check must not
