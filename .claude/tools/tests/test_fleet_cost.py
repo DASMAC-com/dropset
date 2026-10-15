@@ -10,12 +10,15 @@ an unmarked worktree session.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
+import io
 import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import fleet_cost as fc
 import session_metrics as sm
@@ -50,20 +53,28 @@ class WalkTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.projects = root / "home" / "projects"
+        self.home = root / "home"
+        self.projects = self.home / "projects"
         base = root / "repo"
         markers = base / sm.SUBSTRATE_DIR
         markers.mkdir(parents=True)
         (markers / "1651").write_text("bedrock\n")
         (markers / "eng-1073").write_text("bedrock\n")
+        (markers / "1700").write_text("anthropic\n")
+        (markers / "1701").write_text("garbage\n")
         worker = f"{base}/.claude/worktrees/1651"
         legacy = f"{base}/.claude/worktrees/eng-1073"
         unmarked = f"{base}/.claude/worktrees/1999"
 
         bedrock = self.projects / "bedrock"
         (bedrock / "s1" / "subagents").mkdir(parents=True)
-        # One message streamed as three content-block lines.
-        self.write(bedrock / "s1.jsonl", [record("msg_a", worker)] * 3)
+        # One message streamed as three content-block lines, then one on a
+        # model with no rate.
+        self.write(
+            bedrock / "s1.jsonl",
+            [record("msg_a", worker)] * 3
+            + [record("msg_fable", worker, model="claude-fable-5-1")],
+        )
         self.write(
             bedrock / "s1" / "subagents" / "agent.jsonl", [record("msg_sub", worker)]
         )
@@ -80,6 +91,12 @@ class WalkTest(unittest.TestCase):
         )
         self.write(self.projects / "seat" / "s3.jsonl", [record("msg_c", str(base))])
         self.write(self.projects / "loose" / "s4.jsonl", [record("msg_d", unmarked)])
+        seat_worktree = f"{base}/.claude/worktrees/1700"
+        garbled = f"{base}/.claude/worktrees/1701"
+        self.write(
+            self.projects / "seat" / "s5.jsonl", [record("msg_e", seat_worktree)]
+        )
+        self.write(self.projects / "loose" / "s6.jsonl", [record("msg_f", garbled)])
         self.meter = fc.walk(self.projects, [DAY])
 
     def tearDown(self) -> None:
@@ -101,11 +118,39 @@ class WalkTest(unittest.TestCase):
 
     def test_substrates_are_split_and_unmarked_is_not_priced_in(self) -> None:
         summary = fc.day_summary(self.meter, DAY)
-        self.assertEqual(summary["substrates"]["seat"]["sessions"], 1)
-        self.assertEqual(summary["substrates"]["unattributed"]["sessions"], 1)
+        # The base-repo session and the `anthropic`-marked worktree.
+        self.assertEqual(summary["substrates"]["seat"]["sessions"], 2)
+        # The unmarked worktree and the one whose marker is unrecognized.
+        self.assertEqual(summary["substrates"]["unattributed"]["sessions"], 2)
         services = summary["bedrock_by_service"]
         self.assertEqual(list(services), ["Claude Opus 5.5 (Amazon Bedrock Edition)"])
         self.assertAlmostEqual(sum(services.values()), 3 * ONE_MESSAGE)
+
+    def test_an_unpriced_model_is_named_and_kept_out_of_the_services(self) -> None:
+        summary = fc.day_summary(self.meter, DAY)
+        self.assertEqual(summary["unpriced"], ["claude-fable-5-1"])
+        self.assertIn("claude-fable-5-1", summary["bedrock_tokens"])
+        rec = fc.reconcile_day(
+            summary,
+            {
+                "Claude Opus 5.5 (Amazon Bedrock Edition)": 3 * ONE_MESSAGE / 0.918,
+                "Claude Fable 5.1 (Amazon Bedrock Edition)": 4.0,
+            },
+            0.15,
+        )
+        self.assertAlmostEqual(rec["billed_unpriced"], 4.0)
+        self.assertEqual(rec["billed_background"], 0.0)
+        self.assertFalse(rec["flagged"])
+
+    def test_main_meters_a_past_day_and_refuses_today(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(fc.sm, "claude_home", return_value=self.home):
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.assertEqual(fc.main(["meter", "--day", DAY]), 0)
+                self.assertEqual(fc.main(["meter", "--day", "2999-01-01"]), 2)
+        self.assertIn(f"{DAY} (UTC)", out.getvalue())
+        self.assertIn("costliest issues: ENG-1651", out.getvalue())
+        self.assertIn("not a complete UTC day", err.getvalue())
 
     def test_issue_attribution_reads_both_tag_spellings(self) -> None:
         costs = dict(fc.issue_costs(self.meter, [DAY]))
@@ -130,6 +175,9 @@ class UnitTest(unittest.TestCase):
             "claude-haiku-4-5-20251001": "Claude Haiku 4.5 (Amazon Bedrock Edition)",
             "us.anthropic.claude-haiku-4-5-20251001-v1:0": (
                 "Claude Haiku 4.5 (Amazon Bedrock Edition)"
+            ),
+            "global.anthropic.claude-opus-5-5-v1:0": (
+                "Claude Opus 5.5 (Amazon Bedrock Edition)"
             ),
         }
         for model, service in cases.items():
@@ -176,7 +224,7 @@ class UnitTest(unittest.TestCase):
 
     def test_reconcile_flags_after_the_classifier_overhead(self) -> None:
         service = "Claude Opus 5.5 (Amazon Bedrock Edition)"
-        summary = {"bedrock_by_service": {service: 91.8}}
+        summary = {"bedrock_by_service": {service: 91.8}, "unpriced": []}
         on_baseline = fc.reconcile_day(summary, {service: 100.0, "Other": 1.0}, 0.15)
         self.assertFalse(on_baseline["flagged"])
         self.assertAlmostEqual(on_baseline["drift"], 0.0)
@@ -186,9 +234,35 @@ class UnitTest(unittest.TestCase):
         no_bill = fc.reconcile_day(summary, {}, 0.15)
         self.assertTrue(no_bill["flagged"])
 
-    def test_resolve_days_defaults_and_refuses_today(self) -> None:
+    def test_reconcile_flags_a_large_background_share(self) -> None:
+        # Every session misclassified: the session model's own service lands as
+        # background, which must not read as a clean day.
+        summary = {"bedrock_by_service": {}, "unpriced": []}
+        rec = fc.reconcile_day(
+            summary, {"Claude Opus 5.5 (Amazon Bedrock Edition)": 190.0}, 0.15
+        )
+        self.assertAlmostEqual(rec["billed_background"], 190.0)
+        self.assertTrue(rec["flagged"])
+
+    def test_spend_cap_verdicts(self) -> None:
+        cases = [
+            ((192.44, 190.88), "ok", False),
+            ((100.0, 130.0), "cap LEAKING", True),
+            ((130.0, 100.0), "trips EARLY", True),
+            ((5.0, 0.0), "ok", False),
+        ]
+        for (estimate, gross), verdict, flagged in cases:
+            cap = fc.spend_cap_day(estimate, gross, 0.15)
+            self.assertEqual(cap["verdict"], verdict, (estimate, gross))
+            self.assertEqual(cap["flagged"], flagged, (estimate, gross))
+
+    def test_resolve_days_defaults_canonicalizes_and_refuses_today(self) -> None:
         today = datetime.date(2026, 10, 15)
         self.assertEqual(fc.resolve_days(None, today), ["2026-10-13", "2026-10-14"])
+        self.assertEqual(
+            fc.resolve_days(["2026-10-13", "2026-10-12", "2026-10-13"], today),
+            ["2026-10-12", "2026-10-13"],
+        )
         with self.assertRaises(ValueError):
             fc.resolve_days(["2026-10-15"], today)
 

@@ -31,10 +31,15 @@ in UTC, so every day boundary here is a UTC one, on both sides:
 **Substrate classes.** ``bedrock`` and ``seat`` come from a marker. A worktree
 session with **no** marker (or an unrecognized one) is ``unattributed`` and is
 never priced into the Bedrock total — that is the share the bill comparison
-cannot account for, reported rather than guessed. A base-repo session is a seat
-verb (``plan``, ``housekeeping``, ``explore``) and reads as ``seat``; the one
-blind spot is ``plan bedrock``, which writes no marker and so surfaces only as
-bill-side drift.
+cannot account for, reported rather than guessed. ``explore`` lands here by
+design: it runs in a worktree and writes no marker, so its seat spend shows as
+unattributed. A base-repo session (``plan``, ``housekeeping``) reads as
+``seat``.
+
+Two blind spots, both visible only as bill-side drift: ``plan bedrock`` is a
+base-repo launch that writes no marker; and a marker is one file per worktree
+tag, overwritten by each launch, so relaunching a worktree on the other
+substrate reclassifies that worktree's EARLIER sessions too.
 
 **The bill is matched per service, not by a fixed list of names.** Cost
 Explorer files each model as its own Marketplace service, ``Claude <Family>
@@ -44,17 +49,22 @@ false negative. Each new model adds a service, so the read takes every service
 carrying the edition suffix and maps transcript models onto them by name. A
 billed service with no transcript tokens that day is **background** traffic
 (harness calls on another model, which no transcript records) and is reported
-as its own line. The auto-mode permission classifier is the exception: it runs
-on the session's own model, so it bills inside the matched service, and is
-allowed for by the measured :data:`CLASSIFIER_OVERHEAD` before drift is judged.
+as its own line, and flagged past ``--tolerance`` of the day's gross — a
+background share that large means the meter missed a session model's own spend.
+A model that carried tokens but has no rate bills as **unpriced**, not as
+background. The auto-mode permission classifier runs on the session's own
+model, so it bills inside the matched service, and is allowed for by the
+measured :data:`CLASSIFIER_OVERHEAD` before drift is judged.
 
 **D-1 is provisional.** Cost Explorer lands charges hours to a day late, so the
-default window is D-2 (settled) and D-1 (marked provisional). Today's UTC date
-is refused.
+default window is D-2 (settled) and D-1 (marked provisional, and never counted
+toward the exit status, since a partly billed day reads as drift). Today's UTC
+date is refused.
 
 Stdout is a ranked summary (about ten lines a day); ``--json`` emits the full
-breakdown. Exit codes: 0 reported with no drift flag; 1 at least one day
-flagged; 2 a usage error or an AWS call that failed.
+breakdown. Exit codes: 0 reported with no settled day flagged; 1 at least one
+settled day flagged; 2 a usage error, or an AWS call that failed or returned a
+shape this tool does not recognize.
 
 Usage::
 
@@ -157,7 +167,7 @@ def service_for_model(model: str) -> str | None:
     unrecorded sentinel).
     """
     match = re.fullmatch(
-        r"(?:[a-z]{2}\.)?(?:anthropic\.)?claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?"
+        r"(?:[a-z]+\.)?(?:anthropic\.)?claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?"
         r"(?:-\d{8})?(?:-v\d+:\d+)?",
         model,
     )
@@ -349,7 +359,18 @@ def aws(args: list[str]) -> dict:
     if proc.returncode != 0:
         tail = proc.stderr.strip().splitlines()[-1:] or ["no stderr"]
         raise AwsError(f"aws {args[0]} {args[1]} exited {proc.returncode}: {tail[0]}")
-    return json.loads(proc.stdout or "{}")
+    try:
+        return json.loads(proc.stdout or "{}")
+    except ValueError as exc:
+        raise AwsError(f"aws {args[0]} {args[1]}: output is not JSON") from exc
+
+
+def _shape_error(what: str, exc: Exception) -> AwsError:
+    """A response missing a field this tool reads. Raised as `AwsError` so it
+    exits 2 rather than escaping as a traceback, whose status 1 would read as a
+    flagged day.
+    """
+    return AwsError(f"unexpected {what} response: {type(exc).__name__}: {exc}")
 
 
 def next_day(day: str) -> str:
@@ -388,18 +409,27 @@ def fetch_billed(days: list[str]) -> dict[str, dict[str, float]]:
             "Type=DIMENSION,Key=SERVICE",
         ]
     )
-    billed = parse_billed(response)
+    try:
+        billed = parse_billed(response)
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise _shape_error("Cost Explorer", exc) from exc
     return {day: billed.get(day, {}) for day in days}
 
 
 def fetch_estimate(days: list[str]) -> dict[str, float]:
     """The spend-cap alarms' estimate per UTC day, at the deployed rates."""
     stacks = aws(["cloudformation", "describe-stacks", "--stack-name", SPEND_CAP_STACK])
-    params = {
-        p["ParameterKey"]: float(p["ParameterValue"])
-        for p in stacks["Stacks"][0]["Parameters"]
-        if p["ParameterKey"] in SPEND_CAP_METRICS.values()
-    }
+    try:
+        params = {
+            p["ParameterKey"]: float(p["ParameterValue"])
+            for p in stacks["Stacks"][0]["Parameters"]
+            if p["ParameterKey"] in SPEND_CAP_METRICS.values()
+        }
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise _shape_error(SPEND_CAP_STACK, exc) from exc
+    missing = sorted(set(SPEND_CAP_METRICS.values()) - set(params))
+    if missing:
+        raise AwsError(f"{SPEND_CAP_STACK} carries no {', '.join(missing)}")
     queries = [
         {
             "Id": f"m{i}",
@@ -423,7 +453,10 @@ def fetch_estimate(days: list[str]) -> dict[str, float]:
             json.dumps(queries),
         ]
     )
-    return estimate_from(response, params, days)
+    try:
+        return estimate_from(response, params, days)
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise _shape_error("CloudWatch", exc) from exc
 
 
 def estimate_from(
@@ -459,23 +492,55 @@ def drift(metered: float, billed: float) -> float | None:
 
 def reconcile_day(summary: dict, billed: dict[str, float], tolerance: float) -> dict:
     """Metered against billed for one day. Services the transcripts priced are
-    compared; billed services with no metered share are background.
+    compared; a service whose model carried tokens but has no rate is
+    unpriced; any other billed service is background.
     """
     metered_services = summary["bedrock_by_service"]
-    matched = sum(v for k, v in billed.items() if k in metered_services)
-    background = sum(v for k, v in billed.items() if k not in metered_services)
+    unpriced_services = {service_for_model(m) for m in summary["unpriced"]}
+    matched = unpriced = background = 0.0
+    for service, dollars in billed.items():
+        if service in metered_services:
+            matched += dollars
+        elif service in unpriced_services:
+            unpriced += dollars
+        else:
+            background += dollars
     metered = sum(metered_services.values())
     expected = metered / (1 - CLASSIFIER_OVERHEAD)
     d = drift(expected, matched)
-    flagged = (d is not None and abs(d) > tolerance) or (matched == 0 and metered > 0)
+    gross = matched + unpriced + background
+    flagged = (
+        (d is not None and abs(d) > tolerance)
+        or (matched == 0 and metered > 0)
+        or (gross > 0 and background / gross > tolerance)
+    )
     return {
         "metered": metered,
         "expected": expected,
         "billed_matched": matched,
+        "billed_unpriced": unpriced,
         "billed_background": background,
         "raw_drift": drift(metered, matched),
         "drift": d,
         "flagged": flagged,
+    }
+
+
+def spend_cap_day(estimate: float, gross: float, tolerance: float) -> dict:
+    """The cap's estimate against the billed gross for one day. Billed past the
+    estimate by more than ``tolerance`` means the cap leaks; the estimate past
+    billed by more than it means the cap trips early.
+    """
+    d = drift(estimate, gross)
+    leaking = gross > estimate * (1 + tolerance)
+    early = d is not None and d > tolerance
+    verdict = "cap LEAKING" if leaking else "trips EARLY" if early else "ok"
+    return {
+        "estimate": estimate,
+        "billed": gross,
+        "drift": d,
+        "verdict": verdict,
+        "flagged": leaking or early,
     }
 
 
@@ -506,14 +571,22 @@ def render_meter(summary: dict, label: str) -> list[str]:
     return lines
 
 
+def flag_mark(flagged: bool, provisional: bool) -> str:
+    if provisional:
+        return "  (provisional, not counted)"
+    return "  FLAGGED" if flagged else ""
+
+
 def resolve_days(given: list[str] | None, today: datetime.date) -> list[str]:
     if not given:
         return [(today - datetime.timedelta(days=n)).isoformat() for n in (2, 1)]
-    days = sorted(set(given))
-    for day in days:
-        if datetime.date.fromisoformat(day) >= today:
-            raise ValueError(f"{day} is not a complete UTC day yet")
-    return days
+    # Canonicalized, because `fromisoformat` also accepts the basic `20261013`
+    # form on newer Pythons, which would then match no transcript timestamp.
+    dates = sorted({datetime.date.fromisoformat(day) for day in given})
+    for date in dates:
+        if date >= today:
+            raise ValueError(f"{date} is not a complete UTC day yet")
+    return [date.isoformat() for date in dates]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -555,15 +628,17 @@ def main(argv: list[str] | None = None) -> int:
                 if args.command == "reconcile":
                     rec = reconcile_day(summary, billed[day], args.tolerance)
                     summary["reconcile"] = rec
-                    flagged |= rec["flagged"]
+                    flagged |= rec["flagged"] and day != provisional
+                    unpriced = rec["billed_unpriced"]
                     lines.append(
-                        "  bill          {} matched, {} background; drift {} "
+                        "  bill          {} matched, {}{} background; drift {} "
                         "after classifier, {} raw{}".format(
                             money(rec["billed_matched"]),
+                            f"{money(unpriced)} unpriced, " if unpriced else "",
                             money(rec["billed_background"]),
                             pct(rec["drift"]),
                             pct(rec["raw_drift"]),
-                            "  FLAGGED" if rec["flagged"] else "",
+                            flag_mark(rec["flagged"], day == provisional),
                         )
                     )
                 report["days"][day] = summary
@@ -576,22 +651,16 @@ def main(argv: list[str] | None = None) -> int:
             estimate = fetch_estimate(days)
             billed = fetch_billed(days)
             for day in days:
-                gross = sum(billed[day].values())
-                d = drift(estimate[day], gross)
-                leaking = gross > estimate[day] * (1 + args.tolerance)
-                early = d is not None and d > args.tolerance
-                flagged |= leaking or early
-                verdict = "cap LEAKING" if leaking else "trips EARLY" if early else "ok"
-                lines.append(
-                    f"{label(day)} (UTC)  estimate {money(estimate[day])}  "
-                    f"billed {money(gross)}  {pct(d)}  {verdict}"
+                cap = spend_cap_day(
+                    estimate[day], sum(billed[day].values()), args.tolerance
                 )
-                report["days"][day] = {
-                    "estimate": estimate[day],
-                    "billed": gross,
-                    "drift": d,
-                    "verdict": verdict,
-                }
+                flagged |= cap["flagged"] and day != provisional
+                lines.append(
+                    f"{label(day)} (UTC)  estimate {money(cap['estimate'])}  "
+                    f"billed {money(cap['billed'])}  {pct(cap['drift'])}  "
+                    f"{cap['verdict']}{flag_mark(False, day == provisional)}"
+                )
+                report["days"][day] = cap
     except AwsError as exc:
         print(f"fleet_cost: {exc}", file=sys.stderr)
         return 2

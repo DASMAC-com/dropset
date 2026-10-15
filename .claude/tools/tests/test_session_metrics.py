@@ -1039,6 +1039,9 @@ class SubstrateRendering(unittest.TestCase):
         self.assertIn("Cost breakdown", md)
 
     def test_a_projected_rate_is_named_as_unverified(self):
+        # Needs a still-projected row; move both projected-path tests to another
+        # if this one is ever verified.
+        self.assertIsNone(sm.RATES_BY_MODEL["claude-haiku-5-5"].verified)
         agg = sm.SessionAggregator()
         agg.ingest_main_line(
             assistant('{"output_tokens":1000}', "", "claude-haiku-5-5")

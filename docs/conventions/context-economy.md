@@ -217,8 +217,10 @@ not re-litigated per session:
   The ~60% token saving does not pay for the redo risk on a PR. Compact
   PRs and the levers below are the ratified levers instead.
 - **The Bedrock auto-mode classifier's ~7% overhead is accepted burn.**
-  It buys the substrate routing and is not a target for trimming.
-  (Re-measured on Opus 5.5 at about 8% of the bill; see below.)
+  It buys the substrate routing and is not a target for trimming. The
+  ~7% was September's Sonnet spend as a share of Opus spend; on Opus 5.5
+  the same overhead measures about 8% of the bill (see below), and the
+  ruling covers it unchanged.
 
 ### Reconciling against the bill
 
@@ -228,7 +230,8 @@ report and what AWS charges, over **complete UTC days** on both sides
 `reconcile` prices every transcript, sub-agents included, once per
 message id, against the billed gross; `spend-cap` checks the daily
 spend cap's CloudWatch estimate against the same bill. What it encodes,
-all measured 2026-10-14 over the 10-08, 10-09 and 10-13 fleet days:
+all measured 2026-10-14/15 over the Opus 5.5 fleet days 10-08 to 10-13
+(`reconcile` on 10-08, 10-09 and 10-13; `spend-cap` adds 10-12):
 
 - **The bill is one Marketplace service per model**, named
   `Claude <Family> <version> (Amazon Bedrock Edition)`, under record type
@@ -239,19 +242,25 @@ all measured 2026-10-14 over the 10-08, 10-09 and 10-13 fleet days:
 - **The Opus 5.5 rates are exact**: billed quantity per usage type times
   `RATES_BY_MODEL` reproduced the 10-13 bill to the cent.
 - **Transcripts run about 8% under the bill** (8.3, 8.1, 8.3 percent),
-  and the gap is the classifier: almost entirely fresh input and output,
-  while both cache tiers match within about 2%. Since the Opus 5.5 swap
+  and the gap is the classifier: mostly fresh input and output (about
+  85% of the missing dollars), while both cache tiers match within about
+  2%. Since the Opus 5.5 swap
   it bills inside the session model's own service, not as a separate
   Sonnet line, so the September "Sonnet at 7% of Opus" multiplier is
   retired. The tool carries the measured share as `CLASSIFIER_OVERHEAD`
   and flags drift **after** it, past 15%.
 - **The spend-cap estimate tracks the bill within about 1%**, slightly
-  above it (it prices every model at Opus rates), so the cap neither
-  leaks nor trips early on an Opus 5.5 fleet.
+  above it (it prices every model at Opus rates), so on an Opus 5.5
+  fleet the cap never leaks and trips at most about 1% early. Its
+  `TokenRate*` stack parameters mirror the Opus 5.5 row of
+  `RATES_BY_MODEL` and must move with it.
 - **Substrate comes from the launch marker.** A worktree session with no
-  marker is reported as `unattributed` and kept out of the total. The
-  blind spot is `plan bedrock`, a base-repo launch that writes no marker
-  and so surfaces only as bill-side drift.
+  marker is reported as `unattributed` and kept out of the total —
+  `explore` lands there by design, since it writes none. Two blind spots
+  surface only as bill-side drift: `plan bedrock`, a base-repo launch
+  that writes no marker; and a relaunch on the other substrate, which
+  overwrites the worktree's one marker and so reclassifies its earlier
+  sessions too.
 
 ## Resident size has a hard cap
 
