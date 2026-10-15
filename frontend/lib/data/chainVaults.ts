@@ -8,8 +8,9 @@ import {
   type VaultSummary,
 } from "@dropset/sdk";
 import type { SolanaClientRuntime } from "@solana/client";
-import { address } from "@solana/kit";
+import { type Address, address } from "@solana/kit";
 import { resolveEclobRoute } from "../eclob/route";
+import { GET_MULTIPLE_ACCOUNTS_BATCH_SIZE } from "../env";
 import { stablecoinDecimals, stablecoinMint } from "./currencies";
 import type { VaultPosition } from "./positions";
 import {
@@ -18,7 +19,6 @@ import {
   VAULT_PAIR_ROSTER,
   type Vault,
   type VaultMarket,
-  vaultValuePerShare,
 } from "./vaults";
 
 // The live half of the vaults page: every vault on every roster market, read
@@ -31,7 +31,7 @@ import {
 
 type Rpc = SolanaClientRuntime["rpc"];
 
-// Value-per-share and the entry VPS are Q32.32 on-chain.
+// The entry VPS is Q32.32 on-chain.
 const Q32 = 2 ** 32;
 
 const atomsToUnits = (atoms: bigint, decimals: number): number =>
@@ -40,8 +40,20 @@ const atomsToUnits = (atoms: bigint, decimals: number): number =>
 // A live vault's id. There is no vault account — a vault is a sector of its
 // market — so the row key and the position lookup use (market, seq), the
 // pair `seq` is documented to identify.
-export const chainVaultId = (market: string, seq: bigint): string =>
-  `${market}:${seq}`;
+export function chainVaultId(market: string, seq: bigint): string {
+  return `${market}:${seq}`;
+}
+
+// The value-per-share index the program stamps as a depositor's entry VPS:
+// `L / total_shares` with `L = isqrt(base_atoms · quote_atoms)` (the deposit
+// handler), so it is in raw atoms and shares, not in quote. Computed here the
+// same way so `vault.vps / position.entryVps` compares like with like; the
+// units cancel in that ratio, which is all a consumer reads.
+const chainVps = (summary: VaultSummary): number =>
+  summary.totalShares > 0n
+    ? Math.sqrt(Number(summary.baseAtoms) * Number(summary.quoteAtoms)) /
+      Number(summary.totalShares)
+    : 0;
 
 // One decoded vault in the UI's shape. TVL is valued at the same placeholder
 // token prices as the dialog's USD readouts (tokenUsdPrice), and the 24h
@@ -57,7 +69,7 @@ export function chainVault(
     summary.quoteAtoms,
     stablecoinDecimals(quote),
   );
-  const vault: Vault = {
+  return {
     chain: { index: summary.index, seq: summary.seq },
     vaultPubkey: chainVaultId(market, summary.seq),
     leader: summary.leader,
@@ -69,22 +81,19 @@ export function chainVault(
     quoteReserve,
     totalShares: Number(summary.totalShares),
     leaderShares: Number(summary.leaderShares),
-    vps: 0,
+    vps: chainVps(summary),
     minLeaderSharePpm: summary.minLeaderSharePpm,
     frozen: summary.frozen,
     allowOutsideDepositors: summary.allowOutsideDepositors,
     outsideDepositsApproved: summary.outsideDepositsApproved,
     name: null,
   };
-  // Marked at the reserve ratio, the same stand-in the PnL readouts use for
-  // the live reference price, in the units `chainPosition` gives entryVps.
-  vault.vps = vaultValuePerShare(vault) ?? 0;
-  return vault;
 }
 
 // A VaultDepositor account in the UI's position shape. Quote-denominated
 // figures are quote atoms on-chain; the entry reference price is an
-// atoms ratio, rescaled to whole tokens by the decimals gap.
+// atoms ratio, rescaled to whole tokens by the decimals gap; the entry VPS
+// stays in the raw units `chainVps` uses.
 export function chainPosition(
   header: VaultDepositorHeader,
   vaultId: string,
@@ -102,7 +111,7 @@ export function chainPosition(
     entryRefPrice:
       decodePrice(header.entryRefPrice) *
       10 ** (stablecoinDecimals(base) - quoteDecimals),
-    entryVps: quoteUnits(header.entryVps) / Q32,
+    entryVps: Number(header.entryVps) / Q32,
     openedAtSlot: Number(header.openedAt),
     realizedPnl: quoteUnits(header.realizedPnl),
     realizedYield: quoteUnits(header.realizedYield),
@@ -110,13 +119,25 @@ export function chainPosition(
   };
 }
 
+// The market's own base/quote for a roster pair `(a, b)`, from the take side
+// the route resolved for an a→b trade: selling `a` means `a` is the base
+// (see useOrderBook).
+export function marketOrientation(
+  side: "buy" | "sell",
+  a: string,
+  b: string,
+): { base: string; quote: string } {
+  return side === "sell" ? { base: a, quote: b } : { base: b, quote: a };
+}
+
 // Every roster market that exists on this cluster, with its live vaults.
-// Markets resolve in parallel; a pair with no market is simply absent. The
-// route already carries the market's raw bytes, so each market costs its
-// resolve and nothing more.
+// Markets resolve in parallel; a pair with no market is simply absent, and so
+// is one whose read fails this round, so one bad market never blanks the
+// rest. The route already carries the market's raw bytes, so each market
+// costs its resolve and nothing more. Throws only when every market fails.
 export async function fetchChainVaultMarkets(rpc: Rpc): Promise<VaultMarket[]> {
   await initSimulator();
-  const markets = await Promise.all(
+  const results = await Promise.allSettled(
     VAULT_PAIR_ROSTER.map(async ({ base: a, quote: b }) => {
       const route = await resolveEclobRoute(
         rpc,
@@ -124,21 +145,28 @@ export async function fetchChainVaultMarkets(rpc: Rpc): Promise<VaultMarket[]> {
         stablecoinMint(b),
       );
       if (!route) return null;
-      // sell ⇒ the market's base is the first mint passed (see useOrderBook).
-      const base = route.side === "sell" ? a : b;
-      const quote = route.side === "sell" ? b : a;
+      const { base, quote } = marketOrientation(route.side, a, b);
       const vaults = decodeDropsetVaults(route.marketData).map((s) =>
         chainVault(s, route.market, base, quote),
       );
       return resolveVaultMarket(route.market, base, quote, 0, vaults);
     }),
   );
-  return markets.filter((m): m is VaultMarket => m !== null);
+  if (results.every((r) => r.status === "rejected")) {
+    throw new AggregateError(
+      results.map((r) => (r.status === "rejected" ? r.reason : null)),
+      "every vault market read failed",
+    );
+  }
+  return results.flatMap((r) =>
+    r.status === "fulfilled" && r.value ? [r.value] : [],
+  );
 }
 
-// The owner's positions across the live vaults, keyed by chainVaultId. One
-// batched account read: the PDAs are derived locally, and a closed or never
-// opened position is just a missing account.
+// The owner's positions across the live vaults, keyed by chainVaultId. The
+// PDAs are derived locally and read in batches of the provider's
+// getMultipleAccounts cap (as useAllBalances does); a closed or never opened
+// position is just a missing account.
 export async function fetchChainPositions(
   rpc: Rpc,
   owner: string,
@@ -166,12 +194,20 @@ export async function fetchChainPositions(
     ),
   );
   const out = new Map<string, VaultPosition>();
-  if (targets.length === 0) return out;
-  const accounts = await fetchAllMaybeVaultDepositorHeader(
-    rpc,
-    targets.map((t) => t.pda),
-    { commitment: "confirmed" },
-  );
+  const size = GET_MULTIPLE_ACCOUNTS_BATCH_SIZE || targets.length;
+  const chunks: Address[][] = [];
+  for (let i = 0; i < targets.length; i += size) {
+    chunks.push(targets.slice(i, i + size).map((t) => t.pda));
+  }
+  const accounts = (
+    await Promise.all(
+      chunks.map((chunk) =>
+        fetchAllMaybeVaultDepositorHeader(rpc, chunk, {
+          commitment: "confirmed",
+        }),
+      ),
+    )
+  ).flat();
   accounts.forEach((account, i) => {
     const t = targets[i];
     if (!t || !account.exists || account.data.shares === 0n) return;

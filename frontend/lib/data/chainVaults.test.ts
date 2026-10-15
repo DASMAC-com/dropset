@@ -5,7 +5,13 @@ import {
 } from "@dropset/sdk";
 import { address } from "@solana/kit";
 import { describe, expect, it } from "vitest";
-import { chainPosition, chainVault, chainVaultId } from "./chainVaults";
+import {
+  chainPosition,
+  chainVault,
+  chainVaultId,
+  marketOrientation,
+} from "./chainVaults";
+import { positionPnl } from "./pnl";
 import { depositClosedReason } from "./vaults";
 
 const MARKET = "11111111111111111111111111111111";
@@ -37,8 +43,45 @@ describe("chainVault", () => {
     expect(v.chain).toEqual({ index: 2, seq: 5n });
     expect(v.vaultPubkey).toBe(chainVaultId(MARKET, 5n));
     expect(v.volume24h).toBeNull();
-    // Value per share at the reserve ratio: (1000 · 1.27 + 1270) / 2e6.
-    expect(v.vps).toBeCloseTo(2_540 / 2_000_000, 12);
+    // The program's index: isqrt(base_atoms · quote_atoms) / total_shares.
+    expect(v.vps).toBeCloseTo(Math.sqrt(1e12 * 1.27e9) / 2_000_000, 6);
+  });
+
+  it("compares a position's entry VPS like with like", () => {
+    // A depositor who entered at exactly this vault state has earned nothing,
+    // so the program's own entry VPS for that state must read back as 0%.
+    const s = summary();
+    const lAtoms = BigInt(Math.floor(Math.sqrt(1e12 * 1.27e9)));
+    const entryVps = (lAtoms << 32n) / s.totalShares;
+    const v = chainVault(s, MARKET, "TGBP", "USDC");
+    const p = chainPosition(
+      {
+        shares: 1n,
+        netDeposits: 0n,
+        grossDeposited: 0n,
+        entryRefPrice: encodePrice(1.27e-3),
+        entryVps,
+        openedAt: 0n,
+        realizedPnl: 0n,
+        realizedYield: 0n,
+        realizedFx: 0n,
+      } as VaultDepositorHeader,
+      v.vaultPubkey,
+      "TGBP",
+      "USDC",
+    );
+    expect(positionPnl(p, v, 1.27).yieldPctSinceOpen).toBeCloseTo(0, 6);
+  });
+
+  it("orients each market by the take side its route resolved", () => {
+    expect(marketOrientation("sell", "TGBP", "USDC")).toEqual({
+      base: "TGBP",
+      quote: "USDC",
+    });
+    expect(marketOrientation("buy", "USDC", "TGBP")).toEqual({
+      base: "TGBP",
+      quote: "USDC",
+    });
   });
 
   it("closes deposits on each of the program's three gates", () => {
@@ -66,7 +109,7 @@ describe("chainPosition", () => {
       grossDeposited: 200n * 10n ** 6n,
       // 1.27 USDC per TGBP, as a quote-atoms-per-base-atom ratio.
       entryRefPrice: encodePrice(1.27e-3),
-      // 0.00127 USDC (1,270 quote atoms) per share, Q32.32.
+      // Q32.32 of the program's raw-atoms index; kept raw, not rescaled.
       entryVps: 1_270n << 32n,
       openedAt: 42n,
       realizedPnl: -3n * 10n ** 6n,
@@ -78,8 +121,10 @@ describe("chainPosition", () => {
     expect(p.netDeposits).toBe(127);
     expect(p.grossDeposited).toBe(200);
     expect(p.entryRefPrice).toBeCloseTo(1.27, 4);
-    expect(p.entryVps).toBeCloseTo(0.00127, 9);
+    expect(p.entryVps).toBe(1_270);
+    expect(p.openedAtSlot).toBe(42);
     expect(p.realizedPnl).toBe(-3);
+    expect(p.realizedYield).toBe(1);
     expect(p.realizedFx).toBe(-4);
   });
 });

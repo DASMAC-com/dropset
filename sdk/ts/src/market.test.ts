@@ -427,13 +427,50 @@ test('the vaults reader returns each active vault with its shares and deposit fl
     outsideDepositsApproved: false,
   });
 
-  // The flags are independent bytes: flip the other two and re-read.
+  // The flags are independent bytes: flip one at a time, so a swapped pair
+  // of flags cannot pass.
   const dv = new DataView(data.buffer);
   dv.setUint8(ITEMS_START + V_FROZEN, 1);
+  const [frozen] = decodeDropsetVaults(data);
+  assert.equal(frozen!.frozen, true);
+  assert.equal(frozen!.outsideDepositsApproved, false);
+  dv.setUint8(ITEMS_START + V_FROZEN, 0);
   dv.setUint8(ITEMS_START + V_OUTSIDE_APPROVED, 1);
-  const [flipped] = decodeDropsetVaults(data);
-  assert.equal(flipped!.frozen, true);
-  assert.equal(flipped!.outsideDepositsApproved, true);
+  const [approved] = decodeDropsetVaults(data);
+  assert.equal(approved!.frozen, false);
+  assert.equal(approved!.outsideDepositsApproved, true);
+});
+
+test('the vaults reader follows the active list and keeps each vault aligned', () => {
+  // Three sectors, active list 2 → 0, sector 1 unlinked: each vault's index
+  // is its sector, not its list position, and the per-vault arrays line up.
+  const buf = new Uint8Array(ITEMS_START + 3 * VAULT);
+  const dv = new DataView(buf.buffer);
+  dv.setUint32(DISCRIMINATOR + H_HEAD, 2, true);
+  dv.setUint32(DISCRIMINATOR + H_ACTIVE_COUNT, 2, true);
+  dv.setUint32(LEN_AT, 3, true);
+  const sector = (i: number) => ITEMS_START + i * VAULT;
+  dv.setUint32(sector(2), 0, true); // 2.next = 0
+  dv.setUint32(sector(0), NULL_SECTOR, true); // 0.next = NULL
+  dv.setUint32(sector(1), NULL_SECTOR, true);
+  const leader = (seed: number) => Uint8Array.from({ length: 32 }, (_, k) => seed + k);
+  buf.set(leader(1), sector(2) + V_LEADER);
+  buf.set(leader(100), sector(0) + V_LEADER);
+  dv.setBigUint64(sector(2) + V_SEQ, 7n, true);
+  dv.setBigUint64(sector(0) + V_SEQ, 3n, true);
+  dv.setBigUint64(sector(2) + V_TOTAL_SHARES, 20n, true);
+  dv.setBigUint64(sector(0) + V_TOTAL_SHARES, 10n, true);
+  dv.setUint8(sector(0) + V_ALLOW_OUTSIDE, 1);
+
+  const vaults = decodeDropsetVaults(buf);
+  const decode = getAddressDecoder();
+  assert.deepEqual(
+    vaults.map((v) => [v.index, v.seq, v.leader, v.totalShares, v.allowOutsideDepositors]),
+    [
+      [2, 7n, decode.decode(leader(1)), 20n, false],
+      [0, 3n, decode.decode(leader(100)), 10n, true],
+    ],
+  );
 });
 
 test('the vaults reader refuses a corrupt active list', () => {

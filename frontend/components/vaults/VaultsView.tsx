@@ -431,6 +431,12 @@ function MockSectionHeading({ colSpan }: { colSpan: number }) {
   );
 }
 
+// One section of the table (live or mock), filtered and sorted both ways.
+type ArrangedSection = {
+  groups: { group: FxPairGroup; vaults: GroupedVault[] }[];
+  flat: GroupedVault[];
+};
+
 // Filter + sort one section's groups: grouped (each group's vaults filtered
 // and sorted, then the groups sorted, dropping any left empty) and flat (every
 // vault in the section, filtered and sorted as one list).
@@ -439,10 +445,7 @@ function arrangeSection(
   keep: (group: FxPairGroup, entry: GroupedVault) => boolean,
   cmpGroup: (a: FxPairGroup, b: FxPairGroup) => number,
   cmpVault: (a: GroupedVault, b: GroupedVault) => number,
-): {
-  groups: { group: FxPairGroup; vaults: GroupedVault[] }[];
-  flat: GroupedVault[];
-} {
+): ArrangedSection {
   const groups = [...sectionGroups]
     .sort(cmpGroup)
     .map((group) => ({
@@ -630,8 +633,9 @@ function VaultsInner() {
     );
 
   // `m` opens the manage dialog when the current filters resolve to exactly one
-  // vault (across groups or the flat list), like /currencies' f/t lone-result
-  // picks. The dialog itself shows Connect / Deposit / Manage as appropriate.
+  // vault across both sections, like /currencies' f/t lone-result picks. The
+  // flat lists hold the same rows as the groups, so they serve either view.
+  // The dialog itself shows Connect / Deposit / Manage as appropriate.
   useAppEvent("vaultsManageOnlyResult", () => {
     const entries = [...live.flat, ...mock.flat];
     const only = entries.length === 1 ? entries[0] : null;
@@ -642,12 +646,13 @@ function VaultsInner() {
   const colSpan = 7;
 
   // One section's rows: FX headings over their vaults when grouped, else the
-  // flat list.
-  const sectionRows = (section: typeof live) =>
+  // flat list. Both sections can hold the same FX pair, so the heading key
+  // carries the section's name.
+  const sectionRows = (section: ArrangedSection, name: string) =>
     groupByPair
       ? section.groups.flatMap(({ group, vaults }) => [
           <FxGroupHeading
-            key={`h-${group.key}`}
+            key={`h-${name}-${group.key}`}
             group={group}
             colSpan={colSpan}
           />,
@@ -687,7 +692,7 @@ function VaultsInner() {
     chain.status === "loading"
       ? "Loading vaults…"
       : chain.status === "error"
-        ? "Couldn't read vaults from the chain. Retrying…"
+        ? "Couldn't read vaults from the chain, retrying…"
         : liveGroups.length === 0
           ? "No vaults on-chain yet"
           : "No vaults match";
@@ -808,13 +813,13 @@ function VaultsInner() {
             </thead>
             <tbody>
               {live.flat.length > 0 ? (
-                sectionRows(live)
+                sectionRows(live, "live")
               ) : (
                 <MessageRow colSpan={colSpan} text={liveEmptyText} />
               )}
               {mock.flat.length > 0 && [
                 <MockSectionHeading key="mock-heading" colSpan={colSpan} />,
-                ...sectionRows(mock),
+                ...sectionRows(mock, "mock"),
               ]}
             </tbody>
           </table>

@@ -43,7 +43,6 @@ export function useChainVaults(): ChainVaultsState {
     let timer: number | undefined;
     let cancelled = false;
     let generation = 0;
-    let everLoaded = false;
     const rpc = client.runtime.rpc;
 
     const schedule = (delay: number, gen: number) => {
@@ -60,15 +59,29 @@ export function useChainVaults(): ChainVaultsState {
       }
       try {
         const markets = await fetchChainVaultMarkets(rpc);
-        const positions = owner
-          ? await fetchChainPositions(rpc, owner, markets)
-          : new Map<string, VaultPosition>();
+        // The positions read fails on its own: the markets still land, and
+        // this wallet's last good positions stay up until the next tick.
+        let positions: Map<string, VaultPosition> | null = new Map();
+        if (owner) {
+          try {
+            positions = await fetchChainPositions(rpc, owner, markets);
+          } catch {
+            positions = null;
+          }
+        }
         if (cancelled || gen !== generation) return;
-        everLoaded = true;
-        setState({ status: "ready", markets, positions });
+        setState((prev) => ({
+          status: "ready",
+          markets,
+          positions: positions ?? prev.positions,
+        }));
       } catch {
         if (cancelled || gen !== generation) return;
-        if (!everLoaded) setState({ ...INITIAL, status: "error" });
+        // Checked against state, not a flag local to this effect, so a
+        // wallet switch (which re-runs it) cannot wipe a table that loaded.
+        setState((prev) =>
+          prev.status === "ready" ? prev : { ...INITIAL, status: "error" },
+        );
       }
       schedule(VAULTS_REFRESH_MS, gen);
     };

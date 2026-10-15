@@ -54,8 +54,8 @@ export const IS_LOCALNET = CLUSTER === "localnet";
 
 // Show the committed mock vaults (lib/data/vaults.json) as a separate, labeled
 // section below the live ones on /vaults. Off by default: the live section is
-// read straight off the chain, and fake rows beside a vault taking real
-// deposits would read as real. Set NEXT_PUBLIC_SHOW_MOCK_VAULTS=1 for demos.
+// read straight off the chain, and fake rows beside real vaults would read as
+// real. Set NEXT_PUBLIC_SHOW_MOCK_VAULTS=1 for demos.
 export const SHOW_MOCK_VAULTS =
   process.env.NEXT_PUBLIC_SHOW_MOCK_VAULTS?.trim() === "1";
 

@@ -4,10 +4,10 @@
 //! Exposes [`simulate_swap`] (quote a take), [`resting_book`] (read the
 //! depth the take would fill against) and [`vaults`] (read the active
 //! vaults' reserves, shares and deposit flags) over a market account's raw
-//! bytes, so
-//! the TS client runs the engine's own slab decode and book reconstruction
-//! instead of a hand-mirror. Both entry points share `MarketView::load` and
-//! `matching`, which is the point: the byte offsets in `layout.rs` and the
+//! bytes, so the TS client runs the engine's own slab decode and book
+//! reconstruction instead of a hand-mirror. All three share
+//! `MarketView::load`, and the two book entry points share `matching` too,
+//! which is the point: the byte offsets in `layout.rs` and the
 //! materialization rules in `matching.rs` exist in exactly one place, and
 //! the TS client cannot drift from them because it does not restate them.
 //! The `Price` codec bindings are forwarded from `dropset-math-core` (whose

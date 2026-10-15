@@ -499,8 +499,8 @@ export function VaultActionDialog({
   // A live vault's deposit and withdraw transactions aren't wired yet, so its
   // forms stay read-only rather than "submitting" by closing the dialog. The
   // program's own gate comes first: it says why deposits are closed.
-  const closedReason =
-    depositClosedReason(vault) ?? (vault.chain ? LIVE_ACTIONS_PENDING : null);
+  const pendingReason = vault.chain ? LIVE_ACTIONS_PENDING : null;
+  const closedReason = depositClosedReason(vault) ?? pendingReason;
   const depositBlocked = closedReason !== null;
   const depositLabel = position ? "Top off" : "Open position";
 
@@ -698,7 +698,7 @@ export function VaultActionDialog({
                   market={market}
                   vault={vault}
                   position={position}
-                  pendingReason={vault.chain ? LIVE_ACTIONS_PENDING : null}
+                  pendingReason={pendingReason}
                   onSubmit={() => onOpenChange(false)}
                 />
               )

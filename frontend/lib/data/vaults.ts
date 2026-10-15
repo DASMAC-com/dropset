@@ -19,6 +19,9 @@ import vaultsData from "./vaults.json";
 // the FX convention: USD is the quote for EUR/GBP/AUD (base = EURC, quote =
 // USDC) and the base for JPY/CHF/CAD (base = USDC, quote = GYEN).
 export type VaultRaw = {
+  // The vault's id: a pubkey on a mock row, but `market:seq` on a live one
+  // (chainVaultId), since a live vault is a market sector with no account of
+  // its own. Use it only as a key, never as an address.
   vaultPubkey: string;
   leader: string;
   volume24h: number;
