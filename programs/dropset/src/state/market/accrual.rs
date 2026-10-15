@@ -15,7 +15,7 @@
 //! simulator consumers reuse them. The deposit's inventory mutation wraps
 //! no kernel and lives in the sibling `inventory` module.
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang::prelude::*;
 use dropset_math_core::matching_math::{flip_level_price, flush_level_price, level_fill_atoms};
 use dropset_math_core::share::{self, BasketError};
 
@@ -252,7 +252,7 @@ mod tests {
     use super::super::Q32_32_ONE;
     use super::*;
     use crate::Price;
-    use anchor_lang_v2::bytemuck::Zeroable;
+    use anchor_lang::bytemuck::Zeroable;
 
     fn seeded_vault(b: u64, q: u64, total: u64, leader: u64, hwm: u64, fee_ppm: u32) -> Vault {
         let mut v = Vault::zeroed();

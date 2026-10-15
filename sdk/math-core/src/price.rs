@@ -105,7 +105,7 @@ const _: () = assert!(MAX_BIASED_EXPONENT as u32 == (1u32 << (32 - SIGNIFICAND_B
 /// crate stays solana-free.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Pod, Zeroable)]
-#[cfg_attr(feature = "idl", derive(anchor_lang_v2::IdlType))]
+#[cfg_attr(feature = "idl", derive(anchor_lang::IdlType))]
 pub struct Price(u32);
 
 impl core::fmt::Debug for Price {

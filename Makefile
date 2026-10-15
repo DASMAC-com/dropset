@@ -1219,7 +1219,7 @@ tools-tests:
 	python3 -m unittest discover -s .claude/scripts -p 'test_*.py'
 
 # The stable crates.io anchor-cli, at the exact ANCHOR_CLI_VERSION. How it
-# relates to the program crate's anchor-lang-v2 pin: interface.md § SDK, CI
+# relates to the program crate's anchor-lang pin: interface.md § SDK, CI
 # discipline.
 .PHONY: install-anchor
 install-anchor:

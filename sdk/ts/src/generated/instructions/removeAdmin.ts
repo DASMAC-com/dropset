@@ -6,7 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -31,34 +31,6 @@ export function getRemoveAdminInstructionDataDecoder(): FixedSizeDecoder<RemoveA
 
 export function getRemoveAdminInstructionDataCodec(): FixedSizeCodec<RemoveAdminInstructionDataArgs, RemoveAdminInstructionData> {
     return combineCodec(getRemoveAdminInstructionDataEncoder(), getRemoveAdminInstructionDataDecoder());
-}
-
-export type RemoveAdminAsyncInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string> =  {
-  admin: TransactionSigner<TAccountAdmin>;
-registry?: Address<TAccountRegistry>;
-target: RemoveAdminInstructionDataArgs["target"];
-}
-
-export async function getRemoveAdminInstructionAsync<TAccountAdmin extends string, TAccountRegistry extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: RemoveAdminAsyncInput<TAccountAdmin, TAccountRegistry>, config: { programAddress: TProgramAddress } ): Promise<RemoveAdminInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry>> {
-  // Program address.
-const programAddress = config.programAddress;
-
- // Original accounts.
-const originalAccounts = { admin: { value: input.admin ?? null, isWritable: true }, registry: { value: input.registry ?? null, isWritable: true } }
-const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
-
-
-// Original args.
-const args = { ...input,  };
-
-
-// Resolve default values.
-if (!accounts.registry.value) {
-accounts.registry.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))] });
-}
-
-const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry)], data: getRemoveAdminInstructionDataEncoder().encode(args as RemoveAdminInstructionDataArgs), programAddress } as RemoveAdminInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry>);
 }
 
 export type RemoveAdminInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string> =  {

@@ -1,4 +1,4 @@
-use anchor_lang_v2::{
+use anchor_lang::{
     accounts::Slab,
     address_eq,
     bytemuck::{Pod, Zeroable},
@@ -49,7 +49,7 @@ pub const DEFAULT_MAX_PLATFORM_FEE: Bps16 = 100;
 /// guessing which token program owns the mint.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, IdlType)]
-#[bytemuck(crate = "anchor_lang_v2::bytemuck")]
+#[bytemuck(crate = "anchor_lang::bytemuck")]
 pub struct FeeConfig {
     /// Mint accepted for this fee.
     pub mint: Address,

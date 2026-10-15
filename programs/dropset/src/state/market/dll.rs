@@ -4,7 +4,7 @@
 //! mutated only here, through [`VaultDll`]; [`DllList`] names which head a
 //! given operation targets.
 
-use anchor_lang_v2::{bytemuck::Zeroable, prelude::*};
+use anchor_lang::{bytemuck::Zeroable, prelude::*};
 
 use crate::errors::DropsetError;
 
@@ -263,7 +263,7 @@ impl VaultDll for Market {
 }
 
 /// Unit tests driving the **real** `Market` slab via a stack-backed
-/// `AccountBuffer` from `anchor_lang_v2::testing`. Pre-allocates a
+/// `AccountBuffer` from `anchor_lang::testing`. Pre-allocates a
 /// fixed number of sectors up front (see [`super::test_support`]) and
 /// exercises the pointer-arithmetic surface (`link_head`, `unlink`,
 /// free-list reuse of `allocate_sector`) directly against the on-chain
@@ -278,7 +278,7 @@ impl VaultDll for Market {
 mod tests {
     use super::super::test_support::{load_market, setup, SECTORS};
     use super::*;
-    use anchor_lang_v2::testing::AccountBuffer;
+    use anchor_lang::testing::AccountBuffer;
 
     /// Walk `list` starting at its head and return the visit order.
     /// Used by tests to assert ordering without baking it into the

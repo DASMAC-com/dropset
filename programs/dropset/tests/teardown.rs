@@ -32,10 +32,11 @@
 
 mod common;
 
-use anchor_v2_testing::{Keypair, LiteSVM, Signer};
+use anchor_v2_testing::{Keypair, Signer};
 use common::fixture::{simple_profile, Fixture};
 use common::{create_associated_token_account, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID};
 use dropset::Price;
+use litesvm::LiteSVM;
 use solana_pubkey::Pubkey;
 
 /// Lamports balance of `pk`, or 0 if the account does not exist (closed

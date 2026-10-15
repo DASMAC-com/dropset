@@ -5,7 +5,7 @@
 
 mod common;
 
-use anchor_lang_v2::{programs::System, Id, InstructionData};
+use anchor_lang::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
 use common::fixture::{canonical_init_ixn, registry_pda};
 use common::{
@@ -27,7 +27,7 @@ use solana_pubkey::Pubkey;
 /// upgrade authority + genesis admin; the fee mint is a fresh
 /// USDC-shaped SPL mint with mint authority on `authority`. The
 /// registry is initialized against that fee mint with a $1,000 fee.
-fn bootstrap() -> (anchor_v2_testing::LiteSVM, Keypair, Pubkey) {
+fn bootstrap() -> (litesvm::LiteSVM, Keypair, Pubkey) {
     let authority = Keypair::new();
     let mut svm = deploy_with_authority(&authority);
     let fee_mint = create_mock_usdc_mint(&mut svm, &authority);
@@ -97,11 +97,11 @@ fn create_market_ixn(
 
 /// Decode the market header out of the slab account bytes: skip the
 /// 8-byte anchor discriminator, then bytemuck-cast.
-fn read_market_header(svm: &anchor_v2_testing::LiteSVM, market: &Pubkey) -> MarketHeader {
+fn read_market_header(svm: &litesvm::LiteSVM, market: &Pubkey) -> MarketHeader {
     let account = svm.get_account(market).expect("market account exists");
     let data = &account.data;
     assert!(data.len() >= 8 + core::mem::size_of::<MarketHeader>());
-    *anchor_lang_v2::bytemuck::from_bytes::<MarketHeader>(
+    *anchor_lang::bytemuck::from_bytes::<MarketHeader>(
         &data[8..8 + core::mem::size_of::<MarketHeader>()],
     )
 }
@@ -109,7 +109,7 @@ fn read_market_header(svm: &anchor_v2_testing::LiteSVM, market: &Pubkey) -> Mark
 /// Fund a fresh payer keypair with enough SOL to cover the per-tx fees
 /// and the market + treasury rent. SIGNER_FUNDING_LAMPORTS is 1 SOL —
 /// far more than enough for either.
-fn fresh_payer(svm: &mut anchor_v2_testing::LiteSVM) -> Keypair {
+fn fresh_payer(svm: &mut litesvm::LiteSVM) -> Keypair {
     let payer = Keypair::new();
     svm.airdrop(&payer.pubkey(), 10 * SIGNER_FUNDING_LAMPORTS)
         .unwrap();
@@ -120,7 +120,7 @@ fn fresh_payer(svm: &mut anchor_v2_testing::LiteSVM) -> Keypair {
 /// by `wallet`, and return that ATA. Used by the non-admin path so the
 /// fee-transfer CPI has the right balance.
 fn fund_with_fee(
-    svm: &mut anchor_v2_testing::LiteSVM,
+    svm: &mut litesvm::LiteSVM,
     mint_authority: &Keypair,
     fee_mint: &Pubkey,
     wallet: &Keypair,
@@ -138,7 +138,7 @@ fn fund_with_fee(
 
 /// Token balance of an SPL Token account: the SPL layout puts amount at
 /// offset 64..72, little-endian u64.
-fn token_balance(svm: &anchor_v2_testing::LiteSVM, ata: &Pubkey) -> u64 {
+fn token_balance(svm: &litesvm::LiteSVM, ata: &Pubkey) -> u64 {
     let account = svm.get_account(ata).expect("token account exists");
     let bytes: [u8; 8] = account.data[64..72].try_into().unwrap();
     u64::from_le_bytes(bytes)
@@ -151,7 +151,7 @@ fn token_balance(svm: &anchor_v2_testing::LiteSVM, ata: &Pubkey) -> u64 {
 /// runs. It is a regression guard that adoption leaves the authority
 /// alone — not evidence that the squatter gained nothing. What proves
 /// the latter is `create_market_rejects_an_existing_non_canonical_treasury`.
-fn token_account_authority(svm: &anchor_v2_testing::LiteSVM, ata: &Pubkey) -> Pubkey {
+fn token_account_authority(svm: &litesvm::LiteSVM, ata: &Pubkey) -> Pubkey {
     let account = svm.get_account(ata).expect("token account exists");
     let bytes: [u8; 32] = account.data[32..64].try_into().unwrap();
     Pubkey::new_from_array(bytes)

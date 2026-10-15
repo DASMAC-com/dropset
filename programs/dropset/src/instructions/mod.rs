@@ -2,12 +2,20 @@ pub mod admin;
 pub mod close_vault;
 pub mod create_market;
 pub mod create_vault;
+// anchor-next's `#[derive(Accounts)]` re-binds every `#[instruction(..)]`
+// arg inside the generated `exit_accounts` as well as `validate_accounts`,
+// and on a struct whose exit phase reads none of them that second binding
+// is dead — `unused_variables` on the attribute's own span, even for an
+// arg the seeds use. Lint levels for derive output come from the
+// enclosing module, so the allow sits on the four modules it fires in.
+#[allow(unused_variables)]
 pub mod deposit;
 pub mod deposit_leader;
 pub mod freeze_vault;
 pub mod init;
 pub mod registry_defaults;
 pub mod retune;
+#[allow(unused_variables)] // see `deposit`
 pub mod set_leader;
 pub mod set_liquidity_profile;
 pub mod set_outside_deposits;
@@ -15,6 +23,7 @@ pub mod set_quote_authority;
 pub mod set_reference_price;
 pub mod swap;
 pub mod sweep_residual;
+#[allow(unused_variables)] // see `deposit`
 pub mod withdraw;
 pub mod withdraw_leader;
 // Teardown surface. The handlers always compile and are always wired
@@ -28,10 +37,11 @@ pub mod withdraw_leader;
 // the architecture spec, § Account lifecycle and rent reclamation.
 pub mod close_market;
 pub mod close_registry;
+#[allow(unused_variables)] // see `deposit`
 pub mod force_withdraw;
 
-use anchor_lang_v2::{prelude::*, AnchorAccount};
-use anchor_spl_v2::token_2022::{transfer_checked, TransferChecked};
+use anchor_lang::prelude::*;
+use anchor_spl::token_2022::{transfer_checked, TransferChecked};
 
 use crate::{errors::DropsetError, state::Market, AdminSet, Registry, VaultDepositorHeader};
 

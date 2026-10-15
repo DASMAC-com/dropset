@@ -14,7 +14,7 @@
 //! already tombstoned is rejected (`VaultAlreadyTombstoned`); a
 //! free-list sector is rejected as empty.
 
-use anchor_lang_v2::{address_eq, prelude::*};
+use anchor_lang::{address_eq, prelude::*};
 
 use crate::{
     errors::DropsetError,

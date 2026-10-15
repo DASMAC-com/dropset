@@ -6,7 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getBooleanDecoder, getBooleanEncoder, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getBooleanDecoder, getBooleanEncoder, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -31,39 +31,6 @@ export function getSetOutsideDepositsApprovedInstructionDataDecoder(): FixedSize
 
 export function getSetOutsideDepositsApprovedInstructionDataCodec(): FixedSizeCodec<SetOutsideDepositsApprovedInstructionDataArgs, SetOutsideDepositsApprovedInstructionData> {
     return combineCodec(getSetOutsideDepositsApprovedInstructionDataEncoder(), getSetOutsideDepositsApprovedInstructionDataDecoder());
-}
-
-export type SetOutsideDepositsApprovedAsyncInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string> =  {
-  /** Registry admin — authorized via the registry admin set. */
-admin: TransactionSigner<TAccountAdmin>;
-/** Singleton registry, read for the admin-membership check. */
-registry?: Address<TAccountRegistry>;
-/** Market holding the target vault. */
-market: Address<TAccountMarket>;
-vaultIdx: SetOutsideDepositsApprovedInstructionDataArgs["vaultIdx"];
-flag: SetOutsideDepositsApprovedInstructionDataArgs["flag"];
-}
-
-export async function getSetOutsideDepositsApprovedInstructionAsync<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetOutsideDepositsApprovedAsyncInput<TAccountAdmin, TAccountRegistry, TAccountMarket>, config: { programAddress: TProgramAddress } ): Promise<SetOutsideDepositsApprovedInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket>> {
-  // Program address.
-const programAddress = config.programAddress;
-
- // Original accounts.
-const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true } }
-const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
-
-
-// Original args.
-const args = { ...input,  };
-
-
-// Resolve default values.
-if (!accounts.registry.value) {
-accounts.registry.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))] });
-}
-
-const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.market)], data: getSetOutsideDepositsApprovedInstructionDataEncoder().encode(args as SetOutsideDepositsApprovedInstructionDataArgs), programAddress } as SetOutsideDepositsApprovedInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket>);
 }
 
 export type SetOutsideDepositsApprovedInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string> =  {

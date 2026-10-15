@@ -24,13 +24,16 @@
 //! crate-root `crate::{Vault, MarketHeader, …}` re-exports resolve exactly
 //! as they did when this was one file.
 
-use anchor_lang_v2::accounts::Slab;
+use anchor_lang::accounts::Slab;
 
 mod access;
 mod accrual;
 mod dll;
 mod inventory;
-mod layout;
+// `pub(crate)` because `anchor-asm-v2` names each offset-exported type by
+// its defining path (`crate::state::market::layout::Vault`), not by the
+// glob re-export below, in the `combined.rs` it generates into the crate.
+pub(crate) mod layout;
 mod liquidity_profile;
 mod quote_write;
 mod reference_price;
@@ -112,7 +115,7 @@ mod tests {
         // equality here guarantees the two paths stay in sync.
         assert_eq!(
             Market::space_for(0),
-            <Market as anchor_lang_v2::Space>::INIT_SPACE
+            <Market as anchor_lang::Space>::INIT_SPACE
         );
     }
 }

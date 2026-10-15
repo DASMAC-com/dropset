@@ -17,9 +17,9 @@
 //! would make a single collected `create_market` fee — or any unsolicited
 //! transfer — permanently block the close, and with it the redeploy.
 
-use anchor_lang_v2::{prelude::*, AnchorAccount};
+use anchor_lang::{prelude::*, AnchorAccount};
 #[allow(unused_imports)]
-use anchor_spl_v2::{
+use anchor_spl::{
     token_2022::{close_account, CloseAccount},
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
@@ -45,7 +45,7 @@ pub struct CloseRegistryFeeVault {
     /// fee ATA in turn (the historical set is tracked off-chain).
     pub fee_mint: InterfaceAccount<Mint>,
     /// Token program owning `fee_mint`.
-    pub token_program: Interface<'static, TokenInterface>,
+    pub token_program: Interface<TokenInterface>,
     /// The fee ATA to close — pinned to `ata(registry, fee_mint,
     /// token_program)` by the constraint. Drained to `token_recipient`
     /// below, then closed.

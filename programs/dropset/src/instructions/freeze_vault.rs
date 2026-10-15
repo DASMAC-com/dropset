@@ -16,7 +16,7 @@
 //! `set_outside_deposits_approved`. Freezing an already-frozen vault is
 //! an idempotent no-op (the flag is simply re-asserted).
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang::prelude::*;
 
 use crate::{
     errors::DropsetError,

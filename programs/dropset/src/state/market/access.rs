@@ -2,7 +2,7 @@
 //! tail. Centralizes the `u32`-index range check so business logic in the
 //! instruction handlers stops touching the physical slab layout.
 
-use anchor_lang_v2::{address_eq, prelude::*};
+use anchor_lang::{address_eq, prelude::*};
 
 use crate::errors::DropsetError;
 

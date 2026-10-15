@@ -25,12 +25,12 @@
 //! (below), the registry-level mirror of the per-market `SetMarketFeeConfig`.
 //! See the architecture spec, § SetRegistryDefaults and § SetDefaultFeeConfig.
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang::prelude::*;
 // `mint` / `associated_token` stay in scope so the `mint::token_program`
 // constraint on `fee_mint` and the `associated_token::*` constraints on
-// `registry_fee_treasury` expand to their `anchor_spl_v2` markers.
+// `registry_fee_treasury` expand to their `anchor_spl` markers.
 #[allow(unused_imports)]
-use anchor_spl_v2::{
+use anchor_spl::{
     associated_token::{self, AssociatedToken},
     mint,
     token_interface::{Mint, TokenAccount, TokenInterface},
@@ -129,7 +129,7 @@ pub struct SetDefaultFeeConfig {
     /// `Interface<TokenInterface>` rejects any non-token-program address
     /// up front; the `mint::token_program` constraint above then pins it
     /// to `fee_mint`'s actual owner.
-    pub fee_token_program: Interface<'static, TokenInterface>,
+    pub fee_token_program: Interface<TokenInterface>,
     /// Registry's fee ATA for the new default mint. `create_market` loads
     /// the registry fee ATA for `registry.default_fee_config.mint` (`mut`,
     /// not `init`) but never creates it, so we create it here, eagerly, at
