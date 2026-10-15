@@ -18,8 +18,12 @@
 //!
 //! There is deliberately no admin path: an admin rotation would be a
 //! custody-seizure lever, and admins already hold `freeze_vault`. Allowed
-//! on frozen and tombstoned vaults — moving custody of a winding-down
-//! vault is exactly what a leaked-key rotation needs.
+//! on tombstoned vaults — moving custody of a winding-down vault is
+//! exactly what a leaked-key rotation needs. Rejected on frozen vaults:
+//! a frozen vault blocks its leader from opening another on the market,
+//! and rotating it onto a second key the leader controls would lift that
+//! block. A frozen vault can't trade, so a leaked key on one has nothing
+//! to quote.
 
 use anchor_lang::{address_eq, prelude::*};
 
@@ -77,6 +81,7 @@ impl SetLeader {
                 address_eq(&vault.leader, &old_leader),
                 DropsetError::Unauthorized
             );
+            require!(!vault.frozen.get(), DropsetError::VaultFrozen);
             (vault.seq.get(), vault.quote_authority)
         };
 
@@ -95,13 +100,13 @@ impl SetLeader {
             !address_eq(&new_leader, &old_leader),
             DropsetError::SameLeader
         );
-        // One live vault per leader per market, as at `create_vault`. Run
-        // whatever state the target is in: rotating a frozen or tombstoned
-        // vault onto a key that leads a live one creates no second live
-        // vault, but the unconditional form keeps one rule for every path
-        // that seats a leader.
+        // One open vault per leader per market, as at `create_vault`. Run
+        // whatever state the target is in: rotating an unfrozen tombstone onto
+        // a key that leads an open one creates no second open vault, but
+        // the unconditional form keeps one rule for every path that seats
+        // a leader.
         require!(
-            !self.market.leads_live_vault(&new_leader),
+            !self.market.leads_open_vault(&new_leader),
             DropsetError::LeaderAlreadyLeadsVault
         );
         // The leader-and-depositor invariant: a vault's leader never holds

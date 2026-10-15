@@ -894,15 +894,20 @@ final `Withdraw` that drives `total_shares` to 0 unlinks the vault
 from its current DLL, zeroes `vault.leader` so the emptiness marker
 holds, and pushes the sector onto the free list.
 
-Re-entry does not wait for Reclaim. `CreateVault`'s
-one-live-vault-per-leader guard counts only vaults that are neither
-frozen nor tombstoned, so the same leader pubkey may `CreateVault`
-afresh — paying the create-vault fee again — as soon as its vault
-enters either state, on this or any other market. (A frozen vault
-still counts toward `active_count`, so on a full market the re-create
-can still fail the `max_vaults_per_market` cap.) Counting them would
-let one stranded depositor, whose draining `Withdraw` is what triggers
-Reclaim, lock the leader out of the market indefinitely.
+The two states differ on re-entry. `CreateVault`'s
+one-vault-per-leader guard counts a frozen vault, tombstoned or not,
+until Reclaim: a leader frozen for misbehaving cannot reappear on the
+same market for the price of a create fee. Tombstoning a frozen vault
+does not lift the block, and `SetLeader` refuses a frozen vault, so
+the freeze cannot be laundered through either. A tombstone that was
+never frozen does not count, so a leader who closed voluntarily may
+`CreateVault` afresh — paying the create-vault fee again — at once.
+Counting it would let one stranded depositor, whose draining
+`Withdraw` is what triggers Reclaim, lock that leader out of the
+market indefinitely. Other markets are unaffected either way: the
+guard is per-market. Admin can always unblock a frozen leader by
+draining the vault with the `admin-teardown` force-withdraw paths
+below.
 
 When the `admin-teardown` Cargo feature is enabled (see **Account
 lifecycle and rent reclamation**), an admin may additionally
@@ -1479,12 +1484,13 @@ authoritative.
 | Outside deposit, admin approval off                         | `OutsideDepositorsNotApproved` |
 | Withdraw of more shares than the caller holds               | `InsufficientShares`           |
 | `VaultDepositor` PDA ≠ `(market, sector, owner)` seeds      | `VaultDepositorMismatch`       |
-| Leader would lead a second live vault on the market         | `LeaderAlreadyLeadsVault`      |
+| Leader would lead a second open vault on the market         | `LeaderAlreadyLeadsVault`      |
 | `SetLeader` names the vault's current leader                | `SameLeader`                   |
 | `SetLeader` names a depositor on the same vault             | `NewLeaderIsDepositor`         |
 | Vault name not ≤ 32 bytes of printable ASCII                | `InvalidVaultName`             |
 | Vault name taken on the market (case-insensitive)           | `VaultNameTaken`               |
 | `SetVaultName` on an admin-locked name                      | `VaultNameLocked`              |
+| `SetQuoteAuthority` names the current quote authority       | `SameQuoteAuthority`           |
 | Reference price unset where a basis read needs it           | `ReferencePriceNotSet`         |
 | Swap `limit_price` bits not a well-formed `Price`           | `InvalidPrice`                 |
 | Swap `amount_in == 0`                                       | `InvalidAmountIn`              |
@@ -1556,10 +1562,10 @@ Admins may pass any pubkey; that pubkey is stamped as
 `Vault.leader`. Passing `Address::default()` on the admin path uses
 the admin signer as the leader (same as the non-admin path).
 
-**One live vault per leader per market.** After resolving the leader
+**One open vault per leader per market.** After resolving the leader
 and before charging the fee, the instruction scans the market's slab
 and rejects with `LeaderAlreadyLeadsVault` if any occupied sector that
-is neither frozen nor tombstoned already carries that leader. The scan
+is frozen, or not tombstoned, already carries that leader. The scan
 is O(slab) on a cold path: the active set is capped at
 `max_vaults_per_market` (a `u8`), and tombstoned and free sectors add
 to the slab beyond it. The guard is unconditional, so it binds on the
@@ -1568,8 +1574,8 @@ attributes per market, not per vault, so a second live vault under the
 same leader would silently clobber its inventory accounting; the guard
 makes that routing invariant true by construction. It is per-market
 by design — a global guard would need a per-leader PDA written on
-every create, close and reclaim. Frozen and
-tombstoned vaults do not count (see **Frozen and tombstoned vaults**).
+every create, close and reclaim. A frozen vault counts until Reclaim;
+an unfrozen tombstone does not (see **Frozen and tombstoned vaults**).
 `CreateVault` stays single-signer.
 
 Side effect: the instruction stamps `Vault.min_leader_share` from the
@@ -1976,10 +1982,16 @@ Emits `SetQuoteAuthorityEvent` (`market`, `sector_idx`, `vault_seq`,
 `leader`, `old_authority`, `new_authority`). The write is a one-field
 diff, but end-of-slot diffs coalesce a rotate-and-rotate-back within
 one slot into no change at all, so the event — not the account state —
-is how a maker learns its delegation moved. A rotation to the incumbent
-authority is allowed and emits with `old_authority == new_authority`:
-unlike `SetLeader`'s `SameLeader` gate there is no rejection, because
-the equal pair claims no change, and a consumer treats it as a no-op.
+is how a maker learns its delegation moved.
+
+The new authority must be:
+
+- non-zero (`Unauthorized`) — the zero address is the free-list
+  emptiness marker and has no private key, so stamping it would brick
+  the quoting hot path;
+- different from the current quote authority (`SameQuoteAuthority`),
+  so no event claims a rotation that never happened — the same rule
+  `SetLeader`'s `SameLeader` gate applies.
 
 ### SetLeader
 
@@ -1998,8 +2010,8 @@ The new leader must be:
   already excludes it;
 - different from the current leader (`SameLeader`), so no event claims
   a hand-off that never happened;
-- not already the leader of a live vault on the market
-  (`LeaderAlreadyLeadsVault`, the same scan `CreateVault` runs);
+- not already the leader of an open (live or frozen) vault on the
+  market (`LeaderAlreadyLeadsVault`, the same scan `CreateVault` runs);
 - not a depositor on this vault (`NewLeaderIsDepositor`): the
   instruction takes the new leader's `VaultDepositor` PDA and requires
   it not to be program-owned. The test is ownership, not lamports,
@@ -2013,8 +2025,12 @@ maker key; a caller that wants both rotated bundles a
 the fee rate, the flags, `seq`, the `name` and its `name_locked` lock are
 unchanged — the same vault under a new key.
 
-Allowed on frozen and tombstoned vaults: moving custody of a
-winding-down vault is exactly what a leaked-key rotation needs. There is
+Allowed on tombstoned vaults: moving custody of a winding-down vault is
+exactly what a leaked-key rotation needs. Rejected on frozen vaults
+(`VaultFrozen`): a frozen vault blocks its leader from `CreateVault` on
+the market, and rotating it onto a second key the leader controls would
+lift that block. A frozen vault cannot trade, so a leaked key on one has
+nothing to quote. There is
 deliberately no admin path, since an admin rotation would be a
 custody-seizure lever and admins already hold `FreezeVault`. Emits
 `SetLeaderEvent` (`market`, `sector_idx`, `vault_seq`, `old_leader`,
@@ -2051,9 +2067,9 @@ the name for the market. Emits `CloseVaultEvent` (`market`,
 Admin-only. Sets `Vault.frozen = 1`. This is the protocol's
 revocation lever against a misbehaving leader: the vault stays on
 the active DLL (existing levels still match until their deadlines
-pass) but cannot be re-quoted. There is no "unfreeze" — to
-re-enter, the same leader pubkey pays the create-vault fee again and
-starts a new vault. See **Vault → Frozen and tombstoned vaults** for
+pass) but cannot be re-quoted. There is no "unfreeze", and the
+leader cannot re-enter the market until the frozen vault drains and
+is reclaimed. See **Vault → Frozen and tombstoned vaults** for
 full state semantics and the comparison with `CloseVault`.
 
 The freeze also blanks `Vault.name` and sets `name_locked`, releasing

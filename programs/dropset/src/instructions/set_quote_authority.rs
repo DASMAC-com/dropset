@@ -77,6 +77,12 @@ impl SetQuoteAuthority {
                 address_eq(&vault.leader, &signer_addr),
                 DropsetError::Unauthorized
             );
+            // A no-op rotation would emit an event claiming a change that
+            // never happened — rejected, as `set_leader` rejects one.
+            require!(
+                !address_eq(&new_authority, &vault.quote_authority),
+                DropsetError::SameQuoteAuthority
+            );
             (vault.seq.get(), vault.quote_authority)
         };
 

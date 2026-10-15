@@ -10,7 +10,9 @@
 //! `entrypoint.s` ASM path kept minimal for CU, and re-quoting a frozen
 //! vault is harmless (matching skips it). `realize_in_place`
 //! pins the HWM at freeze time. Per the spec's **FreezeVault**, there
-//! is no "unfreeze" — to re-enter, the same leader opens a fresh vault.
+//! is no "unfreeze", and the freeze bars the leader from the market: a
+//! frozen vault counts against `create_vault`'s one-vault-per-leader rule
+//! and `set_leader` refuses to rotate it, until the sector is reclaimed.
 //!
 //! The freeze also blanks `Vault.name` and sets `name_locked`, releasing
 //! the name for the market and refusing a leader rename.
