@@ -106,7 +106,7 @@ pub enum Action {
     KillLadders,
     /// Tombstone the leader's vaults — the permanent stop.
     CloseVaults,
-    /// Withdraw the leader's whole stake from its closed vaults.
+    /// Withdraw the leader's whole stake from its closed or frozen vaults.
     DrainLeader,
     // eCLOB demo controls — keybinds, not menu entries.
     RepegUp,
@@ -1958,7 +1958,7 @@ mod tests {
     /// of this comment claimed the wider scope and was wrong.
     ///
     /// Kept complete by [`all_actions_lists_every_variant`], not by care — the
-    /// `[Action; 17]` length annotation does not change when a variant is
+    /// array's length annotation does not change when a variant is
     /// added, so nothing else would notice the list going stale.
     const ALL_ACTIONS: [Action; 25] = [
         Action::Deploy,

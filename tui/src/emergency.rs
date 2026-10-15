@@ -61,28 +61,34 @@ impl Op {
     /// The plan's first line — what the op does, in the operator's terms.
     fn headline(self) -> &'static str {
         match self {
-            Op::Kill => "EMERGENCY — zero every level on the leader's vaults (reversible)",
+            Op::Kill => {
+                "EMERGENCY — zero every level on the leader's vaults (reversible: a running \
+                 maker re-arms it; close is the durable stop)"
+            }
             Op::Close => {
                 "EMERGENCY — close the leader's vaults: matching stops for good (PERMANENT)"
             }
-            Op::Drain => "EMERGENCY — withdraw every leader share from the closed vaults",
+            Op::Drain => "EMERGENCY — withdraw every leader share from the closed or frozen vaults",
         }
     }
 }
 
 /// A vault the leader leads, in any lifecycle state, as one read found it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Seat {
+pub struct SectorSeat {
     /// Its sector index — valid only for this read, since sectors recycle.
     pub idx: u32,
     /// Its per-market vault number — what the operator is told.
     pub seq: u64,
     /// The key `set_liquidity_profile` must be signed by.
     pub quote_authority: Pubkey,
+    /// Admin-frozen: still on the active list, but past the leader floor.
     pub frozen: bool,
+    /// Closed: off the active list, so matching never visits it.
     pub tombstoned: bool,
     /// Whether any level on either side still carries size.
     pub quoting: bool,
+    /// The share ledger and inventory a drain is sized from.
     pub stake: VaultStake,
 }
 
@@ -91,7 +97,7 @@ pub struct Seat {
 pub struct MarketSeats {
     pub base_treasury: Pubkey,
     pub quote_treasury: Pubkey,
-    pub seats: Vec<Seat>,
+    pub seats: Vec<SectorSeat>,
 }
 
 /// Every sector `leader` leads on `market`, read fresh: `Ok(None)` when the
@@ -122,17 +128,17 @@ pub fn leader_seats(
     Ok(Some(MarketSeats {
         base_treasury: Pubkey::new_from_array(view.header.base_treasury),
         quote_treasury: Pubkey::new_from_array(view.header.quote_treasury),
-        seats: seats_led_by(view.sectors(), leader),
+        seats: sector_seats_led_by(view.sectors(), leader),
     }))
 }
 
 /// The non-free `sectors` whose leader is `leader`, in sector order.
-fn seats_led_by(sectors: &[Vault], leader: &Pubkey) -> Vec<Seat> {
+fn sector_seats_led_by(sectors: &[Vault], leader: &Pubkey) -> Vec<SectorSeat> {
     sectors
         .iter()
         .enumerate()
         .filter(|(_, v)| !v.is_free() && v.leader == leader.to_bytes())
-        .map(|(idx, v)| Seat {
+        .map(|(idx, v)| SectorSeat {
             idx: idx as u32,
             seq: v.seq.get(),
             quote_authority: Pubkey::new_from_array(v.quote_authority),
@@ -155,7 +161,11 @@ pub enum Step {
     Kill,
     Close,
     /// Withdraw the leader's whole stake at these bounds.
-    Drain(Plan),
+    Drain {
+        shares_in: u64,
+        min_base_out: u64,
+        min_quote_out: u64,
+    },
     /// Already in the state the op leaves it in — nothing to send.
     Skip(&'static str),
     /// The op cannot run on this seat; the reason says what would let it.
@@ -164,16 +174,17 @@ pub enum Step {
 
 /// The one rule the plan and the job both apply: what `op` does to `seat`,
 /// signed by `leader`.
-pub fn step(op: Op, seat: &Seat, leader: &Pubkey) -> Step {
+pub fn step(op: Op, seat: &SectorSeat, leader: &Pubkey) -> Step {
     match op {
         Op::Kill if seat.tombstoned => Step::Skip("closed — matching never visits it"),
+        // Before the signer check: a dead ladder needs no key at all.
+        Op::Kill if !seat.quoting => Step::Skip("every level is already zero"),
         // The program checks the signer against the vault's quote authority,
         // not its leader. The TUI opens vaults with the two equal; one opened
         // otherwise needs its own key, and a send would only fail on chain.
         Op::Kill if seat.quote_authority != *leader => {
-            Step::Refuse("its quote authority is not the leader — kill it with that key")
+            Step::Refuse("its quote authority is not the leader — close it instead")
         }
-        Op::Kill if !seat.quoting => Step::Skip("every level is already zero"),
         Op::Kill => Step::Kill,
         Op::Close if seat.tombstoned => Step::Skip("already closed"),
         Op::Close => Step::Close,
@@ -181,9 +192,22 @@ pub fn step(op: Op, seat: &Seat, leader: &Pubkey) -> Step {
         Op::Drain if !seat.tombstoned && !seat.frozen => {
             Step::Refuse("still active — close it first (the min-leader-share floor refuses)")
         }
+        // No performance fee is realized first: the program's realize is a
+        // no-op on a frozen or closed vault, so this read is what is paid.
         Op::Drain => match leader::plan_withdraw(&seat.stake, 100) {
-            Ok(plan) => Step::Drain(plan),
-            Err(_) => Step::Refuse("the stake does not size a withdrawal"),
+            Ok(Plan::Withdraw {
+                shares_in,
+                min_base_out,
+                min_quote_out,
+                ..
+            }) => Step::Drain {
+                shares_in,
+                min_base_out,
+                min_quote_out,
+            },
+            Ok(Plan::Deposit { .. }) | Err(_) => {
+                Step::Refuse("the stake does not size a withdrawal")
+            }
         },
     }
 }
@@ -207,9 +231,20 @@ pub fn plan(
         let leader = market::leader(repo_root, config, operator_leader)?.pubkey();
         let (base, quote) = market::pair_mints(repo_root, config)?;
         let address = chain::market_pda(cluster, &base, &quote);
-        let Some(found) = leader_seats(client, cluster, &address, &leader)? else {
-            lines.push(format!("{symbol}: no market — skipped"));
-            continue;
+        // One market's failed read must not hold the prompt back from every
+        // other market's stop: it is a line in the plan, and the job re-reads.
+        let found = match leader_seats(client, cluster, &address, &leader) {
+            Ok(Some(found)) => found,
+            Ok(None) => {
+                lines.push(format!("{symbol}: no market — skipped"));
+                continue;
+            }
+            Err(e) => {
+                let reason = format!("{symbol}: read failed — {e:#}");
+                lines.push(reason.clone());
+                first_refusal.get_or_insert(reason);
+                continue;
+            }
         };
         if found.seats.is_empty() {
             lines.push(format!(
@@ -222,7 +257,7 @@ pub fn plan(
             if let Step::Refuse(reason) = s {
                 first_refusal.get_or_insert(format!("{symbol} vault #{}: {reason}", seat.seq));
             }
-            if matches!(s, Step::Kill | Step::Close | Step::Drain(_)) {
+            if matches!(s, Step::Kill | Step::Close | Step::Drain { .. }) {
                 work += 1;
             }
             lines.push(plan_line(symbol, config, seat, s));
@@ -241,24 +276,21 @@ pub fn plan(
 }
 
 /// One seat's line in the plan.
-fn plan_line(symbol: &str, config: &PairConfig, seat: &Seat, step: Step) -> String {
+fn plan_line(symbol: &str, config: &PairConfig, seat: &SectorSeat, step: Step) -> String {
     let vault = format!("{symbol}: vault #{}", seat.seq);
     match step {
         Step::Kill => format!("{vault} — KILL: zero every bid and ask level"),
         Step::Close => format!("{vault} — CLOSE: tombstone it; matching stops for good"),
-        Step::Drain(Plan::Withdraw {
+        Step::Drain {
             shares_in,
             min_base_out,
             min_quote_out,
-            ..
-        }) => format!(
+        } => format!(
             "{vault} — DRAIN: {shares_in} shares for at least {} {symbol} + {} {}",
             leader::human(min_base_out, config.base.decimals),
             leader::human(min_quote_out, config.quote.decimals),
             config.quote.symbol
         ),
-        // `plan_withdraw` only ever sizes a withdrawal.
-        Step::Drain(Plan::Deposit { .. }) => format!("{vault} — REFUSED: not a withdrawal"),
         Step::Skip(reason) => format!("{vault} — {reason}, skipped"),
         Step::Refuse(reason) => format!("{vault} — REFUSED: {reason}"),
     }
@@ -281,8 +313,16 @@ pub fn execute(
     let mut failed = 0usize;
     for config in market::roster(cluster) {
         let symbol = config.base.symbol;
-        let leader = market::leader(repo_root, config, operator_leader)?;
-        let (base, quote) = market::pair_mints(repo_root, config)?;
+        let resolved = market::leader(repo_root, config, operator_leader)
+            .and_then(|leader| Ok((leader, market::pair_mints(repo_root, config)?)));
+        let (leader, (base, quote)) = match resolved {
+            Ok(resolved) => resolved,
+            Err(e) => {
+                log.log(format!("{symbol}: {e:#}"));
+                failed += 1;
+                continue;
+            }
+        };
         let address = chain::market_pda(cluster, &base, &quote);
         let found = match leader_seats(client, cluster, &address, &leader.pubkey()) {
             Ok(Some(found)) => found,
@@ -352,7 +392,7 @@ fn instructions(
     base_mint: &Pubkey,
     quote_mint: &Pubkey,
     found: &MarketSeats,
-    seat: &Seat,
+    seat: &SectorSeat,
 ) -> Vec<Instruction> {
     match step {
         // The SDK builder addresses the committed program id, so it passes
@@ -365,12 +405,11 @@ fn instructions(
         Step::Close => vec![chain::build_close_vault_ix(
             cluster, leader, market, seat.idx,
         )],
-        Step::Drain(Plan::Withdraw {
+        Step::Drain {
             shares_in,
             min_base_out,
             min_quote_out,
-            ..
-        }) => {
+        } => {
             let mut ixs =
                 leader::leader_ata_creates(&wallet.pubkey(), leader, base_mint, quote_mint);
             ixs.push(chain::build_withdraw_leader_ix(
@@ -388,7 +427,7 @@ fn instructions(
             ));
             ixs
         }
-        Step::Drain(Plan::Deposit { .. }) | Step::Skip(_) | Step::Refuse(_) => {
+        Step::Skip(_) | Step::Refuse(_) => {
             unreachable!("instructions() is only called for a sending step")
         }
     }
@@ -398,8 +437,8 @@ fn instructions(
 mod tests {
     use super::*;
 
-    fn seat(leader: Pubkey) -> Seat {
-        Seat {
+    fn seat(leader: Pubkey) -> SectorSeat {
+        SectorSeat {
             idx: 3,
             seq: 7,
             quote_authority: leader,
@@ -419,12 +458,12 @@ mod tests {
     fn kill_zeroes_a_quoting_vault_and_skips_a_dead_one() {
         let me = Pubkey::new_unique();
         assert_eq!(step(Op::Kill, &seat(me), &me), Step::Kill);
-        let idle = Seat {
+        let idle = SectorSeat {
             quoting: false,
             ..seat(me)
         };
         assert!(matches!(step(Op::Kill, &idle, &me), Step::Skip(_)));
-        let closed = Seat {
+        let closed = SectorSeat {
             tombstoned: true,
             ..seat(me)
         };
@@ -436,11 +475,18 @@ mod tests {
         // The program would reject the leader's signature; refusing here says
         // which key would work instead of a bare on-chain error.
         let me = Pubkey::new_unique();
-        let delegated = Seat {
+        let delegated = SectorSeat {
             quote_authority: Pubkey::new_unique(),
             ..seat(me)
         };
         assert!(matches!(step(Op::Kill, &delegated, &me), Step::Refuse(_)));
+        // Unless its ladder is already dead: nothing to sign, so no refusal
+        // to turn a finished kill red.
+        let idle = SectorSeat {
+            quoting: false,
+            ..delegated
+        };
+        assert!(matches!(step(Op::Kill, &idle, &me), Step::Skip(_)));
     }
 
     #[test]
@@ -448,12 +494,12 @@ mod tests {
         let me = Pubkey::new_unique();
         assert_eq!(step(Op::Close, &seat(me), &me), Step::Close);
         // A frozen vault is still on the active list, so it still closes.
-        let frozen = Seat {
+        let frozen = SectorSeat {
             frozen: true,
             ..seat(me)
         };
         assert_eq!(step(Op::Close, &frozen, &me), Step::Close);
-        let closed = Seat {
+        let closed = SectorSeat {
             tombstoned: true,
             ..seat(me)
         };
@@ -466,27 +512,26 @@ mod tests {
         // Active: the min-leader-share floor would refuse a full draw.
         assert!(matches!(step(Op::Drain, &seat(me), &me), Step::Refuse(_)));
         for stopped in [
-            Seat {
+            SectorSeat {
                 tombstoned: true,
                 ..seat(me)
             },
-            Seat {
+            SectorSeat {
                 frozen: true,
                 ..seat(me)
             },
         ] {
-            let Step::Drain(Plan::Withdraw {
-                shares_in,
-                base_out,
-                quote_out,
-                ..
-            }) = step(Op::Drain, &stopped, &me)
-            else {
-                panic!("a stopped vault drains");
-            };
-            assert_eq!((shares_in, base_out, quote_out), (1_000, 10_000, 20_000));
+            // Every leader share, for the whole stake less the 100 bps floor.
+            assert_eq!(
+                step(Op::Drain, &stopped, &me),
+                Step::Drain {
+                    shares_in: 1_000,
+                    min_base_out: 9_900,
+                    min_quote_out: 19_800,
+                }
+            );
         }
-        let empty = Seat {
+        let empty = SectorSeat {
             tombstoned: true,
             stake: VaultStake {
                 leader_shares: 0,
@@ -511,11 +556,26 @@ mod tests {
         sectors[2].profile.bids[0].size_bps = 500u16.into();
         sectors[3].leader = me.to_bytes();
         sectors[3].tombstoned = 1;
-        let found = seats_led_by(&sectors, &me);
+        // Distinct values per field, so a transposed mapping fails: the
+        // drain is sized from exactly these.
+        sectors[3].total_shares = 40u64.into();
+        sectors[3].leader_shares = 30u64.into();
+        sectors[3].base_atoms = 20u64.into();
+        sectors[3].quote_atoms = 10u64.into();
+        let found = sector_seats_led_by(&sectors, &me);
         assert_eq!(found.iter().map(|s| s.idx).collect::<Vec<_>>(), [2, 3]);
         assert!(found[0].quoting && !found[0].tombstoned);
         assert!(!found[1].quoting && found[1].tombstoned);
         assert_eq!(found[0].quote_authority, me);
+        assert_eq!(
+            found[1].stake,
+            VaultStake {
+                total_shares: 40,
+                leader_shares: 30,
+                base_atoms: 20,
+                quote_atoms: 10,
+            }
+        );
     }
 
     #[test]
@@ -529,7 +589,7 @@ mod tests {
             quote_treasury: Pubkey::new_unique(),
             seats: vec![],
         };
-        let closed = Seat {
+        let closed = SectorSeat {
             tombstoned: true,
             ..seat(me)
         };

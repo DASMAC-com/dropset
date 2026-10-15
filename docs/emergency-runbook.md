@@ -32,9 +32,10 @@ confirmation before it draws the panel.
 
 Every step opens a red **REAL FUNDS** prompt over a plan read fresh from
 the chain: one line per roster market where the leader leads a vault.
-Read it, type `yes`, press Enter. Esc cancels with nothing sent. Each step
-re-reads before it sends and skips vaults already done, so re-running one
-is always safe.
+Read it, type `yes`, press Enter. Esc cancels with nothing sent. A step
+with nothing to send opens no prompt; it prints a red log line saying why.
+Each step re-reads before it sends and skips vaults already done, so
+re-running one is always safe.
 
 1. **Kill** — press `K` (or menu: `EMERGENCY: kill ladders`). Zeroes every
    level on both sides; the book empties at the next take. Reversible: the
@@ -45,26 +46,27 @@ is always safe.
    matching never visits it again. **Permanent**; quoting again needs a new
    vault. Depositor withdrawals stay open.
 1. **Drain** — menu: `EMERGENCY: drain leader`. Withdraws the whole leader
-   stake into the leader's token accounts. It refuses an active vault (the
-   program's min-leader-share floor), which is why it comes after close.
-   Shares minted by the performance-fee realize that runs first stay
-   behind.
+   stake into the leader's token accounts. The TUI refuses an active vault,
+   since the program's min-leader-share floor would reject a full
+   withdrawal; that is why it comes after close.
 
 ## When something goes wrong
 
 - **A vault is listed as REFUSED.** The line says why. A kill refused for
-  "quote authority is not the leader" needs that vault's own quote-authority
-  key; close still works with the leader.
+  "quote authority is not the leader" cannot be signed from the TUI; go
+  straight to close, which the leader signs.
 - **A send fails.** The job ends in red, naming the vault. The other
   markets were still attempted. Re-run the step.
 - **"A job is already running."** Wait for it to finish, or quit (`q`) and
   relaunch.
-- **No transaction lands at all.** Each level expires on its own wall-clock
-  lifetime, so quotes go stale without a write. That is the passive
-  backstop, not a plan.
+- **No transaction lands at all.** Each level's lifetime runs from the
+  last reference-price write, so quotes go stale only once nothing refreshes
+  it: stop the maker. That is the passive backstop, not a plan.
 
 ## Rehearsal
 
 Launch as above, press `K`, read the plan, and press Esc. Nothing is signed.
-Do the same for close and drain; drain refusing an active vault is the
-expected answer. Rehearse before every live demo.
+Do the same for close; **never type `yes` in a rehearsal** — close is
+permanent. Drain on a live vault opens no prompt: its red log line
+refusing an active vault is the expected answer. Rehearse before every
+live demo.
