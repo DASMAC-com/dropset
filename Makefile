@@ -60,7 +60,7 @@ export ANCHOR_BUILD_SBF_ARCH := v0
 
 # Required toolchain: anchor-cli at ANCHOR_CLI_VERSION, the Solana SBF
 # toolchain, and a solana-cli / solana-test-validator at Agave 4.3 or later —
-# the release mainnet runs, so localnet gets its 200ms slots and Alpenglow.
+# the release mainnet runs, and the floor for the TUI's Alpenglow localnet.
 # A minimum, not an exact match: the SDK's solana-client 3.1 talks to it over
 # JSON-RPC, which is the contract, so the crates need not track the binary
 # (see sdk/rs/Cargo.toml). One prerequisite per tool keeps each recipe body
@@ -79,7 +79,7 @@ check-sbf:
 		|| { echo "cargo build-sbf not found (install Solana toolchain)"; \
 			exit 1; }
 
-# Matches a ` MAJOR.MINOR.PATCH` version of 4.3 or later.
+# Matches a ` MAJOR.MINOR` version prefix of 4.3 or later.
 SOLANA_MIN_VERSION_RE := ( 4\.([3-9]|[1-9][0-9])| [5-9]\.| [1-9][0-9]+\.)
 
 .PHONY: check-solana

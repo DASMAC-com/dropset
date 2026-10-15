@@ -78,7 +78,8 @@ const ALPENGLOW_ENV: &str = "DROPSET_LOCALNET_ALPENGLOW";
 /// on deploy. Deactivated until the program builds for sBPF v3.
 const SIMD_0500_FEATURE: &str = "B8JJXCy5amZyWG9r7EnUYLwzXSXTxG7GZ1qZ1qggo83g";
 
-/// Ticks per slot giving mainnet's 200ms slots. The 4.3 test validator paces
+/// Ticks per slot giving mainnet's 200ms slots under Alpenglow (~250ms on the
+/// Tower opt-out). The 4.3 test validator paces
 /// slots by its tick count (64 ticks, ~400ms) whatever the SIMD-0525 slot-time
 /// features say, so the count is halved here. A stopgap: drop it once the
 /// standard validator paces 200ms slots on its own.

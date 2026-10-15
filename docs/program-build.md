@@ -22,8 +22,9 @@ recipe that produced them, so nobody has to re-measure them.
   whose sBPF v3 (SIMD-0178, -0179, -0189) predates the SIMD-0377 encoding
   that platform-tools v1.57 emits. A v3 ELF built today fails to deploy there
   with `Failed to parse ELF file: invalid file header`, even with every
-  feature enabled. The flip to v3 waits for the Agave 4.x runtime. The local
-  validator already runs Agave 4.3 (`make check-solana`).
+  feature enabled. The flip to v3 waits for litesvm's move to the Agave 4.x
+  runtime. The local validator already runs Agave 4.3 or later
+  (`make check-solana`).
 - **The gate that flip satisfies** is SIMD-0500: a validator refuses to
   deploy, upgrade or finalize any ELF older than sBPF v3. It is listed for
   Agave 4.4 on mainnet, but Agave 4.3 already carries it and a test validator
