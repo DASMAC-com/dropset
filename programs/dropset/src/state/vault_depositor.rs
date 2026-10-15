@@ -8,7 +8,7 @@
 //! fresh PDA. See the architecture spec's **Depositor positions and
 //! cost basis**.
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang::prelude::*;
 use dropset_math_core::share::{self, CrystallizeError};
 
 use crate::{errors::DropsetError, Price};

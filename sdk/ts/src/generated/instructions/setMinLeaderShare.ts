@@ -37,7 +37,7 @@ export type SetMinLeaderShareAsyncInput<TAccountAdmin extends string = string, T
   /** Registry admin — the only signer this lever accepts. */
 admin: TransactionSigner<TAccountAdmin>;
 /** Singleton registry, read for the admin-membership check. */
-registry?: Address<TAccountRegistry>;
+registry: Address<TAccountRegistry>;
 /** Market holding the target vault. `mut` for the floor write. */
 market: Address<TAccountMarket>;
 /** CHECK: Only the event authority can invoke self-CPI */
@@ -62,9 +62,6 @@ const args = { ...input,  };
 
 
 // Resolve default values.
-if (!accounts.registry.value) {
-accounts.registry.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))] });
-}
 if (!accounts.eventAuthority.value) {
 accounts.eventAuthority.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111, 114, 105, 116, 121]))] });
 }

@@ -26,8 +26,33 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..');
 const idlPath = join(repoRoot, 'sdk', 'idl', 'dropset.json');
 
-const idl = JSON.parse(readFileSync(idlPath, 'utf8'));
+const idl = inlineTypeAliases(JSON.parse(readFileSync(idlPath, 'utf8')));
 const codama = createFromRoot(rootNodeFromAnchor(idl));
+
+/**
+ * Inline the IDL's type aliases before Codama reads it.
+ *
+ * anchor-next emits each Pod wrapper (`PodU64`, `PodU32`, ...) as a
+ * `{ kind: "type", alias: <primitive> }` defined type — the IDL spec's
+ * `IdlTypeDefTy::Type` — which `@codama/nodes-from-anchor` does not
+ * recognize (it knows only the older `{ kind: "alias", value }`). The
+ * wrappers are an on-chain alignment detail with the same bytes as their
+ * primitive, so replace every reference with the aliased type and drop
+ * the alias definitions: the clients keep plain `u64` / `bigint` fields.
+ */
+function inlineTypeAliases(idl) {
+  const aliases = new Map(
+    idl.types.filter((t) => t.type.kind === 'type').map((t) => [t.name, t.type.alias]),
+  );
+  const resolve = (node) => {
+    if (Array.isArray(node)) return node.map(resolve);
+    if (node === null || typeof node !== 'object') return node;
+    const name = node.defined?.name;
+    if (aliases.has(name)) return resolve(aliases.get(name));
+    return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, resolve(v)]));
+  };
+  return resolve({ ...idl, types: idl.types.filter((t) => !aliases.has(t.name)) });
+}
 
 /** Levels per side of a `LiquidityProfile` — the program's `N_LEVELS`. */
 const N_LEVELS = 8;
@@ -63,34 +88,43 @@ codama.update(
   ]),
 );
 
-// `Price` is a u32 decimal-float comparison key, but it does not derive
-// `IdlType`, so the program's IDL surfaces it as a *fieldless* struct.
-// Left as-is, Codama would emit a zero-byte codec and silently corrupt
-// every `Price`-bearing decode (FillEvent.fill_price, ReferencePrice).
-// Remap the defined type to its true wire form — a bare `u32` — so the
-// generated codecs read the right four bytes. The human-facing decimal
-// codec (bits <-> value) is layered by hand in each client's `price`
-// module, keyed off these raw bits.
+// `Price` is a u32 decimal-float comparison key; the IDL surfaces it as a
+// one-field tuple struct, which Codama would render as a tuple type.
+// Remap the defined type to its bare wire form — a `u32` — because the
+// human-facing decimal codec (bits <-> value) is layered by hand in each
+// client's `price` module, keyed off these raw bits. (Older anchor-next
+// revs emitted it fieldless, which also mis-sized every account holding a
+// `Price` — `VaultDepositorHeader` read 148 bytes instead of 152.)
 codama.update(
   bottomUpTransformerVisitor([
     {
       select: '[definedTypeNode]price',
       transform: (node) => ({ ...node, type: numberTypeNode('u32') }),
     },
+  ]),
+);
+
+// `set_liquidity_profile`'s `profile_bytes: [u8; PROFILE_BYTES]` must match
+// the serialized LiquidityProfile. The IDL carries the length (older
+// anchor-next revs emitted 0 and this script restored it); fail the
+// generation if it ever disagrees with the hand-derived width, since a
+// mismatch is a silent wire-format break rather than a build error. The
+// value has moved twice already (160 → 224, when per-level expiry gained
+// its second domain; 224 → 288, when each level gained its flip spread).
+const profileArg = idl.instructions
+  .find((ix) => ix.name === 'set_liquidity_profile')
+  .args.find((arg) => arg.name === 'profile_bytes');
+if (profileArg.type.array[1] !== PROFILE_BYTES) {
+  throw new Error(
+    `profile_bytes is [u8; ${profileArg.type.array[1]}] in the IDL, expected ${PROFILE_BYTES}`,
+  );
+}
+// Codama renders an IDL `[u8; N]` as fixed bytes (`ReadonlyUint8Array` in
+// TS); the clients take the profile as a u8 array (`Array<number>`), so
+// keep it an array node of the same width.
+codama.update(
+  bottomUpTransformerVisitor([
     {
-      // `set_liquidity_profile`'s `profile_bytes: [u8; PROFILE_BYTES]`
-      // surfaces as a zero-length array — anchor-next can't const-eval
-      // `PROFILE_BYTES` (= size_of::<LiquidityProfile>()). Restore the
-      // real length so the generated arg matches the serialized
-      // LiquidityProfile the instruction expects.
-      //
-      // Derived here rather than written as a literal, because the value
-      // has moved twice already (160 → 224, when per-level expiry gained
-      // its second domain; 224 → 288, when each level gained its flip
-      // spread) and a stale literal here is a silent wire-format
-      // mismatch rather than a build break: 2 sides × 8 levels × an
-      // 18-byte Level (price_offset u32, flip_spread_ppm u32, size_bps
-      // u16, expiry_offset_secs u32, expiry_offset_slots u32).
       select: '[instructionArgumentNode]profileBytes',
       transform: (node) => ({
         ...node,

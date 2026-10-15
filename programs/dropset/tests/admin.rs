@@ -1,13 +1,14 @@
 mod common;
 
-use anchor_lang_v2::{programs::System, Id, InstructionData};
-use anchor_v2_testing::{Keypair, LiteSVM, Signer};
+use anchor_lang::{programs::System, Id, InstructionData};
+use anchor_v2_testing::{Keypair, Signer};
 use common::fixture::{registry_pda, Fixture};
 use common::{assert_program_error, decode_slab, send_ixn, PROGRAM_ID, SIGNER_FUNDING_LAMPORTS};
 use dropset::{
     instruction::{AddAdmin as AddAdminIx, RemoveAdmin as RemoveAdminIx},
     DropsetError, Registry, RegistryHeader,
 };
+use litesvm::LiteSVM;
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
 

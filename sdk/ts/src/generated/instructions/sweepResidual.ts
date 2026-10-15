@@ -37,7 +37,7 @@ export type SweepResidualAsyncInput<TAccountAdmin extends string = string, TAcco
   /** Registry admin — the only signer this lever accepts. */
 admin: TransactionSigner<TAccountAdmin>;
 /** Singleton registry, read for the admin-membership check. */
-registry?: Address<TAccountRegistry>;
+registry: Address<TAccountRegistry>;
 /**
  * Market owning the treasury. Read-only: a sweep moves neither vault
  * inventory nor the accrued-fee counters — it only pays out what
@@ -95,9 +95,6 @@ const accounts = originalAccounts as Record<keyof typeof originalAccounts, Resol
 
 
 // Resolve default values.
-if (!accounts.registry.value) {
-accounts.registry.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))] });
-}
 if (!accounts.tokenProgram.value) {
 accounts.tokenProgram.value = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' as Address<'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'>;
 }

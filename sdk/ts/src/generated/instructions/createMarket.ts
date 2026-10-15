@@ -43,7 +43,7 @@ payer: TransactionSigner<TAccountPayer>;
  * Singleton registry. Mutated to bump `market_count`, and read
  * for the fee config, admin set, and stamped defaults.
  */
-registry?: Address<TAccountRegistry>;
+registry: Address<TAccountRegistry>;
 /**
  * Base leg mint. `InterfaceAccount<Mint>` accepts SPL Token and
  * Token-2022 by relaxing the owner check; the deserialization
@@ -137,9 +137,6 @@ const accounts = originalAccounts as Record<keyof typeof originalAccounts, Resol
 
 
 // Resolve default values.
-if (!accounts.registry.value) {
-accounts.registry.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))] });
-}
 if (!accounts.market.value) {
 accounts.market.value = await getProgramDerivedAddress({ programAddress, seeds: [getAddressEncoder().encode(expectAddress(accounts.baseMint.value)), getAddressEncoder().encode(expectAddress(accounts.quoteMint.value))] });
 }

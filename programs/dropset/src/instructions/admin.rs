@@ -1,6 +1,6 @@
 use crate::errors::DropsetError;
 use crate::{AdminSet, Registry};
-use anchor_lang_v2::prelude::*;
+use anchor_lang::prelude::*;
 
 /// Add a pubkey to the registry admin set. Authorized by any existing
 /// admin (the `admin` signer), who also funds the extra rent for the

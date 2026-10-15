@@ -197,5 +197,5 @@ export async function fetchAllMaybeVaultDepositorHeader(
 }
 
 export function getVaultDepositorHeaderSize(): number {
-  return 148;
+  return 152;
 }

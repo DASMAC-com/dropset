@@ -56,7 +56,7 @@
 
 mod common;
 
-use anchor_lang_v2::InstructionData;
+use anchor_lang::InstructionData;
 use anchor_v2_testing::{Keypair, Signer};
 use common::fixture::{simple_profile, Fixture, PROFILE_BYTES};
 use core::mem::{offset_of, size_of};
@@ -510,7 +510,7 @@ fn write_profile_and_read(mut f: Fixture, profile: [u8; PROFILE_BYTES]) -> Profi
         .expect("set_liquidity_profile");
     let v = f.vault(0);
     (
-        anchor_lang_v2::bytemuck::bytes_of(&v.profile).to_vec(),
+        anchor_lang::bytemuck::bytes_of(&v.profile).to_vec(),
         v.reference_price.stamp.get(),
         v.reference_price.price.as_u32(),
         v.reference_price.quote_slot.get(),

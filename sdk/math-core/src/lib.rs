@@ -20,7 +20,7 @@
 //!
 //! **Feature surface.** The codec, [`matching_math`], and [`share`] are
 //! solana-free and always compiled. The Anchor `IdlType` derive on `Price`
-//! is gated behind `idl` (which pulls the non-solana-free `anchor-lang-v2`)
+//! is gated behind `idl` (which pulls the non-solana-free `anchor-lang`)
 //! and must never be combined with `wasm`.
 //!
 //! Correctness is pinned to the on-chain engine by the shared conformance

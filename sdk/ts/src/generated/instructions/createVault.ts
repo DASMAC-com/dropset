@@ -45,7 +45,7 @@ payer: TransactionSigner<TAccountPayer>;
  * Singleton registry — read for admin check + the
  * `max_vaults_per_market` cap.
  */
-registry?: Address<TAccountRegistry>;
+registry: Address<TAccountRegistry>;
 /**
  * Market the vault lives on. `mut` because the slab tail grows
  * (or pops from the free list) and `active_count` increments.
@@ -98,9 +98,6 @@ const args = { ...input,  };
 
 
 // Resolve default values.
-if (!accounts.registry.value) {
-accounts.registry.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))] });
-}
 if (!accounts.feeMint.value) {
 accounts.feeMint.value = 'market.fee_config.mint' as Address<'market.fee_config.mint'>;
 }

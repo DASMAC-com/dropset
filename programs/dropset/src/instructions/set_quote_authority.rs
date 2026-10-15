@@ -18,7 +18,7 @@
 //! all, so `SetQuoteAuthorityEvent` — not the account state — is how the
 //! maker learns its delegation moved.
 
-use anchor_lang_v2::{address_eq, prelude::*};
+use anchor_lang::{address_eq, prelude::*};
 
 use crate::{
     errors::DropsetError,

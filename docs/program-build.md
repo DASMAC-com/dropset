@@ -15,16 +15,17 @@ recipe that produced them, so nobody has to re-measure them.
 
 - **anchor-cli 1.2.1** (crates.io) defaults to **platform-tools v1.57** and
   **arch v3**, overridable with `--arch` (or the `ANCHOR_BUILD_SBF_ARCH`
-  environment variable) and `--tools-version`. It recognizes the
-  `anchor-lang-v2` / `anchor-spl-v2` crate pair in its manifest detection.
+  environment variable) and `--tools-version`. It builds the program on the
+  `anchor-next` crates under their current names (`anchor-lang` /
+  `anchor-spl` 2.0.0-rc.2, formerly `anchor-lang-v2` / `anchor-spl-v2`).
 - **The build is held at v0** by the Makefile's exported
-  `ANCHOR_BUILD_SBF_ARCH`. The tests' litesvm runs the Agave 3.1 runtime,
-  whose sBPF v3 (SIMD-0178, -0179, -0189) predates the SIMD-0377 encoding
-  that platform-tools v1.57 emits. A v3 ELF built today fails to deploy there
-  with `Failed to parse ELF file: invalid file header`, even with every
-  feature enabled. The flip to v3 waits for litesvm's move to the Agave 4.x
-  runtime. The local validator already runs Agave 4.3 or later
-  (`make check-solana`).
+  `ANCHOR_BUILD_SBF_ARCH`. The test runtime is litesvm 0.18 (Agave 4.3,
+  solana-sbpf 0.23, which implements the SIMD-0377 encoding that
+  platform-tools v1.57 emits), so nothing in the toolchain still forces v0:
+  the hold now only sequences the v3 flip as its own change. Its predecessor,
+  litesvm 0.11 on Agave 3.1, rejected that v3 ELF with
+  `Failed to parse ELF file: invalid file header`. The local validator runs
+  Agave 4.3 or later (`make check-solana`).
 - **The gate that flip satisfies** is SIMD-0500: a validator refuses to
   deploy, upgrade or finalize any ELF older than sBPF v3. It is listed for
   Agave 4.4 on mainnet, but Agave 4.3 already carries it and a test validator
@@ -36,8 +37,8 @@ recipe that produced them, so nobody has to re-measure them.
   `--tools-version v1.52` and never pass `--arch`, so they can only build v0.
   The Anchor maintainer confirmed on 2026-10-13 that the stable v1 CLI
   releases are the ones to use, v2 programs included. The program crate is
-  unaffected: it stays on `anchor-lang-v2` from anchor-next, which the
-  lockfile pins at `e056cc17` (June 23).
+  unaffected: it stays on the anchor-next crates, which the lockfile pins
+  at `253ad753` (wincode 0.6, solana-address 2.7; previously `e056cc17`).
 
 ## Reading an ELF
 

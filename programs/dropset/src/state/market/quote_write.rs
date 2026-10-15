@@ -24,7 +24,7 @@ use super::{MarketHeader, ReferencePrice, Vault, FLUSH_BIT};
 use crate::asm_offsets::equ;
 
 /// Domain error codes returned by the quote-write kernels. Each equals the
-/// `ProgramError::Custom` value anchor-lang-v2's `#[error_code]` produces
+/// `ProgramError::Custom` value anchor-lang's `#[error_code]` produces
 /// for the matching [`crate::errors::DropsetError`] variant (its index plus
 /// 6000), so the ASM fast path and the Anchor reference build surface the
 /// *same* code on the same domain failure. The equality is pinned by
@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn error_codes_match_dropset() {
-        // anchor-lang-v2 `#[error_code]` maps a fieldless variant to
+        // anchor-lang `#[error_code]` maps a fieldless variant to
         // `Custom(index + 6000)`; pin the kernels' domain codes to that so
         // ASM and Anchor can't drift apart.
         const OFFSET: u32 = 6000;

@@ -26,9 +26,9 @@
 //! (`leg_vault_sum == 0`), so the force-withdraws still cannot be skipped
 //! and depositor principal can never be routed to the drain recipient.
 
-use anchor_lang_v2::{address_eq, prelude::*, AnchorAccount};
+use anchor_lang::{address_eq, prelude::*, AnchorAccount};
 #[allow(unused_imports)]
-use anchor_spl_v2::{
+use anchor_spl::{
     token_2022::{close_account, CloseAccount},
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
@@ -65,7 +65,7 @@ pub struct CloseMarketTreasury {
     /// additionally rejects any mint that isn't one of the market legs.
     pub mint: InterfaceAccount<Mint>,
     /// Token program owning `mint`.
-    pub token_program: Interface<'static, TokenInterface>,
+    pub token_program: Interface<TokenInterface>,
     /// The treasury ATA to close. The ATA constraint pins it to
     /// `ata(market, mint, token_program)`, so a non-canonical account is
     /// rejected before the handler runs. Drained to `token_recipient`
