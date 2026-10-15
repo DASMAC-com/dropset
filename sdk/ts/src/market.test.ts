@@ -202,7 +202,7 @@ test("a filled ask's flipped bid is base-sized and ties after the own level", ()
     writePosition(dv, b + V_REMAINING_BIDS, shared, 2_000_000n);
   });
   const view = decodeDropsetMarketView(data, slotTime(1), wallTime(2));
-  assert.deepEqual(view.asks, [], 'a filled-out ask with no flip of its own rests nothing');
+  assert.deepEqual(view.asks, [], 'a filled-out ask rests nothing, and no bid flipped onto this side');
   assert.deepEqual(view.bids, [
     { price: shared, size: baseForQuote(shared, 2_000_000n) },
     { price: shared, size: baseForQuote(shared, 1_085_000n) },

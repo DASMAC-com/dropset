@@ -26,8 +26,9 @@ describe("levelsToRows", () => {
 
   it("keeps every price of a fully flipped side", () => {
     // One vault's 8 own levels and 8 flipped counters, all distinct prices:
-    // the cap must not cut the deeper half of the book.
-    const levels: BookLevel[] = Array.from({ length: MAX_ROWS }, (_, i) => ({
+    // the cap must not cut the deeper half of the book. Sized from that
+    // protocol fact (2 × N_LEVELS), not from the cap under test.
+    const levels: BookLevel[] = Array.from({ length: 2 * 8 }, (_, i) => ({
       price: p(1.08 + i * 0.0001),
       size: 1n,
     }));
