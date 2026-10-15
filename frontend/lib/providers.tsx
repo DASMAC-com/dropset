@@ -16,6 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import {
   CLUSTER,
   FALLBACK_RPC_URL,
@@ -144,16 +145,26 @@ export function Providers({ children }: { children: ReactNode }) {
   // an install link until the picker is closed and reopened.
   const connectingRef = useRef(false);
 
-  const rebuild = useCallback((connectors: readonly WalletConnector[]) => {
-    // SolanaProvider only auto-destroys a client it created itself; since we
-    // pass our own, tear down the superseded one so its RPC subscriptions
-    // don't leak.
-    const next = makeClient(connectors);
-    clientRef.current.destroy();
-    clientRef.current = next;
-    keyRef.current = connectorKey(connectors);
-    setClient(next);
-  }, []);
+  // `inEffect` marks a call made from inside a React effect, where React is
+  // already committing and `flushSync` would only warn. Every other caller is
+  // a registry or store callback outside React, where a plain `setClient`
+  // would leave the destroyed client rendered for a moment: a picker row
+  // clicked in that window connects on the dead client, so there the swap
+  // commits synchronously.
+  const rebuild = useCallback(
+    (connectors: readonly WalletConnector[], inEffect: boolean) => {
+      // SolanaProvider only auto-destroys a client it created itself; since
+      // we pass our own, tear down the superseded one so its RPC
+      // subscriptions don't leak.
+      const next = makeClient(connectors);
+      clientRef.current.destroy();
+      clientRef.current = next;
+      keyRef.current = connectorKey(connectors);
+      if (inEffect) setClient(next);
+      else flushSync(() => setClient(next));
+    },
+    [],
+  );
 
   // Safe to swap the client only when no connection is live or in flight.
   const canRebuild = useCallback(
@@ -164,22 +175,25 @@ export function Providers({ children }: { children: ReactNode }) {
   // Apply a deferred connector set when it becomes safe. Reads clientRef so it
   // always targets the live client; callable from the store subscription and
   // the connect-settled event.
-  const flush = useCallback(() => {
-    const c = clientRef.current;
-    const pending = pendingRef.current;
-    if (!pending || !canRebuild(c)) return;
-    pendingRef.current = null;
-    // The set may have churned back to what this client already has (a wallet
-    // unregistered then re-registered); skip the needless rebuild.
-    if (connectorKey(pending) === connectorKey(c.connectors.all)) return;
-    rebuild(pending);
-  }, [canRebuild, rebuild]);
+  const flush = useCallback(
+    (inEffect: boolean) => {
+      const c = clientRef.current;
+      const pending = pendingRef.current;
+      if (!pending || !canRebuild(c)) return;
+      pendingRef.current = null;
+      // The set may have churned back to what this client already has (a
+      // wallet unregistered then re-registered); skip the needless rebuild.
+      if (connectorKey(pending) === connectorKey(c.connectors.all)) return;
+      rebuild(pending, inEffect);
+    },
+    [canRebuild, rebuild],
+  );
 
   useAppEvent("walletConnecting", (connecting) => {
     connectingRef.current = connecting;
     // Connect just settled → a connector set deferred while it was in flight
     // can now be applied (if the wallet is also idle).
-    if (!connecting) flush();
+    if (!connecting) flush(false);
   });
 
   useEffect(() => {
@@ -192,8 +206,10 @@ export function Providers({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     // watchWalletStandardConnectors emits the current set synchronously, then
-    // again on every register/unregister; it returns the unsubscribe.
-    return watchWalletStandardConnectors((connectors) => {
+    // again on every register/unregister; it returns the unsubscribe. Only
+    // that first emission runs inside this effect.
+    let subscribing = true;
+    const unsubscribe = watchWalletStandardConnectors((connectors) => {
       const nextKey = connectorKey(connectors);
       if (nextKey === keyRef.current) return;
       keyRef.current = nextKey;
@@ -201,18 +217,20 @@ export function Providers({ children }: { children: ReactNode }) {
       // in-flight connect, so only swap when it's safe; otherwise defer until
       // the wallet is idle and no connect is in flight.
       if (canRebuild(clientRef.current)) {
-        rebuild(connectors);
+        rebuild(connectors, subscribing);
       } else {
         pendingRef.current = connectors;
       }
     });
+    subscribing = false;
+    return unsubscribe;
   }, [canRebuild, rebuild]);
 
   useEffect(() => {
     // Flush a deferred connector set once it's safe. Re-subscribes whenever
     // `client` changes so we're always watching the live store.
-    const unsubscribe = client.store.subscribe(flush);
-    flush();
+    const unsubscribe = client.store.subscribe(() => flush(false));
+    flush(true);
     return unsubscribe;
   }, [client, flush]);
 

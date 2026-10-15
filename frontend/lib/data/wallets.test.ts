@@ -132,9 +132,11 @@ describe("buildPickerWallets icon sources", () => {
   });
 });
 
-// The mobile picker's "Open in <wallet>" rows hang off `browse`, so it must
-// appear exactly when there is nothing to connect to — an installed wallet
-// connects instead of bouncing the user into its in-app browser.
+// The mobile picker's "Open in <wallet>" rows and the desktop phone-handoff QR
+// both hang off `browse`. It follows the curated entry, not the connector: an
+// installed wallet's row still offers the QR to someone else, and connect
+// precedence (`pickerRowAction`) keeps an installed wallet from bouncing the
+// user into its in-app browser.
 describe("buildPickerWallets in-app browser links", () => {
   // The default mobile route on iOS Safari, so it must stay first and linked.
   it("leads with Phantom and gives it a browse link when uninstalled", () => {
@@ -143,14 +145,14 @@ describe("buildPickerWallets in-app browser links", () => {
     expect(notDetected[0]?.browse).toEqual("https://phantom.com/ul/browse/");
   });
 
-  it("drops the browse link once the wallet's connector is live", () => {
+  it("keeps the browse link once the wallet's connector is live", () => {
     const { detected } = buildPickerWallets(
       [connector("phantom:std", "Phantom")],
       false,
     );
     const row = detected.find((w) => w.key === "phantom");
     expect(row?.connectorId).toEqual("phantom:std");
-    expect(row?.browse).toBeUndefined();
+    expect(row?.browse).toEqual("https://phantom.com/ul/browse/");
   });
 
   it("gives a curated wallet with no published link no browse field", () => {

@@ -77,9 +77,12 @@ export type PickerWallet = {
   // Present iff there's nothing to connect to → render a link to the wallet's
   // official site so the user can install it.
   site?: string;
-  // Present iff there's nothing to connect to AND the wallet has an in-app
-  // browser link → on mobile, render "Open in <wallet>" rather than the
-  // install link, since a phone browser can never inject the wallet itself.
+  // Present iff the wallet has an in-app browser link, connectable or not. On
+  // mobile with nothing to connect to, the row renders "Open in <wallet>"
+  // rather than the install link, since a phone browser can never inject the
+  // wallet itself (see `pickerRowAction`). On desktop it backs the row's
+  // phone-handoff QR, which an installed wallet's row offers too: the person
+  // scanning is not the one at the keyboard.
   browse?: string;
 };
 
@@ -129,7 +132,7 @@ export function buildPickerWallets(
       connectorId: connector?.id,
       // Only offer the install link when there's no connector to connect to.
       site: connector ? undefined : w.site,
-      browse: connector ? undefined : w.browse,
+      browse: w.browse,
     };
   });
 
