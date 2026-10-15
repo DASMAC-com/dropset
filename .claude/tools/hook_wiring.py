@@ -110,7 +110,8 @@ ITERM_AUTOLAUNCH_DIR = iterm_deploy.AUTOLAUNCH_DIR
 
 # What each drift state means, for the report.
 ITERM_DRIFT_REASONS = {
-    "stale-copy": "a regular file, not a link into the checkout",
+    "stale-copy": "not a link to its committed script (a copy, or a folder "
+    "linked somewhere else)",
     "wrong-link": "a link that does not resolve to its committed script",
     "missing": "a committed script that was never linked here",
     "orphan": "no committed counterpart",
@@ -358,6 +359,18 @@ def committed_hooks(repo: Path) -> list[str]:
     )
 
 
+def _iterm_entries(directory: Path) -> list[Path]:
+    """The ``iterm-*`` entries of one deploy dir.
+
+    ``os.listdir`` rather than ``Path.glob``: glob swallows a
+    ``PermissionError`` and returns nothing, so an unreadable deploy dir would
+    read as "not deployed" — a clean answer the scan never earned.
+    """
+    return sorted(
+        directory / name for name in os.listdir(directory) if name.startswith("iterm-")
+    )
+
+
 def iterm_drift(repo: Path, scripts_dir: Path, autolaunch_dir: Path) -> dict:
     """``{"deployed": bool, "drift": {path: state}}`` for the iTerm integration.
 
@@ -371,7 +384,8 @@ def iterm_drift(repo: Path, scripts_dir: Path, autolaunch_dir: Path) -> dict:
     """
     source = repo / ".claude" / "scripts"
     present = [d for d in (scripts_dir, autolaunch_dir) if d.is_dir()]
-    if not any(any(d.glob("iterm-*")) for d in present):
+    entries = {d: _iterm_entries(d) for d in present}
+    if not any(entries.values()):
         return {"deployed": False, "drift": {}}
     if not source.is_dir():
         # Deployed against a checkout with nothing to point at: every entry
@@ -389,7 +403,7 @@ def iterm_drift(repo: Path, scripts_dir: Path, autolaunch_dir: Path) -> dict:
             drift[str(link)] = state
     expected = {link for link, _ in pairs}
     for directory in present:
-        for path in sorted(directory.glob("iterm-*")):
+        for path in entries[directory]:
             if path in expected:
                 continue
             dangling = path.is_symlink() and not path.exists()

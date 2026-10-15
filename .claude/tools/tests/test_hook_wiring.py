@@ -1,9 +1,12 @@
+# cspell:word geteuid
+
 """Tests for hook_wiring.py — the committed-but-unwired guard detector."""
 
 from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -646,10 +649,19 @@ class ItermDriftTests(RepoFixture):
         with self.assertRaises(hw.HookWiringError):
             hw.scan(self.repo, self.no_user)
 
-    def test_an_unreadable_deploy_dir_is_a_scan_error(self):
-        with mock.patch.object(hw, "iterm_drift", side_effect=PermissionError("x")):
-            with self.assertRaises(hw.HookWiringError):
-                hw.scan(self.repo, self.no_user)
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 directory anyway")
+    def test_an_unreadable_deploy_dir_is_a_scan_error_not_a_clean_answer(self):
+        """Path.glob swallows PermissionError and returns nothing, which would
+        read an unreadable deploy dir as "not deployed" and exit 0. AutoLaunch
+        is left absent, so nothing else marks the integration deployed."""
+        self.iterm_scripts.mkdir()
+        (self.iterm_scripts / "iterm-paint.sh").symlink_to(
+            self.source / "iterm-paint.sh"
+        )
+        self.iterm_scripts.chmod(0)
+        self.addCleanup(self.iterm_scripts.chmod, 0o755)
+        with self.assertRaises(hw.HookWiringError):
+            hw.scan(self.repo, self.no_user)
 
     def test_no_deployment_says_so(self):
         out = io.StringIO()
