@@ -751,9 +751,12 @@ none to inspect), which is why it lands here:
 python3 .claude/tools/hook_wiring.py
 ```
 
-Exit `0` clean, `1` when something is unwired, `2` when the
-scan itself could not run — a clean scan and a broken one
-must never read alike.
+Exit `0` clean, `1` when something is unwired or a deployed
+iTerm file has drifted from a link into the checkout (a
+`DRIFT` line), `2` when the scan itself could not run — a
+clean scan and a broken one must never read alike. Report
+drift the same way; the fix is the operator's
+`iterm_deploy.py --apply`.
 
 **Report it; never wire it.** Wiring a hook grants it the
 right to block tool calls, which is the operator's decision,
