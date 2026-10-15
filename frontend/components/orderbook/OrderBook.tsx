@@ -1,6 +1,5 @@
 "use client";
 
-import { type BookLevel, decodePrice } from "@dropset/sdk";
 import { useSolanaClient } from "@solana/react-hooks";
 import { useEffect, useMemo, useState } from "react";
 import { ORDER_BOOK_REFRESH_MS } from "@/lib/data/timings";
@@ -8,21 +7,11 @@ import type { BookToken, OrderBookState } from "@/lib/hooks/useOrderBook";
 import { useOrderBook } from "@/lib/hooks/useOrderBook";
 import { verifyCluster } from "@/lib/rpc";
 import { useSwapStore } from "@/lib/store";
-import {
-  formatAmount,
-  formatPrice,
-  humanPrice,
-  priceFractionDigits,
-} from "./format";
+import { formatAmount, formatPrice, priceFractionDigits } from "./format";
+import { levelsToRows, type Row } from "./ladder";
 import { ROW_H } from "./layout";
 import { Trades } from "./Trades";
 import { GREEN, GREEN_BAR, GREEN_FLASH, RED, RED_BAR, RED_FLASH } from "./tone";
-
-// Max rows rendered per side — a cap, not a pad. Matches the protocol's
-// per-side ladder depth (N_LEVELS = 8). Only the resting levels are rendered
-// (no spacer padding), so the panel shrinks to the book; the empty→flashed
-// moment reads as levels appearing in place.
-const MAX_ROWS = 8;
 
 // Asks red, bids green. Text is the saturated tone; the depth bar and the
 // update-flash are low-alpha washes of it. The palette is shared with the
@@ -31,60 +20,6 @@ const TONE = {
   ask: { text: RED, bar: RED_BAR, flash: RED_FLASH },
   bid: { text: GREEN, bar: GREEN_BAR, flash: GREEN_FLASH },
 } as const;
-
-// One rendered ladder row: the raw on-chain price it was built from, that
-// price in human units, the depth resting at it, and the cumulative size from
-// the spread out to this row (the "Total" column).
-//
-// `bits` is carried so rows can be keyed by the price the chain actually
-// quoted rather than by its rendered float — see the slot construction below.
-type Row = {
-  bits: BookLevel["price"];
-  price: number;
-  size: bigint;
-  total: bigint;
-};
-
-// Best-first levels → rows with a running cumulative total (from the spread
-// outward). Drops anything that doesn't decode to a real, positive price.
-//
-// Prices are scaled to human quote-per-base with the pair's decimals — see
-// `humanPrice`. The sentinel guard still runs on the decoded float, since
-// ZERO / INFINITY are properties of the `Price` itself and survive any scaling.
-//
-// Levels quoting the *same* on-chain price fold into one row, summing their
-// depth — two vaults may quote a price identically, and the engine's
-// price-time sort puts those levels adjacent. This mirrors the TUI ladder's
-// merge, which likewise compares raw `Price` equality rather than a float
-// tolerance, so the two books render the same ladder for the same market.
-function levelsToRows(
-  levels: readonly BookLevel[],
-  baseDecimals: number,
-  quoteDecimals: number,
-): Row[] {
-  const rows: Row[] = [];
-  let acc = 0n;
-  for (const l of levels) {
-    const decoded = decodePrice(l.price);
-    if (!Number.isFinite(decoded) || decoded <= 0) continue;
-    const last = rows.at(-1);
-    if (last && last.bits === l.price) {
-      acc += l.size;
-      last.size += l.size;
-      last.total = acc;
-      continue;
-    }
-    if (rows.length >= MAX_ROWS) break;
-    acc += l.size;
-    rows.push({
-      bits: l.price,
-      price: humanPrice(l.price, baseDecimals, quoteDecimals),
-      size: l.size,
-      total: acc,
-    });
-  }
-  return rows;
-}
 
 function LevelRow({
   row,
