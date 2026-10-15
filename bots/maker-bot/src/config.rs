@@ -416,8 +416,9 @@ pub struct LadderLevel {
 /// ticking but wall time does not.
 ///
 /// The **slot** bound sits deliberately *above* each tier's wall life
-/// (~1.25x at the ~0.4 s/slot pace). The wall bound is this bot's actual
-/// policy — it is the §3 tier table — and the slot bound exists for the
+/// (~1.25x at the ~0.2 s/slot pace SIMD-0525 brought mainnet and localnet
+/// to; double that at the old ~0.4 s/slot). The wall bound is this bot's
+/// actual policy — it is the §3 tier table — and the slot bound exists for the
 /// regime where the cluster clock misbehaves, so it must never be the
 /// conjunct that governs a healthy book. The deepest tier goes
 /// [`SlotSpan::UNBOUNDED`], leaving its stratified wall decay to govern
@@ -447,19 +448,19 @@ pub const DEFAULT_LADDER: [LadderLevel; 4] = [
         offset_ppm: 5_000,
         size_bps: 4_000,
         expiry_offset_secs: WallSpan::new(36),
-        expiry_offset_slots: SlotSpan::new(120),
+        expiry_offset_slots: SlotSpan::new(240),
     },
     LadderLevel {
         offset_ppm: 10_000,
         size_bps: 3_000,
         expiry_offset_secs: WallSpan::new(120),
-        expiry_offset_slots: SlotSpan::new(375),
+        expiry_offset_slots: SlotSpan::new(750),
     },
     LadderLevel {
         offset_ppm: 20_000,
         size_bps: 2_000,
         expiry_offset_secs: WallSpan::new(480),
-        expiry_offset_slots: SlotSpan::new(1_500),
+        expiry_offset_slots: SlotSpan::new(3_000),
     },
     LadderLevel {
         offset_ppm: 50_000,
@@ -906,13 +907,13 @@ mod tests {
     #[test]
     fn slot_bound_clears_the_heartbeat() {
         let cfg = BotConfig::default();
-        // The pace the tier equivalence is written against. NOT a
-        // protocol constant, and NOT the safe direction to assume: a
-        // faster pace (SIMD-0525 stages 200 ms) means more slots elapse
-        // per heartbeat *and* buys less wall life per slot, so both
-        // effects erode the margin below. Re-derive the tiers if the
-        // cluster pace changes rather than trusting this number.
-        const SLOT_MS: u64 = 400;
+        // The pace the tier equivalence is written against: SIMD-0525's
+        // 200 ms, which mainnet runs and the localnet validator is
+        // started at. NOT a protocol constant: a faster pace means more
+        // slots elapse per heartbeat *and* buys less wall life per slot,
+        // so both effects erode the margin below. Re-derive the tiers if
+        // the cluster pace changes rather than trusting this number.
+        const SLOT_MS: u64 = 200;
         // `quote_slot` is read at *confirmed* commitment and the stamp
         // then needs a slot or two to land, so the datum is already
         // behind the leader slot when it is written.
@@ -945,7 +946,8 @@ mod tests {
         // This subsumes the domain-confusion check a tolerance band was
         // reaching for, and unlike a band it actually catches it: a
         // seconds value left in a slots field is a 2.5x *shortening* at
-        // 400 ms/slot, which lands under the wall bound and fails here.
+        // 400 ms/slot (5x at 200 ms), which lands under the wall bound and
+        // fails here.
         // Since the two spans became distinct types that particular
         // mix-up no longer compiles, but the *policy* this pins — the
         // slot conjunct must never govern a healthy book — is a tuning

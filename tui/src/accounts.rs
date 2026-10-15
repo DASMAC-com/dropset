@@ -30,10 +30,11 @@ use solana_pubkey::Pubkey;
 /// A maker `quote_slot` this many slots behind the poll's head slot still
 /// counts as [`Liveness::Live`]. The maker stamps a reference price at least
 /// every `ref_heartbeat` (30 s — `bots/maker-bot` `StrategyConfig`); at
-/// localnet's ~400 ms/slot that is ~75 slots, so ~3 heartbeats' worth of slots
-/// absorbs a late or missed heartbeat and poll jitter without flapping to
-/// stale, while a stopped bot still crosses into stale within ~90 s.
-const MAKER_LIVE_WITHIN_SLOTS: u64 = 225;
+/// localnet's ~200 ms/slot that is ~150 slots, so ~3 heartbeats' worth of
+/// slots absorbs a late or missed heartbeat and poll jitter without flapping
+/// to stale, while a stopped bot still crosses into stale within ~90 s (~2 min
+/// on the slower Tower opt-out).
+const MAKER_LIVE_WITHIN_SLOTS: u64 = 450;
 
 /// The bootstrap progression. Each action is enabled in exactly one phase
 /// (plus the always-on ones); the order here is the order they unlock.

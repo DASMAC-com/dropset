@@ -10,7 +10,7 @@ inputs:
       (e.g. v1.57), pre-installed so the toolchain cache carries it
     required: true
   solana-version:
-    description: 'Solana CLI version to install (e.g. v3.1.9)'
+    description: 'Solana CLI version to install (e.g. v4.3.0)'
     required: true
 name: 'Install toolchain'
 runs:

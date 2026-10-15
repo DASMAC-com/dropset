@@ -21,9 +21,9 @@ serde_with = { version = "3", optional = true }
 solana-account = { version = "3", optional = true }
 solana-account-info = "3"
 # Pinned to the 3.1 minor (not bare "3"): `fetch` exposes this crate's
-# `RpcClient`, and the locally installed `solana-test-validator` it talks
-# to must agree on the same minor for wire/RPC compatibility. The
-# `check-toolchain` make target gates the validator to 3.1.x to match.
+# `RpcClient`, so a minor bump is an SDK API change. The validator it talks
+# to is independent — JSON-RPC is the contract — and `check-toolchain`
+# gates that only to a minimum Agave release, not to this minor.
 solana-client = { version = "~3.1", optional = true }
 solana-cpi = "3"
 solana-instruction = "3"

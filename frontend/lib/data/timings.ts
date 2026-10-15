@@ -152,8 +152,8 @@ export const CLOCK_PLAUSIBLE_MAX_UNIX = 4_102_444_800;
 // to answer different failure modes, not to be two spellings of one.
 //
 // Small enough that it cannot blank a healthy book: the tightest slot TIF the
-// maker ladder writes is 120 slots (bots/maker-bot's DEFAULT_LADDER), so this
-// spends ~3% of it, and that ladder is itself held to "the slot conjunct must
+// maker ladder writes is 240 slots (bots/maker-bot's DEFAULT_LADDER), so this
+// spends ~2% of it, and that ladder is itself held to "the slot conjunct must
 // never govern a healthy book" by a test in the same file.
 export const SLOT_SAFETY_MARGIN_SLOTS = 4;
 
