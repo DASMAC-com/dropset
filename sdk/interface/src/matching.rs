@@ -5,9 +5,8 @@
 //! materialize each vault's live levels (flushing from the
 //! `LiquidityProfile` when `FLUSH_BIT` is armed, else reading
 //! `remaining`, flipped counters included), sort by cross-vault
-//! price-time priority, then fill the
-//! taker leg-by-leg until the input is exhausted or the limit price is
-//! crossed.
+//! price-time priority, then fill the taker leg-by-leg until the input is
+//! exhausted or the limit price is crossed.
 //!
 //! Used by the router quoting adapters (e.g. DFlow) and any depth/quote
 //! endpoint. Part of the consensus-critical logic is shared with the
@@ -426,9 +425,9 @@ pub fn resting_levels(
 /// all active vaults, sorted into cross-vault price-time priority: best
 /// price first; on ties, older quote (lower nonce) wins, then lower sector,
 /// then lower level, then a level's own counter before its flipped one.
-/// Shared by [`simulate_swap`] (which then fills against
-/// the levels) and [`resting_levels`] (which exposes them) so the canonical
-/// book reconstruction lives in one place.
+/// Shared by [`simulate_swap`] (which then fills against the levels) and
+/// [`resting_levels`] (which exposes them) so the canonical book
+/// reconstruction lives in one place.
 ///
 /// Returns `None` only when the book is in a state the on-chain engine
 /// hard-rejects, so both callers can refuse rather than quote/show a fill
@@ -499,9 +498,11 @@ fn collect_side_levels(
                 // The same gate `swap.rs` applies, shared through
                 // `matching_math`: a level is live only inside its wall
                 // deadline AND its slot deadline, non-empty and at a
-                // matchable price. A level has one deadline pair, so it
-                // governs both counters. The deadlines are domain-typed, so a
-                // transposed pair does not compile (see `crate::clock`).
+                // matchable price. Each counter is gated by the deadlines of
+                // the Position it lives on: the own counter by `asks[i]`'s on
+                // a Buy, the flipped one by `bids[i]`'s. The deadlines are
+                // domain-typed, so a transposed pair does not compile (see
+                // `crate::clock`).
                 if !level_is_live(
                     price,
                     size,
@@ -765,6 +766,49 @@ mod tests {
         assert_eq!(q.legs, 2);
         assert_eq!(q.out_amount, 1_100_000);
         assert_eq!(q.in_amount, spend);
+    }
+
+    /// At one price, a level's own counter orders before a flipped one,
+    /// and each counter lives or dies by the deadlines of the Position that
+    /// holds it, not the index's other side. Hand-written because the
+    /// vectors come from this matcher and so cannot catch either inverted.
+    #[test]
+    fn flipped_counters_tie_after_own_and_keep_their_own_deadlines() {
+        let px = |s| Price::encode(s, 0).unwrap();
+        let data = market_data_with(|v| {
+            // A flip tied on price with `asks[1]`, smaller so the order shows.
+            v.remaining.bids[1].flip_price = px(11_393_000).as_u32().into();
+            v.remaining.bids[1].flip_size = 77_000u64.into();
+            // `bids[0]` has expired with a live flip on it; `asks[0]` is
+            // still live. Only the ask may rest.
+            v.remaining.bids[0].flip_price = px(10_950_000).as_u32().into();
+            v.remaining.bids[0].flip_size = 300_000u64.into();
+            v.remaining.bids[0].expires_at_slot = 0.into();
+        });
+        let view = MarketView::load(&data).unwrap();
+        let asks = resting_levels(&view, SwapSide::Buy, NOW_SLOT, NOW_WALL);
+        assert_eq!(
+            asks.iter().map(|l| (l.price, l.size)).collect::<Vec<_>>(),
+            vec![
+                (px(10_904_000), 1_000_000),
+                (px(11_393_000), 800_000),
+                (px(11_393_000), 77_000),
+            ]
+        );
+
+        // The mirror: `asks[0]` expired, `bids[0]` live, so `bids[0]`'s
+        // flip rests and `asks[0]`'s own counter does not.
+        let data = market_data_with(|v| {
+            v.remaining.bids[0].flip_price = px(10_950_000).as_u32().into();
+            v.remaining.bids[0].flip_size = 300_000u64.into();
+            v.remaining.asks[0].expires_at_slot = 0.into();
+        });
+        let view = MarketView::load(&data).unwrap();
+        let asks = resting_levels(&view, SwapSide::Buy, NOW_SLOT, NOW_WALL);
+        assert_eq!(
+            asks.iter().map(|l| l.price).collect::<Vec<_>>(),
+            vec![px(10_950_000), px(11_393_000)]
+        );
     }
 
     /// An armed flush zeroes every `flip_size` on-chain, so the simulator

@@ -15,8 +15,8 @@
 //! Scope: the funds-moving paths the program exposes — encoding *validity*
 //! (`is_valid`, which gates order-book ordering), the raw-bits round-trip,
 //! and the `quote_for_base` / `base_for_quote` ratio math the matcher uses
-//! to convert fills between legs, plus the `flip_level_price` a flush
-//! materializes for a flipping level. The vectors' `decode.value` (a decoded
+//! to convert fills between legs, plus a replay of the shared
+//! `flip_level_price` kernel the flush calls. The vectors' `decode.value` (a decoded
 //! `f64`) and `encode` (`from_value`, an SDK-only convenience) are not
 //! re-checked here: the program's `to_f64` is `#[cfg(test)]`-only and it has
 //! no `from_value`, and the decoded value is already exercised end-to-end by
@@ -72,10 +72,12 @@ fn base_for_quote_vectors() {
     }
 }
 
-/// The flip price the flush materializes into `Position::flip_price`,
-/// through the kernel the program's flush calls. Like the ratio replays
-/// this is the generator's own code, so what it guards is that the flush
-/// keeps calling the shared kernel rather than a copy.
+/// The shared flip-pricing kernel the program's flush calls, replayed
+/// against the vectors from the program crate's dependency graph. It is
+/// the generator's own function, so this is a replay, not an oracle, and it
+/// does not reach the flush itself: that the flush materializes this
+/// kernel's result into `Position::flip_price` is pinned by the program's
+/// accrual tests.
 #[test]
 fn flip_level_price_vectors() {
     for c in vectors()["flip_level_price"].as_array().unwrap() {

@@ -37,8 +37,10 @@ pub struct FillEvent {
     /// name the array filled: a Buy fills either `asks[level_idx].size` or
     /// the flipped `bids[level_idx].flip_size` (a filled bid's proceeds
     /// resting as an ask), and a Sell the mirror. Tell the two apart by
-    /// comparing `fill_price` with the level's `price` and `flip_price`;
-    /// where they coincide either reading prices the fill identically.
+    /// comparing `fill_price` with `asks[level_idx].price` and
+    /// `bids[level_idx].flip_price` on a Buy (`bids[level_idx].price` and
+    /// `asks[level_idx].flip_price` on a Sell); where they coincide either
+    /// reading prices the fill identically.
     pub side: u8,
     /// Padding so subsequent fields are aligned-1-friendly without
     /// implicit struct padding the bytemuck check would reject.

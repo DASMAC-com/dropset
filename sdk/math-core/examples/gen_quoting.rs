@@ -82,7 +82,7 @@ struct NativeLevel {
 impl NativeLevel {
     /// This level with a nonzero flip spread, which the forks must carry
     /// into the relative level untouched.
-    fn flip(self, flip_spread_ppm: u32) -> Self {
+    fn with_flip_spread(self, flip_spread_ppm: u32) -> Self {
         Self {
             flip_spread_ppm,
             ..self
@@ -275,12 +275,12 @@ fn main() {
             base_atoms: 4_000_000,
             quote_atoms: 7_000_000,
             asks: vec![
-                nl(10_904_250, 0, 1_000_000, 50, 400).flip(1_000),
+                nl(10_904_250, 0, 1_000_000, 50, 400).with_flip_spread(1_000),
                 nl(11_392_500, 0, 800_000, 60, 900),
             ],
             bids: vec![
-                nl(10_795_750, 0, 2_000_000, 50, 175).flip(2_500),
-                nl(10_416_000, 0, 1_500_000, 70, 1_200).flip(u32::MAX),
+                nl(10_795_750, 0, 2_000_000, 50, 175).with_flip_spread(2_500),
+                nl(10_416_000, 0, 1_500_000, 70, 1_200).with_flip_spread(u32::MAX),
             ],
         },
     ];

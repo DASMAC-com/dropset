@@ -166,3 +166,21 @@ test('quoting rejection vectors', () => {
     assert.equal(ERROR_TAGS[message], r.error, `${r.name}: error kind (message: "${message}")`);
   }
 });
+
+// TS-only: Rust's `u32` field cannot hold these, so no shared vector can
+// carry them. `DataView.setUint32` would wrap each silently into a valid
+// spread, so the translation must refuse instead.
+test('a flip spread that is not a u32 is rejected', () => {
+  const c = vectors.cases[0]!;
+  for (const bad of [-1, 2 ** 32, 1.5, Number.NaN]) {
+    const book: NativeBook = {
+      asks: [{ ...nativeLevel(c.asks[0]!), flipSpreadPpm: bad }],
+      bids: [],
+    };
+    assert.throws(
+      () => nativeBookToProfileBytes(book, c.reference_bits, BigInt(c.base_atoms), BigInt(c.quote_atoms)),
+      (e: unknown) => e instanceof QuotingError && e.message === 'flip spread is not a u32',
+      `flipSpreadPpm ${bad}`,
+    );
+  }
+});

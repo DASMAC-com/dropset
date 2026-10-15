@@ -159,6 +159,9 @@ test('a fill against a flipped counter reads as the taker direction', () => {
   // bids entry and `fillPrice` that level's `flip_price`, not its `price`.
   // The reader carries all three verbatim; only the fill price tells the
   // counter apart, so a consumer must not read `side` as the array filled.
+  // This documents that contract at the reader: the reader has no
+  // flip-specific path, and the engine emitting it is pinned in
+  // programs/dropset/tests/flip.rs.
   const flipPrice = 0x0001_0020;
   const event = { ...sampleEvent(), side: 0, levelIdx: 2, fillPrice: flipPrice };
   const [fill] = collectFillEvents(txWith(envelope(event)));
