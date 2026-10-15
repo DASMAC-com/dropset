@@ -20,12 +20,13 @@ use dropset_sdk::instructions::SwapBuilder;
 use dropset_sdk::layout::MarketView;
 use dropset_sdk::matching::{simulate_swap, SwapSide};
 use dropset_sdk::price::Price;
-use dropset_sdk::DROPSET_ID;
+use dropset_sdk::{DROPSET_ID, SWAP_COMPUTE_UNIT_LIMIT};
 use dropset_util::localnet::{
     associated_token_address, create_ata_idempotent_ix, mint_to_ix, SPL_TOKEN_PROGRAM_ID,
 };
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -470,8 +471,8 @@ pub fn size_order(
     ))
 }
 
-/// Build and send a `swap`, signed and paid by the taker. Returns the
-/// transaction signature.
+/// Build and send a `swap`, signed and paid by the taker, behind
+/// `swap_with_compute_limit`. Returns the transaction signature.
 pub fn send_swap(
     client: &RpcClient,
     taker: &Keypair,
@@ -509,7 +510,17 @@ pub fn send_swap(
         // ride along inert.
         .platform_fee_bps(0)
         .instruction();
-    send(client, taker, &[taker], &[ix])
+    send(client, taker, &[taker], &swap_with_compute_limit(ix))
+}
+
+/// `swap` behind the SDK's [`SWAP_COMPUTE_UNIT_LIMIT`]: a bare `swap` gets
+/// only 200k CU with no budget instruction, which a walk over the whole
+/// book overruns.
+fn swap_with_compute_limit(swap: Instruction) -> [Instruction; 2] {
+    [
+        ComputeBudgetInstruction::set_compute_unit_limit(SWAP_COMPUTE_UNIT_LIMIT),
+        swap,
+    ]
 }
 
 /// Sign `ixs` with `signers` (fee payer = `payer`) and send, confirming at the
@@ -544,6 +555,21 @@ mod tests {
     use super::*;
     use bytemuck::Zeroable;
     use dropset_sdk::layout::{MarketHeader, Vault, NULL_SECTOR, VAULT_ALIGN};
+
+    #[test]
+    fn a_swap_leads_with_the_sdk_compute_unit_limit() {
+        let swap = Instruction::new_with_bytes(DROPSET_ID, &[7], vec![]);
+        let [limit, last] = swap_with_compute_limit(swap.clone());
+        assert_eq!(
+            limit.program_id,
+            Pubkey::from_str_const("ComputeBudget111111111111111111111111111111")
+        );
+        // `SetComputeUnitLimit` is discriminant 2, then the units as a LE u32.
+        let mut data = vec![2];
+        data.extend_from_slice(&SWAP_COMPUTE_UNIT_LIMIT.to_le_bytes());
+        assert_eq!(limit.data, data);
+        assert_eq!(last, swap);
+    }
 
     /// Both legs of the synthetic market use USDC-style decimals, so a human
     /// price of 1.0 is also an atoms-ratio of 1.0 and the arithmetic below

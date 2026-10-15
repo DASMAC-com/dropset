@@ -9,6 +9,7 @@ mod common;
 use anchor_v2_testing::{Keypair, Message, Signer, VersionedMessage, VersionedTransaction};
 use common::fixture::{flip_profile, simple_profile, Fixture, PROFILE_BYTES};
 use dropset::{FillEvent, Price, Vault, N_LEVELS};
+use dropset_sdk::SWAP_COMPUTE_UNIT_LIMIT;
 use litesvm::types::TransactionMetadata;
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
@@ -366,25 +367,7 @@ fn send_at_max_cu(
 /// the whole book for the largest limit price whose take still completes.
 #[test]
 fn a_fully_flipped_ten_vault_book_measures_the_largest_take() {
-    // Every level of every vault quotes a spread, 12% of each leg a level.
-    let ladder: Vec<(u32, u16, u32)> = (0..N_LEVELS as u32)
-        .map(|i| ((i + 1) * 1_000, 1_200, u32::MAX))
-        .collect();
-    let profile = flip_profile(&ladder, &ladder, 500);
-    let mut f = Fixture::bootstrap();
-    let auth = f.authority.insecure_clone();
-    let reference = Price::encode(10_850_000, 0).unwrap().as_u32();
-    for i in 0..VAULTS {
-        let leader = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
-        f.create_vault(0, auth.pubkey(), false, leader.pubkey())
-            .expect("vault");
-        f.set_reference_price(&auth, i, reference, 0).expect("ref");
-        f.set_liquidity_profile(&auth, i, profile).expect("profile");
-        f.deposit_leader_as(&leader, i, SEED_BASE, SEED_QUOTE, SEED_BASE, SEED_QUOTE)
-            .expect("seed");
-        f.svm.expire_blockhash();
-    }
-    let taker = f.funded_depositor(20_000_000, 50_000_000);
+    let (mut f, taker) = ten_vault_book();
 
     // A reverted sell materializes every vault's ladder without filling,
     // so the per-level limit prices can be read off the book. It is also
@@ -436,6 +419,176 @@ fn a_fully_flipped_ten_vault_book_measures_the_largest_take() {
         "the whole-book take should fail on the heap, failed on: {stopped_by}"
     );
     assert_custody(&f, N_LEVELS as u64 + 1);
+}
+
+/// The most legs one take completes on the ten-vault book: a seventeenth
+/// aborts on the 32 KiB heap, since each filled leg buffers a `FillEvent`
+/// the bump allocator never reclaims. The SDK's `compute_budget` docs cite
+/// this figure.
+const HEAP_CEILING_LEGS: usize = 16;
+
+/// The costliest take that fills without stranding dust: a take on a cold
+/// ten-vault book (every vault flushed in the same transaction) sized leg
+/// by leg to the heap ceiling, on each side. It must fit what a bare `swap`
+/// gets with no budget instruction.
+#[test]
+fn a_cold_take_at_the_heap_ceiling_fits_the_default_instruction_budget() {
+    for side in [SELL, BUY] {
+        let (legs, cu, stopped_by) = cold_take_to_the_heap_ceiling(side);
+        println!(
+            "cold side-{side} take to the heap ceiling over {VAULTS} vaults: {legs} \
+             legs, costliest {cu} CU; the next leg failed on: {stopped_by}"
+        );
+        assert_eq!(
+            legs, HEAP_CEILING_LEGS,
+            "side {side}: legs a take completes"
+        );
+        assert!(
+            stopped_by.contains("heap"),
+            "side {side}: the next leg should stop on the heap, stopped on: {stopped_by}"
+        );
+        assert!(
+            cu < common::DEFAULT_INSTRUCTION_CU,
+            "side {side}: the costliest cold take used {cu} CU, over the {} a bare \
+             swap gets",
+            common::DEFAULT_INSTRUCTION_CU
+        );
+    }
+}
+
+/// Size `side` takes on fresh cold books one leg at a time, from one full
+/// tie group up, until one fails. Returns the most legs a take completed,
+/// the costliest completing take's CU, and the failure that stopped it.
+///
+/// Legs move ten at a time across the identical vaults when sized by limit
+/// price, so the sizes are built from input atoms instead: what the first
+/// tie group consumes, plus whole legs of the second, both read off a
+/// primed twin (the build is deterministic, and priming the measured book
+/// would warm it). Each size also runs one atom over, the remainder a
+/// level-capped leg can leave behind.
+fn cold_take_to_the_heap_ceiling(side: u8) -> (usize, u64, String) {
+    let (dust_limit, budget) = if side == SELL {
+        (Price::ZERO.as_u32(), 20_000_000)
+    } else {
+        (Price::INFINITY.as_u32(), 50_000_000)
+    };
+    let (mut twin, primer) = ten_vault_book();
+    let prime = twin.swap_ix(&primer.pubkey(), side, 1, dust_limit, u64::MAX);
+    send_at_max_cu(&mut twin, &primer, prime).expect("priming revert");
+    let levels = {
+        let v = twin.vault(0);
+        let book = if side == SELL {
+            &v.remaining.bids
+        } else {
+            &v.remaining.asks
+        };
+        [book[0].price.as_u32(), book[1].price.as_u32()]
+    };
+    let ata = if side == SELL {
+        twin.base_ata(&primer.pubkey())
+    } else {
+        twin.quote_ata(&primer.pubkey())
+    };
+    let mut consumed = Vec::new();
+    for limit in levels {
+        let before = twin.token_balance(&ata);
+        twin.svm.expire_blockhash();
+        let take = twin.swap_ix(&primer.pubkey(), side, budget, limit, 1);
+        let meta = send_at_max_cu(&mut twin, &primer, take).expect("one tie group");
+        assert_eq!(common::events::fills(&meta).len(), VAULTS as usize);
+        consumed.push(before - twin.token_balance(&ata));
+    }
+    let (first_group, per_leg) = (consumed[0], consumed[1] / u64::from(VAULTS));
+
+    let (mut legs, mut cu) = (0, 0);
+    for extra in 0..u64::from(VAULTS) {
+        for remainder in [0, 1] {
+            let (mut f, taker) = ten_vault_book();
+            let amount = first_group + extra * per_leg + remainder;
+            let take = f.swap_ix(&taker.pubkey(), side, amount, dust_limit, 1);
+            match send_at_max_cu(&mut f, &taker, take) {
+                Ok(meta) => {
+                    legs = legs.max(common::events::fills(&meta).len());
+                    cu = cu.max(meta.compute_units_consumed);
+                }
+                Err(stopped_by) => return (legs, cu, stopped_by),
+            }
+        }
+    }
+    (legs, cu, String::new())
+}
+
+/// The costliest take that completes: a one-atom sell on a fully flipped
+/// ten-vault book, the most entries a sell can see (every vault's own bids
+/// plus every ask flipped to a bid).
+///
+/// One base atom buys a quote atom at any bid above 1, but that quote atom
+/// buys back no whole base atom, so each leg is skipped rather than ending
+/// the walk and the take visits every entry without filling. It overruns
+/// what a bare `swap` gets, so this is the case [`SWAP_COMPUTE_UNIT_LIMIT`]
+/// is sized from.
+#[test]
+fn a_dust_sell_walking_a_flipped_book_fits_the_client_compute_limit() {
+    let (mut f, taker) = ten_vault_book();
+    let prime = f.swap_ix(&taker.pubkey(), BUY, 1, Price::INFINITY.as_u32(), u64::MAX);
+    send_at_max_cu(&mut f, &taker, prime).expect("priming revert");
+    for level in 0..N_LEVELS {
+        let limit = f.vault(0).remaining.asks[level].price.as_u32();
+        let buy = f.swap_ix(&taker.pubkey(), BUY, 50_000_000, limit, 1);
+        let meta = send_at_max_cu(&mut f, &taker, buy).expect("flip one level");
+        assert_eq!(common::events::fills(&meta).len(), VAULTS as usize);
+    }
+    let entries: usize = (0..VAULTS)
+        .map(|i| {
+            let v = f.vault(i);
+            (0..N_LEVELS)
+                .map(|l| {
+                    usize::from(v.remaining.bids[l].size.get() > 0)
+                        + usize::from(v.remaining.asks[l].flip_size.get() > 0)
+                })
+                .sum::<usize>()
+        })
+        .sum();
+    assert_eq!(entries, 2 * N_LEVELS * VAULTS as usize, "every ask flipped");
+
+    let dust = f.swap_ix(&taker.pubkey(), SELL, 1, Price::ZERO.as_u32(), 0);
+    let meta = send_at_max_cu(&mut f, &taker, dust).expect("dust sell");
+    let cu = meta.compute_units_consumed;
+    println!("dust sell over {entries} flipped-book entries: {cu} CU, nothing filled");
+    assert!(
+        common::events::fills(&meta).is_empty(),
+        "a dust sell fills nothing"
+    );
+    assert!(
+        cu < u64::from(SWAP_COMPUTE_UNIT_LIMIT),
+        "the full-book dust walk used {cu} CU, over the {SWAP_COMPUTE_UNIT_LIMIT} \
+         a client sends ahead of a bare swap"
+    );
+}
+
+/// Ten vaults on one market, every level of every vault quoting a spread
+/// at 12% of each leg a level, plus a taker funded to sweep it. Cold:
+/// nothing has touched the book since the profiles were set.
+fn ten_vault_book() -> (Fixture, Keypair) {
+    let ladder: Vec<(u32, u16, u32)> = (0..N_LEVELS as u32)
+        .map(|i| ((i + 1) * 1_000, 1_200, u32::MAX))
+        .collect();
+    let profile = flip_profile(&ladder, &ladder, 500);
+    let mut f = Fixture::bootstrap();
+    let auth = f.authority.insecure_clone();
+    let reference = Price::encode(10_850_000, 0).unwrap().as_u32();
+    for i in 0..VAULTS {
+        let leader = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
+        f.create_vault(0, auth.pubkey(), false, leader.pubkey())
+            .expect("vault");
+        f.set_reference_price(&auth, i, reference, 0).expect("ref");
+        f.set_liquidity_profile(&auth, i, profile).expect("profile");
+        f.deposit_leader_as(&leader, i, SEED_BASE, SEED_QUOTE, SEED_BASE, SEED_QUOTE)
+            .expect("seed");
+        f.svm.expire_blockhash();
+    }
+    let taker = f.funded_depositor(20_000_000, 50_000_000);
+    (f, taker)
 }
 
 /// Every price a Buy would meet on the book, ascending: each vault's own

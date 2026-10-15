@@ -366,11 +366,21 @@ enum LegFill {
     /// This leg fills nothing and the walk continues. Two causes: the
     /// level or the vault is empty (the taker's budget is untouched and
     /// a later level may well fill it), or the leg would move value in
-    /// one direction only and guard 1f rejected it. Only the first
-    /// leaves the taker able to buy an output atom further down the
-    /// book — guard 1f on a taker-capped leg fires with at most one
-    /// input atom left, which buys nothing anywhere, so the next level
-    /// returns [`LegFill::Exhausted`]. Either way this leg is untouched.
+    /// one direction only and guard 1f rejected it. Either way this leg
+    /// is untouched.
+    ///
+    /// Guard 1f on a taker-capped leg does **not** end the walk. The
+    /// remainder is dust (one base atom on a Sell above price 1, one
+    /// quote atom on a Buy below it), and at every later level on the
+    /// same side of 1 its `cap_by_taker` is still non-zero while its
+    /// round trip still floors to zero, so the walk skips on. It ends
+    /// only where the round trip comes back whole (an integer price on
+    /// a Sell, an integer reciprocal on a Buy), where the dust atom
+    /// fills; where the book crosses price 1, which returns
+    /// [`LegFill::Exhausted`]; or at the end of the book, having filled
+    /// nothing more.
+    /// That walk is what the client compute-unit limit
+    /// (`dropset_sdk::SWAP_COMPUTE_UNIT_LIMIT`) is sized to cover.
     Skip,
     /// The taker's remaining input cannot buy one whole output atom at
     /// this price. Levels are visited best-price-first, so every level

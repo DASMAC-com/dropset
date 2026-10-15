@@ -21,9 +21,11 @@ use dropset_sdk::instructions::{
     ForceWithdrawLeaderInstructionArgs, Init, InitInstructionArgs, Swap, SwapInstructionArgs,
     WithdrawLeader, WithdrawLeaderInstructionArgs,
 };
+use dropset_sdk::SWAP_COMPUTE_UNIT_LIMIT;
 use dropset_util::localnet::{create_ata_idempotent_ix, mint_to_ix};
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
 use solana_loader_v3_interface::get_program_data_address;
@@ -401,6 +403,14 @@ pub fn build_swap_ix(
         platform_fee_bps: 0,
     });
     retarget(cluster, ix)
+}
+
+/// The `SetComputeUnitLimit` that leads the swap probe, at the SDK's
+/// [`SWAP_COMPUTE_UNIT_LIMIT`]. Without it a take over the 200k default
+/// fails rather than reporting its cost, so the probe's CU reading would
+/// stop at the case it most needs to show.
+pub fn build_swap_compute_limit_ix() -> Instruction {
+    ComputeBudgetInstruction::set_compute_unit_limit(SWAP_COMPUTE_UNIT_LIMIT)
 }
 
 // ── Teardown instruction builders ────────────────────────────────────
@@ -982,6 +992,19 @@ mod tests {
     use super::*;
     use dropset_sdk::cluster::DROPSET_MAINNET_ID;
     use dropset_sdk::DROPSET_ID;
+
+    #[test]
+    fn the_swap_compute_limit_is_the_sdk_figure() {
+        let ix = build_swap_compute_limit_ix();
+        assert_eq!(
+            ix.program_id,
+            pubkey!("ComputeBudget111111111111111111111111111111")
+        );
+        // `SetComputeUnitLimit` is discriminant 2, then the units as a LE u32.
+        let mut data = vec![2];
+        data.extend_from_slice(&SWAP_COMPUTE_UNIT_LIMIT.to_le_bytes());
+        assert_eq!(ix.data, data);
+    }
 
     fn mint_account(owner: Pubkey, decimals: u8, initialized: bool) -> FreshAccount {
         let mut data = vec![0u8; MINT_LEN];

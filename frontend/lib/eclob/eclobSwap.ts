@@ -294,6 +294,14 @@ export async function executeEclobSwap(
   const { value: latestBlockhash } = await rpc
     .getLatestBlockhash({ commitment: "confirmed" })
     .send();
+  // No compute-budget instruction, deliberately: the wallet owns the budget.
+  // A wallet that adds a priority fee (Phantom does, at signing) skips any
+  // transaction that already carries a `SetComputeUnitLimit`, so setting one
+  // here would cost the taker that fee. Nor is one needed: with none, the
+  // runtime grants 200k CU per non-builtin instruction, shared across the
+  // transaction, so these three get 600k. Less what the two ATA creates use,
+  // that covers every take the SDK's `compute_budget` docs measure — the
+  // costliest, a dust walk over a fully flipped book, included.
   const message = pipe(
     createTransactionMessage({ version: 0 }),
     (m) => setTransactionMessageFeePayer(taker.address, m),
