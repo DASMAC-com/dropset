@@ -51,7 +51,14 @@ import { initSimulator } from './simulate';
 import { resting_book as wasmRestingBook, type RestingBook } from './wasm/dropset_interface';
 import type { PriceBits } from './price';
 
-/** A resting level: an absolute `price` and its depth in **base atoms**. */
+/**
+ * A resting level: an absolute `price` and its depth in **base atoms**.
+ *
+ * A level's flipped counter arrives as one of these too — on the opposite
+ * side, at its `flip_price` — so a partially flipped level appears on both
+ * sides, and a flip landing on a price already quoted is a second entry at
+ * that price, adjacent to the first. Nothing here marks which entries flipped.
+ */
 export type BookLevel = { price: PriceBits; size: bigint };
 
 /** The reconstructed book: the header and both sides, best price first. */

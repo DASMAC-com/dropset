@@ -86,6 +86,13 @@ function writePosition(
   dv.setUint32(offset + 16, expiresAtSlot, true);
 }
 
+/** Write a `Position`'s flipped counter: `flip_price` at `+ 20`, `flip_size`
+ * (atoms on the leg opposite `size`) at `+ 24`. */
+function writeFlip(dv: DataView, offset: number, flipPrice: number, flipSize: bigint): void {
+  dv.setUint32(offset + 20, flipPrice, true);
+  dv.setBigUint64(offset + 24, flipSize, true);
+}
+
 function writeProfileLevel(
   dv: DataView,
   offset: number,
@@ -148,6 +155,57 @@ test('remaining bids are best-first and normalized to base', () => {
   assert.deepEqual(view.bids, [
     { price: best, size: baseForQuote(best, 2_000_000n) },
     { price: next, size: baseForQuote(next, 1_500_000n) },
+  ]);
+});
+
+// A flipped counter is not a new kind of level: the engine hands it back as
+// an ordinary entry on the opposite side, at its `flip_price`, sorted into
+// price-time priority with every own level. These two pin that it crosses the
+// seam that way — the `flip_*` offsets above are as load-bearing as the rest.
+
+test('a partially flipped bid rests on both sides', () => {
+  // `bids[0]` has been part-filled: 1_000_000 quote atoms still bid, and the
+  // 400_000 base atoms it bought rest as an ask at its flip price, inside the
+  // vault's own best ask.
+  const bid = enc(10_796_000);
+  const flipAsk = enc(10_801_000);
+  const data = buildMarket((dv, b) => {
+    dv.setBigUint64(b + V_REF_STAMP, 1n, true); // flush bit clear
+    dv.setUint32(b + V_REF_PRICE, enc(10_850_000), true);
+    dv.setBigUint64(b + V_BASE_ATOMS, 10_000_000n, true);
+    dv.setBigUint64(b + V_QUOTE_ATOMS, 10_000_000n, true);
+    writePosition(dv, b + V_REMAINING_ASKS, enc(10_904_000), 1_000_000n);
+    writePosition(dv, b + V_REMAINING_BIDS, bid, 1_000_000n);
+    writeFlip(dv, b + V_REMAINING_BIDS, flipAsk, 400_000n);
+  });
+  const view = decodeDropsetMarketView(data, slotTime(1), wallTime(2));
+  assert.deepEqual(view.asks, [
+    { price: flipAsk, size: 400_000n },
+    { price: enc(10_904_000), size: 1_000_000n },
+  ]);
+  assert.deepEqual(view.bids, [{ price: bid, size: baseForQuote(bid, 1_000_000n) }]);
+});
+
+test("a filled ask's flipped bid is base-sized and ties after the own level", () => {
+  // `asks[0]` is filled out (size 0), and its quote proceeds rest as a bid at
+  // exactly the price `bids[0]` already quotes. The engine reports the two
+  // separately — the own counter first — and each is converted to base at the
+  // shared price; folding them into one row is the view's job, not the book's.
+  const shared = enc(10_796_000);
+  const data = buildMarket((dv, b) => {
+    dv.setBigUint64(b + V_REF_STAMP, 1n, true); // flush bit clear
+    dv.setUint32(b + V_REF_PRICE, enc(10_850_000), true);
+    dv.setBigUint64(b + V_BASE_ATOMS, 10_000_000n, true);
+    dv.setBigUint64(b + V_QUOTE_ATOMS, 10_000_000n, true);
+    writePosition(dv, b + V_REMAINING_ASKS, enc(10_904_000), 0n);
+    writeFlip(dv, b + V_REMAINING_ASKS, shared, 1_085_000n);
+    writePosition(dv, b + V_REMAINING_BIDS, shared, 2_000_000n);
+  });
+  const view = decodeDropsetMarketView(data, slotTime(1), wallTime(2));
+  assert.deepEqual(view.asks, [], 'a filled-out ask rests nothing, and no bid flipped onto this side');
+  assert.deepEqual(view.bids, [
+    { price: shared, size: baseForQuote(shared, 2_000_000n) },
+    { price: shared, size: baseForQuote(shared, 1_085_000n) },
   ]);
 });
 
