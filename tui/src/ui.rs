@@ -389,7 +389,8 @@ fn menu_item(
 /// On mainnet every one of these controls is refused — the bots and the
 /// eCLOB controls sign with committed localnet role keys, the swap with the
 /// committed taker — so the pane says so instead of advertising keys that only
-/// produce an error line. Same row count, so the layout does not shift.
+/// produce an error line, and advertises the kill switch instead. Same row
+/// count, so the layout does not shift.
 fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
     let tag = |s: &'static str| Span::styled(format!("{s:<6}"), Style::new().fg(Color::DarkGray));
     let live = Style::new().fg(Color::Gray);
@@ -404,8 +405,17 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
                 tag("swap"),
                 Span::styled("localnet only (no mainnet taker key)", off),
             ]),
-            Line::from(vec![tag("peg"), Span::styled("localnet only", off)]),
-            Line::from(vec![tag("shape"), Span::styled("localnet only", off)]),
+            Line::from(vec![tag("eclob"), Span::styled("localnet only", off)]),
+            // The one runtime control mainnet keeps: the kill switch, in the
+            // real-funds red the prompts use. Close and drain follow it from
+            // the menu.
+            Line::from(vec![
+                tag("kill"),
+                Span::styled(
+                    "K kill ladders · then menu: close, drain",
+                    Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+            ]),
             Line::from(vec![tag("view"), Span::styled("r refresh · q quit", live)]),
         ];
         f.render_widget(

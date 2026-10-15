@@ -21,6 +21,7 @@ use crate::market::{self, MintKey, PairConfig};
 use anyhow::{bail, Context, Result};
 use dropset_math_core::share::{compute_pro_rata_slice, single_leg_basket, BasketError};
 use solana_client::rpc_client::RpcClient;
+use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
@@ -387,20 +388,12 @@ pub fn execute(
             min_quote_out,
         ),
     };
-    // The program reads both leader ATAs as existing accounts and creates
-    // neither, so bundle the idempotent creates into the same transaction.
-    let mut ixs: Vec<_> = [&m.base_mint, &m.quote_mint]
-        .into_iter()
-        .map(|mint| {
-            chain::ata_with_create_ix(
-                &wallet.pubkey(),
-                &ticket.leader,
-                mint,
-                &chain::SPL_TOKEN_PROGRAM_ID,
-            )
-            .1
-        })
-        .collect();
+    let mut ixs = leader_ata_creates(
+        &wallet.pubkey(),
+        &ticket.leader,
+        &m.base_mint,
+        &m.quote_mint,
+    );
     ixs.push(ix);
     let label = match ticket.op {
         LeaderOp::Deposit => "deposit_leader",
@@ -414,6 +407,21 @@ pub fn execute(
         ticket.base_symbol,
         ticket.seat.seq
     ))
+}
+
+/// The idempotent creates for `leader`'s two ATAs, paid by `payer`. The
+/// program reads both as existing accounts on a leader deposit or withdraw
+/// and creates neither, so they ride in front of it in the same transaction.
+pub(crate) fn leader_ata_creates(
+    payer: &Pubkey,
+    leader: &Pubkey,
+    base_mint: &Pubkey,
+    quote_mint: &Pubkey,
+) -> Vec<Instruction> {
+    [base_mint, quote_mint]
+        .into_iter()
+        .map(|mint| chain::ata_with_create_ix(payer, leader, mint, &chain::SPL_TOKEN_PROGRAM_ID).1)
+        .collect()
 }
 
 /// Put `(base, quote)` atoms in the leader's ATAs for a deposit, or refuse.

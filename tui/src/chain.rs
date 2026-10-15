@@ -15,11 +15,12 @@ use crate::job::Logger;
 use anyhow::{Context, Result};
 use dropset_sdk::cluster as sdk_cluster;
 use dropset_sdk::instructions::{
-    CloseMarket, CloseMarketTreasury, CloseRegistry, CloseRegistryFeeVault, CreateMarket,
-    CreateVault, CreateVaultInstructionArgs, DepositLeader, DepositLeaderInstructionArgs,
-    ForceWithdrawDepositor, ForceWithdrawDepositorInstructionArgs, ForceWithdrawLeader,
-    ForceWithdrawLeaderInstructionArgs, Init, InitInstructionArgs, Swap, SwapInstructionArgs,
-    WithdrawLeader, WithdrawLeaderInstructionArgs,
+    CloseMarket, CloseMarketTreasury, CloseRegistry, CloseRegistryFeeVault, CloseVault,
+    CloseVaultInstructionArgs, CreateMarket, CreateVault, CreateVaultInstructionArgs,
+    DepositLeader, DepositLeaderInstructionArgs, ForceWithdrawDepositor,
+    ForceWithdrawDepositorInstructionArgs, ForceWithdrawLeader, ForceWithdrawLeaderInstructionArgs,
+    Init, InitInstructionArgs, Swap, SwapInstructionArgs, WithdrawLeader,
+    WithdrawLeaderInstructionArgs,
 };
 use dropset_sdk::SWAP_COMPUTE_UNIT_LIMIT;
 use dropset_util::localnet::{create_ata_idempotent_ix, mint_to_ix};
@@ -350,6 +351,20 @@ pub fn build_withdraw_leader_ix(
         min_quote_out,
     });
     retarget(cluster, ix)
+}
+
+/// `close_vault` — the vault's `leader` (signer) tombstones its vault: it
+/// leaves the active list, so matching never visits it again, while its
+/// sector, inventory and share ledger stay put for withdrawals. Permanent,
+/// and it reclaims no rent — the account is the market's, not the vault's.
+pub fn build_close_vault_ix(leader: &Pubkey, market: &Pubkey, vault_idx: u32) -> Instruction {
+    CloseVault {
+        signer: *leader,
+        market: *market,
+        event_authority: event_authority(),
+        program: DROPSET_ID,
+    }
+    .instruction(CloseVaultInstructionArgs { vault_idx })
 }
 
 /// `swap` — a taker take against the market's live book. `side` is `0` for a

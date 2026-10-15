@@ -18,6 +18,7 @@ pub mod cluster;
 pub mod deploy;
 #[cfg(test)]
 mod e2e;
+pub mod emergency;
 pub mod explorer;
 pub mod fills;
 pub mod job;
