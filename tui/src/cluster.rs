@@ -110,6 +110,25 @@ impl Cluster {
         self.deployment().program_id()
     }
 
+    /// The cluster a headless tool targets, from the chain's `genesis` hash
+    /// and whether its endpoint is `loopback`: mainnet by its hash, localnet
+    /// only on a loopback endpoint (a test validator's genesis is fresh per
+    /// ledger, so no hash names it). Any other chain — devnet, testnet — is
+    /// refused: neither deployment lives there, and the localnet id's key is
+    /// public, so whatever sits at that address there is anyone's program.
+    pub fn of_genesis(genesis: &str, loopback: bool) -> Result<Self> {
+        if genesis == MAINNET_GENESIS_HASH {
+            Ok(Cluster::Mainnet)
+        } else if loopback {
+            Ok(Cluster::Localnet)
+        } else {
+            bail!(
+                "genesis {genesis} is neither mainnet nor a loopback validator — there is \
+                 no Dropset deployment on that chain"
+            )
+        }
+    }
+
     /// Display name, for banners and log lines.
     pub fn label(self) -> &'static str {
         match self {
@@ -351,6 +370,27 @@ pub fn confirm_mainnet_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_headless_tool_targets_only_mainnet_or_a_loopback_localnet() {
+        assert_eq!(
+            Cluster::of_genesis(MAINNET_GENESIS_HASH, false).unwrap(),
+            Cluster::Mainnet
+        );
+        // A test validator's genesis is fresh per ledger, so loopback is
+        // what identifies it.
+        assert_eq!(
+            Cluster::of_genesis("TestValidatorGenesis", true).unwrap(),
+            Cluster::Localnet
+        );
+        // Devnet, testnet or any other remote chain has no deployment, and
+        // the localnet id's key is public there.
+        let refusal = format!(
+            "{:#}",
+            Cluster::of_genesis("EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG", false).unwrap_err()
+        );
+        assert!(refusal.contains("no Dropset deployment"), "{refusal}");
+    }
 
     #[test]
     fn localnet_matches_loopback_host_exactly() {

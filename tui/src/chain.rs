@@ -13,7 +13,7 @@
 use crate::cluster::Cluster;
 use crate::job::Logger;
 use anyhow::{Context, Result};
-use dropset_sdk::cluster;
+use dropset_sdk::cluster as sdk_cluster;
 use dropset_sdk::instructions::{
     CloseMarket, CloseMarketTreasury, CloseRegistry, CloseRegistryFeeVault, CreateMarket,
     CreateVault, CreateVaultInstructionArgs, DepositLeader, DepositLeaderInstructionArgs,
@@ -114,12 +114,12 @@ pub fn genesis_hash(client: &RpcClient) -> Result<String> {
 
 /// The singleton registry PDA — seeds `[b"registry"]`.
 pub fn registry_pda(cluster: Cluster) -> Pubkey {
-    cluster::registry_pda(&cluster.program_id()).0
+    sdk_cluster::registry_pda(&cluster.program_id()).0
 }
 
 /// The market PDA for a `(base, quote)` mint pair — seeds `[base, quote]`.
 pub fn market_pda(cluster: Cluster, base: &Pubkey, quote: &Pubkey) -> Pubkey {
-    cluster::market_pda(&cluster.program_id(), base, quote).0
+    sdk_cluster::market_pda(&cluster.program_id(), base, quote).0
 }
 
 /// A vault depositor's PDA — seeds `[b"vault_depositor", market, idx, owner]`.
@@ -129,12 +129,12 @@ pub fn vault_depositor_pda(
     vault_idx: u32,
     owner: &Pubkey,
 ) -> Pubkey {
-    cluster::vault_depositor_pda(&cluster.program_id(), market, vault_idx, owner).0
+    sdk_cluster::vault_depositor_pda(&cluster.program_id(), market, vault_idx, owner).0
 }
 
 /// The self-CPI event-authority PDA — seeds `[b"__event_authority"]`.
 pub fn event_authority(cluster: Cluster) -> Pubkey {
-    cluster::event_authority(&cluster.program_id())
+    sdk_cluster::event_authority(&cluster.program_id())
 }
 
 /// The program's upgradeable-loader `ProgramData` PDA — read by `init` to
@@ -151,7 +151,7 @@ pub fn program_data(cluster: Cluster) -> Pubkey {
 /// and the localnet event authority. Every other PDA is the caller's to
 /// derive for `cluster`, as the builders below do.
 pub fn retarget(cluster: Cluster, ix: Instruction) -> Instruction {
-    cluster::retarget(ix, &cluster.program_id())
+    sdk_cluster::retarget(ix, &cluster.program_id())
 }
 
 // ── Bootstrap instruction builders ───────────────────────────────────
@@ -1087,7 +1087,8 @@ mod tests {
 
     /// Every builder, on mainnet: aimed at the mainnet id, and carrying no
     /// account derived from the localnet id — neither the id itself, nor its
-    /// event authority, registry, `ProgramData` or any market PDA. A builder
+    /// event authority, registry, `ProgramData` or the depositor PDA. (Market
+    /// addresses are caller-supplied, never derived inside a builder.) A builder
     /// that derived one PDA from the committed constant would sign for
     /// localnet's address on mainnet.
     #[test]
@@ -1136,8 +1137,6 @@ mod tests {
             event_authority(L),
             registry_pda(L),
             program_data(L),
-            market_pda(L, &base, &quote),
-            vault_depositor_pda(L, &market_pda(L, &base, &quote), 0, &k(9)),
             vault_depositor_pda(L, &market, 0, &k(9)),
         ];
         for ix in &ixs {

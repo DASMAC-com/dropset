@@ -804,6 +804,14 @@ mod tests {
         assert_eq!(artifact_for(Cluster::Mainnet).0, MAINNET_ARTIFACT);
         assert_ne!(ARTIFACT, MAINNET_ARTIFACT);
         assert_eq!(artifact_for(Cluster::Mainnet).1, "make program-mainnet");
+        // A missing artifact names the cluster's own build target.
+        let empty = tempfile::tempdir().unwrap();
+        let Err(missing) = Artifact::load(empty.path(), Cluster::Mainnet) else {
+            panic!("an empty tree has no artifact");
+        };
+        let missing = format!("{missing:#}");
+        assert!(missing.contains(MAINNET_ARTIFACT), "{missing}");
+        assert!(missing.contains("make program-mainnet"), "{missing}");
     }
 
     #[test]
