@@ -130,12 +130,22 @@ export function marketOrientation(
   return side === "sell" ? { base: a, quote: b } : { base: b, quote: a };
 }
 
-// Every roster market that exists on this cluster, with its live vaults.
-// Markets resolve in parallel; a pair with no market is simply absent, and so
-// is one whose read fails this round, so one bad market never blanks the
-// rest. The route already carries the market's raw bytes, so each market
-// costs its resolve and nothing more. Throws only when every market fails.
-export async function fetchChainVaultMarkets(rpc: Rpc): Promise<VaultMarket[]> {
+// A roster pair's key, independent of orientation, so a market and the pair
+// that found it match whichever way round each is written.
+export function pairKey(a: string, b: string): string {
+  return a < b ? `${a}/${b}` : `${b}/${a}`;
+}
+
+// Every roster market that exists on this cluster, with its live vaults, plus
+// the pairs whose read failed this round (by pairKey), so a caller can keep
+// those markets' last good read instead of dropping them. Markets resolve in
+// parallel; a pair with no market is simply absent. The route already carries
+// the market's raw bytes, so each market costs its resolve and nothing more.
+// Throws when some read failed and none found a market: that is an outage,
+// not an empty cluster.
+export async function fetchChainVaultMarkets(
+  rpc: Rpc,
+): Promise<{ markets: VaultMarket[]; failed: Set<string> }> {
   await initSimulator();
   const results = await Promise.allSettled(
     VAULT_PAIR_ROSTER.map(async ({ base: a, quote: b }) => {
@@ -152,15 +162,22 @@ export async function fetchChainVaultMarkets(rpc: Rpc): Promise<VaultMarket[]> {
       return resolveVaultMarket(route.market, base, quote, 0, vaults);
     }),
   );
-  if (results.every((r) => r.status === "rejected")) {
-    throw new AggregateError(
-      results.map((r) => (r.status === "rejected" ? r.reason : null)),
-      "every vault market read failed",
-    );
+  const markets: VaultMarket[] = [];
+  const failed = new Set<string>();
+  const reasons: unknown[] = [];
+  results.forEach((r, i) => {
+    const pair = VAULT_PAIR_ROSTER[i];
+    if (r.status === "fulfilled") {
+      if (r.value) markets.push(r.value);
+    } else if (pair) {
+      failed.add(pairKey(pair.base, pair.quote));
+      reasons.push(r.reason);
+    }
+  });
+  if (failed.size > 0 && markets.length === 0) {
+    throw new AggregateError(reasons, "no vault market could be read");
   }
-  return results.flatMap((r) =>
-    r.status === "fulfilled" && r.value ? [r.value] : [],
-  );
+  return { markets, failed };
 }
 
 // The owner's positions across the live vaults, keyed by chainVaultId. The

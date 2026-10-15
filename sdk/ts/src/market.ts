@@ -180,9 +180,10 @@ export type VaultSummary = {
  * discriminator) into its active vaults, in active-list order.
  *
  * Read through the same WASM binding as the book, for the same reason: the
- * slab layout lives only in `layout.rs`. A deposit is open to an outside
- * depositor only when the vault is unfrozen **and** both deposit flags are
- * set — the program checks all three.
+ * slab layout lives only in `layout.rs`. Of the flags read here, an outside
+ * deposit needs the vault unfrozen **and** both deposit flags set; the
+ * program's `deposit` checks further conditions this reader doesn't decide
+ * (the signer isn't the leader, the vault is already seeded).
  *
  * {@link initSimulator} must have resolved first. Throws
  * {@link MarketLayoutError} when the bytes aren't a well-formed market slab

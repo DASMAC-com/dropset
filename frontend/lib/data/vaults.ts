@@ -40,7 +40,9 @@ export type VaultRaw = {
   // guards (see docs/architecture.md → Skin-in-the-game floor).
   leaderShares: number;
   // Current value-per-share (`L / totalShares`), the FX-neutral skill index a
-  // position's `entryVps` is marked against for "yield since open".
+  // position's `entryVps` is marked against for "yield since open". Only its
+  // ratio to `entryVps` means anything: a mock row is normalized near 1.0, a
+  // live row is in the program's raw units (chainVaults.ts → chainVps).
   vps: number;
   minLeaderSharePpm: number;
   frozen: boolean;
@@ -264,8 +266,8 @@ export const leaderShareFraction = (v: Vault): number | null =>
 // The vault's current QUOTE-denominated value per share: the pooled reserves
 // valued in quote tokens (`baseReserve · ratio + quoteReserve`) over total
 // shares. This is the unit a deposit's quote value is minted against — distinct
-// from `Vault.vps`, which is a normalized FX-neutral skill index (~1.0) used
-// only for "yield since open". null for an empty vault.
+// from `Vault.vps`, an FX-neutral skill index read only as a ratio to a
+// position's `entryVps` for "yield since open". null for an empty vault.
 export const vaultValuePerShare = (v: Vault): number | null => {
   const ratio = vaultReserveRatio(v);
   if (ratio === null || v.totalShares <= 0) return null;

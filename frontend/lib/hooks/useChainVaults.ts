@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import {
   fetchChainPositions,
   fetchChainVaultMarkets,
+  pairKey,
 } from "../data/chainVaults";
 import type { VaultPosition } from "../data/positions";
 import { VAULTS_REFRESH_MS } from "../data/timings";
@@ -43,6 +44,7 @@ export function useChainVaults(): ChainVaultsState {
     let timer: number | undefined;
     let cancelled = false;
     let generation = 0;
+    let lastGood: VaultMarket[] = [];
     const rpc = client.runtime.rpc;
 
     const schedule = (delay: number, gen: number) => {
@@ -58,7 +60,15 @@ export function useChainVaults(): ChainVaultsState {
         return;
       }
       try {
-        const markets = await fetchChainVaultMarkets(rpc);
+        const read = await fetchChainVaultMarkets(rpc);
+        // A pair whose read failed this round keeps its last good market, so
+        // one transient failure doesn't drop its rows (and the positions in
+        // it) until the next tick.
+        const markets = [
+          ...read.markets,
+          ...lastGood.filter((m) => read.failed.has(pairKey(m.base, m.quote))),
+        ];
+        lastGood = markets;
         // The positions read fails on its own: the markets still land, and
         // this wallet's last good positions stay up until the next tick.
         let positions: Map<string, VaultPosition> | null = new Map();
