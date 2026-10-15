@@ -8,6 +8,9 @@
 // Regex covers the cases we actually care about for the wallet picker: iOS
 // Safari (iPhone, iPad, iPod), Android browsers, and the in-app browsers
 // (MetaMask, Phantom, etc.) that mostly ship with one of those UA tokens.
+// iPadOS Safari is the exception: it requests the desktop site by default and
+// reports a Macintosh UA, so it is told apart by its touch screen, which no
+// Mac has.
 
 const MOBILE_UA_PATTERN =
   /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
@@ -19,5 +22,6 @@ const MOBILE_UA_PATTERN =
  */
 export function isMobile(): boolean {
   if (typeof navigator === "undefined") return false;
-  return MOBILE_UA_PATTERN.test(navigator.userAgent);
+  if (MOBILE_UA_PATTERN.test(navigator.userAgent)) return true;
+  return /Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1;
 }

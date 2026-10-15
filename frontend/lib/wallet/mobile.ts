@@ -55,6 +55,21 @@ export function registerMobileWalletAdapter(): Promise<void> {
 }
 
 /**
+ * What a picker row does when tapped, in precedence order: connect when a
+ * connector is registered (an installed wallet, MetaMask's relay, or MWA on
+ * Android); otherwise, on mobile, reopen the page in the wallet's in-app
+ * browser when it publishes a link; otherwise link out to install it.
+ */
+export function pickerRowAction(
+  wallet: { connectorId?: string; browse?: string },
+  mobile: boolean,
+): "connect" | "open-in" | "install" {
+  if (wallet.connectorId) return "connect";
+  if (mobile && wallet.browse) return "open-in";
+  return "install";
+}
+
+/**
  * The universal link that opens `pageUrl` inside a wallet's in-app browser,
  * or undefined when the wallet publishes no such link. `browsePrefix` is the
  * curated entry's `browse` field (wallets.json); Phantom, Solflare and

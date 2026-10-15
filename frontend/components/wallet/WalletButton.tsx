@@ -27,7 +27,7 @@ import {
   isMetaMaskExtensionPresent,
   useMetaMaskRegistrationReady,
 } from "@/lib/wallet/metamask";
-import { inWalletBrowseUrl } from "@/lib/wallet/mobile";
+import { inWalletBrowseUrl, pickerRowAction } from "@/lib/wallet/mobile";
 
 // 4 + 4 hex characters out of 64 is enough to disambiguate two wallets at
 // a glance without taking up real estate in the header. Matches the
@@ -47,6 +47,14 @@ export function WalletButton() {
     // Only re-check while the picker is open — that's the only time the badge
     // is visible, and it catches a wallet installed mid-session on reopen.
     if (modal.isOpen) setMetamaskInstalled(isMetaMaskExtensionPresent());
+  }, [modal.isOpen]);
+
+  // Desktop: which wallet row has its phone-handoff QR expanded, if any. One
+  // at a time, and collapsed again whenever the picker closes so it reopens
+  // as a plain wallet list.
+  const [handoffKey, setHandoffKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!modal.isOpen) setHandoffKey(null);
   }, [modal.isOpen]);
 
   // MetaMask's relay SDK initializes asynchronously (dynamic import +
@@ -96,6 +104,36 @@ export function WalletButton() {
 
   const mobile = isMobile();
 
+  // On desktop, a wallet with an in-app browser link gets a small toggle
+  // beside its row that expands that wallet's QR underneath, so someone else
+  // can scan the page into their phone. The toggle is a sibling, not a
+  // child: the row is itself a button or a link, which can't nest one.
+  const renderEntry = (w: PickerWallet) => {
+    const row = renderRow(w);
+    if (mobile || !w.browse) return row;
+    const open = handoffKey === w.id;
+    return (
+      <div key={w.id}>
+        <div className="flex items-center gap-1">
+          {row}
+          <button
+            type="button"
+            onClick={() => setHandoffKey(open ? null : w.id)}
+            aria-expanded={open}
+            aria-label={`Show a QR code to open this page in ${w.name} on a phone`}
+            title={`On a phone? Scan to open in ${w.name}`}
+            className={`shrink-0 rounded-md p-2 transition-colors hover:bg-muted hover:text-foreground ${
+              open ? "bg-muted text-foreground" : "text-muted-fg"
+            }`}
+          >
+            <ExternalLink size={14} aria-hidden />
+          </button>
+        </div>
+        {open && <PhoneHandoff browse={w.browse} name={w.name} />}
+      </div>
+    );
+  };
+
   const renderRow = (w: PickerWallet) => {
     // MetaMask's relay connector lives in the Wallet Standard registry only
     // after `registerMetaMaskConnect()` resolves. Until then, hold the row
@@ -135,8 +173,9 @@ export function WalletButton() {
 
     // A connectorId means we can connect right now (installed wallet, or
     // MetaMask's always-present relay).
-    if (w.connectorId) {
-      const connectorId = w.connectorId;
+    const action = pickerRowAction(w, mobile);
+    const connectorId = w.connectorId;
+    if (action === "connect" && connectorId) {
       return (
         <button
           key={w.id}
@@ -187,13 +226,14 @@ export function WalletButton() {
     // curated order so it is the first thing an iPhone user sees. The
     // universal link falls through to the wallet's download page when the
     // app is missing. Same tab on purpose: the link hands off to the app.
-    const browseUrl = mobile
-      ? inWalletBrowseUrl(
-          w.browse,
-          window.location.href,
-          window.location.origin,
-        )
-      : undefined;
+    const browseUrl =
+      action === "open-in"
+        ? inWalletBrowseUrl(
+            w.browse,
+            window.location.href,
+            window.location.origin,
+          )
+        : undefined;
     if (browseUrl) {
       return (
         <a key={w.id} href={browseUrl} className={`${rowClass} no-underline`}>
@@ -270,14 +310,14 @@ export function WalletButton() {
           </div>
 
           <div className="p-3">
-            {detected.map(renderRow)}
+            {detected.map(renderEntry)}
 
             {notDetected.length > 0 && (
               <>
                 {detected.length > 0 && (
                   <div className="my-2 border-border border-t" />
                 )}
-                {notDetected.map(renderRow)}
+                {notDetected.map(renderEntry)}
               </>
             )}
 
@@ -287,10 +327,6 @@ export function WalletButton() {
               </div>
             )}
           </div>
-
-          {/* Desktop only: a phone already has the "Open in" rows above. The
-              picker never renders during SSR, so window is safe here. */}
-          {!mobile && <PhoneHandoff />}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
