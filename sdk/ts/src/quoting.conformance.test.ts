@@ -28,6 +28,7 @@ type NativeLevelCase = {
   size: number;
   expiry_offset: number;
   expiry_offset_slots: number;
+  flip_spread_ppm: number;
 };
 type LevelCase = NativeLevelCase & {
   price_offset: number;
@@ -94,6 +95,9 @@ function nativeLevel(c: NativeLevelCase): NativeLevel {
     size: BigInt(c.size),
     expiryOffsetSecs: wallSpan(c.expiry_offset),
     expiryOffsetSlots: slotSpan(c.expiry_offset_slots),
+    // A zero spread is left off, so the vectors also pin the omitted field
+    // defaulting to a level that does not flip.
+    ...(c.flip_spread_ppm === 0 ? {} : { flipSpreadPpm: c.flip_spread_ppm }),
   };
 }
 
@@ -128,7 +132,7 @@ test('quoting vectors match', () => {
     c.bids.forEach((exp, i) => {
       const got = readLevel(view, i);
       assert.equal(got.priceOffset, exp.price_offset, `bid[${i}] offset`);
-      assert.equal(got.flipSpreadPpm, 0, `bid[${i}] flip spread`);
+      assert.equal(got.flipSpreadPpm, exp.flip_spread_ppm, `bid[${i}] flip spread`);
       assert.equal(got.sizeBps, exp.size_bps, `bid[${i}] size_bps`);
       assert.equal(got.expiryOffsetSecs, exp.expiry_offset, `bid[${i}] expiry`);
       assert.equal(got.expiryOffsetSlots, exp.expiry_offset_slots, `bid[${i}] expiry slots`);
@@ -136,7 +140,7 @@ test('quoting vectors match', () => {
     c.asks.forEach((exp, i) => {
       const got = readLevel(view, N_LEVELS + i);
       assert.equal(got.priceOffset, exp.price_offset, `ask[${i}] offset`);
-      assert.equal(got.flipSpreadPpm, 0, `ask[${i}] flip spread`);
+      assert.equal(got.flipSpreadPpm, exp.flip_spread_ppm, `ask[${i}] flip spread`);
       assert.equal(got.sizeBps, exp.size_bps, `ask[${i}] size_bps`);
       assert.equal(got.expiryOffsetSecs, exp.expiry_offset, `ask[${i}] expiry`);
       assert.equal(got.expiryOffsetSlots, exp.expiry_offset_slots, `ask[${i}] expiry slots`);
@@ -160,5 +164,23 @@ test('quoting rejection vectors', () => {
     assert.ok(thrown instanceof QuotingError, `${r.name}: expected a QuotingError`);
     const message = (thrown as QuotingError).message;
     assert.equal(ERROR_TAGS[message], r.error, `${r.name}: error kind (message: "${message}")`);
+  }
+});
+
+// TS-only: Rust's `u32` field cannot hold these, so no shared vector can
+// carry them. `DataView.setUint32` would wrap each silently into a valid
+// spread, so the translation must refuse instead.
+test('a flip spread that is not a u32 is rejected', () => {
+  const c = vectors.cases[0]!;
+  for (const bad of [-1, 2 ** 32, 1.5, Number.NaN]) {
+    const book: NativeBook = {
+      asks: [{ ...nativeLevel(c.asks[0]!), flipSpreadPpm: bad }],
+      bids: [],
+    };
+    assert.throws(
+      () => nativeBookToProfileBytes(book, c.reference_bits, BigInt(c.base_atoms), BigInt(c.quote_atoms)),
+      (e: unknown) => e instanceof QuotingError && e.message === 'flip spread is not a u32',
+      `flipSpreadPpm ${bad}`,
+    );
   }
 });

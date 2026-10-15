@@ -10,7 +10,16 @@ import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAdd
 import { getPriceDecoder, getPriceEncoder, type Price, type PriceArgs } from '.';
 
 export type FillEvent = { market: Address; taker: Address; leader: Address; quoteAuthority: Address; 
-/** `0` for ask-side (taker Buy), `1` for bid-side (taker Sell). */
+/**
+ * The taker's direction: `0` for a Buy, `1` for a Sell. It does not
+ * name the array filled: a Buy fills either `asks[level_idx].size` or
+ * the flipped `bids[level_idx].flip_size` (a filled bid's proceeds
+ * resting as an ask), and a Sell the mirror. Tell the two apart by
+ * comparing `fill_price` with `asks[level_idx].price` and
+ * `bids[level_idx].flip_price` on a Buy (`bids[level_idx].price` and
+ * `asks[level_idx].flip_price` on a Sell); where they coincide either
+ * reading prices the fill identically.
+ */
 side: number; 
 /**
  * Padding so subsequent fields are aligned-1-friendly without
@@ -30,7 +39,16 @@ vaultSeq: bigint; fillBase: bigint; fillQuote: bigint; fillPrice: Price;
 pad2: ReadonlyUint8Array; baseAtomsAfter: bigint; quoteAtomsAfter: bigint; nonceAfter: bigint; takerFeeAtoms: bigint;  };
 
 export type FillEventArgs = { market: Address; taker: Address; leader: Address; quoteAuthority: Address; 
-/** `0` for ask-side (taker Buy), `1` for bid-side (taker Sell). */
+/**
+ * The taker's direction: `0` for a Buy, `1` for a Sell. It does not
+ * name the array filled: a Buy fills either `asks[level_idx].size` or
+ * the flipped `bids[level_idx].flip_size` (a filled bid's proceeds
+ * resting as an ask), and a Sell the mirror. Tell the two apart by
+ * comparing `fill_price` with `asks[level_idx].price` and
+ * `bids[level_idx].flip_price` on a Buy (`bids[level_idx].price` and
+ * `asks[level_idx].flip_price` on a Sell); where they coincide either
+ * reading prices the fill identically.
+ */
 side: number; 
 /**
  * Padding so subsequent fields are aligned-1-friendly without

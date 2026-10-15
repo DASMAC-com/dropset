@@ -53,6 +53,10 @@ export type NativeLevel = {
    * second, independent bound. `NO_SLOT_BOUND` leaves a level
    * bounded only in wall time. */
   expiryOffsetSlots: SlotSpan;
+  /** Flip spread in ppm off this level's own `price`: once filled, its
+   * proceeds rest on the opposite side that far back toward the
+   * reference. Omitted or `0`, the level does not flip. */
+  flipSpreadPpm?: number;
 };
 
 /** A native book: absolute-price ladders, top-of-book first, ≤ 8 per side. */
@@ -65,6 +69,7 @@ export class QuotingError extends Error {}
 
 type RelLevel = {
   priceOffset: number;
+  flipSpreadPpm: number;
   sizeBps: number;
   expiryOffsetSecs: WallSpan;
   expiryOffsetSlots: SlotSpan;
@@ -98,8 +103,14 @@ function levelToRelative(
   if (legAtoms <= 0n) throw new QuotingError('inventory leg is zero');
   const sizeBps = (lvl.size * BPS) / legAtoms;
   if (sizeBps > BPS) throw new QuotingError('level size exceeds inventory leg');
+  const flipSpreadPpm = lvl.flipSpreadPpm ?? 0;
+  // `DataView.setUint32` wraps silently, so bound the field here.
+  if (!Number.isInteger(flipSpreadPpm) || flipSpreadPpm < 0 || flipSpreadPpm > 0xffff_ffff) {
+    throw new QuotingError('flip spread is not a u32');
+  }
   return {
     priceOffset: Number(offset),
+    flipSpreadPpm,
     sizeBps: Number(sizeBps),
     expiryOffsetSecs: lvl.expiryOffsetSecs,
     expiryOffsetSlots: lvl.expiryOffsetSlots,
@@ -108,8 +119,7 @@ function levelToRelative(
 
 function writeLevel(view: DataView, offset: number, l: RelLevel): void {
   view.setUint32(offset, l.priceOffset, true);
-  // `flip_spread_ppm`: a native book has no flip input yet, so it never flips.
-  view.setUint32(offset + 4, 0, true);
+  view.setUint32(offset + 4, l.flipSpreadPpm, true);
   view.setUint16(offset + 8, l.sizeBps, true);
   view.setUint32(offset + 10, l.expiryOffsetSecs, true);
   view.setUint32(offset + 14, l.expiryOffsetSlots, true);

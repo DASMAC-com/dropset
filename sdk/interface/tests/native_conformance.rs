@@ -364,6 +364,35 @@ fn equal_price_levels_are_ordered_by_nonce_not_by_sector() {
     );
 }
 
+/// The flipped market must keep a **Sell that fills**. Its bid side is fully
+/// flipped, so the only bid depth is `asks[0]`'s flipped counter: a
+/// non-empty Sell quote there is proof the reader collects `flip_size`. The
+/// replay alone cannot hold that, since a regeneration by a reader that
+/// ignored flips would move the expectation to zero along with the outcome.
+#[test]
+fn the_fixture_still_carries_a_fill_only_flips_can_serve() {
+    let v = vectors();
+    let sells: Vec<(&str, u64)> = v["cases"]
+        .as_array()
+        .expect("cases is an array")
+        .iter()
+        .filter(|c| c["market"].as_str() == Some("flipped") && u64_at(c, "side") == 1)
+        .map(|c| {
+            (
+                c["name"].as_str().expect("case name"),
+                u64_at(&c["expected"], "out_amount"),
+            )
+        })
+        .collect();
+    assert!(
+        !sells.is_empty(),
+        "expected a Sell against the flipped market"
+    );
+    for (name, out) in &sells {
+        assert!(*out > 0, "{name}: a flipped bid must fill");
+    }
+}
+
 /// The far-out cases must keep *ending the walk* rather than filling.
 ///
 /// Their whole point is that a level the taker cannot afford one output atom

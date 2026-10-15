@@ -158,6 +158,25 @@ pub fn ladder_profile(asks: &[(u32, u16, u32)], bids: &[(u32, u16, u32)]) -> [u8
     dual_expiry_profile(&widen(asks), &widen(bids))
 }
 
+/// [`ladder_profile`] with every listed level quoting `spread_ppm` as its
+/// flip spread, so a fill rests its proceeds on the opposite side.
+pub fn flip_profile(
+    asks: &[(u32, u16, u32)],
+    bids: &[(u32, u16, u32)],
+    spread_ppm: u32,
+) -> [u8; PROFILE_BYTES] {
+    let mut profile: LiquidityProfile = bytemuck::pod_read_unaligned(&ladder_profile(asks, bids));
+    for level in profile.asks.iter_mut().take(asks.len()) {
+        level.flip_spread_ppm = spread_ppm.into();
+    }
+    for level in profile.bids.iter_mut().take(bids.len()) {
+        level.flip_spread_ppm = spread_ppm.into();
+    }
+    let mut bytes = [0u8; PROFILE_BYTES];
+    bytes.copy_from_slice(bytemuck::bytes_of(&profile));
+    bytes
+}
+
 /// Build a multi-level profile from explicit per-level
 /// `(offset_ppm, size_bps, expiry_secs, expiry_slots)` tuples — the
 /// dual-domain generalization of [`ladder_profile`], whose slot bound is
