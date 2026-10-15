@@ -136,6 +136,27 @@ class Grammar(unittest.TestCase):
             with self.subTest(argv=argv), self.assertRaises(ValueError):
                 session_dispatch.validate(argv)
 
+    def test_chore_takes_task_s_shapes_without_resume(self):
+        for argv in (
+            ["chore", "1843"],
+            ["chore", "eng-1843"],
+            ["chore", "anthropic", "1843"],
+            ["chore", "bedrock", "1843"],
+        ):
+            with self.subTest(argv=argv):
+                self.assertEqual(session_dispatch.validate(argv), argv)
+        for argv in (
+            ["chore"],
+            ["chore", "anthropic"],
+            ["chore", "0"],
+            ["chore", "keygen"],
+            ["chore", "resume", "1843"],
+            ["chore", "local", "1843"],
+            ["chore", "1843", "bedrock"],
+        ):
+            with self.subTest(argv=argv), self.assertRaises(ValueError):
+                session_dispatch.validate(argv)
+
     def test_verbs_that_take_no_arguments(self):
         for verb in ("plan", "housekeeping"):
             with self.subTest(verb=verb):

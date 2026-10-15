@@ -619,18 +619,21 @@ _ds_topic_sid() {
 #
 #   ADVISOR      plan, architect, explore        default substrate: anthropic
 #   EXECUTOR     task, housekeeping              default substrate: bedrock
+#   HELPER       chore                           default substrate: bedrock
 #   BACKGROUND   Claude Code's small-model slot  follows the session's substrate
 #
 # The names are capability-per-role on purpose, after the advisor/executor
 # pairing in Claude's own docs: the advisor tier decides, the executor tier
-# carries the work out. A family name (opus, haiku)
-# drifts the first time the role changes family, and Claude Code owns those as
-# its own alias slots; a substrate name ("seat") breaks the first time the top
+# carries the work out, and the helper tier does the minor non-repo jobs that
+# merit neither (a Sonnet-class model is the natural value). A family name
+# (opus, haiku) drifts the first time the role changes family, and Claude
+# Code owns those as its own alias slots; a substrate name ("seat") breaks the first time the top
 # model leaves the subscription. The verb → tier table is the code below, and
 # the tier → model + substrate table is the operator's untracked runtime config:
 #
 #   DS_MODEL_ADVISOR,  DS_MODEL_ADVISOR_SUBSTRATE
 #   DS_MODEL_EXECUTOR, DS_MODEL_EXECUTOR_SUBSTRATE
+#   DS_MODEL_HELPER,   DS_MODEL_HELPER_SUBSTRATE
 #   DS_MODEL_BACKGROUND                (applied on Bedrock launches only)
 #
 # NO MODEL ID IS COMMITTED, deliberately, and there is no fallback. A model
@@ -738,7 +741,8 @@ _ds_marker_key() {
 # Resolve a tier to the model and substrate a launch uses. Prints two lines,
 # model then substrate. NON-ZERO MEANS DO NOT LAUNCH.
 #
-#   $1 tier (`advisor` | `executor`)   $2 substrate override, or "" for the config
+#   $1 tier (`advisor` | `executor` | `helper`)
+#   $2 substrate override, or "" for the config
 #
 # This is the deterministic, pre-session half of fail-fast: a tier whose config
 # does not resolve refuses here, offline and free, rather than starting a
@@ -762,6 +766,11 @@ _ds_tier() {
       var=DS_MODEL_EXECUTOR
       model="$DS_MODEL_EXECUTOR"
       substrate="${override:-${DS_MODEL_EXECUTOR_SUBSTRATE:-bedrock}}"
+      ;;
+    helper)
+      var=DS_MODEL_HELPER
+      model="$DS_MODEL_HELPER"
+      substrate="${override:-${DS_MODEL_HELPER_SUBSTRATE:-bedrock}}"
       ;;
     *)
       print -u2 "dropset: unknown model tier '$tier'"
@@ -817,7 +826,8 @@ _ds_substrate_enter() {
 #
 # The key is a parameter rather than a hard-coded tag because a base-repo
 # session would key on its computed session id — but **no verb does that
-# today**, and the only two call sites both pass a worktree tag. Said plainly
+# today**, and every call site (`task`, `architect`, `chore`) passes a
+# worktree tag. Said plainly
 # because the earlier wording here described session-id keying as if it
 # shipped, which it does not: every base-repo verb is seat-only, so none of
 # them has a substrate worth recording.
@@ -833,8 +843,8 @@ _ds_substrate_enter() {
 # default — anthropic substrate, and (see `_ds_resume_tier`) the advisor tier's
 # model rather than the executor's — which is the next function.
 #
-# An optional $3 tier (`advisor`) is written to `<key>.tier`; omitting it
-# removes any such file, so the last launch that writes the marker decides
+# An optional $3 tier (`advisor` | `helper`) is written to `<key>.tier`;
+# omitting it removes any such file, so the last launch that writes the marker decides
 # its resume tier.
 _ds_substrate_write() {
   local key="$1" substrate="$2" tier="$3"
@@ -865,11 +875,13 @@ _ds_substrate_read() {
   fi
 }
 
-# Which tier a `task resume <n>` re-pins. Prints `executor` or `advisor`.
+# Which tier a `task resume <n>` re-pins. Prints `executor`, `advisor` or
+# `helper`.
 #
-# A `<key>.tier` file reading `advisor` wins: `architect` writes one beside its
-# substrate marker, so `architect <n> bedrock` resumes on Bedrock AND on the
-# advisor model. Otherwise a marker's PRESENCE is the tier record — present
+# A `<key>.tier` file reading `advisor` or `helper` wins: `architect` and
+# `chore` write one beside their substrate marker, so `architect <n> bedrock`
+# resumes on Bedrock AND on the advisor model, and a chore on the helper model.
+# Otherwise a marker's PRESENCE is the tier record — present
 # means an executor session (`task`, which clears any `.tier` it finds), absent
 # means the issue-keyed `explore` that writes none (see `explore` for why).
 # The tier lives in its own file because session_metrics.py reads the marker
@@ -878,8 +890,8 @@ _ds_resume_tier() {
   local tier=''
   [[ -f "$_DS_SUBSTRATE_DIR/$1.tier" ]] \
     && tier="$(cat "$_DS_SUBSTRATE_DIR/$1.tier" 2>/dev/null)"
-  if [[ "$tier" == advisor ]]; then
-    print -r -- 'advisor'
+  if [[ "$tier" == (advisor|helper) ]]; then
+    print -r -- "$tier"
   elif [[ -f "$_DS_SUBSTRATE_DIR/$1" ]]; then
     print -r -- 'executor'
   else
@@ -1448,6 +1460,73 @@ _ds_upkeep() {
   return 0
 }
 
+# Start OR resume a CHORE session — a minor job whose deliverable lands OUTSIDE
+# the repo (a key file for 1Password, a local deploy, a one-off probe).
+#
+#   chore <n>             the helper tier on its configured substrate (Bedrock)
+#   chore anthropic <n>   the helper tier on the subscription — for web search
+#   chore bedrock <n>     the helper tier on Bedrock, whatever the config says
+#
+# The gap it fills: `task` is the executor tier plus a bootstrap PR, `explore`
+# is the advisor tier on the seat, and nothing was both cheap and PR-less. It
+# takes `explore`'s shape — a temporary, expendable worktree, the session
+# READ-ONLY toward the repo, anything repo-bound filed as a follow-up task, In
+# Review at handoff and Done only on the operator's word — and `task`'s
+# argument shapes. Idempotent like `explore`, so there is no `resume` word.
+#
+# THE WORKTREE IS THE BARE NUMBER, like every issue-keyed session, so `cdds`,
+# `fleet`, the pruner and the close tool reach it with no new prefix. A chore
+# and a task are separate Linear issues (operator ruling), so they should never
+# share a number — but that is discipline, not a guarantee, so a `task`
+# session's marker is left alone exactly as `architect` leaves it: clobbering
+# it would resume a PR-bearing task on the helper model, silently.
+#
+# The marker carries a `helper` tier, so `task resume <n>` — and `fleet`, which
+# types it — re-pins the helper model on the recorded substrate. A reopen with
+# no substrate word keeps that recorded substrate, as `architect` does.
+chore() {
+  local override='' tag model substrate
+  if [[ "$1" == (anthropic|bedrock) ]]; then
+    override="$1"
+    shift
+  fi
+  if [[ -z "$1" || -n "$2" ]]; then
+    print -u2 'Usage: chore <n> | chore anthropic|bedrock <n>'
+    return 1
+  fi
+  tag="$(_ds_tag_of "$1")"
+  if [[ "$tag" != <-> || "$tag" == 0 ]]; then
+    print -u2 'chore: takes a Linear issue number — file the issue first'
+    return 1
+  fi
+  if [[ -z "$override" && "$(_ds_resume_tier "$tag")" == helper ]]; then
+    override="$(_ds_substrate_read "$tag")"
+  fi
+  { read -r model; read -r substrate; } <<< "$(_ds_tier helper "$override")"
+  [[ -n "$substrate" ]] || return 1
+  _ds_substrate_enter "$substrate" 'chore' || return 1
+  if [[ "$(_ds_resume_tier "$tag")" == executor ]]; then
+    print -u2 "chore: $tag carries a task session's substrate marker —" \
+      'leaving it, so a task resume of it re-pins the executor tier.'
+  else
+    _ds_substrate_write "$tag" "$substrate" helper
+  fi
+
+  # Written out, as `explore`'s is, because there is no skill to name — and it
+  # states the read-only posture rather than trusting the issue body to.
+  local prompt="Bootstrap this chore from Linear issue ENG-$tag. Read that"
+  prompt+=" issue as the spec and mark it In Progress. This session is READ-ONLY"
+  prompt+=" toward the repo: no commits, no PR, no init-pr. The worktree is"
+  prompt+=" temporary and expendable; the deliverable lands outside the repo or"
+  prompt+=" on the issue, and anything repo-bound is filed as a follow-up task."
+  prompt+=" At handoff, move the issue to In Review (only the operator marks it"
+  prompt+=" Done) by ending with: python3 .claude/tools/close_session.py"
+  prompt+=" --state 'In Review' --keep-worktree. The full shape is in"
+  prompt+=" docs/conventions/local-integrations.md."
+  _ds_session "$(_ds_topic_sid chore "$tag")" "$tag" "$prompt" "$model" \
+    "$(_ds_launch_dir "$tag")"
+}
+
 # Start OR resume today's PLANNING session. The name is derived from the date.
 #
 #   plan             the advisor tier on its configured substrate (anthropic)
@@ -1721,10 +1800,10 @@ fleet() {
 # advisor tier: `plan bedrock` sends that same id to Bedrock, so it has to
 # resolve there too. Every id, background included, is mapped to its Bedrock
 # profile: a first-party `claude-*` becomes `us.anthropic.<id>`, and any window
-# suffix is dropped. An advisor or executor alias (`fable`, `opus`) cannot be
-# checked: Claude Code resolves it, not Bedrock, so it is reported rather than
-# failed. A background alias fails instead: Claude Code resolves `haiku` THROUGH
-# this slot, so an alias here is circular.
+# suffix is dropped. An advisor, executor or helper alias (`fable`, `opus`)
+# cannot be checked: Claude Code resolves it, not Bedrock, so it is reported
+# rather than failed. A background alias fails instead: Claude Code resolves
+# `haiku` THROUGH this slot, so an alias here is circular.
 models() {
   if [[ -n "$1" && "$1" != check ]]; then
     print -u2 'Usage: models [check]'
@@ -1732,7 +1811,7 @@ models() {
   fi
   local tier model substrate profile entry rc=0
   local -a profile_flag
-  for tier in advisor executor; do
+  for tier in advisor executor helper; do
     # Reset first: a failed `_ds_tier` prints nothing, and the previous tier's
     # values must not survive into this row.
     model='' substrate=''
@@ -1750,7 +1829,7 @@ models() {
   # false FAIL for an operator whose admin login lives under a named profile.
   [[ -n "$DS_AWS_PROFILE" ]] && profile_flag=(--profile "$DS_AWS_PROFILE")
   for entry in "advisor:$DS_MODEL_ADVISOR" "executor:$DS_MODEL_EXECUTOR" \
-    "background:$DS_MODEL_BACKGROUND"; do
+    "helper:$DS_MODEL_HELPER" "background:$DS_MODEL_BACKGROUND"; do
     tier="${entry%%:*}" model="${entry#*:}"
     [[ -n "$model" ]] || continue
     profile="${model%%\[*}"

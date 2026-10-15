@@ -566,7 +566,7 @@ wired**, which `make hook-wiring` reports on (it names every committed
 **guard** hook that cannot fire — unwired, wired under a `matcher` that
 never selects the tools it inspects, or pointed at a path that resolves
 to nothing — and writes nothing; `housekeeping` runs the same check
-each pass). The **session helpers** (`cdds`, `task`, `explore`, `plan`,
+each pass). The **session helpers** (`cdds`, `task`, `explore`, `chore`, `plan`,
 `housekeeping`, `architect`, `fleet`) are the exception that *is*
 committed, at
 `.claude/shell/init.zsh`, sourced from the base checkout by one guarded
@@ -581,13 +581,13 @@ wiring, the helper family, and the iTerm setup:
 A session runs on **Bedrock** unless it needs something Bedrock lacks —
 web search, web fetch, deep research — or it is a **seat session by
 role** (`plan`, `architect`, `housekeeping`, `explore`). Sub-agents are
-not a differentiator. `task <n>` is Bedrock, `task anthropic <n>` is
-the escape for work needing web research, and `housekeeping` stays on
-the seat deliberately because the operator uses it to open the 5-hour
-subscription window.
+not a differentiator. `task <n>` and `chore <n>` are Bedrock, with
+`anthropic` before `<n>` the web-research escape; `housekeeping` stays
+on the seat because the operator uses it to open the 5-hour window.
 
 Models are named by **role tier** — advisor (`plan`, `architect`,
-`explore`), executor (`task`, `housekeeping`), background — each set in
+`explore`), executor (`task`, `housekeeping`), helper
+(`chore`), background — each set in
 the untracked runtime config (`DS_MODEL_<TIER>[_SUBSTRATE]`). Each verb
 pins its tier at launch and refuses an unresolved one, so no skill
 checks its own model; `plan bedrock` is the credit-pinch override.

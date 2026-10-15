@@ -128,6 +128,17 @@ def validate(argv: list[str]) -> list[str]:
             raise ValueError("`explore` needs a real issue number; 0 is not one")
         return ["explore", args[0]]
 
+    if verb == "chore":
+        # `task`'s substrate words, but no `resume`: `chore <n>` resumes an
+        # existing session itself, as `explore` does.
+        if args and args[0] in _SUBSTRATES:
+            args = args[1:]
+        if len(args) != 1 or not _TAG.match(args[0]):
+            raise ValueError("`chore` takes one eng-### tag or number")
+        if re.fullmatch(r"(?:eng-)?0+", args[0], re.ASCII):
+            raise ValueError("`chore` needs a real issue number; 0 is not one")
+        return argv[:]
+
     if verb == "architect":
         # The governing issue's number is the only argument — there is no topic
         # form — so a design thread is named, tabbed and worktree'd like a task.

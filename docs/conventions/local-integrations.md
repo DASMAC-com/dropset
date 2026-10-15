@@ -1173,6 +1173,7 @@ names alive was the outcome to avoid.
 | `task anthropic <n>` | same, when the work needs web research     | anthropic              | executor         |
 | `task resume [n]`    | resume by number (bare = the picker)       | as recorded            | re-pinned        |
 | `explore <n\|name>`  | research / audit, read-only, temp worktree | anthropic, always      | advisor          |
+| `chore [s] <n>`      | minor non-repo job, read-only, no PR       | helper's (Bedrock)     | helper           |
 | `plan [bedrock]`     | upkeep pass, then daily planning session   | advisor's, or override | advisor          |
 | `housekeeping`       | upkeep; also the 5-hour-window opener      | anthropic, always      | executor's model |
 | `architect <n> [b]`  | design thread, read-only, temp worktree    | advisor's, or override | advisor          |
@@ -1180,7 +1181,8 @@ names alive was the outcome to avoid.
 | `models [check]`     | print the tier table; `check` it for free  | —                      | —                |
 | `cdds [n]`           | not a session verb — navigation            | —                      | —                |
 
-`[b]` is the same optional `anthropic` / `bedrock` word `plan` takes.
+`[b]` is the same optional `anthropic` / `bedrock` word `plan` takes;
+`[s]` is the same word in `task`'s position, before the number.
 `task local <n>` still works for now, printing a line naming its
 replacement. **The tier table itself is in "Model tiers" below.**
 
@@ -1193,9 +1195,9 @@ board, not a branch.
 
 #### Architect and explore sessions: temporary worktree, no PR
 
-**`architect <n>` and every `explore <n|name>` task — audits
-included — run in their own worktree, but that worktree is
-TEMPORARY WORKING STATE and the session is READ-ONLY toward the
+**`architect <n>`, every `explore <n|name>` task — audits
+included — and every `chore <n>` run in their own worktree, but
+that worktree is TEMPORARY WORKING STATE and the session is READ-ONLY toward the
 repo: no commits, no PR.** Durable state is captured in
 **Linear**; a spec file is **optional**, and anything repo-bound
 lands later via a **follow-up worker task**. This is the
@@ -1221,6 +1223,7 @@ design thread with no issue files or names one first.
 | `explore 1196`         | `1196`             | `1196`             |
 | `explore skills-audit` | `exp-skills-audit` | `exp-skills-audit` |
 | `architect 1572`       | `1572`             | `1572`             |
+| `chore 1843`           | `1843`             | `1843`             |
 
 The named exceptions: `plan-<day>` and `housekeeping-<day>` keep
 their day-keyed names (they have no issue), a free-form explore
@@ -1269,7 +1272,7 @@ knowing before relying on the inheritance:**
   which re-pins the tier as well as the substrate: an untagged
   worktree — no marker — resumes on the **advisor** tier, so an
   issue-keyed explore session comes back on the right model. An
-  architect session gets there through its `<n>.tier` file instead,
+  architect or chore session gets there through its `<n>.tier` file instead,
   and keeps its recorded substrate. (This closed the first part of
   ENG-1402.)
 - **No substrate marker is written for an explore session**, and
@@ -1284,6 +1287,22 @@ knowing before relying on the inheritance:**
 Both are the same root: `<n>` is not a single-owner namespace. It
 names a worktree several session kinds can claim, with different
 substrates and different pins.
+
+**`chore <n>` is the cheap member of the family** — a minor job
+whose deliverable lands outside the repo (a key file, a local
+deploy, a one-off probe), on the **helper** tier, Bedrock by
+default with `chore anthropic <n>` as the web-research escape. It
+skips `init-pr` and the bootstrap PR; its written bootstrap prompt
+states the read-only posture and ends the session with
+`close_session.py --state 'In Review' --keep-worktree`. Unlike
+`explore` it **does** write a substrate marker, with a `helper`
+`.tier` beside it, so `task resume <n>` and `fleet` re-pin the
+helper model on the recorded substrate. A chore and a task are
+separate Linear issues (operator ruling, 2026-10-14), so they should
+never share a number; since that is discipline rather than a
+guarantee, a `task` session's marker is left alone, exactly as
+`architect` leaves it. It is idempotent like
+`explore`, so it takes no `resume` word.
 
 There is **no branch to rename and no PR to open** — the worktree does
 arrive on a `worktree-<tag>` branch, as any git worktree must; these
@@ -1560,12 +1579,14 @@ subscription. "Frontier" was rejected too: the executor's model can be
 newer than the advisor model. **Advisor / executor** follows the
 pairing Claude's own docs use for the advisor tool — the advisor
 decides, the executor carries the work out — so the nouns describe the
-roles and outlive any model.
+roles and outlive any model. **Helper** is the third role: minor
+non-repo jobs that merit neither, on a cheaper (Sonnet-class) model.
 
 | Tier         | Verbs                        | Default substrate   | Unset                |
 | ------------ | ---------------------------- | ------------------- | -------------------- |
 | `ADVISOR`    | `plan` `architect` `explore` | anthropic           | refuses to launch    |
 | `EXECUTOR`   | `task` (`housekeeping`)      | bedrock             | refuses to launch    |
+| `HELPER`     | `chore`                      | bedrock             | refuses to launch    |
 | `BACKGROUND` | Claude Code's small slot     | follows the session | warns (Bedrock only) |
 
 **The model id lives ONLY in the runtime config, never in the repo.**
@@ -1579,10 +1600,12 @@ DS_MODEL_ADVISOR='<model-id>[1m]'
 DS_MODEL_ADVISOR_SUBSTRATE=anthropic   # optional; the default
 DS_MODEL_EXECUTOR='<model-id>[1m]'
 DS_MODEL_EXECUTOR_SUBSTRATE=bedrock       # optional; the default
+DS_MODEL_HELPER='<model-id>[1m]'
+DS_MODEL_HELPER_SUBSTRATE=bedrock         # optional; the default
 DS_MODEL_BACKGROUND='<model-id>'
 ```
 
-An unset advisor or executor model refuses to launch and names the
+An unset advisor, executor or helper model refuses to launch and names the
 variable, rather than quietly running a committed id that has gone a
 generation stale — the slip that motivated the tiers. Three details
 are decisions rather than omissions:
@@ -1668,12 +1691,13 @@ window, and a seat session resumed onto Bedrock quietly spends credits
 on attended work. Neither errors. **An absent marker reads as
 `anthropic`**, the conservative default, which is also correct for
 every session predating markers (the retired `seat` value reads the
-same). `task` and `architect` write a marker, and a marker's
-**presence** is the tier record unless an `advisor` `<key>.tier` file
-sits beside it: present resumes the executor tier, absent the advisor
-tier — which is what lets `task resume <n>` bring an issue-keyed
-explore session back on the right model. `architect` writes that
-`.tier` file, and a `task` launch removes it; the tier is a separate
+same). `task`, `architect` and `chore` write a marker, and a marker's
+**presence** is the tier record unless a `<key>.tier` file sits
+beside it (`advisor` from `architect`, `helper` from `chore`):
+present resumes the executor tier, absent the advisor tier — which is
+what lets `task resume <n>` bring an issue-keyed explore session back
+on the right model. `architect` and `chore` write that `.tier` file,
+and a `task` launch removes it; the tier is a separate
 file because `session_metrics.py` reads the marker as one bare word.
 The bare `task resume` picker cannot know
 which session will be chosen, so it resumes unpinned.
@@ -1851,6 +1875,14 @@ drives the real zsh functions.
   `plan` / `housekeeping` / `architect` compute an id of their own.
   `explore` now computes one too, from its name, so the wart is gone
   rather than documented.
+
+- **`chore [anthropic|bedrock] <n>`** — start **or resume** a chore
+  session on issue `n`, on the **helper** tier: the bare-number worktree,
+  a computed id like `explore`'s, a written read-only bootstrap prompt
+  in place of `/init-pr`, and a `helper` substrate marker so a resume
+  keeps both model and provider. A reopen with no word keeps the
+  recorded substrate. See "Architect and explore sessions: temporary
+  worktree, no PR" above for the shape it shares.
 
 - **`plan [anthropic|bedrock]`** — start **or resume** a **planning**
   session. It derives the session name `plan-<day-of-month>` from
