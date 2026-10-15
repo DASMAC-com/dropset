@@ -52,11 +52,6 @@ clean:
 # drift fails check-anchor there. Bump that workflow's PLATFORM_TOOLS_VERSION
 # with it, to the new CLI's default platform-tools release.
 ANCHOR_CLI_VERSION := 1.2.1
-# The v0 hold that interface.md § SDK, CI discipline describes: the CLI
-# reads this variable in place of `--arch`. The export reaches every
-# `anchor build` a recipe runs, including the TUI's own, since every target
-# that runs `cargo run -p dropset-tui` launches it from a recipe.
-export ANCHOR_BUILD_SBF_ARCH := v0
 
 # Required toolchain: anchor-cli at ANCHOR_CLI_VERSION, the Solana SBF
 # toolchain, and a solana-cli / solana-test-validator at Agave 4.3 or later —

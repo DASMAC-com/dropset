@@ -107,6 +107,14 @@
 
 # --- constants ---
 .equ FLUSH_BIT, 0x8000000000000000
+# Static-syscall id of `sol_memcpy_`: murmur3_32 of the name, seed 0, as
+# solana-define-syscall's `sys_hash` computes it. `call` on a constant
+# encodes source field 0 with this immediate (85 00 00 00 a3 c4 7c 71),
+# the static form sBPF v3 dispatches as a syscall (a v0 load on Agave 3.1
+# rejects it as a relative jump out of bounds). `call sol_memcpy_` by
+# symbol encodes an internal call (source field 1) plus a relocation,
+# which sBPF v3 leaves unresolved at immediate -1.
+.equ SYS_MEMCPY_, 0x717cc4a3
 
 # --- error codes ---
 # Domain codes equal the anchor #[error_code] Custom values (variant + 6000)
@@ -319,7 +327,7 @@ write_profile:
     mov64 r1, r9
     add64 r1, VAULT_PROFILE_OFF          # r1 = &vault.profile     (dst)
     mov64 r3, PROFILE_SIZE               # r3 = len
-    call sol_memcpy_
+    call SYS_MEMCPY_                     # sol_memcpy_, static form
 
     mov64 r0, 0
     exit
