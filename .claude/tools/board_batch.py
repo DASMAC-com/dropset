@@ -10,11 +10,14 @@ removal — and paid roughly 40k echoing bodies to confirm changes that fit on
 17 lines. Linear's ``issueUpdate`` returns whatever the caller selects, so
 requesting ``success`` alone makes the echo vanish.
 
-Five subcommands, all reading their config from the environment (no hard-coded
+Six subcommands, all reading their config from the environment (no hard-coded
 ids, never a committed token):
 
 * ``list`` — compact open-Backlog listing: ``number | priority | title``, one
   line each. Roughly 600 tokens where the MCP equivalent measured ~11k.
+* ``view [--name NAME]`` — the same compact listing of the operator's named
+  custom view (default ``Next``), resolved by name and filtered by Linear, so
+  the planning session sees exactly what the operator sees.
 * ``fields --updates FILE`` — every non-body **issue field**: priority, state,
   parent, milestone, labels, assignee. Takes an explicit map of issue number
   to field values and prints one line per issue.
@@ -73,6 +76,7 @@ mixing the two would blur exactly the boundary the paragraph above draws.
 Usage:
     python3 .claude/tools/board_batch.py list
     python3 .claude/tools/board_batch.py list --state Todo
+    python3 .claude/tools/board_batch.py view
     python3 .claude/tools/board_batch.py fields --updates updates.json
     python3 .claude/tools/board_batch.py priorities --updates priorities.json
     python3 .claude/tools/board_batch.py state --id ENG-123 --state "In Review"
@@ -102,6 +106,11 @@ ENDPOINT = linear_api.ENDPOINT
 # roughly 575 issues, and because the resolver read was project-wide and
 # unfiltered, every write subcommand failed outright until these reads paged.
 PAGE_SIZE = 250
+
+# The custom-view read's page. Nesting `issues` under `customView` multiplies
+# Linear's complexity score: a 250-row page measured 83,801 against a 10,000
+# ceiling and was refused outright, so this page stays well under a tenth.
+VIEW_PAGE_SIZE = 25
 
 # How many issue numbers one resolver query names. A write path resolves only the
 # issues its own payload references, so this bounds a chunk of that lookup rather
@@ -181,11 +190,7 @@ def _post(api_key: str, query: str, variables: dict) -> dict:
     )
 
 
-_ISSUES_QUERY = """
-query($filter: IssueFilter, $first: Int!, $after: String) {
-  issues(filter: $filter, first: $first, after: $after) {
-    pageInfo { hasNextPage endCursor }
-    nodes {
+_ISSUE_NODE = """
       id
       identifier
       number
@@ -219,10 +224,48 @@ query($filter: IssueFilter, $first: Int!, $after: String) {
       inverseRelations {
         nodes { type issue { identifier state { type } } }
       }
+"""
+
+_ISSUES_QUERY = (
+    """
+query($filter: IssueFilter, $first: Int!, $after: String) {
+  issues(filter: $filter, first: $first, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {"""
+    + _ISSUE_NODE
+    + """    }
+  }
+}
+"""
+)
+
+# The operator's named custom view, resolved by NAME so no view id is committed.
+# `view` exists because "Next" is a view the operator curates in Linear, and the
+# planning session's own reconstruction of it (unblocked, un-milestoned Backlog)
+# can drift from what the operator actually sees — which is the gap a hold
+# recorded only in prose fell through. Reading the view itself closes it.
+_VIEWS_QUERY = """
+query($name: String!) {
+  customViews(filter: { name: { eq: $name } }, first: 10) {
+    nodes { id name }
+  }
+}
+"""
+
+_VIEW_ISSUES_QUERY = (
+    """
+query($id: String!, $first: Int!, $after: String) {
+  customView(id: $id) {
+    issues(first: $first, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {"""
+    + _ISSUE_NODE
+    + """      }
     }
   }
 }
 """
+)
 
 # The team's workflow states, for resolving a state NAME to its UUID. Linear's
 # `stateId` takes an id and nothing else: a name reaches it as an opaque string
@@ -267,15 +310,29 @@ def _fetch_filtered(api_key: str, issue_filter: dict) -> list[dict]:
     write into a hard error, and the documented fallback for that error was the
     full-body MCP ``save_issue`` — the exact echo cost the tool exists to remove.
     """
+    return _page_through(
+        api_key,
+        _ISSUES_QUERY,
+        {"filter": issue_filter},
+        lambda data: data.get("issues") or {},
+    )
+
+
+def _page_through(
+    api_key: str, query: str, variables: dict, connection, page_size: int = PAGE_SIZE
+) -> list[dict]:
+    """Every node of the connection ``connection(data)`` selects, following the
+    cursor to the end. Shared by the project listing and the custom-view read so
+    both keep the same truncation refusals."""
     nodes: list[dict] = []
     after: str | None = None
     for _ in range(MAX_PAGES):
         data = _post(
             api_key,
-            _ISSUES_QUERY,
-            {"filter": issue_filter, "first": PAGE_SIZE, "after": after},
+            query,
+            {**variables, "first": page_size, "after": after},
         )
-        conn = data.get("issues") or {}
+        conn = connection(data)
         page = conn.get("nodes") or []
         nodes.extend(page)
         info = conn.get("pageInfo") or {}
@@ -286,9 +343,9 @@ def _fetch_filtered(api_key: str, issue_filter: dict) -> list[dict]:
             # it: a FULL page with no `pageInfo` at all. On the resolver path a
             # short read degrades to a loud `resolve_issue` refusal, but `list`
             # has no such net and would print a truncated board as the whole one.
-            if not info and len(page) >= PAGE_SIZE:
+            if not info and len(page) >= page_size:
                 raise BoardBatchError(
-                    f"read returned a full page of {PAGE_SIZE} with no pageInfo "
+                    f"read returned a full page of {page_size} with no pageInfo "
                     "— refusing to report a possibly-truncated board as complete"
                 )
             return nodes
@@ -299,7 +356,7 @@ def _fetch_filtered(api_key: str, issue_filter: dict) -> list[dict]:
                 "to loop or to report a truncated read"
             )
     raise BoardBatchError(
-        f"read did not terminate within {MAX_PAGES} pages of {PAGE_SIZE} — "
+        f"read did not terminate within {MAX_PAGES} pages of {page_size} — "
         "refusing to keep paging; narrow the filter"
     )
 
@@ -317,6 +374,32 @@ def fetch_issues(
     if states:
         issue_filter["state"] = {"name": {"in": states}}
     return _fetch_filtered(api_key, issue_filter)
+
+
+def fetch_view_issues(api_key: str, name: str) -> list[dict]:
+    """The issues in the operator's custom view named ``name``, as Linear itself
+    filters them.
+
+    Resolves the view by exact name and refuses zero or several matches rather
+    than guessing: printing the wrong view as "what the operator sees" is the
+    exact drift this read exists to remove.
+    """
+    views = (_post(api_key, _VIEWS_QUERY, {"name": name}).get("customViews") or {}).get(
+        "nodes"
+    ) or []
+    if not views:
+        raise BoardBatchError(f"no custom view named {name!r}")
+    if len(views) > 1:
+        raise BoardBatchError(
+            f"{len(views)} custom views are named {name!r} — refusing to guess which"
+        )
+    return _page_through(
+        api_key,
+        _VIEW_ISSUES_QUERY,
+        {"id": views[0]["id"]},
+        lambda data: (data.get("customView") or {}).get("issues") or {},
+        page_size=VIEW_PAGE_SIZE,
+    )
 
 
 def fetch_issues_by_number(
@@ -939,6 +1022,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="append each issue's milestone name",
     )
 
+    view = sub.add_parser("view", help="the operator's named custom view, as listed")
+    view.add_argument("--name", default="Next", help="custom view name (default Next)")
+
     for name, help_text in (
         ("fields", "batch non-body issue-field updates"),
         ("priorities", "batch priority updates (a thin alias of fields)"),
@@ -1001,12 +1087,17 @@ def run(argv: list[str]) -> int:
     api_key = env_var("LINEAR_API_KEY")
     project_id = env_var("LINEAR_PROJECT_ID")
 
-    if args.cmd == "list":
-        states = None if args.state == "all" else [args.state]
-        issues = fetch_issues(api_key, project_id, states)
-        if not args.include_milestoned:
-            issues = drop_milestoned(issues)
-        lines = format_listing(issues, show_milestone=args.show_milestone)
+    if args.cmd in ("list", "view"):
+        if args.cmd == "view":
+            # No client-side milestone drop: the view's own filter is the point.
+            issues = fetch_view_issues(api_key, args.name)
+            lines = format_listing(issues)
+        else:
+            states = None if args.state == "all" else [args.state]
+            issues = fetch_issues(api_key, project_id, states)
+            if not args.include_milestoned:
+                issues = drop_milestoned(issues)
+            lines = format_listing(issues, show_milestone=args.show_milestone)
         for line in lines:
             print(line)
         print(f"-- {len(lines)} issue(s)", file=sys.stderr)

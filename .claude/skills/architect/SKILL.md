@@ -110,10 +110,12 @@ pin prevents.
 
 Read **two things**, in one cheap call each:
 
-1. **The Planning document** (`LINEAR_PLANNING_DOC_ID`). This
-   is the non-negotiable read — standing decisions, strategy
-   direction, the vocabulary the operator uses. Arguing
-   architecture without it re-derives settled ground.
+1. **The Planning document** (`LINEAR_PLANNING_DOC_ID`), plus
+   the committed standing decisions and rulings in
+   `.claude/skills/plan/rulings.md`. This is the non-negotiable
+   read — strategy direction, settled decisions, the vocabulary
+   the operator uses. Arguing architecture without it re-derives
+   settled ground.
 1. **The track umbrellas** — the Todo tier, milestone-carrying
    issues excluded.
 

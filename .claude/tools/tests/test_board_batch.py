@@ -749,6 +749,71 @@ class BoardSizeIndependenceTests(unittest.TestCase):
         self.assertEqual(reads, [[889, 914]])
 
 
+class ViewTests(unittest.TestCase):
+    def setUp(self):
+        self.env = mock.patch.dict(
+            os.environ,
+            {"LINEAR_API_KEY": "k", "LINEAR_PROJECT_ID": "p"},
+        )
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def _run_view(self, views, nodes, argv=("board_batch.py", "view")):
+        calls = []
+
+        def fake_post(api_key, query, variables):
+            calls.append((query, variables))
+            if "customViews(" in query:
+                return {"customViews": {"nodes": views}}
+            return {"customView": {"issues": {"nodes": nodes}}}
+
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            with mock.patch("sys.stdout") as out:
+                rc = run(list(argv))
+        printed = "".join(c.args[0] for c in out.write.call_args_list if c.args)
+        return rc, printed, calls
+
+    def test_view_lists_the_named_view_without_dropping_milestoned_rows(self):
+        nodes = [_issue(1, "Live"), _issue(2, "Parked", milestone="Claude meta")]
+        rc, printed, calls = self._run_view([{"id": "v1", "name": "Next"}], nodes)
+        self.assertEqual(rc, 0)
+        self.assertIn("Live", printed)
+        # The view's own filter is the authority; no client-side drop.
+        self.assertIn("Parked", printed)
+        self.assertEqual(calls[0][1], {"name": "Next"})
+        self.assertEqual(calls[1][1]["id"], "v1")
+
+    def test_view_name_is_overridable(self):
+        _, _, calls = self._run_view(
+            [{"id": "v2", "name": "Blocked"}],
+            [],
+            argv=("board_batch.py", "view", "--name", "Blocked"),
+        )
+        self.assertEqual(calls[0][1], {"name": "Blocked"})
+
+    def test_view_pages_under_the_complexity_ceiling(self):
+        _, _, calls = self._run_view([{"id": "v1", "name": "Next"}], [])
+        self.assertEqual(calls[1][1]["first"], bb.VIEW_PAGE_SIZE)
+        self.assertLess(bb.VIEW_PAGE_SIZE, bb.PAGE_SIZE)
+
+    def test_a_missing_view_is_refused(self):
+        with self.assertRaises(BoardBatchError):
+            self._run_view([], [])
+
+    def test_an_ambiguous_view_name_is_refused(self):
+        views = [{"id": "a", "name": "Next"}, {"id": "b", "name": "Next"}]
+        with self.assertRaises(BoardBatchError):
+            self._run_view(views, [])
+
+    def test_the_view_query_carries_no_description(self):
+        # GraphQL `#` comments in the shared node selection mention the field.
+        selected = "\n".join(
+            line.split("#", 1)[0] for line in bb._VIEW_ISSUES_QUERY.splitlines()
+        )
+        self.assertNotIn("description", selected)
+        self.assertIn("inverseRelations", selected)
+
+
 class CliTests(unittest.TestCase):
     def setUp(self):
         self.env = mock.patch.dict(

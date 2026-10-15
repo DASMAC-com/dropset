@@ -1447,6 +1447,20 @@ skill's session in the base repo, human-directed, one edge at a time.
 That is the whole of the exception: not "a skill that is allowed to",
 but "the place a human does it".
 
+**A planning dispatch hold is an edge too** (operator ruling,
+2026-10-08). The operator's Next view means *dispatchable right now*, so
+an unblocked Backlog issue the planning session is holding behind an
+in-flight surface or a sequencing reason is a lie in it: the operator
+sees it, expects to launch it, and cannot see a hold recorded only in
+the Planning document. So the planning session expresses its own holds
+as blocking edges on the in-flight blocker, and the held issue shows as
+Blocked instead. This amends only *what a planning-placed edge may
+mean* — semantic ordering **or** a planning hold. An automated filer
+still never places an edge, and file overlap a filer notices is still
+never one. A hold that outlives its reason self-heals: the board tool
+drops a completed blocker from its blocked marker, so removal is needed
+only on a re-sequence.
+
 **There is no standing edge class any more — the meta batch's edge is
 retired, and so is the goal it served.** The edge existed to keep
 exactly one meta issue unblocked at a time, so agent-infra work landed
@@ -1559,7 +1573,9 @@ Two things that are **not** blocking edges:
 - **File overlap.** Two issues that will edit the same code are
   reconciled in a planning session and recorded as a cluster (see
   "Overlap is a cluster, never an ordering"); the automated
-  related-linking is retired.
+  related-linking is retired. Overlap becomes an edge only when the
+  planning session decides to *hold* one issue behind the other, as
+  above — the decision is the edge, not the overlap.
 - **Coupling that belongs in one PR.** That is handled by combining
   into a single issue (see "Fold coupled findings into one issue"),
   not a relation.
