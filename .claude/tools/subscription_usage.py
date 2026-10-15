@@ -25,8 +25,15 @@ leave Claude Code holding a dead one. An expired token is reported as stale and
 left for Claude Code to refresh on its next run.
 
 **The windows are a rolling 5 hours and 7 days, not calendar days.** There is
-no "percent of today" on this surface; a per-day figure has to be derived by
-sampling, which is the bootstrap step's job, not this tool's.
+no "percent of today" on this surface, so ``--log PATH`` derives one from
+observed samples rather than a configured constant: it reads the sample log at
+``PATH``, prints each weekly window's rise per day against the newest earlier
+sample of the **same** window at least ``MIN_SAMPLE_GAP_HOURS`` old, then
+appends this reading. A window that reset between the two samples gives no
+figure (what it spent before the reset is unobserved). The log is JSON Lines,
+one ``{"at", "rows": [{"label", "percent", "resets"}]}`` object per reading,
+oldest first; an unreadable line is skipped. The ``upkeep`` pass takes one
+sample a day, so the figure is roughly the last day's spend.
 
 **The endpoint is undocumented and has been disabled once before** (a
 third-party tracker fell back to Messages-API rate-limit headers for a while),
@@ -47,7 +54,7 @@ item) or a usage error.
 
 Usage::
 
-    python3 .claude/tools/subscription_usage.py [--timeout SECONDS]
+    python3 .claude/tools/subscription_usage.py [--timeout SECONDS] [--log PATH]
 
 Stdlib only; a Python skill-tool under ``.claude/tools/`` — deliberately not a
 Cargo workspace member. Tests live in ``tests/test_subscription_usage.py``.
@@ -64,6 +71,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 OAUTH_BETA = "oauth-2025-04-20"
@@ -76,6 +84,10 @@ KEYCHAIN_SERVICE = "Claude Code-credentials"
 SECURITY_NOT_FOUND = 44
 
 DEFAULT_TIMEOUT = 20
+
+#: Two samples closer than this give no per-day figure: the rate would mostly
+#: measure which hours of the day fell between them.
+MIN_SAMPLE_GAP_HOURS = 12.0
 
 
 class UsageError(Exception):
@@ -263,6 +275,79 @@ def format_rows(rows: list[dict]) -> list[str]:
     return lines
 
 
+def _numeric(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def read_samples(path: Path) -> list[dict]:
+    """The log's readings, oldest first; a missing log is an empty one."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    samples = []
+    for line in text.splitlines():
+        try:
+            sample = json.loads(line)
+            at = datetime.datetime.fromisoformat(sample["at"]).timestamp()
+        except (ValueError, KeyError, TypeError):
+            continue
+        if isinstance(sample.get("rows"), list):
+            samples.append({"at": at, "rows": sample["rows"]})
+    return samples
+
+
+def per_day_lines(samples: list[dict], rows: list[dict], now: float) -> list[str]:
+    """Each weekly window's rise per day since the newest sample of the same
+    window at least ``MIN_SAMPLE_GAP_HOURS`` before ``now``.
+
+    The same window means the same label AND reset time: a 7-day window that
+    rolled over between the two readings dropped to zero in between, and what
+    it spent before the drop was never observed, so it gives no figure."""
+    lines = []
+    for row in rows:
+        if not row["label"].startswith("weekly") or not _numeric(row["percent"]):
+            continue
+        earlier = None
+        for sample in reversed(samples):
+            hours = (now - sample["at"]) / 3600
+            if hours < MIN_SAMPLE_GAP_HOURS:
+                continue
+            match = next(
+                (
+                    r
+                    for r in sample["rows"]
+                    if isinstance(r, dict)
+                    and r.get("label") == row["label"]
+                    and _numeric(r.get("percent"))
+                ),
+                None,
+            )
+            if match is not None:
+                earlier = (match, hours)
+                break
+        head = f"{row['label']:<14} per day"
+        if earlier is None:
+            lines.append(f"{head}  no sample {MIN_SAMPLE_GAP_HOURS:g}h+ old yet")
+        elif earlier[0].get("resets") != row["resets"]:
+            lines.append(f"{head}  window reset since the last sample")
+        else:
+            match, hours = earlier
+            rate = (row["percent"] - match["percent"]) / hours * 24
+            lines.append(f"{head}  {rate:+.1f}%  over {hours:.1f}h")
+    return lines
+
+
+def append_sample(path: Path, rows: list[dict], now: float) -> None:
+    at = datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat()
+    sample = {
+        "at": at,
+        "rows": [{k: r[k] for k in ("label", "percent", "resets")} for r in rows],
+    }
+    with path.open("a", encoding="utf-8") as log:
+        log.write(json.dumps(sample) + "\n")
+
+
 def _positive_int(text: str) -> int:
     value = int(text)
     if value <= 0:
@@ -273,6 +358,11 @@ def _positive_int(text: str) -> int:
 def run(argv: list[str], read=read_credential, fetch=fetch_usage, now=time.time) -> int:
     parser = argparse.ArgumentParser(prog="subscription_usage.py")
     parser.add_argument("--timeout", type=_positive_int, default=DEFAULT_TIMEOUT)
+    parser.add_argument(
+        "--log",
+        type=Path,
+        help="sample log: print the per-day figure from it, then append this reading",
+    )
     args = parser.parse_args(argv[1:])
 
     credential = read()
@@ -305,6 +395,17 @@ def run(argv: list[str], read=read_credential, fetch=fetch_usage, now=time.time)
         return 1
     for line in format_rows(rows):
         print(line)
+    if args.log is not None:
+        # Read before appending, or this reading would be its own baseline.
+        moment = now()
+        for line in per_day_lines(read_samples(args.log), rows, moment):
+            print(line)
+        try:
+            append_sample(args.log, rows, moment)
+        except OSError as exc:
+            # Stdout, not stderr: the upkeep report is built from stdout, and a
+            # sample that silently stopped landing would freeze the figure.
+            print(f"sample not logged: {exc}")
     summary = f"subscription-usage | {plan}"
     if rows[0]["source"] == "legacy":
         summary += " | limits[] absent: legacy windows only, scoped caps not visible"

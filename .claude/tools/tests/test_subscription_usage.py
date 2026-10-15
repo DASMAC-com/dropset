@@ -12,14 +12,17 @@ of its null codename keys — two are kept so unknown keys are proven harmless.
 from __future__ import annotations
 
 import contextlib
+import datetime
 import http.server
 import io
 import json
 import subprocess
+import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import subscription_usage as su
 
@@ -362,6 +365,64 @@ class Run(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(SystemExit) as caught:
                 self.invoke(FRESH, argv=("x", "--timeout", bad))
             self.assertEqual(caught.exception.code, 2)
+
+
+def sample(hours_ago, weekly, resets="2026-10-09 14:59Z"):
+    at = datetime.datetime.fromtimestamp(NOW - hours_ago * 3600, datetime.timezone.utc)
+    rows = [
+        {"label": "session", "percent": 50, "resets": "2026-10-08 02:29Z"},
+        {"label": "weekly", "percent": weekly, "resets": resets},
+    ]
+    return json.dumps({"at": at.isoformat(), "rows": rows})
+
+
+class SampleLog(unittest.TestCase):
+    invoke = Run.invoke
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.log = Path(self.tmp.name) / "samples.jsonl"
+
+    def logged(self, *lines):
+        self.log.write_text("".join(f"{ln}\n" for ln in lines), encoding="utf-8")
+        _, out, _, _ = self.invoke(FRESH, argv=("x", "--log", str(self.log)))
+        return out
+
+    def test_the_rise_is_scaled_to_a_day_from_the_newest_old_enough_sample(self):
+        # The 6h-old sample is too recent to judge; the 30h-old one is used, so
+        # 20 - 14 over 30h is 4.8 per day. The scoped window has no history.
+        out = self.logged(sample(48, 2), sample(30, 14), sample(6, 19))
+        self.assertIn("weekly         per day  +4.8%  over 30.0h", out)
+        self.assertIn("weekly:Fable   per day  no sample 12h+ old yet", out)
+        self.assertNotIn("session        per day", out)
+
+    def test_a_window_that_reset_between_samples_gives_no_figure(self):
+        out = self.logged(sample(24, 90, resets="2026-10-02 14:59Z"))
+        self.assertIn("weekly         per day  window reset since the last sample", out)
+
+    def test_the_reading_is_appended_after_the_figure_is_taken(self):
+        out = self.logged("not json", '{"at": "never"}')
+        self.assertIn("weekly         per day  no sample 12h+ old yet", out)
+        lines = self.log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 3)
+        last = json.loads(lines[-1])
+        self.assertEqual(datetime.datetime.fromisoformat(last["at"]).timestamp(), NOW)
+        self.assertEqual(
+            last["rows"][1],
+            {"label": "weekly", "percent": 20, "resets": "2026-10-09 14:59Z"},
+        )
+        self.assertEqual(len(su.read_samples(self.log)), 1)
+
+    def test_an_unwritable_log_is_reported_on_stdout(self):
+        missing = Path(self.tmp.name) / "absent-dir" / "samples.jsonl"
+        code, out, _, _ = self.invoke(FRESH, argv=("x", "--log", str(missing)))
+        self.assertEqual(code, 0)
+        self.assertIn("sample not logged:", out)
+
+    def test_a_non_reading_logs_nothing(self):
+        self.invoke(None, argv=("x", "--log", str(self.log)))
+        self.assertFalse(self.log.exists())
 
 
 if __name__ == "__main__":

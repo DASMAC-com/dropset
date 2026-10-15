@@ -313,6 +313,13 @@ all measured 2026-10-14/15 over the Opus 5.5 fleet days 10-08 to 10-13
   that writes no marker; and a relaunch on the other substrate, which
   overwrites the worktree's one marker and so reclassifies its earlier
   sessions too.
+- **It runs daily, unprompted.** The `upkeep` pass the `plan` launcher
+  runs calls `reconcile` and reads the seat allowance, which has no bill
+  line, with `subscription_usage.py --log`. Each pass appends one sample
+  to an untracked log beside its stamp, and the allowance's per-day figure
+  is derived from those samples rather than from a configured constant.
+  The bootstrap says both out loud, so a rate change or a metering bug
+  surfaces within a day.
 
 ## Resident size has a hard cap
 
