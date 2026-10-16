@@ -21,9 +21,18 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { type Address, address } from '@solana/kit';
 
+import {
+  DROPSET_MAINNET_PROGRAM_ADDRESS,
+  type DropsetCluster,
+  dropsetProgramAddress,
+} from './cluster';
 import { findMarketPda } from './generated';
 import { PRICE_INFINITY, PRICE_ZERO } from './price';
-import { platformFeeBpsFor, resolveEclobRoute } from './route';
+import {
+  type EclobRouteInput,
+  platformFeeBpsFor,
+  resolveEclobRoute,
+} from './route';
 
 const FROM = address('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const TO = address('HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr');
@@ -88,20 +97,47 @@ const marketAccount = (owner: Address = TOKEN_PROGRAM): StubAccount => ({
   owner,
 });
 
-/** The market PDA for one orientation. */
+/** The market PDA for one orientation, on `cluster`. */
 const marketFor = async (
   baseMint: Address,
   quoteMint: Address,
+  cluster: DropsetCluster = 'localnet',
 ): Promise<Address> => {
-  const [market] = await findMarketPda({ baseMint, quoteMint });
+  const [market] = await findMarketPda(
+    { baseMint, quoteMint },
+    { programAddress: dropsetProgramAddress(cluster) },
+  );
   return market;
 };
+
+test('looks the market up under the cluster program, and carries it', async () => {
+  // Only the mainnet PDA exists, so a localnet-derived lookup would miss it.
+  const market = await marketFor(FROM, TO, 'mainnet');
+  const accounts = new Map([[market, marketAccount()]]);
+  const input = {
+    inputMint: FROM,
+    outputMint: TO,
+    inputTokenProgram: TOKEN_PROGRAM,
+    outputTokenProgram: TOKEN_PROGRAM,
+  };
+  const route = await resolveEclobRoute(rpcWith(accounts), {
+    ...input,
+    cluster: 'mainnet',
+  });
+  assert.equal(route?.market, market);
+  assert.equal(route?.programAddress, DROPSET_MAINNET_PROGRAM_ADDRESS);
+  assert.equal(
+    await resolveEclobRoute(rpcWith(accounts), { ...input, cluster: 'localnet' }),
+    null,
+  );
+});
 
 test('resolves the sell orientation when the from-token is the base', async () => {
   const market = await marketFor(FROM, TO);
   const route = await resolveEclobRoute(
     rpcWith(new Map([[market, marketAccount()]])),
     {
+      cluster: 'localnet',
       inputMint: FROM,
       outputMint: TO,
       inputTokenProgram: TOKEN_PROGRAM,
@@ -132,6 +168,7 @@ test('resolves the buy orientation when only the reverse market exists', async (
   const route = await resolveEclobRoute(
     rpcWith(new Map([[market, marketAccount()]])),
     {
+      cluster: 'localnet',
       inputMint: FROM,
       outputMint: TO,
       inputTokenProgram: TOKEN_PROGRAM,
@@ -158,7 +195,8 @@ test('resolves the buy orientation when only the reverse market exists', async (
 test('the output leg is the caller to-token in either orientation', async () => {
   const sellMarket = await marketFor(FROM, TO);
   const buyMarket = await marketFor(TO, FROM);
-  const input = {
+  const input: EclobRouteInput = {
+    cluster: 'localnet',
     inputMint: FROM,
     outputMint: TO,
     inputTokenProgram: TOKEN_PROGRAM,
@@ -198,6 +236,7 @@ test('short-circuits on the first orientation that exists', async () => {
       calls,
     ),
     {
+      cluster: 'localnet',
       inputMint: FROM,
       outputMint: TO,
       inputTokenProgram: TOKEN_PROGRAM,
@@ -212,6 +251,7 @@ test('short-circuits on the first orientation that exists', async () => {
 test('returns null when neither orientation has a market', async () => {
   const calls: string[] = [];
   const route = await resolveEclobRoute(rpcWith(new Map(), calls), {
+    cluster: 'localnet',
     inputMint: FROM,
     outputMint: TO,
     inputTokenProgram: TOKEN_PROGRAM,
@@ -227,6 +267,7 @@ test('returns null when neither orientation has a market', async () => {
 test('returns null for a degenerate pair without touching the RPC', async () => {
   const calls: string[] = [];
   const route = await resolveEclobRoute(rpcWith(new Map(), calls), {
+    cluster: 'localnet',
     inputMint: FROM,
     outputMint: FROM,
   });
@@ -247,7 +288,7 @@ test('reads each token program from its mint when not supplied', async () => {
         [TO, { data: '', owner: TOKEN_2022_PROGRAM }],
       ]),
     ),
-    { inputMint: FROM, outputMint: TO },
+    { cluster: 'localnet', inputMint: FROM, outputMint: TO },
   );
 
   assert.ok(route, 'expected a resolved route');
@@ -262,6 +303,7 @@ test('a missing mint account is an error, not a silent null route', async () => 
   await assert.rejects(
     () =>
       resolveEclobRoute(rpcWith(new Map()), {
+        cluster: 'localnet',
         inputMint: FROM,
         outputMint: TO,
       }),

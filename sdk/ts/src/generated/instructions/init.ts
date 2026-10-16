@@ -6,8 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU64Decoder, getU64Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
-import { findRegistryPda } from '../pdas';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU64Decoder, getU64Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -94,9 +93,9 @@ genesisAdmin: InitInstructionDataArgs["genesisAdmin"];
 feeAtoms: InitInstructionDataArgs["feeAtoms"];
 }
 
-export async function getInitInstructionAsync<TAccountPayer extends string, TAccountRegistry extends string, TAccountProgramData extends string, TAccountFeeMint extends string, TAccountFeeVault extends string, TAccountTokenProgram extends string, TAccountAssociatedTokenProgram extends string, TAccountSystemProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: InitAsyncInput<TAccountPayer, TAccountRegistry, TAccountProgramData, TAccountFeeMint, TAccountFeeVault, TAccountTokenProgram, TAccountAssociatedTokenProgram, TAccountSystemProgram>, config?: { programAddress?: TProgramAddress } ): Promise<InitInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountProgramData, TAccountFeeMint, TAccountFeeVault, TAccountTokenProgram, TAccountAssociatedTokenProgram, TAccountSystemProgram>> {
+export async function getInitInstructionAsync<TAccountPayer extends string, TAccountRegistry extends string, TAccountProgramData extends string, TAccountFeeMint extends string, TAccountFeeVault extends string, TAccountTokenProgram extends string, TAccountAssociatedTokenProgram extends string, TAccountSystemProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: InitAsyncInput<TAccountPayer, TAccountRegistry, TAccountProgramData, TAccountFeeMint, TAccountFeeVault, TAccountTokenProgram, TAccountAssociatedTokenProgram, TAccountSystemProgram>, config: { programAddress: TProgramAddress } ): Promise<InitInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountProgramData, TAccountFeeMint, TAccountFeeVault, TAccountTokenProgram, TAccountAssociatedTokenProgram, TAccountSystemProgram>> {
   // Program address.
-const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
+const programAddress = config.programAddress;
 
  // Original accounts.
 const originalAccounts = { payer: { value: input.payer ?? null, isWritable: true }, registry: { value: input.registry ?? null, isWritable: true }, programData: { value: input.programData ?? null, isWritable: false }, feeMint: { value: input.feeMint ?? null, isWritable: false }, feeVault: { value: input.feeVault ?? null, isWritable: true }, tokenProgram: { value: input.tokenProgram ?? null, isWritable: false }, associatedTokenProgram: { value: input.associatedTokenProgram ?? null, isWritable: false }, systemProgram: { value: input.systemProgram ?? null, isWritable: false } }
@@ -109,7 +108,7 @@ const args = { ...input,  };
 
 // Resolve default values.
 if (!accounts.registry.value) {
-accounts.registry.value = await findRegistryPda();
+accounts.registry.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))] });
 }
 if (!accounts.tokenProgram.value) {
 accounts.tokenProgram.value = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' as Address<'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'>;
@@ -185,9 +184,9 @@ genesisAdmin: InitInstructionDataArgs["genesisAdmin"];
 feeAtoms: InitInstructionDataArgs["feeAtoms"];
 }
 
-export function getInitInstruction<TAccountPayer extends string, TAccountRegistry extends string, TAccountProgramData extends string, TAccountFeeMint extends string, TAccountFeeVault extends string, TAccountTokenProgram extends string, TAccountAssociatedTokenProgram extends string, TAccountSystemProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: InitInput<TAccountPayer, TAccountRegistry, TAccountProgramData, TAccountFeeMint, TAccountFeeVault, TAccountTokenProgram, TAccountAssociatedTokenProgram, TAccountSystemProgram>, config?: { programAddress?: TProgramAddress } ): InitInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountProgramData, TAccountFeeMint, TAccountFeeVault, TAccountTokenProgram, TAccountAssociatedTokenProgram, TAccountSystemProgram> {
+export function getInitInstruction<TAccountPayer extends string, TAccountRegistry extends string, TAccountProgramData extends string, TAccountFeeMint extends string, TAccountFeeVault extends string, TAccountTokenProgram extends string, TAccountAssociatedTokenProgram extends string, TAccountSystemProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: InitInput<TAccountPayer, TAccountRegistry, TAccountProgramData, TAccountFeeMint, TAccountFeeVault, TAccountTokenProgram, TAccountAssociatedTokenProgram, TAccountSystemProgram>, config: { programAddress: TProgramAddress } ): InitInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountProgramData, TAccountFeeMint, TAccountFeeVault, TAccountTokenProgram, TAccountAssociatedTokenProgram, TAccountSystemProgram> {
   // Program address.
-const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
+const programAddress = config.programAddress;
 
  // Original accounts.
 const originalAccounts = { payer: { value: input.payer ?? null, isWritable: true }, registry: { value: input.registry ?? null, isWritable: true }, programData: { value: input.programData ?? null, isWritable: false }, feeMint: { value: input.feeMint ?? null, isWritable: false }, feeVault: { value: input.feeVault ?? null, isWritable: true }, tokenProgram: { value: input.tokenProgram ?? null, isWritable: false }, associatedTokenProgram: { value: input.associatedTokenProgram ?? null, isWritable: false }, systemProgram: { value: input.systemProgram ?? null, isWritable: false } }

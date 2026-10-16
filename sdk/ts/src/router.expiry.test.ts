@@ -41,6 +41,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { address } from '@solana/kit';
 
+import { dropsetProgramAddress } from './cluster';
 import { PRICE_INFINITY } from './price';
 import type { EclobRoute } from './route';
 import { NoRouteError, quoteBestRoute } from './router';
@@ -75,6 +76,7 @@ const TOKEN_PROGRAM = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 // Pre-resolved, so the quote needs no market discovery: the only RPC the path
 // can reach for is `getSlot`, which is exactly what we want to watch.
 const ROUTE: EclobRoute = {
+  programAddress: dropsetProgramAddress('localnet'),
   market: MARKET,
   marketData: Uint8Array.from(vectors.market_data),
   baseMint: BASE_MINT,

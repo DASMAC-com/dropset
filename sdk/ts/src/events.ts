@@ -22,12 +22,9 @@
  * not an oversight.
  */
 
-import { type Address, getBase58Encoder, type ReadonlyUint8Array } from '@solana/kit';
-import {
-  DROPSET_PROGRAM_ADDRESS,
-  getFillEventDecoder,
-  type FillEvent,
-} from './generated';
+import { getBase58Encoder, type ReadonlyUint8Array } from '@solana/kit';
+import { type DropsetCluster, dropsetProgramAddress } from './cluster';
+import { getFillEventDecoder, type FillEvent } from './generated';
 
 /**
  * The anchor v2 `emit_cpi!` self-CPI tag, little-endian — the 8-byte prefix on
@@ -186,20 +183,20 @@ export function eventAccountKeys(tx: EventTransaction): readonly string[] | null
  *    can't sign for a foreign invoker) so the transaction fails — which is
  *    precisely why the failure has to be checked here rather than left to
  *    callers.
- * 2. **The emitting program is `config.programAddress`**, the cluster's
- *    program id (see `dropsetProgramAddress`), defaulting to the
- *    localnet {@link DROPSET_PROGRAM_ADDRESS}. The tag and the discriminator
- *    are both public values, so the emitting program id is the only thing
- *    `emit_cpi!`'s self-CPI actually authenticates.
+ * 2. **The emitting program is `cluster`'s program id** (see
+ *    {@link dropsetProgramAddress}). There is no default: a localnet
+ *    fallback would read a mainnet tape as empty rather than fail. The tag
+ *    and the discriminator are both public values, so the emitting program
+ *    id is the only thing `emit_cpi!`'s self-CPI actually authenticates.
  *
  * A transaction whose key list can't be resolved yields nothing rather than an
  * unattributed fill.
  */
 export function collectFillEvents(
   tx: EventTransaction,
-  config: { programAddress?: Address | undefined } = {},
+  cluster: DropsetCluster,
 ): FillEvent[] {
-  const { programAddress = DROPSET_PROGRAM_ADDRESS } = config;
+  const programAddress = dropsetProgramAddress(cluster);
   if (tx.meta?.err != null) return [];
   const sets = tx.meta?.innerInstructions;
   if (!sets) return [];

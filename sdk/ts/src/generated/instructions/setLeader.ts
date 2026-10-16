@@ -6,8 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
-import { findEventAuthorityPda, findNewLeaderDepositorPda } from '../pdas';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressEncoder, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { expectAddress, expectSome, getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -56,9 +55,9 @@ program: Address<TAccountProgram>;
 vaultIdx: SetLeaderInstructionDataArgs["vaultIdx"];
 }
 
-export async function getSetLeaderInstructionAsync<TAccountLeader extends string, TAccountNewLeader extends string, TAccountMarket extends string, TAccountNewLeaderDepositor extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetLeaderAsyncInput<TAccountLeader, TAccountNewLeader, TAccountMarket, TAccountNewLeaderDepositor, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<SetLeaderInstruction<TProgramAddress, TAccountLeader, TAccountNewLeader, TAccountMarket, TAccountNewLeaderDepositor, TAccountEventAuthority, TAccountProgram>> {
+export async function getSetLeaderInstructionAsync<TAccountLeader extends string, TAccountNewLeader extends string, TAccountMarket extends string, TAccountNewLeaderDepositor extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetLeaderAsyncInput<TAccountLeader, TAccountNewLeader, TAccountMarket, TAccountNewLeaderDepositor, TAccountEventAuthority, TAccountProgram>, config: { programAddress: TProgramAddress } ): Promise<SetLeaderInstruction<TProgramAddress, TAccountLeader, TAccountNewLeader, TAccountMarket, TAccountNewLeaderDepositor, TAccountEventAuthority, TAccountProgram>> {
   // Program address.
-const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
+const programAddress = config.programAddress;
 
  // Original accounts.
 const originalAccounts = { leader: { value: input.leader ?? null, isWritable: false }, newLeader: { value: input.newLeader ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, newLeaderDepositor: { value: input.newLeaderDepositor ?? null, isWritable: false }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
@@ -71,10 +70,10 @@ const args = { ...input,  };
 
 // Resolve default values.
 if (!accounts.newLeaderDepositor.value) {
-accounts.newLeaderDepositor.value = await findNewLeaderDepositorPda({ market: expectAddress(accounts.market.value), vaultIdx: expectSome(args.vaultIdx), newLeader: expectAddress(accounts.newLeader.value) });
+accounts.newLeaderDepositor.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([118, 97, 117, 108, 116, 95, 100, 101, 112, 111, 115, 105, 116, 111, 114])), getAddressEncoder().encode(expectAddress(accounts.market.value)), getU32Encoder().encode(expectSome(args.vaultIdx)), getAddressEncoder().encode(expectAddress(accounts.newLeader.value))] });
 }
 if (!accounts.eventAuthority.value) {
-accounts.eventAuthority.value = await findEventAuthorityPda();
+accounts.eventAuthority.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111, 114, 105, 116, 121]))] });
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
@@ -103,9 +102,9 @@ program: Address<TAccountProgram>;
 vaultIdx: SetLeaderInstructionDataArgs["vaultIdx"];
 }
 
-export function getSetLeaderInstruction<TAccountLeader extends string, TAccountNewLeader extends string, TAccountMarket extends string, TAccountNewLeaderDepositor extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetLeaderInput<TAccountLeader, TAccountNewLeader, TAccountMarket, TAccountNewLeaderDepositor, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): SetLeaderInstruction<TProgramAddress, TAccountLeader, TAccountNewLeader, TAccountMarket, TAccountNewLeaderDepositor, TAccountEventAuthority, TAccountProgram> {
+export function getSetLeaderInstruction<TAccountLeader extends string, TAccountNewLeader extends string, TAccountMarket extends string, TAccountNewLeaderDepositor extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetLeaderInput<TAccountLeader, TAccountNewLeader, TAccountMarket, TAccountNewLeaderDepositor, TAccountEventAuthority, TAccountProgram>, config: { programAddress: TProgramAddress } ): SetLeaderInstruction<TProgramAddress, TAccountLeader, TAccountNewLeader, TAccountMarket, TAccountNewLeaderDepositor, TAccountEventAuthority, TAccountProgram> {
   // Program address.
-const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
+const programAddress = config.programAddress;
 
  // Original accounts.
 const originalAccounts = { leader: { value: input.leader ?? null, isWritable: false }, newLeader: { value: input.newLeader ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, newLeaderDepositor: { value: input.newLeaderDepositor ?? null, isWritable: false }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }

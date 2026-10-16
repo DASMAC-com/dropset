@@ -42,9 +42,9 @@ vaultIdx: SetAllowOutsideDepositorsInstructionDataArgs["vaultIdx"];
 flag: SetAllowOutsideDepositorsInstructionDataArgs["flag"];
 }
 
-export function getSetAllowOutsideDepositorsInstruction<TAccountSigner extends string, TAccountMarket extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetAllowOutsideDepositorsInput<TAccountSigner, TAccountMarket>, config?: { programAddress?: TProgramAddress } ): SetAllowOutsideDepositorsInstruction<TProgramAddress, TAccountSigner, TAccountMarket> {
+export function getSetAllowOutsideDepositorsInstruction<TAccountSigner extends string, TAccountMarket extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetAllowOutsideDepositorsInput<TAccountSigner, TAccountMarket>, config: { programAddress: TProgramAddress } ): SetAllowOutsideDepositorsInstruction<TProgramAddress, TAccountSigner, TAccountMarket> {
   // Program address.
-const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
+const programAddress = config.programAddress;
 
  // Original accounts.
 const originalAccounts = { signer: { value: input.signer ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true } }

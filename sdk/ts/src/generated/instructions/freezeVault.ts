@@ -6,8 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
-import { findEventAuthorityPda, findRegistryPda } from '../pdas';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -48,9 +47,9 @@ program: Address<TAccountProgram>;
 vaultIdx: FreezeVaultInstructionDataArgs["vaultIdx"];
 }
 
-export async function getFreezeVaultInstructionAsync<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: FreezeVaultAsyncInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<FreezeVaultInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountEventAuthority, TAccountProgram>> {
+export async function getFreezeVaultInstructionAsync<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: FreezeVaultAsyncInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountEventAuthority, TAccountProgram>, config: { programAddress: TProgramAddress } ): Promise<FreezeVaultInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountEventAuthority, TAccountProgram>> {
   // Program address.
-const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
+const programAddress = config.programAddress;
 
  // Original accounts.
 const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
@@ -63,10 +62,10 @@ const args = { ...input,  };
 
 // Resolve default values.
 if (!accounts.registry.value) {
-accounts.registry.value = await findRegistryPda();
+accounts.registry.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))] });
 }
 if (!accounts.eventAuthority.value) {
-accounts.eventAuthority.value = await findEventAuthorityPda();
+accounts.eventAuthority.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111, 114, 105, 116, 121]))] });
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
@@ -87,9 +86,9 @@ program: Address<TAccountProgram>;
 vaultIdx: FreezeVaultInstructionDataArgs["vaultIdx"];
 }
 
-export function getFreezeVaultInstruction<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: FreezeVaultInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): FreezeVaultInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountEventAuthority, TAccountProgram> {
+export function getFreezeVaultInstruction<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: FreezeVaultInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountEventAuthority, TAccountProgram>, config: { programAddress: TProgramAddress } ): FreezeVaultInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountEventAuthority, TAccountProgram> {
   // Program address.
-const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
+const programAddress = config.programAddress;
 
  // Original accounts.
 const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }

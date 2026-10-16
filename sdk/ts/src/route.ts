@@ -19,6 +19,7 @@ import {
   type FetchAccountConfig,
   fetchEncodedAccount,
 } from '@solana/kit';
+import { type DropsetCluster, dropsetProgramAddress } from './cluster';
 import {
   findMarketPda,
   getMarketHeaderDecoder,
@@ -36,6 +37,11 @@ export type AccountRpc = Parameters<typeof fetchEncodedAccount>[0];
  * price, and the base/quote mints + token programs the swap instruction needs.
  */
 export type EclobRoute = {
+  /**
+   * The program the market was found under, for the swap builder's
+   * `config.programAddress` and its `program` account.
+   */
+  programAddress: Address;
   market: Address;
   /** Raw account bytes, discriminator included — pass verbatim to `simulateSwap`. */
   marketData: Uint8Array;
@@ -143,6 +149,8 @@ export function platformFeeBpsFor(
  * not supplied — pass them to skip those reads when the caller already knows.
  */
 export type EclobRouteInput = {
+  /** The cluster being routed on; it fixes the program the market lives under. */
+  cluster: DropsetCluster;
   inputMint: Address;
   outputMint: Address;
   inputTokenProgram?: Address;
@@ -199,6 +207,7 @@ export async function resolveEclobRoute(
 ): Promise<EclobRoute | null> {
   const { inputMint, outputMint } = input;
   if (inputMint === outputMint) return null;
+  const programAddress = dropsetProgramAddress(input.cluster);
 
   const [inputTokenProgram, outputTokenProgram] = await Promise.all([
     input.inputTokenProgram ?? fetchTokenProgram(rpc, inputMint, config),
@@ -223,14 +232,15 @@ export async function resolveEclobRoute(
   ];
 
   for (const c of orientations) {
-    const [market] = await findMarketPda({
-      baseMint: c.baseMint,
-      quoteMint: c.quoteMint,
-    });
+    const [market] = await findMarketPda(
+      { baseMint: c.baseMint, quoteMint: c.quoteMint },
+      { programAddress },
+    );
     const account = await fetchEncodedAccount(rpc, market, config);
     if (!account.exists) continue;
     const marketData = new Uint8Array(account.data);
     return {
+      programAddress,
       market,
       marketData,
       baseMint: c.baseMint,

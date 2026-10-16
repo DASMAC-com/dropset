@@ -13,10 +13,7 @@ import { test } from 'node:test';
 
 import { address, getBase58Decoder, getBase58Encoder } from '@solana/kit';
 
-import {
-  DROPSET_MAINNET_PROGRAM_ADDRESS,
-  dropsetProgramAddress,
-} from './cluster';
+import { DROPSET_MAINNET_PROGRAM_ADDRESS } from './cluster';
 import {
   collectFillEvents,
   decodeFillEventPayload,
@@ -143,7 +140,7 @@ test('the fill discriminator matches the anchor sha256 scheme', () => {
 
 test('a fill event round-trips through the envelope', () => {
   const event = sampleEvent();
-  const fills = collectFillEvents(txWith(envelope(event)));
+  const fills = collectFillEvents(txWith(envelope(event)), 'localnet');
   assert.equal(fills.length, 1);
   assert.equal(fills[0].fillBase, event.fillBase);
   assert.equal(fills[0].fillQuote, event.fillQuote);
@@ -164,7 +161,7 @@ test('a fill against a flipped counter reads as the taker direction', () => {
   // programs/dropset/tests/flip.rs.
   const flipPrice = 0x0001_0020;
   const event = { ...sampleEvent(), side: 0, levelIdx: 2, fillPrice: flipPrice };
-  const [fill] = collectFillEvents(txWith(envelope(event)));
+  const [fill] = collectFillEvents(txWith(envelope(event)), 'localnet');
   assert.ok(fill);
   assert.equal(fill.side, 0);
   assert.equal(fill.levelIdx, 2);
@@ -176,24 +173,27 @@ test('collects only events our program emitted', () => {
   // tag and discriminator are public, so this must not be trusted.
   const fills = collectFillEvents(
     txWith(envelope(sampleEvent()), { programIdIndex: 0 }),
+    'localnet',
   );
   assert.deepStrictEqual(fills, []);
 });
 
-test('collects against the program id it is given', () => {
-  // A mainnet emission: trusted under the mainnet id, not under the default
-  // localnet one.
-  const tx = txWith(envelope(sampleEvent()), {
+test('collects against the program id of the cluster it is given', () => {
+  // A mainnet emission: trusted on mainnet, not on localnet, and the reverse
+  // for a localnet one.
+  const mainnetTx = txWith(envelope(sampleEvent()), {
     accountKeys: [SOME_ADDRESS, DROPSET_MAINNET_PROGRAM_ADDRESS],
   });
-  const programAddress = dropsetProgramAddress('mainnet');
-  assert.strictEqual(collectFillEvents(tx, { programAddress }).length, 1);
-  assert.deepStrictEqual(collectFillEvents(tx), []);
+  assert.strictEqual(collectFillEvents(mainnetTx, 'mainnet').length, 1);
+  assert.deepStrictEqual(collectFillEvents(mainnetTx, 'localnet'), []);
+  const localnetTx = txWith(envelope(sampleEvent()));
+  assert.deepStrictEqual(collectFillEvents(localnetTx, 'mainnet'), []);
 });
 
 test('drops events with an out-of-range program index', () => {
   const fills = collectFillEvents(
     txWith(envelope(sampleEvent()), { programIdIndex: 9 }),
+    'localnet',
   );
   assert.deepStrictEqual(fills, []);
 });
@@ -210,6 +210,7 @@ test('resolves a program id that lives in the loaded addresses', () => {
         readonly: [SOME_ADDRESS as string],
       },
     }),
+    'localnet',
   );
   assert.equal(fills.length, 1);
 });
@@ -253,7 +254,7 @@ test('undecodable base58 inner data is skipped', () => {
       },
     },
   };
-  assert.deepStrictEqual(collectFillEvents(tx), []);
+  assert.deepStrictEqual(collectFillEvents(tx, 'localnet'), []);
 });
 
 test('a transaction with no account keys attributes nothing', () => {
@@ -263,7 +264,7 @@ test('a transaction with no account keys attributes nothing', () => {
     transaction: { message: {} },
   };
   assert.equal(eventAccountKeys(keyless), null);
-  assert.deepStrictEqual(collectFillEvents(keyless), []);
+  assert.deepStrictEqual(collectFillEvents(keyless, 'localnet'), []);
 });
 
 test('a transaction with no inner instructions yields no fills', () => {
@@ -273,7 +274,7 @@ test('a transaction with no inner instructions yields no fills', () => {
       transaction: {
         message: { accountKeys: [DROPSET_PROGRAM_ADDRESS as string] },
       },
-    }),
+    }, 'localnet'),
     [],
   );
   assert.deepStrictEqual(
@@ -282,7 +283,7 @@ test('a transaction with no inner instructions yields no fills', () => {
       transaction: {
         message: { accountKeys: [DROPSET_PROGRAM_ADDRESS as string] },
       },
-    }),
+    }, 'localnet'),
     [],
   );
 });
@@ -304,6 +305,7 @@ test('a multi-leg sweep yields every leg in inner-instruction order', () => {
   );
   const fills = collectFillEvents(
     txWithSets([legs.map((data) => ({ programIdIndex: 1, data }))]),
+    'localnet',
   );
   assert.deepStrictEqual(
     fills.map((f) => f.fillBase),
@@ -332,6 +334,7 @@ test('events are collected across sets and around unrelated instructions', () =>
         { programIdIndex: 1, data: alsoOurs },
       ],
     ]),
+    'localnet',
   );
   assert.deepStrictEqual(
     fills.map((f) => f.fillBase),
@@ -345,7 +348,7 @@ test('trailing bytes past the fixed-size body are tolerated', () => {
   const exact = envelope(sampleEvent());
   const padded = new Uint8Array(exact.length + 16);
   padded.set(exact, 0);
-  const fills = collectFillEvents(txWith(padded));
+  const fills = collectFillEvents(txWith(padded), 'localnet');
   assert.equal(fills.length, 1);
   assert.equal(fills[0].fillBase, sampleEvent().fillBase);
 });
@@ -359,12 +362,12 @@ test('a failed transaction yields no fills', () => {
     collectFillEvents({
       ...tx,
       meta: { ...tx.meta, err: { InstructionError: [0, 'Custom'] } },
-    }),
+    }, 'localnet'),
     [],
   );
   // A successful transaction carries `err: null` — that must still decode.
   assert.equal(
-    collectFillEvents({ ...tx, meta: { ...tx.meta, err: null } }).length,
+    collectFillEvents({ ...tx, meta: { ...tx.meta, err: null } }, 'localnet').length,
     1,
   );
 });
@@ -381,6 +384,6 @@ test('a malformed loadedAddresses fails closed instead of throwing', () => {
       loadedAddresses: { writable: null, readonly: undefined },
     },
   } as unknown as EventTransaction;
-  assert.doesNotThrow(() => collectFillEvents(malformed));
-  assert.equal(collectFillEvents(malformed).length, 1);
+  assert.doesNotThrow(() => collectFillEvents(malformed, 'localnet'));
+  assert.equal(collectFillEvents(malformed, 'localnet').length, 1);
 });

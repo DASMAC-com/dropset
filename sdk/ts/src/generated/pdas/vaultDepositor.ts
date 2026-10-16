@@ -14,7 +14,7 @@ vaultIdx: number;
 signer: Address;
 };
 
-export async function findVaultDepositorPda(seeds: VaultDepositorSeeds, config: { programAddress?: Address | undefined } = {}): Promise<ProgramDerivedAddress> {
-  const { programAddress = 'AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV' as Address<'AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV'> } = config;
+export async function findVaultDepositorPda(seeds: VaultDepositorSeeds, config: { programAddress: Address }): Promise<ProgramDerivedAddress> {
+  const { programAddress } = config;
   return await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([118, 97, 117, 108, 116, 95, 100, 101, 112, 111, 115, 105, 116, 111, 114])), getAddressEncoder().encode(seeds.market), getU32Encoder().encode(seeds.vaultIdx), getAddressEncoder().encode(seeds.signer)]});
 }
