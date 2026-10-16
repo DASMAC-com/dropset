@@ -1665,6 +1665,7 @@ fn send_kill_stamp(
     let slot = chain::current_slot(&ctx.client)?;
     let sent = chain::invalidate_reference_price(
         &ctx.client,
+        ctx.deployment,
         &ctx.leader,
         &ctx.market.market,
         ctx.vault_idx,
@@ -2048,6 +2049,7 @@ fn quote_market_inner(
         let slot = chain::current_slot(&ctx.client)?;
         let sent = chain::set_reference_price(
             &ctx.client,
+            ctx.deployment,
             &ctx.leader,
             &ctx.market.market,
             ctx.vault_idx,
@@ -2246,6 +2248,7 @@ fn arm_standard(ctx: &mut Context, cfg: &BotConfig, now: Instant, ts: i64) -> Re
     let profile = ladder::build_profile(&cfg.strategy.ladder);
     let sent = chain::set_liquidity_profile(
         &ctx.client,
+        ctx.deployment,
         &ctx.leader,
         &ctx.market.market,
         ctx.vault_idx,
@@ -2278,6 +2281,7 @@ fn arm_reshape(
     );
     let sent = chain::set_liquidity_profile(
         &ctx.client,
+        ctx.deployment,
         &ctx.leader,
         &ctx.market.market,
         ctx.vault_idx,
@@ -2310,6 +2314,7 @@ fn freeze_side(
     ladder::zero_side(&mut profile, side);
     let sent = chain::set_liquidity_profile(
         &ctx.client,
+        ctx.deployment,
         &ctx.leader,
         &ctx.market.market,
         ctx.vault_idx,
@@ -2341,6 +2346,7 @@ fn zero_both_sides(ctx: &mut Context, cfg: &BotConfig, now: Instant, ts: i64) ->
         ladder::zero_side(&mut profile, Side::Ask);
         let sent = chain::set_liquidity_profile(
             &ctx.client,
+            ctx.deployment,
             &ctx.leader,
             &ctx.market.market,
             ctx.vault_idx,
@@ -2366,6 +2372,7 @@ mod tests {
     use crate::quote_state::QuoteStateStore;
     use crate::telemetry::Telemetry;
     use dropset_fair_value::{Consensus, ConsensusState, FairValueConfig, Health, Regime};
+    use dropset_sdk::Deployment;
 
     /// A leg offered by one named source, fresh as of this tick.
     fn one(source: &'static str, value: f64) -> Candidates {
@@ -2398,6 +2405,7 @@ mod tests {
         let quote_state = QuoteStateStore::new(dir).for_market(market.market, cfg.symbol);
         Context::new(
             chain::rpc("http://127.0.0.1:1"),
+            Deployment::Localnet,
             Arc::new(Keypair::new()),
             0,
             market,
@@ -2646,6 +2654,7 @@ mod tests {
         };
         let ctx = Context::new(
             chain::rpc("http://127.0.0.1:1"),
+            Deployment::Localnet,
             Arc::new(Keypair::new()),
             0,
             addrs,

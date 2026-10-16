@@ -58,14 +58,16 @@ pub struct SetDefaultFeeConfig {
 impl SetDefaultFeeConfig {
     pub fn instruction(
         &self,
+        deployment: crate::Deployment,
         args: SetDefaultFeeConfigInstructionArgs,
     ) -> solana_instruction::Instruction {
-        self.instruction_with_remaining_accounts(args, &[])
+        self.instruction_with_remaining_accounts(deployment, args, &[])
     }
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
         &self,
+        deployment: crate::Deployment,
         args: SetDefaultFeeConfigInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
@@ -108,7 +110,7 @@ impl SetDefaultFeeConfig {
         data.append(&mut args);
 
         solana_instruction::Instruction {
-            program_id: crate::DROPSET_ID,
+            program_id: deployment.program_id(),
             accounts,
             data,
         }
@@ -286,7 +288,7 @@ impl SetDefaultFeeConfigBuilder {
         self
     }
     #[allow(clippy::clone_on_copy)]
-    pub fn instruction(&self) -> solana_instruction::Instruction {
+    pub fn instruction(&self, deployment: crate::Deployment) -> solana_instruction::Instruction {
         let accounts = SetDefaultFeeConfig {
             admin: self.admin.expect("admin is not set"),
             registry: self.registry.expect("registry is not set"),
@@ -310,7 +312,7 @@ impl SetDefaultFeeConfigBuilder {
             atoms: self.atoms.clone().expect("atoms is not set"),
         };
 
-        accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
+        accounts.instruction_with_remaining_accounts(deployment, args, &self.__remaining_accounts)
     }
 }
 
@@ -497,7 +499,7 @@ impl<'a, 'b> SetDefaultFeeConfigCpi<'a, 'b> {
         data.append(&mut args);
 
         let instruction = solana_instruction::Instruction {
-            program_id: crate::DROPSET_ID,
+            program_id: *self.__program.key,
             accounts,
             data,
         };

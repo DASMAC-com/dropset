@@ -8,13 +8,21 @@
 //! `declare_id!`; `tests/program_id.rs` pins that literal, the key file and
 //! [`DROPSET_MAINNET_ID`] together.
 //!
-//! The Codama-generated builders hardcode [`DROPSET_ID`], and a cargo
-//! feature cannot switch them, since features unify across one binary
-//! that serves several clusters. So the id is chosen at runtime: derive
-//! PDAs through the helpers here with [`Deployment::program_id`], and pass
-//! a generated instruction through [`retarget`] before signing it.
+//! A cargo feature cannot pick the id, since features unify across one
+//! binary that serves several clusters. So it is chosen at runtime, and
+//! never by default: every instruction builder (the generated ones, rewritten
+//! by `sdk/codama/generate.mjs`, and the hand-written [`crate::quoting`] and
+//! [`crate::adapters::amm`] surfaces) takes a [`Deployment`], and PDAs are
+//! derived through the helpers here with [`Deployment::program_id`].
+//!
+//! The localnet id's secret is committed, so anyone can deploy a program at
+//! that address on a public cluster. A [`Deployment`] can never resolve to
+//! it off localnet; a raw id arriving from configuration goes through
+//! [`Deployment::check_program_id`], which refuses it there.
 
-use solana_instruction::Instruction;
+use std::fmt;
+use std::str::FromStr;
+
 use solana_pubkey::{pubkey, Pubkey};
 
 use crate::DROPSET_ID;
@@ -40,7 +48,51 @@ impl Deployment {
             Self::Mainnet => DROPSET_MAINNET_ID,
         }
     }
+
+    /// Accept `program_id` for this cluster, refusing the localnet id
+    /// anywhere but localnet: a program anyone can deploy must never be
+    /// trusted or signed for on a public cluster. Any other id passes, so
+    /// an operator can still point a client at a fresh deployment.
+    pub fn check_program_id(self, program_id: Pubkey) -> Result<Pubkey, LocalnetIdOffLocalnet> {
+        if self != Self::Localnet && program_id == DROPSET_ID {
+            return Err(LocalnetIdOffLocalnet(self));
+        }
+        Ok(program_id)
+    }
 }
+
+/// Parses `localnet`, or `mainnet` / `mainnet-beta`, case-insensitively.
+impl FromStr for Deployment {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "localnet" => Ok(Self::Localnet),
+            "mainnet" | "mainnet-beta" => Ok(Self::Mainnet),
+            other => Err(format!(
+                "unknown cluster `{other}` (expected localnet or mainnet)"
+            )),
+        }
+    }
+}
+
+/// [`Deployment::check_program_id`]'s refusal: the localnet id, offered
+/// for the named non-localnet cluster.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LocalnetIdOffLocalnet(pub Deployment);
+
+impl fmt::Display for LocalnetIdOffLocalnet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "refusing the localnet program id {DROPSET_ID} on {:?}: its secret is \
+             committed, so anyone can deploy a program at that address",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for LocalnetIdOffLocalnet {}
 
 /// The registry PDA, seeded on `"registry"`.
 pub fn registry_pda(program_id: &Pubkey) -> (Pubkey, u8) {
@@ -77,33 +129,6 @@ pub fn event_authority(program_id: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(&[b"__event_authority"], program_id).0
 }
 
-/// Point a generated instruction at `program_id`.
-///
-/// The input is assumed to be as a generated builder emits it, aimed at
-/// [`DROPSET_ID`]; an instruction already aimed elsewhere is not mapped
-/// back. Rewrites the instruction's program id and every account meta
-/// that the builder filled from [`DROPSET_ID`]: the `program` account
-/// `emit_cpi!` reads, the placeholder for an absent optional account, and
-/// the localnet event authority. Other PDAs are the caller's to derive
-/// with the matching id, since the builders take them as inputs. A no-op
-/// for [`DROPSET_ID`] itself.
-pub fn retarget(mut ix: Instruction, program_id: &Pubkey) -> Instruction {
-    if *program_id == DROPSET_ID {
-        return ix;
-    }
-    let localnet_authority = event_authority(&DROPSET_ID);
-    let target_authority = event_authority(program_id);
-    ix.program_id = *program_id;
-    for meta in &mut ix.accounts {
-        if meta.pubkey == DROPSET_ID {
-            meta.pubkey = *program_id;
-        } else if meta.pubkey == localnet_authority {
-            meta.pubkey = target_authority;
-        }
-    }
-    ix
-}
-
 /// Whether a program binary embeds `program_id` and not [`DROPSET_ID`].
 ///
 /// An advisory wrong-cluster build detector, not a deploy gate: it says
@@ -122,9 +147,8 @@ pub fn embeds_program_id(binary: &[u8], program_id: &Pubkey) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use solana_instruction::AccountMeta;
-
     use super::*;
+    use crate::instructions::{SetReferencePrice, SetReferencePriceInstructionArgs, Swap};
 
     #[test]
     fn deployments_resolve_distinct_ids() {
@@ -134,28 +158,100 @@ mod tests {
     }
 
     #[test]
-    fn retarget_rewrites_program_placeholders_and_event_authority() {
-        let other = Pubkey::new_unique();
-        let ix = Instruction {
-            program_id: DROPSET_ID,
-            accounts: vec![
-                AccountMeta::new(other, true),
-                AccountMeta::new_readonly(DROPSET_ID, false),
-                AccountMeta::new_readonly(event_authority(&DROPSET_ID), false),
-            ],
-            data: vec![1, 2, 3],
-        };
-        let target = DROPSET_MAINNET_ID;
-        let out = retarget(ix.clone(), &target);
-        assert_eq!(out.program_id, target);
-        assert_eq!(out.accounts[0], ix.accounts[0]);
-        assert_eq!(out.accounts[1], AccountMeta::new_readonly(target, false));
+    fn the_localnet_id_is_refused_off_localnet() {
+        let fresh = Pubkey::new_unique();
         assert_eq!(
-            out.accounts[2],
-            AccountMeta::new_readonly(event_authority(&target), false),
+            Deployment::Mainnet.check_program_id(DROPSET_ID),
+            Err(LocalnetIdOffLocalnet(Deployment::Mainnet)),
         );
-        assert_eq!(out.data, ix.data);
-        assert_eq!(retarget(ix.clone(), &DROPSET_ID), ix);
+        assert_eq!(Deployment::Mainnet.check_program_id(fresh), Ok(fresh));
+        assert_eq!(
+            Deployment::Mainnet.check_program_id(DROPSET_MAINNET_ID),
+            Ok(DROPSET_MAINNET_ID),
+        );
+        assert_eq!(
+            Deployment::Localnet.check_program_id(DROPSET_ID),
+            Ok(DROPSET_ID)
+        );
+        assert_eq!(Deployment::Localnet.check_program_id(fresh), Ok(fresh));
+    }
+
+    #[test]
+    fn deployment_parses_both_mainnet_spellings_and_rejects_junk() {
+        assert_eq!("localnet".parse(), Ok(Deployment::Localnet));
+        assert_eq!("mainnet".parse(), Ok(Deployment::Mainnet));
+        assert_eq!("Mainnet-Beta".parse(), Ok(Deployment::Mainnet));
+        assert!("devnet".parse::<Deployment>().is_err());
+    }
+
+    /// The generated builders aim every program-id slot at the deployment
+    /// they are handed: the instruction itself and the placeholder an
+    /// absent optional account takes. Guards the post-generation rewrite in
+    /// `sdk/codama/generate.mjs` against a renderer change.
+    #[test]
+    fn generated_builders_follow_the_deployment() {
+        let key = Pubkey::new_unique();
+        for deployment in [Deployment::Localnet, Deployment::Mainnet] {
+            let program = deployment.program_id();
+            let ix = SetReferencePrice {
+                signer: key,
+                market: key,
+            }
+            .instruction(
+                deployment,
+                SetReferencePriceInstructionArgs {
+                    vault_idx: 0,
+                    price_bits: 0,
+                    quote_slot: 0,
+                    quote_unix: 0,
+                },
+            );
+            assert_eq!(ix.program_id, program);
+
+            let swap = Swap {
+                taker: key,
+                market: key,
+                base_mint: key,
+                quote_mint: key,
+                base_token_program: key,
+                quote_token_program: key,
+                taker_base_ata: key,
+                taker_quote_ata: key,
+                market_base_treasury: key,
+                market_quote_treasury: key,
+                clock: key,
+                platform_fee_authority: None,
+                platform_fee_ata: None,
+                associated_token_program: key,
+                system_program: key,
+                event_authority: event_authority(&program),
+                program,
+            };
+            let ix = swap.instruction_with_remaining_accounts(
+                deployment,
+                crate::instructions::SwapInstructionArgs {
+                    side: 0,
+                    amount_in: 0,
+                    limit_price_bits: 0,
+                    min_out: 0,
+                    platform_fee_bps: 0,
+                },
+                &[],
+            );
+            assert_eq!(ix.program_id, program);
+            assert_eq!(
+                ix.accounts[11].pubkey, program,
+                "absent optional placeholder"
+            );
+            assert_eq!(
+                ix.accounts[12].pubkey, program,
+                "absent optional placeholder"
+            );
+            assert!(ix
+                .accounts
+                .iter()
+                .all(|m| deployment == Deployment::Localnet || m.pubkey != DROPSET_ID));
+        }
     }
 
     #[test]
