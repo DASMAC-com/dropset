@@ -9,8 +9,8 @@ import { SwapError } from "./types";
 
 // Wallet `sendTransaction` returns after submission, not after the chain has
 // confirmed the tx — so balance re-fetches fired immediately after see stale
-// data. Poll `getSignatureStatuses` until the signature reaches `confirmed`
-// (or `finalized`) and bail with an error on revert or timeout.
+// data. Poll `getSignatureStatuses` until the signature reaches `finalized`
+// and bail with an error on revert or timeout.
 //
 // Route-neutral: it takes a signature and an rpc, and both swap paths use it.
 export async function waitForSwapConfirmation(
@@ -49,7 +49,7 @@ export async function waitForSwapConfirmation(
       throw new SwapError(`Transaction reverted on-chain: ${errStr}`, "wallet");
     }
     const cs = status?.confirmationStatus;
-    if (cs === "confirmed" || cs === "finalized") return;
+    if (cs === "finalized") return;
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
   throw new SwapError("Timed out waiting for swap confirmation", "wallet");

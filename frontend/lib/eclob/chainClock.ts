@@ -14,7 +14,7 @@
 //
 // The slot half needs no chain check — the slot *is* a chain read — but it
 // needs the same forward nudge for a different reason: it is read at
-// `confirmed`, which is already behind head. See {@link gateNowSlot}.
+// `finalized`, which is already behind head. See {@link gateNowSlot}.
 //
 // Every poll tick already reads the current slot, so cluster time is one
 // `getBlockTime(slot)` away — a skew detector and a fallback for the price of
@@ -290,13 +290,13 @@ export const gateNowUnix = (): WallTime => {
 };
 
 /**
- * The slot to gate resting levels against, given the `confirmed` slot the
+ * The slot to gate resting levels against, given the `finalized` slot the
  * caller has already read: that slot nudged forward by
  * {@link SLOT_SAFETY_MARGIN_SLOTS}.
  *
  * The slot half of the gate needs no chain check — it *is* a chain read — but
  * it does need the same forward margin {@link gateNowUnix} applies, and for a
- * sharper reason. A `confirmed` slot is behind head when it is read and
+ * sharper reason. A `finalized` slot is behind head when it is read and
  * further behind by the time the transaction lands, so passing it raw reports
  * levels as more alive than the engine will find them. That is precisely the
  * over-showing the wall margin exists to prevent, arriving through the other
@@ -314,5 +314,5 @@ export const gateNowUnix = (): WallTime => {
  * `gateNowUnix`'s `WallTime`, so the two halves of the gate cannot be passed
  * to each other's parameter.
  */
-export const gateNowSlot = (confirmedSlot: bigint | number): SlotTime =>
-  slotTime(Number(confirmedSlot) + SLOT_SAFETY_MARGIN_SLOTS);
+export const gateNowSlot = (finalizedSlot: bigint | number): SlotTime =>
+  slotTime(Number(finalizedSlot) + SLOT_SAFETY_MARGIN_SLOTS);

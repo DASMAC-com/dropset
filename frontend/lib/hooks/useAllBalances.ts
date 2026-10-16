@@ -170,7 +170,7 @@ async function fetchMints(
         rpc
           .getMultipleAccounts(chunk, {
             encoding: "jsonParsed",
-            commitment: "confirmed",
+            commitment: "finalized",
           })
           .send(),
       ),

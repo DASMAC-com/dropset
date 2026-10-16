@@ -85,14 +85,14 @@ const DEFAULT_PERF_FEE_RATE: u32 = 0;
 
 // ── RPC ──────────────────────────────────────────────────────────────
 
-/// An `RpcClient` at the `confirmed` commitment, pointed at `url`. The
+/// An `RpcClient` at the `finalized` commitment, pointed at `url`. The
 /// short request timeout keeps a poll issued while the validator is still
 /// booting from stalling the synchronous event loop.
 pub fn rpc(url: &str) -> RpcClient {
     RpcClient::new_with_timeout_and_commitment(
         url.to_string(),
         std::time::Duration::from_secs(2),
-        CommitmentConfig::confirmed(),
+        CommitmentConfig::finalized(),
     )
 }
 

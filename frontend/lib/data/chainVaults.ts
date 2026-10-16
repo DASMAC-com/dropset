@@ -229,7 +229,7 @@ export async function fetchChainPositions(
     await Promise.all(
       chunks.map((chunk) =>
         fetchAllMaybeVaultDepositorHeader(rpc, chunk, {
-          commitment: "confirmed",
+          commitment: "finalized",
         }),
       ),
     )

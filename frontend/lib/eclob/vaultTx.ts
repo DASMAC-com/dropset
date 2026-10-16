@@ -440,7 +440,7 @@ export async function readDepositorShares(
   depositor: Address,
 ): Promise<bigint> {
   const account = await fetchMaybeVaultDepositorHeader(rpc, depositor, {
-    commitment: "confirmed",
+    commitment: "finalized",
   });
   return account.exists ? account.data.shares : 0n;
 }

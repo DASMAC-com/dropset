@@ -456,7 +456,7 @@ pub fn publish(
         resign_txs_count: Some(WRITE_RESIGN_ROUNDS),
         rpc_send_transaction_config: RpcSendTransactionConfig {
             skip_preflight: true,
-            preflight_commitment: Some(CommitmentLevel::Confirmed),
+            preflight_commitment: Some(CommitmentLevel::Finalized),
             ..RpcSendTransactionConfig::default()
         },
     };
@@ -554,7 +554,7 @@ pub fn client(rpc_url: &str) -> RpcClient {
     RpcClient::new_with_timeout_and_commitment(
         rpc_url.to_string(),
         PUBLISH_RPC_TIMEOUT,
-        CommitmentConfig::confirmed(),
+        CommitmentConfig::finalized(),
     )
 }
 

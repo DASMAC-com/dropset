@@ -180,7 +180,7 @@ export function useRecentFills(
     const fetchTransaction = (signature: Signature) =>
       rpc
         .getTransaction(signature, {
-          commitment: "confirmed",
+          commitment: "finalized",
           encoding: "json",
           maxSupportedTransactionVersion: 0,
         })
@@ -286,7 +286,7 @@ export function useRecentFills(
           const notifications = await rpcSubscriptions
             .logsNotifications(
               { mentions: [dropsetProgramAddress(CLUSTER)] },
-              { commitment: "confirmed" },
+              { commitment: "finalized" },
             )
             .subscribe({ abortSignal: abort.signal });
           for await (const notification of notifications) {

@@ -198,7 +198,7 @@ async function waitForConfirmation(rpc, signature) {
       );
     }
     const cs = status?.confirmationStatus;
-    if (cs === "confirmed" || cs === "finalized") return;
+    if (cs === "finalized") return;
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
   throw new Error(`Timed out waiting for confirmation of ${signature}`);
@@ -271,7 +271,7 @@ try {
       rpc
         .getMultipleAccounts(
           batch.map((p) => p.ata),
-          { commitment: "confirmed" },
+          { commitment: "finalized" },
         )
         .send(),
     );
@@ -354,7 +354,7 @@ console.log(`\nSending ${batches.length} transaction(s)...`);
 for (let b = 0; b < batches.length; b++) {
   const batch = batches[b];
   const { value: blockhash } = await rpc
-    .getLatestBlockhash({ commitment: "confirmed" })
+    .getLatestBlockhash({ commitment: "finalized" })
     .send();
 
   const message = pipe(
@@ -381,7 +381,7 @@ for (let b = 0; b < batches.length; b++) {
   const signature = await rpc
     .sendTransaction(encoded, {
       encoding: "base64",
-      preflightCommitment: "confirmed",
+      preflightCommitment: "finalized",
     })
     .send();
 

@@ -112,7 +112,7 @@ export async function resolveEclobRoute(
   if (pending) return pending;
 
   const promise = sdkResolveEclobRoute(rpc, routeInput, {
-    commitment: "confirmed",
+    commitment: "finalized",
   })
     // A rejection propagates to every caller sharing this lookup — callers that
     // treat a failure as "not yet" (the availability probe) keep doing so — but
