@@ -237,6 +237,14 @@ impl SwapSide {
     ///   `fill_q = floor(taker_in · P)` with `fill_q < P` gives
     ///   `taker_in < 1 + 1/P < 2`. So one atom of the input asset stays
     ///   with the taker — below the resolution of every listed token.
+    ///
+    ///   On a taker-capped leg that atom ends the walk (`guard_1f`).
+    ///   Every later level is worse, so it floors to zero there too —
+    ///   except at a price that is an exact whole ratio, where one atom
+    ///   would fill, and that one-atom miss is accepted as dust. Skipping
+    ///   instead walked the rest of the book filling nothing, about 2.4k
+    ///   CU per entry: a one-atom sell on a full ten-vault book cost
+    ///   ~388k CU for zero fills.
     #[inline]
     fn compute_fill(
         self,
@@ -278,7 +286,7 @@ impl SwapSide {
                 require!(fill_q <= u64::MAX as u128, DropsetError::MathOverflow);
                 let fill_q = fill_q as u64;
                 if fill_q == 0 {
-                    return Ok(LegFill::Skip);
+                    return Ok(guard_1f(taker_bound));
                 }
                 Ok(LegFill::Fill {
                     base: fill_b_u64,
@@ -316,7 +324,7 @@ impl SwapSide {
                 require!(fill_b <= u64::MAX as u128, DropsetError::MathOverflow);
                 let fill_b = fill_b as u64;
                 if fill_b == 0 {
-                    return Ok(LegFill::Skip);
+                    return Ok(guard_1f(taker_bound));
                 }
                 Ok(LegFill::Fill {
                     base: fill_b,
@@ -329,6 +337,19 @@ impl SwapSide {
                 })
             }
         }
+    }
+}
+
+/// What guard 1f (a zero input leg) returns. On a taker-capped leg the
+/// remainder is a single input atom, so end the walk; on a level- or
+/// vault-capped leg the taker still has budget for later levels, so walk
+/// on. See `compute_fill`'s 1f bullet.
+#[inline(always)]
+fn guard_1f(taker_bound: bool) -> LegFill {
+    if taker_bound {
+        LegFill::Exhausted
+    } else {
+        LegFill::Skip
     }
 }
 
@@ -365,28 +386,17 @@ enum LegFill {
     },
     /// This leg fills nothing and the walk continues. Two causes: the
     /// level or the vault is empty (the taker's budget is untouched and
-    /// a later level may well fill it), or the leg would move value in
-    /// one direction only and guard 1f rejected it. Either way this leg
-    /// is untouched.
-    ///
-    /// Guard 1f on a taker-capped leg does **not** end the walk. The
-    /// remainder is dust (one base atom on a Sell above price 1, one
-    /// quote atom on a Buy below it), and at every later level on the
-    /// same side of 1 its `cap_by_taker` is still non-zero while its
-    /// round trip still floors to zero, so the walk skips on. It ends
-    /// only where the round trip comes back whole (an integer price on
-    /// a Sell, an integer reciprocal on a Buy), where the dust atom
-    /// fills; where the book crosses price 1, which returns
-    /// [`LegFill::Exhausted`]; or at the end of the book, having filled
-    /// nothing more.
-    /// That walk is what the client compute-unit limit
-    /// (`dropset_sdk::SWAP_COMPUTE_UNIT_LIMIT`) is sized to cover.
+    /// a later level may well fill it), or guard 1f rejected a level- or
+    /// vault-capped leg that would move value in one direction only.
+    /// Either way this leg is untouched.
     Skip,
     /// The taker's remaining input cannot buy one whole output atom at
-    /// this price. Levels are visited best-price-first, so every level
-    /// after this one is worse and cannot fill it either: stop the walk.
-    /// The remainder stays with the taker — see the type's doc for why
-    /// this arm deliberately absorbs nothing.
+    /// this price — or, on guard 1f's taker-capped leg, it buys one but
+    /// pays zero for it. Levels are visited best-price-first, so every
+    /// level after this one is worse and cannot fill it either (bar 1f's
+    /// whole-ratio dust): stop the walk. The remainder stays with the
+    /// taker — see the type's doc for why this arm deliberately absorbs
+    /// nothing.
     Exhausted,
 }
 
@@ -1578,18 +1588,29 @@ mod tests {
                             // arm where the taker receives no output, so
                             // the level's price is not one they accepted
                             // and its one-atom cost is no bound on their
-                            // loss. It may fire only on a zero taker cap.
+                            // loss. It may fire only on a zero taker cap,
+                            // or on guard 1f's taker-capped leg — whose
+                            // remainder is then a single input atom that
+                            // prices to zero input at the taker cap.
                             if let Ok(LegFill::Exhausted) = got {
                                 let clamped = taker_in.min(u64::MAX as u128) as u64;
                                 let cap_by_taker = match side {
                                     SwapSide::Buy => price.base_for_quote(clamped),
                                     SwapSide::Sell => price.quote_for_base(clamped),
                                 };
-                                assert_eq!(
-                                    cap_by_taker, 0,
-                                    "Exhausted on a non-zero taker cap: side={side:?} \
-                                     price={price:?} taker_in={taker_in}"
-                                );
+                                if cap_by_taker != 0 {
+                                    let cap = cap_by_taker.min(u64::MAX as u128) as u64;
+                                    let reverse = match side {
+                                        SwapSide::Buy => price.quote_for_base(cap),
+                                        SwapSide::Sell => price.base_for_quote(cap),
+                                    };
+                                    assert!(
+                                        clamped == 1 && reverse == 0 && cap <= level_size.min(inv),
+                                        "Exhausted on a non-zero taker cap outside guard 1f: \
+                                         side={side:?} price={price:?} taker_in={taker_in} \
+                                         level_size={level_size} inv={inv}"
+                                    );
+                                }
                             }
                         }
                     }
@@ -1633,10 +1654,12 @@ mod tests {
         let above_one = Price::encode(11_291_080, 0).unwrap();
         assert_eq!(above_one.quote_for_base(1), 1);
         assert_eq!(above_one.base_for_quote(1), 0);
+        // The taker cap binds, so the leg ends the walk rather than
+        // skipping on to every lower bid.
         let got = SwapSide::Sell.compute_fill(above_one, 1, u64::MAX, u64::MAX, u64::MAX);
         assert!(
-            matches!(got, Ok(LegFill::Skip)),
-            "one-base-atom Sell remainder above price 1 must not fill, got {got:?}"
+            matches!(got, Ok(LegFill::Exhausted)),
+            "one-base-atom Sell remainder above price 1 must end the walk, got {got:?}"
         );
 
         // Buy arm, price < 1 — an IDR-scale quote. Here the free leg is
@@ -1647,17 +1670,23 @@ mod tests {
         assert_eq!(below_one.quote_for_base(16_666), 0);
         let got = SwapSide::Buy.compute_fill(below_one, 1, u64::MAX, u64::MAX, u64::MAX);
         assert!(
-            matches!(got, Ok(LegFill::Skip)),
-            "one-quote-atom Buy remainder below price 1 must not fill, got {got:?}"
+            matches!(got, Ok(LegFill::Exhausted)),
+            "one-quote-atom Buy remainder below price 1 must end the walk, got {got:?}"
         );
 
         // Same arm, same price, with the level and vault capping the
         // base leg at a single atom — the mirror image of the Sell case
-        // above rather than the blown-up one.
+        // above rather than the blown-up one. The taker cap does not
+        // bind, so the taker keeps budget a later level may fill: skip.
         let got = SwapSide::Buy.compute_fill(below_one, 1, 1, 1, 1);
         assert!(
             matches!(got, Ok(LegFill::Skip)),
             "one-base-atom Buy leg below price 1 must not fill, got {got:?}"
+        );
+        let got = SwapSide::Sell.compute_fill(above_one, 5, 1, u64::MAX, u64::MAX);
+        assert!(
+            matches!(got, Ok(LegFill::Skip)),
+            "a level-capped one-quote-atom Sell leg must skip, not end the walk, got {got:?}"
         );
 
         // The guard is dust-only: a remainder large enough to price

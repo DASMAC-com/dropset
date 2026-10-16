@@ -342,6 +342,45 @@ fn sdk_simulate_swap_multi_level_sell() {
     );
 }
 
+/// A dust remainder ends the walk at guard 1f, in both implementations.
+///
+/// The bids sit at exactly 1.5 and 1.0 (reference 1.6, offsets 6.25% and
+/// 37.5%). One base atom buys one quote atom at 1.5 and reverse-converts to
+/// zero base, so guard 1f fires with the taker cap binding and the walk
+/// ends. The 1.0 bid behind it is an exact whole ratio that would fill the
+/// atom — the one place stopping is observable rather than only cheaper —
+/// so a simulator that walked on would predict a fill the engine does not
+/// make.
+#[test]
+fn sdk_dust_remainder_ends_the_walk_on_both_sides() {
+    let profile = ladder_profile(
+        &[],
+        &[(62_500, 3_000, u32::MAX), (375_000, 3_000, u32::MAX)],
+    );
+    let mut f = Fixture::seeded_with(1_000_000, 1_000_000, profile);
+    let leader = f.authority.insecure_clone();
+    let reference = Price::encode(16_000_000, 0).unwrap();
+    f.set_reference_price(&leader, 0, reference.as_u32(), 0)
+        .expect("re-anchor the ladder");
+    let taker = f.funded_depositor(10, 0);
+
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Sell, 1, Price::ZERO);
+    assert_eq!(q.legs, 0, "the walk ends at guard 1f");
+    assert_eq!((q.in_amount, q.out_amount), (0, 0), "nothing fills");
+
+    // The swap flushed the ladder, so the materialized bids are readable:
+    // confirm the case really put a whole ratio behind the 1f level.
+    let bids = f.vault(0).remaining.bids;
+    assert_eq!(
+        bids[0].price.as_u32(),
+        Price::encode(15_000_000, 0).unwrap().as_u32()
+    );
+    assert_eq!(
+        bids[1].price.as_u32(),
+        Price::encode(10_000_000, 0).unwrap().as_u32()
+    );
+}
+
 /// Flipped counters, pinned differentially. Every fill on a flipping level
 /// rests its proceeds on the opposite side, and the SDK must see that depth
 /// exactly as the engine matches it, so each take below runs through
