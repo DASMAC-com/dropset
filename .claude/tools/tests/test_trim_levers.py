@@ -15,6 +15,7 @@ monotonically).
 
 from __future__ import annotations
 
+import gc
 import io
 import json
 import os
@@ -1668,6 +1669,11 @@ class ComposeGroupsTests(unittest.TestCase):
             Path(src).write_text(self.DUMP, encoding="utf-8")
             Path(spec).write_text(json.dumps(self.GROUPS), encoding="utf-8")
             out, err = io.StringIO(), io.StringIO()
+            # Collect earlier tests' garbage first: on Python 3.12+ an unclosed
+            # HTTPError another suite left behind warns when it is finalized,
+            # and a collection landing inside the redirect would count those
+            # warnings as this command's output.
+            gc.collect()
             with mock.patch.dict(os.environ, {}, clear=True):
                 with redirect_stdout(out), redirect_stderr(err):
                     code = tl.run(

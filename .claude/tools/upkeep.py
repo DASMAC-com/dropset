@@ -12,7 +12,7 @@ Usage (from the base repo root; a worktree is refused):
 ``prune`` runs steps 4–7 alone, disarmed unless ``--apply`` — the
 ``housekeeping`` skill's prune step, so both passes apply the one rule below.
 
-``run`` executes ten steps in order, each under its own timeout and each
+``run`` executes eleven steps in order, each under its own timeout and each
 **best-effort**: a failure is a report line, never an abort of later steps.
 The one exception is step 1 — running from anywhere but the base checkout
 refuses the whole pass, since every later step assumes it.
@@ -37,8 +37,12 @@ refuses the whole pass, since every later step assumes it.
     (``skill_size --utilization``), allowlist cruft, and the
     monthly refresh gate — mining recent transcripts when due and stamping the
     marker whatever the yield, writing no allow-rule;
- 9. the memory scan gate, then the memory audit when due;
-10. the transcript-purge dry-run manifest.
+ 9. the fleet cost: ``fleet_cost reconcile`` per day (Bedrock metered beside
+    the bill, with its drift flag) and the seat allowance, which has no bill
+    line, read with ``subscription_usage --log`` so each pass that gets a reading appends the one
+    sample its per-day figure is derived from;
+10. the memory scan gate, then the memory audit when due;
+11. the transcript-purge dry-run manifest.
 
 **Arming.** Steps 6 and 7 run as dry runs and touch nothing unless
 ``DS_UPKEEP_ARMED=1`` is exported from the untracked runtime config. The
@@ -77,10 +81,12 @@ from pathlib import Path
 from typing import Callable
 
 import board_batch
+import fleet_cost
 import linear_api
 import planning_doc
 import prune_conversations
 import prune_worktrees
+import subscription_usage
 
 TOOLS = Path(__file__).resolve().parent
 REPO = "DASMAC-com/dropset"
@@ -91,6 +97,9 @@ REPORT_HEADING = "Upkeep report — machine-written, latest run only"
 # swallowed as part of it on the next run.
 REPORT_END = "End of upkeep report."
 STAMP_NAME = ".upkeep-last-run.json"
+# The seat allowance's sample log, at most one reading per pass — machine-local beside
+# the stamp, since the allowance is one operator's subscription.
+SAMPLES_NAME = ".allowance-samples.jsonl"
 
 # Roughly 1.5k tokens. The section is replaced every run, so the cap bounds what
 # every planning bootstrap pays to read it, not just this run's write.
@@ -101,6 +110,8 @@ TIMEOUT_GIT = 120
 TIMEOUT_BREW = 60
 TIMEOUT_GH = 60
 TIMEOUT_TOOL = 120
+# The transcript walk alone takes about a minute, before the Cost Explorer read.
+TIMEOUT_COST = 300
 
 # How many recent transcripts the refresh gate mines, and how many notification
 # PRs outside the listed sets are resolved one by one before giving up.
@@ -463,8 +474,15 @@ def step_notifications(ctx: Ctx) -> None:
     )
 
 
-def _json_tool(ctx: Ctx, step: str, name: str, *args: str, ok_rcs=(0, 1)):
-    rc, out, err = ctx.tool(name, *args)
+def _json_tool(
+    ctx: Ctx,
+    step: str,
+    name: str,
+    *args: str,
+    ok_rcs=(0, 1),
+    timeout: float = TIMEOUT_TOOL,
+):
+    rc, out, err = ctx.tool(name, *args, timeout=timeout)
     if rc not in ok_rcs:
         ctx.record(step, f"{name} failed: {first_line(err)}", False)
         return None
@@ -574,6 +592,90 @@ def step_checks(ctx: Ctx) -> None:
     )
 
 
+def cost_day_line(day: str, summary: dict) -> str:
+    """One reconciled day: Bedrock against its bill, the seat as metered alone."""
+    rec = summary.get("reconcile") or {}
+    seat = summary["substrates"].get(fleet_cost.SEAT) or {}
+    mark = (
+        " (provisional)"
+        if summary.get("provisional")
+        else " FLAGGED"
+        if rec.get("flagged")
+        else ""
+    )
+    return (
+        f"{day}: Bedrock {fleet_cost.money(rec.get('metered', 0.0))} metered "
+        f"({fleet_cost.money(rec.get('expected', 0.0))} with the classifier) vs "
+        f"{fleet_cost.money(rec.get('billed_matched', 0.0))} billed, drift "
+        f"{fleet_cost.pct(rec.get('drift'))}{mark}; seat "
+        f"{fleet_cost.money(seat.get('dollars', 0.0))} at Bedrock rates over "
+        f"{seat.get('sessions', 0)} session(s), no bill line"
+    )
+
+
+def step_cost(ctx: Ctx) -> None:
+    # Exit 1 is a settled day flagged: a finding the report carries, not a
+    # failed read. Exit 2 (an AWS error, expired credentials included) is.
+    report = _json_tool(
+        ctx, "fleet-cost", "fleet_cost.py", "reconcile", "--json", timeout=TIMEOUT_COST
+    )
+    if report is not None:
+        days = sorted(report.get("days", {}).items())
+        flagged = [
+            d
+            for d, s in days
+            if not s.get("provisional") and (s.get("reconcile") or {}).get("flagged")
+        ]
+        # An unreadable transcript drops its spend from the meter, so a low
+        # metered total would otherwise pass as a clean day.
+        unreadable = report.get("unreadable_transcripts") or 0
+        line = (
+            f"{len(flagged)} settled day(s) flagged past "
+            f"{report.get('tolerance', 0):.0%} drift"
+        )
+        if unreadable:
+            line += f"; {unreadable} unreadable transcript(s) not metered"
+        ctx.record(
+            "fleet-cost",
+            line if days else "reconcile reported no day",
+            ok=bool(days) and not unreadable,
+            days=[cost_day_line(d, s) for d, s in days],
+        )
+    rc, out, err = ctx.tool(
+        "subscription_usage.py", "--log", str(ctx.base / ".claude" / SAMPLES_NAME)
+    )
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    if rc == 0:
+        # Exit 0 also covers the no-credential and stale-token non-readings,
+        # which print one line and sample nothing; only a logged reading
+        # prints the marker.
+        sampled = subscription_usage.SAMPLE_LOGGED in lines
+        lines = [ln for ln in lines if ln != subscription_usage.SAMPLE_LOGGED]
+        trouble = [
+            ln
+            for ln in lines
+            if ln.startswith(("sample not logged", "sample log unreadable"))
+        ]
+        summary = (
+            "seat allowance, sampled for the per-day figure"
+            if sampled
+            else f"no reading, nothing sampled: {first_line(out)}"
+        )
+        # The per-day figure and any log trouble lead, so the list cap can only
+        # ever cut a limit row.
+        ctx.record(
+            "allowance",
+            summary,
+            ok=sampled and not trouble,
+            rows=[ln for ln in lines if ln not in trouble and " per day " in ln]
+            + trouble
+            + [ln for ln in lines if ln not in trouble and " per day " not in ln],
+        )
+    else:
+        reason = first_line(out) or first_line(err) or f"exit {rc}"
+        ctx.record("allowance", f"allowance read failed: {reason}", False)
+
+
 def step_memory(ctx: Ctx) -> None:
     memory_dir = (
         prune_conversations.projects_root()
@@ -647,6 +749,7 @@ STEPS = (
     ("prune", step_prune),
     ("notifications", step_notifications),
     ("checks", step_checks),
+    ("cost", step_cost),
     ("memory", step_memory),
     ("purge", step_purge),
 )
@@ -703,6 +806,8 @@ LIST_KEYS = (
     "cruft",
     "candidates",
     "findings",
+    "days",
+    "rows",
 )
 
 

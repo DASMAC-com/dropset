@@ -418,6 +418,123 @@ class PassTests(unittest.TestCase):
         self.assertFalse(step["ok"])
         self.assertIn("failed", step["line"])
 
+    SAMPLED = "weekly  20%\nweekly         per day  +4.8%  over 30.0h\nsample logged\n"
+
+    def _cost_steps(self, cost_rc, cost_out, usage=(0, SAMPLED, "")):
+        base_run = FakeRun()
+
+        def run(cmd, timeout, cwd=None):
+            name = Path(cmd[1]).name if len(cmd) > 1 else ""
+            if name == "fleet_cost.py":
+                return cost_rc, cost_out, "fleet_cost: AWS credentials expired"
+            if name == "subscription_usage.py":
+                return usage
+            return base_run(cmd, timeout, cwd)
+
+        ctx = make_ctx(run)
+        run_pass(ctx)
+        steps = {s["step"]: s for s in ctx.steps}
+        return steps["fleet-cost"], steps["allowance"]
+
+    def test_the_cost_step_reports_each_day_on_both_substrates(self):
+        def day(flagged, provisional, drift):
+            return {
+                "substrates": {"seat": {"dollars": 41.5, "sessions": 3}},
+                "provisional": provisional,
+                "reconcile": {
+                    "metered": 110.0,
+                    "expected": 120.0,
+                    "billed_matched": 100.0,
+                    "drift": drift,
+                    "flagged": flagged,
+                },
+            }
+
+        report = {
+            "tolerance": 0.15,
+            "days": {
+                # A provisional day's flag is never counted, and never shown.
+                "2026-10-07": day(True, True, None),
+                "2026-10-06": day(True, False, 0.2),
+            },
+        }
+        cost, allowance = self._cost_steps(1, json.dumps(report))
+        self.assertTrue(cost["ok"])
+        self.assertEqual(cost["line"], "1 settled day(s) flagged past 15% drift")
+        self.assertEqual(
+            cost["days"],
+            [
+                "2026-10-06: Bedrock $110.00 metered ($120.00 with the classifier) "
+                "vs $100.00 billed, drift +20.0% FLAGGED; seat $41.50 at Bedrock "
+                "rates over 3 session(s), no bill line",
+                "2026-10-07: Bedrock $110.00 metered ($120.00 with the classifier) "
+                "vs $100.00 billed, drift n/a (provisional); seat $41.50 at "
+                "Bedrock rates over 3 session(s), no bill line",
+            ],
+        )
+        self.assertTrue(allowance["ok"])
+        # The per-day figure leads, so the list cap can only cut a limit row.
+        self.assertEqual(
+            allowance["rows"],
+            ["weekly         per day  +4.8%  over 30.0h", "weekly  20%"],
+        )
+
+    def test_a_degraded_cost_read_is_not_reported_healthy(self):
+        report = {"tolerance": 0.15, "days": {}, "unreadable_transcripts": 0}
+        cost, _ = self._cost_steps(0, json.dumps(report))
+        self.assertFalse(cost["ok"])
+        self.assertEqual(cost["line"], "reconcile reported no day")
+        day = {"substrates": {}, "provisional": False, "reconcile": {}}
+        report = {"tolerance": 0.15, "days": {"2026-10-06": day}}
+        report["unreadable_transcripts"] = 2
+        cost, _ = self._cost_steps(0, json.dumps(report))
+        self.assertFalse(cost["ok"])
+        self.assertIn("2 unreadable transcript(s) not metered", cost["line"])
+
+    def test_an_exit_zero_non_reading_or_log_trouble_is_not_healthy(self):
+        stale = (0, "stale credential: the access token has expired\n", "")
+        _, allowance = self._cost_steps(0, json.dumps({"days": {}}), usage=stale)
+        self.assertFalse(allowance["ok"])
+        self.assertEqual(
+            allowance["line"],
+            "no reading, nothing sampled: stale credential: the access token "
+            "has expired",
+        )
+        failed = "weekly  20%\nweekly         per day  +4.8%  over 30.0h\n"
+        usage = (0, failed + "sample not logged: disk full\n", "")
+        _, allowance = self._cost_steps(0, json.dumps({"days": {}}), usage=usage)
+        self.assertFalse(allowance["ok"])
+        self.assertEqual(allowance["rows"][1], "sample not logged: disk full")
+
+    def test_a_logged_reading_with_no_per_day_line_is_still_sampled(self):
+        # A weekly percent the endpoint left unknown yields no per-day line,
+        # but the reading still reached the log; the marker is what says so.
+        usage = (0, "weekly     ?  resets 2026-10-09 14:59Z\nsample logged\n", "")
+        _, allowance = self._cost_steps(0, json.dumps({"days": {}}), usage=usage)
+        self.assertTrue(allowance["ok"])
+        self.assertEqual(
+            allowance["line"], "seat allowance, sampled for the per-day figure"
+        )
+        self.assertEqual(allowance["rows"], ["weekly     ?  resets 2026-10-09 14:59Z"])
+
+    def test_the_allowance_is_sampled_into_the_base_checkouts_log(self):
+        run = FakeRun()
+        run_pass(make_ctx(run))
+        usage = tool_calls(run, "subscription_usage.py")[0]
+        self.assertEqual(usage[2:], ["--log", f"{BASE}/.claude/{upkeep.SAMPLES_NAME}"])
+
+    def test_failed_cost_reads_are_failures_that_say_why(self):
+        cost, allowance = self._cost_steps(
+            2, "", usage=(1, "usage endpoint unavailable: HTTP 404\n", "")
+        )
+        self.assertFalse(cost["ok"])
+        self.assertIn("AWS credentials expired", cost["line"])
+        self.assertFalse(allowance["ok"])
+        self.assertEqual(
+            allowance["line"],
+            "allowance read failed: usage endpoint unavailable: HTTP 404",
+        )
+
     def test_cruft_and_memory_lines_count_findings_not_totals(self):
         base_run = FakeRun()
 

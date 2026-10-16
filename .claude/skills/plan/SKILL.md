@@ -134,7 +134,9 @@ machine-written `Upkeep report` heading, so the fetch above holds
 it; never re-run the pass here. Say what was pruned and dismissed
 (or would have been, unarmed), each refusal (unpushed work, an
 open PR — reported, never retried), and any inert guard,
-dangling reference or file near its size cap. A run stamp
+dangling reference or file near its size cap. Say the
+`fleet-cost` day lines and the `allowance` per-day figure too,
+any flagged day first. A run stamp
 older than today means the pass did not reach the document —
 say so. Its **destructive items**
 are operator-only and ride step 8's `AskUserQuestion`:

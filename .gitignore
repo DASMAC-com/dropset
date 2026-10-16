@@ -36,6 +36,11 @@ sdk/ts/dist/
 # refreshes were its own.
 .claude/.allowlist-refresh.json
 
+# The seat allowance's sample log, at most one reading per upkeep pass, written by
+# .claude/tools/subscription_usage.py --log. Machine-local: it samples one
+# operator's subscription.
+.claude/.allowance-samples.jsonl
+
 # Which substrate — Bedrock or the seat — each session launched on, one file
 # per worktree tag, written by the session verbs in .claude/shell/init.zsh so a
 # resume lands on the provider its session started with. Machine-local runtime
