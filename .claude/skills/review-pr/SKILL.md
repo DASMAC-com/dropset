@@ -103,6 +103,20 @@ migrations or generation inputs, and whether it spans crates.
    git fetch origin <base>
    ```
 
+   **Prove signing first if the session has idled since its last signed
+   commit** — here, and at every later re-rebase (steps 5, 6 and 11)
+   after a fan-out, CI wait or pause. With `commit.gpgsign` set (it is
+   here), a rebase re-signs every commit it replays, so a locked signer
+   kills it part-way and leaves the worktree mid-rebase (`history.md` →
+   "Signer locked mid-rebase"). A dangling signed commit proves the
+   path and moves no ref; on failure, stop and ask for the unlock:
+
+   ```sh
+   git commit-tree -S -p HEAD -m signing-probe HEAD^{tree}
+   ```
+
+   Then rebase:
+
    ```sh
    git rebase origin/<base>
    ```
@@ -474,7 +488,8 @@ migrations or generation inputs, and whether it spans crates.
    excluded generated family (no source to review, though the step
    9/10 gates still apply) — the last two each with an `--only`
    variant. On `base_fresh: false` re-fetch, re-rebase
-   onto `origin/<base>`, and re-run the tool. The base can advance
+   onto `origin/<base>` (signing probe first, step 2), and re-run the
+   tool. The base can advance
    *past* the step-2 rebase mid-review — worktrees share one `.git` —
    and the diff then shows whatever the base added as a **phantom
    deletion** (`history.md` → "Phantom deletion"). Once `base_fresh`
@@ -823,7 +838,9 @@ migrations or generation inputs, and whether it spans crates.
      the surface-gated freshness lenses, nothing else — unless a Python
      helper carries **real logic** (parsing, control flow, filesystem
      mutation): review it under correctness / completeness, and add
-     security back if it reads untrusted input.
+     security back if it reads untrusted input. **A `.claude/hooks/**`
+     guard always adds it back**: it parses the agent's own tool calls
+     and decides what may run.
    - **Full** — cross-cutting or multi-crate, or anything not above:
      every lens below, under the gates that follow, plus step 6.
 
@@ -849,8 +866,9 @@ migrations or generation inputs, and whether it spans crates.
    **Gate the security lens on the diff's trust surface.** Spawn it only
    when the diff touches a program handler (a consensus-critical
    instruction such as `deposit` / `withdraw_leader` / `close_vault`),
-   account or argument deserialization, an auth path, or external I/O
-   (network, untrusted files, user input). Skip it on host / localnet
+   account or argument deserialization, an auth path (a
+   `.claude/hooks/**` guard is one, not a dev-only script), or external
+   I/O (network, untrusted files, user input). Skip it on host / localnet
    tooling — a TUI, a bot's display code, a localnet bootstrap, a
    dev-only script (`history.md` → "Security lens on tooling"). **An
    off-tier security lens is justified, not a trim target**: when a
@@ -1049,7 +1067,15 @@ migrations or generation inputs, and whether it spans crates.
 
    - **Security** (conditional on the trust-surface gate above) —
      injection, unchecked input, missing validation, unsafe operations,
-     secrets in code.
+     secrets in code. **On a `.claude/hooks/**` diff, open the brief —
+     and any step-6 brief on that diff — as defensive verification of
+     the repo's own guard**: the goal is to
+     prove a real command is still flagged at its tier, never "find a
+     command that slips past it". The offensive framing got a lens
+     stopped by a safety classifier before its first probe (`history.md`
+     → "Guard-bypass lens framing"). Keep the constraint beside it:
+     build probe strings inside a scratchpad script, never on a Bash
+     line.
 
    - **Style & consistency** (skipped on a meta-work diff) — naming,
      patterns, idioms that diverge from the rest of the codebase.
@@ -1098,7 +1124,9 @@ migrations or generation inputs, and whether it spans crates.
    diff that took the scaled-down path above.)
 
    **Re-check base freshness first** — the fan-out window is where
-   `main` moves (`history.md` → "Drift during the fan-out"):
+   `main` moves (`history.md` → "Drift during the fan-out"), and where
+   the signer locks, so a forced re-rebase takes step 2's signing probe
+   first:
 
    ```sh
    python3 .claude/tools/review_diff.py --base <base> \
@@ -1460,9 +1488,10 @@ migrations or generation inputs, and whether it spans crates.
      --out <scratchpad>/review-diff.txt
    ```
 
-   If it is `false`, rebase onto `origin/<base>` and *then* run the
-   suites, so the expensive builds run once, against the tree that
-   will merge (`history.md` → "Suites before the rebase"). Switch to
+   If it is `false`, rebase onto `origin/<base>` (signing probe first,
+   step 2) and *then* run the suites, so the expensive builds run
+   once, against the tree that will merge (`history.md` → "Suites
+   before the rebase"). Switch to
    `--split` only when the slices need regenerating (after a rebase,
    for a re-spawn).
 
@@ -1611,7 +1640,7 @@ migrations or generation inputs, and whether it spans crates.
      **blocking** issue. Never mark the PR ready
      with a failing or unverified test target.
 
-1. **Push the branch.** The step-1 rebase rewrote history, so push
+1. **Push the branch.** The step-2 rebase rewrote history, so push
    with lease — it lands the rebased history with any review-fix
    commits and refuses to clobber a concurrent push:
 

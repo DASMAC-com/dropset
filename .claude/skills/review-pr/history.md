@@ -92,6 +92,13 @@ the resident-size gate (`docs/conventions/context-economy.md` →
   empty overlap, the fourth overlapping on `cfg/dictionary.txt` and
   forcing a full re-lint. That one was 37 files with only one costly
   rebase, which is why the signal is overlap and not size.
+- **Signer locked mid-rebase.** The base moved four commits during a
+  lens fan-out and the freshness gate rightly demanded a rebase, but
+  the 1Password agent had locked during the wait, so the rebase died
+  part-way with `failed to fill whole buffer`. The rebase was aborted
+  and the session stalled for an operator unlock. Nothing was lost only
+  because the branch was already pushed. The pre-wait checkpoint covers
+  the wait itself, not a rebase that comes after it.
 
 ## Step 3: Linear echoes
 
@@ -469,6 +476,14 @@ the resident-size gate (`docs/conventions/context-economy.md` →
   lens returned the sharpest finding of the review. Another security
   lens returned no findings and so independently validated an economic
   invariant: refusing a leg can never flip to favor the vault.
+- **Guard-bypass lens framing.** A security lens on a destructive-command
+  guard diff, briefed to "find a command that really performs a
+  force-push and now classifies below its tier", was stopped by a safety
+  classifier after three tool calls (156.8k input). It ran no probe and
+  returned nothing, and deciding how to proceed cost an operator round
+  trip. The cross-check briefs asked the same questions but opened with
+  "defensive review of the repo's own destructive-command guard". All
+  three completed and found every blocking bypass.
 - **Freshness lens yield.** On a pure source diff the two freshness
   lenses near-always return "in sync, no-op", yet each costs ~100k+ of
   sub-agent input. The new-tree trigger exists because a new subsystem
