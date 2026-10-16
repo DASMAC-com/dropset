@@ -389,16 +389,17 @@ test('oversized flush side is skipped, the healthy side still materializes', () 
 });
 
 // Vault share / flag offsets for the vaults reader (`layout.rs` order:
-// leader at 8, `seq` at 72 — pinned there by a const assert — then the
-// reserves, shares, hwm, perf fee, leader floor and the flag bytes).
-const V_LEADER = 8;
-const V_SEQ = 72;
-const V_TOTAL_SHARES = 116;
-const V_LEADER_SHARES = 124;
-const V_MIN_LEADER_SHARE = 144;
-const V_FROZEN = 148;
-const V_ALLOW_OUTSIDE = 149;
-const V_OUTSIDE_APPROVED = 150;
+// the 32-byte name at 8, leader at 40, `seq` at 104 — each pinned there by
+// a const assert — then the reserves, shares, hwm, perf fee, leader floor
+// and the flag bytes).
+const V_LEADER = 40;
+const V_SEQ = 104;
+const V_TOTAL_SHARES = 148;
+const V_LEADER_SHARES = 156;
+const V_MIN_LEADER_SHARE = 176;
+const V_FROZEN = 180;
+const V_ALLOW_OUTSIDE = 181;
+const V_OUTSIDE_APPROVED = 182;
 
 test('the vaults reader returns each active vault with its shares and deposit flags', () => {
   const data = buildMarket((dv, b) => {
