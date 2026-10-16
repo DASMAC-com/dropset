@@ -237,6 +237,28 @@ class CallContract(DriverStub, unittest.TestCase):
         self.assertIn("/dev/ttys-caller", err.getvalue())
         self.assertIn("focused window", err.getvalue())
 
+    def test_a_created_window_is_named_as_new_not_focused(self):
+        self._stub(
+            stdout=json.dumps({"ok": True, "ttys": ["/dev/a"], "window": "created"})
+        )
+        iterm_api.caller_tty = lambda: None
+        with redirect_stderr(io.StringIO()) as err:
+            iterm_api.open_tabs(["task 1"])
+        self.assertIn("none resolved", err.getvalue())
+        self.assertIn("a new window", err.getvalue())
+        self.assertNotIn("focused window", err.getvalue())
+
+    def test_a_refused_batch_still_says_where_its_tabs_landed(self):
+        self._stub(
+            stdout=json.dumps(
+                {"ok": True, "ttys": [None], "untyped": [0], "window": "current"}
+            )
+        )
+        with redirect_stderr(io.StringIO()) as err:
+            with self.assertRaises(iterm_api.ItermUnavailable):
+                iterm_api.open_tabs(["task 1"])
+        self.assertIn("focused window", err.getvalue())
+
     def test_the_batch_timeout_scales_with_the_command_count(self):
         # A fixed budget generous for one tab is not generous for twenty, and
         # the failure it produces is the bad kind: the driver is killed
@@ -762,6 +784,53 @@ class CallerTty(unittest.TestCase):
     def test_a_ps_cycle_is_bounded(self):
         rows = {100: (200, "?"), 200: (100, "?")}
         self.assertIsNone(iterm_api.caller_tty(100, ps=self._ps(rows)))
+
+    def test_an_already_full_path_is_not_prefixed_twice(self):
+        rows = {100: (99, "/dev/ttys004")}
+        self.assertEqual(iterm_api.caller_tty(100, ps=self._ps(rows)), "/dev/ttys004")
+
+
+class PsRow(unittest.TestCase):
+    """`_ps_row` parses one `ps -o ppid=,tty=` line, or says it cannot."""
+
+    def _stub(self, *, stdout="", raises=None):
+        self.addCleanup(setattr, iterm_api, "subprocess", iterm_api.subprocess)
+        real = iterm_api.subprocess
+        self.argv = None
+
+        def run(argv, **_kwargs):
+            self.argv = argv
+            if raises is not None:
+                raise raises
+            completed = type("Completed", (), {})()
+            completed.stdout = stdout
+            return completed
+
+        stub = type("Subprocess", (), {})()
+        stub.run = run
+        stub.TimeoutExpired = real.TimeoutExpired
+        iterm_api.subprocess = stub
+
+    def test_parses_the_parent_and_the_tty(self):
+        self._stub(stdout=" 64443 ??\n")
+        self.assertEqual(iterm_api._ps_row(100), (64443, "??"))
+        self.assertEqual(self.argv[-2:], ["-p", "100"])
+
+    def test_a_dead_pid_prints_nothing_and_is_none(self):
+        self._stub(stdout="")
+        self.assertIsNone(iterm_api._ps_row(100))
+
+    def test_a_non_numeric_parent_is_none(self):
+        self._stub(stdout="PPID TT\n")
+        self.assertIsNone(iterm_api._ps_row(100))
+
+    def test_a_timeout_is_none_not_raised(self):
+        self._stub(raises=iterm_api.subprocess.TimeoutExpired("ps", 5))
+        self.assertIsNone(iterm_api._ps_row(100))
+
+    def test_a_missing_ps_is_none_not_raised(self):
+        self._stub(raises=OSError("no ps"))
+        self.assertIsNone(iterm_api._ps_row(100))
 
 
 class CallerWindow(unittest.TestCase):

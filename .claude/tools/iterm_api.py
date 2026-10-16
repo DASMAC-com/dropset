@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # cspell:word getppid
-# cspell:word ppid
 """Drive iTerm2 through its Python API. The one owner of iTerm automation.
 
 Two callers, and both now want the same thing: `session_dispatch.py` (open a tab
@@ -281,6 +280,10 @@ def caller_tty(pid: int | None = None, ps=_ps_row) -> str | None:
     climbs parents until `ps` reports one. iTerm's session ``tty`` variable is
     the full ``/dev/ttysNNN`` path, while `ps` prints ``ttysNNN``, hence the
     prefix. A process with no terminal reads ``??`` (``?`` on some systems).
+
+    Known limit: the FIRST ancestor with a tty wins. Under tmux or screen that
+    is the multiplexer's own pty, which no iTerm session holds, so the dispatch
+    falls back to the focused window — said on stderr by :func:`open_tabs`.
     """
     pid = os.getppid() if pid is None else pid
     for _ in range(CALLER_TTY_MAX_HOPS):
@@ -359,6 +362,17 @@ def open_tabs(commands: list[str], *, tty: str | None = None) -> list[str | None
         # One round trip per tab against a GUI app, so the budget scales.
         timeout=DRIVER_TIMEOUT_SECONDS + PER_TAB_TIMEOUT_SECONDS * len(commands),
     )
+    # Before the refusal below, so a refused batch still says where its typed
+    # tabs landed.
+    window = response.get("window")
+    if window != "caller":
+        where = tty or "none resolved"
+        landed = "a new window" if window == "created" else "the focused window"
+        print(
+            f"iterm_api: no iTerm session holds the caller's tty ({where}), so "
+            f"the tabs opened in {landed} instead",
+            file=sys.stderr,
+        )
     # Enforced here rather than merely promised by the driver. The driver reports
     # not-ok when it could not type into a tab, but THIS is the half that is
     # testable, and it is also the half whose return type — a flat list of ttys —
@@ -373,14 +387,6 @@ def open_tabs(commands: list[str], *, tty: str | None = None) -> list[str | None
             "into, but reported success",
             ttys=response.get("ttys"),
             untyped=stranded,
-        )
-
-    if response.get("window") != "caller":
-        where = tty or "none resolved"
-        print(
-            f"iterm_api: no iTerm session holds the caller's tty ({where}), so "
-            "the tabs opened in the focused window instead",
-            file=sys.stderr,
         )
 
     ttys = list(response.get("ttys") or [])
