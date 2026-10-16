@@ -148,7 +148,7 @@ shape (dry runs included), never polling a backgrounded log,
 `make tools-tests` whole, `wait_for_checks.py` for CI, and never
 re-reading what you authored. A refused search leaves its question
 unanswered, never zero hits (`docs/conventions/shell-commands.md`).
-Three reminders neither states:
+Four reminders neither states:
 
 - **Lint the changed set** with one bare command; full `make lint`
   only before committing and at the end:
@@ -167,6 +167,14 @@ Three reminders neither states:
   from its slices; reach for `git diff` only for a change you have not
   read (a rebase, a hook autofix, a sibling session), and take
   `--stat` first when the question is which files moved.
+
+- **Write the issue body on the zero-echo path.** Step 10's echo is the
+  one licensed one. After it, a body **append** (a progress or deferral
+  note) goes through
+  `python3 .claude/tools/linear_issue.py append --id <ENG-###> --file <path>`,
+  never `save_issue`, which echoes the whole body again, larger
+  each time it grows. Only an **anchored** edit stays on the MCP
+  `patch`, where the abort is worth the echo.
 
 - **`replace_all` is safe only when search and replacement are
   disjoint.** A replacement that contains the search string rewrites
