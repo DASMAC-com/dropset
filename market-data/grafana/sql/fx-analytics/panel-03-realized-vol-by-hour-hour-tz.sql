@@ -2,9 +2,9 @@
 -- Source: fx-analytics.json
 -- Regenerate: make dashboard-sql
 
--- Realized vol by hour of day, with its own sample size beside it -- absorbing
--- the Weekend vs weekday table, whose remaining job was exactly that sample
--- size for this panel.
+-- Realized vol by hour of day, in session only, with its own sample size
+-- beside it -- absorbing the Weekend vs weekday table, whose remaining job was
+-- exactly that sample size for this panel.
 --
 -- THE ADJACENT-BUCKET GUARD IS LOAD-BEARING, not defensive style. A return is
 -- computed only when the previous bar is exactly one bucket earlier, so a gap
@@ -20,20 +20,30 @@
 -- the honest denominator -- the number of returns that survived the guard --
 -- and bars is the raw count it came from.
 --
--- THE WEEKDAY/WEEKEND SPLIT IS GONE, and be precise about what that costs,
--- because the tempting phrasing ("the weekend series existed to be ignored") is
--- only true while it IS a separate series. Removing the split does not drop
--- those bars, it POOLS them: no session, weekday or volume predicate survives
--- here, so post-close and weekend bars now enter the same per-hour populations
--- as weekday bars, and nothing in the output distinguishes the mixture. That is
--- load-bearing rather than theoretical -- a selectable venue was measured
--- writing 163 contiguous post-close bars, all at volume 0 and none flat, which
--- pass the adjacent-bucket guard and contribute indicative returns. The
--- contamination concentrates in the hours around the Friday close and the
--- Sunday open, which are the hours the guard note above says a reader most
--- cares about. The split was ratified away because it decided nothing under a
--- weekday-only posture while halving every hour's sample; the honest reading of
--- the trade is that the panel is now a whole-week measurement.
+-- ONLY IN-SESSION BARS ARE READ, and the session is imposed, not inferred.
+-- fx_session_window (migration 0015) is the session authority: a bar enters
+-- only when its bucket start falls inside a span reading 'open'. Read the span
+-- half-open (starts_at <= t < ends_at) -- BETWEEN would admit a bar stamped
+-- at the Friday close itself, because the closed span starts on that same
+-- instant. A bar with no covering span is dropped as well, so past the view's
+-- horizon the panel goes empty rather than silently reading unfenced.
+--
+-- This is what the weekday/weekend split's removal was waiting for. The split
+-- was ratified away because it decided nothing under a weekday-only posture
+-- while halving every hour's sample, but removing it without a fence POOLED
+-- the out-of-session bars into the same per-hour populations rather than
+-- dropping them: a grid vendor was measured printing 28.6% of its series out
+-- of session with 99% of those bars moving, concentrated in the hours around
+-- the Friday close and the Sunday open. The fence applies to every venue
+-- alike, a 24/7 crypto venue included -- the reading this panel feeds is the
+-- weekday quoting posture, so a crypto weekend is as far outside the
+-- population as an FX vendor's indicative one.
+--
+-- FENCE BEFORE THE RETURNS, never after. Filtering the bars first leaves the
+-- last bar before the close and the first after the reopen two days apart,
+-- so the adjacent-bucket guard refuses the return that would span the
+-- weekend. Fencing the returns instead would keep the bars but still need
+-- the guard to catch that edge, for no gain.
 --
 -- DO NOT REACH FOR `volume` AS THE DISCRIMINATOR, which is the obvious guess
 -- and is wrong. Measured across 14 days: every one of that vendor's 20,162 bars
@@ -41,9 +51,22 @@
 -- VENDOR as indicative and never a BAR as out-of-session. What does discriminate
 -- is grid-versus-tape -- an indicative vendor emits a bar every minute with no
 -- intraday gaps and identical counts across pairs, while a real tape's counts
--- differ per pair because a minute with no tick produces no bar at all. The fix
--- lands as an imposed session fence, filed separately.
-WITH bars AS (
+-- differ per pair because a minute with no tick produces no bar at all. This
+-- panel needs neither: the fence above imposes the session instead.
+WITH open_spans AS (
+  -- Narrowed to the spans overlapping the window first, so the per-bar test
+  -- below scans a handful of rows rather than the view's whole horizon.
+  SELECT
+    s.starts_at,
+    s.ends_at
+  FROM fx_session_window AS s
+  WHERE
+    s.state = 'open'
+    AND s.starts_at < $__timeTo()
+    AND s.ends_at > $__timeFrom()
+),
+
+bars AS (
   SELECT
     c.bucket_start,
     c.close
@@ -52,6 +75,13 @@ WITH bars AS (
     AND c.source = ${venue_source:sqlstring}
     AND c.product_id = ${venue_product:sqlstring}
     AND c.granularity_secs::text = ${granularity:sqlstring}
+    AND EXISTS (
+      SELECT 1
+      FROM open_spans AS o
+      WHERE
+        o.starts_at <= to_timestamp(c.bucket_start)
+        AND to_timestamp(c.bucket_start) < o.ends_at
+    )
 ),
 
 returns AS (

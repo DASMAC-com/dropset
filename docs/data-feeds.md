@@ -609,12 +609,14 @@ point of sharing an instance.
 
 Unrestricted, but not anonymous: `dropset_ro` is a **read-only login**
 (`db-schema/migrations/0002_reader_role.sql`) holding `SELECT` on every
-table — plus `CONNECT` and schema `USAGE`, and no write privilege of any
-kind. Tables a later migration adds are covered too, by
-`ALTER DEFAULT PRIVILEGES`, though only while migrations keep being
-applied by the same role that ran `0002`; one run as a different role
-would create tables the reader cannot see, which surfaces as an empty
-panel. A
+relation — tables and views alike — plus `CONNECT` and schema `USAGE`,
+and no write privilege of any kind. Relations a later migration adds are
+covered too, by `ALTER DEFAULT PRIVILEGES`, which in Postgres reaches
+views as well as tables; the `fx_session_window` view relies on exactly
+that, carrying no grant of its own. The cover holds only while
+migrations keep being applied by the same role that ran `0002`; one run
+as a different role would create relations the reader cannot see, which
+surfaces as an empty panel. A
 consumer that only reads connects as that role rather than as the
 `dropset` owner, which turns the one-writer rule from an honor system
 into a privilege — a dashboard cannot write a table by accident. Grafana
@@ -634,7 +636,7 @@ for rendering, that document for intent.
 | `fx_rates` *(planned)*                                             | market-data         | Fiat-cross bars for the FX anchor leg                                                          |
 | `peg_rates` *(planned)*                                            | market-data         | Issuer / redemption reference rates                                                            |
 | `fx_events` *(deferred)*                                           | market-data         | Economic-calendar event times — see §13                                                        |
-| `fx_sessions` *(planned)*                                          | market-data         | Generated FX session / week instants (UTC)                                                     |
+| `fx_session_window` *(view)*                                       | migration (rule)    | Contiguous FX open / closed spans, read half-open — the session fence                          |
 | `basis_series` *(planned)*                                         | market-data         | Derived per-market basis series                                                                |
 | `vol_estimates` *(planned)*                                        | market-data         | Realized volatility by market and window                                                       |
 | `regimes` *(planned)*                                              | market-data         | Regime tags every other stat is sliced by                                                      |
