@@ -514,8 +514,8 @@ pub fn send_swap(
 }
 
 /// `swap` behind the SDK's [`SWAP_COMPUTE_UNIT_LIMIT`]: a bare `swap` gets
-/// only 200k CU with no budget instruction, which a walk over the whole
-/// book overruns.
+/// only 200k CU with no budget instruction, which the costliest take fits
+/// with little to spare.
 fn swap_with_compute_limit(swap: Instruction) -> [Instruction; 2] {
     [
         ComputeBudgetInstruction::set_compute_unit_limit(SWAP_COMPUTE_UNIT_LIMIT),
