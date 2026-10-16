@@ -200,6 +200,7 @@ pgrep
 pids
 pkill
 poppler
+ppid
 pptxgenjs
 prebuild
 predev

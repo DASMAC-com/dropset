@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word getppid
 """Drive iTerm2 through its Python API. The one owner of iTerm automation.
 
 Two callers, and both now want the same thing: `session_dispatch.py` (open a tab
@@ -11,6 +12,11 @@ So `open_tabs` is the only window-creating entry point. A `open_window` op used 
 sit beside it for the dispatcher, on a since-reversed rule that each session got
 its own window; the operator ruled on 2026-09-10 that a dispatch belongs in the
 dispatching session's window, which left that op with no caller and retired it.
+
+"The dispatching session's window" means the window HOLDING THE CALLER, found
+by its tty — never iTerm's current window. Those differ whenever the operator
+has moved focus elsewhere, and resolving the focused one put a twelve-verb
+dispatch into the window running the demo stack. See :func:`caller_tty`.
 
 WHY A SEPARATE PROCESS. `iterm2` is not stdlib, and the repo's tools convention
 is stdlib-only so nothing here needs a pip install. iTerm ships its own Python
@@ -34,6 +40,7 @@ was merely trying to open a tab.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -67,6 +74,11 @@ DRIVER_TIMEOUT_SECONDS = 60
 #: driver is killed mid-batch with tabs already open and typed into, while the
 #: caller is told the whole batch failed.
 PER_TAB_TIMEOUT_SECONDS = 10
+
+#: How far up the process tree :func:`caller_tty` climbs. The measured chain is
+#: two hops (tool -> the harness's shell -> `claude`); the bound only exists so
+#: a malformed `ps` answer cannot loop forever.
+CALLER_TTY_MAX_HOPS = 32
 
 
 class ItermUnavailable(Exception):
@@ -240,6 +252,53 @@ def _call(request: dict, *, timeout: int | None = None) -> dict:
     return response
 
 
+def _ps_row(pid: int) -> tuple[int, str] | None:
+    """``(parent pid, tty)`` for ``pid`` from `ps`, or None when it cannot say."""
+    try:
+        completed = subprocess.run(
+            ["ps", "-o", "ppid=,tty=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    fields = completed.stdout.split()
+    if len(fields) != 2 or not fields[0].isdigit():
+        return None
+    return int(fields[0]), fields[1]
+
+
+def caller_tty(pid: int | None = None, ps=_ps_row) -> str | None:
+    """The tty of the nearest ancestor that has one, as iTerm spells it.
+
+    Not the tty of a standard stream, and not ``/dev/tty``: a tool run from the
+    agent harness has pipes on all three streams and no controlling terminal
+    (opening ``/dev/tty`` fails with "Device not configured" — measured). The tty lives
+    further up, on the `claude` process the operator's tab is running, so this
+    climbs parents until `ps` reports one. iTerm's session ``tty`` variable is
+    the full ``/dev/ttysNNN`` path, while `ps` prints ``ttysNNN``, hence the
+    prefix. A process with no terminal reads ``??`` (``?`` on some systems).
+
+    Known limit: the FIRST ancestor with a tty wins. Under tmux or screen that
+    is the multiplexer's own pty, which no iTerm session holds, so the dispatch
+    falls back to the focused window — said on stderr by :func:`open_tabs`.
+    """
+    pid = os.getppid() if pid is None else pid
+    for _ in range(CALLER_TTY_MAX_HOPS):
+        row = ps(pid)
+        if row is None:
+            return None
+        parent, tty = row
+        if tty.strip("?-"):
+            return tty if tty.startswith("/dev/") else f"/dev/{tty}"
+        if parent <= 1 or parent == pid:
+            return None
+        pid = parent
+    return None
+
+
 def session_names() -> list[str]:
     """Every open iTerm session's name, across every window and tab.
 
@@ -249,8 +308,13 @@ def session_names() -> list[str]:
     return list(_call({"op": "session_names"}).get("names") or [])
 
 
-def open_tabs(commands: list[str]) -> list[str | None]:
-    """Open one tab per command in the current window, typing each. Returns ttys.
+def open_tabs(commands: list[str], *, tty: str | None = None) -> list[str | None]:
+    """Open one tab per command in the caller's window, typing each. Returns ttys.
+
+    The caller's window is the one with a session on ``tty``, which defaults to
+    :func:`caller_tty`. When no session matches (or no tty resolves) the driver
+    falls back to the current window and this says so on stderr: the tabs still
+    open, but possibly somewhere the operator is not looking.
 
     One driver round trip for the whole batch rather than one per tab: a
     per-command process would pay interpreter startup N times and interleave
@@ -292,11 +356,23 @@ def open_tabs(commands: list[str]) -> list[str | None]:
     """
     if not commands:
         return []
+    tty = caller_tty() if tty is None else tty
     response = _call(
-        {"op": "open_tabs", "commands": list(commands)},
+        {"op": "open_tabs", "commands": list(commands), "caller_tty": tty},
         # One round trip per tab against a GUI app, so the budget scales.
         timeout=DRIVER_TIMEOUT_SECONDS + PER_TAB_TIMEOUT_SECONDS * len(commands),
     )
+    # Before the refusal below, so a refused batch still says where its typed
+    # tabs landed.
+    window = response.get("window")
+    if window != "caller":
+        where = tty or "none resolved"
+        landed = "a new window" if window == "created" else "the focused window"
+        print(
+            f"iterm_api: no iTerm session holds the caller's tty ({where}), so "
+            f"the tabs opened in {landed} instead",
+            file=sys.stderr,
+        )
     # Enforced here rather than merely promised by the driver. The driver reports
     # not-ok when it could not type into a tab, but THIS is the half that is
     # testable, and it is also the half whose return type — a flat list of ttys —
@@ -404,6 +480,26 @@ async def _reselect(tab) -> bool:
     return True
 
 
+async def _caller_window(windows, tty):
+    """``(window, tab)`` holding the session on ``tty``, or ``(None, None)``.
+
+    The tab is the caller's own, so it doubles as the one focus is handed back
+    to. A session whose tty cannot be read is skipped rather than failing the
+    lookup: the fallback is a usable window, not a lost dispatch.
+    """
+    if not tty:
+        return None, None
+    for window in windows or []:
+        for tab in getattr(window, "tabs", None) or []:
+            for session in getattr(tab, "sessions", None) or []:
+                try:
+                    if await session.async_get_variable("tty") == tty:
+                        return window, tab
+                except Exception:  # noqa: BLE001 - one unreadable session
+                    continue
+    return None, None
+
+
 async def _open_and_type(window, original, commands, ttys, untyped) -> None:
     """The ``open_tabs`` loop: one tab per command, typed, focus handed back.
 
@@ -458,11 +554,20 @@ async def _driver_body(connection, request, result):  # pragma: no cover
 
     if op == "open_tabs":
         app = await iterm2.async_get_app(connection)
-        window = app.current_terminal_window
-        # Captured BEFORE any tab exists, since every create moves the
-        # selection. A window this process creates has nothing to restore.
-        original = window.current_tab if window is not None else None
+        window, original = await _caller_window(
+            app.terminal_windows, request.get("caller_tty")
+        )
+        result["window"] = "caller"
         if window is None:
+            # The fallback `open_tabs` reports on stderr. Resolving this window
+            # FIRST was the bug: it is whichever has focus, not the caller's.
+            window = app.current_terminal_window
+            result["window"] = "current"
+            # Captured BEFORE any tab exists, since every create moves the
+            # selection. A window this process creates has nothing to restore.
+            original = window.current_tab if window is not None else None
+        if window is None:
+            result["window"] = "created"
             window = await iterm2.Window.async_create(connection)
         if window is None:
             result["error"] = "iTerm2 refused to create a window"
