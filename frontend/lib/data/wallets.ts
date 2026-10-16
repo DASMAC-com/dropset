@@ -98,6 +98,17 @@ const matchesKey = (connector: WalletConnector, key: string): boolean =>
 const isKnown = (connector: WalletConnector): boolean =>
   KNOWN_WALLETS.some((w) => matchesKey(connector, w.key));
 
+// The name the Mobile Wallet Adapter registers under on Android
+// (`SolanaMobileWalletAdapterWalletName` in
+// @solana-mobile/wallet-standard-mobile, spelled out because that package is
+// only ever imported dynamically). It names the protocol, not anything a
+// stranger would recognize, so the picker relabels the row.
+const MWA_WALLET_NAME = "Mobile Wallet Adapter";
+export const MWA_ROW_LABEL = "Use installed wallet (Seeker / Android)";
+
+const isMwa = (connector: WalletConnector): boolean =>
+  connector.name === MWA_WALLET_NAME;
+
 /**
  * Merge the curated wallet list with the live discovered connectors into two
  * display groups. MetaMask's badge is gated on a real extension
@@ -140,21 +151,27 @@ export function buildPickerWallets(
   // since extension wallets only register once installed. Exclude anything
   // matching a curated entry so a duplicate (e.g. MetaMask extension + relay)
   // can't render twice.
-  const extras: PickerWallet[] = connectors
-    .filter((c) => !isKnown(c))
-    .map((c) => ({
-      id: c.id,
-      name: c.name,
-      icon: c.icon,
-      // No curated entry, so no canonical URL to promote to. Spelled "" like
-      // every other "nothing further to try" in this module rather than left
-      // absent, so the field is total across all three row shapes.
-      iconFallback: "",
-      detected: true,
-      connectorId: c.id,
-    }));
+  const extraRow = (c: WalletConnector): PickerWallet => ({
+    id: c.id,
+    name: isMwa(c) ? MWA_ROW_LABEL : c.name,
+    icon: c.icon,
+    // No curated entry, so no canonical URL to promote to. Spelled "" like
+    // every other "nothing further to try" in this module rather than left
+    // absent, so the field is total across all three row shapes.
+    iconFallback: "",
+    detected: true,
+    connectorId: c.id,
+  });
+  const extras = connectors.filter((c) => !isKnown(c));
 
-  const all = [...curated, ...extras];
+  // MWA leads: on Android it hands the connect to whichever wallet app is
+  // installed (on a Seeker or Saga, the built-in Seed Vault wallet, with no
+  // deep link), so it is the one row that works whatever the user has.
+  const all = [
+    ...extras.filter(isMwa).map(extraRow),
+    ...curated,
+    ...extras.filter((c) => !isMwa(c)).map(extraRow),
+  ];
   return {
     detected: all.filter((w) => w.detected),
     notDetected: all.filter((w) => !w.detected),
