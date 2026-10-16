@@ -609,7 +609,7 @@ point of sharing an instance.
 
 Unrestricted, but not anonymous: `dropset_ro` is a **read-only login**
 (`db-schema/migrations/0002_reader_role.sql`) holding `SELECT` on every
-relation — tables and views alike — plus `CONNECT` and schema `USAGE`,
+table and view — plus `CONNECT` and schema `USAGE`,
 and no write privilege of any kind. Relations a later migration adds are
 covered too, by `ALTER DEFAULT PRIVILEGES`, which in Postgres reaches
 views as well as tables; the `fx_session_window` view relies on exactly

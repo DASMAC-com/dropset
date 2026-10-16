@@ -25,8 +25,8 @@
 -- only when its bucket start falls inside a span reading 'open'. Read the span
 -- half-open (starts_at <= t < ends_at) -- BETWEEN would admit a bar stamped
 -- at the Friday close itself, because the closed span starts on that same
--- instant. A bar with no covering span is dropped as well, so past the view's
--- horizon the panel goes empty rather than silently reading unfenced.
+-- instant. A bar with no covering span is dropped as well, so outside the
+-- view's horizon the panel goes empty rather than silently reading unfenced.
 --
 -- This is what the weekday/weekend split's removal was waiting for. The split
 -- was ratified away because it decided nothing under a weekday-only posture
@@ -42,8 +42,10 @@
 -- FENCE BEFORE THE RETURNS, never after. Filtering the bars first leaves the
 -- last bar before the close and the first after the reopen two days apart,
 -- so the adjacent-bucket guard refuses the return that would span the
--- weekend. Fencing the returns instead would keep the bars but still need
--- the guard to catch that edge, for no gain.
+-- weekend. Fencing the returns instead would be wrong, not merely redundant:
+-- on a grid vendor the bar before the Sunday reopen is an out-of-session
+-- print exactly one bucket earlier, so the guard would pass that return and
+-- admit it at every reopen.
 --
 -- DO NOT REACH FOR `volume` AS THE DISCRIMINATOR, which is the obvious guess
 -- and is wrong. Measured across 14 days: every one of that vendor's 20,162 bars
@@ -62,7 +64,9 @@ WITH open_spans AS (
   FROM fx_session_window AS s
   WHERE
     s.state = 'open'
-    AND s.starts_at < $__timeTo()
+    -- <= because the bar filter below is inclusive at the window's top edge:
+    -- a bar stamped at the window's end on a reopen instant is still in it.
+    AND s.starts_at <= $__timeTo()
     AND s.ends_at > $__timeFrom()
 ),
 
