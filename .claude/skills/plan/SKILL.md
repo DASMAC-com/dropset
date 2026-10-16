@@ -166,8 +166,9 @@ python3 .claude/tools/lens_preamble.py --out <scratchpad>/fold.md \
   --no-facts
 ```
 
-then: list the pool with `trim_levers.py list`; run
-`/trim-context`; fold and kill with reasons, unasked (ruling 23);
+then: this is a fold, not a review — read-only toward the repo,
+but its Linear writes are the task; run `/trim-context`; fold and
+kill with reasons, unasked (ruling 23);
 at most 40 turns; the final message is the report, at most thirty
 lines. Add one paragraph only for what the operator said that the
 document does not hold. The fold's reads stay in its context.
@@ -175,10 +176,11 @@ document does not hold. The fold's reads stay in its context.
 **The bootstrap runs unattended until its one ask.** After the
 spawn, do every duty that asks nothing — the outstanding list,
 `fleet resume`, the overnight landing check, the board read, the
-Queue's honesty — then end the turn. The completion notification
-resumes it: say the report, record it under `In-session notes`,
-finish the board (the meta fold included, since the fold files
-into `Claude meta`), and stop at step 8's consolidated ask. A
+Queue's honesty — then end the turn (with no spawn, go straight
+on). The completion notification resumes it: say the report,
+record it under `In-session notes`, finish the board (the meta
+fold included, since the fold files into `Claude meta`), and stop
+at step 8's consolidated ask. A
 Discuss item or duty needing the operator's word joins that ask.
 While the fold runs, make **no** `Trim levers` or `Claude meta`
 write, and never fold levers by hand while a sub-agent can.
