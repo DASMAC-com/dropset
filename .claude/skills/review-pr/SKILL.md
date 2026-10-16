@@ -498,8 +498,9 @@ migrations or generation inputs, and whether it spans crates.
    no longer shows it as a **phantom deletion** (`history.md` →
    "Phantom deletion"), so drift blocks only when `base_drift` says
    it interacts: a file both sides changed, the lint config or a hook
-   script, a generation input both sides touched, or a new Rust test
-   reading a file this branch changed. Then rebase onto
+   script, a generation input both sides touched, or a Rust file the
+   base added or changed that reads a file this branch changed. Then
+   rebase onto
    `origin/<base>`, triage as in
    step 2, and re-run the tool. **A disjoint drift (`ready: true`,
    `base_fresh: false`) needs no rebase at all**: note "base moved;
