@@ -72,9 +72,10 @@ slot are deleted; Anza expects about a slot of outage but bounds none.
 The maker must not be live across that boundary. This pause is a
 planned stop, not an emergency one: kill only, never close or drain.
 
-1. **Before the activation epoch begins**, press `K` to kill the
-   ladders, then stop the maker. A passive ladder rests by design with
-   no staleness kill, so stopping the bot alone leaves it on the book.
+1. **Before the activation epoch begins**, stop the maker, then press
+   `K` to kill the ladders. Stopping the bot alone leaves its quotes on
+   the book until they expire; killing first lets a still-running maker
+   re-arm them.
 
 1. **Wait for the switch to complete.** Poll the new RPC method until it
    returns a certificate rather than `null`. A `-32601 Method not found`

@@ -421,7 +421,8 @@ pub use dropset_sdk::ladder::{LadderLevel, PASSIVE_FLIP_SPREAD_PPM, PASSIVE_SPAC
 /// quiet book, only on the 30 s [`StrategyConfig::ref_heartbeat`] — and
 /// its `quote_slot` comes from `get_slot()` at *finalized* commitment,
 /// which already lags the leader slot before the stamp transaction
-/// lands (by about a slot under Alpenglow; before it, by about 32). A 2-slot bound would be past before a taker could match it:
+/// lands (by about a slot under Alpenglow; before it, by about 32
+/// slots). A 2-slot bound would be past before a taker could match it:
 /// the slot conjunct would kill a level the wall conjunct was still
 /// holding open, taking the 40%-of-leg top tier dark on arrival. So the
 /// bound has to clear this bot's own re-stamp cadence, which is what
