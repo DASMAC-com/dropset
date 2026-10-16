@@ -97,6 +97,10 @@ pub struct MarketView {
     /// The leader of every live vault that holds no deposit yet — opened,
     /// never seeded (or drained back to empty).
     pub unseeded_leaders: Vec<Pubkey>,
+    /// Every live vault's seat — sector, number, leader and stake — as of the
+    /// poll. What the leader prompt previews against and the leader pane
+    /// shows; the prompt's Enter still re-reads fresh before sizing.
+    pub vaults: Vec<VaultSeat>,
     /// The `reference_price.quote_slot` of the first live vault — the one whose
     /// leader the accounts pane shows as the MM bot. Drives the leader's
     /// liveness (freshness against the poll's head slot). `None` when the market
@@ -477,6 +481,25 @@ pub struct VaultStake {
     pub leader_shares: u64,
     pub base_atoms: u64,
     pub quote_atoms: u64,
+    /// The skin-in-the-game floor, in ppm of the vault's shares, that a
+    /// leader withdraw must leave the leader above.
+    pub min_leader_share: u32,
+    /// Frozen or tombstoned — the program waives the floor on the exit path.
+    pub winding_down: bool,
+}
+
+impl VaultStake {
+    /// The stake fields of `v`, as of the read that decoded it.
+    pub fn of(v: &Vault) -> Self {
+        Self {
+            total_shares: v.total_shares.get(),
+            leader_shares: v.leader_shares.get(),
+            base_atoms: v.base_atoms.get(),
+            quote_atoms: v.quote_atoms.get(),
+            min_leader_share: v.min_leader_share.get(),
+            winding_down: v.frozen != 0 || v.tombstoned != 0,
+        }
+    }
 }
 
 /// Whether a vault holds any deposit at all. Shares, not just inventory, so a
@@ -527,12 +550,7 @@ pub fn vault_seats_fresh(
                 seq: v.seq.get(),
                 leader: Pubkey::new_from_array(v.leader),
                 seeded: is_seeded(v),
-                stake: VaultStake {
-                    total_shares: v.total_shares.get(),
-                    leader_shares: v.leader_shares.get(),
-                    base_atoms: v.base_atoms.get(),
-                    quote_atoms: v.quote_atoms.get(),
-                },
+                stake: VaultStake::of(v),
             })
             .collect(),
     ))
@@ -545,6 +563,15 @@ pub fn seats_led_by(seats: &[VaultSeat], leader: &Pubkey) -> Vec<VaultSeat> {
         .filter(|s| s.leader == *leader)
         .copied()
         .collect()
+}
+
+/// The one seat in `seats` that `leader` leads — `None` for none or several,
+/// the same refusal to guess the leader commands make.
+pub fn sole_seat_led_by(seats: &[VaultSeat], leader: &Pubkey) -> Option<VaultSeat> {
+    match seats_led_by(seats, leader)[..] {
+        [seat] => Some(seat),
+        _ => None,
+    }
 }
 
 /// Discover the localnet markets by scanning the program's owned accounts for
@@ -639,6 +666,7 @@ fn read_markets(
         // the first one (the vault the accounts pane surfaces as the MM bot),
         // its quote slot for the leader's liveness.
         let mut live_vaults: Vec<(u32, Pubkey)> = Vec::new();
+        let mut vaults: Vec<VaultSeat> = Vec::new();
         let mut unseeded_leaders: Vec<Pubkey> = Vec::new();
         let mut leader_quote_slot: Option<u32> = None;
         let mut leader_reference: Option<Price> = None;
@@ -655,6 +683,13 @@ fn read_markets(
                 }
             }
             live_vaults.push((idx, Pubkey::new_from_array(v.leader)));
+            vaults.push(VaultSeat {
+                idx,
+                seq: v.seq.get(),
+                leader: Pubkey::new_from_array(v.leader),
+                seeded: is_seeded(v),
+                stake: VaultStake::of(v),
+            });
             if !is_seeded(v) {
                 unseeded_leaders.push(Pubkey::new_from_array(v.leader));
             }
@@ -707,6 +742,7 @@ fn read_markets(
             quote_treasury_lamports: lamports(1),
             active_count: header.active_count.get(),
             live_vaults,
+            vaults,
             unseeded_leaders,
             leader_quote_slot,
             reference_price,
@@ -754,6 +790,7 @@ mod tests {
             quote_treasury_lamports: 0,
             active_count,
             live_vaults: Vec::new(),
+            vaults: Vec::new(),
             unseeded_leaders: Vec::new(),
             leader_quote_slot: None,
             reference_price: None,

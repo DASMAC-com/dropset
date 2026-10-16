@@ -606,8 +606,8 @@ impl App {
             KeyCode::Char('S') => self.flip_swap_side(),
             // Open the swap-amount input — subsequent keys edit the amount.
             KeyCode::Char('a') => self.begin_amount_input(),
-            // The leader's own stake on the selected market — each opens the
-            // amount → typed-`yes` prompt; the same entries are in the menu.
+            // The leader's own stake on the selected market — the runtime
+            // pane's `vault` group; each opens the amount → typed-`yes` prompt.
             KeyCode::Char('+') => self.run_action(Action::LeaderDeposit),
             KeyCode::Char('-') => self.run_action(Action::LeaderWithdraw),
             // The kill switch, one keystroke from its typed-`yes` prompt.
@@ -917,7 +917,7 @@ impl App {
     /// and the current amount kept.
     fn commit_amount_input(&mut self) {
         let buf = self.amount_input.take().unwrap_or_default();
-        match parse_swap_amount(&buf) {
+        match parse_positive_amount(&buf) {
             Some(units) => {
                 self.swap_units = units;
                 self.log(LogKind::Ok, format!("Swap amount set to {units} units."));
@@ -969,7 +969,7 @@ impl App {
     /// Size the leader ticket for `buf` against the selected market, reading
     /// its vault fresh, and move the prompt to the confirm stage.
     fn size_leader_ticket(&mut self, op: LeaderOp, buf: &str) {
-        let Some(amount) = parse_swap_amount(buf) else {
+        let Some(amount) = parse_positive_amount(buf) else {
             self.log(
                 LogKind::Err,
                 format!("{} — enter a positive whole number", op.label()),
@@ -1504,11 +1504,11 @@ fn now_hms() -> String {
     format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
-/// Parse a typed swap-amount buffer into whole units — `Some(n)` for a
+/// Parse a typed amount buffer — the swap units, a leader deposit's quote
+/// units or a withdraw's percentage — into a whole number: `Some(n)` for a
 /// positive integer, `None` for empty, zero, or non-numeric input (the caller
-/// keeps the current amount and warns). Split out so it's testable without an
-/// `App`.
-fn parse_swap_amount(buf: &str) -> Option<u64> {
+/// refuses it). Split out so it's testable without an `App`.
+fn parse_positive_amount(buf: &str) -> Option<u64> {
     match buf.parse::<u64>() {
         Ok(n) if n > 0 => Some(n),
         _ => None,
@@ -1613,7 +1613,7 @@ fn classify_basis_line(line: &str) -> Option<(String, BasisNote)> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_basis_line, hit_target, is_confirmation, parse_swap_amount, swap_side_label,
+        classify_basis_line, hit_target, is_confirmation, parse_positive_amount, swap_side_label,
         Action, BasisNote, SwapSide,
     };
     use ratatui::layout::Rect;
@@ -1692,17 +1692,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_swap_amount_accepts_positive_integers_only() {
-        assert_eq!(parse_swap_amount("10"), Some(10));
-        assert_eq!(parse_swap_amount("1"), Some(1));
-        assert_eq!(parse_swap_amount("1000000"), Some(1_000_000));
+    fn parse_positive_amount_accepts_positive_integers_only() {
+        assert_eq!(parse_positive_amount("10"), Some(10));
+        assert_eq!(parse_positive_amount("1"), Some(1));
+        assert_eq!(parse_positive_amount("1000000"), Some(1_000_000));
         // Leading zeros are fine — still a positive integer.
-        assert_eq!(parse_swap_amount("007"), Some(7));
+        assert_eq!(parse_positive_amount("007"), Some(7));
         // Empty, zero, and non-numeric input keep the current amount.
-        assert_eq!(parse_swap_amount(""), None);
-        assert_eq!(parse_swap_amount("0"), None);
-        assert_eq!(parse_swap_amount("00"), None);
-        assert_eq!(parse_swap_amount("12x"), None);
+        assert_eq!(parse_positive_amount(""), None);
+        assert_eq!(parse_positive_amount("0"), None);
+        assert_eq!(parse_positive_amount("00"), None);
+        assert_eq!(parse_positive_amount("12x"), None);
     }
 
     #[test]

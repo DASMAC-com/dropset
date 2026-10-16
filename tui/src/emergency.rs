@@ -145,12 +145,7 @@ fn sector_seats_led_by(sectors: &[Vault], leader: &Pubkey) -> Vec<SectorSeat> {
             frozen: v.frozen != 0,
             tombstoned: v.tombstoned != 0,
             quoting: v.profile.size_bps_sums() != (0, 0),
-            stake: VaultStake {
-                total_shares: v.total_shares.get(),
-                leader_shares: v.leader_shares.get(),
-                base_atoms: v.base_atoms.get(),
-                quote_atoms: v.quote_atoms.get(),
-            },
+            stake: VaultStake::of(v),
         })
         .collect()
 }
@@ -461,6 +456,7 @@ mod tests {
                 leader_shares: 1_000,
                 base_atoms: 10_000,
                 quote_atoms: 20_000,
+                ..VaultStake::default()
             },
         }
     }
@@ -585,6 +581,8 @@ mod tests {
                 leader_shares: 30,
                 base_atoms: 20,
                 quote_atoms: 10,
+                min_leader_share: 0,
+                winding_down: true,
             }
         );
     }
