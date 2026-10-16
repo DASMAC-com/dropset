@@ -103,8 +103,8 @@ impl VaultAccess for Market {
     fn leads_open_vault(&self, leader: &Address) -> bool {
         self.as_slice().iter().any(|v| {
             v.is_occupied()
-                && (v.frozen.get() || !v.tombstoned.get())
                 && address_eq(&v.leader, leader)
+                && (v.frozen.get() || !v.tombstoned.get())
         })
     }
 }
