@@ -660,10 +660,7 @@ fn read_markets(
             }
         }
 
-        // Reconstruct the resting book via the shared matcher (Buy ⇒ asks,
-        // Sell ⇒ bids) — the same levels a real swap would fill.
-        let asks = resting_levels(&view, SwapSide::Buy, now_slot, now_unix);
-        let bids = resting_levels(&view, SwapSide::Sell, now_slot, now_unix);
+        let (asks, bids) = book_sides(&view, now_slot, now_unix);
 
         // Open VaultDepositor PDAs for this market — discovered in the same
         // program-accounts scan, decoded for their (sector, owner).
@@ -721,6 +718,21 @@ fn read_markets(
         });
     }
     out
+}
+
+/// Reconstruct the resting book via the shared matcher (Buy ⇒ asks, Sell ⇒
+/// bids) — the same levels a real swap would fill. Each level's flipped
+/// counter arrives as an ordinary entry on the side opposite its array, so
+/// the pane renders a reverse-order ladder two-sided with no decode of its own.
+fn book_sides(
+    view: &SlabView,
+    now_slot: SlotTime,
+    now_unix: WallTime,
+) -> (Vec<BookLevel>, Vec<BookLevel>) {
+    (
+        resting_levels(view, SwapSide::Buy, now_slot, now_unix),
+        resting_levels(view, SwapSide::Sell, now_slot, now_unix),
+    )
 }
 
 #[cfg(test)]
@@ -1050,5 +1062,80 @@ mod tests {
         );
         // With no markets there is nothing to select.
         assert!(ready_state(Vec::new()).selected_market(0).is_none());
+    }
+
+    /// A partly flipped reverse-order vault rests on both sides of the pane:
+    /// a filled bid's proceeds quote as an ask, a filled ask's as a bid, and
+    /// a flip landing on an own level's price folds into that one row.
+    #[test]
+    fn a_partly_flipped_vault_renders_two_sided() {
+        use bytemuck::{bytes_of, cast_slice, Zeroable};
+        use dropset_sdk::layout::{
+            MarketHeader, Position, ReferencePrice, ACCOUNT_DISCRIMINATOR_LEN, NULL_SECTOR,
+            VAULT_ALIGN,
+        };
+        let px = |s: u32| Price::encode(s, 0).unwrap();
+        let pos = |s: u32, size: u64, flip: Option<(u32, u64)>| {
+            let (flip_price, flip_size) = flip.map_or((0, 0), |(f, n)| (px(f).as_u32(), n));
+            Position {
+                price: px(s).as_u32().into(),
+                size: size.into(),
+                expires_at_unix: u32::MAX.into(),
+                expires_at_slot: u32::MAX.into(),
+                flip_price: flip_price.into(),
+                flip_size: flip_size.into(),
+            }
+        };
+
+        let mut header = MarketHeader::zeroed();
+        header.head = 0u32.into();
+        header.tombstone_head = NULL_SECTOR.into();
+        header.free_head = NULL_SECTOR.into();
+        header.active_count = 1u32.into();
+        let mut v = Vault::zeroed();
+        v.next = NULL_SECTOR.into();
+        v.prev = NULL_SECTOR.into();
+        v.leader = [1u8; 32];
+        v.reference_price = ReferencePrice {
+            stamp: 1u64.into(),
+            price: px(10_850_000).as_u32().into(),
+            quote_slot: 1u32.into(),
+            quote_unix: 1u32.into(),
+        };
+        v.base_atoms = 10_000_000u64.into();
+        v.quote_atoms = 10_000_000u64.into();
+        // asks[0] has filled and flipped its proceeds to a bid at 1.0600;
+        // bids[0] has filled and flipped to an ask at asks[1]'s own price.
+        v.remaining.asks[0] = pos(10_904_000, 1_000_000, Some((10_600_000, 500_000)));
+        v.remaining.asks[1] = pos(11_393_000, 800_000, None);
+        v.remaining.bids[0] = pos(10_796_000, 2_000_000, Some((11_393_000, 300_000)));
+        let mut data = vec![0u8; ACCOUNT_DISCRIMINATOR_LEN];
+        data.extend_from_slice(bytes_of(&header));
+        data.extend_from_slice(&1u32.to_le_bytes());
+        while !data.len().is_multiple_of(VAULT_ALIGN) {
+            data.push(0);
+        }
+        data.extend_from_slice(cast_slice(&[v]));
+
+        let view = SlabView::load(&data).unwrap();
+        let (asks, bids) = book_sides(&view, SlotTime::new(2), WallTime::new(2));
+        let lines = crate::book::lines(&MarketView {
+            asks,
+            bids,
+            ..market(1, 1)
+        });
+        let rows: Vec<String> = lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        // header · two ask rows (highest first) · divider · two bid rows.
+        assert_eq!(rows.len(), 6, "{rows:#?}");
+        // The flipped 0.3 folds into the own 0.8 at 1.1393.
+        assert!(rows[1].contains("1.1393") && rows[1].contains("1.10"));
+        assert!(rows[2].contains("1.0904") && rows[2].contains("1.00"));
+        assert!(rows[3].contains("mid"));
+        assert!(rows[4].contains("1.0796"));
+        // asks[0]'s proceeds, resting as the deeper bid.
+        assert!(rows[5].contains("1.0600"));
     }
 }

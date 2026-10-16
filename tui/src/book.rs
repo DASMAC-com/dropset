@@ -10,6 +10,7 @@
 //! so drawing never touches the chain.
 
 use crate::accounts::MarketView;
+use dropset_sdk::layout::N_LEVELS;
 use dropset_sdk::matching::BookLevel;
 use dropset_sdk::price::Price;
 use dropset_util::decimals::atoms_ratio_to_human;
@@ -20,8 +21,11 @@ use ratatui::{
 
 /// Bar width in cells at full (max) depth.
 const BAR_WIDTH: usize = 16;
-/// Maximum price levels rendered per side.
-const MAX_LEVELS: usize = 8;
+/// Maximum price levels rendered per side: two per profile level, since a
+/// vault's flipped counters rest as ordinary levels on the side opposite their
+/// array, so once its far side flips one vault alone can put 2 × `N_LEVELS`
+/// prices on a side. One `N_LEVELS` would cut the deeper half.
+const MAX_LEVELS: usize = 2 * N_LEVELS;
 /// dropset-alpha's ask (sell) red and bid (buy) green.
 const ASK_COLOR: Color = Color::Rgb(240, 75, 90);
 const BID_COLOR: Color = Color::Rgb(30, 135, 80);
@@ -442,5 +446,22 @@ mod tests {
         assert_eq!(out.len(), 3);
         assert!(text(&out[1]).contains("1.50"));
         assert!(text(&out[2]).contains("best ask"));
+    }
+
+    /// A vault whose bids have flipped rests its own `N_LEVELS` asks plus
+    /// `N_LEVELS` flipped counters on the ask side; the pane shows all of
+    /// them and cuts only past that.
+    #[test]
+    fn a_fully_flipped_side_renders_every_level() {
+        let asks: Vec<BookLevel> = (0..=MAX_LEVELS)
+            .map(|i| lvl(0.74 + i as f64 * 0.001, 1_000_000))
+            .collect();
+        let out = lines(&market(asks, Vec::new()));
+        // header + 2 × N_LEVELS asks + a one-sided divider; the extra is cut.
+        assert_eq!(out.len(), 2 * N_LEVELS + 2);
+        // The deepest kept ask sits at the top; the cut one is absent.
+        assert!(text(&out[1]).contains(&fmt_price(0.74 + (MAX_LEVELS - 1) as f64 * 0.001)));
+        let cut = fmt_price(0.74 + MAX_LEVELS as f64 * 0.001);
+        assert!(out.iter().all(|l| !text(l).contains(&cut)));
     }
 }
