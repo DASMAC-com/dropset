@@ -6,7 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
+import { addDecoderSizePrefix, addEncoderSizePrefix, combineCodec, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getUtf8Decoder, getUtf8Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type Codec, type Decoder, type Encoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -17,19 +17,19 @@ export function getCreateVaultDiscriminatorBytes() { return fixEncoderSize(getBy
 export type CreateVaultInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountPayer extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountFeeMint extends string | AccountMeta<string> = "market.fee_config.mint", TAccountFeeTokenProgram extends string | AccountMeta<string> = "market.fee_config.token_program", TAccountPayerFeeSource extends string | AccountMeta<string> = string, TAccountRegistryFeeTreasury extends string | AccountMeta<string> = string, TAccountSystemProgram extends string | AccountMeta<string> = "11111111111111111111111111111111", TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
 Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountPayer extends string ? WritableSignerAccount<TAccountPayer> & AccountSignerMeta<TAccountPayer> : TAccountPayer, TAccountRegistry extends string ? ReadonlyAccount<TAccountRegistry> : TAccountRegistry, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, TAccountFeeMint extends string ? ReadonlyAccount<TAccountFeeMint> : TAccountFeeMint, TAccountFeeTokenProgram extends string ? ReadonlyAccount<TAccountFeeTokenProgram> : TAccountFeeTokenProgram, TAccountPayerFeeSource extends string ? WritableAccount<TAccountPayerFeeSource> : TAccountPayerFeeSource, TAccountRegistryFeeTreasury extends string ? WritableAccount<TAccountRegistryFeeTreasury> : TAccountRegistryFeeTreasury, TAccountSystemProgram extends string ? ReadonlyAccount<TAccountSystemProgram> : TAccountSystemProgram, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
 
-export type CreateVaultInstructionData = { discriminator: ReadonlyUint8Array; perfFeeRate: number; quoteAuthority: Address; allowOutsideDepositors: boolean; leaderOverride: Address;  };
+export type CreateVaultInstructionData = { discriminator: ReadonlyUint8Array; perfFeeRate: number; quoteAuthority: Address; allowOutsideDepositors: boolean; leaderOverride: Address; name: string;  };
 
-export type CreateVaultInstructionDataArgs = { perfFeeRate: number; quoteAuthority: Address; allowOutsideDepositors: boolean; leaderOverride: Address;  };
+export type CreateVaultInstructionDataArgs = { perfFeeRate: number; quoteAuthority: Address; allowOutsideDepositors: boolean; leaderOverride: Address; name: string;  };
 
-export function getCreateVaultInstructionDataEncoder(): FixedSizeEncoder<CreateVaultInstructionDataArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['perfFeeRate', getU32Encoder()], ['quoteAuthority', getAddressEncoder()], ['allowOutsideDepositors', getBooleanEncoder()], ['leaderOverride', getAddressEncoder()]]), (value) => ({ ...value, discriminator: CREATE_VAULT_DISCRIMINATOR }));
+export function getCreateVaultInstructionDataEncoder(): Encoder<CreateVaultInstructionDataArgs> {
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['perfFeeRate', getU32Encoder()], ['quoteAuthority', getAddressEncoder()], ['allowOutsideDepositors', getBooleanEncoder()], ['leaderOverride', getAddressEncoder()], ['name', addEncoderSizePrefix(getUtf8Encoder(), getU32Encoder())]]), (value) => ({ ...value, discriminator: CREATE_VAULT_DISCRIMINATOR }));
 }
 
-export function getCreateVaultInstructionDataDecoder(): FixedSizeDecoder<CreateVaultInstructionData> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['perfFeeRate', getU32Decoder()], ['quoteAuthority', getAddressDecoder()], ['allowOutsideDepositors', getBooleanDecoder()], ['leaderOverride', getAddressDecoder()]]);
+export function getCreateVaultInstructionDataDecoder(): Decoder<CreateVaultInstructionData> {
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['perfFeeRate', getU32Decoder()], ['quoteAuthority', getAddressDecoder()], ['allowOutsideDepositors', getBooleanDecoder()], ['leaderOverride', getAddressDecoder()], ['name', addDecoderSizePrefix(getUtf8Decoder(), getU32Decoder())]]);
 }
 
-export function getCreateVaultInstructionDataCodec(): FixedSizeCodec<CreateVaultInstructionDataArgs, CreateVaultInstructionData> {
+export function getCreateVaultInstructionDataCodec(): Codec<CreateVaultInstructionDataArgs, CreateVaultInstructionData> {
     return combineCodec(getCreateVaultInstructionDataEncoder(), getCreateVaultInstructionDataDecoder());
 }
 
@@ -81,6 +81,7 @@ perfFeeRate: CreateVaultInstructionDataArgs["perfFeeRate"];
 quoteAuthority: CreateVaultInstructionDataArgs["quoteAuthority"];
 allowOutsideDepositors: CreateVaultInstructionDataArgs["allowOutsideDepositors"];
 leaderOverride: CreateVaultInstructionDataArgs["leaderOverride"];
+name: CreateVaultInstructionDataArgs["name"];
 }
 
 export async function getCreateVaultInstructionAsync<TAccountPayer extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountPayerFeeSource extends string, TAccountRegistryFeeTreasury extends string, TAccountSystemProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CreateVaultAsyncInput<TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>, config: { programAddress: TProgramAddress } ): Promise<CreateVaultInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>> {
@@ -165,6 +166,7 @@ perfFeeRate: CreateVaultInstructionDataArgs["perfFeeRate"];
 quoteAuthority: CreateVaultInstructionDataArgs["quoteAuthority"];
 allowOutsideDepositors: CreateVaultInstructionDataArgs["allowOutsideDepositors"];
 leaderOverride: CreateVaultInstructionDataArgs["leaderOverride"];
+name: CreateVaultInstructionDataArgs["name"];
 }
 
 export function getCreateVaultInstruction<TAccountPayer extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountPayerFeeSource extends string, TAccountRegistryFeeTreasury extends string, TAccountSystemProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CreateVaultInput<TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>, config: { programAddress: TProgramAddress } ): CreateVaultInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram> {

@@ -26,4 +26,6 @@ pub struct FreezeVaultEvent {
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
     )]
     pub leader: Pubkey,
+    /// The name the freeze blanked (and locked); empty when it was unset.
+    pub name: String,
 }

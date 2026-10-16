@@ -123,4 +123,10 @@ pub enum DropsetError {
     EmptyLeg,
     #[msg("deposit is too small to mint one whole share")]
     ZeroShares,
+    #[msg("vault name must be at most 32 bytes of printable ASCII (0x20-0x7E)")]
+    InvalidVaultName,
+    #[msg("another vault on this market already carries that name (case-insensitive)")]
+    VaultNameTaken,
+    #[msg("vault name is locked by an admin")]
+    VaultNameLocked,
 }

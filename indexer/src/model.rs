@@ -52,6 +52,8 @@ pub fn event_market(e: &DropsetEvent) -> Option<String> {
         DropsetEvent::FreezeVault(x) => Some(pk(&x.market)),
         DropsetEvent::SetLeader(x) => Some(pk(&x.market)),
         DropsetEvent::SetQuoteAuthority(x) => Some(pk(&x.market)),
+        DropsetEvent::SetVaultName(x) => Some(pk(&x.market)),
+        DropsetEvent::OverrideVaultName(x) => Some(pk(&x.market)),
         DropsetEvent::Realize(x) => Some(pk(&x.market)),
         DropsetEvent::SetMinLeaderShare(x) => Some(pk(&x.market)),
         DropsetEvent::SetMarketFeeConfig(x) => Some(pk(&x.market)),
@@ -123,13 +125,15 @@ pub fn event_to_json(e: &DropsetEvent) -> Value {
             "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq), "leader": pk(&x.leader),
             "quote_authority": pk(&x.quote_authority), "perf_fee_rate": x.perf_fee_rate,
             "min_leader_share": x.min_leader_share, "allow_outside_depositors": x.allow_outside_depositors,
+            "name": x.name,
         }),
         DropsetEvent::CloseVault(x) => json!({
             "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq), "leader": pk(&x.leader),
-            "active_count_after": x.active_count_after,
+            "active_count_after": x.active_count_after, "name": x.name,
         }),
         DropsetEvent::FreezeVault(x) => json!({
             "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq), "leader": pk(&x.leader),
+            "name": x.name,
         }),
         DropsetEvent::SetLeader(x) => json!({
             "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq),
@@ -140,6 +144,15 @@ pub fn event_to_json(e: &DropsetEvent) -> Value {
             "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq),
             "leader": pk(&x.leader), "old_authority": pk(&x.old_authority),
             "new_authority": pk(&x.new_authority),
+        }),
+        DropsetEvent::SetVaultName(x) => json!({
+            "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq),
+            "leader": pk(&x.leader), "old_name": x.old_name, "new_name": x.new_name,
+        }),
+        DropsetEvent::OverrideVaultName(x) => json!({
+            "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq),
+            "admin": pk(&x.admin), "lock": x.lock,
+            "old_name": x.old_name, "new_name": x.new_name,
         }),
         DropsetEvent::Realize(x) => json!({
             "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq),
@@ -303,6 +316,9 @@ mod tests {
                 "u16" | "i16" => 2,
                 "u32" | "i32" => 4,
                 "u64" | "i64" => 8,
+                // A zeroed borsh `String` is its `u32` length prefix alone:
+                // the empty string.
+                "string" => 4,
                 other => panic!("unhandled IDL field type {other} — teach field_size about it"),
             };
         }
@@ -329,10 +345,11 @@ mod tests {
     /// Postgres test already drove a `DepositEvent` through it and passed.
     /// What was missing was an assertion about *completeness*.
     ///
-    /// Zero-filling is sound because every event body is fixed-size — no
-    /// `Vec` or `String` fields — and a zero byte is a valid `bool`,
-    /// pubkey and integer. That also makes this a size check: if the codec
-    /// and the IDL disagree on a field's width, the decode fails or leaves
+    /// Zero-filling is sound because a zero byte is a valid `bool`, pubkey
+    /// and integer, and four zero bytes are a valid borsh `String` (the
+    /// empty one) — the only variable-width field the events carry, the
+    /// vault names. That also makes this a size check: if the codec and
+    /// the IDL disagree on a field's width, the decode fails or leaves
     /// trailing bytes.
     #[test]
     fn every_event_payload_carries_every_field_the_idl_declares() {
@@ -417,7 +434,7 @@ mod tests {
                          makes a client parse what it could have read"
                     ),
                     "bool" => assert!(value.is_boolean(), "{name}.{field_name}"),
-                    "pubkey" => assert!(value.is_string(), "{name}.{field_name}"),
+                    "pubkey" | "string" => assert!(value.is_string(), "{name}.{field_name}"),
                     other => panic!("unhandled IDL width {other} on {name}.{field_name}"),
                 }
             }

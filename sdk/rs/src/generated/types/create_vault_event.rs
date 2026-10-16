@@ -34,4 +34,6 @@ pub struct CreateVaultEvent {
     pub perf_fee_rate: u32,
     pub min_leader_share: u32,
     pub allow_outside_depositors: bool,
+    /// The name stamped at creation; empty when unset.
+    pub name: String,
 }

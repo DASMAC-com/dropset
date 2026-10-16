@@ -28,4 +28,6 @@ pub struct CloseVaultEvent {
     pub leader: Pubkey,
     /// Active-DLL length after the move.
     pub active_count_after: u32,
+    /// The name the close blanked (and unlocked); empty when it was unset.
+    pub name: String,
 }

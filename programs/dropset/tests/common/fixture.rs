@@ -36,15 +36,16 @@ use dropset::{
         Deposit as DepositIx, DepositLeader as DepositLeaderIx,
         ForceWithdrawDepositor as ForceWithdrawDepositorIx,
         ForceWithdrawLeader as ForceWithdrawLeaderIx, FreezeVault as FreezeVaultIx, Init as InitIx,
+        OverrideVaultName as OverrideVaultNameIx,
         SetAllowOutsideDepositors as SetAllowOutsideDepositorsIx,
         SetDefaultFeeConfig as SetDefaultFeeConfigIx, SetLeader as SetLeaderIx,
         SetLiquidityProfile as SetLiquidityProfileIx, SetMarketFeeConfig as SetMarketFeeConfigIx,
         SetMaxPlatformFee as SetMaxPlatformFeeIx, SetMinLeaderShare as SetMinLeaderShareIx,
         SetOutsideDepositsApproved as SetOutsideDepositsApprovedIx,
         SetQuoteAuthority as SetQuoteAuthorityIx, SetReferencePrice as SetReferencePriceIx,
-        SetRegistryDefaults as SetRegistryDefaultsIx, SetTakerFee as SetTakerFeeIx, Swap as SwapIx,
-        SweepResidual as SweepResidualIx, Withdraw as WithdrawIx,
-        WithdrawLeader as WithdrawLeaderIx,
+        SetRegistryDefaults as SetRegistryDefaultsIx, SetTakerFee as SetTakerFeeIx,
+        SetVaultName as SetVaultNameIx, Swap as SwapIx, SweepResidual as SweepResidualIx,
+        Withdraw as WithdrawIx, WithdrawLeader as WithdrawLeaderIx,
     },
     Level, LiquidityProfile, MarketHeader, Price, RegistryHeader, Vault, VaultDepositorHeader,
 };
@@ -648,6 +649,26 @@ impl Fixture {
         allow_outside_depositors: bool,
         leader_override: Pubkey,
     ) -> Result<TransactionMetadata, String> {
+        self.create_vault_named_meta(
+            perf_fee_rate,
+            quote_authority,
+            allow_outside_depositors,
+            leader_override,
+            "",
+        )
+    }
+
+    /// Like [`Self::create_vault_meta`] but stamps `name`. The other
+    /// senders pass the empty (unset) name, which never collides, so a
+    /// test opening several vaults on one market needs no name plan.
+    pub fn create_vault_named_meta(
+        &mut self,
+        perf_fee_rate: u32,
+        quote_authority: Pubkey,
+        allow_outside_depositors: bool,
+        leader_override: Pubkey,
+        name: &str,
+    ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &CreateVaultIx {
@@ -655,6 +676,7 @@ impl Fixture {
                 quote_authority,
                 allow_outside_depositors,
                 leader_override,
+                name: name.to_owned(),
             }
             .data(),
             vec![
@@ -698,6 +720,7 @@ impl Fixture {
                 quote_authority,
                 allow_outside_depositors,
                 leader_override,
+                name: String::new(),
             }
             .data(),
             vec![
@@ -754,6 +777,7 @@ impl Fixture {
                 quote_authority,
                 allow_outside_depositors,
                 leader_override,
+                name: String::new(),
             }
             .data(),
             vec![
@@ -1897,6 +1921,59 @@ impl Fixture {
         send_ixn_meta(&mut self.svm, admin, ix)
     }
 
+    /// `set_vault_name` — the leader renames their vault. Yields the
+    /// transaction metadata so a test can decode `SetVaultNameEvent`.
+    pub fn set_vault_name_meta(
+        &mut self,
+        signer: &Keypair,
+        vault_idx: u32,
+        name: &str,
+    ) -> Result<TransactionMetadata, String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &SetVaultNameIx {
+                vault_idx,
+                name: name.to_owned(),
+            }
+            .data(),
+            vec![
+                AccountMeta::new_readonly(signer.pubkey(), true),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        send_ixn_meta(&mut self.svm, signer, ix)
+    }
+
+    /// `override_vault_name` — an admin rewrites a vault's name and sets
+    /// its lock. Yields the metadata for `OverrideVaultNameEvent`.
+    pub fn override_vault_name_meta(
+        &mut self,
+        admin: &Keypair,
+        vault_idx: u32,
+        name: &str,
+        lock: bool,
+    ) -> Result<TransactionMetadata, String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &OverrideVaultNameIx {
+                vault_idx,
+                name: name.to_owned(),
+                lock,
+            }
+            .data(),
+            vec![
+                AccountMeta::new_readonly(admin.pubkey(), true),
+                AccountMeta::new_readonly(self.registry, false),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        send_ixn_meta(&mut self.svm, admin, ix)
+    }
+
     /// `force_withdraw_depositor` — admin drains `owner`'s full position
     /// and closes their PDA, refunding its rent to `owner`. The admin
     /// pays for the owner's payout ATAs if `init_if_needed` allocates
@@ -2284,7 +2361,17 @@ impl Fixture {
     pub fn vault(&self, sector_idx: u32) -> Vault {
         let acct = self.svm.get_account(&self.market).expect("market");
         let off = vault_byte_offset(sector_idx);
-        bytemuck::pod_read_unaligned::<Vault>(&acct.data[off..off + core::mem::size_of::<Vault>()])
+        let v = bytemuck::pod_read_unaligned::<Vault>(
+            &acct.data[off..off + core::mem::size_of::<Vault>()],
+        );
+        // The reserve is always zero: no handler writes it, so a nonzero
+        // byte means a write overran its field. Checked on every read so
+        // each test that inspects a vault pins the invariant for free.
+        assert!(
+            v._reserved.iter().all(|&b| b == 0),
+            "vault {sector_idx} reserve is nonzero"
+        );
+        v
     }
 
     /// The market account's whole data region. Field accessors above cover

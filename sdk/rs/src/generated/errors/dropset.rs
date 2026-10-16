@@ -174,6 +174,15 @@ pub enum DropsetError {
     /// 6053 - deposit is too small to mint one whole share
     #[error("deposit is too small to mint one whole share")]
     ZeroShares = 0x17A5,
+    /// 6054 - vault name must be at most 32 bytes of printable ASCII (0x20-0x7E)
+    #[error("vault name must be at most 32 bytes of printable ASCII (0x20-0x7E)")]
+    InvalidVaultName = 0x17A6,
+    /// 6055 - another vault on this market already carries that name (case-insensitive)
+    #[error("another vault on this market already carries that name (case-insensitive)")]
+    VaultNameTaken = 0x17A7,
+    /// 6056 - vault name is locked by an admin
+    #[error("vault name is locked by an admin")]
+    VaultNameLocked = 0x17A8,
 }
 
 impl From<DropsetError> for solana_program_error::ProgramError {

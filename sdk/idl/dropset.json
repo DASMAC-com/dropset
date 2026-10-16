@@ -844,6 +844,10 @@
         {
           "name": "leader_override",
           "type": "pubkey"
+        },
+        {
+          "name": "name",
+          "type": "string"
         }
       ]
     },
@@ -1713,6 +1717,103 @@
         {
           "name": "fee_atoms",
           "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "override_vault_name",
+      "discriminator": [
+        32
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Registry admin — the only signer this lever accepts."
+          ],
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "docs": [
+            "Singleton registry, read for the admin-membership check."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market holding the target vault. `mut` for the name write."
+          ],
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "lock",
+          "type": "bool"
         }
       ]
     },
@@ -2761,6 +2862,76 @@
       ]
     },
     {
+      "name": "set_vault_name",
+      "discriminator": [
+        31
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "docs": [
+            "The vault's leader — the only signer this rename accepts."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "docs": [
+            "Market holding the target vault. `mut` for the name write."
+          ],
+          "writable": true
+        },
+        {
+          "name": "event_authority",
+          "docs": [
+            "CHECK: Only the event authority can invoke self-CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "CHECK: Kept for v1-compatible account ordering and IDL shape"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "vault_idx",
+          "type": "u32"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
       "name": "swap",
       "discriminator": [
         9
@@ -3535,6 +3706,19 @@
       ]
     },
     {
+      "name": "OverrideVaultNameEvent",
+      "discriminator": [
+        52,
+        183,
+        16,
+        189,
+        216,
+        50,
+        225,
+        21
+      ]
+    },
+    {
       "name": "PlatformFeeEvent",
       "discriminator": [
         188,
@@ -3662,6 +3846,19 @@
         48,
         172,
         41
+      ]
+    },
+    {
+      "name": "SetVaultNameEvent",
+      "discriminator": [
+        173,
+        137,
+        158,
+        125,
+        139,
+        38,
+        150,
+        212
       ]
     },
     {
@@ -3961,6 +4158,21 @@
       "code": 6053,
       "name": "ZeroShares",
       "msg": "deposit is too small to mint one whole share"
+    },
+    {
+      "code": 6054,
+      "name": "InvalidVaultName",
+      "msg": "vault name must be at most 32 bytes of printable ASCII (0x20-0x7E)"
+    },
+    {
+      "code": 6055,
+      "name": "VaultNameTaken",
+      "msg": "another vault on this market already carries that name (case-insensitive)"
+    },
+    {
+      "code": 6056,
+      "name": "VaultNameLocked",
+      "msg": "vault name is locked by an admin"
     }
   ],
   "types": [
@@ -4140,6 +4352,13 @@
               "Active-DLL length after the move."
             ],
             "type": "u32"
+          },
+          {
+            "name": "name",
+            "docs": [
+              "The name the close blanked (and unlocked); empty when it was unset."
+            ],
+            "type": "string"
           }
         ]
       }
@@ -4187,6 +4406,13 @@
           {
             "name": "allow_outside_depositors",
             "type": "bool"
+          },
+          {
+            "name": "name",
+            "docs": [
+              "The name stamped at creation; empty when unset."
+            ],
+            "type": "string"
           }
         ]
       }
@@ -4450,6 +4676,13 @@
           {
             "name": "leader",
             "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "docs": [
+              "The name the freeze blanked (and locked); empty when it was unset."
+            ],
+            "type": "string"
           }
         ]
       }
@@ -4636,6 +4869,54 @@
               "an overflow would permanently brick vault creation on the market."
             ],
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OverrideVaultNameEvent",
+      "docs": [
+        "Emitted by `override_vault_name` when an admin rewrites a vault's name",
+        "(blank allowed) and sets or clears its lock. See the spec's",
+        "**OverrideVaultName**."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "sector_idx",
+            "type": "u32"
+          },
+          {
+            "name": "vault_seq",
+            "docs": [
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "lock",
+            "docs": [
+              "The lock state written: `true` refuses the leader's `set_vault_name`."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "old_name",
+            "type": "string"
+          },
+          {
+            "name": "new_name",
+            "type": "string"
           }
         ]
       }
@@ -5123,6 +5404,47 @@
           {
             "name": "taker_fee",
             "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetVaultNameEvent",
+      "docs": [
+        "Emitted by `set_vault_name` when a leader renames their vault. A",
+        "rename to the incumbent emits `old_name == new_name`; treat that as a",
+        "no-op. See the spec's **SetVaultName**."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "sector_idx",
+            "type": "u32"
+          },
+          {
+            "name": "vault_seq",
+            "docs": [
+              "The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
+              "identifies a vault across sector reuse; `sector_idx` alone does not."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "leader",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_name",
+            "type": "string"
+          },
+          {
+            "name": "new_name",
+            "type": "string"
           }
         ]
       }

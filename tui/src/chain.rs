@@ -230,7 +230,7 @@ pub fn build_create_market_ix(
 /// alongside the admin signer, and anchor-v2 rejects the same key in two
 /// slots when one is mutable. `fee_source` likewise must differ from
 /// `payer`. `fee_mint` / `fee_token_program` are the market's stamped fee
-/// config.
+/// config. The vault is named by [`default_vault_name`].
 pub fn build_create_vault_ix(
     cluster: Cluster,
     payer: &Pubkey,
@@ -258,8 +258,20 @@ pub fn build_create_vault_ix(
         quote_authority: *leader,
         allow_outside_depositors: false,
         leader_override: *leader,
+        name: default_vault_name(leader),
     });
     retarget(cluster, ix)
+}
+
+/// The bootstrap vault's name: `Vault ` plus the leader key's first eight
+/// base58 characters. Names are unique per market, and the program allows
+/// one live vault per leader per market, so a leader-derived name is
+/// practically unique among bootstrap vaults. It is not guaranteed: any
+/// leader may already hold the same name through `set_vault_name`, which
+/// fails this create with `VaultNameTaken`. Base58 is printable ASCII,
+/// which the name rules require.
+pub fn default_vault_name(leader: &Pubkey) -> String {
+    format!("Vault {}", &leader.to_string()[..8])
 }
 
 /// `deposit_leader` — the vault's `leader` (signer) moves atoms from its own
@@ -1332,6 +1344,18 @@ mod tests {
         // Neither the fee source nor the leader may alias the admin payer.
         assert_ne!(payer, fee_source);
         assert_ne!(payer, leader);
+    }
+
+    /// The bootstrap name must pass the program's rules — at most 32 bytes
+    /// of printable ASCII — and differ between leaders.
+    #[test]
+    fn default_vault_name_is_valid_and_per_leader() {
+        let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let name = default_vault_name(&a);
+        assert!(name.len() <= 32);
+        assert!(name.bytes().all(|c| (0x20..=0x7E).contains(&c)));
+        assert_eq!(name, format!("Vault {}", &a.to_string()[..8]));
+        assert_ne!(name, default_vault_name(&b));
     }
 
     /// Pins the `deposit_leader` ordering against `fixture`'s

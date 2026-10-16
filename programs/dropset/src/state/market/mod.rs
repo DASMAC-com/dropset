@@ -15,6 +15,8 @@
 //!   flush ([`Vault::materialize_remaining`]).
 //! - `inventory` — the deposit's checked inventory + share mutation
 //!   ([`apply_deposit_inventory`]), which wraps no kernel.
+//! - `name` — [`Vault::name`] validation and packing
+//!   ([`encode_vault_name`]), shared by every name writer.
 //! - `quote_write` / `reference_price` / `liquidity_profile` — the two
 //!   solana-free quote-write kernels the hand-written sBPF entrypoint
 //!   mirrors ([`stamp_reference_price`], [`write_liquidity_profile`]), over
@@ -32,6 +34,7 @@ mod dll;
 mod inventory;
 mod layout;
 mod liquidity_profile;
+mod name;
 mod quote_write;
 mod reference_price;
 
@@ -41,6 +44,7 @@ pub use dll::*;
 pub use inventory::*;
 pub use layout::*;
 pub use liquidity_profile::*;
+pub use name::*;
 pub use quote_write::err;
 pub use reference_price::*;
 
@@ -59,6 +63,10 @@ pub use dropset_math_core::share::{compute_pro_rata_slice, isqrt_u128, min_leade
 /// the initial bring-up; widen once the matching engine lands and CU
 /// budgets are measured.
 pub const N_LEVELS: usize = 8;
+
+/// Byte width of [`Vault::name`]: at most this many printable-ASCII
+/// bytes, zero-padded.
+pub const VAULT_NAME_LEN: usize = 32;
 
 /// "Null" sentinel for sector-index pointers ([`MarketHeader::head`],
 /// [`Vault::next`], etc.). Sector indices are at most

@@ -94,16 +94,16 @@
 .equ MARKET_NONCE_OFF, MARKET_DATA_OFF + 8       # MarketHeader.nonce (u64)
 .equ MARKET_LEN_OFF, MARKET_DATA_OFF + 269       # slab len (u32)
 .equ SLAB_ITEMS_OFF, 276                         # first Vault, within data
-.equ VAULT_SIZE, 956
+.equ VAULT_SIZE, 1088
 .equ PROFILE_SIZE, 288                           # size_of::<LiquidityProfile>()
 
 # --- Vault field offsets ---
-.equ VAULT_QUOTE_AUTHORITY_OFF, 40
-.equ RP_STAMP_OFF, 80             # reference_price.stamp (u64)
-.equ RP_PRICE_OFF, 88             # reference_price.price (u32)
-.equ RP_QUOTE_SLOT_OFF, 92        # reference_price.quote_slot (u32)
-.equ RP_QUOTE_UNIX_OFF, 96        # reference_price.quote_unix (u32)
-.equ VAULT_PROFILE_OFF, 156       # profile (LiquidityProfile, PROFILE_SIZE B)
+.equ VAULT_QUOTE_AUTHORITY_OFF, 72
+.equ RP_STAMP_OFF, 112            # reference_price.stamp (u64)
+.equ RP_PRICE_OFF, 120            # reference_price.price (u32)
+.equ RP_QUOTE_SLOT_OFF, 124       # reference_price.quote_slot (u32)
+.equ RP_QUOTE_UNIX_OFF, 128       # reference_price.quote_unix (u32)
+.equ VAULT_PROFILE_OFF, 288       # profile (LiquidityProfile, PROFILE_SIZE B)
 
 # --- constants ---
 .equ FLUSH_BIT, 0x8000000000000000
@@ -274,10 +274,10 @@ quote_write:
     # shipping code — they need DIFFERENT precedents, so take them
     # separately.
     #
-    # The STORE is the weaker claim: &vault is only 4-aligned (VAULT_SIZE
-    # 956 and SLAB_ITEMS_OFF 276 are both ≡ 4 mod 8, so every even sector
-    # sits at a 4-aligned address), which means the stxdw at RP_STAMP_OFF
-    # above has always been a 4-aligned 8-byte store.
+    # The STORE is the weaker claim: &vault is only 4-aligned (SLAB_ITEMS_OFF
+    # 276 is ≡ 4 mod 8 and VAULT_SIZE 1088 ≡ 0 mod 8, so every sector sits at
+    # a 4-aligned address), which means the stxdw at RP_STAMP_OFF above has
+    # always been a 4-aligned 8-byte store.
     #
     # The LOAD is the novel one and that precedent does NOT cover it.
     # Instruction data starts 8-aligned, so [r2 + 9] is 1 mod 8 — a fully
