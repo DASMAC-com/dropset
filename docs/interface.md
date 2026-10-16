@@ -426,10 +426,8 @@ event codecs, PDA helpers). CI discipline:
   on `anchor-lang-v2` from the `anchor-next` branch, pinned by the lockfile.
   The **tooling** is the stable crates.io `anchor-cli`, pinned to an
   **exact** version (the Makefile's `ANCHOR_CLI_VERSION`, mirrored by the
-  Tests workflow's `ANCHOR_VERSION`), which builds an **sBPF v3** ELF by
-  default — held at v0 by the Makefile's `ANCHOR_BUILD_SBF_ARCH` until the
-  test runtime moves to Agave 4.x, since its Agave 3.1 cannot load that v3
-  ELF (the local validator is already on 4.3 or later). The exact pin
+  Tests workflow's `ANCHOR_VERSION`), which builds the **sBPF v3** ELF the
+  program ships as, its default. The exact pin
   rather than latest stable is deliberate: the CLI generates the IDL, so its
   version is part of the IDL-diff baseline below.
   The crate pin and the CLI pin move independently, and a crate bump is now
