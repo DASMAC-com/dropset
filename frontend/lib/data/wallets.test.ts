@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPickerWallets,
   KNOWN_WALLETS,
+  MWA_ROW_LABEL,
   walletIconFallbackUrl,
   walletIconUrl,
 } from "./wallets";
@@ -160,5 +161,32 @@ describe("buildPickerWallets in-app browser links", () => {
     const row = notDetected.find((w) => w.key === "coinbase");
     expect(row?.site).toBeDefined();
     expect(row?.browse).toBeUndefined();
+  });
+});
+
+// On Android the Mobile Wallet Adapter registers under the protocol's name,
+// which a stranger won't recognize, and it is the one row that connects
+// whatever wallet app is installed.
+describe("buildPickerWallets Mobile Wallet Adapter row", () => {
+  const mwa = connector(
+    "wallet-standard:mobile-wallet-adapter",
+    "Mobile Wallet Adapter",
+  );
+
+  it("relabels the row and pins it above every detected wallet", () => {
+    const { detected } = buildPickerWallets(
+      [
+        connector("phantom:std", "Phantom"),
+        connector("brave:std", "Brave Wallet"),
+        mwa,
+      ],
+      false,
+    );
+    expect(detected.map((w) => w.name)).toEqual([
+      MWA_ROW_LABEL,
+      "Phantom",
+      "Brave Wallet",
+    ]);
+    expect(detected[0]?.connectorId).toEqual(mwa.id);
   });
 });

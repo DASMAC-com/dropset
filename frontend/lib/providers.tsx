@@ -9,13 +9,7 @@ import {
   watchWalletStandardConnectors,
 } from "@solana/client";
 import { SolanaProvider } from "@solana/react-hooks";
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
   CLUSTER,
@@ -29,6 +23,7 @@ import {
   createAppRuntime,
   providerNote,
 } from "./rpc";
+import { type ClientSwap, createClientSwap } from "./wallet/clientSwap";
 import { registerMetaMaskConnect } from "./wallet/metamask";
 import { registerMobileWalletAdapter } from "./wallet/mobile";
 
@@ -98,14 +93,6 @@ const makeClient = (connectors: readonly WalletConnector[]): SolanaClient => {
   return client;
 };
 
-// Identity of a connector set, independent of object identity, so we only
-// rebuild the client when the available wallets actually change.
-const connectorKey = (connectors: readonly WalletConnector[]): string =>
-  connectors
-    .map((c) => c.id)
-    .sort()
-    .join("|");
-
 // Safe to swap the client without yanking a live connection out from under
 // the user. We can't use useWallet() here (Providers sits above the provider
 // that supplies its context), so read the wallet status off the client store
@@ -123,78 +110,27 @@ export function Providers({ children }: { children: ReactNode }) {
   // immutable, the wallet stays both absent from the picker and impossible to
   // connect (connect() throws "No wallet connector registered") until a manual
   // refresh. So we watch the registry and rebuild the client whenever the set
-  // of available wallets changes.
+  // of available wallets changes, when it is safe to (see clientSwap.ts).
   const [client, setClient] = useState<SolanaClient>(() =>
     makeClient(getWalletStandardConnectors()),
   );
-  const clientRef = useRef(client);
-  const keyRef = useRef(connectorKey(client.connectors.all));
-  // A connector set seen while it wasn't safe to swap the client, deferred
-  // until it is (see below). Null when there's nothing pending.
-  const pendingRef = useRef<readonly WalletConnector[] | null>(null);
-  // True while a connect is in flight. Swapping the client then races the
-  // connect: the session lands on the old (destroyed) client while React
-  // rebinds to the new one, so the header stays "Connect Wallet" until a
-  // reload. The picker drives this flag via the `walletConnecting` event,
-  // asserted synchronously from the row's click through connect-resolution
-  // (the SolanaClient store doesn't reliably hold "connecting" during an
-  // external SDK's relay flow, so isIdle alone wouldn't keep us safe past
-  // `modal.close()`). An open-but-idle picker deliberately does NOT block a
-  // swap: a wallet that registers late (MetaMask's relay on mobile) must
-  // reach the picker the user is already looking at, or its row renders as
-  // an install link until the picker is closed and reopened.
-  const connectingRef = useRef(false);
+  const swapRef = useRef<ClientSwap<WalletConnector> | null>(null);
+  if (!swapRef.current) {
+    swapRef.current = createClientSwap(client, {
+      make: makeClient,
+      isIdle,
+      commit: (next, inEffect) => {
+        if (inEffect) setClient(next);
+        else flushSync(() => setClient(next));
+      },
+    });
+  }
+  const swap = swapRef.current;
 
-  // `inEffect` marks a call made from inside a React effect, where React is
-  // already committing and `flushSync` would only warn. Every other caller is
-  // a registry or store callback outside React, where a plain `setClient`
-  // would leave the destroyed client rendered for a moment: a picker row
-  // clicked in that window connects on the dead client, so there the swap
-  // commits synchronously.
-  const rebuild = useCallback(
-    (connectors: readonly WalletConnector[], inEffect: boolean) => {
-      // SolanaProvider only auto-destroys a client it created itself; since
-      // we pass our own, tear down the superseded one so its RPC
-      // subscriptions don't leak.
-      const next = makeClient(connectors);
-      clientRef.current.destroy();
-      clientRef.current = next;
-      keyRef.current = connectorKey(connectors);
-      if (inEffect) setClient(next);
-      else flushSync(() => setClient(next));
-    },
-    [],
+  // The picker asserts this from a row's click until the connect settles.
+  useAppEvent("walletConnecting", (connecting) =>
+    swap.setConnecting(connecting),
   );
-
-  // Safe to swap the client only when no connection is live or in flight.
-  const canRebuild = useCallback(
-    (c: SolanaClient): boolean => isIdle(c) && !connectingRef.current,
-    [],
-  );
-
-  // Apply a deferred connector set when it becomes safe. Reads clientRef so it
-  // always targets the live client; callable from the store subscription and
-  // the connect-settled event.
-  const flush = useCallback(
-    (inEffect: boolean) => {
-      const c = clientRef.current;
-      const pending = pendingRef.current;
-      if (!pending || !canRebuild(c)) return;
-      pendingRef.current = null;
-      // The set may have churned back to what this client already has (a
-      // wallet unregistered then re-registered); skip the needless rebuild.
-      if (connectorKey(pending) === connectorKey(c.connectors.all)) return;
-      rebuild(pending, inEffect);
-    },
-    [canRebuild, rebuild],
-  );
-
-  useAppEvent("walletConnecting", (connecting) => {
-    connectingRef.current = connecting;
-    // Connect just settled → a connector set deferred while it was in flight
-    // can now be applied (if the wallet is also idle).
-    if (!connecting) flush(false);
-  });
 
   useEffect(() => {
     // Register MetaMask Connect and, on Android, the Mobile Wallet Adapter so
@@ -209,30 +145,20 @@ export function Providers({ children }: { children: ReactNode }) {
     // again on every register/unregister; it returns the unsubscribe. Only
     // that first emission runs inside this effect.
     let subscribing = true;
-    const unsubscribe = watchWalletStandardConnectors((connectors) => {
-      const nextKey = connectorKey(connectors);
-      if (nextKey === keyRef.current) return;
-      keyRef.current = nextKey;
-      // Rebuilding the client drops any active connection and races an
-      // in-flight connect, so only swap when it's safe; otherwise defer until
-      // the wallet is idle and no connect is in flight.
-      if (canRebuild(clientRef.current)) {
-        rebuild(connectors, subscribing);
-      } else {
-        pendingRef.current = connectors;
-      }
-    });
+    const unsubscribe = watchWalletStandardConnectors((connectors) =>
+      swap.onConnectors(connectors, subscribing),
+    );
     subscribing = false;
     return unsubscribe;
-  }, [canRebuild, rebuild]);
+  }, [swap]);
 
   useEffect(() => {
     // Flush a deferred connector set once it's safe. Re-subscribes whenever
     // `client` changes so we're always watching the live store.
-    const unsubscribe = client.store.subscribe(() => flush(false));
-    flush(true);
+    const unsubscribe = client.store.subscribe(() => swap.flush(false));
+    swap.flush(true);
     return unsubscribe;
-  }, [client, flush]);
+  }, [client, swap]);
 
   return <SolanaProvider client={client}>{children}</SolanaProvider>;
 }
