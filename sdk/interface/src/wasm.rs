@@ -1,11 +1,13 @@
 //! WASM bindings (`wasm` feature) for the TypeScript client — the book
 //! simulator half.
 //!
-//! Exposes [`simulate_swap`] (quote a take) and [`resting_book`] (read the
-//! depth the take would fill against) over a market account's raw bytes, so
-//! the TS client runs the engine's own slab decode and book reconstruction
-//! instead of a hand-mirror. Both entry points share `MarketView::load` and
-//! `matching`, which is the point: the byte offsets in `layout.rs` and the
+//! Exposes [`simulate_swap`] (quote a take), [`resting_book`] (read the
+//! depth the take would fill against) and [`vaults`] (read the active
+//! vaults' reserves, shares and deposit flags) over a market account's raw
+//! bytes, so the TS client runs the engine's own slab decode and book
+//! reconstruction instead of a hand-mirror. All three share
+//! `MarketView::load`, and the two book entry points share `matching` too,
+//! which is the point: the byte offsets in `layout.rs` and the
 //! materialization rules in `matching.rs` exist in exactly one place, and
 //! the TS client cannot drift from them because it does not restate them.
 //! The `Price` codec bindings are forwarded from `dropset-math-core` (whose
@@ -213,6 +215,132 @@ pub fn resting_book(
         ask_prices,
         ask_sizes,
     })
+}
+
+/// The market's active vaults, as parallel flat arrays in active-list order.
+///
+/// Same boundary shape as [`RestingBook`]: one typed array per field rather
+/// than one JS object per vault. `indices[i]` is vault `i`'s sector index —
+/// the `vault_idx` the `deposit` / `withdraw` instructions take — and every
+/// other array is aligned with it. `leaders` is the 32-byte leader keys
+/// concatenated, so vault `i`'s key is `leaders[32 * i .. 32 * i + 32]`.
+#[wasm_bindgen]
+pub struct VaultSlab {
+    indices: Vec<u32>,
+    seq_numbers: Vec<u64>,
+    leaders: Vec<u8>,
+    base_atoms: Vec<u64>,
+    quote_atoms: Vec<u64>,
+    total_shares: Vec<u64>,
+    leader_shares: Vec<u64>,
+    min_leader_shares: Vec<u32>,
+    frozen: Vec<u8>,
+    allow_outside_depositors: Vec<u8>,
+    outside_deposits_approved: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl VaultSlab {
+    /// Sector indices (the instructions' `vault_idx`).
+    #[wasm_bindgen(getter)]
+    pub fn indices(&self) -> Vec<u32> {
+        self.indices.clone()
+    }
+    /// Per-market vault numbers: with the market, each vault's identity.
+    #[wasm_bindgen(getter)]
+    pub fn seq_numbers(&self) -> Vec<u64> {
+        self.seq_numbers.clone()
+    }
+    /// Leader keys, 32 bytes per vault, concatenated.
+    #[wasm_bindgen(getter)]
+    pub fn leaders(&self) -> Vec<u8> {
+        self.leaders.clone()
+    }
+    /// Base reserve in atoms.
+    #[wasm_bindgen(getter)]
+    pub fn base_atoms(&self) -> Vec<u64> {
+        self.base_atoms.clone()
+    }
+    /// Quote reserve in atoms.
+    #[wasm_bindgen(getter)]
+    pub fn quote_atoms(&self) -> Vec<u64> {
+        self.quote_atoms.clone()
+    }
+    /// Shares outstanding, the leader's included.
+    #[wasm_bindgen(getter)]
+    pub fn total_shares(&self) -> Vec<u64> {
+        self.total_shares.clone()
+    }
+    /// The leader's own shares.
+    #[wasm_bindgen(getter)]
+    pub fn leader_shares(&self) -> Vec<u64> {
+        self.leader_shares.clone()
+    }
+    /// Floor on the leader's share of the vault, in ppm.
+    #[wasm_bindgen(getter)]
+    pub fn min_leader_shares(&self) -> Vec<u32> {
+        self.min_leader_shares.clone()
+    }
+    /// `1` when the vault is frozen.
+    #[wasm_bindgen(getter)]
+    pub fn frozen(&self) -> Vec<u8> {
+        self.frozen.clone()
+    }
+    /// `1` when the leader has opted in to outside depositors.
+    #[wasm_bindgen(getter)]
+    pub fn allow_outside_depositors(&self) -> Vec<u8> {
+        self.allow_outside_depositors.clone()
+    }
+    /// `1` when the admin has approved outside deposits.
+    #[wasm_bindgen(getter)]
+    pub fn outside_deposits_approved(&self) -> Vec<u8> {
+        self.outside_deposits_approved.clone()
+    }
+}
+
+/// Read a market account's active vaults from its raw data (including the
+/// 8-byte discriminator) — the slab half a vaults UI needs, decoded by the
+/// same `MarketView::load` the engine's mirror uses.
+///
+/// A corrupt active list is an error rather than a truncated list: the
+/// program would abort over it, so a UI must not offer a deposit into it.
+#[wasm_bindgen]
+pub fn vaults(market_data: &[u8]) -> Result<VaultSlab, JsError> {
+    let view = MarketView::load(market_data)
+        .map_err(|e| JsError::new(&alloc_fmt(format_args!("{e:?}"))))?;
+    if view.active_dll_is_corrupt() {
+        return Err(JsError::new("corrupt active vault list"));
+    }
+    let n = view.active_vaults().count();
+    let mut slab = VaultSlab {
+        indices: Vec::with_capacity(n),
+        seq_numbers: Vec::with_capacity(n),
+        leaders: Vec::with_capacity(32 * n),
+        base_atoms: Vec::with_capacity(n),
+        quote_atoms: Vec::with_capacity(n),
+        total_shares: Vec::with_capacity(n),
+        leader_shares: Vec::with_capacity(n),
+        min_leader_shares: Vec::with_capacity(n),
+        frozen: Vec::with_capacity(n),
+        allow_outside_depositors: Vec::with_capacity(n),
+        outside_deposits_approved: Vec::with_capacity(n),
+    };
+    for (idx, v) in view.active_vaults() {
+        slab.indices.push(idx);
+        slab.seq_numbers.push(v.seq.get());
+        slab.leaders.extend_from_slice(&v.leader);
+        slab.base_atoms.push(v.base_atoms.get());
+        slab.quote_atoms.push(v.quote_atoms.get());
+        slab.total_shares.push(v.total_shares.get());
+        slab.leader_shares.push(v.leader_shares.get());
+        slab.min_leader_shares.push(v.min_leader_share.get());
+        slab.frozen.push(v.frozen);
+        slab.allow_outside_depositors
+            .push(v.allow_outside_depositors);
+        slab.outside_deposits_approved
+            .push(v.outside_deposits_approved);
+    }
+    Ok(slab)
 }
 
 fn alloc_fmt(args: core::fmt::Arguments<'_>) -> String {

@@ -7,17 +7,21 @@ import {
 } from "./currencies";
 import vaultsData from "./vaults.json";
 
-// Per-leader liquidity vaults, grouped by FX trading pair (e.g. EUR/USD). This
-// module is the single seam between the UI and the vault data source: today it
-// parses a committed mock fixture (vaults.json), but every consumer reads
-// through the exports below, so swapping in a real indexer fetch later is a
-// one-file change with no component edits. See docs/architecture.md → Vault.
+// Per-leader liquidity vaults, grouped by FX trading pair (e.g. EUR/USD). Two
+// sources share the shapes below: the live vaults read straight off each
+// market account (lib/data/chainVaults.ts, no indexer), and the committed mock
+// fixture (vaults.json), shown only behind NEXT_PUBLIC_SHOW_MOCK_VAULTS. The
+// fixture's pair list doubles as the roster of markets the live read probes.
+// See docs/architecture.md → Vault.
 
 // As stored in vaults.json. `base`/`quote` are stablecoin symbols (e.g.
 // "EURC", "USDC") resolved against currencies.ts at load. Token order encodes
 // the FX convention: USD is the quote for EUR/GBP/AUD (base = EURC, quote =
 // USDC) and the base for JPY/CHF/CAD (base = USDC, quote = GYEN).
 export type VaultRaw = {
+  // The vault's id: a pubkey on a mock row, but `market:seq` on a live one
+  // (chainVaultId), since a live vault is a market sector with no account of
+  // its own. Use it only as a key, never as an address.
   vaultPubkey: string;
   leader: string;
   volume24h: number;
@@ -36,7 +40,9 @@ export type VaultRaw = {
   // guards (see docs/architecture.md → Skin-in-the-game floor).
   leaderShares: number;
   // Current value-per-share (`L / totalShares`), the FX-neutral skill index a
-  // position's `entryVps` is marked against for "yield since open".
+  // position's `entryVps` is marked against for "yield since open". Only its
+  // ratio to `entryVps` means anything: a mock row is normalized near 1.0, a
+  // live row is in the program's raw units (chainVaults.ts → chainVps).
   vps: number;
   minLeaderSharePpm: number;
   frozen: boolean;
@@ -52,7 +58,34 @@ export type MarketRaw = {
   vaults: VaultRaw[];
 };
 
-export type Vault = VaultRaw;
+export type Vault = Omit<VaultRaw, "volume24h" | "fees24h"> & {
+  // A live vault's on-chain identity, null on a mock row. `index` is the
+  // sector the deposit / withdraw instructions and the depositor PDA take;
+  // `seq` is the stable per-market vault number.
+  chain: { index: number; seq: bigint } | null;
+  // Null on a live vault: 24h volume and fees need history, which no single
+  // account read can give.
+  volume24h: number | null;
+  fees24h: number | null;
+  // The leader's opt-in to outside depositors. Outside deposits need it, the
+  // admin's `outsideDepositsApproved`, and an unfrozen vault — see depositsOpen.
+  allowOutsideDepositors: boolean;
+  // The vault's display name. Always null until the program stores one; the
+  // dialog already renders it when present.
+  name: string | null;
+};
+
+// Why an outside deposit into `v` is closed, or null when it is open. Mirrors
+// the program's own gate in `deposit` (frozen, then the leader's opt-in, then
+// the admin's approval), so the page never offers a deposit it would reject.
+export const depositClosedReason = (v: Vault): string | null => {
+  if (v.frozen) return "This vault is frozen, so deposits are closed.";
+  if (!v.allowOutsideDepositors)
+    return "This vault's leader isn't taking outside deposits.";
+  if (!v.outsideDepositsApproved)
+    return "Outside deposits aren't approved for this vault yet.";
+  return null;
+};
 
 // A single stablecoin market (e.g. EURC/USDC) with its pair resolved to ISO
 // currency codes + flag/icon URLs. `label` is the stablecoin pair, e.g.
@@ -87,8 +120,8 @@ export type FxPairGroup = {
   label: string;
   nickname: string;
   vaults: GroupedVault[];
-  volume24h: number;
-  fees24h: number;
+  volume24h: number | null;
+  fees24h: number | null;
   tvl: number;
   apr24h: number | null;
 };
@@ -110,10 +143,35 @@ const resolveCurrency = (
   const code = currencyForStablecoin(symbol);
   if (!code) {
     throw new Error(
-      `vaults.json market ${marketPubkey} references stablecoin "${symbol}" that isn't in currencies.json — every vault pair must resolve to a known currency.`,
+      `vault market ${marketPubkey} references stablecoin "${symbol}" that isn't in currencies.json — every vault pair must resolve to a known currency.`,
     );
   }
   return code;
+};
+
+// A market with its pair resolved to ISO currencies and flags — shared by the
+// mock loader and the live read, which differ only in where `vaults` came from.
+export const resolveVaultMarket = (
+  marketPubkey: string,
+  base: string,
+  quote: string,
+  fxMove24h: number,
+  vaults: Vault[],
+): VaultMarket => {
+  const baseCurrency = resolveCurrency(base, marketPubkey);
+  const quoteCurrency = resolveCurrency(quote, marketPubkey);
+  return {
+    marketPubkey,
+    base,
+    quote,
+    baseCurrency,
+    quoteCurrency,
+    baseFlagUrl: currencyFlagUrl(baseCurrency),
+    quoteFlagUrl: currencyFlagUrl(quoteCurrency),
+    label: `${base} / ${quote}`,
+    fxMove24h,
+    vaults,
+  };
 };
 
 // Hard-coded mock USD prices per token symbol, used only for the dialog's
@@ -134,31 +192,37 @@ const TOKEN_USD: Record<string, number> = {
 // USD price for a stablecoin symbol; defaults to 1 (a USD stable) when unknown.
 export const tokenUsdPrice = (symbol: string): number => TOKEN_USD[symbol] ?? 1;
 
-const VAULT_MARKETS: VaultMarket[] = (
+// The fixture predates the leader opt-in flag, so a mock vault reads the
+// admin approval as both halves of the gate — the two only differ on-chain.
+export const MOCK_VAULT_MARKETS: VaultMarket[] = (
   vaultsData as { markets: MarketRaw[] }
-).markets.map((m) => {
-  const baseCurrency = resolveCurrency(m.base, m.marketPubkey);
-  const quoteCurrency = resolveCurrency(m.quote, m.marketPubkey);
-  return {
-    marketPubkey: m.marketPubkey,
-    base: m.base,
-    quote: m.quote,
-    baseCurrency,
-    quoteCurrency,
-    baseFlagUrl: currencyFlagUrl(baseCurrency),
-    quoteFlagUrl: currencyFlagUrl(quoteCurrency),
-    label: `${m.base} / ${m.quote}`,
-    fxMove24h: m.fxMove24h,
-    vaults: m.vaults,
-  };
-});
+).markets.map((m) =>
+  resolveVaultMarket(
+    m.marketPubkey,
+    m.base,
+    m.quote,
+    m.fxMove24h,
+    m.vaults.map((v) => ({
+      ...v,
+      chain: null,
+      allowOutsideDepositors: v.outsideDepositsApproved,
+      name: null,
+    })),
+  ),
+);
+
+// The stablecoin pairs the live read probes for a market, in the fixture's
+// orientation. The live read takes each market's real orientation from the
+// chain, so this order is only the roster's.
+export const VAULT_PAIR_ROSTER: { base: string; quote: string }[] =
+  MOCK_VAULT_MARKETS.map((m) => ({ base: m.base, quote: m.quote }));
 
 // The vault market for an unordered stablecoin pair. A vault's base/quote are
 // fixed by the market, not by which way a taker trades — so USDC→EURC and
 // EURC→USDC both map to the one EURC/USDC market. Returns null when no vault
 // lists the pair (callers use this to hide a "view vaults" affordance).
 export const findVaultMarket = (a: string, b: string): VaultMarket | null =>
-  VAULT_MARKETS.find(
+  MOCK_VAULT_MARKETS.find(
     (m) => (m.base === a && m.quote === b) || (m.base === b && m.quote === a),
   ) ?? null;
 
@@ -166,8 +230,13 @@ export const findVaultMarket = (a: string, b: string): VaultMarket | null =>
 // Returns null when TVL is zero so the UI can render an em dash rather than a
 // divide-by-zero Infinity.
 const DAYS_PER_YEAR = 365;
-const annualizedYield = (fees24h: number, tvl: number): number | null =>
-  tvl > 0 ? (fees24h / tvl) * DAYS_PER_YEAR : null;
+const annualizedYield = (fees24h: number | null, tvl: number): number | null =>
+  fees24h !== null && tvl > 0 ? (fees24h / tvl) * DAYS_PER_YEAR : null;
+
+// Sum of 24h figures that may be unknown: null only when every term is, so a
+// group mixing live and mock rows still totals the rows that have a figure.
+const sumKnown = (a: number | null, b: number | null): number | null =>
+  a === null ? b : b === null ? a : a + b;
 
 export const vaultApr24h = (v: Vault): number | null =>
   annualizedYield(v.fees24h, v.tvl);
@@ -197,8 +266,8 @@ export const leaderShareFraction = (v: Vault): number | null =>
 // The vault's current QUOTE-denominated value per share: the pooled reserves
 // valued in quote tokens (`baseReserve · ratio + quoteReserve`) over total
 // shares. This is the unit a deposit's quote value is minted against — distinct
-// from `Vault.vps`, which is a normalized FX-neutral skill index (~1.0) used
-// only for "yield since open". null for an empty vault.
+// from `Vault.vps`, an FX-neutral skill index read only as a ratio to a
+// position's `entryVps` for "yield since open". null for an empty vault.
 export const vaultValuePerShare = (v: Vault): number | null => {
   const ratio = vaultReserveRatio(v);
   if (ratio === null || v.totalShares <= 0) return null;
@@ -238,10 +307,10 @@ export const mockMaxDeposit = (v: Vault): { base: number; quote: number } => ({
 // and the vaults within. Derived from the resolved currency codes so USDC- and
 // USDT-quoted markets fold into one "EUR / USD" group. Pair-level metrics sum
 // across every vault; APR is TVL-weighted (total fees / total TVL).
-export const VAULT_FX_GROUPS: FxPairGroup[] = (() => {
+export const groupVaultMarkets = (markets: VaultMarket[]): FxPairGroup[] => {
   const order: string[] = [];
   const groups = new Map<string, FxPairGroup>();
-  for (const m of VAULT_MARKETS) {
+  for (const m of markets) {
     const key = `${m.baseCurrency}/${m.quoteCurrency}`;
     let group = groups.get(key);
     if (!group) {
@@ -256,8 +325,8 @@ export const VAULT_FX_GROUPS: FxPairGroup[] = (() => {
         label: `${m.baseCurrency} / ${m.quoteCurrency}`,
         nickname: FX_NICKNAMES[`${m.baseCurrency}/${m.quoteCurrency}`] ?? "",
         vaults: [],
-        volume24h: 0,
-        fees24h: 0,
+        volume24h: null,
+        fees24h: null,
         tvl: 0,
         apr24h: null,
       };
@@ -266,8 +335,8 @@ export const VAULT_FX_GROUPS: FxPairGroup[] = (() => {
     }
     for (const vault of m.vaults) {
       group.vaults.push({ market: m, vault });
-      group.volume24h += vault.volume24h;
-      group.fees24h += vault.fees24h;
+      group.volume24h = sumKnown(group.volume24h, vault.volume24h);
+      group.fees24h = sumKnown(group.fees24h, vault.fees24h);
       group.tvl += vault.tvl;
     }
   }
@@ -279,12 +348,10 @@ export const VAULT_FX_GROUPS: FxPairGroup[] = (() => {
     if (!g) throw new Error(`unreachable: group ${key} missing`);
     return g;
   });
-})();
+};
 
-// Flat list of every vault across all pairs, for the ungrouped table view.
-export const ALL_VAULTS: GroupedVault[] = VAULT_FX_GROUPS.flatMap(
-  (g) => g.vaults,
-);
+export const MOCK_VAULT_FX_GROUPS: FxPairGroup[] =
+  groupVaultMarkets(MOCK_VAULT_MARKETS);
 
 // Sortable numeric metrics. APR can be null (zero TVL); callers push nulls to
 // the bottom regardless of sort direction. "position" is the connected user's

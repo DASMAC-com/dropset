@@ -52,6 +52,65 @@ export class RestingBook {
 }
 
 /**
+ * The market's active vaults, as parallel flat arrays in active-list order.
+ *
+ * Same boundary shape as [`RestingBook`]: one typed array per field rather
+ * than one JS object per vault. `indices[i]` is vault `i`'s sector index —
+ * the `vault_idx` the `deposit` / `withdraw` instructions take — and every
+ * other array is aligned with it. `leaders` is the 32-byte leader keys
+ * concatenated, so vault `i`'s key is `leaders[32 * i .. 32 * i + 32]`.
+ */
+export class VaultSlab {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * `1` when the leader has opted in to outside depositors.
+     */
+    readonly allow_outside_depositors: Uint8Array;
+    /**
+     * Base reserve in atoms.
+     */
+    readonly base_atoms: BigUint64Array;
+    /**
+     * `1` when the vault is frozen.
+     */
+    readonly frozen: Uint8Array;
+    /**
+     * Sector indices (the instructions' `vault_idx`).
+     */
+    readonly indices: Uint32Array;
+    /**
+     * The leader's own shares.
+     */
+    readonly leader_shares: BigUint64Array;
+    /**
+     * Leader keys, 32 bytes per vault, concatenated.
+     */
+    readonly leaders: Uint8Array;
+    /**
+     * Floor on the leader's share of the vault, in ppm.
+     */
+    readonly min_leader_shares: Uint32Array;
+    /**
+     * `1` when the admin has approved outside deposits.
+     */
+    readonly outside_deposits_approved: Uint8Array;
+    /**
+     * Quote reserve in atoms.
+     */
+    readonly quote_atoms: BigUint64Array;
+    /**
+     * Per-market vault numbers: with the market, each vault's identity.
+     */
+    readonly seq_numbers: BigUint64Array;
+    /**
+     * Shares outstanding, the leader's included.
+     */
+    readonly total_shares: BigUint64Array;
+}
+
+/**
  * `quote / price`, rounded toward zero (saturated to u64).
  */
 export function price_base_for_quote(bits: number, quote: bigint): bigint;
@@ -118,12 +177,23 @@ export function resting_book(market_data: Uint8Array, now_slot: number, now_unix
  */
 export function simulate_swap(market_data: Uint8Array, side: number, amount_in: bigint, limit_price_bits: number, now_slot: number, now_unix: number, platform_fee_bps: number): Quote;
 
+/**
+ * Read a market account's active vaults from its raw data (including the
+ * 8-byte discriminator) — the slab half a vaults UI needs, decoded by the
+ * same `MarketView::load` the engine's mirror uses.
+ *
+ * A corrupt active list is an error rather than a truncated list: the
+ * program would abort over it, so a UI must not offer a deposit into it.
+ */
+export function vaults(market_data: Uint8Array): VaultSlab;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_quote_free: (a: number, b: number) => void;
     readonly __wbg_restingbook_free: (a: number, b: number) => void;
+    readonly __wbg_vaultslab_free: (a: number, b: number) => void;
     readonly quote_fee_amount: (a: number) => bigint;
     readonly quote_in_amount: (a: number) => bigint;
     readonly quote_legs: (a: number) => number;
@@ -135,6 +205,18 @@ export interface InitOutput {
     readonly restingbook_bid_prices: (a: number) => [number, number];
     readonly restingbook_bid_sizes: (a: number) => [number, number];
     readonly simulate_swap: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number, h: number) => [number, number, number];
+    readonly vaults: (a: number, b: number) => [number, number, number];
+    readonly vaultslab_allow_outside_depositors: (a: number) => [number, number];
+    readonly vaultslab_base_atoms: (a: number) => [number, number];
+    readonly vaultslab_frozen: (a: number) => [number, number];
+    readonly vaultslab_indices: (a: number) => [number, number];
+    readonly vaultslab_leader_shares: (a: number) => [number, number];
+    readonly vaultslab_leaders: (a: number) => [number, number];
+    readonly vaultslab_min_leader_shares: (a: number) => [number, number];
+    readonly vaultslab_outside_deposits_approved: (a: number) => [number, number];
+    readonly vaultslab_quote_atoms: (a: number) => [number, number];
+    readonly vaultslab_seq_numbers: (a: number) => [number, number];
+    readonly vaultslab_total_shares: (a: number) => [number, number];
     readonly price_base_for_quote: (a: number, b: bigint) => bigint;
     readonly price_decode: (a: number) => number;
     readonly price_encode: (a: number) => number;

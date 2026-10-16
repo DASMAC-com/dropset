@@ -17,6 +17,7 @@ import {
 } from "@/lib/data/pnl";
 import type { VaultPosition } from "@/lib/data/positions";
 import {
+  depositClosedReason,
   leaderFloorFraction,
   maxOutsideDepositValue,
   mockMaxDeposit,
@@ -48,6 +49,11 @@ const fmtBalance = (n: number, symbol: string): string =>
         maximumFractionDigits: stablecoinDecimals(symbol),
       })
     : "—";
+
+// Shown on a live vault whose program gate is open: the page reads the vault
+// but cannot yet send its deposit or withdraw transaction.
+const LIVE_ACTIONS_PENDING =
+  "Deposits and withdrawals from this page are coming soon.";
 
 const detailRow = (label: ReactNode, node: ReactNode) => (
   <div className="flex items-center justify-between">
@@ -237,11 +243,14 @@ function WithdrawSection({
   market,
   vault,
   position,
+  pendingReason,
   onSubmit,
 }: {
   market: VaultMarket;
   vault: Vault;
   position: VaultPosition;
+  // Why the withdraw can be previewed but not sent; null when it can be.
+  pendingReason: string | null;
   onSubmit: () => void;
 }) {
   // Blank by default — the user picks a percentage (or Max) before anything is
@@ -320,7 +329,7 @@ function WithdrawSection({
       <button
         type="button"
         onClick={onSubmit}
-        disabled={fraction <= 0}
+        disabled={fraction <= 0 || pendingReason !== null}
         className="h-10 rounded-md border border-border bg-background px-3 font-medium text-foreground text-sm transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
       >
         {fraction <= 0
@@ -329,6 +338,9 @@ function WithdrawSection({
             ? "Withdraw all"
             : `Withdraw ${percentLabel}`}
       </button>
+      {pendingReason && (
+        <p className="text-center text-muted-fg text-xs">{pendingReason}</p>
+      )}
     </div>
   );
 }
@@ -484,7 +496,12 @@ export function VaultActionDialog({
   const base = Number.parseFloat(baseAmount);
   const quote = Number.parseFloat(quoteAmount);
   const validBasket = base > 0 && quote > 0;
-  const depositBlocked = vault.frozen || !vault.outsideDepositsApproved;
+  // A live vault's deposit and withdraw transactions aren't wired yet, so its
+  // forms stay read-only rather than "submitting" by closing the dialog. The
+  // program's own gate comes first: it says why deposits are closed.
+  const pendingReason = vault.chain ? LIVE_ACTIONS_PENDING : null;
+  const closedReason = depositClosedReason(vault) ?? pendingReason;
+  const depositBlocked = closedReason !== null;
   const depositLabel = position ? "Top off" : "Open position";
 
   // Quote-denominated value of the entered basket (the base leg marked at the
@@ -557,6 +574,14 @@ export function VaultActionDialog({
           </div>
 
           <div className="flex flex-col gap-4 p-5">
+            {/* The vault's name, once the program stores one: one line, as
+                text (React escapes it), never a link. Renders nothing while
+                `name` is null, which it is until the field exists. */}
+            {vault.name && (
+              <p className="truncate font-medium text-foreground text-sm">
+                {vault.name}
+              </p>
+            )}
             <div className="flex items-center gap-2 text-muted-fg text-xs">
               <span>Leader</span>
               <span className="font-mono text-foreground">
@@ -661,11 +686,9 @@ export function VaultActionDialog({
                 >
                   {depositLabel}
                 </button>
-                {depositBlocked && (
+                {closedReason && (
                   <p className="text-center text-muted-fg text-xs">
-                    {vault.frozen
-                      ? "This vault is frozen, so deposits are closed."
-                      : "Outside deposits aren't approved for this vault yet."}
+                    {closedReason}
                   </p>
                 )}
               </>
@@ -675,6 +698,7 @@ export function VaultActionDialog({
                   market={market}
                   vault={vault}
                   position={position}
+                  pendingReason={pendingReason}
                   onSubmit={() => onOpenChange(false)}
                 />
               )
