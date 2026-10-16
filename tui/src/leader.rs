@@ -19,7 +19,9 @@ use crate::cluster::Cluster;
 use crate::job::Logger;
 use crate::market::{self, MintKey, PairConfig};
 use anyhow::{bail, Context, Result};
-use dropset_math_core::share::{compute_pro_rata_slice, single_leg_basket, BasketError};
+use dropset_math_core::share::{
+    compute_pro_rata_slice, min_leader_share_ok, single_leg_basket, BasketError,
+};
 use solana_client::rpc_client::RpcClient;
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
@@ -161,10 +163,10 @@ fn plan_lines(
                 human(quote_out, qd),
                 human(min_quote_out, qd)
             ),
-            // Two program rules the read cannot settle: fee shares minted by
-            // the realize that runs first stay behind even at 100%, and an
-            // active vault refuses a draw below the min-leader-share floor.
-            "note    pre-fee-realize; the min-leader-share floor may refuse".to_string(),
+            // The one program rule the read cannot settle: fee shares minted
+            // by the realize that runs first stay behind even at 100%. The
+            // min-leader-share floor was checked when the ticket was sized.
+            "note    pre-fee-realize; fee shares stay behind even at 100%".to_string(),
         ],
     }
 }
@@ -201,12 +203,8 @@ pub fn plan_deposit(stake: &VaultStake, quote_in: u64) -> Result<Plan> {
     if quote_in == 0 {
         bail!("deposit at least one quote atom");
     }
-    // `single_leg_basket` divides by the leg's inventory unguarded, and a
-    // taker sell can drain a seeded vault's quote leg to exactly zero — so
-    // this refusal is what stops a panic on the event loop.
-    if stake.quote_atoms == 0 {
-        bail!("the vault holds no quote — a quote-leg top-up cannot size against it");
-    }
+    // A taker sell can drain a seeded vault's quote leg to exactly zero; the
+    // kernel refuses that as `EmptyLeg` rather than dividing by it.
     let (shares_out, base_in, quote_final) = single_leg_basket(
         stake.total_shares,
         stake.base_atoms,
@@ -237,9 +235,21 @@ pub fn plan_withdraw(stake: &VaultStake, percent: u64) -> Result<Plan> {
     if stake.leader_shares == 0 || stake.total_shares == 0 {
         bail!("the leader holds no shares in this vault");
     }
-    let shares_in = (u128::from(stake.leader_shares) * u128::from(percent) / 100) as u64;
+    let shares_in = shares_for(stake, percent);
     if shares_in == 0 {
         bail!("{percent}% of the stake rounds to zero shares");
+    }
+    if !leaves_floor(stake, shares_in) {
+        match max_withdraw_percent(stake) {
+            Some(max) => bail!(
+                "{percent}% leaves the leader under the {} floor — at most {max}%",
+                ppm_percent(stake.min_leader_share)
+            ),
+            None => bail!(
+                "the leader is at the {} floor — no withdraw fits",
+                ppm_percent(stake.min_leader_share)
+            ),
+        }
     }
     let (base_out, quote_out) = compute_pro_rata_slice(
         shares_in,
@@ -253,6 +263,147 @@ pub fn plan_withdraw(stake: &VaultStake, percent: u64) -> Result<Plan> {
         quote_out,
         min_base_out: less_tolerance(base_out),
         min_quote_out: less_tolerance(quote_out),
+    })
+}
+
+/// `percent` of the leader's shares, floored.
+fn shares_for(stake: &VaultStake, percent: u64) -> u64 {
+    (u128::from(stake.leader_shares) * u128::from(percent) / 100) as u64
+}
+
+/// Whether burning `shares_in` of the leader's shares keeps the program's
+/// skin-in-the-game floor — the `withdraw_leader` check, mirrored so the
+/// prompt refuses before `yes` rather than the program after it. Waived on a
+/// winding-down vault, and for a draw that empties the vault outright.
+fn leaves_floor(stake: &VaultStake, shares_in: u64) -> bool {
+    let new_total = stake.total_shares.saturating_sub(shares_in);
+    stake.winding_down
+        || new_total == 0
+        || min_leader_share_ok(
+            stake.leader_shares.saturating_sub(shares_in),
+            new_total,
+            stake.min_leader_share,
+        )
+}
+
+/// The largest whole percentage the floor allows, or `None` when none does.
+fn max_withdraw_percent(stake: &VaultStake) -> Option<u64> {
+    (1..=100).rev().find(|&p| {
+        let shares = shares_for(stake, p);
+        shares > 0 && leaves_floor(stake, shares)
+    })
+}
+
+/// A ppm share as a two-place percentage — exact, no float.
+fn ppm_percent(ppm: u32) -> String {
+    format!("{}.{:02}%", ppm / 10_000, (ppm % 10_000) / 100)
+}
+
+/// One mint's display facts: its ticker and decimals.
+pub type Leg<'a> = (&'a str, u8);
+
+/// The quote-terms value of `(base, quote)` atoms at `price` (human quote
+/// per base), or `None` without a price. A float, and labelled `≈` wherever
+/// shown: it is a reading aid, never a bound.
+fn value_in_quote(
+    base: u64,
+    quote: u64,
+    (_, bd): Leg,
+    (_, qd): Leg,
+    price: Option<f64>,
+) -> Option<f64> {
+    let p = price?;
+    let scale = |atoms: u64, d: u8| atoms as f64 / 10f64.powi(i32::from(d));
+    Some(scale(base, bd) * p + scale(quote, qd))
+}
+
+/// `base + quote`, in human units, with the `≈` quote total when priced.
+fn basket_text(base: u64, quote: u64, b: Leg, q: Leg, price: Option<f64>) -> String {
+    let mut s = format!(
+        "{} {} + {} {}",
+        human(base, b.1),
+        b.0,
+        human(quote, q.1),
+        q.0
+    );
+    if let Some(v) = value_in_quote(base, quote, b, q, price) {
+        s.push_str(&format!("  \u{2248} {v:.2} {}", q.0));
+    }
+    s
+}
+
+/// What the leader holds in `seat`'s vault, for the prompt header and the
+/// leader pane: its number, shares and share of the vault (with the floor),
+/// and the leader's pro-rata slice of the inventory, valued at `price`.
+pub fn holding_lines(
+    seq: u64,
+    stake: &VaultStake,
+    b: Leg,
+    q: Leg,
+    price: Option<f64>,
+) -> Vec<String> {
+    let pct = if stake.total_shares == 0 {
+        0.0
+    } else {
+        stake.leader_shares as f64 * 100.0 / stake.total_shares as f64
+    };
+    let (base, quote) = compute_pro_rata_slice(
+        stake.leader_shares,
+        stake.total_shares,
+        stake.base_atoms,
+        stake.quote_atoms,
+    );
+    vec![
+        format!(
+            "vault #{seq} · shares {} of {} ({pct:.2}%) · floor {}",
+            stake.leader_shares,
+            stake.total_shares,
+            ppm_percent(stake.min_leader_share)
+        ),
+        format!("stake    {}", basket_text(base, quote, b, q, price)),
+    ]
+}
+
+/// The live preview under the amount being typed, sized with the same
+/// planners against the poll's `stake` — `Err` carries the refusal, to show
+/// in place of the amounts. `amount` is `None` while the buffer is empty.
+pub fn preview(
+    op: LeaderOp,
+    stake: &VaultStake,
+    amount: Option<u64>,
+    b: Leg,
+    q: Leg,
+    price: Option<f64>,
+) -> Option<Result<Vec<String>, String>> {
+    let amount = amount?;
+    let planned = match op {
+        LeaderOp::Deposit => 10u64
+            .checked_pow(u32::from(q.1))
+            .and_then(|scale| amount.checked_mul(scale))
+            .ok_or_else(|| anyhow::anyhow!("amount overflows the quote mint's atoms"))
+            .and_then(|atoms| plan_deposit(stake, atoms)),
+        LeaderOp::Withdraw => plan_withdraw(stake, amount),
+    };
+    Some(match planned {
+        Ok(Plan::Deposit {
+            quote_in,
+            base_in,
+            shares_out,
+            ..
+        }) => Ok(vec![format!(
+            "preview  +{}, ~+{shares_out} shares",
+            basket_text(base_in, quote_in, b, q, price)
+        )]),
+        Ok(Plan::Withdraw {
+            shares_in,
+            base_out,
+            quote_out,
+            ..
+        }) => Ok(vec![
+            format!("preview  -{shares_in} shares"),
+            format!("         {}", basket_text(base_out, quote_out, b, q, price)),
+        ]),
+        Err(e) => Err(format!("{e:#}")),
     })
 }
 
@@ -488,7 +639,67 @@ mod tests {
             leader_shares: leader,
             base_atoms: base,
             quote_atoms: quote,
+            ..VaultStake::default()
         }
+    }
+
+    #[test]
+    fn withdraw_refuses_a_draw_under_the_floor_and_names_the_most_allowed() {
+        // Leader holds 600 of 1,000 with a 50% floor: burning s leaves
+        // (600 - s) / (1,000 - s) >= 1/2, so s <= 200 — a third of the stake.
+        let s = VaultStake {
+            min_leader_share: 500_000,
+            ..stake(1_000, 600, 10_000, 20_000)
+        };
+        assert!(plan_withdraw(&s, 33).is_ok());
+        let err = plan_withdraw(&s, 34).unwrap_err();
+        assert_eq!(
+            format!("{err}"),
+            "34% leaves the leader under the 50.00% floor — at most 33%"
+        );
+        // Winding down waives it, as the program does.
+        let s = VaultStake {
+            winding_down: true,
+            ..s
+        };
+        assert!(plan_withdraw(&s, 100).is_ok());
+        // A sole holder's full exit empties the vault and is always allowed.
+        let sole = VaultStake {
+            min_leader_share: 500_000,
+            ..stake(1_000, 1_000, 10_000, 20_000)
+        };
+        assert!(plan_withdraw(&sole, 100).is_ok());
+    }
+
+    #[test]
+    fn the_preview_sizes_as_typed_and_shows_a_refusal_in_place() {
+        let s = stake(1_000, 600, 10_000_000, 20_000_000);
+        let (b, q) = (("EURC", 6), ("USDC", 6));
+        assert_eq!(preview(LeaderOp::Withdraw, &s, None, b, q, None), None);
+        assert_eq!(
+            preview(LeaderOp::Withdraw, &s, Some(50), b, q, Some(1.5)),
+            Some(Ok(vec![
+                "preview  -300 shares".to_string(),
+                "         3.000000 EURC + 6.000000 USDC  \u{2248} 10.50 USDC".to_string(),
+            ]))
+        );
+        let refused = preview(LeaderOp::Withdraw, &s, Some(101), b, q, None);
+        assert!(matches!(refused, Some(Err(e)) if e.contains("between 1 and 100")));
+    }
+
+    #[test]
+    fn holdings_show_the_leaders_slice_and_its_value() {
+        let s = VaultStake {
+            min_leader_share: 200_000,
+            ..stake(1_000, 600, 10_000_000, 20_000_000)
+        };
+        assert_eq!(
+            holding_lines(3, &s, ("EURC", 6), ("USDC", 6), Some(2.0)),
+            [
+                "vault #3 · shares 600 of 1000 (60.00%) · floor 20.00%",
+                "stake    6.000000 EURC + 12.000000 USDC  \u{2248} 24.00 USDC",
+            ]
+        );
     }
 
     #[test]
@@ -559,9 +770,13 @@ mod tests {
 
     #[test]
     fn deposit_refuses_a_vault_with_no_quote_and_a_sub_share_amount() {
-        // Quote drained to zero by a taker sell: refuse, never divide by it.
+        // Quote drained to zero by a taker sell: the kernel's `EmptyLeg`
+        // refusal, mapped — not a panic, and not some other basket error.
         let err = plan_deposit(&stake(1_000, 1_000, 1_000, 0), 100).unwrap_err();
-        assert!(format!("{err}").contains("no quote"), "{err}");
+        assert_eq!(
+            format!("{err}"),
+            "the vault holds no quote to price this against"
+        );
         // One quote atom against a deep vault buys zero shares.
         let err = plan_deposit(&stake(1, 1, 1_000, 1_000_000), 1).unwrap_err();
         assert!(format!("{err}").contains("too small"), "{err}");
