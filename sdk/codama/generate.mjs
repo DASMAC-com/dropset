@@ -233,7 +233,7 @@ function requireTsProgramAddress(outDir) {
   // fallback the rules above missed.
   const fallback =
     /(?<!typeof |import \{ |export const )DROPSET_PROGRAM_ADDRESS|programAddress\?:|await find\w+Pda\(/;
-  for (const dir of ['instructions', 'pdas', 'errors', 'accounts', 'shared']) {
+  for (const dir of ['instructions', 'pdas', 'errors', 'accounts', 'programs']) {
     for (const path of sources(dir)) {
       const hit = readFileSync(path, 'utf8').match(fallback);
       if (hit) throw new Error(`${path}: localnet fallback survives: ${hit[0]}`);

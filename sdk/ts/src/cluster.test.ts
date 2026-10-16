@@ -89,9 +89,11 @@ test('generated builders require a program address', async () => {
   const input = { admin: createNoopSigner(FRESH), rentRecipient: FRESH };
   // @ts-expect-error -- the program address has no default
   await assert.rejects(getCloseRegistryInstructionAsync(input));
-  assert.throws(() =>
-    // @ts-expect-error -- the program address has no default
-    getCloseRegistryInstruction({ ...input, registry: FRESH }),
+  assert.throws(
+    () =>
+      // @ts-expect-error -- the program address has no default
+      getCloseRegistryInstruction({ ...input, registry: FRESH }),
+    /programAddress/,
   );
 });
 
