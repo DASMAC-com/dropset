@@ -69,15 +69,17 @@ The Alpenglow migration (SIMD-0384) starts 5,000 slots after the feature
 activates. Until a genesis certificate exists the leader packs only
 votes, RPC commitment stops advancing, and blocks after the certificate
 slot are deleted; Anza expects about a slot of outage but bounds none.
-The maker is not live across that boundary. This pause is a planned
-stop, not an emergency one, so nothing is closed.
+The maker must not be live across that boundary. This pause is a
+planned stop, not an emergency one: kill only, never close or drain.
 
 1. **Before the activation epoch begins**, press `K` to kill the
    ladders, then stop the maker. A passive ladder rests by design with
    no staleness kill, so stopping the bot alone leaves it on the book.
 
 1. **Wait for the switch to complete.** Poll the new RPC method until it
-   returns a certificate:
+   returns a certificate rather than `null`. A `-32601 Method not found`
+   means the node predates Agave 4.3, not that the switch is pending; use
+   another endpoint.
 
    ```sh
    curl -s "$DROPSET_MAINNET_RPC_URL" -H 'Content-Type: application/json' \
