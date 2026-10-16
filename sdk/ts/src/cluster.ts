@@ -27,8 +27,9 @@ export type DropsetCluster = 'localnet' | 'mainnet';
  *
  * Throws on any other value rather than falling back to localnet. The
  * localnet keypair is committed, so anyone can deploy at that id on another
- * cluster. An untyped or miscased caller must therefore not end up trusting
- * it, for instance as the emitter `collectFillEvents` authenticates.
+ * cluster. An untyped caller, or one with the wrong case, must not end up
+ * trusting it, for instance as the emitter `collectFillEvents`
+ * authenticates.
  */
 export function dropsetProgramAddress(cluster: DropsetCluster): Address {
   switch (cluster) {
