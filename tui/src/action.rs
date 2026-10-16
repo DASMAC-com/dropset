@@ -56,7 +56,7 @@ use std::sync::{Arc, Mutex};
 /// A menu action.
 ///
 /// The first block is the bootstrap-lifecycle plus the utility actions; the
-/// numbered `1..=8` entries in [`MENU`] are drawn from it (the swap is a
+/// numbered `1..=9` entries in [`MENU`] are drawn from it (the swap is a
 /// runtime control reached via `s`, not a numbered entry). The trailing block
 /// are the eCLOB demo controls —
 /// market-scoped keybinds, *not* menu entries — that fire the two quoting
@@ -1955,9 +1955,10 @@ mod tests {
     const L: Cluster = Cluster::Localnet;
     const M: Cluster = Cluster::Mainnet;
 
-    /// Every `Action`, so a cluster-gate test covers the demo controls too —
-    /// those are reachable only by keybinds, never appear in `MENU`, and so
-    /// would otherwise go unchecked.
+    /// Every `Action`, so a cluster-gate test covers the demo controls and
+    /// the vault group too — those are reachable only by keybinds and the
+    /// runtime pane, never appear in `MENU`, and so would otherwise go
+    /// unchecked.
     ///
     /// Note the bound: this is every **`Action`**, not everything a keystroke
     /// can reach. The maker/taker bot toggles are not `Action`s and are gated

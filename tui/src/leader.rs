@@ -37,6 +37,8 @@ use std::path::Path;
 pub const SLIPPAGE_BPS: u64 = 100;
 
 const BPS: u128 = 10_000;
+/// Parts per million — the unit of the min-leader-share floor.
+const PPM: u128 = 1_000_000;
 
 /// Which way the leader's stake moves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,10 +165,13 @@ fn plan_lines(
                 human(quote_out, qd),
                 human(min_quote_out, qd)
             ),
-            // The one program rule the read cannot settle: fee shares minted
-            // by the realize that runs first stay behind even at 100%. The
-            // min-leader-share floor was checked when the ticket was sized.
-            "note    pre-fee-realize; fee shares stay behind even at 100%".to_string(),
+            // Two things the read cannot settle: fee shares minted by the
+            // realize that runs first stay behind even at 100%, and the
+            // min-leader-share floor — checked when the ticket was sized,
+            // against a realize mirrored from this read — is judged again at
+            // send, after whatever swaps and deposits land in between.
+            "note    fee shares minted at send stay behind even at 100%".to_string(),
+            "        the program re-checks the leader-share floor".to_string(),
         ],
     }
 }
@@ -228,6 +233,12 @@ pub fn plan_deposit(stake: &VaultStake, quote_in: u64) -> Result<Plan> {
 }
 
 /// Size a withdraw of `percent` (1–100) of the leader's own shares.
+///
+/// `shares_in` is a share of the stake **as read**, so a 100% draw never
+/// asks for more than the leader held; the slice and the floor are judged
+/// against [`VaultStake::realized`], the state the program sees after the
+/// realize it runs first — which mints fee shares to the leader, so judging
+/// the floor pre-realize would refuse draws the program accepts.
 pub fn plan_withdraw(stake: &VaultStake, percent: u64) -> Result<Plan> {
     if !(1..=100).contains(&percent) {
         bail!("withdraw between 1 and 100 percent of the stake");
@@ -239,8 +250,9 @@ pub fn plan_withdraw(stake: &VaultStake, percent: u64) -> Result<Plan> {
     if shares_in == 0 {
         bail!("{percent}% of the stake rounds to zero shares");
     }
-    if !leaves_floor(stake, shares_in) {
-        match max_withdraw_percent(stake) {
+    let realized = stake.realized();
+    if !leaves_floor(&realized, shares_in) {
+        match max_withdraw_percent(stake, &realized) {
             Some(max) => bail!(
                 "{percent}% leaves the leader under the {} floor — at most {max}%",
                 ppm_percent(stake.min_leader_share)
@@ -253,9 +265,9 @@ pub fn plan_withdraw(stake: &VaultStake, percent: u64) -> Result<Plan> {
     }
     let (base_out, quote_out) = compute_pro_rata_slice(
         shares_in,
-        stake.total_shares,
-        stake.base_atoms,
-        stake.quote_atoms,
+        realized.total_shares,
+        realized.base_atoms,
+        realized.quote_atoms,
     );
     Ok(Plan::Withdraw {
         shares_in,
@@ -275,6 +287,8 @@ fn shares_for(stake: &VaultStake, percent: u64) -> u64 {
 /// skin-in-the-game floor — the `withdraw_leader` check, mirrored so the
 /// prompt refuses before `yes` rather than the program after it. Waived on a
 /// winding-down vault, and for a draw that empties the vault outright.
+/// `stake` is the post-realize state ([`VaultStake::realized`]), as the
+/// program judges it.
 fn leaves_floor(stake: &VaultStake, shares_in: u64) -> bool {
     let new_total = stake.total_shares.saturating_sub(shares_in);
     stake.winding_down
@@ -286,11 +300,12 @@ fn leaves_floor(stake: &VaultStake, shares_in: u64) -> bool {
         )
 }
 
-/// The largest whole percentage the floor allows, or `None` when none does.
-fn max_withdraw_percent(stake: &VaultStake) -> Option<u64> {
+/// The largest whole percentage of the stake as read that the floor allows
+/// against `realized`, or `None` when none does.
+fn max_withdraw_percent(stake: &VaultStake, realized: &VaultStake) -> Option<u64> {
     (1..=100).rev().find(|&p| {
         let shares = shares_for(stake, p);
-        shares > 0 && leaves_floor(stake, shares)
+        shares > 0 && leaves_floor(realized, shares)
     })
 }
 
@@ -333,19 +348,21 @@ fn basket_text(base: u64, quote: u64, b: Leg, q: Leg, price: Option<f64>) -> Str
 }
 
 /// What the leader holds in `seat`'s vault, for the prompt header and the
-/// leader pane: its number, shares and share of the vault (with the floor),
-/// and the leader's pro-rata slice of the inventory, valued at `price`.
+/// leader pane, as labelled `(label, value)` rows: its number, shares and
+/// share of the vault beside the floor, and the leader's pro-rata slice of
+/// the inventory, valued at `price`. The share is in exact ppm, rendered
+/// like the floor, so the two never round to different sides of each other.
 pub fn holding_lines(
     seq: u64,
     stake: &VaultStake,
     b: Leg,
     q: Leg,
     price: Option<f64>,
-) -> Vec<String> {
-    let pct = if stake.total_shares == 0 {
-        0.0
+) -> [(&'static str, String); 2] {
+    let share_ppm = if stake.total_shares == 0 {
+        0
     } else {
-        stake.leader_shares as f64 * 100.0 / stake.total_shares as f64
+        (u128::from(stake.leader_shares) * PPM / u128::from(stake.total_shares)) as u32
     };
     let (base, quote) = compute_pro_rata_slice(
         stake.leader_shares,
@@ -353,14 +370,18 @@ pub fn holding_lines(
         stake.base_atoms,
         stake.quote_atoms,
     );
-    vec![
-        format!(
-            "vault #{seq} · shares {} of {} ({pct:.2}%) · floor {}",
-            stake.leader_shares,
-            stake.total_shares,
-            ppm_percent(stake.min_leader_share)
+    [
+        (
+            "vault",
+            format!(
+                "#{seq} · shares {} of {} ({}) · floor {}",
+                stake.leader_shares,
+                stake.total_shares,
+                ppm_percent(share_ppm),
+                ppm_percent(stake.min_leader_share)
+            ),
         ),
-        format!("stake    {}", basket_text(base, quote, b, q, price)),
+        ("stake", basket_text(base, quote, b, q, price)),
     ]
 }
 
@@ -696,10 +717,93 @@ mod tests {
         assert_eq!(
             holding_lines(3, &s, ("EURC", 6), ("USDC", 6), Some(2.0)),
             [
-                "vault #3 · shares 600 of 1000 (60.00%) · floor 20.00%",
-                "stake    6.000000 EURC + 12.000000 USDC  \u{2248} 24.00 USDC",
+                (
+                    "vault",
+                    "#3 · shares 600 of 1000 (60.00%) · floor 20.00%".to_string()
+                ),
+                (
+                    "stake",
+                    "6.000000 EURC + 12.000000 USDC  \u{2248} 24.00 USDC".to_string()
+                ),
             ]
         );
+        // Unpriced: the amounts alone, no `≈` total.
+        let [_, (_, stake_row)] = holding_lines(3, &s, ("EURC", 6), ("USDC", 6), None);
+        assert_eq!(stake_row, "6.000000 EURC + 12.000000 USDC");
+    }
+
+    #[test]
+    fn the_share_truncates_like_the_floor_beside_it() {
+        // 9,999 of 100,000 shares is 99,990 ppm against a 99,999 ppm floor:
+        // under it, and a float `{:.2}` would round it up to read 10.00%
+        // beside a floor of 9.99%.
+        let s = VaultStake {
+            min_leader_share: 99_999,
+            ..stake(100_000, 9_999, 1, 1)
+        };
+        let [(_, vault_row), _] = holding_lines(1, &s, ("EURC", 6), ("USDC", 6), None);
+        assert_eq!(
+            vault_row,
+            "#1 · shares 9999 of 100000 (9.99%) · floor 9.99%"
+        );
+    }
+
+    #[test]
+    fn the_deposit_preview_scales_whole_quote_units_and_refuses_an_overflow() {
+        // 1:2 base:quote vault at 6/6 decimals; 2 whole USDC is 2,000,000
+        // atoms, buying 1,000 shares and 1.000000 EURC.
+        let s = stake(1_000_000, 1_000_000, 1_000_000_000, 2_000_000_000);
+        let (b, q) = (("EURC", 6), ("USDC", 6));
+        assert_eq!(
+            preview(LeaderOp::Deposit, &s, Some(2), b, q, None),
+            Some(Ok(vec![
+                "preview  +1.000000 EURC + 2.000000 USDC, ~+1000 shares".to_string()
+            ]))
+        );
+        let overflow = preview(LeaderOp::Deposit, &s, Some(u64::MAX), b, q, None);
+        assert!(matches!(overflow, Some(Err(e)) if e.contains("overflows")));
+    }
+
+    #[test]
+    fn withdraw_at_the_floor_says_no_withdraw_fits() {
+        // Exactly at a 50% floor with an outside holder: any burn dips under.
+        let s = VaultStake {
+            min_leader_share: 500_000,
+            ..stake(1_000, 500, 10_000, 20_000)
+        };
+        let err = plan_withdraw(&s, 1).unwrap_err();
+        assert_eq!(
+            format!("{err}"),
+            "the leader is at the 50.00% floor — no withdraw fits"
+        );
+    }
+
+    #[test]
+    fn the_floor_is_judged_after_the_realize_mints_the_leader_fee_shares() {
+        // A pending performance fee: VPS is above the HWM, so realize mints
+        // shares to the leader before the program checks the floor.
+        let s = VaultStake {
+            min_leader_share: 500_000,
+            hwm: 1,
+            perf_fee_rate: 500_000,
+            ..stake(1_000, 500, 1_000_000, 1_000_000)
+        };
+        let realized = s.realized();
+        assert!(realized.leader_shares > s.leader_shares, "{realized:?}");
+        assert_eq!(
+            realized.total_shares - s.total_shares,
+            realized.leader_shares - s.leader_shares
+        );
+        // Judged as read, the leader sits exactly at the floor and no draw
+        // fits; judged after the realize, as on chain, some do.
+        assert!(!leaves_floor(&s, shares_for(&s, 1)));
+        assert!(plan_withdraw(&s, 1).is_ok());
+        // Winding down skips the realize, as the program does.
+        let frozen = VaultStake {
+            winding_down: true,
+            ..s
+        };
+        assert_eq!(frozen.realized(), frozen);
     }
 
     #[test]

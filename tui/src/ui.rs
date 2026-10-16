@@ -28,9 +28,9 @@ use std::sync::atomic::Ordering;
 /// the top/bottom borders.
 const RUNTIME_ACTIONS_ROWS: u16 = 6;
 
-/// Inner rows of the leader pane (address, status, wallet, and the two
-/// stake lines) and of the swapper pane (address, wallet).
+/// Inner rows of the leader pane: address, status, wallet, vault, stake.
 const LEADER_PANE_ROWS: u16 = 5;
+/// Inner rows of the swapper pane: address, wallet.
 const SWAPPER_PANE_ROWS: u16 = 2;
 
 /// Render the whole dashboard.
@@ -235,7 +235,7 @@ fn amount_stage_lines(app: &App, op: LeaderOp, buf: &str) -> Vec<Line<'static>> 
             let (b, q) = market_legs(app, mkt);
             leader::holding_lines(seat.seq, &seat.stake, b, q, mkt.reference_price)
                 .into_iter()
-                .map(Line::from)
+                .map(|(label, value)| field(label, Span::raw(value)))
                 .collect()
         }
         None => vec![Line::from(Span::styled(
@@ -882,6 +882,14 @@ fn liveness_word(liveness: Liveness) -> &'static str {
     }
 }
 
+/// The participant's address when its pane will draw it — both it and a
+/// selected market are known — so a pane showing "not read yet" registers
+/// no click target.
+fn drawn_address(app: &App, p: Option<&ParticipantView>) -> Option<Pubkey> {
+    app.chain.selected_market(app.selected_market)?;
+    p.map(|p| p.address)
+}
+
 /// A bordered pane titled `title`, drawn with `lines`.
 fn draw_pane(f: &mut Frame<'_>, title: &str, lines: Vec<Line<'static>>, area: Rect) {
     f.render_widget(
@@ -899,8 +907,7 @@ fn draw_pane(f: &mut Frame<'_>, title: &str, lines: Vec<Line<'static>>, area: Re
 /// in the vault it leads — shares, share of the vault, floor, and its slice
 /// of the inventory valued at the market's reference price.
 fn draw_leader_pane(f: &mut Frame<'_>, app: &mut App, area: Rect) {
-    if let Some(p) = &app.chain.leader {
-        let address = p.address;
+    if let Some(address) = drawn_address(app, app.chain.leader.as_ref()) {
         click_row(app, area, 0, address);
     }
     let app: &App = app;
@@ -926,7 +933,7 @@ fn draw_leader_pane(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         Some((_, seat)) => lines.extend(
             leader::holding_lines(seat.seq, &seat.stake, b, q, mkt.reference_price)
                 .into_iter()
-                .map(Line::from),
+                .map(|(label, value)| field(label, Span::raw(value))),
         ),
         None => lines.push(field(
             "vault",
@@ -939,8 +946,7 @@ fn draw_leader_pane(f: &mut Frame<'_>, app: &mut App, area: Rect) {
 /// The swapper (the taker role key) on the selected market: its address (the
 /// explorer link) and its own wallet.
 fn draw_swapper_pane(f: &mut Frame<'_>, app: &mut App, area: Rect) {
-    if let Some(p) = &app.chain.swapper {
-        let address = p.address;
+    if let Some(address) = drawn_address(app, app.chain.swapper.as_ref()) {
         click_row(app, area, 0, address);
     }
     let app: &App = app;
