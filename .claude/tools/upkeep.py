@@ -39,7 +39,7 @@ refuses the whole pass, since every later step assumes it.
     marker whatever the yield, writing no allow-rule;
  9. the fleet cost: ``fleet_cost reconcile`` per day (Bedrock metered beside
     the bill, with its drift flag) and the seat allowance, which has no bill
-    line, read with ``subscription_usage --log`` so each pass appends the one
+    line, read with ``subscription_usage --log`` so each pass that gets a reading appends the one
     sample its per-day figure is derived from;
 10. the memory scan gate, then the memory audit when due;
 11. the transcript-purge dry-run manifest.
@@ -86,6 +86,7 @@ import linear_api
 import planning_doc
 import prune_conversations
 import prune_worktrees
+import subscription_usage
 
 TOOLS = Path(__file__).resolve().parent
 REPO = "DASMAC-com/dropset"
@@ -96,7 +97,7 @@ REPORT_HEADING = "Upkeep report — machine-written, latest run only"
 # swallowed as part of it on the next run.
 REPORT_END = "End of upkeep report."
 STAMP_NAME = ".upkeep-last-run.json"
-# The seat allowance's sample log, one reading per pass — machine-local beside
+# The seat allowance's sample log, at most one reading per pass — machine-local beside
 # the stamp, since the allowance is one operator's subscription.
 SAMPLES_NAME = ".allowance-samples.jsonl"
 
@@ -646,10 +647,15 @@ def step_cost(ctx: Ctx) -> None:
     lines = [ln for ln in out.splitlines() if ln.strip()]
     if rc == 0:
         # Exit 0 also covers the no-credential and stale-token non-readings,
-        # which print one line and sample nothing. The sampled reading always
-        # prints a per-day line, so its absence is the tell.
-        sampled = any(" per day " in ln for ln in lines)
-        trouble = [ln for ln in lines if ln.startswith(("sample ", "sample log "))]
+        # which print one line and sample nothing; only a logged reading
+        # prints the marker.
+        sampled = subscription_usage.SAMPLE_LOGGED in lines
+        lines = [ln for ln in lines if ln != subscription_usage.SAMPLE_LOGGED]
+        trouble = [
+            ln
+            for ln in lines
+            if ln.startswith(("sample not logged", "sample log unreadable"))
+        ]
         summary = (
             "seat allowance, sampled for the per-day figure"
             if sampled

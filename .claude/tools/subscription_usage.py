@@ -89,6 +89,9 @@ DEFAULT_TIMEOUT = 20
 #: measure which hours of the day fell between them.
 MIN_SAMPLE_GAP_HOURS = 12.0
 
+#: Printed once a reading reached the sample log.
+SAMPLE_LOGGED = "sample logged"
+
 
 class UsageError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
@@ -412,6 +415,9 @@ def run(argv: list[str], read=read_credential, fetch=fetch_usage, now=time.time)
             print(line)
         try:
             append_sample(args.log, rows, moment)
+            # The marker the upkeep step keys on: a reading with no numeric
+            # weekly row prints no per-day line, yet it was still sampled.
+            print(SAMPLE_LOGGED)
         except OSError as exc:
             # Stdout, not stderr: the upkeep report is built from stdout, and a
             # sample that silently stopped landing would freeze the figure.

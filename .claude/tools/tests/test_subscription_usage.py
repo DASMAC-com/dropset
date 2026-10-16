@@ -424,16 +424,19 @@ class SampleLog(unittest.TestCase):
             {"label": "weekly", "percent": 20, "resets": "2026-10-09 14:59Z"},
         )
         self.assertEqual(len(su.read_samples(self.log)), 1)
+        self.assertEqual(out.splitlines()[-1], su.SAMPLE_LOGGED)
 
     def test_an_unwritable_log_is_reported_on_stdout(self):
         missing = Path(self.tmp.name) / "absent-dir" / "samples.jsonl"
         code, out, _, _ = self.invoke(FRESH, argv=("x", "--log", str(missing)))
         self.assertEqual(code, 0)
         self.assertIn("sample not logged:", out)
+        self.assertNotIn(su.SAMPLE_LOGGED, out.splitlines())
 
     def test_a_non_reading_logs_nothing(self):
-        self.invoke(None, argv=("x", "--log", str(self.log)))
+        _, out, _, _ = self.invoke(None, argv=("x", "--log", str(self.log)))
         self.assertFalse(self.log.exists())
+        self.assertNotIn(su.SAMPLE_LOGGED, out.splitlines())
 
 
 if __name__ == "__main__":

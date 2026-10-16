@@ -418,7 +418,7 @@ class PassTests(unittest.TestCase):
         self.assertFalse(step["ok"])
         self.assertIn("failed", step["line"])
 
-    SAMPLED = "weekly  20%\nweekly         per day  +4.8%  over 30.0h\n"
+    SAMPLED = "weekly  20%\nweekly         per day  +4.8%  over 30.0h\nsample logged\n"
 
     def _cost_steps(self, cost_rc, cost_out, usage=(0, SAMPLED, "")):
         base_run = FakeRun()
@@ -500,10 +500,22 @@ class PassTests(unittest.TestCase):
             "no reading, nothing sampled: stale credential: the access token "
             "has expired",
         )
-        usage = (0, self.SAMPLED + "sample not logged: disk full\n", "")
+        failed = "weekly  20%\nweekly         per day  +4.8%  over 30.0h\n"
+        usage = (0, failed + "sample not logged: disk full\n", "")
         _, allowance = self._cost_steps(0, json.dumps({"days": {}}), usage=usage)
         self.assertFalse(allowance["ok"])
         self.assertEqual(allowance["rows"][1], "sample not logged: disk full")
+
+    def test_a_logged_reading_with_no_per_day_line_is_still_sampled(self):
+        # A weekly percent the endpoint left unknown yields no per-day line,
+        # but the reading still reached the log; the marker is what says so.
+        usage = (0, "weekly     ?  resets 2026-10-09 14:59Z\nsample logged\n", "")
+        _, allowance = self._cost_steps(0, json.dumps({"days": {}}), usage=usage)
+        self.assertTrue(allowance["ok"])
+        self.assertEqual(
+            allowance["line"], "seat allowance, sampled for the per-day figure"
+        )
+        self.assertEqual(allowance["rows"], ["weekly     ?  resets 2026-10-09 14:59Z"])
 
     def test_the_allowance_is_sampled_into_the_base_checkouts_log(self):
         run = FakeRun()
