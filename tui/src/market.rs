@@ -651,9 +651,12 @@ pub fn seed_vault(
         &ladder_at_spread_bps(DEFAULT_SPREAD_BPS),
         config.expiry_offset_secs,
     );
-    let ix = chain::retarget(
-        cluster,
-        set_liquidity_profile_ix(quote.pubkey(), market.address, vault_idx, bytes),
+    let ix = set_liquidity_profile_ix(
+        cluster.deployment(),
+        quote.pubkey(),
+        market.address,
+        vault_idx,
+        bytes,
     );
     chain::send_logged(
         client,

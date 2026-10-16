@@ -301,7 +301,8 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     // Discover every on-chain market once, then match the roster against it by
     // base mint (quote is always USDC). The roster is narrowed to any
     // `--market` symbols so one instance can quote a single market.
-    let discovered = chain::discover_markets(&client)?;
+    let deployment = args.cluster.deployment();
+    let discovered = chain::discover_markets(&client, deployment)?;
     let quote_mint = if mainnet {
         MAINNET_USDC
     } else {
@@ -364,6 +365,7 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
         );
         contexts.push(BotContext::new(
             chain::rpc(&cfg.rpc_url),
+            deployment,
             Arc::clone(&leader),
             cfg.vault_idx,
             addrs.clone(),
@@ -414,6 +416,7 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
     let fills = fills::spawn(
         ws_url,
         cfg.rpc_url.clone(),
+        deployment.program_id(),
         leader.pubkey(),
         telemetry.liveness_reporter(fills::FILLS_FEED),
     )

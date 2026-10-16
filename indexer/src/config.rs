@@ -1,7 +1,13 @@
-//! Environment-driven configuration. Nothing is hard-coded: the program
-//! id defaults to the SDK's `DROPSET_ID` but every value is overridable so
-//! the same binary runs against localnet or a deployed cluster.
+//! Environment-driven configuration, so the same binary runs against
+//! localnet or a deployed cluster.
+//!
+//! The cluster is required (`DROPSET_CLUSTER`, `localnet` or `mainnet`) and
+//! fixes the program id; there is deliberately no default, since a mainnet
+//! indexer that fell back to the localnet id would trust events from a
+//! program anyone can deploy. `DROPSET_PROGRAM_ID` may override the id, but
+//! never with the localnet one off localnet.
 
+use dropset_sdk::Deployment;
 use solana_pubkey::Pubkey;
 use std::str::FromStr;
 
@@ -23,10 +29,12 @@ impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
         let database_url = std::env::var("DATABASE_URL")
             .map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
-        let program_id = Pubkey::from_str(&env_or(
-            "DROPSET_PROGRAM_ID",
-            &dropset_sdk::DROPSET_ID.to_string(),
-        ))?;
+        let cluster = std::env::var("DROPSET_CLUSTER")
+            .map_err(|_| anyhow::anyhow!("DROPSET_CLUSTER is required (localnet or mainnet)"))?;
+        let program_id = program_id(
+            cluster.parse().map_err(anyhow::Error::msg)?,
+            std::env::var("DROPSET_PROGRAM_ID").ok().as_deref(),
+        )?;
         Ok(Self {
             database_url,
             rpc_url: env_or("RPC_URL", "http://127.0.0.1:8899"),
@@ -42,5 +50,41 @@ impl Config {
                 .unwrap_or(200)
                 .max(1),
         })
+    }
+}
+
+/// The program id to index on `deployment`: the cluster's own, or the
+/// `DROPSET_PROGRAM_ID` override, refused when it is the localnet id off
+/// localnet.
+fn program_id(deployment: Deployment, override_id: Option<&str>) -> anyhow::Result<Pubkey> {
+    let Some(raw) = override_id else {
+        return Ok(deployment.program_id());
+    };
+    Ok(deployment.check_program_id(Pubkey::from_str(raw)?)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dropset_sdk::{DROPSET_ID, DROPSET_MAINNET_ID};
+
+    #[test]
+    fn the_cluster_fixes_the_id_and_the_localnet_override_is_refused_off_localnet() {
+        assert_eq!(program_id(Deployment::Localnet, None).unwrap(), DROPSET_ID);
+        assert_eq!(
+            program_id(Deployment::Mainnet, None).unwrap(),
+            DROPSET_MAINNET_ID
+        );
+        let localnet = DROPSET_ID.to_string();
+        assert!(program_id(Deployment::Mainnet, Some(&localnet)).is_err());
+        assert_eq!(
+            program_id(Deployment::Localnet, Some(&localnet)).unwrap(),
+            DROPSET_ID
+        );
+        let fresh = Pubkey::new_unique();
+        assert_eq!(
+            program_id(Deployment::Mainnet, Some(&fresh.to_string())).unwrap(),
+            fresh
+        );
     }
 }

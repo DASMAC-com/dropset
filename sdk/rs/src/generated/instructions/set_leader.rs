@@ -32,13 +32,18 @@ pub struct SetLeader {
 }
 
 impl SetLeader {
-    pub fn instruction(&self, args: SetLeaderInstructionArgs) -> solana_instruction::Instruction {
-        self.instruction_with_remaining_accounts(args, &[])
+    pub fn instruction(
+        &self,
+        deployment: crate::Deployment,
+        args: SetLeaderInstructionArgs,
+    ) -> solana_instruction::Instruction {
+        self.instruction_with_remaining_accounts(deployment, args, &[])
     }
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
         &self,
+        deployment: crate::Deployment,
         args: SetLeaderInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
@@ -70,7 +75,7 @@ impl SetLeader {
         data.append(&mut args);
 
         solana_instruction::Instruction {
-            program_id: crate::DROPSET_ID,
+            program_id: deployment.program_id(),
             accounts,
             data,
         }
@@ -203,7 +208,7 @@ impl SetLeaderBuilder {
         self
     }
     #[allow(clippy::clone_on_copy)]
-    pub fn instruction(&self) -> solana_instruction::Instruction {
+    pub fn instruction(&self, deployment: crate::Deployment) -> solana_instruction::Instruction {
         let accounts = SetLeader {
             leader: self.leader.expect("leader is not set"),
             new_leader: self.new_leader.expect("new_leader is not set"),
@@ -218,7 +223,7 @@ impl SetLeaderBuilder {
             vault_idx: self.vault_idx.clone().expect("vault_idx is not set"),
         };
 
-        accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
+        accounts.instruction_with_remaining_accounts(deployment, args, &self.__remaining_accounts)
     }
 }
 
@@ -343,7 +348,7 @@ impl<'a, 'b> SetLeaderCpi<'a, 'b> {
         data.append(&mut args);
 
         let instruction = solana_instruction::Instruction {
-            program_id: crate::DROPSET_ID,
+            program_id: *self.__program.key,
             accounts,
             data,
         };

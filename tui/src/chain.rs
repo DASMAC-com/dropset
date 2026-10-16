@@ -112,8 +112,9 @@ pub fn genesis_hash(client: &RpcClient) -> Result<String> {
 //
 // Every derivation takes the `cluster`, because the program id is per
 // cluster ([`Cluster::program_id`]): a PDA derived from the committed
-// localnet id would silently point at localnet on mainnet, and the
-// instruction `retarget` does not rewrite caller-derived PDAs.
+// localnet id would silently point at localnet on mainnet. The SDK builders
+// take the cluster's deployment for their own program-id slots, but the PDAs
+// they are handed are the caller's to derive.
 
 /// The singleton registry PDA — seeds `[b"registry"]`.
 pub fn registry_pda(cluster: Cluster) -> Pubkey {
@@ -146,17 +147,6 @@ pub fn program_data(cluster: Cluster) -> Pubkey {
     get_program_data_address(&cluster.program_id())
 }
 
-/// Aim a generated instruction at `cluster`'s program. Every SDK builder —
-/// the Codama ones and `dropset_sdk::quoting`'s alike — emits the localnet
-/// id, so each one the cockpit signs passes through here. This rewrites what
-/// the generated code fills from that id itself: the instruction's program
-/// id, the `program` account, the placeholder for an absent optional account
-/// and the localnet event authority. Every other PDA is the caller's to
-/// derive for `cluster`, as the builders below do.
-pub fn retarget(cluster: Cluster, ix: Instruction) -> Instruction {
-    sdk_cluster::retarget(ix, &cluster.program_id())
-}
-
 // ── Bootstrap instruction builders ───────────────────────────────────
 
 /// `init` — create the registry, charging the per-`CreateVault` fee of
@@ -169,7 +159,7 @@ pub fn build_init_ix(
     fee_atoms: u64,
 ) -> Instruction {
     let registry = registry_pda(cluster);
-    let ix = Init {
+    Init {
         payer: *payer,
         registry,
         program_data: program_data(cluster),
@@ -179,11 +169,13 @@ pub fn build_init_ix(
         associated_token_program: ATA_PROGRAM_ID,
         system_program: SYSTEM_PROGRAM_ID,
     }
-    .instruction(InitInstructionArgs {
-        genesis_admin: *payer,
-        fee_atoms,
-    });
-    retarget(cluster, ix)
+    .instruction(
+        cluster.deployment(),
+        InitInstructionArgs {
+            genesis_admin: *payer,
+            fee_atoms,
+        },
+    )
 }
 
 /// `create_market` for a fresh `(base, quote)` pair. `fee_mint` /
@@ -203,7 +195,7 @@ pub fn build_create_market_ix(
 ) -> Instruction {
     let registry = registry_pda(cluster);
     let market = market_pda(cluster, base_mint, quote_mint);
-    let ix = CreateMarket {
+    CreateMarket {
         payer: *payer,
         registry,
         base_mint: *base_mint,
@@ -220,8 +212,7 @@ pub fn build_create_market_ix(
         system_program: SYSTEM_PROGRAM_ID,
         associated_token_program: ATA_PROGRAM_ID,
     }
-    .instruction();
-    retarget(cluster, ix)
+    .instruction(cluster.deployment())
 }
 
 /// `create_vault` on `market` via the admin path (fee waived). The vault is
@@ -245,7 +236,7 @@ pub fn build_create_vault_ix(
     quote_authority: &Pubkey,
 ) -> Instruction {
     let registry = registry_pda(cluster);
-    let ix = CreateVault {
+    CreateVault {
         payer: *payer,
         registry,
         market: *market,
@@ -257,14 +248,16 @@ pub fn build_create_vault_ix(
         event_authority: event_authority(cluster),
         program: cluster.program_id(),
     }
-    .instruction(CreateVaultInstructionArgs {
-        perf_fee_rate: DEFAULT_PERF_FEE_RATE,
-        quote_authority: *quote_authority,
-        allow_outside_depositors: false,
-        leader_override: *leader,
-        name: default_vault_name(leader),
-    });
-    retarget(cluster, ix)
+    .instruction(
+        cluster.deployment(),
+        CreateVaultInstructionArgs {
+            perf_fee_rate: DEFAULT_PERF_FEE_RATE,
+            quote_authority: *quote_authority,
+            allow_outside_depositors: false,
+            leader_override: *leader,
+            name: default_vault_name(leader),
+        },
+    )
 }
 
 /// The bootstrap vault's name: `Vault ` plus the leader key's first eight
@@ -298,7 +291,7 @@ pub fn build_deposit_leader_ix(
     (base_in, quote_in): (u64, u64),
     (max_base_in, max_quote_in): (u64, u64),
 ) -> Instruction {
-    let ix = DepositLeader {
+    DepositLeader {
         signer: *leader,
         market: *market,
         base_mint: *base_mint,
@@ -314,14 +307,16 @@ pub fn build_deposit_leader_ix(
         event_authority: event_authority(cluster),
         program: cluster.program_id(),
     }
-    .instruction(DepositLeaderInstructionArgs {
-        vault_idx,
-        base_in,
-        quote_in,
-        max_base_in,
-        max_quote_in,
-    });
-    retarget(cluster, ix)
+    .instruction(
+        cluster.deployment(),
+        DepositLeaderInstructionArgs {
+            vault_idx,
+            base_in,
+            quote_in,
+            max_base_in,
+            max_quote_in,
+        },
+    )
 }
 
 /// `withdraw_leader` — the vault's `leader` (signer) burns `shares_in` of
@@ -344,7 +339,7 @@ pub fn build_withdraw_leader_ix(
     min_base_out: u64,
     min_quote_out: u64,
 ) -> Instruction {
-    let ix = WithdrawLeader {
+    WithdrawLeader {
         signer: *leader,
         market: *market,
         base_mint: *base_mint,
@@ -360,13 +355,15 @@ pub fn build_withdraw_leader_ix(
         event_authority: event_authority(cluster),
         program: cluster.program_id(),
     }
-    .instruction(WithdrawLeaderInstructionArgs {
-        vault_idx,
-        shares_in,
-        min_base_out,
-        min_quote_out,
-    });
-    retarget(cluster, ix)
+    .instruction(
+        cluster.deployment(),
+        WithdrawLeaderInstructionArgs {
+            vault_idx,
+            shares_in,
+            min_base_out,
+            min_quote_out,
+        },
+    )
 }
 
 /// `close_vault` — the vault's `leader` (signer) tombstones its vault: it
@@ -409,7 +406,7 @@ pub fn build_swap_ix(
     limit_price_bits: u32,
     min_out: u64,
 ) -> Instruction {
-    let ix = Swap {
+    Swap {
         taker: *taker,
         market: *market,
         base_mint: *base_mint,
@@ -432,14 +429,16 @@ pub fn build_swap_ix(
         event_authority: event_authority(cluster),
         program: cluster.program_id(),
     }
-    .instruction(SwapInstructionArgs {
-        side,
-        amount_in,
-        limit_price_bits,
-        min_out,
-        platform_fee_bps: 0,
-    });
-    retarget(cluster, ix)
+    .instruction(
+        cluster.deployment(),
+        SwapInstructionArgs {
+            side,
+            amount_in,
+            limit_price_bits,
+            min_out,
+            platform_fee_bps: 0,
+        },
+    )
 }
 
 /// The `SetComputeUnitLimit` that leads the swap probe, at the SDK's
@@ -469,7 +468,7 @@ pub fn build_force_withdraw_depositor_ix(
 ) -> Instruction {
     let registry = registry_pda(cluster);
     let vault_depositor = vault_depositor_pda(cluster, market, vault_idx, owner);
-    let ix = ForceWithdrawDepositor {
+    ForceWithdrawDepositor {
         admin: *admin,
         registry,
         market: *market,
@@ -488,8 +487,10 @@ pub fn build_force_withdraw_depositor_ix(
         event_authority: event_authority(cluster),
         program: cluster.program_id(),
     }
-    .instruction(ForceWithdrawDepositorInstructionArgs { vault_idx });
-    retarget(cluster, ix)
+    .instruction(
+        cluster.deployment(),
+        ForceWithdrawDepositorInstructionArgs { vault_idx },
+    )
 }
 
 /// `force_withdraw_leader` — admin drains `leader`'s stake on `vault_idx`,
@@ -506,7 +507,7 @@ pub fn build_force_withdraw_leader_ix(
     vault_idx: u32,
     leader: &Pubkey,
 ) -> Instruction {
-    let ix = ForceWithdrawLeader {
+    ForceWithdrawLeader {
         admin: *admin,
         registry: registry_pda(cluster),
         market: *market,
@@ -524,8 +525,10 @@ pub fn build_force_withdraw_leader_ix(
         event_authority: event_authority(cluster),
         program: cluster.program_id(),
     }
-    .instruction(ForceWithdrawLeaderInstructionArgs { vault_idx });
-    retarget(cluster, ix)
+    .instruction(
+        cluster.deployment(),
+        ForceWithdrawLeaderInstructionArgs { vault_idx },
+    )
 }
 
 /// `close_market_treasury` — drain the leg's treasury ATA to
@@ -541,7 +544,7 @@ pub fn build_close_market_treasury_ix(
     token_recipient: &Pubkey,
     rent_recipient: &Pubkey,
 ) -> Instruction {
-    let ix = CloseMarketTreasury {
+    CloseMarketTreasury {
         admin: *admin,
         registry: registry_pda(cluster),
         market: *market,
@@ -553,8 +556,7 @@ pub fn build_close_market_treasury_ix(
         event_authority: event_authority(cluster),
         program: cluster.program_id(),
     }
-    .instruction();
-    retarget(cluster, ix)
+    .instruction(cluster.deployment())
 }
 
 /// `close_market` — close the market PDA + vault slab, refunding rent to
@@ -567,7 +569,7 @@ pub fn build_close_market_ix(
     quote_treasury: &Pubkey,
     rent_recipient: &Pubkey,
 ) -> Instruction {
-    let ix = CloseMarket {
+    CloseMarket {
         admin: *admin,
         registry: registry_pda(cluster),
         market: *market,
@@ -575,8 +577,7 @@ pub fn build_close_market_ix(
         quote_treasury: *quote_treasury,
         rent_recipient: *rent_recipient,
     }
-    .instruction();
-    retarget(cluster, ix)
+    .instruction(cluster.deployment())
 }
 
 /// `close_registry_fee_vault` — drain the registry's fee ATA for
@@ -591,7 +592,7 @@ pub fn build_close_registry_fee_vault_ix(
     rent_recipient: &Pubkey,
 ) -> Instruction {
     let registry = registry_pda(cluster);
-    let ix = CloseRegistryFeeVault {
+    CloseRegistryFeeVault {
         admin: *admin,
         registry,
         fee_mint: *fee_mint,
@@ -602,8 +603,7 @@ pub fn build_close_registry_fee_vault_ix(
         event_authority: event_authority(cluster),
         program: cluster.program_id(),
     }
-    .instruction();
-    retarget(cluster, ix)
+    .instruction(cluster.deployment())
 }
 
 /// `close_registry` — close the registry PDA, refunding rent to
@@ -613,13 +613,12 @@ pub fn build_close_registry_ix(
     admin: &Pubkey,
     rent_recipient: &Pubkey,
 ) -> Instruction {
-    let ix = CloseRegistry {
+    CloseRegistry {
         admin: *admin,
         registry: registry_pda(cluster),
         rent_recipient: *rent_recipient,
     }
-    .instruction();
-    retarget(cluster, ix)
+    .instruction(cluster.deployment())
 }
 
 // ── Mock mint creation + send ────────────────────────────────────────

@@ -434,6 +434,7 @@ services:
         condition: 'service_completed_successfully'
     environment:
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
+      DROPSET_CLUSTER: 'localnet'
       RPC_URL: 'http://host.docker.internal:8899'
       RUST_LOG: 'info'
     extra_hosts:
@@ -452,6 +453,7 @@ services:
     environment:
       API_BIND: '0.0.0.0:8080'
       DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
+      DROPSET_CLUSTER: 'localnet'
       RUST_LOG: 'info'
     ports:
     - '127.0.0.1:8080:8080'

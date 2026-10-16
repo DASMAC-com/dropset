@@ -21,11 +21,11 @@ use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
 
 use crate::clock::{SlotTime, WallTime};
+use crate::cluster::{event_authority, Deployment};
 use crate::generated::instructions::{Swap as SwapAccounts, SwapInstructionArgs};
 use crate::layout::{LayoutError, MarketView};
 use crate::matching::{simulate_swap, SwapSide};
 use crate::price::Price;
-use crate::DROPSET_ID;
 
 /// The clock sysvar — read by `swap` for the current slot (expiry checks).
 pub const CLOCK_SYSVAR: Pubkey =
@@ -63,6 +63,8 @@ pub const SWAP_ACCOUNTS_LEN: usize = 17;
 /// A Dropset market presented through a router's quoting + swap surface.
 #[derive(Clone)]
 pub struct DropsetAmm {
+    /// The cluster the market lives on, which fixes the program id.
+    deployment: Deployment,
     market_key: Pubkey,
     /// Cached market account data (including the 8-byte discriminator).
     data: Vec<u8>,
@@ -145,11 +147,18 @@ impl From<LayoutError> for AmmError {
 
 impl DropsetAmm {
     /// Build from a market account's key + data (`from_keyed_account` /
-    /// `from_account`).
-    pub fn from_account(market_key: Pubkey, data: &[u8]) -> Result<Self, AmmError> {
+    /// `from_account`) on `deployment`'s cluster. The router traits carry no
+    /// cluster, so the integration names it; there is deliberately no
+    /// default.
+    pub fn from_account(
+        deployment: Deployment,
+        market_key: Pubkey,
+        data: &[u8],
+    ) -> Result<Self, AmmError> {
         let view = MarketView::load(data)?;
         let h = view.header;
         Ok(Self {
+            deployment,
             market_key,
             data: data.to_vec(),
             base_mint: Pubkey::from(h.base_mint),
@@ -161,7 +170,7 @@ impl DropsetAmm {
 
     /// The Dropset program id (`program_id`).
     pub fn program_id(&self) -> Pubkey {
-        DROPSET_ID
+        self.deployment.program_id()
     }
 
     /// The market account address (`key`).
@@ -275,8 +284,7 @@ impl DropsetAmm {
     /// `solana_instruction::Instruction`; `.accounts` are the metas.
     pub fn swap_instruction(&self, p: &DropsetSwapParams) -> Result<Instruction, AmmError> {
         let side = self.side_for(p.source_mint, p.destination_mint)?;
-        let (event_authority, _) =
-            Pubkey::find_program_address(&[b"__event_authority"], &DROPSET_ID);
+        let program = self.program_id();
         let accounts = SwapAccounts {
             taker: p.taker,
             market: self.market_key,
@@ -295,16 +303,19 @@ impl DropsetAmm {
             platform_fee_ata: None,
             associated_token_program: ASSOCIATED_TOKEN_PROGRAM_ID,
             system_program: SYSTEM_PROGRAM_ID,
-            event_authority,
-            program: DROPSET_ID,
+            event_authority: event_authority(&program),
+            program,
         };
-        Ok(accounts.instruction(SwapInstructionArgs {
-            side: side as u8,
-            amount_in: p.amount_in,
-            limit_price_bits: p.limit_price_bits,
-            min_out: p.min_out,
-            platform_fee_bps: 0,
-        }))
+        Ok(accounts.instruction(
+            self.deployment,
+            SwapInstructionArgs {
+                side: side as u8,
+                amount_in: p.amount_in,
+                limit_price_bits: p.limit_price_bits,
+                min_out: p.min_out,
+                platform_fee_bps: 0,
+            },
+        ))
     }
 
     /// Resolve taker side from the `(input, output)` mint pair.
@@ -323,6 +334,7 @@ impl DropsetAmm {
 mod tests {
     use super::*;
     use crate::layout::{MarketHeader, Vault, NULL_SECTOR, VAULT_ALIGN};
+    use crate::{DROPSET_ID, DROPSET_MAINNET_ID};
     use bytemuck::Zeroable;
 
     /// Assemble a market account buffer (8-byte discriminator + header +
@@ -370,7 +382,8 @@ mod tests {
     #[test]
     fn quote_buy_against_one_ask_level() {
         let data = one_ask_market(500_000);
-        let amm = DropsetAmm::from_account(Pubkey::from([7u8; 32]), &data).unwrap();
+        let amm =
+            DropsetAmm::from_account(Deployment::Localnet, Pubkey::from([7u8; 32]), &data).unwrap();
 
         assert_eq!(amm.reserve_mints().len(), 2);
         assert_eq!(amm.accounts_to_update(), vec![amm.key()]);
@@ -392,7 +405,8 @@ mod tests {
     #[test]
     fn zero_input_is_safe() {
         let data = one_ask_market(500_000);
-        let amm = DropsetAmm::from_account(Pubkey::from([7u8; 32]), &data).unwrap();
+        let amm =
+            DropsetAmm::from_account(Deployment::Localnet, Pubkey::from([7u8; 32]), &data).unwrap();
         let q = amm
             .quote(&DropsetQuoteParams {
                 input_mint: Pubkey::from([2u8; 32]),
@@ -408,7 +422,8 @@ mod tests {
     #[test]
     fn swap_instruction_shape() {
         let data = one_ask_market(500_000);
-        let amm = DropsetAmm::from_account(Pubkey::from([7u8; 32]), &data).unwrap();
+        let amm =
+            DropsetAmm::from_account(Deployment::Mainnet, Pubkey::from([7u8; 32]), &data).unwrap();
         let ix = amm
             .swap_instruction(&DropsetSwapParams {
                 taker: Pubkey::from([8u8; 32]),
@@ -423,7 +438,13 @@ mod tests {
                 min_out: 0,
             })
             .unwrap();
-        assert_eq!(ix.program_id, DROPSET_ID);
+        assert_eq!(ix.program_id, DROPSET_MAINNET_ID);
+        assert_eq!(amm.program_id(), DROPSET_MAINNET_ID);
+        assert!(
+            ix.accounts.iter().all(|m| m.pubkey != DROPSET_ID),
+            "a mainnet swap never names the localnet id"
+        );
+        assert_eq!(ix.accounts[15].pubkey, event_authority(&DROPSET_MAINNET_ID));
         assert_eq!(ix.data[0], 9, "swap discriminator");
         // The optional platform-fee group still occupies its two slots on this
         // no-fee path — Anchor encodes an absent optional account as the
@@ -431,11 +452,11 @@ mod tests {
         // same constant a router reads from `accounts_len`.
         assert_eq!(ix.accounts.len(), SWAP_ACCOUNTS_LEN);
         assert_eq!(
-            ix.accounts[11].pubkey, DROPSET_ID,
+            ix.accounts[11].pubkey, DROPSET_MAINNET_ID,
             "absent platform_fee_authority is the program-id sentinel"
         );
         assert_eq!(
-            ix.accounts[12].pubkey, DROPSET_ID,
+            ix.accounts[12].pubkey, DROPSET_MAINNET_ID,
             "absent platform_fee_ata is the program-id sentinel"
         );
         assert_eq!(ix.accounts[13].pubkey, ASSOCIATED_TOKEN_PROGRAM_ID);
@@ -453,7 +474,8 @@ mod tests {
 
         // One live ask -> active.
         let live = one_ask_market(500_000);
-        let amm = DropsetAmm::from_account(Pubkey::from([7u8; 32]), &live).unwrap();
+        let amm =
+            DropsetAmm::from_account(Deployment::Localnet, Pubkey::from([7u8; 32]), &live).unwrap();
         assert!(amm.is_active());
         assert_eq!(amm.label(), "Dropset");
         assert_eq!(amm.accounts_len(), SWAP_ACCOUNTS_LEN);
@@ -461,14 +483,16 @@ mod tests {
 
         // No vaults -> inactive.
         let empty = build_market(MarketHeader::zeroed(), &[]);
-        let amm = DropsetAmm::from_account(Pubkey::from([7u8; 32]), &empty).unwrap();
+        let amm = DropsetAmm::from_account(Deployment::Localnet, Pubkey::from([7u8; 32]), &empty)
+            .unwrap();
         assert!(!amm.is_active());
     }
 
     #[test]
     fn quote_rejects_foreign_mints() {
         let data = one_ask_market(500_000);
-        let amm = DropsetAmm::from_account(Pubkey::from([7u8; 32]), &data).unwrap();
+        let amm =
+            DropsetAmm::from_account(Deployment::Localnet, Pubkey::from([7u8; 32]), &data).unwrap();
         let err = amm.quote(&DropsetQuoteParams {
             input_mint: Pubkey::from([3u8; 32]),
             output_mint: Pubkey::from([1u8; 32]),

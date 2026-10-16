@@ -287,9 +287,42 @@ const rustOut = join(rustCrate, 'src', 'generated');
 // the files.
 await codama.accept(renderJavaScript(tsOut, { formatCode: false }));
 requireTsProgramAddress(tsOut);
-codama.accept(
+// Awaited: the renderer may write asynchronously, and the rewrite below must
+// see its output, not the previous run's.
+await codama.accept(
   renderRust(rustOut, { formatCode: false, crateFolder: rustCrate }),
 );
+
+// The Rust renderer hard-codes the program id as `crate::DROPSET_ID`, the
+// localnet id, and has no option to take it at runtime. That id's secret is
+// committed, so a client that forgets to pick its cluster would sign for a
+// program anyone can deploy. Rewrite each client-side builder to take a
+// `crate::Deployment` as its first argument and aim at its id, so forgetting
+// is a compile error. The CPI half below `<Name>CpiAccounts` already carries
+// the program as an account, so it aims at that instead.
+const instructionsOut = join(rustOut, 'instructions');
+for (const file of readdirSync(instructionsOut)) {
+  if (!file.endsWith('.rs') || file === 'mod.rs') continue;
+  const path = join(instructionsOut, file);
+  const source = readFileSync(path, 'utf8');
+  const cpiAt = source.search(/pub struct \w+CpiAccounts\b/);
+  if (cpiAt === -1) throw new Error(`${file}: no CpiAccounts struct to split on`);
+  const client = source
+    .slice(0, cpiAt)
+    .replace(/pub fn instruction\(\s*&self/g, 'pub fn instruction(&self, deployment: crate::Deployment')
+    .replace(
+      /pub fn instruction_with_remaining_accounts\(\s*&self\s*,/g,
+      'pub fn instruction_with_remaining_accounts(&self, deployment: crate::Deployment,',
+    )
+    .replace(/\.instruction_with_remaining_accounts\(/g, '.instruction_with_remaining_accounts(deployment, ')
+    .replaceAll('crate::DROPSET_ID', 'deployment.program_id()');
+  // An accounts struct's two builders plus the `<Name>Builder` one: fewer
+  // means the renderer's output moved and the rewrite missed a path.
+  const rewritten = client.split('deployment: crate::Deployment').length - 1;
+  if (rewritten !== 3) throw new Error(`${file}: rewrote ${rewritten} builders, expected 3`);
+  const cpi = source.slice(cpiAt).replaceAll('crate::DROPSET_ID', '*self.__program.key');
+  writeFileSync(path, client + cpi);
+}
 
 console.log('Generated TypeScript client ->', tsOut);
 console.log('Generated Rust client       ->', rustOut);
