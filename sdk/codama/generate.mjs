@@ -107,15 +107,16 @@ codama.update(
 // one. Inline each link to this program's own PDA node instead: the
 // renderer then derives it with `getProgramDerivedAddress({ programAddress,
 // … })`, against the program address the builder itself resolved.
-const programPdas = new Map(
-  codama.getRoot().program.pdas.map((pda) => [pda.name, pda]),
-);
+const rootProgram = codama.getRoot().program;
+const programPdas = new Map(rootProgram.pdas.map((pda) => [pda.name, pda]));
 codama.update(
   bottomUpTransformerVisitor([
     {
       select: '[pdaValueNode]',
       transform: (node) => {
         if (node.pda.kind !== 'pdaLinkNode') return node;
+        const linked = node.pda.program?.name;
+        if (linked && linked !== rootProgram.name) return node;
         const pda = programPdas.get(node.pda.name);
         if (!pda || pda.programId) return node;
         return { ...node, pda };
@@ -138,19 +139,26 @@ codama.update(
  * sentinel (the instruction's own program, not the localnet id), and
  * `isDropsetError`, which gains a `programAddress` parameter.
  *
- * Every rewrite is an exact-text match with an expected count, and a miss
- * throws. A renderer bump that changes the shape then fails generation
- * rather than silently restoring the default.
+ * Every rewrite is a match with the count the file calls for, and a miss
+ * throws; a closing scan then refuses any localnet fallback left anywhere in
+ * the tree. A renderer bump that changes the shape fails generation rather
+ * than silently restoring the default.
  */
 function requireTsProgramAddress(outDir) {
+  // `from` is a string or a global RegExp; `count` is the expected number of
+  // matches.
   const rewrite = (path, rules) => {
     let text = readFileSync(path, 'utf8');
     for (const { from, to, count } of rules) {
-      const hits = text.split(from).length - 1;
-      if (!count(hits)) {
-        throw new Error(`${path}: ${hits} match(es) of ${JSON.stringify(from)}`);
+      const hits =
+        typeof from === 'string'
+          ? text.split(from).length - 1
+          : (text.match(from) ?? []).length;
+      if (hits !== count) {
+        throw new Error(`${path}: ${hits} match(es) of ${from}, expected ${count}`);
       }
-      text = text.split(from).join(to);
+      text =
+        typeof from === 'string' ? text.split(from).join(to) : text.replace(from, to);
     }
     writeFileSync(path, text);
   };
@@ -161,8 +169,12 @@ function requireTsProgramAddress(outDir) {
 
   for (const path of sources('instructions')) {
     // One sync builder, plus an async one when the instruction has PDA or
-    // other async defaults.
-    const builders = (n) => n === 1 || n === 2;
+    // other async defaults; the parser has the sentinel only when the
+    // instruction has an optional account.
+    const text = readFileSync(path, 'utf8');
+    const builders = (text.match(/^export (async )?function get\w+Instruction(Async)?</gm) ?? [])
+      .length;
+    const optional = text.includes('const getNextOptionalAccount = ') ? 1 : 0;
     rewrite(path, [
       {
         from: 'config?: { programAddress?: TProgramAddress } )',
@@ -177,45 +189,56 @@ function requireTsProgramAddress(outDir) {
       {
         from: 'accountMeta.address === DROPSET_PROGRAM_ADDRESS ? undefined',
         to: 'accountMeta.address === instruction.programAddress ? undefined',
-        count: (n) => n <= 1,
+        count: optional,
       },
     ]);
   }
 
   for (const path of sources('pdas')) {
-    let text = readFileSync(path, 'utf8');
-    const defaulted = /const \{ programAddress = '\w+' as Address<'\w+'> \} = config;/g;
-    if ((text.match(defaulted) ?? []).length !== 1) {
-      throw new Error(`${path}: expected one defaulted programAddress`);
-    }
-    writeFileSync(path, text.replace(defaulted, 'const { programAddress } = config;'));
     rewrite(path, [
+      {
+        from: /const \{ programAddress = '\w+' as Address<'\w+'> \} = config;/g,
+        to: 'const { programAddress } = config;',
+        count: 1,
+      },
       {
         from: 'config: { programAddress?: Address | undefined } = {}): Promise<',
         to: 'config: { programAddress: Address }): Promise<',
-        count: (n) => n === 1,
+        count: 1,
       },
     ]);
   }
 
-  const once = (n) => n === 1;
   rewrite(join(outDir, 'errors', 'dropset.ts'), [
     {
       from: "import { DROPSET_PROGRAM_ADDRESS } from '../programs';\n",
       to: '',
-      count: once,
+      count: 1,
     },
     {
       from: '    transactionMessage: { instructions: Record<number, { programAddress: Address }> },\n',
       to: '    transactionMessage: { instructions: Record<number, { programAddress: Address }> },\n    programAddress: Address,\n',
-      count: once,
+      count: 1,
     },
     {
       from: 'transactionMessage, DROPSET_PROGRAM_ADDRESS, code)',
       to: 'transactionMessage, programAddress, code)',
-      count: once,
+      count: 1,
     },
   ]);
+
+  // Whatever the renderer emitted, the localnet id may survive only as the
+  // constant's own definition, its imports, and type-level defaults. Any
+  // other use, an optional program address, or a no-config PDA call is a
+  // fallback the rules above missed.
+  const fallback =
+    /(?<!typeof |import \{ |export const )DROPSET_PROGRAM_ADDRESS|programAddress\?:|await find\w+Pda\(/;
+  for (const dir of ['instructions', 'pdas', 'errors', 'accounts', 'shared']) {
+    for (const path of sources(dir)) {
+      const hit = readFileSync(path, 'utf8').match(fallback);
+      if (hit) throw new Error(`${path}: localnet fallback survives: ${hit[0]}`);
+    }
+  }
 }
 
 const tsOut = join(repoRoot, 'sdk', 'ts', 'src', 'generated');
@@ -228,7 +251,8 @@ const rustOut = join(rustCrate, 'src', 'generated');
 // lands in canonical `cargo fmt` form — clean under the rustfmt hook and
 // reproducible by the SDK CI gate. TS is left raw: biome lints only
 // frontend/, and raw output is still deterministic.
-// The renderer writes asynchronously, so the rewrite must await it.
+// The renderer writes asynchronously; await it so the rewrite below finds
+// the files.
 await codama.accept(renderJavaScript(tsOut, { formatCode: false }));
 requireTsProgramAddress(tsOut);
 codama.accept(

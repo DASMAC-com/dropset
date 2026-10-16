@@ -22,11 +22,23 @@ export const DROPSET_MAINNET_PROGRAM_ADDRESS = address(
 /** The clusters the program is deployed on. */
 export type DropsetCluster = 'localnet' | 'mainnet';
 
-/** The program id deployed on `cluster`. */
+/**
+ * The program id deployed on `cluster`.
+ *
+ * Throws on any other value rather than falling back to localnet. The
+ * localnet keypair is committed, so anyone can deploy at that id on another
+ * cluster. An untyped or miscased caller must therefore not end up trusting
+ * it, for instance as the emitter `collectFillEvents` authenticates.
+ */
 export function dropsetProgramAddress(cluster: DropsetCluster): Address {
-  return cluster === 'mainnet'
-    ? DROPSET_MAINNET_PROGRAM_ADDRESS
-    : DROPSET_PROGRAM_ADDRESS;
+  switch (cluster) {
+    case 'localnet':
+      return DROPSET_PROGRAM_ADDRESS;
+    case 'mainnet':
+      return DROPSET_MAINNET_PROGRAM_ADDRESS;
+    default:
+      throw new Error(`Unknown Dropset cluster: ${String(cluster)}`);
+  }
 }
 
 /**

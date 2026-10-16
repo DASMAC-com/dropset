@@ -14,12 +14,15 @@ import { address, createNoopSigner } from '@solana/kit';
 import {
   assertDropsetProgramAddress,
   DROPSET_MAINNET_PROGRAM_ADDRESS,
+  type DropsetCluster,
   dropsetProgramAddress,
 } from './cluster';
 import {
   DROPSET_PROGRAM_ADDRESS,
+  findEventAuthorityPda,
   findRegistryPda,
   findVaultDepositorPda,
+  getCloseRegistryInstruction,
   getCloseRegistryInstructionAsync,
   getDepositInstructionAsync,
 } from './generated';
@@ -42,6 +45,15 @@ test('each cluster resolves its own program id', () => {
     DROPSET_MAINNET_PROGRAM_ADDRESS,
   );
   assert.notStrictEqual(DROPSET_PROGRAM_ADDRESS, DROPSET_MAINNET_PROGRAM_ADDRESS);
+});
+
+test('an unknown cluster is refused rather than read as localnet', () => {
+  for (const cluster of ['devnet', 'Mainnet', '']) {
+    assert.throws(
+      () => dropsetProgramAddress(cluster as DropsetCluster),
+      /Unknown Dropset cluster/,
+    );
+  }
 });
 
 test('the localnet id is refused off localnet, and only there', () => {
@@ -73,9 +85,19 @@ test('generated PDA helpers require a program address and derive under it', asyn
   assert.notStrictEqual(localnet, mainnet);
 });
 
+test('generated builders require a program address', async () => {
+  const input = { admin: createNoopSigner(FRESH), rentRecipient: FRESH };
+  // @ts-expect-error -- the program address has no default
+  await assert.rejects(getCloseRegistryInstructionAsync(input));
+  assert.throws(() =>
+    // @ts-expect-error -- the program address has no default
+    getCloseRegistryInstruction({ ...input, registry: FRESH }),
+  );
+});
+
 test('an async builder derives its defaulted PDAs under its own program', async () => {
-  // The builder's event authority and registry used to be derived under the
-  // localnet id whatever `config.programAddress` said.
+  // The builder's registry used to be derived under the localnet id whatever
+  // `config.programAddress` said (the event authority is pinned below).
   const programAddress = dropsetProgramAddress('mainnet');
   const ix = await getCloseRegistryInstructionAsync(
     { admin: createNoopSigner(FRESH), rentRecipient: FRESH },
@@ -91,11 +113,12 @@ test('an inlined variable-seed PDA matches its finder', async () => {
   // pin that the inline seeds (market, u32 vault index, signer) encode the
   // same way the finder's do.
   const programAddress = dropsetProgramAddress('mainnet');
-  const signer = createNoopSigner(FRESH);
+  // Distinct from the signer, so swapped address seeds would not cancel out.
+  const market = address('11111111111111111111111111111113');
   const ix = await getDepositInstructionAsync(
     {
-      signer,
-      market: FRESH,
+      signer: createNoopSigner(FRESH),
+      market,
       baseMint: FRESH,
       quoteMint: FRESH,
       baseTokenProgram: FRESH,
@@ -114,8 +137,11 @@ test('an inlined variable-seed PDA matches its finder', async () => {
     { programAddress },
   );
   const [vaultDepositor] = await findVaultDepositorPda(
-    { market: FRESH, vaultIdx: 3, signer: FRESH },
+    { market, vaultIdx: 3, signer: FRESH },
     { programAddress },
   );
   assert.strictEqual(ix.accounts[2]?.address, vaultDepositor);
+  // The event authority the swap path also relies on, derived the same way.
+  const [eventAuthority] = await findEventAuthorityPda({ programAddress });
+  assert.strictEqual(ix.accounts[14]?.address, eventAuthority);
 });
