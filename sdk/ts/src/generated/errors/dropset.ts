@@ -7,7 +7,6 @@
  */
 
 import { isProgramError, type Address, type SOLANA_ERROR__INSTRUCTION_ERROR__CUSTOM, type SolanaError } from '@solana/kit';
-import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 
 /** InvalidProgramDataAddress: program_data account is not the canonical PDA for this program */
 export const DROPSET_ERROR__INVALID_PROGRAM_DATA_ADDRESS = 0x1770; // 6000
@@ -136,7 +135,8 @@ export function getDropsetErrorMessage(code: DropsetError): string {
 export function isDropsetError<TProgramErrorCode extends DropsetError>(
     error: unknown,
     transactionMessage: { instructions: Record<number, { programAddress: Address }> },
+    programAddress: Address,
     code?: TProgramErrorCode,
 ): error is SolanaError<typeof SOLANA_ERROR__INSTRUCTION_ERROR__CUSTOM> & Readonly<{ context: Readonly<{ code: TProgramErrorCode }> }> {
-  return isProgramError<TProgramErrorCode>(error, transactionMessage, DROPSET_PROGRAM_ADDRESS, code);
+  return isProgramError<TProgramErrorCode>(error, transactionMessage, programAddress, code);
 }

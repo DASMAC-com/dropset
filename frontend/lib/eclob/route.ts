@@ -14,6 +14,7 @@ import {
   PROGRAM_FOR_KIND,
   stablecoinByMint,
 } from "../data/currencies";
+import { CLUSTER } from "../env";
 
 type Rpc = SolanaClientRuntime["rpc"];
 
@@ -53,7 +54,8 @@ export { platformFeeBpsFor };
 
 // The app-side half of route resolution, on its own: the supported-stablecoin
 // gate plus the display-mint → on-chain-mint and token-program translation,
-// stopping short of the SDK lookup.
+// stopping short of the SDK lookup. It also names the cluster, which fixes the
+// program the SDK looks the market up under.
 //
 // Extracted because two callers need it and only one of them wants a resolved
 // route. `resolveEclobRoute` below goes on to do the market search; the router
@@ -74,6 +76,7 @@ export function eclobRouteInput(
   if (!fromMint || !toMint || fromMint === toMint) return null;
   if (!stablecoinByMint(fromMint) || !stablecoinByMint(toMint)) return null;
   return {
+    cluster: CLUSTER,
     inputMint: address(onchainMint(fromMint)),
     outputMint: address(onchainMint(toMint)),
     inputTokenProgram: PROGRAM_FOR_KIND[onchainTokenProgram(fromMint)],

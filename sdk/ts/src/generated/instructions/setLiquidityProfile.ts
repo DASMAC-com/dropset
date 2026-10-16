@@ -49,9 +49,9 @@ vaultIdx: SetLiquidityProfileInstructionDataArgs["vaultIdx"];
 profileBytes: SetLiquidityProfileInstructionDataArgs["profileBytes"];
 }
 
-export function getSetLiquidityProfileInstruction<TAccountSigner extends string, TAccountMarket extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetLiquidityProfileInput<TAccountSigner, TAccountMarket>, config?: { programAddress?: TProgramAddress } ): SetLiquidityProfileInstruction<TProgramAddress, TAccountSigner, TAccountMarket> {
+export function getSetLiquidityProfileInstruction<TAccountSigner extends string, TAccountMarket extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetLiquidityProfileInput<TAccountSigner, TAccountMarket>, config: { programAddress: TProgramAddress } ): SetLiquidityProfileInstruction<TProgramAddress, TAccountSigner, TAccountMarket> {
   // Program address.
-const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
+const programAddress = config.programAddress;
 
  // Original accounts.
 const originalAccounts = { signer: { value: input.signer ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true } }

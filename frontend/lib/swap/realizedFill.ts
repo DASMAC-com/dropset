@@ -49,6 +49,7 @@ import {
   REALIZED_FILL_MAX_ATTEMPTS,
   SWAP_CONFIRMATION_POLL_MS,
 } from "../data/timings";
+import { CLUSTER } from "../env";
 
 /**
  * Minimal structural shape of the one RPC method this needs, declared here
@@ -255,7 +256,7 @@ export async function readRealizedFill(
   // with someone else's real fill must not read as a success. The program-id
   // check inside `collectFillEvents` authenticates the *emitter*, not the
   // subject, so that filtering is this module's job.
-  const filled = collectFillEvents(tx).some(
+  const filled = collectFillEvents(tx, CLUSTER).some(
     (event) => String(event.taker) === ref.owner,
   );
 

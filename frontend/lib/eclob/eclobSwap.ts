@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  DROPSET_PROGRAM_ADDRESS,
   getSwapInstructionAsync,
   initSimulator,
   simulateSwap,
@@ -266,30 +265,38 @@ export async function executeEclobSwap(
     }),
   ]);
 
-  const swapIx = await getSwapInstructionAsync({
-    taker,
-    market: route.market,
-    baseMint: route.baseMint,
-    quoteMint: route.quoteMint,
-    baseTokenProgram: route.baseTokenProgram,
-    quoteTokenProgram: route.quoteTokenProgram,
-    takerBaseAta,
-    takerQuoteAta,
-    marketBaseTreasury,
-    marketQuoteTreasury,
-    program: DROPSET_PROGRAM_ADDRESS,
-    // Omitted (undefined) when no fee is declared, which the generated client
-    // encodes as the program-id sentinel Anchor reads back as `None`. The
-    // program rejects a non-zero rate with either slot absent, so both are
-    // gated on the same condition.
-    platformFeeAuthority: platformFeeBps > 0 ? PLATFORM_FEE?.wallet : undefined,
-    platformFeeAta: platformFeeBps > 0 ? feeAta : undefined,
-    side: route.side === "buy" ? 0 : 1,
-    amountIn: atomicAmount,
-    limitPriceBits: route.limitPriceBits,
-    minOut,
-    platformFeeBps,
-  });
+  // The route carries the program its market was found under, so the
+  // instruction, its `program` account and the PDAs the builder derives all
+  // agree with the market.
+  const { programAddress } = route;
+  const swapIx = await getSwapInstructionAsync(
+    {
+      taker,
+      market: route.market,
+      baseMint: route.baseMint,
+      quoteMint: route.quoteMint,
+      baseTokenProgram: route.baseTokenProgram,
+      quoteTokenProgram: route.quoteTokenProgram,
+      takerBaseAta,
+      takerQuoteAta,
+      marketBaseTreasury,
+      marketQuoteTreasury,
+      program: programAddress,
+      // Omitted (undefined) when no fee is declared, which the generated client
+      // encodes as the program-id sentinel Anchor reads back as `None`. The
+      // program rejects a non-zero rate with either slot absent, so both are
+      // gated on the same condition.
+      platformFeeAuthority:
+        platformFeeBps > 0 ? PLATFORM_FEE?.wallet : undefined,
+      platformFeeAta: platformFeeBps > 0 ? feeAta : undefined,
+      side: route.side === "buy" ? 0 : 1,
+      amountIn: atomicAmount,
+      limitPriceBits: route.limitPriceBits,
+      minOut,
+      platformFeeBps,
+    },
+    { programAddress },
+  );
 
   const { value: latestBlockhash } = await rpc
     .getLatestBlockhash({ commitment: "confirmed" })

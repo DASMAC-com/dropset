@@ -6,8 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
-import { findEventAuthorityPda, findRegistryPda } from '../pdas';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -84,9 +83,9 @@ allowOutsideDepositors: CreateVaultInstructionDataArgs["allowOutsideDepositors"]
 leaderOverride: CreateVaultInstructionDataArgs["leaderOverride"];
 }
 
-export async function getCreateVaultInstructionAsync<TAccountPayer extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountPayerFeeSource extends string, TAccountRegistryFeeTreasury extends string, TAccountSystemProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CreateVaultAsyncInput<TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<CreateVaultInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>> {
+export async function getCreateVaultInstructionAsync<TAccountPayer extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountPayerFeeSource extends string, TAccountRegistryFeeTreasury extends string, TAccountSystemProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CreateVaultAsyncInput<TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>, config: { programAddress: TProgramAddress } ): Promise<CreateVaultInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>> {
   // Program address.
-const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
+const programAddress = config.programAddress;
 
  // Original accounts.
 const originalAccounts = { payer: { value: input.payer ?? null, isWritable: true }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, feeMint: { value: input.feeMint ?? null, isWritable: false }, feeTokenProgram: { value: input.feeTokenProgram ?? null, isWritable: false }, payerFeeSource: { value: input.payerFeeSource ?? null, isWritable: true }, registryFeeTreasury: { value: input.registryFeeTreasury ?? null, isWritable: true }, systemProgram: { value: input.systemProgram ?? null, isWritable: false }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
@@ -99,7 +98,7 @@ const args = { ...input,  };
 
 // Resolve default values.
 if (!accounts.registry.value) {
-accounts.registry.value = await findRegistryPda();
+accounts.registry.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))] });
 }
 if (!accounts.feeMint.value) {
 accounts.feeMint.value = 'market.fee_config.mint' as Address<'market.fee_config.mint'>;
@@ -111,7 +110,7 @@ if (!accounts.systemProgram.value) {
 accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>;
 }
 if (!accounts.eventAuthority.value) {
-accounts.eventAuthority.value = await findEventAuthorityPda();
+accounts.eventAuthority.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111, 114, 105, 116, 121]))] });
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
@@ -168,9 +167,9 @@ allowOutsideDepositors: CreateVaultInstructionDataArgs["allowOutsideDepositors"]
 leaderOverride: CreateVaultInstructionDataArgs["leaderOverride"];
 }
 
-export function getCreateVaultInstruction<TAccountPayer extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountPayerFeeSource extends string, TAccountRegistryFeeTreasury extends string, TAccountSystemProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CreateVaultInput<TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): CreateVaultInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram> {
+export function getCreateVaultInstruction<TAccountPayer extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountFeeMint extends string, TAccountFeeTokenProgram extends string, TAccountPayerFeeSource extends string, TAccountRegistryFeeTreasury extends string, TAccountSystemProgram extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CreateVaultInput<TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram>, config: { programAddress: TProgramAddress } ): CreateVaultInstruction<TProgramAddress, TAccountPayer, TAccountRegistry, TAccountMarket, TAccountFeeMint, TAccountFeeTokenProgram, TAccountPayerFeeSource, TAccountRegistryFeeTreasury, TAccountSystemProgram, TAccountEventAuthority, TAccountProgram> {
   // Program address.
-const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
+const programAddress = config.programAddress;
 
  // Original accounts.
 const originalAccounts = { payer: { value: input.payer ?? null, isWritable: true }, registry: { value: input.registry ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, feeMint: { value: input.feeMint ?? null, isWritable: false }, feeTokenProgram: { value: input.feeTokenProgram ?? null, isWritable: false }, payerFeeSource: { value: input.payerFeeSource ?? null, isWritable: true }, registryFeeTreasury: { value: input.registryFeeTreasury ?? null, isWritable: true }, systemProgram: { value: input.systemProgram ?? null, isWritable: false }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }

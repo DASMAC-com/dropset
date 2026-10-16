@@ -13,7 +13,7 @@ baseMint: Address;
 quoteMint: Address;
 };
 
-export async function findMarketPda(seeds: MarketSeeds, config: { programAddress?: Address | undefined } = {}): Promise<ProgramDerivedAddress> {
-  const { programAddress = 'AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV' as Address<'AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV'> } = config;
+export async function findMarketPda(seeds: MarketSeeds, config: { programAddress: Address }): Promise<ProgramDerivedAddress> {
+  const { programAddress } = config;
   return await getProgramDerivedAddress({ programAddress, seeds: [getAddressEncoder().encode(seeds.baseMint), getAddressEncoder().encode(seeds.quoteMint)]});
 }

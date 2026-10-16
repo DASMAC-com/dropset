@@ -55,9 +55,9 @@ quoteSlot: SetReferencePriceInstructionDataArgs["quoteSlot"];
 quoteUnix: SetReferencePriceInstructionDataArgs["quoteUnix"];
 }
 
-export function getSetReferencePriceInstruction<TAccountSigner extends string, TAccountMarket extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetReferencePriceInput<TAccountSigner, TAccountMarket>, config?: { programAddress?: TProgramAddress } ): SetReferencePriceInstruction<TProgramAddress, TAccountSigner, TAccountMarket> {
+export function getSetReferencePriceInstruction<TAccountSigner extends string, TAccountMarket extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetReferencePriceInput<TAccountSigner, TAccountMarket>, config: { programAddress: TProgramAddress } ): SetReferencePriceInstruction<TProgramAddress, TAccountSigner, TAccountMarket> {
   // Program address.
-const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
+const programAddress = config.programAddress;
 
  // Original accounts.
 const originalAccounts = { signer: { value: input.signer ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true } }

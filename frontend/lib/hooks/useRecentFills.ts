@@ -2,14 +2,15 @@
 
 import {
   collectFillEvents,
-  DROPSET_PROGRAM_ADDRESS,
   decodePrice,
+  dropsetProgramAddress,
   type PriceBits,
 } from "@dropset/sdk";
 import type { Address, Signature } from "@solana/kit";
 import { useSolanaClient } from "@solana/react-hooks";
 import { useEffect, useSyncExternalStore } from "react";
 import { RECENT_FILLS_RESUBSCRIBE_MS } from "../data/timings";
+import { CLUSTER } from "../env";
 
 // Rows held in the tape. A window, not a pad: the newest fill goes on top and
 // the oldest falls off. Lives here rather than in `data/timings` — that module
@@ -243,7 +244,7 @@ export function useRecentFills(
       // rest. A single transaction can in principle touch more than one
       // market, hence the grouping rather than a single target.
       const byMarket = new Map<Address, RecentFill[]>();
-      collectFillEvents(tx).forEach((event, leg) => {
+      collectFillEvents(tx, CLUSTER).forEach((event, leg) => {
         // Decoded only to reject the ZERO / INFINITY sentinels — the value
         // stored is the raw `Price`, scaled to human units at render time.
         const decoded = decodePrice(event.fillPrice);
@@ -284,7 +285,7 @@ export function useRecentFills(
         try {
           const notifications = await rpcSubscriptions
             .logsNotifications(
-              { mentions: [DROPSET_PROGRAM_ADDRESS] },
+              { mentions: [dropsetProgramAddress(CLUSTER)] },
               { commitment: "confirmed" },
             )
             .subscribe({ abortSignal: abort.signal });

@@ -6,8 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
-import { findEventAuthorityPda } from '../pdas';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -47,9 +46,9 @@ vaultIdx: SetQuoteAuthorityInstructionDataArgs["vaultIdx"];
 newAuthority: SetQuoteAuthorityInstructionDataArgs["newAuthority"];
 }
 
-export async function getSetQuoteAuthorityInstructionAsync<TAccountSigner extends string, TAccountMarket extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetQuoteAuthorityAsyncInput<TAccountSigner, TAccountMarket, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): Promise<SetQuoteAuthorityInstruction<TProgramAddress, TAccountSigner, TAccountMarket, TAccountEventAuthority, TAccountProgram>> {
+export async function getSetQuoteAuthorityInstructionAsync<TAccountSigner extends string, TAccountMarket extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetQuoteAuthorityAsyncInput<TAccountSigner, TAccountMarket, TAccountEventAuthority, TAccountProgram>, config: { programAddress: TProgramAddress } ): Promise<SetQuoteAuthorityInstruction<TProgramAddress, TAccountSigner, TAccountMarket, TAccountEventAuthority, TAccountProgram>> {
   // Program address.
-const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
+const programAddress = config.programAddress;
 
  // Original accounts.
 const originalAccounts = { signer: { value: input.signer ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }
@@ -62,7 +61,7 @@ const args = { ...input,  };
 
 // Resolve default values.
 if (!accounts.eventAuthority.value) {
-accounts.eventAuthority.value = await findEventAuthorityPda();
+accounts.eventAuthority.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([95, 95, 101, 118, 101, 110, 116, 95, 97, 117, 116, 104, 111, 114, 105, 116, 121]))] });
 }
 
 const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
@@ -82,9 +81,9 @@ vaultIdx: SetQuoteAuthorityInstructionDataArgs["vaultIdx"];
 newAuthority: SetQuoteAuthorityInstructionDataArgs["newAuthority"];
 }
 
-export function getSetQuoteAuthorityInstruction<TAccountSigner extends string, TAccountMarket extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetQuoteAuthorityInput<TAccountSigner, TAccountMarket, TAccountEventAuthority, TAccountProgram>, config?: { programAddress?: TProgramAddress } ): SetQuoteAuthorityInstruction<TProgramAddress, TAccountSigner, TAccountMarket, TAccountEventAuthority, TAccountProgram> {
+export function getSetQuoteAuthorityInstruction<TAccountSigner extends string, TAccountMarket extends string, TAccountEventAuthority extends string, TAccountProgram extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: SetQuoteAuthorityInput<TAccountSigner, TAccountMarket, TAccountEventAuthority, TAccountProgram>, config: { programAddress: TProgramAddress } ): SetQuoteAuthorityInstruction<TProgramAddress, TAccountSigner, TAccountMarket, TAccountEventAuthority, TAccountProgram> {
   // Program address.
-const programAddress = config?.programAddress ?? DROPSET_PROGRAM_ADDRESS;
+const programAddress = config.programAddress;
 
  // Original accounts.
 const originalAccounts = { signer: { value: input.signer ?? null, isWritable: false }, market: { value: input.market ?? null, isWritable: true }, eventAuthority: { value: input.eventAuthority ?? null, isWritable: false }, program: { value: input.program ?? null, isWritable: false } }

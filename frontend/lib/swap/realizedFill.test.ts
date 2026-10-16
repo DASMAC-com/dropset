@@ -1,5 +1,5 @@
 import {
-  DROPSET_PROGRAM_ADDRESS,
+  dropsetProgramAddress,
   EVENT_DISCRIMINATOR_LEN,
   EVENT_IX_TAG_LE,
   FILL_EVENT_DISCRIMINATOR,
@@ -7,6 +7,8 @@ import {
 } from "@dropset/sdk";
 import { address, getBase58Decoder } from "@solana/kit";
 import { describe, expect, it } from "vitest";
+
+import { CLUSTER } from "../env";
 
 import {
   type RealizedFillTransaction,
@@ -103,7 +105,8 @@ const tx = (
     message: {
       accountKeys: overrides.noKeys
         ? undefined
-        : [OTHER_OWNER, DROPSET_PROGRAM_ADDRESS as string],
+        : // The emitter the reader trusts: the app cluster's program.
+          [OTHER_OWNER, dropsetProgramAddress(CLUSTER) as string],
     },
   },
 });
