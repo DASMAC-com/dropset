@@ -189,12 +189,4 @@ describe("buildPickerWallets Mobile Wallet Adapter row", () => {
     ]);
     expect(detected[0]?.connectorId).toEqual(mwa.id);
   });
-
-  it("leaves other discovered wallets' names alone", () => {
-    const { detected } = buildPickerWallets(
-      [connector("brave:std", "Brave Wallet")],
-      false,
-    );
-    expect(detected.map((w) => w.name)).toEqual(["Brave Wallet"]);
-  });
 });

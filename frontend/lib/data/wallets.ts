@@ -106,6 +106,8 @@ const isKnown = (connector: WalletConnector): boolean =>
 const MWA_WALLET_NAME = "Mobile Wallet Adapter";
 export const MWA_ROW_LABEL = "Use installed wallet (Seeker / Android)";
 
+// An exact match, unlike `matchesKey`: a substring test on a name this generic
+// could catch some other wallet's.
 const isMwa = (connector: WalletConnector): boolean =>
   connector.name === MWA_WALLET_NAME;
 
@@ -113,7 +115,8 @@ const isMwa = (connector: WalletConnector): boolean =>
  * Merge the curated wallet list with the live discovered connectors into two
  * display groups. MetaMask's badge is gated on a real extension
  * (`metamaskInstalled`) rather than its relay registration, so it can show as
- * "Not detected" yet still be connectable.
+ * "Not detected" yet still be connectable. On Android the Mobile Wallet
+ * Adapter's row is relabeled and leads the detected group.
  */
 export function buildPickerWallets(
   connectors: readonly WalletConnector[],
@@ -151,6 +154,7 @@ export function buildPickerWallets(
   // since extension wallets only register once installed. Exclude anything
   // matching a curated entry so a duplicate (e.g. MetaMask extension + relay)
   // can't render twice.
+  const extras = connectors.filter((c) => !isKnown(c));
   const extraRow = (c: WalletConnector): PickerWallet => ({
     id: c.id,
     name: isMwa(c) ? MWA_ROW_LABEL : c.name,
@@ -162,7 +166,6 @@ export function buildPickerWallets(
     detected: true,
     connectorId: c.id,
   });
-  const extras = connectors.filter((c) => !isKnown(c));
 
   // MWA leads: on Android it hands the connect to whichever wallet app is
   // installed (on a Seeker or Saga, the built-in Seed Vault wallet, with no

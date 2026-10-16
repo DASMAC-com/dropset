@@ -17,7 +17,7 @@ export type SwappableClient<K extends { id: string }> = {
   destroy(): void;
 };
 
-export type ClientSwapDeps<C, K> = {
+export type ClientSwapDeps<K, C> = {
   make: (connectors: readonly K[]) => C;
   // True when no connection is live: disconnected, or a failed connect.
   isIdle: (client: C) => boolean;
@@ -37,13 +37,17 @@ export type ClientSwap<K> = {
   // store subscription, from the effect that installs it, and when a connect
   // settles.
   flush: (inEffect: boolean) => void;
-  // Whether a connect is in flight. The picker asserts this synchronously from
-  // the row's click through connect-resolution, because the client store does
-  // not reliably hold "connecting" during an external SDK's relay flow, so
-  // `isIdle` alone would not keep a swap out past `modal.close()`. An
-  // open-but-idle picker deliberately does NOT block a swap: a wallet that
-  // registers late (MetaMask's relay on mobile) must reach the picker the user
-  // is already looking at.
+  // Whether a connect is in flight. A swap then races the connect: the
+  // session lands on the old (destroyed) client while React rebinds to the
+  // new one, so the header stays "Connect Wallet" until a reload. The picker
+  // asserts this synchronously from the row's click through
+  // connect-resolution, because the client store does not reliably hold
+  // "connecting" during an external SDK's relay flow, so `isIdle` alone would
+  // not keep a swap out past `modal.close()`. An open-but-idle picker
+  // deliberately does NOT block a swap: a wallet that registers late
+  // (MetaMask's relay on mobile) must reach the picker the user is already
+  // looking at, or its row renders as an install link until the picker is
+  // closed and reopened.
   setConnecting: (connecting: boolean) => void;
 };
 
@@ -58,7 +62,7 @@ export const connectorKey = (connectors: readonly { id: string }[]): string =>
 export function createClientSwap<
   K extends { id: string },
   C extends SwappableClient<K>,
->(initial: C, deps: ClientSwapDeps<C, K>): ClientSwap<K> {
+>(initial: C, deps: ClientSwapDeps<K, C>): ClientSwap<K> {
   let client = initial;
   // The last set the registry reported, applied or deferred.
   let seenKey = connectorKey(initial.connectors.all);

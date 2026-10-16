@@ -87,6 +87,8 @@ describe("client swap", () => {
     expect(h.commits).toEqual([{ client: h.built[0], inEffect: true }]);
   });
 
+  // The flush that applies it here is the one the client effect makes, so it
+  // must commit with a plain setState too.
   it("defers while a connection is live, then applies it once idle", () => {
     const h = harness(["a"]);
     h.initial.idle = false;
@@ -95,8 +97,24 @@ describe("client swap", () => {
     h.swap.flush(false);
     expect(h.built).toHaveLength(0);
     h.initial.idle = true;
-    h.swap.flush(false);
+    h.swap.flush(true);
     expect(h.built.map((c) => connectorKey(c.connectors.all))).toEqual(["a|b"]);
+    expect(h.commits).toEqual([{ client: h.built[0], inEffect: true }]);
+    expect(h.initial.destroyed).toBe(true);
+  });
+
+  // A set applied directly supersedes one deferred earlier, so no later flush
+  // may roll the client back to the stale set.
+  it("drops a deferred set once a newer one is applied directly", () => {
+    const h = harness(["a"]);
+    h.initial.idle = false;
+    h.swap.onConnectors(set("a", "b"), false);
+    h.initial.idle = true;
+    h.swap.onConnectors(set("a", "b", "c"), false);
+    h.swap.flush(false);
+    expect(h.built.map((c) => connectorKey(c.connectors.all))).toEqual([
+      "a|b|c",
+    ]);
   });
 
   // An idle store is not enough: an external SDK's relay flow can leave the
