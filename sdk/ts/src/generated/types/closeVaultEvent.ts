@@ -6,7 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
+import { addDecoderSizePrefix, addEncoderSizePrefix, combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, getUtf8Decoder, getUtf8Encoder, type Address, type Codec, type Decoder, type Encoder } from '@solana/kit';
 
 export type CloseVaultEvent = { market: Address; sectorIdx: number; 
 /**
@@ -15,7 +15,9 @@ export type CloseVaultEvent = { market: Address; sectorIdx: number;
  */
 vaultSeq: bigint; leader: Address; 
 /** Active-DLL length after the move. */
-activeCountAfter: number;  };
+activeCountAfter: number; 
+/** The name the close blanked (and unlocked); empty when it was unset. */
+name: string;  };
 
 export type CloseVaultEventArgs = { market: Address; sectorIdx: number; 
 /**
@@ -24,16 +26,18 @@ export type CloseVaultEventArgs = { market: Address; sectorIdx: number;
  */
 vaultSeq: number | bigint; leader: Address; 
 /** Active-DLL length after the move. */
-activeCountAfter: number;  };
+activeCountAfter: number; 
+/** The name the close blanked (and unlocked); empty when it was unset. */
+name: string;  };
 
-export function getCloseVaultEventEncoder(): FixedSizeEncoder<CloseVaultEventArgs> {
-    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['leader', getAddressEncoder()], ['activeCountAfter', getU32Encoder()]]);
+export function getCloseVaultEventEncoder(): Encoder<CloseVaultEventArgs> {
+    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['leader', getAddressEncoder()], ['activeCountAfter', getU32Encoder()], ['name', addEncoderSizePrefix(getUtf8Encoder(), getU32Encoder())]]);
 }
 
-export function getCloseVaultEventDecoder(): FixedSizeDecoder<CloseVaultEvent> {
-    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['leader', getAddressDecoder()], ['activeCountAfter', getU32Decoder()]]);
+export function getCloseVaultEventDecoder(): Decoder<CloseVaultEvent> {
+    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['leader', getAddressDecoder()], ['activeCountAfter', getU32Decoder()], ['name', addDecoderSizePrefix(getUtf8Decoder(), getU32Decoder())]]);
 }
 
-export function getCloseVaultEventCodec(): FixedSizeCodec<CloseVaultEventArgs, CloseVaultEvent> {
+export function getCloseVaultEventCodec(): Codec<CloseVaultEventArgs, CloseVaultEvent> {
     return combineCodec(getCloseVaultEventEncoder(), getCloseVaultEventDecoder());
 }

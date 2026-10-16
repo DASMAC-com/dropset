@@ -36,10 +36,11 @@
 
 use crate::types::{
     CloseMarketTreasuryEvent, CloseRegistryFeeVaultEvent, CloseVaultEvent, CreateVaultEvent,
-    DepositEvent, FillEvent, FreezeVaultEvent, PlatformFeeEvent, RealizeEvent,
-    SetDefaultFeeConfigEvent, SetLeaderEvent, SetMarketFeeConfigEvent, SetMaxPlatformFeeEvent,
-    SetMinLeaderShareEvent, SetQuoteAuthorityEvent, SetRegistryDefaultsEvent, SetTakerFeeEvent,
-    SweepResidualEvent, WithdrawEvent,
+    DepositEvent, FillEvent, FreezeVaultEvent, OverrideVaultNameEvent, PlatformFeeEvent,
+    RealizeEvent, SetDefaultFeeConfigEvent, SetLeaderEvent, SetMarketFeeConfigEvent,
+    SetMaxPlatformFeeEvent, SetMinLeaderShareEvent, SetQuoteAuthorityEvent,
+    SetRegistryDefaultsEvent, SetTakerFeeEvent, SetVaultNameEvent, SweepResidualEvent,
+    WithdrawEvent,
 };
 use borsh::BorshDeserialize;
 use solana_pubkey::Pubkey;
@@ -83,6 +84,8 @@ pub const DEPOSIT_EVENT_DISCRIMINATOR: [u8; 8] = [120, 248, 61, 83, 31, 142, 107
 pub const FILL_EVENT_DISCRIMINATOR: [u8; 8] = [13, 89, 41, 228, 105, 178, 45, 112];
 /// Discriminator for `FreezeVaultEvent`.
 pub const FREEZE_VAULT_EVENT_DISCRIMINATOR: [u8; 8] = [9, 180, 143, 223, 189, 20, 1, 74];
+/// Discriminator for `OverrideVaultNameEvent`.
+pub const OVERRIDE_VAULT_NAME_EVENT_DISCRIMINATOR: [u8; 8] = [52, 183, 16, 189, 216, 50, 225, 21];
 /// Discriminator for `PlatformFeeEvent`.
 pub const PLATFORM_FEE_EVENT_DISCRIMINATOR: [u8; 8] = [188, 157, 159, 156, 113, 199, 229, 159];
 /// Discriminator for `RealizeEvent`.
@@ -105,6 +108,8 @@ pub const SET_QUOTE_AUTHORITY_EVENT_DISCRIMINATOR: [u8; 8] = [29, 44, 6, 38, 69,
 pub const SET_REGISTRY_DEFAULTS_EVENT_DISCRIMINATOR: [u8; 8] = [138, 35, 107, 189, 236, 175, 31, 9];
 /// Discriminator for `SetTakerFeeEvent`.
 pub const SET_TAKER_FEE_EVENT_DISCRIMINATOR: [u8; 8] = [175, 232, 242, 29, 241, 48, 172, 41];
+/// Discriminator for `SetVaultNameEvent`.
+pub const SET_VAULT_NAME_EVENT_DISCRIMINATOR: [u8; 8] = [173, 137, 158, 125, 139, 38, 150, 212];
 /// Discriminator for `SweepResidualEvent`.
 pub const SWEEP_RESIDUAL_EVENT_DISCRIMINATOR: [u8; 8] = [10, 97, 22, 134, 106, 210, 95, 7];
 /// Discriminator for `WithdrawEvent`.
@@ -127,6 +132,8 @@ pub enum DropsetEvent {
     FreezeVault(FreezeVaultEvent),
     SetLeader(SetLeaderEvent),
     SetQuoteAuthority(SetQuoteAuthorityEvent),
+    SetVaultName(SetVaultNameEvent),
+    OverrideVaultName(OverrideVaultNameEvent),
     Realize(RealizeEvent),
     SetMinLeaderShare(SetMinLeaderShareEvent),
     SetMarketFeeConfig(SetMarketFeeConfigEvent),
@@ -153,6 +160,8 @@ impl DropsetEvent {
             Self::FreezeVault(_) => "FreezeVaultEvent",
             Self::SetLeader(_) => "SetLeaderEvent",
             Self::SetQuoteAuthority(_) => "SetQuoteAuthorityEvent",
+            Self::SetVaultName(_) => "SetVaultNameEvent",
+            Self::OverrideVaultName(_) => "OverrideVaultNameEvent",
             Self::Realize(_) => "RealizeEvent",
             Self::SetMinLeaderShare(_) => "SetMinLeaderShareEvent",
             Self::SetMarketFeeConfig(_) => "SetMarketFeeConfigEvent",
@@ -255,6 +264,10 @@ pub fn try_decode_event_payload(payload: &[u8]) -> Result<DropsetEvent, DecodeEr
         SET_LEADER_EVENT_DISCRIMINATOR => decode!(SetLeader, SetLeaderEvent),
         SET_QUOTE_AUTHORITY_EVENT_DISCRIMINATOR => {
             decode!(SetQuoteAuthority, SetQuoteAuthorityEvent)
+        }
+        SET_VAULT_NAME_EVENT_DISCRIMINATOR => decode!(SetVaultName, SetVaultNameEvent),
+        OVERRIDE_VAULT_NAME_EVENT_DISCRIMINATOR => {
+            decode!(OverrideVaultName, OverrideVaultNameEvent)
         }
         REALIZE_EVENT_DISCRIMINATOR => decode!(Realize, RealizeEvent),
         SET_MIN_LEADER_SHARE_EVENT_DISCRIMINATOR => {
@@ -404,6 +417,10 @@ mod tests {
         (DEPOSIT_EVENT_DISCRIMINATOR, "DepositEvent"),
         (FILL_EVENT_DISCRIMINATOR, "FillEvent"),
         (FREEZE_VAULT_EVENT_DISCRIMINATOR, "FreezeVaultEvent"),
+        (
+            OVERRIDE_VAULT_NAME_EVENT_DISCRIMINATOR,
+            "OverrideVaultNameEvent",
+        ),
         (PLATFORM_FEE_EVENT_DISCRIMINATOR, "PlatformFeeEvent"),
         (REALIZE_EVENT_DISCRIMINATOR, "RealizeEvent"),
         (
@@ -432,6 +449,7 @@ mod tests {
             "SetRegistryDefaultsEvent",
         ),
         (SET_TAKER_FEE_EVENT_DISCRIMINATOR, "SetTakerFeeEvent"),
+        (SET_VAULT_NAME_EVENT_DISCRIMINATOR, "SetVaultNameEvent"),
         (SWEEP_RESIDUAL_EVENT_DISCRIMINATOR, "SweepResidualEvent"),
         (WITHDRAW_EVENT_DISCRIMINATOR, "WithdrawEvent"),
     ];

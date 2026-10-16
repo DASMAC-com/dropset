@@ -6,30 +6,34 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
+import { addDecoderSizePrefix, addEncoderSizePrefix, combineCodec, getAddressDecoder, getAddressEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, getUtf8Decoder, getUtf8Encoder, type Address, type Codec, type Decoder, type Encoder } from '@solana/kit';
 
 export type FreezeVaultEvent = { market: Address; sectorIdx: number; 
 /**
  * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
  * identifies a vault across sector reuse; `sector_idx` alone does not.
  */
-vaultSeq: bigint; leader: Address;  };
+vaultSeq: bigint; leader: Address; 
+/** The name the freeze blanked (and locked); empty when it was unset. */
+name: string;  };
 
 export type FreezeVaultEventArgs = { market: Address; sectorIdx: number; 
 /**
  * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
  * identifies a vault across sector reuse; `sector_idx` alone does not.
  */
-vaultSeq: number | bigint; leader: Address;  };
+vaultSeq: number | bigint; leader: Address; 
+/** The name the freeze blanked (and locked); empty when it was unset. */
+name: string;  };
 
-export function getFreezeVaultEventEncoder(): FixedSizeEncoder<FreezeVaultEventArgs> {
-    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['leader', getAddressEncoder()]]);
+export function getFreezeVaultEventEncoder(): Encoder<FreezeVaultEventArgs> {
+    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['leader', getAddressEncoder()], ['name', addEncoderSizePrefix(getUtf8Encoder(), getU32Encoder())]]);
 }
 
-export function getFreezeVaultEventDecoder(): FixedSizeDecoder<FreezeVaultEvent> {
-    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['leader', getAddressDecoder()]]);
+export function getFreezeVaultEventDecoder(): Decoder<FreezeVaultEvent> {
+    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['leader', getAddressDecoder()], ['name', addDecoderSizePrefix(getUtf8Decoder(), getU32Decoder())]]);
 }
 
-export function getFreezeVaultEventCodec(): FixedSizeCodec<FreezeVaultEventArgs, FreezeVaultEvent> {
+export function getFreezeVaultEventCodec(): Codec<FreezeVaultEventArgs, FreezeVaultEvent> {
     return combineCodec(getFreezeVaultEventEncoder(), getFreezeVaultEventDecoder());
 }
