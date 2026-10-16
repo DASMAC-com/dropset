@@ -327,8 +327,9 @@ The PK absorbs replays, so the only real question is non-final slots.
 For the prototype:
 
 - Subscribe / poll at **`finalized`** for the canonical store — no
-  reorg below finality to handle. Under Alpenglow mainnet finalizes in
-  about 150 ms, so this costs no latency anywhere.
+  reorg below finality to handle. Localnet finalizes effectively
+  instantly and, under Alpenglow, mainnet in about 150 ms, so the
+  latency cost is negligible everywhere.
 - A lower-latency `processed` tap (for a future realtime
   channel) is an explicit later seam: it would write to the same tables
   and let the `(slot, …)` PK + `ON CONFLICT` reconcile when the slot

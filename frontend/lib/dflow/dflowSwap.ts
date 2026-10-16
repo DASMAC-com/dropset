@@ -62,7 +62,8 @@ export type DflowSwapInput = {
 //      tx (no Jito open-order/fill split — simplest confirm path).
 //   2. Base64-decode the returned transaction to a kit Transaction object.
 //   3. Hand it to the wallet's `sendTransaction` which signs & submits in one
-//      shot, returning the on-chain signature once it reaches `finalized`.
+//      shot, returning the signature after submission; the caller's
+//      `waitForSwapConfirmation` then polls it to `finalized`.
 export async function executeDflowSwap(
   input: DflowSwapInput,
 ): Promise<SwapOutcome> {
