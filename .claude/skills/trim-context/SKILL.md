@@ -74,14 +74,21 @@ document id to resolve, so there is no inbox-not-set-up no-op path.
 
 ## Steps
 
-**1. Sweep the parked levers.** One call, titles and urls only — no
-bodies:
+**1. Sweep the parked levers.** One call, no bodies — titles, urls and
+the paths each lever names, which step 2a checks against HEAD:
 
 ```sh
-python3 .claude/tools/trim_levers.py list
+python3 .claude/tools/trim_levers.py list --targets
 ```
 
 If nothing is parked, report that and stop; there is no fold to do.
+
+`--targets` is a strict **superset** of the bare `list` — the same rows,
+plus a `targets:` column — so a fold that intends to proceed takes it
+**as** its is-anything-parked check and never also takes the bare form.
+Taking both bought one 62-row pool twice for **≈4.9k**, the pass's two
+largest results. The bare `list` survives only for a pass that wants the
+pool size and nothing else.
 
 That stop condition is **reachable**, which it once was not. `list`
 filters to **open** levers, not merely milestoned ones, so a lever closed
@@ -121,9 +128,8 @@ session's largest results, together beating every read the fold actually
 consumed. The worst of the three re-printed the listing it had just been
 asked to spill.
 
-Keep the bare `list` only for the is-anything-parked check — and note
-the combined call answers that too (its size line reports the body
-count), so a fold that intends to proceed never needs the bare form.
+The combined call reports the body count too, so after step 1's
+`--targets` listing nothing else needs the bare form.
 
 `--fingerprints` adds each lever's dedup key to the listing — the thing a
 sibling lookup actually needs, and the one field the plain listing omits.
@@ -257,13 +263,9 @@ cheaper read changes what a fold costs, not what a fold should contain.
 
 **2a. Verify each lever against HEAD before folding it.** A parked lever
 is a snapshot of the session that filed it, and a later pass may have
-landed the thing it asks for. Get the checklist in one call:
-
-```sh
-python3 .claude/tools/trim_levers.py list --targets
-```
-
-That prints the repo paths and tool names each lever's prose names. Probe
+landed the thing it asks for. The checklist is step 1's `targets:`
+column, already in hand — never re-list for it. It names the repo paths
+and tool names each lever's prose names. Probe
 those — an `ls`, a `--help`, one scoped search — and route an
 already-landed lever to **step 6's rejection path** with *already landed*
 as the recorded reason. Dedup-against-resolved then makes the rejection

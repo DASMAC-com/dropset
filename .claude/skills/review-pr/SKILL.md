@@ -256,6 +256,21 @@ migrations or generation inputs, and whether it spans crates.
      write**, in its `patch` — never a save of their own (`history.md`
      → "Deferred-tick echoes").
 
+   - **A body addition that ticks nothing** — a deferral note, a
+     remaining-scope line — is an **append**, and goes through the
+     zero-echo writer, never `save_issue`:
+
+     ```sh
+     python3 .claude/tools/linear_issue.py append --id <ENG-###> \
+       --file <scratchpad>/note.md
+     ```
+
+     An append has no anchor, so `patch`'s atomic abort protects
+     nothing and its full-body echo buys nothing; **anchored** edits
+     (the ticks above) stay on `patch`. On a growing body each echo is
+     larger than the last — four MCP body writes to one issue once cost
+     ≈20k, a fifth of that session's tool-result spend.
+
    - Catalogue every **partial** or **missing** requirement as
      **blocking** (step 7), quoting the checklist text and the deciding
      `file:line` or absence.
@@ -733,6 +748,14 @@ migrations or generation inputs, and whether it spans crates.
    thing are what an in-flight PR most likely reintroduces, so decide
    after reading it whether they are yours or the second-landing PR's.
 
+   **Answer a peer's "do we collide?" from the slices, never
+   `git diff`.** The question *what exactly did I change in this file*
+   does not feel like re-deriving a diff, but it is: locate the file's
+   hunks in the existing slice with
+   `read_result.py --grep '<path>' <slice>` and `Read` that range, or
+   take `review_diff.py --only '<path>'`. Path-scoped `git diff` calls made
+   after the slices existed once cost ≈2.7k for bytes already on disk.
+
    **Ask whether an AMENDMENT is pending before you spawn.** If a
    planning session, a peer or the operator has work queued for this
    branch, the fan-out is about to review a diff that changes;
@@ -880,12 +903,17 @@ migrations or generation inputs, and whether it spans crates.
      A brief naming several files is a reading list, not a scope. State
      it as a **restriction**: *"adjudicate from the inlined block; open
      a convention file only to resolve a named dispute"* — never a
-     permission to open N files.
+     permission to open N files. A permission phrasing in your own
+     draft brief is the tell that this lens will run long.
 
-   - **Inline the implicated audit-registry block** (~20 lines). The
-     **main loop** locates it before spawning, with one
-     `search_source.py` over `docs/conventions/audit-registry.md`
-     (`history.md` → "Audit-registry inlining").
+   - **Inline the implicated passage — whichever convention file the
+     diff's rule lives in**, not only the audit registry (~20 lines
+     each). The **main loop** locates it before spawning, with one
+     `search_source.py --ext md` over the named file (`history.md` →
+     "Audit-registry inlining"). A lens left to find the passage itself
+     spends its calls doing so: one handed a docs slice and leave to
+     open two convention files used 10 calls and ≈502k input, 3.5× the
+     cheapest lens on the same diff.
 
    - **Assert the known negatives** — "this struct has no validator",
      "no other call site constructs this" (`history.md` → "Known
@@ -1856,6 +1884,11 @@ migrations or generation inputs, and whether it spans crates.
    fetch returns **empty stdout**. Always distinguish *fetch failed*
    from *fetched and found nothing* (`history.md` → "Empty-stdout
    scan").
+
+   **Need the PR's file list to place a failure?** Take
+   `gh pr view <number> --json files --jq '.files[].path'`, never
+   `pull_request_read` `get_files`: `minimal_output: true` does not
+   suppress its per-file patch text (`docs/conventions/github-mcp.md`).
 
    Then re-draft the PR, which also cancels a pending "Merge when
    ready", leave the issue where it is, report the failures, and do

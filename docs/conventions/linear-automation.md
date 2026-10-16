@@ -895,6 +895,21 @@ paying the fixed full-body echo for nothing:
 Every one of those strings takes **literal newlines**, never the
 escape sequence `\n`.
 
+The committed **zero-echo writers** have spellings of their own, and
+they differ in whether the issue is a flag or a positional. Guessed
+wrong, each call exits 2, usually on the fallback path after an MCP
+failure, which is the worst moment for it:
+
+| call                      | arguments                                  |
+| ------------------------- | ------------------------------------------ |
+| `board_batch.py state`    | `--id ENG-###`, `--state <name>`           |
+| `linear_issue.py append`  | `--id ENG-###`, one of `--file` / `--text` |
+| `linear_patch.py read`    | `ENG-###` (positional), `--out <file>`     |
+| `linear_patch.py patch`   | `ENG-###` (positional), `--ops <file>`     |
+| `linear_patch.py comment` | `ENG-###` (positional), `--body <file>`    |
+
+Every one takes `--dry-run` except `linear_patch.py read`.
+
 **Insertions include no separator of their own.** `append`, `prepend`,
 `insert_before` and `insert_after` splice the text in *immediately*
 adjacent to the anchor (or the end / start of the body), so the `text`

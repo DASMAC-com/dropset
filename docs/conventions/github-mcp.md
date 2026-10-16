@@ -240,7 +240,12 @@ So when you field-select, ask what shape each field returns:
 The one carve-out worth naming: a **path-only** file list for a single
 PR is small and legitimately useful (`--json files --jq '.files[].path'`
 for one PR), because the per-file additions/deletions/patch objects are
-what make the full form expensive.
+what make the full form expensive. Take it **instead of**
+`pull_request_read` `get_files`, whose `minimal_output: true` reads as
+protection and is not: it still returns every file's full **patch
+text**. One such call, made only to learn whether a PR carried a given
+migration, cost **≈5.2k** — a 136-line migration and a 211-line module
+inline — for a question the filenames answered.
 
 **A `gh api` log fetch needs the escape-sequences flag, and silence
 here is dangerous.** `gh api` refuses a response carrying terminal
