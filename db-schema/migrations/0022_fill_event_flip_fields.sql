@@ -1,7 +1,7 @@
--- Carry the three fields the on-chain `FillEvent` gained in its by-concern
--- relayout, so a fill row says which counter a leg consumed, what the level's
--- flip price was, and how much of that counter is left — without the reader
--- re-deriving any of it from the vault's book.
+-- Carry the three fields the on-chain `FillEvent` gained when it was laid
+-- out again by concern, so a fill row says which counter a leg consumed,
+-- what the level's flip price was, and how much of that counter is left —
+-- without the reader re-deriving any of it from the vault's book.
 --
 -- `leg_kind` is 0 for a leg that consumed the level's own side and 1 for one
 -- that consumed its flipped side. `flip_price` is the level's flip price at
