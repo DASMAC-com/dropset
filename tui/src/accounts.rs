@@ -721,9 +721,10 @@ fn read_markets(
 }
 
 /// Reconstruct the resting book via the shared matcher (Buy ⇒ asks, Sell ⇒
-/// bids) — the same levels a real swap would fill. Each level's flipped
-/// counter arrives as an ordinary entry on the side opposite its array, so
-/// the pane renders a reverse-order ladder two-sided with no decode of its own.
+/// bids) — the same levels a real swap would fill. A level's resting flipped
+/// counter (none while a flush is armed) arrives as an ordinary entry on the
+/// side opposite its array, so the pane renders a reverse-order ladder
+/// two-sided with no decode of its own.
 fn book_sides(
     view: &SlabView,
     now_slot: SlotTime,
