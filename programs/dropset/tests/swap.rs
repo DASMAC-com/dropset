@@ -564,7 +564,7 @@ fn multi_leg_accrual_sums_every_leg() {
         "expected a multi-leg fill, got {}",
         fills.len()
     );
-    let leg_fees: u64 = fills.iter().map(|e| e.taker_fee_atoms).sum();
+    let leg_fees: u64 = fills.iter().map(|e| e.taker_fee_atoms.get()).sum();
     assert!(leg_fees > 0, "a 1% fee on a spill is a non-zero atom count");
 
     let h = f.market_header();

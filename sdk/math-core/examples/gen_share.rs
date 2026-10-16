@@ -260,7 +260,7 @@ fn crystallize_case(
     slice_quote: u64,
     entry_ref_price: Price,
     ref_now: Price,
-    realized_fx: i64,
+    realized_price: i64,
     realized_yield: i64,
     realized_pnl: i64,
 ) -> Value {
@@ -272,7 +272,7 @@ fn crystallize_case(
     obj.insert("slice_quote".into(), s(slice_quote));
     obj.insert("entry_ref_bits".into(), json!(entry_ref_price.as_u32()));
     obj.insert("ref_now_bits".into(), json!(ref_now.as_u32()));
-    obj.insert("realized_fx".into(), s(realized_fx));
+    obj.insert("realized_price".into(), s(realized_price));
     obj.insert("realized_yield".into(), s(realized_yield));
     obj.insert("realized_pnl".into(), s(realized_pnl));
     match crystallize_pnl(
@@ -283,7 +283,7 @@ fn crystallize_case(
         slice_quote,
         entry_ref_price,
         ref_now,
-        realized_fx,
+        realized_price,
         realized_yield,
         realized_pnl,
     ) {
@@ -291,7 +291,7 @@ fn crystallize_case(
             obj.insert(
                 "ok".into(),
                 json!({
-                    "realized_fx": s(r.realized_fx),
+                    "realized_price": s(r.realized_price),
                     "realized_yield": s(r.realized_yield),
                     "realized_pnl": s(r.realized_pnl),
                     "shares_after": s(r.shares_after),

@@ -137,6 +137,10 @@ fn init_succeeds_with_spl_token_mint() {
     let account = svm.get_account(&registry_pda).expect("registry created");
     assert_eq!(account.owner, PROGRAM_ID, "registry not owned by program");
     let (header, admins) = decode_slab::<RegistryHeader, [u8; 32]>(&account.data);
+    // The admin tail's absolute position: disc 8 + header 226 + len 4.
+    // `decode_slab` derives it from the type, so pin the number itself.
+    assert_eq!(&account.data[238..270], &genesis_admin.to_bytes()[..]);
+    assert_eq!(account.data.len(), 270, "one admin, no slack");
     assert_eq!(header.bump, registry_bump);
     assert_eq!(header.max_vaults_per_market, DEFAULT_MAX_VAULTS_PER_MARKET);
     assert_eq!(header.default_taker_fee.get(), DEFAULT_TAKER_FEE);

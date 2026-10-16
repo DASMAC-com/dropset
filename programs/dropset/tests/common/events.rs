@@ -565,7 +565,8 @@ pub fn realize(meta: &TransactionMetadata) -> Realize {
 
 /// All `FillEvent`s emitted, in order. `FillEvent` is
 /// `#[event(bytemuck)]`, so the body is the raw `repr(C)` struct and
-/// decodes straight into the real type.
+/// decodes straight into the real type. Every decoded body's reserve is
+/// asserted all-zero — the carve rule's precondition, as for accounts.
 pub fn fills(meta: &TransactionMetadata) -> Vec<FillEvent> {
     bodies_of::<FillEvent>(meta)
         .iter()
@@ -575,7 +576,12 @@ pub fn fills(meta: &TransactionMetadata) -> Vec<FillEvent> {
                 core::mem::size_of::<FillEvent>(),
                 "FillEvent body size mismatch"
             );
-            bytemuck::pod_read_unaligned::<FillEvent>(b)
+            let ev = bytemuck::pod_read_unaligned::<FillEvent>(b);
+            assert!(
+                ev._reserved.iter().all(|&x| x == 0),
+                "FillEvent._reserved is not all-zero"
+            );
+            ev
         })
         .collect()
 }

@@ -61,7 +61,7 @@ use anchor_v2_testing::{Keypair, Signer};
 use common::fixture::{simple_profile, Fixture, PROFILE_BYTES};
 use core::mem::{offset_of, size_of};
 use dropset::asm_offsets::equ;
-use dropset::{Price, ReferencePrice, Vault};
+use dropset::{MarketHeader, Price, ReferencePrice, Vault};
 use solana_pubkey::Pubkey;
 
 /// Narrow an assembly offset for indexing. The lifted `.equ` table is `u64`
@@ -428,7 +428,8 @@ fn stamp_write_footprint_parity() {
     // Vault 1 of two is the target; everything outside these three ranges
     // must be untouched.
     let vault1 = common::fixture::vault_byte_offset(1);
-    let nonce = 8..8 + size_of::<u64>();
+    let nonce = 8 + offset_of!(MarketHeader, nonce);
+    let nonce = nonce..nonce + size_of::<u64>();
     let rp = vault1 + offset_of!(Vault, reference_price);
     let stamp = rp + offset_of!(ReferencePrice, stamp);
     let stamp = stamp..stamp + size_of::<u64>();
@@ -589,7 +590,8 @@ fn profile_write_footprint_parity() {
     // Vault 1 of two is the target; everything outside these three ranges
     // must be untouched.
     let vault1 = common::fixture::vault_byte_offset(1);
-    let nonce = 8..8 + size_of::<u64>();
+    let nonce = 8 + offset_of!(MarketHeader, nonce);
+    let nonce = nonce..nonce + size_of::<u64>();
     let stamp = vault1 + offset_of!(Vault, reference_price) + offset_of!(ReferencePrice, stamp);
     let stamp = stamp..stamp + size_of::<u64>();
     let profile = vault1 + offset_of!(Vault, profile);

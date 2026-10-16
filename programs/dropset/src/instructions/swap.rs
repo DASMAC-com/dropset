@@ -52,7 +52,7 @@ use dropset_math_core::matching_math::{
 
 use crate::{
     errors::DropsetError,
-    events::{FillEvent, PlatformFeeEvent},
+    events::{FillEvent, PlatformFeeEvent, LEG_KIND_FLIPPED, LEG_KIND_PRIMARY},
     state::{Market, VaultAccess, FLUSH_BIT},
     Price, SlotTime, WallTime, N_LEVELS,
 };
@@ -783,6 +783,10 @@ impl Swap {
         let mut total_out: u128 = 0;
         let mut total_fee: u128 = 0;
         let mut filled_legs: u32 = 0;
+        // Deliberately not pre-sized. Any entry-count bound is a ceiling the
+        // taker's budget rarely reaches, and reserving it up front on the
+        // 32 KiB bump heap faults a small take on a deep book before its
+        // first leg; growth by doubling costs less in the common case.
         let mut fill_events: alloc::vec::Vec<FillEvent> = alloc::vec::Vec::new();
         // Snapshots taken BEFORE each leg mutates state, so that a
         // failed `min_out` check can restore the per-vault inventory
@@ -956,7 +960,7 @@ impl Swap {
             // taker is not consuming.
             let output_atoms = side.output_atoms(fill_base, fill_quote);
             let input_atoms = side.input_atoms(fill_base, fill_quote);
-            let (new_base, new_quote) = {
+            let (new_base, new_quote, level_flip_price, remaining_after) = {
                 let v = self.market.mutate_vault(sector_idx)?;
                 // On a Buy the output leg is base and the input leg is
                 // quote; on a Sell the legs swap. `is_ask_side` (Buy)
@@ -979,16 +983,22 @@ impl Swap {
                 } else {
                     &mut v.remaining.bids[level_idx as usize]
                 };
-                if flipped {
-                    level.flip_size = level.flip_size.get().saturating_sub(output_atoms).into();
+                // The consumed counter after the debit is the event's
+                // `remaining_after`, in that side's atoms.
+                let remaining_after = if flipped {
+                    let left = level.flip_size.get().saturating_sub(output_atoms);
+                    level.flip_size = left.into();
                     level.size = level.size.get().saturating_add(input_atoms).into();
+                    left
                 } else {
-                    level.size = level.size.get().saturating_sub(output_atoms).into();
+                    let left = level.size.get().saturating_sub(output_atoms);
+                    level.size = left.into();
                     if level.flip_price.is_matchable() {
                         level.flip_size = level.flip_size.get().saturating_add(input_atoms).into();
                     }
-                }
-                (b, q)
+                    left
+                };
+                (b, q, level.flip_price, remaining_after)
             };
 
             // Book the fee slice as protocol revenue on the output leg —
@@ -1040,19 +1050,25 @@ impl Swap {
                 taker: *self.taker.address(),
                 leader,
                 quote_authority,
-                side: side_u8,
-                _pad: [0; 7],
-                sector_idx,
-                level_idx,
-                vault_seq,
-                fill_base,
-                fill_quote,
+                sector_idx: sector_idx.into(),
+                level_idx: level_idx.into(),
+                vault_seq: vault_seq.into(),
                 fill_price: price,
-                _pad2: [0; 4],
-                base_atoms_after: new_base,
-                quote_atoms_after: new_quote,
-                nonce_after: new_nonce,
-                taker_fee_atoms: fee_u64,
+                flip_price: level_flip_price,
+                fill_base: fill_base.into(),
+                fill_quote: fill_quote.into(),
+                remaining_after: remaining_after.into(),
+                base_atoms_after: new_base.into(),
+                quote_atoms_after: new_quote.into(),
+                nonce_after: new_nonce.into(),
+                taker_fee_atoms: fee_u64.into(),
+                side: side_u8,
+                leg_kind: if flipped {
+                    LEG_KIND_FLIPPED
+                } else {
+                    LEG_KIND_PRIMARY
+                },
+                _reserved: [0; 46],
             });
         }
 

@@ -19,15 +19,6 @@ export type RegistryHeader = { discriminator: ReadonlyUint8Array;
  * `MarketHeader.fee_config` at market creation.
  */
 defaultFeeConfig: FeeConfig; 
-/**
- * Number of live markets created against this registry. Incremented
- * by `create_market`, decremented by `close_market`. `close_registry`
- * requires this to be zero — the only on-chain witness that no
- * orphan markets remain, since the program cannot iterate all PDAs
- * to verify by enumeration. See the architecture spec, **Account
- * lifecycle and rent reclamation**.
- */
-marketCount: number; 
 /** Default skin-in-the-game floor (ppm, `Ppm32`) stamped into markets. */
 defaultMinLeaderShare: number; 
 /** Default taker fee (ppm, `Ppm16`) stamped into markets. */
@@ -41,8 +32,23 @@ defaultTakerFee: number;
 defaultMaxPlatformFee: number; 
 /** Default cap on vaults per market. */
 maxVaultsPerMarket: number; 
+/**
+ * Number of live markets created against this registry. Incremented
+ * by `create_market`, decremented by `close_market`. `close_registry`
+ * requires this to be zero — the only on-chain witness that no
+ * orphan markets remain, since the program cannot iterate all PDAs
+ * to verify by enumeration. See the architecture spec, **Account
+ * lifecycle and rent reclamation**.
+ */
+marketCount: number; 
 /** Registry PDA bump. */
-bump: number;  };
+bump: number; 
+/**
+ * Reserve for later fields. A carve takes bytes from the front, moves
+ * no other field, and reads all-zero as the pre-carve meaning — see
+ * the architecture spec's **Registry**.
+ */
+reserved: ReadonlyUint8Array;  };
 
 export type RegistryHeaderArgs = { 
 /**
@@ -50,15 +56,6 @@ export type RegistryHeaderArgs = {
  * `MarketHeader.fee_config` at market creation.
  */
 defaultFeeConfig: FeeConfigArgs; 
-/**
- * Number of live markets created against this registry. Incremented
- * by `create_market`, decremented by `close_market`. `close_registry`
- * requires this to be zero — the only on-chain witness that no
- * orphan markets remain, since the program cannot iterate all PDAs
- * to verify by enumeration. See the architecture spec, **Account
- * lifecycle and rent reclamation**.
- */
-marketCount: number; 
 /** Default skin-in-the-game floor (ppm, `Ppm32`) stamped into markets. */
 defaultMinLeaderShare: number; 
 /** Default taker fee (ppm, `Ppm16`) stamped into markets. */
@@ -72,17 +69,32 @@ defaultTakerFee: number;
 defaultMaxPlatformFee: number; 
 /** Default cap on vaults per market. */
 maxVaultsPerMarket: number; 
+/**
+ * Number of live markets created against this registry. Incremented
+ * by `create_market`, decremented by `close_market`. `close_registry`
+ * requires this to be zero — the only on-chain witness that no
+ * orphan markets remain, since the program cannot iterate all PDAs
+ * to verify by enumeration. See the architecture spec, **Account
+ * lifecycle and rent reclamation**.
+ */
+marketCount: number; 
 /** Registry PDA bump. */
-bump: number;  };
+bump: number; 
+/**
+ * Reserve for later fields. A carve takes bytes from the front, moves
+ * no other field, and reads all-zero as the pre-carve meaning — see
+ * the architecture spec's **Registry**.
+ */
+reserved: ReadonlyUint8Array;  };
 
 /** Gets the encoder for {@link RegistryHeaderArgs} account data. */
 export function getRegistryHeaderEncoder(): FixedSizeEncoder<RegistryHeaderArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['defaultFeeConfig', getFeeConfigEncoder()], ['marketCount', getU32Encoder()], ['defaultMinLeaderShare', getU32Encoder()], ['defaultTakerFee', getU16Encoder()], ['defaultMaxPlatformFee', getU16Encoder()], ['maxVaultsPerMarket', getU8Encoder()], ['bump', getU8Encoder()]]), (value) => ({ ...value, discriminator: REGISTRY_HEADER_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['defaultFeeConfig', getFeeConfigEncoder()], ['defaultMinLeaderShare', getU32Encoder()], ['defaultTakerFee', getU16Encoder()], ['defaultMaxPlatformFee', getU16Encoder()], ['maxVaultsPerMarket', getU8Encoder()], ['marketCount', getU32Encoder()], ['bump', getU8Encoder()], ['reserved', fixEncoderSize(getBytesEncoder(), 140)]]), (value) => ({ ...value, discriminator: REGISTRY_HEADER_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link RegistryHeader} account data. */
 export function getRegistryHeaderDecoder(): FixedSizeDecoder<RegistryHeader> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['defaultFeeConfig', getFeeConfigDecoder()], ['marketCount', getU32Decoder()], ['defaultMinLeaderShare', getU32Decoder()], ['defaultTakerFee', getU16Decoder()], ['defaultMaxPlatformFee', getU16Decoder()], ['maxVaultsPerMarket', getU8Decoder()], ['bump', getU8Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['defaultFeeConfig', getFeeConfigDecoder()], ['defaultMinLeaderShare', getU32Decoder()], ['defaultTakerFee', getU16Decoder()], ['defaultMaxPlatformFee', getU16Decoder()], ['maxVaultsPerMarket', getU8Decoder()], ['marketCount', getU32Decoder()], ['bump', getU8Decoder()], ['reserved', fixDecoderSize(getBytesDecoder(), 140)]]);
 }
 
 /** Gets the codec for {@link RegistryHeader} account data. */
@@ -135,5 +147,5 @@ export async function fetchAllMaybeRegistryHeader(
 }
 
 export function getRegistryHeaderSize(): number {
-  return 94;
+  return 234;
 }

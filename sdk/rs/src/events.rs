@@ -12,8 +12,8 @@
 //! where the body is the borsh wire form for a default `#[event]` and the
 //! raw `repr(C)` bytes for `#[event(bytemuck)]` ([`FillEvent`]). The
 //! generated [`crate::types`] structs mirror the on-chain layouts
-//! field-for-field (the bytemuck `FillEvent` carries explicit `pad` /
-//! `pad2` fields), so a single borsh decode reads either form — this is
+//! field-for-field (the bytemuck `FillEvent` is padding-free, its one
+//! `reserved` block included), so a single borsh decode reads either form — this is
 //! the "Codama supplies only the post-extraction codec" split from
 //! `interface.md` §2. This module supplies the extraction (walk inner
 //! instructions, strip the `[tag][discriminator]` envelope) and the
@@ -222,8 +222,8 @@ impl std::error::Error for DecodeError {}
 /// reporting *why* it failed.
 ///
 /// The body decodes via borsh against the generated struct; for the
-/// bytemuck `FillEvent` the generated struct's explicit padding fields make
-/// the borsh read byte-identical to the on-chain `repr(C)` bytes. The
+/// bytemuck `FillEvent` the on-chain struct is padding-free, so the borsh
+/// read is byte-identical to its `repr(C)` bytes. The
 /// decode also requires the body to be fully consumed, matching the
 /// program's own test decoder — which asserts the same thing, with the
 /// comment that it "catches a wire-format drift (an added / reordered /
@@ -616,22 +616,27 @@ mod tests {
             taker: solana_pubkey::Pubkey::new_unique(),
             leader: solana_pubkey::Pubkey::new_unique(),
             quote_authority: solana_pubkey::Pubkey::new_unique(),
-            side: 1,
-            pad: [0; 7],
             sector_idx: 3,
             level_idx: 7,
             vault_seq: 17,
+            fill_price: 42_000_000,
+            flip_price: 41_000_000,
             fill_base: 1_000,
             fill_quote: 2_000,
-            fill_price: 42_000_000,
-            pad2: [0; 4],
+            remaining_after: 500,
             base_atoms_after: 9,
             quote_atoms_after: 11,
             nonce_after: 13,
             taker_fee_atoms: 5,
+            side: 1,
+            leg_kind: 1,
+            reserved: [0; 46],
         };
         let mut payload = FILL_EVENT_DISCRIMINATOR.to_vec();
         borsh::to_writer(&mut payload, &fill).unwrap();
+        // The borsh body is byte-for-byte the on-chain `repr(C)` struct, so
+        // its width is the program's pinned `size_of::<FillEvent>()`.
+        assert_eq!(payload.len(), DISCRIMINATOR_LEN + 256);
         assert_eq!(
             decode_event_payload(&payload),
             Some(DropsetEvent::Fill(fill))

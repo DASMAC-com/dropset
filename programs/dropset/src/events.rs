@@ -376,49 +376,62 @@ impl RealizeEvent {
 /// Spec § **Events and emission → Granularity**: every leg is recorded,
 /// no truncation. A sweep that exceeds one self-CPI's instruction-data
 /// budget splits across multiple `emit_cpi!` calls.
+///
+/// Every field but the two `Price`s (native `u32`s at 4-aligned offsets)
+/// is an alignment-1 Pod wrapper, so the body is padding-free; the IDL
+/// still renders the wrappers as integers.
 #[event(bytemuck)]
 pub struct FillEvent {
     pub market: Address,
     pub taker: Address,
     pub leader: Address,
     pub quote_authority: Address,
-    /// The taker's direction: `0` for a Buy, `1` for a Sell. It does not
-    /// name the array filled: a Buy fills either `asks[level_idx].size` or
-    /// the flipped `bids[level_idx].flip_size` (a filled bid's proceeds
-    /// resting as an ask), and a Sell the mirror. Tell the two apart by
-    /// comparing `fill_price` with `asks[level_idx].price` and
-    /// `bids[level_idx].flip_price` on a Buy (`bids[level_idx].price` and
-    /// `asks[level_idx].flip_price` on a Sell); where they coincide either
-    /// reading prices the fill identically.
-    pub side: u8,
-    /// Padding so subsequent fields are aligned-1-friendly without
-    /// implicit struct padding the bytemuck check would reject.
-    pub _pad: [u8; 7],
-    pub sector_idx: u32,
-    pub level_idx: u32,
+    pub sector_idx: PodU32,
+    pub level_idx: PodU32,
     /// The filled vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
     /// identifies a vault across sector reuse; `sector_idx` alone does not.
-    pub vault_seq: u64,
-    pub fill_base: u64,
-    pub fill_quote: u64,
+    pub vault_seq: PodU64,
     pub fill_price: Price,
-    /// Padding to keep the next `u64` at an 8-byte boundary in the
-    /// fixed-size repr-C layout. `Price` is `u32`, so 4 bytes of pad
-    /// keep the struct stride well-defined.
-    pub _pad2: [u8; 4],
-    pub base_atoms_after: u64,
-    pub quote_atoms_after: u64,
-    pub nonce_after: u64,
-    pub taker_fee_atoms: u64,
+    /// The level's `Position::flip_price` at emit — zero when the level
+    /// does not flip — so the captured spread is `flip_price` against
+    /// `fill_price` on the event alone.
+    pub flip_price: Price,
+    pub fill_base: PodU64,
+    pub fill_quote: PodU64,
+    /// The allowance left, after this leg, on the side it consumed, in
+    /// that side's atoms: `Position::size` for a primary leg,
+    /// `Position::flip_size` for a flipped one (see `leg_kind`).
+    pub remaining_after: PodU64,
+    pub base_atoms_after: PodU64,
+    pub quote_atoms_after: PodU64,
+    pub nonce_after: PodU64,
+    pub taker_fee_atoms: PodU64,
+    /// The taker's direction: `0` for a Buy, `1` for a Sell. It does not
+    /// name the array filled — a Buy fills either `asks[level_idx].size`
+    /// or the flipped `bids[level_idx].flip_size`, and a Sell the mirror;
+    /// `leg_kind` says which.
+    pub side: u8,
+    /// `0` when the leg consumed the ladder's own side
+    /// (`Position::size`), `1` when it consumed the flipped side
+    /// (`Position::flip_size`).
+    pub leg_kind: u8,
+    /// Reserve for later fields; all-zero on every emit. A carve takes
+    /// bytes from the front and moves no other field.
+    pub _reserved: [u8; 46],
 }
+
+/// [`FillEvent::leg_kind`] for a leg that consumed `Position::size`.
+pub const LEG_KIND_PRIMARY: u8 = 0;
+/// [`FillEvent::leg_kind`] for a leg that consumed `Position::flip_size`.
+pub const LEG_KIND_FLIPPED: u8 = 1;
 
 // Pin the bytemuck wire layout: off-chain decoders read this body
 // verbatim, so a size or offset change must be a deliberate edit here.
-// `vault_seq` sits after `level_idx` rather than beside `sector_idx` so
-// it lands on an 8-byte boundary without disturbing any existing field
-// or pad.
-const _: () = assert!(core::mem::size_of::<FillEvent>() == 208);
-const _: () = assert!(core::mem::offset_of!(FillEvent, vault_seq) == 144);
+const _: () = assert!(core::mem::size_of::<FillEvent>() == 256);
+const _: () = assert!(core::mem::offset_of!(FillEvent, vault_seq) == 136);
+const _: () = assert!(core::mem::offset_of!(FillEvent, fill_price) == 144);
+const _: () = assert!(core::mem::offset_of!(FillEvent, side) == 208);
+const _: () = assert!(core::mem::offset_of!(FillEvent, _reserved) == 210);
 
 /// Emitted once per `swap` that skimmed a caller-declared platform fee —
 /// never on the no-integrator path, and never when the declared rate

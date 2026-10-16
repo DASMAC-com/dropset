@@ -70,13 +70,6 @@ pub struct RegistryHeader {
     /// Default fee for the per-`CreateVault` charge, stamped into
     /// `MarketHeader.fee_config` at market creation.
     pub default_fee_config: FeeConfig,
-    /// Number of live markets created against this registry. Incremented
-    /// by `create_market`, decremented by `close_market`. `close_registry`
-    /// requires this to be zero — the only on-chain witness that no
-    /// orphan markets remain, since the program cannot iterate all PDAs
-    /// to verify by enumeration. See the architecture spec, **Account
-    /// lifecycle and rent reclamation**.
-    pub market_count: PodU32,
     /// Default skin-in-the-game floor (ppm, `Ppm32`) stamped into markets.
     pub default_min_leader_share: PodU32,
     /// Default taker fee (ppm, `Ppm16`) stamped into markets.
@@ -88,9 +81,29 @@ pub struct RegistryHeader {
     pub default_max_platform_fee: PodU16,
     /// Default cap on vaults per market.
     pub max_vaults_per_market: u8,
+    /// Number of live markets created against this registry. Incremented
+    /// by `create_market`, decremented by `close_market`. `close_registry`
+    /// requires this to be zero — the only on-chain witness that no
+    /// orphan markets remain, since the program cannot iterate all PDAs
+    /// to verify by enumeration. See the architecture spec, **Account
+    /// lifecycle and rent reclamation**.
+    pub market_count: PodU32,
     /// Registry PDA bump.
     pub bump: u8,
+    /// Reserve for later fields. A carve takes bytes from the front, moves
+    /// no other field, and reads all-zero as the pre-carve meaning — see
+    /// the architecture spec's **Registry**.
+    pub _reserved: [u8; 140],
 }
+
+// Pin the on-chain layout: the total size, the head, the counter the
+// close path reads, and the tail. The admin slab tail is alignment-1 and
+// starts right after the slab's length prefix.
+const _: () = assert!(core::mem::size_of::<RegistryHeader>() == 226);
+const _: () = assert!(core::mem::offset_of!(RegistryHeader, default_fee_config) == 0);
+const _: () = assert!(core::mem::offset_of!(RegistryHeader, market_count) == 81);
+const _: () = assert!(core::mem::offset_of!(RegistryHeader, bump) == 85);
+const _: () = assert!(core::mem::offset_of!(RegistryHeader, _reserved) == 86);
 
 /// The `Registry` account: a [`RegistryHeader`] followed by a
 /// **densely-packed** slab tail of admin pubkeys (the spec's

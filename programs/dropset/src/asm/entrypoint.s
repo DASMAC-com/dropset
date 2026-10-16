@@ -88,12 +88,12 @@
 .equ MARKET_DATA_LEN_OFF, MARKET_BASE + 80
 .equ MARKET_DATA_OFF, MARKET_BASE + 88
 
-# --- market data framing: [disc(8)][MarketHeader(261)][len:u32][pad][vaults] ---
+# --- market data framing: [disc(8)][MarketHeader(396)][len:u32][vaults] ---
 # align_of::<Vault>() == 4 (Vault embeds the u32-aligned Price), so items
-# start at align_up(8 + 261 + 4, 4) = 276, not 273.
-.equ MARKET_NONCE_OFF, MARKET_DATA_OFF + 8       # MarketHeader.nonce (u64)
-.equ MARKET_LEN_OFF, MARKET_DATA_OFF + 269       # slab len (u32)
-.equ SLAB_ITEMS_OFF, 276                         # first Vault, within data
+# start at align_up(8 + 396 + 4, 4) = 408 — already aligned, no pad.
+.equ MARKET_NONCE_OFF, MARKET_DATA_OFF + 232     # MarketHeader.nonce (u64)
+.equ MARKET_LEN_OFF, MARKET_DATA_OFF + 404       # slab len (u32)
+.equ SLAB_ITEMS_OFF, 408                         # first Vault, within data
 .equ VAULT_SIZE, 956
 .equ PROFILE_SIZE, 288                           # size_of::<LiquidityProfile>()
 
@@ -274,10 +274,10 @@ quote_write:
     # shipping code — they need DIFFERENT precedents, so take them
     # separately.
     #
-    # The STORE is the weaker claim: &vault is only 4-aligned (VAULT_SIZE
-    # 956 and SLAB_ITEMS_OFF 276 are both ≡ 4 mod 8, so every even sector
+    # The STORE is the weaker claim: &vault is only 4-aligned (SLAB_ITEMS_OFF
+    # 408 is ≡ 0 mod 8 but VAULT_SIZE 956 is ≡ 4 mod 8, so every odd sector
     # sits at a 4-aligned address), which means the stxdw at RP_STAMP_OFF
-    # above has always been a 4-aligned 8-byte store.
+    # above has always been a 4-aligned 8-byte store for half the sectors.
     #
     # The LOAD is the novel one and that precedent does NOT cover it.
     # Instruction data starts 8-aligned, so [r2 + 9] is 1 mod 8 — a fully

@@ -1112,7 +1112,7 @@ The byte-exact layout is owned by
   return %.
 - **Realized-PnL decomposition.** `realized_pnl` (signed — a withdrawal
   can realize a loss) splits as
-  `realized_yield + realized_fx == realized_pnl`. Discarded when the account
+  `realized_yield + realized_price == realized_pnl`. Discarded when the account
   closes at zero shares.
 
 The cost basis is a shares-weighted average over deposits:
@@ -1189,7 +1189,7 @@ withdrawn slice into the account's `realized_*` accumulators (see
 
 ```text
 all_time_yield = realized_yield + yield_pnl
-all_time_fx    = realized_fx    + fx_pnl
+all_time_fx    = realized_price    + fx_pnl
 all_time_pnl   = realized_pnl   + net_pnl = all_time_yield + all_time_fx
 all_time_pct   = all_time_pnl / gross_deposited
 ```
@@ -2330,7 +2330,7 @@ remaining basis, and `net_deposits` is reduced by exactly that:
 
 ```text
 released_basis  = floor(net_deposits × shares_in / shares)
-realized_fx    += slice_base × (r_now − entry_ref_price)
+realized_price    += slice_base × (r_now − entry_ref_price)
 realized_yield += slice_quote + slice_base × entry_ref_price − released_basis
 realized_pnl   += slice_quote + slice_base × r_now − released_basis
 net_deposits'   = net_deposits − released_basis
