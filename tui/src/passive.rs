@@ -75,11 +75,18 @@ const DEPLOY_FIELDS: [Field; 6] = [
 ];
 const RECENTER_FIELDS: [Field; 1] = [Field::Price];
 
-/// The spacing steps by 1 bp, between 1 and 100 bps.
+/// The spacing steps by 1 bp, between 1 and 100 bps — eight rungs at the
+/// widest still sit within 8% of the center.
 const SPACING_STEP_PPM: u32 = 100;
 const MAX_SPACING_PPM: u32 = 10_000;
-/// The flip spread steps by half a bp; `0` is allowed and warned.
+/// The flip spread steps by half a bp; `0` is allowed and warned. Capped at
+/// the widest spacing, past which every rung would warn anyway.
 const FLIP_STEP_PPM: u32 = 50;
+const MAX_FLIP_SPREAD_PPM: u32 = MAX_SPACING_PPM;
+
+/// How far a typed center may sit from the vault's live reference before the
+/// confirmation warns — a fat-fingered digit, not a day's FX move.
+const CENTER_DEVIATION_WARN: f64 = 0.05;
 
 /// The level lives the expiry field steps through — unbounded first, since a
 /// passive book is meant to be walked away from, then horizons that bound a
@@ -100,8 +107,8 @@ const MAX_PRICE_CHARS: usize = 16;
 pub struct Form {
     pub op: PassiveOp,
     pub ladder: PassiveLadder,
-    /// Typed human quote-per-base; blank centers on the vault's live
-    /// reference, or the book mid when it has none.
+    /// Typed human quote-per-base; blank re-stamps the vault's live
+    /// reference, or centers on the book mid when it has none.
     pub price: String,
     /// Index into [`Form::fields`] of the line being edited.
     pub cursor: usize,
@@ -161,7 +168,7 @@ impl Form {
             }
             Field::FlipSpread => {
                 l.flip_spread_ppm =
-                    stepped(l.flip_spread_ppm, FLIP_STEP_PPM, up).min(MAX_SPACING_PPM);
+                    stepped(l.flip_spread_ppm, FLIP_STEP_PPM, up).min(MAX_FLIP_SPREAD_PPM);
             }
             Field::Expiry => {
                 let at = EXPIRY_PRESETS
@@ -209,7 +216,10 @@ impl Form {
                     Field::Price => self.price.clone(),
                     Field::Spacing => bps(l.spacing_ppm),
                     Field::Levels => format!("{} a side", l.levels),
-                    Field::Shape => format!("{:?}", l.shape).to_lowercase(),
+                    Field::Shape => match l.shape {
+                        PassiveShape::Bell => "bell".to_string(),
+                        PassiveShape::Uniform => "uniform".to_string(),
+                    },
                     Field::FlipSpread => bps(l.flip_spread_ppm),
                     Field::Expiry => expiry_label(l.expiry_secs),
                 };
@@ -291,10 +301,20 @@ impl Ticket {
             ),
         ];
         match self.op {
-            PassiveOp::Deploy => lines.extend(ladder_lines(&self.levels, self.center)),
-            PassiveOp::Recenter => {
-                lines.push("the resting ladder moves with it, shape unchanged".to_string())
+            PassiveOp::Deploy => {
+                // Every rung shares one life, so the innermost names it.
+                if let Some(first) = self.levels.first() {
+                    lines.push(format!(
+                        "expiry  {}",
+                        expiry_label(first.expiry_offset_secs)
+                    ));
+                }
+                lines.extend(ladder_lines(&self.levels, self.center));
             }
+            PassiveOp::Recenter => lines.push(
+                "the resting ladder moves with it, shape unchanged; bounded expiries restart"
+                    .to_string(),
+            ),
         }
         lines.extend(self.warnings.iter().map(|w| format!("warning: {w}")));
         lines.push("stop: the emergency kill (K on mainnet) zeroes it".to_string());
@@ -313,7 +333,7 @@ pub fn ladder_lines(levels: &[LadderLevel], center: f64) -> Vec<String> {
         let price = center * (1.0 + sign * lvl.offset_ppm as f64 / 1e6);
         let bar = "\u{2588}".repeat(usize::from(lvl.size_bps) * BAR_WIDTH / usize::from(widest));
         format!(
-            "{side} L{}  {:>12}  {:>5.1}%  flip {:>4.1}  {bar}",
+            "{side} L{}  {:>12}  {:>5.1}%  flip {:>4.1} bp  {bar}",
             i + 1,
             book::fmt_price(price),
             lvl.size_bps as f64 / 100.0,
@@ -348,6 +368,12 @@ fn passive_seat(
     let seats = emergency::leader_seats(client, cluster, market, leader)?
         .context("market not found")?
         .seats;
+    pick_seat(seats, leader)
+}
+
+/// [`passive_seat`]'s choice over one read's `seats` — split out so the
+/// refusals are testable without a chain.
+fn pick_seat(seats: Vec<SectorSeat>, leader: &Pubkey) -> Result<SectorSeat> {
     let live: Vec<_> = seats.into_iter().filter(|s| !s.tombstoned).collect();
     let seat = match live[..] {
         [seat] => seat,
@@ -385,36 +411,36 @@ pub fn prepare(
     if form.op == PassiveOp::Recenter && !seat.quoting {
         bail!("no ladder rests on vault #{} — post one first", seat.seq);
     }
-    let (center, center_source) = if form.price.is_empty() {
-        let reference = accounts::read_reference_price(client, &market.address, seat.idx)
-            .context("read the vault's reference price")?;
-        if reference.is_matchable() {
-            let ratio = reference.quote_for_base(PRICE_SCALE) as f64 / PRICE_SCALE as f64;
-            let human = dropset_util::decimals::atoms_ratio_to_human(
-                ratio,
-                market.base_decimals,
-                market.quote_decimals,
-            );
-            (human, "the vault's live reference")
-        } else {
-            let mid = book::mid_price(market)
-                .context("the vault has no reference and the book is empty — type a price")?;
+    let reference = accounts::read_reference_price(client, &market.address, seat.idx)
+        .context("read the vault's reference price")?;
+    let live = reference
+        .is_matchable()
+        .then(|| book::human_price(reference, market.base_decimals, market.quote_decimals));
+    let (center, center_source) = match (parse_price(&form.price), live) {
+        (Some(typed), _) => (typed, "typed"),
+        _ if !form.price.is_empty() => bail!("enter a positive number, e.g. 1.324"),
+        // A blank re-stamp is the daily keep-alive: same center, fresh stamp.
+        (None, Some(live)) => (live, "the vault's live reference, re-stamped"),
+        // Only a two-sided book has a mid; one side alone is not a center.
+        (None, None) if !market.asks.is_empty() && !market.bids.is_empty() => {
+            let mid = book::mid_price(market).context("the book has no mid")?;
             (mid, "the book mid")
         }
-    } else {
-        let typed = parse_price(&form.price).context("enter a positive price")?;
-        (typed, "typed")
+        (None, None) => {
+            bail!("the vault has no reference and the book is not two-sided — type a price")
+        }
     };
     let ratio = human_to_atoms_ratio(center, market.base_decimals, market.quote_decimals);
     let price = Price::from_value(ratio).with_context(|| format!("encode the center {center}"))?;
-    let levels = match form.op {
-        PassiveOp::Deploy => form.ladder.levels(),
-        PassiveOp::Recenter => Vec::new(),
+    let (levels, mut warnings) = match form.op {
+        PassiveOp::Deploy => {
+            let levels = form.ladder.levels();
+            let warnings = passive_shape_warnings(&levels);
+            (levels, warnings)
+        }
+        PassiveOp::Recenter => (Vec::new(), Vec::new()),
     };
-    let warnings = match form.op {
-        PassiveOp::Deploy => passive_shape_warnings(&levels),
-        PassiveOp::Recenter => Vec::new(),
-    };
+    warnings.extend(live.and_then(|live| center_warning(center, live)));
     Ok(Ticket {
         op: form.op,
         market: market.address,
@@ -431,9 +457,19 @@ pub fn prepare(
     })
 }
 
-/// `Price::quote_for_base` scale for decoding a reference to its atoms-ratio
-/// — matches the maker bot and SDK (`value × 10^9`).
-const PRICE_SCALE: u64 = 1_000_000_000;
+/// A warning when `center` sits more than [`CENTER_DEVIATION_WARN`] from the
+/// vault's `live` reference — the one check between a mistyped digit and a
+/// book that is swept on arrival.
+fn center_warning(center: f64, live: f64) -> Option<String> {
+    let off = center / live - 1.0;
+    (off.abs() > CENTER_DEVIATION_WARN).then(|| {
+        format!(
+            "the center is {:+.1}% from the live reference {} — check the digits",
+            off * 100.0,
+            book::fmt_price(live)
+        )
+    })
+}
 
 /// Send the confirmed `ticket`, signed by `leader` and paid by `wallet`: the
 /// ladder and the reference in one transaction on a deploy, so the book never
@@ -540,7 +576,17 @@ mod tests {
         form.move_cursor(1);
         form.step(1);
         assert_eq!(form.ladder.shape, PassiveShape::Uniform);
-        form.move_cursor(2);
+        form.move_cursor(1);
+        assert_eq!(form.field(), Field::FlipSpread);
+        for _ in 0..10 {
+            form.step(-1);
+        }
+        assert_eq!(form.ladder.flip_spread_ppm, 0);
+        for _ in 0..500 {
+            form.step(1);
+        }
+        assert_eq!(form.ladder.flip_spread_ppm, MAX_FLIP_SPREAD_PPM);
+        form.move_cursor(1);
         assert_eq!(form.field(), Field::Expiry);
         for _ in 0..10 {
             form.step(1);
@@ -584,5 +630,84 @@ mod tests {
         let bar = |l: &str| l.matches('\u{2588}').count();
         assert_eq!(bar(&lines[3]), BAR_WIDTH);
         assert!(bar(&lines[4]) < BAR_WIDTH);
+    }
+
+    fn seat(idx: u32, leader: Pubkey) -> SectorSeat {
+        SectorSeat {
+            idx,
+            seq: u64::from(idx) + 100,
+            quote_authority: leader,
+            frozen: false,
+            tombstoned: false,
+            quoting: true,
+            stake: Default::default(),
+        }
+    }
+
+    #[test]
+    fn the_seat_pick_takes_the_one_live_vault_and_refuses_the_rest() {
+        let leader = Pubkey::new_unique();
+        // A tombstoned vault beside the live one does not count.
+        let closed = SectorSeat {
+            tombstoned: true,
+            ..seat(0, leader)
+        };
+        let picked = pick_seat(vec![closed, seat(3, leader)], &leader).unwrap();
+        assert_eq!(picked.idx, 3);
+        let err = |seats| pick_seat(seats, &leader).unwrap_err().to_string();
+        assert!(err(vec![closed]).contains("no live vault"));
+        assert!(err(vec![seat(1, leader), seat(2, leader)]).contains("refusing to guess"));
+        let frozen = SectorSeat {
+            frozen: true,
+            ..seat(1, leader)
+        };
+        assert!(err(vec![frozen]).contains("frozen"));
+        let other = seat(1, Pubkey::new_unique());
+        assert!(err(vec![other]).contains("quote authority"));
+    }
+
+    #[test]
+    fn a_center_far_from_the_live_reference_is_warned() {
+        assert_eq!(center_warning(1.33, 1.324), None);
+        let warning = center_warning(13.24, 1.324).unwrap();
+        assert!(warning.contains("+900.0%"), "{warning}");
+        assert!(center_warning(1.20, 1.324).is_some());
+    }
+
+    #[test]
+    fn the_confirmation_names_the_expiry_and_every_rung() {
+        let leader = Pubkey::new_unique();
+        let levels = PassiveLadder {
+            levels: 3,
+            expiry_secs: EXPIRY_PRESETS[2],
+            ..PassiveLadder::default()
+        }
+        .levels();
+        let ticket = Ticket {
+            op: PassiveOp::Deploy,
+            market: Pubkey::new_unique(),
+            base_mint: Pubkey::new_unique(),
+            base_symbol: "TGBP",
+            quote_symbol: "USDC",
+            seat: seat(2, leader),
+            leader,
+            levels,
+            center: 1.324,
+            center_source: "typed",
+            price: Price::from_value(1.324).unwrap(),
+            warnings: vec!["check me".to_string()],
+        };
+        let lines = ticket.summary();
+        assert!(lines[0].contains("TGBP/USDC  vault #102"));
+        assert!(lines.iter().any(|l| l == "expiry  24 h"));
+        assert_eq!(lines.iter().filter(|l| l.contains(" L")).count(), 6);
+        assert!(lines.iter().any(|l| l == "warning: check me"));
+        // A re-center previews no rungs.
+        let recenter = Ticket {
+            op: PassiveOp::Recenter,
+            levels: Vec::new(),
+            ..ticket
+        };
+        assert!(!recenter.summary().iter().any(|l| l.starts_with("expiry")));
     }
 }

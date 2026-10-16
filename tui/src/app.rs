@@ -1066,7 +1066,8 @@ impl App {
     /// Edit the open passive prompt. On the form, `↑`/`↓` pick a line, `←`/`→`
     /// step it, digits type the price, and Enter builds the ticket from a fresh
     /// read; on the confirm stage, Enter sends only on the exact word `yes`.
-    /// Esc — or any refusal along the way — closes it with nothing sent.
+    /// Esc, or a confirmation that is not `yes`, closes it with nothing sent;
+    /// a refusal while building the ticket keeps the form open.
     fn handle_passive_key(&mut self, k: KeyEvent) {
         let Some(prompt) = self.passive_prompt.as_mut() else {
             return;
@@ -1115,25 +1116,22 @@ impl App {
     /// stage. A refusal keeps the form open so the operator can fix the field.
     fn build_passive_ticket(&mut self, form: passive::Form) {
         let label = form.op.label();
-        let Some(leader) = self.roster_leader else {
-            self.log(
-                LogKind::Err,
-                format!("{label} — no leader key; relaunch with --leader"),
-            );
-            return;
-        };
-        let Some(market) = self.chain.selected_market(self.selected_market).cloned() else {
-            self.log(LogKind::Err, format!("{label} — no market selected"));
-            return;
-        };
-        match passive::prepare(
-            &self.client,
-            &self.ctx.repo_root,
-            self.ctx.cluster,
-            &market,
-            &leader,
-            &form,
+        let prepared = match (
+            self.roster_leader,
+            self.chain.selected_market(self.selected_market).cloned(),
         ) {
+            (None, _) => Err(anyhow::anyhow!("no leader key; relaunch with --leader")),
+            (_, None) => Err(anyhow::anyhow!("no market selected")),
+            (Some(leader), Some(market)) => passive::prepare(
+                &self.client,
+                &self.ctx.repo_root,
+                self.ctx.cluster,
+                &market,
+                &leader,
+                &form,
+            ),
+        };
+        match prepared {
             Ok(ticket) => {
                 self.passive_prompt = Some(PassivePrompt::Confirm {
                     ticket: Box::new(ticket),
