@@ -136,6 +136,19 @@ migrations or generation inputs, and whether it spans crates.
      calls): flag it for steps 5 and 11. History was rewritten, so step
      12 force-pushes with `--force-with-lease`.
 
+   - **Prove signing before any rebase that follows an idle stretch** —
+     this one on a resumed session, and every later re-rebase (steps 6
+     and 11) after a fan-out, CI wait or pause. A rebase re-signs every
+     commit, so a locked signer kills it part-way and leaves the
+     worktree mid-rebase (`history.md` → "Signer locked mid-rebase").
+     A dangling signed commit proves the path and moves no ref:
+
+     ```sh
+     git commit-tree -S -p HEAD -m signing-probe HEAD^{tree}
+     ```
+
+     On failure, stop and ask for the unlock; never start the rebase.
+
    **Triage what the base gained**, from the merge-base captured above
    — never `git rev-parse origin/<base>`, a shared ref another session's
    fetch may already have advanced, which reports a false 0-commit
@@ -1019,7 +1032,14 @@ migrations or generation inputs, and whether it spans crates.
 
    - **Security** (conditional on the trust-surface gate above) —
      injection, unchecked input, missing validation, unsafe operations,
-     secrets in code.
+     secrets in code. **On a `.claude/hooks/**` diff, open the brief as
+     defensive verification of the repo's own guard**: the goal is to
+     prove a real command is still flagged at its tier, never "find a
+     command that slips past it". The offensive framing got a lens
+     stopped by a safety classifier before its first probe (`history.md`
+     → "Guard-bypass lens framing"). Keep the constraint beside it:
+     build probe strings inside a scratchpad script, never on a Bash
+     line.
 
    - **Style & consistency** (skipped on a meta-work diff) — naming,
      patterns, idioms that diverge from the rest of the codebase.
