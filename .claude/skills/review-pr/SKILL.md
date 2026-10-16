@@ -466,7 +466,8 @@ migrations or generation inputs, and whether it spans crates.
      "base_fresh": true,          // false iff base_ahead is non-empty
      "base_ahead": [],            // commits the base has that HEAD lacks
      "base_drift": null,          // when stale: overlap, lint_config,
-                                  //   generation_input, disjoint
+                                  //   generation_input, fixture_readers,
+                                  //   disjoint
      "commits": ["abc1234 Subject"],
      "diff_path": "…/review-diff.txt",
      "diff_lines": 1234,
@@ -496,8 +497,10 @@ migrations or generation inputs, and whether it spans crates.
    mid-review — worktrees share one `.git` — but the merge-base diff
    no longer shows it as a **phantom deletion** (`history.md` →
    "Phantom deletion"), so drift blocks only when `base_drift` says
-   it interacts: a file both sides changed, the lint config, or a
-   generation input. Then rebase onto `origin/<base>`, triage as in
+   it interacts: a file both sides changed, the lint config or a hook
+   script, a generation input both sides touched, or a new Rust test
+   reading a file this branch changed. Then rebase onto
+   `origin/<base>`, triage as in
    step 2, and re-run the tool. **A disjoint drift (`ready: true`,
    `base_fresh: false`) needs no rebase at all**: note "base moved;
    drift disjoint" and carry on — the merge queue tests the merged

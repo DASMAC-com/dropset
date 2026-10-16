@@ -60,7 +60,8 @@ Prints JSON::
       "base_fresh": true,          // false iff base_ahead is non-empty
       "base_ahead": [],            // commits the base has that HEAD lacks
       "base_drift": null,          // when stale: {files, overlap, lint_config,
-                                   //   generation_input, disjoint}
+                                   //   generation_input, fixture_readers,
+                                   //   disjoint}
       "commits": ["abc1234 Subject", …],
       "diff_path": "/tmp/review-diff.txt",
       "diff_lines": 1234,
@@ -83,8 +84,8 @@ Prints JSON::
 it can never drift from the reasons. Four things block:
 
 * the base advanced past the rebase **and** its delta interacts with the
-  branch — a shared file, the lint config, or a generation input
-  (:func:`base_drift`). A disjoint delta is reported under ``base_drift`` and
+  branch — a shared file, the lint config or a hook script, a generation input
+  both sides touch, or a new Rust reader of a branch file (:func:`base_drift`). A disjoint delta is reported under ``base_drift`` and
   does not block: the merge-base diff is unaffected by it, and the merge queue
   tests the merged result;
 * the ``git fetch`` **failed**, so freshness is *unverified* rather than
@@ -392,8 +393,9 @@ _INCLUDE_RE = re.compile(r'include_(?:str|bytes)!\s*\(\s*"([^"\n]+)"')
 #: Matching the composition rather than the read is wider than "fixtures": a
 #: generator writing to a manifest-relative path matches too. That is the benign
 #: direction — one unnecessary suite run. The unmatched shape is a
-#: ``PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(var)``, whose tail is not a
-#: literal at all.
+#: ``PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(…)`` chain, whether its
+#: tail is a variable or a literal (``sdk/rs/tests/program_id.rs`` joins
+#: ``"../.."`` then a variable); it reads as "no fixture", not "cannot tell".
 _MANIFEST_RE = re.compile(r'env!\s*\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"\n]+)"')
 
 #: A runtime read of a bare string literal. ``cargo test`` runs each test binary
@@ -449,7 +451,9 @@ def _repo_relative(base: str, target: str) -> str | None:
 
 
 def rust_test_fixtures(
-    sources: list[str] | None = None, root: Path | None = None
+    sources: list[str] | None = None,
+    root: Path | None = None,
+    read=None,
 ) -> dict[str, list[str]]:
     """Map each path a Rust file reads as a fixture to the files that read it.
 
@@ -500,11 +504,19 @@ def rust_test_fixtures(
 
     So folding the scan into ``rust_reachable`` closes a broader hole than the one
     that motivated it, and both halves fail in the same silent direction.
+
+    ``read`` maps a source path to its text (``None`` when unreadable) and
+    defaults to the working tree; :func:`gate` passes a reader at the base ref
+    to scan the readers a moved base added.
     """
     if sources is None:
         sources = tracked_rust_sources()
     if root is None:
         root = repo_root()
+    if read is None:
+
+        def read(src: str) -> str | None:
+            return _read_post_image(str(root / src))
 
     fixtures: dict[str, list[str]] = {}
 
@@ -516,19 +528,23 @@ def rust_test_fixtures(
             including.append(src)
 
     for src in sources:
-        text = _read_post_image(str(root / src))
+        text = read(src)
         if text is None:
             continue
         base = posixpath.dirname(src)
         for target in _INCLUDE_RE.findall(text):
             record(_repo_relative(base, target), src)
-        runtime = _MANIFEST_RE.findall(text) + _READ_LITERAL_RE.findall(text)
-        if runtime:
+        composed = _MANIFEST_RE.findall(text)
+        literals = _READ_LITERAL_RE.findall(text)
+        if composed or literals:
             crate = manifest_dir(src, root)
-            for target in runtime:
-                # The composed tail conventionally starts with `/`, which is a
-                # separator from the manifest dir, not an absolute path.
+            # A composed tail conventionally starts with `/`, which separates it
+            # from the manifest dir rather than making it absolute. A read
+            # literal gets no such allowance: `/etc/x` really is absolute.
+            for target in composed:
                 record(_repo_relative(crate, target.lstrip("/")), src)
+            for target in literals:
+                record(_repo_relative(crate, target), src)
     return {target: sorted(paths) for target, paths in fixtures.items()}
 
 
@@ -1471,20 +1487,54 @@ def grep_excludes() -> dict:
     }
 
 
-#: The files that decide *which* lint checks run. A base delta touching one
-#: changes the answer `make lint` gives on files the delta never touched.
-LINT_CONFIG = ("cfg/pre-commit-lint.yml", ".pre-commit-config.yaml")
+#: The lint configuration outside ``cfg/``, which is lint config wholesale (the
+#: hook list, the linters' own configs, the dictionary, the size baseline).
+LINT_CONFIG_FILES = (".pre-commit-config.yaml",)
+
+_HOOK_SCRIPT_RE = re.compile(r"entry:\s*'?python3\s+(\.claude/tools/\S+?\.py)")
 
 
-def base_drift(base_files: list[str], branch_paths: list[str]) -> dict:
+def lint_hook_scripts(root: Path | None = None) -> set[str]:
+    """The ``.claude/tools`` scripts the lint hooks run, read off the hook list.
+
+    Derived rather than listed, so a new tool-backed hook is covered the day it
+    is wired. An unreadable hook list yields nothing; ``cfg/**`` still covers
+    the list itself.
+    """
+    if root is None:
+        root = repo_root()
+    text = _read_post_image(str(root / "cfg" / "pre-commit-lint.yml"))
+    return set(_HOOK_SCRIPT_RE.findall(text or ""))
+
+
+def is_lint_config(path: str, hook_scripts: set[str]) -> bool:
+    """Whether a change to ``path`` can change ``make lint``'s answer elsewhere."""
+    return path.startswith("cfg/") or path in LINT_CONFIG_FILES or path in hook_scripts
+
+
+def base_drift(
+    base_files: list[str],
+    branch_files: list[str],
+    hook_scripts: set[str] = frozenset(),
+    reader_hits: list[str] = (),
+) -> dict:
     """Whether a base that moved past the branch can interact with it.
 
     With the diff taken from the merge base, a moved base no longer corrupts the
     review diff, so staleness alone is not a reason to stop. It still is when the
-    delta could change an answer the review already has: it touched a file this
-    branch changes (a textual or semantic collision), the lint config (the set of
-    checks itself moved), or a generation input (a committed artifact may now be
-    stale against the merged tree).
+    delta could change an answer the review already has:
+
+    * it touched a file this branch changes — a textual or semantic collision.
+      ``branch_files`` must come from :func:`changed_files` (``--no-renames``)
+      like ``base_files``, or a branch rename of a file the base edited reads as
+      disjoint;
+    * it changed the lint configuration or a script a lint hook runs, so the set
+      or meaning of the checks moved under results the review already holds;
+    * it touched a generation input **and so does the branch** — otherwise the
+      merged tree's artifacts are simply the base's own, regenerated there;
+    * it added or changed a Rust file reading, as a fixture, a path this branch
+      changes (``reader_hits``) — the fixture-coupled dequeue, reached through
+      the base's reader rather than the branch's.
 
     Otherwise the drift is reported and does not block. Measured (2026-10): main
     moving four or five times during one review cost 12 to 25 turns of
@@ -1492,16 +1542,48 @@ def base_drift(base_files: list[str], branch_paths: list[str]) -> dict:
     empty overlap. The merge queue still tests the merged result, so it remains
     the fail-closed integration gate.
     """
-    overlap = sorted(set(base_files) & set(branch_paths))
-    lint_config = sorted(p for p in base_files if p in LINT_CONFIG)
-    generation_input = touches_generation_input(base_files)
+    overlap = sorted(set(base_files) & set(branch_files))
+    lint_config = sorted(p for p in base_files if is_lint_config(p, hook_scripts))
+    generation_input = touches_generation_input(
+        base_files
+    ) and touches_generation_input(branch_files)
+    readers = sorted(reader_hits)
     return {
         "files": len(base_files),
         "overlap": overlap,
         "lint_config": lint_config,
         "generation_input": generation_input,
-        "disjoint": not (overlap or lint_config or generation_input),
+        "fixture_readers": readers,
+        "disjoint": not (overlap or lint_config or generation_input or readers),
     }
+
+
+def _show_at(ref: str):
+    """A ``read`` callable for :func:`rust_test_fixtures` over the tree at ``ref``."""
+
+    def read(path: str) -> str | None:
+        try:
+            return _git(["show", f"{ref}:{path}"])
+        except ReviewDiffError:
+            return None  # deleted on that side
+
+    return read
+
+
+def measure_drift(base_ref: str) -> dict:
+    """:func:`base_drift` for this checkout against ``base_ref``."""
+    base_files = changed_files(f"HEAD...{base_ref}")
+    branch_files = changed_files(f"{base_ref}...HEAD")
+    base_readers = rust_test_fixtures(
+        sources=[p for p in base_files if p.endswith(".rs")],
+        read=_show_at(base_ref),
+    )
+    return base_drift(
+        base_files,
+        branch_files,
+        hook_scripts=lint_hook_scripts(),
+        reader_hits=fixture_hits(branch_files, base_readers),
+    )
 
 
 def gate(
@@ -1589,13 +1671,9 @@ def gate(
 
     base_fresh = not base_ahead
     # What the base gained since the merge base, measured only when it moved.
-    # `gate_paths` for the same reason the predicates use it: a collision is a
-    # property of what the BRANCH changed, not of the slice `--only` reviews.
-    drift = (
-        base_drift(changed_files(f"HEAD...{base_ref}"), gate_paths)
-        if base_ahead
-        else None
-    )
+    # Over the whole branch, never the `--only` slice: a collision is a property
+    # of what the BRANCH changed, not of what this call reviews.
+    drift = measure_drift(base_ref) if base_ahead else None
     diff_empty = diff_lines == 0
 
     # Computed from the WRITTEN diff, deliberately unlike the gate predicates
@@ -1632,7 +1710,11 @@ def gate(
         if drift["lint_config"]:
             reasons.append(f"it changed {', '.join(drift['lint_config'])}")
         if drift["generation_input"]:
-            reasons.append("it touched a generation input")
+            reasons.append("both touched a generation input")
+        if drift["fixture_readers"]:
+            reasons.append(
+                f"it reads {', '.join(drift['fixture_readers'])} in a Rust test"
+            )
         blockers.append(
             f"{base_ref} has {len(base_ahead)} commit(s) HEAD lacks and they "
             f"interact with this branch ({'; '.join(reasons)}) — rebase onto "

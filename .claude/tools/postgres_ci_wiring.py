@@ -56,8 +56,13 @@ TARGET = "test-postgres"
 MAKEFILE = "Makefile"
 WORKFLOW = ".github/workflows/test.yml"
 
-_PACKAGE_NAME_RE = re.compile(r'^name\s*=\s*"([^"]+)"', re.MULTILINE)
+_PACKAGE_NAME_RE = re.compile(r"""^\s*name\s*=\s*["']([^"']+)["']""", re.MULTILINE)
 _SELECT_RE = re.compile(r"(?:^|\s)-p\s+(\S+)")
+#: The workflow step that runs the target — a `run:` value, not a mention in a
+#: comment or a longer target name.
+_RUNS_TARGET_RE = re.compile(
+    rf"^\s*run:\s*'?make {re.escape(TARGET)}'?\s*$", re.MULTILINE
+)
 
 
 def tracked_rust_sources(root: Path) -> list[str]:
@@ -78,16 +83,27 @@ def package_name(cargo_toml: str) -> str | None:
     Read from that table only: a ``[[bin]]`` or ``[lib]`` table also carries a
     ``name``, and in this tree one often precedes ``[package]``.
     """
-    match = re.search(r"^\[package\]\s*$(.*?)(?=^\[|\Z)", cargo_toml, re.M | re.S)
+    match = re.search(
+        r"^\[package\][ \t]*(?:#[^\n]*)?$(.*?)(?=^\[|\Z)", cargo_toml, re.M | re.S
+    )
     if not match:
         return None
     name = _PACKAGE_NAME_RE.search(match.group(1))
     return name.group(1) if name else None
 
 
-def gated_packages(root: Path, sources: list[str]) -> dict[str, list[str]]:
-    """Map each package with a Docker-gated test to the files that carry one."""
+def gated_packages(
+    root: Path, sources: list[str]
+) -> tuple[dict[str, list[str]], list[str]]:
+    """Each package with a Docker-gated test, mapped to the files carrying one.
+
+    Also returns the gated files whose package could not be resolved (no crate
+    manifest, or none with a readable ``[package]`` name). Those are reported
+    rather than skipped: a gated test this guard cannot place is exactly a test
+    it cannot vouch for.
+    """
     packages: dict[str, list[str]] = {}
+    unresolved: list[str] = []
     for src in sources:
         try:
             text = (root / src).read_text(encoding="utf-8", errors="replace")
@@ -99,11 +115,14 @@ def gated_packages(root: Path, sources: list[str]) -> dict[str, list[str]]:
         try:
             manifest = (root / crate / "Cargo.toml").read_text(encoding="utf-8")
         except OSError:
-            continue
+            manifest = ""
         name = package_name(manifest)
         if name:
             packages.setdefault(name, []).append(src)
-    return {name: sorted(files) for name, files in sorted(packages.items())}
+        else:
+            unresolved.append(src)
+    gated = {name: sorted(files) for name, files in sorted(packages.items())}
+    return gated, sorted(unresolved)
 
 
 def recipe(makefile: str, target: str) -> str | None:
@@ -131,11 +150,16 @@ def check(root: Path, sources: list[str] | None = None) -> list[str]:
         sources = tracked_rust_sources(root)
     problems = []
 
-    gated = gated_packages(root, sources)
-    if not gated:
+    gated, unresolved = gated_packages(root, sources)
+    if not gated and not unresolved:
         problems.append(
             "no crate carries a Docker-gated test — the attribute's spelling "
             "drifted from GATE_RE, so this guard would approve any omission"
+        )
+    for src in unresolved:
+        problems.append(
+            f"{src} has a Docker-gated test but no crate `[package]` name could "
+            f"be read for it, so its selection cannot be checked"
         )
 
     try:
@@ -158,7 +182,7 @@ def check(root: Path, sources: list[str] | None = None) -> list[str]:
         workflow = (root / WORKFLOW).read_text(encoding="utf-8")
     except OSError as exc:
         return problems + [f"cannot read {WORKFLOW}: {exc}"]
-    if f"make {TARGET}" not in workflow:
+    if not _RUNS_TARGET_RE.search(workflow):
         problems.append(
             f"{WORKFLOW} no longer runs `make {TARGET}`, so the selection this "
             f"guard checks is not the one CI executes"
@@ -196,7 +220,10 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root) if args.root else find_root()
 
     if args.show:
-        for name, files in gated_packages(root, tracked_rust_sources(root)).items():
+        gated, unresolved = gated_packages(root, tracked_rust_sources(root))
+        for src in unresolved:
+            print(f"(unresolved) {src}")
+        for name, files in gated.items():
             print(f"{name}: {len(files)} gated file(s)")
         body = recipe((root / MAKEFILE).read_text(encoding="utf-8"), TARGET) or ""
         print(f"make {TARGET} selects: {', '.join(selected_packages(body))}")
