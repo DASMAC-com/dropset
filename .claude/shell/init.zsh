@@ -331,10 +331,10 @@ _ds_secrets() {
 # moment interactivity is free: the operator is at the keyboard typing the verb
 # anyway.
 #
-# Three things about the shape below are load-bearing:
+# Four things about the shape below are load-bearing:
 #
-#   * It **probes before logging in**. `aws login` opens a browser, so a
-#     still-valid session must not pay for one. `sts get-caller-identity` is the
+#   * It **probes before logging in**. `aws login` stops for the operator, so
+#     a still-valid session must not pay for one. `sts get-caller-identity` is the
 #     cheapest call that actually proves the credentials resolve, and it is what
 #     fails with `Your session has expired` when they do not.
 #   * **The probe is what decides, not the login's exit status.** `aws login` can
@@ -363,7 +363,7 @@ _ds_secrets() {
 #     names carry the account id.
 #   * **The login is `--remote`, for every profile.** The plain flow opens the
 #     default browser, which silently signs in as whichever identity that
-#     browser already holds — an admin login completes as the PowerUser and
+#     browser already holds — an admin login can complete as the PowerUser and
 #     then fails at role-credential fetch. `--remote` prints the URL and takes
 #     the code back by paste, so the operator chooses the browser (incognito if
 #     need be) and with it the identity. The operator is at the keyboard
@@ -1167,7 +1167,8 @@ _ds_seat_guard() {
 #     prompt box, the `/resume` picker, and the terminal title — and it is
 #     load-bearing for `fleet`, whose already-open check matches the iTerm
 #     session name, so dropping it makes fleet double-resume. `task resume`
-#     resolves through `resolve_session.py`, not by the name or the directory.
+#     finds the session through `resolve_session.py` — the tag's worktree, then
+#     the transcript whose cwd stamps point into it — never by the name.
 #   * `/init-pr` as the initial prompt, so the bootstrap runs without being
 #     asked for — the same trick `plan` and `housekeeping` use for their own skills.
 task() {
@@ -1707,8 +1708,8 @@ plan() {
 # warn-and-launch escapes, and for the same reason: this pass reports spend and
 # runs the monthly permission refresh, both of which need credentials the
 # session cannot obtain for itself. `architect` is
-# deliberately NOT gated — it argues design rather than reading cost data, and a
-# browser login is a poor thing to stand between the operator and a design
+# deliberately NOT gated — it argues design rather than reading cost data, and an
+# interactive login is a poor thing to stand between the operator and a design
 # thought. Add it only if an architect session is actually found wanting one.
 housekeeping() {
   if [[ -n "$1" ]]; then
@@ -1747,7 +1748,8 @@ housekeeping() {
 # The advisor tier like `plan`, for the same reason: this session argues
 # strategy, and fidelity beats tokens. It makes no SCHEDULING writes — it files
 # its own tasks and moves its own governing issue to In Review, but places no
-# edges and edits no other issue; see the skill. It takes the same optional substrate word after the number
+# edges, re-prioritizes nothing, closes nothing and edits no other issue; see
+# the skill. It takes the same optional substrate word after the number
 # (`architect <n> bedrock`), with the same retention line as `plan`.
 #
 # **It runs in its own worktree, named `<n>`, and that worktree is
