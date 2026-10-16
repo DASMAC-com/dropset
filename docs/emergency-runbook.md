@@ -63,6 +63,33 @@ re-running one is always safe.
   last reference-price write, so quotes go stale only once nothing refreshes
   it: stop the maker. That is the passive backstop, not a plan.
 
+## Pausing across the Alpenglow activation
+
+The Alpenglow migration (SIMD-0384) starts 5,000 slots after the feature
+activates. Until a genesis certificate exists the leader packs only
+votes, RPC commitment stops advancing, and blocks after the certificate
+slot are deleted; Anza expects about a slot of outage but bounds none.
+The maker is not live across that boundary. This pause is a planned
+stop, not an emergency one, so nothing is closed.
+
+1. **Before the activation epoch begins**, press `K` to kill the
+   ladders, then stop the maker. A passive ladder rests by design with
+   no staleness kill, so stopping the bot alone leaves it on the book.
+
+1. **Wait for the switch to complete.** Poll the new RPC method until it
+   returns a certificate:
+
+   ```sh
+   curl -s "$DROPSET_MAINNET_RPC_URL" -H 'Content-Type: application/json' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"getAgGenesisCert"}'
+   ```
+
+   Then confirm commitment moves again: two `getSlot` reads at
+   `finalized` a few seconds apart return different slots.
+
+1. **Restart the maker.** The killed profile no longer matches the
+   configured ladder, so its first tick re-arms it and re-centers.
+
 ## Rehearsal
 
 Launch as above, press `K`, read the plan, and press Esc. Nothing is signed.

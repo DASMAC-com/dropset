@@ -161,7 +161,7 @@ export async function executeEclobSwap(
   // level rests only inside both of its deadlines, and the engine measures the
   // second against cluster time — so the device clock is checked against the
   // chain here (lib/eclob/chainClock.ts) rather than trusted, and the slot,
-  // read at `confirmed` and so already behind head, is nudged forward by the
+  // read at `finalized` and so already behind head, is nudged forward by the
   // slot-domain margin. Both corrections point the same way, because this is
   // the sizing that sets `minOut` below: gating against levels the engine has
   // already dropped sizes a floor the fill cannot reach, and the swap
@@ -171,7 +171,7 @@ export async function executeEclobSwap(
   //
   // `syncChainClock` gets the RAW slot: it asks the node for that block's
   // production time, and a slot nudged past head has no block.
-  const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
+  const slot = await rpc.getSlot({ commitment: "finalized" }).send();
   await syncChainClock(rpc, slot);
 
   // Declare the same configured rate the DFlow route declares, paid to the
@@ -299,7 +299,7 @@ export async function executeEclobSwap(
   );
 
   const { value: latestBlockhash } = await rpc
-    .getLatestBlockhash({ commitment: "confirmed" })
+    .getLatestBlockhash({ commitment: "finalized" })
     .send();
   // No compute-budget instruction, deliberately: the wallet owns the budget.
   // A wallet that adds a priority fee (Phantom does, at signing) skips any
@@ -339,7 +339,7 @@ export async function executeEclobSwap(
       signature = await rpc
         .sendTransaction(getBase64EncodedWireTransaction(signed), {
           encoding: "base64",
-          preflightCommitment: "confirmed",
+          preflightCommitment: "finalized",
         })
         .send();
     } else if (walletSession.sendTransaction) {
@@ -348,7 +348,7 @@ export async function executeEclobSwap(
       // the wallet pointed at the local RPC in that case).
       signature = await walletSession.sendTransaction(
         tx as unknown as Transaction & SendableTransaction,
-        { commitment: "confirmed" },
+        { commitment: "finalized" },
       );
     } else {
       throw new SwapError("Connected wallet can't sign", "wallet");

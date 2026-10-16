@@ -152,16 +152,16 @@ export function useOrderBook(
         // own read is throttled, not per-tick. See lib/eclob/chainClock.ts.
         //
         // The sync gets the raw slot (it needs a block that exists); the gate
-        // gets it nudged forward, because a `confirmed` slot is behind the
+        // gets it nudged forward, because a `finalized` slot is behind the
         // head the engine judges against and would otherwise show depth that
         // is already gone — the slot-domain twin of the wall-clock margin.
-        const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
+        const slot = await rpc.getSlot({ commitment: "finalized" }).send();
         if (cancelled || gen !== generation) return;
         await syncChainClock(rpc, slot);
         if (cancelled || gen !== generation) return;
 
         const view = await fetchDropsetMarketView(rpc, market, {
-          commitment: "confirmed",
+          commitment: "finalized",
           nowSlot: gateNowSlot(slot),
           nowUnix: gateNowUnix(),
         });

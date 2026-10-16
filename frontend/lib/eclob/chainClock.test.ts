@@ -235,14 +235,14 @@ describe("the gate against a cached chain offset", () => {
 });
 
 describe("slot gate", () => {
-  it("nudges a confirmed slot forward by the slot-domain margin", async () => {
+  it("nudges a finalized slot forward by the slot-domain margin", async () => {
     const { gateNowSlot } = await import("./chainClock");
 
     expect(gateNowSlot(1_000)).toBe(1_000 + SLOT_SAFETY_MARGIN_SLOTS);
     expect(gateNowSlot(1_000n)).toBe(1_000 + SLOT_SAFETY_MARGIN_SLOTS);
   });
 
-  // The whole point of the constant: a `confirmed` slot is behind head, so
+  // The whole point of the constant: a `finalized` slot is behind head, so
   // gating on it raw reports levels as more alive than the engine will find
   // them. The margin must move the gate *forward* (levels die sooner here),
   // matching the direction the wall-clock margin moves.

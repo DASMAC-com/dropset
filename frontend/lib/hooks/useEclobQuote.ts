@@ -98,7 +98,7 @@ export const useEclobQuote = (
         // figure they never receive. The simulator composes both fees exactly
         // as the engine does, so this also keeps the quote and the fill in
         // agreement to the atom.
-        const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
+        const slot = await rpc.getSlot({ commitment: "finalized" }).send();
         if (cancelled || gen !== generation) return;
         // Keep the wall-clock half of the gate honest against the cluster —
         // see lib/eclob/chainClock.ts. Quoting against an unchecked device

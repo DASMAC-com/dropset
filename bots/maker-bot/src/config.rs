@@ -438,7 +438,7 @@ pub struct LadderLevel {
 ///
 /// This bot is not that quoter. It re-stamps on a 5 s tick and, on a
 /// quiet book, only on the 30 s [`StrategyConfig::ref_heartbeat`] — and
-/// its `quote_slot` comes from `get_slot()` at *confirmed* commitment,
+/// its `quote_slot` comes from `get_slot()` at *finalized* commitment,
 /// which already lags the leader slot before the stamp transaction
 /// lands. A 2-slot bound would be past before a taker could match it:
 /// the slot conjunct would kill a level the wall conjunct was still
@@ -1056,7 +1056,7 @@ mod tests {
         // so both effects erode the margin below. Re-derive the tiers if
         // the cluster pace changes rather than trusting this number.
         const SLOT_MS: u64 = 200;
-        // `quote_slot` is read at *confirmed* commitment and the stamp
+        // `quote_slot` is read at *finalized* commitment and the stamp
         // then needs a slot or two to land, so the datum is already
         // behind the leader slot when it is written.
         const LAG_SLOTS: u64 = 8;
