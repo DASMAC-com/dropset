@@ -1429,13 +1429,13 @@ The gate is `_ds_aws_login` in the committed
 `.claude/shell/init.zsh`, and its shape is three steps:
 
 1. **Probe** with `aws sts get-caller-identity`. A live session stops
-   here, so a valid launch never opens a browser.
+   here, so a valid launch never stops for a login.
 1. **Log in** with `aws login --remote` only if the probe failed.
 1. **Re-probe**, and refuse the launch if *that* fails.
 
 **The login is `--remote`, for every profile.** The plain flow opens
 the default browser, which silently signs in as whichever identity
-that browser already holds: an admin login completes as the PowerUser
+that browser already holds: an admin login can complete as the PowerUser
 and then fails at role-credential fetch with no access. `--remote`
 prints the URL and takes the authorization code back by paste, so the
 operator picks the browser (incognito if need be) and with it the
@@ -1504,7 +1504,7 @@ Three deliberate bounds on the gate:
   genuinely old CLI, which the warning tells the operator to ignore.
 
 - **`architect` is not gated.** It argues design rather than reading
-  cost data, and a browser login is a poor thing to stand between the
+  cost data, and an interactive login is a poor thing to stand between the
   operator and a design thought. Add it only if an architect session is
   actually found wanting one.
 
@@ -1836,18 +1836,20 @@ drives the real zsh functions.
   opened the same `.claude/worktrees/<tag>` on the same
   `worktree-<tag>` branch, an untracked file written by the second
   survived into the third, `git worktree list` gained no second entry,
-  and nothing errored. So the verb needs no guard. The worktree is
-  always created under the **base** checkout's `.claude/worktrees/`,
-  even when launched from inside another worktree, and it stays
+  and nothing errored. So re-entry needs no guard (two **concurrent**
+  sessions on one tag were not measured). Launched from inside another
+  worktree, it was still created under the **base** checkout's
+  `.claude/worktrees/`, and it stays
   `locked` (`claude session <tag>`) after the process exits.
 
   **It runs on Bedrock**, per the substrate rule above.
   `-n <tag>` names the session in the prompt box, the `/resume` picker
   and the terminal title, and it is **load-bearing for `fleet`**, whose
   already-open check matches that name (see `fleet` below).
-  `task resume` resolves through `resolve_session.py`, not by the name
-  or the directory. `/init-pr` runs the bootstrap without being asked,
-  the same trick `plan` and `housekeeping` use.
+  `task resume` finds the session through `resolve_session.py` — the
+  tag's worktree, then the transcript whose cwd stamps point into it —
+  never by the name. `/init-pr` runs the bootstrap without being
+  asked, the same trick `plan` and `housekeeping` use.
 
 - **`task anthropic <n>`** — the same thing on the **subscription**,
   for work that needs web search or deep research (`task bedrock <n>`
@@ -2059,10 +2061,11 @@ drives the real zsh functions.
   idempotency; the different halves are the briefing
   (`/architect ENG-<n>`), what it may write — **no scheduling
   writes**: it files its own tasks and moves its own governing issue to
-  In Review, but places no edges, re-prioritizes nothing and edits no
-  other issue — and **where it runs**, its own temporary worktree
-  `<n>` rather than the base repo (see "Architect and explore
-  sessions: temporary worktree, no PR").
+  In Review, but places no edges, re-prioritizes nothing, closes
+  nothing and edits no other issue — and
+  **where it runs**, its own temporary worktree `<n>` rather than the
+  base repo (see "Architect and explore sessions: temporary worktree,
+  no PR").
 
   It keys on the **issue, not the date**, which is the one substantive
   difference from `plan` / `housekeeping`: a design thread outlives a day, so

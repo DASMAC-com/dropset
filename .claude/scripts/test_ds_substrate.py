@@ -577,10 +577,28 @@ class VerbLaunch(SubstrateHarness):
     def test_every_resume_form_keeps_the_permission_mode(self):
         # Omitting it on a resume silently drops to the saved default on every
         # reopen, and `fleet` types `task resume` for every worker session.
-        for verb in ("task resume 9", "task resume"):
+        # `python3` is stubbed to stand in for `resolve_session.py`, the only
+        # `python3` call on this path, so each of its modes is reached.
+        resolved = "python3() { print -r -- %s; print -r -- sid-9; print; }; "
+        cases = (
+            ("task resume", "ARGS=--resume --permission-mode auto"),
+            (
+                resolved % "continue" + "task resume 9",
+                "ARGS=--continue --permission-mode auto",
+            ),
+            (
+                resolved % "resume" + "task resume 9",
+                "ARGS=--resume sid-9 --permission-mode auto",
+            ),
+            (
+                resolved % "none" + "task resume 9",
+                "ARGS=--resume 9 --permission-mode auto",
+            ),
+        )
+        for verb, expected in cases:
             with self.subTest(verb=verb):
                 result, out = self._launch(verb)
-                self.assertIn("--permission-mode auto", out, result.stderr)
+                self.assertIn(expected, out, result.stderr)
 
 
 class ModelsVerb(SubstrateHarness):
