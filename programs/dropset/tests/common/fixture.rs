@@ -1907,6 +1907,18 @@ impl Fixture {
         vault_idx: u32,
         owner: &Pubkey,
     ) -> Result<(), String> {
+        self.force_withdraw_depositor_meta(admin, vault_idx, owner)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::force_withdraw_depositor`] but yields the transaction
+    /// metadata so a test can decode the emitted events.
+    pub fn force_withdraw_depositor_meta(
+        &mut self,
+        admin: &Keypair,
+        vault_idx: u32,
+        owner: &Pubkey,
+    ) -> Result<TransactionMetadata, String> {
         let (vd, _) = vault_depositor_pda(&self.market, vault_idx, owner);
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
@@ -1931,7 +1943,7 @@ impl Fixture {
                 AccountMeta::new_readonly(PROGRAM_ID, false),
             ],
         );
-        send_ixn(&mut self.svm, admin, ix)
+        send_ixn_meta(&mut self.svm, admin, ix)
     }
 
     /// `force_withdraw_leader` — admin drains the vault's leader stake to
@@ -1943,6 +1955,18 @@ impl Fixture {
         vault_idx: u32,
         leader: &Pubkey,
     ) -> Result<(), String> {
+        self.force_withdraw_leader_meta(admin, vault_idx, leader)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::force_withdraw_leader`] but yields the transaction
+    /// metadata so a test can decode the emitted events.
+    pub fn force_withdraw_leader_meta(
+        &mut self,
+        admin: &Keypair,
+        vault_idx: u32,
+        leader: &Pubkey,
+    ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &ForceWithdrawLeaderIx { vault_idx }.data(),
@@ -1965,7 +1989,7 @@ impl Fixture {
                 AccountMeta::new_readonly(PROGRAM_ID, false),
             ],
         );
-        send_ixn(&mut self.svm, admin, ix)
+        send_ixn_meta(&mut self.svm, admin, ix)
     }
 
     /// `close_market_treasury` — close one market treasury ATA, draining
