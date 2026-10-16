@@ -61,7 +61,7 @@ _SELECT_RE = re.compile(r"(?:^|\s)-p\s+(\S+)")
 #: The workflow step that runs the target — a `run:` value, not a mention in a
 #: comment or a longer target name.
 _RUNS_TARGET_RE = re.compile(
-    rf"^\s*run:\s*'?make {re.escape(TARGET)}'?\s*$", re.MULTILINE
+    rf"""^\s*(?:-\s+)?run:\s*['"]?make {re.escape(TARGET)}['"]?\s*$""", re.MULTILINE
 )
 
 

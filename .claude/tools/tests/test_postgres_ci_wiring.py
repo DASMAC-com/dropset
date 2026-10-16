@@ -89,6 +89,11 @@ class WiringTests(unittest.TestCase):
         )
         self.assertTrue(any("no longer runs" in p for p in self.check()))
 
+    def test_a_list_item_or_double_quoted_run_counts(self):
+        for line in ('- run: "make test-postgres"\n', "  run: make test-postgres\n"):
+            self.write(".github/workflows/test.yml", line)
+            self.assertEqual(self.check(), [], line)
+
     def test_a_longer_target_name_does_not_count(self):
         self.write(".github/workflows/test.yml", "run: 'make test-postgres-lite'\n")
         self.assertTrue(any("no longer runs" in p for p in self.check()))

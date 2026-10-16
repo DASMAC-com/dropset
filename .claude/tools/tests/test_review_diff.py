@@ -699,10 +699,18 @@ class GateTests(unittest.TestCase):
     def test_any_cfg_file_counts_as_lint_config(self):
         # The dictionary, the linters' configs and the size baseline all live
         # under cfg/, and each changes lint's answer on untouched files.
-        self.advance_base("cfg/dictionary.txt", "word\n")
+        self.advance_base("cfg/ruff.toml", "line-length = 88\n")
         v = rd.gate("main", self.out, fetch=False)
         self.assertFalse(v["ready"])
-        self.assertEqual(v["base_drift"]["lint_config"], ["cfg/dictionary.txt"])
+        self.assertEqual(v["base_drift"]["lint_config"], ["cfg/ruff.toml"])
+
+    def test_the_dictionary_alone_is_exempt(self):
+        # Union-merged and only ever loosened by an added word; blocking on it
+        # would re-create the rebase churn on most base moves.
+        self.advance_base("cfg/dictionary.txt", "word\n")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertTrue(v["ready"], v["blockers"])
+        self.assertEqual(v["base_drift"]["lint_config"], [])
 
     def test_a_lint_hook_script_counts_as_lint_config(self):
         hooks = (
@@ -766,6 +774,27 @@ class GateTests(unittest.TestCase):
         self.assertEqual(v["base_drift"]["fixture_readers"], ["frontend/roster.json"])
         self.assertFalse(v["ready"])
         self.assertIn("frontend/roster.json", " ".join(v["blockers"]))
+
+    def test_a_runtime_reader_in_a_crate_only_the_base_has_is_resolved_there(self):
+        # The composed form resolves against the crate root, and that crate's
+        # manifest exists only at the base ref — so the manifest probe must read
+        # the base tree, not the working tree, or the reader resolves wrongly.
+        self.commit("frontend/roster.json", "[]\n", "Roster")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.commit("frontend/roster.json", "[1]\n", "Branch edit")
+        git(self.repo, "checkout", "-q", "-b", "side", "HEAD~1")
+        self.commit("ledger/Cargo.toml", "[package]\nname = 'n'\n", "Crate")
+        self.commit(
+            "ledger/tests/r.rs",
+            'concat!(env!("CARGO_MANIFEST_DIR"), "/../frontend/roster.json")\n',
+            "Reader",
+        )
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.repo, "checkout", "-q", "main")
+        self.assertFalse((self.repo / "ledger").exists())
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertEqual(v["base_drift"]["fixture_readers"], ["frontend/roster.json"])
+        self.assertFalse(v["ready"])
 
     def test_a_fresh_base_reports_no_drift(self):
         self.commit("a.rs", "fn a() {}\n", "Branch work")

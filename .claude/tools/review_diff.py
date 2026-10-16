@@ -419,16 +419,24 @@ def tracked_rust_sources() -> list[str]:
     return [p for p in out.split("\0") if p]
 
 
-def manifest_dir(src: str, root: Path) -> str:
+def manifest_dir(src: str, root: Path, has_file=None) -> str:
     """The repo-relative directory of the crate ``src`` belongs to.
 
     The nearest ancestor holding a ``Cargo.toml``, which is what
     ``CARGO_MANIFEST_DIR`` names at build time and what ``cargo test`` uses as a
     test's working directory. A file under no crate falls back to the repo root.
+
+    ``has_file`` answers "does this repo-relative path exist?" and defaults to
+    the working tree under ``root``; a scan of another ref passes that ref's.
     """
+    if has_file is None:
+
+        def has_file(rel: str) -> bool:
+            return (root / rel).is_file()
+
     d = posixpath.dirname(src)
     while d:
-        if (root / d / "Cargo.toml").is_file():
+        if has_file(f"{d}/Cargo.toml"):
             return d
         d = posixpath.dirname(d)
     return ""
@@ -454,6 +462,7 @@ def rust_test_fixtures(
     sources: list[str] | None = None,
     root: Path | None = None,
     read=None,
+    has_file=None,
 ) -> dict[str, list[str]]:
     """Map each path a Rust file reads as a fixture to the files that read it.
 
@@ -506,8 +515,10 @@ def rust_test_fixtures(
     that motivated it, and both halves fail in the same silent direction.
 
     ``read`` maps a source path to its text (``None`` when unreadable) and
-    defaults to the working tree; :func:`gate` passes a reader at the base ref
-    to scan the readers a moved base added.
+    ``has_file`` answers whether a path exists (for :func:`manifest_dir`); both
+    default to the working tree. :func:`measure_drift` passes the pair for the
+    base ref, so a reader inside a crate that exists only there resolves
+    against that crate.
     """
     if sources is None:
         sources = tracked_rust_sources()
@@ -537,7 +548,7 @@ def rust_test_fixtures(
         composed = _MANIFEST_RE.findall(text)
         literals = _READ_LITERAL_RE.findall(text)
         if composed or literals:
-            crate = manifest_dir(src, root)
+            crate = manifest_dir(src, root, has_file)
             # A composed tail conventionally starts with `/`, which separates it
             # from the manifest dir rather than making it absolute. A read
             # literal gets no such allowance: `/etc/x` really is absolute.
@@ -1488,10 +1499,17 @@ def grep_excludes() -> dict:
 
 
 #: The lint configuration outside ``cfg/``, which is lint config wholesale (the
-#: hook list, the linters' own configs, the dictionary, the size baseline).
+#: hook list, the linters' own configs, the size baseline).
 LINT_CONFIG_FILES = (".pre-commit-config.yaml",)
 
-_HOOK_SCRIPT_RE = re.compile(r"entry:\s*'?python3\s+(\.claude/tools/\S+?\.py)")
+#: The one ``cfg/`` file that is NOT treated as lint config. It moves on main
+#: constantly, carries ``merge=union`` so it cannot collide, and an added word
+#: can only make cspell more permissive — so blocking on it would bring back the
+#: rebase churn the drift check exists to remove. A removed word that newly
+#: fails the branch is left to the merge queue.
+LINT_CONFIG_EXEMPT = ("cfg/dictionary.txt",)
+
+_HOOK_SCRIPT_RE = re.compile(r"entry:\s*'?python3?\s+(\.claude/tools/\S+?\.py)")
 
 
 def lint_hook_scripts(root: Path | None = None) -> set[str]:
@@ -1509,6 +1527,8 @@ def lint_hook_scripts(root: Path | None = None) -> set[str]:
 
 def is_lint_config(path: str, hook_scripts: set[str]) -> bool:
     """Whether a change to ``path`` can change ``make lint``'s answer elsewhere."""
+    if path in LINT_CONFIG_EXEMPT:
+        return False
     return path.startswith("cfg/") or path in LINT_CONFIG_FILES or path in hook_scripts
 
 
@@ -1570,6 +1590,19 @@ def _show_at(ref: str):
     return read
 
 
+def _exists_at(ref: str):
+    """A ``has_file`` callable for :func:`manifest_dir` over the tree at ``ref``."""
+
+    def has_file(path: str) -> bool:
+        try:
+            _git(["cat-file", "-e", f"{ref}:{path}"])
+            return True
+        except ReviewDiffError:
+            return False
+
+    return has_file
+
+
 def measure_drift(base_ref: str) -> dict:
     """:func:`base_drift` for this checkout against ``base_ref``."""
     base_files = changed_files(f"HEAD...{base_ref}")
@@ -1577,6 +1610,7 @@ def measure_drift(base_ref: str) -> dict:
     base_readers = rust_test_fixtures(
         sources=[p for p in base_files if p.endswith(".rs")],
         read=_show_at(base_ref),
+        has_file=_exists_at(base_ref),
     )
     return base_drift(
         base_files,
