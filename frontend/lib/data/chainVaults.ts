@@ -116,7 +116,7 @@ export function chainPosition(
     openedAtSlot: Number(header.openedAt),
     realizedPnl: quoteUnits(header.realizedPnl),
     realizedYield: quoteUnits(header.realizedYield),
-    realizedFx: quoteUnits(header.realizedFx),
+    realizedPrice: quoteUnits(header.realizedPrice),
   };
 }
 
