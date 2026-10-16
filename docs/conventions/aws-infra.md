@@ -203,10 +203,16 @@ The **`aws-mcp`** account-action server authenticates with **SigV4**
 which reuses the AWS CLI credentials the templates are deployed with:
 
 ```sh
-aws login
+aws login --remote
 claude mcp add aws-mcp --scope user -- uvx mcp-proxy-for-aws==1.6.3 \
   https://aws-mcp.us-east-1.api.aws/mcp --metadata AWS_REGION=us-west-2
 ```
+
+**Always log in with `--remote`** (or `--use-device-code` on the older
+`aws sso login`), for every profile. The plain flow reuses whichever
+identity the default browser is signed into, so an admin login can
+complete as the PowerUser and then fail at role-credential fetch;
+`--remote` lets the operator pick the browser, and so the identity.
 
 `aws login` writes short-lived, auto-rotating credentials; the proxy
 signs each MCP request with them. As with the other user-scope MCP

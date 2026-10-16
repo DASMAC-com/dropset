@@ -147,8 +147,8 @@ class ValidSessionCostsNothing(GateHarness):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_valid_credentials_never_run_a_login(self):
-        # The probe-before-login shape is the point: `aws login` opens a browser,
-        # so a still-valid session that re-logs in has made the gate a tax on
+        # The probe-before-login shape is the point: `aws login` stops for the
+        # operator, so a still-valid session that re-logs in has made the gate a tax on
         # every launch rather than a guard on a broken one.
         _, recorded = self._gate(sts_rc=0)
         self.assertEqual(len(recorded), 1, recorded)
@@ -170,6 +170,16 @@ class ExpiredSessionLogsInOnce(GateHarness):
             args for _, args in recorded if args[0] == "login" and "help" not in args
         ]
         self.assertEqual(len(logins), 1, recorded)
+
+    def test_the_login_is_remote_so_the_operator_picks_the_identity(self):
+        # The plain flow reuses whichever identity the default browser holds;
+        # `--remote` prints the URL and takes the code back by paste.
+        _, recorded = self._gate(sts_rc=1, login_rc=0, post_login_sts_rc=0)
+        logins = [
+            args for _, args in recorded if args[0] == "login" and "help" not in args
+        ]
+        self.assertEqual(len(logins), 1, recorded)
+        self.assertIn("--remote", logins[0], recorded)
 
     def test_the_probe_runs_again_after_the_login(self):
         # Two `sts` calls, not one: the second is what actually clears the gate.
