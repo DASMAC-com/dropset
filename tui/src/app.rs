@@ -1472,7 +1472,7 @@ impl App {
                     units,
                     signature,
                 } => self.record_cu(label, units, signature),
-                JobEvent::Fill { signature, event } => self.record_fill(signature, event),
+                JobEvent::Fill { signature, event } => self.record_fill(signature, *event),
                 JobEvent::Done { ok, summary } => {
                     self.job_running = false;
                     self.dirty = true;

@@ -78,6 +78,32 @@ Two integer widths appear:
 is overkill: `size_bps` (per-level fraction of inventory).
 Convention: 10000 = 100%.
 
+**Layout by concern, one reserve, and the carve rule.** Every account
+header and the byte-exact `FillEvent` lay their fields out by concern:
+identity, then price or configuration, then ledger and counters, then
+every byte-wide field together (the flags, then the PDA bump), then one
+`_reserved` block, then any slab tail. There are no padding fields.
+Every field is an alignment-1 `Pod*` wrapper except `Price`, the one
+deliberate native `u32` at alignment 4 — so every struct that embeds a
+`Price` has a stride that is a multiple of 4 and every `Price` sits at
+a 4-aligned offset. Accounts are cast in place, and off-chain readers
+cast at arbitrary byte offsets; alignment-1 wrappers keep that portable.
+Each reserve is sized to its struct's list of **nameable carves** (the
+fields that could plausibly arrive later), roughly doubled. A carve:
+
+- takes bytes from the **front** of the reserve, moves no other field,
+  and changes no size;
+- is an alignment-1 wrapper, since the reserve's front need not be
+  4-aligned (a carved price is stored as `PodU32` bits);
+- states its **zero as the pre-carve meaning**, so an account written
+  before the carve reads correctly after it — which is why the program
+  tests assert after every instruction that every reserve is all-zero;
+- adds an offset assert beside the struct.
+
+There is no version byte. If a size change is ever unavoidable, the data
+length is the version. Each section below records its struct's carve
+list as **options, not commitments**.
+
 ## Registry
 
 The `Registry` is a global singleton account that holds protocol-wide
@@ -159,6 +185,16 @@ the invariants and rationale, not the field-by-field types:
   only on-chain witness that no orphan markets remain, since the
   program cannot iterate all PDAs to verify by enumeration (see
   **Account lifecycle and rent reclamation**).
+- **Layout.** `RegistryHeader` is 226 bytes: the defaults, then
+  `market_count`, then the bump, then a 140-byte reserve. The admin tail
+  starts at byte 238 of the account data (8-byte discriminator, the
+  header, the slab's 4-byte length), so with one admin the account is
+  270 bytes and its rent 2,770,080 lamports. **Carve options:**
+  registry-level defaults for the per-market caps a market header may
+  carve, and a default expiry-tier policy. A registry-level global
+  pause was considered and **rejected**: the registry would then sit on
+  every take's account list. So was permissionless market creation,
+  which stays admin-gated.
 
 Notably absent: there is **no leader allowlist**. Banning a pubkey
 would be trivially defeated by registering a fresh wallet, so the
@@ -207,8 +243,21 @@ counter (see **Vault**), the per-market knobs
 (`taker_fee`, `max_platform_fee`, `default_min_leader_share`,
 `fee_config`) seeded from the
 registry at creation and tunable downstream by admins, the base/quote
-mints, and the two treasury accounts with their PDA bumps. The
-load-bearing invariants and rationale:
+mints, and the two treasury accounts with their PDA bumps.
+
+The header is 396 bytes, by concern (see **Conventions**): the mints
+and treasuries, then the fee config and rates, then the ledger — the
+two accrued-fee counters, `nonce`, `next_vault_seq`, the three DLL
+heads, `active_count` and `outstanding_vault_depositors` — then the
+bump, then a 135-byte reserve. Three assembly literals follow the
+header's shape (the nonce, the slab length and the first sector; see
+**Storage layout**), and each is tied to the Rust layout at compile
+time. **Carve options:** a per-market pause, per-market caps, a maker-fee
+default, an expiry-tier policy, a last-trade band, and per-leg
+Token-2022 flags (the program ids themselves are not stored). The
+market pause is deliberately a carve here and not a field at launch.
+
+The load-bearing invariants and rationale:
 
 - **Treasury custody invariant.**
   `base_treasury.amount >= Σ vault.base_atoms + accrued_base_fee_atoms`
@@ -470,6 +519,14 @@ sectors.
 | MarketHeader   | Sector 0 | Sector 1 | Sector 2 | Sector 3 | ... |
 +----------------+----------+----------+----------+----------+-----+
 ```
+
+Byte for byte, the data region is the 8-byte discriminator, the 396-byte
+header, the slab's `u32` length, then the sectors. `Vault` is 4-aligned
+(it embeds `Price`), so the first sector starts at
+`align_up(8 + 396 + 4, 4)` = **408** — already aligned, so there is no
+pad before sector 0. The assembly entrypoint reads the nonce at data
+offset 232, the slab length at 404 and sector 0 at 408 as literals,
+tied to the Rust types in `asm_offsets.rs`.
 
 Each `Vault` carries two pointer fields (`next`, `prev`; see **Vault**) —
 they thread whichever list the vault is currently on (active,
@@ -1147,7 +1204,16 @@ The byte-exact layout is owned by
 - **Realized-PnL decomposition.** `realized_pnl` (signed — a withdrawal
   can realize a loss) splits as
   `realized_yield + realized_price == realized_pnl`. Discarded when the account
-  closes at zero shares.
+  closes at zero shares. `realized_price` is the base leg's move against
+  the entry reference, named for the asset rather than for FX, since a
+  market's pair need not be a currency pair.
+- **Layout.** The header is 216 bytes, by concern (see **Conventions**):
+  identity (`market`, `sector_idx`, `owner`), then the basis pair
+  (`entry_ref_price` at the 4-aligned offset 68, `entry_vps`), then the
+  ledger (`shares`, the principal measures, `opened_at`, the three
+  realized accumulators), then the bump, then a 79-byte reserve. Rent
+  per position is 2,449,920 lamports, refunded on close. **Carve
+  options:** sized for six nameable fields, doubled.
 
 The cost basis is a shares-weighted average over deposits:
 `entry_ref_price` (a `Price`, the average reference quote-per-base) and
@@ -2659,9 +2725,12 @@ design:
   exhausts the default heap near **50 active vaults**, and the fill
   buffers bring that lower, so a `max_vaults_per_market` raised far
   past the default cannot rely on a frame request to fit.
-- **The fill, not the book, binds.** Each filled leg buffers a 208 B
+- **The fill, not the book, binds.** Each filled leg buffers a 256 B
   `FillEvent` for `lib.rs` to emit, plus a rollback snapshot, and both
-  grow by doubling. That buffer exhausts the heap well before compute
+  grow by doubling. The event buffer is deliberately not pre-sized: any
+  bound built from entry counts is one the taker's budget rarely reaches,
+  and reserving it up front faults a small take on a deep book before
+  its first leg. That buffer exhausts the heap well before compute
   runs out: on a fully flipped ten-vault book a single take completes
   ten legs but not twenty, at roughly a tenth of the 1.4M-CU transaction
   ceiling. The same ceiling held before flips existed, so it is a
@@ -2905,7 +2974,8 @@ ceiling is **64 inner instructions per transaction**
 `emit_cpi!` per matched leg; see **Granularity** below), this count —
 not the per-CPI 10 KiB data cap — is what bounds a take: it can record
 at most `64 − (top-level ix + token CPIs)` legs in one transaction (a
-single `FillEvent` is ~216 B, nowhere near the data cap).
+single `FillEvent` is a 256 B body behind a 16 B envelope, nowhere near
+the data cap).
 
 **Why fills must be events, not account diffs.** `market.nonce` is
 bumped on every fill and every quote update, and a geyser stream
@@ -2936,9 +3006,7 @@ identity. Without it, an RPC-poll indexer that misses one
 `CreateVaultEvent` attributes the new occupant's flows to the previous
 one. The seq is read while the sector is still occupied, so a draining
 withdraw that reclaims its sector in the same instruction still names
-the outgoing vault. It is a plain new field, never carved out of an
-existing pad: pads are reserved for post-mainnet growth, under the same
-rule as the vault struct.
+the outgoing vault.
 
 **Granularity — per-leg emit, every leg recorded.** A single take can
 sweep many levels across many vaults (the sorted-`Vec` fill loop in
@@ -2969,6 +3037,41 @@ cost and the small stack footprint of the event-struct literal at the
 macro site matter. The cold-path events (`Deposit`, `Withdraw`,
 `CreateVault`, `Realize`) use the default `#[event]` — they benefit from
 dynamic fields and emit too rarely for bytemuck to pay back.
+
+**The `FillEvent` layout.** The body is 256 bytes, laid out by concern
+on alignment-1 `Pod*` wrappers under the carve rule (see
+**Conventions**): the four pubkeys, then `sector_idx`, `level_idx` and
+`vault_seq`, then the two prices, then the amounts and post-fill
+counters, then the byte-wide `side` and `leg_kind`, then a 46-byte
+reserve. It has no padding fields; the IDL still renders each wrapper
+as its integer. Three fields describe the leg against its level, so the
+event alone answers what a reverse-order book needs:
+
+- **`leg_kind`** — `0` when the leg consumed the level's own side
+  (`Position::size`), `1` when it consumed the flipped side
+  (`Position::flip_size`). **`side`** keeps its meaning, the taker's
+  direction, so it never names the array filled; `leg_kind` does.
+- **`flip_price`** — the level's `Position::flip_price` at emit, zero
+  when the level does not flip. Against `fill_price` it is the spread
+  the flipping level captures.
+- **`remaining_after`** — the allowance left after the leg on the side
+  it consumed, in that side's atoms: `size` for a primary leg,
+  `flip_size` for a flipped one.
+
+The reserve is sized for five more `u64`-wide slots and six flags,
+deliberately above the rule's minimum because a wire record's growth
+costs every leg. As with accounts, the test decoder asserts it is
+all-zero on every emit. **Carve options:** the slots and flags that
+reserve was sized for, recorded with the account carve lists.
+
+**Cold-path events are append-only after C2.** A default-mode event is
+decoded field by field, and its discriminator hashes the event *name*,
+not its fields. So a post-launch change leaves two body generations
+under one discriminator, and a reserve could not help, because a body
+carrying a `String` has no fixed offsets. The rule: after the C2
+publish, a Borsh event body only grows at its end, and every decoder
+treats a missing tail as its fields' defaults. A change that cannot be
+append-only **renames the event**, which gives it a fresh discriminator.
 
 **Schema source of truth.** This section specifies the emit *mechanism*;
 the event *schema* (the field-by-field layouts) is owned by the

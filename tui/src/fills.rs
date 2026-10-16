@@ -123,7 +123,7 @@ fn subscribe_and_forward(
             if tx
                 .send(JobEvent::Fill {
                     signature: sig.clone(),
-                    event,
+                    event: Box::new(event),
                 })
                 .is_err()
             {

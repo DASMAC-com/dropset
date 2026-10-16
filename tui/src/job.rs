@@ -34,10 +34,11 @@ pub enum JobEvent {
     /// (the [`crate::fills`] thread), tagged with the signature of the swap that
     /// produced it so the fills pane can link each row to the explorer — the
     /// pane keeps a per-market ring of these. Not produced by the single-job
-    /// harness.
+    /// harness. Boxed: the 256-byte event would otherwise size every
+    /// variant of this channel message.
     Fill {
         signature: String,
-        event: dropset_sdk::types::FillEvent,
+        event: Box<dropset_sdk::types::FillEvent>,
     },
 }
 
