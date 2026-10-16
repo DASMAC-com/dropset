@@ -118,7 +118,7 @@ fn draw_passive_prompt(f: &mut Frame<'_>, app: &App, area: Rect) {
     let input = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
     let hint = Style::new().fg(Color::DarkGray);
     let warn = Style::new().fg(Color::Yellow);
-    let (label, mut lines, entry, keys) = match prompt {
+    let (label, body, entry, keys) = match prompt {
         PassivePrompt::Form(form) => (
             form.op.label(),
             form.lines()
@@ -145,9 +145,15 @@ fn draw_passive_prompt(f: &mut Frame<'_>, app: &App, area: Rect) {
             "Enter ok · Esc cancel",
         ),
     };
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(entry, input)));
-    lines.push(Line::from(Span::styled(keys, hint)));
+    // The entry line leads: an eight-rung preview runs past twenty rows, and
+    // a short terminal clips the bottom of the box, which must never be the
+    // line the operator types `yes` into.
+    let mut lines = vec![
+        Line::from(Span::styled(entry, input)),
+        Line::from(Span::styled(keys, hint)),
+        Line::from(""),
+    ];
+    lines.extend(body);
     let (title, border) = if app.ctx.cluster.is_mainnet() {
         (
             format!(" {label} — MAINNET · REAL FUNDS "),

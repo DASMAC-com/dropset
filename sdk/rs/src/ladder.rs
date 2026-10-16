@@ -7,10 +7,10 @@
 //! flush — so the profile is a function of the *strategy*, not the live
 //! balance.
 //!
-//! Every surface that deploys a passive book — the maker bot's passive mode
-//! and the TUI's set-and-forget action — builds it through
-//! [`PassiveLadder::levels`] and checks it with [`passive_shape_warnings`],
-//! so the two cannot drift on the shape rules.
+//! Both surfaces that deploy a passive book share these rules: the TUI's
+//! set-and-forget action builds through [`PassiveLadder::levels`], the maker
+//! bot's default passive ladder is pinned equal to its default output by a
+//! test, and both check with [`passive_shape_warnings`].
 
 use bytemuck::Zeroable;
 
@@ -148,6 +148,7 @@ pub struct PassiveLadder {
     pub spacing_ppm: u32,
     /// Rungs per side, clamped to `1..=N_LEVELS`.
     pub levels: usize,
+    /// How the leg spreads across the rungs.
     pub shape: PassiveShape,
     /// Every rung's flip spread; [`passive_shape_warnings`] flags one past the
     /// spacing.
