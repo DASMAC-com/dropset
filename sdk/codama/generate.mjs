@@ -271,6 +271,12 @@ await codama.accept(
 // invoked program caller-supplied: an on-chain caller must constrain that
 // account to the Dropset id for its cluster before invoking.
 const deploymentParam = 'deployment: crate::Deployment';
+// The localnet id's address as the renderer itself declares it, so the
+// leftover check below catches a literal as well as the constant's name.
+const localnetId = readFileSync(join(rustOut, 'programs.rs'), 'utf8').match(
+  /DROPSET_ID: Pubkey = pubkey!\("(\w+)"\)/,
+)?.[1];
+if (!localnetId) throw new Error('programs.rs: no DROPSET_ID declaration');
 const instructionsOut = join(rustOut, 'instructions');
 for (const file of readdirSync(instructionsOut)) {
   if (!file.endsWith('.rs') || file === 'mod.rs') continue;
@@ -304,9 +310,11 @@ for (const file of readdirSync(instructionsOut)) {
   if (rewritten !== 3) {
     throw new Error(`${file}: rewrote ${rewritten} builders, expected 3`);
   }
-  // Any spelling of the localnet id left behind (a renderer that names it
-  // another way) would be a builder that takes a deployment and ignores it.
-  if (/DROPSET_ID/.test(client + cpi)) {
+  // The localnet id left behind, by name under another path or as its
+  // literal address, would be a builder that takes a deployment and ignores
+  // it. (An alias of another name is the one shape this cannot see.)
+  const rewrittenSource = client + cpi;
+  if (/DROPSET_ID/.test(rewrittenSource) || rewrittenSource.includes(localnetId)) {
     throw new Error(`${file}: the localnet id survived the rewrite`);
   }
   writeFileSync(path, client + cpi);
