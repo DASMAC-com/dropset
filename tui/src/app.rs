@@ -1652,7 +1652,7 @@ fn now_hms() -> String {
 /// units or a withdraw's percentage — into a whole number: `Some(n)` for a
 /// positive integer, `None` for empty, zero, or non-numeric input (the caller
 /// refuses it). Split out so it's testable without an `App`.
-fn parse_positive_amount(buf: &str) -> Option<u64> {
+pub(crate) fn parse_positive_amount(buf: &str) -> Option<u64> {
     match buf.parse::<u64>() {
         Ok(n) if n > 0 => Some(n),
         _ => None,

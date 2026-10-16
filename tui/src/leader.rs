@@ -200,7 +200,28 @@ fn plus_tolerance(x: u64) -> u64 {
     (u128::from(x) + bump).min(u128::from(u64::MAX)) as u64
 }
 
-/// Size a quote-leg top-up of `quote_in` atoms against `stake`.
+/// Size `op` for the typed `amount` against `stake` — whole quote units on a
+/// deposit (scaled by the quote mint's `quote_decimals`), a percentage on a
+/// withdraw. The one entry point both the live preview and the confirmed
+/// ticket go through, so the two cannot size the same keystrokes apart.
+pub fn plan(op: LeaderOp, stake: &VaultStake, amount: u64, quote_decimals: u8) -> Result<Plan> {
+    match op {
+        LeaderOp::Deposit => {
+            let atoms = 10u64
+                .checked_pow(u32::from(quote_decimals))
+                .and_then(|scale| amount.checked_mul(scale))
+                .context("amount overflows the quote mint's atoms")?;
+            plan_deposit(stake, atoms)
+        }
+        LeaderOp::Withdraw => plan_withdraw(stake, amount),
+    }
+}
+
+/// Size a quote-leg top-up of `quote_in` atoms against `stake`, after the
+/// performance-fee realize `deposit_leader` runs first, as a withdraw is
+/// (see [`plan_withdraw`]). The realize moves no inventory, only the share
+/// count, so the base leg it derives matches the as-read sizing to within
+/// an atom of rounding; what it corrects is the share estimate.
 pub fn plan_deposit(stake: &VaultStake, quote_in: u64) -> Result<Plan> {
     if stake.total_shares == 0 {
         bail!("the vault is unseeded — its first deposit is the seed, not a top-up");
@@ -208,6 +229,7 @@ pub fn plan_deposit(stake: &VaultStake, quote_in: u64) -> Result<Plan> {
     if quote_in == 0 {
         bail!("deposit at least one quote atom");
     }
+    let stake = &stake.realized();
     // A taker sell can drain a seeded vault's quote leg to exactly zero; the
     // kernel refuses that as `EmptyLeg` rather than dividing by it.
     let (shares_out, base_in, quote_final) = single_leg_basket(
@@ -396,15 +418,7 @@ pub fn preview(
     q: Leg,
     price: Option<f64>,
 ) -> Option<Result<Vec<String>, String>> {
-    let amount = amount?;
-    let planned = match op {
-        LeaderOp::Deposit => 10u64
-            .checked_pow(u32::from(q.1))
-            .and_then(|scale| amount.checked_mul(scale))
-            .ok_or_else(|| anyhow::anyhow!("amount overflows the quote mint's atoms"))
-            .and_then(|atoms| plan_deposit(stake, atoms)),
-        LeaderOp::Withdraw => plan_withdraw(stake, amount),
-    };
+    let planned = plan(op, stake, amount?, q.1);
     Some(match planned {
         Ok(Plan::Deposit {
             quote_in,
@@ -462,16 +476,7 @@ pub fn prepare(
     let config = market::config_for(repo_root, cluster, &market.base_mint)
         .context("the selected market is not in this cluster's roster")?;
     let seat = led_seat(client, cluster, &market.address, leader)?;
-    let plan = match op {
-        LeaderOp::Deposit => {
-            let atoms = 10u64
-                .checked_pow(u32::from(market.quote_decimals))
-                .and_then(|scale| amount.checked_mul(scale))
-                .context("amount overflows the quote mint's atoms")?;
-            plan_deposit(&seat.stake, atoms)?
-        }
-        LeaderOp::Withdraw => plan_withdraw(&seat.stake, amount)?,
-    };
+    let plan = plan(op, &seat.stake, amount, market.quote_decimals)?;
     Ok(Ticket {
         op,
         market: market.clone(),
