@@ -19,7 +19,9 @@ import {
 import {
   DROPSET_PROGRAM_ADDRESS,
   findRegistryPda,
+  findVaultDepositorPda,
   getCloseRegistryInstructionAsync,
+  getDepositInstructionAsync,
 } from './generated';
 
 /** Neither cluster's id: a stand-in for a fresh deployment, or any wallet. */
@@ -82,4 +84,38 @@ test('an async builder derives its defaulted PDAs under its own program', async 
   const [registry] = await findRegistryPda({ programAddress });
   assert.strictEqual(ix.programAddress, programAddress);
   assert.ok(ix.accounts.some((a) => a.address === registry));
+});
+
+test('an inlined variable-seed PDA matches its finder', async () => {
+  // The builders now derive PDAs inline rather than through the finders, so
+  // pin that the inline seeds (market, u32 vault index, signer) encode the
+  // same way the finder's do.
+  const programAddress = dropsetProgramAddress('mainnet');
+  const signer = createNoopSigner(FRESH);
+  const ix = await getDepositInstructionAsync(
+    {
+      signer,
+      market: FRESH,
+      baseMint: FRESH,
+      quoteMint: FRESH,
+      baseTokenProgram: FRESH,
+      quoteTokenProgram: FRESH,
+      signerBaseAta: FRESH,
+      signerQuoteAta: FRESH,
+      marketBaseTreasury: FRESH,
+      marketQuoteTreasury: FRESH,
+      program: programAddress,
+      vaultIdx: 3,
+      baseIn: 0n,
+      quoteIn: 0n,
+      maxBaseIn: 0n,
+      maxQuoteIn: 0n,
+    },
+    { programAddress },
+  );
+  const [vaultDepositor] = await findVaultDepositorPda(
+    { market: FRESH, vaultIdx: 3, signer: FRESH },
+    { programAddress },
+  );
+  assert.strictEqual(ix.accounts[2]?.address, vaultDepositor);
 });
