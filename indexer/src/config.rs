@@ -32,7 +32,9 @@ impl Config {
         let cluster = std::env::var("DROPSET_CLUSTER")
             .map_err(|_| anyhow::anyhow!("DROPSET_CLUSTER is required (localnet or mainnet)"))?;
         let program_id = program_id(
-            cluster.parse().map_err(anyhow::Error::msg)?,
+            cluster
+                .parse()
+                .map_err(|e| anyhow::anyhow!("DROPSET_CLUSTER: {e}"))?,
             std::env::var("DROPSET_PROGRAM_ID").ok().as_deref(),
         )?;
         Ok(Self {
