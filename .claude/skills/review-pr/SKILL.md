@@ -115,6 +115,8 @@ migrations or generation inputs, and whether it spans crates.
    git commit-tree -S -p HEAD -m signing-probe HEAD^{tree}
    ```
 
+   Then rebase:
+
    ```sh
    git rebase origin/<base>
    ```
@@ -839,8 +841,9 @@ migrations or generation inputs, and whether it spans crates.
    **Gate the security lens on the diff's trust surface.** Spawn it only
    when the diff touches a program handler (a consensus-critical
    instruction such as `deposit` / `withdraw_leader` / `close_vault`),
-   account or argument deserialization, an auth path, or external I/O
-   (network, untrusted files, user input). Skip it on host / localnet
+   account or argument deserialization, an auth path (a
+   `.claude/hooks/**` guard is one, not a dev-only script), or external
+   I/O (network, untrusted files, user input). Skip it on host / localnet
    tooling — a TUI, a bot's display code, a localnet bootstrap, a
    dev-only script (`history.md` → "Security lens on tooling"). **An
    off-tier security lens is justified, not a trim target**: when a
@@ -1607,7 +1610,7 @@ migrations or generation inputs, and whether it spans crates.
      **blocking** issue. Never mark the PR ready
      with a failing or unverified test target.
 
-1. **Push the branch.** The step-1 rebase rewrote history, so push
+1. **Push the branch.** The step-2 rebase rewrote history, so push
    with lease — it lands the rebased history with any review-fix
    commits and refuses to clobber a concurrent push:
 
