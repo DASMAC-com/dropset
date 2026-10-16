@@ -100,6 +100,11 @@ pub enum Action {
     /// arrives with its program change, and a builder guessed at its account
     /// shape now would be rework by construction. Never enabled.
     RotateLeader,
+    /// Post a set-and-forget passive ladder on the leader's vault. Opens the
+    /// form → preview → typed-`yes` prompt — see [`crate::passive`].
+    PassiveLadder,
+    /// Re-center the leader's passive ladder on a new reference. Same prompt.
+    PassiveRecenter,
     // The kill switch — see [`crate::emergency`]. A full stop takes them in
     // this order: kill, close, then drain.
     /// Zero every level on the leader's vaults — the reversible stop.
@@ -148,7 +153,7 @@ const NEVER_EXPIRES: WallSpan = WallSpan::UNBOUNDED;
 /// existing key. The swap is deliberately absent: it is a runtime control,
 /// reached only via `s` (and listed in the "runtime" pane), so it appears in
 /// exactly one place rather than doubling as a numbered step.
-pub const MENU: [Action; 12] = [
+pub const MENU: [Action; 14] = [
     Action::Deploy,
     Action::InitRegistry,
     Action::CreateMarket,
@@ -161,18 +166,21 @@ pub const MENU: [Action; 12] = [
     Action::LeaderDeposit,
     Action::LeaderWithdraw,
     Action::RotateLeader,
+    Action::PassiveLadder,
+    Action::PassiveRecenter,
 ];
 
 /// The mainnet menu — every entry that is meaningful against real funds.
 ///
 /// The ceremony in order — publish (or upgrade), the four account steps, the
 /// stranded-buffer recovery — then the explorer and the leader stake
-/// commands. Each ceremony step opens a typed-`yes` prompt over its plan, read
-/// fresh from the chain, before anything is signed (see
-/// [`Action::needs_ceremony_confirm`]); is existence-checked again at
+/// commands, then the passive ladder. Each ceremony step opens a typed-`yes`
+/// prompt over its plan, read fresh from the chain, before anything is signed
+/// (see [`Action::needs_ceremony_confirm`]); is existence-checked again at
 /// execution time; references the real roster mints rather than minting any
 /// (see [`market::MAINNET_PAIRS`]); and signs with 1Password-held keys. The
-/// leader commands send only after a typed `yes` over the exact amounts.
+/// leader commands send only after a typed `yes` over the exact amounts, and
+/// the passive ladder after one over its previewed ladder.
 /// Nothing here airdrops, builds or discards a ledger.
 ///
 /// The emergency actions close the list, past the number keys, so adding
@@ -182,7 +190,7 @@ pub const MENU: [Action; 12] = [
 /// Kept in sync with [`Action::available_on`] by a test rather than by care —
 /// two hand-maintained lists of the same fact drift, and the direction it
 /// would drift here is toward exposing a write.
-pub const MAINNET_MENU: [Action; 13] = [
+pub const MAINNET_MENU: [Action; 15] = [
     Action::Publish,
     Action::InitRegistry,
     Action::CreateMarket,
@@ -193,6 +201,8 @@ pub const MAINNET_MENU: [Action; 13] = [
     Action::LeaderDeposit,
     Action::LeaderWithdraw,
     Action::RotateLeader,
+    Action::PassiveLadder,
+    Action::PassiveRecenter,
     Action::KillLadders,
     Action::CloseVaults,
     Action::DrainLeader,
@@ -234,6 +244,8 @@ impl Action {
             Action::LeaderDeposit => "Leader deposit",
             Action::LeaderWithdraw => "Leader withdraw",
             Action::RotateLeader => "Rotate leader",
+            Action::PassiveLadder => "Passive ladder",
+            Action::PassiveRecenter => "Passive re-center",
             Action::KillLadders => "EMERGENCY: kill ladders",
             Action::CloseVaults => "EMERGENCY: close vaults",
             Action::DrainLeader => "EMERGENCY: drain leader",
@@ -298,6 +310,9 @@ impl Action {
             // every roster market at once; the prompt then re-reads the
             // selected market's vault fresh and refuses on its own terms.
             Action::LeaderDeposit | Action::LeaderWithdraw => phase == Phase::Ready,
+            // A passive ladder quotes a seeded vault; the prompt re-reads the
+            // leader's own vault fresh, as the stake commands do.
+            Action::PassiveLadder | Action::PassiveRecenter => phase == Phase::Ready,
             Action::RotateLeader => false,
             // The demo controls quote against a live vault.
             Action::RepegUp
@@ -349,6 +364,10 @@ impl Action {
             // operator types `yes` over the exact amounts and bounds. The
             // reserved rotation is listed so it is visible — and stays greyed.
             Action::LeaderDeposit | Action::LeaderWithdraw | Action::RotateLeader => true,
+            // The passive ladder is the demo's liquidity, deployed from here:
+            // signed by the operator's `--leader` on its own vault, and sent
+            // only after a typed `yes` over the previewed ladder and center.
+            Action::PassiveLadder | Action::PassiveRecenter => true,
             // The kill switch — what this mode exists to keep working when the
             // maker's host does not. Signed by the operator's `--leader`, and
             // each sends only after a typed `yes` over its fresh plan.
@@ -394,6 +413,44 @@ impl Action {
             Action::LeaderDeposit => Some(LeaderOp::Deposit),
             Action::LeaderWithdraw => Some(LeaderOp::Withdraw),
             Action::RotateLeader
+            | Action::PassiveLadder
+            | Action::PassiveRecenter
+            | Action::KillLadders
+            | Action::CloseVaults
+            | Action::DrainLeader
+            | Action::Deploy
+            | Action::Publish
+            | Action::CloseBuffers
+            | Action::InitRegistry
+            | Action::CreateMarket
+            | Action::CreateVault
+            | Action::Deposit
+            | Action::OpenExplorer
+            | Action::BootstrapAll
+            | Action::ProbeSwap
+            | Action::Teardown
+            | Action::Wipe
+            | Action::RepegUp
+            | Action::RepegDown
+            | Action::WidenSpread
+            | Action::TightenSpread
+            | Action::ThinFarSide
+            | Action::ResetLadder
+            | Action::ResetAllLadders => None,
+        }
+    }
+
+    /// The passive-ladder prompt this action opens, if any. A sibling of
+    /// [`Action::leader_op`], exhaustive for the same reason: an action routed
+    /// to neither falls through to [`dispatch`]'s no-op arm.
+    pub fn passive_op(self) -> Option<crate::passive::PassiveOp> {
+        use crate::passive::PassiveOp;
+        match self {
+            Action::PassiveLadder => Some(PassiveOp::Deploy),
+            Action::PassiveRecenter => Some(PassiveOp::Recenter),
+            Action::LeaderDeposit
+            | Action::LeaderWithdraw
+            | Action::RotateLeader
             | Action::KillLadders
             | Action::CloseVaults
             | Action::DrainLeader
@@ -455,6 +512,8 @@ impl Action {
             | Action::LeaderDeposit
             | Action::LeaderWithdraw
             | Action::RotateLeader
+            | Action::PassiveLadder
+            | Action::PassiveRecenter
             | Action::KillLadders
             | Action::CloseVaults
             | Action::DrainLeader => "",
@@ -482,8 +541,9 @@ impl Action {
             | Action::KillLadders
             | Action::CloseVaults
             | Action::DrainLeader => true,
-            // The leader commands have their own typed-`yes` prompt; the rest
-            // read only or are unavailable on mainnet.
+            // The leader commands and the passive ladder have their own
+            // typed-`yes` prompt; the rest read only or are unavailable on
+            // mainnet.
             Action::Deploy
             | Action::OpenExplorer
             | Action::BootstrapAll
@@ -493,6 +553,8 @@ impl Action {
             | Action::LeaderDeposit
             | Action::LeaderWithdraw
             | Action::RotateLeader
+            | Action::PassiveLadder
+            | Action::PassiveRecenter
             | Action::RepegUp
             | Action::RepegDown
             | Action::WidenSpread
@@ -544,7 +606,10 @@ impl Action {
             Action::ProbeSwap => "needs a live, seeded vault",
             Action::Teardown => "deploy the program first",
             Action::OpenExplorer | Action::Wipe => "",
-            Action::LeaderDeposit | Action::LeaderWithdraw => "needs every vault seeded",
+            Action::LeaderDeposit
+            | Action::LeaderWithdraw
+            | Action::PassiveLadder
+            | Action::PassiveRecenter => "needs every vault seeded",
             Action::RotateLeader => "reserved — arrives with the leader-rotation program change",
             Action::RepegUp
             | Action::RepegDown
@@ -990,9 +1055,34 @@ pub fn dispatch(
         // Wipe is handled by the event loop (owns the validator). The leader
         // commands open its amount → confirm prompt instead, and dispatch
         // through [`dispatch_leader`] once the operator types `yes`; the
-        // reserved rotation is never enabled.
-        Action::Wipe | Action::LeaderDeposit | Action::LeaderWithdraw | Action::RotateLeader => {}
+        // passive ladder likewise through [`dispatch_passive`]; the reserved
+        // rotation is never enabled.
+        Action::Wipe
+        | Action::LeaderDeposit
+        | Action::LeaderWithdraw
+        | Action::RotateLeader
+        | Action::PassiveLadder
+        | Action::PassiveRecenter => {}
     }
+}
+
+/// Spawn the job that sends a confirmed passive-ladder `ticket`, its leader
+/// resolved per pair exactly as [`dispatch_leader`] resolves it.
+pub fn dispatch_passive(ctx: &JobContext, ticket: crate::passive::Ticket, tx: Sender<JobEvent>) {
+    let rpc_url = ctx.rpc_url.clone();
+    let repo_root = ctx.repo_root.clone();
+    let wallet = ctx.wallet();
+    let cluster = ctx.cluster;
+    let operator_leader = ctx.leader.as_ref().map(Keypair::insecure_clone);
+    let record = ctx.ceremony_log.clone();
+    job::spawn_recorded(tx, ticket.op.label(), record, move |log| {
+        let client = chain::rpc(&rpc_url);
+        let base_mint = ticket.base_mint;
+        let config = market::config_for(&repo_root, cluster, &base_mint)
+            .context("the selected market is not in this cluster's roster")?;
+        let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
+        crate::passive::execute(&client, &wallet, &leader, cluster, &ticket, log)
+    });
 }
 
 /// Spawn the job that sends a confirmed leader `ticket`. The leader key is
@@ -1960,7 +2050,7 @@ mod tests {
     /// Kept complete by [`all_actions_lists_every_variant`], not by care — the
     /// array's length annotation does not change when a variant is
     /// added, so nothing else would notice the list going stale.
-    const ALL_ACTIONS: [Action; 25] = [
+    const ALL_ACTIONS: [Action; 27] = [
         Action::Deploy,
         Action::Publish,
         Action::CloseBuffers,
@@ -1976,6 +2066,8 @@ mod tests {
         Action::LeaderDeposit,
         Action::LeaderWithdraw,
         Action::RotateLeader,
+        Action::PassiveLadder,
+        Action::PassiveRecenter,
         Action::KillLadders,
         Action::CloseVaults,
         Action::DrainLeader,
@@ -1998,12 +2090,13 @@ mod tests {
     }
 
     #[test]
-    fn mainnet_exposes_only_the_ceremony_and_the_confirm_gated_leader_stake() {
+    fn mainnet_exposes_only_the_ceremony_and_the_confirm_gated_leader_writes() {
         // The load-bearing assertion of the whole mode: on mainnet the only
         // reachable writes are the confirm-gated ceremony steps (the kill
-        // switch among them) and the leader's own stake, which sends only
-        // after a typed `yes` over the exact amounts (the reserved rotation is
-        // listed but never enabled). A later change that exposes anything
+        // switch among them), the leader's own stake, which sends only after a
+        // typed `yes` over the exact amounts (the reserved rotation is listed
+        // but never enabled), and the leader's passive ladder, which sends
+        // only after one over its preview. A later change that exposes anything
         // else — a mock-minting bootstrap, a committed-key demo control —
         // fails here.
         let ceremony = [
@@ -2022,9 +2115,12 @@ mod tests {
             Action::LeaderWithdraw,
             Action::RotateLeader,
         ];
+        let passive = [Action::PassiveLadder, Action::PassiveRecenter];
         for a in ALL_ACTIONS {
-            let expected =
-                a == Action::OpenExplorer || ceremony.contains(&a) || leader_stake.contains(&a);
+            let expected = a == Action::OpenExplorer
+                || ceremony.contains(&a)
+                || leader_stake.contains(&a)
+                || passive.contains(&a);
             assert_eq!(
                 a.available_on(M),
                 expected,
@@ -2256,8 +2352,8 @@ mod tests {
 
     #[test]
     fn all_actions_lists_every_variant() {
-        // The completeness guard the MENU check above cannot be: MENU holds 12
-        // of the 25 variants, so a new shortcut-only action would be absent from
+        // The completeness guard the MENU check above cannot be: MENU holds 14
+        // of the 27 variants, so a new shortcut-only action would be absent from
         // both MENU and ALL_ACTIONS and silently escape all four cluster-gate
         // tests — a variant reachable only by a shortcut. PR 2 and PR 3 of this
         // series add exactly that shape.
@@ -2266,8 +2362,8 @@ mod tests {
         // one arm and no wildcard, so adding a variant fails to compile here
         // until someone edits this test; the count pins the fixture's size at
         // the enum's size; and the pairwise check rules out duplicates.
-        // Twenty-five distinct variants drawn from a twenty-five-variant enum
-        // is all of them.
+        // Twenty-seven distinct variants drawn from a twenty-seven-variant
+        // enum is all of them.
         fn is_known(a: Action) -> bool {
             match a {
                 Action::Deploy
@@ -2285,6 +2381,8 @@ mod tests {
                 | Action::LeaderDeposit
                 | Action::LeaderWithdraw
                 | Action::RotateLeader
+                | Action::PassiveLadder
+                | Action::PassiveRecenter
                 | Action::KillLadders
                 | Action::CloseVaults
                 | Action::DrainLeader
@@ -2299,7 +2397,7 @@ mod tests {
         }
         assert_eq!(
             ALL_ACTIONS.len(),
-            25,
+            27,
             "ALL_ACTIONS must list every Action variant"
         );
         for (i, a) in ALL_ACTIONS.iter().enumerate() {
@@ -2308,6 +2406,24 @@ mod tests {
                 assert_ne!(a, b, "ALL_ACTIONS lists {:?} twice", a.label());
             }
         }
+    }
+
+    #[test]
+    fn every_passive_action_and_only_those_open_the_passive_prompt() {
+        use crate::passive::PassiveOp;
+        for a in ALL_ACTIONS {
+            let expected = match a {
+                Action::PassiveLadder => Some(PassiveOp::Deploy),
+                Action::PassiveRecenter => Some(PassiveOp::Recenter),
+                _ => None,
+            };
+            assert_eq!(a.passive_op(), expected, "{a:?}");
+            // `run_action` checks the leader prompt first; none may open both.
+            assert!(a.passive_op().is_none() || a.leader_op().is_none());
+        }
+        // Mainnet is where the demo's passive book is deployed from.
+        assert!(Action::PassiveLadder.available_on(Cluster::Mainnet));
+        assert!(MAINNET_MENU.contains(&Action::PassiveRecenter));
     }
 
     #[test]
