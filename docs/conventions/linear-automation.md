@@ -73,7 +73,8 @@ refiling permanently. Every full `plan` bootstrap spawns
 `trim-context` as a background sub-agent — the way `review-pr` spawns
 its reviewers — gated only on a non-empty pool in upkeep's `parked`
 line; its capped report is the completion notification, and its reads
-never enter the planning prefix. It also runs standalone.
+never enter the planning prefix. It also runs standalone, and
+`housekeeping` still delegates to it until that verb retires.
 
 Every write in that pipeline goes through
 `.claude/tools/trim_levers.py` rather than the MCP — see the carve-out

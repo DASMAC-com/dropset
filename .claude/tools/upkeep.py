@@ -506,13 +506,13 @@ def direction(count: int, before: int | None) -> str:
 
 
 def step_parked(ctx: Ctx) -> None:
+    if ctx.parked is None:
+        ctx.record("parked", "no parked-count lookup configured", False)
+        return
     try:
-        counts = ctx.parked() if ctx.parked else None
+        counts = ctx.parked()
     except Exception as e:  # noqa: BLE001 — a failed read is a line, not a crash
         ctx.record("parked", f"Linear unreachable ({first_line(str(e))})", False)
-        return
-    if counts is None:
-        ctx.record("parked", "no parked-count lookup configured", False)
         return
     previous = ctx.data.get("previous_parked") or {}
     ctx.data["parked"] = counts

@@ -424,6 +424,14 @@ class PassTests(unittest.TestCase):
         self.assertIn("Linear unreachable", step["line"])
         self.assertNotIn("parked", result)
 
+    def test_a_missing_parked_lookup_is_a_failed_line(self):
+        ctx = make_ctx(FakeRun())
+        ctx.parked = None
+        run_pass(ctx)
+        step = next(s for s in ctx.steps if s["step"] == "parked")
+        self.assertFalse(step["ok"])
+        self.assertIn("no parked-count lookup", step["line"])
+
     def _skill_size_step(self, rc, out):
         base_run = FakeRun()
 

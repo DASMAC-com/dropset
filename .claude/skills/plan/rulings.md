@@ -76,7 +76,7 @@ the document's state sections.
 1. **AWS operator chores are one attended session.** A program
    probe (the loader-v4 probe) stays a separate program item.
 
-1. **Fan-out gate.** Invoking a seat verb pre-approves its
+1. **Fan-out gate.** Invoking a verb pre-approves its
    regular sub-agent fan-out — `review-pr`'s reviewers,
    `audit-scope`'s cross-check, `plan`'s bootstrap lever fold.
 

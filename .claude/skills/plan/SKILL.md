@@ -121,12 +121,15 @@ Then fetch the Planning document with
 handoff — and, warm or full:
 
 - **Act on each `Discuss with operator` item first**, before the
-  board.
+  board — one needing the operator's word joins step 8's ask.
 - **Surface `Operator actions outstanding` unprompted**, itemized
   and numbered, so the operator answers all of it in one message.
   Never leave it waiting for the operator to open the document.
 - **Verify overnight landings with `git log`** and the In Review
   listing, never the Done column; release chains as blockers land.
+
+On a full bootstrap, the last two run after the lever-fold spawn
+below.
 
 **Say the upkeep report's highlights, with the parked counts.**
 The `plan` launcher ran `.claude/tools/upkeep.py` before this
