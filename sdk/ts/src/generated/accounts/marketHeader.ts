@@ -14,38 +14,17 @@ export const MARKET_HEADER_DISCRIMINATOR = new Uint8Array([56, 105, 191, 242, 22
 export function getMarketHeaderDiscriminatorBytes() { return fixEncoderSize(getBytesEncoder(), 8).encode(MARKET_HEADER_DISCRIMINATOR); }
 
 export type MarketHeader = { discriminator: ReadonlyUint8Array; 
-/** Per-fill / per-quote monotonic counter. */
-nonce: bigint; 
+/** Base leg mint. */
+baseMint: Address; 
+/** Quote leg mint. */
+quoteMint: Address; 
 /**
- * Head of the active DLL: sector index or `NULL_SECTOR`. Walked
- * by the matching engine on every taker.
+ * SPL / Token-2022 token account holding pooled base inventory.
+ * ATA derived from `(market_pda, base_mint, base_token_program)`.
  */
-head: number; 
-/**
- * Head of the tombstone DLL: sectors that have been `CloseVault`'d
- * but still hold outstanding shares. Not visited by matching.
- */
-tombstoneHead: number; 
-/**
- * Head of the free DLL: sectors available for reuse on `CreateVault`.
- * Singly linked via `next`; `prev` is ignored.
- */
-freeHead: number; 
-/** Active-DLL length. Bounded by `registry.max_vaults_per_market`. */
-activeCount: number; 
-/**
- * Number of live `VaultDepositor` PDAs across every vault on this
- * market (active and tombstoned). Incremented when an outside
- * `Deposit` opens a fresh `VaultDepositor`, decremented when
- * `Withdraw` closes one on `shares == 0` and when
- * `force_withdraw_depositor` closes one. **Not** incremented on
- * top-off (existing `VaultDepositor`). `close_market` requires
- * this to be zero — the only on-chain witness that no orphan
- * depositor PDAs remain, since the program cannot iterate all
- * PDAs to verify by enumeration. See the architecture spec,
- * **Account lifecycle and rent reclamation**.
- */
-outstandingVaultDepositors: number; 
+baseTreasury: Address; 
+/** Same as `base_treasury`, for the quote leg. */
+quoteTreasury: Address; 
 /**
  * Per-market create-vault fee: mint and amount. Seeded from
  * `Registry.default_fee_config` at market creation, then
@@ -70,17 +49,6 @@ maxPlatformFee: number;
  * Stamped from `Registry.default_min_leader_share` at creation.
  */
 defaultMinLeaderShare: number; 
-/** Base leg mint. */
-baseMint: Address; 
-/** Quote leg mint. */
-quoteMint: Address; 
-/**
- * SPL / Token-2022 token account holding pooled base inventory.
- * ATA derived from `(market_pda, base_mint, base_token_program)`.
- */
-baseTreasury: Address; 
-/** Same as `base_treasury`, for the quote leg. */
-quoteTreasury: Address; 
 /**
  * Protocol revenue accrued in `base_treasury`: the running sum of
  * every taker fee charged on a base output leg (a taker `Buy`).
@@ -96,19 +64,15 @@ quoteTreasury: Address;
 accruedBaseFeeAtoms: bigint; 
 /** Same as `accrued_base_fee_atoms`, for the quote leg (a taker `Sell`). */
 accruedQuoteFeeAtoms: bigint; 
-/** Market PDA bump. */
-bump: number; 
+/** Per-fill / per-quote monotonic counter. */
+nonce: bigint; 
 /**
  * Last vault number handed out; `CreateVault` checked-increments it
  * and stamps the result on `Vault::seq`, so the first vault on a
  * market is `1`. A `u64` so exhaustion is physically unreachable —
  * an overflow would permanently brick vault creation on the market.
  */
-nextVaultSeq: bigint;  };
-
-export type MarketHeaderArgs = { 
-/** Per-fill / per-quote monotonic counter. */
-nonce: number | bigint; 
+nextVaultSeq: bigint; 
 /**
  * Head of the active DLL: sector index or `NULL_SECTOR`. Walked
  * by the matching engine on every taker.
@@ -139,6 +103,27 @@ activeCount: number;
  * **Account lifecycle and rent reclamation**.
  */
 outstandingVaultDepositors: number; 
+/** Market PDA bump. */
+bump: number; 
+/**
+ * Reserve for later fields. A carve takes bytes from the front, moves
+ * no other field, and reads all-zero as the pre-carve meaning — see
+ * the architecture spec's **MarketHeader**.
+ */
+reserved: ReadonlyUint8Array;  };
+
+export type MarketHeaderArgs = { 
+/** Base leg mint. */
+baseMint: Address; 
+/** Quote leg mint. */
+quoteMint: Address; 
+/**
+ * SPL / Token-2022 token account holding pooled base inventory.
+ * ATA derived from `(market_pda, base_mint, base_token_program)`.
+ */
+baseTreasury: Address; 
+/** Same as `base_treasury`, for the quote leg. */
+quoteTreasury: Address; 
 /**
  * Per-market create-vault fee: mint and amount. Seeded from
  * `Registry.default_fee_config` at market creation, then
@@ -163,17 +148,6 @@ maxPlatformFee: number;
  * Stamped from `Registry.default_min_leader_share` at creation.
  */
 defaultMinLeaderShare: number; 
-/** Base leg mint. */
-baseMint: Address; 
-/** Quote leg mint. */
-quoteMint: Address; 
-/**
- * SPL / Token-2022 token account holding pooled base inventory.
- * ATA derived from `(market_pda, base_mint, base_token_program)`.
- */
-baseTreasury: Address; 
-/** Same as `base_treasury`, for the quote leg. */
-quoteTreasury: Address; 
 /**
  * Protocol revenue accrued in `base_treasury`: the running sum of
  * every taker fee charged on a base output leg (a taker `Buy`).
@@ -189,24 +163,62 @@ quoteTreasury: Address;
 accruedBaseFeeAtoms: number | bigint; 
 /** Same as `accrued_base_fee_atoms`, for the quote leg (a taker `Sell`). */
 accruedQuoteFeeAtoms: number | bigint; 
-/** Market PDA bump. */
-bump: number; 
+/** Per-fill / per-quote monotonic counter. */
+nonce: number | bigint; 
 /**
  * Last vault number handed out; `CreateVault` checked-increments it
  * and stamps the result on `Vault::seq`, so the first vault on a
  * market is `1`. A `u64` so exhaustion is physically unreachable —
  * an overflow would permanently brick vault creation on the market.
  */
-nextVaultSeq: number | bigint;  };
+nextVaultSeq: number | bigint; 
+/**
+ * Head of the active DLL: sector index or `NULL_SECTOR`. Walked
+ * by the matching engine on every taker.
+ */
+head: number; 
+/**
+ * Head of the tombstone DLL: sectors that have been `CloseVault`'d
+ * but still hold outstanding shares. Not visited by matching.
+ */
+tombstoneHead: number; 
+/**
+ * Head of the free DLL: sectors available for reuse on `CreateVault`.
+ * Singly linked via `next`; `prev` is ignored.
+ */
+freeHead: number; 
+/** Active-DLL length. Bounded by `registry.max_vaults_per_market`. */
+activeCount: number; 
+/**
+ * Number of live `VaultDepositor` PDAs across every vault on this
+ * market (active and tombstoned). Incremented when an outside
+ * `Deposit` opens a fresh `VaultDepositor`, decremented when
+ * `Withdraw` closes one on `shares == 0` and when
+ * `force_withdraw_depositor` closes one. **Not** incremented on
+ * top-off (existing `VaultDepositor`). `close_market` requires
+ * this to be zero — the only on-chain witness that no orphan
+ * depositor PDAs remain, since the program cannot iterate all
+ * PDAs to verify by enumeration. See the architecture spec,
+ * **Account lifecycle and rent reclamation**.
+ */
+outstandingVaultDepositors: number; 
+/** Market PDA bump. */
+bump: number; 
+/**
+ * Reserve for later fields. A carve takes bytes from the front, moves
+ * no other field, and reads all-zero as the pre-carve meaning — see
+ * the architecture spec's **MarketHeader**.
+ */
+reserved: ReadonlyUint8Array;  };
 
 /** Gets the encoder for {@link MarketHeaderArgs} account data. */
 export function getMarketHeaderEncoder(): FixedSizeEncoder<MarketHeaderArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['nonce', getU64Encoder()], ['head', getU32Encoder()], ['tombstoneHead', getU32Encoder()], ['freeHead', getU32Encoder()], ['activeCount', getU32Encoder()], ['outstandingVaultDepositors', getU32Encoder()], ['feeConfig', getFeeConfigEncoder()], ['takerFee', getU16Encoder()], ['maxPlatformFee', getU16Encoder()], ['defaultMinLeaderShare', getU32Encoder()], ['baseMint', getAddressEncoder()], ['quoteMint', getAddressEncoder()], ['baseTreasury', getAddressEncoder()], ['quoteTreasury', getAddressEncoder()], ['accruedBaseFeeAtoms', getU64Encoder()], ['accruedQuoteFeeAtoms', getU64Encoder()], ['bump', getU8Encoder()], ['nextVaultSeq', getU64Encoder()]]), (value) => ({ ...value, discriminator: MARKET_HEADER_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['baseMint', getAddressEncoder()], ['quoteMint', getAddressEncoder()], ['baseTreasury', getAddressEncoder()], ['quoteTreasury', getAddressEncoder()], ['feeConfig', getFeeConfigEncoder()], ['takerFee', getU16Encoder()], ['maxPlatformFee', getU16Encoder()], ['defaultMinLeaderShare', getU32Encoder()], ['accruedBaseFeeAtoms', getU64Encoder()], ['accruedQuoteFeeAtoms', getU64Encoder()], ['nonce', getU64Encoder()], ['nextVaultSeq', getU64Encoder()], ['head', getU32Encoder()], ['tombstoneHead', getU32Encoder()], ['freeHead', getU32Encoder()], ['activeCount', getU32Encoder()], ['outstandingVaultDepositors', getU32Encoder()], ['bump', getU8Encoder()], ['reserved', fixEncoderSize(getBytesEncoder(), 135)]]), (value) => ({ ...value, discriminator: MARKET_HEADER_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link MarketHeader} account data. */
 export function getMarketHeaderDecoder(): FixedSizeDecoder<MarketHeader> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['nonce', getU64Decoder()], ['head', getU32Decoder()], ['tombstoneHead', getU32Decoder()], ['freeHead', getU32Decoder()], ['activeCount', getU32Decoder()], ['outstandingVaultDepositors', getU32Decoder()], ['feeConfig', getFeeConfigDecoder()], ['takerFee', getU16Decoder()], ['maxPlatformFee', getU16Decoder()], ['defaultMinLeaderShare', getU32Decoder()], ['baseMint', getAddressDecoder()], ['quoteMint', getAddressDecoder()], ['baseTreasury', getAddressDecoder()], ['quoteTreasury', getAddressDecoder()], ['accruedBaseFeeAtoms', getU64Decoder()], ['accruedQuoteFeeAtoms', getU64Decoder()], ['bump', getU8Decoder()], ['nextVaultSeq', getU64Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['baseMint', getAddressDecoder()], ['quoteMint', getAddressDecoder()], ['baseTreasury', getAddressDecoder()], ['quoteTreasury', getAddressDecoder()], ['feeConfig', getFeeConfigDecoder()], ['takerFee', getU16Decoder()], ['maxPlatformFee', getU16Decoder()], ['defaultMinLeaderShare', getU32Decoder()], ['accruedBaseFeeAtoms', getU64Decoder()], ['accruedQuoteFeeAtoms', getU64Decoder()], ['nonce', getU64Decoder()], ['nextVaultSeq', getU64Decoder()], ['head', getU32Decoder()], ['tombstoneHead', getU32Decoder()], ['freeHead', getU32Decoder()], ['activeCount', getU32Decoder()], ['outstandingVaultDepositors', getU32Decoder()], ['bump', getU8Decoder()], ['reserved', fixDecoderSize(getBytesDecoder(), 135)]]);
 }
 
 /** Gets the codec for {@link MarketHeader} account data. */
@@ -259,5 +271,5 @@ export async function fetchAllMaybeMarketHeader(
 }
 
 export function getMarketHeaderSize(): number {
-  return 269;
+  return 404;
 }

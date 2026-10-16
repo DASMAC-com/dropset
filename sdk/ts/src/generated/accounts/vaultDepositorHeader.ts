@@ -28,6 +28,13 @@ sectorIdx: number;
  * reassign). See the spec's **Shares**.
  */
 owner: Address; 
+/** Shares-weighted average reference price across deposits. */
+entryRefPrice: Price; 
+/**
+ * Shares-weighted average VPS (`L / total_shares`) across deposits,
+ * Q32.32. Same encoding and practical bound as `Vault::hwm`.
+ */
+entryVps: bigint; 
 /**
  * Pro-rata claim on the vault — the per-depositor term of
  * invariant I6 (`leader_shares + Σ VaultDepositor.shares ==
@@ -45,13 +52,6 @@ netDeposits: bigint;
  * withdraw**. Stable denominator for all-time return %.
  */
 grossDeposited: bigint; 
-/** Shares-weighted average reference price across deposits. */
-entryRefPrice: Price; 
-/**
- * Shares-weighted average VPS (`L / total_shares`) across deposits,
- * Q32.32. Same encoding and practical bound as `Vault::hwm`.
- */
-entryVps: bigint; 
 /** Slot of the first deposit. Captured once at PDA init. */
 openedAt: bigint; 
 /**
@@ -59,19 +59,20 @@ openedAt: bigint;
  * Discarded when the account is closed at zero shares.
  */
 realizedPnl: bigint; 
-/** Signed yield (ex-FX) component of [`Self::realized_pnl`]. */
+/** Signed yield (ex-price) component of [`Self::realized_pnl`]. */
 realizedYield: bigint; 
 /**
- * Signed FX component. Invariant:
- * `realized_yield + realized_fx == realized_pnl`.
+ * Signed price component — the base leg's move against the entry
+ * reference. Invariant:
+ * `realized_yield + realized_price == realized_pnl`.
  */
-realizedFx: bigint; 
+realizedPrice: bigint; 
 /** PDA bump. */
 bump: number; 
 /**
- * Padding so the on-chain size is a multiple of 8 and the
- * `#[account]` derive's discriminator + body length matches the
- * const-asserted total below.
+ * Reserve for later fields. A carve takes bytes from the front, moves
+ * no other field, and reads all-zero as the pre-carve meaning — see
+ * the architecture spec's **Depositor positions and cost basis**.
  */
 reserved: ReadonlyUint8Array;  };
 
@@ -90,6 +91,13 @@ sectorIdx: number;
  * reassign). See the spec's **Shares**.
  */
 owner: Address; 
+/** Shares-weighted average reference price across deposits. */
+entryRefPrice: PriceArgs; 
+/**
+ * Shares-weighted average VPS (`L / total_shares`) across deposits,
+ * Q32.32. Same encoding and practical bound as `Vault::hwm`.
+ */
+entryVps: number | bigint; 
 /**
  * Pro-rata claim on the vault — the per-depositor term of
  * invariant I6 (`leader_shares + Σ VaultDepositor.shares ==
@@ -107,13 +115,6 @@ netDeposits: number | bigint;
  * withdraw**. Stable denominator for all-time return %.
  */
 grossDeposited: number | bigint; 
-/** Shares-weighted average reference price across deposits. */
-entryRefPrice: PriceArgs; 
-/**
- * Shares-weighted average VPS (`L / total_shares`) across deposits,
- * Q32.32. Same encoding and practical bound as `Vault::hwm`.
- */
-entryVps: number | bigint; 
 /** Slot of the first deposit. Captured once at PDA init. */
 openedAt: number | bigint; 
 /**
@@ -121,30 +122,31 @@ openedAt: number | bigint;
  * Discarded when the account is closed at zero shares.
  */
 realizedPnl: number | bigint; 
-/** Signed yield (ex-FX) component of [`Self::realized_pnl`]. */
+/** Signed yield (ex-price) component of [`Self::realized_pnl`]. */
 realizedYield: number | bigint; 
 /**
- * Signed FX component. Invariant:
- * `realized_yield + realized_fx == realized_pnl`.
+ * Signed price component — the base leg's move against the entry
+ * reference. Invariant:
+ * `realized_yield + realized_price == realized_pnl`.
  */
-realizedFx: number | bigint; 
+realizedPrice: number | bigint; 
 /** PDA bump. */
 bump: number; 
 /**
- * Padding so the on-chain size is a multiple of 8 and the
- * `#[account]` derive's discriminator + body length matches the
- * const-asserted total below.
+ * Reserve for later fields. A carve takes bytes from the front, moves
+ * no other field, and reads all-zero as the pre-carve meaning — see
+ * the architecture spec's **Depositor positions and cost basis**.
  */
 reserved: ReadonlyUint8Array;  };
 
 /** Gets the encoder for {@link VaultDepositorHeaderArgs} account data. */
 export function getVaultDepositorHeaderEncoder(): FixedSizeEncoder<VaultDepositorHeaderArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['owner', getAddressEncoder()], ['shares', getU64Encoder()], ['netDeposits', getU64Encoder()], ['grossDeposited', getU64Encoder()], ['entryRefPrice', getPriceEncoder()], ['entryVps', getU64Encoder()], ['openedAt', getU64Encoder()], ['realizedPnl', getI64Encoder()], ['realizedYield', getI64Encoder()], ['realizedFx', getI64Encoder()], ['bump', getU8Encoder()], ['reserved', fixEncoderSize(getBytesEncoder(), 7)]]), (value) => ({ ...value, discriminator: VAULT_DEPOSITOR_HEADER_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['owner', getAddressEncoder()], ['entryRefPrice', getPriceEncoder()], ['entryVps', getU64Encoder()], ['shares', getU64Encoder()], ['netDeposits', getU64Encoder()], ['grossDeposited', getU64Encoder()], ['openedAt', getU64Encoder()], ['realizedPnl', getI64Encoder()], ['realizedYield', getI64Encoder()], ['realizedPrice', getI64Encoder()], ['bump', getU8Encoder()], ['reserved', fixEncoderSize(getBytesEncoder(), 79)]]), (value) => ({ ...value, discriminator: VAULT_DEPOSITOR_HEADER_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link VaultDepositorHeader} account data. */
 export function getVaultDepositorHeaderDecoder(): FixedSizeDecoder<VaultDepositorHeader> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['owner', getAddressDecoder()], ['shares', getU64Decoder()], ['netDeposits', getU64Decoder()], ['grossDeposited', getU64Decoder()], ['entryRefPrice', getPriceDecoder()], ['entryVps', getU64Decoder()], ['openedAt', getU64Decoder()], ['realizedPnl', getI64Decoder()], ['realizedYield', getI64Decoder()], ['realizedFx', getI64Decoder()], ['bump', getU8Decoder()], ['reserved', fixDecoderSize(getBytesDecoder(), 7)]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['owner', getAddressDecoder()], ['entryRefPrice', getPriceDecoder()], ['entryVps', getU64Decoder()], ['shares', getU64Decoder()], ['netDeposits', getU64Decoder()], ['grossDeposited', getU64Decoder()], ['openedAt', getU64Decoder()], ['realizedPnl', getI64Decoder()], ['realizedYield', getI64Decoder()], ['realizedPrice', getI64Decoder()], ['bump', getU8Decoder()], ['reserved', fixDecoderSize(getBytesDecoder(), 79)]]);
 }
 
 /** Gets the codec for {@link VaultDepositorHeader} account data. */
@@ -197,5 +199,5 @@ export async function fetchAllMaybeVaultDepositorHeader(
 }
 
 export function getVaultDepositorHeaderSize(): number {
-  return 152;
+  return 220;
 }

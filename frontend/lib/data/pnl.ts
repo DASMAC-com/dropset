@@ -95,7 +95,7 @@ export const allTimePnl = (
   const allTime = position.realizedPnl + netPnl;
   return {
     allTimeYield: position.realizedYield + yieldPnl,
-    allTimeFx: position.realizedFx + fxPnl,
+    allTimeFx: position.realizedPrice + fxPnl,
     allTimePnl: allTime,
     allTimePct:
       position.grossDeposited > 0 ? allTime / position.grossDeposited : 0,

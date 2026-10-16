@@ -185,22 +185,16 @@ pub struct Remaining {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct MarketHeader {
-    pub nonce: LeU64,
-    pub head: LeU32,
-    pub tombstone_head: LeU32,
-    pub free_head: LeU32,
-    pub active_count: LeU32,
-    pub outstanding_vault_depositors: LeU32,
+    pub base_mint: [u8; 32],
+    pub quote_mint: [u8; 32],
+    pub base_treasury: [u8; 32],
+    pub quote_treasury: [u8; 32],
     pub fee_config: FeeConfig,
     pub taker_fee: LeU16,
     /// Ceiling on a swap's caller-declared `platform_fee_bps`. Note the
     /// denominator differs from `taker_fee` above: bps here, ppm there.
     pub max_platform_fee: LeU16,
     pub default_min_leader_share: LeU32,
-    pub base_mint: [u8; 32],
-    pub quote_mint: [u8; 32],
-    pub base_treasury: [u8; 32],
-    pub quote_treasury: [u8; 32],
     /// Taker fee accrued in `base_treasury` as protocol revenue. Part of
     /// the treasury custody invariant
     /// `base_treasury.amount >= Σ vault.base_atoms + accrued_base_fee_atoms`, so
@@ -210,10 +204,18 @@ pub struct MarketHeader {
     pub accrued_base_fee_atoms: LeU64,
     /// Same as `accrued_base_fee_atoms`, for the quote leg.
     pub accrued_quote_fee_atoms: LeU64,
-    pub bump: u8,
+    pub nonce: LeU64,
     /// Last vault number handed out; the next `CreateVault` stamps one past
     /// it onto `Vault::seq`.
     pub next_vault_seq: LeU64,
+    pub head: LeU32,
+    pub tombstone_head: LeU32,
+    pub free_head: LeU32,
+    pub active_count: LeU32,
+    pub outstanding_vault_depositors: LeU32,
+    pub bump: u8,
+    /// Reserve for later fields; all-zero until a carve names its front.
+    pub _reserved: [u8; 135],
 }
 
 #[repr(C)]
@@ -251,7 +253,7 @@ pub struct Vault {
 // the program layout (without regenerating against a fresh IDL + updating
 // this mirror) breaks the SDK build here rather than silently
 // misdecoding the slab.
-const _: () = assert!(core::mem::size_of::<MarketHeader>() == 261);
+const _: () = assert!(core::mem::size_of::<MarketHeader>() == 396);
 const _: () = assert!(core::mem::size_of::<Vault>() == 1088);
 // The size asserts cannot catch `seq` swapping with another `LeU64`, or
 // `name` with another 32-byte array.

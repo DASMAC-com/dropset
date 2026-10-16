@@ -11,9 +11,9 @@
  * EVENT_IX_TAG_LE (8)  ++  DISCRIMINATOR (8)  ++  body
  * ```
  *
- * Codama generates only the post-extraction codec ({@link getFillEventDecoder},
- * whose explicit `pad` / `pad2` fields make the decode byte-identical to the
- * on-chain `repr(C)` bytes) — this module supplies the extraction: walk the
+ * Codama generates only the post-extraction codec ({@link getFillEventDecoder};
+ * the on-chain struct is padding-free, so the decode is byte-identical to its
+ * `repr(C)` bytes) — this module supplies the extraction: walk the
  * inner instructions, verify the emitting program, strip the envelope, decode.
  *
  * Scope: fills only. The Rust decoder dispatches all twelve events because the

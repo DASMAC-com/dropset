@@ -234,7 +234,7 @@ export class CrystallizeError extends Error {
 
 /** New cost-basis state from {@link crystallizePnl} — mirrors Rust `CrystallizeResult`. */
 export type CrystallizeResult = {
-  realizedFx: bigint;
+  realizedPrice: bigint;
   realizedYield: bigint;
   realizedPnl: bigint;
   sharesAfter: bigint;
@@ -247,7 +247,7 @@ export type CrystallizeResult = {
  * the `(sliceBase, sliceQuote)` basket — the pure scalar core of the
  * program's `crystallize_realized_pnl` (mirrors Rust `crystallize_pnl`):
  *
- *   realized_fx    += slice_base × (ref_now − entry_ref)
+ *   realized_price    += slice_base × (ref_now − entry_ref)
  *   realized_yield += slice_quote + slice_base × entry_ref − released_basis
  *   realized_pnl   += slice_quote + slice_base × ref_now  − released_basis
  *
@@ -263,7 +263,7 @@ export function crystallizePnl(
   sliceQuote: bigint,
   entryRefPrice: PriceBits,
   refNow: PriceBits,
-  realizedFx: bigint,
+  realizedPrice: bigint,
   realizedYield: bigint,
   realizedPnl: bigint,
 ): CrystallizeResult {
@@ -278,7 +278,7 @@ export function crystallizePnl(
   const fxDelta = quoteForRefNow - quoteForRefEntry;
   const yieldDelta = sliceQuote + quoteForRefEntry - releasedBasis;
   const pnlDelta = sliceQuote + quoteForRefNow - releasedBasis;
-  const newFx = clampI64(realizedFx + fxDelta);
+  const newFx = clampI64(realizedPrice + fxDelta);
   const newPnl = clampI64(realizedPnl + pnlDelta);
   const newYield = clampI64(realizedYield + yieldDelta);
   // released_basis ≤ net_deposits since sharesIn ≤ shares, but mirror the
@@ -287,7 +287,7 @@ export function crystallizePnl(
     throw new CrystallizeError('MathOverflow');
   }
   return {
-    realizedFx: newFx,
+    realizedPrice: newFx,
     realizedYield: newYield,
     realizedPnl: newPnl,
     sharesAfter: shares - sharesIn,

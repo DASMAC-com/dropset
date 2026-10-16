@@ -393,7 +393,7 @@ pub enum CrystallizeError {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct CrystallizeResult {
     /// Signed FX component after this call.
-    pub realized_fx: i64,
+    pub realized_price: i64,
     /// Signed yield (ex-FX) component after this call.
     pub realized_yield: i64,
     /// Total signed realized PnL after this call.
@@ -414,7 +414,7 @@ pub struct CrystallizeResult {
 ///
 /// Realized PnL math, per docs/architecture.md
 /// § Depositor operations → Withdraw (the realized-PnL formula block):
-///   realized_fx    += slice_base × (ref_now − entry_ref)
+///   realized_price    += slice_base × (ref_now − entry_ref)
 ///   realized_yield += slice_quote + slice_base × entry_ref − released_basis
 ///   realized_pnl   += slice_quote + slice_base × ref_now    − released_basis
 ///
@@ -438,7 +438,7 @@ pub fn crystallize_pnl(
     slice_quote: u64,
     entry_ref_price: Price,
     ref_now: Price,
-    realized_fx: i64,
+    realized_price: i64,
     realized_yield: i64,
     realized_pnl: i64,
 ) -> Result<CrystallizeResult, CrystallizeError> {
@@ -463,7 +463,7 @@ pub fn crystallize_pnl(
     let pnl_delta: i128 = slice_quote_i
         .saturating_add(quote_for_ref_now)
         .saturating_sub(released_i);
-    let realized_fx = ((realized_fx as i128).saturating_add(fx_delta))
+    let realized_price = ((realized_price as i128).saturating_add(fx_delta))
         .clamp(i64::MIN as i128, i64::MAX as i128) as i64;
     let new_pnl = (realized_pnl as i128).saturating_add(pnl_delta);
     let new_yield = (realized_yield as i128).saturating_add(yield_delta);
@@ -478,7 +478,7 @@ pub fn crystallize_pnl(
         .ok_or(CrystallizeError::MathOverflow)?;
 
     Ok(CrystallizeResult {
-        realized_fx,
+        realized_price,
         realized_yield,
         realized_pnl,
         shares_after,
@@ -822,11 +822,11 @@ mod tests {
         //   pnl    = 0 + 2×100 − 500                      = −300
         let r = crystallize_pnl(50, 100, 1_000, 100, 0, price_one(), price_two(), 0, 0, 0).unwrap();
         assert_eq!(r.pnl_delta, -300, "returned delta is the realized_pnl move");
-        assert_eq!(r.realized_fx, 100);
+        assert_eq!(r.realized_price, 100);
         assert_eq!(r.realized_yield, -400);
         assert_eq!(r.realized_pnl, -300);
-        // Invariant: realized_yield + realized_fx == realized_pnl.
-        assert_eq!(r.realized_yield + r.realized_fx, r.realized_pnl);
+        // Invariant: realized_yield + realized_price == realized_pnl.
+        assert_eq!(r.realized_yield + r.realized_price, r.realized_pnl);
         // Shares burned and basis reduced by exactly the released slice.
         assert_eq!(r.shares_after, 50);
         assert_eq!(r.net_deposits_after, 500);
@@ -861,7 +861,7 @@ mod tests {
             0,
             price_one(),
             price_two(),
-            r1.realized_fx,
+            r1.realized_price,
             r1.realized_yield,
             r1.realized_pnl,
         )
@@ -903,7 +903,7 @@ mod tests {
         );
         assert_eq!(r.realized_pnl, i64::MAX);
         assert_eq!(r.realized_yield, i64::MAX);
-        assert_eq!(r.realized_fx, 0);
+        assert_eq!(r.realized_price, 0);
         // A second positive move stays pinned at the ceiling.
         let r2 = crystallize_pnl(
             1,
@@ -913,7 +913,7 @@ mod tests {
             u64::MAX,
             price_one(),
             price_one(),
-            r.realized_fx,
+            r.realized_price,
             r.realized_yield,
             r.realized_pnl,
         )

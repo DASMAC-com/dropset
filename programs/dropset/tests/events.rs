@@ -199,6 +199,12 @@ fn swap_emits_fill_events() {
         assert_eq!(fill.sector_idx, 0);
         assert_eq!(fill.vault_seq, f.vault(0).seq.get());
         assert!(fill.fill_base > 0 && fill.fill_quote > 0, "non-zero fill");
+        // A non-flipping level: a primary leg with a zero flip price.
+        assert_eq!(fill.leg_kind, dropset::LEG_KIND_PRIMARY);
+        assert_eq!(fill.flip_price, Price::ZERO, "no flip, no flip price");
+        let lvl = f.vault(0).remaining.asks[fill.level_idx.get() as usize];
+        assert_eq!(fill.remaining_after.get(), lvl.size.get());
+        assert_eq!(fill._reserved, [0; 46], "the reserve is emitted zero");
     }
 }
 

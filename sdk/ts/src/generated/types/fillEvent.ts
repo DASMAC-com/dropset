@@ -9,70 +9,86 @@
 import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressDecoder, getAddressEncoder, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, getU8Decoder, getU8Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type ReadonlyUint8Array } from '@solana/kit';
 import { getPriceDecoder, getPriceEncoder, type Price, type PriceArgs } from '.';
 
-export type FillEvent = { market: Address; taker: Address; leader: Address; quoteAuthority: Address; 
-/**
- * The taker's direction: `0` for a Buy, `1` for a Sell. It does not
- * name the array filled: a Buy fills either `asks[level_idx].size` or
- * the flipped `bids[level_idx].flip_size` (a filled bid's proceeds
- * resting as an ask), and a Sell the mirror. Tell the two apart by
- * comparing `fill_price` with `asks[level_idx].price` and
- * `bids[level_idx].flip_price` on a Buy (`bids[level_idx].price` and
- * `asks[level_idx].flip_price` on a Sell); where they coincide either
- * reading prices the fill identically.
- */
-side: number; 
-/**
- * Padding so subsequent fields are aligned-1-friendly without
- * implicit struct padding the bytemuck check would reject.
- */
-pad: ReadonlyUint8Array; sectorIdx: number; levelIdx: number; 
+export type FillEvent = { market: Address; taker: Address; leader: Address; quoteAuthority: Address; sectorIdx: number; levelIdx: number; 
 /**
  * The filled vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
  * identifies a vault across sector reuse; `sector_idx` alone does not.
  */
-vaultSeq: bigint; fillBase: bigint; fillQuote: bigint; fillPrice: Price; 
+vaultSeq: bigint; fillPrice: Price; 
 /**
- * Padding to keep the next `u64` at an 8-byte boundary in the
- * fixed-size repr-C layout. `Price` is `u32`, so 4 bytes of pad
- * keep the struct stride well-defined.
+ * The level's `Position::flip_price` at emit — zero when the level
+ * does not flip — so the captured spread is `flip_price` against
+ * `fill_price` on the event alone.
  */
-pad2: ReadonlyUint8Array; baseAtomsAfter: bigint; quoteAtomsAfter: bigint; nonceAfter: bigint; takerFeeAtoms: bigint;  };
+flipPrice: Price; fillBase: bigint; fillQuote: bigint; 
+/**
+ * The allowance left, after this leg, on the side it consumed, in
+ * that side's atoms: `Position::size` for a primary leg,
+ * `Position::flip_size` for a flipped one (see `leg_kind`).
+ */
+remainingAfter: bigint; baseAtomsAfter: bigint; quoteAtomsAfter: bigint; nonceAfter: bigint; takerFeeAtoms: bigint; 
+/**
+ * The taker's direction: `0` for a Buy, `1` for a Sell. It does not
+ * name the array filled — a Buy fills either `asks[level_idx].size`
+ * or the flipped `bids[level_idx].flip_size`, and a Sell the mirror;
+ * `leg_kind` says which.
+ */
+side: number; 
+/**
+ * `0` when the leg consumed the ladder's own side
+ * (`Position::size`), `1` when it consumed the flipped side
+ * (`Position::flip_size`).
+ */
+legKind: number; 
+/**
+ * Reserve for later fields; all-zero on every emit. A carve takes
+ * bytes from the front and moves no other field.
+ */
+reserved: ReadonlyUint8Array;  };
 
-export type FillEventArgs = { market: Address; taker: Address; leader: Address; quoteAuthority: Address; 
-/**
- * The taker's direction: `0` for a Buy, `1` for a Sell. It does not
- * name the array filled: a Buy fills either `asks[level_idx].size` or
- * the flipped `bids[level_idx].flip_size` (a filled bid's proceeds
- * resting as an ask), and a Sell the mirror. Tell the two apart by
- * comparing `fill_price` with `asks[level_idx].price` and
- * `bids[level_idx].flip_price` on a Buy (`bids[level_idx].price` and
- * `asks[level_idx].flip_price` on a Sell); where they coincide either
- * reading prices the fill identically.
- */
-side: number; 
-/**
- * Padding so subsequent fields are aligned-1-friendly without
- * implicit struct padding the bytemuck check would reject.
- */
-pad: ReadonlyUint8Array; sectorIdx: number; levelIdx: number; 
+export type FillEventArgs = { market: Address; taker: Address; leader: Address; quoteAuthority: Address; sectorIdx: number; levelIdx: number; 
 /**
  * The filled vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
  * identifies a vault across sector reuse; `sector_idx` alone does not.
  */
-vaultSeq: number | bigint; fillBase: number | bigint; fillQuote: number | bigint; fillPrice: PriceArgs; 
+vaultSeq: number | bigint; fillPrice: PriceArgs; 
 /**
- * Padding to keep the next `u64` at an 8-byte boundary in the
- * fixed-size repr-C layout. `Price` is `u32`, so 4 bytes of pad
- * keep the struct stride well-defined.
+ * The level's `Position::flip_price` at emit — zero when the level
+ * does not flip — so the captured spread is `flip_price` against
+ * `fill_price` on the event alone.
  */
-pad2: ReadonlyUint8Array; baseAtomsAfter: number | bigint; quoteAtomsAfter: number | bigint; nonceAfter: number | bigint; takerFeeAtoms: number | bigint;  };
+flipPrice: PriceArgs; fillBase: number | bigint; fillQuote: number | bigint; 
+/**
+ * The allowance left, after this leg, on the side it consumed, in
+ * that side's atoms: `Position::size` for a primary leg,
+ * `Position::flip_size` for a flipped one (see `leg_kind`).
+ */
+remainingAfter: number | bigint; baseAtomsAfter: number | bigint; quoteAtomsAfter: number | bigint; nonceAfter: number | bigint; takerFeeAtoms: number | bigint; 
+/**
+ * The taker's direction: `0` for a Buy, `1` for a Sell. It does not
+ * name the array filled — a Buy fills either `asks[level_idx].size`
+ * or the flipped `bids[level_idx].flip_size`, and a Sell the mirror;
+ * `leg_kind` says which.
+ */
+side: number; 
+/**
+ * `0` when the leg consumed the ladder's own side
+ * (`Position::size`), `1` when it consumed the flipped side
+ * (`Position::flip_size`).
+ */
+legKind: number; 
+/**
+ * Reserve for later fields; all-zero on every emit. A carve takes
+ * bytes from the front and moves no other field.
+ */
+reserved: ReadonlyUint8Array;  };
 
 export function getFillEventEncoder(): FixedSizeEncoder<FillEventArgs> {
-    return getStructEncoder([['market', getAddressEncoder()], ['taker', getAddressEncoder()], ['leader', getAddressEncoder()], ['quoteAuthority', getAddressEncoder()], ['side', getU8Encoder()], ['pad', fixEncoderSize(getBytesEncoder(), 7)], ['sectorIdx', getU32Encoder()], ['levelIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['fillBase', getU64Encoder()], ['fillQuote', getU64Encoder()], ['fillPrice', getPriceEncoder()], ['pad2', fixEncoderSize(getBytesEncoder(), 4)], ['baseAtomsAfter', getU64Encoder()], ['quoteAtomsAfter', getU64Encoder()], ['nonceAfter', getU64Encoder()], ['takerFeeAtoms', getU64Encoder()]]);
+    return getStructEncoder([['market', getAddressEncoder()], ['taker', getAddressEncoder()], ['leader', getAddressEncoder()], ['quoteAuthority', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['levelIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['fillPrice', getPriceEncoder()], ['flipPrice', getPriceEncoder()], ['fillBase', getU64Encoder()], ['fillQuote', getU64Encoder()], ['remainingAfter', getU64Encoder()], ['baseAtomsAfter', getU64Encoder()], ['quoteAtomsAfter', getU64Encoder()], ['nonceAfter', getU64Encoder()], ['takerFeeAtoms', getU64Encoder()], ['side', getU8Encoder()], ['legKind', getU8Encoder()], ['reserved', fixEncoderSize(getBytesEncoder(), 46)]]);
 }
 
 export function getFillEventDecoder(): FixedSizeDecoder<FillEvent> {
-    return getStructDecoder([['market', getAddressDecoder()], ['taker', getAddressDecoder()], ['leader', getAddressDecoder()], ['quoteAuthority', getAddressDecoder()], ['side', getU8Decoder()], ['pad', fixDecoderSize(getBytesDecoder(), 7)], ['sectorIdx', getU32Decoder()], ['levelIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['fillBase', getU64Decoder()], ['fillQuote', getU64Decoder()], ['fillPrice', getPriceDecoder()], ['pad2', fixDecoderSize(getBytesDecoder(), 4)], ['baseAtomsAfter', getU64Decoder()], ['quoteAtomsAfter', getU64Decoder()], ['nonceAfter', getU64Decoder()], ['takerFeeAtoms', getU64Decoder()]]);
+    return getStructDecoder([['market', getAddressDecoder()], ['taker', getAddressDecoder()], ['leader', getAddressDecoder()], ['quoteAuthority', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['levelIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['fillPrice', getPriceDecoder()], ['flipPrice', getPriceDecoder()], ['fillBase', getU64Decoder()], ['fillQuote', getU64Decoder()], ['remainingAfter', getU64Decoder()], ['baseAtomsAfter', getU64Decoder()], ['quoteAtomsAfter', getU64Decoder()], ['nonceAfter', getU64Decoder()], ['takerFeeAtoms', getU64Decoder()], ['side', getU8Decoder()], ['legKind', getU8Decoder()], ['reserved', fixDecoderSize(getBytesDecoder(), 46)]]);
 }
 
 export function getFillEventCodec(): FixedSizeCodec<FillEventArgs, FillEvent> {

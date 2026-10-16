@@ -32,6 +32,11 @@ pub struct VaultDepositorHeader {
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
     )]
     pub owner: Pubkey,
+    /// Shares-weighted average reference price across deposits.
+    pub entry_ref_price: Price,
+    /// Shares-weighted average VPS (`L / total_shares`) across deposits,
+    /// Q32.32. Same encoding and practical bound as `Vault::hwm`.
+    pub entry_vps: u64,
     /// Pro-rata claim on the vault — the per-depositor term of
     /// invariant I6 (`leader_shares + Σ VaultDepositor.shares ==
     /// total_shares`).
@@ -43,33 +48,30 @@ pub struct VaultDepositorHeader {
     /// Lifetime contributions, monotonic — **never reduced on
     /// withdraw**. Stable denominator for all-time return %.
     pub gross_deposited: u64,
-    /// Shares-weighted average reference price across deposits.
-    pub entry_ref_price: Price,
-    /// Shares-weighted average VPS (`L / total_shares`) across deposits,
-    /// Q32.32. Same encoding and practical bound as `Vault::hwm`.
-    pub entry_vps: u64,
     /// Slot of the first deposit. Captured once at PDA init.
     pub opened_at: u64,
     /// Signed quote-denominated PnL crystallized by past withdrawals.
     /// Discarded when the account is closed at zero shares.
     pub realized_pnl: i64,
-    /// Signed yield (ex-FX) component of [`Self::realized_pnl`].
+    /// Signed yield (ex-price) component of [`Self::realized_pnl`].
     pub realized_yield: i64,
-    /// Signed FX component. Invariant:
-    /// `realized_yield + realized_fx == realized_pnl`.
-    pub realized_fx: i64,
+    /// Signed price component — the base leg's move against the entry
+    /// reference. Invariant:
+    /// `realized_yield + realized_price == realized_pnl`.
+    pub realized_price: i64,
     /// PDA bump.
     pub bump: u8,
-    /// Padding so the on-chain size is a multiple of 8 and the
-    /// `#[account]` derive's discriminator + body length matches the
-    /// const-asserted total below.
-    pub reserved: [u8; 7],
+    /// Reserve for later fields. A carve takes bytes from the front, moves
+    /// no other field, and reads all-zero as the pre-carve meaning — see
+    /// the architecture spec's **Depositor positions and cost basis**.
+    #[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::Bytes>"))]
+    pub reserved: [u8; 79],
 }
 
 pub const VAULT_DEPOSITOR_HEADER_DISCRIMINATOR: [u8; 8] = [249, 190, 164, 120, 230, 61, 124, 175];
 
 impl VaultDepositorHeader {
-    pub const LEN: usize = 152;
+    pub const LEN: usize = 220;
 
     #[inline(always)]
     pub fn from_bytes(data: &[u8]) -> Result<Self, std::io::Error> {
