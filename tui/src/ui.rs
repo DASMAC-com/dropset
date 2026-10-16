@@ -6,7 +6,7 @@
 
 use crate::accounts::{self, ChainState, Liveness, MarketView, ParticipantView, Phase, VaultSeat};
 use crate::action::{self, Action};
-use crate::app::{swap_side_label, App, LeaderPrompt, LogKind};
+use crate::app::{parse_positive_amount, swap_side_label, App, LeaderPrompt, LogKind};
 use crate::book;
 use crate::cluster::Cluster;
 use crate::explorer;
@@ -239,7 +239,7 @@ fn amount_stage_lines(app: &App, op: LeaderOp, buf: &str) -> Vec<Line<'static>> 
                 .collect()
         }
         None => vec![Line::from(Span::styled(
-            "no led vault in the last poll — Enter reads the chain",
+            "no single led vault in the last poll — Enter reads the chain",
             hint,
         ))],
     };
@@ -250,7 +250,16 @@ fn amount_stage_lines(app: &App, op: LeaderOp, buf: &str) -> Vec<Line<'static>> 
     lines.push(Line::from(Span::styled(format!("{buf}\u{2588}"), input)));
     let preview = seat.and_then(|(mkt, seat)| {
         let (b, q) = market_legs(app, mkt);
-        leader::preview(op, &seat.stake, buf.parse().ok(), b, q, mkt.reference_price)
+        // The same parse Enter applies, so the preview never sizes what
+        // Enter would refuse to.
+        leader::preview(
+            op,
+            &seat.stake,
+            parse_positive_amount(buf),
+            b,
+            q,
+            mkt.reference_price,
+        )
     });
     match preview {
         Some(Ok(rows)) => lines.extend(rows.into_iter().map(Line::from)),
@@ -937,7 +946,12 @@ fn draw_leader_pane(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         ),
         None => lines.push(field(
             "vault",
-            Span::styled("none led on this market", Style::new().fg(Color::DarkGray)),
+            // `leader_seat` is `None` for no led vault, several, or no
+            // leader key alike.
+            Span::styled(
+                "not exactly one led on this market",
+                Style::new().fg(Color::DarkGray),
+            ),
         )),
     }
     draw_pane(f, "leader", lines, area);
