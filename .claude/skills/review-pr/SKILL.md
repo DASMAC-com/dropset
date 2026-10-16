@@ -753,8 +753,10 @@ migrations or generation inputs, and whether it spans crates.
    does not feel like re-deriving a diff, but it is: locate the file's
    hunks in the existing slice with
    `read_result.py --grep '<path>' <slice>` and `Read` that range, or
-   take `review_diff.py --only '<path>'`. Path-scoped `git diff` calls made
-   after the slices existed once cost ≈2.7k for bytes already on disk.
+   take `review_diff.py --only '<path>'` with an `--out` stem of its
+   own, so the full slices a lens may still be reading survive.
+   Path-scoped `git diff` calls made after the slices existed once cost
+   ≈2.7k for bytes already on disk.
 
    **Ask whether an AMENDMENT is pending before you spawn.** If a
    planning session, a peer or the operator has work queued for this

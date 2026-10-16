@@ -88,7 +88,9 @@ plus a `targets:` column — so a fold that intends to proceed takes it
 **as** its is-anything-parked check and never also takes the bare form.
 Taking both bought one 62-row pool twice for **≈4.9k**, the pass's two
 largest results. The bare `list` survives only for a pass that wants the
-pool size and nothing else.
+pool size and nothing else. When the dedup keys are wanted on screen
+too, add `--fingerprints` to this same call: the two columns compose on
+one row.
 
 That stop condition is **reachable**, which it once was not. `list`
 filters to **open** levers, not merely milestoned ones, so a lever closed
@@ -117,8 +119,8 @@ does nothing: the flag adds a column to the *row listing*, and
 `--bodies-out` suppresses that listing entirely. Each lever's dedup key
 already travels in the spilled body on its own `**Fingerprint**:` line,
 which is where the fold needs it and where `compose` reads it from.
-Pass `--fingerprints` to the **bare** `list` when you want the keys on
-screen — for a dedup-against-resolved check, say.
+Pass `--fingerprints` to step 1's printed listing when you want the keys
+on screen — for a dedup-against-resolved check, say.
 
 This used to be prescribed as two commands on
 consecutive lines, on top of the bare `list` in step 1, and read
@@ -127,9 +129,6 @@ same 41 rows three times for **~4.3k**, ranks 4, 5 and 7 of that
 session's largest results, together beating every read the fold actually
 consumed. The worst of the three re-printed the listing it had just been
 asked to spill.
-
-The combined call reports the body count too, so after step 1's
-`--targets` listing nothing else needs the bare form.
 
 `--fingerprints` adds each lever's dedup key to the listing — the thing a
 sibling lookup actually needs, and the one field the plain listing omits.
