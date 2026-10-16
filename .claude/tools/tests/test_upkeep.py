@@ -299,7 +299,10 @@ class FakeRun:
         return 1, "", "unexpected"
 
 
-def make_ctx(run, armed=False, lookup=None):
+PARKED = {"Trim levers": 22, "Claude meta": 5, "Follow-ups": 3, "Audit findings": 0}
+
+
+def make_ctx(run, armed=False, lookup=None, parked=None):
     ctx = Ctx(
         base=Path(BASE),
         armed=armed,
@@ -307,6 +310,7 @@ def make_ctx(run, armed=False, lookup=None):
         run=run,
         lookup=lookup
         or (lambda nums: {10: "completed", 11: "started", 12: "canceled"}),
+        parked=parked or (lambda: dict(PARKED)),
     )
     from prune_worktrees import parse_worktrees
 
@@ -389,6 +393,44 @@ class PassTests(unittest.TestCase):
         names = [s["step"] for s in ctx.steps]
         self.assertIn("purge", names)
         self.assertIn("memory", names)
+
+    def _parked_step(self, previous=None, parked=None):
+        ctx = make_ctx(FakeRun(), parked=parked)
+        ctx.data["previous_parked"] = previous
+        result = run_pass(ctx)
+        return next(s for s in ctx.steps if s["step"] == "parked"), result
+
+    def test_parked_counts_carry_their_direction_since_the_previous_stamp(self):
+        step, result = self._parked_step(
+            previous={"Trim levers": 22, "Claude meta": 3, "Follow-ups": 4}
+        )
+        self.assertEqual(
+            step["line"],
+            "Trim levers 22 (unchanged), Claude meta 5 (up 2), "
+            "Follow-ups 3 (down 1), Audit findings 0 (no previous count)",
+        )
+        self.assertEqual(result["parked"], PARKED)
+
+    def test_the_first_pass_has_no_previous_count(self):
+        step, _ = self._parked_step()
+        self.assertIn("Trim levers 22 (no previous count)", step["line"])
+
+    def test_an_unreachable_parked_read_is_a_failed_line_not_a_count(self):
+        def down():
+            raise RuntimeError("connection refused")
+
+        step, result = self._parked_step(parked=down)
+        self.assertFalse(step["ok"])
+        self.assertIn("Linear unreachable", step["line"])
+        self.assertNotIn("parked", result)
+
+    def test_a_missing_parked_lookup_is_a_failed_line(self):
+        ctx = make_ctx(FakeRun())
+        ctx.parked = None
+        run_pass(ctx)
+        step = next(s for s in ctx.steps if s["step"] == "parked")
+        self.assertFalse(step["ok"])
+        self.assertIn("no parked-count lookup", step["line"])
 
     def _skill_size_step(self, rc, out):
         base_run = FakeRun()
@@ -720,6 +762,45 @@ class CliTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 upkeep.run(["upkeep.py", "run"])
             self.assertTrue(upkeep.stamp_path(base).exists())
+
+    def test_the_stamp_carries_parked_counts_to_the_next_pass(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            upkeep.check_base = lambda run, cwd: (base, [], "")
+            upkeep.write_report = lambda report: None
+            upkeep.write_stamp(base, datetime.now(timezone.utc), False, {"x": 1})
+            seen = []
+
+            def fake_pass(ctx):
+                seen.append(ctx.data["previous_parked"])
+                return {"ran_at": "t", "armed": False, "steps": [], "parked": PARKED}
+
+            upkeep.run_pass = fake_pass
+            with contextlib.redirect_stdout(io.StringIO()):
+                upkeep.run(["upkeep.py", "run"])
+            self.assertEqual(seen, [{"x": 1}])
+            self.assertEqual(upkeep.previous_parked(upkeep.stamp_path(base)), PARKED)
+
+    def test_a_failed_parked_read_keeps_the_last_good_counts(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            upkeep.check_base = lambda run, cwd: (base, [], "")
+            upkeep.write_report = lambda report: None
+            upkeep.write_stamp(base, datetime.now(timezone.utc), False, {"x": 1})
+            upkeep.run_pass = lambda ctx: {"ran_at": "t", "armed": False, "steps": []}
+            with contextlib.redirect_stdout(io.StringIO()):
+                upkeep.run(["upkeep.py", "run"])
+            self.assertEqual(upkeep.previous_parked(upkeep.stamp_path(base)), {"x": 1})
+
+    def test_a_stamp_without_counts_reads_as_no_previous(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            self.assertIsNone(upkeep.previous_parked(upkeep.stamp_path(base)))
+            upkeep.write_stamp(base, datetime.now(timezone.utc), False)
+            self.assertIsNone(upkeep.previous_parked(upkeep.stamp_path(base)))
 
     def test_no_doc_json_prints_the_result_without_stamping(self):
         with tempfile.TemporaryDirectory() as d:

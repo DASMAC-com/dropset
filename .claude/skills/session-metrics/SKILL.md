@@ -406,8 +406,8 @@ Linear linkifies.
     rejection is not an unattended act.
 
   The middle case is the one that is easy to get wrong, and it
-  is routine rather than exotic: `housekeeping` folds every
-  pass, so any lever spends the window between its fold and its
+  is routine rather than exotic: the `plan` bootstrap folds
+  every morning, so any lever spends the window between its fold and its
   PR landing in exactly that state. Treating the `NOTED` line
   as a refusal would silently drop every recurrence in that
   window — which is the failure the per-lever design exists to

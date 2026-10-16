@@ -377,6 +377,21 @@ def fetch_issues(
     return _fetch_filtered(api_key, issue_filter)
 
 
+def fetch_open_in_milestones(
+    api_key: str, project_id: str, milestones: list[str]
+) -> list[dict]:
+    """Open issues carrying any of the named milestones — the parked pools, in
+    one read rather than one per milestone."""
+    return _fetch_filtered(
+        api_key,
+        {
+            "project": {"id": {"eq": project_id}},
+            "projectMilestone": {"name": {"in": list(milestones)}},
+            "state": {"type": {"nin": ["completed", "canceled"]}},
+        },
+    )
+
+
 def fetch_view_issues(api_key: str, name: str) -> list[dict]:
     """The issues in the operator's custom view named ``name``, as Linear itself
     filters them.

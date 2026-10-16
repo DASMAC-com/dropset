@@ -288,11 +288,11 @@ under the `Trim levers` milestone, keyed by a
 `.claude/tools/trim_levers.py` (`probe` / `file` /
 `append-evidence`) — a deliberate carve-out from the MCP `patch`
 path, whose full-body echo compounds on an accumulator.
-`trim-context` is the periodic **fold**: sweep the milestone,
-fold into **small themed `Claude:` tasks of roughly 4–5 levers
-each** — a small pool is one task, a large one splits by
-surface — and close the originals (the coherence floor still
-governs audit findings and product filings). A rejected
+`trim-context` is the **fold**, a sub-agent of every full `plan`
+bootstrap: sweep the milestone, fold into **small themed
+`Claude:` tasks of ~4–5 levers each** (a large pool
+splits by surface) and close the originals (the coherence floor
+still governs audit findings and product filings). A rejected
 lever is **closed with its reason**, and
 dedup-against-resolved makes that permanent. The old inbox
 document is retired — it outgrew the tool-result cap between

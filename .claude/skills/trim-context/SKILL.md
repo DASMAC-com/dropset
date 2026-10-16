@@ -1,6 +1,6 @@
 ---
 name: trim-context
-description: Use to fold the parked trim levers `session-metrics` files into propose-only skill-improvement tasks — standalone, or as `housekeeping`'s Session Metrics step. Sweeps the `Trim levers` milestone and files small themed `Claude:` tasks of roughly 4–5 levers each, one `# Part N` section per lever keeping its `**Fingerprint**:`, themselves PARKED (Todo plus the `Claude meta` milestone). Then closes the originals; a rejected lever is closed with its reason, which suppresses refiling. Never edits a skill or convention doc — filing a task is the proposal.
+description: Use to fold the parked trim levers `session-metrics` files into propose-only skill-improvement tasks — standalone, or as `plan`'s bootstrap fold sub-agent. Sweeps the `Trim levers` milestone and files small themed `Claude:` tasks of roughly 4–5 levers each, one `# Part N` section per lever keeping its `**Fingerprint**:`, themselves PARKED (Todo plus the `Claude meta` milestone). Then closes the originals; a rejected lever is closed with its reason, which suppresses refiling. Never edits a skill or convention doc — filing a task is the proposal.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -19,10 +19,10 @@ roughly 4–5 levers each (state `Todo` plus the `Claude meta` milestone,
 so the next planning bootstrap's batch assembly consumes them), and
 closes the originals.
 
-It runs identically whether invoked standalone or by `housekeeping` —
-there is **no** propose-only vs. apply split, because filing a task *is*
-the proposal: this skill never edits a skill or convention doc, so an
-unattended pass and a hand run do exactly the same thing.
+It runs identically by hand or as the `plan` bootstrap's background
+sub-agent, and **asks nothing** — which is what lets it run headless.
+Filing a task *is* the proposal: it never edits a skill or convention
+doc, so there is no propose-only vs. apply split.
 
 ## This skill reads no document
 
@@ -57,11 +57,10 @@ machine, on the pattern the `Audit findings` milestone already proved.
 
 This skill sweeps a milestone and **files** one parked task — `Todo`
 plus the `Claude meta` milestone, not Backlog — so it needs
-the env-resolved filing destination (the same one `linear-task` /
-`housekeeping` use). Resolve each variable with its **own** bare
-`printenv` (one `Bash(printenv:*)` allow-rule covers them all) — never a
-combined `printenv A B C`, which on macOS / BSD prints only the first
-value:
+the env-resolved filing destination `linear-task` uses. Resolve each
+variable with its **own** bare `printenv` (one `Bash(printenv:*)`
+allow-rule covers them all) — never a combined `printenv A B C`,
+which on macOS / BSD prints only the first value:
 
 ```sh
 printenv LINEAR_TEAM_ID
@@ -153,7 +152,7 @@ identifier. A bare `--headings` returns every heading at every depth
 instead: measured on a 32-lever dump, **116 headings where 32 were
 wanted**, ≈1.3k and that pass's single largest result, larger than any
 Linear write or the fold's own `compose`. The ratio scales with a pool
-nothing bounds, and `housekeeping` folds every pass. The deeper headings
+nothing bounds, and the fold runs every morning. The deeper headings
 are not waste in general — they are consumed later and selectively, by
 the `--sections` call below.
 
@@ -461,8 +460,8 @@ Team, project and assignee resolve from the `LINEAR_*` environment.
 
 **This is the worst instance of the MCP echo in the whole pipeline, not
 an average one.** A fold task's body is *by construction* among the
-largest the pipeline produces — one `# Part N` per lever — and
-`housekeeping` files them every pass, so the cost scales with the parked
+largest the pipeline produces — one `# Part N` per lever — and the
+fold files them every morning, so the cost scales with the parked
 pool on a fixed cadence. Measured: creating a 12-lever fold task cost
 **~6.0k in one `save_issue`**, the session's largest single result of any
 kind, ~19% of that pass's tool results, and larger than every read the
@@ -494,9 +493,10 @@ issue is discharged.
 that the lever's content now lives in a task — holds only for a task you
 actually filed, and a fold now emits several. So close the levers named
 in **that task's** `folded` list, which the compose summary already
-prints per task, and only once you hold its issue identifier. A composed
-task you did not file leaves its levers **parked**, where the next fold
-picks them up.
+prints per task, once you hold its issue identifier and **before filing
+the next task** — so an interrupted run leaves at most one task filed
+with its originals open. A composed task you did not file leaves its
+levers **parked**, where the next fold picks them up.
 
 This is what makes the guarantee mechanical rather than a matter of
 remembering: the alternative is closing the whole pool on the assumption
@@ -593,10 +593,10 @@ correctly-amortized whole-file Reads; checkpoint-per-logical-change
 commit counts (14 calls at ≈700 total is the convention working);
 post-rebase re-verify churn driven by `main` moving mid-review.
 
-**7. Report** in one line: the aggregated task(s) filed with their
+**7. Report as your final message** — a sub-agent's last message is its
+whole return — in at most thirty lines: the task(s) filed with their
 ENG-###s and how many levers each folded, how many parked levers were
-closed, how many were rejected and why, and how many remain parked for a
-later fold.
+closed, how many were rejected and why, and how many remain parked.
 
 ## Notes
 
@@ -611,10 +611,6 @@ later fold.
   precondition having replaced the one it used to need. Blocking
   edges are human-curated in a planning session (`CLAUDE.md` →
   "Blocking relations").
-- **Runs standalone or as housekeeping's step.** `housekeeping` delegates
-  its Session Metrics step to this skill; it runs just as well by hand any
-  time the milestone has parked levers. Either way the behavior is
-  identical — there is no attended / propose-only mode.
 - **Shell discipline** (per `docs/conventions/shell-commands.md`): every
   command is a single bare call that reduces to an allow-glob — no `&&`,
   pipes, `$(…)`, or redirects; resolve each id with a bare `printenv`,
