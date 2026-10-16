@@ -209,7 +209,7 @@ test-parity: check-nextest program-parity
 # The SQL-backed crates' container-backed suites, `#[ignore]`d because they
 # need a Docker daemon, plus the feature-gated unit tests a `-p` selection
 # leaves off. The required `Tests (Postgres)` CI job runs exactly this target,
-# so a local run means what CI's does, and `postgres_ci_wiring.py` (a lint
+# so a local run selects what CI's does, and `postgres_ci_wiring.py` (a lint
 # hook) fails when a crate gains a Docker-gated test without a `-p` here.
 #
 # One invocation over all the crates so the shared dependency graph compiles

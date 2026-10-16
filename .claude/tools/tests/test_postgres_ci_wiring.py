@@ -69,7 +69,29 @@ class WiringTests(unittest.TestCase):
     def test_a_flag_in_another_target_does_not_count(self):
         self.crate("x", "not-selected")
         self.write("x/src/lib.rs", GATE)
-        self.assertTrue(self.check("x/src/lib.rs"))
+        problems = self.check("x/src/lib.rs")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("not-selected", problems[0])
+
+    def test_a_gated_file_with_no_resolvable_package_fails(self):
+        # Under the virtual root manifest, so no crate `[package]` exists. The
+        # guard cannot vouch for it, so it says so rather than skipping it.
+        self.write("Cargo.toml", '[workspace]\nmembers = ["feeds"]\n')
+        self.write("stray/db.rs", GATE)
+        problems = self.check("stray/db.rs")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("stray/db.rs", problems[0])
+
+    def test_a_workflow_mentioning_the_target_only_in_a_comment_fails(self):
+        self.write(
+            ".github/workflows/test.yml",
+            "# mirrors `make test-postgres`\nrun: 'cargo nextest run'\n",
+        )
+        self.assertTrue(any("no longer runs" in p for p in self.check()))
+
+    def test_a_longer_target_name_does_not_count(self):
+        self.write(".github/workflows/test.yml", "run: 'make test-postgres-lite'\n")
+        self.assertTrue(any("no longer runs" in p for p in self.check()))
 
     def test_an_ungated_crate_is_not_required(self):
         self.crate("tui", "dropset-tui")
@@ -96,6 +118,10 @@ class ParsingTests(unittest.TestCase):
             '[[bin]]\nname = "bin-name"\n[package]\nname = "real"\n[lib]\nname = "l"\n'
         )
         self.assertEqual(pcw.package_name(text), "real")
+
+    def test_package_name_accepts_a_literal_string_and_a_header_comment(self):
+        text = "[package] # the crate\n  name = 'lit'\n"
+        self.assertEqual(pcw.package_name(text), "lit")
 
     def test_package_name_absent(self):
         self.assertIsNone(pcw.package_name('[workspace]\nmembers = ["a"]\n'))

@@ -664,6 +664,7 @@ class GateTests(unittest.TestCase):
                 "overlap": [],
                 "lint_config": [],
                 "generation_input": False,
+                "fixture_readers": [],
                 "disjoint": True,
             },
         )
@@ -693,12 +694,78 @@ class GateTests(unittest.TestCase):
         v = rd.gate("main", self.out, fetch=False)
         self.assertFalse(v["ready"])
         self.assertEqual(v["base_drift"]["lint_config"], ["cfg/pre-commit-lint.yml"])
+        self.assertIn("cfg/pre-commit-lint.yml", " ".join(v["blockers"]))
 
-    def test_a_stale_base_touching_a_generation_input_blocks(self):
-        self.advance_base("programs/dropset/src/lib.rs", "fn lib() {}\n")
+    def test_any_cfg_file_counts_as_lint_config(self):
+        # The dictionary, the linters' configs and the size baseline all live
+        # under cfg/, and each changes lint's answer on untouched files.
+        self.advance_base("cfg/dictionary.txt", "word\n")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertFalse(v["ready"])
+        self.assertEqual(v["base_drift"]["lint_config"], ["cfg/dictionary.txt"])
+
+    def test_a_lint_hook_script_counts_as_lint_config(self):
+        hooks = (
+            "- hooks:\n  - entry: 'python3 .claude/tools/guard.py'\n    id: 'guard'\n"
+        )
+        self.commit("cfg/pre-commit-lint.yml", hooks, "Wire a guard")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.advance_base(".claude/tools/guard.py", "print('v2')\n")
+        drift = rd.gate("main", self.out, fetch=False)["base_drift"]
+        self.assertEqual(drift["lint_config"], [".claude/tools/guard.py"])
+        self.assertFalse(drift["disjoint"])
+
+    def test_a_generation_input_on_BOTH_sides_blocks(self):
+        self.advance_base(
+            "programs/dropset/src/lib.rs",
+            "fn lib() {}\n",
+            branch_rel="programs/dropset/src/swap.rs",
+        )
         v = rd.gate("main", self.out, fetch=False)
         self.assertFalse(v["ready"])
         self.assertTrue(v["base_drift"]["generation_input"])
+        self.assertIn("generation input", " ".join(v["blockers"]))
+
+    def test_a_generation_input_on_the_base_side_only_is_disjoint(self):
+        # The branch touches no input, so the merged tree's artifacts are the
+        # base's own, already regenerated there.
+        self.advance_base("programs/dropset/src/lib.rs", "fn lib() {}\n")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertTrue(v["ready"], v["blockers"])
+        self.assertFalse(v["base_drift"]["generation_input"])
+
+    def test_a_branch_rename_of_a_file_the_base_edits_is_an_overlap(self):
+        # The numstat inventory keeps only a rename's destination, so the overlap
+        # must come from a --no-renames listing or a rename/modify collision
+        # reads as disjoint.
+        self.commit("old.rs", "fn shared() {}\n" * 20, "Seed the file")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.repo, "mv", "old.rs", "new.rs")
+        git(self.repo, "commit", "-q", "-m", "Rename on the branch")
+        git(self.repo, "checkout", "-q", "-b", "side", "HEAD~1")
+        self.commit("old.rs", "fn shared() {}\n" * 19 + "fn edited() {}\n", "Edit")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.repo, "checkout", "-q", "main")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertEqual(v["base_drift"]["overlap"], ["old.rs"])
+        self.assertFalse(v["ready"])
+
+    def test_a_base_adding_a_reader_of_a_branch_file_blocks(self):
+        # Disjoint by files, but the base's new test reads what the branch edits:
+        # the HEAD-tree fixture scan cannot see a reader HEAD does not have.
+        self.commit("tui/Cargo.toml", "[package]\nname = 'tui'\n", "Crate")
+        self.commit("frontend/roster.json", "[]\n", "Roster")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.advance_base(
+            "tui/tests/roster.rs",
+            'const R: &str = include_str!("../../frontend/roster.json");\n',
+            branch_rel="frontend/roster.json",
+        )
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertEqual(v["base_drift"]["overlap"], [])
+        self.assertEqual(v["base_drift"]["fixture_readers"], ["frontend/roster.json"])
+        self.assertFalse(v["ready"])
+        self.assertIn("frontend/roster.json", " ".join(v["blockers"]))
 
     def test_a_fresh_base_reports_no_drift(self):
         self.commit("a.rs", "fn a() {}\n", "Branch work")
@@ -1004,7 +1071,7 @@ class GateTests(unittest.TestCase):
         self.assertFalse(parsed["diff_empty"])
 
     def test_gate_only_refuses_split(self):
-        with self.assertRaises(rd.ReviewDiffError):
+        with self.assertRaisesRegex(rd.ReviewDiffError, "takes no --split"):
             rd.run(
                 [
                     "review_diff.py",
@@ -1017,7 +1084,7 @@ class GateTests(unittest.TestCase):
             )
 
     def test_a_full_run_still_requires_out(self):
-        with self.assertRaises(rd.ReviewDiffError):
+        with self.assertRaisesRegex(rd.ReviewDiffError, "--out is required"):
             rd.run(["review_diff.py", "--base", "main", "--no-fetch"])
 
 
@@ -1698,6 +1765,13 @@ class RustTestFixtureTests(unittest.TestCase):
     def test_an_escaping_manifest_path_is_dropped(self):
         self.write("a/Cargo.toml", "[package]\n")
         self.write("a/t.rs", 'concat!(env!("CARGO_MANIFEST_DIR"), "/../../out.txt")\n')
+        self.assertEqual(self.scan("a/t.rs"), {})
+
+    def test_an_absolute_read_literal_is_dropped(self):
+        # Only a composed manifest tail has its leading `/` read as a separator;
+        # a read literal that starts with one really is absolute.
+        self.write("a/Cargo.toml", "[package]\n")
+        self.write("a/t.rs", 'let s = std::fs::read_to_string("/etc/hosts");\n')
         self.assertEqual(self.scan("a/t.rs"), {})
 
 

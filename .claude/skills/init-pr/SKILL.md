@@ -438,7 +438,9 @@ untracked per-directory content, which step 3 handles.
      --out <scratchpad>/review-diff.txt
    ```
 
-   Read `files` and per-file `changes`, then offer:
+   Read `files` and per-file `changes`, then offer. A non-zero exit
+   with `base_drift.disjoint: false` still leaves `files` correct; the
+   rebase it asks for is `review-pr` step 2's, so offer anyway:
 
    - **"Yes — full adversarial suite"** — first, recommended.
    - **"Yes — reduced tier"** — *only* under `review-pr`'s small-diff
