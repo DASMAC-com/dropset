@@ -429,20 +429,16 @@ untracked per-directory content, which step 3 handles.
    is `review-pr`'s entry gate** — a yes is the invocation, which
    pre-approves the regular fan-out, and the reduced-tier option is
    its abridged-tier opt-down (see its "The entry gate" section).
-   Compute the signals from a real diff, **rebasing first** — a stale
-   base makes the `files` array describe main's commits, not the
-   branch:
+   Compute the signals from a real diff. The tool diffs from the merge
+   base, so a stale base cannot leak main's commits into `files`; no
+   rebase is needed first:
 
    ```sh
-   git fetch origin main
-   git rebase origin/main
    python3 .claude/tools/review_diff.py --base main \
      --out <scratchpad>/review-diff.txt
    ```
 
-   (To skip the rebase, call `--gate-only` first and take the full
-   verdict only once `base_fresh` holds.) Read `files` and per-file
-   `changes`, then offer:
+   Read `files` and per-file `changes`, then offer:
 
    - **"Yes — full adversarial suite"** — first, recommended.
    - **"Yes — reduced tier"** — *only* under `review-pr`'s small-diff

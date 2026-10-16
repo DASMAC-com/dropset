@@ -81,25 +81,10 @@ import sys
 from review_diff import (
     ReviewDiffError,
     _git,
+    changed_files,
     touches_ci_code,
     touches_generation_input,
 )
-
-
-def changed_files(rev_range: str) -> list[str]:
-    """``git diff --name-only <range>``, as a sorted list of repo-relative paths.
-
-    ``--no-renames`` is not optional here. Rename detection is **on by default**
-    and reports only the destination path, so a base delta that renamed
-    ``sdk/a.rs`` to ``sdk/b.rs`` would yield ``base_files = {sdk/b.rs}`` while a
-    branch still editing ``sdk/a.rs`` yields ``{sdk/a.rs}`` — an empty
-    intersection, and :func:`summarize` cheerfully printing "no overlap" for the
-    single delta shape most likely to have silently dropped the branch's edits.
-    Disabling detection surfaces both sides of a rename as changed paths, which
-    is what an overlap question actually wants.
-    """
-    out = _git(["diff", "--no-renames", "--name-only", rev_range])
-    return sorted({line.strip() for line in out.splitlines() if line.strip()})
 
 
 def commit_subjects(rev_range: str) -> list[str]:

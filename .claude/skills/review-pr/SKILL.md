@@ -163,8 +163,8 @@ migrations or generation inputs, and whether it spans crates.
    own files, their **overlap**, and the `runs_artifact_gates` /
    `runs_rust_suites` predicates steps 9 and 11 use to decide what a
    rebase-forced re-run may skip (`history.md` → "Hand-rolled rebase
-   triage"). The rebase and every freshness gate always run (a skipped
-   rebase yields phantom hunks); only the re-runs vary:
+   triage"). This step's rebase and every freshness gate always run;
+   only the re-runs vary:
 
    - **Empty overlap → assert, don't re-run.** `review_diff.py` and
      `make lint` provably cannot change their answer on files the delta
@@ -436,8 +436,10 @@ migrations or generation inputs, and whether it spans crates.
    One `review_diff.py` call does the fetch, range checks, excluded
    diff and stat, and returns one verdict:
 
-   - **Ref `origin/<base>..HEAD`** — the local base in a worktree is
-     stale by already-merged PRs. The tool fetches it itself.
+   - **Ref `origin/<base>...HEAD`, from the merge base** — the local
+     base in a worktree is stale by already-merged PRs, so the tool
+     fetches it itself; three dots keep a base that moves later out of
+     the diff.
    - **Generated families excluded** by `:(exclude)` path patterns from
      the tool's `DIFF_EXCLUDES` (`--print-grep-excludes` lists them); step
      9 regenerates and gate-checks them; a family not yet listed gets the
@@ -463,6 +465,8 @@ migrations or generation inputs, and whether it spans crates.
      "fetch_error": null,         // non-null → freshness is UNVERIFIED
      "base_fresh": true,          // false iff base_ahead is non-empty
      "base_ahead": [],            // commits the base has that HEAD lacks
+     "base_drift": null,          // when stale: overlap, lint_config,
+                                  //   generation_input, disjoint
      "commits": ["abc1234 Subject"],
      "diff_path": "…/review-diff.txt",
      "diff_lines": 1234,
@@ -482,28 +486,34 @@ migrations or generation inputs, and whether it spans crates.
 
    **`ready` is the gate: nothing is spawned until it is `true`.** It
    is defined as `not blockers`, and the tool exits non-zero when it is
-   false. The four blockers: a stale base; a **failed fetch**
+   false. The four blockers: a stale base **whose delta interacts
+   with the branch**; a **failed fetch**
    (freshness unverified — `--no-fetch` accepts the local ref
    deliberately); nothing changed; or every changed path is an
    excluded generated family (no source to review, though the step
    9/10 gates still apply) — the last two each with an `--only`
-   variant. On `base_fresh: false` re-fetch, re-rebase
-   onto `origin/<base>` (signing probe first, step 2), and re-run the
-   tool. The base can advance
-   *past* the step-2 rebase mid-review — worktrees share one `.git` —
-   and the diff then shows whatever the base added as a **phantom
-   deletion** (`history.md` → "Phantom deletion"). Once `base_fresh`
-   holds, read `files` for **sizing and tiering**, not as a second
+   variant. The base can advance *past* the step-2 rebase
+   mid-review — worktrees share one `.git` — but the merge-base diff
+   no longer shows it as a **phantom deletion** (`history.md` →
+   "Phantom deletion"), so drift blocks only when `base_drift` says
+   it interacts: a file both sides changed, the lint config, or a
+   generation input. Then rebase onto `origin/<base>`, triage as in
+   step 2, and re-run the tool. **A disjoint drift (`ready: true`,
+   `base_fresh: false`) needs no rebase at all**: note "base moved;
+   drift disjoint" and carry on — the merge queue tests the merged
+   result. Read `files` for **sizing and tiering**, not as a second
    freshness check. Pass `commits` inline; the diff lives only in the
-   file.
+   file. A rebase this gate asks for takes the signing probe first
+   (step 2).
 
    The tool **owns** three path lists — the generated-family excludes,
    the mirror of `test.yml`'s `code` filter, and the generation inputs
    — which is why steps 9 and 10 read `runs_rust_suites` and
    `runs_artifact_gates` off the verdict. Change them there, never in
-   prose. `--out` is required but **not** validated against the
-   scratchpad root, so substitute the real path (a guessed one is
-   created, not rejected); the tool rewrites it every run, owner-only
+   prose. `--out` is required (except with `--gate-only`, which
+   writes no diff) but **not** validated against the scratchpad root,
+   so substitute the real path (a guessed one is created, not
+   rejected); the tool rewrites it every full run, owner-only
    (`0o600`).
 
    **Route by slice, and default each lens to exactly ONE**
@@ -1129,8 +1139,7 @@ migrations or generation inputs, and whether it spans crates.
    first:
 
    ```sh
-   python3 .claude/tools/review_diff.py --base <base> \
-     --out <scratchpad>/review-diff.txt --gate-only
+   python3 .claude/tools/review_diff.py --base <base> --gate-only
    ```
 
    Pass `--base <base>` **bare**: the tool prepends `origin/` itself,
@@ -1138,10 +1147,13 @@ migrations or generation inputs, and whether it spans crates.
    (`history.md` → "Origin-prefixed base"). **`--gate-only` is the
    default for every freshness probe in this skill**: it emits only
    the verdict fields, with the gating and exit status unchanged, and
+   writes **no** diff, so the probe can never overwrite the
+   `review-diff.txt` the cross-check is about to read. A full run with
    `--split` is the exception, for when slices must be regenerated for
-   an agent (`history.md` → "Gate-only verdicts"). If the diff
-   changed, re-run the affected lenses and then this command with
-   `--split` in place of `--gate-only` — not before.
+   an agent (`history.md` → "Gate-only verdicts"). If the probe blocks
+   and a rebase changes the diff, re-run the affected lenses and then
+   a full `--split --out <scratchpad>/review-diff.txt` run — not
+   before.
 
    Spawn a fresh sub-agent, the `CLAUDE.md` sub-agent brief
    prepended, with the collected findings and the diff **by path** —
@@ -1484,16 +1496,16 @@ migrations or generation inputs, and whether it spans crates.
    one `.git`):
 
    ```sh
-   python3 .claude/tools/review_diff.py --base <base> --gate-only \
-     --out <scratchpad>/review-diff.txt
+   python3 .claude/tools/review_diff.py --base <base> --gate-only
    ```
 
-   If it is `false`, rebase onto `origin/<base>` (signing probe first,
-   step 2) and *then* run the suites, so the expensive builds run
-   once, against the tree that will merge (`history.md` → "Suites
-   before the rebase"). Switch to
-   `--split` only when the slices need regenerating (after a rebase,
-   for a re-spawn).
+   If `ready` is `false`, rebase onto `origin/<base>` and *then* run
+   the suites, so the expensive builds run once, against the tree that
+   will merge (`history.md` → "Suites before the rebase"). A disjoint
+   drift (`ready: true`, `base_fresh: false`) needs no rebase. Switch
+   to a full `--split --out` run only when the slices need
+   regenerating (after a rebase, for a re-spawn).
+   Any rebase here takes the signing probe first (step 2).
 
    **Choose the targets from step 5's flags — read them, never
    re-derive them** — and record every skip with its reason in the
@@ -1515,15 +1527,16 @@ migrations or generation inputs, and whether it spans crates.
      build consumes (a `.rs` file, a `Cargo.toml`, the lockfile, a
      toolchain file or `.cargo/config.toml`, a `build.rs`, an `.s`
      source, a migration, a
-     conformance vector, **or a fixture a Rust test compiles in with
-     `include_str!`**). Mirroring buys something only when the local
+     conformance vector, **or a fixture a Rust test reads**). Mirroring
+     buys something only when the local
      run could fail because of the diff (`history.md` → "Unreachable
      suites").
    - **`rust_fixture_hits` non-empty → run the full local Rust
      suite**, naming the paths in the summary. The tool scans every
      tracked `.rs` file for `include_str!` / `include_bytes!`
-     targets, so it sees a path CI's filter excludes but a Rust test
-     compiles in — every PR-side Tests job no-ops while the merge
+     targets and for runtime reads of a `CARGO_MANIFEST_DIR` path or
+     a bare-literal `fs::read`, so it sees a path CI's filter excludes
+     but a Rust test reads — every PR-side Tests job no-ops while the merge
      queue runs the full suite (`history.md` → "Fixture-coupled
      dequeue"). This is the one case where the path lists say not
      to.
@@ -1590,13 +1603,16 @@ migrations or generation inputs, and whether it spans crates.
    "Forward-computed citations"; `docs/conventions/docs-and-style.md`).
 
    **When the diff adds or changes an `#[ignore]`d test, run the
-   Tests (Postgres) job's own command before pushing** — the targets
+   Tests (Postgres) job's own target before pushing** — the targets
    above skip
    ignored tests, so one can otherwise only ever fail in CI
-   (`history.md` → "Ignored test reddened CI"):
+   (`history.md` → "Ignored test reddened CI"). The job runs exactly
+   this target, so it carries the job's crate selection and its
+   credential-gated exclusion; a bare workspace-wide
+   `--run-ignored all` selects tests no CI run can satisfy:
 
    ```sh
-   python3 .claude/tools/run_quiet.py -- cargo nextest run --run-ignored all
+   python3 .claude/tools/run_quiet.py -- make test-postgres
    ```
 
    **One cargo target at a time per worktree** — a blocked build is

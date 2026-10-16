@@ -26,9 +26,10 @@ the skill, re-typed by hand each run, are now **data with one owner** —
 Two further gate facts are **derived by scanning rather than enumerated**, because
 a hand-kept list cannot learn what changed under it:
 
-* ``rust_fixture_hits`` — the diff paths some Rust test compiles in with
-  ``include_str!``. A list of globs cannot know a test started reading a new
-  fixture, and the blind spot is silent in the direction that costs a dequeue.
+* ``rust_fixture_hits`` — the diff paths some Rust test reads, whether compiled
+  in with ``include_str!`` or read at runtime from a ``CARGO_MANIFEST_DIR``
+  path. A list of globs cannot know a test started reading a new fixture, and
+  the blind spot is silent in the direction that costs a dequeue.
 * ``prose_heavy`` — whether the diff's added lines are mostly comment prose. A
   diff can be documentation-heavy without touching a documentation *path*, which
   the path-keyed lens gate cannot see.
@@ -39,12 +40,16 @@ Usage::
     python3 .claude/tools/review_diff.py --print-grep-excludes
 
 Options: ``--base`` (default ``main``), ``--out`` (where the diff is written —
-required except with ``--print-grep-excludes``), ``--no-fetch`` (skip the network
-fetch and read the local ref), ``--split`` (also write per-lens
-``source`` / ``tests`` / ``docs`` slices beside the diff, reported under
-``slices``), ``--gate-only`` (emit just the verdict fields — for a mid-review
-re-check), ``--print-grep-excludes`` (print the exclude flags a hoisted
-repo-wide grep should reuse, and exit).
+required except with ``--gate-only`` or ``--print-grep-excludes``),
+``--no-fetch`` (skip the network fetch and read the local ref), ``--split``
+(also write per-lens ``source`` / ``tests`` / ``docs`` slices beside the diff,
+reported under ``slices``), ``--gate-only`` (emit just the verdict fields and
+write no diff — for a mid-review re-check), ``--print-grep-excludes`` (print
+the exclude flags a hoisted repo-wide grep should reuse, and exit).
+
+The diff and the file inventory are taken from the **merge base**
+(``origin/<base>...HEAD``), so a base that moved after the rebase cannot put
+phantom hunks in either.
 
 Prints JSON::
 
@@ -54,6 +59,8 @@ Prints JSON::
       "fetched": true,
       "base_fresh": true,          // false iff base_ahead is non-empty
       "base_ahead": [],            // commits the base has that HEAD lacks
+      "base_drift": null,          // when stale: {files, overlap, lint_config,
+                                   //   generation_input, disjoint}
       "commits": ["abc1234 Subject", …],
       "diff_path": "/tmp/review-diff.txt",
       "diff_lines": 1234,
@@ -64,7 +71,7 @@ Prints JSON::
       "code_crates": 1,           // trees with an actual source change
       "runs_rust_suites": false,   // any path outside the CI code filter?
       "rust_reachable": false,     // any path a cargo build actually consumes?
-      "rust_fixture_hits": [],     // …including via a test's `include_str!`
+      "rust_fixture_hits": [],     // …including via a fixture a test reads
       "runs_artifact_gates": false,// any generation input touched?
       "added_shape": {"added": 412, "comment": 250, "ratio": 0.607},
       "prose_heavy": true,         // added lines are mostly comment prose
@@ -75,8 +82,11 @@ Prints JSON::
 ``ready: false`` means **do not fan out**. It is defined as ``not blockers``, so
 it can never drift from the reasons. Four things block:
 
-* the base advanced past the rebase (the phantom-deletion failure the skill
-  documents, which a line count structurally cannot catch);
+* the base advanced past the rebase **and** its delta interacts with the
+  branch — a shared file, the lint config, or a generation input
+  (:func:`base_drift`). A disjoint delta is reported under ``base_drift`` and
+  does not block: the merge-base diff is unaffected by it, and the merge queue
+  tests the merged result;
 * the ``git fetch`` **failed**, so freshness is *unverified* rather than
   verified-fresh — pass ``--no-fetch`` to accept the local ref deliberately;
 * nothing changed at all;
@@ -115,6 +125,7 @@ import posixpath
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # Generated families excluded from the review diff: machine-authored, reviewed
@@ -361,16 +372,34 @@ def rust_is_reachable(paths) -> bool:
 #: routinely sits on a *following* line in this repo, so the whitespace classes
 #: deliberately span newlines; the literal itself may not.
 #:
-#: **Two forms are NOT matched**, and the omission is silent in the direction the
-#: scan exists to close, so it is named rather than left to be discovered: a raw
-#: string (``include_str!(r"…")``) and a computed path
-#: (``include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/x"))``). Every target in
-#: the tree today is a plain relative literal, so there is no live miss — but a
-#: future one would read as "no fixture" rather than as "cannot tell".
+#: **A raw string (``include_str!(r"…")``) is NOT matched**, and the omission is
+#: silent in the direction the scan exists to close, so it is named rather than
+#: left to be discovered. A computed ``concat!(env!("CARGO_MANIFEST_DIR"), …)``
+#: target is caught by :data:`_MANIFEST_RE` instead.
 #:
 #: The reverse case is benign: this also matches an ``include_str!("…")`` written
 #: inside a doc-comment code span, which costs at most one unnecessary suite run.
 _INCLUDE_RE = re.compile(r'include_(?:str|bytes)!\s*\(\s*"([^"\n]+)"')
+
+#: A path composed onto the crate root:
+#: ``concat!(env!("CARGO_MANIFEST_DIR"), "/../frontend/lib/data")``. This is the
+#: shape a test that reads a fixture **at runtime** uses, and the compile-time
+#: scan above cannot see it: the read itself takes a variable
+#: (``fs::read_to_string(path)``), so the only literal to key on is where the
+#: path is built. The target may name a directory that the test joins a file
+#: name onto, which is why hits are matched by path prefix.
+#:
+#: Matching the composition rather than the read is wider than "fixtures": a
+#: generator writing to a manifest-relative path matches too. That is the benign
+#: direction — one unnecessary suite run. The unmatched shape is a
+#: ``PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(var)``, whose tail is not a
+#: literal at all.
+_MANIFEST_RE = re.compile(r'env!\s*\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"\n]+)"')
+
+#: A runtime read of a bare string literal. ``cargo test`` runs each test binary
+#: with the crate root as its working directory, so the literal resolves there,
+#: the same as a :data:`_MANIFEST_RE` target.
+_READ_LITERAL_RE = re.compile(r'fs::read(?:_to_string)?\s*\(\s*"([^"\n]+)"')
 
 
 def repo_root() -> Path:
@@ -388,10 +417,56 @@ def tracked_rust_sources() -> list[str]:
     return [p for p in out.split("\0") if p]
 
 
-def rust_include_fixtures(
+def manifest_dir(src: str, root: Path) -> str:
+    """The repo-relative directory of the crate ``src`` belongs to.
+
+    The nearest ancestor holding a ``Cargo.toml``, which is what
+    ``CARGO_MANIFEST_DIR`` names at build time and what ``cargo test`` uses as a
+    test's working directory. A file under no crate falls back to the repo root.
+    """
+    d = posixpath.dirname(src)
+    while d:
+        if (root / d / "Cargo.toml").is_file():
+            return d
+        d = posixpath.dirname(d)
+    return ""
+
+
+def _repo_relative(base: str, target: str) -> str | None:
+    """``target`` joined onto ``base`` and normalized, or ``None`` if it escapes.
+
+    One that escapes the worktree is dropped rather than reported: it cannot be a
+    diff path, so it could only ever be a false hit.
+    """
+    if posixpath.isabs(target):
+        return None
+    resolved = posixpath.normpath(posixpath.join(base, target))
+    # A path COMPONENT test, not a string prefix: a bare `startswith("..")`
+    # also drops a legitimate `..data/x.yml` at the repo root.
+    if resolved == ".." or resolved.startswith("../"):
+        return None
+    return resolved
+
+
+def rust_test_fixtures(
     sources: list[str] | None = None, root: Path | None = None
 ) -> dict[str, list[str]]:
-    """Map each ``include_str!``-ed path to the Rust files that pull it in.
+    """Map each path a Rust file reads as a fixture to the files that read it.
+
+    Two families of read, resolved by two different rules:
+
+    * **compile-time** — ``include_str!`` / ``include_bytes!``, resolved
+      relative to the **including file's directory**, which is Rust's own rule;
+    * **runtime** — a ``CARGO_MANIFEST_DIR``-composed path, or an
+      ``fs::read`` / ``fs::read_to_string`` of a bare literal, both resolved
+      relative to the **crate root** (:func:`manifest_dir`).
+
+    The runtime family was a blind spot until 2026-09-25: a diff confined to the
+    frontend currency roster read as Rust-unreachable with zero hits, which
+    licenses skipping both Rust suites, while the maker-bot config test and the
+    TUI market test both read that roster at runtime. An additive edit passed
+    them; an edit to an existing entry's decimals would have gone green on the PR
+    path and been dequeued by the merge queue.
 
     This is **derived by scanning, not enumerated**, and that is the whole point.
     :data:`RUST_REACHABLE` is a hand-kept glob list, so it cannot learn that a
@@ -425,10 +500,6 @@ def rust_include_fixtures(
 
     So folding the scan into ``rust_reachable`` closes a broader hole than the one
     that motivated it, and both halves fail in the same silent direction.
-
-    Targets resolve **relative to the including file's directory**, which is
-    Rust's own rule. One that escapes the worktree is dropped rather than
-    reported: it cannot be a diff path, so it could only ever be a false hit.
     """
     if sources is None:
         sources = tracked_rust_sources()
@@ -436,23 +507,40 @@ def rust_include_fixtures(
         root = repo_root()
 
     fixtures: dict[str, list[str]] = {}
+
+    def record(resolved: str | None, src: str) -> None:
+        if resolved is None:
+            return
+        including = fixtures.setdefault(resolved, [])
+        if src not in including:
+            including.append(src)
+
     for src in sources:
         text = _read_post_image(str(root / src))
         if text is None:
             continue
         base = posixpath.dirname(src)
         for target in _INCLUDE_RE.findall(text):
-            if posixpath.isabs(target):
-                continue
-            resolved = posixpath.normpath(posixpath.join(base, target))
-            # A path COMPONENT test, not a string prefix: a bare `startswith("..")`
-            # also drops a legitimate `..data/x.yml` at the repo root.
-            if resolved == ".." or resolved.startswith("../"):
-                continue
-            including = fixtures.setdefault(resolved, [])
-            if src not in including:
-                including.append(src)
+            record(_repo_relative(base, target), src)
+        runtime = _MANIFEST_RE.findall(text) + _READ_LITERAL_RE.findall(text)
+        if runtime:
+            crate = manifest_dir(src, root)
+            for target in runtime:
+                # The composed tail conventionally starts with `/`, which is a
+                # separator from the manifest dir, not an absolute path.
+                record(_repo_relative(crate, target.lstrip("/")), src)
     return {target: sorted(paths) for target, paths in fixtures.items()}
+
+
+def fixture_hits(paths, fixtures: dict[str, list[str]]) -> list[str]:
+    """The ``paths`` a fixture names, either exactly or as a directory under it.
+
+    A runtime read often composes a directory and joins the file name on at run
+    time (``format!("{dir}/{name}")``), so a fixture key can be a directory.
+    """
+    return sorted(
+        p for p in paths if any(p == key or p.startswith(key + "/") for key in fixtures)
+    )
 
 
 def matches(path: str, pattern: str) -> bool:
@@ -602,6 +690,22 @@ def oneline_log(rev_range: str) -> list[str]:
     return [line for line in out.splitlines() if line.strip()]
 
 
+def changed_files(rev_range: str) -> list[str]:
+    """``git diff --name-only <range>``, as a sorted list of repo-relative paths.
+
+    ``--no-renames`` is not optional here. Rename detection is **on by default**
+    and reports only the destination path, so a base delta that renamed
+    ``sdk/a.rs`` to ``sdk/b.rs`` would yield ``{sdk/b.rs}`` while a branch still
+    editing ``sdk/a.rs`` yields ``{sdk/a.rs}`` — an empty intersection, and an
+    overlap check cheerfully reporting "disjoint" for the single delta shape most
+    likely to have silently dropped the branch's edits. Disabling detection
+    surfaces both sides of a rename as changed paths, which is what an overlap
+    question actually wants.
+    """
+    out = _git(["diff", "--no-renames", "--name-only", rev_range])
+    return sorted({line.strip() for line in out.splitlines() if line.strip()})
+
+
 def parse_numstat_z(text: str) -> list[dict]:
     """Parse ``git diff --numstat -z`` into ``[{path, changes}]``, path-sorted.
 
@@ -668,8 +772,13 @@ def write_diff(base_ref: str, out_path: Path, only: list[str] | None = None) -> 
     costliest single agent on one such run took 634.7k of input). The hand-rolled
     alternative was three separate ``git diff`` calls with literal path lists.
 
-    Two deliberate choices:
+    Three deliberate choices:
 
+    * **Three dots, from the merge base.** ``<base>...HEAD`` is the branch's own
+      change however far the base has moved since, so a base that advanced
+      mid-review can no longer surface as phantom deletions in the diff. The
+      two-dot form compared the two tips, which is what made every base move a
+      mandatory rebase before any further review.
     * **The excludes are ``:(top,exclude)``, with no positive pathspec.** A bare
       ``"."`` limiter would resolve against the *process* cwd, so running from a
       subdirectory would silently scope the written diff to that subtree while
@@ -694,7 +803,7 @@ def write_diff(base_ref: str, out_path: Path, only: list[str] | None = None) -> 
         fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fh:
             completed = subprocess.run(
-                ["git", "diff", f"{base_ref}..HEAD", "--", *pathspec],
+                ["git", "diff", f"{base_ref}...HEAD", "--", *pathspec],
                 stdout=fh,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -1362,6 +1471,39 @@ def grep_excludes() -> dict:
     }
 
 
+#: The files that decide *which* lint checks run. A base delta touching one
+#: changes the answer `make lint` gives on files the delta never touched.
+LINT_CONFIG = ("cfg/pre-commit-lint.yml", ".pre-commit-config.yaml")
+
+
+def base_drift(base_files: list[str], branch_paths: list[str]) -> dict:
+    """Whether a base that moved past the branch can interact with it.
+
+    With the diff taken from the merge base, a moved base no longer corrupts the
+    review diff, so staleness alone is not a reason to stop. It still is when the
+    delta could change an answer the review already has: it touched a file this
+    branch changes (a textual or semantic collision), the lint config (the set of
+    checks itself moved), or a generation input (a committed artifact may now be
+    stale against the merged tree).
+
+    Otherwise the drift is reported and does not block. Measured (2026-10): main
+    moving four or five times during one review cost 12 to 25 turns of
+    rebase-and-re-gate on a 200k-400k prefix, and most of those deltas had an
+    empty overlap. The merge queue still tests the merged result, so it remains
+    the fail-closed integration gate.
+    """
+    overlap = sorted(set(base_files) & set(branch_paths))
+    lint_config = sorted(p for p in base_files if p in LINT_CONFIG)
+    generation_input = touches_generation_input(base_files)
+    return {
+        "files": len(base_files),
+        "overlap": overlap,
+        "lint_config": lint_config,
+        "generation_input": generation_input,
+        "disjoint": not (overlap or lint_config or generation_input),
+    }
+
+
 def gate(
     base: str,
     out: Path,
@@ -1402,7 +1544,7 @@ def gate(
     #
     # Note this applies the positive limiters ONLY, never DIFF_EXCLUDES: the
     # inventory stays unfiltered with respect to the generated families.
-    numstat = ["diff", "--numstat", "-z", f"{base_ref}..HEAD"]
+    numstat = ["diff", "--numstat", "-z", f"{base_ref}...HEAD"]
     if only:
         numstat += ["--", *[f":(top,glob){p}" for p in only]]
     files = parse_numstat_z(_git(numstat))
@@ -1418,21 +1560,20 @@ def gate(
         gate_paths = [
             f["path"]
             for f in parse_numstat_z(
-                _git(["diff", "--numstat", "-z", f"{base_ref}..HEAD"])
+                _git(["diff", "--numstat", "-z", f"{base_ref}...HEAD"])
             )
         ]
     else:
         gate_paths = [f["path"] for f in files]
     runs_rust_suites = touches_ci_code(gate_paths)
-    # Fixtures a Rust test compiles in via `include_str!`, DERIVED from the tree
-    # rather than enumerated in RUST_REACHABLE. These paths are reachable by
+    # Fixtures a Rust test reads, at compile time or at runtime, DERIVED from the
+    # tree rather than enumerated in RUST_REACHABLE. These paths are reachable by
     # `rust_is_reachable`'s own definition — "what the build consumes" — so they
     # fold into that flag rather than sitting beside it as a second boolean the
     # caller has to remember to read. The specific hits ride along separately so
     # the skill can name *why* it is running a suite the path list called
     # unreachable.
-    fixtures = rust_include_fixtures()
-    rust_fixture_hits = sorted(p for p in gate_paths if p in fixtures)
+    rust_fixture_hits = fixture_hits(gate_paths, rust_test_fixtures())
     rust_reachable = rust_is_reachable(gate_paths) or bool(rust_fixture_hits)
     # The artifact gate consults only the SOURCE-bearing paths. A docs-only path
     # under a generation-input tree is provably incapable of staling the artifact
@@ -1447,6 +1588,14 @@ def gate(
     runs_artifact_gates = touches_generation_input(gate_source_paths)
 
     base_fresh = not base_ahead
+    # What the base gained since the merge base, measured only when it moved.
+    # `gate_paths` for the same reason the predicates use it: a collision is a
+    # property of what the BRANCH changed, not of the slice `--only` reviews.
+    drift = (
+        base_drift(changed_files(f"HEAD...{base_ref}"), gate_paths)
+        if base_ahead
+        else None
+    )
     diff_empty = diff_lines == 0
 
     # Computed from the WRITTEN diff, deliberately unlike the gate predicates
@@ -1476,10 +1625,18 @@ def gate(
             f"unverified against a possibly-stale local ref; fix the remote, or "
             f"pass --no-fetch to accept the local ref deliberately"
         )
-    if not base_fresh:
+    if drift is not None and not drift["disjoint"]:
+        reasons = []
+        if drift["overlap"]:
+            reasons.append(f"both changed {', '.join(drift['overlap'])}")
+        if drift["lint_config"]:
+            reasons.append(f"it changed {', '.join(drift['lint_config'])}")
+        if drift["generation_input"]:
+            reasons.append("it touched a generation input")
         blockers.append(
-            f"{base_ref} has {len(base_ahead)} commit(s) HEAD lacks — re-fetch, "
-            f"rebase onto {base_ref}, and re-run this gate before fanning out"
+            f"{base_ref} has {len(base_ahead)} commit(s) HEAD lacks and they "
+            f"interact with this branch ({'; '.join(reasons)}) — rebase onto "
+            f"{base_ref}, triage with rebase_overlap.py, and re-run this gate"
         )
     if not files and only:
         # Checked BEFORE the bare no-files case: with `--only` the inventory is
@@ -1501,7 +1658,7 @@ def gate(
         # The limiters matched paths, but every one of them is also an excluded
         # generated family, so the diff came out empty.
         blockers.append(
-            f"{out} is empty: --only {', '.join(only)} matched "
+            f"the review diff is empty: --only {', '.join(only)} matched "
             f"{len(files)} path(s), but all of them are excluded generated "
             f"families ({', '.join(DIFF_EXCLUDES)})"
         )
@@ -1510,7 +1667,7 @@ def gate(
         # generated family, so there is no *source* to fan out over — but the
         # step 9/10 artifact and suite gates still have real work to do.
         blockers.append(
-            f"{out} is empty because every changed path is an excluded generated "
+            f"the review diff is empty because every changed path is an excluded generated "
             f"family ({', '.join(DIFF_EXCLUDES)}) — no source to review, but the "
             f"regeneration and suite gates still apply"
         )
@@ -1524,6 +1681,9 @@ def gate(
         "fetch_error": fetch_error,
         "base_fresh": base_fresh,
         "base_ahead": base_ahead,
+        # Null when the base is fresh; otherwise why its movement does or does
+        # not block (see `base_drift`).
+        "base_drift": drift,
         "commits": commits,
         "diff_path": str(out),
         "diff_lines": diff_lines,
@@ -1538,7 +1698,7 @@ def gate(
         "code_crates": sum(1 for b in crates.values() if b["has_source"]),
         "runs_rust_suites": runs_rust_suites,
         "rust_reachable": rust_reachable,
-        # The diff paths a Rust file compiles in via `include_str!`, whether or
+        # The diff paths a Rust file reads as a fixture, whether or
         # not CI's `code` filter excludes them — NOT only the excluded ones (the
         # scan's docstring records that thirty of the thirty-one unmatched
         # fixtures are CI-visible). Non-empty is the "run the full local suite
@@ -1574,6 +1734,7 @@ GATE_ONLY_FIELDS = (
     "fetch_error",
     "base_fresh",
     "base_ahead",
+    "base_drift",
     "diff_empty",
     "ready",
     "blockers",
@@ -1667,17 +1828,34 @@ def run(argv: list[str]) -> int:
         sys.stdout.write("\n")
         return 0
 
-    if args.out is None:
-        raise ReviewDiffError("--out is required (except with --print-grep-excludes)")
+    if args.gate_only and args.split:
+        raise ReviewDiffError("--gate-only writes no diff, so it takes no --split")
 
-    verdict = gate(
-        args.base,
-        Path(args.out),
-        fetch=not args.no_fetch,
-        split=args.split,
-        only=args.only,
-        overlap=args.overlap,
-    )
+    def run_gate(out: Path) -> dict:
+        return gate(
+            args.base,
+            out,
+            fetch=not args.no_fetch,
+            split=args.split,
+            only=args.only,
+            overlap=args.overlap,
+        )
+
+    if args.gate_only:
+        # A probe writes NO diff where a reader would look, whatever `--out`
+        # says. It used to rewrite the shared `--out` file, so a mid-review probe
+        # against a moved base replaced the diff the cross-check was about to read
+        # (a 99-line diff became 2,706 lines carrying a merged PR in reverse).
+        # The gating still needs a diff for `diff_empty` and the prose shape, so
+        # it gets a private one that dies with the call.
+        with tempfile.TemporaryDirectory() as tmp:
+            verdict = run_gate(Path(tmp) / "gate-probe.diff")
+    elif args.out is None:
+        raise ReviewDiffError(
+            "--out is required (except with --gate-only or --print-grep-excludes)"
+        )
+    else:
+        verdict = run_gate(Path(args.out))
     # Narrow AFTER gating, never instead of it: the exit status below and the
     # blockers both have to reflect the full computation, so --gate-only is a
     # projection of the answer and not a cheaper way of reaching one.
