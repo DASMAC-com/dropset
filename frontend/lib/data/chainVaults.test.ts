@@ -76,7 +76,7 @@ describe("chainVault", () => {
         openedAt: 0n,
         realizedPnl: 0n,
         realizedYield: 0n,
-        realizedFx: 0n,
+        realizedPrice: 0n,
       } as VaultDepositorHeader,
       v.vaultPubkey,
       "TGBP",
@@ -146,7 +146,7 @@ describe("chainPosition", () => {
       openedAt: 42n,
       realizedPnl: -3n * 10n ** 6n,
       realizedYield: 1n * 10n ** 6n,
-      realizedFx: -4n * 10n ** 6n,
+      realizedPrice: -4n * 10n ** 6n,
     } as VaultDepositorHeader;
     const p = chainPosition(header, "id", "TGBP", "USDC");
     expect(p.shares).toBe(100_000);
@@ -157,6 +157,6 @@ describe("chainPosition", () => {
     expect(p.openedAtSlot).toBe(42);
     expect(p.realizedPnl).toBe(-3);
     expect(p.realizedYield).toBe(1);
-    expect(p.realizedFx).toBe(-4);
+    expect(p.realizedPrice).toBe(-4);
   });
 });
