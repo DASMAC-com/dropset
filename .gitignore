@@ -36,7 +36,7 @@ sdk/ts/dist/
 # refreshes were its own.
 .claude/.allowlist-refresh.json
 
-# The seat allowance's sample log, one reading per upkeep pass, written by
+# The seat allowance's sample log, at most one reading per upkeep pass, written by
 # .claude/tools/subscription_usage.py --log. Machine-local: it samples one
 # operator's subscription.
 .claude/.allowance-samples.jsonl

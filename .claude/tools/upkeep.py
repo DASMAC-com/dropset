@@ -603,7 +603,8 @@ def cost_day_line(day: str, summary: dict) -> str:
         else ""
     )
     return (
-        f"{day}: Bedrock {fleet_cost.money(rec.get('expected', 0.0))} metered vs "
+        f"{day}: Bedrock {fleet_cost.money(rec.get('metered', 0.0))} metered "
+        f"({fleet_cost.money(rec.get('expected', 0.0))} with the classifier) vs "
         f"{fleet_cost.money(rec.get('billed_matched', 0.0))} billed, drift "
         f"{fleet_cost.pct(rec.get('drift'))}{mark}; seat "
         f"{fleet_cost.money(seat.get('dollars', 0.0))} at Bedrock rates over "
@@ -624,20 +625,45 @@ def step_cost(ctx: Ctx) -> None:
             for d, s in days
             if not s.get("provisional") and (s.get("reconcile") or {}).get("flagged")
         ]
+        # An unreadable transcript drops its spend from the meter, so a low
+        # metered total would otherwise pass as a clean day.
+        unreadable = report.get("unreadable_transcripts") or 0
+        line = (
+            f"{len(flagged)} settled day(s) flagged past "
+            f"{report.get('tolerance', 0):.0%} drift"
+        )
+        if unreadable:
+            line += f"; {unreadable} unreadable transcript(s) not metered"
         ctx.record(
             "fleet-cost",
-            f"{len(flagged)} settled day(s) flagged past "
-            f"{report.get('tolerance', 0):.0%} drift",
+            line if days else "reconcile reported no day",
+            ok=bool(days) and not unreadable,
             days=[cost_day_line(d, s) for d, s in days],
         )
     rc, out, err = ctx.tool(
         "subscription_usage.py", "--log", str(ctx.base / ".claude" / SAMPLES_NAME)
     )
+    lines = [ln for ln in out.splitlines() if ln.strip()]
     if rc == 0:
+        # Exit 0 also covers the no-credential and stale-token non-readings,
+        # which print one line and sample nothing. The sampled reading always
+        # prints a per-day line, so its absence is the tell.
+        sampled = any(" per day " in ln for ln in lines)
+        trouble = [ln for ln in lines if ln.startswith(("sample ", "sample log "))]
+        summary = (
+            "seat allowance, sampled for the per-day figure"
+            if sampled
+            else f"no reading, nothing sampled: {first_line(out)}"
+        )
+        # The per-day figure and any log trouble lead, so the list cap can only
+        # ever cut a limit row.
         ctx.record(
             "allowance",
-            "seat allowance, sampled for the per-day figure",
-            rows=[ln for ln in out.splitlines() if ln.strip()],
+            summary,
+            ok=sampled and not trouble,
+            rows=[ln for ln in lines if ln not in trouble and " per day " in ln]
+            + trouble
+            + [ln for ln in lines if ln not in trouble and " per day " not in ln],
         )
     else:
         reason = first_line(out) or first_line(err) or f"exit {rc}"

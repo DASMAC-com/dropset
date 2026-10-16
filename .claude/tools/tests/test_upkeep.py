@@ -418,7 +418,9 @@ class PassTests(unittest.TestCase):
         self.assertFalse(step["ok"])
         self.assertIn("failed", step["line"])
 
-    def _cost_steps(self, cost_rc, cost_out, usage=(0, "weekly  20%\n", "")):
+    SAMPLED = "weekly  20%\nweekly         per day  +4.8%  over 30.0h\n"
+
+    def _cost_steps(self, cost_rc, cost_out, usage=(0, SAMPLED, "")):
         base_run = FakeRun()
 
         def run(cmd, timeout, cwd=None):
@@ -440,6 +442,7 @@ class PassTests(unittest.TestCase):
                 "substrates": {"seat": {"dollars": 41.5, "sessions": 3}},
                 "provisional": provisional,
                 "reconcile": {
+                    "metered": 110.0,
                     "expected": 120.0,
                     "billed_matched": 100.0,
                     "drift": drift,
@@ -450,8 +453,8 @@ class PassTests(unittest.TestCase):
         report = {
             "tolerance": 0.15,
             "days": {
-                # The provisional day's flag is never counted.
-                "2026-10-07": day(False, True, None),
+                # A provisional day's flag is never counted, and never shown.
+                "2026-10-07": day(True, True, None),
                 "2026-10-06": day(True, False, 0.2),
             },
         }
@@ -461,16 +464,46 @@ class PassTests(unittest.TestCase):
         self.assertEqual(
             cost["days"],
             [
-                "2026-10-06: Bedrock $120.00 metered vs $100.00 billed, drift "
-                "+20.0% FLAGGED; seat $41.50 at Bedrock rates over 3 session(s), "
-                "no bill line",
-                "2026-10-07: Bedrock $120.00 metered vs $100.00 billed, drift "
-                "n/a (provisional); seat $41.50 at Bedrock rates over 3 "
-                "session(s), no bill line",
+                "2026-10-06: Bedrock $110.00 metered ($120.00 with the classifier) "
+                "vs $100.00 billed, drift +20.0% FLAGGED; seat $41.50 at Bedrock "
+                "rates over 3 session(s), no bill line",
+                "2026-10-07: Bedrock $110.00 metered ($120.00 with the classifier) "
+                "vs $100.00 billed, drift n/a (provisional); seat $41.50 at "
+                "Bedrock rates over 3 session(s), no bill line",
             ],
         )
         self.assertTrue(allowance["ok"])
-        self.assertEqual(allowance["rows"], ["weekly  20%"])
+        # The per-day figure leads, so the list cap can only cut a limit row.
+        self.assertEqual(
+            allowance["rows"],
+            ["weekly         per day  +4.8%  over 30.0h", "weekly  20%"],
+        )
+
+    def test_a_degraded_cost_read_is_not_reported_healthy(self):
+        report = {"tolerance": 0.15, "days": {}, "unreadable_transcripts": 0}
+        cost, _ = self._cost_steps(0, json.dumps(report))
+        self.assertFalse(cost["ok"])
+        self.assertEqual(cost["line"], "reconcile reported no day")
+        day = {"substrates": {}, "provisional": False, "reconcile": {}}
+        report = {"tolerance": 0.15, "days": {"2026-10-06": day}}
+        report["unreadable_transcripts"] = 2
+        cost, _ = self._cost_steps(0, json.dumps(report))
+        self.assertFalse(cost["ok"])
+        self.assertIn("2 unreadable transcript(s) not metered", cost["line"])
+
+    def test_an_exit_zero_non_reading_or_log_trouble_is_not_healthy(self):
+        stale = (0, "stale credential: the access token has expired\n", "")
+        _, allowance = self._cost_steps(0, json.dumps({"days": {}}), usage=stale)
+        self.assertFalse(allowance["ok"])
+        self.assertEqual(
+            allowance["line"],
+            "no reading, nothing sampled: stale credential: the access token "
+            "has expired",
+        )
+        usage = (0, self.SAMPLED + "sample not logged: disk full\n", "")
+        _, allowance = self._cost_steps(0, json.dumps({"days": {}}), usage=usage)
+        self.assertFalse(allowance["ok"])
+        self.assertEqual(allowance["rows"][1], "sample not logged: disk full")
 
     def test_the_allowance_is_sampled_into_the_base_checkouts_log(self):
         run = FakeRun()

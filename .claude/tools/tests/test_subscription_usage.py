@@ -401,7 +401,18 @@ class SampleLog(unittest.TestCase):
         out = self.logged(sample(24, 90, resets="2026-10-02 14:59Z"))
         self.assertIn("weekly         per day  window reset since the last sample", out)
 
-    def test_the_reading_is_appended_after_the_figure_is_taken(self):
+    def test_an_unknown_reset_time_gives_no_figure(self):
+        # Two `?` resets compare equal across a real rollover, so equality is
+        # no evidence the window is the same one.
+        out = self.logged(sample(24, 90, resets="?"))
+        self.assertIn("weekly         per day  reset time unknown, no figure", out)
+
+    def test_a_non_utf8_byte_spoils_only_its_own_line(self):
+        self.log.write_bytes(b"\xff\xfe garbage\n" + sample(30, 14).encode() + b"\n")
+        _, out, _, _ = self.invoke(FRESH, argv=("x", "--log", str(self.log)))
+        self.assertIn("weekly         per day  +4.8%  over 30.0h", out)
+
+    def test_malformed_lines_are_skipped_and_the_reading_appended(self):
         out = self.logged("not json", '{"at": "never"}')
         self.assertIn("weekly         per day  no sample 12h+ old yet", out)
         lines = self.log.read_text(encoding="utf-8").splitlines()

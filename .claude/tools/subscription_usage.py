@@ -280,9 +280,11 @@ def _numeric(value: object) -> bool:
 
 
 def read_samples(path: Path) -> list[dict]:
-    """The log's readings, oldest first; a missing log is an empty one."""
+    """The log's readings, oldest first; a missing log is an empty one. Any
+    other ``OSError`` propagates. A stray non-UTF-8 byte spoils only its own
+    line, which then fails to parse and is skipped."""
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return []
     samples = []
@@ -329,6 +331,9 @@ def per_day_lines(samples: list[dict], rows: list[dict], now: float) -> list[str
         head = f"{row['label']:<14} per day"
         if earlier is None:
             lines.append(f"{head}  no sample {MIN_SAMPLE_GAP_HOURS:g}h+ old yet")
+        elif "?" in (earlier[0].get("resets"), row["resets"]):
+            # Two unknown reset times compare equal across a real rollover.
+            lines.append(f"{head}  reset time unknown, no figure")
         elif earlier[0].get("resets") != row["resets"]:
             lines.append(f"{head}  window reset since the last sample")
         else:
@@ -398,7 +403,12 @@ def run(argv: list[str], read=read_credential, fetch=fetch_usage, now=time.time)
     if args.log is not None:
         # Read before appending, or this reading would be its own baseline.
         moment = now()
-        for line in per_day_lines(read_samples(args.log), rows, moment):
+        try:
+            samples = read_samples(args.log)
+        except OSError as exc:
+            print(f"sample log unreadable: {exc}")
+            samples = []
+        for line in per_day_lines(samples, rows, moment):
             print(line)
         try:
             append_sample(args.log, rows, moment)
