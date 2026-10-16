@@ -1,6 +1,7 @@
 import {
   decodeDropsetVaults,
   decodePrice,
+  dropsetProgramAddress,
   fetchAllMaybeVaultDepositorHeader,
   findVaultDepositorPda,
   initSimulator,
@@ -10,7 +11,7 @@ import {
 import type { SolanaClientRuntime } from "@solana/client";
 import { type Address, address } from "@solana/kit";
 import { resolveEclobRoute } from "../eclob/route";
-import { GET_MULTIPLE_ACCOUNTS_BATCH_SIZE } from "../env";
+import { CLUSTER, GET_MULTIPLE_ACCOUNTS_BATCH_SIZE } from "../env";
 import { stablecoinDecimals, stablecoinMint } from "./currencies";
 import type { VaultPosition } from "./positions";
 import {
@@ -190,17 +191,19 @@ export async function fetchChainPositions(
   markets: VaultMarket[],
 ): Promise<Map<string, VaultPosition>> {
   const signer = address(owner);
+  // The markets were found under this cluster's program, and their
+  // positions live under the same one.
+  const programAddress = dropsetProgramAddress(CLUSTER);
   const targets = await Promise.all(
     markets.flatMap((m) =>
       m.vaults.flatMap((v) => {
         const chain = v.chain;
         if (!chain) return [];
         return [
-          findVaultDepositorPda({
-            market: address(m.marketPubkey),
-            vaultIdx: chain.index,
-            signer,
-          }).then(([pda]) => ({
+          findVaultDepositorPda(
+            { market: address(m.marketPubkey), vaultIdx: chain.index, signer },
+            { programAddress },
+          ).then(([pda]) => ({
             pda,
             vaultId: v.vaultPubkey,
             base: m.base,
