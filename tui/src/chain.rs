@@ -360,14 +360,16 @@ pub fn build_close_vault_ix(
     market: &Pubkey,
     vault_idx: u32,
 ) -> Instruction {
-    let ix = CloseVault {
+    CloseVault {
         signer: *leader,
         market: *market,
         event_authority: event_authority(cluster),
         program: cluster.program_id(),
     }
-    .instruction(CloseVaultInstructionArgs { vault_idx });
-    retarget(cluster, ix)
+    .instruction(
+        cluster.deployment(),
+        CloseVaultInstructionArgs { vault_idx },
+    )
 }
 
 /// `swap` — a taker take against the market's live book. `side` is `0` for a
