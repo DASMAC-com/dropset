@@ -26,7 +26,7 @@ pub struct OverrideVaultNameEvent {
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
     )]
     pub admin: Pubkey,
-    /// The lock state written: true refuses the leader's `set_vault_name`.
+    /// The lock state written: `true` refuses the leader's `set_vault_name`.
     pub lock: bool,
     pub old_name: String,
     pub new_name: String,

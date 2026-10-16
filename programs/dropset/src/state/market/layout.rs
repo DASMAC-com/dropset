@@ -258,8 +258,8 @@ pub struct Vault {
     /// (`allocate_sector` zeroes the whole struct).
     pub tombstoned: PodBool,
     /// True when an admin has locked [`Vault::name`] via
-    /// `OverrideVaultName`, refusing the leader's `SetVaultName`. Set by
-    /// `FreezeVault`, cleared by `CloseVault`.
+    /// `override_vault_name`, refusing the leader's `set_vault_name`. Set
+    /// by `freeze_vault`, cleared by `close_vault`.
     pub name_locked: PodBool,
     /// The vault's single general reserve, always zero. Sized at roughly
     /// double the nameable post-launch carves (about ten percent of the

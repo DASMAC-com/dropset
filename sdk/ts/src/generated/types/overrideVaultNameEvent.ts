@@ -14,7 +14,7 @@ export type OverrideVaultNameEvent = { market: Address; sectorIdx: number;
  * identifies a vault across sector reuse; `sector_idx` alone does not.
  */
 vaultSeq: bigint; admin: Address; 
-/** The lock state written: true refuses the leader's `set_vault_name`. */
+/** The lock state written: `true` refuses the leader's `set_vault_name`. */
 lock: boolean; oldName: string; newName: string;  };
 
 export type OverrideVaultNameEventArgs = { market: Address; sectorIdx: number; 
@@ -23,7 +23,7 @@ export type OverrideVaultNameEventArgs = { market: Address; sectorIdx: number;
  * identifies a vault across sector reuse; `sector_idx` alone does not.
  */
 vaultSeq: number | bigint; admin: Address; 
-/** The lock state written: true refuses the leader's `set_vault_name`. */
+/** The lock state written: `true` refuses the leader's `set_vault_name`. */
 lock: boolean; oldName: string; newName: string;  };
 
 export function getOverrideVaultNameEventEncoder(): Encoder<OverrideVaultNameEventArgs> {

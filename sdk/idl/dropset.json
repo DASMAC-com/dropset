@@ -4906,7 +4906,7 @@
           {
             "name": "lock",
             "docs": [
-              "The lock state written: true refuses the leader's `set_vault_name`."
+              "The lock state written: `true` refuses the leader's `set_vault_name`."
             ],
             "type": "bool"
           },

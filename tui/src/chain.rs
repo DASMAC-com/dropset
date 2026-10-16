@@ -265,9 +265,11 @@ pub fn build_create_vault_ix(
 
 /// The bootstrap vault's name: `Vault ` plus the leader key's first eight
 /// base58 characters. Names are unique per market, and the program allows
-/// one live vault per leader per market, so a leader-derived name cannot
-/// collide with another bootstrap vault. Base58 is printable ASCII, which
-/// the name rules require.
+/// one live vault per leader per market, so a leader-derived name is
+/// practically unique among bootstrap vaults. It is not guaranteed: any
+/// leader may already hold the same name through `set_vault_name`, which
+/// fails this create with `VaultNameTaken`. Base58 is printable ASCII,
+/// which the name rules require.
 pub fn default_vault_name(leader: &Pubkey) -> String {
     format!("Vault {}", &leader.to_string()[..8])
 }

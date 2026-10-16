@@ -205,6 +205,7 @@ fn lock_refuses_the_leader_until_an_unlock() {
     // A distinct name, so the txn differs from the refused one above.
     f.set_vault_name_meta(&leader, 0, "Back again")
         .expect("unlocked, the leader renames again");
+    assert_eq!(name_of(&f, 0), "Back again");
 }
 
 #[test]
@@ -216,6 +217,10 @@ fn override_obeys_uniqueness_and_admin_gate() {
         .override_vault_name_meta(&admin, 1, "ALPHA", false)
         .expect_err("override cannot take a live name");
     common::assert_program_error(&err, DropsetError::VaultNameTaken);
+    let err = f
+        .override_vault_name_meta(&admin, 1, "caf\u{e9}", false)
+        .expect_err("override obeys the validity rules too");
+    common::assert_program_error(&err, DropsetError::InvalidVaultName);
 
     let stranger = f.funded_keypair(SIGNER_FUNDING_LAMPORTS);
     let err = f
@@ -241,6 +246,35 @@ fn freeze_blanks_locks_emits_and_frees_the_name() {
     // The frozen leader may re-enter, and the released name is free.
     f.create_vault_named_meta(0, f.authority.pubkey(), false, Pubkey::default(), "alpha")
         .expect("freeze releases the name");
+}
+
+#[test]
+fn override_reaches_a_frozen_vault() {
+    // The admin path is not refused where the leader's is: it is the only
+    // way to name or unlock a frozen vault.
+    let mut f = fixture_named("Alpha");
+    let admin = f.authority.insecure_clone();
+    f.freeze_vault_meta(&admin, 0).expect("freeze");
+    f.override_vault_name_meta(&admin, 0, "Frozen Desk", false)
+        .expect("admin overrides a frozen vault");
+    assert_eq!(name_of(&f, 0), "Frozen Desk");
+    assert!(!f.vault(0).name_locked.get());
+}
+
+#[test]
+fn leader_cannot_rename_a_tombstone_to_shed_a_lock() {
+    // Close blanks the name and clears the lock; refusing the tombstone
+    // rename is what keeps that release final.
+    let mut f = fixture_named("Alpha");
+    let leader = f.authority.insecure_clone();
+    f.override_vault_name_meta(&leader, 0, "Alpha", true)
+        .expect("admin locks the name");
+    f.close_vault_meta(&leader, 0).expect("close");
+    let err = f
+        .set_vault_name_meta(&leader, 0, "Alpha")
+        .expect_err("a tombstoned vault cannot be renamed by its leader");
+    common::assert_program_error(&err, DropsetError::VaultTombstoned);
+    assert_eq!(f.vault(0).name, [0; 32]);
 }
 
 #[test]

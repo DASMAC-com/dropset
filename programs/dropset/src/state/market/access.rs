@@ -68,8 +68,9 @@ pub trait VaultAccess {
 
     /// True when an occupied sector other than `except` carries a name
     /// that collides with `name` under [`super::names_collide`] — the
-    /// per-market uniqueness rule. Active and tombstoned vaults both
-    /// count (a frozen vault's name is already blank); an unset `name`
+    /// per-market uniqueness rule. Every occupied sector counts — active,
+    /// frozen and tombstoned (the last two are blank unless an admin
+    /// override named them); an unset `name`
     /// never collides. `except` is the sector being renamed, so a vault
     /// may re-case its own name; [`super::NULL_SECTOR`] on create.
     ///

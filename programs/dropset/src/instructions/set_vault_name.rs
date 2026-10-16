@@ -3,8 +3,12 @@
 //! Writes `Vault.name` under the shared rules
 //! ([`crate::state::encode_vault_name`]: printable ASCII, at most 32
 //! bytes, empty means unset) and the per-market, case-insensitive
-//! uniqueness walk. Refused on a frozen vault and on one whose name an
-//! admin locked through `override_vault_name`. The vault's identity is
+//! uniqueness walk. Refused on a frozen vault, on a tombstoned one, and on
+//! one whose name an admin locked through `override_vault_name`. The
+//! tombstone refusal is what makes `close_vault`'s release final: close
+//! blanks the name and clears the lock, so a leader renaming the tombstone
+//! afterwards would both re-take a released name and shed an admin lock.
+//! The vault's identity is
 //! `Vault::seq`, so a rename changes a label and nothing else. See the
 //! architecture spec § SetVaultName.
 
@@ -44,6 +48,7 @@ impl SetVaultName {
                 DropsetError::Unauthorized
             );
             require!(!vault.frozen.get(), DropsetError::VaultFrozen);
+            require!(!vault.tombstoned.get(), DropsetError::VaultTombstoned);
             require!(!vault.name_locked.get(), DropsetError::VaultNameLocked);
             (vault.seq.get(), decode_vault_name(&vault.name))
         };

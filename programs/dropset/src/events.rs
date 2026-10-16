@@ -98,7 +98,7 @@ pub struct OverrideVaultNameEvent {
     /// identifies a vault across sector reuse; `sector_idx` alone does not.
     pub vault_seq: u64,
     pub admin: Address,
-    /// The lock state written: true refuses the leader's `set_vault_name`.
+    /// The lock state written: `true` refuses the leader's `set_vault_name`.
     pub lock: bool,
     pub old_name: String,
     pub new_name: String,

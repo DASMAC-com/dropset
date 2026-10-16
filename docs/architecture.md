@@ -598,18 +598,21 @@ and rationale:
   because exhaustion would permanently brick vault creation on the
   market, and a `u32` is reachable at a zero create fee. Re-creating a
   market restarts the sequence; an indexer must fence that by time.
-  The pair of market and sequence number is the vault's UID.
+  Within one incarnation of the market, the pair of market and sequence
+  number is the vault's UID.
 - **The name is a label, not the identity.** `name` is at most 32 bytes
   of printable ASCII (`0x20`–`0x7E`), stored zero-padded; all-zero means
   unset. It is unique per market, case-insensitively, among occupied
-  sectors (active and tombstoned), and an unset name never collides —
+  sectors (active, frozen and tombstoned), and an unset name never collides —
   nothing else is checked (no URL grammar, no whitespace rules). The
   leader sets it at `CreateVault` and renames it with `SetVaultName`; an
   admin overrides it with `OverrideVaultName`, which can also set
   `name_locked` to refuse the leader's rename. The create fee and the
   admin override are the bound on abuse. `SetLeader` keeps the name and
   the lock, `FreezeVault` blanks the name and locks it, and `CloseVault`
-  blanks it and unlocks it, releasing the name for the market.
+  blanks it and unlocks it, releasing the name for the market. The
+  release is final for the leader: `SetVaultName` refuses a tombstoned
+  vault, so closing cannot be used to shed an admin lock.
 
 **`ReferencePrice` — stamp encoding.** `stamp` packs `market.nonce` at
 the last `SetReferencePrice` / `SetLiquidityProfile`, OR'd with
@@ -2064,8 +2067,10 @@ the name rules (see **Vault**): an invalid name rejects with
 `InvalidVaultName`, one another occupied sector on the market already
 carries (case-insensitively) with `VaultNameTaken`. The vault itself is
 excluded from that walk, so a leader may re-case its own name; the
-empty string blanks it. Refused on a frozen vault (`VaultFrozen`) and
-on an admin-locked name (`VaultNameLocked`). Emits `SetVaultNameEvent`
+empty string blanks it. Refused on a frozen vault (`VaultFrozen`), on
+a tombstoned vault (`VaultTombstoned`, so `CloseVault`'s release of the
+name and the lock is final), and on an admin-locked name
+(`VaultNameLocked`). Emits `SetVaultNameEvent`
 (`market`, `sector_idx`, `vault_seq`, `leader`, `old_name`,
 `new_name`).
 
