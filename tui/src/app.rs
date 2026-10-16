@@ -22,6 +22,7 @@ use crate::fills;
 use crate::job::{JobEvent, Logger};
 use crate::leader::{self, LeaderOp, Ticket};
 use crate::market;
+use crate::passive;
 use crate::ui;
 use crate::validator::Validator;
 use anyhow::Result;
@@ -109,6 +110,18 @@ pub enum LeaderPrompt {
     Amount { op: LeaderOp, buf: String },
     /// The sized ticket on screen; typing the confirmation word.
     Confirm { ticket: Box<Ticket>, buf: String },
+}
+
+/// The open passive-ladder prompt (see [`crate::passive`]) — the same two
+/// stages as [`LeaderPrompt`], with a parameter form in place of the amount.
+pub enum PassivePrompt {
+    /// Editing the ladder and its center.
+    Form(passive::Form),
+    /// The previewed ticket on screen; typing the confirmation word.
+    Confirm {
+        ticket: Box<passive::Ticket>,
+        buf: String,
+    },
 }
 
 /// The open ceremony prompt: a mainnet ceremony step's plan — its dry run,
@@ -204,6 +217,9 @@ pub struct App {
     /// The open leader deposit / withdraw prompt, if any. Like
     /// `amount_input`, it takes every keystroke while open.
     pub(crate) leader_prompt: Option<LeaderPrompt>,
+    /// The open passive-ladder prompt, if any — takes every keystroke while
+    /// open.
+    pub(crate) passive_prompt: Option<PassivePrompt>,
     /// The open ceremony prompt, if any — takes every keystroke while open.
     pub(crate) ceremony_prompt: Option<CeremonyPrompt>,
     /// The per-market maker-bot child processes the operator starts and stops.
@@ -309,6 +325,7 @@ impl App {
             swap_side: SwapSide::Buy,
             amount_input: None,
             leader_prompt: None,
+            passive_prompt: None,
             ceremony_prompt: None,
             bots: BotManager::new(),
             takers: BotManager::new(),
@@ -575,6 +592,10 @@ impl App {
             self.handle_leader_key(k);
             return Flow::Continue;
         }
+        if self.passive_prompt.is_some() {
+            self.handle_passive_key(k);
+            return Flow::Continue;
+        }
         if self.ceremony_prompt.is_some() {
             self.handle_ceremony_key(k);
             return Flow::Continue;
@@ -610,6 +631,11 @@ impl App {
             // amount → typed-`yes` prompt; the same entries are in the menu.
             KeyCode::Char('+') => self.run_action(Action::LeaderDeposit),
             KeyCode::Char('-') => self.run_action(Action::LeaderWithdraw),
+            // The passive ladder on the selected market — post one, or
+            // re-center the one resting; each opens its form → typed-`yes`
+            // prompt, and the same entries are in the menu.
+            KeyCode::Char('p') => self.run_action(Action::PassiveLadder),
+            KeyCode::Char('c') => self.run_action(Action::PassiveRecenter),
             // The kill switch, one keystroke from its typed-`yes` prompt.
             // Mainnet only: localnet runs its writes without a prompt, so
             // there a stray `K` would zero every demo ladder on the spot.
@@ -1037,6 +1063,118 @@ impl App {
         action::dispatch_leader(&self.ctx, ticket, self.tx.clone());
     }
 
+    /// Edit the open passive prompt. On the form, `↑`/`↓` pick a line, `←`/`→`
+    /// step it, digits type the price, and Enter builds the ticket from a fresh
+    /// read; on the confirm stage, Enter sends only on the exact word `yes`.
+    /// Esc — or any refusal along the way — closes it with nothing sent.
+    fn handle_passive_key(&mut self, k: KeyEvent) {
+        let Some(prompt) = self.passive_prompt.as_mut() else {
+            return;
+        };
+        if k.code == KeyCode::Esc {
+            self.passive_prompt = None;
+            self.log(
+                LogKind::Info,
+                "Passive prompt cancelled — nothing sent.".to_string(),
+            );
+            return;
+        }
+        match prompt {
+            PassivePrompt::Form(form) => match k.code {
+                KeyCode::Up => form.move_cursor(-1),
+                KeyCode::Down => form.move_cursor(1),
+                KeyCode::Left => form.step(-1),
+                KeyCode::Right => form.step(1),
+                KeyCode::Backspace => form.backspace(),
+                KeyCode::Char(c) => form.type_char(c),
+                KeyCode::Enter => {
+                    if let Some(PassivePrompt::Form(form)) = self.passive_prompt.take() {
+                        self.build_passive_ticket(form);
+                    }
+                }
+                _ => {}
+            },
+            PassivePrompt::Confirm { buf, .. } => match k.code {
+                KeyCode::Backspace => {
+                    buf.pop();
+                }
+                KeyCode::Char(c) if buf.len() < MAX_CONFIRM_CHARS => buf.push(c),
+                KeyCode::Enter => {
+                    if let Some(PassivePrompt::Confirm { ticket, buf }) = self.passive_prompt.take()
+                    {
+                        self.confirm_passive(*ticket, &buf);
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+
+    /// Build the passive ticket `form` describes against the selected market,
+    /// reading the leader's vault fresh, and move the prompt to the confirm
+    /// stage. A refusal keeps the form open so the operator can fix the field.
+    fn build_passive_ticket(&mut self, form: passive::Form) {
+        let label = form.op.label();
+        let Some(leader) = self.roster_leader else {
+            self.log(
+                LogKind::Err,
+                format!("{label} — no leader key; relaunch with --leader"),
+            );
+            return;
+        };
+        let Some(market) = self.chain.selected_market(self.selected_market).cloned() else {
+            self.log(LogKind::Err, format!("{label} — no market selected"));
+            return;
+        };
+        match passive::prepare(
+            &self.client,
+            &self.ctx.repo_root,
+            self.ctx.cluster,
+            &market,
+            &leader,
+            &form,
+        ) {
+            Ok(ticket) => {
+                self.passive_prompt = Some(PassivePrompt::Confirm {
+                    ticket: Box::new(ticket),
+                    buf: String::new(),
+                });
+            }
+            Err(e) => {
+                self.log(LogKind::Err, format!("{label} — {e:#}"));
+                self.passive_prompt = Some(PassivePrompt::Form(form));
+            }
+        }
+    }
+
+    /// Send `ticket` if `word` is exactly `yes`, re-checking the same gates
+    /// [`App::confirm_leader`] does.
+    fn confirm_passive(&mut self, ticket: passive::Ticket, word: &str) {
+        let label = ticket.op.label();
+        if !is_confirmation(word) {
+            self.log(
+                LogKind::Err,
+                format!("{label} — not confirmed; nothing sent"),
+            );
+            return;
+        }
+        if let Some(reason) = self.identity.write_refusal() {
+            self.log(LogKind::Err, format!("{label} — {reason}"));
+            return;
+        }
+        if let Err(e) = self.ctx.cluster.verify_genesis(&self.client) {
+            self.log(LogKind::Err, format!("{label} — {e:#}"));
+            return;
+        }
+        if self.job_running {
+            self.log(LogKind::Err, "A job is already running.".to_string());
+            return;
+        }
+        self.job_running = true;
+        self.log(LogKind::Info, format!("\u{25b6} {label}"));
+        action::dispatch_passive(&self.ctx, ticket, self.tx.clone());
+    }
+
     /// Edit the open ceremony prompt: Enter sends only on the exact word `yes`,
     /// Esc closes it with nothing sent.
     fn handle_ceremony_key(&mut self, k: KeyEvent) {
@@ -1191,6 +1329,14 @@ impl App {
                 op,
                 buf: String::new(),
             });
+            return;
+        }
+        if let Some(op) = action.passive_op() {
+            if self.job_running {
+                self.log(LogKind::Err, "A job is already running.".to_string());
+                return;
+            }
+            self.passive_prompt = Some(PassivePrompt::Form(passive::Form::new(op)));
             return;
         }
         if self.job_running {
@@ -1690,7 +1836,6 @@ mod tests {
         assert_eq!(Action::RotateLeader.leader_op(), None);
         assert_eq!(Action::Deposit.leader_op(), None);
     }
-
     #[test]
     fn parse_swap_amount_accepts_positive_integers_only() {
         assert_eq!(parse_swap_amount("10"), Some(10));

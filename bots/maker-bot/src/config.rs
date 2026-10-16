@@ -387,28 +387,9 @@ pub fn published_product(symbol: &str) -> Option<&'static str> {
         .find(|p| p.split_once('-').map(|(base, _)| base) == Some(symbol))
 }
 
-/// One rung of the quote ladder: a ppm offset from the reference price, a
-/// fraction of the inventory leg in bps, a flip spread, and a per-level
-/// expiry in each of the two domains the engine gates on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LadderLevel {
-    /// Offset from `reference_price`, in ppm (bids subtract, asks add).
-    pub offset_ppm: u32,
-    /// Flip spread, in ppm off this level's own price: once filled, the
-    /// proceeds rest on the opposite side that far back toward the reference.
-    /// `0` does not flip — the active ladder's setting, since an active bot
-    /// re-stamps faster than a flip would earn.
-    pub flip_spread_ppm: u32,
-    /// Fraction of the inventory leg, in bps (10000 = 100%).
-    pub size_bps: u16,
-    /// Seconds after the quote's `quote_unix` wall-clock datum at which
-    /// this level expires.
-    pub expiry_offset_secs: WallSpan,
-    /// Slots after the quote's `quote_slot` datum at which this level
-    /// expires — the second, independent bound.
-    /// [`SlotSpan::UNBOUNDED`] leaves a level bounded only in wall time.
-    pub expiry_offset_slots: SlotSpan,
-}
+// The ladder vocabulary lives in the SDK so the TUI's passive-ladder action
+// builds through the same rules as this bot.
+pub use dropset_sdk::ladder::{LadderLevel, PASSIVE_FLIP_SPREAD_PPM, PASSIVE_SPACING_PPM};
 
 /// The spec's hand-shaped ladder (§2 + the §3 expiry table): top-of-book at
 /// 50 bps taking 40% of the leg and expiring fastest, widening and shrinking
@@ -478,17 +459,6 @@ pub const DEFAULT_LADDER: [LadderLevel; 4] = [
         expiry_offset_slots: SlotSpan::UNBOUNDED,
     },
 ];
-
-/// The passive ladder's level spacing: 5 bps between adjacent rungs, the
-/// first rung 5 bps off the reference.
-pub const PASSIVE_SPACING_PPM: u32 = 500;
-
-/// The passive ladder's flip spread: 2 bps, inside the 5 bps spacing, so a
-/// filled level's flipped side never crosses the next rung in (§2). That is
-/// the maker's whole earn per round trip — the taker fee is protocol revenue
-/// — so 2 bps is the economics of a 1 bp concentrated-liquidity pool.
-pub const PASSIVE_FLIP_SPREAD_PPM: u32 = 200;
-const _: () = assert!(PASSIVE_FLIP_SPREAD_PPM <= PASSIVE_SPACING_PPM);
 
 /// One passive rung at the standard spacing and flip spread. Neither expiry
 /// domain is bounded: a passive book is meant to be walked away from, so
@@ -969,6 +939,14 @@ mod tests {
             assert!(w[1].offset_ppm > w[0].offset_ppm);
             assert!(w[1].size_bps < w[0].size_bps);
         }
+    }
+
+    /// The bot's table is the SDK builder's default output, so the TUI's
+    /// passive-ladder action and this bot deploy the same book.
+    #[test]
+    fn passive_ladder_matches_the_shared_builder() {
+        let shared = dropset_sdk::ladder::PassiveLadder::default().levels();
+        assert_eq!(DEFAULT_PASSIVE_LADDER.to_vec(), shared);
     }
 
     /// Switching to passive swaps the ladder with the mode and leaves every
