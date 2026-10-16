@@ -13,8 +13,10 @@ order of calls (create, re-select, type), which a recording fake pins exactly.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -98,7 +100,10 @@ class DriverStub:
             setattr, iterm_api, "bundled_interpreter", iterm_api.bundled_interpreter
         )
         self.addCleanup(setattr, iterm_api, "subprocess", iterm_api.subprocess)
+        self.addCleanup(setattr, iterm_api, "caller_tty", iterm_api.caller_tty)
         iterm_api.preflight = lambda: preflight
+        # Otherwise `caller_tty`'s own `ps` call would hit the subprocess stub.
+        iterm_api.caller_tty = lambda: "/dev/ttys-caller"
         iterm_api.bundled_interpreter = lambda root=None: Path("/bin/true")
 
         self.sent = {}
@@ -189,7 +194,11 @@ class CallContract(DriverStub, unittest.TestCase):
         iterm_api.open_tabs(["task anthropic 1234"])
         self.assertEqual(
             self.sent_request(),
-            {"op": "open_tabs", "commands": ["task anthropic 1234"]},
+            {
+                "op": "open_tabs",
+                "commands": ["task anthropic 1234"],
+                "caller_tty": "/dev/ttys-caller",
+            },
         )
 
     def test_open_tabs_sends_every_command_in_order(self):
@@ -197,8 +206,36 @@ class CallContract(DriverStub, unittest.TestCase):
         iterm_api.open_tabs(["task resume 1", "task resume 2"])
         self.assertEqual(
             self.sent_request(),
-            {"op": "open_tabs", "commands": ["task resume 1", "task resume 2"]},
+            {
+                "op": "open_tabs",
+                "commands": ["task resume 1", "task resume 2"],
+                "caller_tty": "/dev/ttys-caller",
+            },
         )
+
+    def test_an_explicit_tty_overrides_the_resolved_one(self):
+        self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/a"]}))
+        iterm_api.open_tabs(["task 1"], tty="/dev/ttys009")
+        self.assertEqual(self.sent_request()["caller_tty"], "/dev/ttys009")
+
+    def test_landing_in_the_callers_window_is_silent(self):
+        self._stub(
+            stdout=json.dumps({"ok": True, "ttys": ["/dev/a"], "window": "caller"})
+        )
+        with redirect_stderr(io.StringIO()) as err:
+            iterm_api.open_tabs(["task 1"])
+        self.assertEqual(err.getvalue(), "")
+
+    def test_a_fallback_window_is_said_out_loud(self):
+        # The tabs still open, so the batch succeeds — but somewhere the
+        # operator may not be looking, which is the incident this guards.
+        self._stub(
+            stdout=json.dumps({"ok": True, "ttys": ["/dev/a"], "window": "current"})
+        )
+        with redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(iterm_api.open_tabs(["task 1"]), ["/dev/a"])
+        self.assertIn("/dev/ttys-caller", err.getvalue())
+        self.assertIn("focused window", err.getvalue())
 
     def test_the_batch_timeout_scales_with_the_command_count(self):
         # A fixed budget generous for one tab is not generous for twenty, and
@@ -694,6 +731,145 @@ class FocusIsHandedBack(unittest.TestCase):
         self.assertEqual(ttys, ["/dev/a", "/dev/b"])
         # Nothing may land in the retry set, or a caller would double it.
         self.assertEqual(untyped, [])
+
+
+class CallerTty(unittest.TestCase):
+    """The caller's tty is found up the process tree, never on its own streams."""
+
+    @staticmethod
+    def _ps(rows):
+        return lambda pid: rows.get(pid)
+
+    def test_climbs_past_parents_without_a_tty_to_the_first_tty(self):
+        # The measured shape: the harness's shell has no tty, `claude` does.
+        rows = {100: (64443, "??"), 64443: (45844, "ttys022")}
+        self.assertEqual(iterm_api.caller_tty(100, ps=self._ps(rows)), "/dev/ttys022")
+
+    def test_a_direct_terminal_caller_resolves_at_the_first_hop(self):
+        rows = {100: (99, "ttys004")}
+        self.assertEqual(iterm_api.caller_tty(100, ps=self._ps(rows)), "/dev/ttys004")
+
+    def test_no_tty_anywhere_up_to_launchd_is_none(self):
+        rows = {100: (50, "??"), 50: (1, "??")}
+        self.assertIsNone(iterm_api.caller_tty(100, ps=self._ps(rows)))
+
+    def test_an_unanswerable_ps_is_none(self):
+        self.assertIsNone(iterm_api.caller_tty(100, ps=self._ps({})))
+
+    def test_a_self_parented_row_cannot_loop(self):
+        self.assertIsNone(iterm_api.caller_tty(100, ps=self._ps({100: (100, "??")})))
+
+    def test_a_ps_cycle_is_bounded(self):
+        rows = {100: (200, "?"), 200: (100, "?")}
+        self.assertIsNone(iterm_api.caller_tty(100, ps=self._ps(rows)))
+
+
+class CallerWindow(unittest.TestCase):
+    """Tabs go to the window holding the caller, not the one with focus."""
+
+    def setUp(self):
+        self.log = []
+
+    def _session(self, tty, *, unreadable=False):
+        log = self.log
+
+        class Session:
+            async def async_send_text(self, text):
+                log.append(("type", tty, text))
+
+            async def async_get_variable(self, _name):
+                if unreadable:
+                    raise RuntimeError("variable unreadable")
+                return tty
+
+        return Session()
+
+    def _tab(self, name, ttys, *, unreadable=False):
+        log = self.log
+        tab = type("Tab", (), {})()
+        tab.name = name
+        tab.sessions = [self._session(t, unreadable=unreadable) for t in ttys]
+
+        async def async_select(order_window_front=True):
+            log.append(("select", name, order_window_front))
+
+        tab.async_select = async_select
+        return tab
+
+    def _window(self, name, tabs):
+        log = self.log
+        test = self
+        window = type("Window", (), {})()
+        window.name = name
+        window.tabs = tabs
+        window.current_tab = tabs[0] if tabs else None
+        made = iter(range(100))
+
+        async def async_create_tab():
+            tab = test._tab(f"{name}-new{next(made)}", [f"/dev/{name}-new"])
+            log.append(("create", name))
+            return tab
+
+        window.async_create_tab = async_create_tab
+        return window
+
+    def _two_windows(self):
+        # The incident: the demo window is CURRENT (listed first, as iTerm's
+        # focused would be); the caller sits in the other one, in a second tab.
+        demo = self._window("demo", [self._tab("demo-1", ["/dev/ttys001"])])
+        planning = self._window(
+            "planning",
+            [
+                self._tab("planning-1", ["/dev/ttys010"]),
+                self._tab("planning-2", ["/dev/ttys011", "/dev/ttys022"]),
+            ],
+        )
+        return demo, planning
+
+    def test_finds_the_window_and_tab_holding_the_callers_session(self):
+        demo, planning = self._two_windows()
+        window, tab = asyncio.run(
+            iterm_api._caller_window([demo, planning], "/dev/ttys022")
+        )
+        self.assertIs(window, planning)
+        self.assertEqual(tab.name, "planning-2")
+
+    def test_tabs_open_in_the_callers_window_and_focus_returns_to_its_tab(self):
+        demo, planning = self._two_windows()
+        window, original = asyncio.run(
+            iterm_api._caller_window([demo, planning], "/dev/ttys022")
+        )
+        ttys, untyped = [], []
+        asyncio.run(
+            iterm_api._open_and_type(window, original, ["A", "B"], ttys, untyped)
+        )
+        created = [entry[1] for entry in self.log if entry[0] == "create"]
+        selected = {entry[1] for entry in self.log if entry[0] == "select"}
+        self.assertEqual(created, ["planning", "planning"])
+        # The caller's tab — not the window's first, and never the demo's.
+        self.assertEqual(selected, {"planning-2"})
+        self.assertEqual(untyped, [])
+
+    def test_no_matching_session_is_none_so_the_driver_falls_back(self):
+        demo, planning = self._two_windows()
+        self.assertEqual(
+            asyncio.run(iterm_api._caller_window([demo, planning], "/dev/ttys099")),
+            (None, None),
+        )
+
+    def test_no_tty_skips_the_walk(self):
+        demo, _ = self._two_windows()
+        self.assertEqual(
+            asyncio.run(iterm_api._caller_window([demo], None)), (None, None)
+        )
+
+    def test_an_unreadable_session_is_skipped_not_fatal(self):
+        broken = self._window("broken", [self._tab("b", ["x"], unreadable=True)])
+        _, planning = self._two_windows()
+        window, _ = asyncio.run(
+            iterm_api._caller_window([broken, planning], "/dev/ttys010")
+        )
+        self.assertIs(window, planning)
 
 
 if __name__ == "__main__":
