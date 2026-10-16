@@ -76,8 +76,9 @@ the document's state sections.
 1. **AWS operator chores are one attended session.** A program
    probe (the loader-v4 probe) stays a separate program item.
 
-1. **Fan-out gate.** Invoking `review-pr` pre-approves its
-   regular sub-agent fan-out.
+1. **Fan-out gate.** Invoking a seat verb pre-approves its
+   regular sub-agent fan-out — `review-pr`'s reviewers,
+   `audit-scope`'s cross-check, `plan`'s bootstrap lever fold.
 
 1. **Architect read-back.** Fold the operator's comments into the
    spec in place; the spec file in an architect worktree is
@@ -104,10 +105,8 @@ the document's state sections.
 1. **Housekeeping never costs a tab visit.** Upkeep runs as a tool
    inside the plan launch with its report in the bootstrap;
    destructive items are asked once in the planning tab; the
-   trim-lever fold reports by message and self-closes. Where the
-   trim-lever fold lives now that upkeep moved into the launch,
-   and what retires with the `housekeeping` verb, is an open
-   design question carried in the document until it is ratified.
+   trim-lever fold runs as a sub-agent of the planning session.
+   Neither costs a tab.
 
 1. **Dispatch never steals focus, and no notification for
    self-waiting.** A yellow tab is a trigger problem, not a window
@@ -123,9 +122,11 @@ the document's state sections.
    the operator names; the named exceptions are state, listed in
    the document's direction section.
 
-1. **Parked hygiene.** Every parked milestone is reviewed
-   intermittently; Follow-ups gets a count-and-offer line at
-   bootstrap (`SKILL.md` step 8).
+1. **Parked hygiene is a rhythm.** Every full bootstrap says each
+   parked milestone's count with its direction, machine-written by
+   upkeep; the lever pool folds there (ruling 23), and Follow-ups
+   and Audit findings get count-and-offer lines (`SKILL.md`
+   step 8).
 
 1. **Alpenglow proof is explicit.** The v3 port closes only with
    a recorded end-to-end deploy on an Alpenglow-enabled 4.3
@@ -136,9 +137,10 @@ the document's state sections.
 
 1. **Trim levers must not accumulate.** Nearly every PR files
    levers, acceptable only while the daily startup consumes them:
-   the fold folds the milestone every morning, the meta review
-   kills on doubt, and every full bootstrap says the lever count
-   with its direction since the previous stamp. A pool that grows
+   the bootstrap's fold sub-agent folds the milestone every
+   morning, the meta review kills on doubt, and every full
+   bootstrap says the lever count with its direction since the
+   previous stamp, as upkeep writes it. A pool that grows
    two bootstraps running is a filer defect (raise the reservoir
    bar), not a backlog. A couple hundred dollars a day is
    acceptable spend; unbounded growth is the only failure
@@ -218,7 +220,7 @@ the document's state sections.
 1. **Verbs**: `task`, `task anthropic`, `task resume`, `chore`,
    `chore anthropic`, `explore`, `plan`, `plan cycle`, `architect`
    (bare number, idempotent), `fleet`, and `housekeeping` until its
-   retirement is ratified (ruling 16). Audit issues dispatch as
+   retirement lands. Audit issues dispatch as
    `explore`.
 1. **Announce a fleet-wide toolchain change** (a global anchor or
    solana install) to every program-building session by message

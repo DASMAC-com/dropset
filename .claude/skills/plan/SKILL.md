@@ -91,8 +91,9 @@ operator lever, never this mechanism.
   python3 .claude/tools/plan_cycle.py check
   ```
 
-  On `"due": true` (a 250k prefix or 40 inbound messages), ask
-  once: cycle now? — yes recommended. On no, run
+  On `"due": true` (a 250k prefix or 40 inbound messages), and no
+  fold sub-agent still running (its notification would be lost),
+  ask once: cycle now? — yes recommended. On no, run
   `plan_cycle.py snooze` (+50k tokens / +15 messages).
 
 - **The procedure.** A one-line FYI to every live worker with an
@@ -106,8 +107,8 @@ operator lever, never this mechanism.
   close-out rewrite keeps it. A bootstrap finding today's date
   there is **warm**: read `rulings.md` and the document, run
   `ListAgents`, surface
-  the outstanding list — and skip the once-a-day duties (the meta
-  fold, the audit heartbeat, the parked counts, the upkeep
+  the outstanding list — and skip the once-a-day duties (the lever
+  and meta folds, the audit heartbeat, the parked counts, the upkeep
   report, step 8). No stamp
   means a full bootstrap.
 
@@ -131,7 +132,8 @@ handoff — and, warm or full:
 The `plan` launcher ran `.claude/tools/upkeep.py` before this
 session started and spliced its report under the document's
 machine-written `Upkeep report` heading, so the fetch above holds
-it; never re-run the pass here. Say what was pruned and dismissed
+it; never re-run the pass here. Say its `parked` line — each
+pool's count and direction (ruling 23) — what was pruned and dismissed
 (or would have been, unarmed), each refusal (unpushed work, an
 open PR — reported, never retried), and any inert guard,
 dangling reference or file near its size cap. Say the
@@ -148,6 +150,35 @@ are operator-only and ride step 8's `AskUserQuestion`:
   `allowlist.py add` per approved rule;
 - **the transcript-purge apply** — `/purge-conversations`, this
   yes being its approval.
+
+**Spawn the lever fold — every full bootstrap, unasked**, right
+after saying the parked counts, unless the report's line reads
+`Trim levers 0`. Invoking `plan` is the authorization (ruling 11).
+One fresh background `general-purpose` `Agent` — never a fork, no
+model override — whose brief is pointers, not content: the
+canonical brief from
+
+```sh
+python3 .claude/tools/lens_preamble.py --out <scratchpad>/fold.md \
+  --no-facts
+```
+
+then: list the pool with `trim_levers.py list`; run
+`/trim-context`; fold and kill with reasons, unasked (ruling 23);
+at most 40 turns; the final message is the report, at most thirty
+lines. Add one paragraph only for what the operator said that the
+document does not hold. The fold's reads stay in its context.
+
+**The bootstrap runs unattended until its one ask.** After the
+spawn, do every duty that asks nothing — the outstanding list,
+`fleet resume`, the overnight landing check, the board read, the
+Queue's honesty — then end the turn. The completion notification
+resumes it: say the report, record it under `In-session notes`,
+finish the board (the meta fold included, since the fold files
+into `Claude meta`), and stop at step 8's consolidated ask. A
+Discuss item or duty needing the operator's word joins that ask.
+While the fold runs, make **no** `Trim levers` or `Claude meta`
+write, and never fold levers by hand while a sub-agent can.
 
 Then read the board. **Which tier an issue sits in is the whole
 scoping signal:**

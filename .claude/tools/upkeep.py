@@ -12,7 +12,7 @@ Usage (from the base repo root; a worktree is refused):
 ``prune`` runs steps 4–7 alone, disarmed unless ``--apply`` — the
 ``housekeeping`` skill's prune step, so both passes apply the one rule below.
 
-``run`` executes eleven steps in order, each under its own timeout and each
+``run`` executes twelve steps in order, each under its own timeout and each
 **best-effort**: a failure is a report line, never an abort of later steps.
 The one exception is step 1 — running from anywhere but the base checkout
 refuses the whole pass, since every later step assumes it.
@@ -33,16 +33,19 @@ refuses the whole pass, since every later step assumes it.
     whose unpushed-work gate still applies);
  7. dismiss the eligible PRs' notifications, one thread at a time (never
     mark-all);
- 8. convention-reference check, hook-wiring check, the skill-size watch line
+ 8. the open count of each parked milestone, with its direction since the
+    previous stamp — the line the ``plan`` bootstrap says, and the lever
+    count its fold sub-agent's spawn gate reads;
+ 9. convention-reference check, hook-wiring check, the skill-size watch line
     (``skill_size --utilization``), allowlist cruft, and the
     monthly refresh gate — mining recent transcripts when due and stamping the
     marker whatever the yield, writing no allow-rule;
- 9. the fleet cost: ``fleet_cost reconcile`` per day (Bedrock metered beside
+10. the fleet cost: ``fleet_cost reconcile`` per day (Bedrock metered beside
     the bill, with its drift flag) and the seat allowance, which has no bill
     line, read with ``subscription_usage --log`` so each pass that gets a reading appends the one
     sample its per-day figure is derived from;
-10. the memory scan gate, then the memory audit when due;
-11. the transcript-purge dry-run manifest.
+11. the memory scan gate, then the memory audit when due;
+12. the transcript-purge dry-run manifest.
 
 **Arming.** Steps 6 and 7 run as dry runs and touch nothing unless
 ``DS_UPKEEP_ARMED=1`` is exported from the untracked runtime config. The
@@ -54,7 +57,8 @@ through its ``REPORT_END`` line — is replaced wholesale each run, bounded to
 ``REPORT_CHAR_CAP``. The same report
 prints to stdout (the standalone interface, and the fallback when Linear is
 unreachable); ``--json`` prints the structured twin instead. A local stamp beside
-the allowlist refresh marker answers ``ran-today`` with no network read; it is
+the allowlist refresh marker answers ``ran-today`` with no network read, and
+carries the parked counts the next pass measures direction against; it is
 written only when the report reached the document, so a ``--no-doc`` preview or
 a failed write never answers it. ``run --if-stale`` consults that stamp first
 and skips the pass when it already answers yes — the form the ``plan`` launcher
@@ -126,6 +130,9 @@ OPEN_PR_LIMIT = 100
 NOTIFICATIONS_PATH = "/notifications?all=true&per_page=50"
 
 RESOLVED_TYPES = ("completed", "canceled")
+# The parking milestones, in report order. Trim levers leads: its count is the
+# fold sub-agent's spawn gate.
+PARKED_MILESTONES = ("Trim levers", "Claude meta", "Follow-ups", "Audit findings")
 # A branch tied to an ENG issue: `eng-<n>` once `init-pr` has renamed it, or the
 # `worktree-<n>` that `claude -w <n>` creates and a read-only architect or
 # explore session never renames (`worktree-eng-<n>` before the bare-number
@@ -166,6 +173,8 @@ class Ctx:
     run: Runner = real_run
     # numbers -> {number: status type}; raises when Linear is unreachable.
     lookup: Callable[[list[int]], dict[int, str]] | None = None
+    # () -> {milestone: open count}; raises when Linear is unreachable.
+    parked: Callable[[], dict[str, int]] | None = None
     steps: list[dict] = field(default_factory=list)
     data: dict = field(default_factory=dict)
 
@@ -233,6 +242,20 @@ def linear_lookup(numbers: list[int]) -> dict[int, str]:
         if ident.startswith("ENG-"):
             out[int(issue["number"])] = (issue.get("state") or {}).get("type")
     return out
+
+
+def linear_parked() -> dict[str, int]:
+    """Open issues per parking milestone, in one read."""
+    key = linear_api.env_var("LINEAR_API_KEY")
+    project = linear_api.env_var("LINEAR_PROJECT_ID")
+    counts = dict.fromkeys(PARKED_MILESTONES, 0)
+    for issue in board_batch.fetch_open_in_milestones(
+        key, project, list(PARKED_MILESTONES)
+    ):
+        name = (issue.get("projectMilestone") or {}).get("name")
+        if name in counts:
+            counts[name] += 1
+    return counts
 
 
 # --- steps -----------------------------------------------------------------
@@ -471,6 +494,35 @@ def step_notifications(ctx: Ctx) -> None:
         f"dismissed {len(threads) - failed} notification(s)"
         + (f", {failed} failed" if failed else ""),
         ok=not failed,
+    )
+
+
+def direction(count: int, before: int | None) -> str:
+    if before is None:
+        return "no previous count"
+    if count == before:
+        return "unchanged"
+    return f"{'up' if count > before else 'down'} {abs(count - before)}"
+
+
+def step_parked(ctx: Ctx) -> None:
+    try:
+        counts = ctx.parked() if ctx.parked else None
+    except Exception as e:  # noqa: BLE001 — a failed read is a line, not a crash
+        ctx.record("parked", f"Linear unreachable ({first_line(str(e))})", False)
+        return
+    if counts is None:
+        ctx.record("parked", "no parked-count lookup configured", False)
+        return
+    previous = ctx.data.get("previous_parked") or {}
+    ctx.data["parked"] = counts
+    ctx.record(
+        "parked",
+        ", ".join(
+            f"{name} {counts.get(name, 0)} "
+            f"({direction(counts.get(name, 0), previous.get(name))})"
+            for name in PARKED_MILESTONES
+        ),
     )
 
 
@@ -748,6 +800,7 @@ STEPS = (
     ("board", step_board),
     ("prune", step_prune),
     ("notifications", step_notifications),
+    ("parked", step_parked),
     ("checks", step_checks),
     ("cost", step_cost),
     ("memory", step_memory),
@@ -771,11 +824,14 @@ def run_pass(ctx: Ctx, only: tuple[str, ...] | None = None) -> dict:
             ctx.record(
                 name, f"step crashed: {type(e).__name__}: {first_line(str(e))}", False
             )
-    return {
+    result = {
         "ran_at": ctx.now.isoformat(),
         "armed": ctx.armed,
         "steps": ctx.steps,
     }
+    if "parked" in ctx.data:
+        result["parked"] = ctx.data["parked"]
+    return result
 
 
 # --- report ----------------------------------------------------------------
@@ -915,11 +971,22 @@ def stamp_path(base: Path) -> Path:
     return base / ".claude" / STAMP_NAME
 
 
-def write_stamp(base: Path, now: datetime, armed: bool) -> None:
-    stamp_path(base).write_text(
-        json.dumps({"last_run": now.isoformat(), "armed": armed}) + "\n",
-        encoding="utf-8",
-    )
+def write_stamp(
+    base: Path, now: datetime, armed: bool, parked: dict | None = None
+) -> None:
+    stamp = {"last_run": now.isoformat(), "armed": armed}
+    if parked is not None:
+        stamp["parked"] = parked
+    stamp_path(base).write_text(json.dumps(stamp) + "\n", encoding="utf-8")
+
+
+def previous_parked(path: Path) -> dict | None:
+    """The parked counts the last stamped pass saw, or None before the first."""
+    try:
+        parked = json.loads(path.read_text("utf-8")).get("parked")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return parked if isinstance(parked, dict) else None
 
 
 def ran_today(path: Path, now: datetime) -> dict:
@@ -1000,8 +1067,10 @@ def run(argv: list[str]) -> int:
         armed=os.environ.get(ARM_ENV) == "1",
         now=now,
         lookup=linear_lookup,
+        parked=linear_parked,
     )
     ctx.data["trees"] = trees
+    ctx.data["previous_parked"] = previous_parked(stamp_path(base))
     result = run_pass(ctx)
     report = render(result)
     if not args.no_doc:
@@ -1018,7 +1087,10 @@ def run(argv: list[str]) -> int:
     # day's pass, so a preview or a failed write must not answer it.
     if result.get("doc") == "written":
         try:
-            write_stamp(base, now, ctx.armed)
+            # A failed count carries the last good one forward, so one Linear
+            # blip does not cost the next pass its direction.
+            parked = result.get("parked") or ctx.data["previous_parked"]
+            write_stamp(base, now, ctx.armed, parked)
         except OSError as e:
             print(f"upkeep: run stamp not written: {e}", file=sys.stderr)
     return 0
