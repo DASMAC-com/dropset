@@ -17,19 +17,17 @@ recipe that produced them, so nobody has to re-measure them.
   **arch v3**, overridable with `--arch` (or the `ANCHOR_BUILD_SBF_ARCH`
   environment variable) and `--tools-version`. It recognizes the
   `anchor-lang-v2` / `anchor-spl-v2` crate pair in its manifest detection.
-- **The build is held at v0** by the Makefile's exported
-  `ANCHOR_BUILD_SBF_ARCH`. The tests' litesvm runs the Agave 3.1 runtime,
-  whose sBPF v3 (SIMD-0178, -0179, -0189) predates the SIMD-0377 encoding
-  that platform-tools v1.57 emits. A v3 ELF built today fails to deploy there
-  with `Failed to parse ELF file: invalid file header`, even with every
-  feature enabled. The flip to v3 waits for litesvm's move to the Agave 4.x
-  runtime. The local validator already runs Agave 4.3 or later
-  (`make check-solana`).
-- **The gate that flip satisfies** is SIMD-0500: a validator refuses to
-  deploy, upgrade or finalize any ELF older than sBPF v3. It is listed for
-  Agave 4.4 on mainnet, but Agave 4.3 already carries it and a test validator
-  turns it on at genesis. So `dropset-tui` deactivates it when starting the
-  localnet validator, until the program builds for v3
+- **The program builds for v3**, the CLI's default; no make target passes
+  `--arch`. Loading that ELF needs the Agave 4.x runtime: Agave 3.1's sBPF v3
+  (SIMD-0178, -0179, -0189) predates the SIMD-0377 encoding that
+  platform-tools v1.57 emits, and fails the deploy with
+  `Failed to parse ELF file: invalid file header` even with every feature
+  enabled. The tests' litesvm and the local validator
+  (`make check-solana`) both run Agave 4.3.
+- **The gate v3 satisfies** is SIMD-0500: a validator refuses to deploy,
+  upgrade or finalize any ELF older than sBPF v3. It is listed for Agave 4.4
+  on mainnet, but Agave 4.3 already carries it and a test validator turns it
+  on at genesis, so the localnet deploy runs with it active
   ([`infra/localnet/README.md`](../infra/localnet/README.md)).
 - **Before this pin**, CI built the CLI from anchor-next at rev `2a191379`
   (June 3). Both anchor-next and the 2.0 branch at rc.2 hard-code
@@ -50,8 +48,8 @@ recipe that produced them, so nobody has to re-measure them.
 
 ## The entrypoint's syscall spelling
 
-The hand-written assembly entrypoint calls `sol_memcpy_`, and how that call
-is spelled decides what it encodes as:
+The hand-written assembly entrypoint calls `sol_memcpy_` by its static id
+(`SYS_MEMCPY_`), and how that call is spelled decides what it encodes as:
 
 - **`call sol_memcpy_`** (by symbol) encodes an internal call (source field 1)
   plus a relocation. A v0 loader resolves the relocation to the syscall.
@@ -60,8 +58,8 @@ is spelled decides what it encodes as:
   `sol_memcpy_`) encodes the static form, `85 00 00 00 a3 c4 7c 71`. This is
   what v3 dispatches, and what every Rust-side syscall in the same ELF lowers
   to. It is **not** version-agnostic: a v0 load on Agave 3.1 rejects it with
-  `Relative jump out of bounds` at that instruction. So the rewrite ships
-  together with the v3 flip, never before it.
+  `Relative jump out of bounds` at that instruction, so it is correct only
+  in the v3 build.
 - The constant must be a plain `.equ`: `build.rs` deliberately fails closed
   on `.equiv` and `.set`.
 

@@ -72,12 +72,6 @@ impl Drop for Validator {
 /// Set to `0` to start the localnet on Tower consensus instead of Alpenglow.
 const ALPENGLOW_ENV: &str = "DROPSET_LOCALNET_ALPENGLOW";
 
-/// SIMD-0500 ("Disable deployment of SBPF v0, v1 and v2 programs"). A test
-/// validator activates every feature it knows at genesis, and Agave 4.3 knows
-/// this one, so it would refuse the v0-held program ELF (docs/program-build.md)
-/// on deploy. Deactivated until the program builds for sBPF v3.
-const SIMD_0500_FEATURE: &str = "B8JJXCy5amZyWG9r7EnUYLwzXSXTxG7GZ1qZ1qggo83g";
-
 /// Ticks per slot giving mainnet's 200ms slots under Alpenglow (~250ms on the
 /// Tower opt-out). The 4.3 test validator paces
 /// slots by its tick count (64 ticks, ~400ms) whatever the SIMD-0525 slot-time
@@ -86,15 +80,13 @@ const SIMD_0500_FEATURE: &str = "B8JJXCy5amZyWG9r7EnUYLwzXSXTxG7GZ1qZ1qggo83g";
 const TICKS_PER_SLOT: &str = "32";
 
 /// The flags beyond ledger placement: Alpenglow at genesis unless `alpenglow`
-/// is off, plus the two stopgaps above. A single node starts Alpenglow from
-/// genesis, so this cannot rehearse mainnet's Tower-to-Alpenglow switch.
+/// is off, plus the tick-count stopgap above. Every feature the validator
+/// knows stays active, SIMD-0500's refusal of pre-v3 ELFs included, so a
+/// deploy here proves the program's sBPF v3 build loads. A single node starts
+/// Alpenglow from genesis, so this cannot rehearse mainnet's
+/// Tower-to-Alpenglow switch.
 fn consensus_args(alpenglow: bool) -> Vec<&'static str> {
-    let mut args = vec![
-        "--deactivate-feature",
-        SIMD_0500_FEATURE,
-        "--ticks-per-slot",
-        TICKS_PER_SLOT,
-    ];
+    let mut args = vec!["--ticks-per-slot", TICKS_PER_SLOT];
     if alpenglow {
         args.push("--alpenglow");
     }
@@ -142,9 +134,7 @@ mod tests {
         assert!(on.contains(&"--alpenglow"));
         assert!(!off.contains(&"--alpenglow"));
         for args in [&on, &off] {
-            assert!(args
-                .windows(2)
-                .any(|w| w == ["--deactivate-feature", SIMD_0500_FEATURE]));
+            assert!(!args.contains(&"--deactivate-feature"));
             assert!(args
                 .windows(2)
                 .any(|w| w == ["--ticks-per-slot", TICKS_PER_SLOT]));
