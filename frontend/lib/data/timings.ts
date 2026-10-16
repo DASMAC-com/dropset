@@ -156,8 +156,8 @@ export const CLOCK_PLAUSIBLE_MAX_UNIX = 4_102_444_800;
 // Alpenglow, where `finalized` trails head by about a slot; before it,
 // finalization took about 32 slots.
 //
-// Deliberately sized *in slots* rather than derived from the seconds margin by a slot-duration
-// conversion: SIMD-0525 stages slots 400 → 200 ms without touching
+// Deliberately sized *in slots* rather than derived from the seconds margin
+// by a slot-duration conversion: SIMD-0525 stages slots 400 → 200 ms without touching
 // `unix_timestamp` (docs/architecture.md), so any such conversion would
 // silently re-scale this margin at the switch — and the two domains are meant
 // to answer different failure modes, not to be two spellings of one.
