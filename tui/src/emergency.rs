@@ -756,8 +756,8 @@ mod tests {
 
     #[test]
     fn every_emergency_write_is_addressed_to_the_clusters_program() {
-        // Every builder takes the cluster's deployment, so a write aimed at
-        // the localnet id on mainnet no longer compiles; this pins the result.
+        // Every builder takes a deployment, so no write can omit its cluster;
+        // this pins that each one is handed the right one.
         let me = Pubkey::new_unique();
         let wallet = Keypair::new();
         let found = MarketSeats {

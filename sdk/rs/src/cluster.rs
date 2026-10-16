@@ -19,6 +19,10 @@
 //! that address on a public cluster. A [`Deployment`] can never resolve to
 //! it off localnet; a raw id arriving from configuration goes through
 //! [`Deployment::check_program_id`], which refuses it there.
+//!
+//! The generated CPI builders are the exception: they invoke whatever
+//! program account the on-chain caller hands them, so that caller must
+//! constrain it to its cluster's Dropset id.
 
 use std::fmt;
 use std::str::FromStr;
@@ -186,8 +190,9 @@ mod tests {
 
     /// The generated builders aim every program-id slot at the deployment
     /// they are handed: the instruction itself and the placeholder an
-    /// absent optional account takes. Guards the post-generation rewrite in
-    /// `sdk/codama/generate.mjs` against a renderer change.
+    /// absent optional account takes. A spot check of the post-generation
+    /// rewrite in `sdk/codama/generate.mjs`, which itself refuses any output
+    /// still naming the localnet id.
     #[test]
     fn generated_builders_follow_the_deployment() {
         let key = Pubkey::new_unique();
@@ -247,10 +252,6 @@ mod tests {
                 ix.accounts[12].pubkey, program,
                 "absent optional placeholder"
             );
-            assert!(ix
-                .accounts
-                .iter()
-                .all(|m| deployment == Deployment::Localnet || m.pubkey != DROPSET_ID));
         }
     }
 

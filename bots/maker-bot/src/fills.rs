@@ -462,7 +462,7 @@ fn decode_fill_event(data: &[u8]) -> Option<FillEvent> {
 mod tests {
     use super::*;
     use dropset_sdk::events::EVENT_IX_TAG_LE;
-    use dropset_sdk::DROPSET_ID;
+    use dropset_sdk::{DROPSET_ID, DROPSET_MAINNET_ID};
     use sha2::{Digest, Sha256};
     use solana_transaction_status_client_types::UiCompiledInstruction;
 
@@ -628,6 +628,40 @@ mod tests {
         );
         assert_eq!(fills.len(), 1, "only the DROPSET_ID-emitted event counts");
         assert_eq!(fills[0].event, event);
+    }
+
+    /// On mainnet the trusted emitter is the mainnet program: an event from a
+    /// program at the localnet id (deployable by anyone, its secret being
+    /// committed) is dropped even though it carries our `quote_authority`.
+    #[test]
+    fn a_mainnet_run_ignores_events_from_the_localnet_id() {
+        let quote_authority = Pubkey::new_unique();
+        let event = sample_event(quote_authority);
+        let account_keys = vec![DROPSET_ID, DROPSET_MAINNET_ID];
+        let impostor = vec![UiInnerInstructions {
+            index: 0,
+            instructions: vec![compiled_event_ix(0, &event)],
+        }];
+        let fills = attribute_fills(
+            &impostor,
+            &account_keys,
+            &Signature::default(),
+            &DROPSET_MAINNET_ID,
+            &quote_authority,
+        );
+        assert!(fills.is_empty(), "the localnet-id emitter is not trusted");
+        let genuine = vec![UiInnerInstructions {
+            index: 0,
+            instructions: vec![compiled_event_ix(1, &event)],
+        }];
+        let fills = attribute_fills(
+            &genuine,
+            &account_keys,
+            &Signature::default(),
+            &DROPSET_MAINNET_ID,
+            &quote_authority,
+        );
+        assert_eq!(fills.len(), 1, "the mainnet program's event counts");
     }
 
     /// An out-of-range `program_id_index` (e.g. an unresolved key) resolves to
