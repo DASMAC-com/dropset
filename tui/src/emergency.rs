@@ -583,6 +583,8 @@ mod tests {
                 quote_atoms: 10,
                 min_leader_share: 0,
                 winding_down: true,
+                hwm: 0,
+                perf_fee_rate: 0,
             }
         );
     }
