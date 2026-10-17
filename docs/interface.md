@@ -428,8 +428,8 @@ event codecs, PDA helpers). CI discipline:
   **exact** version (the Makefile's `ANCHOR_CLI_VERSION`, mirrored by the
   Tests workflow's `ANCHOR_VERSION`), which builds an **sBPF v3** ELF by
   default — held at v0 by the Makefile's `ANCHOR_BUILD_SBF_ARCH` until the
-  v3 flip lands as its own change (the test runtime, litesvm 0.18, and the
-  local validator now all run Agave 4.3). The exact pin
+  v3 flip lands as its own change (the test runtime, litesvm 0.18, now runs
+  Agave 4.3, as the local validator does). The exact pin
   rather than latest stable is deliberate: the CLI generates the IDL, so its
   version is part of the IDL-diff baseline below.
   The crate pin and the CLI pin move independently: a crate bump is its own
