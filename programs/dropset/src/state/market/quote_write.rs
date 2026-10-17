@@ -48,8 +48,8 @@ pub mod err {
 
 /// 8-byte Anchor account discriminator ahead of the header.
 const DISC_SIZE: usize = 8;
-/// `MarketHeader.nonce` is the header's first field, so it sits at the
-/// top of the data region just past the discriminator.
+/// `MarketHeader.nonce`, past the discriminator and the header fields
+/// ahead of it.
 pub(super) const NONCE_OFF: usize = DISC_SIZE + offset_of!(MarketHeader, nonce);
 /// Slab's `len: u32`, written immediately after the header.
 pub(super) const LEN_OFF: usize = DISC_SIZE + size_of::<MarketHeader>();

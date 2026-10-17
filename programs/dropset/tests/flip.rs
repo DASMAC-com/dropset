@@ -8,7 +8,7 @@ mod common;
 
 use anchor_v2_testing::{Keypair, Message, Signer, VersionedMessage, VersionedTransaction};
 use common::fixture::{flip_profile, simple_profile, Fixture, PROFILE_BYTES};
-use dropset::{FillEvent, Price, Vault, N_LEVELS};
+use dropset::{FillEvent, Price, Vault, LEG_KIND_FLIPPED, LEG_KIND_PRIMARY, N_LEVELS};
 use dropset_sdk::SWAP_COMPUTE_UNIT_LIMIT;
 use litesvm::types::TransactionMetadata;
 use solana_instruction::Instruction;
@@ -70,7 +70,7 @@ fn an_ask_fill_flips_and_the_round_trip_grows_the_level_by_the_spread() {
         &f.swap_meta(&taker, BUY, 100_000, Price::INFINITY.as_u32(), 1)
             .expect("buy"),
     );
-    let (dx, dq) = (fill.fill_base, fill.fill_quote);
+    let (dx, dq) = (fill.fill_base.get(), fill.fill_quote.get());
     let lvl = f.vault(0).remaining.asks[0];
     assert_eq!(
         lvl.size.get(),
@@ -83,6 +83,11 @@ fn an_ask_fill_flips_and_the_round_trip_grows_the_level_by_the_spread() {
         "flip credited the priced input leg"
     );
     assert!(lvl.flip_price.is_matchable() && lvl.flip_price < lvl.price);
+    // A primary leg: it consumed `size`, reports what is left of it, and
+    // carries the level's flip price so the spread reads off the event.
+    assert_eq!(fill.leg_kind, LEG_KIND_PRIMARY);
+    assert_eq!(fill.remaining_after.get(), lvl.size.get());
+    assert_eq!(fill.flip_price, lvl.flip_price);
 
     // The flipped bid is the only bid on the book; a large sell takes it
     // whole, so the level is bound and no residue applies.
@@ -90,11 +95,15 @@ fn an_ask_fill_flips_and_the_round_trip_grows_the_level_by_the_spread() {
         &f.swap_meta(&taker, SELL, 1_000_000, Price::ZERO.as_u32(), 1)
             .expect("sell back"),
     );
-    assert_eq!((back.sector_idx, back.level_idx), (0, 0));
+    assert_eq!((back.sector_idx.get(), back.level_idx.get()), (0, 0));
     assert_eq!(back.fill_price, lvl.flip_price, "fills at the flip price");
-    assert_eq!(back.fill_quote, dq, "the whole flipped bid fills");
+    assert_eq!(back.fill_quote.get(), dq, "the whole flipped bid fills");
     let credited = lvl.flip_price.base_for_quote(dq) as u64;
-    assert_eq!(back.fill_base, credited);
+    assert_eq!(back.fill_base.get(), credited);
+    // A flipped leg: it consumed `flip_size`, here to zero.
+    assert_eq!(back.leg_kind, LEG_KIND_FLIPPED);
+    assert_eq!(back.remaining_after.get(), 0);
+    assert_eq!(back.flip_price, lvl.flip_price);
 
     let after = f.vault(0).remaining.asks[0];
     assert_eq!(after.flip_size.get(), 0);
@@ -119,20 +128,27 @@ fn a_bid_fill_flips_and_the_round_trip_grows_the_level_by_the_spread() {
         &f.swap_meta(&taker, SELL, 100_000, Price::ZERO.as_u32(), 1)
             .expect("sell"),
     );
-    let (db, dq) = (fill.fill_base, fill.fill_quote);
+    let (db, dq) = (fill.fill_base.get(), fill.fill_quote.get());
     let lvl = f.vault(0).remaining.bids[0];
     assert_eq!(lvl.size.get(), SEED_QUOTE - dq);
     assert_eq!(lvl.flip_size.get(), db);
     assert!(lvl.flip_price.is_matchable() && lvl.flip_price > lvl.price);
+    // `remaining_after` is in the consumed side's atoms: quote on a bid.
+    assert_eq!(fill.leg_kind, LEG_KIND_PRIMARY);
+    assert_eq!(fill.remaining_after.get(), SEED_QUOTE - dq);
+    assert_eq!(fill.flip_price, lvl.flip_price);
 
     let back = only_fill(
         &f.swap_meta(&taker, BUY, 1_000_000, Price::INFINITY.as_u32(), 1)
             .expect("buy back"),
     );
     assert_eq!(back.fill_price, lvl.flip_price);
-    assert_eq!(back.fill_base, db, "the whole flipped ask fills");
+    assert_eq!(back.fill_base.get(), db, "the whole flipped ask fills");
     let credited = lvl.flip_price.quote_for_base(db) as u64;
-    assert_eq!(back.fill_quote, credited);
+    assert_eq!(back.fill_quote.get(), credited);
+    assert_eq!(back.leg_kind, LEG_KIND_FLIPPED);
+    assert_eq!(back.remaining_after.get(), 0);
+    assert_eq!(back.flip_price, lvl.flip_price);
 
     let after = f.vault(0).remaining.bids[0];
     assert_eq!(after.flip_size.get(), 0);
@@ -162,17 +178,22 @@ fn a_partial_fill_quotes_both_sides_of_the_level() {
         &f.swap_meta(&taker, SELL, 10_000, Price::ZERO.as_u32(), 1)
             .expect("sell into the flip"),
     );
-    assert_eq!(sell.level_idx, 0);
+    assert_eq!(sell.level_idx.get(), 0);
     assert_eq!(sell.fill_price, ask.flip_price);
     let ask = f.vault(0).remaining.asks[0];
     assert!(ask.size.get() > 0 && ask.flip_size.get() > 0, "still both");
+    // A flipped leg that leaves the counter non-zero reports what is left
+    // of `flip_size`, not of `size` and not a drained zero.
+    assert_eq!(sell.leg_kind, LEG_KIND_FLIPPED);
+    assert_eq!(sell.remaining_after.get(), ask.flip_size.get());
+    assert_eq!(sell.flip_price, ask.flip_price);
 
     // And the same level's own ask still fills a buy.
     let buy = only_fill(
         &f.swap_meta(&taker, BUY, 10_000, Price::INFINITY.as_u32(), 1)
             .expect("buy the own ask"),
     );
-    assert_eq!(buy.level_idx, 0);
+    assert_eq!(buy.level_idx.get(), 0);
     assert_eq!(buy.fill_price, ask.price);
     assert_custody(&f, 3);
 }
@@ -235,7 +256,7 @@ fn a_flush_resets_flipped_state() {
     let v = f.vault(0);
     assert_eq!(v.remaining.asks[0].flip_size.get(), 0, "flush re-centered");
     assert_eq!(fill.fill_price, v.remaining.bids[0].price);
-    assert_eq!(v.remaining.bids[0].flip_size.get(), fill.fill_base);
+    assert_eq!(v.remaining.bids[0].flip_size.get(), fill.fill_base.get());
 }
 
 #[test]
@@ -288,6 +309,27 @@ fn a_zero_spread_never_flips() {
         assert_eq!(p.flip_price, Price::ZERO, "zero spread writes the sentinel");
         assert_eq!(p.flip_size.get(), 0, "zero spread never credits a flip");
     }
+    assert_eq!(sell.flip_price, Price::ZERO, "the event reports no flip");
+}
+
+#[test]
+fn a_full_spread_flushes_to_no_flip_and_reports_zero() {
+    // A 100% spread puts the ask's flip bid at zero, so the flush stores
+    // the `Price::ZERO` sentinel rather than a price, even though the
+    // spread itself is non-zero. The level never flips, and the event
+    // carries that zero through.
+    let profile = flip_profile(&[(5_000, 10_000, u32::MAX)], &[], 1_000_000);
+    let mut f = Fixture::seeded_with(SEED_BASE, SEED_QUOTE, profile);
+    let taker = f.funded_depositor(1_000_000, 1_000_000);
+    let fill = only_fill(
+        &f.swap_meta(&taker, BUY, 100_000, Price::INFINITY.as_u32(), 1)
+            .expect("buy"),
+    );
+    let lvl = f.vault(0).remaining.asks[0];
+    assert!(!lvl.flip_price.is_matchable(), "the flip cannot be matched");
+    assert_eq!(lvl.flip_size.get(), 0, "so nothing was credited");
+    assert_eq!(fill.leg_kind, LEG_KIND_PRIMARY);
+    assert_eq!(fill.flip_price, Price::ZERO, "the event reports no flip");
 }
 
 #[test]
@@ -361,7 +403,7 @@ fn send_at_max_cu(
 /// level, `2 × N_LEVELS × VAULTS`, the most a single take can see. The
 /// sells go one level at a time (a limit at that level's price), ten legs
 /// each, because what bounds a take is **not** compute: every filled leg
-/// buffers a `FillEvent` (208 B) for `lib.rs` to emit, in the 32 KiB bump
+/// buffers a `FillEvent` (256 B) for `lib.rs` to emit, in the 32 KiB bump
 /// heap that never reclaims, so the heap runs out long before the
 /// transaction's 1.4M CU do. The measured Buy therefore searches down from
 /// the whole book for the largest limit price whose take still completes.

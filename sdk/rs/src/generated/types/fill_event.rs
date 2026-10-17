@@ -33,32 +33,41 @@ pub struct FillEvent {
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
     )]
     pub quote_authority: Pubkey,
-    /// The taker's direction: `0` for a Buy, `1` for a Sell. It does not
-    /// name the array filled: a Buy fills either `asks[level_idx].size` or
-    /// the flipped `bids[level_idx].flip_size` (a filled bid's proceeds
-    /// resting as an ask), and a Sell the mirror. Tell the two apart by
-    /// comparing `fill_price` with `asks[level_idx].price` and
-    /// `bids[level_idx].flip_price` on a Buy (`bids[level_idx].price` and
-    /// `asks[level_idx].flip_price` on a Sell); where they coincide either
-    /// reading prices the fill identically.
-    pub side: u8,
-    /// Padding so subsequent fields are aligned-1-friendly without
-    /// implicit struct padding the bytemuck check would reject.
-    pub pad: [u8; 7],
     pub sector_idx: u32,
     pub level_idx: u32,
     /// The filled vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
     /// identifies a vault across sector reuse; `sector_idx` alone does not.
     pub vault_seq: u64,
+    pub fill_price: Price,
+    /// The level's `Position::flip_price` at emit, or zero when the level
+    /// cannot flip (its flip price is not matchable). On a primary leg it
+    /// is where the proceeds now rest, so the spread the level will
+    /// capture is `flip_price` against `fill_price` on the event alone.
+    /// On a flipped leg it equals `fill_price`: the leg filled at it.
+    pub flip_price: Price,
     pub fill_base: u64,
     pub fill_quote: u64,
-    pub fill_price: Price,
-    /// Padding to keep the next `u64` at an 8-byte boundary in the
-    /// fixed-size repr-C layout. `Price` is `u32`, so 4 bytes of pad
-    /// keep the struct stride well-defined.
-    pub pad2: [u8; 4],
+    /// The allowance left, after this leg, on the side it consumed, in
+    /// that side's atoms: `Position::size` for a primary leg,
+    /// `Position::flip_size` for a flipped one (see `leg_kind`).
+    pub remaining_after: u64,
     pub base_atoms_after: u64,
     pub quote_atoms_after: u64,
     pub nonce_after: u64,
     pub taker_fee_atoms: u64,
+    /// The taker's direction: `0` for a Buy, `1` for a Sell. It does not
+    /// name the array filled — a Buy fills either `asks[level_idx].size`
+    /// or the flipped `bids[level_idx].flip_size`, and a Sell the mirror;
+    /// `leg_kind` says which.
+    pub side: u8,
+    /// `LEG_KIND_PRIMARY` (`0`) when the leg consumed the ladder's own
+    /// side (`Position::size`), `LEG_KIND_FLIPPED` (`1`) when it consumed
+    /// the flipped side (`Position::flip_size`).
+    pub leg_kind: u8,
+    /// Reserve for later fields. A carve takes bytes from the front, moves
+    /// no other field, and reads all-zero as the pre-carve meaning — every
+    /// emit writes it zero; see the architecture spec's **Events and
+    /// emission**.
+    #[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::Bytes>"))]
+    pub reserved: [u8; 46],
 }

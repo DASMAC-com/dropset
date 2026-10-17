@@ -40,18 +40,18 @@ import { initSimulator } from './simulate';
 await initSimulator(readFileSync(new URL('./wasm/dropset_interface_bg.wasm', import.meta.url)));
 
 // Slab layout constants (mirror `layout.rs`): discriminator + on-chain
-// MarketHeader (261) = the offset of the u32 slab length; the first sector
-// starts at the next 4-byte boundary after it.
+// MarketHeader (396) = the offset of the u32 slab length; the first sector
+// starts at the next 4-byte boundary after it, which it already is.
 const DISCRIMINATOR = 8;
-const HEADER = 261;
-const LEN_AT = DISCRIMINATOR + HEADER; // 269
-const ITEMS_START = (LEN_AT + 4 + 3) & ~3; // 276
+const HEADER = 396;
+const LEN_AT = DISCRIMINATOR + HEADER; // 404
+const ITEMS_START = (LEN_AT + 4 + 3) & ~3; // 408
 const VAULT = 956;
 
 // MarketHeader field offsets, relative to the start of the header (i.e.
 // after the discriminator). Only `head` / `activeCount` matter to the reader.
-const H_HEAD = 8;
-const H_ACTIVE_COUNT = 20;
+const H_HEAD = 240;
+const H_ACTIVE_COUNT = 252;
 
 // Vault field offsets (relative to the sector start).
 const V_REF_STAMP = 80;

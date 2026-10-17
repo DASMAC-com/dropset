@@ -469,19 +469,21 @@ mod tests {
             taker: Pubkey::new_from_array([2; 32]),
             leader: Pubkey::new_from_array([3; 32]),
             quote_authority,
-            side: 1,
-            pad: [0; 7],
             sector_idx: 4,
             level_idx: 2,
             vault_seq: 1,
+            fill_price: 0x1234_5678,
+            flip_price: 0,
             fill_base: 1_000,
             fill_quote: 730,
-            fill_price: 0x1234_5678,
-            pad2: [0; 4],
+            remaining_after: 5_000,
             base_atoms_after: 9_000,
             quote_atoms_after: 8_000,
             nonce_after: 42,
             taker_fee_atoms: 7,
+            side: 1,
+            leg_kind: 0,
+            reserved: [0; 46],
         }
     }
 
@@ -495,9 +497,6 @@ mod tests {
         data
     }
 
-    /// The borsh body is exactly the on-chain `repr(C)` size — the explicit
-    /// padding fields make the two layouts byte-identical (208 bytes:
-    /// 4×32-byte keys + u8 + [u8;7] + 2×u32 + 3×u64 + u32 + [u8;4] + 4×u64).
     /// The subscribe URL reaches a column the read-only dashboard role can
     /// read, so every credential shape a hosted endpoint uses has to be gone
     /// before it gets there. The query case is the one the framework's
@@ -548,10 +547,13 @@ mod tests {
         assert_eq!(endpoint_label(""), "<endpoint>");
     }
 
+    /// The borsh body is exactly the on-chain `repr(C)` size — the struct is
+    /// padding-free, so the two layouts are byte-identical (256 bytes:
+    /// 4×32-byte keys + 2×u32 + u64 + 2×u32 + 7×u64 + 2×u8 + [u8;46]).
     #[test]
     fn body_is_the_fixed_event_size() {
         let body = borsh::to_vec(&sample_event(Pubkey::new_unique())).unwrap();
-        assert_eq!(body.len(), 208);
+        assert_eq!(body.len(), 256);
     }
 
     #[test]

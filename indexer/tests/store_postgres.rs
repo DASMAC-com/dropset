@@ -58,6 +58,10 @@ fn tagged(discriminator: [u8; 8], body: &impl borsh::BorshSerialize) -> Vec<u8> 
     data
 }
 
+/// The flip price and remaining allowance every [`fill`] leg carries.
+const FLIP_PRICE: u32 = 7;
+const REMAINING_AFTER: u64 = 42;
+
 /// One fill leg on `market`, priced so the take totals are easy to read.
 fn fill(market: Pubkey, base: u64, quote: u64, fee: u64) -> Vec<u8> {
     tagged(
@@ -67,19 +71,23 @@ fn fill(market: Pubkey, base: u64, quote: u64, fee: u64) -> Vec<u8> {
             taker: Pubkey::new_unique(),
             leader: Pubkey::new_unique(),
             quote_authority: Pubkey::new_unique(),
-            side: 0,
-            pad: [0; 7],
             sector_idx: 1,
             level_idx: 2,
             vault_seq: 1,
+            fill_price: 1,
+            // Distinct, recognizable values so the round trip below can
+            // tell the three 0022 columns apart.
+            flip_price: FLIP_PRICE,
             fill_base: base,
             fill_quote: quote,
-            fill_price: 1,
-            pad2: [0; 4],
+            remaining_after: REMAINING_AFTER,
             base_atoms_after: 0,
             quote_atoms_after: 0,
             nonce_after: 0,
             taker_fee_atoms: fee,
+            side: 0,
+            leg_kind: 1,
+            reserved: [0; 46],
         },
     )
 }
@@ -173,6 +181,15 @@ async fn store_sink_routes_events_to_their_tables_and_advances_the_cursor() {
 
     assert_eq!(count(&pool, "fill_events").await, 1);
     assert_eq!(count(&pool, "events").await, 1);
+    // The three columns 0022 added carry the event's values through.
+    let (leg_kind, flip_price, remaining_after): (Option<i16>, Option<i64>, Option<Decimal>) =
+        sqlx::query_as("SELECT leg_kind, flip_price, remaining_after FROM fill_events")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(leg_kind, Some(1));
+    assert_eq!(flip_price, Some(i64::from(FLIP_PRICE)));
+    assert_eq!(remaining_after, Some(Decimal::from(REMAINING_AFTER)));
     // The framework saves the resume cursor after the batch commits.
     let cursors = PgCursorStore::new(pool.clone());
     assert_eq!(cursors.load(feed).await.unwrap(), Some(cursor));

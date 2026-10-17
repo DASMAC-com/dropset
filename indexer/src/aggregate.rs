@@ -157,6 +157,9 @@ mod tests {
             quote_atoms_after: Decimal::ZERO,
             nonce_after: Decimal::ZERO,
             taker_fee_atoms: Decimal::from(fee),
+            leg_kind: Some(0),
+            flip_price: Some(0),
+            remaining_after: Some(Decimal::ZERO),
         }
     }
 

@@ -123,7 +123,7 @@ fn subscribe_and_forward(
             if tx
                 .send(JobEvent::Fill {
                     signature: sig.clone(),
-                    event,
+                    event: Box::new(event),
                 })
                 .is_err()
             {
@@ -253,19 +253,21 @@ mod tests {
             taker: Pubkey::new_from_array([2; 32]),
             leader: Pubkey::new_from_array([3; 32]),
             quote_authority: Pubkey::new_from_array([4; 32]),
-            side: 0,
-            pad: [0; 7],
             sector_idx: 0,
             level_idx: 0,
             vault_seq: 1,
+            fill_price: 0x1234_5678,
+            flip_price: 0,
             fill_base: 1_000_000,
             fill_quote: 1_140_000,
-            fill_price: 0x1234_5678,
-            pad2: [0; 4],
+            remaining_after: 0,
             base_atoms_after: 0,
             quote_atoms_after: 0,
             nonce_after: 1,
             taker_fee_atoms: 0,
+            side: 0,
+            leg_kind: 0,
+            reserved: [0; 46],
         }
     }
 

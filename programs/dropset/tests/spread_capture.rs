@@ -136,17 +136,21 @@ impl Tally {
     /// Book the flip-spread slice of one fill. `v` is the pre-take vault,
     /// whose level prices the take does not move.
     fn book(&mut self, v: &Vault, fill: &FillEvent) {
-        let l = fill.level_idx as usize;
+        let l = fill.level_idx.get() as usize;
         self.fills += 1;
         if fill.side == BUY && fill.fill_price != v.remaining.asks[l].price {
             // A flipped ask: the vault sold base above the bid it came from.
-            let own = v.remaining.bids[l].price.quote_for_base(fill.fill_base);
-            self.fee += fill.fill_quote as i128 - own as i128;
+            let own = v.remaining.bids[l]
+                .price
+                .quote_for_base(fill.fill_base.get());
+            self.fee += fill.fill_quote.get() as i128 - own as i128;
             self.flipped_buys += 1;
         } else if fill.side == SELL && fill.fill_price != v.remaining.bids[l].price {
             // A flipped bid: the vault bought base below the ask it came from.
-            let own = v.remaining.asks[l].price.quote_for_base(fill.fill_base);
-            self.fee += own as i128 - fill.fill_quote as i128;
+            let own = v.remaining.asks[l]
+                .price
+                .quote_for_base(fill.fill_base.get());
+            self.fee += own as i128 - fill.fill_quote.get() as i128;
             self.flipped_sells += 1;
         }
     }
@@ -226,7 +230,7 @@ fn take(
         .swap_meta(taker, side, amount_in, limit.as_u32(), 0)
         .expect("arbitrage take");
     let fills = common::events::fills(&meta);
-    let levels: BTreeSet<u32> = fills.iter().map(|fill| fill.level_idx).collect();
+    let levels: BTreeSet<u32> = fills.iter().map(|fill| fill.level_idx.get()).collect();
     if levels.len() > 1 {
         t.multi_level_takes += 1;
     }

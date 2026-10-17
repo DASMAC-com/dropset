@@ -135,11 +135,54 @@ pub fn send_ixn_signed_meta(
     signers: &[&Keypair],
     ixn: Instruction,
 ) -> Result<TransactionMetadata, String> {
+    let touched: Vec<Pubkey> = ixn.accounts.iter().map(|m| m.pubkey).collect();
     let blockhash = svm.latest_blockhash();
     let msg = Message::new_with_blockhash(&[ixn], Some(&signers[0].pubkey()), &blockhash);
     let txn = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), signers).unwrap();
-    svm.send_transaction(txn)
-        .map_err(|e| format!("{:?}", e.err))
+    let meta = svm
+        .send_transaction(txn)
+        .map_err(|e| format!("{:?}", e.err))?;
+    assert_reserves_zero(svm, &touched);
+    Ok(meta)
+}
+
+/// The carve rule's precondition, checked after every instruction the
+/// tests send: each `_reserved` block on every program-owned account the
+/// instruction touched is all-zero, so a later carve can read zero as its
+/// field's pre-carve meaning. Every header's reserve is its last field,
+/// so the span is `offset_of!(H, _reserved)..size_of::<H>()`.
+fn assert_reserves_zero(svm: &LiteSVM, touched: &[Pubkey]) {
+    use core::mem::{offset_of, size_of};
+    use dropset::{MarketHeader, RegistryHeader, VaultDepositorHeader};
+
+    for key in touched {
+        let Some(acct) = svm.get_account(key) else {
+            continue;
+        };
+        if acct.owner != PROGRAM_ID || acct.data.len() < 8 {
+            continue;
+        }
+        let (disc, body) = acct.data.split_at(8);
+        let (name, reserve) = if disc == RegistryHeader::DISCRIMINATOR {
+            let off = offset_of!(RegistryHeader, _reserved);
+            ("RegistryHeader", &body[off..size_of::<RegistryHeader>()])
+        } else if disc == MarketHeader::DISCRIMINATOR {
+            let off = offset_of!(MarketHeader, _reserved);
+            ("MarketHeader", &body[off..size_of::<MarketHeader>()])
+        } else if disc == VaultDepositorHeader::DISCRIMINATOR {
+            let off = offset_of!(VaultDepositorHeader, _reserved);
+            (
+                "VaultDepositorHeader",
+                &body[off..size_of::<VaultDepositorHeader>()],
+            )
+        } else {
+            continue;
+        };
+        assert!(
+            reserve.iter().all(|&b| b == 0),
+            "{name}._reserved at {key} is not all-zero after an instruction"
+        );
+    }
 }
 
 /// Decode a `Slab<H, T>` account buffer into `(header, tail items)`.

@@ -14,48 +14,6 @@ use solana_pubkey::Pubkey;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MarketHeader {
     pub discriminator: [u8; 8],
-    /// Per-fill / per-quote monotonic counter.
-    pub nonce: u64,
-    /// Head of the active DLL: sector index or `NULL_SECTOR`. Walked
-    /// by the matching engine on every taker.
-    pub head: u32,
-    /// Head of the tombstone DLL: sectors that have been `CloseVault`'d
-    /// but still hold outstanding shares. Not visited by matching.
-    pub tombstone_head: u32,
-    /// Head of the free DLL: sectors available for reuse on `CreateVault`.
-    /// Singly linked via `next`; `prev` is ignored.
-    pub free_head: u32,
-    /// Active-DLL length. Bounded by `registry.max_vaults_per_market`.
-    pub active_count: u32,
-    /// Number of live `VaultDepositor` PDAs across every vault on this
-    /// market (active and tombstoned). Incremented when an outside
-    /// `Deposit` opens a fresh `VaultDepositor`, decremented when
-    /// `Withdraw` closes one on `shares == 0` and when
-    /// `force_withdraw_depositor` closes one. **Not** incremented on
-    /// top-off (existing `VaultDepositor`). `close_market` requires
-    /// this to be zero — the only on-chain witness that no orphan
-    /// depositor PDAs remain, since the program cannot iterate all
-    /// PDAs to verify by enumeration. See the architecture spec,
-    /// **Account lifecycle and rent reclamation**.
-    pub outstanding_vault_depositors: u32,
-    /// Per-market create-vault fee: mint and amount. Seeded from
-    /// `Registry.default_fee_config` at market creation, then
-    /// admin-retunable via `SetMarketFeeConfig`.
-    pub fee_config: FeeConfig,
-    /// Taker fee rate, capped at ~6.55% (`Ppm16` max).
-    pub taker_fee: u16,
-    /// Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —
-    /// note the different denominator from `taker_fee` above. Seeded from
-    /// `Registry.default_max_platform_fee` at creation, then admin-retunable
-    /// via `SetMaxPlatformFee`.
-    ///
-    /// A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the
-    /// bound: every write path range-checks `<= BPS` so a market can never
-    /// hold a ceiling above 100% of the taker's output.
-    pub max_platform_fee: u16,
-    /// Default min-leader-share for vaults opened on this market.
-    /// Stamped from `Registry.default_min_leader_share` at creation.
-    pub default_min_leader_share: u32,
     /// Base leg mint.
     #[cfg_attr(
         feature = "serde",
@@ -81,6 +39,24 @@ pub struct MarketHeader {
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
     )]
     pub quote_treasury: Pubkey,
+    /// Per-market create-vault fee: mint and amount. Seeded from
+    /// `Registry.default_fee_config` at market creation, then
+    /// admin-retunable via `SetMarketFeeConfig`.
+    pub fee_config: FeeConfig,
+    /// Taker fee rate, capped at ~6.55% (`Ppm16` max).
+    pub taker_fee: u16,
+    /// Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —
+    /// note the different denominator from `taker_fee` above. Seeded from
+    /// `Registry.default_max_platform_fee` at creation, then admin-retunable
+    /// via `SetMaxPlatformFee`.
+    ///
+    /// A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the
+    /// bound: every write path range-checks `<= BPS` so a market can never
+    /// hold a ceiling above 100% of the taker's output.
+    pub max_platform_fee: u16,
+    /// Default min-leader-share for vaults opened on this market.
+    /// Stamped from `Registry.default_min_leader_share` at creation.
+    pub default_min_leader_share: u32,
     /// Protocol revenue accrued in `base_treasury`: the running sum of
     /// every taker fee charged on a base output leg (a taker `Buy`).
     /// These atoms sit physically in the treasury but belong to the
@@ -94,19 +70,48 @@ pub struct MarketHeader {
     pub accrued_base_fee_atoms: u64,
     /// Same as `accrued_base_fee_atoms`, for the quote leg (a taker `Sell`).
     pub accrued_quote_fee_atoms: u64,
-    /// Market PDA bump.
-    pub bump: u8,
+    /// Per-fill / per-quote monotonic counter.
+    pub nonce: u64,
     /// Last vault number handed out; `CreateVault` checked-increments it
     /// and stamps the result on `Vault::seq`, so the first vault on a
     /// market is `1`. A `u64` so exhaustion is physically unreachable —
     /// an overflow would permanently brick vault creation on the market.
     pub next_vault_seq: u64,
+    /// Head of the active DLL: sector index or `NULL_SECTOR`. Walked
+    /// by the matching engine on every taker.
+    pub head: u32,
+    /// Head of the tombstone DLL: sectors that have been `CloseVault`'d
+    /// but still hold outstanding shares. Not visited by matching.
+    pub tombstone_head: u32,
+    /// Head of the free DLL: sectors available for reuse on `CreateVault`.
+    /// Singly linked via `next`; `prev` is ignored.
+    pub free_head: u32,
+    /// Active-DLL length. Bounded by `registry.max_vaults_per_market`.
+    pub active_count: u32,
+    /// Number of live `VaultDepositor` PDAs across every vault on this
+    /// market (active and tombstoned). Incremented when an outside
+    /// `Deposit` opens a fresh `VaultDepositor`, decremented when
+    /// `Withdraw` closes one on `shares == 0` and when
+    /// `force_withdraw_depositor` closes one. **Not** incremented on
+    /// top-off (existing `VaultDepositor`). `close_market` requires
+    /// this to be zero — the only on-chain witness that no orphan
+    /// depositor PDAs remain, since the program cannot iterate all
+    /// PDAs to verify by enumeration. See the architecture spec,
+    /// **Account lifecycle and rent reclamation**.
+    pub outstanding_vault_depositors: u32,
+    /// Market PDA bump.
+    pub bump: u8,
+    /// Reserve for later fields. A carve takes bytes from the front, moves
+    /// no other field, and reads all-zero as the pre-carve meaning — see
+    /// the architecture spec's **MarketHeader**.
+    #[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::Bytes>"))]
+    pub reserved: [u8; 135],
 }
 
 pub const MARKET_HEADER_DISCRIMINATOR: [u8; 8] = [56, 105, 191, 242, 226, 243, 198, 164];
 
 impl MarketHeader {
-    pub const LEN: usize = 269;
+    pub const LEN: usize = 404;
 
     #[inline(always)]
     pub fn from_bytes(data: &[u8]) -> Result<Self, std::io::Error> {
