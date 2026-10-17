@@ -1,9 +1,9 @@
 //! `create_vault` integration tests — admin leader-override path,
 //! non-admin fee path, the perf-fee bound, the cap-exceeded gate, the
 //! quote-authority guard, active-DLL linkage, the `seq` vault-number
-//! stamp across the vault lifecycle, and the one-live-vault-per-leader
-//! guard. All built on the
-//! shared [`Fixture`].
+//! stamp across the vault lifecycle, and the one-open-vault-per-leader
+//! guard (frozen vaults count until reclaimed; unfrozen tombstones do
+//! not). All built on the shared [`Fixture`].
 
 mod common;
 
