@@ -48,9 +48,9 @@ use std::str::FromStr;
 /// The anchor v2 `emit_cpi!` self-CPI tag, little-endian — the 8-byte
 /// prefix on every event inner-instruction's data (`0x1d9acb512ea545e4`).
 ///
-/// Hand-copied so this crate stays free of the on-chain `anchor_lang_v2`
+/// Hand-copied so this crate stays free of the on-chain `anchor_lang`
 /// dependency. The program test crate's `sdk_event_tag_matches_anchor` pins
-/// this literal to `anchor_lang_v2::event::EVENT_IX_TAG_LE`, so a fork bump
+/// this literal to `anchor_lang::event::EVENT_IX_TAG_LE`, so a fork bump
 /// that moved the tag fails that test (or the build, if it also renamed the
 /// constant) rather than silently zeroing event decoding here and in the
 /// indexer.
@@ -331,7 +331,7 @@ pub fn strip_event_tag(inner_ix_data: &[u8]) -> Option<&[u8]> {
 /// `solana_transaction_status::UiLoadedAddresses` so this crate stays free
 /// of the transaction-status dependency (the same reason
 /// [`EVENT_IX_TAG`] is hand-copied rather than imported from
-/// `anchor_lang_v2`). Every caller has the two `Vec<String>` fields to
+/// `anchor_lang`). Every caller has the two `Vec<String>` fields to
 /// hand; unwrapping their `OptionSerializer` is three lines at the call
 /// site and keeps this the one shared, tested implementation.
 pub fn full_account_keys(

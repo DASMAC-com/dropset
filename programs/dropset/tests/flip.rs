@@ -427,17 +427,27 @@ fn a_fully_flipped_ten_vault_book_measures_the_largest_take() {
 /// this figure.
 const HEAP_CEILING_LEGS: usize = 16;
 
+/// Floor on the legs a cold take completes within what a bare `swap` gets
+/// with no budget instruction — the ordinary take, which must keep filling
+/// without one. Only a take that clears most of the book runs past it.
+/// Fifteen fit as measured; the floor keeps one leg of slack, since a cold
+/// take's CU moves by several thousand between runs (the fresh keys it
+/// derives from).
+const DEFAULT_BUDGET_LEGS: usize = 14;
+
 /// The costliest take that fills without stranding dust: a take on a cold
 /// ten-vault book (every vault flushed in the same transaction) sized leg
-/// by leg to the heap ceiling, on each side. It must fit what a bare `swap`
-/// gets with no budget instruction.
+/// by leg to the heap ceiling, on each side. The deepest of them needs the
+/// [`SWAP_COMPUTE_UNIT_LIMIT`] clients send; the first
+/// [`DEFAULT_BUDGET_LEGS`] legs must fit what a bare `swap` gets.
 #[test]
-fn a_cold_take_at_the_heap_ceiling_fits_the_default_instruction_budget() {
+fn a_cold_take_at_the_heap_ceiling_fits_the_swap_compute_budget() {
     for side in [SELL, BUY] {
-        let (legs, cu, stopped_by) = cold_take_to_the_heap_ceiling(side);
+        let (legs, cu, legs_in_default, stopped_by) = cold_take_to_the_heap_ceiling(side);
         println!(
             "cold side-{side} take to the heap ceiling over {VAULTS} vaults: {legs} \
-             legs, costliest {cu} CU; the next leg failed on: {stopped_by}"
+             legs, costliest {cu} CU, {legs_in_default} legs within the default \
+             budget; the next leg failed on: {stopped_by}"
         );
         assert_eq!(
             legs, HEAP_CEILING_LEGS,
@@ -448,9 +458,13 @@ fn a_cold_take_at_the_heap_ceiling_fits_the_default_instruction_budget() {
             "side {side}: the next leg should stop on the heap, stopped on: {stopped_by}"
         );
         assert!(
-            cu < common::DEFAULT_INSTRUCTION_CU,
-            "side {side}: the costliest cold take used {cu} CU, over the {} a bare \
-             swap gets",
+            cu < u64::from(SWAP_COMPUTE_UNIT_LIMIT),
+            "side {side}: the costliest cold take used {cu} CU, over the \
+             {SWAP_COMPUTE_UNIT_LIMIT} clients send"
+        );
+        assert!(
+            legs_in_default >= DEFAULT_BUDGET_LEGS,
+            "side {side}: only {legs_in_default} legs fit the {} a bare swap gets",
             common::DEFAULT_INSTRUCTION_CU
         );
     }
@@ -458,7 +472,9 @@ fn a_cold_take_at_the_heap_ceiling_fits_the_default_instruction_budget() {
 
 /// Size `side` takes on fresh cold books one leg at a time, from one full
 /// tie group up, until one fails. Returns the most legs a take completed,
-/// the costliest completing take's CU, and the failure that stopped it.
+/// the costliest completing take's CU, the most legs a take completed
+/// within [`common::DEFAULT_INSTRUCTION_CU`], and the failure that stopped
+/// it.
 ///
 /// Legs move ten at a time across the identical vaults when sized by limit
 /// price, so the sizes are built from input atoms instead: what the first
@@ -466,7 +482,7 @@ fn a_cold_take_at_the_heap_ceiling_fits_the_default_instruction_budget() {
 /// primed twin (the build is deterministic, and priming the measured book
 /// would warm it). Each size also runs one atom over, the remainder a
 /// level-capped leg can leave behind.
-fn cold_take_to_the_heap_ceiling(side: u8) -> (usize, u64, String) {
+fn cold_take_to_the_heap_ceiling(side: u8) -> (usize, u64, usize, String) {
     let (dust_limit, budget) = if side == SELL {
         (Price::ZERO.as_u32(), 20_000_000)
     } else {
@@ -500,7 +516,7 @@ fn cold_take_to_the_heap_ceiling(side: u8) -> (usize, u64, String) {
     }
     let (first_group, per_leg) = (consumed[0], consumed[1] / u64::from(VAULTS));
 
-    let (mut legs, mut cu) = (0, 0);
+    let (mut legs, mut cu, mut legs_in_default) = (0, 0, 0);
     for extra in 0..u64::from(VAULTS) {
         for remainder in [0, 1] {
             let (mut f, taker) = ten_vault_book();
@@ -508,14 +524,18 @@ fn cold_take_to_the_heap_ceiling(side: u8) -> (usize, u64, String) {
             let take = f.swap_ix(&taker.pubkey(), side, amount, dust_limit, 1);
             match send_at_max_cu(&mut f, &taker, take) {
                 Ok(meta) => {
-                    legs = legs.max(common::events::fills(&meta).len());
+                    let filled = common::events::fills(&meta).len();
+                    legs = legs.max(filled);
                     cu = cu.max(meta.compute_units_consumed);
+                    if meta.compute_units_consumed < common::DEFAULT_INSTRUCTION_CU {
+                        legs_in_default = legs_in_default.max(filled);
+                    }
                 }
-                Err(stopped_by) => return (legs, cu, stopped_by),
+                Err(stopped_by) => return (legs, cu, legs_in_default, stopped_by),
             }
         }
     }
-    (legs, cu, String::new())
+    (legs, cu, legs_in_default, String::new())
 }
 
 /// The costliest take that completes: a one-atom sell on a fully flipped

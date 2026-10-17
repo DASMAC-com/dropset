@@ -6,9 +6,9 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressEncoder, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
-import { expectAddress, expectSome, getAccountMetaFactory, type ResolvedAccount } from '../shared';
+import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
 export const FORCE_WITHDRAW_DEPOSITOR_DISCRIMINATOR = new Uint8Array([16]);
 
@@ -40,7 +40,7 @@ export type ForceWithdrawDepositorAsyncInput<TAccountAdmin extends string = stri
  */
 admin: TransactionSigner<TAccountAdmin>;
 /** Singleton registry, read for the admin-membership check. */
-registry?: Address<TAccountRegistry>;
+registry: Address<TAccountRegistry>;
 /** Market the vault lives on. */
 market: Address<TAccountMarket>;
 /**
@@ -56,7 +56,7 @@ market: Address<TAccountMarket>;
  */
 owner: Address<TAccountOwner>;
 /** The depositor's basis PDA. Closed to `owner` on full drain. */
-vaultDepositor?: Address<TAccountVaultDepositor>;
+vaultDepositor: Address<TAccountVaultDepositor>;
 baseMint: Address<TAccountBaseMint>;
 quoteMint: Address<TAccountQuoteMint>;
 baseTokenProgram: Address<TAccountBaseTokenProgram>;
@@ -90,12 +90,6 @@ const args = { ...input,  };
 
 
 // Resolve default values.
-if (!accounts.registry.value) {
-accounts.registry.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))] });
-}
-if (!accounts.vaultDepositor.value) {
-accounts.vaultDepositor.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([118, 97, 117, 108, 116, 95, 100, 101, 112, 111, 115, 105, 116, 111, 114])), getAddressEncoder().encode(expectAddress(accounts.market.value)), getU32Encoder().encode(expectSome(args.vaultIdx)), getAddressEncoder().encode(expectAddress(accounts.owner.value))] });
-}
 if (!accounts.associatedTokenProgram.value) {
 accounts.associatedTokenProgram.value = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL' as Address<'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'>;
 }

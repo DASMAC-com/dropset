@@ -22,7 +22,7 @@
 //! `write_liquidity_profile` kernel — the same kernel the assembly
 //! mirrors byte-for-byte.
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang::prelude::*;
 
 #[cfg(not(feature = "asm-entrypoint"))]
 use crate::state::write_liquidity_profile;
@@ -71,7 +71,7 @@ impl SetLiquidityProfile {
             // `Address` is a 32-byte `Pod` wrapper; reinterpret it as the
             // raw key bytes the kernel compares, without depending on its
             // inherent accessors.
-            let signer_key: &[u8; 32] = anchor_lang_v2::bytemuck::cast_ref(self.signer.address());
+            let signer_key: &[u8; 32] = anchor_lang::bytemuck::cast_ref(self.signer.address());
             // `AccountView` is `Copy` and borrow state lives in the shared
             // account header, so a local copy still tracks the one live
             // mutable borrow of the market's data.

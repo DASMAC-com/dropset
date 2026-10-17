@@ -32,12 +32,12 @@
 //! reconstructs the set of historical fee mints from it (see the spec's
 //! **Account lifecycle and rent reclamation**).
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang::prelude::*;
 // `mint` / `associated_token` stay in scope so the `mint::token_program`
 // constraint on `fee_mint` and the `associated_token::*` constraints on
-// `registry_fee_treasury` expand to their `anchor_spl_v2` markers.
+// `registry_fee_treasury` expand to their `anchor_spl` markers.
 #[allow(unused_imports)]
-use anchor_spl_v2::{
+use anchor_spl::{
     associated_token::{self, AssociatedToken},
     mint,
     token_interface::{Mint, TokenAccount, TokenInterface},
@@ -132,7 +132,7 @@ pub struct SetMarketFeeConfig {
     /// `Interface<TokenInterface>` rejects any non-token-program address
     /// up front; the `mint::token_program` constraint above then pins it
     /// to `fee_mint`'s actual owner.
-    pub fee_token_program: Interface<'static, TokenInterface>,
+    pub fee_token_program: Interface<TokenInterface>,
     /// Registry's fee ATA for the new mint. `CreateVault` charges the
     /// per-vault fee into this account but does **not** create it, so we
     /// create it here, eagerly, at config time — `init_if_needed` so

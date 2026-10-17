@@ -423,19 +423,17 @@ event codecs, PDA helpers). CI discipline:
 
 - **How the program is built** — the one canonical statement, which the
   Makefile and CI point at rather than restate. The **program crate** depends
-  on `anchor-lang-v2` from the `anchor-next` branch, pinned by the lockfile.
+  on `anchor-lang` 2.0 from the `anchor-next` branch, pinned by the lockfile.
   The **tooling** is the stable crates.io `anchor-cli`, pinned to an
   **exact** version (the Makefile's `ANCHOR_CLI_VERSION`, mirrored by the
   Tests workflow's `ANCHOR_VERSION`), which builds an **sBPF v3** ELF by
   default — held at v0 by the Makefile's `ANCHOR_BUILD_SBF_ARCH` until the
-  test runtime moves to Agave 4.x, since its Agave 3.1 cannot load that v3
-  ELF (the local validator is already on 4.3 or later). The exact pin
+  v3 flip lands as its own change (the test runtime, litesvm 0.18, now runs
+  Agave 4.3, as the local validator does). The exact pin
   rather than latest stable is deliberate: the CLI generates the IDL, so its
   version is part of the IDL-diff baseline below.
-  The crate pin and the CLI pin move independently, and a crate bump is now
-  a rename — the
-  `anchor-next` tip has renamed `anchor-lang-v2` to `anchor-lang` — so it is
-  its own decision, never a side effect of a CLI bump. The measured
+  The crate pin and the CLI pin move independently: a crate bump is its own
+  decision, never a side effect of a CLI bump. The measured
   toolchain facts and the probe recipe behind this bullet are in
   [program-build.md](program-build.md).
 - **Gate CI on a diff of the full regenerated IDL.** `metadata.spec` is the

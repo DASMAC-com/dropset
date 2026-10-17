@@ -15,7 +15,7 @@
 //! to the previous one. `(market, sector_idx, vault_seq)` is the stable
 //! vault identity.
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang::prelude::*;
 
 use crate::state::RealizeOutcome;
 use crate::Price;

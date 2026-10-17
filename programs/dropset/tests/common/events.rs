@@ -20,7 +20,7 @@
 
 #![allow(dead_code)]
 
-use anchor_lang_v2::{bytemuck, event::EVENT_IX_TAG_LE, Discriminator};
+use anchor_lang::{bytemuck, event::EVENT_IX_TAG_LE, Discriminator};
 use dropset::{
     CloseMarketTreasuryEvent, CloseRegistryFeeVaultEvent, CloseVaultEvent, CreateVaultEvent,
     DepositEvent, FillEvent, FreezeVaultEvent, PlatformFeeEvent, RealizeEvent,

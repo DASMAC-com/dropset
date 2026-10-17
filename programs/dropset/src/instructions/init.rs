@@ -3,13 +3,13 @@ use crate::{
     AdminSet, FeeConfig, Registry, DEFAULT_MAX_PLATFORM_FEE, DEFAULT_MAX_VAULTS_PER_MARKET,
     DEFAULT_MIN_LEADER_SHARE, DEFAULT_TAKER_FEE,
 };
-use anchor_lang_v2::{
+use anchor_lang::{
     address_eq,
     bytemuck::{self, Pod, Zeroable},
     find_and_verify_program_address,
     prelude::*,
 };
-use anchor_spl_v2::{
+use anchor_spl::{
     associated_token::AssociatedToken,
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
@@ -20,12 +20,12 @@ use anchor_spl_v2::{
 /// verification reads cleanly; the `solana-sdk-ids` re-export is a
 /// `Pubkey` that would otherwise need a conversion at every call site.
 const BPF_LOADER_UPGRADEABLE_ID: Address =
-    anchor_lang_v2::address!("BPFLoaderUpgradeab1e11111111111111111111111");
+    anchor_lang::address!("BPFLoaderUpgradeab1e11111111111111111111111");
 
 /// Expected `UpgradeableLoaderState::ProgramData` header.
 #[repr(C, packed)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-#[bytemuck(crate = "anchor_lang_v2::bytemuck")]
+#[bytemuck(crate = "anchor_lang::bytemuck")]
 struct ProgramDataHeader {
     enum_tag: u32,
     slot: u64,
@@ -90,7 +90,7 @@ pub struct Init {
     /// (`IncorrectProgramId`); the ATA seeds bake this in too, so a
     /// caller-supplied mismatch against `fee_mint`'s owner yields a
     /// non-canonical ATA and a separate `InvalidSeeds` rejection.
-    pub token_program: Interface<'static, TokenInterface>,
+    pub token_program: Interface<TokenInterface>,
     pub associated_token_program: Program<AssociatedToken>,
     pub system_program: Program<System>,
 }

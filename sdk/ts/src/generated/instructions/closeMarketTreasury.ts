@@ -37,7 +37,7 @@ export type CloseMarketTreasuryAsyncInput<TAccountAdmin extends string = string,
   /** Registry admin — authorized via the registry admin set. */
 admin: TransactionSigner<TAccountAdmin>;
 /** Singleton registry, read for the admin-membership check. */
-registry?: Address<TAccountRegistry>;
+registry: Address<TAccountRegistry>;
 /**
  * Market owning the treasury. `mut` so the leg's accrued-fee counter
  * can be zeroed as its atoms leave — the counter and the balance it
@@ -107,9 +107,6 @@ const accounts = originalAccounts as Record<keyof typeof originalAccounts, Resol
 
 
 // Resolve default values.
-if (!accounts.registry.value) {
-accounts.registry.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))] });
-}
 if (!accounts.tokenProgram.value) {
 accounts.tokenProgram.value = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' as Address<'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'>;
 }

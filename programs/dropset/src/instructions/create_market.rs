@@ -15,12 +15,12 @@
 //! refuses to initialize a treasury against a non-mint, so no extra
 //! mint plumbing is needed in this handler.
 
-use anchor_lang_v2::{address_eq, prelude::*};
+use anchor_lang::{address_eq, prelude::*};
 // `associated_token::{self, ...}` keeps the module in scope so the
 // derive can expand `associated_token::*` constraint expressions to
-// `anchor_spl_v2::associated_token::<Marker>` paths.
+// `anchor_spl::associated_token::<Marker>` paths.
 #[allow(unused_imports)]
-use anchor_spl_v2::{
+use anchor_spl::{
     associated_token::{self, AssociatedToken},
     token_2022::{transfer_checked, TransferChecked},
     token_interface::{Mint, TokenAccount, TokenInterface},
@@ -60,9 +60,9 @@ pub struct CreateMarket {
     /// with `IncorrectProgramId`; an actual `(mint, token_program)`
     /// owner mismatch surfaces later when the ATA program CPIs through
     /// to it.
-    pub base_token_program: Interface<'static, TokenInterface>,
+    pub base_token_program: Interface<TokenInterface>,
     /// Same for the quote leg.
-    pub quote_token_program: Interface<'static, TokenInterface>,
+    pub quote_token_program: Interface<TokenInterface>,
 
     /// Market PDA seeded by `(base_mint, quote_mint)`. The slab tail
     /// holds the vault sectors; we open with zero capacity here and
@@ -127,7 +127,7 @@ pub struct CreateMarket {
     /// rejected up front. The `Interface<TokenInterface>` bound is
     /// belt-and-braces — the address check already implies it.
     #[account(address = registry.default_fee_config.token_program)]
-    pub fee_token_program: Interface<'static, TokenInterface>,
+    pub fee_token_program: Interface<TokenInterface>,
     /// Caller's source ATA holding the fee mint. Only read on the
     /// non-admin path — admins skip the transfer entirely, so the
     /// unchecked passthrough is safe: any account here is ignored on

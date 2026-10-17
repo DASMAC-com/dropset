@@ -6,9 +6,9 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getAddressEncoder, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount, type WritableSignerAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
-import { expectAddress, expectSome, getAccountMetaFactory, type ResolvedAccount } from '../shared';
+import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
 export const WITHDRAW_DISCRIMINATOR = new Uint8Array([8]);
 
@@ -53,7 +53,7 @@ market: Address<TAccountMarket>;
  * Anchor's unconditional `close = signer` attribute) is what lets
  * the PDA survive a partial withdrawal.
  */
-vaultDepositor?: Address<TAccountVaultDepositor>;
+vaultDepositor: Address<TAccountVaultDepositor>;
 baseMint: Address<TAccountBaseMint>;
 quoteMint: Address<TAccountQuoteMint>;
 baseTokenProgram: Address<TAccountBaseTokenProgram>;
@@ -88,9 +88,6 @@ const args = { ...input,  };
 
 
 // Resolve default values.
-if (!accounts.vaultDepositor.value) {
-accounts.vaultDepositor.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([118, 97, 117, 108, 116, 95, 100, 101, 112, 111, 115, 105, 116, 111, 114])), getAddressEncoder().encode(expectAddress(accounts.market.value)), getU32Encoder().encode(expectSome(args.vaultIdx)), getAddressEncoder().encode(expectAddress(accounts.signer.value))] });
-}
 if (!accounts.associatedTokenProgram.value) {
 accounts.associatedTokenProgram.value = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL' as Address<'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'>;
 }

@@ -12,9 +12,9 @@
 //! incurred (the leader's basis lives on `Vault.leader_shares`, not
 //! on a per-depositor PDA — see spec § Shares).
 
-use anchor_lang_v2::{address_eq, prelude::*};
+use anchor_lang::{address_eq, prelude::*};
 #[allow(unused_imports)]
-use anchor_spl_v2::{
+use anchor_spl::{
     associated_token::AssociatedToken,
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
@@ -43,8 +43,8 @@ pub struct DepositLeader {
     pub base_mint: InterfaceAccount<Mint>,
     #[account(address = market.quote_mint)]
     pub quote_mint: InterfaceAccount<Mint>,
-    pub base_token_program: Interface<'static, TokenInterface>,
-    pub quote_token_program: Interface<'static, TokenInterface>,
+    pub base_token_program: Interface<TokenInterface>,
+    pub quote_token_program: Interface<TokenInterface>,
     #[account(
         mut,
         associated_token::mint = base_mint,

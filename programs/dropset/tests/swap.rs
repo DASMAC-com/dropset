@@ -6,7 +6,7 @@
 
 mod common;
 
-use anchor_lang_v2::bytemuck;
+use anchor_lang::bytemuck;
 use anchor_v2_testing::Signer;
 use common::fixture::{dual_profile, ladder_profile, simple_profile, Fixture};
 use dropset::{Price, FLUSH_BIT};

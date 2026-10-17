@@ -1,6 +1,6 @@
 mod common;
 
-use anchor_lang_v2::{programs::System, Id, InstructionData};
+use anchor_lang::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
 use common::fixture::{canonical_init_ixn, init_ixn, registry_pda};
 use common::{
@@ -76,11 +76,7 @@ fn init_rejects_non_upgrade_authority() {
 /// shape the ATA program produces for `token_program` — SPL Token is
 /// 165 bytes; Token-2022 is 165 base + 1 `AccountType` + 4 bytes for
 /// the `ImmutableOwner` extension the ATA program enables by default.
-fn assert_fee_vault_created(
-    svm: &anchor_v2_testing::LiteSVM,
-    fee_mint: Pubkey,
-    token_program: Pubkey,
-) {
+fn assert_fee_vault_created(svm: &litesvm::LiteSVM, fee_mint: Pubkey, token_program: Pubkey) {
     const SPL_TOKEN_ACCOUNT_LEN: usize = 165;
     const TOKEN_2022_ATA_LEN: usize = 170;
     let vault_addr = associated_token_address(&registry_pda(), &fee_mint, &token_program);

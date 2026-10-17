@@ -4,7 +4,7 @@
 //! so the `dll` and `access` test modules drive the on-chain code path
 //! directly rather than a mock. Compiled only under `cfg(test)`.
 
-use anchor_lang_v2::{testing::AccountBuffer, AnchorAccount, Discriminator};
+use anchor_lang::{testing::AccountBuffer, AnchorAccount, Discriminator};
 
 use super::{Market, MarketHeader, NULL_SECTOR};
 

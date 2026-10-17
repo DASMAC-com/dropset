@@ -75,7 +75,7 @@ mod tests {
     };
     use super::*;
     use crate::state::FLUSH_BIT;
-    use anchor_lang_v2::bytemuck::{bytes_of, Zeroable};
+    use anchor_lang::bytemuck::{bytes_of, Zeroable};
 
     /// A recognizable profile blob: byte `i` is `i + 1`, so any
     /// off-by-`n` in the destination offset shows up as a shifted pattern
