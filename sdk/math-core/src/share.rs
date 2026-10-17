@@ -392,7 +392,7 @@ pub enum CrystallizeError {
 /// `WithdrawEvent`.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct CrystallizeResult {
-    /// Signed FX component after this call.
+    /// Signed price component (the base leg against its entry reference) after this call.
     pub realized_price: i64,
     /// Signed yield (ex-FX) component after this call.
     pub realized_yield: i64,
@@ -414,7 +414,7 @@ pub struct CrystallizeResult {
 ///
 /// Realized PnL math, per docs/architecture.md
 /// § Depositor operations → Withdraw (the realized-PnL formula block):
-///   realized_price    += slice_base × (ref_now − entry_ref)
+///   realized_price += slice_base × (ref_now − entry_ref)
 ///   realized_yield += slice_quote + slice_base × entry_ref − released_basis
 ///   realized_pnl   += slice_quote + slice_base × ref_now    − released_basis
 ///

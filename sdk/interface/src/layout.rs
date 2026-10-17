@@ -250,6 +250,10 @@ pub struct Vault {
 // this mirror) breaks the SDK build here rather than silently
 // misdecoding the slab.
 const _: () = assert!(core::mem::size_of::<MarketHeader>() == 396);
+// The equal-width ledger fields a size check cannot tell apart.
+const _: () = assert!(core::mem::offset_of!(MarketHeader, nonce) == 224);
+const _: () = assert!(core::mem::offset_of!(MarketHeader, next_vault_seq) == 232);
+const _: () = assert!(core::mem::offset_of!(MarketHeader, head) == 240);
 const _: () = assert!(core::mem::size_of::<Vault>() == 956);
 // The size asserts cannot catch `seq` swapping with another `LeU64`.
 const _: () = assert!(core::mem::offset_of!(Vault, seq) == 72);

@@ -247,7 +247,7 @@ export type CrystallizeResult = {
  * the `(sliceBase, sliceQuote)` basket — the pure scalar core of the
  * program's `crystallize_realized_pnl` (mirrors Rust `crystallize_pnl`):
  *
- *   realized_price    += slice_base × (ref_now − entry_ref)
+ *   realized_price += slice_base × (ref_now − entry_ref)
  *   realized_yield += slice_quote + slice_base × entry_ref − released_basis
  *   realized_pnl   += slice_quote + slice_base × ref_now  − released_basis
  *
@@ -278,7 +278,7 @@ export function crystallizePnl(
   const fxDelta = quoteForRefNow - quoteForRefEntry;
   const yieldDelta = sliceQuote + quoteForRefEntry - releasedBasis;
   const pnlDelta = sliceQuote + quoteForRefNow - releasedBasis;
-  const newFx = clampI64(realizedPrice + fxDelta);
+  const newPrice = clampI64(realizedPrice + fxDelta);
   const newPnl = clampI64(realizedPnl + pnlDelta);
   const newYield = clampI64(realizedYield + yieldDelta);
   // released_basis ≤ net_deposits since sharesIn ≤ shares, but mirror the
@@ -287,7 +287,7 @@ export function crystallizePnl(
     throw new CrystallizeError('MathOverflow');
   }
   return {
-    realizedPrice: newFx,
+    realizedPrice: newPrice,
     realizedYield: newYield,
     realizedPnl: newPnl,
     sharesAfter: shares - sharesIn,

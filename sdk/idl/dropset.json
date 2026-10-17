@@ -4360,9 +4360,11 @@
           {
             "name": "flip_price",
             "docs": [
-              "The level's `Position::flip_price` at emit — zero when the level",
-              "does not flip — so the captured spread is `flip_price` against",
-              "`fill_price` on the event alone."
+              "The level's `Position::flip_price` at emit, or zero when the level",
+              "cannot flip (its flip price is not matchable). On a primary leg it",
+              "is where the proceeds now rest, so the spread the level will",
+              "capture is `flip_price` against `fill_price` on the event alone.",
+              "On a flipped leg it equals `fill_price`: the leg filled at it."
             ],
             "type": {
               "defined": {
@@ -4416,17 +4418,19 @@
           {
             "name": "leg_kind",
             "docs": [
-              "`0` when the leg consumed the ladder's own side",
-              "(`Position::size`), `1` when it consumed the flipped side",
-              "(`Position::flip_size`)."
+              "`LEG_KIND_PRIMARY` (`0`) when the leg consumed the ladder's own",
+              "side (`Position::size`), `LEG_KIND_FLIPPED` (`1`) when it consumed",
+              "the flipped side (`Position::flip_size`)."
             ],
             "type": "u8"
           },
           {
             "name": "_reserved",
             "docs": [
-              "Reserve for later fields; all-zero on every emit. A carve takes",
-              "bytes from the front and moves no other field."
+              "Reserve for later fields. A carve takes bytes from the front, moves",
+              "no other field, and reads all-zero as the pre-carve meaning — every",
+              "emit writes it zero; see the architecture spec's **Events and",
+              "emission**."
             ],
             "type": {
               "array": [

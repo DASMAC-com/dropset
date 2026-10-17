@@ -152,7 +152,7 @@ impl VaultDepositorHeader {
     ///
     /// Realized PnL math, per docs/architecture.md
     /// § Depositor operations → Withdraw (the realized-PnL formula block):
-    ///   realized_price    += slice_base × (ref_now − entry_ref)
+    ///   realized_price += slice_base × (ref_now − entry_ref)
     ///   realized_yield += slice_quote + slice_base × entry_ref − released_basis
     ///   realized_pnl   += slice_quote + slice_base × ref_now    − released_basis
     ///

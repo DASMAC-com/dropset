@@ -277,7 +277,7 @@ quote_write:
     # The STORE is the weaker claim: &vault is only 4-aligned (SLAB_ITEMS_OFF
     # 408 is ≡ 0 mod 8 but VAULT_SIZE 956 is ≡ 4 mod 8, so every odd sector
     # sits at a 4-aligned address), which means the stxdw at RP_STAMP_OFF
-    # above has always been a 4-aligned 8-byte store for half the sectors.
+    # above is a 4-aligned 8-byte store on every odd sector.
     #
     # The LOAD is the novel one and that precedent does NOT cover it.
     # Instruction data starts 8-aligned, so [r2 + 9] is 1 mod 8 — a fully

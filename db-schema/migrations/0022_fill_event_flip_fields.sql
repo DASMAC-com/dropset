@@ -5,8 +5,9 @@
 --
 -- `leg_kind` is 0 for a leg that consumed the level's own side and 1 for one
 -- that consumed its flipped side. `flip_price` is the level's flip price at
--- emit, as raw `Price` bits like `fill_price`, and 0 when the level does not
--- flip; against `fill_price` it is the spread a flipping level captures.
+-- emit, as raw `Price` bits like `fill_price`, and 0 when the level cannot
+-- flip. On a primary leg, against `fill_price`, it is the spread the level
+-- will capture; on a flipped leg it equals `fill_price`.
 -- `remaining_after` is the allowance left on the consumed side, after the leg,
 -- in that side's atoms.
 --
@@ -29,8 +30,8 @@ COMMENT ON COLUMN fill_events.leg_kind IS
     'flipped side. NULL for a leg indexed before the event carried it.';
 
 COMMENT ON COLUMN fill_events.flip_price IS
-    'The level''s flip price at emit, as raw Price bits; 0 when the level does '
-    'not flip. NULL for a leg indexed before the event carried it.';
+    'The level''s flip price at emit, as raw Price bits; 0 when the level '
+    'cannot flip. NULL for a leg indexed before the event carried it.';
 
 COMMENT ON COLUMN fill_events.remaining_after IS
     'Atoms left on the consumed side after the leg, in that side''s units. '
