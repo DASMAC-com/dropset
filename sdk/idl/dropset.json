@@ -3940,7 +3940,7 @@
     {
       "code": 6049,
       "name": "LeaderAlreadyLeadsVault",
-      "msg": "leader already leads a live (not frozen, not tombstoned) vault on this market"
+      "msg": "leader already leads an open (live or frozen) vault on this market"
     },
     {
       "code": 6050,
@@ -3961,6 +3961,11 @@
       "code": 6053,
       "name": "ZeroShares",
       "msg": "deposit is too small to mint one whole share"
+    },
+    {
+      "code": 6054,
+      "name": "SameQuoteAuthority",
+      "msg": "new quote authority is the vault's current quote authority"
     }
   ],
   "types": [
@@ -5039,8 +5044,10 @@
         "within one slot into nothing, so this record — not the diff — is how",
         "the maker learns its delegation moved. Carries `leader` so an indexer",
         "sees the full post-rotation authority pair, mirroring",
-        "`SetLeaderEvent`. A leader re-stamping the incumbent emits",
-        "`old_authority == new_authority`; treat that as a no-op. See the spec's",
+        "`SetLeaderEvent`. Re-stamping the incumbent is rejected, so every",
+        "event emitted since that rejection landed has",
+        "`old_authority != new_authority`; an older one may carry an equal",
+        "pair, which records no change. See the spec's",
         "**SetQuoteAuthority**."
       ],
       "type": {

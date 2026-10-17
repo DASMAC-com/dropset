@@ -10,7 +10,10 @@
 //! `entrypoint.s` ASM path kept minimal for CU, and re-quoting a frozen
 //! vault is harmless (matching skips it). `realize_in_place`
 //! pins the HWM at freeze time. Per the spec's **FreezeVault**, there
-//! is no "unfreeze" — to re-enter, the same leader opens a fresh vault.
+//! is no "unfreeze", and the freeze bars the leader's key from the market
+//! until the sector is reclaimed: a frozen vault counts against
+//! `create_vault`'s one-vault-per-leader rule and `set_leader` refuses to
+//! rotate it. The bar is per key; a fresh keypair is not stopped.
 //!
 //! Admin-only: authorized via the registry admin set, mirroring
 //! `set_outside_deposits_approved`. Freezing an already-frozen vault is

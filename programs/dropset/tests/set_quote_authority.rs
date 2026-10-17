@@ -94,17 +94,19 @@ fn rotate_and_back_emits_both_legs() {
 }
 
 #[test]
-fn rotation_to_the_incumbent_emits_an_unchanged_pair() {
-    // Not rejected (unlike `set_leader`'s `SameLeader`): the event states
-    // `old == new` honestly rather than claiming a change.
+fn rejects_rotation_to_the_incumbent() {
+    // Rejected, as `set_leader` rejects with `SameLeader`: a no-op
+    // rotation would emit an event claiming a change that never happened.
     let mut f = fixture_with_vault();
     let leader = f.authority.insecure_clone();
-    let meta = f
-        .set_quote_authority_meta(&leader, 0, leader.pubkey())
-        .expect("re-stamping the incumbent is allowed");
-    let ev = events::set_quote_authority(&meta);
-    assert_eq!(ev.old_authority, ev.new_authority);
-    assert_eq!(ev.new_authority, leader.pubkey().to_bytes());
+    let err = f
+        .set_quote_authority(&leader, 0, leader.pubkey())
+        .expect_err("re-stamping the incumbent must reject");
+    common::assert_program_error(&err, dropset::DropsetError::SameQuoteAuthority);
+    assert_eq!(
+        f.vault(0).quote_authority,
+        leader.pubkey().to_bytes().into()
+    );
 }
 
 #[test]

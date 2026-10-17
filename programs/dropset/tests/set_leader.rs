@@ -2,7 +2,8 @@
 //! co-signed by the incoming key. Covers the happy rotation and its event,
 //! the functional hand-off (the new leader gains the leader levers and the
 //! old one loses them), what the rotation leaves alone (`seq`, the quoting
-//! delegate), rotation on frozen and tombstoned vaults, and each gate.
+//! delegate), rotation on tombstoned vaults (refused on frozen ones), and
+//! each gate.
 //!
 //! The zero-address gate has no test: no key signs for the zero address,
 //! so the co-sign makes it unreachable from a real transaction. The
@@ -104,15 +105,19 @@ fn rotation_hands_off_the_leader_levers() {
 }
 
 #[test]
-fn leader_may_rotate_on_a_frozen_vault() {
+fn rejects_rotation_on_a_frozen_vault() {
     let mut f = fixture_with_vault();
     let leader = f.authority.insecure_clone();
     f.freeze_vault(&leader, 0).expect("admin freezes vault");
 
+    // Rotating onto a second key would free the frozen leader to open a
+    // fresh vault on the market.
     let next = new_key(&mut f);
-    f.set_leader(&leader, &next, 0)
-        .expect("a frozen vault's custody may still move");
-    assert_eq!(f.vault(0).leader, next.pubkey().to_bytes().into());
+    let err = f
+        .set_leader(&leader, &next, 0)
+        .expect_err("a frozen vault's leader is pinned");
+    common::assert_program_error(&err, DropsetError::VaultFrozen);
+    assert_eq!(f.vault(0).leader, leader.pubkey().to_bytes().into());
 }
 
 #[test]
@@ -166,7 +171,7 @@ fn rejects_new_leader_of_a_live_vault() {
 }
 
 #[test]
-fn accepts_new_leader_of_a_frozen_vault() {
+fn rejects_new_leader_of_a_frozen_vault() {
     let mut f = fixture_with_vault();
     let leader = f.authority.insecure_clone();
     let next = new_key(&mut f);
@@ -174,9 +179,11 @@ fn accepts_new_leader_of_a_frozen_vault() {
         .expect("seat next on a second vault");
     f.freeze_vault(&leader, 1).expect("admin freezes sector 1");
 
-    // A frozen vault doesn't count, exactly as at `create_vault`.
-    f.set_leader(&leader, &next, 0)
-        .expect("leading only a frozen vault does not block a rotation");
+    // A frozen vault counts, exactly as at `create_vault`.
+    let err = f
+        .set_leader(&leader, &next, 0)
+        .expect_err("leading a frozen vault blocks a rotation");
+    common::assert_program_error(&err, DropsetError::LeaderAlreadyLeadsVault);
 }
 
 #[test]
