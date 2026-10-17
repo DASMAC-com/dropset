@@ -394,7 +394,7 @@ pub enum CrystallizeError {
 pub struct CrystallizeResult {
     /// Signed price component (the base leg against its entry reference) after this call.
     pub realized_price: i64,
-    /// Signed yield (ex-FX) component after this call.
+    /// Signed yield (ex-price) component after this call.
     pub realized_yield: i64,
     /// Total signed realized PnL after this call.
     pub realized_pnl: i64,

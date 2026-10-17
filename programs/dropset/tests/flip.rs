@@ -309,6 +309,27 @@ fn a_zero_spread_never_flips() {
         assert_eq!(p.flip_price, Price::ZERO, "zero spread writes the sentinel");
         assert_eq!(p.flip_size.get(), 0, "zero spread never credits a flip");
     }
+    assert_eq!(sell.flip_price, Price::ZERO, "the event reports no flip");
+}
+
+#[test]
+fn a_full_spread_flushes_to_no_flip_and_reports_zero() {
+    // A 100% spread puts the ask's flip bid at zero, so the flush stores
+    // the `Price::ZERO` sentinel rather than a price, even though the
+    // spread itself is non-zero. The level never flips, and the event
+    // carries that zero through.
+    let profile = flip_profile(&[(5_000, 10_000, u32::MAX)], &[], 1_000_000);
+    let mut f = Fixture::seeded_with(SEED_BASE, SEED_QUOTE, profile);
+    let taker = f.funded_depositor(1_000_000, 1_000_000);
+    let fill = only_fill(
+        &f.swap_meta(&taker, BUY, 100_000, Price::INFINITY.as_u32(), 1)
+            .expect("buy"),
+    );
+    let lvl = f.vault(0).remaining.asks[0];
+    assert!(!lvl.flip_price.is_matchable(), "the flip cannot be matched");
+    assert_eq!(lvl.flip_size.get(), 0, "so nothing was credited");
+    assert_eq!(fill.leg_kind, LEG_KIND_PRIMARY);
+    assert_eq!(fill.flip_price, Price::ZERO, "the event reports no flip");
 }
 
 #[test]
