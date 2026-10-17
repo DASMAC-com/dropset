@@ -224,7 +224,7 @@ pub struct FillRow {
     /// `0` primary leg, `1` flipped leg. `None` (with the two below) on a
     /// row indexed before the event carried it — see migration 0022.
     pub leg_kind: Option<i16>,
-    /// Raw `Price` bits of the level's flip price; `0` when it does not flip.
+    /// Raw `Price` bits of the level's flip price; `0` when it cannot flip.
     pub flip_price: Option<i64>,
     /// Atoms left on the consumed side after the leg.
     pub remaining_after: Option<Decimal>,
