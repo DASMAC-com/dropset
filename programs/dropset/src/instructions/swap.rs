@@ -1008,7 +1008,15 @@ impl Swap {
                     }
                     left
                 };
-                (b, q, level.flip_price, remaining_after)
+                // Report zero for a level that cannot flip: a non-zero
+                // spread can still flush to a non-matchable price, and the
+                // forward credit above is gated on `is_matchable`, not zero.
+                let flip_price = if level.flip_price.is_matchable() {
+                    level.flip_price
+                } else {
+                    Price::ZERO
+                };
+                (b, q, flip_price, remaining_after)
             };
 
             // Book the fee slice as protocol revenue on the output leg —

@@ -136,6 +136,7 @@ fn a_bid_fill_flips_and_the_round_trip_grows_the_level_by_the_spread() {
     // `remaining_after` is in the consumed side's atoms: quote on a bid.
     assert_eq!(fill.leg_kind, LEG_KIND_PRIMARY);
     assert_eq!(fill.remaining_after.get(), SEED_QUOTE - dq);
+    assert_eq!(fill.flip_price, lvl.flip_price);
 
     let back = only_fill(
         &f.swap_meta(&taker, BUY, 1_000_000, Price::INFINITY.as_u32(), 1)
@@ -147,6 +148,7 @@ fn a_bid_fill_flips_and_the_round_trip_grows_the_level_by_the_spread() {
     assert_eq!(back.fill_quote.get(), credited);
     assert_eq!(back.leg_kind, LEG_KIND_FLIPPED);
     assert_eq!(back.remaining_after.get(), 0);
+    assert_eq!(back.flip_price, lvl.flip_price);
 
     let after = f.vault(0).remaining.bids[0];
     assert_eq!(after.flip_size.get(), 0);
@@ -180,6 +182,11 @@ fn a_partial_fill_quotes_both_sides_of_the_level() {
     assert_eq!(sell.fill_price, ask.flip_price);
     let ask = f.vault(0).remaining.asks[0];
     assert!(ask.size.get() > 0 && ask.flip_size.get() > 0, "still both");
+    // A flipped leg that leaves the counter non-zero reports what is left
+    // of `flip_size`, not of `size` and not a drained zero.
+    assert_eq!(sell.leg_kind, LEG_KIND_FLIPPED);
+    assert_eq!(sell.remaining_after.get(), ask.flip_size.get());
+    assert_eq!(sell.flip_price, ask.flip_price);
 
     // And the same level's own ask still fills a buy.
     let buy = only_fill(

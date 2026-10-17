@@ -435,9 +435,11 @@ pub struct FillEvent {
     /// identifies a vault across sector reuse; `sector_idx` alone does not.
     pub vault_seq: PodU64,
     pub fill_price: Price,
-    /// The level's `Position::flip_price` at emit — zero when the level
-    /// does not flip — so the captured spread is `flip_price` against
-    /// `fill_price` on the event alone.
+    /// The level's `Position::flip_price` at emit, or zero when the level
+    /// cannot flip (its flip price is not matchable). On a primary leg it
+    /// is where the proceeds now rest, so the spread the level will
+    /// capture is `flip_price` against `fill_price` on the event alone.
+    /// On a flipped leg it equals `fill_price`: the leg filled at it.
     pub flip_price: Price,
     pub fill_base: PodU64,
     pub fill_quote: PodU64,
@@ -454,12 +456,14 @@ pub struct FillEvent {
     /// or the flipped `bids[level_idx].flip_size`, and a Sell the mirror;
     /// `leg_kind` says which.
     pub side: u8,
-    /// `0` when the leg consumed the ladder's own side
-    /// (`Position::size`), `1` when it consumed the flipped side
-    /// (`Position::flip_size`).
+    /// `LEG_KIND_PRIMARY` (`0`) when the leg consumed the ladder's own
+    /// side (`Position::size`), `LEG_KIND_FLIPPED` (`1`) when it consumed
+    /// the flipped side (`Position::flip_size`).
     pub leg_kind: u8,
-    /// Reserve for later fields; all-zero on every emit. A carve takes
-    /// bytes from the front and moves no other field.
+    /// Reserve for later fields. A carve takes bytes from the front, moves
+    /// no other field, and reads all-zero as the pre-carve meaning — every
+    /// emit writes it zero; see the architecture spec's **Events and
+    /// emission**.
     pub _reserved: [u8; 46],
 }
 

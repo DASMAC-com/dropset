@@ -16,9 +16,11 @@ export type FillEvent = { market: Address; taker: Address; leader: Address; quot
  */
 vaultSeq: bigint; fillPrice: Price; 
 /**
- * The level's `Position::flip_price` at emit — zero when the level
- * does not flip — so the captured spread is `flip_price` against
- * `fill_price` on the event alone.
+ * The level's `Position::flip_price` at emit, or zero when the level
+ * cannot flip (its flip price is not matchable). On a primary leg it
+ * is where the proceeds now rest, so the spread the level will
+ * capture is `flip_price` against `fill_price` on the event alone.
+ * On a flipped leg it equals `fill_price`: the leg filled at it.
  */
 flipPrice: Price; fillBase: bigint; fillQuote: bigint; 
 /**
@@ -35,14 +37,16 @@ remainingAfter: bigint; baseAtomsAfter: bigint; quoteAtomsAfter: bigint; nonceAf
  */
 side: number; 
 /**
- * `0` when the leg consumed the ladder's own side
- * (`Position::size`), `1` when it consumed the flipped side
- * (`Position::flip_size`).
+ * `LEG_KIND_PRIMARY` (`0`) when the leg consumed the ladder's own
+ * side (`Position::size`), `LEG_KIND_FLIPPED` (`1`) when it consumed
+ * the flipped side (`Position::flip_size`).
  */
 legKind: number; 
 /**
- * Reserve for later fields; all-zero on every emit. A carve takes
- * bytes from the front and moves no other field.
+ * Reserve for later fields. A carve takes bytes from the front, moves
+ * no other field, and reads all-zero as the pre-carve meaning — every
+ * emit writes it zero; see the architecture spec's **Events and
+ * emission**.
  */
 reserved: ReadonlyUint8Array;  };
 
@@ -53,9 +57,11 @@ export type FillEventArgs = { market: Address; taker: Address; leader: Address; 
  */
 vaultSeq: number | bigint; fillPrice: PriceArgs; 
 /**
- * The level's `Position::flip_price` at emit — zero when the level
- * does not flip — so the captured spread is `flip_price` against
- * `fill_price` on the event alone.
+ * The level's `Position::flip_price` at emit, or zero when the level
+ * cannot flip (its flip price is not matchable). On a primary leg it
+ * is where the proceeds now rest, so the spread the level will
+ * capture is `flip_price` against `fill_price` on the event alone.
+ * On a flipped leg it equals `fill_price`: the leg filled at it.
  */
 flipPrice: PriceArgs; fillBase: number | bigint; fillQuote: number | bigint; 
 /**
@@ -72,14 +78,16 @@ remainingAfter: number | bigint; baseAtomsAfter: number | bigint; quoteAtomsAfte
  */
 side: number; 
 /**
- * `0` when the leg consumed the ladder's own side
- * (`Position::size`), `1` when it consumed the flipped side
- * (`Position::flip_size`).
+ * `LEG_KIND_PRIMARY` (`0`) when the leg consumed the ladder's own
+ * side (`Position::size`), `LEG_KIND_FLIPPED` (`1`) when it consumed
+ * the flipped side (`Position::flip_size`).
  */
 legKind: number; 
 /**
- * Reserve for later fields; all-zero on every emit. A carve takes
- * bytes from the front and moves no other field.
+ * Reserve for later fields. A carve takes bytes from the front, moves
+ * no other field, and reads all-zero as the pre-carve meaning — every
+ * emit writes it zero; see the architecture spec's **Events and
+ * emission**.
  */
 reserved: ReadonlyUint8Array;  };
 

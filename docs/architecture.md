@@ -97,7 +97,9 @@ fields that could plausibly arrive later), roughly doubled. A carve:
   4-aligned (a carved price is stored as `PodU32` bits);
 - states its **zero as the pre-carve meaning**, so an account written
   before the carve reads correctly after it — which is why the program
-  tests assert after every instruction that every reserve is all-zero;
+  tests assert, after every successful transaction, that each
+  account-header reserve it touched is all-zero, and that every emitted
+  `FillEvent`'s reserve is;
 - adds an offset assert beside the struct.
 
 There is no version byte. If a size change is ever unavoidable, the data
@@ -243,7 +245,8 @@ counter (see **Vault**), the per-market knobs
 (`taker_fee`, `max_platform_fee`, `default_min_leader_share`,
 `fee_config`) seeded from the
 registry at creation and tunable downstream by admins, the base/quote
-mints, and the two treasury accounts with their PDA bumps.
+mints, the two treasury accounts the market PDA signs for, and that
+PDA's bump.
 
 The header is 396 bytes, by concern (see **Conventions**): the mints
 and treasuries, then the fee config and rates, then the ledger — the
@@ -1289,7 +1292,7 @@ withdrawn slice into the account's `realized_*` accumulators (see
 
 ```text
 all_time_yield = realized_yield + yield_pnl
-all_time_fx    = realized_price    + fx_pnl
+all_time_fx    = realized_price + fx_pnl
 all_time_pnl   = realized_pnl   + net_pnl = all_time_yield + all_time_fx
 all_time_pct   = all_time_pnl / gross_deposited
 ```
@@ -2487,7 +2490,7 @@ remaining basis, and `net_deposits` is reduced by exactly that:
 
 ```text
 released_basis  = floor(net_deposits × shares_in / shares)
-realized_price    += slice_base × (r_now − entry_ref_price)
+realized_price += slice_base × (r_now − entry_ref_price)
 realized_yield += slice_quote + slice_base × entry_ref_price − released_basis
 realized_pnl   += slice_quote + slice_base × r_now − released_basis
 net_deposits'   = net_deposits − released_basis
@@ -3052,8 +3055,10 @@ event alone answers what a reverse-order book needs:
   (`Position::flip_size`). **`side`** keeps its meaning, the taker's
   direction, so it never names the array filled; `leg_kind` does.
 - **`flip_price`** — the level's `Position::flip_price` at emit, zero
-  when the level does not flip. Against `fill_price` it is the spread
-  the flipping level captures.
+  when the level cannot flip (its flip price is not matchable). On a
+  primary leg it is where the proceeds now rest, so against
+  `fill_price` it is the spread the level will capture. On a flipped
+  leg it equals `fill_price`, the price the leg filled at.
 - **`remaining_after`** — the allowance left after the leg on the side
   it consumed, in that side's atoms: `size` for a primary leg,
   `flip_size` for a flipped one.
@@ -3061,15 +3066,16 @@ event alone answers what a reverse-order book needs:
 The reserve is sized for five more `u64`-wide slots and six flags,
 deliberately above the rule's minimum because a wire record's growth
 costs every leg. As with accounts, the test decoder asserts it is
-all-zero on every emit. **Carve options:** the slots and flags that
-reserve was sized for, recorded with the account carve lists.
+all-zero on every emit. **Carve options:** the five slots and six
+flags the reserve was sized for are not yet itemized.
 
-**Cold-path events are append-only after C2.** A default-mode event is
-decoded field by field, and its discriminator hashes the event *name*,
-not its fields. So a post-launch change leaves two body generations
-under one discriminator, and a reserve could not help, because a body
-carrying a `String` has no fixed offsets. The rule: after the C2
-publish, a Borsh event body only grows at its end, and every decoder
+**Cold-path events are append-only after the first mainnet publish.**
+A default-mode event is decoded field by field, and its discriminator
+hashes the event *name*, not its fields. So a post-launch change leaves
+two body generations under one discriminator, and a reserve could not
+help, because a body carrying a `String` has no fixed offsets. The
+rule: after the first mainnet publish of the program and its SDKs, a
+Borsh event body only grows at its end, and every decoder
 treats a missing tail as its fields' defaults. A change that cannot be
 append-only **renames the event**, which gives it a fresh discriminator.
 
