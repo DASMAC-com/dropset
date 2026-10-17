@@ -214,7 +214,7 @@ export async function readRealizedFill(
         .getTransaction(
           signature as never,
           {
-            commitment: "confirmed",
+            commitment: "finalized",
             encoding: "json",
             maxSupportedTransactionVersion: 0,
           } as never,

@@ -36,12 +36,12 @@ const PRICE_SCALE: u64 = 1_000_000_000;
 /// `u64` supply).
 const MINT_DECIMALS_OFFSET: usize = 44;
 
-/// An `RpcClient` at `confirmed`, pointed at `url`.
+/// An `RpcClient` at `finalized`, pointed at `url`.
 pub fn rpc(url: &str) -> RpcClient {
     RpcClient::new_with_timeout_and_commitment(
         url.to_string(),
         Duration::from_secs(10),
-        CommitmentConfig::confirmed(),
+        CommitmentConfig::finalized(),
     )
 }
 

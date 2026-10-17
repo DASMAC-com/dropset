@@ -148,7 +148,7 @@ export const useRouterQuote = (
         // that gates it, and no clock to supply when there is no book.
         let gatedEclob: GatedEclobLeg | null = null;
         if (eclobLeg) {
-          const slot = await rpc.getSlot({ commitment: "confirmed" }).send();
+          const slot = await rpc.getSlot({ commitment: "finalized" }).send();
           if (cancelled || gen !== generation) return;
           await syncChainClock(rpc, slot);
           if (cancelled || gen !== generation) return;
