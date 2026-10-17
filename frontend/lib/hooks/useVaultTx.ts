@@ -13,17 +13,23 @@ import {
 import { emit } from "../events";
 import { getErrorMessage } from "../guards";
 import { waitForSwapConfirmation } from "../swap/confirm";
-import { SwapError } from "../swap/types";
 
 export type VaultTxStatus =
   | "idle"
+  // Re-reading the market and sizing, before the wallet is asked.
+  | "preparing"
   | "signing"
   | "confirming"
   | "success"
   | "error";
 
 export type VaultTxRequest =
-  | { kind: "deposit"; leg: DepositLeg; amountIn: bigint }
+  | {
+      kind: "deposit";
+      leg: DepositLeg;
+      amountIn: bigint;
+      walletAtoms: { base: bigint; quote: bigint };
+    }
   | { kind: "withdraw"; bps: number };
 
 export type UseVaultTx = {
@@ -65,13 +71,14 @@ export function useVaultTx(vault: VaultRef): UseVaultTx {
       }
       inFlight.current = true;
       setError(null);
-      setStatus("signing");
+      setStatus("preparing");
       const rpc = client.runtime.rpc;
       const ctx = {
         vault,
         owner: wallet.session.account.address.toString(),
         walletSession: wallet.session,
         rpc,
+        onSigning: () => setStatus("signing"),
       };
       try {
         const res: VaultTxOutcome =
@@ -93,7 +100,7 @@ export function useVaultTx(vault: VaultRef): UseVaultTx {
         setStatus("success");
         return true;
       } catch (e) {
-        setError(e instanceof SwapError ? e.message : getErrorMessage(e));
+        setError(getErrorMessage(e));
         setStatus("error");
         return false;
       } finally {

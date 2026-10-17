@@ -534,6 +534,18 @@ function VaultsInner() {
     [mockOwner, chain.positions],
   );
 
+  // The dialog's vault as the latest poll has it. The row is captured at
+  // click, but a live vault's reserves, shares and gates move while the
+  // dialog stays open (its own deposit or withdraw moves them), and the
+  // previews and the deposit gate must read the current state. A mock row,
+  // or a vault the latest poll no longer lists, keeps the captured row.
+  const currentVault = (captured: Vault): Vault =>
+    captured.chain
+      ? (chain.markets
+          .flatMap((m) => m.vaults)
+          .find((v) => v.vaultPubkey === captured.vaultPubkey) ?? captured)
+      : captured;
+
   // The connected user's position value in a vault (0 if none) — the sort key
   // "position" can't live in vaultMetric since it depends on wallet state.
   // Memoized so the sort useMemos below have a stable dependency.
@@ -828,7 +840,7 @@ function VaultsInner() {
       {dialog && (
         <VaultActionDialog
           market={dialog.market}
-          vault={dialog.vault}
+          vault={currentVault(dialog.vault)}
           position={positionFor(dialog.vault)}
           open={true}
           onOpenChange={(open) => {

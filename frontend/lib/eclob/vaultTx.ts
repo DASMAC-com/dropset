@@ -42,8 +42,11 @@ import { assertWalletCanSign, submitInstructions } from "./submit";
 // performance fee before sizing (`realize_in_place`), which mints shares to
 // the leader and leaves the atoms untouched. So a deposit's atom amounts are
 // exact, while its `sharesOut` may come out slightly higher (each share then
-// worth slightly less); a withdraw's slice may come out slightly smaller,
-// which the slippage floor absorbs. The share balance shown after a
+// worth slightly less). A withdraw's slice shrinks by the minted fraction,
+// and its floors absorb that only up to VAULT_SLIPPAGE_BPS: the fee accrues
+// across every trade between deposits and withdraws, and past the tolerance
+// the withdraw is rejected (fails closed, moving nothing) until the fee state
+// is decoded or the payout simulated first. The share balance shown after a
 // transaction is read back from chain, never taken from the preview.
 
 type Rpc = SolanaClientRuntime["rpc"];
@@ -53,8 +56,10 @@ const BPS_DENOMINATOR = 10_000n;
 const PPM = 1_000_000n;
 
 // The tolerance on the leg a deposit derives and on a withdraw's floors,
-// covering the ratio moving (trades against the vault's book, a fee
-// realization) between the pre-build read and the transaction landing. The
+// covering the vault's mix moving (trades against its book, a fee
+// realization) between the pre-build read and the transaction landing. A
+// withdraw's floors are per leg, not on value: a fill that shifts the mix
+// more than this fails the withdraw even though its value barely moved. The
 // eCLOB swap's default, so the two paths carry one figure.
 export const VAULT_SLIPPAGE_BPS = 50;
 
@@ -145,7 +150,12 @@ export type WithdrawSizing = {
 // withdraw takes every share, so the position closes and its rent comes back
 // rather than leaving a rounding remainder behind.
 export function sharesForFraction(shares: bigint, bps: number): bigint {
-  const clamped = BigInt(Math.min(Math.max(Math.trunc(bps), 0), 10_000));
+  // A non-finite fraction redeems nothing rather than throwing out of
+  // BigInt, as applySlippage guards its own input.
+  const finite = Number.isFinite(bps) ? Math.trunc(bps) : 0;
+  const clamped = BigInt(
+    Math.min(Math.max(finite, 0), Number(BPS_DENOMINATOR)),
+  );
   return clamped === BPS_DENOMINATOR
     ? shares
     : (shares * clamped) / BPS_DENOMINATOR;
@@ -202,6 +212,8 @@ type VaultTxContext = {
   owner: string;
   walletSession: WalletSession;
   rpc: Rpc;
+  // Called once the transaction is built, as it goes to the wallet.
+  onSigning?: () => void;
   slippageBps?: number;
 };
 
@@ -222,12 +234,12 @@ async function freshVault(
     stablecoinMint(vault.base),
     stablecoinMint(vault.quote),
   );
-  if (!route) throw new SwapError("This vault's market is unavailable", "api");
+  if (!route) throw new SwapError("This vault's market is unavailable.", "api");
   await initSimulator();
   const summary = decodeDropsetVaults(route.marketData).find(
     (s) => s.seq === vault.seq,
   );
-  if (!summary) throw new SwapError("This vault no longer exists", "api");
+  if (!summary) throw new SwapError("This vault no longer exists.", "api");
   return { route, summary };
 }
 
@@ -293,17 +305,23 @@ async function depositorPda(
 }
 
 // Deposit `amountIn` atoms of `leg`; the program pulls the other leg pro rata.
+// `walletAtoms` is the wallet's balance of each leg: the fresh basket is
+// checked against it, and the bounds are capped at it, so a basket the
+// wallet can't cover fails here with a reason instead of at the transfer.
 export async function executeVaultDeposit({
   vault,
   owner,
   walletSession,
   rpc,
+  onSigning,
   leg,
   amountIn,
+  walletAtoms,
   slippageBps = VAULT_SLIPPAGE_BPS,
 }: VaultTxContext & {
   leg: DepositLeg;
   amountIn: bigint;
+  walletAtoms: { base: bigint; quote: bigint };
 }): Promise<VaultTxOutcome> {
   assertWalletCanSign(walletSession);
   const { route, summary } = await freshVault(rpc, vault);
@@ -322,6 +340,14 @@ export async function executeVaultDeposit({
       "api",
     );
   }
+  const short =
+    sizing.baseIn > walletAtoms.base
+      ? vault.base
+      : sizing.quoteIn > walletAtoms.quote
+        ? vault.quote
+        : null;
+  if (short) throw new SwapError(`Not enough ${short} in your wallet.`, "api");
+  const cap = (bound: bigint, held: bigint) => (bound < held ? bound : held);
 
   const signer = createNoopSigner(address(owner));
   const { accounts, createAtas } = await legAccounts(route, signer);
@@ -331,11 +357,12 @@ export async function executeVaultDeposit({
       vaultIdx: summary.index,
       baseIn: leg === "base" ? amountIn : 0n,
       quoteIn: leg === "quote" ? amountIn : 0n,
-      maxBaseIn: sizing.maxBaseIn,
-      maxQuoteIn: sizing.maxQuoteIn,
+      maxBaseIn: cap(sizing.maxBaseIn, walletAtoms.base),
+      maxQuoteIn: cap(sizing.maxQuoteIn, walletAtoms.quote),
     },
     { programAddress: route.programAddress },
   );
+  onSigning?.();
   const signature = await submitInstructions({
     feePayer: signer,
     instructions: [...createAtas, depositIx],
@@ -355,6 +382,7 @@ export async function executeVaultWithdraw({
   owner,
   walletSession,
   rpc,
+  onSigning,
   bps,
   slippageBps = VAULT_SLIPPAGE_BPS,
 }: VaultTxContext & { bps: number }): Promise<VaultTxOutcome> {
@@ -370,10 +398,18 @@ export async function executeVaultWithdraw({
   const depositor = await depositorPda(route, summary.index, signer.address);
   const shares = await readDepositorShares(rpc, depositor);
   const sharesIn = sharesForFraction(shares, bps);
-  if (sharesIn === 0n) {
-    throw new SwapError("You hold no shares in this vault to withdraw", "api");
+  if (shares === 0n) {
+    throw new SwapError("You hold no shares in this vault to withdraw.", "api");
   }
   const sizing = sizeWithdraw(summary, sharesIn, slippageBps);
+  // A fraction of a small position can round to no shares, or to shares
+  // whose slice pays out nothing; either would burn shares for nothing.
+  if (sharesIn === 0n || (sizing.baseOut === 0n && sizing.quoteOut === 0n)) {
+    throw new SwapError(
+      "Too small: this fraction of your position pays out nothing. Withdraw more.",
+      "api",
+    );
+  }
 
   const { accounts, createAtas } = await legAccounts(route, signer);
   const withdrawIx = await getWithdrawInstructionAsync(
@@ -387,6 +423,7 @@ export async function executeVaultWithdraw({
     },
     { programAddress: route.programAddress },
   );
+  onSigning?.();
   const signature = await submitInstructions({
     feePayer: signer,
     instructions: [...createAtas, withdrawIx],
