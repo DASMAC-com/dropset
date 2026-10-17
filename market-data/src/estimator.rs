@@ -405,6 +405,10 @@ pub struct Estimator {
     last_read_ok: Option<Instant>,
     publish_failing_since: Option<Instant>,
     last_tick: Option<Instant>,
+    /// Seconds added to the wall clock wherever a tick takes an epoch second —
+    /// the fence read, the session decision and the published `ts`. Zero in
+    /// production; see [`Self::pin_wall_clock`].
+    wall_clock_offset: i64,
 }
 
 impl Estimator {
@@ -476,7 +480,30 @@ impl Estimator {
             last_read_ok: None,
             publish_failing_since: None,
             last_tick: None,
+            wall_clock_offset: 0,
         })
+    }
+
+    /// Run this estimator's wall clock as though it read `at_unix` now.
+    ///
+    /// **A test seam, for the FX session.** The session a tick prices under is
+    /// the fence's span covering the tick's epoch second, so a test on the real
+    /// clock passes only while the real FX market is open — and fails every
+    /// merge-queue run after the Friday close. Pinning moves the clock rather
+    /// than replacing it: it keeps advancing from `at_unix`, so consecutive
+    /// ticks still take distinct stamps, and rows seeded at `at_unix` age as
+    /// they would have at the real one.
+    ///
+    /// The [`Instant`] [`Self::tick_once_at`] takes is a separate clock and is
+    /// not moved by this.
+    #[doc(hidden)]
+    pub fn pin_wall_clock(&mut self, at_unix: i64) {
+        self.wall_clock_offset = at_unix - now_secs();
+    }
+
+    /// The tick's epoch second: the wall clock, as pinned.
+    fn unix_now(&self) -> i64 {
+        now_secs() + self.wall_clock_offset
     }
 
     /// Compose and publish until a [`Halt`] fires or a shutdown signal arrives.
@@ -649,7 +676,7 @@ impl Estimator {
             .latest()
             .await
             .context("reading spot_ticks for the USDC/USD peg leg")?;
-        let fence = read_spans(&self.pool, now_secs())
+        let fence = read_spans(&self.pool, self.unix_now())
             .await
             .context("reading fx_session_window for the session fence")?;
         Ok(Snapshot {
@@ -672,6 +699,7 @@ impl Estimator {
     /// market's basis EMA included — and a rolled-back tick rewinds none of it,
     /// so that in-memory state has moved by one `dt` that no row records.
     async fn publish_tick(&mut self, now: Instant, dt: Duration) -> Result<(), PublishError> {
+        let ts = self.unix_now();
         // Destructured rather than reached through `self`, so the snapshot's
         // immutable borrow and the engine map's mutable one are disjoint field
         // borrows: the engines mutate (each carries a basis EMA) while the rows
@@ -684,7 +712,6 @@ impl Estimator {
             ..
         } = self;
 
-        let ts = now_secs();
         let clock = snapshot.clock(ts);
         // Named here because nothing else names it. A fence that answers but
         // covers nothing — its horizon run out, or a gap in the view — keeps
