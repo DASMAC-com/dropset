@@ -34,13 +34,32 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{insert_bucket, insert_tick, start_pg};
-use dropset_feeds::now_secs;
 use dropset_market_data::estimator::{
     Estimator, EstimatorMarket, Halt, Ticked, MAX_PUBLISH_RETRY_WINDOW, PUBLISHED_MARKETS,
 };
 use dropset_market_data::fx_store::{MAX_STORE_SILENCE, SOURCE_COINBASE};
 use dropset_market_data::tick_store::{TickStoreReader, SOURCE_KRAKEN, USDC_USD_PRODUCT};
 use sqlx::{PgPool, Row};
+
+/// Wednesday 2026-10-14 12:00 UTC, inside an FX session.
+///
+/// **Every test that composes from seeded legs ticks here, never on the real
+/// clock.** The session a tick prices under is the fence's span covering its
+/// epoch second, so on the wall clock these tests passed only while the real FX
+/// market was open, and every merge-queue run after the Friday close failed
+/// them. The fence's horizon is a fixed calendar, so this instant stays covered.
+const IN_SESSION: i64 = 1_791_979_200;
+
+/// Saturday 2026-10-17 12:00 UTC, inside the weekend close after
+/// [`IN_SESSION`].
+const OUT_OF_SESSION: i64 = 1_792_238_400;
+
+/// `estimator` with its wall clock pinned to `at_unix`, the instant its legs
+/// are seeded at.
+fn pinned(mut estimator: Estimator, at_unix: i64) -> Estimator {
+    estimator.pin_wall_clock(at_unix);
+    estimator
+}
 
 /// One published row, read back through the columns a consumer reads.
 struct PublishedRow {
@@ -176,15 +195,17 @@ async fn an_empty_tick_table_is_not_an_error() {
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn a_full_tick_publishes_every_market() {
     let (_pg, pool) = start_pg().await;
-    let now = now_secs();
-    seed_all_legs(&pool, now).await;
+    seed_all_legs(&pool, IN_SESSION).await;
 
-    let mut estimator = Estimator::new(
-        pool.clone(),
-        PUBLISHED_MARKETS.to_vec(),
-        Duration::from_secs(15),
-    )
-    .expect("the published roster is constructible");
+    let mut estimator = pinned(
+        Estimator::new(
+            pool.clone(),
+            PUBLISHED_MARKETS.to_vec(),
+            Duration::from_secs(15),
+        )
+        .expect("the published roster is constructible"),
+        IN_SESSION,
+    );
     let outcome = estimator
         .tick_once()
         .await
@@ -266,7 +287,7 @@ async fn a_full_tick_publishes_every_market() {
 async fn the_peg_leg_comes_from_the_tick_table() {
     async fn tick_with_peg(peg: Option<f64>) -> PublishedRow {
         let (_pg, pool) = start_pg().await;
-        let now = now_secs();
+        let now = IN_SESSION;
         insert_bucket(&pool, "oanda", "EUR-USD", now, 1.1400).await;
         insert_bucket(&pool, "twelvedata", "EUR-USD", now, 1.1402).await;
         insert_bucket(&pool, SOURCE_COINBASE, "EURC-USDC", now, 1.1410).await;
@@ -274,8 +295,11 @@ async fn the_peg_leg_comes_from_the_tick_table() {
             insert_tick(&pool, SOURCE_KRAKEN, USDC_USD_PRODUCT, now, price).await;
         }
         let eurc: EstimatorMarket = PUBLISHED_MARKETS[0];
-        let mut estimator = Estimator::new(pool.clone(), vec![eurc], Duration::from_secs(15))
-            .expect("constructible");
+        let mut estimator = pinned(
+            Estimator::new(pool.clone(), vec![eurc], Duration::from_secs(15))
+                .expect("constructible"),
+            now,
+        );
         estimator.tick_once().await.expect("must not halt");
         read_published(&pool, eurc.product_id)
             .await
@@ -326,7 +350,7 @@ async fn the_peg_leg_comes_from_the_tick_table() {
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn a_pinned_market_publishes_unverified() {
     let (_pg, pool) = start_pg().await;
-    let now = now_secs();
+    let now = IN_SESSION;
     let audd: EstimatorMarket = PUBLISHED_MARKETS[2];
     assert!(
         audd.pinned_basis.is_some(),
@@ -338,8 +362,10 @@ async fn a_pinned_market_publishes_unverified() {
     // `AUDD-USDC` — so a market that priced off it would be visible here.
     insert_bucket(&pool, SOURCE_COINBASE, "AUDD-USDC", now, 0.9999).await;
 
-    let mut estimator =
-        Estimator::new(pool.clone(), vec![audd], Duration::from_secs(15)).expect("constructible");
+    let mut estimator = pinned(
+        Estimator::new(pool.clone(), vec![audd], Duration::from_secs(15)).expect("constructible"),
+        now,
+    );
     estimator.tick_once().await.expect("must not halt");
 
     let row = read_published(&pool, audd.product_id)
@@ -358,6 +384,60 @@ async fn a_pinned_market_publishes_unverified() {
     );
 }
 
+/// Outside an FX session the same fresh legs publish the weekend composition:
+/// an observed-basis market flips to its crypto reference, and a pinned market,
+/// which has none to flip to, falls to its static peg, degraded.
+///
+/// The counterpart of `a_full_tick_publishes_every_market`, so the weekend
+/// path is covered on purpose — on the real clock it was only ever reached by
+/// a merge-queue run after the Friday close, as three unrelated failures.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn a_tick_outside_the_session_publishes_the_weekend_regimes() {
+    let (_pg, pool) = start_pg().await;
+    seed_all_legs(&pool, OUT_OF_SESSION).await;
+
+    let mut estimator = pinned(
+        Estimator::new(
+            pool.clone(),
+            PUBLISHED_MARKETS.to_vec(),
+            Duration::from_secs(15),
+        )
+        .expect("constructible"),
+        OUT_OF_SESSION,
+    );
+    assert_eq!(
+        estimator.tick_once().await,
+        Ok(Ticked::Published),
+        "a closed session is an answer, not a halt"
+    );
+
+    for market in PUBLISHED_MARKETS {
+        let row = read_published(&pool, market.product_id)
+            .await
+            .unwrap_or_else(|| panic!("{} published no row", market.product_id));
+        // `uncorroborated` rather than `crypto_only`: it shadows the regime it
+        // composes as when the leg rests on one venue, and each crypto
+        // reference here is Coinbase alone.
+        let (anchor, regime) = if market.pinned_basis.is_some() {
+            ("static", "degraded")
+        } else {
+            ("crypto_reference", "uncorroborated")
+        };
+        assert_eq!(
+            row.anchor, anchor,
+            "{}: a shut FX session must empty the FX leg, fresh as it is",
+            market.product_id
+        );
+        assert_eq!(row.regime, regime, "{}", market.product_id);
+        assert!(
+            row.fair.is_some_and(|f| f > 0.0),
+            "{}: the weekend is still priced",
+            market.product_id
+        );
+    }
+}
+
 /// Two ticks in a row both publish, at different stamps.
 ///
 /// `fair_price`'s primary key is `(product_id, ts)` in whole seconds, so this is
@@ -368,13 +448,12 @@ async fn a_pinned_market_publishes_unverified() {
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn consecutive_ticks_accumulate_rows() {
     let (_pg, pool) = start_pg().await;
-    let now = now_secs();
+    let now = IN_SESSION;
     let eurc: EstimatorMarket = PUBLISHED_MARKETS[0];
     insert_bucket(&pool, "oanda", "EUR-USD", now, 1.1400).await;
     insert_tick(&pool, SOURCE_KRAKEN, USDC_USD_PRODUCT, now, 0.9999).await;
 
-    let mut estimator =
-        Estimator::new(pool.clone(), vec![eurc], Duration::from_secs(1)).expect("constructible");
+    let mut estimator = eurc_estimator(&pool);
     estimator.tick_once().await.expect("first tick");
     next_stamp().await;
     estimator.tick_once().await.expect("second tick");
@@ -389,14 +468,18 @@ async fn consecutive_ticks_accumulate_rows() {
     assert_eq!(count, 2, "each tick publishes its own row");
 }
 
-/// An estimator over EURC (`PUBLISHED_MARKETS[0]`) alone, ticking once a second.
+/// An estimator over EURC (`PUBLISHED_MARKETS[0]`) alone, ticking once a second
+/// from [`IN_SESSION`].
 fn eurc_estimator(pool: &PgPool) -> Estimator {
-    Estimator::new(
-        pool.clone(),
-        vec![PUBLISHED_MARKETS[0]],
-        Duration::from_secs(1),
+    pinned(
+        Estimator::new(
+            pool.clone(),
+            vec![PUBLISHED_MARKETS[0]],
+            Duration::from_secs(1),
+        )
+        .expect("constructible"),
+        IN_SESSION,
     )
-    .expect("constructible")
 }
 
 /// Past `fair_price`'s one-second key granularity, so the next tick's row takes
@@ -414,7 +497,7 @@ async fn next_stamp() {
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn a_permanent_publish_failure_halts_immediately() {
     let (_pg, pool) = start_pg().await;
-    seed_all_legs(&pool, now_secs()).await;
+    seed_all_legs(&pool, IN_SESSION).await;
     let mut estimator = eurc_estimator(&pool);
 
     sqlx::query("DROP TABLE fair_price")
@@ -463,7 +546,7 @@ async fn refuse_inserts_transiently(pool: &PgPool) {
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn a_transient_publish_failure_halts_at_the_retry_window() {
     let (_pg, pool) = start_pg().await;
-    seed_all_legs(&pool, now_secs()).await;
+    seed_all_legs(&pool, IN_SESSION).await;
     let mut estimator = eurc_estimator(&pool);
     refuse_inserts_transiently(&pool).await;
 
@@ -502,7 +585,7 @@ async fn a_transient_publish_failure_halts_at_the_retry_window() {
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn a_successful_publish_resets_the_retry_window() {
     let (_pg, pool) = start_pg().await;
-    seed_all_legs(&pool, now_secs()).await;
+    seed_all_legs(&pool, IN_SESSION).await;
     let mut estimator = eurc_estimator(&pool);
     refuse_inserts_transiently(&pool).await;
 
@@ -547,7 +630,7 @@ async fn a_successful_publish_resets_the_retry_window() {
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn an_unreadable_store_halts_at_the_silence_bound() {
     let (_pg, pool) = start_pg().await;
-    seed_all_legs(&pool, now_secs()).await;
+    seed_all_legs(&pool, IN_SESSION).await;
     let mut estimator = eurc_estimator(&pool);
 
     let t0 = Instant::now();
@@ -596,7 +679,7 @@ async fn an_unreadable_store_halts_at_the_silence_bound() {
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn a_cached_snapshot_ages_its_legs_out_on_the_receipt_floor() {
     let (_pg, pool) = start_pg().await;
-    seed_all_legs(&pool, now_secs()).await;
+    seed_all_legs(&pool, IN_SESSION).await;
     let eurc = PUBLISHED_MARKETS[0];
     let mut estimator = eurc_estimator(&pool);
     assert!(
@@ -676,12 +759,15 @@ async fn a_cached_snapshot_ages_its_legs_out_on_the_receipt_floor() {
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn an_unfed_market_publishes_its_static_peg_degraded() {
     let (_pg, pool) = start_pg().await;
-    let mut estimator = Estimator::new(
-        pool.clone(),
-        PUBLISHED_MARKETS.to_vec(),
-        Duration::from_secs(15),
-    )
-    .expect("constructible");
+    let mut estimator = pinned(
+        Estimator::new(
+            pool.clone(),
+            PUBLISHED_MARKETS.to_vec(),
+            Duration::from_secs(15),
+        )
+        .expect("constructible"),
+        IN_SESSION,
+    );
     assert_eq!(
         estimator.tick_once().await,
         Ok(Ticked::Published),
