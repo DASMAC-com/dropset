@@ -1,7 +1,7 @@
 "use client";
 
 import { useSolanaClient, useWallet } from "@solana/react-hooks";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   fetchChainPositions,
   fetchChainVaultMarkets,
@@ -10,6 +10,7 @@ import {
 import type { VaultPosition } from "../data/positions";
 import { VAULTS_REFRESH_MS } from "../data/timings";
 import type { VaultMarket } from "../data/vaults";
+import { useAppEvent } from "../events";
 
 export type ChainVaultsState = {
   // "loading" until the first read lands; "error" only when no read has ever
@@ -39,6 +40,7 @@ export function useChainVaults(): ChainVaultsState {
       ? wallet.session.account.address.toString()
       : null;
   const [state, setState] = useState<ChainVaultsState>(INITIAL);
+  const restartRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -101,20 +103,30 @@ export function useChainVaults(): ChainVaultsState {
     setState((prev) => ({ ...prev, positions: new Map() }));
     schedule(0, generation);
 
-    const onVisible = () => {
-      if (document.visibilityState !== "visible") return;
+    // Restart the poll chain now: a new generation, so the old chain's
+    // pending tick lapses instead of running alongside.
+    const restart = () => {
       generation += 1;
       if (timer !== undefined) window.clearTimeout(timer);
       schedule(0, generation);
     };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") restart();
+    };
     document.addEventListener("visibilitychange", onVisible);
+    restartRef.current = restart;
 
     return () => {
+      restartRef.current = null;
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [client, owner]);
+
+  // A confirmed deposit or withdraw moved this vault's reserves and shares and
+  // the wallet's position, so read now rather than up to a poll period later.
+  useAppEvent("vaultTxSucceeded", () => restartRef.current?.());
 
   return state;
 }
