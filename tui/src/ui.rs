@@ -6,7 +6,7 @@
 
 use crate::accounts::{ChainState, Liveness, ParticipantView, Phase};
 use crate::action::{self, Action};
-use crate::app::{swap_side_label, App, LeaderPrompt, LogKind};
+use crate::app::{swap_side_label, App, LeaderPrompt, LogKind, PassivePrompt};
 use crate::book;
 use crate::cluster::Cluster;
 use crate::explorer;
@@ -103,7 +103,86 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     draw_log(f, app, log);
     // Last, so it paints over the dashboard rather than under it.
     draw_leader_prompt(f, app, area);
+    draw_passive_prompt(f, app, area);
     draw_ceremony_prompt(f, app, area);
+}
+
+/// The passive-ladder prompt, centered over the dashboard while it is open:
+/// the parameter form, then the previewed ladder with the typed-`yes` line.
+/// Bordered like the leader prompt, so mainnet names itself at the moment of
+/// sending.
+fn draw_passive_prompt(f: &mut Frame<'_>, app: &App, area: Rect) {
+    let Some(prompt) = &app.passive_prompt else {
+        return;
+    };
+    let input = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
+    let hint = Style::new().fg(Color::DarkGray);
+    let warn = Style::new().fg(Color::Yellow);
+    let (label, body, entry, keys) = match prompt {
+        PassivePrompt::Form(form) => (
+            form.op.label(),
+            form.lines()
+                .into_iter()
+                .map(|l| Line::from(Span::styled(l, input)))
+                .collect::<Vec<_>>(),
+            "Enter preview".to_string(),
+            "\u{2191}\u{2193} field · \u{2190}\u{2192} step · digits type the price · Esc cancel",
+        ),
+        PassivePrompt::Confirm { ticket, buf } => (
+            ticket.op.label(),
+            ticket
+                .summary()
+                .into_iter()
+                .map(|l| {
+                    if l.starts_with("warning:") {
+                        Line::from(Span::styled(l, warn))
+                    } else {
+                        Line::from(l)
+                    }
+                })
+                .collect(),
+            format!("Type 'yes' to sign and send: {buf}\u{2588}"),
+            "Enter ok · Esc cancel",
+        ),
+    };
+    // The entry line leads: an eight-rung preview runs past twenty rows, and
+    // a short terminal clips the bottom of the box, which must never be the
+    // line the operator types `yes` into.
+    let mut lines = vec![
+        Line::from(Span::styled(entry, input)),
+        Line::from(Span::styled(keys, hint)),
+        Line::from(""),
+    ];
+    lines.extend(body);
+    let (title, border) = if app.ctx.cluster.is_mainnet() {
+        (
+            format!(" {label} — MAINNET · REAL FUNDS "),
+            Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        (
+            format!(" {label} — localnet "),
+            Style::new().fg(Color::Yellow),
+        )
+    };
+    let width = area.width.min(80);
+    let height = (lines.len() as u16 + 2).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(border),
+        ),
+        rect,
+    );
 }
 
 /// The mainnet ceremony prompt, centered over the dashboard while it is open:
@@ -389,8 +468,8 @@ fn menu_item(
 /// On mainnet every one of these controls is refused — the bots and the
 /// eCLOB controls sign with committed localnet role keys, the swap with the
 /// committed taker — so the pane says so instead of advertising keys that only
-/// produce an error line, and advertises the kill switch instead. Same row
-/// count, so the layout does not shift.
+/// produce an error line, and advertises the passive ladder and the kill
+/// switch instead. Same row count, so the layout does not shift.
 fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
     let tag = |s: &'static str| Span::styled(format!("{s:<6}"), Style::new().fg(Color::DarkGray));
     let live = Style::new().fg(Color::Gray);
@@ -405,10 +484,14 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
                 tag("swap"),
                 Span::styled("localnet only (no mainnet taker key)", off),
             ]),
-            Line::from(vec![tag("eclob"), Span::styled("localnet only", off)]),
-            // The one runtime control mainnet keeps: the kill switch, in the
-            // real-funds red the prompts use. Close and drain follow it from
-            // the menu.
+            // The demo controls are localnet only; the passive ladder is the
+            // mainnet book, deployed and re-centered from here.
+            Line::from(vec![
+                tag("ladder"),
+                Span::styled("p passive ladder · c re-center", live),
+            ]),
+            // The kill switch, in the real-funds red the prompts use. Close
+            // and drain follow it from the menu.
             Line::from(vec![
                 tag("kill"),
                 Span::styled(

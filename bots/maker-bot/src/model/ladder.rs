@@ -9,8 +9,8 @@
 
 use crate::config::{LadderLevel, StrategyMode};
 use anyhow::Result;
-use bytemuck::Zeroable;
-use dropset_sdk::layout::{LiquidityProfile, BPS, N_LEVELS};
+use dropset_sdk::ladder::passive_shape_warnings;
+use dropset_sdk::layout::{LiquidityProfile, BPS};
 use dropset_sdk::quoting::{profile_bytes, PROFILE_BYTES};
 
 /// Which side of the book a reshape targets.
@@ -20,81 +20,17 @@ pub enum Side {
     Ask,
 }
 
-/// Build a symmetric [`LiquidityProfile`] from `ladder` — the same offsets,
-/// sizes, and expiries on both the bid and ask sides. Levels past
-/// [`N_LEVELS`] are dropped (the config is validated to fit, see tests).
-pub fn build_profile(ladder: &[LadderLevel]) -> LiquidityProfile {
-    let mut profile = LiquidityProfile::zeroed();
-    for (i, lvl) in ladder.iter().take(N_LEVELS).enumerate() {
-        for side in [&mut profile.bids, &mut profile.asks] {
-            side[i].price_offset = lvl.offset_ppm.into();
-            side[i].flip_spread_ppm = lvl.flip_spread_ppm.into();
-            side[i].size_bps = lvl.size_bps.into();
-            side[i].expiry_offset_secs = lvl.expiry_offset_secs.get().into();
-            side[i].expiry_offset_slots = lvl.expiry_offset_slots.get().into();
-        }
-    }
-    profile
-}
+pub use dropset_sdk::ladder::build_profile;
 
 /// Shape guidance for a ladder under `mode` (§2), as one human-readable line
-/// per problem — empty when the ladder is sound. Guidance, not a gate: the
-/// protocol checks none of this, and staying a good LP is the maker's call, so
-/// the bot logs these at startup and quotes the ladder it was given.
-///
-/// Active mode has nothing to say. A passive ladder is checked for being empty
-/// (it covers no range, so every tick reads as a walk and re-centers) and for
-/// the three ways its shape goes wrong:
-///
-/// * **Grow-outward sizes.** A flipped level keeps its size and only changes
-///   direction, so a rung larger than the one inside it ends up next to the
-///   market after a move — the shape inverts. A passive ladder should be a
-///   bell (or uniform, the no-view option).
-/// * **No flip spread.** A passive level that does not flip sits filled and
-///   dark until the next re-center, which may never come.
-/// * **Flip spread past the spacing.** After a fill the market is
-///   `spacing + flip_spread` wide; a flip spread past the gap to the next rung
-///   in quotes the flipped side through that rung (and the innermost rung's
-///   past the reference).
+/// per problem — empty when the ladder is sound. The bot logs these at
+/// startup and quotes the ladder it was given. Active mode has nothing to
+/// say; a passive ladder gets the shared [`passive_shape_warnings`] rules.
 pub fn shape_warnings(ladder: &[LadderLevel], mode: StrategyMode) -> Vec<String> {
-    if mode == StrategyMode::Active {
-        return Vec::new();
+    match mode {
+        StrategyMode::Active => Vec::new(),
+        StrategyMode::Passive => passive_shape_warnings(ladder),
     }
-    if ladder.is_empty() {
-        return vec!["the passive ladder is empty: every tick would re-center".to_string()];
-    }
-    let mut warnings = Vec::new();
-    let mut inner_offset = 0;
-    for (i, lvl) in ladder.iter().enumerate() {
-        let rung = i + 1;
-        if i > 0 && lvl.size_bps > ladder[i - 1].size_bps {
-            warnings.push(format!(
-                "L{rung} ({} bps) is larger than L{i} ({} bps): a grow-outward passive \
-                 ladder inverts after every move — use a bell or uniform shape",
-                lvl.size_bps,
-                ladder[i - 1].size_bps
-            ));
-        }
-        let spacing = lvl.offset_ppm.saturating_sub(inner_offset);
-        if lvl.flip_spread_ppm == 0 {
-            warnings.push(format!(
-                "L{rung} has no flip spread: once filled it stays dark until a re-center"
-            ));
-        } else if lvl.flip_spread_ppm > spacing {
-            let crossed = if i == 0 {
-                "the reference"
-            } else {
-                "the next level in"
-            };
-            warnings.push(format!(
-                "L{rung} flip spread {} ppm exceeds its {spacing} ppm spacing: the flipped \
-                 side would quote through {crossed}",
-                lvl.flip_spread_ppm
-            ));
-        }
-        inner_offset = lvl.offset_ppm;
-    }
-    warnings
 }
 
 /// Zero one side of a profile — the §4 "freeze the heavy side" reshape, where
@@ -175,6 +111,7 @@ pub fn checked_bytes(profile: &LiquidityProfile) -> Result<[u8; PROFILE_BYTES]> 
 mod tests {
     use super::*;
     use crate::config::{DEFAULT_LADDER, DEFAULT_PASSIVE_LADDER};
+    use dropset_sdk::layout::N_LEVELS;
 
     #[test]
     fn carries_each_levels_flip_spread_onto_both_sides() {
