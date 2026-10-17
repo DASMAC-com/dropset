@@ -55,9 +55,9 @@ pub trait VaultAccess {
     /// The one-vault-per-leader rule. The maker bot keys its fills per
     /// market, not per vault, so a second vault under the same leader
     /// would silently clobber its inventory accounting. A frozen vault
-    /// counts, so a leader frozen for misbehaving can't open a fresh
-    /// vault on the same market and keep quoting for the price of a create
-    /// fee — tombstoned or not, since `close_vault` doesn't refuse a
+    /// counts until Reclaim, so a leader key frozen for misbehaving can't
+    /// open a fresh vault on the same market and keep quoting for the price
+    /// of a create fee (the rule is per key) — tombstoned or not, since `close_vault` doesn't refuse a
     /// frozen vault and would otherwise launder the freeze. An unfrozen
     /// tombstone doesn't count: a stranded depositor on it (reclaimed only
     /// on the last draining withdraw) must not lock a leader who closed

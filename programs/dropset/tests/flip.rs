@@ -9,6 +9,7 @@ mod common;
 use anchor_v2_testing::{Keypair, Message, Signer, VersionedMessage, VersionedTransaction};
 use common::fixture::{flip_profile, simple_profile, Fixture, PROFILE_BYTES};
 use dropset::{FillEvent, Price, Vault, N_LEVELS};
+use dropset_sdk::SWAP_COMPUTE_UNIT_LIMIT;
 use litesvm::types::TransactionMetadata;
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
@@ -493,6 +494,11 @@ fn a_cold_take_at_the_heap_ceiling_fits_the_swap_compute_budget() {
             legs_in_default >= DEFAULT_BUDGET_LEGS,
             "side {side}: only {legs_in_default} legs fit the {} a bare swap gets",
             common::DEFAULT_INSTRUCTION_CU
+        );
+        assert!(
+            cu < u64::from(SWAP_COMPUTE_UNIT_LIMIT),
+            "side {side}: the costliest cold take used {cu} CU, over the \
+             {SWAP_COMPUTE_UNIT_LIMIT} a client sends ahead of a bare swap"
         );
     }
 }

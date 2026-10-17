@@ -106,14 +106,19 @@ sweep both.
 The per-market cap on vault count (`max_vaults_per_market`) is set by
 the cost to reconstruct the ephemeral order book during each take
 and can be tuned across the protocol's lifecycle as CU budgets and
-runtime performance evolve. Two budgets are sized for the default cap
-of ten vaults: an ordinary take (up to fourteen legs on a cold book) must
-fit the 200k CU a bare `swap` gets with no budget instruction, and
-both a take that clears the book to the heap ceiling and a dust take that
-walks the whole book must fit the limit clients send ahead of a bare
-`swap` (`SWAP_COMPUTE_UNIT_LIMIT` in the Rust SDK). Tests in
-`programs/dropset/tests/flip.rs` pin both against a measured case,
-so raising the cap means re-measuring there first.
+runtime performance evolve. A take's cost is the entries it visits:
+the legs it fills, which the heap bounds, plus the entries it skips. It
+ends its walk once its own remainder is a single unfillable atom, so a
+dust taker no longer walks the book, but an entry whose level or vault
+cap prices to zero input is still skipped. Two budgets are sized for
+the default cap of ten vaults: an ordinary take (up to fourteen legs on
+a cold book) must fit the 200k CU a bare `swap` gets with no budget
+instruction, and both a take that clears the book to the heap ceiling
+and a no-fill walk over a book quoted with dust-sized levels throughout
+must fit the limit clients send ahead of a bare `swap`
+(`SWAP_COMPUTE_UNIT_LIMIT` in the Rust SDK). Tests in
+`programs/dropset/tests/flip.rs` pin the ordinary-book cases against a
+measured case, so raising the cap means re-measuring there first.
 
 The byte-exact layout of both records is owned by
 [`state/registry.rs`](../programs/dropset/src/state/registry.rs)
@@ -905,8 +910,9 @@ never frozen does not count, so a leader who closed voluntarily may
 Counting it would let one stranded depositor, whose draining
 `Withdraw` is what triggers Reclaim, lock that leader out of the
 market indefinitely. Other markets are unaffected either way: the
-guard is per-market. Admin can always unblock a frozen leader by
-draining the vault with the `admin-teardown` force-withdraw paths
+guard is per-market, and per key: a fresh keypair is not stopped. In
+a build with the `admin-teardown` feature, an admin can unblock a
+frozen leader by draining the vault with the force-withdraw paths
 below.
 
 When the `admin-teardown` Cargo feature is enabled (see **Account
@@ -1986,9 +1992,8 @@ is how a maker learns its delegation moved.
 
 The new authority must be:
 
-- non-zero (`Unauthorized`) — the zero address is the free-list
-  emptiness marker and has no private key, so stamping it would brick
-  the quoting hot path;
+- non-zero (`Unauthorized`) — the zero address has no private key, so
+  stamping it would brick the quoting hot path;
 - different from the current quote authority (`SameQuoteAuthority`),
   so no event claims a rotation that never happened — the same rule
   `SetLeader`'s `SameLeader` gate applies.
@@ -2025,12 +2030,15 @@ maker key; a caller that wants both rotated bundles a
 the fee rate, the flags, `seq`, the `name` and its `name_locked` lock are
 unchanged — the same vault under a new key.
 
-Allowed on tombstoned vaults: moving custody of a winding-down vault is
-exactly what a leaked-key rotation needs. Rejected on frozen vaults
-(`VaultFrozen`): a frozen vault blocks its leader from `CreateVault` on
-the market, and rotating it onto a second key the leader controls would
-lift that block. A frozen vault cannot trade, so a leaked key on one has
-nothing to quote. There is
+Allowed on unfrozen tombstoned vaults: moving custody of a winding-down
+vault is exactly what a leaked-key rotation needs. Rejected on frozen
+vaults (`VaultFrozen`): a frozen vault blocks its leader key from
+`CreateVault` on the market, and rotating it onto a second key the
+leader controls would lift that block for the first key. The cost is
+accepted: matching skips a frozen vault, but a leaked leader key on one
+can still `Withdraw` the leader stake (the `min_leader_share` floor is
+bypassed once frozen), and the owner can no longer rotate the key away
+first. The block is per key, not per operator. There is
 deliberately no admin path, since an admin rotation would be a
 custody-seizure lever and admins already hold `FreezeVault`. Emits
 `SetLeaderEvent` (`market`, `sector_idx`, `vault_seq`, `old_leader`,
