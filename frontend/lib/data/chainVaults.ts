@@ -71,7 +71,13 @@ export function chainVault(
     stablecoinDecimals(quote),
   );
   return {
-    chain: { index: summary.index, seq: summary.seq },
+    chain: {
+      index: summary.index,
+      seq: summary.seq,
+      baseAtoms: summary.baseAtoms,
+      quoteAtoms: summary.quoteAtoms,
+      totalShares: summary.totalShares,
+    },
     vaultPubkey: chainVaultId(market, summary.seq),
     leader: summary.leader,
     volume24h: null,

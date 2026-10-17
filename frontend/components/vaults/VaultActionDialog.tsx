@@ -2,13 +2,18 @@
 
 import NumberFlow from "@number-flow/react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { type ReactNode, useState } from "react";
+import { useWallet } from "@solana/react-hooks";
+import { type ReactNode, useMemo, useState } from "react";
 import { ChevronDown, ExternalLink, Wallet, X } from "@/components/icons";
 import { BalancePercentControl } from "@/components/ui/BalancePercentControl";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { TokenIcon } from "@/components/ui/TokenIcon";
-import { shortenMint, stablecoinDecimals } from "@/lib/data/currencies";
+import {
+  shortenMint,
+  stablecoinDecimals,
+  stablecoinMint,
+} from "@/lib/data/currencies";
 import {
   allTimePnl,
   positionBasket,
@@ -26,10 +31,26 @@ import {
   type VaultMarket,
   vaultReserveRatio,
 } from "@/lib/data/vaults";
+import {
+  type DepositLeg as DepositLegKind,
+  type DepositSizing,
+  depositSizingError,
+  sharesForFraction,
+  sizeDeposit,
+  sizeWithdraw,
+  VAULT_SLIPPAGE_BPS,
+} from "@/lib/eclob/vaultTx";
 import { EXPLORER_NAME, explorerAddressUrl } from "@/lib/explorer";
+import {
+  formatBaseAmount,
+  groupThousands,
+  parseAmountToBase,
+} from "@/lib/format/balance";
 import { FORMATS } from "@/lib/format/formats";
 import { sanitizeAmount } from "@/lib/format/input";
 import { BPS_SCALE, cappedPercentLabel } from "@/lib/format/percent";
+import { useAllBalances } from "@/lib/hooks/useAllBalances";
+import { type UseVaultTx, useVaultTx } from "@/lib/hooks/useVaultTx";
 import { DIALOG_CONTENT_POSITION, DIALOG_OVERLAY_CLASS } from "@/lib/ui/dialog";
 import { pnlTone } from "@/lib/ui/pnlTone";
 
@@ -50,10 +71,42 @@ const fmtBalance = (n: number, symbol: string): string =>
       })
     : "—";
 
-// Shown on a live vault whose program gate is open: the page reads the vault
-// but cannot yet send its deposit or withdraw transaction.
-const LIVE_ACTIONS_PENDING =
-  "Deposits and withdrawals from this page are coming soon.";
+// Atoms → a whole-token input string at the token's full precision, the same
+// shape padToken gives a float.
+const atomsToInput = (atoms: bigint, symbol: string): string => {
+  const decimals = stablecoinDecimals(symbol);
+  return formatBaseAmount(atoms, decimals, decimals);
+};
+const atomsToUnits = (atoms: bigint, symbol: string): number =>
+  Number(atoms) / 10 ** stablecoinDecimals(symbol);
+
+// A live vault transaction's progress, under its form's button.
+function TxStatusLine({ tx }: { tx: UseVaultTx }) {
+  const text =
+    tx.status === "signing"
+      ? "Approve the transaction in your wallet…"
+      : tx.status === "confirming"
+        ? "Confirming on-chain…"
+        : tx.status === "success"
+          ? tx.sharesAfter === null
+            ? "Confirmed."
+            : `Confirmed. You now hold ${groupThousands(tx.sharesAfter.toString())} shares.`
+          : tx.status === "error"
+            ? tx.error
+            : null;
+  if (!text) return null;
+  const tone =
+    tx.status === "error"
+      ? "text-red-400"
+      : tx.status === "success"
+        ? "text-emerald-400"
+        : "text-muted-fg";
+  return (
+    <p role="status" className={`text-center text-xs ${tone}`}>
+      {text}
+    </p>
+  );
+}
 
 const detailRow = (label: ReactNode, node: ReactNode) => (
   <div className="flex items-center justify-between">
@@ -204,14 +257,28 @@ function PositionDetail({
         )}
         {detailRow(
           "Yield since open",
-          <span
-            className={`font-mono tabular-nums ${pnlTone(pnl.yieldPctSinceOpen)}`}
-          >
-            <NumberFlow
-              value={pnl.yieldPctSinceOpen}
-              format={FORMATS.percent}
-            />
-          </span>,
+          pnl.yieldPctSinceOpen === null ? (
+            <span
+              className="flex items-center gap-1 font-mono text-muted-fg"
+              title="Undefined while the vault holds only one token"
+            >
+              —
+              <InfoTooltip
+                size={11}
+                side="top"
+                label="The yield index needs both tokens in the vault, so it reads nothing while one leg is empty."
+              />
+            </span>
+          ) : (
+            <span
+              className={`font-mono tabular-nums ${pnlTone(pnl.yieldPctSinceOpen)}`}
+            >
+              <NumberFlow
+                value={pnl.yieldPctSinceOpen}
+                format={FORMATS.percent}
+              />
+            </span>
+          ),
         )}
       </div>
       {/* Current basket, broken out per leg at the bottom (tidier than one
@@ -236,22 +303,24 @@ function PositionDetail({
 // Withdraw a chosen fraction of the position (take-profit). Shares are one
 // fungible claim, so a withdrawal is always a pro-rata slice of the whole
 // basket — both legs and the realized PnL scale together. 100% redeems
-// everything (and, per the protocol, closes the VaultDepositor PDA). Read-side
-// only for now: submitting just closes the dialog — this is where the on-chain
-// Withdraw instruction will be built and sent when the program is integrated.
+// everything (and, per the protocol, closes the VaultDepositor PDA). On a live
+// vault the legs are the program's own floored slice; submitting sends the
+// Withdraw instruction, re-sized against a fresh read. On a mock row it just
+// closes the dialog.
 function WithdrawSection({
   market,
   vault,
   position,
-  pendingReason,
+  busy,
   onSubmit,
 }: {
   market: VaultMarket;
   vault: Vault;
   position: VaultPosition;
-  // Why the withdraw can be previewed but not sent; null when it can be.
-  pendingReason: string | null;
-  onSubmit: () => void;
+  // A transaction is in flight; the button holds until it settles.
+  busy: boolean;
+  // The fraction to redeem, in basis points (10000 = everything).
+  onSubmit: (bps: number) => void;
 }) {
   // Blank by default — the user picks a percentage (or Max) before anything is
   // withdrawn, mirroring the swap balance control. The label caps at 99.99%
@@ -267,7 +336,25 @@ function WithdrawSection({
 
   const refNow = vaultReserveRatio(vault) ?? position.entryRefPrice;
   const quoteUsd = tokenUsdPrice(market.quote);
-  const preview = withdrawalPreview(position, vault, refNow, fraction);
+  const bps = isFull ? Number(BPS_SCALE) : Math.round(fraction * 10_000);
+  const floatPreview = withdrawalPreview(position, vault, refNow, fraction);
+  // A live vault's legs come from the SDK's floored slice over raw counts, so
+  // they never promise an atom the program won't pay; the value and PnL
+  // figures stay on the float model, which only they need.
+  const slice = vault.chain
+    ? sizeWithdraw(
+        vault.chain,
+        sharesForFraction(BigInt(Math.trunc(position.shares)), bps),
+        VAULT_SLIPPAGE_BPS,
+      )
+    : null;
+  const preview = slice
+    ? {
+        ...floatPreview,
+        baseOut: atomsToUnits(slice.baseOut, market.base),
+        quoteOut: atomsToUnits(slice.quoteOut, market.quote),
+      }
+    : floatPreview;
 
   return (
     <div className="flex flex-col gap-3 border-border border-t pt-4">
@@ -328,8 +415,8 @@ function WithdrawSection({
       </div>
       <button
         type="button"
-        onClick={onSubmit}
-        disabled={fraction <= 0 || pendingReason !== null}
+        onClick={() => onSubmit(bps)}
+        disabled={fraction <= 0 || busy}
         className="h-10 rounded-md border border-border bg-background px-3 font-medium text-foreground text-sm transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
       >
         {fraction <= 0
@@ -338,9 +425,6 @@ function WithdrawSection({
             ? "Withdraw all"
             : `Withdraw ${percentLabel}`}
       </button>
-      {pendingReason && (
-        <p className="text-center text-muted-fg text-xs">{pendingReason}</p>
-      )}
     </div>
   );
 }
@@ -445,10 +529,12 @@ function DepositLeg({
 
 // Manage a single vault position. With no position the user opens one; with a
 // position they see its PnL detail and can top off or withdraw any fraction of
-// the basket (take-profit). Read-side only for now: the buttons don't send a
-// transaction yet — this is where the on-chain Deposit / Withdraw instructions
-// will be built when the program is integrated. Deposit amounts link pro-rata
-// to the vault's reserve ratio, and each leg rounds to its own token decimals.
+// the basket (take-profit). On a live vault the buttons build, sign and send
+// the Deposit / Withdraw instruction (lib/eclob/vaultTx.ts) and report the
+// share balance read back from chain; on a mock row they just close. Deposit
+// amounts link pro-rata to the vault — on a live vault through the program's
+// own single-leg sizing, so the derived leg is exactly what will be pulled —
+// and each leg rounds to its own token decimals.
 export function VaultActionDialog({
   market,
   vault,
@@ -469,25 +555,84 @@ export function VaultActionDialog({
   // flips the target. The exact amount pulled is settled at transaction time.
   const [activeLeg, setActiveLeg] = useState<"base" | "quote" | null>(null);
 
+  const chain = vault.chain;
+  const wallet = useWallet();
+  const owner =
+    wallet.status === "connected"
+      ? wallet.session.account.address.toString()
+      : null;
+  const vaultRef = useMemo(
+    () => ({ base: market.base, quote: market.quote, seq: chain?.seq ?? 0n }),
+    [market.base, market.quote, chain?.seq],
+  );
+  const tx = useVaultTx(vaultRef);
+  const busy = tx.status === "signing" || tx.status === "confirming";
+
   // Quote tokens per base token; null for an empty vault (no ratio to hold).
   const ratio = vaultReserveRatio(vault);
 
-  const onBaseChange = (value: string) => {
-    setBaseAmount(value);
-    setActiveLeg(value.trim() ? "base" : null);
-    if (ratio === null) return;
-    setQuoteAmount(padToken(Number.parseFloat(value) * ratio, market.quote));
-  };
-  const onQuoteChange = (value: string) => {
-    setQuoteAmount(value);
-    setActiveLeg(value.trim() ? "quote" : null);
-    if (ratio === null) return;
-    setBaseAmount(padToken(Number.parseFloat(value) / ratio, market.base));
+  // A live vault's deposit sized by the SDK on the leg being driven: the
+  // basket the program will pull and the shares it will mint, or why it would
+  // reject the amount.
+  const sizeLeg = (
+    leg: DepositLegKind,
+    value: string,
+  ): { sizing: DepositSizing } | { error: string } | null => {
+    if (!chain) return null;
+    const symbol = leg === "base" ? market.base : market.quote;
+    const amountIn = parseAmountToBase(value, stablecoinDecimals(symbol));
+    if (amountIn === 0n) return null;
+    try {
+      return {
+        sizing: sizeDeposit(chain, leg, amountIn, VAULT_SLIPPAGE_BPS),
+      };
+    } catch (e) {
+      return { error: depositSizingError(e, leg, market) };
+    }
   };
 
-  // Mock per-leg wallet balance (seam — see mockMaxDeposit). Max / a percent
-  // fills a plausible pro-rata basket; real balances replace this one call.
-  const { base: maxBase, quote: maxQuote } = mockMaxDeposit(vault);
+  // The other leg follows the driven one: on a live vault, the exact final
+  // the program will pull (blank while it can't be sized); on a mock row, the
+  // reserve ratio.
+  const onLegChange = (leg: DepositLegKind, value: string) => {
+    const [setOwn, setOther, otherSymbol] =
+      leg === "base"
+        ? [setBaseAmount, setQuoteAmount, market.quote]
+        : [setQuoteAmount, setBaseAmount, market.base];
+    setOwn(value);
+    setActiveLeg(value.trim() ? leg : null);
+    if (tx.status === "success" || tx.status === "error") tx.reset();
+    if (chain) {
+      const sized = sizeLeg(leg, value);
+      setOther(
+        sized && "sizing" in sized
+          ? atomsToInput(
+              leg === "base" ? sized.sizing.quoteIn : sized.sizing.baseIn,
+              otherSymbol,
+            )
+          : "",
+      );
+      return;
+    }
+    if (ratio === null) return;
+    const n = Number.parseFloat(value);
+    setOther(padToken(leg === "base" ? n * ratio : n / ratio, otherSymbol));
+  };
+  const onBaseChange = (value: string) => onLegChange("base", value);
+  const onQuoteChange = (value: string) => onLegChange("quote", value);
+
+  // Per-leg wallet balance: the connected wallet's token accounts on a live
+  // vault (0 until they load or with no wallet), the mock seam on a mock row.
+  const baseMint = stablecoinMint(market.base);
+  const quoteMint = stablecoinMint(market.quote);
+  const balances = useAllBalances(chain ? [baseMint, quoteMint] : []);
+  const walletAtoms = (mint: string): bigint => balances.balanceFor(mint) ?? 0n;
+  const { base: maxBase, quote: maxQuote } = chain
+    ? {
+        base: atomsToUnits(walletAtoms(baseMint), market.base),
+        quote: atomsToUnits(walletAtoms(quoteMint), market.quote),
+      }
+    : mockMaxDeposit(vault);
 
   // A held position can deposit (top off) or withdraw; the two forms are
   // mutually exclusive, chosen from a dropdown. A fresh position only deposits.
@@ -495,12 +640,30 @@ export function VaultActionDialog({
 
   const base = Number.parseFloat(baseAmount);
   const quote = Number.parseFloat(quoteAmount);
-  const validBasket = base > 0 && quote > 0;
-  // A live vault's deposit and withdraw transactions aren't wired yet, so its
-  // forms stay read-only rather than "submitting" by closing the dialog. The
-  // program's own gate comes first: it says why deposits are closed.
-  const pendingReason = vault.chain ? LIVE_ACTIONS_PENDING : null;
-  const closedReason = depositClosedReason(vault) ?? pendingReason;
+  // The live sizing of the driven leg, and whether the wallet covers the
+  // basket it pulls. A one-sided vault pulls nothing on its empty leg, so a
+  // live basket needs only one positive leg.
+  const sized =
+    activeLeg === null
+      ? null
+      : sizeLeg(activeLeg, activeLeg === "base" ? baseAmount : quoteAmount);
+  const sizing = sized && "sizing" in sized ? sized.sizing : null;
+  const shortOf = sizing
+    ? sizing.baseIn > walletAtoms(baseMint)
+      ? market.base
+      : sizing.quoteIn > walletAtoms(quoteMint)
+        ? market.quote
+        : null
+    : null;
+  const sizingError =
+    (sized && "error" in sized ? sized.error : null) ??
+    (shortOf ? `Not enough ${shortOf} in your wallet.` : null);
+  const validBasket = chain
+    ? sizing !== null && shortOf === null
+    : base > 0 && quote > 0;
+  // The program's own gate, checked against the connected wallet so a leader
+  // isn't offered a deposit into their own vault.
+  const closedReason = depositClosedReason(vault, owner);
   const depositBlocked = closedReason !== null;
   const depositLabel = position ? "Top off" : "Open position";
 
@@ -528,11 +691,36 @@ export function VaultActionDialog({
     depositCap !== null && validBasket && depositValue > depositCap;
   const floorPct = Math.round(leaderFloorFraction(vault) * 100);
 
-  // Read-side only: this is where the Deposit transaction will be built and
-  // sent once the program is integrated; for now a valid basket just closes.
-  const submitDeposit = () => {
-    if (!validBasket || depositBlocked || floorBreached) return;
-    onOpenChange(false);
+  // A live vault sends the deposit (re-sized against a fresh read of the
+  // market) and stays open to report the result; a mock row just closes.
+  const submitDeposit = async () => {
+    if (!validBasket || depositBlocked || floorBreached || busy) return;
+    if (!chain) {
+      onOpenChange(false);
+      return;
+    }
+    if (activeLeg === null) return;
+    const symbol = activeLeg === "base" ? market.base : market.quote;
+    const value = activeLeg === "base" ? baseAmount : quoteAmount;
+    const confirmed = await tx.execute({
+      kind: "deposit",
+      leg: activeLeg,
+      amountIn: parseAmountToBase(value, stablecoinDecimals(symbol)),
+    });
+    // Clear the form once it lands, so the confirmed amounts can't be
+    // resubmitted by a second click; a failure keeps them for a retry.
+    if (confirmed) {
+      setBaseAmount("");
+      setQuoteAmount("");
+      setActiveLeg(null);
+    }
+  };
+  const submitWithdraw = (bps: number) => {
+    if (!chain) {
+      onOpenChange(false);
+      return;
+    }
+    void tx.execute({ kind: "withdraw", bps });
   };
 
   return (
@@ -636,7 +824,9 @@ export function VaultActionDialog({
               </label>
             )}
 
-            {mode === "deposit" ? (
+            {/* A full withdraw closes the position, so fall back to the
+                deposit form once the refreshed table drops it. */}
+            {!position || mode === "deposit" ? (
               <>
                 <div className="flex flex-col gap-2">
                   <DepositLeg
@@ -669,8 +859,31 @@ export function VaultActionDialog({
                       <NumberFlow value={depositUsd} format={FORMATS.usd} />
                     </span>
                   </div>
+                  {/* The shares the program will mint for this basket, from
+                      the SDK's own sizing — live vaults only. */}
+                  {chain && sizing && (
+                    <div className="flex items-center justify-between gap-2 font-mono text-[10px] text-muted-fg tabular-nums">
+                      <span>You'll receive ≈</span>
+                      <span>
+                        {groupThousands(sizing.sharesOut.toString())} shares (
+                        <NumberFlow
+                          value={
+                            Number(sizing.sharesOut) /
+                            Number(chain.totalShares + sizing.sharesOut)
+                          }
+                          format={FORMATS.percent}
+                        />{" "}
+                        of the vault)
+                      </span>
+                    </div>
+                  )}
                 </div>
 
+                {sizingError && !depositBlocked && (
+                  <p className="rounded-md border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-amber-300 text-xs">
+                    {sizingError}
+                  </p>
+                )}
                 {floorBreached && !depositBlocked && (
                   <p className="rounded-md border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-amber-300 text-xs">
                     Too large. This would push the leader below their {floorPct}
@@ -680,8 +893,10 @@ export function VaultActionDialog({
                 )}
                 <button
                   type="button"
-                  onClick={submitDeposit}
-                  disabled={!validBasket || depositBlocked || floorBreached}
+                  onClick={() => void submitDeposit()}
+                  disabled={
+                    !validBasket || depositBlocked || floorBreached || busy
+                  }
                   className="h-10 rounded-md bg-accent px-3 font-medium text-background text-sm transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-fg"
                 >
                   {depositLabel}
@@ -698,11 +913,12 @@ export function VaultActionDialog({
                   market={market}
                   vault={vault}
                   position={position}
-                  pendingReason={pendingReason}
-                  onSubmit={() => onOpenChange(false)}
+                  busy={busy}
+                  onSubmit={submitWithdraw}
                 />
               )
             )}
+            {chain && <TxStatusLine tx={tx} />}
           </div>
         </Dialog.Content>
       </Dialog.Portal>

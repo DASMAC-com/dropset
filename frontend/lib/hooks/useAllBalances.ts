@@ -276,15 +276,15 @@ export function useAllBalances(scope: readonly string[]): UseAllBalances {
     request(client.runtime.rpc, ownerStr, scopeKey ? scopeKey.split(",") : []);
   }, [ownerStr, client, scopeKey]);
 
-  // After a swap lands, re-fetch everything loaded so far — once now and once
-  // ~1.5 s later to absorb RPC propagation lag between confirmation status
-  // and account state. Every mounted consumer hears the event: the queue
-  // merges their immediate requests into one fetch, and the delayed one is
-  // scheduled once. Snapshot `ownerStr` and re-check `activeOwner` at fire
-  // time so a wallet swap between the swap-success event and the delayed
-  // refetch doesn't write the old owner's balances into the new owner's
-  // cache.
-  useAppEvent("swapSucceeded", () => {
+  // After a swap or a vault deposit / withdraw lands, re-fetch everything
+  // loaded so far — once now and once ~1.5 s later to absorb RPC propagation
+  // lag between confirmation status and account state. Every mounted consumer
+  // hears the event: the queue merges their immediate requests into one
+  // fetch, and the delayed one is scheduled once. Snapshot `ownerStr` and
+  // re-check `activeOwner` at fire time so a wallet swap between the success
+  // event and the delayed refetch doesn't write the old owner's balances into
+  // the new owner's cache.
+  const refetchAfterTx = () => {
     const owner = ownerStr;
     if (!owner) return;
     const rpc = client.runtime.rpc;
@@ -294,7 +294,9 @@ export function useAllBalances(scope: readonly string[]): UseAllBalances {
       delayedRefetch = undefined;
       if (activeOwner === owner) request(rpc, owner, [...fetched], true);
     }, BALANCE_REFETCH_DELAY_MS);
-  });
+  };
+  useAppEvent("swapSucceeded", refetchAfterTx);
+  useAppEvent("vaultTxSucceeded", refetchAfterTx);
 
   const failure =
     ownerStr === null || cacheOwner !== ownerStr

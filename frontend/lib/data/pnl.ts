@@ -19,12 +19,15 @@ import type { Vault } from "./vaults";
 //   netPnl           = currentValue − netDeposits = yieldPnl + fxPnl
 //
 // `yieldPctSinceOpen` is the oracle-free pure-skill figure VPS_now / entryVps − 1.
+// The index is `isqrt(base · quote) / shares`, so a vault holding only one leg
+// (or a position stamped while it did) has an index of 0 that measures nothing
+// — not a total loss. The figure is null there rather than a false −100%.
 export type PositionPnl = {
   currentValue: number;
   yieldPnl: number;
   fxPnl: number;
   netPnl: number;
-  yieldPctSinceOpen: number;
+  yieldPctSinceOpen: number | null;
 };
 
 // The depositor's current claim on the vault's reserves: base_out / quote_out
@@ -56,7 +59,9 @@ export const positionPnl = (
   const fxPnl = baseOut * (refNow - position.entryRefPrice);
   const netPnl = currentValue - position.netDeposits;
   const yieldPctSinceOpen =
-    position.entryVps > 0 ? vault.vps / position.entryVps - 1 : 0;
+    position.entryVps > 0 && vault.vps > 0
+      ? vault.vps / position.entryVps - 1
+      : null;
 
   return {
     currentValue,
