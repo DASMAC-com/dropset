@@ -56,7 +56,7 @@ use std::sync::{Arc, Mutex};
 /// A menu action.
 ///
 /// The first block is the bootstrap-lifecycle plus the utility actions; the
-/// numbered `1..=8` entries in [`MENU`] are drawn from it (the swap is a
+/// numbered `1..=9` entries in [`MENU`] are drawn from it (the swap is a
 /// runtime control reached via `s`, not a numbered entry). The trailing block
 /// are the eCLOB demo controls —
 /// market-scoped keybinds, *not* menu entries — that fire the two quoting
@@ -141,14 +141,17 @@ const THIN_DEPTH_SCALE: f64 = 0.3;
 /// a magic number.
 const NEVER_EXPIRES: WallSpan = WallSpan::UNBOUNDED;
 
+/// How many menu entries have a number key (`1..=9`); an entry past them is
+/// reached with `j`/`k` + Enter.
+pub const NUMBER_KEYS: usize = 9;
+
 /// The numbered setup menu in display order — the bootstrap lifecycle plus the
-/// explorer / teardown / wipe utilities, then the leader stake commands.
-/// Indices map to the `1..=9` number keys; the leader entries sit past them,
-/// reached with `j`/`k` + Enter (or `+` / `-`), so appending them moved no
-/// existing key. The swap is deliberately absent: it is a runtime control,
-/// reached only via `s` (and listed in the "runtime" pane), so it appears in
-/// exactly one place rather than doubling as a numbered step.
-pub const MENU: [Action; 12] = [
+/// explorer / teardown / wipe utilities, one per number key. The swap and the
+/// leader's stake commands are deliberately absent: they are runtime
+/// controls, on letter keys and listed in the "runtime" pane (see
+/// [`VAULT_ACTIONS`]), so each appears in exactly one place rather than
+/// doubling as a numbered step.
+pub const MENU: [Action; NUMBER_KEYS] = [
     Action::Deploy,
     Action::InitRegistry,
     Action::CreateMarket,
@@ -158,6 +161,12 @@ pub const MENU: [Action; 12] = [
     Action::BootstrapAll,
     Action::Teardown,
     Action::Wipe,
+];
+
+/// The leader's own stake — the runtime pane's `vault` group, on both
+/// clusters: deposit on `+`, withdraw on `-`, and the reserved rotation,
+/// shown greyed and on no key until its program change lands.
+pub const VAULT_ACTIONS: [Action; 3] = [
     Action::LeaderDeposit,
     Action::LeaderWithdraw,
     Action::RotateLeader,
@@ -166,23 +175,24 @@ pub const MENU: [Action; 12] = [
 /// The mainnet menu — every entry that is meaningful against real funds.
 ///
 /// The ceremony in order — publish (or upgrade), the four account steps, the
-/// stranded-buffer recovery — then the explorer and the leader stake
-/// commands. Each ceremony step opens a typed-`yes` prompt over its plan, read
+/// stranded-buffer recovery — then the explorer. The leader's stake commands
+/// are in the runtime pane's `vault` group ([`VAULT_ACTIONS`]), as on
+/// localnet. Each ceremony step opens a typed-`yes` prompt over its plan, read
 /// fresh from the chain, before anything is signed (see
 /// [`Action::needs_ceremony_confirm`]); is existence-checked again at
 /// execution time; references the real roster mints rather than minting any
-/// (see [`market::MAINNET_PAIRS`]); and signs with 1Password-held keys. The
-/// leader commands send only after a typed `yes` over the exact amounts.
+/// (see [`market::MAINNET_PAIRS`]); and signs with 1Password-held keys.
 /// Nothing here airdrops, builds or discards a ledger.
 ///
-/// The emergency actions close the list, past the number keys, so adding
-/// them moved no existing key; the kill itself is also on `K` (see
-/// `App::handle_key`), one keystroke from its prompt.
+/// The emergency actions close the list, the last one past the number keys;
+/// the kill itself is also on `K` (see `App::handle_key`), one keystroke from
+/// its prompt.
 ///
-/// Kept in sync with [`Action::available_on`] by a test rather than by care —
-/// two hand-maintained lists of the same fact drift, and the direction it
-/// would drift here is toward exposing a write.
-pub const MAINNET_MENU: [Action; 13] = [
+/// Kept in sync with [`Action::available_on`] — together with
+/// [`VAULT_ACTIONS`] — by a test rather than by care: two hand-maintained
+/// lists of the same fact drift, and the direction it would drift here is
+/// toward exposing a write.
+pub const MAINNET_MENU: [Action; 10] = [
     Action::Publish,
     Action::InitRegistry,
     Action::CreateMarket,
@@ -190,9 +200,6 @@ pub const MAINNET_MENU: [Action; 13] = [
     Action::Deposit,
     Action::CloseBuffers,
     Action::OpenExplorer,
-    Action::LeaderDeposit,
-    Action::LeaderWithdraw,
-    Action::RotateLeader,
     Action::KillLadders,
     Action::CloseVaults,
     Action::DrainLeader,
@@ -1948,9 +1955,10 @@ mod tests {
     const L: Cluster = Cluster::Localnet;
     const M: Cluster = Cluster::Mainnet;
 
-    /// Every `Action`, so a cluster-gate test covers the demo controls too —
-    /// those are reachable only by keybinds, never appear in `MENU`, and so
-    /// would otherwise go unchecked.
+    /// Every `Action`, so a cluster-gate test covers the demo controls and
+    /// the vault group too — those are reachable only by keybinds and the
+    /// runtime pane, never appear in `MENU`, and so would otherwise go
+    /// unchecked.
     ///
     /// Note the bound: this is every **`Action`**, not everything a keystroke
     /// can reach. The maker/taker bot toggles are not `Action`s and are gated
@@ -2003,8 +2011,8 @@ mod tests {
         // reachable writes are the confirm-gated ceremony steps (the kill
         // switch among them) and the leader's own stake, which sends only
         // after a typed `yes` over the exact amounts (the reserved rotation is
-        // listed but never enabled). A later change that exposes anything
-        // else — a mock-minting bootstrap, a committed-key demo control —
+        // shown in the vault group but never enabled). A later change that
+        // exposes anything else — a mock-minting bootstrap, a committed-key demo control —
         // fails here.
         let ceremony = [
             Action::Publish,
@@ -2219,15 +2227,24 @@ mod tests {
 
     #[test]
     fn mainnet_menu_agrees_with_the_cluster_gate() {
-        // Guards the drift between the two hand-written lists: the menu shows
-        // exactly the available actions, and nothing available is missing.
-        for a in MAINNET_MENU {
+        // Guards the drift between the hand-written lists: the menu and the
+        // vault group show exactly the available actions, and nothing
+        // available is missing from both.
+        for a in MAINNET_MENU.iter().chain(&VAULT_ACTIONS) {
             assert!(a.available_on(Cluster::Mainnet), "{:?}", a.label());
         }
         for a in ALL_ACTIONS {
             if a.available_on(Cluster::Mainnet) {
-                assert!(MAINNET_MENU.contains(&a), "{:?} missing", a.label());
+                assert!(
+                    MAINNET_MENU.contains(&a) || VAULT_ACTIONS.contains(&a),
+                    "{:?} missing",
+                    a.label()
+                );
             }
+        }
+        // One home each: the vault group is in neither numbered menu.
+        for a in VAULT_ACTIONS {
+            assert!(!MENU.contains(&a) && !MAINNET_MENU.contains(&a));
         }
         assert_eq!(menu_for(Cluster::Mainnet), &MAINNET_MENU);
         assert_eq!(menu_for(Cluster::Localnet), &MENU);
@@ -2256,7 +2273,7 @@ mod tests {
 
     #[test]
     fn all_actions_lists_every_variant() {
-        // The completeness guard the MENU check above cannot be: MENU holds 12
+        // The completeness guard the MENU check above cannot be: MENU holds 9
         // of the 25 variants, so a new shortcut-only action would be absent from
         // both MENU and ALL_ACTIONS and silently escape all four cluster-gate
         // tests — a variant reachable only by a shortcut. PR 2 and PR 3 of this
