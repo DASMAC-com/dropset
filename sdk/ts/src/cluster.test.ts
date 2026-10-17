@@ -37,8 +37,8 @@ const QUOTE_MINT = address('11111111111111111111111111111114');
 
 /**
  * Every account `create_market` takes from its caller. Its `market` PDA is
- * the one an async builder still derives: the registry carries a stored
- * bump, so the IDL gives it no seeds to default from.
+ * one an async builder still derives. `registry` must be passed in: it
+ * carries a stored bump, so the IDL gives it no seeds to default from.
  */
 const createMarketInput = {
   payer: createNoopSigner(FRESH),
@@ -110,7 +110,7 @@ test('generated PDA helpers require a program address and derive under it', asyn
 
 test('generated builders require a program address', async () => {
   // @ts-expect-error -- the program address has no default
-  await assert.rejects(getCreateMarketInstructionAsync(createMarketInput));
+  await assert.rejects(getCreateMarketInstructionAsync(createMarketInput), /programAddress/);
   assert.throws(
     () =>
       // @ts-expect-error -- the program address has no default

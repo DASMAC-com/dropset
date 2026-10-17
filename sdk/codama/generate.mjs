@@ -92,9 +92,7 @@ codama.update(
 // one-field tuple struct, which Codama would render as a tuple type.
 // Remap the defined type to its bare wire form — a `u32` — because the
 // human-facing decimal codec (bits <-> value) is layered by hand in each
-// client's `price` module, keyed off these raw bits. (Older anchor-next
-// revs emitted it fieldless, which also mis-sized every account holding a
-// `Price` — `VaultDepositorHeader` read 148 bytes instead of 152.)
+// client's `price` module, keyed off these raw bits.
 codama.update(
   bottomUpTransformerVisitor([
     {
@@ -105,18 +103,18 @@ codama.update(
 );
 
 // `set_liquidity_profile`'s `profile_bytes: [u8; PROFILE_BYTES]` must match
-// the serialized LiquidityProfile. The IDL carries the length (older
-// anchor-next revs emitted 0 and this script restored it); fail the
+// the serialized LiquidityProfile. The IDL carries the length; fail the
 // generation if it ever disagrees with the hand-derived width, since a
 // mismatch is a silent wire-format break rather than a build error. The
 // value has moved twice already (160 → 224, when per-level expiry gained
 // its second domain; 224 → 288, when each level gained its flip spread).
 const profileArg = idl.instructions
   .find((ix) => ix.name === 'set_liquidity_profile')
-  .args.find((arg) => arg.name === 'profile_bytes');
-if (profileArg.type.array[1] !== PROFILE_BYTES) {
+  ?.args.find((arg) => arg.name === 'profile_bytes');
+const profileLen = profileArg?.type?.array?.[1];
+if (profileLen !== PROFILE_BYTES) {
   throw new Error(
-    `profile_bytes is [u8; ${profileArg.type.array[1]}] in the IDL, expected ${PROFILE_BYTES}`,
+    `set_liquidity_profile.profile_bytes should be [u8; ${PROFILE_BYTES}] in the IDL, found ${JSON.stringify(profileArg?.type)}`,
   );
 }
 // Codama renders an IDL `[u8; N]` as fixed bytes (`ReadonlyUint8Array` in

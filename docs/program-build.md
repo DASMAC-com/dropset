@@ -21,11 +21,11 @@ recipe that produced them, so nobody has to re-measure them.
 - **The build is held at v0** by the Makefile's exported
   `ANCHOR_BUILD_SBF_ARCH`. The test runtime is litesvm 0.18 (Agave 4.3,
   solana-sbpf 0.23, which implements the SIMD-0377 encoding that
-  platform-tools v1.57 emits), so nothing in the toolchain still forces v0:
-  the hold now only sequences the v3 flip as its own change. Its predecessor,
-  litesvm 0.11 on Agave 3.1, rejected that v3 ELF with
-  `Failed to parse ELF file: invalid file header`. The local validator runs
-  Agave 4.3 or later (`make check-solana`).
+  platform-tools v1.57 emits); loading a v3 ELF on it is not yet measured.
+  The hold sequences the v3 flip, together with the static-syscall rewrite
+  below, as its own change. Its predecessor, litesvm 0.11 on Agave 3.1,
+  rejected that v3 ELF with `Failed to parse ELF file: invalid file header`.
+  The local validator runs Agave 4.3 or later (`make check-solana`).
 - **The gate that flip satisfies** is SIMD-0500: a validator refuses to
   deploy, upgrade or finalize any ELF older than sBPF v3. It is listed for
   Agave 4.4 on mainnet, but Agave 4.3 already carries it and a test validator
@@ -38,7 +38,7 @@ recipe that produced them, so nobody has to re-measure them.
   The Anchor maintainer confirmed on 2026-10-13 that the stable v1 CLI
   releases are the ones to use, v2 programs included. The program crate is
   unaffected: it stays on the anchor-next crates, which the lockfile pins
-  at `253ad753` (wincode 0.6, solana-address 2.7; previously `e056cc17`).
+  at `253ad753` (wincode 0.6, solana-address 2.7).
 
 ## Reading an ELF
 

@@ -7,7 +7,7 @@ pub mod create_vault;
 // and on a struct whose exit phase reads none of them that second binding
 // is dead — `unused_variables` on the attribute's own span, even for an
 // arg the seeds use. Lint levels for derive output come from the
-// enclosing module, so the allow sits on the four modules it fires in.
+// enclosing module, so the allow sits on each module it fires in.
 #[allow(unused_variables)]
 pub mod deposit;
 pub mod deposit_leader;

@@ -15,7 +15,8 @@
 //!
 //! - the costliest take that fills without stranding dust: a cold book
 //!   (every vault flushed in the same transaction) taken to the heap
-//!   ceiling, sixteen legs, about 205k CU on either side — over the 200k a
+//!   ceiling, sixteen legs, about 205k to 211k CU on either side (it varies
+//!   with the keys a run derives) — over the 200k a
 //!   bare `swap` gets, which covers the first fifteen legs (the test pins
 //!   at least fourteen), and under [`SWAP_COMPUTE_UNIT_LIMIT`];
 //! - a one-atom sell on a fully flipped book (160 entries walked, nothing
