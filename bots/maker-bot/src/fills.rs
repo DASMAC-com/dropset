@@ -47,7 +47,6 @@ use anyhow::{anyhow, Context as _, Result};
 use dropset_feeds::{redact_to_origin, ChannelSource, LivenessReporter, MAX_ERROR_CHARS};
 use dropset_sdk::events::{decode_event_payload, emitted_by, strip_event_tag, DropsetEvent};
 use dropset_sdk::types::FillEvent;
-use dropset_sdk::DROPSET_ID;
 use solana_client::pubsub_client::PubsubClient;
 use solana_client::rpc_client::RpcClient;
 use solana_client::rpc_config::{
@@ -106,6 +105,7 @@ pub struct Fill {
 /// Spawn the fill-subscription thread and return the [`ChannelSource`] the
 /// `feeds` runner drives into the live forward sink the tick drains.
 ///
+/// `program` is the cluster's program id, the only emitter trusted, and
 /// `quote_authority` is the bot's vault key (the leader); only fills against
 /// that vault are forwarded. The thread owns its own [`RpcClient`] and the
 /// blocking pubsub subscription, reconnecting on drop — it never quotes. It is
@@ -127,6 +127,7 @@ pub struct Fill {
 pub fn spawn(
     ws_url: String,
     rpc_url: String,
+    program: Pubkey,
     quote_authority: Pubkey,
     liveness: Option<LivenessReporter<Record>>,
 ) -> Option<ChannelSource<Fill>> {
@@ -139,7 +140,14 @@ pub fn spawn(
             // reporter's drop-at-closure-end — and so its down report — comes
             // from the `move` closure owning it, not from this binding.
             let mut liveness = liveness;
-            run(&ws_url, &rpc, &quote_authority, &tx, &mut liveness);
+            run(
+                &ws_url,
+                &rpc,
+                &program,
+                &quote_authority,
+                &tx,
+                &mut liveness,
+            );
         });
     match spawned {
         Ok(_) => Some(source),
@@ -163,12 +171,13 @@ pub fn spawn(
 fn run(
     ws_url: &str,
     rpc: &RpcClient,
+    program: &Pubkey,
     quote_authority: &Pubkey,
     tx: &Sender<Fill>,
     liveness: &mut Option<LivenessReporter<Record>>,
 ) {
     loop {
-        match subscribe_and_forward(ws_url, rpc, quote_authority, tx, liveness) {
+        match subscribe_and_forward(ws_url, rpc, program, quote_authority, tx, liveness) {
             // Receiver dropped — bot is shutting down.
             Ok(true) => {
                 if let Some(reporter) = liveness.as_mut() {
@@ -230,20 +239,21 @@ fn endpoint_label(ws_url: &str) -> String {
 fn subscribe_and_forward(
     ws_url: &str,
     rpc: &RpcClient,
+    program: &Pubkey,
     quote_authority: &Pubkey,
     tx: &Sender<Fill>,
     liveness: &mut Option<LivenessReporter<Record>>,
 ) -> Result<bool> {
     let (_subscription, notifications) = PubsubClient::logs_subscribe(
         ws_url,
-        RpcTransactionLogsFilter::Mentions(vec![DROPSET_ID.to_string()]),
+        RpcTransactionLogsFilter::Mentions(vec![program.to_string()]),
         RpcTransactionLogsConfig {
             commitment: Some(CommitmentConfig::confirmed()),
         },
     )
     .map_err(|e| anyhow!("logs_subscribe {}: {e}", endpoint_label(ws_url)))?;
     println!(
-        "[fills] subscribed to {DROPSET_ID} logs at {}",
+        "[fills] subscribed to {program} logs at {}",
         endpoint_label(ws_url)
     );
     // Reported here, on the subscribe — deliberately not on the first
@@ -289,7 +299,7 @@ fn subscribe_and_forward(
                 continue;
             }
         };
-        match decode_fills(rpc, &signature, quote_authority) {
+        match decode_fills(rpc, &signature, program, quote_authority) {
             Ok(fills) => {
                 for fill in fills {
                     // `blocking_send` blocks this dedicated thread if the
@@ -310,7 +320,7 @@ fn subscribe_and_forward(
 ///
 /// Each event inner instruction's emitting program is verified by resolving
 /// its `program_id_index` against the transaction's full account-key list and
-/// requiring it to be `DROPSET_ID` — without it, a third party could craft a
+/// requiring it to be the cluster's `program` — without it, a third party could craft a
 /// `FillEvent`-shaped inner instruction from another program carrying our
 /// `quote_authority` (the tag and discriminator are both public). If the
 /// account-key list can't be resolved (the transaction won't decode, or a
@@ -319,13 +329,14 @@ fn subscribe_and_forward(
 ///
 /// The loaded addresses are load-bearing, not belt-and-braces: when a swap
 /// reaches the program through a CPI whose program account is supplied by an
-/// address-lookup table (an aggregator routing into it, say), `DROPSET_ID`
+/// address-lookup table (an aggregator routing into it, say), the program id
 /// sits in the *loaded* segment, so the self-CPI's `program_id_index` points
 /// past the static keys. A static-keys-only check would fail to resolve it and
 /// wrongly drop a legitimate fill — hence we build the full list or bail.
 fn decode_fills(
     rpc: &RpcClient,
     signature: &Signature,
+    program: &Pubkey,
     quote_authority: &Pubkey,
 ) -> Result<Vec<Fill>> {
     let confirmed = rpc
@@ -368,6 +379,7 @@ fn decode_fills(
         &inner_sets,
         &account_keys,
         signature,
+        program,
         quote_authority,
     ))
 }
@@ -381,6 +393,7 @@ fn attribute_fills(
     inner_sets: &[UiInnerInstructions],
     account_keys: &[Pubkey],
     signature: &Signature,
+    program: &Pubkey,
     quote_authority: &Pubkey,
 ) -> Vec<Fill> {
     let mut fills = Vec::new();
@@ -393,7 +406,7 @@ fn attribute_fills(
             // Only events emitted by our own program count — the tag and
             // discriminator are public, so anyone can forge the bytes, but the
             // emitting program id is what `emit_cpi!`'s self-CPI authenticates.
-            if !emitted_by(account_keys, compiled.program_id_index, &DROPSET_ID) {
+            if !emitted_by(account_keys, compiled.program_id_index, program) {
                 continue;
             }
             // Inner-instruction data is base58 even under base64 tx encoding.
@@ -449,6 +462,7 @@ fn decode_fill_event(data: &[u8]) -> Option<FillEvent> {
 mod tests {
     use super::*;
     use dropset_sdk::events::EVENT_IX_TAG_LE;
+    use dropset_sdk::{DROPSET_ID, DROPSET_MAINNET_ID};
     use sha2::{Digest, Sha256};
     use solana_transaction_status_client_types::UiCompiledInstruction;
 
@@ -609,10 +623,45 @@ mod tests {
             &inner_sets,
             &account_keys,
             &Signature::default(),
+            &DROPSET_ID,
             &quote_authority,
         );
         assert_eq!(fills.len(), 1, "only the DROPSET_ID-emitted event counts");
         assert_eq!(fills[0].event, event);
+    }
+
+    /// On mainnet the trusted emitter is the mainnet program: an event from a
+    /// program at the localnet id (deployable by anyone, its secret being
+    /// committed) is dropped even though it carries our `quote_authority`.
+    #[test]
+    fn a_mainnet_run_ignores_events_from_the_localnet_id() {
+        let quote_authority = Pubkey::new_unique();
+        let event = sample_event(quote_authority);
+        let account_keys = vec![DROPSET_ID, DROPSET_MAINNET_ID];
+        let impostor = vec![UiInnerInstructions {
+            index: 0,
+            instructions: vec![compiled_event_ix(0, &event)],
+        }];
+        let fills = attribute_fills(
+            &impostor,
+            &account_keys,
+            &Signature::default(),
+            &DROPSET_MAINNET_ID,
+            &quote_authority,
+        );
+        assert!(fills.is_empty(), "the localnet-id emitter is not trusted");
+        let genuine = vec![UiInnerInstructions {
+            index: 0,
+            instructions: vec![compiled_event_ix(1, &event)],
+        }];
+        let fills = attribute_fills(
+            &genuine,
+            &account_keys,
+            &Signature::default(),
+            &DROPSET_MAINNET_ID,
+            &quote_authority,
+        );
+        assert_eq!(fills.len(), 1, "the mainnet program's event counts");
     }
 
     /// An out-of-range `program_id_index` (e.g. an unresolved key) resolves to
@@ -630,6 +679,7 @@ mod tests {
             &inner_sets,
             &account_keys,
             &Signature::default(),
+            &DROPSET_ID,
             &quote_authority,
         );
         assert!(fills.is_empty());
@@ -649,6 +699,7 @@ mod tests {
             &inner_sets,
             &account_keys,
             &Signature::default(),
+            &DROPSET_ID,
             &Pubkey::new_unique(), // our vault — not the event's
         );
         assert!(fills.is_empty());

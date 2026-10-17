@@ -49,9 +49,10 @@ pub use dropset_math_core::clock::{self, SlotSpan, SlotTime, WallSpan, WallTime}
 // forms resolve, and so downstream users get the ergonomic
 // `dropset_sdk::instructions::*` surface.
 pub use generated::{accounts, errors, instructions, programs, shared, types};
-// The generated instruction builders reference the program id as
+// The generated account owners reference the program id as
 // `crate::DROPSET_ID`, so flatten the program constants to the crate root.
 pub use generated::programs::DROPSET_ID;
-// That constant is the localnet id; the per-cluster lookup is `cluster`.
-pub use cluster::{Deployment, DROPSET_MAINNET_ID};
+// That constant is the localnet id. The generated instruction builders take
+// a `Deployment` instead (`sdk/codama/generate.mjs`), resolved in `cluster`.
+pub use cluster::{Deployment, LocalnetIdOffLocalnet, DROPSET_MAINNET_ID};
 pub use compute_budget::SWAP_COMPUTE_UNIT_LIMIT;

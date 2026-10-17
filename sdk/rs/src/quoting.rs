@@ -23,6 +23,7 @@ use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
 
 use crate::clock::{SlotSpan, WallSpan};
+use crate::cluster::Deployment;
 use crate::generated::instructions::{
     SetLiquidityProfile, SetLiquidityProfileInstructionArgs, SetReferencePrice,
     SetReferencePriceInstructionArgs,
@@ -212,6 +213,7 @@ pub fn profile_bytes(profile: &LiquidityProfile) -> [u8; PROFILE_BYTES] {
 /// IDL and the generated client speak. This is the boundary the
 /// distinguished-fixture convention still covers.
 pub fn set_reference_price_ix(
+    deployment: Deployment,
     signer: Pubkey,
     market: Pubkey,
     vault_idx: u32,
@@ -219,25 +221,32 @@ pub fn set_reference_price_ix(
     quote_slot: u64,
     quote_unix: i64,
 ) -> Instruction {
-    SetReferencePrice { signer, market }.instruction(SetReferencePriceInstructionArgs {
-        vault_idx,
-        price_bits: reference.as_u32(),
-        quote_slot: quote_slot as u32,
-        quote_unix: quote_unix.clamp(0, u32::MAX as i64) as u32,
-    })
+    SetReferencePrice { signer, market }.instruction(
+        deployment,
+        SetReferencePriceInstructionArgs {
+            vault_idx,
+            price_bits: reference.as_u32(),
+            quote_slot: quote_slot as u32,
+            quote_unix: quote_unix.clamp(0, u32::MAX as i64) as u32,
+        },
+    )
 }
 
 /// Build the `set_liquidity_profile` instruction from a serialized profile.
 pub fn set_liquidity_profile_ix(
+    deployment: Deployment,
     signer: Pubkey,
     market: Pubkey,
     vault_idx: u32,
     profile_bytes: [u8; PROFILE_BYTES],
 ) -> Instruction {
-    SetLiquidityProfile { signer, market }.instruction(SetLiquidityProfileInstructionArgs {
-        vault_idx,
-        profile_bytes,
-    })
+    SetLiquidityProfile { signer, market }.instruction(
+        deployment,
+        SetLiquidityProfileInstructionArgs {
+            vault_idx,
+            profile_bytes,
+        },
+    )
 }
 
 #[cfg(test)]

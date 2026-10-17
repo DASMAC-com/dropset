@@ -255,9 +255,70 @@ const rustOut = join(rustCrate, 'src', 'generated');
 // the files.
 await codama.accept(renderJavaScript(tsOut, { formatCode: false }));
 requireTsProgramAddress(tsOut);
-codama.accept(
+// Awaited: the renderer may write asynchronously, and the rewrite below must
+// see its output, not the previous run's.
+await codama.accept(
   renderRust(rustOut, { formatCode: false, crateFolder: rustCrate }),
 );
+
+// The Rust renderer hard-codes the program id as `crate::DROPSET_ID`, the
+// localnet id, and has no option to take it at runtime. That id's secret is
+// committed, so a client that forgets to pick its cluster would sign for a
+// program anyone can deploy. Rewrite each client-side builder to take a
+// `crate::Deployment` as its first argument and aim at its id, so forgetting
+// is a compile error. The CPI half below `<Name>CpiAccounts` already carries
+// the program as an account, so it aims at that instead — which makes the
+// invoked program caller-supplied: an on-chain caller must constrain that
+// account to the Dropset id for its cluster before invoking.
+const deploymentParam = 'deployment: crate::Deployment';
+// The localnet id's address as the renderer itself declares it, so the
+// leftover check below catches a literal as well as the constant's name.
+const localnetId = readFileSync(join(rustOut, 'programs.rs'), 'utf8').match(
+  /DROPSET_ID: Pubkey = pubkey!\("(\w+)"\)/,
+)?.[1];
+if (!localnetId) throw new Error('programs.rs: no DROPSET_ID declaration');
+const instructionsOut = join(rustOut, 'instructions');
+for (const file of readdirSync(instructionsOut)) {
+  if (!file.endsWith('.rs') || file === 'mod.rs') continue;
+  const path = join(instructionsOut, file);
+  const source = readFileSync(path, 'utf8');
+  const cpiAt = source.search(/pub struct \w+CpiAccounts\b/);
+  if (cpiAt === -1) {
+    throw new Error(`${file}: no CpiAccounts struct to split on`);
+  }
+  const client = source
+    .slice(0, cpiAt)
+    .replace(
+      /pub fn instruction\(\s*&self/g,
+      `pub fn instruction(&self, ${deploymentParam}`,
+    )
+    .replace(
+      /pub fn instruction_with_remaining_accounts\(\s*&self\s*,/g,
+      `pub fn instruction_with_remaining_accounts(&self, ${deploymentParam},`,
+    )
+    .replace(
+      /\.instruction_with_remaining_accounts\(/g,
+      '.instruction_with_remaining_accounts(deployment, ',
+    )
+    .replaceAll('crate::DROPSET_ID', 'deployment.program_id()');
+  const cpi = source
+    .slice(cpiAt)
+    .replaceAll('crate::DROPSET_ID', '*self.__program.key');
+  // An accounts struct's two builders plus the `<Name>Builder` one: fewer
+  // means the renderer's output moved and the rewrite missed a path.
+  const rewritten = client.split(deploymentParam).length - 1;
+  if (rewritten !== 3) {
+    throw new Error(`${file}: rewrote ${rewritten} builders, expected 3`);
+  }
+  // The localnet id left behind, by name under another path or as its
+  // literal address, would be a builder that takes a deployment and ignores
+  // it. (An alias of another name is the one shape this cannot see.)
+  const rewrittenSource = client + cpi;
+  if (/DROPSET_ID/.test(rewrittenSource) || rewrittenSource.includes(localnetId)) {
+    throw new Error(`${file}: the localnet id survived the rewrite`);
+  }
+  writeFileSync(path, client + cpi);
+}
 
 console.log('Generated TypeScript client ->', tsOut);
 console.log('Generated Rust client       ->', rustOut);

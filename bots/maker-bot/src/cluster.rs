@@ -25,6 +25,7 @@
 
 use anyhow::{anyhow, bail, Result};
 use dropset_feeds::secrets::SecretProvider;
+use dropset_sdk::Deployment;
 use solana_keypair::Keypair;
 use solana_pubkey::{pubkey, Pubkey};
 use solana_signer::Signer;
@@ -61,6 +62,15 @@ impl Cluster {
     /// Whether this run targets real funds.
     pub fn is_mainnet(self) -> bool {
         self == Cluster::Mainnet
+    }
+
+    /// The SDK deployment this cluster runs, which fixes the program id every
+    /// scan, subscription and instruction aims at.
+    pub fn deployment(self) -> Deployment {
+        match self {
+            Cluster::Localnet => Deployment::Localnet,
+            Cluster::Mainnet => Deployment::Mainnet,
+        }
     }
 }
 
@@ -175,6 +185,18 @@ mod tests {
         assert_eq!(Cluster::parse("mainnet").unwrap(), Cluster::Mainnet);
         assert_eq!(Cluster::parse("Mainnet-Beta").unwrap(), Cluster::Mainnet);
         assert!(Cluster::parse("devnet").is_err());
+    }
+
+    /// Mainnet mode aims at the mainnet program, never the localnet id whose
+    /// secret is committed.
+    #[test]
+    fn each_cluster_aims_at_its_own_program() {
+        assert_eq!(Cluster::Localnet.deployment(), Deployment::Localnet);
+        assert_eq!(Cluster::Mainnet.deployment(), Deployment::Mainnet);
+        assert_ne!(
+            Cluster::Mainnet.deployment().program_id(),
+            dropset_sdk::DROPSET_ID
+        );
     }
 
     /// The embedded roster is exactly the public halves of `keys/*.json` — no
