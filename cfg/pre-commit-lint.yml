@@ -190,6 +190,19 @@ repos:
     name: 'Rust images inherit the pinned-toolchain layer'
     pass_filenames: false
   repo: 'local'
+# A Docker-gated test runs only in the `Tests (Postgres)` job, and only for the
+# crates `make test-postgres` selects, so a crate that gains one without a `-p`
+# there is coverage CI silently never runs. The gated set is derived from the
+# tree, not listed. `always_run` because the omission is a property of the
+# whole tree: the edit that creates it touches only the new crate's `.rs`.
+- hooks:
+  - always_run: true
+    entry: 'python3 .claude/tools/postgres_ci_wiring.py'
+    id: 'postgres-ci-wiring'
+    language: 'system'
+    name: 'Docker-gated crates are selected by the Postgres job'
+    pass_filenames: false
+  repo: 'local'
 # Resident-size gate: skill entry files, skill descriptions and CLAUDE.md are
 # loaded into every session that reaches them, so each carries a hard byte cap,
 # with today's over-cap files frozen at their size in

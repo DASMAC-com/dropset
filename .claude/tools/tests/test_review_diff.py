@@ -642,23 +642,163 @@ class GateTests(unittest.TestCase):
         self.assertNotIn("sdk/{math-core => interface}/gen.rs", paths)
         self.assertTrue(v["runs_artifact_gates"])
 
-    def test_stale_base_is_not_ready(self):
-        # Advance the branch, then advance origin/main *past* it — the phantom
-        # deletion condition a line count cannot detect.
-        self.commit("a.rs", "fn a() {}\n", "Branch work")
+    def advance_base(self, rel, text, branch_rel="a.rs"):
+        """Commit branch work, then advance origin/main *past* it with ``rel``."""
+        self.commit(branch_rel, "fn a() {}\n", "Branch work")
         git(self.repo, "checkout", "-q", "-b", "side", "HEAD~1")
-        self.commit("landed.rs", "fn landed() {}\n", "Landed on main")
+        self.commit(rel, text, "Landed on main")
         git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
         git(self.repo, "checkout", "-q", "main")
 
+    def test_a_disjoint_stale_base_is_ready_and_reports_the_drift(self):
+        self.advance_base("landed.rs", "fn landed() {}\n")
         v = rd.gate("main", self.out, fetch=False)
-        self.assertFalse(v["ready"])
         self.assertFalse(v["base_fresh"])
         self.assertEqual(len(v["base_ahead"]), 1)
         self.assertIn("Landed on main", v["base_ahead"][0])
-        self.assertTrue(any("commit(s) HEAD lacks" in b for b in v["blockers"]))
-        # The diff is non-empty, so line count alone would have said "fine".
-        self.assertGreater(v["diff_lines"], 0)
+        self.assertTrue(v["ready"], v["blockers"])
+        self.assertEqual(
+            v["base_drift"],
+            {
+                "files": 1,
+                "overlap": [],
+                "lint_config": [],
+                "generation_input": False,
+                "fixture_readers": [],
+                "disjoint": True,
+            },
+        )
+
+    def test_a_stale_base_puts_no_phantom_hunk_in_the_diff(self):
+        # The two-dot diff showed the base's new file as a deletion — the hazard
+        # that made every base move a mandatory rebase. From the merge base the
+        # diff is the branch's own change only.
+        self.advance_base("landed.rs", "fn landed() {}\n")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertEqual([f["path"] for f in v["files"]], ["a.rs"])
+        self.assertNotIn("landed.rs", self.out.read_text(encoding="utf-8"))
+
+    def test_a_stale_base_sharing_a_file_blocks_and_names_it(self):
+        self.advance_base("shared.rs", "fn base() {}\n", branch_rel="shared.rs")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertFalse(v["ready"])
+        self.assertEqual(v["base_drift"]["overlap"], ["shared.rs"])
+        joined = " ".join(v["blockers"])
+        self.assertIn("commit(s) HEAD lacks", joined)
+        self.assertIn("shared.rs", joined)
+
+    def test_a_stale_base_moving_the_lint_config_blocks(self):
+        # The base changed WHICH checks run, so a lint result taken before it
+        # cannot stand, whatever the file overlap.
+        self.advance_base("cfg/pre-commit-lint.yml", "repos: []\n")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertFalse(v["ready"])
+        self.assertEqual(v["base_drift"]["lint_config"], ["cfg/pre-commit-lint.yml"])
+        self.assertIn("cfg/pre-commit-lint.yml", " ".join(v["blockers"]))
+
+    def test_any_cfg_file_counts_as_lint_config(self):
+        # The dictionary, the linters' configs and the size baseline all live
+        # under cfg/, and each changes lint's answer on untouched files.
+        self.advance_base("cfg/ruff.toml", "line-length = 88\n")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertFalse(v["ready"])
+        self.assertEqual(v["base_drift"]["lint_config"], ["cfg/ruff.toml"])
+
+    def test_the_dictionary_alone_is_exempt(self):
+        # Union-merged and only ever loosened by an added word; blocking on it
+        # would re-create the rebase churn on most base moves.
+        self.advance_base("cfg/dictionary.txt", "word\n")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertTrue(v["ready"], v["blockers"])
+        self.assertEqual(v["base_drift"]["lint_config"], [])
+
+    def test_a_lint_hook_script_counts_as_lint_config(self):
+        hooks = (
+            "- hooks:\n  - entry: 'python3 .claude/tools/guard.py'\n    id: 'guard'\n"
+        )
+        self.commit("cfg/pre-commit-lint.yml", hooks, "Wire a guard")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.advance_base(".claude/tools/guard.py", "print('v2')\n")
+        drift = rd.gate("main", self.out, fetch=False)["base_drift"]
+        self.assertEqual(drift["lint_config"], [".claude/tools/guard.py"])
+        self.assertFalse(drift["disjoint"])
+
+    def test_a_generation_input_on_BOTH_sides_blocks(self):
+        self.advance_base(
+            "programs/dropset/src/lib.rs",
+            "fn lib() {}\n",
+            branch_rel="programs/dropset/src/swap.rs",
+        )
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertFalse(v["ready"])
+        self.assertTrue(v["base_drift"]["generation_input"])
+        self.assertIn("generation input", " ".join(v["blockers"]))
+
+    def test_a_generation_input_on_the_base_side_only_is_disjoint(self):
+        # The branch touches no input, so the merged tree's artifacts are the
+        # base's own, already regenerated there.
+        self.advance_base("programs/dropset/src/lib.rs", "fn lib() {}\n")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertTrue(v["ready"], v["blockers"])
+        self.assertFalse(v["base_drift"]["generation_input"])
+
+    def test_a_branch_rename_of_a_file_the_base_edits_is_an_overlap(self):
+        # The numstat inventory keeps only a rename's destination, so the overlap
+        # must come from a --no-renames listing or a rename/modify collision
+        # reads as disjoint.
+        self.commit("old.rs", "fn shared() {}\n" * 20, "Seed the file")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.repo, "mv", "old.rs", "new.rs")
+        git(self.repo, "commit", "-q", "-m", "Rename on the branch")
+        git(self.repo, "checkout", "-q", "-b", "side", "HEAD~1")
+        self.commit("old.rs", "fn shared() {}\n" * 19 + "fn edited() {}\n", "Edit")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.repo, "checkout", "-q", "main")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertEqual(v["base_drift"]["overlap"], ["old.rs"])
+        self.assertFalse(v["ready"])
+
+    def test_a_base_adding_a_reader_of_a_branch_file_blocks(self):
+        # Disjoint by files, but the base's new test reads what the branch edits:
+        # the HEAD-tree fixture scan cannot see a reader HEAD does not have.
+        self.commit("tui/Cargo.toml", "[package]\nname = 'tui'\n", "Crate")
+        self.commit("frontend/roster.json", "[]\n", "Roster")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.advance_base(
+            "tui/tests/roster.rs",
+            'const R: &str = include_str!("../../frontend/roster.json");\n',
+            branch_rel="frontend/roster.json",
+        )
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertEqual(v["base_drift"]["overlap"], [])
+        self.assertEqual(v["base_drift"]["fixture_readers"], ["frontend/roster.json"])
+        self.assertFalse(v["ready"])
+        self.assertIn("frontend/roster.json", " ".join(v["blockers"]))
+
+    def test_a_runtime_reader_in_a_crate_only_the_base_has_is_resolved_there(self):
+        # The composed form resolves against the crate root, and that crate's
+        # manifest exists only at the base ref — so the manifest probe must read
+        # the base tree, not the working tree, or the reader resolves wrongly.
+        self.commit("frontend/roster.json", "[]\n", "Roster")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.commit("frontend/roster.json", "[1]\n", "Branch edit")
+        git(self.repo, "checkout", "-q", "-b", "side", "HEAD~1")
+        self.commit("ledger/Cargo.toml", "[package]\nname = 'n'\n", "Crate")
+        self.commit(
+            "ledger/tests/r.rs",
+            'concat!(env!("CARGO_MANIFEST_DIR"), "/../frontend/roster.json")\n',
+            "Reader",
+        )
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.repo, "checkout", "-q", "main")
+        self.assertFalse((self.repo / "ledger").exists())
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertEqual(v["base_drift"]["fixture_readers"], ["frontend/roster.json"])
+        self.assertFalse(v["ready"])
+
+    def test_a_fresh_base_reports_no_drift(self):
+        self.commit("a.rs", "fn a() {}\n", "Branch work")
+        self.assertIsNone(rd.gate("main", self.out, fetch=False)["base_drift"])
 
     def test_generated_families_are_excluded_from_the_diff(self):
         self.commit("sdk/rs/src/generated/big.rs", "// generated\n" * 50, "Regenerate")
@@ -924,10 +1064,12 @@ class GateTests(unittest.TestCase):
         self.assertFalse(parsed["ready"])
         self.assertTrue(parsed["blockers"])
 
-    def test_gate_only_writes_the_diff_file_as_usual(self):
-        # It narrows the printed JSON, not the work — the diff on disk is what
-        # a later full call or a lens brief still points at.
+    def test_gate_only_never_touches_the_out_file(self):
+        # The shared diff is what the lenses and the cross-check read. A probe
+        # that rewrote it against a moved base handed the cross-check a corrupt
+        # input, so the probe leaves it byte-for-byte alone.
         self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        self.out.write_text("the diff the lenses read\n", encoding="utf-8")
         with redirect_stdout(io.StringIO()):
             rd.run(
                 [
@@ -940,7 +1082,39 @@ class GateTests(unittest.TestCase):
                     "--gate-only",
                 ]
             )
-        self.assertTrue(self.out.exists())
+        self.assertEqual(
+            self.out.read_text(encoding="utf-8"), "the diff the lenses read\n"
+        )
+
+    def test_gate_only_runs_without_an_out_path(self):
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = rd.run(
+                ["review_diff.py", "--base", "main", "--no-fetch", "--gate-only"]
+            )
+        self.assertEqual(code, 0)
+        parsed = json.loads(buf.getvalue())
+        self.assertTrue(parsed["ready"])
+        # The gating still saw a real diff, not an empty stand-in.
+        self.assertFalse(parsed["diff_empty"])
+
+    def test_gate_only_refuses_split(self):
+        with self.assertRaisesRegex(rd.ReviewDiffError, "takes no --split"):
+            rd.run(
+                [
+                    "review_diff.py",
+                    "--base",
+                    "main",
+                    "--no-fetch",
+                    "--gate-only",
+                    "--split",
+                ]
+            )
+
+    def test_a_full_run_still_requires_out(self):
+        with self.assertRaisesRegex(rd.ReviewDiffError, "--out is required"):
+            rd.run(["review_diff.py", "--base", "main", "--no-fetch"])
 
 
 class GateOnlyProjectionTests(unittest.TestCase):
@@ -1466,8 +1640,8 @@ class ArtifactGateSourceOnlyTests(unittest.TestCase):
         self.assertTrue(verdict["runs_artifact_gates"])
 
 
-class RustIncludeFixtureTests(unittest.TestCase):
-    """The `include_str!` scan, over a throwaway tree with injected sources.
+class RustTestFixtureTests(unittest.TestCase):
+    """The fixture scan, over a throwaway tree with injected sources.
 
     `sources` and `root` are injectable precisely so these stay deterministic:
     asserting against the live repo would make the test fail the day a test stops
@@ -1487,7 +1661,7 @@ class RustIncludeFixtureTests(unittest.TestCase):
         target.write_text(text, encoding="utf-8")
 
     def scan(self, *sources):
-        return rd.rust_include_fixtures(sources=list(sources), root=self.root)
+        return rd.rust_test_fixtures(sources=list(sources), root=self.root)
 
     def test_a_relative_target_resolves_against_the_including_file(self):
         self.write(
@@ -1567,17 +1741,93 @@ class RustIncludeFixtureTests(unittest.TestCase):
     def test_a_missing_source_is_skipped_not_raised(self):
         self.assertEqual(self.scan("gone/never.rs"), {})
 
-    def test_a_raw_string_or_computed_path_is_NOT_matched(self):
-        # Both are named in the regex's own comment as known blind spots. Pinned
-        # so a future reader learns it from a test rather than from a dequeue.
+    def test_a_raw_string_or_a_non_manifest_concat_is_NOT_matched(self):
+        # Named in the regexes' own comments as known blind spots. Pinned so a
+        # future reader learns it from a test rather than from a dequeue.
         self.write("a/t.rs", 'include_str!(r"../raw.yml")\n')
         self.write("a/u.rs", 'include_str!(concat!(env!("DIR"), "/c.yml"))\n')
         self.assertEqual(self.scan("a/t.rs"), {})
-        # The `concat!` form yields NO key at all: the pattern requires the literal
-        # immediately after the open paren, and the next character here is `c`.
         # Asserted as an exact empty dict rather than a missing key, so loosening
-        # the regex later fails loudly instead of passing vacuously.
+        # a regex later fails loudly instead of passing vacuously.
         self.assertEqual(self.scan("a/u.rs"), {})
+
+    def test_a_runtime_manifest_path_resolves_against_the_CRATE_root(self):
+        # The 1566 shape: a test deep in `src/` builds the path from the manifest
+        # dir, so resolving it against the source file's own directory would
+        # land one level too deep and miss the roster.
+        self.write("bots/maker-bot/Cargo.toml", "[package]\n")
+        self.write(
+            "bots/maker-bot/src/config.rs",
+            "let path = concat!(\n"
+            '    env!("CARGO_MANIFEST_DIR"),\n'
+            '    "/../../frontend/lib/data/currencies.json"\n'
+            ");\n"
+            "let text = std::fs::read_to_string(path).unwrap();\n",
+        )
+        self.assertEqual(
+            self.scan("bots/maker-bot/src/config.rs"),
+            {"frontend/lib/data/currencies.json": ["bots/maker-bot/src/config.rs"]},
+        )
+
+    def test_a_computed_include_is_caught_by_the_manifest_form(self):
+        self.write("a/Cargo.toml", "[package]\n")
+        self.write(
+            "a/tests/t.rs",
+            'include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/c.yml"))\n',
+        )
+        self.assertEqual(
+            self.scan("a/tests/t.rs"), {"a/fixtures/c.yml": ["a/tests/t.rs"]}
+        )
+
+    def test_a_bare_literal_read_resolves_against_the_crate_root(self):
+        # `cargo test` runs a test binary from its crate root.
+        self.write("a/Cargo.toml", "[package]\n")
+        self.write(
+            "a/src/lib.rs", 'let s = std::fs::read_to_string("fixtures/x.json");\n'
+        )
+        self.write("a/src/b.rs", 'let b = fs::read("fixtures/y.bin");\n')
+        self.assertEqual(
+            self.scan("a/src/lib.rs", "a/src/b.rs"),
+            {"a/fixtures/x.json": ["a/src/lib.rs"], "a/fixtures/y.bin": ["a/src/b.rs"]},
+        )
+
+    def test_an_escaping_manifest_path_is_dropped(self):
+        self.write("a/Cargo.toml", "[package]\n")
+        self.write("a/t.rs", 'concat!(env!("CARGO_MANIFEST_DIR"), "/../../out.txt")\n')
+        self.assertEqual(self.scan("a/t.rs"), {})
+
+    def test_an_absolute_read_literal_is_dropped(self):
+        # Only a composed manifest tail has its leading `/` read as a separator;
+        # a read literal that starts with one really is absolute.
+        self.write("a/Cargo.toml", "[package]\n")
+        self.write("a/t.rs", 'let s = std::fs::read_to_string("/etc/hosts");\n')
+        self.assertEqual(self.scan("a/t.rs"), {})
+
+
+class FixtureHitsTests(unittest.TestCase):
+    """The projection from a fixture map onto diff paths."""
+
+    def test_a_directory_key_hits_the_files_under_it(self):
+        # A runtime read composes the directory and joins the file name on at
+        # run time, so the scan's key is the directory.
+        fixtures = {"frontend/lib/data": ["tui/src/market.rs"]}
+        self.assertEqual(
+            rd.fixture_hits(
+                ["frontend/lib/data/currencies.json", "frontend/app/page.tsx"],
+                fixtures,
+            ),
+            ["frontend/lib/data/currencies.json"],
+        )
+
+    def test_a_shared_name_prefix_is_not_a_directory_hit(self):
+        fixtures = {"frontend/lib/data": ["tui/src/market.rs"]}
+        self.assertEqual(rd.fixture_hits(["frontend/lib/database.ts"], fixtures), [])
+
+    def test_hits_are_sorted(self):
+        fixtures = {"b.yml": ["x.rs"], "a.yml": ["x.rs"]}
+        self.assertEqual(
+            rd.fixture_hits(["b.yml", "a.yml"], fixtures), ["a.yml", "b.yml"]
+        )
 
     def test_the_hits_field_rides_the_gate_only_projection(self):
         # A caller taking `--gate-only` must still see the reason to run a suite the
@@ -1681,6 +1931,26 @@ class FixtureReachabilityGateTests(unittest.TestCase):
         verdict = self._commit_change("infra/localnet/README.md", "notes\n")
         self.assertFalse(verdict["rust_reachable"])
         self.assertEqual(verdict["rust_fixture_hits"], [])
+
+    def test_a_roster_read_at_RUNTIME_is_reachable(self):
+        # The 1566 case end to end: a frontend-only diff, read by a test that
+        # composes the path from its manifest dir and joins the file name on.
+        roster = "frontend/lib/data/currencies.json"
+        self._write("tui/Cargo.toml", "[package]\nname = 'tui'\n")
+        self._write(
+            "tui/src/market.rs",
+            'let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../frontend/lib/data");\n'
+            'let text = std::fs::read_to_string(format!("{dir}/currencies.json"));\n',
+        )
+        self._write(roster, "[]\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "Add the roster reader")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+        self.assertFalse(rd.rust_is_reachable([roster]))
+        verdict = self._commit_change(roster, '[{"decimals": 6}]\n')
+        self.assertTrue(verdict["rust_reachable"])
+        self.assertEqual(verdict["rust_fixture_hits"], [roster])
 
 
 class ProseHeavyGateTests(unittest.TestCase):

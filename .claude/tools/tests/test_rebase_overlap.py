@@ -18,6 +18,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 import rebase_overlap as ro
+import review_diff as rd
 from review_diff import ReviewDiffError
 
 
@@ -99,7 +100,8 @@ class AnalyzeTests(unittest.TestCase):
         base that renamed a file the branch still edits reports NO overlap, on
         the one delta shape most likely to have dropped the branch's edits."""
         seen = []
-        with mock.patch.object(ro, "_git", side_effect=lambda a: seen.append(a) or ""):
+        # `changed_files` lives in review_diff, shared with its drift check.
+        with mock.patch.object(rd, "_git", side_effect=lambda a: seen.append(a) or ""):
             ro.changed_files("a..b")
         self.assertIn("--no-renames", seen[0])
 
