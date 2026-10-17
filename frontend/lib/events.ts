@@ -25,6 +25,9 @@ export type AppEvents = {
   applyMaxBalance: undefined;
   openBalancePercent: undefined;
   swapSucceeded: undefined;
+  // A vault deposit or withdraw confirmed: wallet balances and the vaults
+  // table (reserves, shares, the wallet's positions) are stale.
+  vaultTxSucceeded: undefined;
   openSlippage: undefined;
   resetGlobe: undefined;
   focusRoute: undefined;
@@ -77,6 +80,7 @@ export const EVENTS: { [K in keyof AppEvents]: K } = {
   applyMaxBalance: "applyMaxBalance",
   openBalancePercent: "openBalancePercent",
   swapSucceeded: "swapSucceeded",
+  vaultTxSucceeded: "vaultTxSucceeded",
   openSlippage: "openSlippage",
   resetGlobe: "resetGlobe",
   focusRoute: "focusRoute",

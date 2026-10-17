@@ -6,31 +6,17 @@ import {
   simulateSwap,
 } from "@dropset/sdk";
 import type { SolanaClientRuntime, WalletSession } from "@solana/client";
-import {
-  type Address,
-  address,
-  appendTransactionMessageInstructions,
-  compileTransaction,
-  createNoopSigner,
-  createTransactionMessage,
-  getBase64EncodedWireTransaction,
-  pipe,
-  type SendableTransaction,
-  type Signature,
-  setTransactionMessageFeePayer,
-  setTransactionMessageLifetimeUsingBlockhash,
-  type Transaction,
-} from "@solana/kit";
+import { type Address, address, createNoopSigner } from "@solana/kit";
 import {
   findAssociatedTokenPda,
   getCreateAssociatedTokenIdempotentInstructionAsync,
 } from "@solana-program/token";
 import { PLATFORM_FEE } from "../env";
-import { getErrorMessage } from "../guards";
 import type { SettlementRef } from "../swap/realizedFill";
-import { CANCEL_PATTERN, SwapError, type SwapOutcome } from "../swap/types";
+import { SwapError, type SwapOutcome } from "../swap/types";
 import { gateNowSlot, gateNowUnix, syncChainClock } from "./chainClock";
 import { type EclobRoute, platformFeeBpsFor, resolveEclobRoute } from "./route";
+import { assertWalletCanSign, submitInstructions } from "./submit";
 
 type Rpc = SolanaClientRuntime["rpc"];
 
@@ -128,9 +114,8 @@ export const applySlippage = (out: bigint, bps: number): bigint => {
 //      re-derived here (not trusted from the UI) so `minOut` reflects the
 //      book at submit time, mirroring how the DFlow path re-fetches /order.
 //   3. Build the swap instruction (idempotently creating the taker's ATAs
-//      first, so a first-time output token doesn't fail the transfer), compile
-//      to a fee-payer-only transaction, and hand it to the wallet to sign +
-//      submit.
+//      first, so a first-time output token doesn't fail the transfer) and
+//      hand it to submitInstructions to compile, sign and submit.
 export async function executeEclobSwap(
   input: EclobSwapInput,
 ): Promise<EclobSwapOutcome> {
@@ -144,12 +129,7 @@ export async function executeEclobSwap(
     rpc,
   } = input;
 
-  if (!walletSession.signTransaction && !walletSession.sendTransaction) {
-    throw new SwapError(
-      "Connected wallet can't sign or send transactions",
-      "wallet",
-    );
-  }
+  assertWalletCanSign(walletSession);
 
   const route = await resolveEclobRoute(rpc, inputMint, outputMint);
   if (!route) {
@@ -298,69 +278,12 @@ export async function executeEclobSwap(
     { programAddress },
   );
 
-  const { value: latestBlockhash } = await rpc
-    .getLatestBlockhash({ commitment: "confirmed" })
-    .send();
-  // No compute-budget instruction, deliberately: the wallet owns the budget.
-  // A wallet that adds a priority fee (Phantom does, at signing) skips any
-  // transaction that already carries a `SetComputeUnitLimit`, so setting one
-  // here would cost the taker that fee. Nor is one needed: with none, the
-  // runtime grants 200k CU per non-builtin instruction, shared across the
-  // transaction, so these three get 600k. Less what the two ATA creates use,
-  // that covers every take the SDK's `compute_budget` docs measure — the
-  // costliest, a dust walk over a fully flipped book, included.
-  const message = pipe(
-    createTransactionMessage({ version: 0 }),
-    (m) => setTransactionMessageFeePayer(taker.address, m),
-    (m) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, m),
-    (m) =>
-      appendTransactionMessageInstructions(
-        [createBaseAta, createQuoteAta, swapIx],
-        m,
-      ),
-  );
-  const tx = compileTransaction(message);
-
-  let signature: Signature;
-  try {
-    // Cast via unknown: the compiled tx has an empty signature slot for the
-    // taker (and carries a blockhash-lifetime brand), while the wallet's
-    // parameter types want a fully-signed SendableTransaction. The wallet adds
-    // the signature during signing, so the hand-off is runtime-safe.
-    const unsigned = tx as unknown as SendableTransaction & Transaction;
-    if (walletSession.signTransaction) {
-      // Preferred path: the wallet only *signs*; we submit to our own RPC —
-      // the same cluster we quoted against (localnet under `make demo`,
-      // mainnet in normal mode). Submission therefore never depends on the
-      // wallet's selected network, so a localnet swap works without switching
-      // the wallet (e.g. Phantom) off mainnet. The blockhash was fetched from
-      // this same RPC, so it's valid on the node we submit to.
-      const signed = await walletSession.signTransaction(unsigned);
-      signature = await rpc
-        .sendTransaction(getBase64EncodedWireTransaction(signed), {
-          encoding: "base64",
-          preflightCommitment: "confirmed",
-        })
-        .send();
-    } else if (walletSession.sendTransaction) {
-      // Fallback for a wallet that can only sign-and-submit in one step: it
-      // submits over its own network (fine on mainnet; a localnet demo needs
-      // the wallet pointed at the local RPC in that case).
-      signature = await walletSession.sendTransaction(
-        tx as unknown as Transaction & SendableTransaction,
-        { commitment: "confirmed" },
-      );
-    } else {
-      throw new SwapError("Connected wallet can't sign", "wallet");
-    }
-  } catch (e) {
-    const msg = getErrorMessage(e);
-    const cancelled = CANCEL_PATTERN.test(msg);
-    throw new SwapError(
-      cancelled ? "Cancelled in wallet" : msg,
-      cancelled ? "rejected" : "wallet",
-    );
-  }
+  const signature = await submitInstructions({
+    feePayer: taker,
+    instructions: [createBaseAta, createQuoteAta, swapIx],
+    walletSession,
+    rpc,
+  });
 
   return {
     signature,

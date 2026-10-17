@@ -40,7 +40,13 @@ describe("chainVault", () => {
     expect(v.baseReserve).toBe(1_000);
     expect(v.quoteReserve).toBe(1_270);
     expect(v.totalShares).toBe(2_000_000);
-    expect(v.chain).toEqual({ index: 2, seq: 5n });
+    expect(v.chain).toEqual({
+      index: 2,
+      seq: 5n,
+      baseAtoms: 1_000n * 10n ** 9n,
+      quoteAtoms: 1_270n * 10n ** 6n,
+      totalShares: 2_000_000n,
+    });
     expect(v.vaultPubkey).toBe(chainVaultId(MARKET, 5n));
     expect(v.volume24h).toBeNull();
     // The program's index: isqrt(base_atoms · quote_atoms) / total_shares.
@@ -84,17 +90,26 @@ describe("chainVault", () => {
     });
   });
 
-  it("closes deposits on each of the program's three gates", () => {
+  it("closes deposits on each of the program's flag gates", () => {
     const open = chainVault(summary(), MARKET, "TGBP", "USDC");
     expect(depositClosedReason(open)).toBeNull();
     for (const over of [
       { frozen: true },
+      { totalShares: 0n },
       { allowOutsideDepositors: false },
       { outsideDepositsApproved: false },
     ]) {
       const v = chainVault(summary(over), MARKET, "TGBP", "USDC");
       expect(depositClosedReason(v)).not.toBeNull();
     }
+  });
+
+  it("closes deposits to the vault's own leader only", () => {
+    const open = chainVault(summary(), MARKET, "TGBP", "USDC");
+    expect(depositClosedReason(open, LEADER)).not.toBeNull();
+    expect(depositClosedReason(open, MARKET)).toBeNull();
+    // A raw decoded summary gates the same way as the table row.
+    expect(depositClosedReason(summary({ frozen: true }))).not.toBeNull();
   });
 });
 
