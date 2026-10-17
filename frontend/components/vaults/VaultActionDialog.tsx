@@ -566,7 +566,10 @@ export function VaultActionDialog({
     [market.base, market.quote, chain?.seq],
   );
   const tx = useVaultTx(vaultRef);
-  const busy = tx.status === "signing" || tx.status === "confirming";
+  const busy =
+    tx.status === "preparing" ||
+    tx.status === "signing" ||
+    tx.status === "confirming";
 
   // Quote tokens per base token; null for an empty vault (no ratio to hold).
   const ratio = vaultReserveRatio(vault);
@@ -706,6 +709,10 @@ export function VaultActionDialog({
       kind: "deposit",
       leg: activeLeg,
       amountIn: parseAmountToBase(value, stablecoinDecimals(symbol)),
+      walletAtoms: {
+        base: walletAtoms(baseMint),
+        quote: walletAtoms(quoteMint),
+      },
     });
     // Clear the form once it lands, so the confirmed amounts can't be
     // resubmitted by a second click; a failure keeps them for a retry.
