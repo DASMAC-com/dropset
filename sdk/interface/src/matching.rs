@@ -307,10 +307,10 @@ pub fn simulate_swap(
             }
             let fill_b = fill_b as u64;
             // Symmetric to the Buy zero-input guard above: a one-atom
-            // quote leg at any price above 1 costs zero base, and the
-            // engine skips it. (Bounded near one atom on this arm,
-            // unlike the Buy side, since the price is above 1.) A
-            // taker-capped leg ends the walk, as on the Buy side.
+            // quote leg at any price above 1 costs zero base. (Bounded
+            // near one atom on this arm, unlike the Buy side, since the
+            // price is above 1.) As on the Buy side, a taker-capped leg
+            // ends the walk and a level- or vault-capped one is skipped.
             if fill_b == 0 {
                 if taker_bound {
                     break;
@@ -1688,10 +1688,10 @@ mod tests {
     /// rather than walking on to a later level that could fill it.
     ///
     /// The later level sits at an exact whole ratio (0.5: one quote atom
-    /// buys two base for exactly one quote), the one price at which the
-    /// walk could have filled the atom. Ending the walk forgoes it, the
+    /// buys two base for exactly one quote), a price at which the walk
+    /// could have filled the atom. Ending the walk forgoes it, the
     /// accepted dust: the alternative is a full-book walk on every dust
-    /// remainder, ~2.4k CU per entry, for nothing on every other price.
+    /// remainder for nothing at every other price.
     #[test]
     fn a_dust_remainder_ends_the_walk_at_guard_1f() {
         let data = market_with_asks(&[
@@ -1717,6 +1717,36 @@ mod tests {
         assert_eq!(q.legs, 1, "the walk ends at guard 1f");
         assert_eq!(q.out_amount, 10, "only the first level fills");
         assert_eq!(q.in_amount, 3, "the remainder atom stays with the taker");
+    }
+
+    /// The other half of guard 1f: a leg capped by its LEVEL (not the
+    /// taker's budget) whose zero input leg trips the guard is skipped,
+    /// not the end of the walk, since the taker still has budget a later
+    /// level can fill.
+    #[test]
+    fn a_level_capped_zero_input_leg_skips_and_the_walk_goes_on() {
+        let data = market_with_asks(&[
+            // One base atom at 0.35 costs 0 quote, so guard 1f fires; the
+            // taker's 5 quote atoms could buy 14 base here, so the level
+            // cap, not the taker, binds.
+            position_at(35_000_000, -1, 1),
+            // 5 quote atoms buy 10 base at 0.5.
+            position_at(50_000_000, -1, 1_000_000),
+        ]);
+        let view = MarketView::load(&data).unwrap();
+
+        let q = simulate_swap(
+            &view,
+            SwapSide::Buy,
+            5,
+            Price::INFINITY,
+            NOW_SLOT,
+            NOW_WALL,
+            0,
+        );
+        assert_eq!(q.legs, 1, "the dust level is skipped, the next fills");
+        assert_eq!(q.out_amount, 10);
+        assert_eq!(q.in_amount, 5);
     }
 
     /// The zero-leg early return, reached the only way it can be: a live

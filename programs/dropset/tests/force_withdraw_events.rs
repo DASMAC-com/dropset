@@ -150,6 +150,11 @@ fn force_withdraw_leader_drain_emits_withdraw_and_realize() {
     let leader_shares_before = f.vault(0).leader_shares.get();
     let (base_ata, quote_ata) = (f.base_ata(&owner), f.quote_ata(&owner));
     let (base_before, quote_before) = (f.token_balance(&base_ata), f.token_balance(&quote_ata));
+    assert_ne!(
+        f.market_header().free_head.get(),
+        0,
+        "sector 0 is occupied before the drain"
+    );
 
     let meta = f
         .force_withdraw_leader_meta(&admin, 0, &owner)

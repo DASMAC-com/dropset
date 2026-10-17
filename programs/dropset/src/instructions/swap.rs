@@ -242,9 +242,9 @@ impl SwapSide {
     ///   Every later level is worse, so it floors to zero there too —
     ///   except at a price that is an exact whole ratio, where one atom
     ///   would fill, and that one-atom miss is accepted as dust. Skipping
-    ///   instead walked the rest of the book filling nothing, about 2.4k
-    ///   CU per entry: a one-atom sell on a full ten-vault book cost
-    ///   ~388k CU for zero fills.
+    ///   on would walk the rest of the book filling nothing. A level- or
+    ///   vault-capped 1f leg still skips: the taker keeps budget a later
+    ///   level may fill.
     #[inline]
     fn compute_fill(
         self,

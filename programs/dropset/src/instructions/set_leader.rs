@@ -18,12 +18,16 @@
 //!
 //! There is deliberately no admin path: an admin rotation would be a
 //! custody-seizure lever, and admins already hold `freeze_vault`. Allowed
-//! on tombstoned vaults — moving custody of a winding-down vault is
-//! exactly what a leaked-key rotation needs. Rejected on frozen vaults:
-//! a frozen vault blocks its leader from opening another on the market,
-//! and rotating it onto a second key the leader controls would lift that
-//! block. A frozen vault can't trade, so a leaked key on one has nothing
-//! to quote.
+//! on unfrozen tombstoned vaults — moving custody of a winding-down vault
+//! is exactly what a leaked-key rotation needs. Rejected on frozen vaults:
+//! a frozen vault blocks its leader key from opening another on the
+//! market, and rotating it onto a second key the leader controls would
+//! lift that block for the first key. The cost is accepted: matching
+//! skips a frozen vault, but a leaked leader key on one can still
+//! `withdraw_leader` the stake (the `min_leader_share` floor is bypassed
+//! once frozen), and the owner can no longer rotate the key away first.
+//! The block is per key, not per operator, so a fresh keypair is not
+//! stopped either.
 
 use anchor_lang_v2::{address_eq, prelude::*};
 

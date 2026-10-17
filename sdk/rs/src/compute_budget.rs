@@ -3,14 +3,21 @@
 //!
 //! With no `SetComputeUnitLimit`, the runtime grants 200k CU per non-builtin
 //! instruction, shared across the transaction. A transaction that is a bare
-//! `swap` therefore gets 200k. On the default-cap book
-//! (`registry.max_vaults_per_market = 10`) every take fits that, but with
-//! little room: a take ends its walk once its remaining input is dust (one
-//! input atom that prices to zero at the next level), so its cost is bounded
-//! by the legs it fills, and the heap bounds those.
+//! `swap` therefore gets 200k. A take's cost is the entries it visits:
+//! the legs it fills, which the heap bounds, plus the entries it skips at
+//! about 2.4k CU each. A take ends its walk once its own remaining input is
+//! dust (one input atom that prices to zero at the next level), so a dust
+//! taker no longer walks the book. An entry is still skipped when its level
+//! or vault is empty, or when its level or vault cap is so small the leg
+//! prices to zero input, since the taker keeps budget a later level may
+//! fill. A book quoted with such dust-sized levels throughout can still cost
+//! a no-fill walk over every entry: roughly the 390k a one-atom sell walking
+//! the fully flipped ten-vault book cost before a dust taker's walk ended,
+//! an estimate never re-measured on a dust-quoted book.
 //!
-//! Measured on the ten-vault book in `programs/dropset/tests/flip.rs`, which
-//! asserts each stays under the 200k a bare `swap` gets:
+//! Measured on the ten-vault book in `programs/dropset/tests/flip.rs` (whose
+//! levels are not dust-sized), which asserts each stays under the 200k a
+//! bare `swap` gets:
 //!
 //! - the costliest take: a cold book (every vault flushed in the same
 //!   transaction) taken to the heap ceiling, sixteen legs, with or without a
@@ -18,10 +25,11 @@
 //! - a one-atom sell on a fully flipped book (160 entries on the side, nothing
 //!   filled): about 76k CU, since the walk ends at the first entry.
 //!
-//! [`SWAP_COMPUTE_UNIT_LIMIT`] sits about 60% over the costliest take, as
-//! headroom for drift: a priority fee is charged on the requested limit, not
-//! the units consumed, so a limit far above the worst case overpays on every
-//! swap. Raising the vault cap scales the flush and the walk, by up to
+//! [`SWAP_COMPUTE_UNIT_LIMIT`] covers the dust-quoted full-book walk above
+//! as well, so a bare `swap` into such a book completes empty rather than
+//! failing. A priority fee is charged on the requested limit, not the units
+//! consumed, so the gap between this limit and an ordinary take is paid on
+//! every swap; sizing the limit per take from simulation is the planned fix. Raising the vault cap scales the flush and the walk, by up to
 //! sixteen entries a vault, so a cap change re-runs those tests first.
 //!
 //! The limit does **not** lift the heap ceiling: on that book a take
@@ -40,4 +48,4 @@
 /// The `SetComputeUnitLimit` a client sends ahead of a bare `swap`. See the
 /// module docs for the measurement it is sized from and which clients it
 /// binds.
-pub const SWAP_COMPUTE_UNIT_LIMIT: u32 = 300_000;
+pub const SWAP_COMPUTE_UNIT_LIMIT: u32 = 600_000;
