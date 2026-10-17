@@ -11,9 +11,11 @@
 # validator's post-execution rent check rejects (litesvm before 0.18 skipped
 # that check, so the program tests never saw it). The const rate equals
 # `3480 * 2` today and `6960 * 1` once SIMD-0194 activates, so it is correct
-# across the transition; the tradeoff is any cluster whose rent differs from
-# that rate, which SIMD-0437's lowering steps would make every cluster (the
-# program tests pin litesvm's Rent sysvar to it: `tests/common/mod.rs`).
+# across the transition; the tradeoff is any cluster whose rent sits below
+# that rate, as SIMD-0437's lowering steps would make every cluster that
+# activates them: there the PDAs are over-funded, which passes the rent check
+# but costs payers more (the program tests pin litesvm's Rent sysvar to the
+# const rate: `tests/common/mod.rs`).
 anchor-lang = { workspace = true, features = ["const-rent"] }
 # Canonical consensus arithmetic — `Price` codec, pure matcher math, and
 # the share/NAV/PnL kernels (interface.md § SDK). Pulled with
