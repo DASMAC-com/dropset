@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -68,6 +69,40 @@ class WriteKeyFileTest(unittest.TestCase):
     def test_rejects_wrong_length(self):
         with self.assertRaises(ValueError):
             grind_key.write_key_file(self.out_dir, self.keypair[:32])
+
+
+class GrindTest(unittest.TestCase):
+    """grind() with the keygen replaced by a stub that drops JSON files."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out_dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def stub_keygen(self, names):
+        def run(argv, cwd, **_):
+            self.assertEqual(
+                argv[:4], ["solana-keygen", "grind", "--starts-with", "eBook:1"]
+            )
+            self.assertNotIn("--ignore-case", argv)
+            for name in names:
+                (Path(cwd) / name).write_text(FIXTURE.read_text())
+
+        return mock.patch.object(grind_key.subprocess, "run", run)
+
+    def test_returns_the_one_new_json(self):
+        (self.out_dir / "old.json").write_text("[]")
+        with self.stub_keygen([f"{FIXTURE_PUBKEY}.json"]):
+            path = grind_key.grind("eBook", self.out_dir)
+        self.assertEqual(path.name, f"{FIXTURE_PUBKEY}.json")
+
+    def test_several_new_keypair_files_are_all_deleted(self):
+        with self.stub_keygen(["a.json", "b.json"]):
+            with self.assertRaises(RuntimeError):
+                grind_key.grind("eBook", self.out_dir)
+        self.assertEqual(list(self.out_dir.iterdir()), [])
 
 
 if __name__ == "__main__":

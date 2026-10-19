@@ -117,7 +117,9 @@ The prefix match is case-sensitive. Each run writes one file to
 checkout: `<pubkey>.txt`, mode 600, whose entire contents are the base58
 encoding of the 64-byte secret keypair, the form Phantom imports and
 exports. The keygen JSON is deleted, and the script prints only the
-public key, the path and the byte count.
+public key, the path and the byte count. If iCloud's "Desktop &
+Documents Folders" sync is on, pass a non-synced `--out-dir` instead, or
+the secret is uploaded the moment it is written.
 
 Verify each file with a Phantom round trip before storing it:
 

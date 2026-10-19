@@ -3,11 +3,11 @@
 """Grind one mainnet vanity keypair into a Phantom-importable text file.
 
 Runs ``solana-keygen grind --starts-with <prefix>:1`` (case-sensitive)
-in an output directory outside every checkout, then converts the keygen
-JSON array to ``<pubkey>.txt``: mode 600, its entire contents the
-base58 encoding of the 64-byte secret keypair, the form Phantom's
-import and export dialogs use. The keygen JSON is deleted, so no other
-key-file form is left behind.
+in an output directory (by default outside every checkout), then
+converts the keygen JSON array to ``<pubkey>.txt``: mode 600, its
+entire contents the base58 encoding of the 64-byte secret keypair, the
+form Phantom's import and export dialogs use. The keygen JSON is
+deleted, so no other key-file form is left behind.
 
 Prints only the public key, the output path and the byte count; the
 secret is never printed or logged. See ``keys/README.md`` → "Mainnet
@@ -48,8 +48,12 @@ def write_key_file(out_dir: Path, keypair: bytes) -> Path:
         raise ValueError(f"keypair is {len(keypair)} bytes, want {KEYPAIR_LEN}")
     path = out_dir / f"{b58encode(keypair[32:])}.txt"
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(b58encode(keypair))
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(b58encode(keypair))
+    except BaseException:
+        path.unlink()
+        raise
     return path
 
 
@@ -70,6 +74,9 @@ def grind(prefix: str, out_dir: Path) -> Path:
     )
     new = set(out_dir.glob("*.json")) - before
     if len(new) != 1:
+        # Every new JSON is a secret keypair; never leave one behind.
+        for p in new:
+            p.unlink()
         raise RuntimeError(f"expected one new keypair JSON, found {len(new)}")
     return new.pop()
 
@@ -89,6 +96,7 @@ def main() -> int:
 
     os.umask(0o077)
     args.out_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    args.out_dir.chmod(0o700)  # mkdir leaves an existing directory's mode
     json_path = grind(args.prefix, args.out_dir)
     try:
         keypair = bytes(json.loads(json_path.read_text()))
