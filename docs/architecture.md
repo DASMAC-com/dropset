@@ -539,14 +539,21 @@ The byte-exact layout of the vault sector and its inline records
 `Position`) is owned by
 [`state/market/layout.rs`](../programs/dropset/src/state/market/layout.rs)
 (`Vault`, `ReferencePrice`, `Remaining`, `Position`) and canonicalized
-in the IDL. A vault carries the `leader` and `quote_authority`, its `seq`
-vault number, the `reference_price`, pooled `base_atoms` /
-`quote_atoms`, the share bookkeeping (`total_shares`, `leader_shares`,
-`hwm`, `perf_fee_rate`, `min_leader_share`), the `frozen` /
-`allow_outside_depositors` / `outside_deposits_approved` / `tombstoned`
-flags, the `profile` ladder, and the materialized `remaining`. DLL
-pointers (`next` / `prev`) thread it into one of three lists (see
-**Storage layout**). The load-bearing invariants and rationale:
+in the IDL. Fields run by concern, with one reserve and no padding: the
+identity group (DLL pointers `next` / `prev`, the 32-byte `name`, the
+`leader` and `quote_authority`, and its `seq` vault number), the
+`reference_price`, the ledger (pooled `base_atoms` / `quote_atoms` and
+the share bookkeeping `total_shares`, `leader_shares`, `hwm`,
+`perf_fee_rate`, `min_leader_share`), the flags together (`frozen`,
+`allow_outside_depositors`, `outside_deposits_approved`, `tombstoned`,
+`name_locked`), a 103-byte zero `_reserved`, then the `profile` ladder
+and the materialized `remaining` — 1,088 bytes per sector. The DLL
+pointers thread it into one of three lists (see **Storage layout**).
+The reserve is the vault's single general reserve, sized at roughly
+double the nameable post-launch carves (about ten percent of the
+struct) and 3 mod 4 so the ladder lands on a 4-byte boundary; carves
+take alignment-1 wrappers from its front. The load-bearing invariants
+and rationale:
 
 - **Inventory backs the book; treasury holds the atoms.** `base_atoms`
   backs asks, `quote_atoms` backs bids; both are pooled across the
@@ -591,6 +598,21 @@ pointers (`next` / `prev`) thread it into one of three lists (see
   because exhaustion would permanently brick vault creation on the
   market, and a `u32` is reachable at a zero create fee. Re-creating a
   market restarts the sequence; an indexer must fence that by time.
+  Within one incarnation of the market, the pair of market and sequence
+  number is the vault's UID.
+- **The name is a label, not the identity.** `name` is at most 32 bytes
+  of printable ASCII (`0x20`–`0x7E`), stored zero-padded; all-zero means
+  unset. It is unique per market, case-insensitively, among occupied
+  sectors (active, frozen and tombstoned), and an unset name never collides —
+  nothing else is checked (no URL grammar, no whitespace rules). The
+  leader sets it at `CreateVault` and renames it with `SetVaultName`; an
+  admin overrides it with `OverrideVaultName`, which can also set
+  `name_locked` to refuse the leader's rename. The create fee and the
+  admin override are the bound on abuse. `SetLeader` keeps the name and
+  the lock, `FreezeVault` blanks the name and locks it, and `CloseVault`
+  blanks it and unlocks it, releasing the name for the market. The
+  release is final for the leader: `SetVaultName` refuses a tombstoned
+  vault, so closing cannot be used to shed an admin lock.
 
 **`ReferencePrice` — stamp encoding.** `stamp` packs `market.nonce` at
 the last `SetReferencePrice` / `SetLiquidityProfile`, OR'd with
@@ -1414,7 +1436,7 @@ that is not a permissionless instruction falls under one of them.
    here so the full set is visible in one place:
    - Steady-state: `add_admin`, `remove_admin`, `create_market`
      (see **Registry → Admin gating of market creation**),
-     `FreezeVault`, `SetOutsideDepositsApproved`,
+     `FreezeVault`, `OverrideVaultName`, `SetOutsideDepositsApproved`,
      `SetMinLeaderShare`, `SetMarketFeeConfig`, `SweepResidual`, and a
      waived `CreateVault` fee path.
    - Feature-gated under `admin-teardown` (see **Account
@@ -1459,6 +1481,9 @@ authoritative.
 | Leader would lead a second live vault on the market         | `LeaderAlreadyLeadsVault`      |
 | `SetLeader` names the vault's current leader                | `SameLeader`                   |
 | `SetLeader` names a depositor on the same vault             | `NewLeaderIsDepositor`         |
+| Vault name not ≤ 32 bytes of printable ASCII                | `InvalidVaultName`             |
+| Vault name taken on the market (case-insensitive)           | `VaultNameTaken`               |
+| `SetVaultName` on an admin-locked name                      | `VaultNameLocked`              |
 | Reference price unset where a basis read needs it           | `ReferencePriceNotSet`         |
 | Swap `limit_price` bits not a well-formed `Price`           | `InvalidPrice`                 |
 | Swap `amount_in == 0`                                       | `InvalidAmountIn`              |
@@ -1515,6 +1540,12 @@ Caller arguments stamped onto the vault:
   `SetQuoteAuthority`.
 - `allow_outside_depositors: bool` — toggleable post-open via
   `SetAllowOutsideDepositors`.
+- `name: String` — the vault's label, after `leader_override` on the
+  wire. Validated under the name rules (see **Vault**) and copied into
+  the fixed field before the sector is allocated: an invalid name
+  rejects with `InvalidVaultName`, a taken one with `VaultNameTaken`.
+  Empty leaves it unset. The leader renames it post-open via
+  `SetVaultName`.
 
 **`leader` resolution.** Every `CreateVault` takes a
 `leader_override: Address` argument. A non-admin caller must pass
@@ -1978,8 +2009,8 @@ The new leader must be:
 is the leader on a hardware wallet and the quoting delegate on the hot
 maker key; a caller that wants both rotated bundles a
 `SetQuoteAuthority` in the same transaction. `leader_shares`, the HWM,
-the fee rate, the flags and `seq` are unchanged — the same vault under a
-new key.
+the fee rate, the flags, `seq`, the `name` and its `name_locked` lock are
+unchanged — the same vault under a new key.
 
 Allowed on frozen and tombstoned vaults: moving custody of a
 winding-down vault is exactly what a leaked-key rotation needs. There is
@@ -2009,6 +2040,11 @@ drains. This is the intended leader-initiated lifecycle exit ("done
 quoting this market"). See **Vault → Frozen and tombstoned vaults**
 for full state semantics and the comparison with `FreezeVault`.
 
+The close also blanks `Vault.name` and clears `name_locked`, releasing
+the name for the market. Emits `CloseVaultEvent` (`market`,
+`sector_idx`, `vault_seq`, `leader`, `active_count_after`, and the
+`name` it blanked).
+
 ### FreezeVault
 
 Admin-only. Sets `Vault.frozen = 1`. This is the protocol's
@@ -2018,6 +2054,36 @@ pass) but cannot be re-quoted. There is no "unfreeze" — to
 re-enter, the same leader pubkey pays the create-vault fee again and
 starts a new vault. See **Vault → Frozen and tombstoned vaults** for
 full state semantics and the comparison with `CloseVault`.
+
+The freeze also blanks `Vault.name` and sets `name_locked`, releasing
+the name for the market and refusing a leader rename. Emits
+`FreezeVaultEvent` (`market`, `sector_idx`, `vault_seq`, `leader`, and
+the `name` it blanked).
+
+### SetVaultName
+
+Leader-only. Writes `Vault.name` from a `name: String` argument under
+the name rules (see **Vault**): an invalid name rejects with
+`InvalidVaultName`, one another occupied sector on the market already
+carries (case-insensitively) with `VaultNameTaken`. The vault itself is
+excluded from that walk, so a leader may re-case its own name; the
+empty string blanks it. Refused on a frozen vault (`VaultFrozen`), on
+a tombstoned vault (`VaultTombstoned`, so `CloseVault`'s release of the
+name and the lock is final), and on an admin-locked name
+(`VaultNameLocked`). Emits `SetVaultNameEvent`
+(`market`, `sector_idx`, `vault_seq`, `leader`, `old_name`,
+`new_name`).
+
+### OverrideVaultName
+
+Admin-only, in the `FreezeVault` account shape. Takes `name: String`
+and `lock: bool`: writes the name (blank allowed) under the same
+validity and uniqueness rules as `SetVaultName`, and sets
+`Vault.name_locked = lock`. A locked name refuses the leader's
+`SetVaultName` until an admin unlocks it. Not refused on a frozen
+vault, so the admin path reaches where the leader's does not. Emits
+`OverrideVaultNameEvent` (`market`, `sector_idx`, `vault_seq`,
+`admin`, `lock`, `old_name`, `new_name`).
 
 ### SetOutsideDepositsApproved
 
@@ -2773,8 +2839,11 @@ vault-lifecycle changes (`CloseVault`, `FreezeVault`), the two
 authority rotations `SetLeader` and `SetQuoteAuthority` — a coalesced
 diff collapses an A → B → C rotation inside one slot to A → C, and an
 A → B → A one to nothing, which loses who held custody when and hides
-from a maker that its own quoting delegation moved — the admin
-retuning levers (`SetMinLeaderShare`, `SetMarketFeeConfig`,
+from a maker that its own quoting delegation moved — the two name
+writers `SetVaultName` and `OverrideVaultName`, for the same coalescing
+reason (each carries both the old and the new name; `CreateVault`,
+`FreezeVault` and `CloseVault` each carry the name they wrote or
+blanked), the admin retuning levers (`SetMinLeaderShare`, `SetMarketFeeConfig`,
 `SetTakerFee`, `SetRegistryDefaults`), and `SweepResidual` — which emits
 on **every** call, including the zero-sweep case, because the three terms
 it reports are a diagnosis an account diff cannot supply (see

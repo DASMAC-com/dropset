@@ -221,6 +221,9 @@ pub struct MarketHeader {
 pub struct Vault {
     pub next: LeU32,
     pub prev: LeU32,
+    /// Printable-ASCII display name, zero-padded; all-zero means unset.
+    /// A label, not the identity — see [`Vault::seq`].
+    pub name: [u8; 32],
     pub leader: [u8; 32],
     pub quote_authority: [u8; 32],
     /// Per-market vault number: with the market, the vault's identity.
@@ -238,7 +241,8 @@ pub struct Vault {
     pub allow_outside_depositors: u8,
     pub outside_deposits_approved: u8,
     pub tombstoned: u8,
-    pub _reserved: [u8; 4],
+    pub name_locked: u8,
+    pub _reserved: [u8; 103],
     pub profile: LiquidityProfile,
     pub remaining: Remaining,
 }
@@ -248,9 +252,13 @@ pub struct Vault {
 // this mirror) breaks the SDK build here rather than silently
 // misdecoding the slab.
 const _: () = assert!(core::mem::size_of::<MarketHeader>() == 261);
-const _: () = assert!(core::mem::size_of::<Vault>() == 956);
-// The size asserts cannot catch `seq` swapping with another `LeU64`.
-const _: () = assert!(core::mem::offset_of!(Vault, seq) == 72);
+const _: () = assert!(core::mem::size_of::<Vault>() == 1088);
+// The size asserts cannot catch `seq` swapping with another `LeU64`, or
+// `name` with another 32-byte array.
+const _: () = assert!(core::mem::offset_of!(Vault, name) == 8);
+const _: () = assert!(core::mem::offset_of!(Vault, seq) == 104);
+const _: () = assert!(core::mem::offset_of!(Vault, name_locked) == 184);
+const _: () = assert!(core::mem::offset_of!(Vault, profile) == 288);
 // Sectors stay aligned across the slab: stride must be a multiple of the
 // on-chain Vault alignment (see VAULT_ALIGN / MarketView::load).
 const _: () = assert!(core::mem::size_of::<Vault>().is_multiple_of(VAULT_ALIGN));

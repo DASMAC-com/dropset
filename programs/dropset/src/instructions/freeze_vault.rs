@@ -12,6 +12,9 @@
 //! pins the HWM at freeze time. Per the spec's **FreezeVault**, there
 //! is no "unfreeze" — to re-enter, the same leader opens a fresh vault.
 //!
+//! The freeze also blanks `Vault.name` and sets `name_locked`, releasing
+//! the name for the market and refusing a leader rename.
+//!
 //! Admin-only: authorized via the registry admin set, mirroring
 //! `set_outside_deposits_approved`. Freezing an already-frozen vault is
 //! an idempotent no-op (the flag is simply re-asserted).
@@ -51,12 +54,14 @@ impl FreezeVault {
         let leader = vault.leader;
         let vault_seq = vault.seq.get();
         vault.frozen = true.into();
+        let name = vault.blank_name(true);
 
         Ok(FreezeVaultEvent {
             market: market_addr,
             sector_idx: vault_idx,
             vault_seq,
             leader,
+            name,
         })
     }
 }

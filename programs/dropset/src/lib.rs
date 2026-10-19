@@ -88,12 +88,14 @@ pub mod dropset {
         quote_authority: Address,
         allow_outside_depositors: bool,
         leader_override: Address,
+        name: String,
     ) -> Result<()> {
         let event = ctx.accounts.create_vault(
             perf_fee_rate,
             quote_authority,
             allow_outside_depositors,
             leader_override,
+            name,
         )?;
         emit_cpi!(event);
         Ok(())
@@ -514,6 +516,34 @@ pub mod dropset {
     #[discrim = 30]
     pub fn set_leader(ctx: &mut Context<SetLeader>, vault_idx: u32) -> Result<()> {
         let event = ctx.accounts.set_leader(vault_idx)?;
+        emit_cpi!(event);
+        Ok(())
+    }
+
+    // The vault-name pair, appended at the tail so discriminants 0–30 keep
+    // their numbers: the leader's rename, then the admin override (the
+    // `freeze_vault` account shape). See the architecture spec,
+    // § SetVaultName and § OverrideVaultName.
+    #[discrim = 31]
+    pub fn set_vault_name(
+        ctx: &mut Context<SetVaultName>,
+        vault_idx: u32,
+        name: String,
+    ) -> Result<()> {
+        let event = ctx.accounts.set_vault_name(vault_idx, name)?;
+        emit_cpi!(event);
+        Ok(())
+    }
+
+    #[discrim = 32]
+    #[access_control(require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin))]
+    pub fn override_vault_name(
+        ctx: &mut Context<OverrideVaultName>,
+        vault_idx: u32,
+        name: String,
+        lock: bool,
+    ) -> Result<()> {
+        let event = ctx.accounts.override_vault_name(vault_idx, name, lock)?;
         emit_cpi!(event);
         Ok(())
     }

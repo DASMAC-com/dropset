@@ -19,6 +19,11 @@
 //! that is neither frozen nor tombstoned already carries the resolved
 //! leader, the call fails with [`DropsetError::LeaderAlreadyLeadsVault`],
 //! on the override path included.
+//!
+//! `name` is the vault's display label, validated by
+//! [`crate::state::encode_vault_name`] and unique per market
+//! (case-insensitive) — [`DropsetError::InvalidVaultName`] /
+//! [`DropsetError::VaultNameTaken`]. Empty leaves it unset.
 
 use anchor_lang_v2::{address_eq, prelude::*};
 // `associated_token::{self, ...}` keeps the module in scope so the
@@ -34,8 +39,8 @@ use anchor_spl_v2::{
 use crate::{
     errors::DropsetError,
     events::CreateVaultEvent,
-    state::{Market, VaultAccess, VaultDll},
-    AdminSet, Registry, PPM, Q32_32_ONE,
+    state::{encode_vault_name, Market, VaultAccess, VaultDll},
+    AdminSet, Registry, NULL_SECTOR, PPM, Q32_32_ONE,
 };
 
 #[event_cpi]
@@ -98,6 +103,7 @@ impl CreateVault {
         quote_authority: Address,
         allow_outside_depositors: bool,
         leader_override: Address,
+        name: String,
     ) -> Result<CreateVaultEvent> {
         // Validate perf fee. Capped at 100% (`PPM`). The spec leaves
         // this open-ended; the cap matches the `Ppm32` semantic.
@@ -151,6 +157,14 @@ impl CreateVault {
             DropsetError::LeaderAlreadyLeadsVault
         );
 
+        // Validate and claim the name before the fee moves or the sector
+        // is allocated. No sector is excluded: this one does not exist yet.
+        let packed_name = encode_vault_name(&name)?;
+        require!(
+            !self.market.name_taken(&packed_name, NULL_SECTOR),
+            DropsetError::VaultNameTaken
+        );
+
         // Charge the create-vault fee unless the signer is an admin.
         if !is_admin {
             let atoms = self.market.fee_config.atoms.get();
@@ -201,6 +215,7 @@ impl CreateVault {
             // in range by construction; the accessor's bounds check is a
             // no-op here but keeps the stamp off the raw slab layout.
             let vault = self.market.mutate_vault(sector)?;
+            vault.name = packed_name;
             vault.leader = leader;
             vault.quote_authority = quote_authority;
             vault.seq = seq.into();
@@ -227,6 +242,7 @@ impl CreateVault {
             perf_fee_rate,
             min_leader_share,
             allow_outside_depositors,
+            name,
         })
     }
 }

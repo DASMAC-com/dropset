@@ -134,6 +134,7 @@ pub struct CreateVaultInstructionArgs {
     pub quote_authority: Pubkey,
     pub allow_outside_depositors: bool,
     pub leader_override: Pubkey,
+    pub name: String,
 }
 
 impl CreateVaultInstructionArgs {
@@ -172,6 +173,7 @@ pub struct CreateVaultBuilder {
     quote_authority: Option<Pubkey>,
     allow_outside_depositors: Option<bool>,
     leader_override: Option<Pubkey>,
+    name: Option<String>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
@@ -274,6 +276,11 @@ impl CreateVaultBuilder {
         self.leader_override = Some(leader_override);
         self
     }
+    #[inline(always)]
+    pub fn name(&mut self, name: String) -> &mut Self {
+        self.name = Some(name);
+        self
+    }
     /// Add an additional account to the instruction.
     #[inline(always)]
     pub fn add_remaining_account(&mut self, account: solana_instruction::AccountMeta) -> &mut Self {
@@ -328,6 +335,7 @@ impl CreateVaultBuilder {
                 .leader_override
                 .clone()
                 .expect("leader_override is not set"),
+            name: self.name.clone().expect("name is not set"),
         };
 
         accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
@@ -565,6 +573,7 @@ impl<'a, 'b> CreateVaultCpiBuilder<'a, 'b> {
             quote_authority: None,
             allow_outside_depositors: None,
             leader_override: None,
+            name: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
@@ -673,6 +682,11 @@ impl<'a, 'b> CreateVaultCpiBuilder<'a, 'b> {
         self.instruction.leader_override = Some(leader_override);
         self
     }
+    #[inline(always)]
+    pub fn name(&mut self, name: String) -> &mut Self {
+        self.instruction.name = Some(name);
+        self
+    }
     /// Add an additional account to the instruction.
     #[inline(always)]
     pub fn add_remaining_account(
@@ -728,6 +742,7 @@ impl<'a, 'b> CreateVaultCpiBuilder<'a, 'b> {
                 .leader_override
                 .clone()
                 .expect("leader_override is not set"),
+            name: self.instruction.name.clone().expect("name is not set"),
         };
         let instruction = CreateVaultCpi {
             __program: self.instruction.__program,
@@ -792,6 +807,7 @@ struct CreateVaultCpiBuilderInstruction<'a, 'b> {
     quote_authority: Option<Pubkey>,
     allow_outside_depositors: Option<bool>,
     leader_override: Option<Pubkey>,
+    name: Option<String>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }

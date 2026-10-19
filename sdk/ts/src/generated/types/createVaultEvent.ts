@@ -6,30 +6,34 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder } from '@solana/kit';
+import { addDecoderSizePrefix, addEncoderSizePrefix, combineCodec, getAddressDecoder, getAddressEncoder, getBooleanDecoder, getBooleanEncoder, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, getUtf8Decoder, getUtf8Encoder, type Address, type Codec, type Decoder, type Encoder } from '@solana/kit';
 
 export type CreateVaultEvent = { market: Address; sectorIdx: number; 
 /**
  * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
  * identifies a vault across sector reuse; `sector_idx` alone does not.
  */
-vaultSeq: bigint; leader: Address; quoteAuthority: Address; perfFeeRate: number; minLeaderShare: number; allowOutsideDepositors: boolean;  };
+vaultSeq: bigint; leader: Address; quoteAuthority: Address; perfFeeRate: number; minLeaderShare: number; allowOutsideDepositors: boolean; 
+/** The name stamped at creation; empty when unset. */
+name: string;  };
 
 export type CreateVaultEventArgs = { market: Address; sectorIdx: number; 
 /**
  * The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
  * identifies a vault across sector reuse; `sector_idx` alone does not.
  */
-vaultSeq: number | bigint; leader: Address; quoteAuthority: Address; perfFeeRate: number; minLeaderShare: number; allowOutsideDepositors: boolean;  };
+vaultSeq: number | bigint; leader: Address; quoteAuthority: Address; perfFeeRate: number; minLeaderShare: number; allowOutsideDepositors: boolean; 
+/** The name stamped at creation; empty when unset. */
+name: string;  };
 
-export function getCreateVaultEventEncoder(): FixedSizeEncoder<CreateVaultEventArgs> {
-    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['leader', getAddressEncoder()], ['quoteAuthority', getAddressEncoder()], ['perfFeeRate', getU32Encoder()], ['minLeaderShare', getU32Encoder()], ['allowOutsideDepositors', getBooleanEncoder()]]);
+export function getCreateVaultEventEncoder(): Encoder<CreateVaultEventArgs> {
+    return getStructEncoder([['market', getAddressEncoder()], ['sectorIdx', getU32Encoder()], ['vaultSeq', getU64Encoder()], ['leader', getAddressEncoder()], ['quoteAuthority', getAddressEncoder()], ['perfFeeRate', getU32Encoder()], ['minLeaderShare', getU32Encoder()], ['allowOutsideDepositors', getBooleanEncoder()], ['name', addEncoderSizePrefix(getUtf8Encoder(), getU32Encoder())]]);
 }
 
-export function getCreateVaultEventDecoder(): FixedSizeDecoder<CreateVaultEvent> {
-    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['leader', getAddressDecoder()], ['quoteAuthority', getAddressDecoder()], ['perfFeeRate', getU32Decoder()], ['minLeaderShare', getU32Decoder()], ['allowOutsideDepositors', getBooleanDecoder()]]);
+export function getCreateVaultEventDecoder(): Decoder<CreateVaultEvent> {
+    return getStructDecoder([['market', getAddressDecoder()], ['sectorIdx', getU32Decoder()], ['vaultSeq', getU64Decoder()], ['leader', getAddressDecoder()], ['quoteAuthority', getAddressDecoder()], ['perfFeeRate', getU32Decoder()], ['minLeaderShare', getU32Decoder()], ['allowOutsideDepositors', getBooleanDecoder()], ['name', addDecoderSizePrefix(getUtf8Decoder(), getU32Decoder())]]);
 }
 
-export function getCreateVaultEventCodec(): FixedSizeCodec<CreateVaultEventArgs, CreateVaultEvent> {
+export function getCreateVaultEventCodec(): Codec<CreateVaultEventArgs, CreateVaultEvent> {
     return combineCodec(getCreateVaultEventEncoder(), getCreateVaultEventDecoder());
 }
