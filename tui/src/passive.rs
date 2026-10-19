@@ -1,18 +1,22 @@
-//! Set-and-forget passive liquidity — post a flipping ladder on the leader's
-//! vault and leave it, re-centering by hand when the market has walked.
+//! Set-and-forget passive liquidity — post a flipping ladder on the vault and
+//! leave it, re-centering by hand when the market has walked.
 //!
 //! The operating model is a laptop visit about once a day: open the panel,
 //! post or re-center, sign, close it. Nothing stays connected in between, so
 //! there is no maker process here — the book rests and flips on its own.
 //!
 //! The same two halves as [`crate::leader`] around the operator's typed `yes`:
-//! [`prepare`] reads the leader's vault fresh and builds a [`Ticket`] from the
+//! [`prepare`] reads the vault fresh and builds a [`Ticket`] from the
 //! [`Form`]; the panel previews it; [`execute`] sends exactly that ticket. The
 //! ladder comes from [`dropset_sdk::ladder::PassiveLadder`], the builder the
 //! maker bot's passive mode uses, so the two cannot drift on the shape rules.
 //!
+//! Both writes are the vault's quote authority's to sign, so the vault is
+//! found by that key and the leader — the custody key — is never needed: a
+//! daily visit loads only the quote key.
+//!
 //! The stop is not here: the emergency kill (`K` on mainnet) zeroes every
-//! level on the leader's vaults, passive ones included.
+//! level on the quote key's vaults, passive ones included.
 
 use crate::accounts::{self, MarketView};
 use crate::book;
@@ -270,12 +274,13 @@ pub fn parse_price(buf: &str) -> Option<f64> {
 pub struct Ticket {
     pub op: PassiveOp,
     pub market: Pubkey,
-    /// Resolves the pair, and through it the signing leader.
+    /// Resolves the pair, and through it the signing quote authority.
     pub base_mint: Pubkey,
     pub base_symbol: &'static str,
     pub quote_symbol: &'static str,
     pub seat: SectorSeat,
-    pub leader: Pubkey,
+    /// The vault's quote authority — the key both writes are signed by.
+    pub quote_authority: Pubkey,
     /// The rungs [`PassiveOp::Deploy`] writes; empty on a re-center.
     pub levels: Vec<LadderLevel>,
     /// The center, human quote-per-base, and where it came from.
@@ -293,7 +298,7 @@ impl Ticket {
                 "market  {}/{}  vault #{}",
                 self.base_symbol, self.quote_symbol, self.seat.seq
             ),
-            format!("leader  {}", self.leader),
+            format!("signer  {} (quote authority)", self.quote_authority),
             format!(
                 "center  {} ({})",
                 book::fmt_price(self.center),
@@ -356,58 +361,60 @@ pub fn ladder_lines(levels: &[LadderLevel], center: f64) -> Vec<String> {
     lines
 }
 
-/// The one live vault `leader` leads on `market`, read fresh, that a passive
-/// write can sign for — refusing none, several, a frozen one, or one whose
-/// quote authority is not the leader (the program checks that key).
+/// The one live vault on `market` whose quote authority is `quote`, read
+/// fresh, that a passive write can sign for — refusing none, several, or a
+/// frozen one.
 fn passive_seat(
     client: &RpcClient,
     cluster: Cluster,
     market: &Pubkey,
-    leader: &Pubkey,
+    quote: &Pubkey,
 ) -> Result<SectorSeat> {
-    let seats = emergency::leader_seats(client, cluster, market, leader)?
+    let seats = emergency::quote_seats(client, cluster, market, quote)?
         .context("market not found")?
         .seats;
-    pick_seat(seats, leader)
+    pick_seat(seats, quote)
 }
 
 /// [`passive_seat`]'s choice over one read's `seats` — split out so the
 /// refusals are testable without a chain.
-fn pick_seat(seats: Vec<SectorSeat>, leader: &Pubkey) -> Result<SectorSeat> {
+fn pick_seat(seats: Vec<SectorSeat>, quote: &Pubkey) -> Result<SectorSeat> {
     let live: Vec<_> = seats.into_iter().filter(|s| !s.tombstoned).collect();
     let seat = match live[..] {
         [seat] => seat,
-        [] => bail!("leader {leader} leads no live vault on this market"),
+        [] => bail!("quote authority {quote} signs for no live vault on this market"),
         ref many => bail!(
-            "leader {leader} leads {} vaults on this market — refusing to guess",
+            "quote authority {quote} signs for {} vaults on this market — refusing to guess",
             many.len()
         ),
     };
     if seat.frozen {
         bail!("vault #{} is frozen — matching is stopped", seat.seq);
     }
-    if seat.quote_authority != *leader {
+    // The scan keys on this field, so it holds by construction; kept as the
+    // guard, since the program checks exactly this key.
+    if seat.quote_authority != *quote {
         bail!(
-            "vault #{}'s quote authority is not the leader — it cannot sign",
+            "vault #{}'s quote authority is not this session's quote key — it cannot sign",
             seat.seq
         );
     }
     Ok(seat)
 }
 
-/// Read the leader's vault on `market` fresh and build the ticket `form`
-/// describes. Sends nothing.
+/// Read the vault `quote` signs for on `market` fresh and build the ticket
+/// `form` describes. Sends nothing.
 pub fn prepare(
     client: &RpcClient,
     repo_root: &Path,
     cluster: Cluster,
     market: &MarketView,
-    leader: &Pubkey,
+    quote: &Pubkey,
     form: &Form,
 ) -> Result<Ticket> {
     let config = market::config_for(repo_root, cluster, &market.base_mint)
         .context("the selected market is not in this cluster's roster")?;
-    let seat = passive_seat(client, cluster, &market.address, leader)?;
+    let seat = passive_seat(client, cluster, &market.address, quote)?;
     if form.op == PassiveOp::Recenter && !seat.quoting {
         bail!("no ladder rests on vault #{} — post one first", seat.seq);
     }
@@ -448,7 +455,7 @@ pub fn prepare(
         base_symbol: config.base.symbol,
         quote_symbol: config.quote.symbol,
         seat,
-        leader: *leader,
+        quote_authority: *quote,
         levels,
         center,
         center_source,
@@ -471,23 +478,23 @@ fn center_warning(center: f64, live: f64) -> Option<String> {
     })
 }
 
-/// Send the confirmed `ticket`, signed by `leader` and paid by `wallet`: the
-/// ladder and the reference in one transaction on a deploy, so the book never
-/// rests on the new shape at the old center; the reference alone on a
-/// re-center. Refuses, nothing sent, when the vault is no longer the one
-/// confirmed.
+/// Send the confirmed `ticket`, signed by the vault's quote authority `quote`
+/// and paid by `wallet`: the ladder and the reference in one transaction on a
+/// deploy, so the book never rests on the new shape at the old center; the
+/// reference alone on a re-center. Refuses, nothing sent, when the vault is no
+/// longer the one confirmed.
 pub fn execute(
     client: &RpcClient,
     wallet: &Keypair,
-    leader: &Keypair,
+    quote: &Keypair,
     cluster: Cluster,
     ticket: &Ticket,
     log: &Logger,
 ) -> Result<String> {
-    if leader.pubkey() != ticket.leader {
-        bail!("the signing leader is not the one confirmed — nothing was sent");
+    if quote.pubkey() != ticket.quote_authority {
+        bail!("the signing quote authority is not the one confirmed — nothing was sent");
     }
-    let now = passive_seat(client, cluster, &ticket.market, &ticket.leader)?;
+    let now = passive_seat(client, cluster, &ticket.market, &ticket.quote_authority)?;
     if (now.idx, now.seq) != (ticket.seat.idx, ticket.seat.seq) {
         bail!(
             "vault #{} is no longer at sector {} — nothing was sent; re-open the prompt",
@@ -502,7 +509,7 @@ pub fn execute(
             bail!("the ladder commits more than the whole leg — nothing was sent");
         }
         ixs.push(set_liquidity_profile_ix(
-            ticket.leader,
+            ticket.quote_authority,
             ticket.market,
             ticket.seat.idx,
             profile_bytes(&profile),
@@ -510,7 +517,7 @@ pub fn execute(
     }
     let slot = client.get_slot().context("current slot")?;
     ixs.push(set_reference_price_ix(
-        ticket.leader,
+        ticket.quote_authority,
         ticket.market,
         ticket.seat.idx,
         ticket.price,
@@ -522,7 +529,7 @@ pub fn execute(
         .map(|ix| chain::retarget(cluster, ix))
         .collect();
     let label = ticket.op.label();
-    chain::send_logged(client, wallet, &[wallet, leader], &ixs, label, log).context(label)?;
+    chain::send_logged(client, wallet, &[wallet, quote], &ixs, label, log).context(label)?;
     log.accounts_changed();
     Ok(match ticket.op {
         PassiveOp::Deploy => format!(
@@ -667,6 +674,39 @@ mod tests {
     }
 
     #[test]
+    fn the_ticket_is_signed_by_the_quote_authority_alone() {
+        // The hot path's two writes name the quote key as their signer, never
+        // the leader — so a re-centre session needs no custody key.
+        let quote = Keypair::new();
+        let ticket = Ticket {
+            op: PassiveOp::Deploy,
+            market: Pubkey::new_unique(),
+            base_mint: Pubkey::new_unique(),
+            base_symbol: "TGBP",
+            quote_symbol: "USDC",
+            seat: seat(2, quote.pubkey()),
+            quote_authority: quote.pubkey(),
+            levels: Vec::new(),
+            center: 1.324,
+            center_source: "typed",
+            price: Price::from_value(1.324).unwrap(),
+            warnings: Vec::new(),
+        };
+        assert!(ticket
+            .summary()
+            .iter()
+            .any(|l| l.contains(&quote.pubkey().to_string()) && l.contains("quote authority")));
+        // The wrong key is refused before any read or send.
+        let stranger = Keypair::new();
+        let client = RpcClient::new("http://127.0.0.1:1".to_string());
+        let log = Logger::new(std::sync::mpsc::channel().0);
+        let err = execute(&client, &stranger, &stranger, Cluster::Localnet, &ticket, &log)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("quote authority is not the one confirmed"), "{err}");
+    }
+
+    #[test]
     fn a_center_far_from_the_live_reference_is_warned() {
         assert_eq!(center_warning(1.33, 1.324), None);
         let warning = center_warning(13.24, 1.324).unwrap();
@@ -690,7 +730,7 @@ mod tests {
             base_symbol: "TGBP",
             quote_symbol: "USDC",
             seat: seat(2, leader),
-            leader,
+            quote_authority: leader,
             levels,
             center: 1.324,
             center_source: "typed",

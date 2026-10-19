@@ -1,6 +1,8 @@
 //! The emergency actions — the kill switch for a live vault, pulled from a
-//! laptop with nothing but an RPC endpoint and the leader key, whatever
-//! state the maker's own host is in.
+//! laptop with nothing but an RPC endpoint and the vault's keys, whatever
+//! state the maker's own host is in. The kill is a ladder write, so it signs
+//! with the quote authority and needs no custody key; close and drain sign
+//! with the leader.
 //!
 //! In an eCLOB a vault's resting quotes outlive the bot that wrote them, so
 //! stopping the bot stops nothing. These are the on-chain writes that do, in
@@ -16,9 +18,9 @@
 //!    vault is closed or frozen: the program's min-leader-share floor refuses
 //!    a full draw from an active vault.
 //!
-//! Each op runs over every roster market on which the session's leader leads
-//! a vault, so one confirmation stops every book rather than the selected
-//! one. The prompt's plan and the job's sends come from the same rule
+//! Each op runs over every roster market on which the session's signing key
+//! for it holds a vault, so one confirmation stops every book rather than the
+//! selected one. The prompt's plan and the job's sends come from the same rule
 //! ([`step`]) applied to a fresh read; the job re-reads rather than
 //! replaying the plan, and a market whose send fails is reported while the
 //! rest still run — a kill switch that stops at its first error leaves the
@@ -28,6 +30,7 @@ use crate::accounts::VaultStake;
 use crate::chain;
 use crate::cluster::Cluster;
 use crate::job::Logger;
+use crate::keys::LazyKey;
 use crate::leader::{self, Plan};
 use crate::market::{self, PairConfig};
 use anyhow::{anyhow, bail, Context, Result};
@@ -58,11 +61,50 @@ impl Op {
         }
     }
 
+    /// The role whose key signs the op — the one the program checks.
+    fn signer_role(self) -> &'static str {
+        match self {
+            Op::Kill => "quote authority",
+            Op::Close | Op::Drain => "leader",
+        }
+    }
+
+    /// Resolve the key the op signs with on `config`'s market: the quote
+    /// authority for a kill, so a kill never loads the custody key, and the
+    /// leader otherwise.
+    fn signer(
+        self,
+        repo_root: &Path,
+        config: &PairConfig,
+        operator_leader: Option<&LazyKey>,
+        operator_quote: Option<&Keypair>,
+    ) -> Result<Keypair> {
+        match self {
+            Op::Kill => market::quote_authority(repo_root, config, operator_quote),
+            Op::Close | Op::Drain => market::leader(repo_root, config, operator_leader),
+        }
+    }
+
+    /// The vaults on `market` the op acts on for `signer`: those it is quote
+    /// authority of for a kill, those it leads otherwise.
+    fn seats(
+        self,
+        client: &RpcClient,
+        cluster: Cluster,
+        market: &Pubkey,
+        signer: &Pubkey,
+    ) -> Result<Option<MarketSeats>> {
+        match self {
+            Op::Kill => quote_seats(client, cluster, market, signer),
+            Op::Close | Op::Drain => leader_seats(client, cluster, market, signer),
+        }
+    }
+
     /// The plan's first line — what the op does, in the operator's terms.
     fn headline(self) -> &'static str {
         match self {
             Op::Kill => {
-                "EMERGENCY — zero every level on the leader's vaults (reversible: a running \
+                "EMERGENCY — zero every level on the quote key's vaults (reversible: a running \
                  maker re-arms it; close is the durable stop)"
             }
             Op::Close => {
@@ -73,7 +115,8 @@ impl Op {
     }
 }
 
-/// A vault the leader leads, in any lifecycle state, as one read found it.
+/// A vault the session's key leads or quotes for, in any lifecycle state, as
+/// one read found it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SectorSeat {
     /// Its sector index — valid only for this read, since sectors recycle.
@@ -92,7 +135,7 @@ pub struct SectorSeat {
     pub stake: VaultStake,
 }
 
-/// The leader's vaults on one market, with the treasuries a drain pays from.
+/// One key's vaults on one market, with the treasuries a drain pays from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MarketSeats {
     pub base_treasury: Pubkey,
@@ -114,6 +157,30 @@ pub fn leader_seats(
     market: &Pubkey,
     leader: &Pubkey,
 ) -> Result<Option<MarketSeats>> {
+    seats_where(client, cluster, market, |v| v.leader == leader.to_bytes())
+}
+
+/// Every sector on `market` whose quote authority is `quote`, read fresh, as
+/// [`leader_seats`] reads them. How the hot path finds its vault without the
+/// leader key: the quote authority is what it signs as.
+pub fn quote_seats(
+    client: &RpcClient,
+    cluster: Cluster,
+    market: &Pubkey,
+    quote: &Pubkey,
+) -> Result<Option<MarketSeats>> {
+    seats_where(client, cluster, market, |v| {
+        v.quote_authority == quote.to_bytes()
+    })
+}
+
+/// The non-free sectors on `market` that `keep` selects, read fresh.
+fn seats_where(
+    client: &RpcClient,
+    cluster: Cluster,
+    market: &Pubkey,
+    keep: impl Fn(&Vault) -> bool,
+) -> Result<Option<MarketSeats>> {
     let Some(account) = chain::fetch_fresh(client, market, "market")? else {
         return Ok(None);
     };
@@ -128,16 +195,16 @@ pub fn leader_seats(
     Ok(Some(MarketSeats {
         base_treasury: Pubkey::new_from_array(view.header.base_treasury),
         quote_treasury: Pubkey::new_from_array(view.header.quote_treasury),
-        seats: sector_seats_led_by(view.sectors(), leader),
+        seats: sector_seats(view.sectors(), keep),
     }))
 }
 
-/// The non-free `sectors` whose leader is `leader`, in sector order.
-fn sector_seats_led_by(sectors: &[Vault], leader: &Pubkey) -> Vec<SectorSeat> {
+/// The non-free `sectors` that `keep` selects, in sector order.
+fn sector_seats(sectors: &[Vault], keep: impl Fn(&Vault) -> bool) -> Vec<SectorSeat> {
     sectors
         .iter()
         .enumerate()
-        .filter(|(_, v)| !v.is_free() && v.leader == leader.to_bytes())
+        .filter(|(_, v)| !v.is_free() && keep(v))
         .map(|(idx, v)| SectorSeat {
             idx: idx as u32,
             seq: v.seq.get(),
@@ -168,17 +235,17 @@ pub enum Step {
 }
 
 /// The one rule the plan and the job both apply: what `op` does to `seat`,
-/// signed by `leader`.
-pub fn step(op: Op, seat: &SectorSeat, leader: &Pubkey) -> Step {
+/// signed by `signer` ([`Op::signer`]).
+pub fn step(op: Op, seat: &SectorSeat, signer: &Pubkey) -> Step {
     match op {
         Op::Kill if seat.tombstoned => Step::Skip("closed — matching never visits it"),
         // Before the signer check: a dead ladder needs no key at all.
         Op::Kill if !seat.quoting => Step::Skip("every level is already zero"),
-        // The program checks the signer against the vault's quote authority,
-        // not its leader. The TUI opens vaults with the two equal; one opened
-        // otherwise needs its own key, and a send would only fail on chain.
-        Op::Kill if seat.quote_authority != *leader => {
-            Step::Refuse("its quote authority is not the leader — close it instead")
+        // The program checks the signer against the vault's quote authority.
+        // A kill finds its vaults by that key, so this holds by construction;
+        // it stays as the guard, since a send would only fail on chain.
+        Op::Kill if seat.quote_authority != *signer => {
+            Step::Refuse("its quote authority is not this session's quote key — close it instead")
         }
         Op::Kill => Step::Kill,
         Op::Close if seat.tombstoned => Step::Skip("already closed"),
@@ -216,7 +283,8 @@ pub fn plan(
     repo_root: &Path,
     cluster: Cluster,
     admin: &Pubkey,
-    operator_leader: Option<&Keypair>,
+    operator_leader: Option<&LazyKey>,
+    operator_quote: Option<&Keypair>,
 ) -> Result<Vec<String>> {
     let mut lines = vec![op.headline().to_string()];
     let mut work = 0usize;
@@ -226,10 +294,11 @@ pub fn plan(
         // One market's failure to resolve or read must not hold the prompt
         // back from every other market's stop: it is a line in the plan, and
         // the job tries again. With nothing else to send, the first such
-        // reason is what the refusal names (a missing `--leader` included).
-        let resolved = market::leader(repo_root, config, operator_leader)
-            .and_then(|leader| Ok((leader.pubkey(), market::pair_mints(repo_root, config)?)));
-        let (leader, (base, quote)) = match resolved {
+        // reason is what the refusal names (a missing key included).
+        let resolved = op
+            .signer(repo_root, config, operator_leader, operator_quote)
+            .and_then(|signer| Ok((signer.pubkey(), market::pair_mints(repo_root, config)?)));
+        let (signer, (base, quote)) = match resolved {
             Ok(resolved) => resolved,
             Err(e) => {
                 let reason = format!("{symbol}: {e:#}");
@@ -239,7 +308,7 @@ pub fn plan(
             }
         };
         let address = chain::market_pda(cluster, &base, &quote);
-        let found = match leader_seats(client, cluster, &address, &leader) {
+        let found = match op.seats(client, cluster, &address, &signer) {
             Ok(Some(found)) => found,
             Ok(None) => {
                 lines.push(format!("{symbol}: no market — skipped"));
@@ -254,12 +323,13 @@ pub fn plan(
         };
         if found.seats.is_empty() {
             lines.push(format!(
-                "{symbol}: leader {leader} leads no vault — skipped"
+                "{symbol}: {} {signer} holds no vault — skipped",
+                op.signer_role()
             ));
             continue;
         }
         for seat in &found.seats {
-            let s = step(op, seat, &leader);
+            let s = step(op, seat, &signer);
             if let Step::Refuse(reason) = s {
                 first_refusal.get_or_insert(format!("{symbol} vault #{}: {reason}", seat.seq));
             }
@@ -276,7 +346,8 @@ pub fn plan(
         }
     }
     lines.push(format!(
-        "signed by the leader per market · fees paid by the admin {admin}"
+        "signed by the {} per market · fees paid by the admin {admin}",
+        op.signer_role()
     ));
     Ok(lines)
 }
@@ -303,25 +374,29 @@ fn plan_line(symbol: &str, config: &PairConfig, seat: &SectorSeat, step: Step) -
 }
 
 /// Run `op` against a fresh read, one transaction per vault, signed by the
-/// leader and paid by `wallet`. Every market is attempted; the job fails at
-/// the end if any send failed or any vault was refused, so the operator
-/// sees the outcome in red rather than a partial stop reading as success.
+/// op's key ([`Op::signer`]) and paid by `wallet`. Every market is attempted;
+/// the job fails at the end if any send failed or any vault was refused, so
+/// the operator sees the outcome in red rather than a partial stop reading as
+/// success.
+#[allow(clippy::too_many_arguments)]
 pub fn execute(
     op: Op,
     client: &RpcClient,
     wallet: &Keypair,
     repo_root: &Path,
     cluster: Cluster,
-    operator_leader: Option<&Keypair>,
+    operator_leader: Option<&LazyKey>,
+    operator_quote: Option<&Keypair>,
     log: &Logger,
 ) -> Result<String> {
     let mut sent = 0usize;
     let mut failed = 0usize;
     for config in market::roster(cluster) {
         let symbol = config.base.symbol;
-        let resolved = market::leader(repo_root, config, operator_leader)
-            .and_then(|leader| Ok((leader, market::pair_mints(repo_root, config)?)));
-        let (leader, (base, quote)) = match resolved {
+        let resolved = op
+            .signer(repo_root, config, operator_leader, operator_quote)
+            .and_then(|signer| Ok((signer, market::pair_mints(repo_root, config)?)));
+        let (signer, (base, quote)) = match resolved {
             Ok(resolved) => resolved,
             Err(e) => {
                 log.log(format!("{symbol}: {e:#}"));
@@ -330,7 +405,7 @@ pub fn execute(
             }
         };
         let address = chain::market_pda(cluster, &base, &quote);
-        let found = match leader_seats(client, cluster, &address, &leader.pubkey()) {
+        let found = match op.seats(client, cluster, &address, &signer.pubkey()) {
             Ok(Some(found)) => found,
             Ok(None) => continue,
             Err(e) => {
@@ -340,7 +415,7 @@ pub fn execute(
             }
         };
         for seat in &found.seats {
-            let ixs = match step(op, seat, &leader.pubkey()) {
+            let ixs = match step(op, seat, &signer.pubkey()) {
                 Step::Skip(_) => continue,
                 Step::Refuse(reason) => {
                     log.log(format!("{symbol} vault #{}: refused — {reason}", seat.seq));
@@ -351,7 +426,7 @@ pub fn execute(
                     s,
                     cluster,
                     wallet,
-                    &leader.pubkey(),
+                    &signer.pubkey(),
                     &address,
                     &base,
                     &quote,
@@ -360,7 +435,7 @@ pub fn execute(
                 ),
             };
             let label = op.instruction();
-            match chain::send_logged(client, wallet, &[wallet, &leader], &ixs, label, log)
+            match chain::send_logged(client, wallet, &[wallet, &signer], &ixs, label, log)
                 .with_context(|| format!("{symbol} vault #{}: {label}", seat.seq))
             {
                 Ok(_) => {
@@ -387,7 +462,8 @@ pub fn execute(
 }
 
 /// The transaction for a sending `step` on `seat`, addressed to `cluster`'s
-/// program.
+/// program. `leader` is the step's signer: the quote authority for a kill,
+/// the leader for the rest.
 #[allow(clippy::too_many_arguments)]
 fn instructions(
     step: Step,
@@ -479,8 +555,8 @@ mod tests {
 
     #[test]
     fn kill_refuses_a_vault_whose_quote_authority_is_another_key() {
-        // The program would reject the leader's signature; refusing here
-        // points at close instead of a bare on-chain error.
+        // The program would reject the signature; refusing here points at
+        // close instead of a bare on-chain error.
         let me = Pubkey::new_unique();
         let delegated = SectorSeat {
             quote_authority: Pubkey::new_unique(),
@@ -494,6 +570,30 @@ mod tests {
             ..delegated
         };
         assert!(matches!(step(Op::Kill, &idle, &me), Step::Skip(_)));
+    }
+
+    #[test]
+    fn a_kill_signs_with_the_quote_key_and_never_resolves_the_leader() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let config = market::roster(Cluster::Mainnet)[0];
+        // Unresolvable on purpose: resolving it at all would fail the test.
+        let leader = LazyKey::new(
+            "op://nowhere/lead/key".to_string(),
+            "--leader",
+            Cluster::Mainnet,
+            vec![],
+            vec![],
+        );
+        let quote = Keypair::new();
+        let signer = Op::Kill
+            .signer(root, config, Some(&leader), Some(&quote))
+            .unwrap();
+        assert_eq!(signer.pubkey(), quote.pubkey());
+        assert_eq!(leader.resolved_pubkey(), None);
+        // With no quote key the kill refuses; it never falls back to the leader.
+        let err = Op::Kill.signer(root, config, Some(&leader), None).unwrap_err();
+        assert!(format!("{err:#}").contains("--quote"), "{err:#}");
+        assert_eq!(leader.resolved_pubkey(), None);
     }
 
     #[test]
@@ -569,8 +669,12 @@ mod tests {
         sectors[3].leader_shares = 30u64.into();
         sectors[3].base_atoms = 20u64.into();
         sectors[3].quote_atoms = 10u64.into();
-        let found = sector_seats_led_by(&sectors, &me);
+        let found = sector_seats(&sectors, |v| v.leader == me.to_bytes());
         assert_eq!(found.iter().map(|s| s.idx).collect::<Vec<_>>(), [2, 3]);
+        // The kill's scan keys on the quote authority instead: only sector 2
+        // names `me` there, and a free sector never matches.
+        let quoted = sector_seats(&sectors, |v| v.quote_authority == me.to_bytes());
+        assert_eq!(quoted.iter().map(|s| s.idx).collect::<Vec<_>>(), [2]);
         assert!(found[0].quoting && !found[0].tombstoned);
         assert!(!found[1].quoting && found[1].tombstoned);
         assert_eq!(found[0].quote_authority, me);

@@ -181,11 +181,16 @@ pub struct App {
     /// every poll so the phase measures progress against what should exist.
     roster_markets: Vec<Pubkey>,
     /// The session's vault leader (localnet's committed role key, or the
-    /// operator's `--leader`), stamped onto every poll beside
-    /// `roster_markets` so the vault phases count only this leader's vaults.
-    /// Every roster pair shares one leader on both clusters, so the first
-    /// pair's answers for all. `None` on mainnet without `--leader`.
+    /// operator's), stamped onto every poll beside `roster_markets` so the
+    /// vault phases count only this leader's vaults. Every roster pair shares
+    /// one leader on both clusters, so the first pair's answers for all.
+    /// `None` on mainnet until a custody step first resolves the leader —
+    /// see [`App::session_leader`].
     roster_leader: Option<Pubkey>,
+    /// The session's vault quote authority (localnet's committed leader, or
+    /// the operator's quote key): the passive ladder finds and signs for its
+    /// vault by it. `None` on a watch-only mainnet session.
+    roster_quote: Option<Pubkey>,
     /// Which chain is behind the endpoint. A mainnet session starts
     /// [`Identity::Verified`] (its genesis was checked at launch); a localnet
     /// one starts [`Identity::Unchecked`] and is classified on the first poll
@@ -295,9 +300,15 @@ impl App {
         // Resolve the known mint tickers once — used to label the accounts pane.
         let mint_symbols = market::mint_symbols(&ctx.repo_root, ctx.cluster);
         let roster_markets = market::roster_markets(&ctx.repo_root, ctx.cluster);
-        let roster_leader = market::roster(ctx.cluster)
-            .first()
-            .and_then(|c| market::leader(&ctx.repo_root, c, ctx.leader.as_ref()).ok())
+        // Never resolves the operator's leader: on mainnet that waits for a
+        // custody step, so a session that only re-centres never loads it.
+        let roster = market::roster(ctx.cluster).first();
+        let roster_leader = roster
+            .filter(|_| !ctx.cluster.is_mainnet())
+            .and_then(|c| market::leader(&ctx.repo_root, c, None).ok())
+            .map(|k| k.pubkey());
+        let roster_quote = roster
+            .and_then(|c| market::quote_authority(&ctx.repo_root, c, ctx.quote.as_ref()).ok())
             .map(|k| k.pubkey());
         let identity = if ctx.cluster.is_mainnet() {
             Identity::Verified
@@ -318,6 +329,7 @@ impl App {
             mint_symbols,
             roster_markets,
             roster_leader,
+            roster_quote,
             identity,
             selected_market: 0,
             follow_default_market: true,
@@ -1002,12 +1014,12 @@ impl App {
             );
             return;
         };
-        let Some(leader) = self.roster_leader else {
-            self.log(
-                LogKind::Err,
-                format!("{} — no leader key; relaunch with --leader", op.label()),
-            );
-            return;
+        let leader = match self.session_leader() {
+            Ok(leader) => leader,
+            Err(e) => {
+                self.log(LogKind::Err, format!("{} — {e:#}", op.label()));
+                return;
+            }
         };
         let Some(market) = self.chain.selected_market(self.selected_market).cloned() else {
             self.log(LogKind::Err, format!("{} — no market selected", op.label()));
@@ -1111,23 +1123,41 @@ impl App {
         }
     }
 
+    /// The session's leader pubkey, resolving the operator's leader now if no
+    /// custody step has yet — the custody prompts are what call this, so the
+    /// key is loaded only once one is opened.
+    fn session_leader(&mut self) -> anyhow::Result<Pubkey> {
+        if let Some(leader) = self.roster_leader {
+            return Ok(leader);
+        }
+        let config = market::roster(self.ctx.cluster)
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("this cluster has no roster"))?;
+        let leader =
+            market::leader(&self.ctx.repo_root, config, self.ctx.leader.as_deref())?.pubkey();
+        self.roster_leader = Some(leader);
+        Ok(leader)
+    }
+
     /// Build the passive ticket `form` describes against the selected market,
-    /// reading the leader's vault fresh, and move the prompt to the confirm
+    /// reading the quote key's vault fresh, and move the prompt to the confirm
     /// stage. A refusal keeps the form open so the operator can fix the field.
     fn build_passive_ticket(&mut self, form: passive::Form) {
         let label = form.op.label();
         let prepared = match (
-            self.roster_leader,
+            self.roster_quote,
             self.chain.selected_market(self.selected_market).cloned(),
         ) {
-            (None, _) => Err(anyhow::anyhow!("no leader key; relaunch with --leader")),
+            (None, _) => Err(anyhow::anyhow!(
+                "no quote key; relaunch with its reference in the keys file or --quote"
+            )),
             (_, None) => Err(anyhow::anyhow!("no market selected")),
-            (Some(leader), Some(market)) => passive::prepare(
+            (Some(quote), Some(market)) => passive::prepare(
                 &self.client,
                 &self.ctx.repo_root,
                 self.ctx.cluster,
                 &market,
-                &leader,
+                &quote,
                 &form,
             ),
         };
@@ -1496,6 +1526,10 @@ impl App {
                 &self.mint_symbols,
             );
             self.chain.roster_markets = self.roster_markets.clone();
+            // A custody job may have resolved the leader since the last poll.
+            if self.roster_leader.is_none() {
+                self.roster_leader = self.ctx.leader.as_ref().and_then(|k| k.resolved_pubkey());
+            }
             self.chain.roster_leader = self.roster_leader;
             self.check_identity();
             let log = Logger::new(self.tx.clone());
