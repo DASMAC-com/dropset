@@ -4,12 +4,15 @@
 //! left action menu (enabled / greyed with reasons, recommended next step
 //! marked), a right account table (✓ / ✗ + lamports), and a scrolling log.
 
-use crate::accounts::{ChainState, Liveness, ParticipantView, Phase};
+use crate::accounts::{self, ChainState, Liveness, MarketView, ParticipantView, Phase, VaultSeat};
 use crate::action::{self, Action};
-use crate::app::{swap_side_label, App, LeaderPrompt, LogKind, PassivePrompt};
+use crate::app::{
+    parse_positive_amount, swap_side_label, App, LeaderPrompt, LogKind, PassivePrompt,
+};
 use crate::book;
 use crate::cluster::Cluster;
 use crate::explorer;
+use crate::leader::{self, LeaderOp, Leg};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -23,9 +26,14 @@ use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 
 /// Number of grouped control rows the "runtime actions" pane renders (bots,
-/// swap, eCLOB peg, eCLOB shape, view) — its box height is this plus the
-/// top/bottom borders.
-const RUNTIME_ACTIONS_ROWS: u16 = 5;
+/// swap, eCLOB peg, eCLOB shape, vault, view) — its box height is this plus
+/// the top/bottom borders.
+const RUNTIME_ACTIONS_ROWS: u16 = 6;
+
+/// Inner rows of the leader pane: address, status, wallet, vault, stake.
+const LEADER_PANE_ROWS: u16 = 5;
+/// Inner rows of the swapper pane: address, wallet.
+const SWAPPER_PANE_ROWS: u16 = 2;
 
 /// Render the whole dashboard.
 pub fn draw(f: &mut Frame<'_>, app: &mut App) {
@@ -74,12 +82,23 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     draw_menu(f, app, menu_area);
     draw_runtime_actions(f, app, other_area);
     draw_alerts(f, app, alerts_area);
-    let [accounts_area, cu_area] = Layout::new(
+    // The middle column stacks the program-side accounts, then the market's
+    // two participants in their own labelled panes, over the CU tape, which
+    // takes the rest.
+    let account_rows = build_account_rows(&app.chain, app.ctx.cluster, app.selected_market);
+    let [accounts_area, leader_area, swapper_area, cu_area] = Layout::new(
         Direction::Vertical,
-        [Constraint::Percentage(62), Constraint::Percentage(38)],
+        [
+            Constraint::Length(account_rows.len() as u16 + 2),
+            Constraint::Length(LEADER_PANE_ROWS + 2),
+            Constraint::Length(SWAPPER_PANE_ROWS + 2),
+            Constraint::Min(5),
+        ],
     )
     .areas(mid_area);
-    draw_accounts(f, app, accounts_area);
+    draw_accounts(f, app, account_rows, accounts_area);
+    draw_leader_pane(f, app, leader_area);
+    draw_swapper_pane(f, app, swapper_area);
     draw_cu(f, app, cu_area);
     // The markets list is as tall as its rows (plus borders), capped so the
     // book + fills keep most of the column; they take the rest.
@@ -241,24 +260,19 @@ fn draw_leader_prompt(f: &mut Frame<'_>, app: &App, area: Rect) {
     };
     let input = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
     let hint = Style::new().fg(Color::DarkGray);
-    let (op, mut lines, entry) = match prompt {
-        LeaderPrompt::Amount { op, buf } => (
-            *op,
-            vec![Line::from(Span::styled(
-                format!("amount, in {}:", op.amount_hint()),
-                hint,
-            ))],
-            format!("{buf}\u{2588}"),
-        ),
-        LeaderPrompt::Confirm { ticket, buf } => (
-            ticket.op,
-            ticket.summary().into_iter().map(Line::from).collect(),
-            format!("Type 'yes' to send: {buf}\u{2588}"),
-        ),
+    let (op, lines) = match prompt {
+        LeaderPrompt::Amount { op, buf } => (*op, amount_stage_lines(app, *op, buf)),
+        LeaderPrompt::Confirm { ticket, buf } => {
+            let mut lines: Vec<Line> = ticket.summary().into_iter().map(Line::from).collect();
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("Type 'yes' to send: {buf}\u{2588}"),
+                input,
+            )));
+            lines.push(Line::from(Span::styled("Enter ok · Esc cancel", hint)));
+            (ticket.op, lines)
+        }
     };
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(entry, input)));
-    lines.push(Line::from(Span::styled("Enter ok · Esc cancel", hint)));
     let title = if app.ctx.cluster.is_mainnet() {
         format!(" {} — MAINNET · REAL FUNDS ", op.label())
     } else {
@@ -287,6 +301,60 @@ fn draw_leader_prompt(f: &mut Frame<'_>, app: &App, area: Rect) {
         ),
         rect,
     );
+}
+
+/// The amount stage of the leader prompt: what the leader holds now, the
+/// typed amount, and a live preview of what it sizes to — all against the
+/// last poll, so typing costs no RPC. Enter still sizes from a fresh read,
+/// and the confirm stage shows that ticket, not this preview.
+fn amount_stage_lines(app: &App, op: LeaderOp, buf: &str) -> Vec<Line<'static>> {
+    let input = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
+    let hint = Style::new().fg(Color::DarkGray);
+    let seat = leader_seat(app);
+    let mut lines: Vec<Line> = match seat {
+        Some((mkt, seat)) => {
+            let (b, q) = market_legs(app, mkt);
+            leader::holding_lines(seat.seq, &seat.stake, b, q, mkt.reference_price)
+                .into_iter()
+                .map(|(label, value)| field(label, Span::raw(value)))
+                .collect()
+        }
+        None => vec![Line::from(Span::styled(
+            "no single led vault in the last poll — Enter reads the chain",
+            hint,
+        ))],
+    };
+    lines.push(Line::from(Span::styled(
+        format!("amount, in {}:", op.amount_hint()),
+        hint,
+    )));
+    lines.push(Line::from(Span::styled(format!("{buf}\u{2588}"), input)));
+    let preview = seat.and_then(|(mkt, seat)| {
+        let (b, q) = market_legs(app, mkt);
+        // The same parse Enter applies, so the preview never sizes what
+        // Enter would refuse to.
+        leader::preview(
+            op,
+            &seat.stake,
+            parse_positive_amount(buf),
+            b,
+            q,
+            mkt.reference_price,
+        )
+    });
+    match preview {
+        Some(Ok(rows)) => lines.extend(rows.into_iter().map(Line::from)),
+        Some(Err(reason)) => lines.push(Line::from(Span::styled(
+            format!("preview  {reason}"),
+            Style::new().fg(Color::Red),
+        ))),
+        None => {}
+    }
+    lines.push(Line::from(Span::styled(
+        "Enter size from a fresh read · Esc cancel",
+        hint,
+    )));
+    lines
 }
 
 fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
@@ -430,7 +498,7 @@ fn menu_item(
     let recommended = next == Some(action);
     // Only `1..=9` are keys; an entry past them is reached by `j`/`k` + Enter,
     // and a "10." would name a key that does not exist.
-    let key_label = if i < 9 {
+    let key_label = if i < action::NUMBER_KEYS {
         format!("{}. ", i + 1)
     } else {
         "   ".to_string()
@@ -465,16 +533,26 @@ fn menu_item(
 /// yet. Keep the line count in sync with [`RUNTIME_ACTIONS_ROWS`], which sizes
 /// the box.
 ///
-/// On mainnet every one of these controls is refused — the bots and the
-/// eCLOB controls sign with committed localnet role keys, the swap with the
-/// committed taker — so the pane says so instead of advertising keys that only
-/// produce an error line, and advertises the passive ladder and the kill
-/// switch instead. Same row count, so the layout does not shift.
+/// On mainnet the bot, swap and eCLOB controls are refused — the bots and
+/// the eCLOB controls sign with committed localnet role keys, the swap with
+/// the committed taker — so the pane says so instead of advertising keys that
+/// only produce an error line, and advertises the passive ladder and the kill
+/// switch instead. The `vault` row is live on both: the leader's stake
+/// commands are confirm-gated writes mainnet keeps. Same row count, so the
+/// layout does not shift.
 fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
     let tag = |s: &'static str| Span::styled(format!("{s:<6}"), Style::new().fg(Color::DarkGray));
     let live = Style::new().fg(Color::Gray);
+    let off = Style::new().fg(Color::DarkGray);
+    let ready = app.chain.phase() == Phase::Ready;
+    // The leader's stake: live once every vault is seeded (the commands'
+    // own gate), and the reserved rotation always greyed.
+    let vault_line = Line::from(vec![
+        tag("vault"),
+        Span::styled("+ deposit · - withdraw", if ready { live } else { off }),
+        Span::styled(" · rotate (reserved)", off),
+    ]);
     if app.ctx.cluster.is_mainnet() {
-        let off = Style::new().fg(Color::DarkGray);
         let lines = vec![
             Line::from(vec![
                 tag("bots"),
@@ -490,6 +568,7 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
                 tag("ladder"),
                 Span::styled("p passive ladder · c re-center", live),
             ]),
+            vault_line,
             // The kill switch, in the real-funds red the prompts use. Close
             // and drain follow it from the menu.
             Line::from(vec![
@@ -511,13 +590,8 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
         );
         return;
     }
-    let ready = app.chain.phase() == Phase::Ready;
     // Market-scoped controls read live only once a seeded vault exists.
-    let market_style = if ready {
-        live
-    } else {
-        Style::new().fg(Color::DarkGray)
-    };
+    let market_style = if ready { live } else { off };
 
     // The swap row doubles as the amount input: while the taker is typing a new
     // amount (`a`), it echoes the digits with a block cursor instead of the
@@ -564,6 +638,7 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
             tag("shape"),
             Span::styled("f thin far side · g reset · G reset all", market_style),
         ]),
+        vault_line,
         Line::from(vec![tag("view"), Span::styled("r refresh · q quit", live)]),
     ];
     f.render_widget(
@@ -658,35 +733,36 @@ fn draw_alerts(f: &mut Frame<'_>, app: &App, area: Rect) {
     );
 }
 
-fn draw_accounts(f: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let rows = build_account_rows(
-        &app.chain,
-        app.ctx.cluster,
-        &app.mint_symbols,
-        app.selected_market,
-    );
-    // Register each address-bearing row as a click target over its inner-row
-    // rect, so a left-click anywhere on the row opens that account in the
-    // explorer. The inner area sits one cell in from the border on every side.
-    let inner_x = area.x + 1;
-    let inner_y = area.y + 1;
-    let inner_w = area.width.saturating_sub(2);
-    let max_y = area.y + area.height.saturating_sub(1);
+/// Register inner row `i` of the bordered pane at `area` as a click target
+/// opening `addr` in the explorer — a no-op for a row past the bottom border,
+/// which is not drawn and so not clickable. The inner area sits one cell in
+/// from the border on every side.
+fn click_row(app: &mut App, area: Rect, i: usize, addr: Pubkey) {
+    let y = area.y + 1 + i as u16;
+    if y >= area.y + area.height.saturating_sub(1) {
+        return;
+    }
+    app.click_targets.push((
+        Rect {
+            x: area.x + 1,
+            y,
+            width: area.width.saturating_sub(2),
+            height: 1,
+        },
+        addr,
+    ));
+}
+
+fn draw_accounts(
+    f: &mut Frame<'_>,
+    app: &mut App,
+    rows: Vec<(Line<'static>, Option<Pubkey>)>,
+    area: Rect,
+) {
+    // A left-click anywhere on an address-bearing row opens that account.
     for (i, (_, addr)) in rows.iter().enumerate() {
-        let y = inner_y + i as u16;
-        if y >= max_y {
-            break; // past the bottom border — not drawn, so not clickable
-        }
         if let Some(addr) = addr {
-            app.click_targets.push((
-                Rect {
-                    x: inner_x,
-                    y,
-                    width: inner_w,
-                    height: 1,
-                },
-                *addr,
-            ));
+            click_row(app, area, i, *addr);
         }
     }
     let lines: Vec<Line> = rows.into_iter().map(|(line, _)| line).collect();
@@ -703,13 +779,12 @@ fn draw_accounts(f: &mut Frame<'_>, app: &mut App, area: Rect) {
 /// Build the accounts-pane rows from chain state: each row is a rendered line
 /// paired with the address it points at (if any). The pairing lets the caller
 /// both draw the line and register it as a click target that opens that
-/// address in the explorer. `symbols` maps a mint to its ticker, so the
-/// participant rows name their actual coins rather than generic base/quote.
-/// `selected` picks which discovered market's accounts to show.
+/// address in the explorer. `selected` picks which discovered market's
+/// accounts to show. The market's participants are not here: they have their
+/// own panes ([`draw_leader_pane`], [`draw_swapper_pane`]).
 fn build_account_rows(
     chain: &ChainState,
     cluster: Cluster,
-    symbols: &[(Pubkey, &'static str)],
     selected: usize,
 ) -> Vec<(Line<'static>, Option<Pubkey>)> {
     // The cluster's program id is fixed and meaningful even before deploy, so
@@ -772,37 +847,6 @@ fn build_account_rows(
                 count_line(format!("  active vaults: {}", mkt.active_count)),
                 None,
             ));
-            // The market's participants — the MM bot (vault leader) and the
-            // swapper — with the token holdings in their own wallets, labelled
-            // with the market's actual coin tickers.
-            let base_symbol = symbol_for(symbols, &mkt.base_mint, "base");
-            let quote_symbol = symbol_for(symbols, &mkt.quote_mint, "quote");
-            if let Some(leader) = &chain.leader {
-                rows.push((
-                    participant_line(
-                        "leader",
-                        leader,
-                        mkt.base_decimals,
-                        mkt.quote_decimals,
-                        base_symbol,
-                        quote_symbol,
-                    ),
-                    Some(leader.address),
-                ));
-            }
-            if let Some(swapper) = &chain.swapper {
-                rows.push((
-                    participant_line(
-                        "swapper",
-                        swapper,
-                        mkt.base_decimals,
-                        mkt.quote_decimals,
-                        base_symbol,
-                        quote_symbol,
-                    ),
-                    Some(swapper.address),
-                ));
-            }
         }
         None => rows.push((
             account_line("market", false, &Pubkey::default(), None),
@@ -869,39 +913,152 @@ fn account_line(
     Line::from(spans)
 }
 
-/// One participant row: a status dot · label · short address · the holdings in
-/// its own wallet, each leg named with its coin ticker and right-aligned in a
-/// fixed-width column so the two participant rows line up. Uses a bullet rather
-/// than the ✓/✗ of an account row — a participant is an identity that always
-/// "is", not an account whose existence is the thing being tracked — but colors
-/// that bullet by [`Liveness`]: green when the bot is quoting, yellow once its
-/// quotes have aged, dim when the TUI has no signal to observe (see
-/// [`liveness_color`]).
-fn participant_line(
-    label: &str,
-    p: &ParticipantView,
-    base_decimals: u8,
-    quote_decimals: u8,
-    base_symbol: &str,
-    quote_symbol: &str,
-) -> Line<'static> {
-    let base = p.base_tokens as f64 / 10f64.powi(base_decimals as i32);
-    let quote = p.quote_tokens as f64 / 10f64.powi(quote_decimals as i32);
+/// The selected market's two legs, each `(ticker, decimals)`, named by the
+/// known-mint map so the participant panes show actual coins.
+fn market_legs<'a>(app: &'a App, mkt: &MarketView) -> (Leg<'a>, Leg<'a>) {
+    (
+        (
+            symbol_for(&app.mint_symbols, &mkt.base_mint, "base"),
+            mkt.base_decimals,
+        ),
+        (
+            symbol_for(&app.mint_symbols, &mkt.quote_mint, "quote"),
+            mkt.quote_decimals,
+        ),
+    )
+}
+
+/// The roster leader's one vault on the selected market, as of the last
+/// poll — `None` without a leader key, a market, or exactly one led vault.
+fn leader_seat(app: &App) -> Option<(&MarketView, VaultSeat)> {
+    let mkt = app.chain.selected_market(app.selected_market)?;
+    let leader = app.chain.roster_leader?;
+    Some((mkt, accounts::sole_seat_led_by(&mkt.vaults, &leader)?))
+}
+
+/// One labelled field row: a dim fixed-width label, then the value.
+fn field(label: &str, value: Span<'static>) -> Line<'static> {
     Line::from(vec![
-        Span::styled("\u{2022} ", Style::new().fg(liveness_color(p.liveness))),
-        Span::raw(format!("{label:<14} ")),
-        // Underlined like the account rows — a clickable link to the explorer.
+        Span::styled(format!("{label:<9}"), Style::new().fg(Color::DarkGray)),
+        value,
+    ])
+}
+
+/// A participant's address as an underlined, clickable field — the row the
+/// pane registers as its explorer link.
+fn address_field(address: &Pubkey) -> Line<'static> {
+    field(
+        "address",
         Span::styled(
-            short_pubkey(&p.address),
+            short_pubkey(address),
             Style::new()
                 .fg(Color::Gray)
                 .add_modifier(Modifier::UNDERLINED),
         ),
-        Span::styled(
-            format!("  {base_symbol} {base:>12.2} · {quote_symbol} {quote:>12.2}"),
-            Style::new().fg(Color::DarkGray),
+    )
+}
+
+/// The token holdings in a participant's own wallet, each leg named.
+fn wallet_field(p: &ParticipantView, (bs, bd): Leg, (qs, qd): Leg) -> Line<'static> {
+    let base = p.base_tokens as f64 / 10f64.powi(i32::from(bd));
+    let quote = p.quote_tokens as f64 / 10f64.powi(i32::from(qd));
+    field(
+        "wallet",
+        Span::raw(format!("{base:.2} {bs} · {quote:.2} {qs}")),
+    )
+}
+
+/// What [`Liveness`] means for the leader's bot, in words beside its color.
+fn liveness_word(liveness: Liveness) -> &'static str {
+    match liveness {
+        Liveness::Live => "quoting",
+        Liveness::Stale => "stale",
+        Liveness::Unknown => "no signal",
+    }
+}
+
+/// The participant's address when its pane will draw it — both it and a
+/// selected market are known — so a pane showing "not read yet" registers
+/// no click target.
+fn drawn_address(app: &App, p: Option<&ParticipantView>) -> Option<Pubkey> {
+    app.chain.selected_market(app.selected_market)?;
+    p.map(|p| p.address)
+}
+
+/// A bordered pane titled `title`, drawn with `lines`.
+fn draw_pane(f: &mut Frame<'_>, title: &str, lines: Vec<Line<'static>>, area: Rect) {
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(format!(" {title} "))
+                .borders(Borders::ALL),
         ),
-    ])
+        area,
+    );
+}
+
+/// The vault leader (the MM bot) on the selected market: its address (the
+/// explorer link), whether its bot is quoting, its own wallet, and its stake
+/// in the vault it leads — shares, share of the vault, floor, and its slice
+/// of the inventory valued at the market's reference price.
+fn draw_leader_pane(f: &mut Frame<'_>, app: &mut App, area: Rect) {
+    if let Some(address) = drawn_address(app, app.chain.leader.as_ref()) {
+        click_row(app, area, 0, address);
+    }
+    let app: &App = app;
+    let (Some(p), Some(mkt)) = (
+        &app.chain.leader,
+        app.chain.selected_market(app.selected_market),
+    ) else {
+        return draw_pane(f, "leader", vec![count_line("not read yet".into())], area);
+    };
+    let (b, q) = market_legs(app, mkt);
+    let mut lines = vec![
+        address_field(&p.address),
+        field(
+            "status",
+            Span::styled(
+                liveness_word(p.liveness),
+                Style::new().fg(liveness_color(p.liveness)),
+            ),
+        ),
+        wallet_field(p, b, q),
+    ];
+    match leader_seat(app) {
+        Some((_, seat)) => lines.extend(
+            leader::holding_lines(seat.seq, &seat.stake, b, q, mkt.reference_price)
+                .into_iter()
+                .map(|(label, value)| field(label, Span::raw(value))),
+        ),
+        None => lines.push(field(
+            "vault",
+            // `leader_seat` is `None` for no led vault, several, or no
+            // leader key alike.
+            Span::styled(
+                "not exactly one led on this market",
+                Style::new().fg(Color::DarkGray),
+            ),
+        )),
+    }
+    draw_pane(f, "leader", lines, area);
+}
+
+/// The swapper (the taker role key) on the selected market: its address (the
+/// explorer link) and its own wallet.
+fn draw_swapper_pane(f: &mut Frame<'_>, app: &mut App, area: Rect) {
+    if let Some(address) = drawn_address(app, app.chain.swapper.as_ref()) {
+        click_row(app, area, 0, address);
+    }
+    let app: &App = app;
+    let (Some(p), Some(mkt)) = (
+        &app.chain.swapper,
+        app.chain.selected_market(app.selected_market),
+    ) else {
+        return draw_pane(f, "swapper", vec![count_line("not read yet".into())], area);
+    };
+    let (b, q) = market_legs(app, mkt);
+    let lines = vec![address_field(&p.address), wallet_field(p, b, q)];
+    draw_pane(f, "swapper", lines, area);
 }
 
 /// The status-dot color for a participant's liveness: green when quoting,
