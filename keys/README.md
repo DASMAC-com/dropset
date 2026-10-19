@@ -104,15 +104,12 @@ localnet ledger reference these exact addresses.
 
 ### Mainnet keys
 
-The mainnet keys — eBook (the program id), Admin, Lead and Quote — are
-ground by the operator with `grind_key.py`, never by an agent session,
-one command per key:
+Mainnet keys are ground by the operator with `grind_key.py`, never by an
+agent session, so no secret ever enters a session or a checkout. One
+command per key, taking its vanity prefix:
 
 ```sh
-python3 keys/grind_key.py eBook
-python3 keys/grind_key.py Admin
-python3 keys/grind_key.py Lead
-python3 keys/grind_key.py Quote
+python3 keys/grind_key.py <Prefix>
 ```
 
 The prefix match is case-sensitive. Each run writes one file to
@@ -130,6 +127,6 @@ Verify each file with a Phantom round trip before storing it:
    the file's contents byte for byte.
 
 Then put the text file into 1Password and delete it from the Desktop.
-A rotation is the same command. Only eBook's public half is committed
-(`dropset-mainnet.pubkey`, see above); Admin, Lead and Quote are runtime
-inputs and never enter the repo.
+A rotation is the same command. Only the program id's public half is
+committed (`dropset-mainnet.pubkey`, see above); every other mainnet key
+is a runtime input and never enters the repo.
