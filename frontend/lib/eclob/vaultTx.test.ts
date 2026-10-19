@@ -30,6 +30,15 @@ describe("sizeDeposit", () => {
     expect(s.maxQuoteIn).toBe(12_763_500n);
   });
 
+  it("rounds the widened bound up when the tolerance isn't a whole atom", () => {
+    // A derived final of 12,700,001 at 50 bps widens by 63,500.005 atoms: the
+    // bound takes the ceiling, so it never sits a fractional atom short.
+    const v = { ...VAULT, quoteAtoms: 1_270_000_001n };
+    const s = sizeDeposit(v, "base", 10n * 10n ** 9n, 50);
+    expect(s.quoteIn).toBe(12_700_001n);
+    expect(s.maxQuoteIn).toBe(12_763_502n);
+  });
+
   it("sizes the quote leg symmetrically", () => {
     const s = sizeDeposit(VAULT, "quote", 12_700_000n, 50);
     expect(s.sharesOut).toBe(20_000n);
@@ -81,6 +90,8 @@ describe("sharesForFraction", () => {
     expect(sharesForFraction(3n, 5_000)).toBe(1n);
     expect(sharesForFraction(1_000n, 2_500)).toBe(250n);
     expect(sharesForFraction(1_000n, -5)).toBe(0n);
+    // A non-finite fraction redeems nothing rather than throwing.
+    expect(sharesForFraction(1_000n, Number.NaN)).toBe(0n);
   });
 });
 

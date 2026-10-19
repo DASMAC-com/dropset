@@ -77,6 +77,17 @@ describe("chainVault", () => {
       "USDC",
     );
     expect(positionPnl(p, v, 1.27).yieldPctSinceOpen).toBeCloseTo(0, 6);
+
+    // A vault holding one leg has an index of 0, which measures nothing:
+    // the figure is undefined, not a −100% loss.
+    const oneSided = chainVault(
+      summary({ quoteAtoms: 0n }),
+      MARKET,
+      "TGBP",
+      "USDC",
+    );
+    expect(oneSided.vps).toBe(0);
+    expect(positionPnl(p, oneSided, 1.27).yieldPctSinceOpen).toBeNull();
   });
 
   it("orients each market by the take side its route resolved", () => {

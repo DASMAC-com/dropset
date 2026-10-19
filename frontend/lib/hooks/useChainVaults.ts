@@ -8,7 +8,7 @@ import {
   pairKey,
 } from "../data/chainVaults";
 import type { VaultPosition } from "../data/positions";
-import { VAULTS_REFRESH_MS } from "../data/timings";
+import { BALANCE_REFETCH_DELAY_MS, VAULTS_REFRESH_MS } from "../data/timings";
 import type { VaultMarket } from "../data/vaults";
 import { useAppEvent } from "../events";
 
@@ -114,18 +114,31 @@ export function useChainVaults(): ChainVaultsState {
       if (document.visibilityState === "visible") restart();
     };
     document.addEventListener("visibilitychange", onVisible);
-    restartRef.current = restart;
+    // After a confirmed transaction: read now, and once more after the same
+    // short delay the balance cache waits out, since the node can report a
+    // signature confirmed before its account reads reflect it.
+    let followUp: number | undefined;
+    restartRef.current = () => {
+      restart();
+      if (followUp !== undefined) window.clearTimeout(followUp);
+      followUp = window.setTimeout(() => {
+        followUp = undefined;
+        if (!cancelled) restart();
+      }, BALANCE_REFETCH_DELAY_MS);
+    };
 
     return () => {
       restartRef.current = null;
       cancelled = true;
+      if (followUp !== undefined) window.clearTimeout(followUp);
       if (timer !== undefined) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [client, owner]);
 
   // A confirmed deposit or withdraw moved this vault's reserves and shares and
-  // the wallet's position, so read now rather than up to a poll period later.
+  // the wallet's position, so read now (and once more shortly after) rather
+  // than up to a poll period later.
   useAppEvent("vaultTxSucceeded", () => restartRef.current?.());
 
   return state;
