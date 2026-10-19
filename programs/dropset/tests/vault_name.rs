@@ -243,9 +243,13 @@ fn freeze_blanks_locks_emits_and_frees_the_name() {
         .set_vault_name_meta(&admin, 0, "Again")
         .expect_err("a frozen vault cannot be renamed by its leader");
     common::assert_program_error(&err, DropsetError::VaultFrozen);
-    // The frozen leader may re-enter, and the released name is free.
-    f.create_vault_named_meta(0, f.authority.pubkey(), false, Pubkey::default(), "alpha")
-        .expect("freeze releases the name");
+    // The released name is free for another leader. The frozen leader
+    // itself may not re-enter while its vault is unreclaimed.
+    second_vault(&mut f, "alpha").expect("freeze releases the name");
+    let err = f
+        .create_vault_named_meta(0, f.authority.pubkey(), false, Pubkey::default(), "Other")
+        .expect_err("a frozen vault still counts against its leader");
+    common::assert_program_error(&err, DropsetError::LeaderAlreadyLeadsVault);
 }
 
 #[test]
