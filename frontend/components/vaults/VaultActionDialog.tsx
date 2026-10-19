@@ -313,6 +313,7 @@ function WithdrawSection({
   position,
   busy,
   onSubmit,
+  onEdit,
 }: {
   market: VaultMarket;
   vault: Vault;
@@ -321,11 +322,17 @@ function WithdrawSection({
   busy: boolean;
   // The fraction to redeem, in basis points (10000 = everything).
   onSubmit: (bps: number) => void;
+  // The user picked a new fraction.
+  onEdit: () => void;
 }) {
   // Blank by default — the user picks a percentage (or Max) before anything is
   // withdrawn, mirroring the swap balance control. The label caps at 99.99%
   // short of an exact full redeem (cappedPercentLabel).
-  const [percent, setPercent] = useState("");
+  const [percent, setPercentState] = useState("");
+  const setPercent = (p: string) => {
+    setPercentState(p);
+    onEdit();
+  };
   const [pctOpen, setPctOpen] = useState(false);
   const parsed = Number.parseFloat(percent);
   const fraction = Number.isFinite(parsed)
@@ -336,7 +343,9 @@ function WithdrawSection({
 
   const refNow = vaultReserveRatio(vault) ?? position.entryRefPrice;
   const quoteUsd = tokenUsdPrice(market.quote);
-  const bps = isFull ? Number(BPS_SCALE) : Math.round(fraction * 10_000);
+  const bps = isFull
+    ? Number(BPS_SCALE)
+    : Math.round(fraction * Number(BPS_SCALE));
   const floatPreview = withdrawalPreview(position, vault, refNow, fraction);
   // A live vault's legs come from the SDK's floored slice over raw counts, so
   // they never promise an atom the program won't pay; the value and PnL
@@ -604,7 +613,7 @@ export function VaultActionDialog({
         : [setQuoteAmount, setBaseAmount, market.base];
     setOwn(value);
     setActiveLeg(value.trim() ? leg : null);
-    if (tx.status === "success" || tx.status === "error") tx.reset();
+    clearTxResult();
     if (chain) {
       const sized = sizeLeg(leg, value);
       setOther(
@@ -625,7 +634,8 @@ export function VaultActionDialog({
   const onQuoteChange = (value: string) => onLegChange("quote", value);
 
   // Per-leg wallet balance: the connected wallet's token accounts on a live
-  // vault (0 until they load or with no wallet), the mock seam on a mock row.
+  // vault (read as 0 until they load or with no wallet; `balancesKnown` below
+  // keeps that 0 from reading as a shortfall), the mock seam on a mock row.
   const baseMint = stablecoinMint(market.base);
   const quoteMint = stablecoinMint(market.quote);
   const balances = useAllBalances(chain ? [baseMint, quoteMint] : []);
@@ -638,8 +648,19 @@ export function VaultActionDialog({
     : mockMaxDeposit(vault);
 
   // A held position can deposit (top off) or withdraw; the two forms are
-  // mutually exclusive, chosen from a dropdown. A fresh position only deposits.
+  // mutually exclusive, chosen from a dropdown. A fresh position only deposits,
+  // so a full withdraw that closes the position drops back to the deposit form
+  // (and a later top-off doesn't snap back to withdraw).
   const [mode, setMode] = useState<"deposit" | "withdraw">("deposit");
+  if (!position && mode !== "deposit") setMode("deposit");
+  // Bumped on each confirmed withdraw, remounting the withdraw form so the
+  // fraction just redeemed can't be sent again by a second click.
+  const [withdrawEpoch, setWithdrawEpoch] = useState(0);
+  // A finished transaction's result line clears once the user starts a new
+  // amount, so it never sits under a form it doesn't describe.
+  const clearTxResult = () => {
+    if (tx.status === "success" || tx.status === "error") tx.reset();
+  };
 
   const base = Number.parseFloat(baseAmount);
   const quote = Number.parseFloat(quoteAmount);
@@ -651,22 +672,30 @@ export function VaultActionDialog({
       ? null
       : sizeLeg(activeLeg, activeLeg === "base" ? baseAmount : quoteAmount);
   const sizing = sized && "sizing" in sized ? sized.sizing : null;
-  const shortOf = sizing
-    ? sizing.baseIn > walletAtoms(baseMint)
-      ? market.base
-      : sizing.quoteIn > walletAtoms(quoteMint)
-        ? market.quote
-        : null
-    : null;
+  // A live basket is checked against the wallet only once its balances are
+  // known: while they load, or with no wallet, there is no shortfall to
+  // report, just nothing to submit yet.
+  const balancesKnown = !chain || (owner !== null && balances.isReady);
+  const shortOf =
+    sizing && balancesKnown
+      ? sizing.baseIn > walletAtoms(baseMint)
+        ? market.base
+        : sizing.quoteIn > walletAtoms(quoteMint)
+          ? market.quote
+          : null
+      : null;
   const sizingError =
     (sized && "error" in sized ? sized.error : null) ??
     (shortOf ? `Not enough ${shortOf} in your wallet.` : null);
   const validBasket = chain
-    ? sizing !== null && shortOf === null
+    ? sizing !== null && balancesKnown && shortOf === null
     : base > 0 && quote > 0;
   // The program's own gate, checked against the connected wallet so a leader
-  // isn't offered a deposit into their own vault.
-  const closedReason = depositClosedReason(vault, owner);
+  // isn't offered a deposit into their own vault; past it, a live vault still
+  // needs a wallet to deposit from.
+  const closedReason =
+    depositClosedReason(vault, owner) ??
+    (chain && owner === null ? "Connect a wallet to deposit." : null);
   const depositBlocked = closedReason !== null;
   const depositLabel = position ? "Top off" : "Open position";
 
@@ -722,12 +751,14 @@ export function VaultActionDialog({
       setActiveLeg(null);
     }
   };
-  const submitWithdraw = (bps: number) => {
+  const submitWithdraw = async (bps: number) => {
     if (!chain) {
       onOpenChange(false);
       return;
     }
-    void tx.execute({ kind: "withdraw", bps });
+    if (await tx.execute({ kind: "withdraw", bps })) {
+      setWithdrawEpoch((n) => n + 1);
+    }
   };
 
   return (
@@ -831,9 +862,7 @@ export function VaultActionDialog({
               </label>
             )}
 
-            {/* A full withdraw closes the position, so fall back to the
-                deposit form once the refreshed table drops it. */}
-            {!position || mode === "deposit" ? (
+            {mode === "deposit" ? (
               <>
                 <div className="flex flex-col gap-2">
                   <DepositLeg
@@ -917,11 +946,13 @@ export function VaultActionDialog({
             ) : (
               position && (
                 <WithdrawSection
+                  key={withdrawEpoch}
                   market={market}
                   vault={vault}
                   position={position}
                   busy={busy}
-                  onSubmit={submitWithdraw}
+                  onSubmit={(bps) => void submitWithdraw(bps)}
+                  onEdit={clearTxResult}
                 />
               )
             )}
