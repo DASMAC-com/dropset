@@ -227,10 +227,14 @@ jobs:
         && steps.sbf-cache.outputs.cache-hit != 'true'
       name: 'Build program (.so)'
       run: 'make program'
-    # Install the nextest runner (downloaded binary, not compiled).
+    # Install the nextest runner (downloaded binary, not compiled). Pinned in
+    # all four jobs, because a filter expression in the Postgres job is
+    # load-bearing for a required check; bump the four together.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'taiki-e/install-action@nextest'
+      uses: 'taiki-e/install-action@v2'
+      with:
+        tool: 'cargo-nextest@0.9.143'
     # Run the whole Rust workspace test suite — including the math-core
     # conformance vectors and the engine-vs-SDK litesvm conformance
     # (tests/sdk_conformance.rs). nextest runs tests from all ~20
@@ -362,7 +366,9 @@ jobs:
     # Install the nextest runner (downloaded binary, not compiled).
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'taiki-e/install-action@nextest'
+      uses: 'taiki-e/install-action@v2'
+      with:
+        tool: 'cargo-nextest@0.9.143'
     - env:
         RUSTC_WRAPPER: 'sccache'
       if: |
@@ -480,7 +486,9 @@ jobs:
         test -s target/deploy/dropset_ref.so
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'taiki-e/install-action@nextest'
+      uses: 'taiki-e/install-action@v2'
+      with:
+        tool: 'cargo-nextest@0.9.143'
     - env:
         DROPSET_REQUIRE_PARITY_ORACLE: '1'
         RUSTC_WRAPPER: 'sccache'
@@ -552,42 +560,26 @@ jobs:
         shared-key: 'rust-postgres-${{ runner.os }}'
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'taiki-e/install-action@nextest'
-    # One invocation over all four crates so the shared dependency graph
-    # compiles once. `--run-ignored all` runs the container-backed suites
-    # alongside the ordinary unit tests; the feeds features are named
-    # explicitly because a `-p` selection does not enable them.
+      uses: 'taiki-e/install-action@v2'
+      with:
+        tool: 'cargo-nextest@0.9.143'
+    # The crate selection, the feature flags and the `oanda_direction`
+    # exclusion live in the Makefile's `test-postgres` target, the one owner
+    # a local run and review-pr also use; `postgres_ci_wiring.py` fails lint
+    # when a crate gains a Docker-gated test the target does not select, or
+    # when this step stops running the target.
     #
     # The schema comes from `dropset-db-schema` inside the tests themselves
     # (docs/data-feeds.md §8) — there is no in-crate migrator left to lean on
-    # since the single-schema-owner split, and no DDL is issued here.
-    #
-    # `oanda_direction` is filtered out because it is the one `#[ignore]`d
-    # target across these four crates gated on something other than Docker:
-    # it needs a network and the OANDA credential, and `--run-ignored all`
-    # would otherwise select it. It can never be a gate here because a
-    # required check must not depend on a live third-party venue; and today
-    # no CI run holds that credential anyway — it lives in 1Password,
-    # reached through `secrets.local.env`. It stays operator-run, and its
-    # own module doc says so.
-    # Excluded by `binary_id` rather than by package, so the rest of
-    # `dropset-market-data` is still covered, and rather than by bare
-    # `binary`, which matches the unqualified name in every selected crate.
-    # A rename fails closed: nextest errors on a filter expression that
-    # matches no binary, so lost coverage reddens the job instead of
-    # passing quietly.
+    # since the single-schema-owner split, and no DDL is issued here. No CI
+    # run holds the OANDA credential either; it lives in 1Password, reached
+    # through `secrets.local.env`.
     - env:
         RUSTC_WRAPPER: 'sccache'
       if: |
         needs.changes.outputs.code == 'true'
       name: 'Run store and feature-gated tests against Postgres'
-      run: |
-        cargo nextest run --run-ignored all \
-        -E 'not binary_id(dropset-market-data::oanda_direction)' \
-        -p dropset-feeds -p dropset-indexer -p dropset-market-data \
-        -p dropset-db-schema \
-        --features dropset-feeds/store,dropset-feeds/http \
-        --features dropset-feeds/rpc,dropset-feeds/stream
+      run: 'make test-postgres'
     # See the `test` job's summary step. No SBF line here: this job builds no
     # program and so has no `sbf-cache` step to report on.
     - continue-on-error: true
