@@ -53,7 +53,7 @@ class WriteKeyFileTest(unittest.TestCase):
 
     def test_name_contents_and_mode(self):
         path = grind_key.write_key_file(self.out_dir, self.keypair)
-        self.assertEqual(path.name, f"{FIXTURE_PUBKEY}.key")
+        self.assertEqual(path.name, f"{FIXTURE_PUBKEY}.txt")
         contents = path.read_text()
         self.assertNotIn("\n", contents)
         self.assertEqual(b58decode(contents), self.keypair)

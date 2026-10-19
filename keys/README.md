@@ -117,7 +117,7 @@ python3 keys/grind_key.py Quote
 
 The prefix match is case-sensitive. Each run writes one file to
 `~/Desktop/dropset-vanity/` (override with `--out-dir`), outside every
-checkout: `<pubkey>.key`, mode 600, whose entire contents are the base58
+checkout: `<pubkey>.txt`, mode 600, whose entire contents are the base58
 encoding of the 64-byte secret keypair, the form Phantom imports and
 exports. The keygen JSON is deleted, and the script prints only the
 public key, the path and the byte count.

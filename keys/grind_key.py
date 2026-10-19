@@ -4,7 +4,7 @@
 
 Runs ``solana-keygen grind --starts-with <prefix>:1`` (case-sensitive)
 in an output directory outside every checkout, then converts the keygen
-JSON array to ``<pubkey>.key``: mode 600, its entire contents the
+JSON array to ``<pubkey>.txt``: mode 600, its entire contents the
 base58 encoding of the 64-byte secret keypair, the form Phantom's
 import and export dialogs use. The keygen JSON is deleted, so no other
 key-file form is left behind.
@@ -39,14 +39,14 @@ def b58encode(data: bytes) -> str:
 
 
 def write_key_file(out_dir: Path, keypair: bytes) -> Path:
-    """Write ``<pubkey>.key`` holding the base58 keypair; return its path.
+    """Write ``<pubkey>.txt`` holding the base58 keypair; return its path.
 
     Refuses to overwrite an existing file, and creates it at mode 600
     so the secret is never readable by another user, even briefly.
     """
     if len(keypair) != KEYPAIR_LEN:
         raise ValueError(f"keypair is {len(keypair)} bytes, want {KEYPAIR_LEN}")
-    path = out_dir / f"{b58encode(keypair[32:])}.key"
+    path = out_dir / f"{b58encode(keypair[32:])}.txt"
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(b58encode(keypair))
