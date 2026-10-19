@@ -27,6 +27,7 @@ pub mod events;
 #[allow(clippy::io_other_error)]
 #[allow(unused_imports)]
 pub mod generated;
+pub mod ladder;
 pub mod quoting;
 pub mod time;
 

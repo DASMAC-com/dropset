@@ -24,6 +24,7 @@ pub mod fills;
 pub mod job;
 pub mod leader;
 pub mod market;
+pub mod passive;
 pub mod publish;
 pub mod teardown;
 pub mod ui;
