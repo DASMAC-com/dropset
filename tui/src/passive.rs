@@ -514,6 +514,7 @@ pub fn execute(
             bail!("the ladder commits more than the whole leg — nothing was sent");
         }
         ixs.push(set_liquidity_profile_ix(
+            cluster.deployment(),
             ticket.quote_authority,
             ticket.market,
             ticket.seat.idx,
@@ -522,6 +523,7 @@ pub fn execute(
     }
     let slot = client.get_slot().context("current slot")?;
     ixs.push(set_reference_price_ix(
+        cluster.deployment(),
         ticket.quote_authority,
         ticket.market,
         ticket.seat.idx,
@@ -529,10 +531,6 @@ pub fn execute(
         slot,
         dropset_sdk::time::now_unix(),
     ));
-    let ixs: Vec<_> = ixs
-        .into_iter()
-        .map(|ix| chain::retarget(cluster, ix))
-        .collect();
     let label = ticket.op.label();
     chain::send_logged(client, wallet, &[wallet, quote_authority], &ixs, label, log)
         .context(label)?;
