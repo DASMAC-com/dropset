@@ -159,8 +159,8 @@ pub enum DropsetError {
     /// 6048 - market still has vaults on the active list
     #[error("market still has vaults on the active list")]
     MarketHasActiveVaults = 0x17A0,
-    /// 6049 - leader already leads a live (not frozen, not tombstoned) vault on this market
-    #[error("leader already leads a live (not frozen, not tombstoned) vault on this market")]
+    /// 6049 - leader already leads an open (live or frozen) vault on this market
+    #[error("leader already leads an open (live or frozen) vault on this market")]
     LeaderAlreadyLeadsVault = 0x17A1,
     /// 6050 - new leader is the vault's current leader
     #[error("new leader is the vault's current leader")]
@@ -183,6 +183,9 @@ pub enum DropsetError {
     /// 6056 - vault name is locked by an admin
     #[error("vault name is locked by an admin")]
     VaultNameLocked = 0x17A8,
+    /// 6057 - new quote authority is the vault's current quote authority
+    #[error("new quote authority is the vault's current quote authority")]
+    SameQuoteAuthority = 0x17A9,
 }
 
 impl From<DropsetError> for solana_program_error::ProgramError {
