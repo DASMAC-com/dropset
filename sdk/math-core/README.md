@@ -32,7 +32,7 @@ vectors under [`sdk/conformance`](../conformance).
 - `wasm` — `wasm-bindgen` exports of the `Price` codec for the TS client.
 - `idl` / `idl-build` — Anchor `IdlType` derive on `Price`, for the
   on-chain program's IDL build. **Not** solana-free (pulls
-  `anchor-lang-v2`); off by default and never combined with `wasm`.
+  `anchor-lang`); off by default and never combined with `wasm`.
 
 ## License
 

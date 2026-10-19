@@ -40,7 +40,7 @@
 //! quote it is picking off. This constraint applies to both domains; see
 //! the spec's **SetReferencePrice**.
 
-use anchor_lang_v2::{
+use anchor_lang::{
     address_eq,
     bytemuck::{Pod, Zeroable},
     prelude::*,
@@ -54,7 +54,7 @@ use super::{N_LEVELS, VAULT_NAME_LEN};
 /// **Vault → ReferencePrice**.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, IdlType)]
-#[bytemuck(crate = "anchor_lang_v2::bytemuck")]
+#[bytemuck(crate = "anchor_lang::bytemuck")]
 pub struct ReferencePrice {
     /// `market.nonce` at the last `SetReferencePrice` / `SetLiquidityProfile`,
     /// OR'd with `FLUSH_BIT` when a flush is armed. Alignment-1.
@@ -74,7 +74,7 @@ pub struct ReferencePrice {
 /// containing array is byte-packed.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, IdlType)]
-#[bytemuck(crate = "anchor_lang_v2::bytemuck")]
+#[bytemuck(crate = "anchor_lang::bytemuck")]
 pub struct Level {
     /// Spread from `reference_price.price` in ppm — direction is implicit
     /// from which side this level sits on (bids subtract, asks add).
@@ -120,7 +120,7 @@ pub struct Level {
 /// reference price.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, IdlType)]
-#[bytemuck(crate = "anchor_lang_v2::bytemuck")]
+#[bytemuck(crate = "anchor_lang::bytemuck")]
 pub struct LiquidityProfile {
     /// Bid levels, top of book first.
     pub bids: [Level; N_LEVELS],
@@ -133,7 +133,7 @@ pub struct LiquidityProfile {
 /// armed.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, IdlType)]
-#[bytemuck(crate = "anchor_lang_v2::bytemuck")]
+#[bytemuck(crate = "anchor_lang::bytemuck")]
 pub struct Position {
     /// Absolute price for this level.
     pub price: Price,
@@ -176,7 +176,7 @@ pub struct Position {
 /// Per-vault remaining sizes, one entry per [`Level`].
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, IdlType)]
-#[bytemuck(crate = "anchor_lang_v2::bytemuck")]
+#[bytemuck(crate = "anchor_lang::bytemuck")]
 pub struct Remaining {
     pub bids: [Position; N_LEVELS],
     pub asks: [Position; N_LEVELS],
@@ -195,7 +195,7 @@ pub struct Remaining {
 /// sector with `leader == Address::default()` is on the free list.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, IdlType)]
-#[bytemuck(crate = "anchor_lang_v2::bytemuck")]
+#[bytemuck(crate = "anchor_lang::bytemuck")]
 pub struct Vault {
     /// Next sector in the current DLL (active / tombstone / free), or
     /// [`super::NULL_SECTOR`] at the tail.

@@ -6,7 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -31,57 +31,6 @@ export function getCloseMarketInstructionDataDecoder(): FixedSizeDecoder<CloseMa
 
 export function getCloseMarketInstructionDataCodec(): FixedSizeCodec<CloseMarketInstructionDataArgs, CloseMarketInstructionData> {
     return combineCodec(getCloseMarketInstructionDataEncoder(), getCloseMarketInstructionDataDecoder());
-}
-
-export type CloseMarketAsyncInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountBaseTreasury extends string = string, TAccountQuoteTreasury extends string = string, TAccountRentRecipient extends string = string> =  {
-  /** Registry admin — authorized via the registry admin set. */
-admin: TransactionSigner<TAccountAdmin>;
-/**
- * Singleton registry. `mut` to decrement `market_count` — the
- * witness `close_registry` later checks is zero.
- */
-registry?: Address<TAccountRegistry>;
-/**
- * The market being closed. `mut` so its lamports can be drained and
- * its discriminator scrubbed by `Slab::close`. Taken bare, matching
- * every other handler; the treasury `address` constraints below
- * reference this market's stored treasury addresses, so a
- * mismatched market is rejected before the close.
- */
-market: Address<TAccountMarket>;
-/**
- * The base treasury — must already be closed (zero lamports).
- * CHECK: pinned to `market.base_treasury` and required closed.
- */
-baseTreasury: Address<TAccountBaseTreasury>;
-/**
- * The quote treasury — must already be closed (zero lamports).
- * CHECK: pinned to `market.quote_treasury` and required closed.
- */
-quoteTreasury: Address<TAccountQuoteTreasury>;
-/**
- * Receives the market account's rent lamports on close.
- * CHECK: rent destination only.
- */
-rentRecipient: Address<TAccountRentRecipient>;
-}
-
-export async function getCloseMarketInstructionAsync<TAccountAdmin extends string, TAccountRegistry extends string, TAccountMarket extends string, TAccountBaseTreasury extends string, TAccountQuoteTreasury extends string, TAccountRentRecipient extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CloseMarketAsyncInput<TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountRentRecipient>, config: { programAddress: TProgramAddress } ): Promise<CloseMarketInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountRentRecipient>> {
-  // Program address.
-const programAddress = config.programAddress;
-
- // Original accounts.
-const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: true }, market: { value: input.market ?? null, isWritable: true }, baseTreasury: { value: input.baseTreasury ?? null, isWritable: false }, quoteTreasury: { value: input.quoteTreasury ?? null, isWritable: false }, rentRecipient: { value: input.rentRecipient ?? null, isWritable: true } }
-const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
-
-
-// Resolve default values.
-if (!accounts.registry.value) {
-accounts.registry.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))] });
-}
-
-const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.market), getAccountMeta(accounts.baseTreasury), getAccountMeta(accounts.quoteTreasury), getAccountMeta(accounts.rentRecipient)], data: getCloseMarketInstructionDataEncoder().encode({}), programAddress } as CloseMarketInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountMarket, TAccountBaseTreasury, TAccountQuoteTreasury, TAccountRentRecipient>);
 }
 
 export type CloseMarketInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountMarket extends string = string, TAccountBaseTreasury extends string = string, TAccountQuoteTreasury extends string = string, TAccountRentRecipient extends string = string> =  {

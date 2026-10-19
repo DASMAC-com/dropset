@@ -45,7 +45,7 @@ admin: TransactionSigner<TAccountAdmin>;
  * read for the admin-membership check and as the authority of the
  * fee ATA created below.
  */
-registry?: Address<TAccountRegistry>;
+registry: Address<TAccountRegistry>;
 /**
  * New default fee mint. `mint::token_program = fee_token_program`
  * ties it to the supplied program, so the stored
@@ -99,9 +99,6 @@ const args = { ...input,  };
 
 
 // Resolve default values.
-if (!accounts.registry.value) {
-accounts.registry.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))] });
-}
 if (!accounts.associatedTokenProgram.value) {
 accounts.associatedTokenProgram.value = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL' as Address<'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'>;
 }

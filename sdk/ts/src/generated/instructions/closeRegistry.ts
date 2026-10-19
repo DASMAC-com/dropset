@@ -6,7 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getStructDecoder, getStructEncoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -31,42 +31,6 @@ export function getCloseRegistryInstructionDataDecoder(): FixedSizeDecoder<Close
 
 export function getCloseRegistryInstructionDataCodec(): FixedSizeCodec<CloseRegistryInstructionDataArgs, CloseRegistryInstructionData> {
     return combineCodec(getCloseRegistryInstructionDataEncoder(), getCloseRegistryInstructionDataDecoder());
-}
-
-export type CloseRegistryAsyncInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountRentRecipient extends string = string> =  {
-  /**
- * The last remaining registry admin — the only signer this accepts,
- * and the one whose authority the close is performed under.
- */
-admin: TransactionSigner<TAccountAdmin>;
-/**
- * The registry being closed. `mut` so its lamports can be drained
- * and its discriminator scrubbed by `Slab::close`.
- */
-registry?: Address<TAccountRegistry>;
-/**
- * Receives the registry account's rent lamports on close.
- * CHECK: rent destination only.
- */
-rentRecipient: Address<TAccountRentRecipient>;
-}
-
-export async function getCloseRegistryInstructionAsync<TAccountAdmin extends string, TAccountRegistry extends string, TAccountRentRecipient extends string, TProgramAddress extends Address = typeof DROPSET_PROGRAM_ADDRESS>(input: CloseRegistryAsyncInput<TAccountAdmin, TAccountRegistry, TAccountRentRecipient>, config: { programAddress: TProgramAddress } ): Promise<CloseRegistryInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountRentRecipient>> {
-  // Program address.
-const programAddress = config.programAddress;
-
- // Original accounts.
-const originalAccounts = { admin: { value: input.admin ?? null, isWritable: false }, registry: { value: input.registry ?? null, isWritable: true }, rentRecipient: { value: input.rentRecipient ?? null, isWritable: true } }
-const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedAccount>;
-
-
-// Resolve default values.
-if (!accounts.registry.value) {
-accounts.registry.value = await getProgramDerivedAddress({ programAddress, seeds: [getBytesEncoder().encode(new Uint8Array([114, 101, 103, 105, 115, 116, 114, 121]))] });
-}
-
-const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
-return Object.freeze({ accounts: [getAccountMeta(accounts.admin), getAccountMeta(accounts.registry), getAccountMeta(accounts.rentRecipient)], data: getCloseRegistryInstructionDataEncoder().encode({}), programAddress } as CloseRegistryInstruction<TProgramAddress, TAccountAdmin, TAccountRegistry, TAccountRentRecipient>);
 }
 
 export type CloseRegistryInput<TAccountAdmin extends string = string, TAccountRegistry extends string = string, TAccountRentRecipient extends string = string> =  {

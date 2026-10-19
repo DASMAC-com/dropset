@@ -1,8 +1,6 @@
-use anchor_lang_v2::{bytemuck, Discriminator};
-use anchor_v2_testing::{
-    Keypair, LiteSVM, Message, Signer, VersionedMessage, VersionedTransaction,
-};
-use litesvm::types::TransactionMetadata;
+use anchor_lang::{bytemuck, Discriminator};
+use anchor_v2_testing::{Keypair, Message, Signer, VersionedMessage, VersionedTransaction};
+use litesvm::{types::TransactionMetadata, LiteSVM};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_loader_v3_interface::{instruction as loader_v3, state::UpgradeableLoaderState};
 use solana_native_token::LAMPORTS_PER_SOL;
@@ -59,6 +57,21 @@ pub fn deploy_with_authority(authority: &Keypair) -> LiteSVM {
 /// (`REF_PROGRAM_SO_PATH`) alongside the default asm build.
 pub fn deploy_with_authority_from(authority: &Keypair, so_path: &str) -> LiteSVM {
     let mut svm = anchor_v2_testing::svm();
+    // litesvm 0.18 opens at a mainnet-scale slot (447_552_000) where 0.11
+    // opened at 0. The suites stamp `quote_slot` in the single digits (the
+    // distinguished-fixture convention in `fixture.rs`), so restore slot 0
+    // before deploying — after it, the loader would see a future
+    // deployment slot.
+    let mut clock = svm.get_sysvar::<solana_clock::Clock>();
+    clock.slot = 0;
+    svm.set_sysvar(&clock);
+    // litesvm 0.18 also activates SIMD-0437's rent reductions (5_080
+    // lamports/byte, the rate mainnet already charges), but the program's
+    // `const-rent` funds PDAs at the SIMD-0194 rate (6_960). Pin the Rent
+    // sysvar — which litesvm's post-execution rent check reads too — to
+    // that rate, so the suites assert const-rent's funding exactly; on a
+    // cluster at the lower rate the same PDAs are over-funded.
+    svm.set_sysvar(&solana_rent::Rent::default());
 
     let payer = Keypair::new();
     svm.airdrop(&payer.pubkey(), PAYER_FUNDING_LAMPORTS)
@@ -170,7 +183,7 @@ where
 /// offset or variant order rather than hard-coding a number.
 #[allow(dead_code)]
 pub fn assert_program_error(err: &str, code: dropset::DropsetError) {
-    let expected = format!("{:?}", anchor_lang_v2::Error::from(code));
+    let expected = format!("{:?}", anchor_lang::Error::from(code));
     assert!(err.contains(&expected), "expected {expected}, got: {err}");
 }
 

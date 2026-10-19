@@ -18,7 +18,7 @@
 //! Every event that writes `Vault::name` carries the name as text, padding
 //! stripped, with the empty string meaning unset.
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang::prelude::*;
 
 use crate::state::RealizeOutcome;
 use crate::Price;

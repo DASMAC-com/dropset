@@ -3,7 +3,7 @@
     feature(asm_experimental_arch)
 )]
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang::prelude::*;
 
 pub mod asm_offsets;
 mod errors;
@@ -555,6 +555,6 @@ pub mod dropset {
 // entrypoint; reinstate the other two so the Rust handlers reached via
 // `__anchor_dispatch` still have a heap and a panic path.
 #[cfg(all(target_os = "solana", feature = "asm-entrypoint"))]
-anchor_lang_v2::pinocchio::default_allocator!();
+anchor_lang::pinocchio::default_allocator!();
 #[cfg(all(target_os = "solana", feature = "asm-entrypoint"))]
-anchor_lang_v2::pinocchio::default_panic_handler!();
+anchor_lang::pinocchio::default_panic_handler!();

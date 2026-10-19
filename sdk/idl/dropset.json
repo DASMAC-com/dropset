@@ -19,24 +19,7 @@
         },
         {
           "name": "registry",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "system_program",
@@ -69,24 +52,7 @@
             "Singleton registry. `mut` to decrement `market_count` — the",
             "witness `close_registry` later checks is zero."
           ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "market",
@@ -147,24 +113,7 @@
           "name": "registry",
           "docs": [
             "Singleton registry, read for the admin-membership check."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
           "name": "market",
@@ -298,24 +247,7 @@
             "The registry being closed. `mut` so its lamports can be drained",
             "and its discriminator scrubbed by `Slab::close`."
           ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "rent_recipient",
@@ -347,24 +279,7 @@
             "Singleton registry. Read-only — the registry account itself is",
             "closed separately by `close_registry`. The registry PDA signs the",
             "`CloseAccount` CPI via its `[b\"registry\"]` seed."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
           "name": "fee_mint",
@@ -547,24 +462,7 @@
             "Singleton registry. Mutated to bump `market_count`, and read",
             "for the fee config, admin set, and stamped defaults."
           ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "base_mint",
@@ -725,24 +623,7 @@
           "docs": [
             "Singleton registry — read for admin check + the",
             "`max_vaults_per_market` cap."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
           "name": "market",
@@ -1193,24 +1074,7 @@
           "name": "registry",
           "docs": [
             "Singleton registry, read for the admin-membership check."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
           "name": "market",
@@ -1239,43 +1103,7 @@
           "docs": [
             "The depositor's basis PDA. Closed to `owner` on full drain."
           ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116,
-                  95,
-                  100,
-                  101,
-                  112,
-                  111,
-                  115,
-                  105,
-                  116,
-                  111,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market"
-              },
-              {
-                "kind": "arg",
-                "path": "vault_idx"
-              },
-              {
-                "kind": "account",
-                "path": "owner"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "base_mint",
@@ -1390,24 +1218,7 @@
           "name": "registry",
           "docs": [
             "Singleton registry, read for the admin-membership check."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
           "name": "market",
@@ -1536,24 +1347,7 @@
           "name": "registry",
           "docs": [
             "Singleton registry, read for the admin-membership check."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
           "name": "market",
@@ -1737,24 +1531,7 @@
           "name": "registry",
           "docs": [
             "Singleton registry, read for the admin-membership check."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
           "name": "market",
@@ -1830,24 +1607,7 @@
         },
         {
           "name": "registry",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          "writable": true
         }
       ],
       "args": [
@@ -1912,24 +1672,7 @@
             "read for the admin-membership check and as the authority of the",
             "fee ATA created below."
           ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "fee_mint",
@@ -2177,7 +1920,7 @@
           "type": {
             "array": [
               "u8",
-              0
+              288
             ]
           }
         }
@@ -2204,24 +1947,7 @@
           "docs": [
             "Singleton registry, read for the admin-membership check and as",
             "the authority of the fee ATA created below."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
           "name": "market",
@@ -2336,24 +2062,7 @@
           "name": "registry",
           "docs": [
             "Singleton registry, read for the admin-membership check."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
           "name": "market",
@@ -2426,24 +2135,7 @@
           "name": "registry",
           "docs": [
             "Singleton registry, read for the admin-membership check."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
           "name": "market",
@@ -2519,24 +2211,7 @@
           "name": "registry",
           "docs": [
             "Singleton registry, read for the admin-membership check."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
           "name": "market",
@@ -2693,24 +2368,7 @@
             "Singleton registry. `mut` for the default writes; also read for",
             "the admin-membership check."
           ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "event_authority",
@@ -2789,24 +2447,7 @@
           "name": "registry",
           "docs": [
             "Singleton registry, read for the admin-membership check."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
           "name": "market",
@@ -3161,24 +2802,7 @@
           "name": "registry",
           "docs": [
             "Singleton registry, read for the admin-membership check."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
           "name": "market",
@@ -3312,43 +2936,7 @@
             "Anchor's unconditional `close = signer` attribute) is what lets",
             "the PDA survive a partial withdrawal."
           ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116,
-                  95,
-                  100,
-                  101,
-                  112,
-                  111,
-                  115,
-                  105,
-                  116,
-                  111,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market"
-              },
-              {
-                "kind": "arg",
-                "path": "vault_idx"
-              },
-              {
-                "kind": "account",
-                "path": "signer"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "base_mint",
@@ -4516,7 +4104,11 @@
             "docs": [
               "Amount in atoms of `mint`."
             ],
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           }
         ]
       }
@@ -4710,7 +4302,11 @@
             "docs": [
               "Per-fill / per-quote monotonic counter."
             ],
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           },
           {
             "name": "head",
@@ -4718,7 +4314,11 @@
               "Head of the active DLL: sector index or `NULL_SECTOR`. Walked",
               "by the matching engine on every taker."
             ],
-            "type": "u32"
+            "type": {
+              "defined": {
+                "name": "PodU32"
+              }
+            }
           },
           {
             "name": "tombstone_head",
@@ -4726,7 +4326,11 @@
               "Head of the tombstone DLL: sectors that have been `CloseVault`'d",
               "but still hold outstanding shares. Not visited by matching."
             ],
-            "type": "u32"
+            "type": {
+              "defined": {
+                "name": "PodU32"
+              }
+            }
           },
           {
             "name": "free_head",
@@ -4734,14 +4338,22 @@
               "Head of the free DLL: sectors available for reuse on `CreateVault`.",
               "Singly linked via `next`; `prev` is ignored."
             ],
-            "type": "u32"
+            "type": {
+              "defined": {
+                "name": "PodU32"
+              }
+            }
           },
           {
             "name": "active_count",
             "docs": [
               "Active-DLL length. Bounded by `registry.max_vaults_per_market`."
             ],
-            "type": "u32"
+            "type": {
+              "defined": {
+                "name": "PodU32"
+              }
+            }
           },
           {
             "name": "outstanding_vault_depositors",
@@ -4757,7 +4369,11 @@
               "PDAs to verify by enumeration. See the architecture spec,",
               "**Account lifecycle and rent reclamation**."
             ],
-            "type": "u32"
+            "type": {
+              "defined": {
+                "name": "PodU32"
+              }
+            }
           },
           {
             "name": "fee_config",
@@ -4777,7 +4393,11 @@
             "docs": [
               "Taker fee rate, capped at ~6.55% (`Ppm16` max)."
             ],
-            "type": "u16"
+            "type": {
+              "defined": {
+                "name": "PodU16"
+              }
+            }
           },
           {
             "name": "max_platform_fee",
@@ -4791,7 +4411,11 @@
               "bound: every write path range-checks `<= BPS` so a market can never",
               "hold a ceiling above 100% of the taker's output."
             ],
-            "type": "u16"
+            "type": {
+              "defined": {
+                "name": "PodU16"
+              }
+            }
           },
           {
             "name": "default_min_leader_share",
@@ -4799,7 +4423,11 @@
               "Default min-leader-share for vaults opened on this market.",
               "Stamped from `Registry.default_min_leader_share` at creation."
             ],
-            "type": "u32"
+            "type": {
+              "defined": {
+                "name": "PodU32"
+              }
+            }
           },
           {
             "name": "base_mint",
@@ -4844,14 +4472,22 @@
               "residual — exact-in fill change, or an unsolicited transfer — and",
               "never income (see `sweep_residual`)."
             ],
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           },
           {
             "name": "accrued_quote_fee_atoms",
             "docs": [
               "Same as `accrued_base_fee_atoms`, for the quote leg (a taker `Sell`)."
             ],
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           },
           {
             "name": "bump",
@@ -4868,7 +4504,11 @@
               "market is `1`. A `u64` so exhaustion is physically unreachable —",
               "an overflow would permanently brick vault creation on the market."
             ],
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           }
         ]
       }
@@ -4986,6 +4626,34 @@
       }
     },
     {
+      "name": "PodI64",
+      "type": {
+        "kind": "type",
+        "alias": "i64"
+      }
+    },
+    {
+      "name": "PodU16",
+      "type": {
+        "kind": "type",
+        "alias": "u16"
+      }
+    },
+    {
+      "name": "PodU32",
+      "type": {
+        "kind": "type",
+        "alias": "u32"
+      }
+    },
+    {
+      "name": "PodU64",
+      "type": {
+        "kind": "type",
+        "alias": "u64"
+      }
+    },
+    {
       "name": "Price",
       "docs": [
         "A `u32` decimal floating-point comparison key.",
@@ -5021,7 +4689,9 @@
       ],
       "type": {
         "kind": "struct",
-        "fields": []
+        "fields": [
+          "u32"
+        ]
       }
     },
     {
@@ -5108,21 +4778,33 @@
               "to verify by enumeration. See the architecture spec, **Account",
               "lifecycle and rent reclamation**."
             ],
-            "type": "u32"
+            "type": {
+              "defined": {
+                "name": "PodU32"
+              }
+            }
           },
           {
             "name": "default_min_leader_share",
             "docs": [
               "Default skin-in-the-game floor (ppm, `Ppm32`) stamped into markets."
             ],
-            "type": "u32"
+            "type": {
+              "defined": {
+                "name": "PodU32"
+              }
+            }
           },
           {
             "name": "default_taker_fee",
             "docs": [
               "Default taker fee (ppm, `Ppm16`) stamped into markets."
             ],
-            "type": "u16"
+            "type": {
+              "defined": {
+                "name": "PodU16"
+              }
+            }
           },
           {
             "name": "default_max_platform_fee",
@@ -5132,7 +4814,11 @@
               "caller-declared `platform_fee_bps` a `swap` may skim off the taker's",
               "output; retunable per market afterwards via `SetMaxPlatformFee`."
             ],
-            "type": "u16"
+            "type": {
+              "defined": {
+                "name": "PodU16"
+              }
+            }
           },
           {
             "name": "max_vaults_per_market",
@@ -5550,7 +5236,11 @@
             "docs": [
               "Sector index within the market's slab."
             ],
-            "type": "u32"
+            "type": {
+              "defined": {
+                "name": "PodU32"
+              }
+            }
           },
           {
             "name": "owner",
@@ -5568,7 +5258,11 @@
               "invariant I6 (`leader_shares + Σ VaultDepositor.shares ==",
               "total_shares`)."
             ],
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           },
           {
             "name": "net_deposits",
@@ -5577,7 +5271,11 @@
               "formula (`Deposit` top-off): `Σ (quote_in + base_in × ref_now)`.",
               "Reduced on `Withdraw` by the floored share-pro-rata slice."
             ],
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           },
           {
             "name": "gross_deposited",
@@ -5585,7 +5283,11 @@
               "Lifetime contributions, monotonic — **never reduced on",
               "withdraw**. Stable denominator for all-time return %."
             ],
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           },
           {
             "name": "entry_ref_price",
@@ -5604,14 +5306,22 @@
               "Shares-weighted average VPS (`L / total_shares`) across deposits,",
               "Q32.32. Same encoding and practical bound as `Vault::hwm`."
             ],
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           },
           {
             "name": "opened_at",
             "docs": [
               "Slot of the first deposit. Captured once at PDA init."
             ],
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           },
           {
             "name": "realized_pnl",
@@ -5619,14 +5329,22 @@
               "Signed quote-denominated PnL crystallized by past withdrawals.",
               "Discarded when the account is closed at zero shares."
             ],
-            "type": "i64"
+            "type": {
+              "defined": {
+                "name": "PodI64"
+              }
+            }
           },
           {
             "name": "realized_yield",
             "docs": [
               "Signed yield (ex-FX) component of [`Self::realized_pnl`]."
             ],
-            "type": "i64"
+            "type": {
+              "defined": {
+                "name": "PodI64"
+              }
+            }
           },
           {
             "name": "realized_fx",
@@ -5634,7 +5352,11 @@
               "Signed FX component. Invariant:",
               "`realized_yield + realized_fx == realized_pnl`."
             ],
-            "type": "i64"
+            "type": {
+              "defined": {
+                "name": "PodI64"
+              }
+            }
           },
           {
             "name": "bump",

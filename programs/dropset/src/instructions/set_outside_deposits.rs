@@ -18,7 +18,7 @@
 //! `market.nonce`: they mutate a single config bool, so there is no
 //! flush to arm and no matching-engine state to invalidate.
 
-use anchor_lang_v2::{address_eq, prelude::*};
+use anchor_lang::{address_eq, prelude::*};
 
 use crate::{
     errors::DropsetError,

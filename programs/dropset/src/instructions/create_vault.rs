@@ -25,12 +25,12 @@
 //! (case-insensitive) — [`DropsetError::InvalidVaultName`] /
 //! [`DropsetError::VaultNameTaken`]. Empty leaves it unset.
 
-use anchor_lang_v2::{address_eq, prelude::*};
+use anchor_lang::{address_eq, prelude::*};
 // `associated_token::{self, ...}` keeps the module in scope so the
 // `associated_token::*` constraint paths on `registry_fee_treasury`
-// expand to `anchor_spl_v2::associated_token::<Marker>`.
+// expand to `anchor_spl::associated_token::<Marker>`.
 #[allow(unused_imports)]
-use anchor_spl_v2::{
+use anchor_spl::{
     associated_token::{self, AssociatedToken},
     token_2022::{transfer_checked, TransferChecked},
     token_interface::{Mint, TokenAccount, TokenInterface},
@@ -70,7 +70,7 @@ pub struct CreateVault {
     /// Token program owning `fee_mint`. Pinned to the value stamped at
     /// market creation.
     #[account(address = market.fee_config.token_program)]
-    pub fee_token_program: Interface<'static, TokenInterface>,
+    pub fee_token_program: Interface<TokenInterface>,
     /// Caller's source ATA for the fee mint. Only read on the
     /// non-admin path; admin path skips the transfer entirely.
     #[account(mut)]

@@ -107,10 +107,11 @@ The per-market cap on vault count (`max_vaults_per_market`) is set by
 the cost to reconstruct the ephemeral order book during each take
 and can be tuned across the protocol's lifecycle as CU budgets and
 runtime performance evolve. Two budgets are sized for the default cap
-of ten vaults: a take that fills without stranding dust must fit the
-200k CU a bare `swap` gets with no budget instruction, and a dust take
-that walks the whole book must fit the limit clients send ahead of a
-bare `swap` (`SWAP_COMPUTE_UNIT_LIMIT` in the Rust SDK). Tests in
+of ten vaults: an ordinary take (up to fourteen legs on a cold book) must
+fit the 200k CU a bare `swap` gets with no budget instruction, and
+both a take that clears the book to the heap ceiling and a dust take that
+walks the whole book must fit the limit clients send ahead of a bare
+`swap` (`SWAP_COMPUTE_UNIT_LIMIT` in the Rust SDK). Tests in
 `programs/dropset/tests/flip.rs` pin both against a measured case,
 so raising the cap means re-measuring there first.
 

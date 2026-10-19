@@ -41,9 +41,9 @@
 //! never touched — draining protocol revenue waits on a decided
 //! destination (see the spec's **Fee model → Harvest**).
 
-use anchor_lang_v2::{address_eq, prelude::*};
+use anchor_lang::{address_eq, prelude::*};
 #[allow(unused_imports)]
-use anchor_spl_v2::token_interface::{Mint, TokenAccount, TokenInterface};
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::{errors::DropsetError, events::SweepResidualEvent, state::Market, Registry};
 
@@ -73,7 +73,7 @@ pub struct SweepResidual {
     /// inventory field is summed, and which accrued counter is subtracted.
     pub mint: InterfaceAccount<Mint>,
     /// Token program owning `mint`.
-    pub token_program: Interface<'static, TokenInterface>,
+    pub token_program: Interface<TokenInterface>,
     /// The treasury ATA to sweep. Pinned to `ata(market, mint,
     /// token_program)`, so a non-canonical account is rejected before the
     /// handler runs.

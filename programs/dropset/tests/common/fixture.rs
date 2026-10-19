@@ -26,8 +26,8 @@ use super::{
     send_ixn_meta, send_ixn_signed_meta, ATA_PROGRAM_ID, CREATE_MARKET_FEE_ATOMS, PROGRAM_ID,
     REF_PROGRAM_SO_PATH, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
 };
-use anchor_lang_v2::{bytemuck, programs::System, Id, InstructionData};
-use anchor_v2_testing::{Keypair, LiteSVM, Signer};
+use anchor_lang::{bytemuck, programs::System, Id, InstructionData};
+use anchor_v2_testing::{Keypair, Signer};
 use dropset::{
     instruction::{
         CloseMarket as CloseMarketIx, CloseMarketTreasury as CloseMarketTreasuryIx,
@@ -50,10 +50,11 @@ use dropset::{
     Level, LiquidityProfile, MarketHeader, Price, RegistryHeader, Vault, VaultDepositorHeader,
 };
 use litesvm::types::TransactionMetadata;
+use litesvm::LiteSVM;
 use solana_instruction::{AccountMeta, Instruction};
 // The *sysvar-serializable* `Clock`, which is what litesvm's `get_sysvar`
 // / `set_sysvar` are bounded on — distinct from
-// `anchor_lang_v2::prelude::Clock`, the account-wrapper type the program's
+// `anchor_lang::prelude::Clock`, the account-wrapper type the program's
 // own `Sysvar<Clock>` field uses.
 use dropset_sdk::clock::{SlotSpan, SlotTime, WallTime};
 use solana_clock::Clock;

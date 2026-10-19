@@ -2,7 +2,7 @@
 //! `dropset-math-core` kernel, so it lives apart from the kernel wrappers
 //! in `accrual`.
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang::prelude::*;
 
 use crate::errors::DropsetError;
 
@@ -56,7 +56,7 @@ pub fn apply_deposit_inventory(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anchor_lang_v2::bytemuck::Zeroable;
+    use anchor_lang::bytemuck::Zeroable;
 
     #[test]
     fn apply_deposit_inventory_adds_legs_and_shares() {
