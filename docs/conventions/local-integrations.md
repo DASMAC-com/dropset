@@ -11,7 +11,7 @@
 This doc covers the **user-local Claude Code configuration** the repo
 *documents but does not commit*: the compound-shell guard hook, the
 git-grep guard hook, the worktree edit-path guard hook, the
-destructive-command guard hook, the iTerm2
+destructive-command guard hook, the AI-attribution guard hook, the iTerm2
 tab-color integration, and the shell setup they lean on. None of it is
 enforced on a checkout.
 
@@ -241,7 +241,7 @@ leaving the **two** other guards that existed then inert — including the
 worktree edit-path guard, which exists specifically for worktree
 sessions. (`no_destructive_bash.py` is newer than that incident, which
 is why the count here is two and not three; the inventory above is
-four as of today.) Wire the ones you want using
+five as of today.) Wire the ones you want using
 the blocks in each guard's section below.
 
 **This doc states no per-guard wiring status, deliberately.** The
@@ -1429,9 +1429,18 @@ The gate is `_ds_aws_login` in the committed
 `.claude/shell/init.zsh`, and its shape is three steps:
 
 1. **Probe** with `aws sts get-caller-identity`. A live session stops
-   here, so a valid launch never opens a browser.
-1. **Log in** with `aws login` only if the probe failed.
+   here, so a valid launch never stops for a login.
+1. **Log in** with `aws login --remote` only if the probe failed.
 1. **Re-probe**, and refuse the launch if *that* fails.
+
+**The login is `--remote`, for every profile.** The plain flow opens
+the default browser, which silently signs in as whichever identity
+that browser already holds: an admin login can complete as the PowerUser
+and then fails at role-credential fetch with no access. `--remote`
+prints the URL and takes the authorization code back by paste, so the
+operator picks the browser (incognito if need be) and with it the
+identity. A login you run by hand takes the same flag, and the older
+`aws sso login` takes `--use-device-code` for the same reason.
 
 **Step 3 is the load-bearing one.** `aws login` can exit 0 having left a
 profile that still cannot call STS, so the gate trusts the probe rather
@@ -1477,7 +1486,8 @@ Three deliberate bounds on the gate:
 
 - **An `aws` too OLD for a top-level `login` takes that same branch.**
   It is the same "AWS is not set up here" shape, so it warns and
-  launches, naming the older `aws sso login` spelling. Without this it
+  launches, naming the older `aws sso login --use-device-code`
+  spelling. Without this it
   was strictly worse than having no CLI at all: the login failed with
   `Invalid choice: 'login'`, the re-probe failed, and the verb refused
   to start — while a machine with no `aws` started fine.
@@ -1494,18 +1504,17 @@ Three deliberate bounds on the gate:
   genuinely old CLI, which the warning tells the operator to ignore.
 
 - **`architect` is not gated.** It argues design rather than reading
-  cost data, and a browser login is a poor thing to stand between the
+  cost data, and an interactive login is a poor thing to stand between the
   operator and a design thought. Add it only if an architect session is
   actually found wanting one.
 
-**One consequence worth knowing: `aws login` blocks on a browser.** That
+**One consequence worth knowing: `aws login` blocks on the operator.** That
 is exactly right for a verb the operator types — which `plan` and
 `housekeeping` are, being the seat verbs that open the day. It would be
 wrong for a verb typed into a tab by automation, so note that
 `session_dispatch.py` dispatches `task` verbs, which run on Bedrock and
 are deliberately **not** gated. Keep it that way: gating a dispatched
-verb would hang a tab nobody is watching, with the device code rendered
-there.
+verb would hang a tab nobody is watching, waiting on a pasted code.
 
 It runs **after** `_ds_seat_guard`, which matters: the guard clears an
 `AWS_REGION` inherited from a previous `task` in the same tab, and the
@@ -1821,11 +1830,26 @@ drives the real zsh functions.
   `task 882` and `task eng-882` agree and the start / resume pair
   composes; a deliberate non-`eng` name passes through untouched.
 
+  **`-w <tag>` on a worktree that already exists reuses it** — routine
+  now that `explore` and `task` can target the same tag. Measured
+  2026-10-15 with three `-p` launches on one scratch tag: every one
+  opened the same `.claude/worktrees/<tag>` on the same
+  `worktree-<tag>` branch, an untracked file written by the second
+  survived into the third, `git worktree list` gained no second entry,
+  and nothing errored. So re-entry needs no guard (two **concurrent**
+  sessions on one tag were not measured). Launched from inside another
+  worktree, it was still created under the **base** checkout's
+  `.claude/worktrees/`, and it stays
+  `locked` (`claude session <tag>`) after the process exits.
+
   **It runs on Bedrock**, per the substrate rule above.
-  `-n <tag>` is for the human (the prompt box, the `/resume` picker, the
-  terminal title — `task resume` resolves by directory), and `/init-pr`
-  runs the bootstrap without being asked, the same trick `plan` and
-  `housekeeping` use.
+  `-n <tag>` names the session in the prompt box, the `/resume` picker
+  and the terminal title, and it is **load-bearing for `fleet`**, whose
+  already-open check matches that name (see `fleet` below).
+  `task resume` finds the session through `resolve_session.py` — the
+  tag's worktree, then the transcript whose cwd stamps point into it —
+  never by the name. `/init-pr` runs the bootstrap without being
+  asked, the same trick `plan` and `housekeeping` use.
 
 - **`task anthropic <n>`** — the same thing on the **subscription**,
   for work that needs web search or deep research (`task bedrock <n>`
@@ -2035,10 +2059,13 @@ drives the real zsh functions.
   hat, and the complement to `plan` rather than a variant of it. Same
   tier, same optional substrate word (after the number), same
   idempotency; the different halves are the briefing
-  (`/architect ENG-<n>`), what it may write — **nothing to the board**
-  — and **where it runs**, its own temporary worktree `<n>` rather than
-  the base repo (see "Architect and explore sessions: temporary
-  worktree, no PR").
+  (`/architect ENG-<n>`), what it may write — **no scheduling
+  writes**: it files its own tasks and moves its own governing issue to
+  In Review, but places no edges, re-prioritizes nothing, closes
+  nothing and edits no other issue — and
+  **where it runs**, its own temporary worktree `<n>` rather than the
+  base repo (see "Architect and explore sessions: temporary worktree,
+  no PR").
 
   It keys on the **issue, not the date**, which is the one substantive
   difference from `plan` / `housekeeping`: a design thread outlives a day, so

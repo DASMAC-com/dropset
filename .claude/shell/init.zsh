@@ -331,10 +331,10 @@ _ds_secrets() {
 # moment interactivity is free: the operator is at the keyboard typing the verb
 # anyway.
 #
-# Three things about the shape below are load-bearing:
+# Four things about the shape below are load-bearing:
 #
-#   * It **probes before logging in**. `aws login` opens a browser, so a
-#     still-valid session must not pay for one. `sts get-caller-identity` is the
+#   * It **probes before logging in**. `aws login` stops for the operator, so
+#     a still-valid session must not pay for one. `sts get-caller-identity` is the
 #     cheapest call that actually proves the credentials resolve, and it is what
 #     fails with `Your session has expired` when they do not.
 #   * **The probe is what decides, not the login's exit status.** `aws login` can
@@ -361,6 +361,13 @@ _ds_secrets() {
 #     default, which is the common case. Naming a profile in a committed file
 #     would hard-code one machine's SSO config — and this account's profile
 #     names carry the account id.
+#   * **The login is `--remote`, for every profile.** The plain flow opens the
+#     default browser, which silently signs in as whichever identity that
+#     browser already holds — an admin login can complete as the PowerUser and
+#     then fails at role-credential fetch. `--remote` prints the URL and takes
+#     the code back by paste, so the operator chooses the browser (incognito if
+#     need be) and with it the identity. The operator is at the keyboard
+#     anyway, so the paste costs nothing.
 #
 # `aws login` is the spelling this CLI itself prescribes: measured on
 # aws-cli/2.35.22, an expired session fails with "Please reauthenticate using
@@ -391,7 +398,7 @@ _ds_aws_login() {
   fi
 
   print -u2 "$verb: AWS session expired or absent — logging in before launch."
-  aws login "${profile[@]}"
+  aws login --remote "${profile[@]}"
 
   if aws sts get-caller-identity "${profile[@]}" >/dev/null 2>&1; then
     return 0
@@ -420,7 +427,7 @@ _ds_aws_login() {
     print -u2 "$verb: this \`aws\` has no top-level \`login\` command (needs a" \
       "recent AWS CLI v2; measured on 2.35.22) — launching WITHOUT cost-read" \
       "access, and ignore any \`Invalid choice\` above. Upgrade the CLI, or run" \
-      "the older \`aws sso login\` by hand first."
+      "the older \`aws sso login --use-device-code\` by hand first."
     return 0
   fi
 
@@ -432,7 +439,7 @@ _ds_aws_login() {
     "NOT launching — it would hit the same error mid-conversation with no way" \
     "to fix it from inside. Either the login did not complete, or AWS was" \
     "unreachable (offline, captive portal, STS throttle). Re-run \`$verb\`" \
-    "once \`aws login\` succeeds, or check DS_AWS_PROFILE in the runtime" \
+    "once \`aws login --remote\` succeeds, or check DS_AWS_PROFILE in the runtime" \
     "config."
   return 1
 }
@@ -1157,8 +1164,11 @@ _ds_seat_guard() {
 #     hooks fire regardless of permission mode — the policy layers compose
 #     rather than substitute.
 #   * `-n "$tag"` — a display name, so the session is identifiable in the
-#     prompt box, the `/resume` picker, and the terminal title. `task resume` resolves
-#     by directory, so this is for the human, not the tooling.
+#     prompt box, the `/resume` picker, and the terminal title — and it is
+#     load-bearing for `fleet`, whose already-open check matches the iTerm
+#     session name, so dropping it makes fleet double-resume. `task resume`
+#     finds the session through `resolve_session.py` — the tag's worktree, then
+#     the transcript whose cwd stamps point into it — never by the name.
 #   * `/init-pr` as the initial prompt, so the bootstrap runs without being
 #     asked for — the same trick `plan` and `housekeeping` use for their own skills.
 task() {
@@ -1250,7 +1260,7 @@ _ds_task_resume() {
   if [[ -z "$1" ]]; then
     _ds_seat_guard 'task resume'
     _ds_secrets
-    claude --resume
+    claude --resume --permission-mode auto
     return
   fi
 
@@ -1300,19 +1310,19 @@ _ds_task_resume() {
     continue)
       # The worktree has its own transcript, so per-directory addressing works
       # and this is the original fast path.
-      ANTHROPIC_MODEL="$model" claude --continue
+      ANTHROPIC_MODEL="$model" claude --continue --permission-mode auto
       ;;
     resume)
       # The `-w` case: resume by id from the base repo. This is the form that
       # was missing, and the only one that reaches such a session.
-      ANTHROPIC_MODEL="$model" claude --resume "$sid"
+      ANTHROPIC_MODEL="$model" claude --resume "$sid" --permission-mode auto
       ;;
     *)
       # Nothing resolved — the worktree was pruned, or the session never
       # started. `--resume <tag>` filters the picker rather than resuming, which
       # is a pick rather than a resume, but it is the last form that can reach
       # anything.
-      ANTHROPIC_MODEL="$model" claude --resume "$tag"
+      ANTHROPIC_MODEL="$model" claude --resume "$tag" --permission-mode auto
       ;;
   esac
 }
@@ -1698,8 +1708,8 @@ plan() {
 # warn-and-launch escapes, and for the same reason: this pass reports spend and
 # runs the monthly permission refresh, both of which need credentials the
 # session cannot obtain for itself. `architect` is
-# deliberately NOT gated — it argues design rather than reading cost data, and a
-# browser login is a poor thing to stand between the operator and a design
+# deliberately NOT gated — it argues design rather than reading cost data, and an
+# interactive login is a poor thing to stand between the operator and a design
 # thought. Add it only if an architect session is actually found wanting one.
 housekeeping() {
   if [[ -n "$1" ]]; then
@@ -1736,8 +1746,10 @@ housekeeping() {
 # creating a bare `1572` beside it.
 #
 # The advisor tier like `plan`, for the same reason: this session argues
-# strategy, and fidelity beats tokens. It writes nothing to the board — see the
-# skill. It takes the same optional substrate word after the number
+# strategy, and fidelity beats tokens. It makes no SCHEDULING writes — it files
+# its own tasks and moves its own governing issue to In Review, but places no
+# edges, re-prioritizes nothing, closes nothing and edits no other issue; see
+# the skill. It takes the same optional substrate word after the number
 # (`architect <n> bedrock`), with the same retention line as `plan`.
 #
 # **It runs in its own worktree, named `<n>`, and that worktree is

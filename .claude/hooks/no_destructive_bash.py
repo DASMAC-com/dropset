@@ -5,8 +5,9 @@
 # cspell:word ionice
 """PreToolUse guard: stop catastrophic and hard-to-reverse Bash commands.
 
-The three committed guards cover shell **form** (compounds, `git grep`) and
-edit **path** (a worktree session writing the base repo). None covers command
+The other committed guards cover shell **form** (compounds, `git grep`), edit
+**path** (a worktree session writing the base repo) and message **content** (AI
+attribution in a commit, PR or comment). None covers command
 **danger**, and the failure mode is the expensive one: a recursive delete or a
 force-push is discovered after it has run.
 

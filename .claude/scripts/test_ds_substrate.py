@@ -574,6 +574,32 @@ class VerbLaunch(SubstrateHarness):
         result, out = self._launch("task resume 9")
         self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
 
+    def test_every_resume_form_keeps_the_permission_mode(self):
+        # Omitting it on a resume silently drops to the saved default on every
+        # reopen, and `fleet` types `task resume` for every worker session.
+        # `python3` is stubbed to stand in for `resolve_session.py`, the only
+        # `python3` call on this path, so each of its modes is reached.
+        resolved = "python3() { print -r -- %s; print -r -- sid-9; print; }; "
+        cases = (
+            ("task resume", "ARGS=--resume --permission-mode auto"),
+            (
+                resolved % "continue" + "task resume 9",
+                "ARGS=--continue --permission-mode auto",
+            ),
+            (
+                resolved % "resume" + "task resume 9",
+                "ARGS=--resume sid-9 --permission-mode auto",
+            ),
+            (
+                resolved % "none" + "task resume 9",
+                "ARGS=--resume 9 --permission-mode auto",
+            ),
+        )
+        for verb, expected in cases:
+            with self.subTest(verb=verb):
+                result, out = self._launch(verb)
+                self.assertIn(expected, out, result.stderr)
+
 
 class ModelsVerb(SubstrateHarness):
     """`models` — the offline table, and `check` against a stubbed `aws`."""
