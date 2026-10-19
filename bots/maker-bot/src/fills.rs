@@ -238,7 +238,7 @@ fn subscribe_and_forward(
         ws_url,
         RpcTransactionLogsFilter::Mentions(vec![DROPSET_ID.to_string()]),
         RpcTransactionLogsConfig {
-            commitment: Some(CommitmentConfig::confirmed()),
+            commitment: Some(CommitmentConfig::finalized()),
         },
     )
     .map_err(|e| anyhow!("logs_subscribe {}: {e}", endpoint_label(ws_url)))?;
@@ -333,7 +333,7 @@ fn decode_fills(
             signature,
             RpcTransactionConfig {
                 encoding: Some(UiTransactionEncoding::Base64),
-                commitment: Some(CommitmentConfig::confirmed()),
+                commitment: Some(CommitmentConfig::finalized()),
                 max_supported_transaction_version: Some(0),
             },
         )

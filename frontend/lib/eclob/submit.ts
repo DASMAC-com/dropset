@@ -56,7 +56,7 @@ export async function submitInstructions({
   rpc: Rpc;
 }): Promise<Signature> {
   const { value: latestBlockhash } = await rpc
-    .getLatestBlockhash({ commitment: "confirmed" })
+    .getLatestBlockhash({ commitment: "finalized" })
     .send();
   const message = pipe(
     createTransactionMessage({ version: 0 }),
@@ -83,7 +83,7 @@ export async function submitInstructions({
       return await rpc
         .sendTransaction(getBase64EncodedWireTransaction(signed), {
           encoding: "base64",
-          preflightCommitment: "confirmed",
+          preflightCommitment: "finalized",
         })
         .send();
     }
@@ -92,7 +92,7 @@ export async function submitInstructions({
       // submits over its own network (fine on mainnet; a localnet demo needs
       // the wallet pointed at the local RPC in that case).
       return await walletSession.sendTransaction(unsigned, {
-        commitment: "confirmed",
+        commitment: "finalized",
       });
     }
     throw new SwapError("Connected wallet can't sign", "wallet");
