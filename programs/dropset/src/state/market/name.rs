@@ -8,7 +8,7 @@
 //! [`super::VaultAccess::name_taken`]. Nothing else — no URL grammar, no
 //! whitespace rules; the creation fee and the admin override bound abuse.
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang::prelude::*;
 
 use crate::errors::DropsetError;
 
@@ -54,7 +54,7 @@ impl Vault {
 
 #[cfg(test)]
 mod tests {
-    use anchor_lang_v2::bytemuck::Zeroable;
+    use anchor_lang::bytemuck::Zeroable;
 
     use super::*;
 

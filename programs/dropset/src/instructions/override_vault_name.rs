@@ -9,7 +9,7 @@
 //! a frozen vault too — the admin path is not refused where the leader's
 //! is. See the architecture spec § OverrideVaultName.
 
-use anchor_lang_v2::prelude::*;
+use anchor_lang::prelude::*;
 
 use crate::{
     errors::DropsetError,

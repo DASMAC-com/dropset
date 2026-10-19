@@ -1531,24 +1531,7 @@
           "name": "registry",
           "docs": [
             "Singleton registry, read for the admin-membership check."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
           "name": "market",
