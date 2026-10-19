@@ -700,10 +700,20 @@ mod tests {
         let stranger = Keypair::new();
         let client = RpcClient::new("http://127.0.0.1:1".to_string());
         let log = Logger::new(std::sync::mpsc::channel().0);
-        let err = execute(&client, &stranger, &stranger, Cluster::Localnet, &ticket, &log)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("quote authority is not the one confirmed"), "{err}");
+        let err = execute(
+            &client,
+            &stranger,
+            &stranger,
+            Cluster::Localnet,
+            &ticket,
+            &log,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("quote authority is not the one confirmed"),
+            "{err}"
+        );
     }
 
     #[test]

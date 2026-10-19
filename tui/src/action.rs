@@ -1241,7 +1241,8 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
         Action::CreateVault | Action::Deposit => {
             for config in roster {
                 let symbol = config.base.symbol;
-                let leader = market::leader(&ctx.repo_root, config, ctx.leader.as_deref())?.pubkey();
+                let leader =
+                    market::leader(&ctx.repo_root, config, ctx.leader.as_deref())?.pubkey();
                 let (base, quote) = market::pair_mints(&ctx.repo_root, config)?;
                 let address = chain::market_pda(ctx.cluster, &base, &quote);
                 // A missing market or vault is refused here because the step

@@ -235,7 +235,8 @@ pub enum Step {
 }
 
 /// The one rule the plan and the job both apply: what `op` does to `seat`,
-/// signed by `signer` ([`Op::signer`]).
+/// signed by `signer` (the op's own key: the quote authority for a kill, the
+/// leader otherwise).
 pub fn step(op: Op, seat: &SectorSeat, signer: &Pubkey) -> Step {
     match op {
         Op::Kill if seat.tombstoned => Step::Skip("closed — matching never visits it"),
@@ -374,7 +375,8 @@ fn plan_line(symbol: &str, config: &PairConfig, seat: &SectorSeat, step: Step) -
 }
 
 /// Run `op` against a fresh read, one transaction per vault, signed by the
-/// op's key ([`Op::signer`]) and paid by `wallet`. Every market is attempted;
+/// op's key (the quote authority for a kill, the leader otherwise) and paid by
+/// `wallet`. Every market is attempted;
 /// the job fails at the end if any send failed or any vault was refused, so
 /// the operator sees the outcome in red rather than a partial stop reading as
 /// success.
@@ -591,7 +593,9 @@ mod tests {
         assert_eq!(signer.pubkey(), quote.pubkey());
         assert_eq!(leader.resolved_pubkey(), None);
         // With no quote key the kill refuses; it never falls back to the leader.
-        let err = Op::Kill.signer(root, config, Some(&leader), None).unwrap_err();
+        let err = Op::Kill
+            .signer(root, config, Some(&leader), None)
+            .unwrap_err();
         assert!(format!("{err:#}").contains("--quote"), "{err:#}");
         assert_eq!(leader.resolved_pubkey(), None);
     }

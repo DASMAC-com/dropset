@@ -58,9 +58,9 @@ fn main() -> Result<()> {
     // would be silently ignored — refused instead, like `--leader`.
     let refs = match &args.keys_file {
         None => KeyRefs::default(),
-        Some(_) if !args.cluster.is_mainnet() => bail!(
-            "--keys-file is mainnet-only — localnet signs with the committed keys/ roster"
-        ),
+        Some(_) if !args.cluster.is_mainnet() => {
+            bail!("--keys-file is mainnet-only — localnet signs with the committed keys/ roster")
+        }
         Some(path) => KeyRefs::load(Path::new(path))?,
     };
     let wallet_ref = args.wallet.clone().or(refs.wallet);
@@ -409,7 +409,10 @@ mod tests {
         let err = quote_reference(Cluster::Mainnet, None, false)
             .unwrap_err()
             .to_string();
-        assert!(err.contains(keys::QUOTE_VAR) && err.contains("--quote"), "{err}");
+        assert!(
+            err.contains(keys::QUOTE_VAR) && err.contains("--quote"),
+            "{err}"
+        );
         // A watch-only session signs nothing, so it needs none.
         assert_eq!(quote_reference(Cluster::Mainnet, None, true).unwrap(), None);
         let given = Some("op://v/quote/key".to_string());
@@ -420,7 +423,10 @@ mod tests {
         // Localnet's committed leader is its quote authority: a supplied key
         // would be ignored, so it is refused, and none is required.
         assert!(quote_reference(Cluster::Localnet, given, false).is_err());
-        assert_eq!(quote_reference(Cluster::Localnet, None, false).unwrap(), None);
+        assert_eq!(
+            quote_reference(Cluster::Localnet, None, false).unwrap(),
+            None
+        );
     }
 
     #[test]

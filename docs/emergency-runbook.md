@@ -5,33 +5,35 @@ runs from a laptop against an RPC endpoint; nothing depends on the host the
 maker runs on.
 
 In an eCLOB a vault's resting quotes outlive the bot that wrote them, so
-stopping the maker stops nothing. The stop is an on-chain write, signed by
-the vault's leader, from the TUI's mainnet mode.
+stopping the maker stops nothing. The stop is an on-chain write from the
+TUI's mainnet mode: the kill is signed by the vault's quote authority, and
+close and drain by its leader.
 
 ## Before you need it
 
 - The TUI builds on this laptop: `cargo build -p dropset-tui`. Build ahead
   of time, not under pressure.
-- 1Password is unlocked and holds the admin wallet (pays the fees) and the
-  vault's leader key. Both are `op://` references, never files.
+- 1Password is unlocked and holds the admin wallet (pays the fees), the
+  vault's quote key and its leader key.
+- `tui/keys.env` exists, copied from `tui/keys.env.example`, with one
+  `op://` reference per key. These are references, never files.
 - The admin wallet holds some SOL for transaction fees.
 - `DROPSET_MAINNET_RPC_URL` is exported, pointing at a provider endpoint.
 
 ## Launch
 
 ```sh
-make tui-mainnet \
-  TUI_MAINNET_ARGS="--wallet op://<vault>/<item>/<field> \
-    --leader op://<vault>/<item>/<field>"
+make tui-mainnet
 ```
 
 The TUI checks the endpoint's genesis hash, then asks for a typed
-confirmation before it draws the panel.
+confirmation before it draws the panel. The quote key loads at launch; the
+leader key loads only when close or drain first needs it.
 
 ## The stop, in order
 
 Every step opens a red **REAL FUNDS** prompt over a plan read fresh from
-the chain: one line per roster market where the leader leads a vault.
+the chain: one line per roster market where the step's key holds a vault.
 Read it, type `yes`, press Enter. Esc cancels with nothing sent. A step
 with nothing to send opens no prompt; it prints a red log line saying why.
 Each step re-reads before it sends and skips vaults already done, so
@@ -53,8 +55,8 @@ re-running one is always safe.
 ## When something goes wrong
 
 - **A vault is listed as REFUSED.** The line says why. A kill refused for
-  "quote authority is not the leader" cannot be signed from the TUI; go
-  straight to close, which the leader signs.
+  "quote authority is not this session's quote key" cannot be signed from
+  the TUI; go straight to close, which the leader signs.
 - **A send fails.** The job ends in red, naming the vault. The other
   markets were still attempted. Re-run the step.
 - **"A job is already running."** Wait for it to finish, or quit (`q`) and

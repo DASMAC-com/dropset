@@ -12,6 +12,8 @@
 //! step first needs the key. A re-centre session, which signs with the quote
 //! key alone, never brings the leader into memory.
 
+// cspell:word QOUTE
+
 use crate::cluster::Cluster;
 use crate::wallet;
 use anyhow::{bail, Context, Result};
@@ -39,8 +41,12 @@ pub struct KeyRefs {
 impl KeyRefs {
     /// Read and parse the keys file at `path`.
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("read the keys file {}", path.display()))?;
+        let text = std::fs::read_to_string(path).with_context(|| {
+            format!(
+                "read the keys file {} — start one by copying tui/keys.env.example",
+                path.display()
+            )
+        })?;
         Self::parse(&text).with_context(|| format!("parse the keys file {}", path.display()))
     }
 
