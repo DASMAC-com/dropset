@@ -66,10 +66,11 @@ pub fn deploy_with_authority_from(authority: &Keypair, so_path: &str) -> LiteSVM
     clock.slot = 0;
     svm.set_sysvar(&clock);
     // litesvm 0.18 also activates SIMD-0437's rent reductions (5_080
-    // lamports/byte), but the program's `const-rent` funds PDAs at the
-    // SIMD-0194 rate (6_960). Pin the Rent sysvar — which litesvm's
-    // post-execution rent check reads too — to that rate, so the suites
-    // test the cluster the program targets.
+    // lamports/byte, the rate mainnet already charges), but the program's
+    // `const-rent` funds PDAs at the SIMD-0194 rate (6_960). Pin the Rent
+    // sysvar — which litesvm's post-execution rent check reads too — to
+    // that rate, so the suites assert const-rent's funding exactly; on a
+    // cluster at the lower rate the same PDAs are over-funded.
     svm.set_sysvar(&solana_rent::Rent::default());
 
     let payer = Keypair::new();
