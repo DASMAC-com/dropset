@@ -61,8 +61,16 @@ export type MarketRaw = {
 export type Vault = Omit<VaultRaw, "volume24h" | "fees24h"> & {
   // A live vault's on-chain identity, null on a mock row. `index` is the
   // sector the deposit / withdraw instructions and the depositor PDA take;
-  // `seq` is the stable per-market vault number.
-  chain: { index: number; seq: bigint } | null;
+  // `seq` is the stable per-market vault number. The raw atom and share
+  // counts are what the dialog's share preview sizes against, so the SDK's
+  // integer kernels see exactly what the program will.
+  chain: {
+    index: number;
+    seq: bigint;
+    baseAtoms: bigint;
+    quoteAtoms: bigint;
+    totalShares: bigint;
+  } | null;
   // Null on a live vault: 24h volume and fees need history, which no single
   // account read can give.
   volume24h: number | null;
@@ -75,11 +83,27 @@ export type Vault = Omit<VaultRaw, "volume24h" | "fees24h"> & {
   name: string | null;
 };
 
+// The fields depositClosedReason reads, so it gates a freshly decoded
+// VaultSummary (raw counts) as readily as a table row.
+type DepositGate = Pick<
+  Vault,
+  "frozen" | "allowOutsideDepositors" | "outsideDepositsApproved"
+> & { leader: string; totalShares: number | bigint };
+
 // Why an outside deposit into `v` is closed, or null when it is open. Mirrors
-// the program's own gate in `deposit` (frozen, then the leader's opt-in, then
-// the admin's approval), so the page never offers a deposit it would reject.
-export const depositClosedReason = (v: Vault): string | null => {
+// the program's own gate in `deposit`, in its order — frozen, the signer being
+// the leader, an unseeded vault, the leader's opt-in, the admin's approval —
+// so the page never offers a deposit it would reject. `signer` is the
+// connected wallet, if any; with none, the leader check is skipped.
+export const depositClosedReason = (
+  v: DepositGate,
+  signer?: string | null,
+): string | null => {
   if (v.frozen) return "This vault is frozen, so deposits are closed.";
+  if (signer && signer === v.leader)
+    return "You lead this vault. Leader deposits aren't made from this page.";
+  if (Number(v.totalShares) <= 0)
+    return "This vault hasn't been seeded by its leader yet.";
   if (!v.allowOutsideDepositors)
     return "This vault's leader isn't taking outside deposits.";
   if (!v.outsideDepositsApproved)
