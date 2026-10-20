@@ -388,9 +388,8 @@ endef
 # git-ignored keys file — one reference per key (wallet, leader, quote); copy
 # tui/keys.env.example to start one. The target is deliberately not run under
 # `op run`, so no resolved key reaches the environment. TUI_MAINNET_ARGS
-# carries what the keys file does not hold (`--program-key` for a first
-# publish, or a one-off override of one of its lines); see
-# `cargo run -p dropset-tui -- --help`.
+# carries `--program-key` for a first publish, or a one-off override of a
+# keys-file line; see `cargo run -p dropset-tui -- --help`.
 #
 # `make demo` and `make tui` are untouched.
 TUI_KEYS_FILE ?= tui/keys.env

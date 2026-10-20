@@ -78,7 +78,12 @@ impl KeyRefs {
                 // a stray `=` could be the body of a pasted base64 secret.
                 other if is_name(other) => bail!(
                     "line {n}: unknown key `{other}` — expected {WALLET_VAR}, {LEADER_VAR} or \
-                     {QUOTE_VAR} (no `export` prefix)"
+                     {QUOTE_VAR}{}",
+                    if other.starts_with("export ") {
+                        ", with no `export` prefix"
+                    } else {
+                        ""
+                    }
                 ),
                 _ => bail!("line {n}: expected NAME=value with a known NAME"),
             };

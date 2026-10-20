@@ -178,17 +178,17 @@ pub fn leader_seats(
     seats_where(client, cluster, market, |v| v.leader == leader.to_bytes())
 }
 
-/// Every sector on `market` whose quote authority is `quote`, read fresh, as
-/// [`leader_seats`] reads them. How the hot path finds its vault without the
-/// leader key: the quote authority is what it signs as.
+/// Every sector on `market` whose quote authority is `quote_authority`, read
+/// fresh, as [`leader_seats`] reads them. How the hot path finds its vault
+/// without the leader key: the quote authority is what it signs as.
 pub fn quote_seats(
     client: &RpcClient,
     cluster: Cluster,
     market: &Pubkey,
-    quote: &Pubkey,
+    quote_authority: &Pubkey,
 ) -> Result<Option<MarketSeats>> {
     seats_where(client, cluster, market, |v| {
-        v.quote_authority == quote.to_bytes()
+        v.quote_authority == quote_authority.to_bytes()
     })
 }
 
