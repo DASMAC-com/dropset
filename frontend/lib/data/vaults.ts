@@ -108,11 +108,37 @@ export const depositClosedReason = (
   if (signer && signer === v.leader)
     return "You lead this vault. Leader deposits aren't made from this page.";
   if (Number(v.totalShares) <= 0)
-    return "This vault hasn't been seeded by its leader yet.";
+    return "Not open yet: the leader hasn't funded this vault.";
   if (!v.allowOutsideDepositors)
-    return "This vault's leader isn't taking outside deposits.";
+    return "Not open yet: the leader hasn't opened this vault to outside deposits.";
   if (!v.outsideDepositsApproved)
-    return "Outside deposits aren't approved for this vault yet.";
+    return "Not open yet: outside deposits are waiting on approval.";
+  return null;
+};
+
+// Why the contribute surface takes no deposit into `v`, or null when it does:
+// the program's gates first (depositClosedReason), then two states the
+// program would size but the surface holds closed, in words. A one-sided
+// vault (one leg empty) would only take the leg it holds, so it waits for the
+// book to rebalance; a vault at its leader floor has no room for any outside
+// capital.
+export const contributeClosedReason = (
+  market: Pick<VaultMarket, "base" | "quote">,
+  v: Vault,
+  signer?: string | null,
+): string | null => {
+  const gate = depositClosedReason(v, signer);
+  if (gate) return gate;
+  if (v.baseReserve <= 0 || v.quoteReserve <= 0) {
+    const held = v.baseReserve > 0 ? market.base : market.quote;
+    return `One-sided for now: the vault holds only ${held}. Deposits reopen when the book rebalances.`;
+  }
+  if (maxOutsideDepositValue(v) === 0) {
+    const floor = leaderFloorFraction(v);
+    const multiple = Math.round((1 - floor) / floor);
+    const floorPct = Math.round(floor * 100);
+    return `Full: outside capital is at its cap of ${multiple} times the leader's stake (the leader keeps at least ${floorPct}% of the vault).`;
+  }
   return null;
 };
 
@@ -254,6 +280,25 @@ export const findVaultMarket = (a: string, b: string): VaultMarket | null =>
   MOCK_VAULT_MARKETS.find(
     (m) => (m.base === a && m.quote === b) || (m.base === b && m.quote === a),
   ) ?? null;
+
+// The live vault a public vault link names (vaultLinkHref): the market with
+// this base / quote, and the vault in it with this `seq`. `seq` is the raw
+// query value, so anything but a decimal integer matches nothing.
+export const findVaultBySeq = (
+  markets: VaultMarket[],
+  base: string,
+  quote: string,
+  seq: string,
+): GroupedVault | null => {
+  if (!/^\d+$/.test(seq)) return null;
+  const want = BigInt(seq);
+  for (const market of markets) {
+    if (market.base !== base || market.quote !== quote) continue;
+    const vault = market.vaults.find((v) => v.chain?.seq === want);
+    if (vault) return { market, vault };
+  }
+  return null;
+};
 
 // Annualized 24h fee yield to depositors, as a fraction (0.1234 = 12.34%).
 // Returns null when TVL is zero so the UI can render an em dash rather than a

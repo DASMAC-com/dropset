@@ -22,7 +22,7 @@ import {
 } from "@/lib/data/pnl";
 import type { VaultPosition } from "@/lib/data/positions";
 import {
-  depositClosedReason,
+  contributeClosedReason,
   leaderFloorFraction,
   maxOutsideDepositValue,
   mockMaxDeposit,
@@ -54,6 +54,7 @@ import { useAllBalances } from "@/lib/hooks/useAllBalances";
 import { type UseVaultTx, useVaultTx } from "@/lib/hooks/useVaultTx";
 import { DIALOG_CONTENT_POSITION, DIALOG_OVERLAY_CLASS } from "@/lib/ui/dialog";
 import { pnlTone } from "@/lib/ui/pnlTone";
+import { vaultLinkHref } from "@/lib/ui/swapUrl";
 
 // Fill an input with a token amount at its FULL precision — exactly the
 // token's decimals, padded with trailing zeros. Used for the derived leg and
@@ -547,6 +548,41 @@ function DepositLeg({
   );
 }
 
+// The vault's performance fee as a percent label, e.g. "10%" for 100,000 ppm.
+const perfFeeLabel = (ppm: number): string =>
+  `${(ppm / 10_000).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
+
+// What a depositor is buying and when it is quoted, in plain words under the
+// deposit form: no share math, and the risk line last. The fee line reads the
+// live vault's own rate, so a mock row (no chain state) carries none.
+function ContributeTerms({ vault }: { vault: Vault }) {
+  const feePpm = vault.chain?.perfFeeRatePpm ?? null;
+  const terms = [
+    "Your deposit is quoted after the leader's next re-center.",
+    "Withdraw at any time, paid in both assets.",
+    ...(feePpm === null
+      ? []
+      : [
+          feePpm > 0
+            ? `The leader takes a ${perfFeeLabel(feePpm)} performance fee on the vault's gains.`
+            : "The leader takes no performance fee.",
+        ]),
+  ];
+  return (
+    <div className="flex flex-col gap-1.5 rounded-md border border-border bg-muted px-3 py-3 text-muted-fg text-xs">
+      <ul className="flex list-disc flex-col gap-1 pl-4">
+        {terms.map((t) => (
+          <li key={t}>{t}</li>
+        ))}
+      </ul>
+      <p className="border-border border-t pt-1.5 text-foreground">
+        The leader controls the ladder and the fee. You can leave at any time.
+        You are taking a risk.
+      </p>
+    </div>
+  );
+}
+
 // Manage a single vault position. With no position the user opens one; with a
 // position they see its PnL detail and can top off or withdraw any fraction of
 // the basket (take-profit). On a live vault the buttons build, sign and send
@@ -701,11 +737,11 @@ export function VaultActionDialog({
   const validBasket = chain
     ? sizing !== null && balancesKnown && shortOf === null
     : base > 0 && quote > 0;
-  // The program's own gate, checked against the connected wallet so a leader
-  // isn't offered a deposit into their own vault; past it, a live vault still
-  // needs a wallet to deposit from.
+  // The program's own gate and the surface's closed states, checked against
+  // the connected wallet so a leader isn't offered a deposit into their own
+  // vault; past them, a live vault still needs a wallet to deposit from.
   const closedReason =
-    depositClosedReason(vault, owner) ??
+    contributeClosedReason(market, vault, owner) ??
     (chain && owner === null ? "Connect a wallet to deposit." : null);
   const depositBlocked = closedReason !== null;
   const depositLabel = position ? "Top off" : "Open position";
@@ -835,6 +871,17 @@ export function VaultActionDialog({
               >
                 <ExternalLink size={12} />
               </a>
+              {/* The vault's public link (by market and seq), for sharing or
+                  a QR code — live vaults only, since a mock row has no seq. */}
+              {chain && (
+                <span className="ml-auto flex items-center gap-1">
+                  <span>Link</span>
+                  <CopyButton
+                    value={`${window.location.origin}${vaultLinkHref(market.base, market.quote, chain.seq)}`}
+                    label="vault link"
+                  />
+                </span>
+              )}
             </div>
 
             {position && (
@@ -906,22 +953,19 @@ export function VaultActionDialog({
                       <NumberFlow value={depositUsd} format={FORMATS.usd} />
                     </span>
                   </div>
-                  {/* The shares the program will mint for this basket, from
-                      the SDK's own sizing — live vaults only. */}
+                  {/* This deposit's share of the vault once it lands, from
+                      the SDK's own sizing — live vaults only. A share, never
+                      a share count: the surface carries no share math. */}
                   {chain && sizing && (
                     <div className="flex items-center justify-between gap-2 font-mono text-[10px] text-muted-fg tabular-nums">
-                      <span>You'll receive ≈</span>
-                      <span>
-                        {groupThousands(sizing.sharesOut.toString())} shares (
-                        <NumberFlow
-                          value={
-                            Number(sizing.sharesOut) /
-                            Number(chain.totalShares + sizing.sharesOut)
-                          }
-                          format={FORMATS.percent}
-                        />{" "}
-                        of the vault)
-                      </span>
+                      <span>Your share of the vault ≈</span>
+                      <NumberFlow
+                        value={
+                          Number(sizing.sharesOut) /
+                          Number(chain.totalShares + sizing.sharesOut)
+                        }
+                        format={FORMATS.percent}
+                      />
                     </div>
                   )}
                 </div>
@@ -953,6 +997,7 @@ export function VaultActionDialog({
                     {closedReason}
                   </p>
                 )}
+                <ContributeTerms vault={vault} />
               </>
             ) : (
               position && (

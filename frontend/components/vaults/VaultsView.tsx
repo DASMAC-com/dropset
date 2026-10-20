@@ -24,8 +24,9 @@ import {
   type VaultPosition,
 } from "@/lib/data/positions";
 import {
-  depositClosedReason,
+  contributeClosedReason,
   type FxPairGroup,
+  findVaultBySeq,
   type GroupedVault,
   groupMetric,
   groupVaultMarkets,
@@ -44,7 +45,11 @@ import { FORMATS } from "@/lib/format/formats";
 import { useChainVaults } from "@/lib/hooks/useChainVaults";
 import { groupedRowClassName } from "@/lib/ui/groupedRows";
 import { pnlTone } from "@/lib/ui/pnlTone";
-import { replaceUrlParams, useGoToSwapPair } from "@/lib/ui/swapUrl";
+import {
+  replaceUrlParams,
+  useGoToSwapPair,
+  VAULT_SEQ_PARAM,
+} from "@/lib/ui/swapUrl";
 
 const APR_TOOLTIP =
   "What you earn in a year from the leader's skill, based on the last 24 hours. This does not count money made or lost when prices move.";
@@ -240,7 +245,7 @@ function VaultRow({
 }) {
   const { market, vault } = entry;
   const goToSwapPair = useGoToSwapPair();
-  const closedReason = depositClosedReason(vault);
+  const closedReason = contributeClosedReason(market, vault);
 
   const action = !connected
     ? {
@@ -492,6 +497,26 @@ function VaultsInner() {
     setPin(merged);
     replaceUrlParams(merged);
   };
+
+  // A public vault link (vaultLinkHref) names one live vault by its pair and
+  // `seq`. Captured once from the URL; when the first live read lands, that
+  // vault's dialog opens, and the link is spent either way.
+  const [link, setLink] = useState(() => {
+    const seq = searchParams.get(VAULT_SEQ_PARAM);
+    return seq === null
+      ? null
+      : {
+          base: searchParams.get("base") ?? "",
+          quote: searchParams.get("quote") ?? "",
+          seq,
+        };
+  });
+  useEffect(() => {
+    if (link === null || chain.status === "loading") return;
+    const hit = findVaultBySeq(chain.markets, link.base, link.quote, link.seq);
+    if (hit) setDialog(hit);
+    setLink(null);
+  }, [link, chain.status, chain.markets]);
 
   // Re-sync the pin from the URL on browser Back/Forward. Our own writes use
   // replaceState (no navigation), so only popstate can move the URL out from
@@ -844,7 +869,11 @@ function VaultsInner() {
           position={positionFor(dialog.vault)}
           open={true}
           onOpenChange={(open) => {
-            if (!open) setDialog(null);
+            if (open) return;
+            setDialog(null);
+            // A spent vault link leaves the pair pin but not the vault, so a
+            // reload doesn't reopen a dialog the user closed.
+            replaceUrlParams({ [VAULT_SEQ_PARAM]: null });
           }}
         />
       )}
