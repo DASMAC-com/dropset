@@ -1208,7 +1208,9 @@ board, not a branch.
 included — run in their own worktree, but that worktree is
 TEMPORARY WORKING STATE and the session is READ-ONLY toward the
 repo: no commits, no PR.** Durable state is captured in
-**Linear**; a spec file is **optional**, and anything repo-bound
+**Linear**; a spec file is **optional** but the operator's
+ratification is not — **no task is filed from an unratified
+design**, only marked stubs — and anything repo-bound
 lands later via a **follow-up worker task**. This is the
 canonical statement of the mechanism; the `architect` and `plan`
 skills state their own duties and point here rather than
@@ -1398,8 +1400,9 @@ irreplaceable at any point.
 
 **The read-back protocol** — write the file, name its path in
 plain text, let the operator edit it in place, read it back
-**once**, ratify — plus the `NEEDS-CONFIRM` / `NEEDS-FEEDBACK`
-markers and the top-of-file index of open items, is specified in
+**once**, ratify, and only then file — plus the `NEEDS-CONFIRM` /
+`NEEDS-FEEDBACK` markers and the top-of-file index of open items,
+is specified in
 the `architect` skill and applies to explore-style spec tasks
 unchanged. Naming the path out loud is a **hard requirement**:
 the operator works the file through an editor, and cannot edit a

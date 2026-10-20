@@ -550,15 +550,18 @@ tier, no PR, In Review at handoff.
   rather than retrying. `--dry-run` shows them.
 - **A batch is all-or-nothing on validation** — fix the typo and
   re-run the whole call.
+- **An `architect` kick-off is this fixed text, never a
+  paraphrase:** "The read-back is mandatory: file no task until
+  the operator ratifies the design, and open your handoff with
+  where and when they did." Never call the read-back optional. A
+  handoff lacking that line is unratified: park its tasks.
 - **A ratified spec FILE is folded in first.** `architect` and
-  `explore` sessions are read-only toward the repo, and usually
-  their design landed as tasks, so there is nothing to fold. When
-  one iterated a spec file, it sits untracked in that session's
-  temporary worktree, which a dispatched implementer cannot read:
-  **copy it into the implementing issue's body, then delete the
-  file.** No PR to close, no branch to delete. Fold only a spec
-  its close-out note reports as **ratified**; one still in its
-  read-back loop is live work.
+  `explore` are read-only toward the repo, and usually their
+  design landed as tasks, so there is nothing to fold. A spec file
+  sits untracked in that session's temporary worktree, which a
+  dispatched implementer cannot read: **copy it into the
+  implementing issue's body, then delete the file.** Fold only a
+  spec reported **ratified**; one in its read-back is live work.
 
 **6. Write back — incrementally, then rewritten at the gate.**
 Write after each major decision: planning sessions are often
