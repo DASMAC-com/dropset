@@ -92,11 +92,12 @@ repo-bound — a ratified spec included — lands later via a
 **follow-up worker task**. **`explore` shares all of this**, audits
 included.
 
-**A spec FILE is optional** — a design can be ratified purely as
-Linear tasks. When one is warranted the loop is write → operator
-edits **in place** → read back **once** → ratify, with
+**A spec FILE is optional; ratification is not — no task is filed
+from an unratified design, only marked stubs.** The loop is write
+→ operator edits **in place** → read back **once** → ratify → file
+tasks, with
 `AskUserQuestion` reserved for calls the draft cannot proceed
-without; give the file's path in plain text. Open
+without; say where the design lives in plain text. Open
 items carry greppable **`NEEDS-CONFIRM`** / **`NEEDS-FEEDBACK`**
 markers and an index at the top; **settled text carries no marker**,
 since a marker meaning "I changed this" competes with one meaning "I

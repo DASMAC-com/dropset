@@ -86,7 +86,9 @@ the document's state sections.
 1. **Architect read-back.** Fold the operator's comments into the
    spec in place; the spec file in an architect worktree is
    expendable once the rulings are on the issue. The spec lives at
-   the worktree root, never under a repo-shaped path.
+   the worktree root, never under a repo-shaped path. **No task is
+   filed from an unratified design** (2026-10-19): the read-back
+   ends in the operator's explicit yes, and only stubs precede it.
 
 1. **Planning is read-only toward the repo.** A planning session
    writes Linear state only; a fast-forward of the base checkout

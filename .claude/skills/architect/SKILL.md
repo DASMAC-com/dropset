@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Run an architect session, launched with `architect <n>` on its governing issue — a long-horizon design conversation asking whether the thing on the board is the right thing to build. Bootstraps from the Planning document and the track umbrellas only. Produces Linear tasks, plus an optional on-disk spec file the operator edits in place, with NEEDS- markers on open items. Makes no scheduling writes: it files its own tasks and moves only its own issue to In Review, then hands conclusions to planning through the Planning document's notes and a direct message. Runs in a temporary worktree but is READ-ONLY toward the repo — no commits, no PR.
+description: Run an architect session, launched with `architect <n>` on its governing issue — a long-horizon design conversation asking whether the thing on the board is the right thing to build. Bootstraps from the Planning document and the track umbrellas only. Produces Linear tasks, filed only after the operator ratifies the design in a mandatory read-back, plus an optional on-disk spec file the operator edits in place, with NEEDS- markers on open items. Makes no scheduling writes: it files its own tasks and moves only its own issue to In Review, then hands conclusions to planning through the Planning document's notes and a direct message. Runs in a temporary worktree but is READ-ONLY toward the repo — no commits, no PR.
 user-invocable: true
 model: fable
 ---
@@ -141,7 +141,9 @@ absolute rule and they are not the same thing.
   decided. This is not a concession, it is the mechanism the
   whole design rests on: durable state must reach Linear
   *before* the handoff, so a session that could not file would
-  have no way to make its output durable.
+  have no way to make its output durable. They are filed **only
+  after the operator ratifies the design** (see "The loop"
+  below); before that, a task exists only as a marked stub.
 - **Its own governing issue's state**, In Progress → In Review
   at handoff. Never Done — that is the operator's.
 
@@ -205,16 +207,27 @@ skipped at bootstrap.
 
 ## The deliverable: Linear tasks, and optionally a spec file
 
-**Linear tasks are the durable output. A spec file is
-optional** — reach for one only when the thinking is too large
-to hold in issue bodies, or when a longer-term repo artifact is
-genuinely warranted. A design can be ratified purely as Linear
-tasks that workers then pick up, and that is a complete,
-normal outcome, not a shortcut.
+**Linear tasks are the durable output, and they are filed only
+from a ratified design.** What is optional is the spec *file*,
+never the ratification. Reach for a file only when the thinking
+is too large to hold in the governing issue's body, or when a
+longer-term repo artifact is genuinely warranted; a short design
+can be written into that body instead. Either way it goes
+through the read-back loop below **before any task is filed**.
 
 This is a correction worth stating plainly, because the 09-11
 shape made the file the *point*: it isn't. **The file is an
-iteration medium; Linear is the record.**
+iteration medium; Linear is the record.** It is also a second
+correction: an earlier version said a design "can be ratified
+purely as Linear tasks", and on 2026-10-19 a session read that
+as license to file seven tasks and hand off without the
+operator ever seeing the design. Filing is not ratifying.
+
+**A task may exist before ratification only as a marked stub**
+— its body carries a stub note saying the design is unratified.
+A stub is never assembled into a meta batch or promoted; when
+the review settles, it is rewritten to the ratified spec or
+closed if the review removed it.
 
 When you do write one, it goes in the worktree at:
 
@@ -243,14 +256,25 @@ an artifact:
   is in Linear by then. If that is not true, the fix is to
   write the Linear task, not to protect the file.
 
-### The loop: write, edit, read back ONCE
+### The loop: write, edit, read back ONCE — then file
 
-1. **Write the file.** Say its path in the conversation, in
-   plain text, the moment it exists.
-1. **The operator edits it directly**, in a real editor,
-   between turns.
-1. **Read it back exactly once** and incorporate their edits.
-1. **They edit again**, and you ratify.
+The loop is **mandatory**, file or no file:
+
+1. **Write the design** — the spec file, or the governing
+   issue's body. Say where it is, in plain text, the moment it
+   exists: in this tab **and** in a message to any live
+   planning session.
+1. **The operator edits it directly**, in a real editor or as
+   comments on the issue, between turns.
+1. **Read it back exactly once** and fold their edits and
+   comments in place.
+1. **They edit again**, and give an **explicit yes** — in this
+   tab, or a thumbs-up on the issue. Only then file the tasks.
+
+**A session that cannot reach the operator stops at In Review
+with no task filed beyond marked stubs**, the design copied into
+the governing issue's body first so a spec file is never the
+only copy. It never files to save time.
 
 **One read-back per round is the budget.** Re-reading the file
 to check whether it changed is the failure mode: a spec is
@@ -300,6 +324,10 @@ The state machine is **In Progress while the session runs → In
 Review when the deliverable is handed off → Done only on the
 operator's ratification**.
 
+Two yeses, not one: the **design yes** inside the loop is what
+licenses filing, and comes before In Review; the **close yes**
+(see "Lifecycle" below) is what moves the issue to Done.
+
 **Never self-mark Done.** That is the measured mistake which
 produced the invalid state described under "This session is
 read-only toward the repo": an issue marked Done while its
@@ -313,8 +341,8 @@ tasks — but because *which* issue a design thread hangs off is
 the operator's call, and a self-created umbrella is the kind of
 board structure the monopoly above reserves. That is a
 legitimate pre-draft `AskUserQuestion`, and it is avoidable
-anyway: a design whose output is Linear tasks needs no filename
-at all.
+anyway: a design written into the governing issue's body needs
+no filename at all.
 
 ### Lifecycle: nothing to close, nothing to clean
 
@@ -403,9 +431,13 @@ alternatives or the failure paths: those live in Linear, and
 duplicating them into the Planning document is how the document
 grows without bound between close-out rewrites.
 
-State explicitly whether the design is **ratified** or **still
-in its read-back loop**, because that is what tells the planning
-session whether it may dispatch yet.
+**Both channels open with the ratification** — where and when the
+operator said yes (this tab, or a thumbs-up on the issue, with
+the date) — **before** it lists any filed task. A design still
+in its read-back loop says so instead, and has no tasks to list
+beyond marked stubs. Planning treats a handoff **without** that
+line as unratified and parks its tasks pending the operator's
+review.
 
 **Move the governing issue to In Review as part of this
 handoff** — that is what the handoff *is*. Then stop: Done is
