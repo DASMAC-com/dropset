@@ -71,7 +71,7 @@ pub struct VaultDepositorHeader {
 pub const VAULT_DEPOSITOR_HEADER_DISCRIMINATOR: [u8; 8] = [249, 190, 164, 120, 230, 61, 124, 175];
 
 impl VaultDepositorHeader {
-    pub const LEN: usize = 220;
+    pub const LEN: usize = 224;
 
     #[inline(always)]
     pub fn from_bytes(data: &[u8]) -> Result<Self, std::io::Error> {

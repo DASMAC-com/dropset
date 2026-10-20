@@ -483,9 +483,14 @@ fn a_fully_flipped_ten_vault_book_measures_the_largest_take() {
         "a take fills at least {MIN_LEGS} legs, got {legs}"
     );
     // What stops the whole-book take is the heap, as the doc above claims —
-    // not compute, and not a fault in the flipped path.
+    // not compute, and not a fault in the flipped path. The VM names the
+    // heap when a write lands inside it, but a growth that overruns the end
+    // is reported as an unmapped write; either way the address sits in the
+    // SBF heap region, `0x3_0000_0000..`, which no other region shares.
+    let heap_fault = stopped_by.contains("heap")
+        || (stopped_by.contains("Access violation") && stopped_by.contains("address 0x3"));
     assert!(
-        stopped_by.contains("heap"),
+        heap_fault,
         "the whole-book take should fail on the heap, failed on: {stopped_by}"
     );
     assert_custody(&f, N_LEVELS as u64 + 1);

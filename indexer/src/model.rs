@@ -340,7 +340,23 @@ mod tests {
         if ty.get("defined").and_then(|d| d["name"].as_str()) == Some("Price") {
             return 4;
         }
+        if let Some(primitive) = pod_primitive(ty) {
+            return field_size(&Value::from(primitive));
+        }
         panic!("unhandled IDL field type {ty} — teach field_size about it");
+    }
+
+    /// The primitive an alignment-1 Pod wrapper carries. The IDL records
+    /// the wrapper as a defined type, but on the wire and in JSON it is
+    /// exactly that integer, so both the size and the width rules apply.
+    fn pod_primitive(ty: &Value) -> Option<&'static str> {
+        match ty.get("defined")?["name"].as_str()? {
+            "PodU16" => Some("u16"),
+            "PodU32" => Some("u32"),
+            "PodU64" => Some("u64"),
+            "PodI64" => Some("i64"),
+            _ => None,
+        }
     }
 
     /// **Field completeness, per variant, against the IDL.**
@@ -428,8 +444,11 @@ mod tests {
                 if field_name.starts_with('_') {
                     continue;
                 }
-                let Some(width) = field["type"].as_str() else {
-                    continue; // arrays and defined types carry no width rule
+                let Some(width) = field["type"]
+                    .as_str()
+                    .or_else(|| pod_primitive(&field["type"]))
+                else {
+                    continue; // arrays and other defined types carry no width rule
                 };
                 let value = &object[field_name];
                 match width {
