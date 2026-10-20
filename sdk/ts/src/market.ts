@@ -166,7 +166,7 @@ export type VaultSummary = {
   quoteAtoms: bigint;
   totalShares: bigint;
   leaderShares: bigint;
-  /** Performance-fee high-water mark: value per share, Q32.32. */
+  /** Performance-fee high-water mark, a Q32.32 value per share. */
   hwm: bigint;
   /** The leader's performance-fee rate, in ppm. */
   perfFeeRatePpm: number;

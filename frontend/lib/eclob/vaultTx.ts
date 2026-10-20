@@ -170,7 +170,7 @@ export type VaultFeeState = Pick<
 
 // The share count the program slices a withdraw against: the stored count
 // plus the performance-fee shares `realize_in_place` mints first. A frozen
-// vault accrues no fee, as the program's own guard has it.
+// vault realizes no fee, as the program's own guard has it.
 export function realizedTotalShares(vault: VaultAtoms & VaultFeeState): bigint {
   if (vault.frozen) return vault.totalShares;
   return realizePerfFee(

@@ -35,6 +35,7 @@ import {
   type DepositLeg as DepositLegKind,
   type DepositSizing,
   depositSizingError,
+  realizedTotalShares,
   sharesForFraction,
   sizeDeposit,
   sizeWithdraw,
@@ -346,7 +347,17 @@ function WithdrawSection({
   const bps = isFull
     ? Number(BPS_SCALE)
     : Math.round(fraction * Number(BPS_SCALE));
-  const floatPreview = withdrawalPreview(position, vault, refNow, fraction);
+  // The float model sees the fee-realized share count, so the value and PnL
+  // figures dilute by the leader's fee just as the legs below do.
+  const realizedVault = vault.chain
+    ? { ...vault, totalShares: Number(realizedTotalShares(vault.chain)) }
+    : vault;
+  const floatPreview = withdrawalPreview(
+    position,
+    realizedVault,
+    refNow,
+    fraction,
+  );
   // A live vault's legs come from the SDK's floored slice over raw counts, so
   // they never promise an atom the program won't pay; the value and PnL
   // figures stay on the float model, which only they need.

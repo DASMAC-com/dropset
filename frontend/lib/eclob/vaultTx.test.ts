@@ -36,7 +36,9 @@ const VPS =
   (isqrtU128(VAULT.baseAtoms * VAULT.quoteAtoms) << 32n) / VAULT.totalShares;
 const ACCRUED = { ...VAULT, hwm: VPS / 2n, perfFeeRatePpm: 200_000 };
 
-// What withdraw.rs pays: realize, re-read the share count, slice.
+// The payout in withdraw.rs's order: realize, re-read the share count, slice.
+// Parity of the kernels themselves with the program is the SDK conformance
+// suite's to prove; this pins the order.
 const programPayout = (v: typeof VAULT, sharesIn: bigint) => {
   const total = v.frozen
     ? v.totalShares
