@@ -577,7 +577,7 @@ fn cold_take_to_the_heap_ceiling(side: u8) -> (usize, u64, usize, String) {
 /// One base atom buys a quote atom at any bid above 1, but that quote atom
 /// buys back no whole base atom, so guard 1f fires with the taker cap
 /// binding and the walk ends at the first entry. Skipping on instead
-/// visited all 160 for ~390k CU and nothing filled; ended, the take fits
+/// visited all 160 for ~404k CU and nothing filled; ended, the take fits
 /// what a bare `swap` gets.
 #[test]
 fn a_dust_sell_on_a_flipped_book_fits_a_bare_swap() {

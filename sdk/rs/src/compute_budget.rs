@@ -11,28 +11,22 @@
 //! or vault is empty, or when its level or vault cap is so small the leg
 //! prices to zero input, since the taker keeps budget a later level may
 //! fill. A book quoted with such dust-sized levels throughout can still cost
-//! a no-fill walk over every entry: roughly the 390k a one-atom sell walking
+//! a no-fill walk over every entry: roughly the 404k a one-atom sell walking
 //! the fully flipped ten-vault book cost before a dust taker's walk ended,
 //! an estimate never re-measured on a dust-quoted book.
 //!
-//! Measured on the ten-vault book in `programs/dropset/tests/flip.rs` (whose
-//! levels are not dust-sized), which asserts each stays under the 200k a
-//! bare `swap` gets:
+//! Measured on the ten-vault book in `programs/dropset/tests/flip.rs`, whose
+//! levels are not dust-sized:
 //!
-//! - the costliest take that fills without stranding dust: a cold book
-//!   (every vault flushed in the same transaction) taken to the heap
-//!   ceiling, sixteen legs, about 205k to 211k CU on either side (it varies
-//!   with the keys a run derives) — over the 200k a
-//!   bare `swap` gets, which covers the first fifteen legs (the test pins
-//!   at least fourteen), and under [`SWAP_COMPUTE_UNIT_LIMIT`];
-//! - a one-atom sell on a fully flipped book (160 entries walked, nothing
-//!   filled): about 404k CU, under [`SWAP_COMPUTE_UNIT_LIMIT`];
-//! - a take that fills to the heap ceiling and is then stranded with one
-//!   atom pays both, an **estimated** 470k. It needs a last leg whose level
-//!   cap lands just so, which the measured book never produced, so no test
-//!   pins it; it is the case the headroom above 404k is for. (The estimate
-//!   predates the anchor-next bump that raised both figures above, so it
-//!   is likely low now.)
+//! - the costliest take: a cold book (every vault flushed in the same
+//!   transaction) taken to the heap ceiling, sixteen legs, with or without a
+//!   one-atom remainder left over, about 205k to 210k CU (it varies with the
+//!   keys a run derives) — over the 200k a bare `swap` gets, which covers the
+//!   first fourteen or fifteen legs (the test pins at least fourteen), and
+//!   under [`SWAP_COMPUTE_UNIT_LIMIT`]. A remainder stranded at the ceiling
+//!   adds no walk, since it ends the take;
+//! - a one-atom sell on a fully flipped book (160 entries, nothing filled):
+//!   about 70k CU, since the walk ends at the first entry.
 //!
 //! [`SWAP_COMPUTE_UNIT_LIMIT`] covers the dust-quoted full-book walk above
 //! as well, so a bare `swap` into such a book completes empty rather than
