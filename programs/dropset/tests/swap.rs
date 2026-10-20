@@ -7,7 +7,7 @@
 mod common;
 
 use anchor_lang::bytemuck;
-use anchor_v2_testing::Signer;
+use anchor_v2_testing::{Keypair, Signer};
 use common::fixture::{dual_profile, ladder_profile, simple_profile, Fixture};
 use dropset::{Price, FLUSH_BIT};
 use solana_pubkey::Pubkey;
@@ -1632,18 +1632,44 @@ fn platform_fee_multi_leg_fill_stays_inside_the_cu_budget() {
     // count, which moves with every matcher change.
     const DEFAULT_CU_BUDGET: u64 = common::DEFAULT_INSTRUCTION_CU;
 
-    let free_cu = {
-        let mut f = Fixture::seeded_two_ask_levels();
-        let taker = f.funded_depositor(0, 5_000_000);
-        f.swap_meta(&taker, 0, 2_000_000, Price::INFINITY.as_u32(), 1)
-            .expect("no-fee multi-leg swap")
-            .compute_units_consumed
-    };
-
+    //
+    // Both arms run from one fixture, so the CU delta is a deterministic
+    // figure rather than the gap between two noisy readings. Every fixture
+    // key is random, and each PDA derivation pays ~1.5k CU per rejected bump,
+    // so two separate fixtures swung the delta by ~22k. Here the control arm
+    // runs on a snapshot that is then restored, which makes every shared
+    // derivation cost the same in both arms. The one key-dependent
+    // derivation only the fee arm makes is the ATA program's search for the
+    // fee ATA, so the integrator is ground until that search lands on the
+    // first bump.
     let mut f = Fixture::seeded_two_ask_levels();
     let taker = f.funded_depositor(0, 5_000_000);
-    let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let integrator = loop {
+        let kp = Keypair::new();
+        let (_, bump) = Pubkey::find_program_address(
+            &[
+                kp.pubkey().as_ref(),
+                common::SPL_TOKEN_PROGRAM_ID.as_ref(),
+                f.base_mint.as_ref(),
+            ],
+            &common::ATA_PROGRAM_ID,
+        );
+        if bump == u8::MAX {
+            break kp;
+        }
+    };
+    f.svm
+        .airdrop(&integrator.pubkey(), common::SIGNER_FUNDING_LAMPORTS)
+        .unwrap();
     let fee_ata = f.platform_fee_ata(&integrator.pubkey(), 0);
+
+    let snapshot = f.svm.clone();
+    let free_cu = f
+        .swap_meta(&taker, 0, 2_000_000, Price::INFINITY.as_u32(), 1)
+        .expect("no-fee multi-leg swap")
+        .compute_units_consumed;
+    f.svm = snapshot;
+
     let meta = f
         .swap_with_fee_meta(
             &taker,
@@ -1683,9 +1709,10 @@ fn platform_fee_multi_leg_fill_stays_inside_the_cu_budget() {
     // rather than decoration for the `println!`. This is the figure that
     // regresses if a future change makes the fee path materially heavier —
     // the total above could stay under budget while the delta doubled. The
-    // ceiling is loose on purpose: the dominant term is the one-time ATA
-    // creation (~20k), and pinning it tightly would fail on any upstream
-    // SPL/ATA cost change without indicating a problem here.
+    // delta measures ~31.8k and holds to within a few CU across stress runs,
+    // dominated by the one-time ATA creation. The ceiling leaves ~13k for
+    // upstream SPL/ATA or runtime cost drift, which says nothing about this
+    // path, while a ~20k regression in the fee path still trips it.
     const MAX_FEE_OVERHEAD_CU: u64 = 45_000;
     let overhead = paid_cu.saturating_sub(free_cu);
     assert!(
