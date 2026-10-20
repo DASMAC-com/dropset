@@ -62,14 +62,19 @@ export type Vault = Omit<VaultRaw, "volume24h" | "fees24h"> & {
   // A live vault's on-chain identity, null on a mock row. `index` is the
   // sector the deposit / withdraw instructions and the depositor PDA take;
   // `seq` is the stable per-market vault number. The raw atom and share
-  // counts are what the dialog's share preview sizes against, so the SDK's
-  // integer kernels see exactly what the program will.
+  // counts, and the fee state a withdraw realizes first, are what the
+  // dialog's share preview sizes against, so the SDK's integer kernels see
+  // exactly what the program will.
   chain: {
     index: number;
     seq: bigint;
     baseAtoms: bigint;
     quoteAtoms: bigint;
     totalShares: bigint;
+    leaderShares: bigint;
+    hwm: bigint;
+    perfFeeRatePpm: number;
+    frozen: boolean;
   } | null;
   // Null on a live vault: 24h volume and fees need history, which no single
   // account read can give.

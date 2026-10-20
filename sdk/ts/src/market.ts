@@ -166,6 +166,10 @@ export type VaultSummary = {
   quoteAtoms: bigint;
   totalShares: bigint;
   leaderShares: bigint;
+  /** Performance-fee high-water mark: value per share, Q32.32. */
+  hwm: bigint;
+  /** The leader's performance-fee rate, in ppm. */
+  perfFeeRatePpm: number;
   /** Floor on the leader's share of the vault, in ppm. */
   minLeaderSharePpm: number;
   frozen: boolean;
@@ -204,6 +208,8 @@ export function decodeDropsetVaults(data: ReadonlyUint8Array): VaultSummary[] {
     const quoteAtoms = slab.quote_atoms;
     const totalShares = slab.total_shares;
     const leaderShares = slab.leader_shares;
+    const highWaterMarks = slab.high_water_marks;
+    const perfFeeRates = slab.perf_fee_rates;
     const minLeaderShares = slab.min_leader_shares;
     const frozen = slab.frozen;
     const allow = slab.allow_outside_depositors;
@@ -219,6 +225,8 @@ export function decodeDropsetVaults(data: ReadonlyUint8Array): VaultSummary[] {
         quoteAtoms: quoteAtoms[i]!,
         totalShares: totalShares[i]!,
         leaderShares: leaderShares[i]!,
+        hwm: highWaterMarks[i]!,
+        perfFeeRatePpm: perfFeeRates[i]!,
         minLeaderSharePpm: minLeaderShares[i]!,
         frozen: frozen[i] !== 0,
         allowOutsideDepositors: allow[i] !== 0,

@@ -396,6 +396,8 @@ const V_LEADER = 40;
 const V_SEQ = 104;
 const V_TOTAL_SHARES = 148;
 const V_LEADER_SHARES = 156;
+const V_HWM = 164;
+const V_PERF_FEE_RATE = 172;
 const V_MIN_LEADER_SHARE = 176;
 const V_FROZEN = 180;
 const V_ALLOW_OUTSIDE = 181;
@@ -409,6 +411,8 @@ test('the vaults reader returns each active vault with its shares and deposit fl
     dv.setBigUint64(b + V_QUOTE_ATOMS, 1_250_000n, true);
     dv.setBigUint64(b + V_TOTAL_SHARES, 900_000n, true);
     dv.setBigUint64(b + V_LEADER_SHARES, 600_000n, true);
+    dv.setBigUint64(b + V_HWM, 5n << 32n, true);
+    dv.setUint32(b + V_PERF_FEE_RATE, 200_000, true);
     dv.setUint32(b + V_MIN_LEADER_SHARE, 100_000, true);
     dv.setUint8(b + V_ALLOW_OUTSIDE, 1);
   });
@@ -422,6 +426,8 @@ test('the vaults reader returns each active vault with its shares and deposit fl
     quoteAtoms: 1_250_000n,
     totalShares: 900_000n,
     leaderShares: 600_000n,
+    hwm: 5n << 32n,
+    perfFeeRatePpm: 200_000,
     minLeaderSharePpm: 100_000,
     frozen: false,
     allowOutsideDepositors: true,

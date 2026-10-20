@@ -1,20 +1,54 @@
-import { BasketError } from "@dropset/sdk";
+import {
+  BasketError,
+  computeProRataSlice,
+  isqrtU128,
+  realizePerfFee,
+} from "@dropset/sdk";
 import { describe, expect, it } from "vitest";
 import { applySlippage } from "./eclobSwap";
 import {
   depositSizingError,
   leaderFloorHolds,
+  realizedTotalShares,
   sharesForFraction,
   sizeDeposit,
   sizeWithdraw,
   type VaultAtoms,
+  type VaultFeeState,
 } from "./vaultTx";
 
-// 1,000 TGBP (9 decimals) against 1,270 USDC (6 decimals) over 2M shares.
-const VAULT: VaultAtoms = {
+// 1,000 TGBP (9 decimals) against 1,270 USDC (6 decimals) over 2M shares,
+// with no fee accrued: a zero rate mints nothing whatever the HWM.
+const VAULT: VaultAtoms & VaultFeeState = {
   baseAtoms: 1_000n * 10n ** 9n,
   quoteAtoms: 1_270n * 10n ** 6n,
   totalShares: 2_000_000n,
+  leaderShares: 1_500_000n,
+  hwm: 0n,
+  perfFeeRatePpm: 0,
+  frozen: false,
+};
+
+// The same vault after its value per share has doubled since the HWM, with a
+// 20% fee: the leader is owed about 11% of the shares, far past the
+// tolerance.
+const VPS =
+  (isqrtU128(VAULT.baseAtoms * VAULT.quoteAtoms) << 32n) / VAULT.totalShares;
+const ACCRUED = { ...VAULT, hwm: VPS / 2n, perfFeeRatePpm: 200_000 };
+
+// What withdraw.rs pays: realize, re-read the share count, slice.
+const programPayout = (v: typeof VAULT, sharesIn: bigint) => {
+  const total = v.frozen
+    ? v.totalShares
+    : realizePerfFee(
+        v.baseAtoms,
+        v.quoteAtoms,
+        v.totalShares,
+        v.leaderShares,
+        v.hwm,
+        BigInt(v.perfFeeRatePpm),
+      ).totalSharesAfter;
+  return computeProRataSlice(sharesIn, total, v.baseAtoms, v.quoteAtoms);
 };
 const SYMBOLS = { base: "TGBP", quote: "USDC" };
 
@@ -103,6 +137,36 @@ describe("sizeWithdraw", () => {
     expect(s.minBaseOut).toBe(applySlippage(s.baseOut, 50));
     expect(s.minQuoteOut).toBe(applySlippage(s.quoteOut, 50));
     expect(s.minQuoteOut).toBeLessThan(s.quoteOut);
+  });
+
+  it("clears its floors once the accrued fee dilutes past the tolerance", () => {
+    const sharesIn = 20_000n;
+    const minted = realizedTotalShares(ACCRUED) - ACCRUED.totalShares;
+    // The precondition: dilution well past VAULT_SLIPPAGE_BPS.
+    expect(minted * 10_000n).toBeGreaterThan(50n * ACCRUED.totalShares);
+
+    const [paidBase, paidQuote] = programPayout(ACCRUED, sharesIn);
+    // Sized against the stored share count, the floors sit above what the
+    // program pays, so the withdraw would fail closed.
+    const stale = sizeWithdraw(VAULT, sharesIn, 50);
+    expect(stale.minBaseOut).toBeGreaterThan(paidBase);
+    expect(stale.minQuoteOut).toBeGreaterThan(paidQuote);
+
+    // Sized against the realized count, the slice is the payout itself and
+    // both floors clear it.
+    const s = sizeWithdraw(ACCRUED, sharesIn, 50);
+    expect([s.baseOut, s.quoteOut]).toEqual([paidBase, paidQuote]);
+    expect(s.minBaseOut).toBeLessThanOrEqual(paidBase);
+    expect(s.minQuoteOut).toBeLessThanOrEqual(paidQuote);
+  });
+
+  it("realizes no fee on a frozen vault or below the HWM", () => {
+    const frozen = { ...ACCRUED, frozen: true };
+    expect(realizedTotalShares(frozen)).toBe(ACCRUED.totalShares);
+    expect(sizeWithdraw(frozen, 20_000n, 50).baseOut).toBe(10n * 10n ** 9n);
+
+    const belowHwm = { ...ACCRUED, hwm: VPS * 2n };
+    expect(realizedTotalShares(belowHwm)).toBe(ACCRUED.totalShares);
   });
 });
 

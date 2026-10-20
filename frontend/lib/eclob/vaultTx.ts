@@ -9,6 +9,7 @@ import {
   getDepositInstructionAsync,
   getWithdrawInstructionAsync,
   initSimulator,
+  realizePerfFee,
   singleLegBasket,
   type VaultSummary,
 } from "@dropset/sdk";
@@ -38,16 +39,16 @@ import { assertWalletCanSign, submitInstructions } from "./submit";
 // fresh read of the market just before the transaction is built, since the
 // table can be a poll period stale.
 //
-// One thing neither run can see: the program realizes the leader's
-// performance fee before sizing (`realize_in_place`), which mints shares to
-// the leader and leaves the atoms untouched. So a deposit's atom amounts are
-// exact, while its `sharesOut` may come out slightly higher (each share then
-// worth slightly less). A withdraw's slice shrinks by the minted fraction,
-// and its floors absorb that only up to VAULT_SLIPPAGE_BPS: the fee accrues
-// across every trade between deposits and withdraws, and past the tolerance
-// the withdraw is rejected (fails closed, moving nothing) until the fee state
-// is decoded or the payout simulated first. The share balance shown after a
-// transaction is read back from chain, never taken from the preview.
+// The program realizes the leader's performance fee before sizing
+// (`realize_in_place`), which mints shares to the leader and leaves the atoms
+// untouched. A withdraw's slice shrinks by the minted fraction, and the fee
+// accrues across every trade between deposits and withdraws, so it can
+// outgrow any fixed tolerance: a withdraw is therefore sized against the
+// realized share count, run through the SDK's mirror of the same kernel. A
+// deposit is not: its atom amounts are exact either way, and only its
+// `sharesOut` may come out slightly higher (each share then worth slightly
+// less). The share balance shown after a transaction is read back from
+// chain, never taken from the preview.
 
 type Rpc = SolanaClientRuntime["rpc"];
 
@@ -56,8 +57,8 @@ const BPS_DENOMINATOR = 10_000n;
 const PPM = 1_000_000n;
 
 // The tolerance on the leg a deposit derives and on a withdraw's floors,
-// covering the vault's mix moving (trades against its book, a fee
-// realization) between the pre-build read and the transaction landing. A
+// covering the vault's mix moving (trades against its book, the fee they
+// accrue) between the pre-build read and the transaction landing. A
 // withdraw's floors are per leg, not on value: a fill that shifts the mix
 // more than this fails the withdraw even though its value barely moved. The
 // eCLOB swap's default, so the two paths carry one figure.
@@ -161,16 +162,38 @@ export function sharesForFraction(shares: bigint, bps: number): bigint {
     : (shares * clamped) / BPS_DENOMINATOR;
 }
 
-// Size a withdraw of `sharesIn` as the program's floored pro-rata slice, with
-// each leg's floor the slice less the slippage tolerance.
+// The fee state a withdraw realizes before it slices.
+export type VaultFeeState = Pick<
+  VaultSummary,
+  "leaderShares" | "hwm" | "perfFeeRatePpm" | "frozen"
+>;
+
+// The share count the program slices a withdraw against: the stored count
+// plus the performance-fee shares `realize_in_place` mints first. A frozen
+// vault accrues no fee, as the program's own guard has it.
+export function realizedTotalShares(vault: VaultAtoms & VaultFeeState): bigint {
+  if (vault.frozen) return vault.totalShares;
+  return realizePerfFee(
+    vault.baseAtoms,
+    vault.quoteAtoms,
+    vault.totalShares,
+    vault.leaderShares,
+    vault.hwm,
+    BigInt(vault.perfFeeRatePpm),
+  ).totalSharesAfter;
+}
+
+// Size a withdraw of `sharesIn` as the program's floored pro-rata slice of
+// the realized vault, with each leg's floor the slice less the slippage
+// tolerance.
 export function sizeWithdraw(
-  vault: VaultAtoms,
+  vault: VaultAtoms & VaultFeeState,
   sharesIn: bigint,
   slippageBps: number,
 ): WithdrawSizing {
   const [baseOut, quoteOut] = computeProRataSlice(
     sharesIn,
-    vault.totalShares,
+    realizedTotalShares(vault),
     vault.baseAtoms,
     vault.quoteAtoms,
   );
