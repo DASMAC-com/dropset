@@ -272,7 +272,9 @@ The loop is **mandatory**, file or no file:
    tab, or a thumbs-up on the issue. Only then file the tasks.
 
 **A session that cannot reach the operator stops at In Review
-with no task filed.** It never files to save time.
+with no task filed beyond marked stubs**, the design copied into
+the governing issue's body first so a spec file is never the
+only copy. It never files to save time.
 
 **One read-back per round is the budget.** Re-reading the file
 to check whether it changed is the failure mode: a spec is
@@ -322,6 +324,10 @@ The state machine is **In Progress while the session runs → In
 Review when the deliverable is handed off → Done only on the
 operator's ratification**.
 
+Two yeses, not one: the **design yes** inside the loop is what
+licenses filing, and comes before In Review; the **close yes**
+(see "Lifecycle" below) is what moves the issue to Done.
+
 **Never self-mark Done.** That is the measured mistake which
 produced the invalid state described under "This session is
 read-only toward the repo": an issue marked Done while its
@@ -335,8 +341,8 @@ tasks — but because *which* issue a design thread hangs off is
 the operator's call, and a self-created umbrella is the kind of
 board structure the monopoly above reserves. That is a
 legitimate pre-draft `AskUserQuestion`, and it is avoidable
-anyway: a design whose output is Linear tasks needs no filename
-at all.
+anyway: a design written into the governing issue's body needs
+no filename at all.
 
 ### Lifecycle: nothing to close, nothing to clean
 
@@ -425,7 +431,7 @@ alternatives or the failure paths: those live in Linear, and
 duplicating them into the Planning document is how the document
 grows without bound between close-out rewrites.
 
-**The note opens with the ratification** — where and when the
+**Both channels open with the ratification** — where and when the
 operator said yes (this tab, or a thumbs-up on the issue, with
 the date) — **before** it lists any filed task. A design still
 in its read-back loop says so instead, and has no tasks to list

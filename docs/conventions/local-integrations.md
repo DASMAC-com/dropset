@@ -1398,9 +1398,10 @@ irreplaceable at any point.
   issues, so there is nothing to fold — the session closes and
   the worktree is simply expendable.
 
-**The read-back protocol** — write the file, name its path in
+**The read-back protocol** — write the design (a file or the
+issue body), name where it is in
 plain text, let the operator edit it in place, read it back
-**once**, ratify, and only then file — plus the `NEEDS-CONFIRM` /
+**once**, ratify, and only then file tasks — plus the `NEEDS-CONFIRM` /
 `NEEDS-FEEDBACK` markers and the top-of-file index of open items,
 is specified in
 the `architect` skill and applies to explore-style spec tasks

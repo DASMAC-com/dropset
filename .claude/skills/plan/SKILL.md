@@ -329,7 +329,9 @@ the two listings:
 1. **Before assembly, kill on doubt**, per issue: one that cannot
    name a concrete recurring cost larger than its
    landing-plus-ratification cost goes on a kill list (titles
-   first; read only a kill candidate's body).
+   first; read only a kill candidate's body). An architect
+   **stub** (its body says the design is unratified) is never
+   assembled or promoted.
 1. After assembly, group the batches by the surface each rewrites
    (`review-pr`, `init-pr`, the shell init file, guard hooks,
    tools, conventions, AWS) from **titles alone**. A
@@ -551,10 +553,11 @@ tier, no PR, In Review at handoff.
 - **A batch is all-or-nothing on validation** — fix the typo and
   re-run the whole call.
 - **An `architect` kick-off is this fixed text, never a
-  paraphrase:** "The read-back is mandatory: file no task until
-  the operator ratifies the design, and open your handoff with
-  where and when they did." Never call the read-back optional. A
-  handoff lacking that line is unratified: park its tasks.
+  paraphrase:** "The read-back is mandatory: file no task beyond
+  marked stubs until the operator ratifies the design, and open
+  your handoff with where and when they did." Never call the
+  read-back optional. A handoff lacking that line is unratified:
+  hold its tasks in Todo, out of Next, pending review.
 - **A ratified spec FILE is folded in first.** `architect` and
   `explore` are read-only toward the repo, and usually their
   design landed as tasks, so there is nothing to fold. A spec file
