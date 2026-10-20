@@ -20,7 +20,7 @@ use dropset_sdk::instructions::SwapBuilder;
 use dropset_sdk::layout::MarketView;
 use dropset_sdk::matching::{simulate_swap, SwapSide};
 use dropset_sdk::price::Price;
-use dropset_sdk::{DROPSET_ID, SWAP_COMPUTE_UNIT_LIMIT};
+use dropset_sdk::{Deployment, SWAP_COMPUTE_UNIT_LIMIT};
 use dropset_util::localnet::{
     associated_token_address, create_ata_idempotent_ix, mint_to_ix, SPL_TOKEN_PROGRAM_ID,
 };
@@ -95,9 +95,14 @@ pub fn assert_localnet(client: &RpcClient) -> Result<()> {
     Ok(())
 }
 
+/// The only deployment this bot targets. [`assert_localnet`] refuses every
+/// public cluster before the first send, so naming localnet here is a fact
+/// about the bot, not a default.
+const DEPLOYMENT: Deployment = Deployment::Localnet;
+
 /// The self-CPI event-authority PDA — seeds `[b"__event_authority"]`.
 fn event_authority() -> Pubkey {
-    Pubkey::find_program_address(&[b"__event_authority"], &DROPSET_ID).0
+    dropset_sdk::cluster::event_authority(&DEPLOYMENT.program_id())
 }
 
 /// Airdrop `lamports` to `who` and block until it confirms (localnet faucet).
@@ -119,7 +124,7 @@ pub fn airdrop(client: &RpcClient, who: &Pubkey, lamports: u64) -> Result<()> {
 /// otherwise the first market the scan turns up (the single-market default).
 pub fn discover_market(client: &RpcClient, target: Option<Pubkey>) -> Result<MarketAddrs> {
     let accounts = client
-        .get_program_accounts(&DROPSET_ID)
+        .get_program_accounts(&DEPLOYMENT.program_id())
         .context("get_program_accounts")?;
     let (address, account) = accounts
         .iter()
@@ -499,7 +504,7 @@ pub fn send_swap(
         .market_base_treasury(market.base_treasury)
         .market_quote_treasury(market.quote_treasury)
         .event_authority(event_authority())
-        .program(DROPSET_ID)
+        .program(DEPLOYMENT.program_id())
         .side(swap.side as u8)
         .amount_in(swap.amount_in)
         .limit_price_bits(swap.limit_price_bits)
@@ -509,7 +514,7 @@ pub fn send_swap(
         // the `None` sentinel), and the two program ids it fills in for us
         // ride along inert.
         .platform_fee_bps(0)
-        .instruction();
+        .instruction(DEPLOYMENT);
     send(client, taker, &[taker], &swap_with_compute_limit(ix))
 }
 
@@ -555,6 +560,7 @@ mod tests {
     use super::*;
     use bytemuck::Zeroable;
     use dropset_sdk::layout::{MarketHeader, Vault, NULL_SECTOR, VAULT_ALIGN};
+    use dropset_sdk::DROPSET_ID;
 
     #[test]
     fn a_swap_leads_with_the_sdk_compute_unit_limit() {

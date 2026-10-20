@@ -1363,16 +1363,14 @@ fn do_repeg(
     // level life.
     // Localnet only, like `do_reshape`: the cluster gate keeps the eCLOB
     // controls off mainnet.
-    let ix = chain::retarget(
-        Cluster::Localnet,
-        set_reference_price_ix(
-            quote.pubkey(),
-            market,
-            vault_idx,
-            price,
-            slot,
-            dropset_sdk::time::now_unix(),
-        ),
+    let ix = set_reference_price_ix(
+        Cluster::Localnet.deployment(),
+        quote.pubkey(),
+        market,
+        vault_idx,
+        price,
+        slot,
+        dropset_sdk::time::now_unix(),
     );
     chain::send_logged(
         client,
@@ -1464,9 +1462,12 @@ fn do_reshape(
         ),
         other => unreachable!("do_reshape received a non-reshape action: {other:?}"),
     };
-    let ix = chain::retarget(
-        Cluster::Localnet,
-        set_liquidity_profile_ix(quote.pubkey(), market, vault_idx, bytes),
+    let ix = set_liquidity_profile_ix(
+        Cluster::Localnet.deployment(),
+        quote.pubkey(),
+        market,
+        vault_idx,
+        bytes,
     );
     chain::send_logged(
         client,

@@ -19,6 +19,7 @@ use crate::quote_state::QuoteState;
 use crate::telemetry::Telemetry;
 use dropset_fair_value::{FairValueConfig, FairValueEngine};
 use dropset_sdk::layout::LiquidityProfile;
+use dropset_sdk::Deployment;
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -81,6 +82,8 @@ pub enum ProfileKind {
 /// vault, armed profile, and inventory belief.
 pub struct Context {
     pub client: RpcClient,
+    /// The cluster's program deployment, which every quote write aims at.
+    pub deployment: Deployment,
     /// The leader / quote-authority signer, shared by every market's context
     /// rather than copied into each — one long-lived copy of the 32-byte
     /// secret regardless of roster size.
@@ -190,6 +193,7 @@ impl Context {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         client: RpcClient,
+        deployment: Deployment,
         leader: Arc<Keypair>,
         vault_idx: u32,
         market: MarketAddrs,
@@ -230,6 +234,7 @@ impl Context {
             quote_state,
             reference_invalidated: false,
             client,
+            deployment,
             leader,
             vault_idx,
             market,

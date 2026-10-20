@@ -13,7 +13,7 @@ use dropset_sdk::accounts::MARKET_HEADER_DISCRIMINATOR;
 use dropset_sdk::layout::MarketView as SlabView;
 use dropset_sdk::price::Price;
 use dropset_sdk::quoting::{set_liquidity_profile_ix, set_reference_price_ix, PROFILE_BYTES};
-use dropset_sdk::DROPSET_ID;
+use dropset_sdk::Deployment;
 use dropset_util::decimals::{atoms_ratio_to_human, human_to_atoms_ratio};
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
@@ -114,15 +114,15 @@ pub fn airdrop(client: &RpcClient, who: &Pubkey, lamports: u64) -> Result<()> {
     Err(anyhow!("airdrop did not confirm in time"))
 }
 
-/// Discover every localnet market in one scan of the program's accounts for the
+/// Discover every market in one scan of `deployment`'s program accounts for the
 /// `MarketHeader` discriminator, reading each one's mints, treasuries, and the
 /// pair's decimals. The supervisor matches these against the [`MARKETS`] roster
 /// by base mint to find each bot's market.
 ///
 /// [`MARKETS`]: crate::config::MARKETS
-pub fn discover_markets(client: &RpcClient) -> Result<Vec<MarketAddrs>> {
+pub fn discover_markets(client: &RpcClient, deployment: Deployment) -> Result<Vec<MarketAddrs>> {
     let accounts = client
-        .get_program_accounts(&DROPSET_ID)
+        .get_program_accounts(&deployment.program_id())
         .context("get_program_accounts")?;
     let mut markets = Vec::new();
     for (address, account) in &accounts {
@@ -219,6 +219,7 @@ pub fn read_vault(
 #[allow(clippy::too_many_arguments)]
 pub fn set_reference_price(
     client: &RpcClient,
+    deployment: Deployment,
     leader: &Keypair,
     market: &Pubkey,
     vault_idx: u32,
@@ -237,6 +238,7 @@ pub fn set_reference_price(
     // ladder's life, and paying an RPC for it on every tick of the
     // re-quote hot path buys accuracy the sysvar itself does not have.
     let ix = set_reference_price_ix(
+        deployment,
         leader.pubkey(),
         *market,
         vault_idx,
@@ -261,6 +263,7 @@ pub fn set_reference_price(
 /// per-vault gate rejects the vault before any expiry comparison.
 pub fn invalidate_reference_price(
     client: &RpcClient,
+    deployment: Deployment,
     leader: &Keypair,
     market: &Pubkey,
     vault_idx: u32,
@@ -272,6 +275,7 @@ pub fn invalidate_reference_price(
     // level expiry is consulted — but stamp the real one anyway so the
     // stored record stays honest about when the kill was issued.
     let ix = set_reference_price_ix(
+        deployment,
         leader.pubkey(),
         *market,
         vault_idx,
@@ -285,12 +289,19 @@ pub fn invalidate_reference_price(
 /// Rewrite the quote ladder (`set_liquidity_profile`, cold path).
 pub fn set_liquidity_profile(
     client: &RpcClient,
+    deployment: Deployment,
     leader: &Keypair,
     market: &Pubkey,
     vault_idx: u32,
     profile_bytes: [u8; PROFILE_BYTES],
 ) -> Result<Sent> {
-    let ix = set_liquidity_profile_ix(leader.pubkey(), *market, vault_idx, profile_bytes);
+    let ix = set_liquidity_profile_ix(
+        deployment,
+        leader.pubkey(),
+        *market,
+        vault_idx,
+        profile_bytes,
+    );
     send(client, leader, &[ix], 0)
 }
 

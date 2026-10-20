@@ -512,12 +512,14 @@ fn instructions(
     seat: &SectorSeat,
 ) -> Vec<Instruction> {
     match step {
-        // The SDK builder addresses the committed program id, so it passes
-        // through `retarget` like every other quoting write — without it, the
-        // kill would go to a program that does not exist on mainnet.
-        Step::Kill => vec![chain::retarget(
-            cluster,
-            set_liquidity_profile_ix(*signer, *market, seat.idx, [0u8; PROFILE_BYTES]),
+        // Aimed at the cluster's own program, like every other quoting write:
+        // the localnet id does not belong to us on mainnet.
+        Step::Kill => vec![set_liquidity_profile_ix(
+            cluster.deployment(),
+            *signer,
+            *market,
+            seat.idx,
+            [0u8; PROFILE_BYTES],
         )],
         Step::Close => vec![chain::build_close_vault_ix(
             cluster, signer, market, seat.idx,
@@ -754,8 +756,8 @@ mod tests {
 
     #[test]
     fn every_emergency_write_is_addressed_to_the_clusters_program() {
-        // The kill's SDK builder stamps the committed program id; a missing
-        // retarget would compile and send the mainnet kill nowhere.
+        // Every builder takes a deployment, so no write can omit its cluster;
+        // this pins that each one is handed the right one.
         let me = Pubkey::new_unique();
         let wallet = Keypair::new();
         let found = MarketSeats {

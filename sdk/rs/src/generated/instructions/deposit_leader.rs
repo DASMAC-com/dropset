@@ -46,14 +46,16 @@ pub struct DepositLeader {
 impl DepositLeader {
     pub fn instruction(
         &self,
+        deployment: crate::Deployment,
         args: DepositLeaderInstructionArgs,
     ) -> solana_instruction::Instruction {
-        self.instruction_with_remaining_accounts(args, &[])
+        self.instruction_with_remaining_accounts(deployment, args, &[])
     }
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
         &self,
+        deployment: crate::Deployment,
         args: DepositLeaderInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
@@ -114,7 +116,7 @@ impl DepositLeader {
         data.append(&mut args);
 
         solana_instruction::Instruction {
-            program_id: crate::DROPSET_ID,
+            program_id: deployment.program_id(),
             accounts,
             data,
         }
@@ -333,7 +335,7 @@ impl DepositLeaderBuilder {
         self
     }
     #[allow(clippy::clone_on_copy)]
-    pub fn instruction(&self) -> solana_instruction::Instruction {
+    pub fn instruction(&self, deployment: crate::Deployment) -> solana_instruction::Instruction {
         let accounts = DepositLeader {
             signer: self.signer.expect("signer is not set"),
             market: self.market.expect("market is not set"),
@@ -370,7 +372,7 @@ impl DepositLeaderBuilder {
             max_quote_in: self.max_quote_in.clone().expect("max_quote_in is not set"),
         };
 
-        accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
+        accounts.instruction_with_remaining_accounts(deployment, args, &self.__remaining_accounts)
     }
 }
 
@@ -556,7 +558,7 @@ impl<'a, 'b> DepositLeaderCpi<'a, 'b> {
         data.append(&mut args);
 
         let instruction = solana_instruction::Instruction {
-            program_id: crate::DROPSET_ID,
+            program_id: *self.__program.key,
             accounts,
             data,
         };
