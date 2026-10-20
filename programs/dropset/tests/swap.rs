@@ -1633,7 +1633,7 @@ fn platform_fee_multi_leg_fill_stays_inside_the_cu_budget() {
     const DEFAULT_CU_BUDGET: u64 = common::DEFAULT_INSTRUCTION_CU;
 
     //
-    // Both arms run from one fixture, so the CU delta is a deterministic
+    // Both arms run from one fixture, so the CU delta is a near-constant
     // figure rather than the gap between two noisy readings. Every fixture
     // key is random, and each PDA derivation pays ~1.5k CU per rejected bump,
     // so two separate fixtures swung the delta by ~22k. Here the control arm
