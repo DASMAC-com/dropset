@@ -25,6 +25,12 @@
 //! replaying the plan, and a market whose send fails is reported while the
 //! rest still run — a kill switch that stops at its first error leaves the
 //! remaining books quoting.
+//!
+//! The job acts only on the vaults the confirmed plan listed ([`Planned`]):
+//! one opened between the prompt and Enter is left alone and turns the job
+//! red, so it is planned and confirmed on its own; one gone since is
+//! reported. A market the plan could not read is read again and acted on as
+//! found, as its plan line said.
 
 use crate::accounts::VaultStake;
 use crate::chain;
@@ -41,6 +47,7 @@ use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// One of the three emergency writes.
@@ -303,8 +310,98 @@ pub fn step(op: Op, seat: &SectorSeat, signer: &Pubkey) -> Step {
     }
 }
 
+/// The vaults a confirmed plan listed, per roster market it read, by
+/// per-market vault number — never sector index, which recycles. The job
+/// acts on exactly these. A market absent from the set is one the plan could
+/// not resolve or read, which the job reads again and acts on as found.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Planned(BTreeMap<Pubkey, BTreeSet<u64>>);
+
+/// One roster market resolved for an op: its address, its mints, and the
+/// op's signing key on it.
+struct Market {
+    address: Pubkey,
+    base: Pubkey,
+    quote: Pubkey,
+    signer: Keypair,
+}
+
+/// Every roster market resolved for `op`, each on its own: one market's
+/// missing key or mint must not hold back every other market's stop.
+fn resolve(
+    op: Op,
+    repo_root: &Path,
+    cluster: Cluster,
+    operator_leader: Option<&LazyKey>,
+    operator_quote: Option<&Keypair>,
+) -> Vec<(&'static PairConfig, Result<Market>)> {
+    market::roster(cluster)
+        .iter()
+        .map(|&config| {
+            let market = op
+                .signer(repo_root, config, operator_leader, operator_quote)
+                .and_then(|signer| {
+                    let (base, quote) = market::pair_mints(repo_root, config)?;
+                    Ok(Market {
+                        address: chain::market_pda(cluster, &base, &quote),
+                        base,
+                        quote,
+                        signer,
+                    })
+                });
+            (config, market)
+        })
+        .collect()
+}
+
+/// The two chain calls an emergency op makes — one market's seats, read
+/// fresh, and one vault's send — behind a seam so the plan and the job's
+/// tally run over a stub in tests.
+trait Rpc {
+    fn seats(&self, op: Op, market: &Pubkey, signer: &Pubkey) -> Result<Option<MarketSeats>>;
+    fn send(
+        &self,
+        wallet: &Keypair,
+        signer: &Keypair,
+        ixs: &[Instruction],
+        label: &str,
+        log: &Logger,
+    ) -> Result<()>;
+}
+
+/// The live chain behind [`Rpc`].
+struct Live<'a> {
+    client: &'a RpcClient,
+    cluster: Cluster,
+    operator_leader: Option<&'a LazyKey>,
+}
+
+impl Rpc for Live<'_> {
+    fn seats(&self, op: Op, market: &Pubkey, signer: &Pubkey) -> Result<Option<MarketSeats>> {
+        op.seats(
+            self.client,
+            self.cluster,
+            market,
+            signer,
+            self.operator_leader,
+        )
+    }
+
+    fn send(
+        &self,
+        wallet: &Keypair,
+        signer: &Keypair,
+        ixs: &[Instruction],
+        label: &str,
+        log: &Logger,
+    ) -> Result<()> {
+        chain::send_logged(self.client, wallet, &[wallet, signer], ixs, label, log).map(drop)
+    }
+}
+
 /// The plan `op` shows under its typed-`yes` prompt: a line per roster
-/// market, read fresh, nothing signed. Refuses when nothing would be sent,
+/// market, read fresh, nothing signed, and the vaults those lines list —
+/// what [`execute`] is then confined to. Refuses when nothing would be sent,
 /// naming the first refusal if there was one.
 pub fn plan(
     op: Op,
@@ -314,21 +411,35 @@ pub fn plan(
     admin: &Pubkey,
     operator_leader: Option<&LazyKey>,
     operator_quote: Option<&Keypair>,
-) -> Result<Vec<String>> {
+) -> Result<(Vec<String>, Planned)> {
+    let rpc = Live {
+        client,
+        cluster,
+        operator_leader,
+    };
+    let markets = resolve(op, repo_root, cluster, operator_leader, operator_quote);
+    plan_over(op, &rpc, &markets, admin)
+}
+
+/// [`plan`] over resolved `markets`, reading through `rpc`.
+fn plan_over(
+    op: Op,
+    rpc: &impl Rpc,
+    markets: &[(&'static PairConfig, Result<Market>)],
+    admin: &Pubkey,
+) -> Result<(Vec<String>, Planned)> {
     let mut lines = vec![op.headline().to_string()];
+    let mut planned = Planned::default();
     let mut work = 0usize;
     let mut first_refusal = None;
-    for config in market::roster(cluster) {
+    for (config, market) in markets {
         let symbol = config.base.symbol;
         // One market's failure to resolve or read must not hold the prompt
         // back from every other market's stop: it is a line in the plan, and
         // the job tries again. With nothing else to send, the first such
         // reason is what the refusal names (a missing key included).
-        let resolved = op
-            .signer(repo_root, config, operator_leader, operator_quote)
-            .and_then(|signer| Ok((signer.pubkey(), market::pair_mints(repo_root, config)?)));
-        let (signer, (base, quote)) = match resolved {
-            Ok(resolved) => resolved,
+        let market = match market {
+            Ok(market) => market,
             Err(e) => {
                 let reason = format!("{symbol}: {e:#}");
                 lines.push(reason.clone());
@@ -336,10 +447,13 @@ pub fn plan(
                 continue;
             }
         };
-        let address = chain::market_pda(cluster, &base, &quote);
-        let found = match op.seats(client, cluster, &address, &signer, operator_leader) {
+        let signer = market.signer.pubkey();
+        let found = match rpc.seats(op, &market.address, &signer) {
             Ok(Some(found)) => found,
             Ok(None) => {
+                // Read, and empty: a vault on a market created since is not
+                // what the operator confirmed.
+                planned.0.insert(market.address, BTreeSet::new());
                 lines.push(format!("{symbol}: no market — skipped"));
                 continue;
             }
@@ -350,6 +464,10 @@ pub fn plan(
                 continue;
             }
         };
+        planned.0.insert(
+            market.address,
+            found.seats.iter().map(|seat| seat.seq).collect(),
+        );
         if found.seats.is_empty() {
             // A kill scans by quote authority, so say so: a vault led under
             // another quote key is out of its reach, and close stops it.
@@ -385,7 +503,7 @@ pub fn plan(
         "signed by the {} per market · fees paid by the admin {admin}",
         op.signer_role()
     ));
-    Ok(lines)
+    Ok((lines, planned))
 }
 
 /// One seat's line in the plan.
@@ -411,9 +529,11 @@ fn plan_line(symbol: &str, config: &PairConfig, seat: &SectorSeat, step: Step) -
 
 /// Run `op` against a fresh read, one transaction per vault, signed by the
 /// op's key (the quote authority for a kill, the leader otherwise) and paid by
-/// `wallet`. Every market is attempted; the job fails at the end if any send
-/// failed or any vault was refused, so the operator sees the outcome in red
-/// rather than a partial stop reading as success.
+/// `wallet`. Confined to the vaults `planned` lists when there was a plan;
+/// localnet, which has no prompt, acts on everything it reads. Every market is
+/// attempted; the job fails at the end if any send failed, any vault was
+/// refused, or any vault was left alone for want of a plan, so the operator
+/// sees the outcome in red rather than a partial stop reading as success.
 #[allow(clippy::too_many_arguments)]
 pub fn execute(
     op: Op,
@@ -423,25 +543,43 @@ pub fn execute(
     cluster: Cluster,
     operator_leader: Option<&LazyKey>,
     operator_quote: Option<&Keypair>,
+    planned: Option<&Planned>,
+    log: &Logger,
+) -> Result<String> {
+    let rpc = Live {
+        client,
+        cluster,
+        operator_leader,
+    };
+    let markets = resolve(op, repo_root, cluster, operator_leader, operator_quote);
+    execute_over(op, &rpc, cluster, wallet, &markets, planned, log)
+}
+
+/// [`execute`] over resolved `markets`, reading and sending through `rpc`.
+fn execute_over(
+    op: Op,
+    rpc: &impl Rpc,
+    cluster: Cluster,
+    wallet: &Keypair,
+    markets: &[(&'static PairConfig, Result<Market>)],
+    planned: Option<&Planned>,
     log: &Logger,
 ) -> Result<String> {
     let mut sent = 0usize;
     let mut failed = 0usize;
-    for config in market::roster(cluster) {
+    let mut unplanned = 0usize;
+    for (config, market) in markets {
         let symbol = config.base.symbol;
-        let resolved = op
-            .signer(repo_root, config, operator_leader, operator_quote)
-            .and_then(|signer| Ok((signer, market::pair_mints(repo_root, config)?)));
-        let (signer, (base, quote)) = match resolved {
-            Ok(resolved) => resolved,
+        let market = match market {
+            Ok(market) => market,
             Err(e) => {
                 log.log(format!("{symbol}: {e:#}"));
                 failed += 1;
                 continue;
             }
         };
-        let address = chain::market_pda(cluster, &base, &quote);
-        let found = match op.seats(client, cluster, &address, &signer.pubkey(), operator_leader) {
+        let signer = market.signer.pubkey();
+        let found = match rpc.seats(op, &market.address, &signer) {
             Ok(Some(found)) => found,
             Ok(None) => continue,
             Err(e) => {
@@ -450,8 +588,29 @@ pub fn execute(
                 continue;
             }
         };
+        // `None` when there was no plan, or the plan could not read this
+        // market: the job then acts on its own read.
+        let listed = planned.and_then(|p| p.0.get(&market.address));
+        for seq in listed.into_iter().flatten() {
+            if !found.seats.iter().any(|seat| seat.seq == *seq) {
+                log.log(format!(
+                    "{symbol} vault #{seq}: gone since the plan — nothing to send"
+                ));
+            }
+        }
         for seat in &found.seats {
-            let ixs = match step(op, seat, &signer.pubkey()) {
+            // A vault's number is never reused on its market, so one the plan
+            // does not list opened after the operator read it.
+            if listed.is_some_and(|listed| !listed.contains(&seat.seq)) {
+                log.log(format!(
+                    "{symbol} vault #{}: opened since the plan — left alone; run it again to \
+                     plan it",
+                    seat.seq
+                ));
+                unplanned += 1;
+                continue;
+            }
+            let ixs = match step(op, seat, &signer) {
                 Step::Skip(_) => continue,
                 Step::Refuse(reason) => {
                     log.log(format!("{symbol} vault #{}: refused — {reason}", seat.seq));
@@ -462,19 +621,20 @@ pub fn execute(
                     s,
                     cluster,
                     wallet,
-                    &signer.pubkey(),
-                    &address,
-                    &base,
-                    &quote,
+                    &signer,
+                    &market.address,
+                    &market.base,
+                    &market.quote,
                     &found,
                     seat,
                 ),
             };
             let label = op.instruction();
-            match chain::send_logged(client, wallet, &[wallet, &signer], &ixs, label, log)
+            match rpc
+                .send(wallet, &market.signer, &ixs, label, log)
                 .with_context(|| format!("{symbol} vault #{}: {label}", seat.seq))
             {
-                Ok(_) => {
+                Ok(()) => {
                     sent += 1;
                     log.accounts_changed();
                 }
@@ -485,10 +645,20 @@ pub fn execute(
             }
         }
     }
+    let mut short = Vec::new();
     if failed > 0 {
+        short.push(format!("{failed} failed or were refused"));
+    }
+    if unplanned > 0 {
+        short.push(format!(
+            "{unplanned} opened since the plan and were left alone"
+        ));
+    }
+    if !short.is_empty() {
         bail!(
-            "{} landed on {sent} vault(s); {failed} failed or were refused — see the log",
-            op.instruction()
+            "{} landed on {sent} vault(s); {} — see the log",
+            op.instruction(),
+            short.join("; ")
         );
     }
     if sent == 0 {
@@ -795,6 +965,215 @@ mod tests {
                 );
             }
         }
+    }
+
+    use crate::job::JobEvent;
+    use std::cell::RefCell;
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::mpsc;
+
+    /// A chain the test scripts: each market's reads in order, and every
+    /// send's write recorded.
+    #[derive(Default)]
+    struct Stub {
+        reads: RefCell<HashMap<Pubkey, VecDeque<Result<Option<MarketSeats>>>>>,
+        sent: RefCell<Vec<Instruction>>,
+        /// Sends touching this market fail.
+        rejects: Option<Pubkey>,
+    }
+
+    impl Stub {
+        fn script(&self, market: &Market, read: Result<Option<MarketSeats>>) {
+            self.reads
+                .borrow_mut()
+                .entry(market.address)
+                .or_default()
+                .push_back(read);
+        }
+    }
+
+    impl Rpc for Stub {
+        fn seats(&self, _: Op, market: &Pubkey, _: &Pubkey) -> Result<Option<MarketSeats>> {
+            self.reads
+                .borrow_mut()
+                .get_mut(market)
+                .and_then(VecDeque::pop_front)
+                .unwrap_or_else(|| panic!("an unscripted read of {market}"))
+        }
+
+        fn send(
+            &self,
+            _: &Keypair,
+            _: &Keypair,
+            ixs: &[Instruction],
+            _: &str,
+            _: &Logger,
+        ) -> Result<()> {
+            let write = ixs.last().unwrap().clone();
+            if let Some(rejected) = self.rejects {
+                if write.accounts.iter().any(|a| a.pubkey == rejected) {
+                    bail!("the stub rejects this market");
+                }
+            }
+            self.sent.borrow_mut().push(write);
+            Ok(())
+        }
+    }
+
+    fn resolved() -> Market {
+        Market {
+            address: Pubkey::new_unique(),
+            base: Pubkey::new_unique(),
+            quote: Pubkey::new_unique(),
+            signer: Keypair::new(),
+        }
+    }
+
+    fn holding(seats: Vec<SectorSeat>) -> Result<Option<MarketSeats>> {
+        Ok(Some(MarketSeats {
+            base_treasury: Pubkey::new_unique(),
+            quote_treasury: Pubkey::new_unique(),
+            seats,
+        }))
+    }
+
+    fn vault(idx: u32, seq: u64) -> SectorSeat {
+        SectorSeat {
+            idx,
+            seq,
+            ..seat(Pubkey::new_unique())
+        }
+    }
+
+    /// The close the job should send for sector `idx` of `market`.
+    fn close(market: &Market, idx: u32) -> Instruction {
+        chain::build_close_vault_ix(
+            Cluster::Localnet,
+            &market.signer.pubkey(),
+            &market.address,
+            idx,
+        )
+    }
+
+    /// Run the job over `markets`, returning its outcome and its log lines.
+    fn run(
+        stub: &Stub,
+        markets: &[(&'static PairConfig, Result<Market>)],
+        planned: Option<&Planned>,
+    ) -> (Result<String>, Vec<String>) {
+        let (tx, rx) = mpsc::channel();
+        let outcome = execute_over(
+            Op::Close,
+            stub,
+            Cluster::Localnet,
+            &Keypair::new(),
+            markets,
+            planned,
+            &Logger::new(tx),
+        );
+        let lines = rx
+            .try_iter()
+            .filter_map(|event| match event {
+                JobEvent::Log(line) => Some(line),
+                _ => None,
+            })
+            .collect();
+        (outcome, lines)
+    }
+
+    #[test]
+    fn the_job_closes_exactly_the_vaults_the_plan_listed() {
+        let config = market::roster(Cluster::Localnet)[0];
+        let (a, b, c) = (resolved(), resolved(), resolved());
+        let stub = Stub::default();
+        // A: vault #2 goes and vault #3 opens between the prompt and Enter.
+        stub.script(&a, holding(vec![vault(0, 1), vault(1, 2)]));
+        stub.script(&a, holding(vec![vault(0, 1), vault(2, 3)]));
+        // B: the plan could not read it, so the job reads it and acts.
+        stub.script(&b, Err(anyhow!("unreachable")));
+        stub.script(&b, holding(vec![vault(0, 5)]));
+        // C: closed by someone else in the window — nothing left to send.
+        stub.script(&c, holding(vec![vault(4, 9)]));
+        stub.script(
+            &c,
+            holding(vec![SectorSeat {
+                tombstoned: true,
+                ..vault(4, 9)
+            }]),
+        );
+        let markets = vec![(config, Ok(a)), (config, Ok(b)), (config, Ok(c))];
+        let market = |i: usize| markets[i].1.as_ref().unwrap();
+
+        let (lines, planned) =
+            plan_over(Op::Close, &stub, &markets, &Pubkey::new_unique()).unwrap();
+        assert!(lines.iter().any(|l| l.contains("read failed")), "{lines:?}");
+        assert_eq!(
+            planned,
+            Planned(BTreeMap::from([
+                (market(0).address, BTreeSet::from([1, 2])),
+                (market(2).address, BTreeSet::from([9])),
+            ]))
+        );
+
+        let (outcome, log) = run(&stub, &markets, Some(&planned));
+        assert_eq!(
+            *stub.sent.borrow(),
+            [close(market(0), 0), close(market(1), 0)]
+        );
+        assert!(
+            log.iter()
+                .any(|l| l.contains("vault #2: gone since the plan")),
+            "{log:?}"
+        );
+        assert!(
+            log.iter()
+                .any(|l| l.contains("vault #3: opened since the plan")),
+            "{log:?}"
+        );
+        // The vault left alone turns the job red: the stop is not complete.
+        let err = format!("{:#}", outcome.unwrap_err());
+        assert!(err.contains("landed on 2 vault(s)"), "{err}");
+        assert!(err.contains("1 opened since the plan"), "{err}");
+    }
+
+    #[test]
+    fn without_a_plan_the_job_acts_on_its_read_and_one_failure_spares_the_rest() {
+        let config = market::roster(Cluster::Localnet)[0];
+        let (a, b) = (resolved(), resolved());
+        let stub = Stub {
+            rejects: Some(a.address),
+            ..Stub::default()
+        };
+        stub.script(&a, holding(vec![vault(0, 1)]));
+        stub.script(&b, holding(vec![vault(0, 1), vault(3, 4)]));
+        let markets = vec![
+            (config, Ok(a)),
+            (config, Err(anyhow!("no leader key"))),
+            (config, Ok(b)),
+        ];
+        let b = markets[2].1.as_ref().unwrap();
+
+        let (outcome, log) = run(&stub, &markets, None);
+        assert_eq!(*stub.sent.borrow(), [close(b, 0), close(b, 3)]);
+        assert!(log.iter().any(|l| l.contains("no leader key")), "{log:?}");
+        let err = format!("{:#}", outcome.unwrap_err());
+        assert!(
+            err.contains("landed on 2 vault(s); 2 failed or were refused"),
+            "{err}"
+        );
+
+        // Every vault already done is a red "nothing was sent", not a success.
+        let stub = Stub::default();
+        let a = resolved();
+        stub.script(
+            &a,
+            holding(vec![SectorSeat {
+                tombstoned: true,
+                ..vault(0, 1)
+            }]),
+        );
+        let (outcome, _) = run(&stub, &[(config, Ok(a))], None);
+        assert!(format!("{:#}", outcome.unwrap_err()).contains("nothing was sent"));
     }
 
     #[test]
