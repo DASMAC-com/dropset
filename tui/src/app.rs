@@ -131,7 +131,7 @@ pub struct CeremonyPrompt {
     pub action: Action,
     pub plan: Vec<String>,
     /// An emergency action's vaults, as `plan` lists them — all its job may
-    /// touch once confirmed.
+    /// touch, once confirmed, on every market the plan read.
     pub planned: Option<crate::emergency::Planned>,
     pub buf: String,
 }
@@ -1235,7 +1235,7 @@ impl App {
     /// prompt could have outlived — and the chain's genesis hash itself, read
     /// again now, so the last thing before a mainnet write is proof of which
     /// chain it goes to. An emergency action's job is confined to the
-    /// `planned` vaults the operator just read.
+    /// `planned` vaults the operator just read, on every market the plan read.
     fn confirm_ceremony(
         &mut self,
         action: Action,

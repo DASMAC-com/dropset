@@ -1176,7 +1176,7 @@ pub fn dispatch_leader(ctx: &JobContext, ticket: crate::leader::Ticket, tx: Send
 /// operator is never asked to confirm a no-op. The step re-checks everything
 /// again when it runs; this is what the operator reads, not what guards. An
 /// emergency action also returns the vaults its lines list, which bound what
-/// its job may touch.
+/// its job may touch on every market the plan read.
 pub fn ceremony_plan(
     action: Action,
     ctx: &JobContext,

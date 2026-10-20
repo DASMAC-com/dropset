@@ -314,6 +314,11 @@ pub fn step(op: Op, seat: &SectorSeat, signer: &Pubkey) -> Step {
 /// per-market vault number — never sector index, which recycles. The job
 /// acts on exactly these. A market absent from the set is one the plan could
 /// not resolve or read, which the job reads again and acts on as found.
+///
+/// Every listed vault counts, skipped and refused lines included: the job
+/// re-applies [`step`] to each, so one whose state moved in the window gets
+/// what the confirmed op now does to it — a kill for a ladder re-armed since,
+/// a drain for a vault closed since.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Planned(BTreeMap<Pubkey, BTreeSet<u64>>);
 
@@ -594,13 +599,21 @@ fn execute_over(
         for seq in listed.into_iter().flatten() {
             if !found.seats.iter().any(|seat| seat.seq == *seq) {
                 log.log(format!(
-                    "{symbol} vault #{seq}: gone since the plan — nothing to send"
+                    "{symbol} vault #{seq}: no longer found since the plan — nothing to send"
                 ));
             }
         }
         for seat in &found.seats {
+            let s = step(op, seat, &signer);
+            // Before anything is counted: a vault with nothing to send needs
+            // no plan, so one opened since with a dead ladder leaves the job
+            // green rather than asking for a re-plan that would refuse.
+            if let Step::Skip(_) = s {
+                continue;
+            }
             // A vault's number is never reused on its market, so one the plan
-            // does not list opened after the operator read it.
+            // does not list opened after the operator read it — left alone,
+            // refusal or send alike.
             if listed.is_some_and(|listed| !listed.contains(&seat.seq)) {
                 log.log(format!(
                     "{symbol} vault #{}: opened since the plan — left alone; run it again to \
@@ -610,7 +623,7 @@ fn execute_over(
                 unplanned += 1;
                 continue;
             }
-            let ixs = match step(op, seat, &signer) {
+            let ixs = match s {
                 Step::Skip(_) => continue,
                 Step::Refuse(reason) => {
                     log.log(format!("{symbol} vault #{}: refused — {reason}", seat.seq));
@@ -645,20 +658,20 @@ fn execute_over(
             }
         }
     }
-    let mut short = Vec::new();
+    let mut shortfalls = Vec::new();
     if failed > 0 {
-        short.push(format!("{failed} failed or were refused"));
+        shortfalls.push(format!("{failed} failed or were refused"));
     }
     if unplanned > 0 {
-        short.push(format!(
+        shortfalls.push(format!(
             "{unplanned} opened since the plan and were left alone"
         ));
     }
-    if !short.is_empty() {
+    if !shortfalls.is_empty() {
         bail!(
             "{} landed on {sent} vault(s); {} — see the log",
             op.instruction(),
-            short.join("; ")
+            shortfalls.join("; ")
         );
     }
     if sent == 0 {
@@ -1055,15 +1068,29 @@ mod tests {
         )
     }
 
-    /// Run the job over `markets`, returning its outcome and its log lines.
+    /// The kill the job should send for sector `idx` of `market`.
+    fn kill(market: &Market, idx: u32) -> Instruction {
+        chain::retarget(
+            Cluster::Localnet,
+            set_liquidity_profile_ix(
+                market.signer.pubkey(),
+                market.address,
+                idx,
+                [0u8; PROFILE_BYTES],
+            ),
+        )
+    }
+
+    /// Run `op`'s job over `markets`, returning its outcome and its log lines.
     fn run(
+        op: Op,
         stub: &Stub,
         markets: &[(&'static PairConfig, Result<Market>)],
         planned: Option<&Planned>,
     ) -> (Result<String>, Vec<String>) {
         let (tx, rx) = mpsc::channel();
         let outcome = execute_over(
-            Op::Close,
+            op,
             stub,
             Cluster::Localnet,
             &Keypair::new(),
@@ -1084,11 +1111,12 @@ mod tests {
     #[test]
     fn the_job_closes_exactly_the_vaults_the_plan_listed() {
         let config = market::roster(Cluster::Localnet)[0];
-        let (a, b, c) = (resolved(), resolved(), resolved());
+        let (a, b, c, d) = (resolved(), resolved(), resolved(), resolved());
         let stub = Stub::default();
-        // A: vault #2 goes and vault #3 opens between the prompt and Enter.
+        // A: vault #2 goes and vault #3 opens in its recycled sector between
+        // the prompt and Enter — keyed by sector, the job would close it.
         stub.script(&a, holding(vec![vault(0, 1), vault(1, 2)]));
-        stub.script(&a, holding(vec![vault(0, 1), vault(2, 3)]));
+        stub.script(&a, holding(vec![vault(0, 1), vault(1, 3)]));
         // B: the plan could not read it, so the job reads it and acts.
         stub.script(&b, Err(anyhow!("unreachable")));
         stub.script(&b, holding(vec![vault(0, 5)]));
@@ -1101,7 +1129,15 @@ mod tests {
                 ..vault(4, 9)
             }]),
         );
-        let markets = vec![(config, Ok(a)), (config, Ok(b)), (config, Ok(c))];
+        // D: no market when planned; created, with a vault, before Enter.
+        stub.script(&d, Ok(None));
+        stub.script(&d, holding(vec![vault(0, 1)]));
+        let markets = vec![
+            (config, Ok(a)),
+            (config, Ok(b)),
+            (config, Ok(c)),
+            (config, Ok(d)),
+        ];
         let market = |i: usize| markets[i].1.as_ref().unwrap();
 
         let (lines, planned) =
@@ -1112,28 +1148,88 @@ mod tests {
             Planned(BTreeMap::from([
                 (market(0).address, BTreeSet::from([1, 2])),
                 (market(2).address, BTreeSet::from([9])),
+                (market(3).address, BTreeSet::new()),
             ]))
         );
 
-        let (outcome, log) = run(&stub, &markets, Some(&planned));
+        let (outcome, log) = run(Op::Close, &stub, &markets, Some(&planned));
         assert_eq!(
             *stub.sent.borrow(),
             [close(market(0), 0), close(market(1), 0)]
         );
-        assert!(
-            log.iter()
-                .any(|l| l.contains("vault #2: gone since the plan")),
+        let logged = |needle: &str| log.iter().filter(|l| l.contains(needle)).count();
+        assert_eq!(
+            logged("vault #2: no longer found since the plan"),
+            1,
             "{log:?}"
         );
-        assert!(
-            log.iter()
-                .any(|l| l.contains("vault #3: opened since the plan")),
-            "{log:?}"
-        );
-        // The vault left alone turns the job red: the stop is not complete.
+        assert_eq!(logged("vault #3: opened since the plan"), 1, "{log:?}");
+        assert_eq!(logged("vault #1: opened since the plan"), 1, "{log:?}");
+        // The vaults left alone turn the job red: the stop is not complete.
         let err = format!("{:#}", outcome.unwrap_err());
         assert!(err.contains("landed on 2 vault(s)"), "{err}");
-        assert!(err.contains("1 opened since the plan"), "{err}");
+        assert!(err.contains("2 opened since the plan"), "{err}");
+    }
+
+    #[test]
+    fn a_kill_leaves_an_unplanned_ladder_alone_but_never_counts_a_dead_one() {
+        let config = market::roster(Cluster::Localnet)[0];
+        let a = resolved();
+        let me = a.signer.pubkey();
+        let quoting = |idx, seq| SectorSeat {
+            idx,
+            seq,
+            ..seat(me)
+        };
+        let foreign = |idx, seq| SectorSeat {
+            quote_authority: Pubkey::new_unique(),
+            ..quoting(idx, seq)
+        };
+        let stub = Stub::default();
+        stub.script(&a, holding(vec![quoting(0, 1)]));
+        // Opened since: #2 with a dead ladder, nothing to send.
+        stub.script(
+            &a,
+            holding(vec![
+                quoting(0, 1),
+                SectorSeat {
+                    quoting: false,
+                    ..quoting(1, 2)
+                },
+            ]),
+        );
+        let markets = vec![(config, Ok(a))];
+        let a = markets[0].1.as_ref().unwrap();
+        let (_, planned) = plan_over(Op::Kill, &stub, &markets, &me).unwrap();
+        let (outcome, log) = run(Op::Kill, &stub, &markets, Some(&planned));
+        // No plan was needed for #2, so the kill reads as complete.
+        assert_eq!(
+            outcome.unwrap(),
+            "set_liquidity_profile landed on 1 vault(s)"
+        );
+        assert!(!log.iter().any(|l| l.contains("opened since")), "{log:?}");
+        assert_eq!(*stub.sent.borrow(), [kill(a, 0)]);
+
+        // A refusal the operator read and a quoting ladder opened since: both
+        // turn the job red, and only the planned ladder is zeroed.
+        let stub = Stub::default();
+        stub.script(a, holding(vec![quoting(0, 1), foreign(2, 3)]));
+        stub.script(
+            a,
+            holding(vec![quoting(0, 1), foreign(2, 3), quoting(3, 4)]),
+        );
+        let (_, planned) = plan_over(Op::Kill, &stub, &markets, &me).unwrap();
+        let (outcome, log) = run(Op::Kill, &stub, &markets, Some(&planned));
+        assert_eq!(*stub.sent.borrow(), [kill(a, 0)]);
+        assert!(
+            log.iter().any(|l| l.contains("vault #4: opened since")),
+            "{log:?}"
+        );
+        let err = format!("{:#}", outcome.unwrap_err());
+        assert!(
+            err.contains("landed on 1 vault(s); 1 failed or were refused; 1 opened since"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -1153,7 +1249,7 @@ mod tests {
         ];
         let b = markets[2].1.as_ref().unwrap();
 
-        let (outcome, log) = run(&stub, &markets, None);
+        let (outcome, log) = run(Op::Close, &stub, &markets, None);
         assert_eq!(*stub.sent.borrow(), [close(b, 0), close(b, 3)]);
         assert!(log.iter().any(|l| l.contains("no leader key")), "{log:?}");
         let err = format!("{:#}", outcome.unwrap_err());
@@ -1172,7 +1268,7 @@ mod tests {
                 ..vault(0, 1)
             }]),
         );
-        let (outcome, _) = run(&stub, &[(config, Ok(a))], None);
+        let (outcome, _) = run(Op::Close, &stub, &[(config, Ok(a))], None);
         assert!(format!("{:#}", outcome.unwrap_err()).contains("nothing was sent"));
     }
 
