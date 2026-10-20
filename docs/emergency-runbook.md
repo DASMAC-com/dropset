@@ -57,6 +57,10 @@ re-running one is always safe.
 - **A vault is listed as REFUSED.** The line says why. A kill refused for
   "quote authority is not this session's quote key" cannot be signed from
   the TUI; go straight to close, which the leader signs.
+- **The kill finds no vault on a market you know is quoting.** The kill
+  looks vaults up by the session's quote key, so a vault opened under
+  another quote key is out of its reach (it is listed as refused only once
+  the leader key has loaded). Go straight to close.
 - **A send fails.** The job ends in red, naming the vault. The other
   markets were still attempted. Re-run the step.
 - **"A job is already running."** Wait for it to finish, or quit (`q`) and

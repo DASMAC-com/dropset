@@ -53,8 +53,8 @@ directory on mainnet, since its secret is public. The mainnet TUI reads one
 - the admin wallet
 - the vault leader (Lead), the custody key, which the TUI resolves only
   when a custody step first needs it
-- the vault quote authority (Quote), which signs the ladder and the
-  re-centre, and which create-vault sets on every new vault
+- the vault quote authority (Quote), which signs the ladder, the re-centre
+  and the emergency kill, and which create-vault sets on every new vault
 
 On localnet `EEEE.json` is both leader and quote authority.
 

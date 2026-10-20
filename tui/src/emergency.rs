@@ -87,15 +87,33 @@ impl Op {
 
     /// The vaults on `market` the op acts on for `signer`: those it is quote
     /// authority of for a kill, those it leads otherwise.
+    ///
+    /// A kill also lists the vaults the session's leader leads, when that key
+    /// is already resolved — never resolving it — so a led vault with another
+    /// quote authority shows as refused rather than going unseen while its
+    /// ladder rests.
     fn seats(
         self,
         client: &RpcClient,
         cluster: Cluster,
         market: &Pubkey,
         signer: &Pubkey,
+        operator_leader: Option<&LazyKey>,
     ) -> Result<Option<MarketSeats>> {
         match self {
-            Op::Kill => quote_seats(client, cluster, market, signer),
+            Op::Kill => {
+                let Some(mut found) = quote_seats(client, cluster, market, signer)? else {
+                    return Ok(None);
+                };
+                let leader = operator_leader.and_then(LazyKey::resolved_pubkey);
+                if let Some(led) = leader.filter(|l| l != signer) {
+                    let led = leader_seats(client, cluster, market, &led)?
+                        .map(|m| m.seats)
+                        .unwrap_or_default();
+                    merge_seats(&mut found.seats, led);
+                }
+                Ok(Some(found))
+            }
             Op::Close | Op::Drain => leader_seats(client, cluster, market, signer),
         }
     }
@@ -197,6 +215,16 @@ fn seats_where(
         quote_treasury: Pubkey::new_from_array(view.header.quote_treasury),
         seats: sector_seats(view.sectors(), keep),
     }))
+}
+
+/// Add each of `more` that `seats` lacks, keeping sector order.
+fn merge_seats(seats: &mut Vec<SectorSeat>, more: Vec<SectorSeat>) {
+    for seat in more {
+        if !seats.iter().any(|s| s.idx == seat.idx) {
+            seats.push(seat);
+        }
+    }
+    seats.sort_by_key(|s| s.idx);
 }
 
 /// The non-free `sectors` that `keep` selects, in sector order.
@@ -309,7 +337,7 @@ pub fn plan(
             }
         };
         let address = chain::market_pda(cluster, &base, &quote);
-        let found = match op.seats(client, cluster, &address, &signer) {
+        let found = match op.seats(client, cluster, &address, &signer, operator_leader) {
             Ok(Some(found)) => found,
             Ok(None) => {
                 lines.push(format!("{symbol}: no market — skipped"));
@@ -323,10 +351,17 @@ pub fn plan(
             }
         };
         if found.seats.is_empty() {
-            lines.push(format!(
-                "{symbol}: {} {signer} holds no vault — skipped",
-                op.signer_role()
-            ));
+            // A kill scans by quote authority, so say so: a vault led under
+            // another quote key is out of its reach, and close stops it.
+            lines.push(match op {
+                Op::Kill => format!(
+                    "{symbol}: quote authority {signer} signs for no vault — skipped (close \
+                     stops a vault led under another quote key)"
+                ),
+                Op::Close | Op::Drain => {
+                    format!("{symbol}: leader {signer} leads no vault — skipped")
+                }
+            });
             continue;
         }
         for seat in &found.seats {
@@ -376,10 +411,9 @@ fn plan_line(symbol: &str, config: &PairConfig, seat: &SectorSeat, step: Step) -
 
 /// Run `op` against a fresh read, one transaction per vault, signed by the
 /// op's key (the quote authority for a kill, the leader otherwise) and paid by
-/// `wallet`. Every market is attempted;
-/// the job fails at the end if any send failed or any vault was refused, so
-/// the operator sees the outcome in red rather than a partial stop reading as
-/// success.
+/// `wallet`. Every market is attempted; the job fails at the end if any send
+/// failed or any vault was refused, so the operator sees the outcome in red
+/// rather than a partial stop reading as success.
 #[allow(clippy::too_many_arguments)]
 pub fn execute(
     op: Op,
@@ -407,7 +441,7 @@ pub fn execute(
             }
         };
         let address = chain::market_pda(cluster, &base, &quote);
-        let found = match op.seats(client, cluster, &address, &signer.pubkey()) {
+        let found = match op.seats(client, cluster, &address, &signer.pubkey(), operator_leader) {
             Ok(Some(found)) => found,
             Ok(None) => continue,
             Err(e) => {
@@ -464,14 +498,13 @@ pub fn execute(
 }
 
 /// The transaction for a sending `step` on `seat`, addressed to `cluster`'s
-/// program. `leader` is the step's signer: the quote authority for a kill,
-/// the leader for the rest.
+/// program, signed by `signer` (the op's own key).
 #[allow(clippy::too_many_arguments)]
 fn instructions(
     step: Step,
     cluster: Cluster,
     wallet: &Keypair,
-    leader: &Pubkey,
+    signer: &Pubkey,
     market: &Pubkey,
     base_mint: &Pubkey,
     quote_mint: &Pubkey,
@@ -484,10 +517,10 @@ fn instructions(
         // kill would go to a program that does not exist on mainnet.
         Step::Kill => vec![chain::retarget(
             cluster,
-            set_liquidity_profile_ix(*leader, *market, seat.idx, [0u8; PROFILE_BYTES]),
+            set_liquidity_profile_ix(*signer, *market, seat.idx, [0u8; PROFILE_BYTES]),
         )],
         Step::Close => vec![chain::build_close_vault_ix(
-            cluster, leader, market, seat.idx,
+            cluster, signer, market, seat.idx,
         )],
         Step::Drain {
             shares_in,
@@ -495,10 +528,10 @@ fn instructions(
             min_quote_out,
         } => {
             let mut ixs =
-                leader::leader_ata_creates(&wallet.pubkey(), leader, base_mint, quote_mint);
+                leader::leader_ata_creates(&wallet.pubkey(), signer, base_mint, quote_mint);
             ixs.push(chain::build_withdraw_leader_ix(
                 cluster,
-                leader,
+                signer,
                 market,
                 base_mint,
                 quote_mint,
@@ -598,6 +631,28 @@ mod tests {
             .unwrap_err();
         assert!(format!("{err:#}").contains("--quote"), "{err:#}");
         assert_eq!(leader.resolved_pubkey(), None);
+    }
+
+    #[test]
+    fn a_kill_refuses_a_led_vault_its_quote_key_cannot_sign() {
+        // The leader's own scan adds the vault the quote scan missed; it is
+        // refused, so the job ends red instead of reading as a full stop.
+        let quote = Pubkey::new_unique();
+        let mut found = vec![SectorSeat {
+            idx: 5,
+            ..seat(quote)
+        }];
+        let led_elsewhere = SectorSeat {
+            idx: 2,
+            quote_authority: Pubkey::new_unique(),
+            ..seat(quote)
+        };
+        // The vault both scans found is listed once.
+        let both = found[0];
+        merge_seats(&mut found, vec![led_elsewhere, both]);
+        assert_eq!(found.iter().map(|s| s.idx).collect::<Vec<_>>(), [2, 5]);
+        assert!(matches!(step(Op::Kill, &found[0], &quote), Step::Refuse(_)));
+        assert_eq!(step(Op::Kill, &found[1], &quote), Step::Kill);
     }
 
     #[test]

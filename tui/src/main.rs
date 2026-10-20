@@ -67,6 +67,22 @@ fn main() -> Result<()> {
     let leader_ref = args.leader.clone().or(refs.leader);
     let quote_ref = args.quote.clone().or(refs.quote);
 
+    // The operator's vault leader — the custody key. Mainnet-only, refused on
+    // localnet like `--quote`. It resolves only when a custody step first
+    // needs it (below), but its shape is checked now, before any `op read`
+    // prompt, so a key file is refused at launch rather than mid-session.
+    match &leader_ref {
+        Some(_) if !args.cluster.is_mainnet() => bail!(
+            "--leader is mainnet-only — the localnet roster leads with its committed role key"
+        ),
+        Some(arg) if !arg.starts_with(wallet::OP_REFERENCE_PREFIX) => bail!(
+            "--leader on mainnet must be a 1Password reference ({}vault/item/field) — key \
+             files are refused on a real cluster",
+            wallet::OP_REFERENCE_PREFIX
+        ),
+        _ => {}
+    }
+
     // Localnet reads the committed key files; mainnet resolves 1Password
     // references in memory and has no default admin (the default is the
     // committed localnet one).
@@ -143,34 +159,22 @@ fn main() -> Result<()> {
         }
     }
 
-    // The operator's vault leader — the custody key. Mainnet-only, refused on
-    // localnet like `--quote`. Only its reference is taken here: it resolves
-    // when a custody step first needs it, running the checks the other roles
-    // ran above, so a session that only re-centres never loads it. A file is
-    // refused now rather than at that first use.
-    let leader = match leader_ref {
-        None => None,
-        Some(_) if !args.cluster.is_mainnet() => bail!(
-            "--leader is mainnet-only — the localnet roster leads with its committed role key"
-        ),
-        Some(arg) if !arg.starts_with(wallet::OP_REFERENCE_PREFIX) => bail!(
-            "--leader on mainnet must be a 1Password reference ({}vault/item/field) — key \
-             files are refused on a real cluster",
-            wallet::OP_REFERENCE_PREFIX
-        ),
-        Some(arg) => {
-            let mut distinct_from = vec![(wallet.pubkey(), "--wallet")];
-            distinct_from.extend(quote.as_ref().map(|k| (k.pubkey(), "--quote")));
-            distinct_from.extend(program_key.as_ref().map(|k| (k.pubkey(), "--program-key")));
-            Some(Arc::new(LazyKey::new(
-                arg,
-                "--leader",
-                args.cluster,
-                distinct_from,
-                committed,
-            )))
-        }
-    };
+    // Only the leader's reference is taken here: it resolves when a custody
+    // step first needs it, running the checks the other roles ran above, so a
+    // session that only re-centres never loads it.
+    let leader = leader_ref.map(|arg| {
+        // The program rejects one key as both admin and leader.
+        let mut distinct_from = vec![(wallet.pubkey(), "--wallet")];
+        distinct_from.extend(quote.as_ref().map(|k| (k.pubkey(), "--quote")));
+        distinct_from.extend(program_key.as_ref().map(|k| (k.pubkey(), "--program-key")));
+        Arc::new(LazyKey::new(
+            arg,
+            "--leader",
+            args.cluster,
+            distinct_from,
+            committed,
+        ))
+    });
 
     // The ceremony record: always kept on mainnet, opt-in on localnet. Opened
     // before the banner so a log that cannot be written refuses the session
@@ -194,9 +198,11 @@ fn main() -> Result<()> {
     let rpc_url = args.cluster.rpc_url()?;
     if args.cluster.is_mainnet() {
         args.cluster.verify_genesis(&chain::rpc(&rpc_url))?;
+        // The reference, not a pubkey: the leader is not resolved yet, and the
+        // reference is what names the custody item to check before `yes`.
         let leader_label = leader
             .as_ref()
-            .map(|_| "reference set — resolved on the first custody step".to_string());
+            .map(|k| format!("{} (resolved on the first custody step)", k.reference()));
         let quote_label = quote.as_ref().map(|k| k.pubkey().to_string());
         let program_label = program_key.as_ref().map(|k| k.pubkey().to_string());
         let log_label = ceremony_log

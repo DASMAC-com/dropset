@@ -361,31 +361,36 @@ pub fn ladder_lines(levels: &[LadderLevel], center: f64) -> Vec<String> {
     lines
 }
 
-/// The one live vault on `market` whose quote authority is `quote`, read
-/// fresh, that a passive write can sign for — refusing none, several, or a
-/// frozen one.
+/// The one live vault on `market` whose quote authority is `quote_authority`,
+/// read fresh, that a passive write can sign for — refusing none, several, or
+/// a frozen one.
 fn passive_seat(
     client: &RpcClient,
     cluster: Cluster,
     market: &Pubkey,
-    quote: &Pubkey,
+    quote_authority: &Pubkey,
 ) -> Result<SectorSeat> {
-    let seats = emergency::quote_seats(client, cluster, market, quote)?
+    let seats = emergency::quote_seats(client, cluster, market, quote_authority)?
         .context("market not found")?
         .seats;
-    pick_seat(seats, quote)
+    pick_seat(seats, quote_authority)
 }
 
 /// [`passive_seat`]'s choice over one read's `seats` — split out so the
 /// refusals are testable without a chain.
-fn pick_seat(seats: Vec<SectorSeat>, quote: &Pubkey) -> Result<SectorSeat> {
+fn pick_seat(seats: Vec<SectorSeat>, quote_authority: &Pubkey) -> Result<SectorSeat> {
     let live: Vec<_> = seats.into_iter().filter(|s| !s.tombstoned).collect();
     let seat = match live[..] {
         [seat] => seat,
-        [] => bail!("quote authority {quote} signs for no live vault on this market"),
+        [] => bail!("quote authority {quote_authority} signs for no live vault on this market"),
         ref many => bail!(
-            "quote authority {quote} signs for {} vaults on this market — refusing to guess",
-            many.len()
+            "quote authority {quote_authority} signs for {} vaults on this market (#{}) — \
+             refusing to guess",
+            many.len(),
+            many.iter()
+                .map(|s| s.seq.to_string())
+                .collect::<Vec<_>>()
+                .join(", #")
         ),
     };
     if seat.frozen {
@@ -393,7 +398,7 @@ fn pick_seat(seats: Vec<SectorSeat>, quote: &Pubkey) -> Result<SectorSeat> {
     }
     // The scan keys on this field, so it holds by construction; kept as the
     // guard, since the program checks exactly this key.
-    if seat.quote_authority != *quote {
+    if seat.quote_authority != *quote_authority {
         bail!(
             "vault #{}'s quote authority is not this session's quote key — it cannot sign",
             seat.seq
@@ -402,19 +407,19 @@ fn pick_seat(seats: Vec<SectorSeat>, quote: &Pubkey) -> Result<SectorSeat> {
     Ok(seat)
 }
 
-/// Read the vault `quote` signs for on `market` fresh and build the ticket
-/// `form` describes. Sends nothing.
+/// Read the vault `quote_authority` signs for on `market` fresh and build the
+/// ticket `form` describes. Sends nothing.
 pub fn prepare(
     client: &RpcClient,
     repo_root: &Path,
     cluster: Cluster,
     market: &MarketView,
-    quote: &Pubkey,
+    quote_authority: &Pubkey,
     form: &Form,
 ) -> Result<Ticket> {
     let config = market::config_for(repo_root, cluster, &market.base_mint)
         .context("the selected market is not in this cluster's roster")?;
-    let seat = passive_seat(client, cluster, &market.address, quote)?;
+    let seat = passive_seat(client, cluster, &market.address, quote_authority)?;
     if form.op == PassiveOp::Recenter && !seat.quoting {
         bail!("no ladder rests on vault #{} — post one first", seat.seq);
     }
@@ -455,7 +460,7 @@ pub fn prepare(
         base_symbol: config.base.symbol,
         quote_symbol: config.quote.symbol,
         seat,
-        quote_authority: *quote,
+        quote_authority: *quote_authority,
         levels,
         center,
         center_source,
@@ -478,20 +483,20 @@ fn center_warning(center: f64, live: f64) -> Option<String> {
     })
 }
 
-/// Send the confirmed `ticket`, signed by the vault's quote authority `quote`
-/// and paid by `wallet`: the ladder and the reference in one transaction on a
+/// Send the confirmed `ticket`, signed by the vault's `quote_authority` and
+/// paid by `wallet`: the ladder and the reference in one transaction on a
 /// deploy, so the book never rests on the new shape at the old center; the
 /// reference alone on a re-center. Refuses, nothing sent, when the vault is no
 /// longer the one confirmed.
 pub fn execute(
     client: &RpcClient,
     wallet: &Keypair,
-    quote: &Keypair,
+    quote_authority: &Keypair,
     cluster: Cluster,
     ticket: &Ticket,
     log: &Logger,
 ) -> Result<String> {
-    if quote.pubkey() != ticket.quote_authority {
+    if quote_authority.pubkey() != ticket.quote_authority {
         bail!("the signing quote authority is not the one confirmed — nothing was sent");
     }
     let now = passive_seat(client, cluster, &ticket.market, &ticket.quote_authority)?;
@@ -529,7 +534,8 @@ pub fn execute(
         .map(|ix| chain::retarget(cluster, ix))
         .collect();
     let label = ticket.op.label();
-    chain::send_logged(client, wallet, &[wallet, quote], &ixs, label, log).context(label)?;
+    chain::send_logged(client, wallet, &[wallet, quote_authority], &ixs, label, log)
+        .context(label)?;
     log.accounts_changed();
     Ok(match ticket.op {
         PassiveOp::Deploy => format!(
@@ -696,20 +702,14 @@ mod tests {
             .summary()
             .iter()
             .any(|l| l.contains(&quote.pubkey().to_string()) && l.contains("quote authority")));
-        // The wrong key is refused before any read or send.
+        // A wrong signing key is refused before any read or send — even with
+        // the confirmed key as payer, so the check is on the signer argument.
         let stranger = Keypair::new();
         let client = RpcClient::new("http://127.0.0.1:1".to_string());
         let log = Logger::new(std::sync::mpsc::channel().0);
-        let err = execute(
-            &client,
-            &stranger,
-            &stranger,
-            Cluster::Localnet,
-            &ticket,
-            &log,
-        )
-        .unwrap_err()
-        .to_string();
+        let err = execute(&client, &quote, &stranger, Cluster::Localnet, &ticket, &log)
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("quote authority is not the one confirmed"),
             "{err}"

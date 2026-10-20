@@ -1338,9 +1338,12 @@ mod tests {
             &quote,
         );
         // The quote authority is its own argument, never defaulted to the
-        // leader: both keys ride in the instruction data.
-        let carries = |k: &Pubkey| ix.data.windows(32).any(|w| w == k.as_ref());
-        assert!(carries(&quote) && carries(&leader));
+        // leader, and each key sits in its own slot: the args run
+        // `quote_authority`, the one-byte `allow_outside_depositors`, then
+        // `leader_override`, so a swap of the two moves these offsets.
+        let at = |k: &Pubkey| ix.data.windows(32).position(|w| w == k.as_ref());
+        let (quote_at, leader_at) = (at(&quote).unwrap(), at(&leader).unwrap());
+        assert_eq!(leader_at, quote_at + 33);
         assert_eq!(
             metas(&ix),
             vec![

@@ -13,6 +13,7 @@
 //! key alone, never brings the leader into memory.
 
 // cspell:word QOUTE
+// cspell:word Vjcm
 
 use crate::cluster::Cluster;
 use crate::wallet;
@@ -50,33 +51,59 @@ impl KeyRefs {
         Self::parse(&text).with_context(|| format!("parse the keys file {}", path.display()))
     }
 
-    /// Parse `NAME=value` lines; blank lines and `#` comments are skipped and
-    /// a value may be quoted. An unknown name is refused rather than ignored,
-    /// so a misspelt role fails at launch instead of reading as absent.
+    /// Parse `NAME=value` lines; blank lines and whole-line `#` comments are
+    /// skipped and a value may be quoted. Anything ambiguous is refused at
+    /// launch rather than read some way that fails later, mid-session: an
+    /// unknown or repeated name, and a value carrying an inline comment
+    /// (which would otherwise become part of the reference).
     pub fn parse(text: &str) -> Result<Self> {
         let mut refs = Self::default();
+        let mut seen = Vec::new();
         for (n, line) in text.lines().enumerate() {
+            let n = n + 1;
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
             let Some((name, value)) = line.split_once('=') else {
-                bail!("line {}: expected NAME=value", n + 1);
+                bail!("line {n}: expected NAME=value");
             };
+            let name = name.trim();
             let value = unquote(value.trim());
-            let slot = match name.trim() {
+            let slot = match name {
                 WALLET_VAR => &mut refs.wallet,
                 LEADER_VAR => &mut refs.leader,
                 QUOTE_VAR => &mut refs.quote,
-                other => bail!(
-                    "line {}: unknown key `{other}` — expected {WALLET_VAR}, {LEADER_VAR} or {QUOTE_VAR}",
-                    n + 1
+                // Named only when it is shaped like a name: the text before
+                // a stray `=` could be the body of a pasted base64 secret.
+                other if is_name(other) => bail!(
+                    "line {n}: unknown key `{other}` — expected {WALLET_VAR}, {LEADER_VAR} or \
+                     {QUOTE_VAR} (no `export` prefix)"
                 ),
+                _ => bail!("line {n}: expected NAME=value with a known NAME"),
             };
+            if seen.contains(&name) {
+                bail!("line {n}: {name} is set twice");
+            }
+            seen.push(name);
+            if value.contains(" #") || value.contains("\t#") {
+                bail!(
+                    "line {n}: {name} carries an inline comment — put comments on their own line"
+                );
+            }
             *slot = (!value.is_empty()).then(|| value.to_string());
         }
         Ok(refs)
     }
+}
+
+/// Whether `s` is shaped like an env-file name — `A-Z`, `0-9` and `_`, after
+/// an optional `export ` prefix.
+fn is_name(s: &str) -> bool {
+    let s = s.strip_prefix("export ").unwrap_or(s).trim_start();
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
 }
 
 /// `value` without one pair of matching surrounding quotes.
@@ -140,10 +167,22 @@ impl LazyKey {
         Ok(key)
     }
 
-    /// The key's pubkey if it has been resolved — never resolves it.
+    /// The reference the key resolves from — not a secret.
+    pub fn reference(&self) -> &str {
+        &self.reference
+    }
+
+    /// The key's pubkey if it has been resolved — never resolves it, and
+    /// never waits: while a resolution holds the lock (an `op read` can sit on
+    /// a 1Password prompt) it answers `None`, so a UI poll cannot freeze on it.
     pub fn resolved_pubkey(&self) -> Option<Pubkey> {
-        let slot = self.resolved.lock().unwrap_or_else(|e| e.into_inner());
-        slot.as_ref().map(Keypair::pubkey)
+        match self.resolved.try_lock() {
+            Ok(slot) => slot.as_ref().map(Keypair::pubkey),
+            Err(std::sync::TryLockError::Poisoned(e)) => {
+                e.into_inner().as_ref().map(Keypair::pubkey)
+            }
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        }
     }
 }
 
@@ -174,6 +213,26 @@ mod tests {
         let err = KeyRefs::parse("DROPSET_TUI_QOUTE=op://v/q/k").unwrap_err();
         assert!(err.to_string().contains("unknown key `DROPSET_TUI_QOUTE`"));
         assert!(KeyRefs::parse("op://v/q/k").is_err());
+    }
+
+    #[test]
+    fn never_echoes_text_that_is_not_shaped_like_a_name() {
+        // A pasted base64 secret splits at its `=` padding; its body must not
+        // reach the error.
+        let err = KeyRefs::parse("c2VjcmV0Ym9keQ==").unwrap_err().to_string();
+        assert!(!err.contains("c2VjcmV0Ym9keQ"), "{err}");
+    }
+
+    #[test]
+    fn refuses_a_repeated_name_and_an_inline_comment() {
+        let twice = "DROPSET_TUI_QUOTE=op://v/a/k\nDROPSET_TUI_QUOTE=op://v/b/k\n";
+        assert!(KeyRefs::parse(twice)
+            .unwrap_err()
+            .to_string()
+            .contains("set twice"));
+        let commented = "DROPSET_TUI_LEADER=op://v/lead/key  # custody";
+        let err = KeyRefs::parse(commented).unwrap_err().to_string();
+        assert!(err.contains("inline comment"), "{err}");
     }
 
     #[test]

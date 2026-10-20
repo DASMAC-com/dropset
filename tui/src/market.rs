@@ -961,8 +961,20 @@ mod tests {
         );
         assert_eq!(lazy.resolved_pubkey(), None);
         let got = leader(root, &MAINNET_EURC, Some(&lazy)).unwrap();
-        assert_eq!(got.pubkey(), supplied.pubkey());
         std::fs::remove_file(&path).unwrap();
+        assert_eq!(got.pubkey(), supplied.pubkey());
+        assert_eq!(lazy.resolved_pubkey(), Some(supplied.pubkey()));
+    }
+
+    /// A localnet vault is opened with its committed leader as quote
+    /// authority, so the hot path signs with that same file there.
+    #[test]
+    fn a_localnet_pair_quotes_with_its_committed_leader() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        for c in PAIRS {
+            let quote = quote_authority(root, c, None).unwrap().pubkey();
+            assert_eq!(quote, leader(root, c, None).unwrap().pubkey());
+        }
     }
 
     /// The same for the quote authority, which is never the leader on an

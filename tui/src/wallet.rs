@@ -9,10 +9,12 @@
 //! Solana store.
 //!
 //! Mainnet keys never come from a file. Every mainnet role — admin, leader,
-//! program — is named by a 1Password secret reference (`op://vault/item/field`)
-//! and resolved by [`resolve_key`] through the `op` CLI into memory at launch,
-//! so the key exists on disk nowhere this process controls and the code that
-//! drives the ceremony never holds it as text.
+//! quote authority, program — is named by a 1Password secret reference
+//! (`op://vault/item/field`) and resolved by [`resolve_key`] through the `op`
+//! CLI into memory — at launch, except the leader, which resolves on its first
+//! custody step ([`crate::keys`]) — so the key exists on disk nowhere this
+//! process controls and the code that drives the ceremony never holds it as
+//! text.
 
 use crate::cluster::Cluster;
 use anyhow::{anyhow, bail, Context, Result};
