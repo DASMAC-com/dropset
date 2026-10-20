@@ -519,9 +519,9 @@ pub fn send_swap(
 }
 
 /// `swap` behind the SDK's [`SWAP_COMPUTE_UNIT_LIMIT`]: a bare `swap` gets
-/// only 200k CU with no budget instruction. The costliest take on an
-/// ordinary book fits that with little to spare, but a no-fill walk over a
-/// book of dust-sized levels does not; the limit covers it.
+/// only 200k CU with no budget instruction. An ordinary take fits that,
+/// but a take that clears the book to the heap ceiling and a no-fill walk
+/// over a book of dust-sized levels do not; the limit covers both.
 fn swap_with_compute_limit(swap: Instruction) -> [Instruction; 2] {
     [
         ComputeBudgetInstruction::set_compute_unit_limit(SWAP_COMPUTE_UNIT_LIMIT),
