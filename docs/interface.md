@@ -426,8 +426,8 @@ event codecs, PDA helpers). CI discipline:
   on `anchor-lang` 2.0 from the `anchor-next` branch, pinned by the lockfile.
   The **tooling** is the stable crates.io `anchor-cli`, pinned to an
   **exact** version (the Makefile's `ANCHOR_CLI_VERSION`, mirrored by the
-  Tests workflow's `ANCHOR_VERSION`), which builds the **sBPF v3** ELF the
-  program ships as, its default. The exact pin
+  Tests workflow's `ANCHOR_VERSION`), which by default builds the
+  **sBPF v3** ELF the program ships as. The exact pin
   rather than latest stable is deliberate: the CLI generates the IDL, so its
   version is part of the IDL-diff baseline below.
   The crate pin and the CLI pin move independently: a crate bump is its own

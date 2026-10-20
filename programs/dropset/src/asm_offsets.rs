@@ -40,9 +40,9 @@
 //!   serialization rather than against another number. Only their
 //!   *relationships* are asserted below, since those are what the fused
 //!   load depends on.
-//! * **The syscall id** (`SYS_MEMCPY_`) — a wrong hash names no
-//!   registered syscall, so every `set_liquidity_profile` parity case
-//!   fails at the call.
+//! * **Syscall ids** (`SYS_MEMCPY_`) — a wrong hash still loads but names
+//!   no registered syscall, so every parity case that reaches the profile
+//!   write fails at the call with `ProgramFailedToComplete`.
 
 use crate::{LiquidityProfile, Market, MarketHeader, ReferencePrice, Vault};
 use core::mem::{offset_of, size_of};
