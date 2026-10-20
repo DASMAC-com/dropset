@@ -35,6 +35,7 @@ use crate::accounts::MarketView;
 use crate::chain;
 use crate::cluster::Cluster;
 use crate::job::Logger;
+use crate::keys::LazyKey;
 use anyhow::{Context, Result};
 use bytemuck::Zeroable;
 use dropset_sdk::clock::{SlotSpan, WallSpan};
@@ -342,12 +343,39 @@ pub fn mint_symbols(repo_root: &Path, cluster: Cluster) -> Vec<(Pubkey, &'static
 /// exercises any market.
 const TAKER_KEYPAIR_FILE: &str = "keys/FFFF.json";
 
-/// Load the leader / quote-authority keypair `config` names.
+/// Load the leader keypair `config` names.
 ///
 /// An [`LeaderKey::Operator`] pair names no file, so this needs the key the
-/// operator supplied at launch as `operator`; without it, it errors rather
-/// than falling back to a committed role key that leads nothing real.
+/// operator named at launch as `operator`, resolving it now if this is its
+/// first use; without one, it errors rather than falling back to a committed
+/// role key that leads nothing real.
 pub fn leader(
+    repo_root: &Path,
+    config: &PairConfig,
+    operator: Option<&LazyKey>,
+) -> Result<Keypair> {
+    match config.leader {
+        LeaderKey::Keypair(file) => load_key(repo_root, file),
+        LeaderKey::Operator => operator
+            .with_context(|| {
+                format!(
+                    "the {} leader is operator-supplied on this cluster — relaunch with \
+                     its reference in the keys file or --leader op://…",
+                    config.base.symbol
+                )
+            })?
+            .resolve(),
+    }
+}
+
+/// Load the quote-authority keypair for `config`'s vault — the signer of
+/// `set_reference_price` and `set_liquidity_profile`.
+///
+/// A localnet pair's vault is opened with its committed leader as quote
+/// authority, so that file serves both roles there. An [`LeaderKey::Operator`]
+/// pair's vault is opened with the operator's separate quote key, `operator`,
+/// so the hot path never needs the custody key.
+pub fn quote_authority(
     repo_root: &Path,
     config: &PairConfig,
     operator: Option<&Keypair>,
@@ -356,8 +384,8 @@ pub fn leader(
         LeaderKey::Keypair(file) => load_key(repo_root, file),
         LeaderKey::Operator => operator.map(Keypair::insecure_clone).with_context(|| {
             format!(
-                "the {} leader is operator-supplied on this cluster — relaunch with \
-                 --leader op://…",
+                "the {} quote authority is operator-supplied on this cluster — relaunch \
+                 with its reference in the keys file or --quote op://…",
                 config.base.symbol
             )
         }),
@@ -379,14 +407,14 @@ pub fn config_for(
         .find(|c| c.base.address(repo_root).is_ok_and(|a| a == *base_mint))
 }
 
-/// Load the localnet leader / quote-authority keypair for the market with
+/// Load the localnet quote-authority keypair for the market with
 /// `base_mint` — the signer `set_reference_price` / `set_liquidity_profile`
 /// require. Localnet only: the eCLOB controls that call it are unavailable on
 /// mainnet.
-pub fn leader_for(repo_root: &Path, base_mint: &Pubkey) -> Result<Keypair> {
+pub fn quote_authority_for(repo_root: &Path, base_mint: &Pubkey) -> Result<Keypair> {
     let config = config_for(repo_root, Cluster::Localnet, base_mint)
         .context("market not in the bootstrap roster")?;
-    leader(repo_root, config, None)
+    quote_authority(repo_root, config, None)
 }
 
 /// Resolve a pair's two mint pubkeys without creating them — used to address
@@ -543,8 +571,8 @@ pub enum Funding {
 /// seed the vault with `deposit_leader` — first minting the leader's legs from
 /// the admin mint authority under the localnet `Mint*` modes, or checking the
 /// leader already holds them under [`Funding::LeaderHeld`]. The `leader` must be `config`'s leader key — it
-/// co-signs each instruction as the vault's quote authority / leader, while
-/// `wallet` (admin) pays the fees.
+/// co-signs the deposit — and `quote` the vault's quote authority, which
+/// co-signs the ladder ([`quote_authority`]); `wallet` (admin) pays the fees.
 ///
 /// No reference price is stamped here, so the market opens **dark**: the
 /// ladder and the inventory are in place, but the vault fails the program's
@@ -573,6 +601,7 @@ pub fn seed_vault(
     cluster: Cluster,
     wallet: &Keypair,
     leader: &Keypair,
+    quote: &Keypair,
     config: &PairConfig,
     market: &MarketView,
     vault_idx: u32,
@@ -624,12 +653,12 @@ pub fn seed_vault(
     );
     let ix = chain::retarget(
         cluster,
-        set_liquidity_profile_ix(leader.pubkey(), market.address, vault_idx, bytes),
+        set_liquidity_profile_ix(quote.pubkey(), market.address, vault_idx, bytes),
     );
     chain::send_logged(
         client,
         wallet,
-        &[wallet, leader],
+        &[wallet, quote],
         &[ix],
         "set_liquidity_profile",
         log,
@@ -913,14 +942,51 @@ mod tests {
     }
 
     /// A pair whose leader is operator-supplied refuses to load without one,
-    /// instead of quietly falling back to a committed role key.
+    /// instead of quietly falling back to a committed role key — and resolves
+    /// the supplied one only when asked.
     #[test]
     fn operator_leader_is_required_on_mainnet() {
         let root = Path::new("/nonexistent");
         let err = leader(root, &MAINNET_EURC, None).unwrap_err();
         assert!(format!("{err:#}").contains("--leader"), "{err:#}");
         let supplied = Keypair::new();
-        let got = leader(root, &MAINNET_EURC, Some(&supplied)).unwrap();
+        let path = std::env::temp_dir().join(format!("op-leader-{}.json", std::process::id()));
+        solana_keypair::write_keypair_file(&supplied, &path).unwrap();
+        let lazy = LazyKey::new(
+            path.to_string_lossy().into_owned(),
+            "--leader",
+            Cluster::Localnet,
+            vec![],
+            vec![],
+        );
+        assert_eq!(lazy.resolved_pubkey(), None);
+        let got = leader(root, &MAINNET_EURC, Some(&lazy)).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(got.pubkey(), supplied.pubkey());
+        assert_eq!(lazy.resolved_pubkey(), Some(supplied.pubkey()));
+    }
+
+    /// A localnet vault is opened with its committed leader as quote
+    /// authority, so the hot path signs with that same file there.
+    #[test]
+    fn a_localnet_pair_quotes_with_its_committed_leader() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        for c in PAIRS {
+            let quote = quote_authority(root, c, None).unwrap().pubkey();
+            assert_eq!(quote, leader(root, c, None).unwrap().pubkey());
+        }
+    }
+
+    /// The same for the quote authority, which is never the leader on an
+    /// operator-supplied pair: without the quote key it refuses rather than
+    /// signing the hot path with the custody key.
+    #[test]
+    fn operator_quote_authority_is_required_on_mainnet() {
+        let root = Path::new("/nonexistent");
+        let err = quote_authority(root, &MAINNET_EURC, None).unwrap_err();
+        assert!(format!("{err:#}").contains("--quote"), "{err:#}");
+        let supplied = Keypair::new();
+        let got = quote_authority(root, &MAINNET_EURC, Some(&supplied)).unwrap();
         assert_eq!(got.pubkey(), supplied.pubkey());
     }
 

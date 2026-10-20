@@ -230,7 +230,10 @@ pub fn build_create_market_ix(
 /// alongside the admin signer, and anchor-v2 rejects the same key in two
 /// slots when one is mutable. `fee_source` likewise must differ from
 /// `payer`. `fee_mint` / `fee_token_program` are the market's stamped fee
-/// config. The vault is named by [`default_vault_name`].
+/// config. `quote_authority` is set at creation, so the vault never sits
+/// with it defaulted to the leader. The vault is named by
+/// [`default_vault_name`].
+#[allow(clippy::too_many_arguments)]
 pub fn build_create_vault_ix(
     cluster: Cluster,
     payer: &Pubkey,
@@ -239,6 +242,7 @@ pub fn build_create_vault_ix(
     fee_mint: &Pubkey,
     fee_token_program: &Pubkey,
     leader: &Pubkey,
+    quote_authority: &Pubkey,
 ) -> Instruction {
     let registry = registry_pda(cluster);
     let ix = CreateVault {
@@ -255,7 +259,7 @@ pub fn build_create_vault_ix(
     }
     .instruction(CreateVaultInstructionArgs {
         perf_fee_rate: DEFAULT_PERF_FEE_RATE,
-        quote_authority: *leader,
+        quote_authority: *quote_authority,
         allow_outside_depositors: false,
         leader_override: *leader,
         name: default_vault_name(leader),
@@ -1156,7 +1160,16 @@ mod tests {
         let ixs = [
             build_init_ix(m, &a, &mint, 1),
             build_create_market_ix(m, &a, &k(5), &base, &quote, &mint, &SPL_TOKEN_PROGRAM_ID),
-            build_create_vault_ix(m, &a, &k(5), &market, &mint, &SPL_TOKEN_PROGRAM_ID, &k(6)),
+            build_create_vault_ix(
+                m,
+                &a,
+                &k(5),
+                &market,
+                &mint,
+                &SPL_TOKEN_PROGRAM_ID,
+                &k(6),
+                &k(7),
+            ),
             build_deposit_leader_ix(
                 m,
                 &a,
@@ -1312,6 +1325,7 @@ mod tests {
         let market = Pubkey::new_unique();
         let fee_mint = Pubkey::new_unique();
         let leader = Pubkey::new_unique();
+        let quote = Pubkey::new_unique();
         let registry = registry_pda(L);
         let ix = build_create_vault_ix(
             L,
@@ -1321,7 +1335,15 @@ mod tests {
             &fee_mint,
             &SPL_TOKEN_PROGRAM_ID,
             &leader,
+            &quote,
         );
+        // The quote authority is its own argument, never defaulted to the
+        // leader, and each key sits in its own slot: the args run
+        // `quote_authority`, the one-byte `allow_outside_depositors`, then
+        // `leader_override`, so a swap of the two moves these offsets.
+        let at = |k: &Pubkey| ix.data.windows(32).position(|w| w == k.as_ref());
+        let (quote_at, leader_at) = (at(&quote).unwrap(), at(&leader).unwrap());
+        assert_eq!(leader_at, quote_at + 33);
         assert_eq!(
             metas(&ix),
             vec![

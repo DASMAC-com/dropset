@@ -32,7 +32,7 @@ convention, in the order the localnet bootstrap introduces them:
 | `BBBB.json` | `BBBB…` | admin 1 — payer / upgrade / mint authority |
 | `CCCC.json` | `CCCC…` | admin 2                                    |
 | `DDDD.json` | `DDDD…` | registrant                                 |
-| `EEEE.json` | `EEEE…` | vault leader                               |
+| `EEEE.json` | `EEEE…` | vault leader and quote authority           |
 | `FFFF.json` | `FFFF…` | taker                                      |
 
 `AAAA.json` is the **program keypair**: it is copied into
@@ -41,6 +41,27 @@ Makefile target) so `declare_id!` and anchor's build-time program-ID
 check agree. The rest are signer accounts the TUI and bots fund and
 drive. Need more participants (extra takers or makers)? Grind the next
 prefix (`GGGG`, `HHHH`, …) into this directory.
+
+## Mainnet signing keys
+
+No mainnet signing key lives here, and the TUI refuses any key in this
+directory on mainnet, since its secret is public. The mainnet TUI reads one
+1Password reference per key from its own git-ignored keys file,
+`tui/keys.env`. To start one, copy the committed placeholder file
+`tui/keys.env.example`. It holds three keys:
+
+- the admin wallet
+- the vault leader (Lead), the custody key, which the TUI resolves only
+  when a custody step first needs it
+- the vault quote authority (Quote), which signs the ladder, the re-centre
+  and the emergency kill, and which create-vault sets on every new vault
+
+On localnet `EEEE.json` is both leader and quote authority.
+
+That file is one of the repo's two secrets-reference homes. The other is
+the localnet collectors enclave, `infra/localnet/secrets.local.env`, which
+holds the data stack's credentials (`docs/data-feeds.md` §12). Each keeps
+references only; the values stay in 1Password.
 
 ## The mainnet program id
 

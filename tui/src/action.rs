@@ -35,6 +35,7 @@ use crate::deploy;
 use crate::emergency;
 use crate::explorer;
 use crate::job::{self, JobEvent, Logger};
+use crate::keys::LazyKey;
 use crate::market::{self, PairConfig};
 use crate::publish;
 use crate::teardown;
@@ -666,10 +667,17 @@ pub struct JobContext {
     pub repo_root: PathBuf,
     pub wallet_path: String,
     pub wallet: Keypair,
-    /// The operator-supplied vault leader (`--leader`), for a roster whose
-    /// pairs name no leader file ([`market::LeaderKey::Operator`] — mainnet).
-    /// `None` on localnet, whose pairs use the committed role keys.
-    pub leader: Option<Keypair>,
+    /// The operator-supplied vault leader (the keys file or `--leader`), for a
+    /// roster whose pairs name no leader file ([`market::LeaderKey::Operator`]
+    /// — mainnet). The custody key, so it resolves only when a custody step
+    /// first needs it. `None` on localnet, whose pairs use the committed role
+    /// keys.
+    pub leader: Option<Arc<LazyKey>>,
+    /// The operator-supplied vault quote authority (the keys file or
+    /// `--quote`): the signer of the ladder and reference-price writes on an
+    /// [`market::LeaderKey::Operator`] roster. `None` on localnet, where the
+    /// committed leader is also the quote authority.
+    pub quote: Option<Keypair>,
     /// The program keypair (`--program-key`), needed only by a first
     /// [`Action::Publish`] — an upgrade is signed by the admin alone.
     pub program_key: Option<Keypair>,
@@ -714,7 +722,8 @@ pub fn dispatch(
     let wallet_path = ctx.wallet_path.clone();
     let wallet = ctx.wallet();
     let cluster = ctx.cluster;
-    let operator_leader = ctx.leader.as_ref().map(Keypair::insecure_clone);
+    let operator_leader = ctx.leader.clone();
+    let operator_quote = ctx.quote.as_ref().map(Keypair::insecure_clone);
     let program_key = ctx.program_key.as_ref().map(Keypair::insecure_clone);
     let record = ctx.ceremony_log.clone();
     let explorer_state = ctx.explorer_state.clone();
@@ -777,8 +786,19 @@ pub fn dispatch(
             job::spawn_recorded(tx, "Create vaults", record, move |log| {
                 let client = chain::rpc(&rpc_url);
                 over_roster(cluster, "vault", log, |config| {
-                    let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
-                    do_create_vault(&client, &wallet, &repo_root, cluster, config, &leader, log)
+                    let quote =
+                        market::quote_authority(&repo_root, config, operator_quote.as_ref())?;
+                    let leader = market::leader(&repo_root, config, operator_leader.as_deref())?;
+                    do_create_vault(
+                        &client,
+                        &wallet,
+                        &repo_root,
+                        cluster,
+                        config,
+                        &leader,
+                        &quote.pubkey(),
+                        log,
+                    )
                 })
             });
         }
@@ -794,9 +814,12 @@ pub fn dispatch(
                     market::Funding::MintBoth
                 };
                 over_roster(cluster, "deposit", log, |config| {
-                    let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
+                    let quote =
+                        market::quote_authority(&repo_root, config, operator_quote.as_ref())?;
+                    let leader = market::leader(&repo_root, config, operator_leader.as_deref())?;
                     do_deposit(
-                        &client, &wallet, &repo_root, cluster, config, &leader, funding, log,
+                        &client, &wallet, &repo_root, cluster, config, &leader, &quote, funding,
+                        log,
                     )
                 })
             });
@@ -862,8 +885,17 @@ pub fn dispatch(
                                     &client, &wallet, repo_root, cluster, config, &log,
                                 )?
                                 .log_skip(&log);
+                                // Localnet: the committed leader is also
+                                // the quote authority.
                                 do_create_vault(
-                                    &client, &wallet, repo_root, cluster, config, &leader, &log,
+                                    &client,
+                                    &wallet,
+                                    repo_root,
+                                    cluster,
+                                    config,
+                                    &leader,
+                                    &leader.pubkey(),
+                                    &log,
                                 )?
                                 .log_skip(&log);
                                 do_deposit(
@@ -872,6 +904,7 @@ pub fn dispatch(
                                     repo_root,
                                     cluster,
                                     config,
+                                    &leader,
                                     &leader,
                                     market::Funding::MintBaseOnly,
                                     &log,
@@ -1055,7 +1088,8 @@ pub fn dispatch(
                     &wallet,
                     &repo_root,
                     cluster,
-                    operator_leader.as_ref(),
+                    operator_leader.as_deref(),
+                    operator_quote.as_ref(),
                     log,
                 )
             });
@@ -1074,22 +1108,23 @@ pub fn dispatch(
     }
 }
 
-/// Spawn the job that sends a confirmed passive-ladder `ticket`, its leader
-/// resolved per pair exactly as [`dispatch_leader`] resolves it.
+/// Spawn the job that sends a confirmed passive-ladder `ticket`, signed by the
+/// pair's quote authority ([`market::quote_authority`]) — never the leader,
+/// which this path does not resolve.
 pub fn dispatch_passive(ctx: &JobContext, ticket: crate::passive::Ticket, tx: Sender<JobEvent>) {
     let rpc_url = ctx.rpc_url.clone();
     let repo_root = ctx.repo_root.clone();
     let wallet = ctx.wallet();
     let cluster = ctx.cluster;
-    let operator_leader = ctx.leader.as_ref().map(Keypair::insecure_clone);
+    let operator_quote = ctx.quote.as_ref().map(Keypair::insecure_clone);
     let record = ctx.ceremony_log.clone();
     job::spawn_recorded(tx, ticket.op.label(), record, move |log| {
         let client = chain::rpc(&rpc_url);
         let base_mint = ticket.base_mint;
         let config = market::config_for(&repo_root, cluster, &base_mint)
             .context("the selected market is not in this cluster's roster")?;
-        let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
-        crate::passive::execute(&client, &wallet, &leader, cluster, &ticket, log)
+        let quote = market::quote_authority(&repo_root, config, operator_quote.as_ref())?;
+        crate::passive::execute(&client, &wallet, &quote, cluster, &ticket, log)
     });
 }
 
@@ -1101,13 +1136,13 @@ pub fn dispatch_leader(ctx: &JobContext, ticket: crate::leader::Ticket, tx: Send
     let repo_root = ctx.repo_root.clone();
     let wallet = ctx.wallet();
     let cluster = ctx.cluster;
-    let operator_leader = ctx.leader.as_ref().map(Keypair::insecure_clone);
+    let operator_leader = ctx.leader.clone();
     let record = ctx.ceremony_log.clone();
     job::spawn_recorded(tx, ticket.op.label(), record, move |log| {
         let client = chain::rpc(&rpc_url);
         let config = market::config_for(&repo_root, cluster, &ticket.market.base_mint)
             .context("the selected market is not in this cluster's roster")?;
-        let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
+        let leader = market::leader(&repo_root, config, operator_leader.as_deref())?;
         crate::leader::execute(&client, &wallet, &leader, &repo_root, cluster, &ticket, log)
     });
 }
@@ -1162,7 +1197,8 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
                 &ctx.repo_root,
                 ctx.cluster,
                 &admin,
-                ctx.leader.as_ref(),
+                ctx.leader.as_deref(),
+                ctx.quote.as_ref(),
             );
         }
         Action::InitRegistry => {
@@ -1205,7 +1241,8 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
         Action::CreateVault | Action::Deposit => {
             for config in roster {
                 let symbol = config.base.symbol;
-                let leader = market::leader(&ctx.repo_root, config, ctx.leader.as_ref())?.pubkey();
+                let leader =
+                    market::leader(&ctx.repo_root, config, ctx.leader.as_deref())?.pubkey();
                 let (base, quote) = market::pair_mints(&ctx.repo_root, config)?;
                 let address = chain::market_pda(ctx.cluster, &base, &quote);
                 // A missing market or vault is refused here because the step
@@ -1217,7 +1254,13 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
                 let line = match (action, deposit_seat(&seats, &leader)) {
                     (Action::CreateVault, DepositSeat::NoVault) => {
                         work += 1;
-                        format!("{symbol}: CREATE vault on {address}, leader {leader} (fee waived)")
+                        let quote =
+                            market::quote_authority(&ctx.repo_root, config, ctx.quote.as_ref())?
+                                .pubkey();
+                        format!(
+                            "{symbol}: CREATE vault on {address}, leader {leader}, quote \
+                             authority {quote} (fee waived)"
+                        )
                     }
                     (Action::CreateVault, _) => {
                         format!("{symbol}: leader already has a vault — skipped")
@@ -1282,7 +1325,7 @@ fn eclob_target(
 /// Reprice the selected market's vault (`set_reference_price`) — the cheap
 /// hot path. Reads the live reference, scales it by `bps`, and re-stamps it at
 /// the current slot, moving the *whole* ladder without reshaping it. The
-/// leader (quote authority) co-signs; the admin wallet pays the fee.
+/// vault's quote authority co-signs; the admin wallet pays the fee.
 #[allow(clippy::too_many_arguments)]
 fn do_repeg(
     client: &solana_client::rpc_client::RpcClient,
@@ -1295,7 +1338,7 @@ fn do_repeg(
     log: &Logger,
 ) -> Result<String> {
     let (market, base_mint, vault_idx) = eclob_target(market, base_mint, vault_idx)?;
-    let leader = market::leader_for(repo_root, &base_mint)?;
+    let quote = market::quote_authority_for(repo_root, &base_mint)?;
     // Bump the live reference — decode it to its atoms-ratio, scale by the bps
     // step, and re-encode — so the nudge is relative to the current peg.
     let current = accounts::read_reference_price(client, &market, vault_idx)
@@ -1323,7 +1366,7 @@ fn do_repeg(
     let ix = chain::retarget(
         Cluster::Localnet,
         set_reference_price_ix(
-            leader.pubkey(),
+            quote.pubkey(),
             market,
             vault_idx,
             price,
@@ -1334,7 +1377,7 @@ fn do_repeg(
     chain::send_logged(
         client,
         wallet,
-        &[wallet, &leader],
+        &[wallet, &quote],
         &[ix],
         "set_reference_price",
         log,
@@ -1358,7 +1401,8 @@ fn do_repeg(
 /// Reshape the selected market's ladder (`set_liquidity_profile`) — the cold
 /// path. Rewrites the quote profile (spread / per-side depth) while the peg
 /// stays put, so the book's *shape* changes without moving the anchor. The
-/// preset is chosen by `action`; the leader co-signs, the admin wallet pays.
+/// preset is chosen by `action`; the vault's quote authority co-signs, the
+/// admin wallet pays.
 /// `swap_side` orients the [`Action::ThinFarSide`] preset — the "far" side is
 /// the one the current swap would take from (ask on a Buy, bid on a Sell), so
 /// flipping the swap side (`S`) flips which ladder thins.
@@ -1380,7 +1424,7 @@ fn do_reshape(
     // so the committed roster and its role keys are the right ones here.
     let config = market::config_for(repo_root, Cluster::Localnet, &base_mint)
         .context("market not in the bootstrap roster")?;
-    let leader = market::leader(repo_root, config, None)?;
+    let quote = market::quote_authority(repo_root, config, None)?;
     // Widen / tighten step the spread by ±5 bps (the caller adjusts `spread_bps`
     // before dispatch); the ladder is rebuilt at that spread, keeping all four
     // levels. Thin-far-side keeps the full bid ladder over a depth-scaled ask
@@ -1422,12 +1466,12 @@ fn do_reshape(
     };
     let ix = chain::retarget(
         Cluster::Localnet,
-        set_liquidity_profile_ix(leader.pubkey(), market, vault_idx, bytes),
+        set_liquidity_profile_ix(quote.pubkey(), market, vault_idx, bytes),
     );
     chain::send_logged(
         client,
         wallet,
-        &[wallet, &leader],
+        &[wallet, &quote],
         &[ix],
         "set_liquidity_profile",
         log,
@@ -1762,6 +1806,11 @@ pub(crate) fn do_create_market(
 /// key in the admin and leader slots, and admin teardown's
 /// `force_withdraw_leader` would alias them. The fee source likewise must
 /// differ from the payer.
+///
+/// The vault's quote authority is `quote`, set in the create itself. On
+/// mainnet it must be a key of its own, so the custody key is never the
+/// vault's daily signer — not even for the instant before a separate
+/// `set_quote_authority` could land.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn do_create_vault(
     client: &solana_client::rpc_client::RpcClient,
@@ -1770,6 +1819,7 @@ pub(crate) fn do_create_vault(
     cluster: Cluster,
     config: &PairConfig,
     leader: &Keypair,
+    quote: &Pubkey,
     log: &Logger,
 ) -> Result<Outcome> {
     if leader.pubkey() == wallet.pubkey() {
@@ -1777,6 +1827,9 @@ pub(crate) fn do_create_vault(
             "the leader must not be the admin wallet ({})",
             wallet.pubkey()
         );
+    }
+    if cluster.is_mainnet() && *quote == leader.pubkey() {
+        anyhow::bail!("the quote authority must not be the leader on mainnet");
     }
     let registry =
         accounts::registry_fresh(client, cluster)?.context("registry not found — init first")?;
@@ -1798,6 +1851,7 @@ pub(crate) fn do_create_vault(
     ensure_funded(client, &wallet.pubkey(), cluster, log)?;
     let fee_source = Keypair::new().pubkey();
     log.log(format!("vault leader: {}", leader.pubkey()));
+    log.log(format!("quote authority: {quote}"));
     let ix = chain::build_create_vault_ix(
         cluster,
         &wallet.pubkey(),
@@ -1806,6 +1860,7 @@ pub(crate) fn do_create_vault(
         &registry.fee_mint,
         &registry.fee_token_program,
         &leader.pubkey(),
+        quote,
     );
     // Trailing rent top-up for the market PDA, which create_vault grows —
     // see RENT_TOPUP_LAMPORTS.
@@ -1875,6 +1930,7 @@ pub(crate) fn do_deposit(
     cluster: Cluster,
     config: &PairConfig,
     leader: &Keypair,
+    quote: &Keypair,
     funding: market::Funding,
     log: &Logger,
 ) -> Result<Outcome> {
@@ -1907,7 +1963,7 @@ pub(crate) fn do_deposit(
     let market = accounts::read_market_at(client, cluster, market_address)
         .context("could not read the market back — refusing")?;
     market::seed_vault(
-        client, cluster, wallet, leader, config, &market, seat.idx, funding, log,
+        client, cluster, wallet, leader, quote, config, &market, seat.idx, funding, log,
     )?;
     log.accounts_changed();
     Ok(Outcome::Done(format!(

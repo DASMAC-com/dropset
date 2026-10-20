@@ -341,6 +341,7 @@ pub fn confirm_mainnet_entry(
     rpc_url: &str,
     admin: &str,
     leader: Option<&str>,
+    quote: Option<&str>,
     program: Option<&str>,
     ceremony_log: &str,
 ) -> Result<()> {
@@ -353,9 +354,15 @@ pub fn confirm_mainnet_entry(
     eprintln!("   admin:    {admin}  (--wallet; registry admin, upgrade authority, payer)");
     match leader {
         Some(leader) => {
-            eprintln!("   leader:   {leader}  (--leader; leads every roster vault)")
+            eprintln!("   leader:   {leader}  (leads every roster vault)")
         }
-        None => eprintln!("   leader:   (none — create-vault and deposit will refuse)"),
+        None => eprintln!("   leader:   (none — create-vault, deposit and withdraw will refuse)"),
+    }
+    match quote {
+        Some(quote) => {
+            eprintln!("   quote:    {quote}  (signs the ladder, re-centre and kill)")
+        }
+        None => eprintln!("   quote:    (none — watch-only)"),
     }
     match program {
         Some(program) => eprintln!("   program:  {program}  (--program-key; first publish)"),

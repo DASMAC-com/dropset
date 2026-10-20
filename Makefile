@@ -384,17 +384,22 @@ endef
 # verifies the endpoint's genesis hash really is mainnet-beta's and requires a
 # typed confirmation before drawing a frame.
 #
-# Keys are 1Password references, never files, e.g.
-# `TUI_MAINNET_ARGS="--wallet op://<vault>/<item>/<field> --leader op://…"`;
-# see `cargo run -p dropset-tui -- --help`.
+# Keys are 1Password references, never files, read by the TUI itself from its
+# git-ignored keys file — one reference per key (wallet, leader, quote); copy
+# tui/keys.env.example to start one. The target is deliberately not run under
+# `op run`, so no resolved key reaches the environment. TUI_MAINNET_ARGS
+# carries `--program-key` for a first publish, or a one-off override of a
+# keys-file line; see `cargo run -p dropset-tui -- --help`.
 #
 # `make demo` and `make tui` are untouched.
+TUI_KEYS_FILE ?= tui/keys.env
 TUI_MAINNET_ARGS ?=
 MAINNET_RPC_HINT := mainnet mode has no default endpoint; set it explicitly
 .PHONY: tui-mainnet
 tui-mainnet:
 	$(call require-env,DROPSET_MAINNET_RPC_URL,$(MAINNET_RPC_HINT))
-	cargo run -p dropset-tui -- --cluster mainnet $(TUI_MAINNET_ARGS)
+	cargo run -p dropset-tui -- --cluster mainnet --keys-file '$(TUI_KEYS_FILE)' \
+		$(TUI_MAINNET_ARGS)
 
 # Film-the-startup variant of `tui-mainnet`: the same cockpit, with the two
 # things it insists on filled in so it launches with no arguments. The RPC

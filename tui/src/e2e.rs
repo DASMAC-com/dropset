@@ -113,9 +113,23 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
     ));
     let config = market::roster(L)[0];
     let leader = market::leader(&root, config, None).unwrap();
+    // A quote authority of its own, as on mainnet: the seed ladder must be
+    // signed by it, not the leader, or the deposit step fails on chain.
+    let quote_authority = Keypair::new();
     let steps: [&dyn Fn() -> anyhow::Result<Outcome>; 3] = [
         &|| action::do_create_market(&client, &admin, &root, L, config, &log),
-        &|| action::do_create_vault(&client, &admin, &root, L, config, &leader, &log),
+        &|| {
+            action::do_create_vault(
+                &client,
+                &admin,
+                &root,
+                L,
+                config,
+                &leader,
+                &quote_authority.pubkey(),
+                &log,
+            )
+        },
         &|| {
             action::do_deposit(
                 &client,
@@ -124,6 +138,7 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
                 L,
                 config,
                 &leader,
+                &quote_authority,
                 market::Funding::MintBoth,
                 &log,
             )
