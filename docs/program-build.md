@@ -21,7 +21,7 @@ recipe that produced them, so nobody has to re-measure them.
 - **The program builds for v3**, the CLI's default; no make target passes
   `--arch`. Loading that ELF needs the Agave 4.x runtime: Agave 3.1's sBPF v3
   (SIMD-0178, -0179, -0189) predates the SIMD-0377 encoding that
-  platform-tools v1.57 emits: litesvm 0.11, on Agave 3.1 with every feature
+  platform-tools v1.57 emits. litesvm 0.11, on Agave 3.1 with every feature
   enabled, rejected the v3 ELF with
   `Failed to parse ELF file: invalid file header`. The tests' litesvm 0.18
   (solana-sbpf 0.23) runs Agave 4.3, and the local validator runs 4.3 or
