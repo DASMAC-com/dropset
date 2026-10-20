@@ -116,12 +116,22 @@ export const depositClosedReason = (
   return null;
 };
 
-// Why the contribute surface takes no deposit into `v`, or null when it does:
-// the program's gates first (depositClosedReason), then two states the
-// program would size but the surface holds closed, in words. A one-sided
-// vault (one leg empty) would only take the leg it holds, so it waits for the
-// book to rebalance; a vault at its leader floor has no room for any outside
-// capital.
+// Whether not even one more share fits under the leader's min_leader_share
+// floor. A live vault takes the program's own integer check (as
+// leaderFloorHolds does at send time), so a vault exactly at its floor reads
+// full; a mock row falls back to the float cap.
+const atLeaderFloor = (v: Vault): boolean =>
+  v.chain
+    ? v.chain.leaderShares * BigInt(PPM) <
+      BigInt(v.minLeaderSharePpm) * (v.chain.totalShares + 1n)
+    : maxOutsideDepositValue(v) === 0;
+
+// Why the contribute surface takes no deposit into `v`, or null when it does,
+// in words: the program's gates first (depositClosedReason), then an empty
+// or one-sided vault, which the program would size but the surface holds
+// closed (a one-sided vault would only take the leg it holds, so it waits for
+// the book to rebalance), then a vault at its leader floor, where the program
+// would reject any outside deposit.
 export const contributeClosedReason = (
   market: Pick<VaultMarket, "base" | "quote">,
   v: Vault,
@@ -129,11 +139,13 @@ export const contributeClosedReason = (
 ): string | null => {
   const gate = depositClosedReason(v, signer);
   if (gate) return gate;
+  if (v.baseReserve <= 0 && v.quoteReserve <= 0)
+    return "Closed for now: the vault holds neither asset.";
   if (v.baseReserve <= 0 || v.quoteReserve <= 0) {
     const held = v.baseReserve > 0 ? market.base : market.quote;
     return `One-sided for now: the vault holds only ${held}. Deposits reopen when the book rebalances.`;
   }
-  if (maxOutsideDepositValue(v) === 0) {
+  if (atLeaderFloor(v)) {
     const floor = leaderFloorFraction(v);
     const multiple = Math.round((1 - floor) / floor);
     const floorPct = Math.round(floor * 100);

@@ -183,6 +183,28 @@ describe("contributeClosedReason", () => {
       ),
     ).toBeNull();
   });
+
+  it("decides the floor in integers, exactly at one share of room", () => {
+    // 0.9% of 1,000 shares is exactly the leader's 9: no share fits. The
+    // float cap (9 / 0.009 lands just above 1,000) reads a sliver of room.
+    const atFloor = { leaderShares: 9n, minLeaderSharePpm: 9_000 };
+    expect(
+      contributeClosedReason(PAIR, vault({ ...atFloor, totalShares: 1_000n })),
+    ).toMatch(/^Full/);
+    expect(
+      contributeClosedReason(PAIR, vault({ ...atFloor, totalShares: 999n })),
+    ).toBeNull();
+  });
+
+  it("names an empty vault, and puts the program's gates first", () => {
+    expect(
+      contributeClosedReason(PAIR, vault({ baseAtoms: 0n, quoteAtoms: 0n })),
+    ).toMatch(/holds neither asset/);
+    expect(
+      contributeClosedReason(PAIR, vault({ frozen: true, quoteAtoms: 0n })),
+    ).toMatch(/frozen/);
+    expect(contributeClosedReason(PAIR, vault(), LEADER)).toMatch(/lead/);
+  });
 });
 
 describe("the public vault link", () => {

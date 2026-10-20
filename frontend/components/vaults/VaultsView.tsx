@@ -500,7 +500,8 @@ function VaultsInner() {
 
   // A public vault link (vaultLinkHref) names one live vault by its pair and
   // `seq`. Captured once from the URL; when the first live read lands, that
-  // vault's dialog opens, and the link is spent either way.
+  // vault's dialog opens if it lists the vault, and the link is spent either
+  // way.
   const [link, setLink] = useState(() => {
     const seq = searchParams.get(VAULT_SEQ_PARAM);
     return seq === null
@@ -512,9 +513,13 @@ function VaultsInner() {
         };
   });
   useEffect(() => {
-    if (link === null || chain.status === "loading") return;
+    // An errored first read is retried by the next poll, so the link waits
+    // for a read that lands rather than being spent on the failure.
+    if (link === null || chain.status !== "ready") return;
     const hit = findVaultBySeq(chain.markets, link.base, link.quote, link.seq);
     if (hit) setDialog(hit);
+    // A link that names no vault leaves the pair pin but not the dead `seq`.
+    else replaceUrlParams({ [VAULT_SEQ_PARAM]: null });
     setLink(null);
   }, [link, chain.status, chain.markets]);
 

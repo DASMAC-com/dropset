@@ -26,11 +26,13 @@ export const vaultsHref = (
   return `/vaults?${params.toString()}`;
 };
 
+// The query key a public vault link carries the vault's `seq` under.
+export const VAULT_SEQ_PARAM = "seq";
+
 // The public link to one live vault: its market's pair plus `seq`, the vault's
 // stable per-market number (a sector index can be reused). Opening it pins
 // the table to the market and opens that vault's dialog, so it can be shared
 // or printed as a QR code. Relative; the dialog prefixes the origin.
-export const VAULT_SEQ_PARAM = "seq";
 export const vaultLinkHref = (
   base: string,
   quote: string,
