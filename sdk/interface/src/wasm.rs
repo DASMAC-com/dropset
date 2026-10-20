@@ -233,6 +233,8 @@ pub struct VaultSlab {
     quote_atoms: Vec<u64>,
     total_shares: Vec<u64>,
     leader_shares: Vec<u64>,
+    high_water_marks: Vec<u64>,
+    perf_fee_rates: Vec<u32>,
     min_leader_shares: Vec<u32>,
     frozen: Vec<u8>,
     allow_outside_depositors: Vec<u8>,
@@ -275,6 +277,16 @@ impl VaultSlab {
     #[wasm_bindgen(getter)]
     pub fn leader_shares(&self) -> Vec<u64> {
         self.leader_shares.clone()
+    }
+    /// Performance-fee high-water mark, a Q32.32 value per share.
+    #[wasm_bindgen(getter)]
+    pub fn high_water_marks(&self) -> Vec<u64> {
+        self.high_water_marks.clone()
+    }
+    /// The leader's performance-fee rate, in ppm.
+    #[wasm_bindgen(getter)]
+    pub fn perf_fee_rates(&self) -> Vec<u32> {
+        self.perf_fee_rates.clone()
     }
     /// Floor on the leader's share of the vault, in ppm.
     #[wasm_bindgen(getter)]
@@ -320,6 +332,8 @@ pub fn vaults(market_data: &[u8]) -> Result<VaultSlab, JsError> {
         quote_atoms: Vec::with_capacity(n),
         total_shares: Vec::with_capacity(n),
         leader_shares: Vec::with_capacity(n),
+        high_water_marks: Vec::with_capacity(n),
+        perf_fee_rates: Vec::with_capacity(n),
         min_leader_shares: Vec::with_capacity(n),
         frozen: Vec::with_capacity(n),
         allow_outside_depositors: Vec::with_capacity(n),
@@ -333,6 +347,8 @@ pub fn vaults(market_data: &[u8]) -> Result<VaultSlab, JsError> {
         slab.quote_atoms.push(v.quote_atoms.get());
         slab.total_shares.push(v.total_shares.get());
         slab.leader_shares.push(v.leader_shares.get());
+        slab.high_water_marks.push(v.hwm.get());
+        slab.perf_fee_rates.push(v.perf_fee_rate.get());
         slab.min_leader_shares.push(v.min_leader_share.get());
         slab.frozen.push(v.frozen);
         slab.allow_outside_depositors

@@ -192,6 +192,16 @@ export class VaultSlab {
         return v1;
     }
     /**
+     * Performance-fee high-water mark, a Q32.32 value per share.
+     * @returns {BigUint64Array}
+     */
+    get high_water_marks() {
+        const ret = wasm.vaultslab_high_water_marks(this.__wbg_ptr);
+        var v1 = getArrayU64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
      * Sector indices (the instructions' `vault_idx`).
      * @returns {Uint32Array}
      */
@@ -239,6 +249,16 @@ export class VaultSlab {
         const ret = wasm.vaultslab_outside_deposits_approved(this.__wbg_ptr);
         var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * The leader's performance-fee rate, in ppm.
+     * @returns {Uint32Array}
+     */
+    get perf_fee_rates() {
+        const ret = wasm.vaultslab_perf_fee_rates(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v1;
     }
     /**

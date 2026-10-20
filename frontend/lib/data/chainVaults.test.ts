@@ -27,6 +27,8 @@ const summary = (over: Partial<VaultSummary> = {}): VaultSummary => ({
   quoteAtoms: 1_270n * 10n ** 6n, // 1,270 USDC
   totalShares: 2_000_000n,
   leaderShares: 1_500_000n,
+  hwm: 7n << 32n,
+  perfFeeRatePpm: 200_000,
   minLeaderSharePpm: 100_000,
   frozen: false,
   allowOutsideDepositors: true,
@@ -46,6 +48,10 @@ describe("chainVault", () => {
       baseAtoms: 1_000n * 10n ** 9n,
       quoteAtoms: 1_270n * 10n ** 6n,
       totalShares: 2_000_000n,
+      leaderShares: 1_500_000n,
+      hwm: 7n << 32n,
+      perfFeeRatePpm: 200_000,
+      frozen: false,
     });
     expect(v.vaultPubkey).toBe(chainVaultId(MARKET, 5n));
     expect(v.volume24h).toBeNull();

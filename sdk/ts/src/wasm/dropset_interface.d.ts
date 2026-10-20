@@ -77,6 +77,10 @@ export class VaultSlab {
      */
     readonly frozen: Uint8Array;
     /**
+     * Performance-fee high-water mark, a Q32.32 value per share.
+     */
+    readonly high_water_marks: BigUint64Array;
+    /**
      * Sector indices (the instructions' `vault_idx`).
      */
     readonly indices: Uint32Array;
@@ -96,6 +100,10 @@ export class VaultSlab {
      * `1` when the admin has approved outside deposits.
      */
     readonly outside_deposits_approved: Uint8Array;
+    /**
+     * The leader's performance-fee rate, in ppm.
+     */
+    readonly perf_fee_rates: Uint32Array;
     /**
      * Quote reserve in atoms.
      */
@@ -209,11 +217,13 @@ export interface InitOutput {
     readonly vaultslab_allow_outside_depositors: (a: number) => [number, number];
     readonly vaultslab_base_atoms: (a: number) => [number, number];
     readonly vaultslab_frozen: (a: number) => [number, number];
+    readonly vaultslab_high_water_marks: (a: number) => [number, number];
     readonly vaultslab_indices: (a: number) => [number, number];
     readonly vaultslab_leader_shares: (a: number) => [number, number];
     readonly vaultslab_leaders: (a: number) => [number, number];
     readonly vaultslab_min_leader_shares: (a: number) => [number, number];
     readonly vaultslab_outside_deposits_approved: (a: number) => [number, number];
+    readonly vaultslab_perf_fee_rates: (a: number) => [number, number];
     readonly vaultslab_quote_atoms: (a: number) => [number, number];
     readonly vaultslab_seq_numbers: (a: number) => [number, number];
     readonly vaultslab_total_shares: (a: number) => [number, number];
