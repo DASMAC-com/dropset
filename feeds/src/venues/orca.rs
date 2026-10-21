@@ -7,7 +7,7 @@
 //! and the number that says whether a resting ladder sits inside the route.
 //! It is **never designated believable on its own**: a pool price is whatever
 //! the last swap left it at, and a thin pool can be walked by anyone willing to
-//! pay the slippage. It corroborates the CEX legs; it does not stand in for
+//! pay the slippage. It can corroborate the CEX legs; it does not stand in for
 //! them.
 //!
 //! Each poll reads one Whirlpool account over JSON-RPC, decodes it with Orca's
@@ -107,8 +107,10 @@ pub enum ReadError {
     /// credential, or a reply that was not JSON-RPC at all. The next endpoint
     /// is tried.
     Unavailable(String),
-    /// The endpoint answered with a JSON-RPC error. Another endpoint would say
-    /// the same, so this ends the call.
+    /// The endpoint answered with a JSON-RPC error, which ends the call. For a
+    /// malformed request another endpoint would say the same; a node reporting
+    /// itself unhealthy (-32005) is the known exception, and is not yet failed
+    /// over.
     Other(anyhow::Error),
 }
 
@@ -185,7 +187,8 @@ fn transport_class(status: Option<u16>, timeout: bool, connect: bool, builder: b
         None if builder => ReadError::Other(anyhow!("RPC request could not be built")),
         None if timeout => ReadError::Unavailable("request timed out".to_string()),
         None if connect => ReadError::Unavailable("connection failed".to_string()),
-        None => ReadError::Unavailable("request failed before an answer".to_string()),
+        // A connection reset mid-request, or a body that would not decode.
+        None => ReadError::Unavailable("no usable answer".to_string()),
     }
 }
 
@@ -418,6 +421,9 @@ impl<T: AccountReader> OrcaSpot<T> {
             .flatten()
             .ok_or_else(|| anyhow!("pool account {} does not exist", self.pool))?;
         let state = parse_whirlpool(&account)?;
+        // The pair check first, so a mis-pinned pool fails loudly even when it
+        // holds no liquidity, rather than reading as an empty feed forever.
+        is_inverted(&state, &self.base_mint, &self.quote_mint)?;
         // No in-range liquidity: the pool keeps its last `sqrt_price`, but no
         // swap can trade at it, so it is not a price anyone could take.
         if state.liquidity == 0 {
