@@ -1249,7 +1249,9 @@ class DiagnoseFailuresTests(unittest.TestCase):
             ("Run pre-commit run --all-files --color=always", "failure"),
         ]
         self._stub([(0, json.dumps(job("Lint", steps)), "")])
-        [rec] = wfc.diagnose_failures(self._failing("https://x/runs/7/job/8"), "o/r")
+        [rec] = wfc.diagnose_failures(
+            self._failing("https://github.com/o/r/actions/runs/7/job/8"), "o/r"
+        )
         self.assertEqual(rec["kind"], "lint_hook")
         self.assertIn("lint_paths.py", rec["next_command"])
         self.assertIn("toolchain skew", rec["note"])
@@ -1260,7 +1262,9 @@ class DiagnoseFailuresTests(unittest.TestCase):
         """ "Tail landed in the epilogue": the summary prints after the failure."""
         steps = [("Run make tools-tests", "failure")]
         self._stub([(0, json.dumps(job("Lint", steps)), "")])
-        [rec] = wfc.diagnose_failures(self._failing("https://x/runs/7/job/8"), "o/r")
+        [rec] = wfc.diagnose_failures(
+            self._failing("https://github.com/o/r/actions/runs/7/job/8"), "o/r"
+        )
         self.assertEqual(rec["kind"], "test_runner")
         self.assertEqual(
             rec["next_command"],
@@ -1276,22 +1280,49 @@ class DiagnoseFailuresTests(unittest.TestCase):
     def test_empty_stdout_is_a_fetch_failure_not_nothing_found(self):
         """ "Empty-stdout scan": a read that returned nothing proves nothing."""
         self._stub([(0, "", "")])
-        [rec] = wfc.diagnose_failures(self._failing("https://x/runs/7/job/8"), "o/r")
+        [rec] = wfc.diagnose_failures(
+            self._failing("https://github.com/o/r/actions/runs/7/job/8"), "o/r"
+        )
         self.assertEqual(rec["kind"], "fetch_failed")
         self.assertEqual(rec["error"], "empty stdout")
         self.assertIn("--log-failed", rec["next_command"])
 
     def test_a_non_zero_fetch_is_a_fetch_failure(self):
         self._stub([(1, "", "HTTP 404")])
-        [rec] = wfc.diagnose_failures(self._failing("https://x/runs/7/job/8"), "o/r")
+        [rec] = wfc.diagnose_failures(
+            self._failing("https://github.com/o/r/actions/runs/7/job/8"), "o/r"
+        )
         self.assertEqual((rec["kind"], rec["error"]), ("fetch_failed", "HTTP 404"))
 
     def test_a_job_with_no_failed_step_says_it_never_ran(self):
         steps = [("Set up job", "success")]
         self._stub([(0, json.dumps(job("Tests", steps, "cancelled")), "")])
-        [rec] = wfc.diagnose_failures(self._failing("https://x/runs/7/job/8"), "o/r")
+        [rec] = wfc.diagnose_failures(
+            self._failing("https://github.com/o/r/actions/runs/7/job/8"), "o/r"
+        )
         self.assertEqual(rec["kind"], "never_ran")
         self.assertIsNone(rec["step"])
+        # No step failed, so `--log-failed` would print nothing.
+        self.assertTrue(rec["next_command"].endswith("--log"))
+
+    def test_a_non_numeric_job_id_is_a_fetch_failure(self):
+        bad = job("Tests", [("Run cargo test", "failure")], job_id="1; rm")
+        self._stub([(0, json.dumps(bad), "")])
+        [rec] = wfc.diagnose_failures(
+            self._failing("https://github.com/o/r/actions/runs/7/job/8"), "o/r"
+        )
+        self.assertEqual(rec["kind"], "fetch_failed")
+
+    def test_unexpected_payload_shapes_are_fetch_failures(self):
+        for link, body in (
+            ("https://github.com/o/r/actions/runs/7/job/8", "[]"),
+            ("https://github.com/o/r/actions/runs/7", "[]"),
+            ("https://github.com/o/r/actions/runs/7", "{not json"),
+            ("https://github.com/o/r/actions/runs/7", json.dumps({"jobs": []})),
+        ):
+            self._stub([(0, body, "")])
+            [rec] = wfc.diagnose_failures(self._failing(link), "o/r")
+            self.assertEqual(rec["kind"], "fetch_failed", body)
 
     def test_a_run_only_link_reads_the_runs_failed_jobs(self):
         jobs = {
@@ -1301,7 +1332,9 @@ class DiagnoseFailuresTests(unittest.TestCase):
             ]
         }
         self._stub([(0, json.dumps(jobs), "")])
-        [rec] = wfc.diagnose_failures(self._failing("https://x/actions/runs/7"), "o/r")
+        [rec] = wfc.diagnose_failures(
+            self._failing("https://github.com/o/r/actions/runs/7"), "o/r"
+        )
         self.assertEqual((rec["job"], rec["kind"]), ("bad", "test_runner"))
         self.assertIn("runs/7/jobs", self.calls[0][1])
 
@@ -1318,7 +1351,18 @@ class DiagnoseFailuresTests(unittest.TestCase):
             "o/r",
         )
         self.assertEqual(rec["kind"], "external")
-        self.assertEqual(rec["next_command"], "https://deploy.example/x")
+        # A third-party link is reported, never handed over as a command.
+        self.assertIsNone(rec["next_command"])
+        self.assertEqual(rec["link"], "https://deploy.example/x")
+
+    def test_a_foreign_host_link_with_a_job_path_is_external(self):
+        """A third-party URL must not select a job in this repo to read."""
+        self._stub([])
+        [rec] = wfc.diagnose_failures(
+            self._failing("https://evil.example/runs/7/job/8"), "o/r"
+        )
+        self.assertEqual(rec["kind"], "external")
+        self.assertEqual(self.calls, [])
 
     def test_wait_attaches_the_diagnosis_only_on_fail(self):
         real_watch, real_read = wfc.watch_checks, wfc.read_checks
@@ -1327,7 +1371,7 @@ class DiagnoseFailuresTests(unittest.TestCase):
         self.addCleanup(setattr, wfc, "read_checks", real_read)
         self._stub([(0, json.dumps(job("Lint", [("Run cargo test", "failure")])), "")])
         wfc.read_checks = lambda pr, repo: [
-            check("Lint", "fail", "Lint", "https://x/runs/7/job/8")
+            check("Lint", "fail", "Lint", "https://github.com/o/r/actions/runs/7/job/8")
         ]
         v = wfc.wait(285, repo="o/r")
         self.assertEqual(v["failed_steps"][0]["kind"], "test_runner")
@@ -1344,7 +1388,7 @@ class ActionHintTests(unittest.TestCase):
 
     def test_the_gate_per_conclusion(self):
         self.assertEqual(self._gate("pass"), "green")
-        self.assertEqual(self._gate("none"), "green")
+        self.assertEqual(self._gate("none", mergeable="MERGEABLE"), "green")
         self.assertEqual(self._gate("conflicting"), "blocking")
         self.assertEqual(self._gate("fail", failing=[{"name": "a"}]), "blocking")
         self.assertEqual(self._gate("pending"), "retry")
@@ -1360,6 +1404,13 @@ class ActionHintTests(unittest.TestCase):
             {"conclusion": "none", "watch_rounds": 3, "mergeable_error": "boom"}
         )
         self.assertIn("boom", hint["evidence"])
+
+    def test_a_none_whose_conflict_probe_did_not_settle_is_unverified(self):
+        """A conflicting PR produces no run at all, so `none` is a pass only
+        once the probe has ruled a conflict out."""
+        self.assertEqual(self._gate("none", mergeable_error="boom"), "unverified")
+        self.assertEqual(self._gate("none", mergeable="UNKNOWN"), "unverified")
+        self.assertEqual(self._gate("none", mergeable=None), "unverified")
 
 
 class MergeableModeTests(unittest.TestCase):
@@ -1387,7 +1438,7 @@ class MergeableModeTests(unittest.TestCase):
     def test_a_persistent_unknown_holds_rather_than_passing(self):
         v = self._run([self._p("UNKNOWN", "UNKNOWN")])
         self.assertEqual(v["conclusion"], "unknown")
-        self.assertEqual(v["reads"], wfc.MERGEABLE_SETTLE_READS + 1)
+        self.assertEqual(v["reads"], wfc.MERGEABLE_SETTLE_RETRIES + 1)
         self.assertEqual(v["hint"]["gate"], "unverified")
 
     def test_conflicting_and_dirty_are_blocking(self):
@@ -1459,13 +1510,63 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(Path("c.txt").read_text(), "staged\n")
         self.assertEqual(Path("d.txt").read_text(), "untracked\n")
 
+    def test_crlf_and_non_utf8_bytes_survive_the_round_trip(self):
+        """Text mode would strip the `\\r` and replace the latin-1 byte."""
+        crlf, latin = b"one\r\ntwo\r\n", b"caf\xe9\n"
+        Path("a.txt").write_bytes(crlf)
+        Path("e.txt").write_bytes(latin)
+        out = Path(self.tmp.name) / "spill.diff"
+        snap = wfc.snapshot(out, "main")
+        self.assertIsNone(snap["error"])
+        self._git("checkout", "-q", "-f", snap["merge_base"])
+        self._git("clean", "-q", "-fd", "--exclude=spill.diff")
+        self._git("apply", str(out))
+        self.assertEqual(Path("a.txt").read_bytes(), crlf)
+        self.assertEqual(Path("e.txt").read_bytes(), latin)
+
+    def test_untracked_work_is_listed_from_a_subdirectory_too(self):
+        Path("sub").mkdir()
+        Path("sub/s.txt").write_text("deeper\n")
+        os.chdir("sub")
+        snap = wfc.snapshot(Path("spill.diff"), "main")
+        self.assertIsNone(snap["error"])
+        self.assertEqual(sorted(snap["untracked"]), ["d.txt", "sub/s.txt"])
+
     def test_a_missing_base_is_an_error_not_an_empty_spill(self):
         snap = wfc.snapshot(Path(self.tmp.name) / "spill.diff", "nope")
         self.assertTrue(snap["error"])
 
+    def test_a_failed_untracked_listing_is_an_error_not_a_shorter_spill(self):
+        real = wfc._git
+
+        def fake(args, cwd=None):
+            if args[0] == "ls-files":
+                return 128, b"", "fatal: boom"
+            return real(args, cwd)
+
+        wfc._git = fake
+        self.addCleanup(setattr, wfc, "_git", real)
+        snap = wfc.snapshot(Path(self.tmp.name) / "spill.diff", "main")
+        self.assertIn("boom", snap["error"])
+
+    def test_wait_runs_the_snapshot_and_reports_it(self):
+        real_watch, real_read = wfc.watch_checks, wfc.read_checks
+        wfc.watch_checks = lambda pr, repo, interval, timeout, log: True
+        wfc.read_checks = lambda pr, repo: [check("a", "pass")]
+        self.addCleanup(setattr, wfc, "watch_checks", real_watch)
+        self.addCleanup(setattr, wfc, "read_checks", real_read)
+        out = Path(self.tmp.name) / "spill.diff"
+        v = wfc.wait(285, repo="o/r", snapshot_path=out, base="main")
+        self.assertIsNone(v["snapshot"]["error"])
+        self.assertTrue(out.read_bytes())
+
     def test_the_cli_refuses_a_snapshot_outside_checks_mode(self):
         with self.assertRaises(wfc.WaitForChecksError):
             wfc.run(["w", "--run", "1", "--snapshot", "x.diff"])
+        with self.assertRaises(wfc.WaitForChecksError):
+            wfc.run(["w", "--pr", "1", "--base", "main"])
+        with self.assertRaises(wfc.WaitForChecksError):
+            wfc.run(["w", "--mergeable", "1", "--interval", "5"])
 
     def test_verdict_out_writes_the_same_verdict(self):
         real = wfc.wait_mergeable
@@ -1475,6 +1576,16 @@ class SnapshotTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             wfc.run(["w", "--mergeable", "9", "--verdict-out", str(path)])
         self.assertEqual(json.loads(path.read_text())["pr"], 9)
+
+    def test_a_bad_verdict_out_path_still_prints_the_verdict(self):
+        """A verdict can take an hour to earn; a bad path must not lose it."""
+        real = wfc.wait_mergeable
+        self.addCleanup(setattr, wfc, "wait_mergeable", real)
+        wfc.wait_mergeable = lambda pr, repo: {"conclusion": "mergeable", "pr": pr}
+        buf = io.StringIO()
+        with redirect_stdout(buf), self.assertRaises(wfc.WaitForChecksError):
+            wfc.run(["w", "--mergeable", "9", "--verdict-out", "/nonexistent/v.json"])
+        self.assertEqual(json.loads(buf.getvalue())["pr"], 9)
 
 
 if __name__ == "__main__":

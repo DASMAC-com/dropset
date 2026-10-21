@@ -74,10 +74,11 @@ which drifted behind it twice:
   stay shell-rule-clean and reduce to `Bash(gh pr checks:*)` /
   `Bash(gh pr view:*)` allow-rules. This is the one place a `gh` read
   is preferred *over* the MCP: when the call repeats and the payload —
-  not the transport — is the cost. Keep the poll **model-driven** (a
-  fresh call paced by `ScheduleWakeup`), never a shell `while … sleep`
-  loop or a `jq` filter; the failure path still pulls logs via
-  `get_job_logs`.
+  not the transport — is the cost. `review-pr` issues them through
+  `wait_for_checks.py` (`--pr`, `--mergeable`), which owns the pacing,
+  never a shell `while … sleep` loop or a `jq` filter; its failure path
+  names a per-step `next_command` (a `gh run view --log-failed` through
+  the quiet runner) rather than `get_job_logs`.
 
 - **Any INVENTORY read** — a few fields across many PRs: which PRs are
   open, what files they touch, what their heads are. The carve-out above

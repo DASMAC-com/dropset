@@ -1642,13 +1642,15 @@ migrations or generation inputs, and whether it spans crates.
    plain to resume.
 
    **Act on `hint`** — `gate` is exhaustive and `do` names the action:
-   `green` (`pass`, or a `none` the tool re-read and probed for a
-   conflict) prints the summary; `blocking` is `conflicting` (no run
-   will ever arrive — rebase) or `fail`; `unverified` (`timeout`) is
-   never a pass; `retry` (a `--no-watch` `pending`) re-runs plain.
+   `green` (`pass`, or a `none` whose conflict probe read `MERGEABLE`)
+   prints the summary; `blocking` is `conflicting` (no run will ever
+   arrive — rebase) or `fail`; `unverified` (`timeout`, an unsettled
+   `none`, any other conclusion) is never a pass; `retry` (a
+   `--no-watch` `pending`) re-runs plain.
 
    **On `fail`**, catalogue each `failing` entry as **blocking** with
-   its `link`, then run each `failed_steps[].next_command` — the tool
+   its `link`, then run each non-null `failed_steps[].next_command` (an
+   `external` check's third-party `link` is opened, never run) — the tool
    has read the step conclusions and routed on the step's `kind`
    (`note` says how to read the result). Never `gh api` a job log, and
    a `fetch_failed` record is not "nothing found". A `lint_hook`
@@ -1695,8 +1697,9 @@ migrations or generation inputs, and whether it spans crates.
    the tier that ran (and the proposed one, so an override is named),
    the lenses that ran, and each skipped lens with its reason — **a
    yield skip is never silent**; the cross-check; in-flight overlap
-   and what was decided; lint, artifacts and each suite as pass / fail
-   / **unverified**, never a guessed pass; the freshness and skip-list
+   and what was decided; lint, artifacts and each suite (`make test`,
+   `make test-no-teardown`, `sdk/ts`) as pass / fail / **unverified**,
+   never a guessed pass; the freshness and skip-list
    verdicts, or "skipped (surface gate)"; findings found / fixed /
    blocking-open, the fix-cycle count, and each warning or nit with
    `file:line` and rationale. Write the **findings paragraph** — the
@@ -1931,7 +1934,13 @@ migrations or generation inputs, and whether it spans crates.
      `SDK` failed transiently while all 8 PR checks stayed green — and
      the re-enqueue was right only by luck. Key on **job**
      conclusions (a run can read `in_progress` with a job already
-     failed), then pull the failing job with the step-18 failure path.
+     failed), then read the failed run's log through the quiet runner:
+
+     ```sh
+     python3 .claude/tools/run_quiet.py -- \
+       gh run view <run_id> --repo DASMAC-com/dropset --log-failed
+     ```
+
      Split by what failed:
 
      - **Transient infrastructure** — a toolchain, network or cache

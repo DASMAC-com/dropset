@@ -56,9 +56,45 @@ class RenderTests(unittest.TestCase):
         self.assertTrue(text.rstrip().endswith("Two findings, both fixed."))
 
     def test_an_open_blocking_finding_says_so_in_the_fixed_place(self):
-        _, converged = self._render(
+        text, converged = self._render(
             findings={"found": 2, "fixed": 1, "blocking_open": 1}
         )
+        self.assertFalse(converged)
+        self.assertIn("1 blocking open", text)
+        self.assertIn("**Converged**: NO", text)
+
+    def test_a_partial_checklist_item_does_not_converge(self):
+        """Step 3 rules a partial requirement blocking."""
+        _, converged = self._render(checklist=[{"item": "Part 5", "status": "partial"}])
+        self.assertFalse(converged)
+
+    def test_a_failed_gate_is_named(self):
+        text, converged = self._render(lint={"status": "fail", "detail": "cspell"})
+        self.assertFalse(converged)
+        self.assertIn("failed: lint", text)
+
+    def test_bad_shapes_are_errors_not_tracebacks(self):
+        """A traceback exits 1, which reads as a plain `Converged: NO`."""
+        findings_no_blocking = {"found": 1, "fixed": 1}
+        for bad in (
+            {"findings": findings_no_blocking},
+            {"findings": {"found": 1, "fixed": 1, "blocking_open": "0"}},
+            {"findings": {"found": 1, "fixed": 1, "blocking_open": True}},
+            {"checklist": ["Part 1"]},
+            {"lenses_skipped": [{"lens": "style"}]},
+            {"lint": "pass"},
+            {"tests": {}},
+            {"integrity": ["x"]},
+        ):
+            with self.assertRaises(rs.SummaryError, msg=bad):
+                self._render(**bad)
+        facts = copy.deepcopy(FACTS)
+        del facts["tier"]
+        with self.assertRaises(rs.SummaryError):
+            rs.render(facts, CI, MERGE)
+
+    def test_a_malformed_ci_verdict_is_not_green(self):
+        _, converged = self._render(ci={"conclusion": "pass", "hint": "green"})
         self.assertFalse(converged)
 
     def test_ci_and_merge_come_from_the_verdicts_not_the_facts(self):

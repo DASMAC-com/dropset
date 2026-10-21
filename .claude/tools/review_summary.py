@@ -18,7 +18,8 @@ Usage::
     python3 .claude/tools/review_summary.py --facts <facts.json> \\
       --ci <ci-verdict.json> --mergeable <mergeable-verdict.json>
 
-``facts.json`` (``integrity`` optional; every other key required)::
+``facts.json`` (``tier_proposed`` and ``integrity`` optional; every other key
+required, with the type shown — a missing key or a wrong shape is exit 2)::
 
     {
       "tag": "ENG-1977",                // null when none resolved
@@ -41,9 +42,17 @@ Usage::
       "findings_paragraph": "…"
     }
 
-``converged`` is true only when no blocking finding is open, no checklist item
-is missing, nothing reported ``fail``, CI's hint gate is ``green`` and the PR is
-``mergeable``. Exit 0 when converged, 1 when not, 2 on bad input.
+``converged`` is true only when no blocking finding is open, every checklist
+item is ``addressed`` (a partial requirement is blocking, as step 3 rules),
+nothing reported ``fail``, at least one suite was reported, CI's hint gate is
+``green`` and the PR is ``mergeable``. An ``unverified`` local lint, artifact or
+suite does **not** block it — step 17's gate reports a check that could not run
+locally rather than gating on it, and CI is then the authority — but each is
+named on the ``Converged`` line, never rendered as a pass. Exit 0 when
+converged, 1 when not, 2 on bad input.
+
+The lint, artifact, test and title lines are session facts for now: no tool
+emits a lint or suite verdict file yet. When one does, it replaces the fact.
 
 Standard library only; tests in ``tests/test_review_summary.py``.
 """
@@ -65,10 +74,74 @@ class SummaryError(Exception):
     """Bad input: surfaced to stderr, exit 2."""
 
 
+#: Required facts keys and their types. `tier_proposed` and `integrity` are
+#: the optional ones, checked where they are read.
+REQUIRED = {
+    "tag": (str, type(None)),
+    "checklist": list,
+    "tier": str,
+    "lenses_ran": list,
+    "lenses_skipped": list,
+    "cross_check": str,
+    "overlap": str,
+    "lint": dict,
+    "artifacts": dict,
+    "tests": dict,
+    "title": str,
+    "freshness": str,
+    "skip_list": str,
+    "findings": dict,
+    "fix_cycles": int,
+    "warnings": list,
+    "ready": bool,
+    "findings_paragraph": str,
+}
+
+
 def _status(value, allowed, where: str) -> str:
     if value not in allowed:
         raise SummaryError(f"{where}: {value!r} is not one of {', '.join(allowed)}")
     return value
+
+
+def _count(value, where: str) -> int:
+    # `bool` is an `int` subclass; `True` is not a count.
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise SummaryError(f"{where}: {value!r} is not a non-negative integer")
+    return value
+
+
+def _check_shape(facts: dict) -> None:
+    """Every required key present with its type, every nested record a dict
+    with the fields it is read for — so bad input is exit 2, never a traceback
+    (exit 1, which reads as a plain ``Converged: NO``)."""
+    for key, kind in REQUIRED.items():
+        if key not in facts:
+            raise SummaryError(f"facts missing {key!r}")
+        if not isinstance(facts[key], kind) or (
+            kind is int and isinstance(facts[key], bool)
+        ):
+            raise SummaryError(f"facts {key!r} has the wrong type")
+    for item in facts["checklist"]:
+        if not isinstance(item, dict):
+            raise SummaryError(f"checklist entry {item!r} is not an object")
+    for s in facts["lenses_skipped"]:
+        if not (
+            isinstance(s, dict)
+            and isinstance(s.get("lens"), str)
+            and isinstance(s.get("reason"), str)
+        ):
+            raise SummaryError(f"lenses_skipped entry {s!r} needs lens and reason")
+    if not facts["tests"]:
+        raise SummaryError("tests is empty: report at least one suite")
+    for key in ("found", "fixed", "blocking_open"):
+        _count(facts["findings"].get(key), f"findings.{key}")
+    _count(facts["fix_cycles"], "fix_cycles")
+    integrity = facts.get("integrity", [])
+    if not isinstance(integrity, list) or not all(
+        isinstance(i, dict) for i in integrity
+    ):
+        raise SummaryError("integrity must be a list of objects")
 
 
 def _load(path: Path | None, what: str) -> dict | None:
@@ -76,7 +149,7 @@ def _load(path: Path | None, what: str) -> dict | None:
         return None
     try:
         data = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         raise SummaryError(f"reading {what} {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise SummaryError(f"{what} {path} is not a JSON object")
@@ -86,11 +159,12 @@ def _load(path: Path | None, what: str) -> dict | None:
 def _ci_line(ci: dict | None) -> tuple[str, bool]:
     if ci is None:
         return "not read — no CI verdict passed; not green", False
-    gate = (ci.get("hint") or {}).get("gate")
+    hint = ci.get("hint")
+    gate = hint.get("gate") if isinstance(hint, dict) else None
     conclusion = ci.get("conclusion")
     if conclusion == "none" and gate == "green":
         return "no checks apply (path-filtered), treated as green", True
-    counts = ci.get("counts") or {}
+    counts = ci.get("counts") if isinstance(ci.get("counts"), dict) else {}
     detail = ", ".join(f"{n} {k}" for k, n in sorted(counts.items()))
     return f"{conclusion} ({detail or 'no counts'}); gate {gate}", gate == "green"
 
@@ -107,14 +181,12 @@ def _merge_line(merge: dict | None) -> tuple[str, bool]:
 
 def render(facts: dict, ci: dict | None, merge: dict | None) -> tuple[str, bool]:
     """The summary markdown and whether the review converged."""
-    try:
-        checklist = facts["checklist"]
-        findings = facts["findings"]
-        tests = facts["tests"]
-        lint = facts["lint"]
-        artifacts = facts["artifacts"]
-    except KeyError as exc:
-        raise SummaryError(f"facts missing {exc}") from exc
+    _check_shape(facts)
+    checklist = facts["checklist"]
+    findings = facts["findings"]
+    tests = facts["tests"]
+    lint = facts["lint"]
+    artifacts = facts["artifacts"]
     statuses = [
         _status(i.get("status"), CHECKLIST, f"checklist {i.get('item')!r}")
         for i in checklist
@@ -126,7 +198,7 @@ def render(facts: dict, ci: dict | None, merge: dict | None) -> tuple[str, bool]
     ci_text, ci_green = _ci_line(ci)
     merge_text, mergeable = _merge_line(merge)
 
-    blocking = int(findings.get("blocking_open", 0))
+    blocking = findings["blocking_open"]
     failed = [
         n
         for n, s in [("lint", lint_s), ("title", title_s), *test_s.items()]
@@ -139,7 +211,7 @@ def render(facts: dict, ci: dict | None, merge: dict | None) -> tuple[str, bool]
     ]
     converged = (
         blocking == 0
-        and "missing" not in statuses
+        and all(s == "addressed" for s in statuses)
         and not failed
         and ci_green
         and mergeable

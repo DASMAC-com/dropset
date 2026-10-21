@@ -63,7 +63,8 @@ loop — one call serving ``review-pr`` steps 16 and 20. See :func:`wait_mergeab
 
 Usage::
 
-    python3 .claude/tools/wait_for_checks.py --pr 285 --snapshot /tmp/pre-wait.diff
+    python3 .claude/tools/wait_for_checks.py --pr 285 \
+      --snapshot <scratchpad>/pre-wait.diff --verdict-out <scratchpad>/ci.json
     python3 .claude/tools/wait_for_checks.py --pr 285 --interval 30 --timeout 1800
     python3 .claude/tools/wait_for_checks.py --run 1234567890
     python3 .claude/tools/wait_for_checks.py --queue 285
@@ -74,9 +75,10 @@ Options: exactly one of ``--pr`` / ``--run`` / ``--queue`` / ``--mergeable``,
 write the verdict there), ``--snapshot <path>`` with ``--base`` (checks mode:
 see :func:`snapshot`),
 ``--interval`` (seconds between refreshes, default 30, or 60 under
-``--queue``; honored in **every** mode), ``--timeout``
+``--queue``; honored in every watching mode), ``--timeout``
 (seconds before giving up on the watch, default 3600, or 7200 under
-``--queue``), ``--no-watch`` (skip the
+``--queue``) — both rejected with ``--mergeable``, whose settle loop is
+fixed — ``--no-watch`` (skip the
 watch and just read the current state once — a resumed session where the
 background task is gone; checks mode only).
 
@@ -107,7 +109,8 @@ Prints JSON::
 it. ``failed_steps`` is filled only on ``fail``: one record per failing step,
 whose ``kind`` (``lint_hook`` / ``test_runner`` / ``single_command`` /
 ``never_ran`` / ``external`` / ``fetch_failed``) routes the one
-``next_command`` that reads it. See :func:`diagnose_failures`.
+``next_command`` that reads it — ``null`` for ``external``, whose third-party
+``link`` is reported instead, never as a command. See :func:`diagnose_failures`.
 
 ``none`` is **ambiguous and is disambiguated for you.** A CONFLICTING PR cannot
 produce any ``pull_request`` workflow run at all — the merge ref cannot be
@@ -246,18 +249,21 @@ _TEST_STEP_RE = re.compile(
 STEP_KIND_NOTES = {
     "lint_hook": (
         "reproduce locally and trust its exit code; never re-fetch a larger "
-        "tail. A red CI Lint with a green local reproduce is toolchain skew — "
-        "confirm on another branch's Lint job, never edit unrelated code"
+        "tail; once the output names the failing hook, re-run with "
+        "`-- <hook-id>`. A red CI Lint with a green local reproduce is "
+        "toolchain skew — confirm on another branch's Lint job, never edit "
+        "unrelated code; pin or report the toolchain"
     ),
     "test_runner": "grep the captured log for the runner's failure summary",
     "single_command": "its last output is its error: read the captured log's tail",
     "never_ran": "the job failed with no failed step (setup, cancel, or runner)",
-    "external": "not an Actions check: open its link",
+    "external": "not an Actions check: its link is third-party; open it, never run it",
 }
 
 # The settle loop for `--mergeable`, longer than the `none` probe's, because
 # this read is the gate itself (steps 16 and 20) rather than a cause probe.
-MERGEABLE_SETTLE_READS = 6
+# Re-reads after the first, so the bound is one more read than this.
+MERGEABLE_SETTLE_RETRIES = 6
 MERGEABLE_SETTLE_DELAY = 5
 
 
@@ -839,17 +845,24 @@ def classify_step(name: str) -> str:
     return "single_command"
 
 
-def next_command(kind: str, repo: str, job_id: str, link: str = "") -> str:
-    """The one command that reads a failing step, routed on its ``kind``."""
+def next_command(kind: str, repo: str, job_id: str) -> str | None:
+    """The one command that reads a failing step, routed on its ``kind``.
+
+    ``None`` for an ``external`` check: its link is set by a third-party
+    provider, so it is reported as ``link`` and never handed over as a command.
+    A ``never_ran`` job has no failed step, so ``--log-failed`` would print
+    nothing; it gets the whole job log.
+    """
     if kind == "lint_hook":
         return (
             "python3 .claude/tools/run_quiet.py -- python3 .claude/tools/lint_paths.py"
         )
     if kind == "external":
-        return link
+        return None
+    which = "--log" if kind == "never_ran" else "--log-failed"
     return (
         f"python3 .claude/tools/run_quiet.py -- "
-        f"gh run view --job {job_id} --repo {repo} --log-failed"
+        f"gh run view --job {job_id} --repo {repo} {which}"
     )
 
 
@@ -871,8 +884,23 @@ def _fetch_json(args: list[str]):
         return None, f"undecodable: {exc}"
 
 
-def _job_records(job: dict, repo: str, check: str) -> list[dict]:
+def _fetch_failed(check: str, run_id: str, repo: str, error: str) -> dict:
+    return {
+        "check": check,
+        "run_id": run_id,
+        "kind": "fetch_failed",
+        "error": error,
+        "next_command": (
+            f"python3 .claude/tools/run_quiet.py -- "
+            f"gh run view {run_id} --repo {repo} --log-failed"
+        ),
+    }
+
+
+def _job_records(job: dict, repo: str, check: str, run_id: str) -> list[dict]:
     job_id = str(job.get("id", ""))
+    if not job_id.isdigit():
+        return [_fetch_failed(check, run_id, repo, f"job id {job_id!r} is not numeric")]
     failed = [
         s
         for s in job.get("steps") or []
@@ -914,52 +942,54 @@ def diagnose_failures(failing: list[dict], repo: str) -> list[dict]:
     A check's link names its job (``/runs/<run>/job/<job>``), so one read per
     check returns exactly that job's steps; a link naming only a run falls back
     to the run's failed jobs. A fetch that fails is recorded as ``fetch_failed``
-    with its error — never dropped, never read as "nothing found".
+    with its error — never dropped, never read as "nothing found". Only a link
+    into this repo's Actions pages counts as an Actions check; any other link
+    is ``external``, so a third-party URL can never select a job to read.
     """
     records: list[dict] = []
+    actions_prefix = f"https://github.com/{repo}/actions/"
     for f in failing:
         link = f.get("link") or ""
         run_id = f.get("run_id") or ""
-        job_match = _JOB_ID_RE.search(link)
         check = f.get("name") or ""
-        if not run_id:
+        if not run_id or not link.startswith(actions_prefix):
             records.append(
                 {
                     "check": check,
                     "kind": "external",
-                    "next_command": next_command("external", repo, "", link),
+                    "link": link,
+                    "next_command": None,
                     "note": STEP_KIND_NOTES["external"],
                 }
             )
             continue
+        job_match = _JOB_ID_RE.search(link)
         if job_match:
-            path = f"repos/{repo}/actions/jobs/{job_match.group(1)}"
-            payload, error = _fetch_json(["api", path])
-            jobs = [payload] if isinstance(payload, dict) else []
+            payload, error = _fetch_json(
+                ["api", f"repos/{repo}/actions/jobs/{job_match.group(1)}"]
+            )
+            if error is None and not isinstance(payload, dict):
+                error = "unexpected job payload shape"
+            jobs = [payload] if error is None else []
         else:
-            path = f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100"
-            payload, error = _fetch_json(["api", path])
+            payload, error = _fetch_json(
+                ["api", f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100"]
+            )
+            listed = payload.get("jobs") if isinstance(payload, dict) else None
+            if error is None and not isinstance(listed, list):
+                error = "unexpected jobs payload shape"
             jobs = [
                 j
-                for j in (payload or {}).get("jobs") or []
+                for j in listed or []
                 if isinstance(j, dict) and j.get("conclusion") in FAILED_RUN_CONCLUSIONS
             ]
-        if error is not None or not jobs:
-            records.append(
-                {
-                    "check": check,
-                    "run_id": run_id,
-                    "kind": "fetch_failed",
-                    "error": error or "no failed job in the run",
-                    "next_command": (
-                        f"python3 .claude/tools/run_quiet.py -- "
-                        f"gh run view {run_id} --repo {repo} --log-failed"
-                    ),
-                }
-            )
+            if error is None and not jobs:
+                error = "no failed job in the run"
+        if error is not None:
+            records.append(_fetch_failed(check, run_id, repo, error))
             continue
         for job in jobs:
-            records.extend(_job_records(job, repo, check))
+            records.extend(_job_records(job, repo, check, run_id))
     return records
 
 
@@ -979,18 +1009,29 @@ def action_hint(verdict: dict) -> dict:
             "evidence": f"counts {counts}",
         }
     if c == "none":
-        return {
-            "gate": "green",
-            "do": "no checks apply; treat as green",
-            "evidence": (
-                f"no check registered over {rounds} round(s); mergeable "
-                f"{verdict.get('mergeable')}"
+        evidence = (
+            f"no check registered over {rounds} round(s); mergeable "
+            f"{verdict.get('mergeable')}"
+        )
+        # A conflicting PR produces no run at all, so `none` is green only once
+        # the probe has RULED OUT a conflict; a failed or unsettled probe has not.
+        if verdict.get("mergeable_error") or (
+            (verdict.get("mergeable") or "").upper() != "MERGEABLE"
+        ):
+            return {
+                "gate": "unverified",
+                "do": "conflict not ruled out; re-run --mergeable before trusting none",
+                "evidence": evidence
                 + (
                     f", probe error: {verdict['mergeable_error']}"
                     if verdict.get("mergeable_error")
                     else ""
-                )
-            ),
+                ),
+            }
+        return {
+            "gate": "green",
+            "do": "no checks apply; treat as green",
+            "evidence": evidence,
         }
     if c == "conflicting":
         return {
@@ -1148,7 +1189,7 @@ def settle_mergeability(
 def wait_mergeable(
     pr: int,
     repo: str = DEFAULT_REPO,
-    retries: int = MERGEABLE_SETTLE_READS,
+    retries: int = MERGEABLE_SETTLE_RETRIES,
     delay: float = MERGEABLE_SETTLE_DELAY,
     sleep=time.sleep,
 ) -> dict:
@@ -1199,19 +1240,26 @@ def wait_mergeable(
     }
 
 
-def _git(args: list[str]) -> tuple[int, str, str]:
+def _git(args: list[str], cwd: str | None = None) -> tuple[int, bytes, str]:
+    """``(returncode, stdout bytes, stderr text)``. Bytes, because a patch is
+    bytes: text mode's universal newlines strip a CRLF file's ``\\r`` and its
+    replacement decoding corrupts non-UTF-8 content, and either breaks the
+    ``git apply`` the spill exists for."""
     try:
         completed = subprocess.run(
             ["git", *args],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            errors="replace",
+            cwd=cwd,
             check=False,
         )
     except OSError as exc:
-        return 127, "", str(exc)
-    return completed.returncode, completed.stdout, completed.stderr
+        return 127, b"", str(exc)
+    return (
+        completed.returncode,
+        completed.stdout,
+        completed.stderr.decode("utf-8", errors="replace"),
+    )
 
 
 def snapshot(path: Path, base: str) -> dict:
@@ -1221,30 +1269,51 @@ def snapshot(path: Path, base: str) -> dict:
 
     Diffing committed history alone omits exactly the work at risk: a signing
     failure leaves the fixes uncommitted (history.md → "Worktree deleted under
-    a wait"). A git failure is reported in ``error`` and never silently skipped.
+    a wait"). Every git call's status is checked: a failure is reported in
+    ``error``, never a silently shorter spill. Git runs from the top level, so
+    the untracked listing covers the whole tree whatever the caller's cwd.
     """
+    path = Path(path).resolve()
     ref = f"origin/{base}"
-    code, out, err = _git(["merge-base", ref, "HEAD"])
+
+    def failed(what: str, err: str, code: int) -> dict:
+        return {
+            "path": str(path),
+            "base": ref,
+            "error": f"{what}: {err.strip() or code}",
+        }
+
+    code, out, err = _git(["rev-parse", "--show-toplevel"])
     if code != 0:
-        return {"path": str(path), "base": ref, "error": err.strip() or f"exit {code}"}
-    merge_base = out.strip()
-    code, diff, err = _git(["diff", "--binary", merge_base])
+        return failed("rev-parse", err, code)
+    top = out.decode().strip()
+    code, out, err = _git(["merge-base", ref, "HEAD"], top)
     if code != 0:
-        return {"path": str(path), "base": ref, "error": err.strip() or f"exit {code}"}
-    _, names, _ = _git(["diff", "--name-only", "HEAD"])
-    _, others, _ = _git(["ls-files", "--others", "--exclude-standard"])
-    untracked = [p for p in others.splitlines() if p]
+        return failed("merge-base", err, code)
+    merge_base = out.decode().strip()
+    diff_flags = ["diff", "--binary", "--no-ext-diff", "--no-color"]
+    code, diff, err = _git([*diff_flags, merge_base], top)
+    if code != 0:
+        return failed("diff", err, code)
+    code, names, err = _git(["diff", "--name-only", "-z", "HEAD"], top)
+    if code != 0:
+        return failed("diff --name-only", err, code)
+    code, others, err = _git(["ls-files", "-z", "--others", "--exclude-standard"], top)
+    if code != 0:
+        return failed("ls-files", err, code)
+    untracked = [os.fsdecode(p) for p in others.split(b"\0") if p]
     parts = [diff]
     for rel in untracked:
-        # `--no-index` exits 1 whenever the two sides differ, which they do.
-        code, text, err = _git(["diff", "--binary", "--no-index", "/dev/null", rel])
-        if code not in (0, 1):
-            return {"path": str(path), "base": ref, "error": f"{rel}: {err.strip()}"}
+        # `--no-index` exits 1 whenever the two sides differ, which they do;
+        # `--` keeps a file named like an option from being parsed as one.
+        code, text, err = _git([*diff_flags, "--no-index", "--", "/dev/null", rel], top)
+        if code not in (0, 1) or not text:
+            return failed(rel, err or "empty diff", code)
         parts.append(text)
-    body = "".join(parts)
+    body = b"".join(parts)
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fh:
+        with os.fdopen(fd, "wb") as fh:
             fh.write(body)
     except OSError as exc:
         return {"path": str(path), "base": ref, "error": str(exc)}
@@ -1252,8 +1321,8 @@ def snapshot(path: Path, base: str) -> dict:
         "path": str(path),
         "base": ref,
         "merge_base": merge_base,
-        "bytes": len(body.encode("utf-8", errors="replace")),
-        "uncommitted": [p for p in names.splitlines() if p],
+        "bytes": len(body),
+        "uncommitted": [p for p in names.decode(errors="replace").split("\0") if p],
         "untracked": untracked,
         "error": None,
     }
@@ -1295,7 +1364,10 @@ def wait(
     ``conclusion: "none"``, ``counts: {}``, ``settled: true`` and
     ``mergeable: "MERGEABLE"``, while four runs were in fact already starting
     and ``Semantic PR`` had already completed on that exact SHA. Taking that
-    literally treats a CI-unverified commit as green.
+    literally treats a CI-unverified commit as green (history.md →
+    "Registration race"). A ``none`` that still looks wrong after the rounds
+    is told apart from the race by one ``gh run list --branch <branch>``
+    filtered to the head SHA.
 
     A commit that genuinely has no checks still reports ``none`` once the
     rounds are spent, **not** ``timeout`` — the rounds established the absence
@@ -1452,7 +1524,7 @@ def run(argv: list[str]) -> int:
         "here before the watch starts",
     )
     parser.add_argument(
-        "--base", default="main", help="with --snapshot: the base branch"
+        "--base", default=None, help="with --snapshot: the base branch (main)"
     )
     parser.add_argument(
         "--verdict-out",
@@ -1502,10 +1574,15 @@ def run(argv: list[str]) -> int:
         raise WaitForChecksError("--since is meaningful only with --queue")
     if args.snapshot is not None and args.pr is None:
         raise WaitForChecksError("--snapshot is meaningful only with --pr")
+    if args.base is not None and args.snapshot is None:
+        raise WaitForChecksError("--base is meaningful only with --snapshot")
 
     if args.mergeable_pr is not None:
-        if args.no_watch:
-            raise WaitForChecksError("--no-watch is meaningless with --mergeable")
+        if args.no_watch or args.interval is not None or args.timeout is not None:
+            raise WaitForChecksError(
+                "--no-watch, --interval and --timeout are meaningless with "
+                "--mergeable, whose settle loop is fixed"
+            )
         verdict = wait_mergeable(args.mergeable_pr, repo=args.repo)
     elif args.queue_pr is not None:
         if args.no_watch:
@@ -1539,15 +1616,17 @@ def run(argv: list[str]) -> int:
                 timeout=timeout,
                 watch=not args.no_watch,
                 snapshot_path=args.snapshot,
-                base=args.base,
+                base=args.base or "main",
             )
+    # Stdout first: a verdict can take an hour to earn, and a bad
+    # `--verdict-out` path must not throw it away.
+    json.dump(verdict, sys.stdout, indent=2)
+    sys.stdout.write("\n")
     if args.verdict_out is not None:
         try:
             args.verdict_out.write_text(json.dumps(verdict, indent=2) + "\n")
         except OSError as exc:
             raise WaitForChecksError(f"cannot write {args.verdict_out}: {exc}")
-    json.dump(verdict, sys.stdout, indent=2)
-    sys.stdout.write("\n")
     return 0 if verdict["conclusion"] in ("pass", "merged", "mergeable") else 1
 
 
