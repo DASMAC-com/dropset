@@ -56,9 +56,7 @@ import json
 import os
 import re
 import shlex
-import subprocess
 import sys
-from pathlib import Path
 
 import iterm_api
 import linear_api
@@ -84,9 +82,6 @@ RESUME_VERB = "task resume"
 _TAG_RE = re.compile(r"\A\W*(?:(?:eng|ceo|exp)-)?(\d+)\s*\Z", re.IGNORECASE | re.ASCII)
 
 _IDENT_RE = re.compile(r"^ENG-(\d+)$", re.IGNORECASE)
-
-# Where the attend-mark script lives, relative to this file.
-_ATTEND = Path(__file__).resolve().parent.parent / "scripts" / "iterm-attend.sh"
 
 _IN_FLIGHT_QUERY = """
 query InFlight($filter: IssueFilter, $first: Int!, $after: String) {
@@ -248,31 +243,8 @@ def open_tabs(tags: list[str]) -> list[tuple[str, str]]:
 
 
 def mark_attention(tty: str) -> bool:
-    """Apply the green attend mark to ``tty``. True on success.
-
-    Shells out to the committed `iterm-attend.sh` rather than re-emitting the
-    escape here, so the palette has one owner. `--mark` sets green outright
-    instead of toggling: a toggle's outcome depends on the tab's history, and a
-    launcher wants green, not "the other one".
-    """
-    if not _ATTEND.exists():
-        return False
-    try:
-        completed = subprocess.run(
-            [str(_ATTEND), "--tty", tty, "--mark"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        # `.exists()` is not `.access(X_OK)`: a checkout that stripped the exec
-        # bit raises PermissionError here — an OSError, not a FleetResumeError,
-        # so uncaught it would surface as a raw traceback at the worst possible
-        # moment, AFTER every tab is already open and resumed and before
-        # `result` is ever printed. The tint is the only casualty; report it
-        # through `unmarked` like any other failed mark.
-        return False
-    return completed.returncode == 0
+    """Apply the green attend mark to ``tty``; see `iterm_api.mark_attention`."""
+    return iterm_api.mark_attention(tty)
 
 
 def plan(api_key: str, project_id: str) -> dict:

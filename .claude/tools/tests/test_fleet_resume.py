@@ -372,7 +372,7 @@ class MarkAttention(unittest.TestCase):
     def test_it_passes_the_tty_and_the_mark_flag(self):
         record = os.path.join(self.root, "argv.txt")
         stub = self._stub('#!/bin/sh\nprintf "%s\\n" "$@" > ' + record + "\nexit 0\n")
-        with mock.patch.object(fr, "_ATTEND", Path(stub)):
+        with mock.patch.object(fr.iterm_api, "ATTEND_SCRIPT", Path(stub)):
             self.assertTrue(fr.mark_attention("/dev/ttys009"))
         with open(record, encoding="utf-8") as fh:
             argv = fh.read().split()
@@ -381,18 +381,20 @@ class MarkAttention(unittest.TestCase):
 
     def test_a_non_zero_exit_reports_false(self):
         stub = self._stub("#!/bin/sh\nexit 3\n")
-        with mock.patch.object(fr, "_ATTEND", Path(stub)):
+        with mock.patch.object(fr.iterm_api, "ATTEND_SCRIPT", Path(stub)):
             self.assertFalse(fr.mark_attention("/dev/ttys009"))
 
     def test_a_missing_script_reports_false(self):
-        with mock.patch.object(fr, "_ATTEND", Path(self.root) / "gone.sh"):
+        with mock.patch.object(
+            fr.iterm_api, "ATTEND_SCRIPT", Path(self.root) / "gone.sh"
+        ):
             self.assertFalse(fr.mark_attention("/dev/ttys009"))
 
     def test_a_non_executable_script_reports_false_rather_than_raising(self):
         # `.exists()` is not `.access(X_OK)`. Uncaught, this raised a traceback
         # after every tab was already open and resumed.
         stub = self._stub("#!/bin/sh\nexit 0\n", mode=0o644)
-        with mock.patch.object(fr, "_ATTEND", Path(stub)):
+        with mock.patch.object(fr.iterm_api, "ATTEND_SCRIPT", Path(stub)):
             self.assertFalse(fr.mark_attention("/dev/ttys009"))
 
 

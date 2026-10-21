@@ -80,6 +80,15 @@ PER_TAB_TIMEOUT_SECONDS = 10
 #: a malformed `ps` answer cannot loop forever.
 CALLER_TTY_MAX_HOPS = 32
 
+#: The iTerm user variable the `plan` launcher sets, and its value. Read here to
+#: place new tabs left of a rightmost planning tab; `iterm-reorder.py` reads the
+#: same pair to keep it there.
+ROLE_VARIABLE = "user.ds_role"
+PLAN_ROLE = "plan"
+
+#: The attend-mark script, shared by both launchers.
+ATTEND_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "iterm-attend.sh"
+
 
 class ItermUnavailable(Exception):
     """iTerm automation cannot run here. Carries a one-line operator-facing why.
@@ -308,6 +317,33 @@ def session_names() -> list[str]:
     return list(_call({"op": "session_names"}).get("names") or [])
 
 
+def mark_attention(tty: str) -> bool:
+    """Apply the green attend mark to ``tty``. True on success.
+
+    Exactly what the operator's Attend shortcut does, so a launched tab reads as
+    one they marked themselves. Shells out to the committed `iterm-attend.sh`
+    rather than re-emitting the escape here, so the palette has one owner.
+    `--mark` sets green outright instead of toggling: a toggle's outcome depends
+    on the tab's history, and a launcher wants green, not "the other one".
+    """
+    if not ATTEND_SCRIPT.exists():
+        return False
+    try:
+        completed = subprocess.run(
+            [str(ATTEND_SCRIPT), "--tty", tty, "--mark"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        # `.exists()` is not `.access(X_OK)`: a checkout that stripped the exec
+        # bit raises PermissionError here. Uncaught, it would surface as a raw
+        # traceback AFTER every tab is already open and typed into. The tint is
+        # the only casualty; report it like any other failed mark.
+        return False
+    return completed.returncode == 0
+
+
 def open_tabs(commands: list[str], *, tty: str | None = None) -> list[str | None]:
     """Open one tab per command in the caller's window, typing each. Returns ttys.
 
@@ -483,9 +519,10 @@ async def _reselect(tab) -> bool:
 async def _caller_window(windows, tty):
     """``(window, tab)`` holding the session on ``tty``, or ``(None, None)``.
 
-    The tab is the caller's own, so it doubles as the one focus is handed back
-    to. A session whose tty cannot be read is skipped rather than failing the
-    lookup: the fallback is a usable window, not a lost dispatch.
+    The tab is the caller's own — only a fallback for the one focus is handed
+    back to; see :func:`_focus_to_restore`. A session whose tty cannot be read
+    is skipped rather than failing the lookup: the fallback is a usable window,
+    not a lost dispatch.
     """
     if not tty:
         return None, None
@@ -500,14 +537,58 @@ async def _caller_window(windows, tty):
     return None, None
 
 
-async def _open_and_type(window, original, commands, ttys, untyped) -> None:
+def _focus_to_restore(window, caller_tab):
+    """The tab to hand focus back to: the window's SELECTED tab, which is the
+    one the operator is reading, and the caller's own tab only when no
+    selection is known.
+
+    This used to be the caller's tab outright. The caller is the planning
+    session, so a dispatch made while the operator was reading some other tab
+    pulled them onto the planning tab — the steal the re-select exists to
+    prevent, merely redirected.
+    """
+    current = getattr(window, "current_tab", None)
+    return current if current is not None else caller_tab
+
+
+async def _plan_insert_index(window):
+    """Where new tabs go: just left of the planning tab when it is the
+    RIGHTMOST tab, else None (iTerm's default, the end).
+
+    Placing it at creation keeps the planning tab rightmost, where Command-9
+    reaches it, without waiting on a reorder pass. While the reorderer runs, a
+    planning tab that is not rightmost is in an attention group on the left,
+    and appending is then already its resting order. iTerm has no tab pin to
+    use instead.
+    """
+    tabs = list(getattr(window, "tabs", None) or [])
+    if not tabs:
+        return None
+    for session in getattr(tabs[-1], "sessions", None) or []:
+        try:
+            if await session.async_get_variable(ROLE_VARIABLE) == PLAN_ROLE:
+                return len(tabs) - 1
+        except Exception:  # noqa: BLE001 - an unreadable role is no planning tab
+            continue
+    return None
+
+
+async def _open_and_type(
+    window, original, commands, ttys, untyped, insert_at=None
+) -> None:
     """The ``open_tabs`` loop: one tab per command, typed, focus handed back.
 
     Mutates ``ttys`` / ``untyped`` in place. The driver published both into its
     result before calling, which is what lets a mid-batch failure report them.
+    ``insert_at`` is the creation index from :func:`_plan_insert_index`; each
+    insert pushes the planning tab right by one, so the batch keeps its order.
     """
     for index, command in enumerate(commands):
-        tab = await window.async_create_tab()
+        if insert_at is None:
+            tab = await window.async_create_tab()
+        else:
+            tab = await window.async_create_tab(index=insert_at)
+            insert_at += 1
         # Straight back, before typing: the steal then lasts one round trip
         # rather than the whole batch, since typing needs no selection.
         await _reselect(original)
@@ -554,9 +635,11 @@ async def _driver_body(connection, request, result):  # pragma: no cover
 
     if op == "open_tabs":
         app = await iterm2.async_get_app(connection)
-        window, original = await _caller_window(
+        window, caller_tab = await _caller_window(
             app.terminal_windows, request.get("caller_tty")
         )
+        # Captured BEFORE any tab exists, since every create moves the selection.
+        original = _focus_to_restore(window, caller_tab)
         result["window"] = "caller"
         if window is None:
             # The fallback `open_tabs` reports on stderr. Resolving this window
@@ -589,8 +672,11 @@ async def _driver_body(connection, request, result):  # pragma: no cover
         # separately rather than being inferred from a falsy entry.
         untyped = []
         result["untyped"] = untyped
+        insert_at = await _plan_insert_index(window)
         try:
-            await _open_and_type(window, original, request["commands"], ttys, untyped)
+            await _open_and_type(
+                window, original, request["commands"], ttys, untyped, insert_at
+            )
         finally:
             # Once more on the way out, failure path included: a batch that
             # broke mid-loop must not leave the operator on a half-made tab.

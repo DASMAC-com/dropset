@@ -755,6 +755,116 @@ class FocusIsHandedBack(unittest.TestCase):
         self.assertEqual(untyped, [])
 
 
+class DispatchPlacement(unittest.TestCase):
+    """A dispatch lands in the background, just left of a rightmost planning
+    tab, and hands focus back to the tab the operator was READING — not to the
+    planning tab that dispatched."""
+
+    def setUp(self):
+        self.log = []
+
+    def _tab(self, name, role=None, *, unreadable=False):
+        log = self.log
+        tab = type("Tab", (), {})()
+        tab.name = name
+
+        class Session:
+            async def async_send_text(self, text):
+                log.append(("type", name, text))
+
+            async def async_get_variable(self, variable):
+                if variable == "tty":
+                    return f"/dev/{name}"
+                if unreadable:
+                    raise RuntimeError("variable unreadable")
+                return role if variable == iterm_api.ROLE_VARIABLE else None
+
+        tab.sessions = [Session()]
+
+        async def async_select(order_window_front=True):
+            log.append(("select", name, order_window_front))
+
+        tab.async_select = async_select
+        return tab
+
+    def _window(self, tabs, current):
+        log = self.log
+        test = self
+        window = type("Window", (), {})()
+        window.tabs = tabs
+        window.current_tab = current
+        made = iter(range(100))
+
+        async def async_create_tab(index=None):
+            name = f"new{next(made)}"
+            log.append(("create", name, index))
+            return test._tab(name)
+
+        window.async_create_tab = async_create_tab
+        return window
+
+    def test_focus_returns_to_the_selected_tab_not_the_callers(self):
+        plan, reading = self._tab("plan", "plan"), self._tab("reading")
+        window = self._window([reading, plan], current=reading)
+        self.assertIs(iterm_api._focus_to_restore(window, plan), reading)
+
+    def test_focus_falls_back_to_the_callers_tab_with_no_selection(self):
+        plan = self._tab("plan", "plan")
+        window = self._window([plan], current=None)
+        self.assertIs(iterm_api._focus_to_restore(window, plan), plan)
+
+    def test_a_rightmost_planning_tab_takes_new_tabs_on_its_left(self):
+        tabs = [self._tab("a"), self._tab("b"), self._tab("plan", "plan")]
+        window = self._window(tabs, current=tabs[0])
+        self.assertEqual(asyncio.run(iterm_api._plan_insert_index(window)), 2)
+
+    def test_a_planning_tab_not_rightmost_leaves_the_default(self):
+        # It is in an attention group on the left; appending is the resting order.
+        tabs = [self._tab("plan", "plan"), self._tab("a")]
+        window = self._window(tabs, current=tabs[0])
+        self.assertIsNone(asyncio.run(iterm_api._plan_insert_index(window)))
+
+    def test_no_planning_tab_or_no_tabs_leaves_the_default(self):
+        tabs = [self._tab("a"), self._tab("b", "task")]
+        self.assertIsNone(
+            asyncio.run(iterm_api._plan_insert_index(self._window(tabs, tabs[0])))
+        )
+        self.assertIsNone(
+            asyncio.run(iterm_api._plan_insert_index(self._window([], None)))
+        )
+
+    def test_an_unreadable_role_is_not_a_planning_tab(self):
+        tabs = [self._tab("a"), self._tab("plan", "plan", unreadable=True)]
+        window = self._window(tabs, current=tabs[0])
+        self.assertIsNone(asyncio.run(iterm_api._plan_insert_index(window)))
+
+    def test_a_batch_fills_left_of_the_planning_tab_in_order(self):
+        reading, plan = self._tab("reading"), self._tab("plan", "plan")
+        window = self._window([reading, plan], current=reading)
+        original = iterm_api._focus_to_restore(window, plan)
+        insert_at = asyncio.run(iterm_api._plan_insert_index(window))
+        ttys, untyped = [], []
+        asyncio.run(
+            iterm_api._open_and_type(
+                window, original, ["A", "B"], ttys, untyped, insert_at
+            )
+        )
+        # Index 1 then 2: each insert pushes the planning tab right by one, so
+        # A sits left of B and both sit left of the planning tab.
+        self.assertEqual(
+            self.log,
+            [
+                ("create", "new0", 1),
+                ("select", "reading", False),
+                ("type", "new0", "A\n"),
+                ("create", "new1", 2),
+                ("select", "reading", False),
+                ("type", "new1", "B\n"),
+            ],
+        )
+        self.assertEqual(untyped, [])
+
+
 class CallerTty(unittest.TestCase):
     """The caller's tty is found up the process tree, never on its own streams."""
 

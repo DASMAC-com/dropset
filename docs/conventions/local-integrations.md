@@ -838,8 +838,19 @@ Beyond coloring, `iterm-reorder.py` keeps each window's tabs sorted into
 attention groups so you can park at position 1 and sweep right:
 
 ```txt
-[ yellow (permission) … ] [ green (reply wanted) … ] [ everything else … ]
+[ yellow (permission) … ] [ green (reply wanted) … ] [ the rest … ] [ plan ]
 ```
+
+**The planning tab is always locatable, by position alone** (no color of
+its own). While it is resting it sorts last, so `Cmd-9` — which selects
+the last tab even with fewer than nine — always lands on it. While it
+needs attention it queues in its yellow or green group like any other
+tab, so a planning ask still surfaces at position 1 in FIFO order, and
+it returns to the rightmost slot once cleared. The reorderer finds it by
+the iTerm user variable `user.ds_role=plan`, which the `plan` launcher
+sets around its cycle loop and clears on exit — never by title. Set
+`DS_PLAN_TAB_RIGHTMOST=0` in the runtime config to skip the marker; the
+planning tab then sorts like any other.
 
 Within each attention group the order is **FIFO**: the tab that has
 waited longest stays leftmost, and a tab that newly needs attention goes
@@ -2266,11 +2277,29 @@ drives the real zsh functions.
   captures the window's selected tab before creating anything,
   re-selects it after every create (the steal then lasts one round trip,
   not the batch) and once more on the way out, failure path included,
-  without raising the window. A refused re-select is reported as
-  `focus_restored: false` and never fails the batch: the commands were
-  typed, and a not-ok answer would put them in the retry set and double
-  them. Since both callers go through `open_tabs`, so would any future
-  one.
+  without raising the window. The selected tab, not the caller's (that
+  is only the fallback when no selection is known): the caller is the
+  planning tab, and restoring that pulled an operator reading some other
+  tab onto it. iTerm's API has no create-unselected
+  option, so the one-round-trip flash is the floor. A refused re-select
+  is reported as `focus_restored: false` and never fails the batch: the
+  commands were typed, and a not-ok answer would put them in the retry
+  set and double them. Since both callers go through `open_tabs`, so
+  would any future one.
+
+  **New tabs land just left of a rightmost planning tab**, by creation
+  index (`async_create_tab(index=…)`) rather than a later reorder, so
+  the planning tab stays where `Cmd-9` reaches it. iTerm has no tab pin
+  or fixed-index facility to use instead. While the reorderer runs, a
+  planning tab that is not rightmost is in an attention group, and the
+  default append is then already the resting order.
+
+  **Every tab either launcher opens gets the green Attend mark**
+  (`iterm_api.mark_attention`, the same `iterm-attend.sh --mark` the
+  operator's shortcut applies), so a dispatched or resumed session reads
+  as waiting until visited. It clears exactly as a hand-set mark does —
+  including on the session's own next paint, so a verb launched with a
+  kick-off prompt may clear it on its first `UserPromptSubmit`.
 
   **No AppleScript.** iTerm is driven through its Python API via the
   shared `.claude/tools/iterm_api.py`, the one owner of iTerm automation

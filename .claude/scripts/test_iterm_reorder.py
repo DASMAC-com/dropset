@@ -123,6 +123,70 @@ class PlanOrder(unittest.TestCase):
         self.assertEqual(ids, ["B", "A"])
 
 
+class PlanningTab(unittest.TestCase):
+    """A resting planning tab sorts last, so Command-9 always reaches it; one
+    that needs attention queues in its group like any other tab."""
+
+    def setUp(self):
+        self.seq, self.last_group, self.counter = {}, {}, 0
+
+    def step(self, tabs, plan_group):
+        # `tabs` is the non-planning tabs; P is the planning tab, listed first so
+        # every placement below is the reorderer's doing, not the input order.
+        entries = [("P", ir.effective_group(plan_group, ir.PLAN_ROLE))] + tabs
+        order, self.counter = ir.plan_order(
+            entries, self.seq, self.last_group, self.counter
+        )
+        return [entries[i][0] for i in order]
+
+    def test_resting_planning_tab_is_rightmost_alone(self):
+        ids = self.step([("A", "neutral"), ("B", "neutral")], "neutral")
+        self.assertEqual(ids, ["A", "B", "P"])
+
+    def test_resting_planning_tab_is_rightmost_behind_attention(self):
+        ids = self.step([("A", "neutral"), ("B", "green"), ("C", "yellow")], "neutral")
+        self.assertEqual(ids, ["C", "B", "A", "P"])
+
+    def test_a_planning_ask_surfaces_at_position_one(self):
+        ids = self.step([("A", "neutral"), ("B", "neutral")], "green")
+        self.assertEqual(ids[0], "P")
+
+    def test_a_planning_ask_queues_fifo_behind_older_attention(self):
+        self.step([("A", "green"), ("B", "neutral")], "neutral")
+        ids = self.step([("A", "green"), ("B", "neutral")], "green")
+        self.assertEqual(ids, ["A", "P", "B"])
+
+    def test_a_cleared_planning_tab_returns_to_the_rightmost_slot(self):
+        tabs = [("A", "neutral"), ("B", "yellow")]
+        self.step(tabs, "yellow")
+        ids = self.step(tabs, "neutral")
+        self.assertEqual(ids, ["B", "A", "P"])
+
+    def test_the_role_is_found_on_any_pane_of_a_split_tab(self):
+        import asyncio
+
+        def session(role):
+            class Session:
+                async def async_get_variable(self, name):
+                    return role if name == ir.ROLE_VARIABLE else None
+
+            return Session()
+
+        split = type("Tab", (), {})()
+        split.sessions = [session(None), session(ir.PLAN_ROLE)]
+        plain = type("Tab", (), {})()
+        plain.sessions = [session(None), session("task")]
+        self.assertEqual(asyncio.run(ir._tab_role(split)), ir.PLAN_ROLE)
+        self.assertIsNone(asyncio.run(ir._tab_role(plain)))
+
+    def test_only_the_marked_role_is_special(self):
+        self.assertEqual(ir.effective_group("neutral", None), "neutral")
+        self.assertEqual(ir.effective_group("neutral", ""), "neutral")
+        self.assertEqual(ir.effective_group("neutral", "task"), "neutral")
+        self.assertEqual(ir.effective_group("green", ir.PLAN_ROLE), "green")
+        self.assertEqual(ir.effective_group("yellow", ir.PLAN_ROLE), "yellow")
+
+
 class GroupForColor(unittest.TestCase):
     def test_maps_state_hexes(self):
         self.assertEqual(ir._group_for_color("3a2c08"), "yellow")

@@ -287,6 +287,20 @@ class SplitVerbs(unittest.TestCase):
 
 
 class Dispatch(unittest.TestCase):
+    def setUp(self):
+        # Always stubbed: the real mark writes a state file and paints a live
+        # tty, and a fake tty like /dev/ttys005 may well be a real one here.
+        self.marked = []
+        self.mark_ok = True
+
+        def mark(tty):
+            self.marked.append(tty)
+            return self.mark_ok
+
+        original = iterm_api.mark_attention
+        iterm_api.mark_attention = mark
+        self.addCleanup(setattr, iterm_api, "mark_attention", original)
+
     def _stub_tabs(self, result):
         """Replace `open_tabs`, recording its argument. `result` is a list or an
         exception to raise."""
@@ -381,6 +395,26 @@ class Dispatch(unittest.TestCase):
             rc = session_dispatch.run(["plan"])
         self.assertEqual(rc, 0)
         self.assertIn("roll-call unavailable", out.getvalue())
+
+    def test_every_dispatched_tab_gets_the_attend_mark(self):
+        self._stub_tabs(["/dev/a", "/dev/b"])
+        self._stub_names([])
+        with redirect_stdout(io.StringIO()):
+            rc = session_dispatch.run(["task", "resume", "12", "+", "chore", "34"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.marked, ["/dev/a", "/dev/b"])
+
+    def test_a_lost_mark_is_named_and_does_not_fail_the_dispatch(self):
+        self._stub_tabs(["/dev/a", None])
+        self._stub_names([])
+        self.mark_ok = False
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            rc = session_dispatch.run(["task", "12", "+", "plan"])
+        self.assertEqual(rc, 0)
+        # A tab with no tty cannot be marked, and is never handed to the script.
+        self.assertEqual(self.marked, ["/dev/a"])
+        self.assertIn("could not mark green: task 12, plan", err.getvalue())
 
 
 class BlockedDispatch(unittest.TestCase):
