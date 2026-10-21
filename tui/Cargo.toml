@@ -1,10 +1,14 @@
+# cspell:word rustls
+
 # Localnet control-plane TUI. A ratatui + crossterm panel that
 # spawns a `solana-test-validator`, gates each bootstrap action on live
 # on-chain state (a derived `Phase`), and drives the eCLOB lifecycle —
 # deploy, init, create-market, create-vault, teardown, wipe — end to end.
-# Rust-only, not published. No tokio: a synchronous event loop services a
+# Rust-only, not published. A synchronous event loop services a
 # `std::thread` + `mpsc` background-job harness, and the SDK fetch path is
-# the blocking `RpcClient` (sdk/rs `fetch` feature).
+# the blocking `RpcClient` (sdk/rs `fetch` feature). The one async island is
+# the fair-price read (`src/fair.rs`), which runs on a throwaway
+# current-thread runtime per read.
 
 [[bin]]
 name = "dropset-tui"
@@ -44,6 +48,11 @@ dropset-sdk = { path = "../sdk/rs", features = ["fetch"] }
 # `compute_pro_rata_slice`), so the leader deposit / withdraw preview rounds
 # exactly as the handler does rather than re-deriving it.
 dropset-math-core = { path = "../sdk/math-core" }
+# The fair-price estimator's published row and its decode checks
+# (`FairPriceSource`, `FairPriceRow::fair_value`), and the market → product
+# join, so the passive-ladder seed reads `fair_price` exactly as the maker
+# bot does.
+dropset-market-data = { path = "../market-data" }
 open = "5"
 ratatui = "0.29"
 # Pinned to the SDK's 3.x line (sdk/rs/Cargo.toml) so there is one
@@ -73,7 +82,16 @@ solana-transaction = "3"
 solana-transaction-status-client-types = "3"
 # The publish record's binary digest — the sha256 the ceremony log carries.
 sha2 = "0.10"
+# The fair-price read's connect options (reader role check, read-only
+# session) — the same feature set as market-data, so nothing new compiles.
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+] }
 tempfile = "3"
+# The fair-price read's per-read current-thread runtime and its timeout.
+tokio = { version = "1", features = ["net", "rt", "time"] }
 
 # Build a `FillEvent`'s borsh body when exercising the fill decoder's
 # emitting-program check (fills.rs tests). Not needed at runtime — the SDK's

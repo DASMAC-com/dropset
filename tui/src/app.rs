@@ -18,6 +18,7 @@ use crate::bot::{self, BotManager};
 use crate::chain;
 use crate::cluster::{Cluster, Identity};
 use crate::explorer;
+use crate::fair;
 use crate::fills;
 use crate::job::{JobEvent, Logger};
 use crate::leader::{self, LeaderOp, Ticket};
@@ -194,6 +195,9 @@ pub struct App {
     /// the operator's quote key): the passive ladder finds and signs for its
     /// vault by it. `None` on a watch-only mainnet session.
     roster_quote: Option<Pubkey>,
+    /// The fair-price database a blank passive center seeds from, when
+    /// [`fair::DATABASE_URL_ENV`] names one.
+    fair_db: Option<fair::FairDb>,
     /// Which chain is behind the endpoint. A mainnet session starts
     /// [`Identity::Verified`] (its genesis was checked at launch); a localnet
     /// one starts [`Identity::Unchecked`] and is classified on the first poll
@@ -282,6 +286,9 @@ impl App {
     /// caller resolved it, because that endpoint has already been verified
     /// against the expected genesis hash and must not be second-guessed here.
     pub fn new(mut ctx: JobContext) -> Result<Self> {
+        // Ahead of the validator, so a misconfigured URL fails the launch
+        // before anything is spawned.
+        let fair_db = fair::FairDb::from_env()?;
         let validator = match ctx.cluster {
             Cluster::Localnet => {
                 let v = Validator::spawn()?;
@@ -333,6 +340,7 @@ impl App {
             roster_markets,
             roster_leader,
             roster_quote,
+            fair_db,
             identity,
             selected_market: 0,
             follow_default_market: true,
@@ -1155,14 +1163,18 @@ impl App {
                 "no quote key; relaunch with its reference in the keys file or --quote"
             )),
             (_, None) => Err(anyhow::anyhow!("no market selected")),
-            (Some(quote), Some(market)) => passive::prepare(
-                &self.client,
-                &self.ctx.repo_root,
-                self.ctx.cluster,
-                &market,
-                &quote,
-                &form,
-            ),
+            (Some(quote), Some(market)) => {
+                let fair = self.read_fair(&market);
+                passive::prepare(
+                    &self.client,
+                    &self.ctx.repo_root,
+                    self.ctx.cluster,
+                    &market,
+                    &quote,
+                    &form,
+                    &fair,
+                )
+            }
         };
         match prepared {
             Ok(ticket) => {
@@ -1175,6 +1187,19 @@ impl App {
                 self.log(LogKind::Err, format!("{label} — {e:#}"));
                 self.passive_prompt = Some(PassivePrompt::Form(form));
             }
+        }
+    }
+
+    /// The estimator's fair for `market`, read now — [`fair::Fair::Off`] with
+    /// no database configured, or when the market is off this cluster's
+    /// roster (nothing to join a product on).
+    fn read_fair(&self, market: &accounts::MarketView) -> fair::Fair {
+        let Some(db) = &self.fair_db else {
+            return fair::Fair::Off;
+        };
+        match market::config_for(&self.ctx.repo_root, self.ctx.cluster, &market.base_mint) {
+            Some(config) => db.read(config.base.symbol),
+            None => fair::Fair::Off,
         }
     }
 
@@ -1380,7 +1405,22 @@ impl App {
                 self.log(LogKind::Err, "A job is already running.".to_string());
                 return;
             }
-            self.passive_prompt = Some(PassivePrompt::Form(passive::Form::new(op)));
+            let mut form = passive::Form::new(op);
+            if let Some(market) = self.chain.selected_market(self.selected_market).cloned() {
+                form.fair = self.read_fair(&market);
+                form.vault = match self.roster_quote {
+                    None => vec!["no quote key — the vault view needs one".to_string()],
+                    Some(quote) => passive::vault_lines(
+                        &self.client,
+                        &self.ctx.repo_root,
+                        self.ctx.cluster,
+                        &market,
+                        &quote,
+                    )
+                    .unwrap_or_else(|e| vec![format!("vault view — {e:#}")]),
+                };
+            }
+            self.passive_prompt = Some(PassivePrompt::Form(form));
             return;
         }
         if self.job_running {

@@ -20,6 +20,7 @@ pub mod deploy;
 mod e2e;
 pub mod emergency;
 pub mod explorer;
+pub mod fair;
 pub mod fills;
 pub mod job;
 pub mod keys;

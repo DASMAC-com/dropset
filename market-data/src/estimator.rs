@@ -220,6 +220,21 @@ pub const PUBLISHED_MARKETS: [EstimatorMarket; 4] = [
     },
 ];
 
+/// The product id this estimator publishes for the market with this base
+/// `symbol`, or `None` if it publishes nothing for it.
+///
+/// Every reader of `fair_price` — the maker bot's quoting path and the TUI's
+/// passive-ladder seed — resolves its market here, so rostering a market above
+/// switches them all over with no edit on their side. Joined on the base
+/// symbol, the same join `market-data/tests/estimator_roster_agreement.rs`
+/// uses.
+pub fn published_product(symbol: &str) -> Option<&'static str> {
+    PUBLISHED_MARKETS
+        .iter()
+        .map(|m| m.product_id)
+        .find(|p| p.split_once('-').map(|(base, _)| base) == Some(symbol))
+}
+
 /// Why the estimator stopped.
 ///
 /// Every variant is fail-closed: the process exits and its orchestrator restarts

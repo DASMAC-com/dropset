@@ -271,6 +271,7 @@ sqlstate
 sqlstring
 sqlx
 sslmode
+sslrootcert
 stablecoins
 stdlib
 stoikov
