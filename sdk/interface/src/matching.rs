@@ -266,8 +266,14 @@ pub fn simulate_swap(
             // (`compute_fill` guard 1f) rather than hand out free base,
             // so skip it here too — quoting it would promise output the
             // chain won't deliver. It charges no residue either, for the
-            // symmetric reason: the leg pays out nothing.
+            // symmetric reason: the leg pays out nothing. On a
+            // taker-capped leg the remainder is one quote atom, which no
+            // later ask fills bar an exact whole ratio, so the engine
+            // ends the walk there (`guard_1f`) and so must this.
             if fill_q == 0 {
+                if taker_bound {
+                    break;
+                }
                 continue;
             }
             let residue = if taker_bound {
@@ -301,10 +307,14 @@ pub fn simulate_swap(
             }
             let fill_b = fill_b as u64;
             // Symmetric to the Buy zero-input guard above: a one-atom
-            // quote leg at any price above 1 costs zero base, and the
-            // engine skips it. (Bounded near one atom on this arm,
-            // unlike the Buy side, since the price is above 1.)
+            // quote leg at any price above 1 costs zero base. (Bounded
+            // near one atom on this arm, unlike the Buy side, since the
+            // price is above 1.) As on the Buy side, a taker-capped leg
+            // ends the walk and a level- or vault-capped one is skipped.
             if fill_b == 0 {
+                if taker_bound {
+                    break;
+                }
                 continue;
             }
             let residue = if taker_bound {
@@ -1589,10 +1599,10 @@ mod tests {
         );
     }
 
-    /// A one-vault market carrying exactly the two asks given, at 6-vs-6
+    /// A one-vault market carrying exactly the asks given, at 6-vs-6
     /// decimals with no fees. Lets a test place a deliberately far-out
     /// level behind an honest one.
-    fn market_with_asks(a0: Position, a1: Position) -> Vec<u8> {
+    fn market_with_asks(asks: &[Position]) -> Vec<u8> {
         let mut header = MarketHeader::zeroed();
         header.head = 0u32.into();
         header.tombstone_head = NULL_SECTOR.into();
@@ -1613,8 +1623,7 @@ mod tests {
         };
         v.base_atoms = 10_000_000u64.into();
         v.quote_atoms = 10_000_000u64.into();
-        v.remaining.asks[0] = a0;
-        v.remaining.asks[1] = a1;
+        v.remaining.asks[..asks.len()].copy_from_slice(asks);
 
         let vaults = [v];
         let mut data = Vec::new();
@@ -1645,7 +1654,7 @@ mod tests {
         // Behind it, the largest representable price.
         let honest = position(10_904_000, 1_000);
         let far_out = position_at(99_999_999, 15, 1_000_000);
-        let data = market_with_asks(honest, far_out);
+        let data = market_with_asks(&[honest, far_out]);
         let view = MarketView::load(&data).unwrap();
 
         const BUDGET: u64 = 5_000_000;
@@ -1674,6 +1683,72 @@ mod tests {
         );
     }
 
+    /// A one-atom remainder left by a level-capped fill ends the walk at
+    /// the next level whose zero input leg trips guard 1f taker-capped —
+    /// rather than walking on to a later level that could fill it.
+    ///
+    /// The later level sits at an exact whole ratio (0.5: one quote atom
+    /// buys two base for exactly one quote), a price at which the walk
+    /// could have filled the atom. Ending the walk forgoes it, the
+    /// accepted dust: the alternative is a full-book walk on every dust
+    /// remainder for nothing at every other price.
+    #[test]
+    fn a_dust_remainder_ends_the_walk_at_guard_1f() {
+        let data = market_with_asks(&[
+            // 10 base at 0.3 costs 3 quote; the level caps the leg.
+            position_at(30_000_000, -1, 10),
+            // One quote atom buys 2 base at 0.35, which reverse-converts
+            // to 0 quote: guard 1f, and the taker cap binds.
+            position_at(35_000_000, -1, 1_000_000),
+            // One quote atom buys 2 base at 0.5 for exactly 1 quote.
+            position_at(50_000_000, -1, 1_000_000),
+        ]);
+        let view = MarketView::load(&data).unwrap();
+
+        let q = simulate_swap(
+            &view,
+            SwapSide::Buy,
+            4,
+            Price::INFINITY,
+            NOW_SLOT,
+            NOW_WALL,
+            0,
+        );
+        assert_eq!(q.legs, 1, "the walk ends at guard 1f");
+        assert_eq!(q.out_amount, 10, "only the first level fills");
+        assert_eq!(q.in_amount, 3, "the remainder atom stays with the taker");
+    }
+
+    /// The other half of guard 1f: a leg capped by its LEVEL (not the
+    /// taker's budget) whose zero input leg trips the guard is skipped,
+    /// not the end of the walk, since the taker still has budget a later
+    /// level can fill.
+    #[test]
+    fn a_level_capped_zero_input_leg_skips_and_the_walk_goes_on() {
+        let data = market_with_asks(&[
+            // One base atom at 0.35 costs 0 quote, so guard 1f fires; the
+            // taker's 5 quote atoms could buy 14 base here, so the level
+            // cap, not the taker, binds.
+            position_at(35_000_000, -1, 1),
+            // 5 quote atoms buy 10 base at 0.5.
+            position_at(50_000_000, -1, 1_000_000),
+        ]);
+        let view = MarketView::load(&data).unwrap();
+
+        let q = simulate_swap(
+            &view,
+            SwapSide::Buy,
+            5,
+            Price::INFINITY,
+            NOW_SLOT,
+            NOW_WALL,
+            0,
+        );
+        assert_eq!(q.legs, 1, "the dust level is skipped, the next fills");
+        assert_eq!(q.out_amount, 10);
+        assert_eq!(q.in_amount, 5);
+    }
+
     /// The zero-leg early return, reached the only way it can be: a live
     /// best ask the taker cannot afford a single atom at. The engine
     /// soft-reverts that take whole (`filled_legs == 0`) and transfers
@@ -1684,10 +1759,10 @@ mod tests {
         // Both levels far out — `collect_side_levels` sorts best-price
         // first, so a cheap level in either slot would be the one the
         // walk reaches and this would not test the zero-leg path.
-        let data = market_with_asks(
+        let data = market_with_asks(&[
             position_at(99_999_999, 15, 1_000_000),
             position_at(10_000_000, 15, 1_000_000),
-        );
+        ]);
         let view = MarketView::load(&data).unwrap();
 
         let q = simulate_swap(

@@ -126,8 +126,10 @@ pub struct SetLeaderEvent {
 /// within one slot into nothing, so this record — not the diff — is how
 /// the maker learns its delegation moved. Carries `leader` so an indexer
 /// sees the full post-rotation authority pair, mirroring
-/// `SetLeaderEvent`. A leader re-stamping the incumbent emits
-/// `old_authority == new_authority`; treat that as a no-op. See the spec's
+/// `SetLeaderEvent`. Re-stamping the incumbent is rejected, so every
+/// event emitted since that rejection landed has
+/// `old_authority != new_authority`; an older one may carry an equal
+/// pair, which records no change. See the spec's
 /// **SetQuoteAuthority**.
 #[event]
 pub struct SetQuoteAuthorityEvent {

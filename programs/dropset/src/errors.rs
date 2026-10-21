@@ -113,7 +113,7 @@ pub enum DropsetError {
     MissingPlatformFeeAccounts,
     #[msg("market still has vaults on the active list")]
     MarketHasActiveVaults,
-    #[msg("leader already leads a live (not frozen, not tombstoned) vault on this market")]
+    #[msg("leader already leads an open (live or frozen) vault on this market")]
     LeaderAlreadyLeadsVault,
     #[msg("new leader is the vault's current leader")]
     SameLeader,
@@ -129,4 +129,6 @@ pub enum DropsetError {
     VaultNameTaken,
     #[msg("vault name is locked by an admin")]
     VaultNameLocked,
+    #[msg("new quote authority is the vault's current quote authority")]
+    SameQuoteAuthority,
 }

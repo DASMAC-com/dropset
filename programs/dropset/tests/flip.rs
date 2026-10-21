@@ -353,6 +353,34 @@ fn send_at_max_cu(
     })
 }
 
+/// What a one-atom sell into a cold ten-vault book cost before guard 1f
+/// ended the walk: every one of the book's entries visited, ~2.4k CU
+/// each, for zero fills. A dust walk must now come in well under it.
+const OLD_DUST_WALK_CU: u64 = 247_000;
+
+/// A one-atom sell above price 1 buys one quote atom at the best bid and
+/// pays zero base for it, so guard 1f fires — and since the taker's own
+/// budget is the binding cap, the walk ends there rather than skipping on
+/// down every lower bid.
+#[test]
+fn a_one_atom_sell_ends_the_walk() {
+    let (mut f, taker) = ten_vault_book();
+    let base_ata = f.base_ata(&taker.pubkey());
+    let before = f.token_balance(&base_ata);
+
+    let sell = f.swap_ix(&taker.pubkey(), SELL, 1, Price::ZERO.as_u32(), 0);
+    let meta = send_at_max_cu(&mut f, &taker, sell).expect("dust sell");
+
+    assert!(common::events::fills(&meta).is_empty(), "nothing fills");
+    assert_eq!(f.token_balance(&base_ata), before, "the atom stays put");
+    let cu = meta.compute_units_consumed;
+    println!("one-atom sell over {VAULTS} cold vaults: {cu} CU");
+    assert!(
+        cu < OLD_DUST_WALK_CU / 2,
+        "a dust sell must not walk the book: {cu} CU"
+    );
+}
+
 /// The take a fully flipped ten-vault book allows — the figure the
 /// `N_LEVELS` sizing question waits on.
 ///
@@ -467,6 +495,11 @@ fn a_cold_take_at_the_heap_ceiling_fits_the_swap_compute_budget() {
             "side {side}: only {legs_in_default} legs fit the {} a bare swap gets",
             common::DEFAULT_INSTRUCTION_CU
         );
+        assert!(
+            cu < u64::from(SWAP_COMPUTE_UNIT_LIMIT),
+            "side {side}: the costliest cold take used {cu} CU, over the \
+             {SWAP_COMPUTE_UNIT_LIMIT} a client sends ahead of a bare swap"
+        );
     }
 }
 
@@ -538,17 +571,16 @@ fn cold_take_to_the_heap_ceiling(side: u8) -> (usize, u64, usize, String) {
     (legs, cu, legs_in_default, String::new())
 }
 
-/// The costliest take that completes: a one-atom sell on a fully flipped
-/// ten-vault book, the most entries a sell can see (every vault's own bids
-/// plus every ask flipped to a bid).
+/// A one-atom sell on a fully flipped ten-vault book, the most entries a
+/// sell can see (every vault's own bids plus every ask flipped to a bid).
 ///
 /// One base atom buys a quote atom at any bid above 1, but that quote atom
-/// buys back no whole base atom, so each leg is skipped rather than ending
-/// the walk and the take visits every entry without filling. It overruns
-/// what a bare `swap` gets, so this is the case [`SWAP_COMPUTE_UNIT_LIMIT`]
-/// is sized from.
+/// buys back no whole base atom, so guard 1f fires with the taker cap
+/// binding and the walk ends at the first entry. Skipping on instead
+/// visited all 160 for ~404k CU and nothing filled; ended, the take fits
+/// what a bare `swap` gets.
 #[test]
-fn a_dust_sell_walking_a_flipped_book_fits_the_client_compute_limit() {
+fn a_dust_sell_on_a_flipped_book_fits_a_bare_swap() {
     let (mut f, taker) = ten_vault_book();
     let prime = f.swap_ix(&taker.pubkey(), BUY, 1, Price::INFINITY.as_u32(), u64::MAX);
     send_at_max_cu(&mut f, &taker, prime).expect("priming revert");
@@ -580,9 +612,9 @@ fn a_dust_sell_walking_a_flipped_book_fits_the_client_compute_limit() {
         "a dust sell fills nothing"
     );
     assert!(
-        cu < u64::from(SWAP_COMPUTE_UNIT_LIMIT),
-        "the full-book dust walk used {cu} CU, over the {SWAP_COMPUTE_UNIT_LIMIT} \
-         a client sends ahead of a bare swap"
+        cu < common::DEFAULT_INSTRUCTION_CU,
+        "the dust sell used {cu} CU, over the {} a bare swap gets",
+        common::DEFAULT_INSTRUCTION_CU
     );
 }
 
