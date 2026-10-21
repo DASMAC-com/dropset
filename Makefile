@@ -479,7 +479,7 @@ endef
 # With no reference there is no `op` dependency at all, and the keys stay
 # unset (the keyless default). A bare `pnpm dev` over a referencing file hands
 # the route handlers the literal reference, which they refuse.
-FRONTEND_OP_REF = $(shell grep -qs '^[^#]*op://' frontend/.env.local && echo 1)
+FRONTEND_OP_REF = $(shell grep -qs '^[^\#]*op://' frontend/.env.local && echo 1)
 FRONTEND_OP = \
 	$(if $(FRONTEND_OP_REF),op run $(OP_ACCT) --env-file=.env.local --,)
 
