@@ -135,8 +135,8 @@ pub enum Posture {
     /// Seeded with the opening ladder and quoted by its maker bot.
     Active,
     /// Seeded with the passive-tight-8 book and run with no maker: the
-    /// operator re-centers it from the passive form, exactly as a mainnet
-    /// passive book is run.
+    /// operator re-centers it from the passive form, exactly as a passive
+    /// book is meant to be run on mainnet.
     Passive,
 }
 

@@ -866,7 +866,10 @@ impl App {
         };
         if posture == market::Posture::Passive && self.bots.is_running(symbol) {
             self.bots.stop(symbol);
-            self.log(LogKind::Ok, format!("[{symbol}] bot stopped"));
+            self.log(
+                LogKind::Ok,
+                format!("[{symbol}] bot stopped — post the passive book with p"),
+            );
         }
         self.log(
             LogKind::Ok,
