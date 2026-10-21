@@ -194,6 +194,13 @@ describe("contributeClosedReason", () => {
     expect(
       contributeClosedReason(PAIR, vault({ ...atFloor, totalShares: 999n })),
     ).toBeNull();
+    // No floor sets no cap; a floor with no leader stake left fits nothing.
+    expect(
+      contributeClosedReason(PAIR, vault({ minLeaderSharePpm: 0 })),
+    ).toBeNull();
+    expect(contributeClosedReason(PAIR, vault({ leaderShares: 0n }))).toMatch(
+      /^Full/,
+    );
   });
 
   it("names an empty vault, and puts the program's gates first", () => {
