@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // lib/env reads process.env at module scope, so each case stubs the env and
-// imports a fresh copy.
+// imports a fresh copy. The URL overrides default to unset, so one exported in
+// the developer's shell cannot decide a case.
 const load = async (vars: Record<string, string>) => {
   vi.resetModules();
-  for (const [name, value] of Object.entries(vars)) vi.stubEnv(name, value);
+  const all = {
+    NEXT_PUBLIC_DFLOW_QUOTE_URL: "",
+    NEXT_PUBLIC_DFLOW_ORDER_URL: "",
+    NEXT_PUBLIC_JUPITER_SEARCH_URL: "",
+    ...vars,
+  };
+  for (const [name, value] of Object.entries(all)) vi.stubEnv(name, value);
   return import("./env");
 };
 

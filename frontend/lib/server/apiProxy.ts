@@ -101,7 +101,7 @@ export async function forward(
     res = await fetch(url, { headers, redirect: "error", signal: req.signal });
   } catch {
     return Response.json(
-      { msg: `Network error reaching ${url.hostname}` },
+      { msg: `Network error or refused redirect reaching ${url.hostname}` },
       { status: 502 },
     );
   }

@@ -137,7 +137,7 @@ describe("forward", () => {
 
     expect(res.status).toBe(502);
     const body = await res.text();
-    expect(body).toContain("Network error reaching quote-api.dflow.net");
+    expect(body).toContain("refused redirect reaching quote-api.dflow.net");
     expect(body).not.toContain(KEY);
   });
 });
