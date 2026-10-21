@@ -1070,14 +1070,12 @@ mod tests {
 
     /// The kill the job should send for sector `idx` of `market`.
     fn kill(market: &Market, idx: u32) -> Instruction {
-        chain::retarget(
-            Cluster::Localnet,
-            set_liquidity_profile_ix(
-                market.signer.pubkey(),
-                market.address,
-                idx,
-                [0u8; PROFILE_BYTES],
-            ),
+        set_liquidity_profile_ix(
+            Cluster::Localnet.deployment(),
+            market.signer.pubkey(),
+            market.address,
+            idx,
+            [0u8; PROFILE_BYTES],
         )
     }
 
