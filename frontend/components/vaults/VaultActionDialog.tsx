@@ -26,9 +26,9 @@ import {
   leaderFloorFraction,
   maxOutsideDepositValue,
   mockMaxDeposit,
-  tokenUsdPrice,
   type Vault,
   type VaultMarket,
+  vaultRefPrice,
   vaultReserveRatio,
 } from "@/lib/data/vaults";
 import {
@@ -175,10 +175,10 @@ function PositionDetail({
   vault: Vault;
   position: VaultPosition;
 }) {
-  const refNow = vaultReserveRatio(vault) ?? position.entryRefPrice;
+  const refNow = vaultRefPrice(vault) ?? position.entryRefPrice;
   // Quote→USD rate for the ≈ readouts; the base leg is valued at refNow into
   // quote first, so every USD figure here shares one basis as Current value.
-  const quoteUsd = tokenUsdPrice(market.quote);
+  const quoteUsd = vault.quoteUsd;
   const { baseOut, quoteOut } = positionBasket(position, vault);
   const pnl = positionPnl(position, vault, refNow);
   const at = allTimePnl(position, vault, refNow);
@@ -343,8 +343,8 @@ function WithdrawSection({
   const isFull = parsed >= 100;
   const percentLabel = fractionPercentLabel(fraction, isFull);
 
-  const refNow = vaultReserveRatio(vault) ?? position.entryRefPrice;
-  const quoteUsd = tokenUsdPrice(market.quote);
+  const refNow = vaultRefPrice(vault) ?? position.entryRefPrice;
+  const quoteUsd = vault.quoteUsd;
   const bps = isFull
     ? Number(BPS_SCALE)
     : Math.round(fraction * Number(BPS_SCALE));
@@ -755,10 +755,13 @@ export function VaultActionDialog({
   // USD value of the basket, for display only ("Total Deposit" + per-leg ≈).
   // Each leg's quote-denominated value × the quote token's USD price, so the
   // legs and the total share one basis and read as real USD even when the
-  // quote leg isn't a USD stable (e.g. GYEN).
-  const quoteUsd = tokenUsdPrice(market.quote);
+  // quote leg isn't a USD stable (e.g. GYEN). The base leg is priced at the
+  // vault's reference price, not the basket ratio, which measures holdings.
+  const quoteUsd = vault.quoteUsd;
   const baseUsdValue =
-    (Number.isFinite(base) ? base : 0) * (ratio ?? 0) * quoteUsd;
+    (Number.isFinite(base) ? base : 0) *
+    (vaultRefPrice(vault) ?? ratio ?? 0) *
+    quoteUsd;
   const quoteUsdValue = (Number.isFinite(quote) ? quote : 0) * quoteUsd;
   const depositUsd = baseUsdValue + quoteUsdValue;
   // The largest deposit the vault can take before the new shares would dilute

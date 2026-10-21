@@ -34,9 +34,8 @@ import {
   MOCK_VAULT_FX_GROUPS,
   type Vault,
   type VaultMarket,
-  vaultApr24h,
   vaultMetric,
-  vaultReserveRatio,
+  vaultRefPrice,
 } from "@/lib/data/vaults";
 import { SHOW_MOCK_VAULTS } from "@/lib/env";
 import { emit, useAppEvent } from "@/lib/events";
@@ -51,8 +50,10 @@ import {
   VAULT_SEQ_PARAM,
 } from "@/lib/ui/swapUrl";
 
-const APR_TOOLTIP =
-  "What you earn in a year from the leader's skill, based on the last 24 hours. This does not count money made or lost when prices move.";
+// The table shows only what the chain gives. APR, 24h volume and the pair's
+// 24h figures need trade history, so they return with the indexer rather than
+// rendering blank here; a depositor's PnL stays on their position, marked at
+// the vault's reference price (vaultRefPrice).
 
 // Pin the generic shared header to this table's metric keys so the literal
 // `sortKey` props type-check against `sort` / `onToggle`.
@@ -103,22 +104,8 @@ function UsdCell({ value }: { value: number | null }) {
   );
 }
 
-// APR cell — em dash when null (zero TVL). Toned positive so the yield reads
-// as an at-a-glance "good" signal.
-function AprCell({ apr }: { apr: number | null }) {
-  return (
-    <td className="border-border border-r px-3 py-2 text-right align-middle font-mono tabular-nums text-accent-buy last:border-r-0">
-      {apr === null ? (
-        <span className="text-muted-fg">—</span>
-      ) : (
-        <NumberFlow value={apr} format={FORMATS.percent} />
-      )}
-    </td>
-  );
-}
-
-// The connected user's position value in a vault, marked at the vault's reserve
-// ratio (the display reference price stand-in), with the all-time return %
+// The connected user's position value in a vault, marked at the vault's
+// reference price (vaultRefPrice), with the all-time return %
 // below it (same red/green as the dialog's headline). The basket breakdown
 // lives in the manage dialog.
 function PositionValue({
@@ -128,7 +115,7 @@ function PositionValue({
   vault: Vault;
   position: VaultPosition;
 }) {
-  const refNow = vaultReserveRatio(vault) ?? position.entryRefPrice;
+  const refNow = vaultRefPrice(vault) ?? position.entryRefPrice;
   const { currentValue } = positionPnl(position, vault, refNow);
   const at = allTimePnl(position, vault, refNow);
   return (
@@ -172,7 +159,7 @@ function TokenPair({
 
 // FX-pair heading spanning the table, mirroring the per-currency headings on
 // /currencies: two flags + "EUR / USD" + nickname, with the pair's summed TVL
-// / 24h volume / vault count to the right.
+// and vault count to the right.
 function FxGroupHeading({
   group,
   colSpan,
@@ -200,15 +187,6 @@ function FxGroupHeading({
             <span>
               TVL <NumberFlow value={group.tvl} format={FORMATS.usdCompact} />
             </span>
-            {group.volume24h !== null && (
-              <span>
-                Vol{" "}
-                <NumberFlow
-                  value={group.volume24h}
-                  format={FORMATS.usdCompact}
-                />
-              </span>
-            )}
             <span>
               {count} {count === 1 ? "vault" : "vaults"}
             </span>
@@ -372,9 +350,7 @@ function VaultRow({
           {action.label}
         </button>
       </td>
-      <AprCell apr={vaultApr24h(vault)} />
       <UsdCell value={vault.tvl} />
-      <UsdCell value={vault.volume24h} />
     </tr>
   );
 }
@@ -470,6 +446,11 @@ function VaultsInner() {
   const liveGroups = useMemo(
     () => groupVaultMarkets(chain.markets),
     [chain.markets],
+  );
+  // Whether any live vault's TVL fell back to indicative token prices (a dark
+  // book or a pair with no USD leg), so the page note says only what's true.
+  const liveIndicative = chain.markets.some((m) =>
+    m.vaults.some((v) => v.usdIndicative),
   );
   const searchParams = useSearchParams();
   const [groupByPair, setGroupByPair] = useState(true);
@@ -583,7 +564,7 @@ function VaultsInner() {
     (vault: Vault): number => {
       const p = positionFor(vault);
       return p
-        ? positionPnl(p, vault, vaultReserveRatio(vault) ?? p.entryRefPrice)
+        ? positionPnl(p, vault, vaultRefPrice(vault) ?? p.entryRefPrice)
             .currentValue
         : 0;
     },
@@ -618,11 +599,11 @@ function VaultsInner() {
     [positionValue],
   );
 
-  // There's always an effective sort; default 24h volume desc. Memoized so the
+  // There's always an effective sort; default TVL desc. Memoized so the
   // groups/flatVaults memos below don't recompute every render in the default
   // (unsorted) state from a fresh object identity.
   const effective: { key: MetricKey; direction: SortDir } = useMemo(
-    () => sort ?? { key: "volume24h", direction: "desc" },
+    () => sort ?? { key: "tvl", direction: "desc" },
     [sort],
   );
 
@@ -684,8 +665,8 @@ function VaultsInner() {
     if (only) setDialog({ market: only.market, vault: only.vault });
   });
 
-  // Columns: Pair, Leader, Your Position, Manage, APR, TVL, 24h Vol.
-  const colSpan = 7;
+  // Columns: Pair, Leader, Your Position, Manage, TVL.
+  const colSpan = 5;
 
   // One section's rows: FX headings over their vaults when grouped, else the
   // flat list. Both sections can hold the same FX pair, so the heading key
@@ -775,7 +756,10 @@ function VaultsInner() {
             </label>
           </div>
           <p className="text-muted-fg text-xs">
-            Read live from the chain. TVL uses indicative token prices.
+            Read live from the chain. TVL is valued at each vault's reference
+            price.
+            {liveIndicative &&
+              " Where a vault has no on-chain USD price (its book is dark), its TVL uses indicative token prices."}
           </p>
         </div>
         {/* Active URL pin (?base=&quote=&leader=) shown as removable chips on
@@ -830,23 +814,8 @@ function VaultsInner() {
                   Manage
                 </th>
                 <VaultSortHeader
-                  sortKey="apr24h"
-                  label="APR 24h"
-                  sort={sort}
-                  onToggle={toggleSort}
-                  info={APR_TOOLTIP}
-                  thClassName="w-px whitespace-nowrap"
-                />
-                <VaultSortHeader
                   sortKey="tvl"
                   label="TVL"
-                  sort={sort}
-                  onToggle={toggleSort}
-                  thClassName="w-px whitespace-nowrap"
-                />
-                <VaultSortHeader
-                  sortKey="volume24h"
-                  label="24h Vol"
                   sort={sort}
                   onToggle={toggleSort}
                   thClassName="w-px whitespace-nowrap"

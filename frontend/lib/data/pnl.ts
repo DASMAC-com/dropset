@@ -44,8 +44,8 @@ export const positionBasket = (
   };
 };
 
-// `refNow` is the display reference price (quote per base). Until a price feed
-// exists callers pass vaultReserveRatio(vault) as the stand-in.
+// `refNow` is the display reference price (quote per base). Callers pass
+// vaultRefPrice(vault): the vault's live reference price where it has one.
 export const positionPnl = (
   position: VaultPosition,
   vault: Vault,

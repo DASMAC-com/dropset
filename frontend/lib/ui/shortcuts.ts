@@ -278,7 +278,7 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("toggleGroupByPair"),
     },
     // Sort keys ordered to match the table's columns: Pair, Leader, Your
-    // Position, APR, TVL, 24h Vol.
+    // Position, TVL.
     {
       key: "p",
       description: "Sort by pair",
@@ -298,22 +298,10 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("vaultsSort", "position"),
     },
     {
-      key: "a",
-      description: "Sort by 24h APR",
-      group: "Sort & display",
-      run: () => emit("vaultsSort", "apr24h"),
-    },
-    {
       key: "t",
       description: "Sort by TVL",
       group: "Sort & display",
       run: () => emit("vaultsSort", "tvl"),
-    },
-    {
-      key: "v",
-      description: "Sort by 24h volume",
-      group: "Sort & display",
-      run: () => emit("vaultsSort", "volume24h"),
     },
   ],
 };

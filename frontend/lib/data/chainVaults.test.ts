@@ -1,5 +1,6 @@
 import {
   encodePrice,
+  PRICE_ZERO,
   type VaultDepositorHeader,
   type VaultSummary,
 } from "@dropset/sdk";
@@ -18,6 +19,8 @@ import {
   depositClosedReason,
   findVaultBySeq,
   resolveVaultMarket,
+  tokenUsdPrice,
+  vaultRefPrice,
 } from "./vaults";
 
 const MARKET = "11111111111111111111111111111111";
@@ -29,6 +32,8 @@ const summary = (over: Partial<VaultSummary> = {}): VaultSummary => ({
   index: 2,
   seq: 5n,
   leader: LEADER,
+  // 1.25 USDC per TGBP, as a quote-atoms-per-base-atom ratio.
+  referencePrice: encodePrice(1.25e-3),
   baseAtoms: 1_000n * 10n ** 9n, // 1,000 TGBP
   quoteAtoms: 1_270n * 10n ** 6n, // 1,270 USDC
   totalShares: 2_000_000n,
@@ -60,9 +65,65 @@ describe("chainVault", () => {
       frozen: false,
     });
     expect(v.vaultPubkey).toBe(chainVaultId(MARKET, 5n));
-    expect(v.volume24h).toBeNull();
     // The program's index: isqrt(base_atoms · quote_atoms) / total_shares.
     expect(v.vps).toBeCloseTo(Math.sqrt(1e12 * 1.27e9) / 2_000_000, 6);
+  });
+
+  it("values TVL at the vault's own reference price", () => {
+    // USD-quoted: 1,000 TGBP × 1.25 + 1,270 USDC, no placeholder price.
+    const v = chainVault(summary(), MARKET, "TGBP", "USDC");
+    expect(v.refPrice).toBeCloseTo(1.25, 6);
+    expect(v.quoteUsd).toBe(1);
+    expect(v.usdIndicative).toBe(false);
+    expect(v.tvl).toBeCloseTo(2_520, 4);
+    expect(vaultRefPrice(v)).toBeCloseTo(1.25, 6);
+
+    // USD-based (USD/JPY quotes GYEN, both 6 decimals): 150 GYEN per USDC
+    // makes a GYEN worth 1/150 USD, so the whole vault is valued in base.
+    const jpy = chainVault(
+      summary({
+        referencePrice: encodePrice(150),
+        baseAtoms: 1_000n * 10n ** 6n,
+        quoteAtoms: 150_000n * 10n ** 6n,
+      }),
+      MARKET,
+      "USDC",
+      "GYEN",
+    );
+    expect(jpy.quoteUsd).toBeCloseTo(1 / 150, 9);
+    expect(jpy.usdIndicative).toBe(false);
+    expect(jpy.tvl).toBeCloseTo(2_000, 4);
+  });
+
+  it("falls back to indicative prices only while the book is dark", () => {
+    const dark = chainVault(
+      summary({ referencePrice: PRICE_ZERO }),
+      MARKET,
+      "TGBP",
+      "USDC",
+    );
+    expect(dark.refPrice).toBeNull();
+    expect(dark.usdIndicative).toBe(true);
+    expect(dark.tvl).toBeCloseTo(1_000 * tokenUsdPrice("TGBP") + 1_270, 4);
+    // PnL then marks at the reserve ratio, as before a price was decoded.
+    expect(vaultRefPrice(dark)).toBeCloseTo(1.27, 6);
+
+    // A dark USD-based market has no on-chain quote→USD rate either, so the
+    // quote leg falls back to the table too.
+    const darkJpy = chainVault(
+      summary({
+        referencePrice: PRICE_ZERO,
+        baseAtoms: 1_000n * 10n ** 6n,
+        quoteAtoms: 150_000n * 10n ** 6n,
+      }),
+      MARKET,
+      "USDC",
+      "GYEN",
+    );
+    expect(darkJpy.refPrice).toBeNull();
+    expect(darkJpy.quoteUsd).toBe(tokenUsdPrice("GYEN"));
+    expect(darkJpy.usdIndicative).toBe(true);
+    expect(darkJpy.tvl).toBeCloseTo(1_000 + 150_000 * tokenUsdPrice("GYEN"), 4);
   });
 
   it("compares a position's entry VPS like with like", () => {
