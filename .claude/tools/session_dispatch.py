@@ -308,6 +308,21 @@ def run(argv: list[str]) -> int:
     for command, tty in zip(commands, ttys):
         print(f"{command} -> {tty or 'tty unknown'}")
 
+    # Every new tab gets the operator's own Attend mark, green until visited,
+    # so a dispatched or resumed session is attended to rather than found by
+    # scanning (operator, 2026-10-19). Best effort, like the roll-call: a lost
+    # tint never turns a dispatch that worked into a non-zero exit.
+    unmarked = [
+        command
+        for command, tty in zip(commands, ttys)
+        if not (tty and iterm_api.mark_attention(tty))
+    ]
+    if unmarked:
+        print(
+            f"session-dispatch: could not mark green: {', '.join(unmarked)}",
+            file=sys.stderr,
+        )
+
     # The roll-call, best-effort and deliberately AFTER the per-verb lines. It is
     # the independent check that the tabs really exist — the ttys above come from
     # the call that made them, so they cannot disprove their own success, whereas

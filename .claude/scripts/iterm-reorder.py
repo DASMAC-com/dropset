@@ -4,7 +4,12 @@
 A single app-level daemon that keeps each iTerm2 window's tabs sorted into
 attention groups so you can park at position 1 and sweep right:
 
-    [ yellow (permission) … ] [ green (reply wanted) … ] [ everything else … ]
+    [ yellow (permission) … ] [ green (reply wanted) … ] [ the rest … ] [ plan ]
+
+The planning tab, once attended, sorts LAST so Command-9 always lands on it;
+while it needs attention it queues in its yellow or green group like any other
+tab. It is identified by the `user.ds_role` variable the `plan` launcher sets
+(see `.claude/shell/init.zsh`), never by its title.
 
 Within each attention group the order is **FIFO** — the oldest tab to enter
 the group stays leftmost, and a tab that newly needs attention goes to the
@@ -64,8 +69,15 @@ _PALETTE_KEYS = {
 
 _STATE_ASSIGNMENT = re.compile(r'^(STATE_[A-Z]+)="([0-9a-fA-F]{6})"', re.MULTILINE)
 
-# Group ordering: yellow first, then green, then everything else.
-_PRIORITY = {"yellow": 0, "green": 1, "neutral": 2}
+# Group ordering: yellow first, then green, then everything else, then a
+# resting planning tab.
+_PRIORITY = {"yellow": 0, "green": 1, "neutral": 2, "plan": 3}
+
+# The iTerm user variable the `plan` launcher sets on its session, and the value
+# that marks it. A plan launched with the switch off carries no marker, so it
+# sorts as an ordinary tab.
+ROLE_VARIABLE = "user.ds_role"
+PLAN_ROLE = "plan"
 
 POLL_SECONDS = 0.3
 
@@ -143,6 +155,17 @@ def _read_group(tty: str) -> str:
     return _group_for_color(color)
 
 
+def effective_group(group: str, role: str | None) -> str:
+    """The sort group of a tab: its attention group, except that a RESTING
+    planning tab gets a group of its own at the far right. A planning tab that
+    needs attention keeps its yellow or green group, so it still surfaces at
+    position 1 in FIFO order.
+    """
+    if role == PLAN_ROLE and group == "neutral":
+        return "plan"
+    return group
+
+
 def plan_order(entries, seq: dict, last_group: dict, counter: int):
     """Pure FIFO ordering. ``entries`` is the window's tabs in current order as
     ``(tab_id, group)`` pairs. Returns ``(order, counter)`` where ``order`` is
@@ -180,6 +203,9 @@ async def _reorder_window(window, seq: dict, last_group: dict, counter: int) -> 
             tty = await session.async_get_variable("tty")
             if tty:
                 group = _read_group(tty)
+            group = effective_group(
+                group, await session.async_get_variable(ROLE_VARIABLE)
+            )
         entries.append((tab.tab_id, group))
 
     order, counter = plan_order(entries, seq, last_group, counter)

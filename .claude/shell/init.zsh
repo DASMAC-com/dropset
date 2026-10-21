@@ -643,6 +643,17 @@ _ds_session() {
   fi
 }
 
+# Internal: set this iTerm session's `user.ds_role` variable to $1 ('' clears).
+#
+# A session variable rather than a title match, so a rename never breaks it, and
+# rather than a /tmp file keyed by tty, so a reused tty never inherits a stale
+# role. iTerm takes the value base64-encoded. A no-op outside iTerm or with no
+# terminal on stdout.
+_ds_iterm_role() {
+  [[ "$TERM_PROGRAM" == iTerm.app && -t 1 ]] || return 0
+  printf '\e]1337;SetUserVar=ds_role=%s\a' "$(print -rn -- "$1" | base64)"
+}
+
 # Internal: a deterministic per-TOPIC session UUID, seeded by kind + topic.
 #
 # Deliberately no date in the seed, which is the one substantive difference from
@@ -1699,6 +1710,13 @@ chore() {
 # addressing. The counter is per day, so a later bare `plan` the same day
 # resumes the latest cycle; plan_cycle.py and resolve_session.py read the same
 # counter, and DS_PLAN_DATE carries the launch day into the client.
+#
+# THE ROLE MARKER. Around the loop the tab carries the iTerm user variable
+# `ds_role=plan`, which `iterm-reorder.py` reads to keep a resting planning tab
+# rightmost (Command-9) and `session_dispatch.py` reads to open new tabs just
+# left of it. Set once outside the loop, so a cycle relaunch inherits it, and
+# cleared by the `always` block on every way out. `DS_PLAN_TAB_RIGHTMOST=0` in
+# the runtime config skips it, and the planning tab then sorts like any other.
 plan() {
   local model substrate day counter cycle name rc relaunch=''
   local marker="$_DS_SUBSTRATE_DIR/plan-cycle-pending"
@@ -1718,6 +1736,8 @@ plan() {
   _ds_upkeep
   day="$(date +%Y%m%d)" name="plan-$(date +%-d)"
   counter="$_DS_SUBSTRATE_DIR/plan-cycle-$day"
+  [[ "${DS_PLAN_TAB_RIGHTMOST:-1}" == 1 ]] && _ds_iterm_role plan
+  {
   while true; do
     cycle=0
     [[ -r "$counter" ]] && cycle="$(<"$counter")"
@@ -1744,6 +1764,9 @@ plan() {
     print -r -- $(( cycle + 1 )) >| "$counter"
     relaunch=1
   done
+  } always {
+    _ds_iterm_role ''
+  }
 }
 
 # Start OR resume today's HOUSEKEEPING session — the same contract as `plan`,
