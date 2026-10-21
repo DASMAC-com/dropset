@@ -16,13 +16,6 @@ pub struct RegistryHeader {
     /// Default fee for the per-`CreateVault` charge, stamped into
     /// `MarketHeader.fee_config` at market creation.
     pub default_fee_config: FeeConfig,
-    /// Number of live markets created against this registry. Incremented
-    /// by `create_market`, decremented by `close_market`. `close_registry`
-    /// requires this to be zero — the only on-chain witness that no
-    /// orphan markets remain, since the program cannot iterate all PDAs
-    /// to verify by enumeration. See the architecture spec, **Account
-    /// lifecycle and rent reclamation**.
-    pub market_count: u32,
     /// Default skin-in-the-game floor (ppm, `Ppm32`) stamped into markets.
     pub default_min_leader_share: u32,
     /// Default taker fee (ppm, `Ppm16`) stamped into markets.
@@ -34,14 +27,26 @@ pub struct RegistryHeader {
     pub default_max_platform_fee: u16,
     /// Default cap on vaults per market.
     pub max_vaults_per_market: u8,
+    /// Number of live markets created against this registry. Incremented
+    /// by `create_market`, decremented by `close_market`. `close_registry`
+    /// requires this to be zero — the only on-chain witness that no
+    /// orphan markets remain, since the program cannot iterate all PDAs
+    /// to verify by enumeration. See the architecture spec, **Account
+    /// lifecycle and rent reclamation**.
+    pub market_count: u32,
     /// Registry PDA bump.
     pub bump: u8,
+    /// Reserve for later fields. A carve takes bytes from the front, moves
+    /// no other field, and reads all-zero as the pre-carve meaning — see
+    /// the architecture spec's **Registry**.
+    #[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::Bytes>"))]
+    pub reserved: [u8; 140],
 }
 
 pub const REGISTRY_HEADER_DISCRIMINATOR: [u8; 8] = [74, 214, 198, 41, 138, 211, 36, 245];
 
 impl RegistryHeader {
-    pub const LEN: usize = 94;
+    pub const LEN: usize = 234;
 
     #[inline(always)]
     pub fn from_bytes(data: &[u8]) -> Result<Self, std::io::Error> {

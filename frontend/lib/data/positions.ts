@@ -40,7 +40,7 @@ export type VaultPosition = {
   // docs/architecture.md → "Depositor positions and cost basis" → All-time PnL.
   realizedPnl: number;
   realizedYield: number;
-  realizedFx: number;
+  realizedPrice: number;
 };
 
 // The mock depositor whose positions the preview surfaces. A connected wallet

@@ -61,7 +61,7 @@ type RealizeCase = {
   leader_shares_after: string;
 };
 type CrystallizeOk = {
-  realized_fx: string;
+  realized_price: string;
   realized_yield: string;
   realized_pnl: string;
   shares_after: string;
@@ -76,7 +76,7 @@ type CrystallizeCase = {
   slice_quote: string;
   entry_ref_bits: number;
   ref_now_bits: number;
-  realized_fx: string;
+  realized_price: string;
   realized_yield: string;
   realized_pnl: string;
   ok?: CrystallizeOk;
@@ -175,7 +175,7 @@ test('crystallize_pnl vectors match', () => {
         BigInt(c.slice_quote),
         c.entry_ref_bits,
         c.ref_now_bits,
-        BigInt(c.realized_fx),
+        BigInt(c.realized_price),
         BigInt(c.realized_yield),
         BigInt(c.realized_pnl),
       );
@@ -188,7 +188,7 @@ test('crystallize_pnl vectors match', () => {
     } else {
       const r = call();
       const ok = c.ok as CrystallizeOk;
-      assert.equal(r.realizedFx, BigInt(ok.realized_fx), 'realizedFx');
+      assert.equal(r.realizedPrice, BigInt(ok.realized_price), 'realizedPrice');
       assert.equal(r.realizedYield, BigInt(ok.realized_yield), 'realizedYield');
       assert.equal(r.realizedPnl, BigInt(ok.realized_pnl), 'realizedPnl');
       assert.equal(r.sharesAfter, BigInt(ok.shares_after), 'sharesAfter');

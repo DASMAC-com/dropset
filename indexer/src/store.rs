@@ -258,6 +258,9 @@ async fn write_fill(
         .bind(r.quote_atoms_after)
         .bind(r.nonce_after)
         .bind(r.taker_fee_atoms)
+        .bind(r.leg_kind)
+        .bind(r.flip_price)
+        .bind(r.remaining_after)
         .execute(&mut **tx)
         .await?;
     Ok(res.rows_affected())

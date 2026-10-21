@@ -4127,7 +4127,11 @@
         "",
         "Spec § **Events and emission → Granularity**: every leg is recorded,",
         "no truncation. A sweep that exceeds one self-CPI's instruction-data",
-        "budget splits across multiple `emit_cpi!` calls."
+        "budget splits across multiple `emit_cpi!` calls.",
+        "",
+        "Every field but the two `Price`s (native `u32`s at 4-aligned offsets)",
+        "is an alignment-1 Pod wrapper, so the body is padding-free; the IDL",
+        "still renders the wrappers as integers."
       ],
       "serialization": "bytemuck",
       "repr": {
@@ -4153,39 +4157,20 @@
             "type": "pubkey"
           },
           {
-            "name": "side",
-            "docs": [
-              "The taker's direction: `0` for a Buy, `1` for a Sell. It does not",
-              "name the array filled: a Buy fills either `asks[level_idx].size` or",
-              "the flipped `bids[level_idx].flip_size` (a filled bid's proceeds",
-              "resting as an ask), and a Sell the mirror. Tell the two apart by",
-              "comparing `fill_price` with `asks[level_idx].price` and",
-              "`bids[level_idx].flip_price` on a Buy (`bids[level_idx].price` and",
-              "`asks[level_idx].flip_price` on a Sell); where they coincide either",
-              "reading prices the fill identically."
-            ],
-            "type": "u8"
-          },
-          {
-            "name": "_pad",
-            "docs": [
-              "Padding so subsequent fields are aligned-1-friendly without",
-              "implicit struct padding the bytemuck check would reject."
-            ],
+            "name": "sector_idx",
             "type": {
-              "array": [
-                "u8",
-                7
-              ]
+              "defined": {
+                "name": "PodU32"
+              }
             }
           },
           {
-            "name": "sector_idx",
-            "type": "u32"
-          },
-          {
             "name": "level_idx",
-            "type": "u32"
+            "type": {
+              "defined": {
+                "name": "PodU32"
+              }
+            }
           },
           {
             "name": "vault_seq",
@@ -4193,15 +4178,11 @@
               "The filled vault's `Vault::seq`. `(market, sector_idx, vault_seq)`",
               "identifies a vault across sector reuse; `sector_idx` alone does not."
             ],
-            "type": "u64"
-          },
-          {
-            "name": "fill_base",
-            "type": "u64"
-          },
-          {
-            "name": "fill_quote",
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           },
           {
             "name": "fill_price",
@@ -4212,34 +4193,114 @@
             }
           },
           {
-            "name": "_pad2",
+            "name": "flip_price",
             "docs": [
-              "Padding to keep the next `u64` at an 8-byte boundary in the",
-              "fixed-size repr-C layout. `Price` is `u32`, so 4 bytes of pad",
-              "keep the struct stride well-defined."
+              "The level's `Position::flip_price` at emit, or zero when the level",
+              "cannot flip (its flip price is not matchable). On a primary leg it",
+              "is where the proceeds now rest, so the spread the level will",
+              "capture is `flip_price` against `fill_price` on the event alone.",
+              "On a flipped leg it equals `fill_price`: the leg filled at it."
             ],
             "type": {
-              "array": [
-                "u8",
-                4
-              ]
+              "defined": {
+                "name": "Price"
+              }
+            }
+          },
+          {
+            "name": "fill_base",
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
+          },
+          {
+            "name": "fill_quote",
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
+          },
+          {
+            "name": "remaining_after",
+            "docs": [
+              "The allowance left, after this leg, on the side it consumed, in",
+              "that side's atoms: `Position::size` for a primary leg,",
+              "`Position::flip_size` for a flipped one (see `leg_kind`)."
+            ],
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
             }
           },
           {
             "name": "base_atoms_after",
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           },
           {
             "name": "quote_atoms_after",
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           },
           {
             "name": "nonce_after",
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           },
           {
             "name": "taker_fee_atoms",
-            "type": "u64"
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
+          },
+          {
+            "name": "side",
+            "docs": [
+              "The taker's direction: `0` for a Buy, `1` for a Sell. It does not",
+              "name the array filled — a Buy fills either `asks[level_idx].size`",
+              "or the flipped `bids[level_idx].flip_size`, and a Sell the mirror;",
+              "`leg_kind` says which."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "leg_kind",
+            "docs": [
+              "`LEG_KIND_PRIMARY` (`0`) when the leg consumed the ladder's own",
+              "side (`Position::size`), `LEG_KIND_FLIPPED` (`1`) when it consumed",
+              "the flipped side (`Position::flip_size`)."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "_reserved",
+            "docs": [
+              "Reserve for later fields. A carve takes bytes from the front, moves",
+              "no other field, and reads all-zero as the pre-carve meaning — every",
+              "emit writes it zero; see the architecture spec's **Events and",
+              "emission**."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                46
+              ]
+            }
           }
         ]
       }
@@ -4293,7 +4354,8 @@
         "",
         "All fields are alignment-1 — `Address`, `Pod*` wrappers, `[FeeConfig]`,",
         "`u8` — so the header is padding-free and casts directly from the",
-        "account bytes."
+        "account bytes. Fields run identity, configuration, ledger and counters,",
+        "the bump, then the one reserve."
       ],
       "serialization": "bytemuck",
       "repr": {
@@ -4303,9 +4365,137 @@
         "kind": "struct",
         "fields": [
           {
+            "name": "base_mint",
+            "docs": [
+              "Base leg mint."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_mint",
+            "docs": [
+              "Quote leg mint."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "base_treasury",
+            "docs": [
+              "SPL / Token-2022 token account holding pooled base inventory.",
+              "ATA derived from `(market_pda, base_mint, base_token_program)`."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "quote_treasury",
+            "docs": [
+              "Same as `base_treasury`, for the quote leg."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_config",
+            "docs": [
+              "Per-market create-vault fee: mint and amount. Seeded from",
+              "`Registry.default_fee_config` at market creation, then",
+              "admin-retunable via `SetMarketFeeConfig`."
+            ],
+            "type": {
+              "defined": {
+                "name": "FeeConfig"
+              }
+            }
+          },
+          {
+            "name": "taker_fee",
+            "docs": [
+              "Taker fee rate, capped at ~6.55% (`Ppm16` max)."
+            ],
+            "type": {
+              "defined": {
+                "name": "PodU16"
+              }
+            }
+          },
+          {
+            "name": "max_platform_fee",
+            "docs": [
+              "Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —",
+              "note the different denominator from `taker_fee` above. Seeded from",
+              "`Registry.default_max_platform_fee` at creation, then admin-retunable",
+              "via `SetMaxPlatformFee`.",
+              "",
+              "A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the",
+              "bound: every write path range-checks `<= BPS` so a market can never",
+              "hold a ceiling above 100% of the taker's output."
+            ],
+            "type": {
+              "defined": {
+                "name": "PodU16"
+              }
+            }
+          },
+          {
+            "name": "default_min_leader_share",
+            "docs": [
+              "Default min-leader-share for vaults opened on this market.",
+              "Stamped from `Registry.default_min_leader_share` at creation."
+            ],
+            "type": {
+              "defined": {
+                "name": "PodU32"
+              }
+            }
+          },
+          {
+            "name": "accrued_base_fee_atoms",
+            "docs": [
+              "Protocol revenue accrued in `base_treasury`: the running sum of",
+              "every taker fee charged on a base output leg (a taker `Buy`).",
+              "These atoms sit physically in the treasury but belong to the",
+              "protocol, not to the vaults' depositors — the treasury custody",
+              "invariant is",
+              "`base_treasury.amount >= Σ vault.base_atoms + accrued_base_fee_atoms`.",
+              "Authoritative: nothing infers protocol revenue from a residual, so",
+              "a treasury balance above the sum of the two is unattributed",
+              "residual — exact-in fill change, or an unsolicited transfer — and",
+              "never income (see `sweep_residual`)."
+            ],
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
+          },
+          {
+            "name": "accrued_quote_fee_atoms",
+            "docs": [
+              "Same as `accrued_base_fee_atoms`, for the quote leg (a taker `Sell`)."
+            ],
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
+          },
+          {
             "name": "nonce",
             "docs": [
               "Per-fill / per-quote monotonic counter."
+            ],
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
+          },
+          {
+            "name": "next_vault_seq",
+            "docs": [
+              "Last vault number handed out; `CreateVault` checked-increments it",
+              "and stamps the result on `Vault::seq`, so the first vault on a",
+              "market is `1`. A `u64` so exhaustion is physically unreachable —",
+              "an overflow would permanently brick vault creation on the market."
             ],
             "type": {
               "defined": {
@@ -4381,120 +4571,6 @@
             }
           },
           {
-            "name": "fee_config",
-            "docs": [
-              "Per-market create-vault fee: mint and amount. Seeded from",
-              "`Registry.default_fee_config` at market creation, then",
-              "admin-retunable via `SetMarketFeeConfig`."
-            ],
-            "type": {
-              "defined": {
-                "name": "FeeConfig"
-              }
-            }
-          },
-          {
-            "name": "taker_fee",
-            "docs": [
-              "Taker fee rate, capped at ~6.55% (`Ppm16` max)."
-            ],
-            "type": {
-              "defined": {
-                "name": "PodU16"
-              }
-            }
-          },
-          {
-            "name": "max_platform_fee",
-            "docs": [
-              "Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —",
-              "note the different denominator from `taker_fee` above. Seeded from",
-              "`Registry.default_max_platform_fee` at creation, then admin-retunable",
-              "via `SetMaxPlatformFee`.",
-              "",
-              "A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the",
-              "bound: every write path range-checks `<= BPS` so a market can never",
-              "hold a ceiling above 100% of the taker's output."
-            ],
-            "type": {
-              "defined": {
-                "name": "PodU16"
-              }
-            }
-          },
-          {
-            "name": "default_min_leader_share",
-            "docs": [
-              "Default min-leader-share for vaults opened on this market.",
-              "Stamped from `Registry.default_min_leader_share` at creation."
-            ],
-            "type": {
-              "defined": {
-                "name": "PodU32"
-              }
-            }
-          },
-          {
-            "name": "base_mint",
-            "docs": [
-              "Base leg mint."
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "quote_mint",
-            "docs": [
-              "Quote leg mint."
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "base_treasury",
-            "docs": [
-              "SPL / Token-2022 token account holding pooled base inventory.",
-              "ATA derived from `(market_pda, base_mint, base_token_program)`."
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "quote_treasury",
-            "docs": [
-              "Same as `base_treasury`, for the quote leg."
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "accrued_base_fee_atoms",
-            "docs": [
-              "Protocol revenue accrued in `base_treasury`: the running sum of",
-              "every taker fee charged on a base output leg (a taker `Buy`).",
-              "These atoms sit physically in the treasury but belong to the",
-              "protocol, not to the vaults' depositors — the treasury custody",
-              "invariant is",
-              "`base_treasury.amount >= Σ vault.base_atoms + accrued_base_fee_atoms`.",
-              "Authoritative: nothing infers protocol revenue from a residual, so",
-              "a treasury balance above the sum of the two is unattributed",
-              "residual — exact-in fill change, or an unsolicited transfer — and",
-              "never income (see `sweep_residual`)."
-            ],
-            "type": {
-              "defined": {
-                "name": "PodU64"
-              }
-            }
-          },
-          {
-            "name": "accrued_quote_fee_atoms",
-            "docs": [
-              "Same as `accrued_base_fee_atoms`, for the quote leg (a taker `Sell`)."
-            ],
-            "type": {
-              "defined": {
-                "name": "PodU64"
-              }
-            }
-          },
-          {
             "name": "bump",
             "docs": [
               "Market PDA bump."
@@ -4502,17 +4578,17 @@
             "type": "u8"
           },
           {
-            "name": "next_vault_seq",
+            "name": "_reserved",
             "docs": [
-              "Last vault number handed out; `CreateVault` checked-increments it",
-              "and stamps the result on `Vault::seq`, so the first vault on a",
-              "market is `1`. A `u64` so exhaustion is physically unreachable —",
-              "an overflow would permanently brick vault creation on the market."
+              "Reserve for later fields. A carve takes bytes from the front, moves",
+              "no other field, and reads all-zero as the pre-carve meaning — see",
+              "the architecture spec's **MarketHeader**."
             ],
             "type": {
-              "defined": {
-                "name": "PodU64"
-              }
+              "array": [
+                "u8",
+                135
+              ]
             }
           }
         ]
@@ -4774,22 +4850,6 @@
             }
           },
           {
-            "name": "market_count",
-            "docs": [
-              "Number of live markets created against this registry. Incremented",
-              "by `create_market`, decremented by `close_market`. `close_registry`",
-              "requires this to be zero — the only on-chain witness that no",
-              "orphan markets remain, since the program cannot iterate all PDAs",
-              "to verify by enumeration. See the architecture spec, **Account",
-              "lifecycle and rent reclamation**."
-            ],
-            "type": {
-              "defined": {
-                "name": "PodU32"
-              }
-            }
-          },
-          {
             "name": "default_min_leader_share",
             "docs": [
               "Default skin-in-the-game floor (ppm, `Ppm32`) stamped into markets."
@@ -4833,11 +4893,41 @@
             "type": "u8"
           },
           {
+            "name": "market_count",
+            "docs": [
+              "Number of live markets created against this registry. Incremented",
+              "by `create_market`, decremented by `close_market`. `close_registry`",
+              "requires this to be zero — the only on-chain witness that no",
+              "orphan markets remain, since the program cannot iterate all PDAs",
+              "to verify by enumeration. See the architecture spec, **Account",
+              "lifecycle and rent reclamation**."
+            ],
+            "type": {
+              "defined": {
+                "name": "PodU32"
+              }
+            }
+          },
+          {
             "name": "bump",
             "docs": [
               "Registry PDA bump."
             ],
             "type": "u8"
+          },
+          {
+            "name": "_reserved",
+            "docs": [
+              "Reserve for later fields. A carve takes bytes from the front, moves",
+              "no other field, and reads all-zero as the pre-carve meaning — see",
+              "the architecture spec's **Registry**."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                140
+              ]
+            }
           }
         ]
       }
@@ -5219,8 +5309,9 @@
       "docs": [
         "Authoritative on-chain record of one depositor's position in one",
         "vault — both the share claim and the cost basis the unrealized PnL",
-        "is measured against. All fields are alignment-1 so the struct casts",
-        "directly from the account bytes."
+        "is measured against. Every field but `entry_ref_price` (a native `u32`",
+        "at a 4-aligned offset) is alignment-1, so the struct is padding-free",
+        "and casts directly from the account bytes."
       ],
       "serialization": "bytemuck",
       "repr": {
@@ -5257,6 +5348,29 @@
               "reassign). See the spec's **Shares**."
             ],
             "type": "pubkey"
+          },
+          {
+            "name": "entry_ref_price",
+            "docs": [
+              "Shares-weighted average reference price across deposits."
+            ],
+            "type": {
+              "defined": {
+                "name": "Price"
+              }
+            }
+          },
+          {
+            "name": "entry_vps",
+            "docs": [
+              "Shares-weighted average VPS (`L / total_shares`) across deposits,",
+              "Q32.32. Same encoding and practical bound as `Vault::hwm`."
+            ],
+            "type": {
+              "defined": {
+                "name": "PodU64"
+              }
+            }
           },
           {
             "name": "shares",
@@ -5297,29 +5411,6 @@
             }
           },
           {
-            "name": "entry_ref_price",
-            "docs": [
-              "Shares-weighted average reference price across deposits."
-            ],
-            "type": {
-              "defined": {
-                "name": "Price"
-              }
-            }
-          },
-          {
-            "name": "entry_vps",
-            "docs": [
-              "Shares-weighted average VPS (`L / total_shares`) across deposits,",
-              "Q32.32. Same encoding and practical bound as `Vault::hwm`."
-            ],
-            "type": {
-              "defined": {
-                "name": "PodU64"
-              }
-            }
-          },
-          {
             "name": "opened_at",
             "docs": [
               "Slot of the first deposit. Captured once at PDA init."
@@ -5345,7 +5436,7 @@
           {
             "name": "realized_yield",
             "docs": [
-              "Signed yield (ex-FX) component of [`Self::realized_pnl`]."
+              "Signed yield (ex-price) component of [`Self::realized_pnl`]."
             ],
             "type": {
               "defined": {
@@ -5354,10 +5445,11 @@
             }
           },
           {
-            "name": "realized_fx",
+            "name": "realized_price",
             "docs": [
-              "Signed FX component. Invariant:",
-              "`realized_yield + realized_fx == realized_pnl`."
+              "Signed price component — the base leg's move against the entry",
+              "reference. Invariant:",
+              "`realized_yield + realized_price == realized_pnl`."
             ],
             "type": {
               "defined": {
@@ -5375,14 +5467,14 @@
           {
             "name": "_reserved",
             "docs": [
-              "Padding so the on-chain size is a multiple of 8 and the",
-              "`#[account]` derive's discriminator + body length matches the",
-              "const-asserted total below."
+              "Reserve for later fields. A carve takes bytes from the front, moves",
+              "no other field, and reads all-zero as the pre-carve meaning — see",
+              "the architecture spec's **Depositor positions and cost basis**."
             ],
             "type": {
               "array": [
                 "u8",
-                7
+                79
               ]
             }
           }

@@ -1,0 +1,10 @@
+# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+#
+# Three nullable ADD COLUMNs against `fill_events`, which 0001 created, plus a
+# `COMMENT ON COLUMN` for each. None is a relation, so the existence probe is
+# blind to it — the same position 0019_fair_price_fx_tape_live is in.
+#
+# The columns are asserted by their writer and reader instead: the fill
+# round-trip in indexer/tests/store_postgres.rs writes all three through
+# `fill_insert.sql` and reads them back through `SELECT *`.
+none adds three nullable columns and their comments to a table 0001 created, not a relation

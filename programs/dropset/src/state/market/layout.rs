@@ -410,11 +410,57 @@ impl Vault {
 ///
 /// All fields are alignment-1 — `Address`, `Pod*` wrappers, `[FeeConfig]`,
 /// `u8` — so the header is padding-free and casts directly from the
-/// account bytes.
+/// account bytes. Fields run identity, configuration, ledger and counters,
+/// the bump, then the one reserve.
 #[account]
 pub struct MarketHeader {
+    /// Base leg mint.
+    pub base_mint: Address,
+    /// Quote leg mint.
+    pub quote_mint: Address,
+    /// SPL / Token-2022 token account holding pooled base inventory.
+    /// ATA derived from `(market_pda, base_mint, base_token_program)`.
+    pub base_treasury: Address,
+    /// Same as `base_treasury`, for the quote leg.
+    pub quote_treasury: Address,
+    /// Per-market create-vault fee: mint and amount. Seeded from
+    /// `Registry.default_fee_config` at market creation, then
+    /// admin-retunable via `SetMarketFeeConfig`.
+    pub fee_config: FeeConfig,
+    /// Taker fee rate, capped at ~6.55% (`Ppm16` max).
+    pub taker_fee: PodU16,
+    /// Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —
+    /// note the different denominator from `taker_fee` above. Seeded from
+    /// `Registry.default_max_platform_fee` at creation, then admin-retunable
+    /// via `SetMaxPlatformFee`.
+    ///
+    /// A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the
+    /// bound: every write path range-checks `<= BPS` so a market can never
+    /// hold a ceiling above 100% of the taker's output.
+    pub max_platform_fee: PodU16,
+    /// Default min-leader-share for vaults opened on this market.
+    /// Stamped from `Registry.default_min_leader_share` at creation.
+    pub default_min_leader_share: PodU32,
+    /// Protocol revenue accrued in `base_treasury`: the running sum of
+    /// every taker fee charged on a base output leg (a taker `Buy`).
+    /// These atoms sit physically in the treasury but belong to the
+    /// protocol, not to the vaults' depositors — the treasury custody
+    /// invariant is
+    /// `base_treasury.amount >= Σ vault.base_atoms + accrued_base_fee_atoms`.
+    /// Authoritative: nothing infers protocol revenue from a residual, so
+    /// a treasury balance above the sum of the two is unattributed
+    /// residual — exact-in fill change, or an unsolicited transfer — and
+    /// never income (see `sweep_residual`).
+    pub accrued_base_fee_atoms: PodU64,
+    /// Same as `accrued_base_fee_atoms`, for the quote leg (a taker `Sell`).
+    pub accrued_quote_fee_atoms: PodU64,
     /// Per-fill / per-quote monotonic counter.
     pub nonce: PodU64,
+    /// Last vault number handed out; `CreateVault` checked-increments it
+    /// and stamps the result on `Vault::seq`, so the first vault on a
+    /// market is `1`. A `u64` so exhaustion is physically unreachable —
+    /// an overflow would permanently brick vault creation on the market.
+    pub next_vault_seq: PodU64,
     /// Head of the active DLL: sector index or `NULL_SECTOR`. Walked
     /// by the matching engine on every taker.
     pub head: PodU32,
@@ -437,53 +483,12 @@ pub struct MarketHeader {
     /// PDAs to verify by enumeration. See the architecture spec,
     /// **Account lifecycle and rent reclamation**.
     pub outstanding_vault_depositors: PodU32,
-    /// Per-market create-vault fee: mint and amount. Seeded from
-    /// `Registry.default_fee_config` at market creation, then
-    /// admin-retunable via `SetMarketFeeConfig`.
-    pub fee_config: FeeConfig,
-    /// Taker fee rate, capped at ~6.55% (`Ppm16` max).
-    pub taker_fee: PodU16,
-    /// Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —
-    /// note the different denominator from `taker_fee` above. Seeded from
-    /// `Registry.default_max_platform_fee` at creation, then admin-retunable
-    /// via `SetMaxPlatformFee`.
-    ///
-    /// A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the
-    /// bound: every write path range-checks `<= BPS` so a market can never
-    /// hold a ceiling above 100% of the taker's output.
-    pub max_platform_fee: PodU16,
-    /// Default min-leader-share for vaults opened on this market.
-    /// Stamped from `Registry.default_min_leader_share` at creation.
-    pub default_min_leader_share: PodU32,
-    /// Base leg mint.
-    pub base_mint: Address,
-    /// Quote leg mint.
-    pub quote_mint: Address,
-    /// SPL / Token-2022 token account holding pooled base inventory.
-    /// ATA derived from `(market_pda, base_mint, base_token_program)`.
-    pub base_treasury: Address,
-    /// Same as `base_treasury`, for the quote leg.
-    pub quote_treasury: Address,
-    /// Protocol revenue accrued in `base_treasury`: the running sum of
-    /// every taker fee charged on a base output leg (a taker `Buy`).
-    /// These atoms sit physically in the treasury but belong to the
-    /// protocol, not to the vaults' depositors — the treasury custody
-    /// invariant is
-    /// `base_treasury.amount >= Σ vault.base_atoms + accrued_base_fee_atoms`.
-    /// Authoritative: nothing infers protocol revenue from a residual, so
-    /// a treasury balance above the sum of the two is unattributed
-    /// residual — exact-in fill change, or an unsolicited transfer — and
-    /// never income (see `sweep_residual`).
-    pub accrued_base_fee_atoms: PodU64,
-    /// Same as `accrued_base_fee_atoms`, for the quote leg (a taker `Sell`).
-    pub accrued_quote_fee_atoms: PodU64,
     /// Market PDA bump.
     pub bump: u8,
-    /// Last vault number handed out; `CreateVault` checked-increments it
-    /// and stamps the result on `Vault::seq`, so the first vault on a
-    /// market is `1`. A `u64` so exhaustion is physically unreachable —
-    /// an overflow would permanently brick vault creation on the market.
-    pub next_vault_seq: PodU64,
+    /// Reserve for later fields. A carve takes bytes from the front, moves
+    /// no other field, and reads all-zero as the pre-carve meaning — see
+    /// the architecture spec's **MarketHeader**.
+    pub _reserved: [u8; 135],
 }
 
 impl MarketHeader {
@@ -508,16 +513,15 @@ impl MarketHeader {
 // padding, but it can't catch a field reorder that lands at the same
 // total size by accident, nor a silent bump to a `Pod*` wrapper width.
 // These const asserts pin the on-chain layout — any change must be a
-// deliberate update here, paired with an account-data answer. While the
-// program is pre-launch that answer is **re-create, not migrate**: a
-// layout change shifts every field above it, so a market account written
-// by an older build decodes as garbage rather than failing loudly, and
-// the only safe response is to tear the market down and bootstrap it
-// again (localnet does this on every run). A deploy that must preserve
-// live accounts needs a real migration or a version gate before it
-// changes anything below.
+// deliberate update here, paired with an account-data answer. That answer
+// is the **carve rule**: a new field takes bytes from the front of its
+// struct's one `_reserved` block, moves no other field, changes no size,
+// treats all-zero as the pre-carve meaning, and adds an offset assert
+// below. A reorder or a size change re-interprets every live account's
+// bytes, so it is never the answer; if a size change is ever unavoidable,
+// the data length is the version — there is no version byte.
 const _: () = assert!(core::mem::size_of::<Vault>() == 1088);
-const _: () = assert!(core::mem::size_of::<MarketHeader>() == 261);
+const _: () = assert!(core::mem::size_of::<MarketHeader>() == 396);
 const _: () = assert!(core::mem::size_of::<LiquidityProfile>() == 2 * N_LEVELS * 18);
 const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 32);
 
@@ -554,9 +558,15 @@ const _: () = assert!(core::mem::offset_of!(Vault, quote_authority) == 72);
 const _: () = assert!(core::mem::offset_of!(Vault, seq) == 104);
 const _: () = assert!(core::mem::offset_of!(Vault, reference_price) == 112);
 const _: () = assert!(core::mem::offset_of!(ReferencePrice, stamp) == 0);
-const _: () = assert!(core::mem::offset_of!(MarketHeader, head) == 8);
-const _: () = assert!(core::mem::offset_of!(MarketHeader, tombstone_head) == 12);
-const _: () = assert!(core::mem::offset_of!(MarketHeader, free_head) == 16);
+const _: () = assert!(core::mem::offset_of!(MarketHeader, base_mint) == 0);
+const _: () = assert!(core::mem::offset_of!(MarketHeader, accrued_base_fee_atoms) == 208);
+const _: () = assert!(core::mem::offset_of!(MarketHeader, nonce) == 224);
+const _: () = assert!(core::mem::offset_of!(MarketHeader, next_vault_seq) == 232);
+const _: () = assert!(core::mem::offset_of!(MarketHeader, head) == 240);
+const _: () = assert!(core::mem::offset_of!(MarketHeader, tombstone_head) == 244);
+const _: () = assert!(core::mem::offset_of!(MarketHeader, free_head) == 248);
+const _: () = assert!(core::mem::offset_of!(MarketHeader, bump) == 260);
+const _: () = assert!(core::mem::offset_of!(MarketHeader, _reserved) == 261);
 
 // ── Clock-datum adjacency pins ───────────────────────────────────────
 //

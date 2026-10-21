@@ -39,19 +39,21 @@ const sampleEvent = (): FillEventArgs => ({
   taker: SOME_ADDRESS,
   leader: SOME_ADDRESS,
   quoteAuthority: SOME_ADDRESS,
-  side: 1,
-  pad: new Uint8Array(7),
   sectorIdx: 3,
   levelIdx: 5,
   vaultSeq: 17n,
+  fillPrice: 0x0001_0000,
+  flipPrice: 0,
   fillBase: 1_000_000n,
   fillQuote: 1_100_000n,
-  fillPrice: 0x0001_0000,
-  pad2: new Uint8Array(4),
+  remainingAfter: 4_000_000n,
   baseAtomsAfter: 9_000_000n,
   quoteAtomsAfter: 8_000_000n,
   nonceAfter: 42n,
   takerFeeAtoms: 300n,
+  side: 1,
+  legKind: 0,
+  reserved: new Uint8Array(46),
 });
 
 /** Wrap an encoded event body in the `[tag][discriminator][body]` envelope. */
@@ -153,19 +155,30 @@ test('a fill event round-trips through the envelope', () => {
 test('a fill against a flipped counter reads as the taker direction', () => {
   // A Buy that fills `bids[2]`'s flipped `flip_size` (a filled bid's base
   // proceeds resting as an ask) emits `side` 0 with `levelIdx` naming the
-  // bids entry and `fillPrice` that level's `flip_price`, not its `price`.
-  // The reader carries all three verbatim; only the fill price tells the
-  // counter apart, so a consumer must not read `side` as the array filled.
-  // This documents that contract at the reader: the reader has no
-  // flip-specific path, and the engine emitting it is pinned in
+  // bids entry, `legKind` 1 naming the flipped counter, and `fillPrice` and
+  // `flipPrice` both that level's `flip_price`. The reader carries every
+  // field verbatim; `legKind`, not `side`, names the counter filled. This
+  // documents that contract at the reader: the reader has no flip-specific
+  // path, and the engine emitting it is pinned in
   // programs/dropset/tests/flip.rs.
   const flipPrice = 0x0001_0020;
-  const event = { ...sampleEvent(), side: 0, levelIdx: 2, fillPrice: flipPrice };
+  const event = {
+    ...sampleEvent(),
+    side: 0,
+    levelIdx: 2,
+    fillPrice: flipPrice,
+    flipPrice,
+    legKind: 1,
+    remainingAfter: 0n,
+  };
   const [fill] = collectFillEvents(txWith(envelope(event)), 'localnet');
   assert.ok(fill);
   assert.equal(fill.side, 0);
   assert.equal(fill.levelIdx, 2);
+  assert.equal(fill.legKind, 1);
   assert.equal(fill.fillPrice, flipPrice);
+  assert.equal(fill.flipPrice, flipPrice);
+  assert.equal(fill.remainingAfter, 0n);
 });
 
 test('collects only events our program emitted', () => {

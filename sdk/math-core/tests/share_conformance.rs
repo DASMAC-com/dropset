@@ -138,14 +138,18 @@ fn crystallize_pnl_vectors() {
             u64_of(c, "slice_quote"),
             price_of(c, "entry_ref_bits"),
             price_of(c, "ref_now_bits"),
-            i64_of(c, "realized_fx"),
+            i64_of(c, "realized_price"),
             i64_of(c, "realized_yield"),
             i64_of(c, "realized_pnl"),
         );
         match got {
             Ok(r) => {
                 let ok = &c["ok"];
-                assert_eq!(r.realized_fx, i64_of(ok, "realized_fx"), "realized_fx");
+                assert_eq!(
+                    r.realized_price,
+                    i64_of(ok, "realized_price"),
+                    "realized_price"
+                );
                 assert_eq!(
                     r.realized_yield,
                     i64_of(ok, "realized_yield"),

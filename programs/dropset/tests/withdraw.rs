@@ -243,12 +243,12 @@ fn rejects_basket_slippage() {
 }
 
 #[test]
-fn realized_fx_positive_when_reference_rises() {
+fn realized_price_positive_when_reference_rises() {
     let (mut f, alice) = open_with_depositor(100_000);
     let shares = f.vault_depositor(0, &alice.pubkey()).unwrap().shares.get();
 
     // Reference rises 1.0850 → 1.2000 between deposit and withdraw, so
-    // the base leg appreciated in quote terms: realized_fx > 0.
+    // the base leg appreciated in quote terms: realized_price > 0.
     let higher = Price::encode(12_000_000, 0).unwrap();
     f.set_reference_price(&f.authority.insecure_clone(), 0, higher.as_u32(), 0)
         .expect("raise reference price");
@@ -258,13 +258,13 @@ fn realized_fx_positive_when_reference_rises() {
 
     let vd = f.vault_depositor(0, &alice.pubkey()).unwrap();
     assert!(
-        vd.realized_fx.get() > 0,
+        vd.realized_price.get() > 0,
         "rising reference crystallizes positive FX PnL (got {})",
-        vd.realized_fx.get()
+        vd.realized_price.get()
     );
-    // Invariant: realized_yield + realized_fx == realized_pnl.
+    // Invariant: realized_yield + realized_price == realized_pnl.
     assert_eq!(
-        vd.realized_yield.get() + vd.realized_fx.get(),
+        vd.realized_yield.get() + vd.realized_price.get(),
         vd.realized_pnl.get(),
         "yield + fx == pnl"
     );

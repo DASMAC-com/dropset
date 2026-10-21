@@ -95,7 +95,8 @@ pub fn event_to_json(e: &DropsetEvent) -> Value {
             "quote_authority": pk(&x.quote_authority), "side": x.side,
             "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq), "level_idx": x.level_idx,
             "fill_base": wide(x.fill_base), "fill_quote": wide(x.fill_quote),
-            "fill_price": x.fill_price,
+            "fill_price": x.fill_price, "flip_price": x.flip_price,
+            "leg_kind": x.leg_kind, "remaining_after": wide(x.remaining_after),
             "base_atoms_after": wide(x.base_atoms_after),
             "quote_atoms_after": wide(x.quote_atoms_after),
             "nonce_after": wide(x.nonce_after),
@@ -233,6 +234,13 @@ pub struct FillRow {
     pub quote_atoms_after: Decimal,
     pub nonce_after: Decimal,
     pub taker_fee_atoms: Decimal,
+    /// `0` primary leg, `1` flipped leg. `None` (with the two below) on a
+    /// row indexed before the event carried it — see migration 0022.
+    pub leg_kind: Option<i16>,
+    /// Raw `Price` bits of the level's flip price; `0` when it cannot flip.
+    pub flip_price: Option<i64>,
+    /// Atoms left on the consumed side after the leg.
+    pub remaining_after: Option<Decimal>,
 }
 
 impl FillRow {
@@ -258,6 +266,9 @@ impl FillRow {
             quote_atoms_after: Decimal::from(f.quote_atoms_after),
             nonce_after: Decimal::from(f.nonce_after),
             taker_fee_atoms: Decimal::from(f.taker_fee_atoms),
+            leg_kind: Some(i16::from(f.leg_kind)),
+            flip_price: Some(i64::from(f.flip_price)),
+            remaining_after: Some(Decimal::from(f.remaining_after)),
         }
     }
 }
@@ -329,7 +340,23 @@ mod tests {
         if ty.get("defined").and_then(|d| d["name"].as_str()) == Some("Price") {
             return 4;
         }
+        if let Some(primitive) = pod_primitive(ty) {
+            return field_size(&Value::from(primitive));
+        }
         panic!("unhandled IDL field type {ty} — teach field_size about it");
+    }
+
+    /// The primitive an alignment-1 Pod wrapper carries. The IDL records
+    /// the wrapper as a defined type, but on the wire and in JSON it is
+    /// exactly that integer, so both the size and the width rules apply.
+    fn pod_primitive(ty: &Value) -> Option<&'static str> {
+        match ty.get("defined")?["name"].as_str()? {
+            "PodU16" => Some("u16"),
+            "PodU32" => Some("u32"),
+            "PodU64" => Some("u64"),
+            "PodI64" => Some("i64"),
+            _ => None,
+        }
     }
 
     /// **Field completeness, per variant, against the IDL.**
@@ -417,8 +444,11 @@ mod tests {
                 if field_name.starts_with('_') {
                     continue;
                 }
-                let Some(width) = field["type"].as_str() else {
-                    continue; // arrays and defined types carry no width rule
+                let Some(width) = field["type"]
+                    .as_str()
+                    .or_else(|| pod_primitive(&field["type"]))
+                else {
+                    continue; // arrays and other defined types carry no width rule
                 };
                 let value = &object[field_name];
                 match width {

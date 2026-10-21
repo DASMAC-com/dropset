@@ -15,8 +15,9 @@ use crate::{errors::DropsetError, Price};
 
 /// Authoritative on-chain record of one depositor's position in one
 /// vault — both the share claim and the cost basis the unrealized PnL
-/// is measured against. All fields are alignment-1 so the struct casts
-/// directly from the account bytes.
+/// is measured against. Every field but `entry_ref_price` (a native `u32`
+/// at a 4-aligned offset) is alignment-1, so the struct is padding-free
+/// and casts directly from the account bytes.
 #[account]
 pub struct VaultDepositorHeader {
     /// Market PDA this position is on. The vault is identified by
@@ -29,6 +30,11 @@ pub struct VaultDepositorHeader {
     /// non-transferable (there is no separate authority field to
     /// reassign). See the spec's **Shares**.
     pub owner: Address,
+    /// Shares-weighted average reference price across deposits.
+    pub entry_ref_price: Price,
+    /// Shares-weighted average VPS (`L / total_shares`) across deposits,
+    /// Q32.32. Same encoding and practical bound as `Vault::hwm`.
+    pub entry_vps: PodU64,
     /// Pro-rata claim on the vault — the per-depositor term of
     /// invariant I6 (`leader_shares + Σ VaultDepositor.shares ==
     /// total_shares`).
@@ -40,27 +46,23 @@ pub struct VaultDepositorHeader {
     /// Lifetime contributions, monotonic — **never reduced on
     /// withdraw**. Stable denominator for all-time return %.
     pub gross_deposited: PodU64,
-    /// Shares-weighted average reference price across deposits.
-    pub entry_ref_price: Price,
-    /// Shares-weighted average VPS (`L / total_shares`) across deposits,
-    /// Q32.32. Same encoding and practical bound as `Vault::hwm`.
-    pub entry_vps: PodU64,
     /// Slot of the first deposit. Captured once at PDA init.
     pub opened_at: PodU64,
     /// Signed quote-denominated PnL crystallized by past withdrawals.
     /// Discarded when the account is closed at zero shares.
     pub realized_pnl: PodI64,
-    /// Signed yield (ex-FX) component of [`Self::realized_pnl`].
+    /// Signed yield (ex-price) component of [`Self::realized_pnl`].
     pub realized_yield: PodI64,
-    /// Signed FX component. Invariant:
-    /// `realized_yield + realized_fx == realized_pnl`.
-    pub realized_fx: PodI64,
+    /// Signed price component — the base leg's move against the entry
+    /// reference. Invariant:
+    /// `realized_yield + realized_price == realized_pnl`.
+    pub realized_price: PodI64,
     /// PDA bump.
     pub bump: u8,
-    /// Padding so the on-chain size is a multiple of 8 and the
-    /// `#[account]` derive's discriminator + body length matches the
-    /// const-asserted total below.
-    pub _reserved: [u8; 7],
+    /// Reserve for later fields. A carve takes bytes from the front, moves
+    /// no other field, and reads all-zero as the pre-carve meaning — see
+    /// the architecture spec's **Depositor positions and cost basis**.
+    pub _reserved: [u8; 79],
 }
 
 impl VaultDepositorHeader {
@@ -150,7 +152,7 @@ impl VaultDepositorHeader {
     ///
     /// Realized PnL math, per docs/architecture.md
     /// § Depositor operations → Withdraw (the realized-PnL formula block):
-    ///   realized_fx    += slice_base × (ref_now − entry_ref)
+    ///   realized_price += slice_base × (ref_now − entry_ref)
     ///   realized_yield += slice_quote + slice_base × entry_ref − released_basis
     ///   realized_pnl   += slice_quote + slice_base × ref_now    − released_basis
     ///
@@ -181,7 +183,7 @@ impl VaultDepositorHeader {
             slice_quote,
             self.entry_ref_price,
             ref_now,
-            self.realized_fx.get(),
+            self.realized_price.get(),
             self.realized_yield.get(),
             self.realized_pnl.get(),
         )
@@ -190,7 +192,7 @@ impl VaultDepositorHeader {
             CrystallizeError::MathOverflow => DropsetError::MathOverflow,
         })?;
 
-        self.realized_fx = r.realized_fx.into();
+        self.realized_price = r.realized_price.into();
         self.realized_pnl = r.realized_pnl.into();
         self.realized_yield = r.realized_yield.into();
         // Burn the withdrawn shares and reduce the cost basis by the
@@ -204,15 +206,17 @@ impl VaultDepositorHeader {
 
 // Pin the on-chain layout — same boundary-only offset-guard pattern as
 // `MarketHeader` / `Vault` (see `market/layout.rs`). These pin the total
-// size plus the head field (`market`), the identity and share-claim
-// offsets (`sector_idx`, `owner`, `shares`), and the tail (`bump`,
-// `_reserved`); a size-preserving reorder among the interior basis
-// fields (offsets 76–136) is deliberately **not** caught here.
-const _: () = assert!(core::mem::size_of::<VaultDepositorHeader>() == 144);
+// size plus the head field (`market`), the identity, price and
+// share-claim offsets (`sector_idx`, `owner`, `entry_ref_price`,
+// `shares`), and the tail (`bump`, `_reserved`); a size-preserving
+// reorder among the interior basis fields (offsets 88–136) is
+// deliberately **not** caught here.
+const _: () = assert!(core::mem::size_of::<VaultDepositorHeader>() == 216);
 const _: () = assert!(core::mem::offset_of!(VaultDepositorHeader, market) == 0);
 const _: () = assert!(core::mem::offset_of!(VaultDepositorHeader, sector_idx) == 32);
 const _: () = assert!(core::mem::offset_of!(VaultDepositorHeader, owner) == 36);
-const _: () = assert!(core::mem::offset_of!(VaultDepositorHeader, shares) == 68);
+const _: () = assert!(core::mem::offset_of!(VaultDepositorHeader, entry_ref_price) == 68);
+const _: () = assert!(core::mem::offset_of!(VaultDepositorHeader, shares) == 80);
 const _: () = assert!(core::mem::offset_of!(VaultDepositorHeader, bump) == 136);
 const _: () = assert!(core::mem::offset_of!(VaultDepositorHeader, _reserved) == 137);
 
@@ -247,9 +251,9 @@ mod tests {
             opened_at: 0u64.into(),
             realized_pnl: 0i64.into(),
             realized_yield: 0i64.into(),
-            realized_fx: 0i64.into(),
+            realized_price: 0i64.into(),
             bump: 0,
-            _reserved: [0u8; 7],
+            _reserved: [0u8; 79],
         }
     }
 
@@ -274,12 +278,12 @@ mod tests {
         let mut v = vd(100, 1_000, price_one());
         let delta = v.crystallize_realized_pnl(50, 100, 0, price_two()).unwrap();
         assert_eq!(delta, -300, "returned delta is the realized_pnl move");
-        assert_eq!(v.realized_fx.get(), 100);
+        assert_eq!(v.realized_price.get(), 100);
         assert_eq!(v.realized_yield.get(), -400);
         assert_eq!(v.realized_pnl.get(), -300);
-        // Invariant: realized_yield + realized_fx == realized_pnl.
+        // Invariant: realized_yield + realized_price == realized_pnl.
         assert_eq!(
-            v.realized_yield.get() + v.realized_fx.get(),
+            v.realized_yield.get() + v.realized_price.get(),
             v.realized_pnl.get()
         );
         // Shares burned and basis reduced by exactly the released slice.
