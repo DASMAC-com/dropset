@@ -15,9 +15,11 @@ all: lint test
 # (all cheaply rebuilt). Leaves the committed generated trees (sdk/idl,
 # sdk/ts, sdk/conformance) alone. Run at PR merge time (by review-pr) so a
 # worktree that lingers before it is pruned doesn't keep its build tree.
+# `rm -rf target`, not `cargo clean`: under the shared cargo pool, `cargo
+# clean` would wipe the POOL (every worktree's build), not this one's outputs.
 .PHONY: clean
 clean:
-	cargo clean
+	rm -rf target
 	rm -rf node_modules frontend/node_modules decks/node_modules \
 		sdk/ts/node_modules sdk/codama/node_modules
 	rm -rf frontend/.next decks/.next sdk/ts/dist
@@ -124,14 +126,33 @@ check-nextest:
 # check — and the litesvm tests in programs/dropset/tests/common/mod.rs
 # that read the file — see keypair == declare_id!. keys/AAAA.json is the
 # single committed source; target/deploy/ is a pure build artifact.
+#
+# Under the shared cargo pool (CARGO_TARGET_DIR, exported by the shell init;
+# docs/conventions/local-integrations.md → "The cargo pool") anchor looks
+# for the keypair in the POOL's deploy/, a path no flag overrides, so the
+# localnet key is staged there too. Every worktree stages the same committed
+# file, so sharing it is harmless; without the pool both paths are one.
+CARGO_TARGET := $(or $(CARGO_TARGET_DIR),$(CURDIR)/target)
 .PHONY: program-keypair
 program-keypair:
-	mkdir -p target/deploy
+	mkdir -p target/deploy $(CARGO_TARGET)/deploy
 	cp keys/AAAA.json target/deploy/dropset-keypair.json
+	cp keys/AAAA.json $(CARGO_TARGET)/deploy/dropset-keypair.json
+
+# Every `anchor build` writes its OUTPUTS into this worktree's target/,
+# whatever the pool: the `.so` (cargo build-sbf reads SBF_OUT_PATH), the IDL
+# and its TS types. The pool's deploy/ is shared by every branch with no
+# fingerprint, so leaving them there would let one worktree's build overwrite
+# another's, and the litesvm tests and the TUI read them from here. The `.so`
+# path is an env var, not a trailing `-- --sbf-out-dir`, because anchor
+# forwards trailing args to the IDL build's `cargo test` too, which rejects
+# it. Absolute, because anchor runs the build from the program's directory.
+export SBF_OUT_PATH := $(CURDIR)/target/deploy
+ANCHOR_OUT := --idl $(CURDIR)/target/idl --idl-ts $(CURDIR)/target/types
 
 .PHONY: program
 program: check-toolchain program-keypair
-	anchor keys sync && anchor build
+	anchor keys sync && anchor build $(ANCHOR_OUT)
 
 # Build the program .so WITHOUT `admin-teardown` (the shape of the final
 # immutable deploy). `anchor build`'s trailing args are forwarded to
@@ -140,7 +161,7 @@ program: check-toolchain program-keypair
 # a cache hit (see .github/workflows/test.yml).
 .PHONY: program-no-teardown
 program-no-teardown: check-toolchain program-keypair
-	anchor build -- --no-default-features
+	anchor build $(ANCHOR_OUT) -- --no-default-features
 
 # Build BOTH artifacts the Rust↔ASM parity tests need: the reference
 # (feature-off) build stashed as `dropset_ref.so`, then the default asm
@@ -149,9 +170,10 @@ program-no-teardown: check-toolchain program-keypair
 # restores the asm artifact every other test deploys.
 .PHONY: program-parity
 program-parity: check-toolchain program-keypair
-	anchor build -- --no-default-features --features admin-teardown
+	anchor build $(ANCHOR_OUT) -- --no-default-features \
+		--features admin-teardown
 	cp target/deploy/dropset.so target/deploy/dropset_ref.so
-	anchor build
+	anchor build $(ANCHOR_OUT)
 
 # Build the mainnet program: the `mainnet` feature selects the mainnet
 # declare_id! (keys/dropset-mainnet.pubkey), everything else as `program`,

@@ -220,7 +220,8 @@ pub fn taker_command(repo_root: &Path, address: &Pubkey, rpc_url: &str) -> Comma
 /// Build a command running the bot binary `bin_name` with `args` from the repo
 /// root (working directory `repo_root`, so the role-key paths resolve).
 ///
-/// Prefers the prebuilt binary in `target/debug/`: `make tui` / `tui-prebuild`
+/// Prefers the prebuilt binary in the cargo target directory's `debug/` (the
+/// shared pool when `CARGO_TARGET_DIR` is set): `make tui` / `tui-prebuild`
 /// builds the bots up front, so the fast path is a direct fork+exec. This
 /// matters most when starting every market's bot at once — routing each launch
 /// through `cargo run` spawns N cargo processes that contend on the build lock
@@ -233,15 +234,17 @@ pub fn taker_command(repo_root: &Path, address: &Pubkey, rpc_url: &str) -> Comma
 /// prebuild: the same `make tui` that launches the panel rebuilds the bots
 /// first, so the binary on disk matches the deployed program. The cargo
 /// fallback only fires when the binary is **absent** (a direct
-/// `cargo run -p dropset-tui`, skipping the prebuild) or a custom
-/// `CARGO_TARGET_DIR` moves it — it rebuilds and runs a current binary. The
+/// `cargo run -p dropset-tui`, skipping the prebuild) — it rebuilds and runs
+/// a current binary. The
 /// one gap it does *not* cover: a binary left over from an earlier `make tui`
 /// is exec'd as-is, so editing bot/program sources and then launching via a
 /// bare `cargo run -p dropset-tui` (no fresh prebuild) can run it stale. The
 /// standard `make tui` / `make demo` flow rebuilds first, so this only bites a
 /// deliberately-skipped prebuild.
 fn bot_command(repo_root: &Path, bin_name: &str, args: &[&str]) -> Command {
-    let built = repo_root.join("target").join("debug").join(bin_name);
+    let built = crate::deploy::cargo_target_dir(repo_root)
+        .join("debug")
+        .join(bin_name);
     let mut cmd = if built.exists() {
         Command::new(built)
     } else {

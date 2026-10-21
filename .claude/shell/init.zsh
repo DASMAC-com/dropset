@@ -2,6 +2,7 @@
 # cspell:word subshell
 # cspell:word localoptions
 # cspell:word localtraps
+# cspell:word ncpu
 #
 # Dropset session helpers — source this from ~/.zshrc:
 #
@@ -61,6 +62,31 @@ if [[ "$_DS_REPO" == */.claude/worktrees/* ]]; then
   print -u2 "dropset shell helpers: sourced from a worktree copy" \
     "($_DS_REPO) — source the base checkout's copy instead"
 fi
+
+# THE CARGO POOL: every cargo on the machine shares one build directory and asks
+# for at most the cores minus two. Exported at SOURCE time, not lazily like
+# `_ds_secrets`, because the point is that every shell inherits it — a plain tab,
+# a session, and every Bash command a session's agent runs — with no Makefile in
+# the loop. Unbounded, each worktree's cargo planned for the whole machine and
+# kept its own 20–30 GB target/ tree; shared, dependencies compile once, cargo's
+# lock on the directory makes concurrent builds take turns, and the job bound
+# caps anything outside that lock.
+#
+# `DS_CARGO_POOL=0` in the runtime config turns both off, and must be set BEFORE
+# the line that sources this file. An already-exported value of either variable
+# wins, the same override shape as `_ds_secrets`. The directory sits under Cargo
+# home, beside the registry, so it is cleaned with the rest of Cargo's state.
+# See docs/conventions/local-integrations.md → "The cargo pool".
+_ds_cargo_pool() {
+  [[ "${DS_CARGO_POOL:-1}" == 0 ]] && return 0
+  local cores
+  cores="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null)"
+  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${CARGO_HOME:-$HOME/.cargo}/target/dropset}"
+  if [[ "$cores" == <-> ]] && (( cores > 2 )); then
+    export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(( cores - 2 ))}"
+  fi
+}
+_ds_cargo_pool
 
 # How recently a fast-forward must have happened for the next one to be skipped.
 #

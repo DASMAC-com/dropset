@@ -42,11 +42,21 @@ pub fn deploy_program(
 
     // Materialize the program keypair from its committed source so anchor
     // build's program-id check sees keypair == declare_id! (keys/AAAA.json
-    // is canonical; target/deploy/ is a pure build artifact).
-    let program_keypair: PathBuf = repo_root.join("target/deploy/dropset-keypair.json");
-    std::fs::create_dir_all(repo_root.join("target/deploy")).context("create target/deploy")?;
-    std::fs::copy(repo_root.join("keys/AAAA.json"), &program_keypair)
+    // is canonical; target/deploy/ is a pure build artifact). Staged in the
+    // cargo pool's deploy/ too, where anchor looks under a shared
+    // CARGO_TARGET_DIR — the same as the Makefile's `program-keypair`.
+    let deploy_dir = repo_root.join("target/deploy");
+    for dir in [
+        deploy_dir.clone(),
+        cargo_target_dir(repo_root).join("deploy"),
+    ] {
+        std::fs::create_dir_all(&dir).context("create deploy dir")?;
+        std::fs::copy(
+            repo_root.join("keys/AAAA.json"),
+            dir.join("dropset-keypair.json"),
+        )
         .context("stage program keypair")?;
+    }
 
     let mut sync = Command::new("anchor");
     sync.args(["keys", "sync"]).current_dir(repo_root);
@@ -54,18 +64,23 @@ pub fn deploy_program(
 
     // `--no-idl` skips IDL generation, which builds and runs the test suite
     // to extract the IDL. Deploy only needs the `.so`, and the IDL is
-    // already checked in (sdk/idl/dropset.json).
+    // already checked in (sdk/idl/dropset.json). `SBF_OUT_PATH` (read by
+    // cargo build-sbf) keeps the `.so` in this worktree rather than the
+    // pool's shared deploy/, as the Makefile's export does.
     let mut build = Command::new("anchor");
-    build.args(["build", "--no-idl"]).current_dir(repo_root);
+    build
+        .args(["build", "--no-idl"])
+        .env("SBF_OUT_PATH", &deploy_dir)
+        .current_dir(repo_root);
     job::run_streaming(log, "anchor build --no-idl", build)?;
 
-    let so: PathBuf = repo_root.join("target/deploy/dropset.so");
+    let so: PathBuf = deploy_dir.join("dropset.so");
     let mut deploy = Command::new("solana");
     deploy
         .args(["program", "deploy"])
         .arg(&so)
         .arg("--program-id")
-        .arg(&program_keypair)
+        .arg(deploy_dir.join("dropset-keypair.json"))
         .arg("--keypair")
         .arg(wallet_path)
         .arg("--url")
@@ -77,4 +92,14 @@ pub fn deploy_program(
 
     log.accounts_changed();
     Ok("Program deployed".into())
+}
+
+/// Where cargo writes this workspace's build: the shared pool the shell init
+/// exports as `CARGO_TARGET_DIR` (resolved against `repo_root` if relative,
+/// as cargo resolves it against the working directory), else `target/`.
+pub fn cargo_target_dir(repo_root: &Path) -> PathBuf {
+    match std::env::var_os("CARGO_TARGET_DIR") {
+        Some(dir) if !dir.is_empty() => repo_root.join(dir),
+        _ => repo_root.join("target"),
+    }
 }

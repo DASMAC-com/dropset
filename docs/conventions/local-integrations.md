@@ -1102,6 +1102,64 @@ here because this section is exactly where someone looks when a
 variable fails to appear, and it once cost a wrong instruction to the
 operator ("re-source your profile and retry", which cannot work).
 
+### The cargo pool
+
+Sourcing `.claude/shell/init.zsh` exports two variables (`_ds_cargo_pool`),
+so every cargo on the machine pools its compile load with no Makefile or CI
+in the loop. Cargo reads both from the environment, and every session —
+and every Bash command its agent runs — descends from a shell that sourced
+the init, so all of them inherit the pool.
+
+- **`CARGO_TARGET_DIR`** is `$CARGO_HOME/target/dropset` (Cargo home
+  defaults to `~/.cargo`): one build directory for every worktree, beside
+  the registry. Dependencies compile once instead of per worktree (20–30
+  GB each). Artifacts from different branches coexist, because cargo keys
+  each by a fingerprint of its exact inputs. Cargo locks the directory for
+  a build's length, so two worktrees building at once take turns at full
+  width. The only visible change is cargo's one-line
+  `Blocking waiting for file lock on …` message.
+- **`CARGO_BUILD_JOBS`** is the core count minus two, so no single cargo
+  asks for the whole machine. It also bounds any cargo outside the lock.
+
+**The off switch** is `DS_CARGO_POOL=0` in the runtime config, set
+**before** the line that sources the init. Both variables then stay unset
+and everything behaves as before. A value of either variable that is
+already exported wins over the default. CI never sources the init, so its
+builds are unchanged.
+
+**The Anchor build is the one carve-out.** Anchor reads the program
+keypair from `<target dir>/deploy/` and no flag overrides that path, and
+by default it also writes the `.so` and IDL there. The pool's `deploy/` has
+no per-branch fingerprint. So `make program-keypair` (and the TUI's deploy
+action) stages `keys/AAAA.json` in the pool's `deploy/` as well as the
+worktree's. That key is the same localnet file for every worktree, so
+sharing it is harmless. Every `anchor build` the Makefile or the TUI runs
+also writes its outputs back into the worktree's own `target/` (the `.so`
+via `cargo build-sbf`'s `SBF_OUT_PATH`, the IDL via `--idl` / `--idl-ts`),
+where the litesvm
+tests and the TUI read them. **A hand-typed `anchor build` gets none of
+this.** Go through `make program`, or run it as
+`env -u CARGO_TARGET_DIR anchor build`.
+
+**Cleaning.** `make clean` now removes only the worktree's `target/`,
+which holds just those Anchor outputs. Never run `cargo clean` there: it
+wipes the whole pool, every worktree's build with it. The worktree pruner
+no longer frees build artifacts, so the pool is the place disk accumulates.
+When it grows too large, delete it while no build is running:
+`rm -rf "$CARGO_TARGET_DIR"`. The next build in each worktree is then cold.
+
+**Adopting it, once.** A session launched before the init change does not
+see the variables (see the shell-snapshot note under "Session secrets"), so
+the pool fills as sessions relaunch. The first build into the empty pool is
+a full cold build. Each existing worktree's own `target/` is dead weight
+once its session runs pooled; delete it with `make clean` in that worktree.
+
+**The editor is not in the pool yet.** VS Code launched from the Dock does
+not inherit shell exports, so its rust-analyzer still checks into each
+worktree's `target/` with an unbounded job count. A follow-up task hands it
+the same two values and bounds its checks. Until that lands, the pool is not
+complete.
+
 ### Session helpers (`.claude/shell/init.zsh`)
 
 The function family that starts and resumes Claude Code sessions is
