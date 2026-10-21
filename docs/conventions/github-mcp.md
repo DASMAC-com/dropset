@@ -365,16 +365,15 @@ writes to confirm-on-use:
 
 - **Pre-approve (the `gh api` REST reads):** `Bash(gh api repos/:*)` —
   a third `gh` shape, distinct from `gh api graphql` above and easy to
-  miss because the two share a verb. `review-pr` uses it for two
-  field-selected reads the MCP does not expose compactly: the failing
-  job's id and name from a run
-  (`repos/{owner}/{repo}/actions/runs/<id>/jobs`, then
-  `actions/jobs/<id>`), and the branch ruleset's check list
-  (`repos/{owner}/{repo}/rules/branches/main`). Reads only — the one
-  `gh api` **write** in the skills is `init-pr`'s `updateSubscription`
-  mutation, which rides the GraphQL rule.
+  miss because the two share a verb. `review-pr` uses it for the branch
+  ruleset's check list (`repos/{owner}/{repo}/rules/branches/main`);
+  the failing job's step conclusions
+  (`actions/jobs/<id>`, or a run's `actions/runs/<id>/jobs`) are read
+  inside `wait_for_checks.py`, which filters in Python. Reads only — the
+  one `gh api` **write** in the skills is `init-pr`'s
+  `updateSubscription` mutation, which rides the GraphQL rule.
 
-  Both call sites pass a `--jq` filter containing a `|`. That is a
+  The ruleset call site passes a `--jq` filter containing a `|`. That is a
   command **flag**, not a shell pipe, so the compound guard does not
   fire on it (a quoted separator never reaches its unquoted scan — see
   [shell commands](shell-commands.md)). Whether the *harness's* own

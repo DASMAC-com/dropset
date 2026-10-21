@@ -206,9 +206,14 @@ class WaitTests(unittest.TestCase):
         wfc.watch_checks = lambda pr, repo, interval, timeout, log: settled
         wfc.read_checks = lambda pr, repo: checks
         wfc.time.sleep = lambda _s: None
+        # The failure diagnosis and the conflict probe both read through gh;
+        # keep the tests network-free.
+        real_gh = wfc._gh
+        wfc._gh = lambda args: (1, "", "stubbed")
         self.addCleanup(setattr, wfc, "watch_checks", wfc_real_watch)
         self.addCleanup(setattr, wfc, "read_checks", wfc_real_read)
         self.addCleanup(setattr, wfc.time, "sleep", real_sleep)
+        self.addCleanup(setattr, wfc, "_gh", real_gh)
 
     def test_green_build(self):
         self._stub([check("a", "pass")])
@@ -1208,6 +1213,268 @@ class ConflictingPrTests(unittest.TestCase):
         # exists to avoid.
         self.assertNotIn("files", joined)
         self.assertNotIn("commits", joined)
+
+
+def job(name, steps, conclusion="failure", job_id=8):
+    return {
+        "id": job_id,
+        "name": name,
+        "conclusion": conclusion,
+        "steps": [{"name": n, "conclusion": c} for n, c in steps],
+    }
+
+
+class DiagnoseFailuresTests(unittest.TestCase):
+    """The failed-step read the session used to do by hand with two compound
+    ``gh api --jq`` calls, with fixtures shaped on the ledger's incidents."""
+
+    def _stub(self, responses):
+        self.calls = []
+
+        def fake(args):
+            self.calls.append(args)
+            return responses.pop(0)
+
+        real = wfc._gh
+        wfc._gh = fake
+        self.addCleanup(setattr, wfc, "_gh", real)
+
+    def _failing(self, link):
+        return [{"name": "Lint", "link": link, "run_id": wfc.run_id_from_link(link)}]
+
+    def test_the_lint_jobs_pre_commit_step_routes_to_a_local_reproduce(self):
+        """PR #235: the batch sits above any tail, so a larger tail is wrong."""
+        steps = [
+            ("Run make tools-tests", "success"),
+            ("Run pre-commit run --all-files --color=always", "failure"),
+        ]
+        self._stub([(0, json.dumps(job("Lint", steps)), "")])
+        [rec] = wfc.diagnose_failures(self._failing("https://x/runs/7/job/8"), "o/r")
+        self.assertEqual(rec["kind"], "lint_hook")
+        self.assertIn("lint_paths.py", rec["next_command"])
+        self.assertIn("toolchain skew", rec["note"])
+        # The job id from the link is read directly — one call, that job only.
+        self.assertEqual(self.calls[0], ["api", "repos/o/r/actions/jobs/8"])
+
+    def test_a_test_runner_step_routes_to_the_quiet_log_fetch(self):
+        """ "Tail landed in the epilogue": the summary prints after the failure."""
+        steps = [("Run make tools-tests", "failure")]
+        self._stub([(0, json.dumps(job("Lint", steps)), "")])
+        [rec] = wfc.diagnose_failures(self._failing("https://x/runs/7/job/8"), "o/r")
+        self.assertEqual(rec["kind"], "test_runner")
+        self.assertEqual(
+            rec["next_command"],
+            "python3 .claude/tools/run_quiet.py -- "
+            "gh run view --job 8 --repo o/r --log-failed",
+        )
+
+    def test_other_steps_are_single_commands(self):
+        self.assertEqual(wfc.classify_step("Run make decks-build"), "single_command")
+        self.assertEqual(wfc.classify_step("Run cargo nextest run"), "test_runner")
+        self.assertEqual(wfc.classify_step("Run make test-no-teardown"), "test_runner")
+
+    def test_empty_stdout_is_a_fetch_failure_not_nothing_found(self):
+        """ "Empty-stdout scan": a read that returned nothing proves nothing."""
+        self._stub([(0, "", "")])
+        [rec] = wfc.diagnose_failures(self._failing("https://x/runs/7/job/8"), "o/r")
+        self.assertEqual(rec["kind"], "fetch_failed")
+        self.assertEqual(rec["error"], "empty stdout")
+        self.assertIn("--log-failed", rec["next_command"])
+
+    def test_a_non_zero_fetch_is_a_fetch_failure(self):
+        self._stub([(1, "", "HTTP 404")])
+        [rec] = wfc.diagnose_failures(self._failing("https://x/runs/7/job/8"), "o/r")
+        self.assertEqual((rec["kind"], rec["error"]), ("fetch_failed", "HTTP 404"))
+
+    def test_a_job_with_no_failed_step_says_it_never_ran(self):
+        steps = [("Set up job", "success")]
+        self._stub([(0, json.dumps(job("Tests", steps, "cancelled")), "")])
+        [rec] = wfc.diagnose_failures(self._failing("https://x/runs/7/job/8"), "o/r")
+        self.assertEqual(rec["kind"], "never_ran")
+        self.assertIsNone(rec["step"])
+
+    def test_a_run_only_link_reads_the_runs_failed_jobs(self):
+        jobs = {
+            "jobs": [
+                job("ok", [("Run x", "success")], "success", 1),
+                job("bad", [("Run cargo test", "failure")], "failure", 2),
+            ]
+        }
+        self._stub([(0, json.dumps(jobs), "")])
+        [rec] = wfc.diagnose_failures(self._failing("https://x/actions/runs/7"), "o/r")
+        self.assertEqual((rec["job"], rec["kind"]), ("bad", "test_runner"))
+        self.assertIn("runs/7/jobs", self.calls[0][1])
+
+    def test_a_non_actions_check_is_external(self):
+        self._stub([])
+        [rec] = wfc.diagnose_failures(
+            [
+                {
+                    "name": "deploy preview",
+                    "link": "https://deploy.example/x",
+                    "run_id": "",
+                }
+            ],
+            "o/r",
+        )
+        self.assertEqual(rec["kind"], "external")
+        self.assertEqual(rec["next_command"], "https://deploy.example/x")
+
+    def test_wait_attaches_the_diagnosis_only_on_fail(self):
+        real_watch, real_read = wfc.watch_checks, wfc.read_checks
+        wfc.watch_checks = lambda pr, repo, interval, timeout, log: True
+        self.addCleanup(setattr, wfc, "watch_checks", real_watch)
+        self.addCleanup(setattr, wfc, "read_checks", real_read)
+        self._stub([(0, json.dumps(job("Lint", [("Run cargo test", "failure")])), "")])
+        wfc.read_checks = lambda pr, repo: [
+            check("Lint", "fail", "Lint", "https://x/runs/7/job/8")
+        ]
+        v = wfc.wait(285, repo="o/r")
+        self.assertEqual(v["failed_steps"][0]["kind"], "test_runner")
+        self.assertEqual(v["hint"]["gate"], "blocking")
+        wfc.read_checks = lambda pr, repo: [check("Lint", "pass")]
+        self.assertEqual(wfc.wait(285, repo="o/r")["failed_steps"], [])
+
+
+class ActionHintTests(unittest.TestCase):
+    """Only `green` is a gate pass; an unverifiable state never is."""
+
+    def _gate(self, conclusion, **extra):
+        return wfc.action_hint({"conclusion": conclusion, **extra})["gate"]
+
+    def test_the_gate_per_conclusion(self):
+        self.assertEqual(self._gate("pass"), "green")
+        self.assertEqual(self._gate("none"), "green")
+        self.assertEqual(self._gate("conflicting"), "blocking")
+        self.assertEqual(self._gate("fail", failing=[{"name": "a"}]), "blocking")
+        self.assertEqual(self._gate("pending"), "retry")
+        self.assertEqual(self._gate("timeout"), "unverified")
+        self.assertEqual(self._gate("blocked"), "unverified")
+
+    def test_a_timeout_names_what_is_still_pending(self):
+        hint = wfc.action_hint({"conclusion": "timeout", "pending_checks": ["Tests"]})
+        self.assertIn("Tests", hint["evidence"])
+
+    def test_a_none_names_a_failed_conflict_probe(self):
+        hint = wfc.action_hint(
+            {"conclusion": "none", "watch_rounds": 3, "mergeable_error": "boom"}
+        )
+        self.assertIn("boom", hint["evidence"])
+
+
+class MergeableModeTests(unittest.TestCase):
+    def _run(self, payloads, code=0):
+        reads = []
+
+        def fake(args):
+            reads.append(args)
+            return code, payloads[min(len(reads), len(payloads)) - 1], "err"
+
+        real = wfc._gh
+        wfc._gh = fake
+        self.addCleanup(setattr, wfc, "_gh", real)
+        return wfc.wait_mergeable(285, repo="o/r", sleep=lambda _s: None)
+
+    @staticmethod
+    def _p(mergeable, status):
+        return json.dumps({"mergeable": mergeable, "mergeStateStatus": status})
+
+    def test_unknown_settles_before_concluding(self):
+        v = self._run([self._p("UNKNOWN", "UNKNOWN"), self._p("MERGEABLE", "BLOCKED")])
+        self.assertEqual((v["conclusion"], v["reads"]), ("mergeable", 2))
+        self.assertEqual(v["hint"]["gate"], "green")
+
+    def test_a_persistent_unknown_holds_rather_than_passing(self):
+        v = self._run([self._p("UNKNOWN", "UNKNOWN")])
+        self.assertEqual(v["conclusion"], "unknown")
+        self.assertEqual(v["reads"], wfc.MERGEABLE_SETTLE_READS + 1)
+        self.assertEqual(v["hint"]["gate"], "unverified")
+
+    def test_conflicting_and_dirty_are_blocking(self):
+        self.assertEqual(
+            self._run([self._p("CONFLICTING", "DIRTY")])["hint"]["gate"], "blocking"
+        )
+        self.assertEqual(
+            self._run([self._p("MERGEABLE", "DIRTY")])["conclusion"], "conflicting"
+        )
+
+    def test_a_failed_probe_is_never_read_as_clean(self):
+        v = self._run([""], code=1)
+        self.assertEqual(
+            (v["conclusion"], v["hint"]["gate"]), ("probe_failed", "unverified")
+        )
+
+    def test_the_cli_exits_zero_only_on_mergeable(self):
+        real = wfc.wait_mergeable
+        self.addCleanup(setattr, wfc, "wait_mergeable", real)
+        for conclusion, code in (("mergeable", 0), ("unknown", 1)):
+            wfc.wait_mergeable = lambda pr, repo, c=conclusion: {"conclusion": c}
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(wfc.run(["w", "--mergeable", "285"]), code)
+
+
+class SnapshotTests(unittest.TestCase):
+    """1943 part 2: the pre-wait spill must carry the work a signing failure
+    left uncommitted — committed, staged, unstaged and untracked."""
+
+    def _git(self, *args):
+        code, out, err = wfc._git(list(args))
+        self.assertEqual(code, 0, err)
+        return out
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        os.chdir(self.tmp.name)
+        self._git("init", "-q", "-b", "main")
+        self._git("config", "user.email", "t@t")
+        self._git("config", "user.name", "t")
+        self._git("config", "commit.gpgsign", "false")
+        Path("a.txt").write_text("base\n")
+        self._git("add", "a.txt")
+        self._git("commit", "-q", "-m", "base")
+        self._git("update-ref", "refs/remotes/origin/main", "HEAD")
+        Path("b.txt").write_text("committed\n")
+        self._git("add", "b.txt")
+        self._git("commit", "-q", "-m", "b")
+        Path("c.txt").write_text("staged\n")
+        self._git("add", "c.txt")
+        Path("a.txt").write_text("unstaged\n")
+        Path("d.txt").write_text("untracked\n")
+
+    def test_the_spill_applies_on_the_merge_base_with_every_change(self):
+        out = Path(self.tmp.name) / "spill.diff"
+        snap = wfc.snapshot(out, "main")
+        self.assertIsNone(snap["error"])
+        self.assertEqual(snap["untracked"], ["d.txt"])
+        self.assertEqual(sorted(snap["uncommitted"]), ["a.txt", "c.txt"])
+        # Recovery: a fresh checkout of the merge base, then one `git apply`.
+        self._git("checkout", "-q", "-f", snap["merge_base"])
+        self._git("clean", "-q", "-fd", "--exclude=spill.diff")
+        self._git("apply", str(out))
+        self.assertEqual(Path("a.txt").read_text(), "unstaged\n")
+        self.assertEqual(Path("b.txt").read_text(), "committed\n")
+        self.assertEqual(Path("c.txt").read_text(), "staged\n")
+        self.assertEqual(Path("d.txt").read_text(), "untracked\n")
+
+    def test_a_missing_base_is_an_error_not_an_empty_spill(self):
+        snap = wfc.snapshot(Path(self.tmp.name) / "spill.diff", "nope")
+        self.assertTrue(snap["error"])
+
+    def test_the_cli_refuses_a_snapshot_outside_checks_mode(self):
+        with self.assertRaises(wfc.WaitForChecksError):
+            wfc.run(["w", "--run", "1", "--snapshot", "x.diff"])
+
+    def test_verdict_out_writes_the_same_verdict(self):
+        real = wfc.wait_mergeable
+        self.addCleanup(setattr, wfc, "wait_mergeable", real)
+        wfc.wait_mergeable = lambda pr, repo: {"conclusion": "mergeable", "pr": pr}
+        path = Path(self.tmp.name) / "v.json"
+        with redirect_stdout(io.StringIO()):
+            wfc.run(["w", "--mergeable", "9", "--verdict-out", str(path)])
+        self.assertEqual(json.loads(path.read_text())["pr"], 9)
 
 
 if __name__ == "__main__":

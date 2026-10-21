@@ -1552,32 +1552,20 @@ migrations or generation inputs, and whether it spans crates.
    commit's message must match the title — squash or reword.
 
 1. **Confirm the PR still merges cleanly.** The base can advance again
-   during a long review. Fetch it, then read only the two merge fields
-   (`docs/conventions/github-mcp.md` → "The CI-wait and PR-state
-   reads"):
+   during a long review. One call reads the mergeability tri-state,
+   settling an `UNKNOWN` itself; step 20 makes the same call:
 
    ```sh
-   git fetch origin <base>
+   python3 .claude/tools/wait_for_checks.py --mergeable <number> \
+     --verdict-out <scratchpad>/mergeable.json
    ```
 
-   ```sh
-   gh pr view <number> --json mergeable,mergeStateStatus
-   ```
-
-   **The mergeability tri-state** — key on `mergeable`, the gh twin of
-   the MCP `mergeable_state`; this step and step 20 both branch on it:
-
-   - `CONFLICTING` (or `mergeStateStatus: "DIRTY"`) → **blocking**.
-     Don't mark the PR ready; tell the user to rebase onto
-     `origin/<base>`, resolve, and re-run `/review-pr`. This skill
-     **never auto-resolves a conflict** — step 2 argues why that holds
-     even for a trivial sorted-list collision.
-   - `UNKNOWN` → GitHub is still computing; re-read after a few seconds
-     until it settles.
-   - `MERGEABLE`, any `mergeStateStatus` → no conflict. `BLOCKED` /
-     `UNSTABLE` mean protection, checks or review are outstanding (a
-     draft mid-review); `BEHIND` means the base moved, which step 2
-     handled.
+   Act on `hint.gate`: `green` (`mergeable`) proceeds; `blocking`
+   (`conflicting`) means don't mark ready — tell the user to rebase onto
+   `origin/<base>`, resolve, and re-run `/review-pr`; this skill **never
+   auto-resolves a conflict** (step 2 says why, even for a trivial
+   sorted-list collision); `unverified` (`unknown`, `probe_failed`)
+   holds.
 
 1. **Gate.** Mark the PR ready only when **every** local CI-mirroring
    check is green: **zero blocking issues** (every Linear checklist
@@ -1588,7 +1576,7 @@ migrations or generation inputs, and whether it spans crates.
    toolchain — SDK clients, conformance vectors); `make test` and
    `make test-no-teardown` pass or are honestly reported unverifiable;
    the **`sdk/ts` node suite passes** (always runnable); the title
-   passes `Semantic PR`; and `mergeable` is not `CONFLICTING`. Then:
+   passes `Semantic PR`; and step 16's gate is `green`. Then:
 
    ```txt
    mcp__github__update_pull_request(
@@ -1619,65 +1607,33 @@ migrations or generation inputs, and whether it spans crates.
    it at push time, so it is already in flight.
 
    **Make the working state survivable before any long unattended
-   wait** — this one and the step-5 fan-out. A worktree has been
-   deleted under a review, losing a verified-but-uncommitted fix, and
-   the checkpoint rule that should have saved it did not fire because
-   signing was down (`history.md` → "Worktree deleted under a wait").
-   So:
+   wait** — this one and the step-5 fan-out (`history.md` → "Worktree
+   deleted under a wait"). Make the checkpoint commit immediately
+   before it: that probes signing, which `init-pr` step 0b cannot (the
+   agent locks while a session idles), and **a signing failure is an
+   unpushed-state alarm** — get signing working before the wait.
 
-   - **A signing failure is an unpushed-state alarm**, not a nuisance:
-     the checkpoint did not happen. Get signing working before
-     starting a wait.
-
-   - **Probe signing BEFORE the wait** by making the checkpoint commit
-     immediately before it (and before the step-5 fan-out). `init-pr`
-     step 0b cannot cover this: the agent locks while the session sits
-     idle, which is what a long wait produces.
-
-   - **Write the working diff to the scratchpad**, so recovery is one
-     `git apply` even if the commit could not be made:
-
-     ```sh
-     python3 .claude/tools/review_diff.py --base <base> \
-       --out <scratchpad>/pre-wait.diff
-     ```
-
-   **Wait with the tool — never poll.** One call blocks until the
-   checks settle and prints one compact verdict:
+   **Wait with the tool — never poll.** One call snapshots the working
+   diff (uncommitted and untracked work included, so recovery is one
+   `git apply` on `snapshot.merge_base` even when the commit could not
+   be made), blocks until the checks settle, and prints one compact
+   verdict; the tool's docstring has the schema:
 
    ```sh
-   python3 .claude/tools/wait_for_checks.py --pr <number>
+   python3 .claude/tools/wait_for_checks.py --pr <number> \
+     --snapshot <scratchpad>/pre-wait.diff --base <base> \
+     --verdict-out <scratchpad>/ci.json
    ```
 
-   ```json
-   {
-     "conclusion": "pass",  // pass fail pending none conflicting timeout
-     "settled": true,
-     "elapsed_seconds": 127,
-     "watch_rounds": 1,       // >1 means a check registered late
-     "counts": {"pass": 12, "fail": 0, "skipping": 3},
-     "failing": [{"name": "…", "workflow": "…", "link": "…", "run_id": "…"}],
-     "pending_checks": [],
-     "log_path": "…/wait-for-checks-<number>.log"
-   }
-   ```
-
-   Inside, gh paces a `gh pr checks --watch` whose live table goes to
-   `log_path`, then one `--json` read *is* the verdict — not gh's exit
-   code, which overloads "failed", "pending" and "no checks". It exits
-   0 only on `pass`, and `failing` carries each `run_id`.
+   A `snapshot.error` means the spill did not happen — say so, as for a
+   signing failure.
 
    **The never-poll rule, for every wait in this skill** (this one,
    the step-20 mergeability re-read, the step-22 queue watch): no
-   shell `while … sleep … done` loop and no `jq` filter — compounds
-   that cannot reduce to an allow-rule. Never a **bare**
-   `gh pr checks --watch` or `gh run watch` either: called directly
-   each re-prints its whole table every refresh into one tool result,
-   replayed on every later turn, and the cost grows with CI's length
-   (`history.md` → "Bare watch cost"). `--watch` is right only inside
-   the tool. Without the tool, the acceptable substitutes are a
-   narrowed one-line-per-poll read or a backgrounded watcher whose
-   exit status alone is read.
+   shell `while … sleep` loop, no `jq` filter, and never a **bare**
+   `gh pr checks --watch` or `gh run watch`, which re-prints its whole
+   table every refresh into one replayed result (`history.md` → "Bare
+   watch cost"); `--watch` is right only inside the tool.
 
    **Say once, then silent** — the same rule for the step-22 queue
    watch: tell the human once that CI is in flight, then say nothing
@@ -1685,102 +1641,20 @@ migrations or generation inputs, and whether it spans crates.
    gone, run the tool with `--no-watch` for one current read, then
    plain to resume.
 
-   Branch on `conclusion` — it is exhaustive:
+   **Act on `hint`** — `gate` is exhaustive and `do` names the action:
+   `green` (`pass`, or a `none` the tool re-read and probed for a
+   conflict) prints the summary; `blocking` is `conflicting` (no run
+   will ever arrive — rebase) or `fail`; `unverified` (`timeout`) is
+   never a pass; `retry` (a `--no-watch` `pending`) re-runs plain.
 
-   - **`none`** with `blocked_by_conflict: false` → no checks apply (a
-     path-filtered diff); treat it as green. The tool re-reads a
-     `none` over a few short rounds before believing it, because a
-     wait started right after a push can beat the runs' registration,
-     and `none` fails **open** where `pending` fails safe
-     (`history.md` → "Registration race"). If a `none` still looks
-     wrong, one `gh run list --branch <branch>` filtered to the head
-     SHA tells the two apart.
-   - **`conflicting`** → **blocking**: a CONFLICTING PR gets no
-     `pull_request` run at all, so nothing will ever arrive. Rebase,
-     push, re-run the wait. Never green.
-   - **`timeout`** → the bound (default one hour) or the re-watch
-     rounds ran out with checks unsettled; a `none` arriving after any
-     `pending` round reports this too. It never claims `pass` from a
-     snapshot it stopped waiting on — treat it as unverified, and read
-     `pending_checks`.
-   - **`pending`** → only from a `--no-watch` read (under `--watch` a
-     pending read re-enters the watch). Re-run the tool plain.
-     `watch_rounds` > 1 means a check registered after gh's census —
-     routine, and the reason the tool re-enters rather than believing
-     one read.
-   - **`pass`** → ready and CI-green; print the summary.
-   - **`fail`** → catalogue each `failing` entry as **blocking**, with
-     its name and `link`, then diagnose as follows.
-
-   **Read the failing job's STEP CONCLUSIONS before any log** — bounded
-   by step count, not log volume:
-
-   ```sh
-   gh api repos/DASMAC-com/dropset/actions/runs/<run_id>/jobs \
-     --jq '.jobs[] | "\(.conclusion)\t\(.id)\t\(.name)"'
-   ```
-
-   ```sh
-   gh api repos/DASMAC-com/dropset/actions/jobs/<job_id> \
-     --jq '.steps[] | "\(.conclusion)\t\(.name)"'
-   ```
-
-   A tail is an offset guess, and the post-steps epilogue fills the
-   last several dozen lines (`history.md` → "Tail landed in the
-   epilogue"). The step's **name** often is the diagnosis, says whether
-   a log is cascade-shaped or single-command, and separates "ran and
-   failed" from "never ran". **Route on what the failing step IS:**
-
-   - **A test runner or anything with its own trailing summary**
-     (`make tools-tests`, `cargo nextest`, `pnpm test`) → skip
-     `get_job_logs`: the summary prints after the failure and the
-     epilogue after that. Capture the log through the quiet runner
-     and Grep it:
-
-     ```sh
-     python3 .claude/tools/run_quiet.py -- \
-       gh run view <run-id> --repo DASMAC-com/dropset --log-failed
-     ```
-
-   - **A single command whose last output is its error** → the MCP
-     tail is fine:
-
-     ```txt
-     mcp__github__get_job_logs(
-       owner: "DASMAC-com",
-       repo: "dropset",
-       run_id: <run_id>,
-       failed_only: true,
-       return_content: true,
-       tail_lines: 100,
-     )
-     ```
-
-   - **The pre-commit `Lint` job** → never re-fetch a larger tail: it
-     runs `--all-files`, so the failing batch sits above any tail.
-     Reproduce the hook locally and trust its exit code:
-
-     ```sh
-     python3 .claude/tools/run_quiet.py -- \
-       python3 .claude/tools/lint_paths.py -- <hook-id>
-     ```
-
-     Through `lint_paths.py`, **not** bare
-     `pre-commit run <hook-id> --all-files`, which enumerates via
-     `git ls-files` and so cannot see an un-`git add`ed file — exactly
-     the one CI's checkout fails on. `run_quiet` names the offending
-     files (PR #235). Skip a hook that can't run here, as step 4 does.
-     **A red CI `Lint` with a GREEN local reproduce is probably
-     toolchain skew**, not a flake — a clippy failure in a file this
-     branch never touched almost certainly is. Confirm it on another
-     recent branch's `Lint` job; **never "fix" it by editing unrelated
-     code** — pin or report the toolchain.
-
-   **Never `gh api` a job log**: Actions logs are colorized and
-   `gh api` refuses escape sequences without its allow flag, so the
-   fetch returns **empty stdout**. Always distinguish *fetch failed*
-   from *fetched and found nothing* (`history.md` → "Empty-stdout
-   scan").
+   **On `fail`**, catalogue each `failing` entry as **blocking** with
+   its `link`, then run each `failed_steps[].next_command` — the tool
+   has read the step conclusions and routed on the step's `kind`
+   (`note` says how to read the result). Never `gh api` a job log, and
+   a `fetch_failed` record is not "nothing found". A `lint_hook`
+   reproduces through `lint_paths.py`, never bare `pre-commit run`,
+   which cannot see an un-added file; skip a hook that can't run here,
+   as step 4 does.
 
    **Need the PR's file list to place a failure?** Take
    `gh pr view <number> --json files --jq '.files[].path'`, never
@@ -1806,51 +1680,29 @@ migrations or generation inputs, and whether it spans crates.
    at the moment they decide. The queue outcome is not known yet; it
    is reported by step 22.
 
-   - Linear coverage: the resolved tag, and each checklist item marked
-     addressed / partial / missing (or "no Linear task checked" if none
-     was resolvable).
-   - Fan-out: which tier the diff took (full, small single-crate,
-     move-refactor / other reduced-fan-out, meta-work, or trivial
-     short-circuit) and, for a scaled-down run, which lenses were
-     skipped and why (security lens skipped — no trust surface; style
-     skipped — meta-work; cross-check skipped; freshness skipped —
-     surface gate; **a lens skipped on yield** — name it, and never let
-     a yield skip be silent).
-   - In-flight overlap: open PRs whose files intersect this diff (from
-     `review_diff.py --overlap`), and what was decided about them —
-     waited, or proceeded with the re-run cost accepted. Or that there
-     were none, or that the probe could not run.
-   - Lint status: pass, fail with details, or which hooks were
-     unverifiable locally (deps not installed) and why that's safe for
-     this diff.
-   - Generated artifacts: IDL / SDK clients / conformance vectors —
-     regenerated clean, committed a refresh, or (IDL only)
-     unverifiable without the toolchain.
-   - Test status: `make test` and `make test-no-teardown` — pass,
-     fail, or unverified locally (toolchain absent) — plus the `sdk/ts`
-     node suite (always runnable): pass or fail.
-   - Title status: passes `Semantic PR` or not.
-   - Merge status: `mergeable` — `CONFLICTING` vs. `MERGEABLE` (no
-     conflict).
-   - CI status: all GitHub checks green, or "no checks" treated as
-     green — by this point CI has passed (a failure would have stopped
-     the run at the CI wait).
-   - Linear status: currently **In Progress**; it moves to **In
-     Review** at the merge-queue handoff that follows (or stays put if
-     no tag was resolvable).
-   - `CLAUDE.md` + `docs/conventions/` freshness: in sync, or each
-     stale rule / dangling skill reference the diff outdated, with the
-     suggested correction — or **skipped** (the surface gate didn't
-     fire: the diff touched no `CLAUDE.md` / `docs/conventions/` /
-     `.github/` surface and added no new top-level tree).
-   - CI skip-list freshness: the `test.yml` `code`-filter exclude-list
-     is in sync, or each test-irrelevant tree the diff added/renamed
-     that should be excluded, with the suggested one-line edit (warning
-     only) — or **skipped** (surface gate didn't fire, as above).
-   - Issues found / fixed / remaining.
-   - Remaining warnings and nits for human review, each with
-     `file:line` and rationale.
-   - Whether the PR was marked ready.
+   Write the facts only this session holds to
+   `<scratchpad>/summary-facts.json` (schema in the tool's docstring),
+   then render; the CI and merge lines come from the verdict files,
+   never from the facts:
+
+   ```sh
+   python3 .claude/tools/review_summary.py \
+     --facts <scratchpad>/summary-facts.json \
+     --ci <scratchpad>/ci.json --mergeable <scratchpad>/mergeable.json
+   ```
+
+   The facts carry: each checklist item addressed / partial / missing;
+   the tier that ran (and the proposed one, so an override is named),
+   the lenses that ran, and each skipped lens with its reason — **a
+   yield skip is never silent**; the cross-check; in-flight overlap
+   and what was decided; lint, artifacts and each suite as pass / fail
+   / **unverified**, never a guessed pass; the freshness and skip-list
+   verdicts, or "skipped (surface gate)"; findings found / fixed /
+   blocking-open, the fix-cycle count, and each warning or nit with
+   `file:line` and rationale. Write the **findings paragraph** — the
+   one part in prose. Print the output; a `Converged: NO` (exit 1)
+   means a blocking finding, a missing item or a red gate is still
+   open, and the run does not proceed to step 20.
 
 1. **Move the issue to In Review and offer to add the PR to the merge
    queue.** Only when the CI wait took the **all-checks-green** path
@@ -1867,13 +1719,12 @@ migrations or generation inputs, and whether it spans crates.
    turn `CONFLICTING` while CI ran:
 
    ```sh
-   gh pr view <number> --json mergeable,mergeStateStatus
+   python3 .claude/tools/wait_for_checks.py --mergeable <number>
    ```
 
-   Apply step 16's tri-state, with the stakes raised: on `CONFLICTING`
-   neither enqueue nor advance the issue — report it, tell the human to
-   rebase, leave the issue In Progress, and stop. On an `UNKNOWN` that
-   survives a few spaced re-reads, say so and hold. Only `MERGEABLE`
+   With the stakes raised: on `blocking` neither enqueue nor advance
+   the issue — report it, tell the human to rebase, leave the issue In
+   Progress, and stop. On `unverified`, say so and hold. Only `green`
    proceeds.
 
    **If this branch adds a migration, check for a cross-branch number
