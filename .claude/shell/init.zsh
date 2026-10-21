@@ -85,24 +85,32 @@ fi
 # wins, the same override shape as `_ds_secrets`. The directory sits under Cargo
 # home, beside the registry, so it is cleaned with the rest of Cargo's state.
 # See docs/conventions/local-integrations.md → "The cargo pool".
-# Declared, never reset: `_ds_reload_init` re-sources this file after a pull,
-# and emptying the list then would orphan the exports it owns.
-typeset -ga _DS_CARGO_POOL_OWNED
+# Each variable the hook exported, mapped to the value it exported. Leaving a
+# checkout unsets a variable only while it still holds that value, so a pin
+# made by hand after the export survives too. Declared, never reset:
+# `_ds_reload_init` re-sources this file after a pull, and emptying the map
+# then would orphan the exports it owns.
+typeset -gA _DS_CARGO_POOL_OWNED
 _ds_cargo_pool() {
   local cores var
   if [[ "${DS_CARGO_POOL:-1}" == 0 || "${PWD:A}/" != "$_DS_REPO/"* ]]; then
-    for var in "${_DS_CARGO_POOL_OWNED[@]}"; do unset "$var"; done
+    for var in "${(k)_DS_CARGO_POOL_OWNED[@]}"; do
+      [[ "${(P)var-}" == "${_DS_CARGO_POOL_OWNED[$var]}" ]] && unset "$var"
+    done
     _DS_CARGO_POOL_OWNED=()
     return 0
   fi
   if [[ -z "${CARGO_TARGET_DIR-}" ]]; then
     export CARGO_TARGET_DIR="${CARGO_HOME:-$HOME/.cargo}/target/dropset"
-    _DS_CARGO_POOL_OWNED+=(CARGO_TARGET_DIR)
+    _DS_CARGO_POOL_OWNED[CARGO_TARGET_DIR]="$CARGO_TARGET_DIR"
   fi
+  # Probed only when the bound is unset, so a `cd` within a pooled checkout
+  # forks nothing.
+  [[ -n "${CARGO_BUILD_JOBS-}" ]] && return 0
   cores="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null)"
-  if [[ -z "${CARGO_BUILD_JOBS-}" && "$cores" == <-> ]] && (( cores > 2 )); then
+  if [[ "$cores" == <-> ]] && (( cores > 2 )); then
     export CARGO_BUILD_JOBS="$(( cores - 2 ))"
-    _DS_CARGO_POOL_OWNED+=(CARGO_BUILD_JOBS)
+    _DS_CARGO_POOL_OWNED[CARGO_BUILD_JOBS]="$CARGO_BUILD_JOBS"
   fi
 }
 autoload -Uz add-zsh-hook

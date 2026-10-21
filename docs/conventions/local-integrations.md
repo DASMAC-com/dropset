@@ -1113,8 +1113,10 @@ so the session — and every Bash command its agent runs — inherits the pool.
 - **`CARGO_TARGET_DIR`** is `$CARGO_HOME/target/dropset` (Cargo home
   defaults to `~/.cargo`): one build directory for every worktree, beside
   the registry. Dependencies compile once instead of per worktree (20–30
-  GB each). Artifacts from different branches coexist, because cargo keys
-  each by a fingerprint of its exact inputs. Cargo locks the directory for
+  GB each). Intermediate artifacts from different branches coexist,
+  because cargo keys each by a fingerprint of its exact inputs; the final
+  binaries it copies to the top of `debug/` or `release/` are last-build-wins
+  (see the carve-outs below). Cargo locks the directory for
   a build's length, so two worktrees building at once take turns at full
   width. The only visible change is cargo's one-line
   `Blocking waiting for file lock on …` message.
@@ -1125,19 +1127,21 @@ so the session — and every Bash command its agent runs — inherits the pool.
 **Scoped to dropset checkouts, never machine-wide.** A `chpwd` hook
 re-evaluates on every directory change: inside the base repo or any
 worktree under it both are exported, and leaving unsets the ones the hook
-set (a value pinned by hand survives). In another Anchor repo the pool
+set while they still hold its value (a value pinned by hand survives). In
+another Anchor repo the pool
 would be actively harmful: Anchor reads the program keypair from the
 target directory's `deploy/` and creates a random one when it is missing,
 so `anchor keys sync` would re-key that repo.
 
 **The off switch** is `DS_CARGO_POOL=0` in the runtime config, set
-**before** the line that sources the init. Both variables then stay unset
+**before** the line that sources the init (set later, it takes effect at
+the next `cd`). Both variables then stay unset
 and everything behaves as before. A value of either variable that is
 already exported wins over the default. CI never sources the init, so its
 builds are unchanged.
 
-**The Anchor build is the one carve-out.** Anchor reads the program
-keypair from `<target dir>/deploy/` and no flag overrides that path, and
+**Two carve-outs: the Anchor build and the TUI's bots.** Anchor reads the
+program keypair from `<target dir>/deploy/` and no flag overrides that path, and
 by default it also writes the `.so` and IDL there. The pool's `deploy/` has
 no per-branch fingerprint. So `make program-keypair` (and the TUI's deploy
 action) stages `keys/AAAA.json` in the pool's `deploy/` as well as the
@@ -1148,8 +1152,12 @@ via `cargo build-sbf`'s `SBF_OUT_PATH`, the IDL via `--idl` / `--idl-ts`),
 where the litesvm tests and the TUI read them. `make tui-prebuild` likewise
 copies the maker and taker bots from the pool's `debug/`, which every
 worktree's build overwrites, into the worktree's `target/debug/`, where the
-TUI execs them. **A hand-typed `anchor build` gets none of this.** Go
-through `make program`, or run it as `env -u CARGO_TARGET_DIR anchor build`.
+TUI execs them. One narrow window remains in both: cargo releases the lock
+when the build exits, just before the copy, so a second worktree relinking
+the same artifact in that instant can hand this one its build. It is rare,
+since the other build must finish its own compile first; a rebuild clears
+it. **A hand-typed `anchor build` gets none of this.** Go through
+`make program`, or run it as `env -u CARGO_TARGET_DIR anchor build`.
 
 **Cleaning.** `make clean` removes the worktree's own `target/` (plus its
 `node_modules` and `.next`), never the pool. Under the pool that `target/`

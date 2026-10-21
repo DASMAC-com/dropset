@@ -132,7 +132,7 @@ check-nextest:
 # for the keypair in the POOL's deploy/, a path no flag overrides, so the
 # localnet key is staged there too. Every worktree stages the same committed
 # file, so sharing it is harmless; without the pool both paths are one.
-CARGO_TARGET := $(or $(CARGO_TARGET_DIR),$(CURDIR)/target)
+CARGO_TARGET := $(abspath $(or $(CARGO_TARGET_DIR),$(CURDIR)/target))
 .PHONY: program-keypair
 program-keypair:
 	mkdir -p target/deploy $(CARGO_TARGET)/deploy

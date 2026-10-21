@@ -58,14 +58,21 @@ class CargoPoolHarness(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.outside = self._tmp.name
 
-    def _pool(self, *dirs, env=None, resource=False):
+    def _pool(self, *dirs, env=None, resource=False, pin=""):
         """Source the init in `dirs[0]`, `cd` through the rest, and return
         (CARGO_TARGET_DIR, CARGO_BUILD_JOBS) as the last directory sees them.
-        `resource` sources it a second time first, as `_ds_reload_init` does."""
+        `resource` sources it a second time first, as `_ds_reload_init` does;
+        `pin` runs before the hops, the way an operator pins a value by hand."""
         start, *rest = dirs
         source = 'source "%s" 2>/dev/null; ' % INIT
         hops = "".join('cd "%s"; ' % d for d in rest)
-        script = 'cd "%s"; %s%s%s' % (start, source, source if resource else "", hops)
+        script = 'cd "%s"; %s%s%s%s' % (
+            start,
+            source,
+            source if resource else "",
+            pin,
+            hops,
+        )
         script += 'print -r -- "${CARGO_TARGET_DIR-%s}"; ' % _UNSET
         script += 'print -r -- "${CARGO_BUILD_JOBS-%s}"' % _UNSET
         child_env = {**os.environ}
@@ -134,6 +141,11 @@ class AnExportedValueWins(CargoPoolHarness):
         self.assertEqual(
             self._pool(REPO, self.outside, env=self.PINNED), ("/scratch/t", "3")
         )
+
+    def test_a_pin_made_after_the_export_survives_leaving(self):
+        pin = "export CARGO_TARGET_DIR=/scratch/t; "
+        target, jobs = self._pool(REPO, self.outside, pin=pin)
+        self.assertEqual((target, jobs), ("/scratch/t", _UNSET))
 
 
 if __name__ == "__main__":
