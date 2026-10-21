@@ -101,10 +101,11 @@ grows, so one measured read was a session's largest main-loop result at
 ≈7.9k for four short passages; ask a live planning session first, use
 this when none is live), `check_home_paths.py` (the
 committed-agent-material hygiene guard, wired
-as a scoped pre-commit hook), `lens_preamble.py` (composes the standing
-half of a lens brief from the
+as a scoped pre-commit hook), `lens_preamble.py` (composes a lens brief from the
 [sub-agent brief](sub-agent-brief.md) plus a skill's own committed
-section, so a skill never reads either to quote it), and
+sections — for `review-pr`, `--lens` appends the standing half and that
+lens's file under `lenses/` — so a skill never reads them to quote
+them), and
 `render_review.py` (measures or contact-sheets rendered deck pages
 instead of reading them at print resolution — the one tool with an
 optional dependency, per the lazy-import rule above), alongside the

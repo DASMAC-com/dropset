@@ -39,14 +39,24 @@ So ``--fact`` (repeatable) or ``--facts-file`` is mandatory, and a run with
 genuinely nothing to state must say so with ``--no-facts`` rather than omitting
 the section silently.
 
+**``--lens <name>`` composes one review lens's whole brief.** The agent-facing
+wording of each ``review-pr`` lens — its dimension, standing sub-questions,
+what it is handed, its default cap — lives in one committed file under
+``.claude/skills/review-pr/lenses/``, so the reviewing session holds none of it
+resident. ``--lens`` appends ``lens-standing.md`` and then that file, and fills
+the file's ``CAP_PLACEHOLDER`` code span from ``--cap`` or, absent it, from the
+file's own ``<!-- default-cap: ... -->`` line. An unknown name is refused, and
+``LENSES`` is the table a unittest holds equal to the directory listing, so a
+name the tool accepts cannot be missing its file, nor a file be orphaned.
+
 Usage::
 
     python3 .claude/tools/lens_preamble.py --out <scratchpad>/lens-preamble.md \\
         --fact '<something you verified, stated as fact>' \\
         --fact '<a NEGATIVE you verified — "there is no X here">'
-    python3 .claude/tools/lens_preamble.py --out <path> \\
+    python3 .claude/tools/lens_preamble.py --out <scratchpad>/brief-<lens>.md \\
         --facts-file <scratchpad>/facts.md \\
-        --append .claude/skills/review-pr/lens-standing.md
+        --lens <lens> [--cap '<= 6 turns / <= 9 tool calls']
 
 The facts above are **placeholders on purpose**. An earlier version of this
 docstring used concrete, plausible-looking examples, which is a hazard in a
@@ -63,6 +73,7 @@ run via ``make tools-tests``.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -74,6 +85,38 @@ BRIEF_DOC = Path("docs/conventions/sub-agent-brief.md")
 # first blockquote in the file") means a later doc edit that adds an earlier
 # quoted aside cannot silently swap what gets emitted.
 BRIEF_MARKER = "**Prepend this standing brief to *every* `Agent` prompt:**"
+
+
+# The review-pr lens wording. The standing half every lens shares, then one
+# file per lens; both relative to the repo root like ``BRIEF_DOC``.
+LENS_STANDING = Path(".claude/skills/review-pr/lens-standing.md")
+LENS_DIR = Path(".claude/skills/review-pr/lenses")
+
+# Every review-pr lens with its own brief file in ``LENS_DIR`` (the reduced
+# tier's reformat and value-rewiring lenses reuse ``move-fidelity`` and
+# ``correctness``). The unittest holds this equal to the directory listing in
+# both directions.
+LENSES = (
+    "ci-skip-list",
+    "comment-accuracy",
+    "completeness",
+    "correctness",
+    "cross-check",
+    "doc-freshness",
+    "move-fidelity",
+    "ops-correctness",
+    "security",
+    "style",
+    "test-validity",
+)
+
+# Written as a code span so markdown formatters leave it alone (mdformat
+# escapes a bare ``{{``); the whole span, backticks included, is replaced.
+CAP_PLACEHOLDER = "`{{cap}}`"
+
+# A lens file's own default cap, as an HTML comment so it renders as nothing.
+# It is stripped from the composed brief: the agent reads the filled-in cap.
+DEFAULT_CAP_RE = re.compile(r"^<!--\s*default-cap:\s*(.+?)\s*-->\s*\n?", re.M)
 
 
 class LensPreambleError(Exception):
@@ -156,13 +199,57 @@ def facts_section(facts: list[str], no_facts: bool) -> list[str]:
     return body
 
 
+def lens_path(lens: str) -> Path:
+    """The committed file for ``lens``, refusing a name the table lacks."""
+    if lens not in LENSES:
+        raise LensPreambleError(
+            f"unknown lens {lens!r} — known lenses: {', '.join(LENSES)}"
+        )
+    return LENS_DIR / f"{lens}.md"
+
+
+def fill_cap(text: str, cap: str | None, name: str) -> str:
+    """``text`` with its default-cap line stripped and ``{{cap}}`` filled.
+
+    ``cap`` wins over the file's default. A file with the placeholder and
+    neither is refused rather than shipped with a literal ``{{cap}}``: a lens
+    with no stated cap has no hard stop, which is the overrun the cap exists
+    to prevent.
+    """
+    match = DEFAULT_CAP_RE.search(text)
+    body = DEFAULT_CAP_RE.sub("", text, count=1) if match else text
+    cap = (cap or "").strip() or None
+    if CAP_PLACEHOLDER not in body:
+        if cap:
+            raise LensPreambleError(
+                f"--cap was given but {name} has no {CAP_PLACEHOLDER} to fill"
+            )
+        return body
+    chosen = cap or (match.group(1).strip() if match else None)
+    if not chosen:
+        raise LensPreambleError(
+            f"{name} has a {CAP_PLACEHOLDER} placeholder but no default-cap line, "
+            "and no --cap was given"
+        )
+    return body.replace(CAP_PLACEHOLDER, chosen)
+
+
 def compose(
     root: Path,
     appends: list[Path],
     facts: list[str] | None = None,
     no_facts: bool = False,
+    lens: str | None = None,
+    cap: str | None = None,
 ) -> str:
-    """The full preamble: the canonical brief, the facts, then each append."""
+    """The full preamble: the canonical brief, the facts, then each append.
+
+    With ``lens``, ``lens-standing.md`` and then the lens's own file follow the
+    explicit appends (``lens-standing.md`` once, even if also appended).
+    """
+    if cap is not None and lens is None:
+        raise LensPreambleError("--cap fills a lens file's cap; pass --lens too")
+    lens_file = lens_path(lens) if lens is not None else None
     doc = root / BRIEF_DOC
     try:
         text = doc.read_text(encoding="utf-8")
@@ -179,12 +266,24 @@ def compose(
             "is what this refusal prevents"
         )
 
+    if lens is None:
+        intro = [
+            "# Standing brief for this review",
+            "",
+            "This file is the standing half of every lens brief in this run — "
+            "identical across lenses. Your own scope follows in the prompt that "
+            "pointed you here.",
+        ]
+    else:
+        intro = [
+            f"# Brief for the `{lens}` lens of this review",
+            "",
+            "This file is your whole standing brief: the shared rules, then your "
+            "lens's own section at the end. The material gathered for your lens "
+            "and your scope line follow in the prompt that pointed you here.",
+        ]
     parts = [
-        "# Standing brief for this review",
-        "",
-        "This file is the standing half of every lens brief in this run — "
-        "identical across lenses. Your own scope follows in the prompt that "
-        "pointed you here.",
+        *intro,
         "",
         "## Shell and tool conventions",
         "",
@@ -195,11 +294,18 @@ def compose(
     # bothers to read, so they should be read before the scope detail, not after.
     parts.extend(facts_section(facts, no_facts))
 
-    for extra in appends:
+    sections = list(appends)
+    if lens_file is not None:
+        sections = [p for p in sections if p != LENS_STANDING]
+        sections.extend([LENS_STANDING, lens_file])
+
+    for extra in sections:
         try:
             body = (root / extra).read_text(encoding="utf-8")
         except OSError as e:
             raise LensPreambleError(f"cannot read {extra}: {e}") from e
+        if extra == lens_file:
+            body = fill_cap(body, cap, str(extra))
         parts.extend(["", body.rstrip()])
 
     return "\n".join(parts) + "\n"
@@ -215,6 +321,18 @@ def run(argv: list[str]) -> int:
         default=[],
         metavar="PATH",
         help="a committed standing section to append (repeatable)",
+    )
+    parser.add_argument(
+        "--lens",
+        default=None,
+        metavar="NAME",
+        help=f"append lens-standing.md and the named lens file ({', '.join(LENSES)})",
+    )
+    parser.add_argument(
+        "--cap",
+        default=None,
+        metavar="TEXT",
+        help="the lens's cap, overriding its file's default (requires --lens)",
     )
     parser.add_argument(
         "--fact",
@@ -258,17 +376,25 @@ def run(argv: list[str]) -> int:
             "--no-facts contradicts the facts given; drop one of them"
         )
 
-    text = compose(root, [Path(p) for p in args.append], facts, args.no_facts)
+    text = compose(
+        root,
+        [Path(p) for p in args.append],
+        facts,
+        args.no_facts,
+        lens=args.lens,
+        cap=args.cap,
+    )
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
 
     print(out)
+    lens_note = f", lens {args.lens}" if args.lens else ""
     print(
         f"lens-preamble | {len(text.splitlines())} line(s), "
         f"{len(facts)} established fact(s), "
-        f"{len(args.append)} appended section(s)",
+        f"{len(args.append)} appended section(s){lens_note}",
         file=sys.stderr,
     )
     return 0

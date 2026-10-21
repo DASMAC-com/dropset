@@ -529,12 +529,13 @@ migrations or generation inputs, and whether it spans crates.
    | tests  | completeness; correctness when the diff changes pinned logic |
    | docs   | doc-freshness                                                |
 
-   - **Each brief NAMES its slice**, and a lens scoped to one tree gets
-     that tree's `--only` diff (a tools lens `--only '.claude/tools/**'`;
-     a conventions lens `docs/conventions/**` plus `CLAUDE.md`).
-   - **A second slice needs a one-line justification** in the brief —
+   - **Each lens's material NAMES its slice**, and a lens scoped to one
+     tree gets that tree's `--only` diff (a tools lens
+     `--only '.claude/tools/**'`; a conventions lens
+     `docs/conventions/**` plus `CLAUDE.md`).
+   - **A second slice needs a one-line justification** in the material —
      why its question spans the seam. Print each lens's **slice count
-     and handed-in byte count** beside the brief, so an over-broad
+     and handed-in byte count** at spawn, so an over-broad
      hand-in shows at fan-out time. This is scoping only; nothing here
      argues for fewer or shallower lenses.
    - **When generated output dominates the diff**, the completeness
@@ -572,7 +573,7 @@ migrations or generation inputs, and whether it spans crates.
    - **A prose or cross-file-consistency lens usually keeps the whole
      slice** — splitting destroys the relation it checks. That
      exemption **lifts its turn cap with it**, roughly in proportion
-     (≈3× the ceiling, ≈3× the turns), stated in the brief; otherwise
+     (≈3× the ceiling, ≈3× the turns), passed as `--cap`; otherwise
      it overruns by construction and a hard stop discards the findings
      least recoverable by a narrower re-run.
    - **The exemplar band shifts with size**: a 509-line slice
@@ -603,24 +604,23 @@ migrations or generation inputs, and whether it spans crates.
    structurally a self-review at any diff size (`history.md` → "Why
    the inline path was removed").
 
-   **Emit the standing preamble with the tool, never by hand.** The
-   byte-identical standing half of every brief is written once and
-   handed by path; the tool reads `docs/conventions/sub-agent-brief.md`
-   in its own process so the skill reads nothing (`history.md` →
-   "Preamble economics"). It reaches the step-6 cross-check too:
+   **Compose each lens's brief with the tool, never by hand.** Every
+   agent-facing rule lives in committed files the tool assembles in its
+   own process, so this step holds none of it (`history.md` →
+   "Preamble economics"): the canonical shell rules;
+   `lens-standing.md` (scope and negative scope, budget and hard stop,
+   the lint carve-out, the pre-emit gate, the standing suppressions,
+   the report shape with its checks-to-run slot and self-report); and
+   the lens's own file under `lenses/` (its dimension, standing
+   sub-questions, what it is handed and never handed, its default
+   cap). One call per lens, the step-6 cross-check included; `--lens`
+   refuses a name with no file:
 
    ```sh
    python3 .claude/tools/lens_preamble.py \
-     --out <scratchpad>/lens-preamble.md \
-     --append .claude/skills/review-pr/lens-standing.md \
+     --out <scratchpad>/brief-<lens>.md --lens <lens> \
      --facts-file <scratchpad>/facts.md
    ```
-
-   It composes the canonical shell rules with `lens-standing.md` beside
-   this file — the scope and negative scope, the budget and hard stop,
-   the pre-emit gate, the standing suppressions. **That template is the
-   agent-facing wording; this step is its rationale.** When you change
-   one, check the other still describes it.
 
    **The facts are the highest-leverage input in this step.** The tool
    refuses a run with neither facts (`--facts-file`, or the equivalent
@@ -645,10 +645,10 @@ migrations or generation inputs, and whether it spans crates.
    - **For a key, id or wire format, hoist both ends**: the writer-side
      constants that compose it, not only the reader-side schema.
 
-   **Emit the preamble at the spawn gate; a missing file is a stop —
+   **Emit the briefs at the spawn gate; a missing file is a stop —
    re-emit it and re-check.** Run `lens_preamble.py` immediately before
    spawning, in the same gate that checks `review_diff.py`'s `ready`,
-   and check the path in the same command sequence that spawns, so it
+   and check the paths in the same command sequence that spawns, so it
    fails loudly there — a session resume can strip a file emitted
    earlier, and the fan-out then runs with no shell rules and no
    suppressions while reading as normal (`history.md` → "Missing
@@ -656,22 +656,21 @@ migrations or generation inputs, and whether it spans crates.
 
    **The per-lens material travels by file too.** Write each lens's
    block — handler semantics, fixture helpers, known negatives,
-   measured values — to `<scratchpad>/lens-<name>.md`, so a retry after
-   a transient failure re-sends a path, not the brief (`history.md` →
-   "Per-lens retries"). Keep inline only
-   what identifies the lens — its dimension, scope line and cap:
+   measured values, the diff path it reads — to
+   `<scratchpad>/lens-<name>.md`, so a retry after a transient failure
+   re-sends a path, not the brief (`history.md` → "Per-lens
+   retries"). The spawn prompt is three lines:
 
    ```txt
-   Read <scratchpad>/lens-preamble.md first — it is the
-   standing brief for this review. Then read
-   <scratchpad>/lens-<name>.md, which holds the material
-   gathered for your lens. Then: <per-lens scope>
+   Read <scratchpad>/brief-<name>.md first — it is your brief.
+   Then read <scratchpad>/lens-<name>.md, the material for your lens.
+   Then: <scope line, and at most three sub-questions>
    ```
 
    **Excerpts inline: if the main loop has read it, the excerpt goes
-   in the brief.** This is the single highest-value lever in the step,
+   in the material.** This is the single highest-value lever in the step,
    for **every** lens, and it is *input*-scoping, not fewer lenses
-   (`history.md` → "Cold-reading held context"). A brief never names a
+   (`history.md` → "Cold-reading held context"). Material never names a
    file path the main loop could have quoted — reference and prior-art
    files included (the module the change imitates, the type it must
    stay compatible with), since a named path is an instruction to go
@@ -684,57 +683,40 @@ migrations or generation inputs, and whether it spans crates.
    **Scope the whole-read license to the excerpt**: name the region you
    will excerpt before reading a file whole, and map-and-slice when it
    is a known section. When two files are near-identical in the region,
-   read one and diff the other against it. Three lenses need it shaped:
+   read one and diff the other against it. **Each lens file's "What you
+   are handed" section is the shaping rule for its material** — the
+   docs lens's claim → excerpt table, the style lens's sibling excerpts
+   pasted, the freshness lenses' positive scope — and its "never" half
+   is what the material must not hand over.
 
-   | lens      | hand it                                                                                                                        | never                                       |
-   | --------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
-   | docs      | the docs slice plus a claim → excerpt table: the assertion, the 5–15 lines that settle it, a line-number column                | the source slices as "ground truth"         |
-   | style     | the one or two sibling files that define the idiom, named **and their excerpts pasted**                                        | a discovery glob (`components/**`)          |
-   | freshness | its named files (`CLAUDE.md`, the skill files, `test.yml`) as a positive scope, opened only through Read / Grep and slice-read | shell `grep` / `git grep`; whole-file Reads |
+   **Bound every lens; the brief files carry the wording.** The scope
+   line, the hard-stop cap in turns **and** tool calls (`history.md` →
+   "Hard-stop wording"), the checks-to-run slot and the self-report are
+   in every brief already. The material and prompt supply what varies:
 
-   **Bound every lens; the template carries the wording.** In the
-   per-lens half, state:
-
-   - **The scope line, verbatim**:
-     *"adjudicate from the provided diff + excerpts; cold-read only a
-     file no excerpt covers."* The freshness lenses get their positive
-     scope (their named files) alongside the template's negative one.
-   - **A cap in turns AND tool calls, called a hard stop** — *"≤ 4
-     turns / ≤ 6 tool calls, hard stop"* — in **every** brief, not one
-     lens's. A turn is not a unit an agent can count, and a soft "≈6"
-     is read as a suggestion (`history.md` → "Hard-stop wording").
-     Default to **4 turns**, or 6 for a lens holding a section map. A
-     hard stop, the template's negative-scope line and its
-     do-not-re-open negative bind the step-6 cross-check too, but at its
-     own higher cap (step 6), never this one.
+   - **The cap, when not the lens file's default** — `--cap '<cap>'`:
+     6 turns for a lens holding a section map, the prose-lens exemption
+     above. The cross-check's higher cap is its file's default.
    - **At most three enumerated sub-questions.** The wording is
      necessary and not sufficient; sub-question count is where the
      remaining variance lives (`history.md` → "Sub-question count").
      Any sub-question the main loop can answer gets *answered* in the
-     brief — a known answer is a fact with a question mark on it. More
+     material — a known answer is a fact with a question mark on it. More
      than three means you are surveying, or the lens should split.
    - **A cap the ask can satisfy.** When the question is genuinely "do
      these two large files agree in their entirety", either **hoist the
      extraction** into the main loop and hand over the pairs
      (preferred), or state the higher cap and why. Silently keeping ≈6
      is the one option always wrong.
-   - **A self-report of the files it opened**, so an overrun is visible
-     next time.
-   - **The exemplar to match**: read once, adjudicate, report. The
-     current targets — security **90.4k / 2 turns, zero cold reads**;
-     correctness **102.9k / 2 turns**; style **81.7k / 2 turns / 1 tool
-     call** — all credit facts and excerpts inlined (`history.md` → "Exemplar
-     figures"). They are **summed per-turn input** from
-     `session-metrics`' rollup, not the Agent tool's `subagent_tokens`;
-     the gap grows with turns (≈1.7–2.5× at 2–3 turns, near 10× for
-     long lenses).
-   - **A closing "checks to run" list**: concerns it could not settle
-     in scope, each phrased as the check that would. Without that slot
-     a lens can only speculate or stay silent. Run them in the main
-     loop before step 7 and fold each result into the catalogue as one
-     line. **Re-shape an inherited check first**: the lens phrased it
-     for adjudication, the main loop usually needs existence, and the
-     right tool may differ (`history.md` → "Checks to run").
+
+   **Run each lens's "checks to run" list** in the main loop before
+   step 7 and fold each result into the catalogue as one line.
+   **Re-shape an inherited check first**: the lens phrased it for
+   adjudication, the main loop usually needs existence, and the right
+   tool may differ (`history.md` → "Checks to run"). Exemplar figures
+   are **summed per-turn input** from `session-metrics`' rollup, not
+   the Agent tool's `subagent_tokens` (`history.md` → "Exemplar
+   figures").
 
    **Gate a lens on its historical YIELD too.** A lens returning zero
    findings across **ten or more** dispatches is auto-skipped, and the
@@ -743,9 +725,9 @@ migrations or generation inputs, and whether it spans crates.
    in production (`history.md` → "Yield gating").
 
    **A resume is a report-now order.** A `SendMessage` resume re-sends
-   the lens's whole context, so it carries **"report now, at most 2
-   more tool calls"**, never an open continuation; a lens that cannot
-   conclude under that is reported unfinished, not resumed again
+   the lens's whole context, so it says **"report now"** (the brief
+   bounds that to two more tool calls), never an open continuation; a
+   lens that cannot conclude is reported unfinished, not resumed again
    (`history.md` → "Resumed lenses").
 
    **On a transient fan-out failure, back off once, then probe with
@@ -809,38 +791,35 @@ migrations or generation inputs, and whether it spans crates.
    merely-small-but-subtle. Name in the summary any tier below the full
    one and every lens a gate below skips.
 
-   - **Trivial short-circuit — one scoped reviewer, no cross-check.**
+   - **Trivial short-circuit — one scoped reviewer (plus the gated
+     freshness lenses), no cross-check.**
      Small and confined to one of: comment / doc / Markdown only, a
      config or workflow tweak, a rename, or a handful of lines with no
-     new control flow. The one reviewer covers correctness plus what the
-     diff's nature calls for (the freshness lenses for a `CLAUDE.md` or
-     skill edit).
+     new control flow. The one reviewer is the `correctness` lens,
+     scoped to what the diff's nature calls for, plus the freshness
+     lenses for a `CLAUDE.md` or skill edit.
    - **Reduced fan-out — one scoped lens matched to the risk, no
      cross-check.** A diff that may be *large* but whose risk is
      **narrow** (`history.md` → "Reduced-fan-out band"):
      - **infra / ops** touching no program, SDK or app control flow
        (Dockerfile, compose, a make target, CI YAML, docs) — one
-       ops-correctness lens; building or running the image verifies it
-       better than prose.
+       `ops-correctness` lens.
      - **faithful extraction / move refactor** — code deleted in one
-       place reappears verbatim elsewhere. One move-fidelity +
-       straggler-refs lens: is the move faithful (no dropped or altered
-       lines), and does every reference reach the new home? **Name the
-       Grep tool** for the straggler search and hand over the hit-list:
-       Grep honors gitignore, a bare recursive shell `grep` over a
-       package root does not (`history.md` → "Straggler grep into
-       build output"). Add **one** small new-logic lens only when
-       genuinely new additions rode along, and never turn correctness /
-       completeness / style loose on unchanged logic. This holds at any
-       size: it overrides the full-tier "four substantive lenses"
-       default.
+       place reappears verbatim elsewhere. One `move-fidelity` lens,
+       handed the Grep-tool straggler hit-list (`history.md` →
+       "Straggler grep into build output"). Add **one** small new-logic
+       lens only when genuinely new additions rode along, and never turn
+       correctness / completeness / style loose on unchanged logic. This
+       holds at any size: it overrides the full-tier "four substantive
+       lenses" default.
      - **mechanical repo-wide reformat** — discount the reformat noise
-       from the sizing; one lens spot-checks that no semantic change
-       rode along.
-     - **value / default rewiring with no new control flow** — one lens
-       confirms the new values and their call sites.
+       from the sizing; one `move-fidelity` lens, scoped to whether a
+       semantic change rode along.
+     - **value / default rewiring with no new control flow** — one
+       `correctness` lens, scoped to the new values and their call
+       sites.
      - **test-only** (`#[cfg(test)]`, `tests/`, no production change) —
-       one **test-validity** lens: do the tests assert the right thing?
+       one `test-validity` lens.
    - **Small single-crate — correctness + completeness, no
      cross-check.** Small, one crate, **self-contained** (its own tests,
      no new cross-cutting control flow), even at a couple hundred lines;
@@ -903,11 +882,10 @@ migrations or generation inputs, and whether it spans crates.
    **A fifth trigger is a SHAPE, not a path: `prose_heavy`.** Read it
    off the verdict (a 0.5 comment-line ratio **and** a floor of 20
    comment lines); never re-derive it from an impression. When true,
-   run the doc-freshness lens as a **comment-accuracy** pass over the
-   diff's own added comments, at zero changed markdown lines: is each
-   claim the new prose makes true of the code in the same diff? Hand it
-   the source slice's comment hunks and the items they document, under
-   the two-section cap below. It is step 4's spelling-pre-flight
+   run the `comment-accuracy` lens over the diff's own added comments,
+   at zero changed markdown lines, handing it the source slice's
+   comment hunks and the items they document, under the two-section cap
+   below. It is step 4's spelling-pre-flight
    principle one stage later. **This is a QUALITY gate, not a token
    lever** — it spends a lens, so no trim pass will ever surface it;
    don't optimize it out on cost grounds (`history.md` → "The
@@ -934,11 +912,10 @@ migrations or generation inputs, and whether it spans crates.
      ```
 
    - **Cap the freshness lens at two named sections, excerpts inline.**
-     A brief naming several files is a reading list, not a scope. State
-     it as a **restriction**: *"adjudicate from the inlined block; open
-     a convention file only to resolve a named dispute"* — never a
-     permission to open N files. A permission phrasing in your own
-     draft brief is the tell that this lens will run long.
+     A material file naming several files is a reading list, not a
+     scope; the lens file states the restriction, and a permission
+     phrasing in your own material is the tell that this lens will run
+     long.
 
    - **Inline the implicated passage — whichever convention file the
      diff's rule lives in**, not only the audit registry (~20 lines
@@ -958,9 +935,8 @@ migrations or generation inputs, and whether it spans crates.
 
    - **Hoist every repo-wide grep into the main loop and hand over the
      result set** — unconditional for any "verify X across the repo"
-     ask, a dictionary ≥ 2-files census included. The lens is capped
-     to "adjudicate from the diff + the provided grep — don't
-     re-derive". **Hoist it and narrow it**: a hoisted sweep whose
+     ask, a dictionary ≥ 2-files census included; the brief tells the
+     lens not to re-derive it. **Hoist it and narrow it**: a hoisted sweep whose
      result becomes a path list defaults to `--files-only`, widened
      only for adjudication. Prose lives in `.md`, so a skill or
      convention sweep needs `--ext md`. Width, scope, match density,
@@ -975,11 +951,6 @@ migrations or generation inputs, and whether it spans crates.
      main loop happened to read: name the invariant the diff changes,
      grep its consumers once, hand over the result. Those reads are
      not waste; pre-pay them (`history.md` → "Consumers never hoisted").
-
-   - **Confirm a rule's presence or absence by `Read`ing the current
-     file**, never from the diff's `-`/`+` lines. Any lens's "violates
-     a convention" claim cites the convention's definition site or is
-     dropped (`history.md` → "Convention by analogy").
 
    - With **no new top-level tree or build manifest**, fold or skip the
      CI-skip-list and audit-registry checks.
@@ -1000,59 +971,24 @@ migrations or generation inputs, and whether it spans crates.
    python3 .claude/tools/search_source.py '<identifier>' --files-only
    ```
 
-   **The lint gate already owns the compile-time facts — say so in the
-   completeness and cross-check briefs** (`history.md` → "Re-deriving
-   compile facts"):
+   **The lint gate owns the compile-time facts** (`history.md` →
+   "Re-deriving compile facts"); every brief carries the carve-out, so
+   the facts supply only **which hook covered this diff's languages**
+   and whether one could not run (a fresh worktree has no frontend
+   deps, step 4). It holds because step 4 passed **before** the
+   fan-out; if lint was skipped or is failing, say so in the facts.
+   **Run the dead-code / unused-symbol grep ONCE, in the main loop**,
+   and hand the result set to completeness and the cross-check.
 
-   - **Unused-import / does-it-resolve / does-it-compile /
-     unused-symbol checks are OWNED by the lint gate** this skill ran
-     green; never cold-read a file to confirm a symbol resolves. **Name
-     the hook covering this diff's languages**: for Rust
-     `cargo clippy --all-targets -- -D warnings` **plus** `rustdoc` (a
-     full-workspace `cargo doc` under `-D warnings`, settling intra-doc
-     links in the program crate and its generated SDK copy);
-     `ruff check` for Python; `biome` and `tsc` for TS/JS. If that hook didn't
-     run (a fresh worktree has no frontend deps, step 4), say so: the
-     gate proves nothing there.
-   - **Run the dead-code / unused-symbol grep ONCE, in the main loop**,
-     and hand the result set to both lenses.
-   - **What is left for the lens is judgment, not compilation**: test
-     adequacy, code that compiles yet is dead by design, and leftover
-     artifacts (TODO/FIXME, debug prints, stray fixtures) — from the
-     diff plus one read of each touched file.
-
-   This holds because step 4 ran **before** the fan-out and passed; if
-   lint was skipped or is failing, the lens reads for itself — say
-   which case applies in the brief.
-
-   **Standing suppressions — drop these before emitting.** Give every
-   lens this repo-specific "do NOT flag" list beside the template's
-   own, so known noise never reaches the cross-check (`history.md` →
-   "Security lens on tooling"):
-
-   - **pre-existing code the diff doesn't touch** — judge the `+`/`-`
-     lines and their immediate context;
-   - **tuning constants / threshold values or their "why this value"
-     comments**;
-   - **an assertion that "could be tighter"** when the existing one
-     covers the behavior under test;
-   - **harmless redundancy that aids readability** (an explicit match
-     arm, a clarifying local binding);
-   - **consistency-only nits** ("wrap X the way Y is guarded") when
-     both forms are already correct.
-
-   It is **not** a free pass: a real bug on a suppressed *line* is
-   still a finding.
-
-   **Pre-emit gate — quote the changed line, or drop it.** Every lens
-   and the step-6 cross-check quotes the exact `+`/`-` line each
-   finding rests on; one that can't is **dropped, not emitted**
-   (`history.md` → "Speculative findings"). The principle only — **no**
-   numeric confidence scale; severity stays **blocking** / **warning**
-   / **nit**.
+   The standing suppressions (`history.md` → "Security lens on
+   tooling") and the pre-emit gate — quote the changed line or drop
+   it; severity **blocking** / **warning** / **nit**, no numeric scale
+   (`history.md` → "Speculative findings"), a convention claim citing
+   its definition site (`history.md` → "Convention by analogy") — are in
+   every brief too.
 
    Spawn the lenses as parallel `Agent` calls in a single message, each
-   with the brief above prepended.
+   with its three-line prompt.
 
    **While the fan-out is in flight, do not re-read git state, CI
    state, or agent liveness.** The harness notifies on completion and
@@ -1068,71 +1004,13 @@ migrations or generation inputs, and whether it spans crates.
    `history.md` → "Exemplars"**, naming the figure it expects to move
    and by how much.
 
-   At minimum:
-
-   - **Correctness** — logic errors, off-by-ones, unhandled edge cases,
-     incorrect assumptions, broken invariants. **Standing sub-question,
-     mandatory on any diff touching dashboards, alerts, health tables,
-     status displays, or watchers: "if this were broken right now,
-     would anything actually emit?"** On an observability diff it is
-     *the* lens: rendering healthy while broken is a defect in the
-     deliverable. Ask it of the watcher and the alert, not only the
-     panel (`history.md` → "Healthy while broken").
-
-   - **Security** (conditional on the trust-surface gate above) —
-     injection, unchecked input, missing validation, unsafe operations,
-     secrets in code. **On a `.claude/hooks/**` diff, open the brief —
-     and any step-6 brief on that diff — as defensive verification of
-     the repo's own guard**: the goal is to
-     prove a real command is still flagged at its tier, never "find a
-     command that slips past it". The offensive framing got a lens
-     stopped by a safety classifier before its first probe (`history.md`
-     → "Guard-bypass lens framing"). Keep the constraint beside it:
-     build probe strings inside a scratchpad script, never on a Bash
-     line.
-
-   - **Style & consistency** (skipped on a meta-work diff) — naming,
-     patterns, idioms that diverge from the rest of the codebase.
-
-   - **Completeness** — missing tests, TODO/FIXME left behind, partial
-     implementations, and code the diff introduces that is dead **by
-     design** (reachable-nowhere logic, a parameter nothing supplies).
-     Not unused imports or does-it-resolve: the lint gate owns those
-     (name the hook, per the block above). **Blocking**: a rule removed
-     from `CLAUDE.md` or a skill entry file that points to neither its
-     ledger entry nor its new home, and any raised ceiling in
-     `cfg/skill-size-baseline.json`; an added one is a warning.
-
-   - **`CLAUDE.md` + `docs/conventions/` freshness** (conditional on the
-     surface gate above) — does the convention set still match reality
-     after this diff? `CLAUDE.md` is the index; the rules live in
-     `docs/conventions/**`. Check the inlined sections' rules, command
-     examples, paths and tooling references against the codebase and
-     the diff. Flag guidance the diff outdates (a command, path, target
-     or convention it renames, moves or removes), any rule gone silently
-     stale, **and any skill citing a `CLAUDE.md` section or convention
-     doc the diff renamed or moved** (the index ↔ doc ↔ skill sync). A
-     rule the diff **directly violates or invalidates**, or a dangling
-     reference, is **blocking**; merely-stale prose a **warning** with
-     the suggested correction.
-
-   - **CI skip-list freshness** (conditional on the surface gate above)
-     — the `Tests` workflow's `changes` job is a fail-**closed** `code`
-     filter: a catch-all `'**'` minus **negated** excludes
-     (`'!frontend/**'`, `'!docs/**'`, …) under
-     `predicate-quantifier: 'every'`, so an unlisted new path runs the
-     suite automatically. The lens is about the opposite: a diff that
-     **adds or renames a test-IRRELEVANT tree** (a frontend-like dir, a
-     TS-only SDK package, a docs or config tree, a non-test workflow)
-     leaves the exclude-list stale. Grep `.github/workflows/test.yml`
-     to the `code:` / `predicate-quantifier` block and slice-read just
-     that (~20 lines), then flag the one-line `'!tree/**'` addition or
-     rename. Always a **warning**: a stale list only over-runs tests.
-
-   Each sub-agent returns findings with file path, line number, **the
-   exact `+`/`-` diff line the finding rests on** (the pre-emit gate),
-   severity (**blocking** / **warning** / **nit**), and a one-line
-   rationale.
+   At minimum, each lens's dimension being its file under `lenses/`:
+   `correctness` (its observability sub-question: `history.md` →
+   "Healthy while broken"); `security` under the trust-surface gate
+   (defensive framing on a hooks diff: `history.md` → "Guard-bypass
+   lens framing"); `style`, skipped on a meta-work diff;
+   `completeness`; and `doc-freshness` and `ci-skip-list` under the
+   surface gate.
 
 1. **Adversarial cross-check.** (Skipped for a trivial
    diff that took the scaled-down path above.)
@@ -1159,20 +1037,16 @@ migrations or generation inputs, and whether it spans crates.
    a full `--split --out <scratchpad>/review-diff.txt` run — not
    before.
 
-   Spawn a fresh sub-agent, the `CLAUDE.md` sub-agent brief
-   prepended, with the collected findings and the diff **by path** —
-   `<scratchpad>/review-diff.txt`, the **full** diff rather than a
-   per-lens slice, since this is the one pass that should see
-   everything — told to act adversarially:
-
-   - Challenge weak or speculative findings.
-     Flag false positives.
-   - Identify issues the first pass missed.
-   - Push back on rationale that doesn't hold up.
-   - Apply the **pre-emit gate** to its own new findings
-     too: quote the exact `+`/`-` diff line, or drop it —
-     and drop any inherited finding that cites no concrete
-     changed line.
+   Spawn a fresh sub-agent on the `cross-check` brief
+   (`--lens cross-check`), its material naming the **full**
+   `<scratchpad>/review-diff.txt` rather than a per-lens slice, the
+   collected findings in a file of their own, the hoisted grep result
+   set, and the fix commits when they apply. The brief orders it to read
+   the diff and list its own findings **before** opening the findings
+   file, then adjudicate, so independent misses and false positives are
+   both caught in the one agent; its cap, the lint carve-out and the
+   stale-prose rule are in it too (`history.md` → "Cross-check cap",
+   "Refuted against the fixed text").
 
    **When it runs regardless of tier.** The reduced tiers drop it for
    a trivial or small-single-crate diff, and that stands. It is
@@ -1186,34 +1060,6 @@ migrations or generation inputs, and whether it spans crates.
    checks-to-run list against any future trim**: most of one review's
    blocking findings came from following a lens's unresolved-check
    items, not its findings (`history.md` → "Checks-to-run").
-
-   Put these in its brief:
-
-   - **A cap of 8–10 tool calls, hard stop** — higher than the
-     primary lenses, because it is the pass that overruns most and
-     returns most per turn (`history.md` → "Cross-check cap").
-   - **Challenge from what it was given.** Reason from the findings
-     and the diff plus one up-front read of any file a finding cites,
-     shelling out again only for a **genuine** dispute. **Do NOT
-     re-open a file a finding already cites** unless resolving a
-     specific, named dispute about it; a cross-check that re-derived
-     the diff's files from scratch cost 676.7k input.
-   - **The completeness lens's lint carve-out, verbatim**:
-     unused-import / does-it-resolve / does-it-compile /
-     unused-symbol are settled by the green step-4 gate — Rust
-     `cargo clippy --all-targets -- -D warnings` **plus** `rustdoc`
-     (intra-doc links), Python `ruff check`, TS/JS `biome` / `tsc`.
-     Name the hook covering **this** diff and say plainly when it
-     couldn't run. Where the gate holds, it must **not** cold-read a
-     transitive dependency to re-derive it, and should **refute** an
-     inherited finding resting on such a claim. Hand it the same
-     hoisted grep result set the lenses got.
-   - **Adjudicate a stale-prose finding against the file as the lens
-     saw it.** A fix may have landed between the two reads, so when a
-     quote no longer matches, judge it against the version the lens
-     read, or re-read and **say the text changed** — never score it as
-     a fabricated quote (`history.md` → "Refuted against the fixed
-     text").
 
    On material disagreements, iterate: re-spawn the relevant topic
    agent with the challenge to defend or retract, at most 2
