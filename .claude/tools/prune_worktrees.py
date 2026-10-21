@@ -35,8 +35,10 @@ or any tree whose tier cannot be read) keeps the full refusal below. An
 advisor worktree (``architect``, ``explore``) is read-only toward the repo, so
 its untracked spec file is expendable once the caller has confirmed its issue
 finished: it is removed with one ``--force``, which still refuses a **locked**
-tree (a live session). Only a commit of its own beyond ``origin/main`` holds it
-back — a read-only session never makes one, so one is worth a human look.
+tree. A live session's lock holds it; a Claude Code lock whose recorded pid is
+gone is stale (:func:`stale_lock`) and lifted first, since the CLI can leave
+one behind at exit. Only a commit of its own beyond ``origin/main`` holds it
+back otherwise — a read-only session never makes one, so one is worth a look.
 
 The base worktree (``refs/heads/main``) is never a candidate. Stdlib only; a
 Python skill-tool under ``.claude/tools/`` — deliberately **not** a Cargo
@@ -61,6 +63,8 @@ ADVISOR = "advisor"
 # A worktree directory named for an issue: the bare number, or a pre-rename
 # `eng-` / `ceo-` / `exp-` spelling — the forms `_ds_worktree_of` resolves.
 ISSUE_DIR_RE = re.compile(r"(?:eng-|ceo-|exp-)?(\d+)", re.IGNORECASE | re.ASCII)
+# The reason Claude Code writes when it locks a session's worktree.
+LOCK_RE = re.compile(r"^claude session \S+ \(pid (\d+) start (.+)\)$")
 
 
 def parse_worktrees(porcelain: str) -> list[dict]:
@@ -77,6 +81,8 @@ def parse_worktrees(porcelain: str) -> list[dict]:
         elif line.startswith("branch ") and current is not None:
             current["ref"] = line[len("branch ") :].strip()
             current["branch"] = current["ref"].removeprefix("refs/heads/")
+        elif (line == "locked" or line.startswith("locked ")) and current is not None:
+            current["locked"] = line[len("locked") :].strip()
     if current is not None:
         trees.append(current)
     return trees
@@ -220,7 +226,36 @@ def advisor_unsafe_reason(branch: str, git=_real_git) -> str | None:
     return None
 
 
-def prune(merged: set[str], dry_run: bool, git=_real_git, tier=None) -> dict:
+def _real_alive(pid: int, start: str) -> bool:
+    """Whether ``pid`` is running at all. ``start`` is deliberately NOT
+    compared: the lock records it in UTC while ``ps`` prints local time, so a
+    string compare read every live session as dead (measured). A reused pid
+    therefore reads as alive — the tree is skipped, the safe direction."""
+    del start
+    proc = subprocess.run(
+        ["ps", "-o", "pid=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0 and bool(proc.stdout.strip())
+
+
+def stale_lock(reason: str | None, alive=_real_alive) -> bool:
+    """Whether a worktree lock is a Claude Code session lock whose holder is
+    gone. The CLI writes ``claude session <tag> (pid N start <time>)`` and,
+    measured, can leave it behind when the session exits — which would hold
+    every advisor tree forever. Anything else — no lock, a bare ``locked``, a
+    hand-written reason, an unparseable one, a live holder — is NOT stale."""
+    m = LOCK_RE.search(reason or "")
+    if not m:
+        return False
+    return not alive(int(m.group(1)), m.group(2))
+
+
+def prune(
+    merged: set[str], dry_run: bool, git=_real_git, tier=None, alive=_real_alive
+) -> dict:
     """Remove each merged branch's worktree + local branch, skipping unsafe ones.
 
     Two gates, and both matter: ``merged`` restricts the candidates to branches
@@ -257,12 +292,21 @@ def prune(merged: set[str], dry_run: bool, git=_real_git, tier=None) -> dict:
             reason = advisor_unsafe_reason(branch, git)
         else:
             reason = unsafe_reason(path, branch, git)
+        lock = tree.get("locked")
+        # A live session's lock holds every tier. Only an advisor's STALE
+        # Claude Code lock — its holder gone — is lifted, since the CLI can
+        # leave one behind at exit; an executor keeps git's plain refusal.
+        unlock = advisor and lock is not None and stale_lock(lock, alive)
+        if reason is None and lock is not None and advisor and not unlock:
+            reason = f"locked by a live session ({lock or 'no reason'})"
         if reason is not None:
             skipped.append({"path": path, "branch": branch, "reason": reason})
             continue
         if dry_run:
             removed.append({"path": path, "branch": branch})
             continue
+        if unlock:
+            git(["worktree", "unlock", path])
         # An executor gets no --force: a dirty or locked worktree refuses, which
         # is the safe outcome — record it as skipped and move on. An advisor
         # gets ONE --force, which discards its expendable spec file but still
@@ -270,6 +314,9 @@ def prune(merged: set[str], dry_run: bool, git=_real_git, tier=None) -> dict:
         force = ["--force"] if advisor else []
         r_rc, _, r_err = git(["worktree", "remove", *force, path])
         if r_rc != 0:
+            if unlock:
+                # Put the stale lock back as found: the removal did not happen.
+                git(["worktree", "lock", "--reason", lock, path])
             skipped.append(
                 {"path": path, "branch": branch, "reason": r_err.strip() or "refused"}
             )

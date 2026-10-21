@@ -11,10 +11,12 @@ from types import SimpleNamespace
 
 from prune_worktrees import (
     _read_merged,
+    _real_alive,
     is_base,
     normalize_branch,
     parse_worktrees,
     prune,
+    stale_lock,
     tier_of,
 )
 
@@ -110,6 +112,9 @@ class FakeGit:
             if branch in self.no_upstream:
                 return 128, "", "no upstream configured"
             return 0, "%s\n" % self.unpushed.get(branch, 0), ""
+        if args[:2] == ["worktree", "unlock"]:
+            self.locked.discard(args[2])
+            return 0, "", ""
         if args[:2] == ["worktree", "remove"]:
             path = args[-1]
             if path in self.locked:
@@ -354,6 +359,81 @@ class TierGateTests(unittest.TestCase):
         out = prune({"eng-1957"}, dry_run=False, git=git, tier=tiers())
         self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-1957"])
         self.assertIn("uncommitted", out["skipped"][0]["reason"])
+
+
+LOCK = "claude session 1957 (pid 4242 start Wed Oct 21 23:12:13 2026)"
+LOCKED_PORCELAIN = ADVISOR_PORCELAIN.replace(
+    "branch refs/heads/eng-1957\n", f"branch refs/heads/eng-1957\nlocked {LOCK}\n"
+).replace(
+    "branch refs/heads/eng-1958\n", f"branch refs/heads/eng-1958\nlocked {LOCK}\n"
+)
+
+
+class LockTests(unittest.TestCase):
+    """A live session's lock holds every tier; only an advisor's stale Claude
+    Code lock — measured to outlive its session — is lifted."""
+
+    TIERS = staticmethod(TierGateTests.TIERS)
+
+    def git(self):
+        return FakeGit(
+            LOCKED_PORCELAIN,
+            on_main=["eng-1957"],
+            locked=[ADVISOR_PATH, EXECUTOR_PATH],
+        )
+
+    def test_a_live_lock_holds_an_advisor_tree(self):
+        git = self.git()
+        out = prune(
+            {"eng-1957"}, False, git=git, tier=self.TIERS, alive=lambda p, s: True
+        )
+        self.assertIn("live session", out["skipped"][0]["reason"])
+        self.assertFalse(any(c[:2] == ["worktree", "remove"] for c in git.calls))
+
+    def test_a_stale_lock_is_lifted_and_the_advisor_tree_removed(self):
+        git = self.git()
+        out = prune(
+            {"eng-1957"}, False, git=git, tier=self.TIERS, alive=lambda p, s: False
+        )
+        self.assertEqual([r["branch"] for r in out["removed"]], ["eng-1957"])
+        self.assertLess(
+            git.calls.index(["worktree", "unlock", ADVISOR_PATH]),
+            git.calls.index(["worktree", "remove", "--force", ADVISOR_PATH]),
+        )
+
+    def test_a_dry_run_unlocks_nothing(self):
+        git = self.git()
+        out = prune(
+            {"eng-1957"}, True, git=git, tier=self.TIERS, alive=lambda p, s: False
+        )
+        self.assertEqual([r["branch"] for r in out["removed"]], ["eng-1957"])
+        self.assertNotIn(["worktree", "unlock", ADVISOR_PATH], git.calls)
+
+    def test_an_executor_stale_lock_is_never_lifted(self):
+        git = self.git()
+        out = prune(
+            {"eng-1958"}, False, git=git, tier=self.TIERS, alive=lambda p, s: False
+        )
+        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-1958"])
+        self.assertNotIn(["worktree", "unlock", EXECUTOR_PATH], git.calls)
+
+    def test_stale_lock_reads_only_a_claude_session_lock(self):
+        dead = lambda p, s: False  # noqa: E731
+        self.assertTrue(stale_lock(LOCK, dead))
+        self.assertFalse(stale_lock(LOCK, lambda p, s: True))
+        self.assertFalse(stale_lock("held by the operator", dead))
+        self.assertFalse(stale_lock("", dead))
+        self.assertFalse(stale_lock(None, dead))
+
+    def test_the_real_probe_sees_this_process_alive_whatever_the_start_text(self):
+        # The guard against the measured UTC-vs-local mismatch: a live pid
+        # must read alive even when the recorded start text differs.
+        self.assertTrue(_real_alive(os.getpid(), "Thu Jan  1 00:00:00 1970"))
+
+    def test_the_lock_line_is_parsed(self):
+        trees = parse_worktrees(LOCKED_PORCELAIN)
+        self.assertEqual(trees[1]["locked"], LOCK)
+        self.assertNotIn("locked", trees[0])
 
 
 class TierOfTests(unittest.TestCase):

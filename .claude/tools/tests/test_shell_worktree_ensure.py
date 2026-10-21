@@ -45,8 +45,8 @@ class WorktreeEnsureTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def ensure(self, tag: str) -> subprocess.CompletedProcess:
-        script = 'source "$1" && _ds_worktree_ensure "$2"'
+    def ensure(self, tag: str, fn: str = "_ds_worktree_ensure"):
+        script = f'source "$1" && {fn} "$2"'
         init = str(self.repo / ".claude" / "shell" / "init.zsh")
         return subprocess.run(
             ["zsh", "-fc", script, "zsh", init, tag],
@@ -85,6 +85,19 @@ class WorktreeEnsureTest(unittest.TestCase):
         self.assertEqual(self.ensure("exp-audit").returncode, 0)
         branches = git("branch", "--format=%(refname:short)", cwd=self.repo).split()
         self.assertEqual(branches, ["main"])
+
+    def test_an_advisor_marks_only_a_tree_it_creates_or_already_owns(self) -> None:
+        may = "_ds_advisor_may_mark"
+        # No worktree yet: this launch creates it.
+        self.assertEqual(self.ensure("1960", may).returncode, 0)
+        # An unmarked tree another launch made: never.
+        (self.repo / ".claude" / "worktrees" / "1960").mkdir(parents=True)
+        self.assertNotEqual(self.ensure("1960", may).returncode, 0)
+        # A reopen of a tree already marked advisor.
+        markers = self.repo / ".claude" / "session-substrate"
+        markers.mkdir(parents=True)
+        (markers / "1960.tier").write_text("advisor\n")
+        self.assertEqual(self.ensure("1960", may).returncode, 0)
 
 
 if __name__ == "__main__":

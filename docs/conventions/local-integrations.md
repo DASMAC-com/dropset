@@ -1397,13 +1397,19 @@ refusal: uncommitted changes, unpushed commits, or no upstream with
 a commit beyond `origin/main` all hold it. An **advisor** worktree
 (`architect`, `explore`) is removed with one `--force`, discarding
 its untracked spec file, which the read-only rule makes expendable
-once the issue is Done; one `--force` still refuses a **locked**
-tree (a live session), and a commit of its own beyond
-`origin/main` holds it, since a read-only session never makes one.
-The table's tier column is each verb's own; the gate follows the
-marker actually on disk, so a pre-marker explore worktree, a
-free-form one, a number whose marker a `task <n>` wrote first, and
-a pre-rename-named directory all get the executor gate. A worded
+once the issue is Done. A **live session's lock** holds it, and so
+does a commit of its own beyond `origin/main`, since a read-only
+session never makes one. The CLI can leave its lock
+(`claude session <n> (pid … start …)`) behind at exit — measured
+on a headless run — so a Claude Code lock whose pid is no longer
+running is **stale** and lifted for an advisor tree only; a reused
+pid reads as live, which only skips the tree. The table's tier
+column is each verb's own; the gate follows the marker actually on
+disk, so a pre-marker explore worktree, a free-form one, a number
+whose marker a `task <n>` wrote first, a tree some other launch
+made before `explore` or `architect` reached it (neither records
+its tier on a tree it did not create), and a pre-rename-named
+directory all get the executor gate. A worded
 `ceo-<topic>` or `exp-<name>` worktree matches no issue: it is
 reported as unresolvable, never removed. A
 canceled issue whose PR is still open is always flagged, never
@@ -1421,14 +1427,15 @@ knowing before relying on the inheritance:**
   resume to `chore <n>`, since a chore has no worktree to resolve.
   (This closed the first part of ENG-1402.)
 - **An explore session writes its marker only where none
-  exists.** The marker keys on the **worktree tag alone**, which
-  `task <n>` also writes — so an unconditional write would let
-  `explore 1196` flip a `bedrock` marker to `seat` and make the
-  next `task resume 1196` resume the *implementation* session on
-  the seat, silently; an architect thread's marker is left alone
-  likewise. Writing one at all (`anthropic`, advisor `.tier`) is
-  what lets the pruner lift the executor gate and the fleet cost
-  tool meter the session as seat rather than unattributed.
+  exists, and only on a worktree it creates.** The marker keys on
+  the **worktree tag alone**, which `task <n>` also writes — so an
+  unconditional write would let `explore 1196` flip a `bedrock`
+  marker to `seat` and make the next `task resume 1196` resume the
+  *implementation* session on the seat, silently; an architect
+  thread's marker is left alone likewise. Writing one at all
+  (`anthropic`, advisor `.tier`) is what lets the pruner lift the
+  executor gate and the fleet cost tool meter the session as seat
+  rather than unattributed.
 
 Both are the same root: `<n>` is not a single-owner namespace. It
 names a worktree several session kinds can claim, with different

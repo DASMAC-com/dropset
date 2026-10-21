@@ -843,6 +843,16 @@ _ds_marker_key() {
   print -r -- "$tag"
 }
 
+# Internal: may an advisor launch record its tier for this tag? Only when the
+# marker already says advisor (a reopen) or no worktree exists yet (this launch
+# creates it). The advisor `.tier` LIFTS the pruner's executor refusal, so it
+# must never land on an unmarked tree another launch made — a hand-run
+# `claude -w <n>` may hold uncommitted work there.
+_ds_advisor_may_mark() {
+  [[ "$(cat "$_DS_SUBSTRATE_DIR/$1.tier" 2>/dev/null)" == advisor ]] \
+    || ! _ds_worktree_of "$1" >/dev/null
+}
+
 # Resolve a tier to the model and substrate a launch uses. Prints two lines,
 # model then substrate. NON-ZERO MEANS DO NOT LAUNCH.
 #
@@ -1573,8 +1583,11 @@ explore() {
   # the TIER from this marker (`advisor` lifts its executor refusal), and the
   # fleet cost tool reads the substrate — an unmarked explore worktree used to
   # meter as unattributed. It costs the resume nothing: absent already read as
-  # the advisor tier on anthropic, which is exactly what is written.
-  if [[ "$raw" == <-> && ! -f "$_DS_SUBSTRATE_DIR/$(_ds_marker_key "$tag")" ]]
+  # the advisor tier on anthropic, which is exactly what is written. And only
+  # for a worktree this launch creates (`_ds_advisor_may_mark`): an unmarked
+  # tree some other launch made may hold its uncommitted work.
+  if [[ "$raw" == <-> && ! -f "$_DS_SUBSTRATE_DIR/$(_ds_marker_key "$tag")" ]] \
+    && _ds_advisor_may_mark "$tag"
   then
     _ds_substrate_write "$tag" "$substrate" advisor
   fi
@@ -1923,8 +1936,11 @@ architect() {
   if [[ -n "$executor_owned" ]]; then
     print -u2 "architect: $tag carries a task session's substrate marker —" \
       'leaving it, so a task resume of it re-pins the executor tier.'
-  else
+  elif _ds_advisor_may_mark "$tag"; then
     _ds_substrate_write "$tag" "$substrate" advisor
+  else
+    print -u2 "architect: worktree $tag was made by another launch with no" \
+      'marker — leaving it unmarked, so the pruner keeps its executor gate.'
   fi
   _ds_session "$(_ds_topic_sid architect "$tag")" \
     "$tag" "/architect ENG-$tag" "$model" "$(_ds_launch_dir "$tag")"

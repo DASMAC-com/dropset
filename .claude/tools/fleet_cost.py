@@ -14,9 +14,9 @@ in UTC, so every day boundary here is a UTC one, on both sides:
     recorded, and price it at ``session_metrics.RATES_BY_MODEL``. Sessions are
     split by substrate, which comes from the launch marker and **never** from
     the transcript's model id (a seat and a Bedrock session record the same
-    name). Every session is also keyed to its Linear issue the one way — the
-    worktree tag, or for a base-checkout ``chore`` its bootstrap prompt —
-    whatever its substrate: Bedrock issues are priced, seat and unattributed
+    name). Every session is also keyed to its Linear issue the same way for
+    every substrate — the worktree tag, or for a base-checkout ``chore`` its
+    bootstrap prompt: Bedrock issues are priced, seat and unattributed
     ones are listed by session count beside them.
 
 ``reconcile``
