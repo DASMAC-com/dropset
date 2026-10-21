@@ -574,7 +574,7 @@ decks-build: check-pnpm
 # quit that runs those destructors instead of bypassing them.
 #
 # What is left when the demo ends is therefore the collectors it started —
-# every one, or the keyless five if the enclave gate declined — plus
+# every one, or the keyless six if the enclave gate declined — plus
 # Grafana. They are deliberately left running: they are a standing
 # recording service, not a demo fixture. Every minute they are down is a hole
 # in the stored history that no later run can backfill at tick resolution, and
@@ -761,7 +761,7 @@ indexer-down: check-docker
 # aged badly the first time a keyed venue published something other than FX.
 #
 # The gate is what keeps this target working on a machine with no credentials
-# at all: the keyless five come up regardless, and a keyed half that cannot
+# at all: the keyless six come up regardless, and a keyed half that cannot
 # start warns loudly without failing the run (see `KEYED_WARN` below for why
 # it is loud and why it is non-fatal). A machine holding its keys as plain
 # exported environment variables rather than in the enclave has no target
@@ -829,7 +829,7 @@ grafana-down: check-docker
 # The credentialed half of `collectors-up` — the free-tier FX venues
 # (docs/data-feeds.md §9, "The free-tier FX roster"). No target of its own:
 # `collectors-up` runs `KEYED_UP` behind the enclave gate, and
-# `collectors-down` removes these three alongside the keyless five. Each
+# `collectors-down` removes these three alongside the keyless six. Each
 # service reads its credential from the environment and refuses to start
 # without one, naming the variable it wanted.
 #
@@ -847,7 +847,7 @@ grafana-down: check-docker
 # the hosted deploy has with Secrets Manager.
 #
 # The enclave is optional, hence the gate rather than a hard dependency: a
-# checkout without 1Password access still gets the keyless five. (No CI
+# checkout without 1Password access still gets the keyless six. (No CI
 # workflow runs any collector target, so CI is not a consumer of that
 # path — it is there for a fresh checkout.) `op run` resolves eagerly, so a
 # bad reference stops the stack here instead of starting a collector that
@@ -915,7 +915,7 @@ KEYED_SERVICES = oanda twelvedata alphavantage
 # added here would be silently skipped there while the teardown still removed
 # it.
 #
-# Five keyless **feeds** plus the **estimator**, which is a publisher rather
+# Six keyless **feeds** plus the **estimator**, which is a publisher rather
 # than a feed: it polls no venue, reads both store tables and writes
 # `fair_price`. It belongs in this variable anyway, and the reason is what the
 # variable is for rather than what its members have in common — it is keyless,
@@ -923,7 +923,12 @@ KEYED_SERVICES = oanda twelvedata alphavantage
 # survives into the next bring-up. Splitting it into a second variable would buy
 # an accurate name and reintroduce exactly the lose-a-name failure the single
 # list prevents.
-KEYLESS_SERVICES = coinbase coinbase-ticker kraken erapi frankfurter estimator
+#
+# `orca` is keyless in the sense that matters here — it starts and records on
+# the public RPC endpoint with no credential — but it also takes an optional
+# keyed endpoint from the enclave, so `FX_UP` below names it as well.
+KEYLESS_SERVICES = coinbase coinbase-ticker kraken erapi frankfurter orca \
+	estimator
 # Pyth is removal-only, and the asymmetry is the point: no target here starts
 # it (it went keyed and is started deliberately once a key exists — see the
 # `collectors-up` comment above), but `collectors-down` still removes it so a
@@ -935,8 +940,14 @@ PYTH_SERVICES = pyth
 FX_COMPOSE = docker compose -f infra/localnet/docker-compose.yml --profile fx
 # `--build` for the same reason as `collectors-up` above: without it these
 # services keep whichever image another worktree last built.
+#
+# `orca` rides along without joining `KEYED_SERVICES`: re-upping it inside
+# `op run` is what hands it `HELIUS_RPC_URL`, and compose recreates it only
+# when that value changes its config. It stays out of the probe and the banner
+# because a keyed failure costs it nothing — it is already recording on the
+# public endpoint from the keyless bring-up.
 FX_UP = $(FX_COMPOSE) up -d --build --quiet-pull postgres migrate \
-	$(KEYED_SERVICES)
+	$(KEYED_SERVICES) orca
 # A keyed bring-up that does not happen is LOUD, and it does not abort the
 # run. Loud because the failure is otherwise invisible in exactly the way that
 # matters: the keyless feeds are up, Grafana is green, and the three keyed
@@ -946,7 +957,7 @@ FX_UP = $(FX_COMPOSE) up -d --build --quiet-pull postgres migrate \
 #
 # Non-fatal because this is now the default bring-up and sits on the `demo`
 # path: a 1Password hiccup should cost the keyed venues, not the whole stack.
-# The keyless five are unaffected by anything that goes wrong here, so the
+# The keyless six are unaffected by anything that goes wrong here, so the
 # useful thing to do is start them, say plainly what is missing, and continue.
 # The alternative — exit non-zero on a bad `op://` reference, treating it as
 # the config bug it usually is — was the road not taken; it would have made

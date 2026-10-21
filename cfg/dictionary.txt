@@ -170,6 +170,7 @@ myrc
 newtypes
 nextest
 nohup
+nonblocking
 notif
 numstat
 oanda

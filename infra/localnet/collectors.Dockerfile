@@ -1,8 +1,9 @@
 # Multi-stage build for the collector binaries, using cargo-chef to cache the
 # dependency graph so only first-time and source-changing builds pay the full
-# compile. The app depends on `dropset-feeds` with only its `http` + `store`
-# features — not the Solana `rpc` tree and not the on-chain program — so
-# this build stays lean and never pulls the anchor-next git source.
+# compile. The app depends on `dropset-feeds` with its `http`, `store` and
+# `orca` features. `orca` brings in the Solana client and Orca's SDK (crates.io
+# only), but not the indexer's `rpc` walk and not the on-chain program, so
+# this build never pulls the anchor-next git source.
 #
 # **Every** binary in the package is built and shipped, not just one, because
 # the compose file runs all of them from this one image and selects between them
@@ -76,6 +77,7 @@ COPY --from=builder /app/target/release/market-data-coinbase-ticker \
     /app/target/release/market-data-erapi \
     /app/target/release/market-data-frankfurter \
     /app/target/release/market-data-kraken \
+    /app/target/release/market-data-orca \
     /app/target/release/market-data-pyth \
     /usr/local/bin/
 # The fair-value estimator, which is neither: it READS both tables and

@@ -80,6 +80,13 @@ use crate::fx_store::store_reading;
 /// collector this PR does not otherwise touch.
 pub const SOURCE_KRAKEN: &str = "kraken";
 
+/// `spot_ticks.source` for the Orca Whirlpool pool price — the on-chain basis
+/// tape (`market-data/src/bin/orca.rs`).
+///
+/// Unlike [`SOURCE_KRAKEN`], the collector writes under **this** constant rather
+/// than a private copy, so the reader and the writer cannot drift apart.
+pub const SOURCE_ORCA: &str = "orca";
+
 /// The canonical peg series every market's common-mode guard reads.
 ///
 /// **Portfolio-wide, not per-market.** A USDC/USD deviation is one event for the

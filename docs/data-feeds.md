@@ -1043,6 +1043,7 @@ live.
 | `market-data-coinbase-ticker` | One feed per product       | The prints **between** candle closes on the reference venue     |
 | `market-data-erapi`           | Batched, roster from env   | The only keyless **NGN**, and a blend of ≥3 upstreams per code  |
 | `market-data-frankfurter`     | Batched, roster from env   | The ECB reference fix itself — breadth, at a daily cadence      |
+| `market-data-orca`            | One feed per pinned pool   | The **on-chain** pool price — the route Jupiter actually takes  |
 
 Three things about this tier are load-bearing.
 
@@ -1080,6 +1081,26 @@ configured products have *ever* priced and, after a few polls, report the
 ones that never did as a roster error rather than a venue gap. The
 per-product Coinbase collector needs no such watch — each of its feeds is
 named, so one that never yields is already identifiable in the logs.
+
+**The Orca pool is a tape that corroborates and never stands alone.** The
+collector reads a Whirlpool account over JSON-RPC every 15 s and converts its
+square-root price to USDC per token with Orca's SDK; `tGBP-USDC` is its one
+pool today, pinned by address in the roster (`PRODUCT=POOL_ADDRESS`), because
+a lookup by mint pair would let whoever creates the next pool for that pair
+choose which one is read. The estimator offers it on the basis leg beside the
+Coinbase candle, as an **untrusted** tape. The reason is the manipulation
+caveat: a pool price is whatever the last swap left it at, so a thin pool can
+be walked to any value by anyone paying the slippage. Where the candle exists,
+the dispersion gate names a walked pool as the outlier; a market with only
+the pool resolves single-source and unverified.
+
+Reachability: the public mainnet-beta endpoint serves it keyless, at one
+`getMultipleAccounts` per pool per poll against a limit of 100 requests per
+10 s per IP. A keyed endpoint (`helius/rpc-url`, §12) goes ahead of it when
+configured, with the public one kept as the fallback on a connection failure,
+a timeout or a 429. Every read starts from the primary, so the collector is
+back on it as soon as it answers again. Endpoints are logged by label, never
+by URL, since the keyed URL carries its API key.
 
 **Pyth is keyed as of 2026-08-26**, and the way that arrived is worth
 recording. The Core upgrade put Hermes behind a bearer token

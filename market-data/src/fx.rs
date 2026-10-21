@@ -182,6 +182,16 @@ pub fn secret(name: &str) -> Result<String> {
         .with_context(|| format!("{name} is required (the API credential for this feed)"))
 }
 
+/// [`secret`] for a credential the collector can run without: `None` when no
+/// store carries it, so the caller takes its keyless path. A store that should
+/// have answered and could not is still an error — it must not read as "not
+/// configured" and quietly select that path.
+pub fn optional_secret(name: &str) -> Result<Option<String>> {
+    SecretProvider::from_env()
+        .resolve_optional(name)
+        .with_context(|| format!("resolving the optional secret {name}"))
+}
+
 /// Split a canonical `BASE-QUOTE` symbol into its two ISO-4217 legs.
 ///
 /// Both legs must be exactly three ASCII letters. The charset check is not

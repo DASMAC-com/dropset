@@ -20,8 +20,8 @@
 //! currency the provider does not carry, which is the failure the collectors'
 //! own silence watches are written to make visible and cannot here.
 //!
-//! **One mode: every service must match compose exactly.** All eight carry
-//! their own `DEFAULT_PRODUCTS` — seven in the binary that polls the roster,
+//! **One mode: every service must match compose exactly.** All nine carry
+//! their own `DEFAULT_PRODUCTS` — eight in the binary that polls the roster,
 //! coinbase's in `market-data/src/config.rs` — so the property is equality
 //! for all of them.
 //!
@@ -191,6 +191,12 @@ fn wirings() -> Vec<Wiring> {
             variable_chain: &["OANDA_PRODUCT_IDS"],
         },
         Wiring {
+            service: "orca",
+            rust_source: "market-data/src/bin/orca.rs",
+            rust_source_text: include_str!("../src/bin/orca.rs"),
+            variable_chain: &["ORCA_PRODUCT_IDS"],
+        },
+        Wiring {
             service: "twelvedata",
             rust_source: "market-data/src/bin/twelvedata.rs",
             rust_source_text: include_str!("../src/bin/twelvedata.rs"),
@@ -216,11 +222,27 @@ fn wirings() -> Vec<Wiring> {
 /// compose default carrying the same pair twice would therefore crash every
 /// collector at startup while a set-only comparison stayed green — exactly the
 /// silent divergence this file exists to close. [`entry_count`] is what covers
-/// it. (`parse_roster` also accepts the `CANONICAL=VENUE` pin form, which is
-/// not re-implemented either — but that one fails loudly through the
-/// canonical-id guard, since `=` is not an upper-case letter.)
+/// it.
+///
+/// **A `CANONICAL=VENUE` pin keeps its venue half verbatim.** Only the canonical
+/// id is upper-cased, as `parse_roster` does — the pin is passed through
+/// untouched there, and for the Orca roster it is a case-sensitive base58 pool
+/// address, so upper-casing it here would compare two different pools as equal.
+/// The pin is part of the compared entry, so a compose default that pins a
+/// different pool than the Rust constant is a divergence like any other.
 fn pairs(spec: &str) -> BTreeSet<String> {
-    entries(spec).map(str::to_ascii_uppercase).collect()
+    entries(spec).map(normalize_entry).collect()
+}
+
+/// One entry as `parse_roster` normalizes it: the canonical id upper-cased, a
+/// pinned venue spelling kept as written.
+fn normalize_entry(entry: &str) -> String {
+    match entry.split_once('=') {
+        Some((canonical, pin)) => {
+            format!("{}={}", canonical.trim().to_ascii_uppercase(), pin.trim())
+        }
+        None => entry.to_ascii_uppercase(),
+    }
 }
 
 /// The spec's entries before deduping — the input [`pairs`] collapses.
@@ -593,7 +615,7 @@ fn every_shared_chained_roster_agrees() {
         // two members are the same service compares a roster with itself —
         // passing vacuously while also satisfying the non-vacuity guard below.
         // Two `wirings()` rows carrying the same `service` string would reach
-        // that same state; nothing here guards it, and the eight rows are
+        // that same state; nothing here guards it, and the nine rows are
         // distinct by inspection.
         let shared_vars: BTreeSet<&str> = wiring.variable_chain.iter().skip(1).copied().collect();
         for shared_var in shared_vars {
@@ -695,7 +717,7 @@ fn every_rostered_service_is_pinned() {
 #[test]
 fn the_extractors_actually_found_every_roster() {
     let compose = compose_defaults();
-    // Eight rostered services today. A floor rather than an equality so adding
+    // Nine rostered services today. A floor rather than an equality so adding
     // a collector does not fail this — `every_rostered_service_is_pinned` is
     // what covers that direction — while a scan that stops matching the file's
     // shape still does.
@@ -737,15 +759,20 @@ fn the_extractors_actually_found_every_roster() {
                 wiring.service,
             );
         }
-        // Every entry on both sides is a canonical `BASE-QUOTE` id. This is
-        // what catches a fold that swallowed a separator: `EUR-USD GBP-USD`
-        // parses as one entry and would otherwise just look like a missing pair.
+        // Every entry on both sides is a canonical `BASE-QUOTE` id, optionally
+        // pinned. This is what catches a fold that swallowed a separator:
+        // `EUR-USD GBP-USD` parses as one entry and would otherwise just look
+        // like a missing pair. A pin must be non-empty and free of whitespace,
+        // which catches the same swallowed separator on a pinned entry.
         for entry in pairs(&rust).iter().chain(pairs(composed).iter()) {
+            let (canonical, pin) = entry.split_once('=').unwrap_or((entry, "x"));
             assert!(
-                entry.split('-').count() == 2
-                    && entry
+                canonical.split('-').count() == 2
+                    && canonical
                         .split('-')
-                        .all(|leg| leg.len() >= 3 && leg.chars().all(|c| c.is_ascii_uppercase())),
+                        .all(|leg| leg.len() >= 3 && leg.chars().all(|c| c.is_ascii_uppercase()))
+                    && !pin.is_empty()
+                    && !pin.contains(char::is_whitespace),
                 "`{entry}` in service `{}` is not a canonical BASE-QUOTE id",
                 wiring.service,
             );

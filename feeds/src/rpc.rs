@@ -2,8 +2,6 @@
 //! `getTransaction` at `finalized`, generalized over program id. Extracted
 //! from `indexer/src/ingest.rs` (docs/data-feeds.md §2, §4).
 
-// cspell:word nonblocking
-
 use crate::backfill::{Backfill, BackfillStep};
 use crate::cursor::Cursor;
 use crate::record::Batch;

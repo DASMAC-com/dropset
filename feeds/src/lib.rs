@@ -114,7 +114,8 @@ mod testing;
 // Not gated, on purpose: the module's shared vocabulary (`Quotes`, `Candle`)
 // needs no transport, so a streaming venue can land here without pulling in
 // `http`. Each venue submodule carries its own transport's gate instead — every
-// adapter shipped today polls REST, so today they all ride `http`.
+// REST adapter rides `http`, and the one chain-state adapter (`orca`) rides its
+// own feature.
 pub mod venues;
 
 #[cfg(feature = "rpc")]

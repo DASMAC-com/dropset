@@ -31,6 +31,15 @@ reqwest = { version = "0.12", default-features = false, features = [
   "json",
   "rustls-tls",
 ], optional = true }
+# Orca's Whirlpool SDK: the generated account decoder (`Whirlpool::from_bytes`)
+# and the core price math (`sqrt_price_to_price`). The client's `fetch` feature
+# is deliberately off — its helpers take the blocking `RpcClient` and a single
+# endpoint, while the adapter reads through its own failover list. Both crates
+# sit on the same solana 3.x line as the pins below, so `Pubkey` is one type.
+orca_whirlpools_client = { version = "8", default-features = false, optional = true }
+orca_whirlpools_core = { version = "2.1", default-features = false, features = [
+  "floats",
+], optional = true }
 # Same 3.x solana line as the indexer and maker-bot so there is one `Pubkey`
 # type across decode and RPC.
 solana-client = { version = "~3.1", optional = true }
@@ -103,6 +112,17 @@ rpc = [
   "dep:solana-signature",
   "dep:solana-transaction-status",
   "dep:bs58",
+]
+# The Orca Whirlpool spot adapter (`venues::orca`): reads pool and mint
+# accounts over JSON-RPC, so it carries the Solana client and Orca's SDK rather
+# than riding `http`. Kept apart from `rpc`, which is the indexer's signature
+# walk and needs none of the SDK.
+orca = [
+  "dep:orca_whirlpools_client",
+  "dep:orca_whirlpools_core",
+  "dep:solana-client",
+  "dep:solana-commitment-config",
+  "dep:solana-pubkey",
 ]
 # The subscribe / streaming seam: the channel bridge a WebSocket /
 # `logsSubscribe` / geyser transport pushes into. The concrete socket lands

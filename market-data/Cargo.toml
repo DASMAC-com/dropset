@@ -1,7 +1,7 @@
 # cspell:word rustls
 # The market-data collection app (docs/data-feeds.md §7), and the first
 # consumer of the shared `feeds` framework — so it proves the source →
-# store-sink path end to end. Ten binaries: nine collectors, one per
+# store-sink path end to end. Eleven binaries: ten collectors, one per
 # venue-and-tier, plus the fair-value estimator. For a collector the tier is
 # what decides the table it writes:
 #
@@ -10,7 +10,8 @@
 #   `-twelvedata` / `-alphavantage` (§9 "The free-tier FX roster").
 # * Spot ticks into `spot_ticks` — `market-data-kraken` (batched peg truth),
 #   `market-data-pyth` (batched FX with a published confidence),
-#   `market-data-coinbase-ticker` (the prints between candle closes), and the
+#   `market-data-coinbase-ticker` (the prints between candle closes),
+#   `market-data-orca` (the on-chain pool price, read over JSON-RPC), and the
 #   two keyless daily FX references `market-data-erapi` /
 #   `-frankfurter`, which attribute each reading to the day it describes
 #   rather than to the poll second — er-api from the provider's own refresh
@@ -27,9 +28,10 @@
 # classify its own errors rather than retrying any failure forever.
 #
 # Schema provisioning belongs to `dropset-migrate`, the single schema owner
-# (§8), so this crate ships no migrate runner. HTTP-only: it enables `feeds`'
-# `http` + `store` features and never compiles the Solana or streaming
-# transports.
+# (§8), so this crate ships no migrate runner. It enables `feeds`' `http` +
+# `store` features, plus `orca` for the one collector that reads chain state —
+# which brings in the Solana client and Orca's SDK, but never the indexer's
+# `rpc` signature walk, the streaming seam, or the on-chain program.
 #
 # Each binary is declared rather than left to `src/bin` auto-discovery, so the
 # deployed command name carries the crate prefix the compose services invoke.
@@ -69,6 +71,10 @@ name = "market-data-oanda"
 path = "src/bin/oanda.rs"
 
 [[bin]]
+name = "market-data-orca"
+path = "src/bin/orca.rs"
+
+[[bin]]
 name = "market-data-pyth"
 path = "src/bin/pyth.rs"
 
@@ -90,11 +96,14 @@ dropset-db-schema = { path = "../db-schema" }
 dropset-fair-value = { path = "../fair-value" }
 # The shared ingestion framework: the Coinbase source composes its `HttpClient`
 # and its `PgCursorStore`, and the collector binary the `run` runner +
-# `StoreSink`. Only the poll-into-store path is needed, so just `http` + `store`
-# — no `rpc`/`stream`, so no Solana tree.
-dropset-feeds = { path = "../feeds", features = ["http", "store"] }
+# `StoreSink`. The poll-into-store path over `http` + `store`, and `orca` for
+# the Whirlpool adapter — no `rpc`/`stream`.
+dropset-feeds = { path = "../feeds", features = ["http", "orca", "store"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The Orca collector parses its roster's pinned pool addresses. The same 3.x
+# line `feeds`' `orca` feature uses, so it is one `Pubkey` type.
+solana-pubkey = "3"
 # Runtime (string-typed) queries; no compile-time `DATABASE_URL`, so no
 # `macros`/`migrate` feature. `rustls` matches the store sink's TLS backend so
 # nothing pulls in openssl.
