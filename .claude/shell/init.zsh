@@ -811,7 +811,9 @@ _ds_launch_dir() {
 # creating it here first is how the branch gets the scheme's name.
 #
 # A no-op for an existing directory (pre-rename spellings included, which
-# `_ds_launch_dir` has already resolved) and for a worded tag. `--no-track`:
+# `_ds_launch_dir` has already resolved) and for a worded tag. An `eng-<n>`
+# branch that outlived its worktree is checked out where it stands, not reset
+# to `origin/main` — it may hold the earlier session's work. `--no-track`:
 # from `origin/main` git would otherwise set main as the upstream, and then
 # `git status` and the pruner's unpushed count would read against the wrong
 # branch. Best-effort: on any failure it warns and the CLI creates the worktree

@@ -398,8 +398,9 @@ What the command does, so the report reads right:
   notifications, field-selected, in one `gh` call each;
 - ties each worktree and branch to its issue **by number,
   never by prefix** — `eng-<n>`, which every verb now creates,
-  and the older `worktree-<n>` / `worktree-eng-` / `-ceo-` /
-  `-exp-<n>` spellings — and reads the status types in **one**
+  and the older `worktree-<n>`, `worktree-eng-<n>`,
+  `worktree-ceo-<n>` and `worktree-exp-<n>` spellings — and
+  reads the status types in **one**
   field-selected GraphQL call;
 - hands the eligible set to `prune_worktrees.py`, which gates
   by the **tier** the launch's substrate marker records. An

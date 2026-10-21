@@ -379,6 +379,13 @@ class TierOfTests(unittest.TestCase):
         base = self._markers({"eng-814": "bedrock\n"})
         self.assertEqual(tier_of(base, f"{base}/.claude/worktrees/ceo-814"), "executor")
 
+    def test_an_advisor_marker_never_lifts_the_gate_on_a_pre_rename_tree(self):
+        # The marker keys on the number: an `explore 814` that reused a legacy
+        # `eng-814` task tree must not hand that tree the advisor gate.
+        base = self._markers({"814": "anthropic\n", "814.tier": "advisor\n"})
+        self.assertIsNone(tier_of(base, f"{base}/.claude/worktrees/eng-814"))
+        self.assertEqual(tier_of(base, f"{base}/.claude/worktrees/814"), "advisor")
+
     def test_no_marker_is_unknown(self):
         base = self._markers({})
         self.assertIsNone(tier_of(base, f"{base}/.claude/worktrees/1959"))

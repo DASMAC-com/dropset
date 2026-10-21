@@ -191,7 +191,19 @@ class WalkTest(unittest.TestCase):
                 },
             }
         )
-        self.write(self.projects / "seat" / "s7.jsonl", [prompt, record("msg_g", base)])
+        # A caveat record ahead of the command must not hide it.
+        caveat = json.dumps(
+            {
+                "type": "user",
+                "isMeta": True,
+                "cwd": base,
+                "message": {"role": "user", "content": "<local-command-caveat>"},
+            }
+        )
+        self.write(
+            self.projects / "seat" / "s7.jsonl",
+            [caveat, prompt, record("msg_g", base)],
+        )
         meter = fc.walk(self.projects, [DAY])
         self.assertIn(("ENG-2031", 1), fc.issue_session_counts(meter, [DAY], fc.SEAT))
 

@@ -170,7 +170,7 @@ def issue_of(cwd: str | None) -> str | None:
 PROMPT_ISSUE_RE = re.compile(
     r"<command-name>/(?:chore|architect|explore)</command-name>\s*"
     r"<command-args>\s*(?:ENG-)?(\d+)\b"
-    r"|^/(?:chore|architect)\s+(?:ENG-)?(\d+)\b",
+    r"|^/(?:chore|architect|explore)\s+(?:ENG-)?(\d+)\b",
     re.IGNORECASE,
 )
 
@@ -281,10 +281,12 @@ def _prompt_text(rec: dict) -> str:
 
 
 def _read_head(path: Path) -> tuple[str | None, str | None]:
-    """``(cwd, issue from the first prompt)``, read up to the first user
-    message — the bootstrap prompt names the issue a base-checkout launch ran
-    for, where no worktree tag does."""
+    """``(cwd, issue from the bootstrap prompt)`` — the prompt names the issue
+    a base-checkout launch ran for, where no worktree tag does. The first few
+    user records are tried, not only the first: a caveat or hook record can
+    precede the command."""
     cwd = None
+    users = 0
     for line in sm._read_lines(path):
         try:
             rec = json.loads(line)
@@ -295,8 +297,15 @@ def _read_head(path: Path) -> tuple[str | None, str | None]:
         if cwd is None and isinstance(rec.get("cwd"), str) and rec["cwd"].strip():
             cwd = rec["cwd"].strip()
         if rec.get("type") == "user":
-            return cwd, issue_of_prompt(_prompt_text(rec))
+            issue = issue_of_prompt(_prompt_text(rec))
+            users += 1
+            if issue or users >= HEAD_USER_RECORDS:
+                return cwd, issue
     return cwd, None
+
+
+# How many leading user records may hold the bootstrap prompt.
+HEAD_USER_RECORDS = 3
 
 
 def walk(projects: Path, days: list[str]) -> Meter:

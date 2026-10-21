@@ -1386,8 +1386,8 @@ issue whose **status type** is neither completed nor canceled;
 everything else is cleanup-eligible (`upkeep.py`, which the
 `housekeeping` skill drives through `upkeep.py prune`). It decides
 **by the issue, never by the prefix**: `eng-<n>` and every older
-spelling (`worktree-<n>`, `worktree-eng-` / `-ceo-` / `-exp-<n>`)
-resolve to issue `<n>`. So every issue-keyed worktree is
+spelling (`worktree-<n>`, `worktree-eng-<n>`, `worktree-ceo-<n>`,
+`worktree-exp-<n>`) resolve to issue `<n>`. So every issue-keyed worktree is
 **protected while its issue is In Progress or In Review and
 eligible once it is Done or canceled**. Eligible is not removed:
 `prune_worktrees.py` then gates by **tier**, read from the launch's
@@ -1400,9 +1400,12 @@ its untracked spec file, which the read-only rule makes expendable
 once the issue is Done; one `--force` still refuses a **locked**
 tree (a live session), and a commit of its own beyond
 `origin/main` holds it, since a read-only session never makes one.
-A pre-marker explore worktree has no marker and so gets the
-executor gate. A worded `ceo-<topic>` or `exp-<name>` worktree
-matches no issue: it is reported as unresolvable, never removed. A
+The table's tier column is each verb's own; the gate follows the
+marker actually on disk, so a pre-marker explore worktree, a
+free-form one, a number whose marker a `task <n>` wrote first, and
+a pre-rename-named directory all get the executor gate. A worded
+`ceo-<topic>` or `exp-<name>` worktree matches no issue: it is
+reported as unresolvable, never removed. A
 canceled issue whose PR is still open is always flagged, never
 pruned.
 
@@ -1460,7 +1463,8 @@ guarantee, a `task` session's marker is left alone, exactly as
 `explore`, so it takes no `resume` word.
 
 There is **no PR to open** — the worktree arrives on its `eng-<n>`
-branch (see the table above), as any git worktree must carry one;
+branch (`worktree-exp-<name>` for a free-form explore; see the table
+above), as any git worktree must carry one;
 these sessions simply never commit to or push it. A spec file,
 when one is warranted at all, sits **untracked** in the worktree
 at `docs/specs/<issue-number>-<topic>.md` — a bare number,
@@ -2041,8 +2045,9 @@ drives the real zsh functions.
   **The advisor tier, pinned to the anthropic substrate.** Explore
   work is thinking-heavy, so it runs the top tier like `plan` and
   `architect`, but it ignores `DS_MODEL_ADVISOR_SUBSTRATE` and takes no
-  override word: it writes no substrate marker, so a marker-less
-  `task resume <n>` always resumes it on anthropic, and launching it
+  override word: it records `anthropic` with an advisor `.tier` (only
+  where no marker exists, never for a free-form tag), so a
+  `task resume <n>` of it resumes on anthropic, and launching it
   anywhere else would make that resume switch provider.
 
 - **`explore resume <name>` is RETIRED** — the verb now prints a

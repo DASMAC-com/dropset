@@ -184,7 +184,12 @@ def tier_of(base: str, tree_path: str) -> str | None:
     The shell reads an ABSENT marker as advisor (the issue-keyed ``explore``
     once wrote none), but this is the destructive side, so absent stays
     unknown and gets the executor gate. Keys mirror ``_ds_marker_key``: the
-    bare number first, then a pre-rename ``eng-<n>``."""
+    bare number first, then a pre-rename ``eng-<n>``.
+
+    An advisor reading counts only for a tree named by the bare number. The
+    marker keys on the NUMBER, so a pre-rename ``eng-<n>`` task tree that an
+    ``explore <n>`` later reused would otherwise inherit that launch's advisor
+    tier and lose its executor gate."""
     name = Path(tree_path).name
     m = ISSUE_DIR_RE.fullmatch(name)
     keys = [str(int(m.group(1))), f"eng-{int(m.group(1))}"] if m else [name]
@@ -196,6 +201,8 @@ def tier_of(base: str, tree_path: str) -> str | None:
             tier = (markers / f"{key}.tier").read_text(encoding="utf-8").strip()
         except OSError:
             tier = ""
+        if tier == ADVISOR and name != keys[0]:
+            return None
         return tier if tier in (ADVISOR, "helper") else "executor"
     return None
 
