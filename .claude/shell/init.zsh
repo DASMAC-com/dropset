@@ -2,6 +2,7 @@
 # cspell:word subshell
 # cspell:word localoptions
 # cspell:word localtraps
+# cspell:word ncpu
 #
 # Dropset session helpers — source this from ~/.zshrc:
 #
@@ -61,6 +62,60 @@ if [[ "$_DS_REPO" == */.claude/worktrees/* ]]; then
   print -u2 "dropset shell helpers: sourced from a worktree copy" \
     "($_DS_REPO) — source the base checkout's copy instead"
 fi
+
+# THE CARGO POOL: every cargo in a dropset checkout — the base repo or any
+# worktree under it — shares one build directory and asks for at most the cores
+# minus two. A `chpwd` hook, not a lazy call like `_ds_secrets`, because the
+# point is that every shell in a checkout has it — a plain tab, a session, and
+# every Bash command a session's agent runs (the verbs `cd` into the repo before
+# launching, so the client inherits it) — with no Makefile in the loop.
+# Unbounded, each worktree's cargo planned for the whole machine and kept its
+# own 20–30 GB target/ tree; shared, dependencies compile once, cargo's lock on
+# the directory makes concurrent builds take turns, and the job bound caps
+# anything outside that lock.
+#
+# SCOPED TO DROPSET, never machine-wide: in another Anchor repo the pool is
+# actively harmful — anchor reads the program keypair from the target dir's
+# deploy/ and creates a random one when it is missing there, so `anchor keys
+# sync` would re-key that repo. Leaving a checkout unsets only what the hook
+# itself exported, so a value pinned by hand survives.
+#
+# `DS_CARGO_POOL=0` in the runtime config turns it off, and must be set BEFORE
+# the line that sources this file. An already-exported value of either variable
+# wins, the same override shape as `_ds_secrets`. The directory sits under Cargo
+# home, beside the registry, so it is cleaned with the rest of Cargo's state.
+# See docs/conventions/local-integrations.md → "The cargo pool".
+# Each variable the hook exported, mapped to the value it exported. Leaving a
+# checkout unsets a variable only while it still holds that value, so a pin
+# made by hand after the export survives too. Declared, never reset:
+# `_ds_reload_init` re-sources this file after a pull, and emptying the map
+# then would orphan the exports it owns.
+typeset -gA _DS_CARGO_POOL_OWNED
+_ds_cargo_pool() {
+  local cores var
+  if [[ "${DS_CARGO_POOL:-1}" == 0 || "${PWD:A}/" != "$_DS_REPO/"* ]]; then
+    for var in "${(k)_DS_CARGO_POOL_OWNED[@]}"; do
+      [[ "${(P)var-}" == "${_DS_CARGO_POOL_OWNED[$var]}" ]] && unset "$var"
+    done
+    _DS_CARGO_POOL_OWNED=()
+    return 0
+  fi
+  if [[ -z "${CARGO_TARGET_DIR-}" ]]; then
+    export CARGO_TARGET_DIR="${CARGO_HOME:-$HOME/.cargo}/target/dropset"
+    _DS_CARGO_POOL_OWNED[CARGO_TARGET_DIR]="$CARGO_TARGET_DIR"
+  fi
+  # Probed only when the bound is unset, so a `cd` within a pooled checkout
+  # forks nothing.
+  [[ -n "${CARGO_BUILD_JOBS-}" ]] && return 0
+  cores="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null)"
+  if [[ "$cores" == <-> ]] && (( cores > 2 )); then
+    export CARGO_BUILD_JOBS="$(( cores - 2 ))"
+    _DS_CARGO_POOL_OWNED[CARGO_BUILD_JOBS]="$CARGO_BUILD_JOBS"
+  fi
+}
+autoload -Uz add-zsh-hook
+add-zsh-hook chpwd _ds_cargo_pool
+_ds_cargo_pool
 
 # How recently a fast-forward must have happened for the next one to be skipped.
 #

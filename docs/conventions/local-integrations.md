@@ -1017,8 +1017,8 @@ so with the function bodies now committed there is nothing left for it
 to keep out.
 
 That same file carries the non-secret launch knobs too — the
-`DS_MODEL_*` tier table (the substrate section) and `DS_AWS_PROFILE`
-(the AWS login gate) — each
+`DS_MODEL_*` tier table (the substrate section), `DS_AWS_PROFILE`
+(the AWS login gate) and `DS_CARGO_POOL` (the cargo pool) — each
 documented where its consumer is rather than listed twice here. They are
 untracked for different reasons: these `DS_OP_*` refs because they are
 credential coordinates, those because they name one machine's setup.
@@ -1101,6 +1101,84 @@ mid-session edit reaches the running session not at all. This is stated
 here because this section is exactly where someone looks when a
 variable fails to appear, and it once cost a wrong instruction to the
 operator ("re-source your profile and retry", which cannot work).
+
+### The cargo pool
+
+`.claude/shell/init.zsh` exports two variables (`_ds_cargo_pool`) whenever
+the shell is inside a dropset checkout, so every cargo there pools its
+compile load with no Makefile or CI in the loop. Cargo reads both from the
+environment, and every session verb `cd`s into the repo before launching,
+so the session — and every Bash command its agent runs — inherits the pool.
+
+- **`CARGO_TARGET_DIR`** is `$CARGO_HOME/target/dropset` (Cargo home
+  defaults to `~/.cargo`): one build directory for every worktree, beside
+  the registry. Dependencies compile once instead of per worktree (20–30
+  GB each). Intermediate artifacts from different branches coexist,
+  because cargo keys each by a fingerprint of its exact inputs; the final
+  binaries it copies to the top of `debug/` or `release/` are last-build-wins
+  (see the carve-outs below). Cargo locks the directory for
+  a build's length, so two worktrees building at once take turns at full
+  width. The only visible change is cargo's one-line
+  `Blocking waiting for file lock on …` message.
+- **`CARGO_BUILD_JOBS`** is the core count minus two (left unset on a
+  machine with two cores or fewer), so no single cargo asks for the whole
+  machine. It also bounds any cargo outside the lock.
+
+**Scoped to dropset checkouts, never machine-wide.** A `chpwd` hook
+re-evaluates on every directory change: inside the base repo or any
+worktree under it both are exported, and leaving unsets the ones the hook
+set while they still hold its value (a value pinned by hand survives). In
+another Anchor repo the pool
+would be actively harmful: Anchor reads the program keypair from the
+target directory's `deploy/` and creates a random one when it is missing,
+so `anchor keys sync` would re-key that repo.
+
+**The off switch** is `DS_CARGO_POOL=0` in the runtime config, set
+**before** the line that sources the init (set later, it takes effect at
+the next `cd`). Both variables then stay unset
+and everything behaves as before. A value of either variable that is
+already exported wins over the default. CI never sources the init, so its
+builds are unchanged.
+
+**Two carve-outs: the Anchor build and the TUI's bots.** Anchor reads the
+program keypair from `<target dir>/deploy/` and no flag overrides that path, and
+by default it also writes the `.so` and IDL there. The pool's `deploy/` has
+no per-branch fingerprint. So `make program-keypair` (and the TUI's deploy
+action) stages `keys/AAAA.json` in the pool's `deploy/` as well as the
+worktree's. That key is the same localnet file for every worktree, so
+sharing it is harmless. Every `anchor build` the Makefile or the TUI runs
+also writes its outputs back into the worktree's own `target/` (the `.so`
+via `cargo build-sbf`'s `SBF_OUT_PATH`, the IDL via `--idl` / `--idl-ts`),
+where the litesvm tests and the TUI read them. `make tui-prebuild` likewise
+copies the maker and taker bots from the pool's `debug/`, which every
+worktree's build overwrites, into the worktree's `target/debug/`, where the
+TUI execs them. One narrow window remains in both: cargo releases the lock
+when the build exits, just before the copy, so a second worktree relinking
+the same artifact in that instant can hand this one its build. It is rare,
+since the other build must finish its own compile first; a rebuild clears
+it. **A hand-typed `anchor build` gets none of this.** Go through
+`make program`, or run it as `env -u CARGO_TARGET_DIR anchor build`.
+
+**Cleaning.** `make clean` removes the worktree's own `target/` (plus its
+`node_modules` and `.next`), never the pool. Under the pool that `target/`
+holds the Anchor outputs, the copied bots and, until the editor joins,
+rust-analyzer's checks. Never run `cargo clean` in a checkout: it wipes the
+whole pool, every worktree's build with it. The worktree pruner
+no longer frees build artifacts, so the pool is the place disk accumulates.
+When it grows too large, delete it while no build is running:
+`rm -rf "$CARGO_TARGET_DIR"`. The next build in each worktree is then cold.
+
+**Adopting it, once.** A session launched before the init change does not
+see the variables (see the shell-snapshot note under "Session secrets"), so
+the pool fills as sessions relaunch. The first build into the empty pool is
+a full cold build. Each existing worktree's own `target/` is dead weight
+once its session runs pooled; delete it with `make clean` in that worktree.
+
+**The editor is not in the pool yet.** VS Code launched from the Dock does
+not inherit shell exports, so its rust-analyzer still checks into each
+worktree's `target/` with an unbounded job count. A follow-up task hands it
+the same two values and bounds its checks. Until that lands, the pool is not
+complete.
 
 ### Session helpers (`.claude/shell/init.zsh`)
 

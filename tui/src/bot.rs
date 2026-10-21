@@ -233,8 +233,10 @@ pub fn taker_command(repo_root: &Path, address: &Pubkey, rpc_url: &str) -> Comma
 /// prebuild: the same `make tui` that launches the panel rebuilds the bots
 /// first, so the binary on disk matches the deployed program. The cargo
 /// fallback only fires when the binary is **absent** (a direct
-/// `cargo run -p dropset-tui`, skipping the prebuild) or a custom
-/// `CARGO_TARGET_DIR` moves it — it rebuilds and runs a current binary. The
+/// `cargo run -p dropset-tui`, skipping the prebuild) — it rebuilds and runs a
+/// current binary. Under the shared cargo pool the prebuild copies the bots
+/// here from the pool's `debug/`, which every worktree overwrites, so this
+/// path stays this worktree's own build. The
 /// one gap it does *not* cover: a binary left over from an earlier `make tui`
 /// is exec'd as-is, so editing bot/program sources and then launching via a
 /// bare `cargo run -p dropset-tui` (no fresh prebuild) can run it stale. The
