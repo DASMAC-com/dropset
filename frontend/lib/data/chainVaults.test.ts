@@ -5,6 +5,7 @@ import {
 } from "@dropset/sdk";
 import { address } from "@solana/kit";
 import { describe, expect, it } from "vitest";
+import { VAULT_SEQ_PARAM, vaultLinkHref } from "../ui/swapUrl";
 import {
   chainPosition,
   chainVault,
@@ -12,7 +13,12 @@ import {
   marketOrientation,
 } from "./chainVaults";
 import { positionPnl } from "./pnl";
-import { depositClosedReason } from "./vaults";
+import {
+  contributeClosedReason,
+  depositClosedReason,
+  findVaultBySeq,
+  resolveVaultMarket,
+} from "./vaults";
 
 const MARKET = "11111111111111111111111111111111";
 const LEADER = address("So11111111111111111111111111111111111111112");
@@ -127,6 +133,115 @@ describe("chainVault", () => {
     expect(depositClosedReason(open, MARKET)).toBeNull();
     // A raw decoded summary gates the same way as the table row.
     expect(depositClosedReason(summary({ frozen: true }))).not.toBeNull();
+  });
+});
+
+describe("contributeClosedReason", () => {
+  const PAIR = { base: "TGBP", quote: "USDC" };
+  const vault = (over: Partial<VaultSummary> = {}) =>
+    chainVault(summary(over), MARKET, PAIR.base, PAIR.quote);
+
+  it("is open on an open, two-sided vault with room under the floor", () => {
+    expect(contributeClosedReason(PAIR, vault())).toBeNull();
+  });
+
+  it("says not open yet when the opt-in or the approval is missing", () => {
+    for (const over of [
+      { totalShares: 0n },
+      { allowOutsideDepositors: false },
+      { outsideDepositsApproved: false },
+    ]) {
+      expect(contributeClosedReason(PAIR, vault(over))).toMatch(
+        /^Not open yet/,
+      );
+    }
+  });
+
+  it("names the leg a one-sided vault still holds", () => {
+    expect(contributeClosedReason(PAIR, vault({ quoteAtoms: 0n }))).toMatch(
+      /holds only TGBP.*rebalances/,
+    );
+    expect(contributeClosedReason(PAIR, vault({ baseAtoms: 0n }))).toMatch(
+      /holds only USDC/,
+    );
+  });
+
+  it("closes at the leader floor with the outside-capital multiple", () => {
+    // A 5% floor caps the vault at 20x the leader's stake: 19x outside.
+    const full = vault({
+      leaderShares: 100_000n,
+      totalShares: 2_000_000n,
+      minLeaderSharePpm: 50_000,
+    });
+    expect(contributeClosedReason(PAIR, full)).toMatch(
+      /cap of 19 times the leader's stake.*5%/,
+    );
+    expect(
+      contributeClosedReason(
+        PAIR,
+        vault({ leaderShares: 100_001n, minLeaderSharePpm: 50_000 }),
+      ),
+    ).toBeNull();
+  });
+
+  it("decides the floor in integers, exactly at one share of room", () => {
+    // 0.9% of 1,000 shares is exactly the leader's 9: no share fits. The
+    // float cap (9 / 0.009 lands just above 1,000) reads a sliver of room.
+    const atFloor = { leaderShares: 9n, minLeaderSharePpm: 9_000 };
+    expect(
+      contributeClosedReason(PAIR, vault({ ...atFloor, totalShares: 1_000n })),
+    ).toMatch(/^Full/);
+    expect(
+      contributeClosedReason(PAIR, vault({ ...atFloor, totalShares: 999n })),
+    ).toBeNull();
+    // No floor sets no cap; a floor with no leader stake left fits nothing.
+    expect(
+      contributeClosedReason(PAIR, vault({ minLeaderSharePpm: 0 })),
+    ).toBeNull();
+    expect(contributeClosedReason(PAIR, vault({ leaderShares: 0n }))).toMatch(
+      /^Full/,
+    );
+  });
+
+  it("names an empty vault, and puts the program's gates first", () => {
+    expect(
+      contributeClosedReason(PAIR, vault({ baseAtoms: 0n, quoteAtoms: 0n })),
+    ).toMatch(/holds neither asset/);
+    expect(
+      contributeClosedReason(PAIR, vault({ frozen: true, quoteAtoms: 0n })),
+    ).toMatch(/frozen/);
+    expect(contributeClosedReason(PAIR, vault(), LEADER)).toMatch(/lead/);
+  });
+});
+
+describe("the public vault link", () => {
+  const live = chainVault(summary(), MARKET, "TGBP", "USDC");
+  const markets = [
+    resolveVaultMarket(MARKET, "TGBP", "USDC", 0, [
+      chainVault(summary({ seq: 4n }), MARKET, "TGBP", "USDC"),
+      live,
+    ]),
+  ];
+
+  it("round-trips the pair and seq through the URL", () => {
+    const href = vaultLinkHref("TGBP", "USDC", 5n);
+    const params = new URL(href, "https://dropset.example").searchParams;
+    expect(params.get("base")).toBe("TGBP");
+    expect(params.get(VAULT_SEQ_PARAM)).toBe("5");
+    const hit = findVaultBySeq(
+      markets,
+      params.get("base") ?? "",
+      params.get("quote") ?? "",
+      params.get(VAULT_SEQ_PARAM) ?? "",
+    );
+    expect(hit?.vault).toBe(live);
+  });
+
+  it("matches nothing for another pair, an unknown seq, or a non-integer", () => {
+    expect(findVaultBySeq(markets, "USDC", "TGBP", "5")).toBeNull();
+    expect(findVaultBySeq(markets, "TGBP", "USDC", "6")).toBeNull();
+    expect(findVaultBySeq(markets, "TGBP", "USDC", "5x")).toBeNull();
+    expect(findVaultBySeq(markets, "TGBP", "USDC", "")).toBeNull();
   });
 });
 

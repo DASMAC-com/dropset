@@ -219,6 +219,7 @@ ratatui
 raydium
 readback
 reauthored
+rebalances
 recalibratable
 refspec
 regclass
