@@ -166,6 +166,19 @@ def effective_group(group: str, role: str | None) -> str:
     return group
 
 
+async def _tab_role(tab) -> str | None:
+    """The planning role if ANY pane of ``tab`` carries it, else None.
+
+    Every pane, not just the focused one, to match the dispatcher's lookup in
+    `iterm_api._plan_insert_index`: focusing a sibling pane of a split planning
+    tab must not drop it out of the rightmost slot.
+    """
+    for session in tab.sessions:
+        if await session.async_get_variable(ROLE_VARIABLE) == PLAN_ROLE:
+            return PLAN_ROLE
+    return None
+
+
 def plan_order(entries, seq: dict, last_group: dict, counter: int):
     """Pure FIFO ordering. ``entries`` is the window's tabs in current order as
     ``(tab_id, group)`` pairs. Returns ``(order, counter)`` where ``order`` is
@@ -203,9 +216,9 @@ async def _reorder_window(window, seq: dict, last_group: dict, counter: int) -> 
             tty = await session.async_get_variable("tty")
             if tty:
                 group = _read_group(tty)
-            group = effective_group(
-                group, await session.async_get_variable(ROLE_VARIABLE)
-            )
+            # Only a resting tab can be re-grouped, so only it pays the reads.
+            if group == "neutral":
+                group = effective_group(group, await _tab_role(tab))
         entries.append((tab.tab_id, group))
 
     order, counter = plan_order(entries, seq, last_group, counter)

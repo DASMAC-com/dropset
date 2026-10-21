@@ -317,7 +317,7 @@ def session_names() -> list[str]:
     return list(_call({"op": "session_names"}).get("names") or [])
 
 
-def mark_attention(tty: str, script: Path | None = None) -> bool:
+def mark_attention(tty: str) -> bool:
     """Apply the green attend mark to ``tty``. True on success.
 
     Exactly what the operator's Attend shortcut does, so a launched tab reads as
@@ -326,12 +326,11 @@ def mark_attention(tty: str, script: Path | None = None) -> bool:
     `--mark` sets green outright instead of toggling: a toggle's outcome depends
     on the tab's history, and a launcher wants green, not "the other one".
     """
-    script = ATTEND_SCRIPT if script is None else script
-    if not script.exists():
+    if not ATTEND_SCRIPT.exists():
         return False
     try:
         completed = subprocess.run(
-            [str(script), "--tty", tty, "--mark"],
+            [str(ATTEND_SCRIPT), "--tty", tty, "--mark"],
             capture_output=True,
             text=True,
             check=False,
@@ -557,9 +556,10 @@ async def _plan_insert_index(window):
     RIGHTMOST tab, else None (iTerm's default, the end).
 
     Placing it at creation keeps the planning tab rightmost, where Command-9
-    reaches it, without waiting on a reorder pass. A planning tab that is not
-    rightmost is in an attention group on the left, and appending is then
-    already the reorderer's resting order. iTerm has no tab pin to use instead.
+    reaches it, without waiting on a reorder pass. While the reorderer runs, a
+    planning tab that is not rightmost is in an attention group on the left,
+    and appending is then already its resting order. iTerm has no tab pin to
+    use instead.
     """
     tabs = list(getattr(window, "tabs", None) or [])
     if not tabs:

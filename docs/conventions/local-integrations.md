@@ -2277,9 +2277,10 @@ drives the real zsh functions.
   captures the window's selected tab before creating anything,
   re-selects it after every create (the steal then lasts one round trip,
   not the batch) and once more on the way out, failure path included,
-  without raising the window. The selected tab, not the caller's: the
-  caller is the planning tab, and restoring that pulled an operator
-  reading some other tab onto it. iTerm's API has no create-unselected
+  without raising the window. The selected tab, not the caller's (that
+  is only the fallback when no selection is known): the caller is the
+  planning tab, and restoring that pulled an operator reading some other
+  tab onto it. iTerm's API has no create-unselected
   option, so the one-round-trip flash is the floor. A refused re-select
   is reported as `focus_restored: false` and never fails the batch: the
   commands were typed, and a not-ok answer would put them in the retry
@@ -2289,9 +2290,9 @@ drives the real zsh functions.
   **New tabs land just left of a rightmost planning tab**, by creation
   index (`async_create_tab(index=…)`) rather than a later reorder, so
   the planning tab stays where `Cmd-9` reaches it. iTerm has no tab pin
-  or fixed-index facility to use instead. A planning tab that is not
-  rightmost is in an attention group, and the default append is then
-  already the resting order.
+  or fixed-index facility to use instead. While the reorderer runs, a
+  planning tab that is not rightmost is in an attention group, and the
+  default append is then already the resting order.
 
   **Every tab either launcher opens gets the green Attend mark**
   (`iterm_api.mark_attention`, the same `iterm-attend.sh --mark` the

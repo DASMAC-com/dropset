@@ -162,6 +162,23 @@ class PlanningTab(unittest.TestCase):
         ids = self.step(tabs, "neutral")
         self.assertEqual(ids, ["B", "A", "P"])
 
+    def test_the_role_is_found_on_any_pane_of_a_split_tab(self):
+        import asyncio
+
+        def session(role):
+            class Session:
+                async def async_get_variable(self, name):
+                    return role if name == ir.ROLE_VARIABLE else None
+
+            return Session()
+
+        split = type("Tab", (), {})()
+        split.sessions = [session(None), session(ir.PLAN_ROLE)]
+        plain = type("Tab", (), {})()
+        plain.sessions = [session(None), session("task")]
+        self.assertEqual(asyncio.run(ir._tab_role(split)), ir.PLAN_ROLE)
+        self.assertIsNone(asyncio.run(ir._tab_role(plain)))
+
     def test_only_the_marked_role_is_special(self):
         self.assertEqual(ir.effective_group("neutral", None), "neutral")
         self.assertEqual(ir.effective_group("neutral", ""), "neutral")
