@@ -783,6 +783,19 @@ impl FairValueEngine {
         // when it should fire.
         let (fx, crypto) = (fx_leg.reading, crypto_leg.reading);
         let usdc_breach = self.usdc_breach(legs, &usdc_leg);
+        // A basis leg whose designated tape **held** is not degraded by the
+        // corroborator that disagreed with it. The disagreement is still
+        // reported — the leg stays `Dispersed`, with the corroborator named as
+        // its outlier — but the value is the designated tape's alone, so the
+        // fault the degrade exists to price is not in the mid. Without this a
+        // thin pool walked past the band, or one large organic swap, would
+        // demote the market from live quoting: a veto a corroborator must not
+        // hold. A contradicted anchor, or a leg with none, still degrades.
+        //
+        // Basis leg only. The FX leg's designation is contradicted by peer
+        // tapes of the same kind, where a disagreement is the fault it reads
+        // as; the basis corroborator is an on-chain pool anyone can move.
+        let crypto_dispersed = crypto_leg.state.is_dispersed() && !crypto_leg.anchored();
 
         // `since_basis` accumulates here and is only reset when the EMA folds an
         // observation, which a pinned market never reaches. That is harmless
@@ -870,7 +883,7 @@ impl FairValueEngine {
 
                 let regime = if outlier {
                     Regime::Degraded(Degrade::NoBasisLeg)
-                } else if fx_leg.state.is_dispersed() || crypto_leg.state.is_dispersed() {
+                } else if fx_leg.state.is_dispersed() || crypto_dispersed {
                     // A surviving value does not make a disagreement benign: with
                     // three or more sources the median still resolves, so without
                     // this the composition would report `Ok` while one of its
@@ -924,7 +937,7 @@ impl FairValueEngine {
                 // dispersed **crypto** leg is different: that is the leg
                 // carrying the mid on this arm, so it degrades regardless of the
                 // session.
-                let regime = if crypto_leg.state.is_dispersed() {
+                let regime = if crypto_dispersed {
                     Regime::Degraded(Degrade::LegDispersed)
                 } else if clock.session.is_closed() {
                     Regime::CryptoOnly
@@ -2512,6 +2525,86 @@ mod tests {
             Anchor::CryptoReference,
             "the median still anchors"
         );
+    }
+
+    /// A designated basis tape beside a pool that disagrees with it: the
+    /// tGBP shape, a Coinbase candle anchoring and an Orca print corroborating.
+    fn anchored_against_a_walked_pool() -> Candidates {
+        Candidates::none()
+            .push_trusted("coinbase", Some(fresh(1.0)))
+            .push("orca", Some(fresh(0.80)))
+    }
+
+    /// [`normal`] with its FX leg designated, so a lone FX source does not
+    /// make every composition below `Uncorroborated` for an unrelated reason.
+    fn anchored_fx(crypto_usdc: Candidates) -> Legs {
+        Legs {
+            fx: Candidates::none().push_trusted("pyth-hermes", Some(fresh(1.0))),
+            crypto_usdc,
+            ..normal(1.0)
+        }
+    }
+
+    #[test]
+    fn a_corroborator_disagreeing_with_a_held_anchor_flags_without_degrading() {
+        // The pool can be walked past the band by anyone paying the slippage,
+        // so its disagreement must not demote the market. It is still the
+        // outlier on the per-leg report — the flag the published row carries —
+        // while the regime and the value are the designated tape's alone.
+        let mut e = engine();
+        let r = e.compose(
+            anchored_fx(anchored_against_a_walked_pool()),
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert!(r.crypto_leg.dispersed(), "the disagreement is reported");
+        assert_eq!(r.crypto_leg.outlier, Some("orca"));
+        assert_eq!(r.regime, Regime::Normal, "and does not move the regime");
+        assert!(!r.basis_outlier, "the anchor's reading folded");
+        let basis = r.basis.expect("composed on the anchor");
+        assert!((basis - 1.0).abs() < 1e-9, "on coinbase alone, got {basis}");
+    }
+
+    #[test]
+    fn a_held_anchor_does_not_degrade_on_the_weekend_arm_either() {
+        // The arm where the crypto leg carries the mid outright. A walked pool
+        // still has no veto there: the session decides the regime.
+        let mut e = engine();
+        let r = e.compose(
+            Legs {
+                fx: Candidates::none(),
+                crypto_usdc: anchored_against_a_walked_pool(),
+                ..normal(1.14)
+            },
+            secs(5),
+            ClockCtx::closed(),
+        );
+        assert!(r.crypto_leg.dispersed());
+        assert_eq!(r.regime, Regime::CryptoOnly);
+        assert_eq!(r.fair, Some(1.0));
+    }
+
+    #[test]
+    fn an_agreeing_corroborator_credits_the_anchor_alone() {
+        // Agreement corroborates without blending: the designation anchors, so
+        // the pool shows up in the judged count and not in the value.
+        let mut e = engine();
+        let r = e.compose(
+            anchored_fx(
+                Candidates::none()
+                    .push_trusted("coinbase", Some(fresh(1.0)))
+                    .push("orca", Some(fresh(1.001))),
+            ),
+            secs(5),
+            ClockCtx::in_session(),
+        );
+        assert_eq!(r.crypto_leg.state, ConsensusState::Agreed);
+        assert_eq!(r.crypto_leg.n, 2);
+        assert_eq!(
+            r.crypto_leg.contributors.dominant().map(|c| c.source),
+            Some("coinbase")
+        );
+        assert_eq!(r.regime, Regime::Normal);
     }
 
     #[test]

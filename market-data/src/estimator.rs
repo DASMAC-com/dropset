@@ -97,7 +97,9 @@ use crate::fx_store::{
     FxStoreSource, FX_STORE_SOURCES, SOURCE_COINBASE,
 };
 use crate::session_fence::{read_spans, session_at, FenceSpans};
-use crate::tick_store::{TickStoreReader, TickStoreRow, SOURCE_KRAKEN, USDC_USD_PRODUCT};
+use crate::tick_store::{
+    TickStoreReader, TickStoreRow, SOURCE_KRAKEN, SOURCE_ORCA, USDC_USD_PRODUCT,
+};
 
 /// How long publishing may keep failing **transiently** before the estimator
 /// halts anyway.
@@ -139,6 +141,16 @@ pub struct EstimatorMarket {
     /// Exactly one of this and [`Self::pinned_basis`] is `Some` — see the test
     /// that enforces it, and the module docs for why two markets are pinned.
     pub crypto_product: Option<&'static str>,
+    /// The on-chain pool series in `spot_ticks`, under [`SOURCE_ORCA`], that
+    /// corroborates the crypto leg — or `None` for a market with no pool tape.
+    ///
+    /// **Setting it designates the candle.** A market with a pool corroborator
+    /// offers its candle as the believable-alone tape and the pool beside it,
+    /// untrusted, so a pool walked past the dispersion band is named the
+    /// outlier and flagged rather than vetoing the leg. The pool is offered
+    /// only while the candle is itself fresh: it corroborates and never stands
+    /// alone, since anyone paying the slippage can move it.
+    pub pool_corroborator: Option<&'static str>,
     /// Basis to pin because the market has no candle series fit to compose
     /// from: CADC was never listed, and `AUDD-USDC` trades too thinly. The
     /// module docs carry the argument.
@@ -191,6 +203,7 @@ pub const PUBLISHED_MARKETS: [EstimatorMarket; 4] = [
         // rosters `AUDD-USDC` too, but that book is too thin to compose from —
         // which is why AUDD is pinned rather than unwired.
         crypto_product: Some("EURC-USDC"),
+        pool_corroborator: None,
         pinned_basis: None,
         static_usd: 1.14,
     },
@@ -201,6 +214,8 @@ pub const PUBLISHED_MARKETS: [EstimatorMarket; 4] = [
         // book is thin, so a minute with no trade leaves no candle — the gap
         // the candle collector's roster note already expects of AUDD.
         crypto_product: Some("TGBP-USDC"),
+        // The Orca Whirlpool the demo token routes through.
+        pool_corroborator: Some("TGBP-USDC"),
         pinned_basis: None,
         static_usd: 1.324,
     },
@@ -208,6 +223,7 @@ pub const PUBLISHED_MARKETS: [EstimatorMarket; 4] = [
         product_id: "AUDD-USDC",
         currency: "AUD",
         crypto_product: None,
+        pool_corroborator: None,
         pinned_basis: Some(1.0),
         static_usd: 0.7214,
     },
@@ -215,6 +231,7 @@ pub const PUBLISHED_MARKETS: [EstimatorMarket; 4] = [
         product_id: "CADC-USDC",
         currency: "CAD",
         crypto_product: None,
+        pool_corroborator: None,
         pinned_basis: Some(1.0),
         static_usd: 0.7244,
     },
@@ -445,6 +462,7 @@ impl Estimator {
 
         let mut engines = HashMap::with_capacity(markets.len());
         let mut candle_products = Vec::new();
+        let mut tick_products = vec![USDC_USD_PRODUCT.to_string()];
         for m in &markets {
             let fx = m.fx_product().ok_or_else(|| {
                 anyhow!(
@@ -456,6 +474,9 @@ impl Estimator {
             candle_products.push(fx);
             if let Some(crypto) = m.crypto_product {
                 candle_products.push(crypto.to_string());
+            }
+            if let Some(pool) = m.pool_corroborator {
+                tick_products.push(pool.to_string());
             }
             if engines
                 .insert(m.product_id, FairValueEngine::new(m.config()))
@@ -484,8 +505,14 @@ impl Estimator {
                 candle_products,
             ),
             // No name argument, unlike the candle reader above: the tick reader
-            // is not a `Source`, so it has no framework identity to label.
-            ticks: TickStoreReader::peg(pool.clone()),
+            // is not a `Source`, so it has no framework identity to label. The
+            // peg series plus every pool corroborator; the reader crosses the
+            // two lists, so each leg below keys its rows by source and pair.
+            ticks: TickStoreReader::new(
+                pool.clone(),
+                vec![SOURCE_KRAKEN.to_string(), SOURCE_ORCA.to_string()],
+                tick_products,
+            ),
             pool,
             markets,
             engines,
@@ -690,7 +717,7 @@ impl Estimator {
             .ticks
             .latest()
             .await
-            .context("reading spot_ticks for the USDC/USD peg leg")?;
+            .context("reading spot_ticks for the peg leg and the pool corroborators")?;
         let fence = read_spans(&self.pool, self.unix_now())
             .await
             .context("reading fx_session_window for the session fence")?;
@@ -763,8 +790,8 @@ impl Estimator {
 
             // `Candidates` is `Copy`, so every market gets the same resolved peg
             // leg by value — which is the intent: one portfolio-wide reading.
-            let legs = build_legs(market, snapshot, ts, receipt_age, peg);
             let (stale, _dispersion) = engine.leg_bounds();
+            let legs = build_legs(market, snapshot, ts, receipt_age, stale, peg);
             let fair = engine.compose(legs, dt, clock);
 
             // The bounds the composition was ACTUALLY resolved at, taken from the
@@ -811,11 +838,19 @@ fn build_legs(
     snapshot: &Snapshot,
     now_unix: i64,
     receipt_age: Duration,
+    stale: LegStaleness,
     usdc_usd: Candidates,
 ) -> Legs {
     Legs {
         fx: fx_candidates(market, &snapshot.candles, now_unix, receipt_age),
-        crypto_usdc: crypto_candidates(market, &snapshot.candles, now_unix, receipt_age),
+        crypto_usdc: crypto_candidates(
+            market,
+            &snapshot.candles,
+            &snapshot.ticks,
+            now_unix,
+            receipt_age,
+            stale,
+        ),
         usdc_usd,
         static_usd: market.static_usd,
     }
@@ -849,31 +884,54 @@ fn fx_candidates(
     candidates
 }
 
-/// The crypto reference leg: the market's own `*-USDC` candle series.
+/// The crypto reference leg: the market's own `*-USDC` candle series, plus its
+/// pool corroborator where it has one.
 ///
-/// Offered as an **untrusted** tape. One venue is all this leg has, so the
-/// engine resolves it as an explicit single-source state and the market composes
-/// as [`dropset_fair_value::Regime::Uncorroborated`] — quoted, and no longer
-/// described as corroborated. Designating it believable-alone would claim
-/// corroboration that does not exist.
+/// **Without a corroborator** the candle is offered as an untrusted tape. One
+/// venue is all the leg has, so the engine resolves it as an explicit
+/// single-source state and the market composes as
+/// [`dropset_fair_value::Regime::Uncorroborated`] — quoted, and not described
+/// as corroborated.
+///
+/// **With one** the candle is the leg's designated tape and the pool an
+/// untrusted corroborator — see [`EstimatorMarket::pool_corroborator`]. An
+/// agreeing pool corroborates; a disagreeing one is named the outlier while
+/// the value stays the candle's, and the engine flags rather than degrades.
+/// The cost, accepted when the rule was chosen: a lone candle reads
+/// `SingleTrusted`, not `SingleUnverified`, so a market whose pool is dark no
+/// longer says `Uncorroborated`. The pool is offered only while the candle is
+/// fresh at the tape bound, so a dark candle leaves the leg absent and the
+/// market degraded rather than composed on the pool alone.
 ///
 /// Empty for a pinned market, which has no such series. The engine drops a
 /// pinned market's crypto set unconditionally anyway; offering nothing here
 /// means the two agree rather than relying on that.
 fn crypto_candidates(
     market: &EstimatorMarket,
-    rows: &[FxStoreRow],
+    candles: &[FxStoreRow],
+    ticks: &[TickStoreRow],
     now_unix: i64,
     receipt_age: Duration,
+    stale: LegStaleness,
 ) -> Candidates {
     let Some(product) = market.crypto_product else {
         return Candidates::none();
     };
-    let reading = rows
+    let candle = candles
         .iter()
         .find(|r| r.source == SOURCE_COINBASE && r.product_id == product)
         .and_then(|r| store_reading(r.close, r.published_at, now_unix, receipt_age));
-    Candidates::none().push(SOURCE_COINBASE, reading)
+    let Some(pool) = market.pool_corroborator else {
+        return Candidates::none().push(SOURCE_COINBASE, candle);
+    };
+    let pool_reading = ticks
+        .iter()
+        .find(|r| r.source == SOURCE_ORCA && r.product_id == pool)
+        .and_then(|r| r.reading(now_unix, receipt_age))
+        .filter(|_| candle.is_some_and(|c| c.fresh(stale.tape)));
+    Candidates::none()
+        .push_trusted(SOURCE_COINBASE, candle)
+        .push(SOURCE_ORCA, pool_reading)
 }
 
 /// The portfolio-wide USDC/USD peg leg, from `spot_ticks`.
@@ -1162,13 +1220,115 @@ mod tests {
             candle(SOURCE_COINBASE, "EURC-USDC", 1_000, 1.1410),
             candle(SOURCE_COINBASE, "AUDD-USDC", 1_000, 0.7220),
         ];
-        let resolved = crypto_candidates(&eurc(), &rows, 1_060, Duration::from_secs(1))
-            .resolve(bounds(), 0.01);
+        let resolved =
+            crypto_candidates(&eurc(), &rows, &[], 1_060, Duration::from_secs(1), bounds())
+                .resolve(bounds(), 0.01);
         assert_eq!(
             resolved.reading.map(|r| r.value),
             Some(1.1410),
             "EURC must compose from its own pair, not another market's"
         );
+    }
+
+    fn tgbp() -> EstimatorMarket {
+        PUBLISHED_MARKETS[1]
+    }
+
+    fn pool_tick(observed_at: i64, price: f64) -> TickStoreRow {
+        TickStoreRow {
+            source: SOURCE_ORCA.to_string(),
+            product_id: "TGBP-USDC".to_string(),
+            observed_at,
+            price,
+        }
+    }
+
+    /// tGBP's basis leg: the candle designated, the pool beside it.
+    ///
+    /// A pool walked past the band is named the outlier while the leg keeps the
+    /// candle's value — the resolution the engine flags without degrading.
+    #[test]
+    fn the_tgbp_leg_anchors_on_the_candle_and_names_a_walked_pool() {
+        let candles = vec![candle(SOURCE_COINBASE, "TGBP-USDC", 1_000, 1.324)];
+        let walked = vec![pool_tick(1_050, 1.10)];
+        let c = crypto_candidates(
+            &tgbp(),
+            &candles,
+            &walked,
+            1_060,
+            Duration::from_secs(1),
+            bounds(),
+        )
+        .resolve(bounds(), 0.01);
+        assert!(c.state.is_dispersed());
+        assert_eq!(c.outlier, Some(SOURCE_ORCA));
+        assert!(c.anchored());
+        assert_eq!(c.reading.map(|r| r.value), Some(1.324));
+
+        // Agreeing, the pool corroborates without entering the value.
+        let agreeing = vec![pool_tick(1_050, 1.3245)];
+        let c = crypto_candidates(
+            &tgbp(),
+            &candles,
+            &agreeing,
+            1_060,
+            Duration::from_secs(1),
+            bounds(),
+        )
+        .resolve(bounds(), 0.01);
+        assert_eq!(c.n, 2);
+        assert!(!c.state.is_dispersed());
+        assert_eq!(c.reading.map(|r| r.value), Some(1.324));
+    }
+
+    /// The pool never stands alone: with the candle stale it is not offered,
+    /// so the leg is absent rather than composed on a print anyone can move.
+    #[test]
+    fn a_pool_is_not_offered_without_a_fresh_candle() {
+        let tight = LegStaleness::uniform(Duration::from_secs(120));
+        let stale_candle = vec![candle(SOURCE_COINBASE, "TGBP-USDC", 100, 1.324)];
+        let live_pool = vec![pool_tick(1_050, 1.324)];
+        let c = crypto_candidates(
+            &tgbp(),
+            &stale_candle,
+            &live_pool,
+            1_060,
+            Duration::from_secs(1),
+            tight,
+        );
+        assert_eq!(
+            c.iter().map(|c| c.source).collect::<Vec<_>>(),
+            [SOURCE_COINBASE],
+            "only the (stale) candle is offered"
+        );
+        assert!(c.resolve(tight, 0.01).reading.is_none());
+
+        let no_candle = crypto_candidates(
+            &tgbp(),
+            &[],
+            &live_pool,
+            1_060,
+            Duration::from_secs(1),
+            tight,
+        );
+        assert!(no_candle.is_empty());
+    }
+
+    /// A market without a corroborator offers its candle untrusted, so a
+    /// lone print still composes as uncorroborated.
+    #[test]
+    fn a_market_without_a_pool_keeps_its_candle_untrusted() {
+        let rows = vec![candle(SOURCE_COINBASE, "EURC-USDC", 1_000, 1.1410)];
+        let c = crypto_candidates(
+            &eurc(),
+            &rows,
+            &[pool_tick(1_050, 1.1410)],
+            1_060,
+            Duration::from_secs(1),
+            bounds(),
+        )
+        .resolve(bounds(), 0.01);
+        assert!(c.state.is_uncorroborated());
     }
 
     /// A pinned market offers no crypto candidate at all.
@@ -1178,8 +1338,9 @@ mod tests {
         // `AUDD-USDC` — so the emptiness has to come from the roster's pin
         // rather than from an absent row.
         let rows = vec![candle(SOURCE_COINBASE, "AUDD-USDC", 1_000, 0.7220)];
-        let resolved = crypto_candidates(&audd(), &rows, 1_060, Duration::from_secs(1))
-            .resolve(bounds(), 0.01);
+        let resolved =
+            crypto_candidates(&audd(), &rows, &[], 1_060, Duration::from_secs(1), bounds())
+                .resolve(bounds(), 0.01);
         assert!(
             resolved.reading.is_none(),
             "a pinned market must not offer a basis candidate"
@@ -1229,6 +1390,7 @@ mod tests {
             &snapshot,
             1_060,
             Duration::from_secs(1),
+            bounds(),
             Candidates::none(),
         );
         let mut engine = FairValueEngine::new(market.config());
@@ -1255,6 +1417,7 @@ mod tests {
             &snapshot,
             1_060,
             Duration::from_secs(1),
+            bounds(),
             Candidates::none(),
         );
         let mut engine = FairValueEngine::new(market.config());

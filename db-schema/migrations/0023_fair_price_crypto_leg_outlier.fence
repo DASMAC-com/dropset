@@ -1,0 +1,11 @@
+# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+#
+# One nullable ADD COLUMN against a table 0011 created, plus a `COMMENT ON
+# COLUMN`. Neither is a relation, so the existence probe is blind to it — the
+# same position 0019_fair_price_fx_tape_live is in.
+#
+# The column is asserted by its writer and reader instead:
+# `crypto_leg_outlier_names_the_dispersed_legs_outlier` in
+# market-data/tests/fair_price_roundtrip.rs writes it through
+# `fair_price_insert.sql` and reads it back.
+none alters a table 0011 created — adds one nullable column and its comment, not a relation

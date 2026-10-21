@@ -318,6 +318,18 @@ pub fn fx_tape_live(fv: &FairValue) -> bool {
         .any(|c| is_tape_source(c.source))
 }
 
+/// The source judged the outlier on this composition's crypto (basis) leg, when
+/// that leg was dispersed — the `crypto_leg_outlier` column (0023).
+///
+/// Gated on the leg's state rather than read straight off the outlier, so the
+/// column states a dispersion and nothing else.
+pub fn crypto_leg_outlier(fv: &FairValue) -> Option<&'static str> {
+    fv.crypto_leg
+        .dispersed()
+        .then_some(fv.crypto_leg.outlier)
+        .flatten()
+}
+
 /// The inverse of [`anchor_name`].
 pub fn parse_anchor(name: &str) -> Option<Anchor> {
     Some(match name {
@@ -438,6 +450,9 @@ pub async fn publish(
         // than passed in, because it is a fact about `fv` itself: a caller-side
         // copy could describe a different leg report than the one serialized.
         .bind(fx_tape_live(fv))
+        // Who disagreed on the basis leg (0023) — the flag a corroborator's
+        // dispersion leaves when the regime, by design, does not move.
+        .bind(crypto_leg_outlier(fv))
         .execute(executor)
         .await
         .map_err(classify)?;

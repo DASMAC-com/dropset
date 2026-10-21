@@ -748,6 +748,23 @@ impl Consensus {
     pub fn healthy(&self) -> &[Option<Candidate>] {
         &self.healthy
     }
+
+    /// Whether a designated source **anchors** this leg's value: it answered,
+    /// it was not itself the outlier, and so it is the whole of the reading.
+    ///
+    /// This is what lets a consumer tell a corroborator's disagreement from a
+    /// leg that is actually sick. A dispersed leg whose anchor held still
+    /// quotes on the designated source, and the one that disagreed is named in
+    /// [`Consensus::outlier`]; a dispersed leg whose anchor was contradicted, or
+    /// that never had one, is resolving on a median or on nothing.
+    pub fn anchored(&self) -> bool {
+        self.contributors.dominant().is_some_and(|d| {
+            self.healthy
+                .iter()
+                .flatten()
+                .any(|c| c.trusted && c.source == d.source)
+        })
+    }
 }
 
 /// The resolution of one leg's candidate set.
@@ -1633,6 +1650,45 @@ mod tests {
         assert_eq!(c.outlier, Some("frankfurter"));
         assert_eq!(credits(&c), [("pyth-hermes", 1.0)]);
         assert_eq!(c.reading.unwrap().value, 1.140, "the leg is not dark");
+    }
+
+    #[test]
+    fn a_dispersed_pair_names_its_outlier_only_when_one_is_designated() {
+        // The pair the tGBP basis leg runs on. With the candle designated, a
+        // pool that disagrees is named by construction and the leg is anchored
+        // — what lets the engine flag it without degrading. With no designation, the
+        // same pair resolves to nothing, and the name it reports is settled by
+        // float rounding at the midpoint rather than by any signal, so a reader
+        // must not take it as "the pool was the outlier".
+        let anchored = Candidates::none()
+            .push_trusted("coinbase", Some(r(1.324)))
+            .push("orca", Some(r(1.10)))
+            .resolve(STALE, BAND);
+        assert_eq!(anchored.state, ConsensusState::Dispersed);
+        assert_eq!(anchored.outlier, Some("orca"));
+        assert!(anchored.anchored());
+        assert_eq!(credits(&anchored), [("coinbase", 1.0)]);
+
+        let bare = Candidates::none()
+            .push("coinbase", Some(r(1.324)))
+            .push("orca", Some(r(1.10)))
+            .resolve(STALE, BAND);
+        assert_eq!(bare.state, ConsensusState::Dispersed);
+        assert!(bare.reading.is_none(), "no majority, no designation");
+        assert!(!bare.anchored());
+    }
+
+    #[test]
+    fn a_contradicted_designation_is_not_anchored() {
+        // Three sources outvote the designated one, so the median stands and the
+        // leg is sick in the sense the degrade exists to price.
+        let c = Candidates::none()
+            .push_trusted("coinbase", Some(r(0.60)))
+            .push("orca", Some(r(1.140)))
+            .push("kraken", Some(r(1.141)))
+            .resolve(STALE, BAND);
+        assert_eq!(c.outlier, Some("coinbase"));
+        assert!(!c.anchored());
     }
 
     #[test]
