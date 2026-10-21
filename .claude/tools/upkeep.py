@@ -133,15 +133,17 @@ RESOLVED_TYPES = ("completed", "canceled")
 # The parking milestones, in report order. Trim levers leads: its count is the
 # fold sub-agent's spawn gate.
 PARKED_MILESTONES = ("Trim levers", "Claude meta", "Follow-ups", "Audit findings")
-# A branch tied to an ENG issue: `eng-<n>` once `init-pr` has renamed it, or the
-# `worktree-<n>` that `claude -w <n>` creates and a read-only architect or
-# explore session never renames (`worktree-eng-<n>` before the bare-number
-# rename). Tying the last two to their issue is what makes an architect
-# worktree eligible once its issue is completed or canceled — still behind the
-# pruner's dirty-tree refusal, which an untracked spec file trips. A pre-rename
-# `worktree-ceo-*` / `worktree-exp-*` branch matches nothing, so it is reported
-# as unresolvable and cleaned by hand — grandfathered, never guessed at.
-BRANCH_RE = re.compile(r"^(?:worktree-)?(?:eng-)?(\d+)$", re.IGNORECASE | re.ASCII)
+# A branch tied to an ENG issue, by its NUMBER whatever the verb: `eng-<n>`,
+# which every issue-keyed launch now creates, or a pre-scheme spelling — the
+# `worktree-<n>` that `claude -w <n>` named it, and the `worktree-eng-` /
+# `-ceo-` / `-exp-<n>` forms from before the bare-number rename. Tying them all
+# to their issue is what makes an architect or explore worktree eligible once
+# its issue is completed or canceled; the pruner then gates it by tier. A
+# worded name (`worktree-exp-<topic>`) names no issue, so it is reported as
+# unresolvable and cleaned by hand — never guessed at.
+BRANCH_RE = re.compile(
+    r"^(?:worktree-)?(?:eng-|ceo-|exp-)?(\d+)$", re.IGNORECASE | re.ASCII
+)
 PR_URL_RE = re.compile(r"/repos/DASMAC-com/dropset/pulls/(\d+)$")
 
 Runner = Callable[[list[str], float, "str | None"], "tuple[int, str, str]"]

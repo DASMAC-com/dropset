@@ -20,7 +20,8 @@ sessions: temporary worktree, no PR".
 - **No worktree, no branch, no PR, no `init-pr`.** The session runs in
   the **base checkout**, which other sessions share: never edit, stage,
   commit, check out or stash anything there. Scratch files go under
-  `/private/tmp`.
+  `/private/tmp` — never a scratch worktree (`EnterWorktree` included),
+  which names no issue the pruner can resolve.
 - **Anything repo-bound is a follow-up task**, filed with
   `linear-task`, never a local edit.
 - **In Review at handoff, Done only on the operator's word.**

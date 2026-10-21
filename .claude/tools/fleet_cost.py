@@ -14,8 +14,10 @@ in UTC, so every day boundary here is a UTC one, on both sides:
     recorded, and price it at ``session_metrics.RATES_BY_MODEL``. Sessions are
     split by substrate, which comes from the launch marker and **never** from
     the transcript's model id (a seat and a Bedrock session record the same
-    name). Bedrock spend is also attributed per Linear issue, from the worktree
-    tag.
+    name). Every session is also keyed to its Linear issue the one way — the
+    worktree tag, or for a base-checkout ``chore`` its bootstrap prompt —
+    whatever its substrate: Bedrock issues are priced, seat and unattributed
+    ones are listed by session count beside them.
 
 ``reconcile``
     ``meter`` beside Cost Explorer's billed gross for the same days, per
@@ -31,10 +33,9 @@ in UTC, so every day boundary here is a UTC one, on both sides:
 **Substrate classes.** ``bedrock`` and ``seat`` come from a marker. A worktree
 session with **no** marker (or an unrecognized one) is ``unattributed`` and is
 never priced into the Bedrock total — that is the share the bill comparison
-cannot account for, reported rather than guessed. ``explore`` lands here by
-design: it runs in a worktree and writes no marker, so its seat spend shows as
-unattributed. A base-repo session (``plan``, ``housekeeping``) reads as
-``seat``.
+cannot account for, reported rather than guessed. ``explore`` landed here
+until it wrote a marker; an older explore worktree still does. A base-repo
+session (``plan``, ``housekeeping``, ``chore``) reads as ``seat``.
 
 Two blind spots, both visible only as bill-side drift: ``plan bedrock`` is a
 base-repo launch that writes no marker; and a marker is one file per worktree
@@ -151,15 +152,35 @@ def classify(cwd: str | None) -> str:
 def issue_of(cwd: str | None) -> str | None:
     """The Linear issue a worktree session ran for, from its tag.
 
-    Tags come in two spellings on disk — bare ``1651`` (``task <n>`` since mid
-    October) and ``eng-1073`` (before) — and both name ``ENG-<n>``. A tag that
-    is not an issue number is returned as-is, so it still groups.
+    Every issue-keyed verb names its worktree the bare number (``1651``); the
+    pre-rename ``eng-`` / ``ceo-`` / ``exp-<n>`` spellings name ``ENG-<n>``
+    too. A tag that is not an issue number is returned as-is, so it still
+    groups.
     """
     tag = sm.tag_from_cwd(cwd)
     if not tag:
         return None
-    match = re.fullmatch(r"(?:eng-)?(\d+)", tag, flags=re.IGNORECASE)
-    return f"ENG-{match.group(1)}" if match else tag
+    match = re.fullmatch(r"(?:eng-|ceo-|exp-)?(\d+)", tag, flags=re.IGNORECASE)
+    return f"ENG-{int(match.group(1))}" if match else tag
+
+
+# The bootstrap prompt of an issue-keyed launch with no worktree to name it —
+# `chore <n>` types `/chore <n>` in the base checkout — as the transcript
+# records a slash command, or as typed.
+PROMPT_ISSUE_RE = re.compile(
+    r"<command-name>/(?:chore|architect|explore)</command-name>\s*"
+    r"<command-args>\s*(?:ENG-)?(\d+)\b"
+    r"|^/(?:chore|architect)\s+(?:ENG-)?(\d+)\b",
+    re.IGNORECASE,
+)
+
+
+def issue_of_prompt(text: str) -> str | None:
+    """The issue a base-checkout session ran for, from its first prompt."""
+    match = PROMPT_ISSUE_RE.search(text.strip())
+    if not match:
+        return None
+    return f"ENG-{int(match.group(1) or match.group(2))}"
 
 
 def service_for_model(model: str) -> str | None:
@@ -191,12 +212,16 @@ def service_for_model(model: str) -> str | None:
 @dataclass
 class Meter:
     """Deduplicated token counts, bucketed per UTC day, substrate and model,
-    plus the Bedrock share per issue.
+    plus the same per issue — every substrate, keyed one way, so a seat
+    session carries its issue as a Bedrock one does.
     """
 
     days: set[str]
     by_day: dict[tuple[str, str, str], sm.Tokens] = field(default_factory=dict)
-    by_issue: dict[tuple[str, str, str], sm.Tokens] = field(default_factory=dict)
+    # (day, substrate, issue, model)
+    by_issue: dict[tuple[str, str, str, str], sm.Tokens] = field(default_factory=dict)
+    # (day, substrate, issue) -> session ids
+    issue_sessions: dict[tuple[str, str, str], set[str]] = field(default_factory=dict)
     sessions: dict[tuple[str, str], set[str]] = field(default_factory=dict)
     seen: set[str] = field(default_factory=set)
     parse_errors: int = 0
@@ -232,22 +257,46 @@ class Meter:
             self.seen.add(msg_id)
         model = sm._model_of(msg)
         self.by_day.setdefault((day, substrate, model), sm.Tokens()).add(msg["usage"])
-        if substrate == BEDROCK:
-            key = (day, issue or "(no issue)", model)
-            self.by_issue.setdefault(key, sm.Tokens()).add(msg["usage"])
+        issue = issue or NO_ISSUE
+        key = (day, substrate, issue, model)
+        self.by_issue.setdefault(key, sm.Tokens()).add(msg["usage"])
+        self.issue_sessions.setdefault((day, substrate, issue), set()).add(session)
         self.sessions.setdefault((day, substrate), set()).add(session)
 
 
-def _read_cwd(path: Path) -> str | None:
+NO_ISSUE = "(no issue)"
+
+
+def _prompt_text(rec: dict) -> str:
+    content = (rec.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    return ""
+
+
+def _read_head(path: Path) -> tuple[str | None, str | None]:
+    """``(cwd, issue from the first prompt)``, read up to the first user
+    message — the bootstrap prompt names the issue a base-checkout launch ran
+    for, where no worktree tag does."""
+    cwd = None
     for line in sm._read_lines(path):
         try:
             rec = json.loads(line)
         except ValueError:
             continue
-        cwd = rec.get("cwd") if isinstance(rec, dict) else None
-        if isinstance(cwd, str) and cwd.strip():
-            return cwd.strip()
-    return None
+        if not isinstance(rec, dict):
+            continue
+        if cwd is None and isinstance(rec.get("cwd"), str) and rec["cwd"].strip():
+            cwd = rec["cwd"].strip()
+        if rec.get("type") == "user":
+            return cwd, issue_of_prompt(_prompt_text(rec))
+    return cwd, None
 
 
 def walk(projects: Path, days: list[str]) -> Meter:
@@ -275,11 +324,11 @@ def walk(projects: Path, days: list[str]) -> Meter:
             except OSError:
                 continue
             try:
-                cwd = _read_cwd(transcript)
+                cwd, prompted = _read_head(transcript)
             except OSError:
                 meter.unreadable += 1
                 continue
-            substrate, issue = classify(cwd), issue_of(cwd)
+            substrate, issue = classify(cwd), issue_of(cwd) or prompted
             session = transcript.stem
             files = [
                 transcript,
@@ -347,10 +396,23 @@ def day_summary(meter: Meter, day: str) -> dict:
 def issue_costs(meter: Meter, days: list[str]) -> list[tuple[str, float]]:
     """Bedrock dollars per issue over ``days``, costliest first."""
     totals: dict[str, float] = {}
-    for (day, issue, model), tokens in meter.by_issue.items():
-        if day in days:
+    for (day, substrate, issue, model), tokens in meter.by_issue.items():
+        if day in days and substrate == BEDROCK:
             totals[issue] = totals.get(issue, 0.0) + (price(tokens, model) or 0.0)
     return sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def issue_session_counts(
+    meter: Meter, days: list[str], substrate: str
+) -> list[tuple[str, int]]:
+    """Sessions per issue on one non-Bedrock class over ``days``, most first.
+    Listed rather than priced: seat spend has no bill line to reconcile."""
+    by_issue: dict[str, set[str]] = {}
+    for (day, sub, issue), sessions in meter.issue_sessions.items():
+        if day in days and sub == substrate:
+            by_issue.setdefault(issue, set()).update(sessions)
+    counts = [(issue, len(s)) for issue, s in by_issue.items()]
+    return sorted(counts, key=lambda kv: (-kv[1], kv[0]))
 
 
 # --------------------------------------------------------------------------- #
@@ -672,6 +734,12 @@ def main(argv: list[str] | None = None) -> int:
             if issues:
                 top = ", ".join(f"{i} {money(c)}" for i, c in issues[: args.top])
                 lines.append(f"costliest issues: {top}")
+            for substrate in (SEAT, UNATTRIBUTED):
+                counts = issue_session_counts(meter, days, substrate)
+                report[f"{substrate}_issues"] = counts
+                if counts:
+                    top = ", ".join(f"{i} ({n})" for i, n in counts[: args.top])
+                    lines.append(f"{substrate} sessions by issue: {top}")
             if meter.unreadable:
                 lines.append(f"skipped {meter.unreadable} unreadable transcript(s)")
         else:

@@ -264,10 +264,11 @@ untracked per-directory content, which step 3 handles.
      `--no-default-features` `.so` behind that fails ~15 teardown tests
      in a later scoped `cargo test`.
 
-1. **Normalize the branch name.** `task <n>` runs `claude -w <n>`,
-   which names the worktree directory `<n>` and the branch
-   `worktree-<n>`; the branch is renamed to `eng-<n>`, the form
-   Linear's GitHub integration links. If `rename_needed` is `true`:
+1. **Normalize the branch name.** `task <n>` pre-creates the
+   worktree `<n>` on branch `eng-<n>`, the form Linear's GitHub
+   integration links, so this is normally a no-op; when that
+   pre-create failed, `claude -w <n>` named the branch
+   `worktree-<n>` instead. If `rename_needed` is `true`:
 
    ```sh
    git branch -m <current_branch> <normalized_branch>

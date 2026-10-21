@@ -29,6 +29,15 @@ pruned: bool, dry_run: bool}``:
   PR), untouched;
 * ``pruned`` — whether ``git worktree prune`` ran (skipped in ``--dry-run``).
 
+**The gate is per tier**, read from the launch's substrate marker
+(:func:`tier_of`), never from the branch name. An executor worktree (``task``,
+or any tree whose tier cannot be read) keeps the full refusal below. An
+advisor worktree (``architect``, ``explore``) is read-only toward the repo, so
+its untracked spec file is expendable once the caller has confirmed its issue
+finished: it is removed with one ``--force``, which still refuses a **locked**
+tree (a live session). Only a commit of its own beyond ``origin/main`` holds it
+back — a read-only session never makes one, so one is worth a human look.
+
 The base worktree (``refs/heads/main``) is never a candidate. Stdlib only; a
 Python skill-tool under ``.claude/tools/`` — deliberately **not** a Cargo
 workspace member (see ``CLAUDE.md`` → "Skill tooling").
@@ -38,11 +47,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 MAIN_BRANCH_REF = "refs/heads/main"
+# Where the shell's `_ds_substrate_write` records each launch, relative to the
+# base checkout: `<key>` holds the substrate, `<key>.tier` the advisor or
+# helper tier (absent for a `task`).
+SUBSTRATE_DIR = Path(".claude") / "session-substrate"
+ADVISOR = "advisor"
+# A worktree directory named for an issue: the bare number, or a pre-rename
+# `eng-` / `ceo-` / `exp-` spelling — the forms `_ds_worktree_of` resolves.
+ISSUE_DIR_RE = re.compile(r"(?:eng-|ceo-|exp-)?(\d+)", re.IGNORECASE | re.ASCII)
 
 
 def parse_worktrees(porcelain: str) -> list[dict]:
@@ -158,42 +176,92 @@ def unpushed_reason(branch: str, git=_real_git, prefix: list[str] = ()) -> str |
     return None
 
 
-def prune(merged: set[str], dry_run: bool, git=_real_git) -> dict:
+def tier_of(base: str, tree_path: str) -> str | None:
+    """The tier a worktree's session launched on, from its substrate marker:
+    the ``.tier`` file's ``advisor`` / ``helper``, else ``executor`` when only
+    the marker exists, else ``None``.
+
+    The shell reads an ABSENT marker as advisor (the issue-keyed ``explore``
+    once wrote none), but this is the destructive side, so absent stays
+    unknown and gets the executor gate. Keys mirror ``_ds_marker_key``: the
+    bare number first, then a pre-rename ``eng-<n>``."""
+    name = Path(tree_path).name
+    m = ISSUE_DIR_RE.fullmatch(name)
+    keys = [str(int(m.group(1))), f"eng-{int(m.group(1))}"] if m else [name]
+    markers = Path(base) / SUBSTRATE_DIR
+    for key in keys:
+        if not (markers / key).is_file():
+            continue
+        try:
+            tier = (markers / f"{key}.tier").read_text(encoding="utf-8").strip()
+        except OSError:
+            tier = ""
+        return tier if tier in (ADVISOR, "helper") else "executor"
+    return None
+
+
+def advisor_unsafe_reason(branch: str, git=_real_git) -> str | None:
+    """The whole gate for an advisor worktree: refuse only a commit of its own
+    beyond ``origin/main``. Uncommitted and untracked files are expendable by
+    the convention — the session's durable state is in Linear."""
+    rc, out, _ = git(["rev-list", "--count", f"origin/main..{branch}"])
+    count = out.strip()
+    if rc != 0 or not count.isdigit():
+        return "could not count commits beyond origin/main, so safety is unprovable"
+    if count != "0":
+        return f"{count} commit(s) beyond origin/main on a read-only session"
+    return None
+
+
+def prune(merged: set[str], dry_run: bool, git=_real_git, tier=None) -> dict:
     """Remove each merged branch's worktree + local branch, skipping unsafe ones.
 
     Two gates, and both matter: ``merged`` restricts the candidates to branches
     the caller has confirmed finished — a merged PR for ``housekeeping``, a
     completed or canceled issue with no open PR for ``upkeep`` — and
     :func:`unsafe_reason` then refuses any of
-    those still holding uncommitted or unpushed work. ``git`` is an injectable
-    ``(args) -> (rc, stdout, stderr)`` runner."""
+    those still holding uncommitted or unpushed work — or, for an advisor
+    worktree, :func:`advisor_unsafe_reason`. ``git`` is an injectable
+    ``(args) -> (rc, stdout, stderr)`` runner; ``tier`` an injectable
+    ``(path) -> tier | None``, defaulting to :func:`tier_of` on the base."""
     rc, out, err = git(["worktree", "list", "--porcelain"])
     if rc != 0:
         raise RuntimeError(f"git worktree list failed: {err.strip()}")
+    trees = parse_worktrees(out)
+    if tier is None:
+        base = next((t["path"] for t in trees if is_base(t)), None)
+        tier = (lambda p: tier_of(base, p)) if base else (lambda p: None)
 
     removed: list[dict] = []
     skipped: list[dict] = []
     left: list[dict] = []
 
-    for tree in parse_worktrees(out):
+    for tree in trees:
         if is_base(tree) or tree.get("branch") is None:
             continue
         path, branch = tree["path"], tree["branch"]
         if branch not in merged:
             left.append({"path": path, "branch": branch})
             continue
+        advisor = tier(path) == ADVISOR
         # Checked before the dry-run branch, so a dry run reports what it would
         # actually do rather than promising a removal the real run would refuse.
-        reason = unsafe_reason(path, branch, git)
+        if advisor:
+            reason = advisor_unsafe_reason(branch, git)
+        else:
+            reason = unsafe_reason(path, branch, git)
         if reason is not None:
             skipped.append({"path": path, "branch": branch, "reason": reason})
             continue
         if dry_run:
             removed.append({"path": path, "branch": branch})
             continue
-        # No --force: a dirty or locked worktree refuses, which is the safe
-        # outcome — record it as skipped and move on.
-        r_rc, _, r_err = git(["worktree", "remove", path])
+        # An executor gets no --force: a dirty or locked worktree refuses, which
+        # is the safe outcome — record it as skipped and move on. An advisor
+        # gets ONE --force, which discards its expendable spec file but still
+        # refuses a locked tree (that takes two).
+        force = ["--force"] if advisor else []
+        r_rc, _, r_err = git(["worktree", "remove", *force, path])
         if r_rc != 0:
             skipped.append(
                 {"path": path, "branch": branch, "reason": r_err.strip() or "refused"}
@@ -207,7 +275,7 @@ def prune(merged: set[str], dry_run: bool, git=_real_git) -> dict:
     # A merged branch whose worktree is already gone used to survive every pass:
     # only a worktree removal ever deleted a branch. Same gate, minus the status
     # read there is no tree to make.
-    in_trees = {t["branch"] for t in parse_worktrees(out) if t.get("branch")}
+    in_trees = {t["branch"] for t in trees if t.get("branch")}
     refs_rc, refs, _ = git(["for-each-ref", "--format=%(refname:short)", "refs/heads"])
     local = set(refs.split()) if refs_rc == 0 else set()
     branches_removed: list[str] = []

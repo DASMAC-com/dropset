@@ -1339,19 +1339,32 @@ operator looks up in Linear). `architect` takes the governing
 issue as its **only** argument — there is no topic form, so a
 design thread with no issue files or names one first.
 
-| Launch                 | Worktree           | Session name       |
-| ---------------------- | ------------------ | ------------------ |
-| `task 1196`            | `1196`             | `1196`             |
-| `explore 1196`         | `1196`             | `1196`             |
-| `explore skills-audit` | `exp-skills-audit` | `exp-skills-audit` |
-| `architect 1572`       | `1572`             | `1572`             |
-| `chore 1843`           | none (base)        | `1843`             |
+**One scheme for every session kind** (operator ruling,
+2026-10-20): every session is linked to a Linear issue, so its
+worktree, branch and purge read the same whatever the verb. This
+table is the canonical statement; the `architect` and `explore`
+sections point here.
 
+| Launch                 | Worktree           | Branch           | Tier     | Pruned when, and how                                   |
+| ---------------------- | ------------------ | ---------------- | -------- | ------------------------------------------------------ |
+| `task 1196`            | `1196`             | `eng-1196`       | executor | issue Done/canceled, no open PR; clean and pushed only |
+| `explore 1196`         | `1196`             | `eng-1196`       | advisor  | issue Done/canceled; spec file discarded               |
+| `architect 1572`       | `1572`             | `eng-1572`       | advisor  | issue Done/canceled; spec file discarded               |
+| `explore skills-audit` | `exp-skills-audit` | `worktree-exp-…` | advisor  | never — names no issue; reported, removed by hand      |
+| `chore 1843`           | none (base)        | none             | helper   | nothing to prune                                       |
+
+The session name is the worktree column (`1843` for a chore).
 The named exceptions: `plan-<day>` and `housekeeping-<day>` keep
-their day-keyed names (they have no issue), a free-form explore
-keeps `exp-<name>`, and **git branches keep the `eng-` prefix**
-— `init-pr` renames `worktree-<n>` to `eng-<n>`, because Linear's
-GitHub integration links branches and PRs on that form. Two
+their day-keyed names (they have no issue), and a free-form explore
+keeps `exp-<name>`. **Git branches keep the `eng-` prefix**, because
+Linear's GitHub integration links branches and PRs on that form;
+`claude -w` cannot choose a branch name (it would say
+`worktree-<n>`), so `_ds_worktree_ensure` pre-creates the worktree
+on `eng-<n>` (from `origin/main`, untracked) and `-w` reuses it.
+Should that fail, the CLI's `worktree-<n>` arrives, `init-pr`
+renames it for a task, and the pruner resolves it either way. A
+chore runs in the base checkout and must never create a worktree,
+`EnterWorktree` included. Two
 mirrored normalizers agree on the rule: `_ds_tag_of` in the shell
 and `normalize_tag` in `resolve_session.py` both map `1196`,
 `eng-1196`, `ceo-1196` and `exp-1196` to `1196`.
@@ -1371,21 +1384,27 @@ the thread lived in was never reached.
 local branch survives iff it is tied to an **open PR**, or to an
 issue whose **status type** is neither completed nor canceled;
 everything else is cleanup-eligible (`upkeep.py`, which the
-`housekeeping` skill drives through `upkeep.py prune`). A
-read-only session never renames its branch, so the pruner ties a
-`worktree-<n>` branch to issue `<n>` as well as an `eng-<n>` one,
-and its never-pushed branch passes the unpushed-work gate when
-every commit on it is already on `origin/main`. So an architect
-or explore worktree is **protected while its issue is In
-Progress or In Review and eligible once it is Done or
-canceled**. The pruner still refuses a dirty tree, so one
-holding an untracked spec file is reported on every pass and
-removed by hand; gitignored files are not protected at all.
-The pre-rename `ceo-<topic>`
-and `exp-<name>` worktrees match no issue: the pruner reports
-them as unresolvable and they are removed by hand as their
-threads close. A canceled issue whose PR is still open is always
-flagged, never pruned.
+`housekeeping` skill drives through `upkeep.py prune`). It decides
+**by the issue, never by the prefix**: `eng-<n>` and every older
+spelling (`worktree-<n>`, `worktree-eng-` / `-ceo-` / `-exp-<n>`)
+resolve to issue `<n>`. So every issue-keyed worktree is
+**protected while its issue is In Progress or In Review and
+eligible once it is Done or canceled**. Eligible is not removed:
+`prune_worktrees.py` then gates by **tier**, read from the launch's
+substrate marker (`tier_of`), never from the branch name. An
+**executor** worktree — or one with no marker — keeps the full
+refusal: uncommitted changes, unpushed commits, or no upstream with
+a commit beyond `origin/main` all hold it. An **advisor** worktree
+(`architect`, `explore`) is removed with one `--force`, discarding
+its untracked spec file, which the read-only rule makes expendable
+once the issue is Done; one `--force` still refuses a **locked**
+tree (a live session), and a commit of its own beyond
+`origin/main` holds it, since a read-only session never makes one.
+A pre-marker explore worktree has no marker and so gets the
+executor gate. A worded `ceo-<topic>` or `exp-<name>` worktree
+matches no issue: it is reported as unresolvable, never removed. A
+canceled issue whose PR is still open is always flagged, never
+pruned.
 
 **Two costs of sharing the number with `task <n>`, both worth
 knowing before relying on the inheritance:**
@@ -1398,14 +1417,15 @@ knowing before relying on the inheritance:**
   and keeps its recorded substrate; a `helper` `.tier` hands the
   resume to `chore <n>`, since a chore has no worktree to resolve.
   (This closed the first part of ENG-1402.)
-- **No substrate marker is written for an explore session**, and
-  that is deliberate rather than an omission. The marker keys on
-  the **worktree tag alone**, which `task <n>` also writes — so
-  writing one here would let `explore 1196` flip a `bedrock`
-  marker to `seat` and make the next `task resume 1196` resume
-  the *implementation* session on the seat, silently. An absent
-  marker already reads as anthropic and as the advisor tier,
-  which is what this verb runs.
+- **An explore session writes its marker only where none
+  exists.** The marker keys on the **worktree tag alone**, which
+  `task <n>` also writes — so an unconditional write would let
+  `explore 1196` flip a `bedrock` marker to `seat` and make the
+  next `task resume 1196` resume the *implementation* session on
+  the seat, silently; an architect thread's marker is left alone
+  likewise. Writing one at all (`anthropic`, advisor `.tier`) is
+  what lets the pruner lift the executor gate and the fleet cost
+  tool meter the session as seat rather than unattributed.
 
 Both are the same root: `<n>` is not a single-owner namespace. It
 names a worktree several session kinds can claim, with different
@@ -1428,8 +1448,8 @@ Bedrock cannot resolve, is skipped with a note): the first chore's tab
 403'd on every turn (the agent identity lacked the Marketplace
 actions that enable the helper model) and only looked alive.
 `models check` cannot catch that, since a control-plane read passes
-for a model the account may not invoke. Unlike `explore` it **does**
-write a substrate marker, with a `helper` `.tier` beside it, so
+for a model the account may not invoke. It writes a substrate
+marker with a `helper` `.tier` beside it, so
 `task resume <n>` — and so `fleet` — hands back to `chore <n>`,
 which resumes by its computed id on the recorded substrate. A chore
 and a task are
@@ -1439,9 +1459,9 @@ guarantee, a `task` session's marker is left alone, exactly as
 `architect` leaves it. It is idempotent like
 `explore`, so it takes no `resume` word.
 
-There is **no branch to rename and no PR to open** — the worktree does
-arrive on a `worktree-<tag>` branch, as any git worktree must; these
-sessions simply never rename, commit to, or push it. A spec file,
+There is **no PR to open** — the worktree arrives on its `eng-<n>`
+branch (see the table above), as any git worktree must carry one;
+these sessions simply never commit to or push it. A spec file,
 when one is warranted at all, sits **untracked** in the worktree
 at `docs/specs/<issue-number>-<topic>.md` — a bare number,
 matching the existing `docs/specs/1313-mainnet-laptop.md`; the
@@ -2193,11 +2213,11 @@ drives the real zsh functions.
 
   The session, tab and worktree are all the bare number, like every
   issue-keyed session; a topic is refused with a pointer to file or
-  name the issue first. The branch exists because `claude -w` creates a
-  git worktree and a git worktree always carries one (it arrives as
-  `worktree-<n>`); what these sessions never do is **rename, commit to,
-  or push** it — which is why the pruner ties `worktree-<n>` to its
-  issue too.
+  name the issue first. The branch exists because a git worktree always
+  carries one — `eng-<n>`, per the naming table under "Architect and
+  explore sessions"; what these sessions never do is **commit to or
+  push** it, which is why the pruner gates them by tier rather than by
+  pushed state.
 
   All four standing verbs share one core, `_ds_session`, which takes
   an already-computed id — `plan` and `housekeeping` hand it a daily id,

@@ -93,13 +93,29 @@ class ClassifyTests(unittest.TestCase):
         # branch stays `worktree-<n>` — and the one rule must still reach it
         # once the issue is Done, while it is In Review it survives.
         eligible, flags = eligible_branches(
-            {"worktree-1572", "worktree-eng-9", "worktree-1600", "worktree-ceo-7"},
+            {
+                "worktree-1572",
+                "worktree-eng-9",
+                "worktree-1600",
+                "worktree-ceo-7",
+                "worktree-exp-8",
+                "worktree-exp-audit",
+            },
             {},
-            {1572: "completed", 9: "canceled", 1600: "started"},
+            {1572: "completed", 9: "canceled", 1600: "started", 7: "completed"},
         )
-        self.assertEqual(eligible, {"worktree-1572", "worktree-eng-9"})
-        # A pre-rename role-prefixed branch is grandfathered: reported, kept.
-        self.assertEqual(flags, ["worktree-ceo-7: issue unresolvable"])
+        # A pre-rename role-prefixed branch resolves by its number too; an
+        # issue with no reading (8) or a worded name is reported, never removed.
+        self.assertEqual(
+            eligible, {"worktree-1572", "worktree-eng-9", "worktree-ceo-7"}
+        )
+        self.assertEqual(
+            flags,
+            [
+                "worktree-exp-8: issue unresolvable",
+                "worktree-exp-audit: issue unresolvable",
+            ],
+        )
 
 
 class ReportTests(unittest.TestCase):

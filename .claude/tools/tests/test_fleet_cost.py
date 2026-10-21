@@ -164,6 +164,44 @@ class WalkTest(unittest.TestCase):
         self.assertAlmostEqual(costs["ENG-1651"], 2 * ONE_MESSAGE)
         self.assertAlmostEqual(costs["ENG-1073"], ONE_MESSAGE)
 
+    def test_every_substrate_carries_its_issue(self) -> None:
+        # The seat worktree (1700) and the unmarked one (1999) are keyed to
+        # their issues the same way the Bedrock ones are, and listed, not priced.
+        self.assertEqual(
+            fc.issue_session_counts(self.meter, [DAY], fc.SEAT),
+            [("(no issue)", 1), ("ENG-1700", 1)],
+        )
+        self.assertEqual(
+            fc.issue_session_counts(self.meter, [DAY], fc.UNATTRIBUTED),
+            [("ENG-1701", 1), ("ENG-1999", 1)],
+        )
+
+    def test_a_base_checkout_chore_is_keyed_by_its_bootstrap_prompt(self) -> None:
+        base = str(Path(self.tmp.name) / "repo")
+        prompt = json.dumps(
+            {
+                "type": "user",
+                "cwd": base,
+                "timestamp": f"{DAY}T11:59:00.000Z",
+                "message": {
+                    "role": "user",
+                    "content": "<command-message>chore</command-message>\n"
+                    "<command-name>/chore</command-name>\n"
+                    "<command-args>2031</command-args>",
+                },
+            }
+        )
+        self.write(self.projects / "seat" / "s7.jsonl", [prompt, record("msg_g", base)])
+        meter = fc.walk(self.projects, [DAY])
+        self.assertIn(("ENG-2031", 1), fc.issue_session_counts(meter, [DAY], fc.SEAT))
+
+    def test_issue_of_reads_every_pre_rename_spelling(self) -> None:
+        for tag in ("1651", "eng-1651", "ceo-1651", "exp-1651"):
+            cwd = f"/repo/.claude/worktrees/{tag}"
+            self.assertEqual(fc.issue_of(cwd), "ENG-1651", tag)
+        self.assertEqual(fc.issue_of_prompt("/architect ENG-1572"), "ENG-1572")
+        self.assertIsNone(fc.issue_of_prompt("look at the plan"))
+
     def test_stale_transcript_is_skipped_unread(self) -> None:
         stale = self.projects / "bedrock" / "s2.jsonl"
         os.utime(stale, (0, 0))
