@@ -1281,6 +1281,14 @@ dashboard-sql-lint:
 session-metrics:
 	python3 .claude/tools/session_metrics.py --session-id $(SESSION) $(ARGS)
 
+# Measure the merge-queue critical path, per-job durations and failed entries
+# from GitHub Actions run data (the ci-infra audit's instrument; see
+# docs/ci.md § 4). Reads through an authenticated `gh`. Pass flags via ARGS,
+# e.g. `make ci-metrics ARGS='--days 14 --cache /tmp/ci.json --steps Tests'`.
+.PHONY: ci-metrics
+ci-metrics:
+	python3 .claude/tools/ci_metrics.py $(ARGS)
+
 # Run every Python skill-tool's unit tests (stdlib `unittest`, no third-party
 # dep). Covers the `.claude/tools/` skill helpers (tests live under
 # `.claude/tools/tests/`) plus the Python under `.claude/scripts/` (the iTerm
