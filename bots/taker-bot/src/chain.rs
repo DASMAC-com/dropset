@@ -305,8 +305,9 @@ pub struct SizedSwap {
     pub depth_capped: bool,
 }
 
-/// The market's current reference price (quote-per-base) as a float, taken
-/// from the first active, validly-priced vault. `None` if no vault is quoting.
+/// The market's current reference price as a float atoms ratio (quote atoms
+/// per base atom, not a display price), taken from the first active,
+/// validly-priced vault. `None` if no vault is quoting.
 fn market_reference_price(view: &MarketView<'_>) -> Option<f64> {
     view.active_vaults().find_map(|(_, v)| {
         // The matcher's own gate, shared rather than re-derived: a maker that
@@ -393,10 +394,14 @@ pub fn size_against_book(
 ) -> Option<SizedSwap> {
     let price = market_reference_price(view)?;
 
-    // Convert the quote notional into the input leg's atoms.
+    // Convert the quote notional into the input leg's atoms. `price` is an
+    // atoms ratio (quote atoms per base atom), not a display price, so a Sell
+    // divides the notional's *quote atoms* by it; dividing whole tokens and
+    // rescaling by base decimals is off by 10^(base − quote decimals).
+    let notional_quote_atoms = to_atoms(order.notional, market.quote_decimals);
     let requested_in = match order.side {
-        SwapSide::Buy => to_atoms(order.notional, market.quote_decimals),
-        SwapSide::Sell => to_atoms(order.notional / price, market.base_decimals),
+        SwapSide::Buy => notional_quote_atoms,
+        SwapSide::Sell => (notional_quote_atoms as f64 / price) as u64,
     };
     if requested_in == 0 {
         return None;
@@ -609,14 +614,19 @@ mod tests {
     /// `MarketAddrs` for the synthetic market — only the decimals matter to
     /// [`size_against_book`]; the addresses are never dereferenced.
     fn addrs() -> MarketAddrs {
+        addrs_with(DECIMALS, DECIMALS)
+    }
+
+    /// [`addrs`] with the given per-leg decimals.
+    fn addrs_with(base_decimals: u8, quote_decimals: u8) -> MarketAddrs {
         MarketAddrs {
             market: Pubkey::new_unique(),
             base_mint: Pubkey::from([1u8; 32]),
             quote_mint: Pubkey::from([2u8; 32]),
             base_treasury: Pubkey::new_unique(),
             quote_treasury: Pubkey::new_unique(),
-            base_decimals: DECIMALS,
-            quote_decimals: DECIMALS,
+            base_decimals,
+            quote_decimals,
         }
     }
 
@@ -627,6 +637,16 @@ mod tests {
     /// header, slab length, then `VAULT_ALIGN`-aligned sectors) the way the
     /// SDK's own adapter tests do. An empty slice leaves that side empty.
     fn market_bytes(asks: &[(Price, u64)], bids: &[(Price, u64)], inventory_atoms: u64) -> Vec<u8> {
+        market_bytes_at(px(0), asks, bids, inventory_atoms)
+    }
+
+    /// [`market_bytes`] with the vault's reference price set to `reference`.
+    fn market_bytes_at(
+        reference: Price,
+        asks: &[(Price, u64)],
+        bids: &[(Price, u64)],
+        inventory_atoms: u64,
+    ) -> Vec<u8> {
         let mut header = MarketHeader::zeroed();
         header.head = 0u32.into();
         header.active_count = 1u32.into();
@@ -637,7 +657,7 @@ mod tests {
         v.next = NULL_SECTOR.into();
         v.prev = NULL_SECTOR.into();
         v.leader = [9u8; 32]; // non-zero ⇒ active, not on the free list
-        v.reference_price.price = px(0).as_u32().into();
+        v.reference_price.price = reference.as_u32().into();
         v.reference_price.stamp = 1u64.into(); // nonce 1, FLUSH_BIT clear ⇒ read `remaining`
         v.base_atoms = inventory_atoms.into();
         v.quote_atoms = inventory_atoms.into();
@@ -805,6 +825,49 @@ mod tests {
         let swap = size(SwapSide::Sell, 100.0, 0, 1_000_000, 0.25).expect("fills");
         assert_eq!(swap.amount_in, 250_000);
         assert!(swap.depth_capped);
+    }
+
+    /// With unequal decimals (a 9-decimal base against a 6-decimal quote, the
+    /// tGBP-USDC shape) the reference price is an atoms ratio ~1000× below the
+    /// display price, and a Sell must be sized off that ratio. A $1 Sell against
+    /// a $10 bid is then uncapped and its input is worth its notional at the
+    /// reference; reading the ratio as a display price instead asks for ~1000×
+    /// the base, which the depth cap silently clamps to a quarter of the book.
+    #[test]
+    fn sell_with_unequal_decimals_sizes_off_the_atoms_ratio() {
+        // Display 1.324 quote per base ⇒ 1.324e-3 quote atoms per base atom.
+        let reference = Price::from_value(1.324e-3).expect("encodable price");
+        let bids = [(reference, 10_000_000)]; // $10 of USDC bid
+        let data = market_bytes_at(reference, &[], &bids, INVENTORY_ATOMS);
+        let view = MarketView::load(&data).expect("synthetic market decodes");
+        let order = Order {
+            side: SwapSide::Sell,
+            notional: 1.0,
+        };
+        let swap = size_against_book(
+            &view,
+            &addrs_with(9, 6),
+            &order,
+            0.01,
+            0.25,
+            NOW_SLOT,
+            NOW_UNIX,
+        )
+        .expect("fills");
+
+        // $1 is 1_000_000 quote atoms; at the ratio that is ~0.755 base tokens.
+        assert_eq!(
+            swap.amount_in,
+            (1_000_000.0 / reference.to_f64()) as u64,
+            "the sampled $1 in base atoms",
+        );
+        assert!(!swap.depth_capped, "a $1 take fits inside a $10 book");
+        // Filled at the reference, the base paid in returns ~the $1 notional.
+        assert!(
+            swap.expected_out.abs_diff(1_000_000) <= 1_000,
+            "expected_out {} ≈ $1",
+            swap.expected_out,
+        );
     }
 
     /// Nothing resting on the taken side means no depth and so no take — the
