@@ -16,7 +16,7 @@ import { DROPSET_PROGRAM_ADDRESS } from './generated';
 
 /** The mainnet program id, mirrored from `keys/dropset-mainnet.pubkey`. */
 export const DROPSET_MAINNET_PROGRAM_ADDRESS = address(
-  'FXv1Dsy4CL5UvvkAAcPmzHZCvaotJMi9TfYLraj99KUL',
+  'eBookZxYPxRsgi48cYW6wCaaae3XKe2ezsSfA8aVoLT',
 );
 
 /** The clusters the program is deployed on. */

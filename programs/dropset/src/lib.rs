@@ -41,7 +41,7 @@ pub use dropset_math_core::clock::{self, SlotSpan, SlotTime, WallSpan, WallTime}
 #[cfg(not(feature = "mainnet"))]
 declare_id!("AAAAz3pYUMwhX1bsEtPx9LSWYbpRM8qrFaQgmKVX6oiV");
 #[cfg(feature = "mainnet")]
-declare_id!("FXv1Dsy4CL5UvvkAAcPmzHZCvaotJMi9TfYLraj99KUL");
+declare_id!("eBookZxYPxRsgi48cYW6wCaaae3XKe2ezsSfA8aVoLT");
 
 // Link the hand-written sBPF entrypoint (`src/asm/entrypoint.s`, expanded
 // into `$OUT_DIR/combined.s` by `build.rs`). It short-circuits the two

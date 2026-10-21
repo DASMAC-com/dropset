@@ -33,6 +33,9 @@ fn declared_under(lib_rs: &str, cfg: &str) -> String {
 
 #[test]
 fn mainnet_id_matches_the_public_key_file_and_the_program() {
+    // The operator-ground eBook vanity key.
+    assert!(DROPSET_MAINNET_ID.to_string().starts_with("eBook"));
+
     let file = repo_file("keys/dropset-mainnet.pubkey");
     assert_eq!(file.trim(), DROPSET_MAINNET_ID.to_string());
 
