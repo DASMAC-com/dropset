@@ -1386,6 +1386,13 @@ mod tests {
         let lines = drift_lines(&lifted, &LEGS, &Fair::Off, None);
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines[1].starts_with("no ask rests"), "{lines:?}");
+        let mut hit = spaced_vault(false);
+        for p in &mut hit.remaining.bids {
+            p.size = 0.into();
+        }
+        let lines = drift_lines(&hit, &LEGS, &Fair::Off, None);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[1].starts_with("no bid rests"), "{lines:?}");
         // Before the stamp's flush everything rests as posted.
         let mut armed = spaced_vault(true);
         armed.remaining.asks = Zeroable::zeroed();

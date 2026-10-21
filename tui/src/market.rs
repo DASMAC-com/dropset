@@ -135,7 +135,8 @@ pub enum Posture {
     /// Seeded with the opening ladder and quoted by its maker bot.
     Active,
     /// Seeded with the passive-tight-8 book and run with no maker: the
-    /// operator re-centers it from the passive form, exactly as on mainnet.
+    /// operator re-centers it from the passive form, exactly as a mainnet
+    /// passive book is run.
     Passive,
 }
 
@@ -269,8 +270,8 @@ const fn passive(config: PairConfig) -> PairConfig {
 
 pub const MARKET_EURC: PairConfig = fx_market("EURC", "keys/EURC.json", 6, 1.14);
 pub const MARKET_VCHF: PairConfig = fx_market("VCHF", "keys/VCHF.json", 9, 1.235);
-// The demo shows tGBP passive beside the rest active — the posture it runs
-// in on mainnet.
+// The demo shows tGBP passive beside the rest active — the posture it is
+// meant to run in on mainnet.
 pub const MARKET_TGBP: PairConfig = passive(fx_market("TGBP", "keys/TGBP.json", 9, 1.324));
 pub const MARKET_ZARP: PairConfig = fx_market("ZARP", "keys/ZARP.json", 6, 0.0605);
 pub const MARKET_MXNE: PairConfig = fx_market("MXNe", "keys/MXNe.json", 9, 0.0573);
@@ -721,13 +722,7 @@ pub fn seed_vault(
     //    Shape only: it rests inert, pricing nothing, until a reference price
     //    is stamped.
     log.log(format!("set_liquidity_profile ({})", posture.label()));
-    let bytes = match posture {
-        Posture::Active => ladder_profile_bytes(
-            &ladder_at_spread_bps(DEFAULT_SPREAD_BPS),
-            config.expiry_offset_secs,
-        ),
-        Posture::Passive => profile_bytes(&build_profile(&TightLadder::default().levels())),
-    };
+    let bytes = seed_profile(posture, config.expiry_offset_secs);
     let ix = set_liquidity_profile_ix(
         cluster.deployment(),
         quote.pubkey(),
@@ -791,6 +786,18 @@ pub fn seed_vault(
     )
     .context("deposit_leader")?;
     Ok(())
+}
+
+/// The opening ladder [`seed_vault`] writes for `posture`: the default-spread
+/// seed ladder with `expiry_secs` for an active market, the passive-tight-8
+/// book at its defaults for a passive one.
+pub fn seed_profile(posture: Posture, expiry_secs: WallSpan) -> [u8; PROFILE_BYTES] {
+    match posture {
+        Posture::Active => {
+            ladder_profile_bytes(&ladder_at_spread_bps(DEFAULT_SPREAD_BPS), expiry_secs)
+        }
+        Posture::Passive => profile_bytes(&build_profile(&TightLadder::default().levels())),
+    }
 }
 
 /// Load a checked-in keypair named relative to the repo root.
@@ -1240,5 +1247,19 @@ mod tests {
         assert_eq!(postures.toggle("NOPE"), None);
         assert_eq!(postures.of("NOPE"), Posture::Active);
         assert!(MAINNET_PAIRS.iter().all(|c| c.posture == Posture::Active));
+    }
+
+    /// A passive market opens on the shared tight ladder, never the active
+    /// seed — the same bytes the passive form's default deploy writes.
+    #[test]
+    fn a_passive_seed_is_the_tight_ladder_and_an_active_one_is_unchanged() {
+        let tight = profile_bytes(&build_profile(&TightLadder::default().levels()));
+        assert_eq!(seed_profile(Posture::Passive, WallSpan::UNBOUNDED), tight);
+        let active = ladder_profile_bytes(
+            &ladder_at_spread_bps(DEFAULT_SPREAD_BPS),
+            WallSpan::UNBOUNDED,
+        );
+        assert_eq!(seed_profile(Posture::Active, WallSpan::UNBOUNDED), active);
+        assert_ne!(active, tight);
     }
 }

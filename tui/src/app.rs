@@ -845,7 +845,14 @@ impl App {
     /// and a deposit reads the flipped one. On a market already seeded, going
     /// passive stops its maker — post the passive book with `p` — and going
     /// active leaves the resting book for its maker's first quote to replace.
+    ///
+    /// Localnet only, like the bot toggles: a mainnet vault is seeded through
+    /// the ceremony, and a flip here would change what that deposit writes
+    /// without the plan ever saying so.
     fn toggle_posture(&mut self) {
+        if self.refuse_on_mainnet("Posture") {
+            return;
+        }
         let Some(symbol) = self.selected_symbol() else {
             self.log(LogKind::Err, "No market selected.".to_string());
             return;
@@ -859,6 +866,7 @@ impl App {
         };
         if posture == market::Posture::Passive && self.bots.is_running(symbol) {
             self.bots.stop(symbol);
+            self.log(LogKind::Ok, format!("[{symbol}] bot stopped"));
         }
         self.log(
             LogKind::Ok,

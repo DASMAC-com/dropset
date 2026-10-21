@@ -139,7 +139,10 @@ impl FairDb {
         let row = rows.into_iter().find(|r| r.product_id == product)?;
         (row.price.is_finite() && row.price > 0.0).then(|| Spot {
             price: row.price,
-            age_secs: dropset_sdk::time::now_unix() - row.observed_at,
+            // A writer clock ahead of this one reads as fresh, not negative.
+            age_secs: dropset_sdk::time::now_unix()
+                .saturating_sub(row.observed_at)
+                .max(0),
         })
     }
 

@@ -2013,7 +2013,7 @@ pub(crate) fn do_deposit(
         market::Posture::Passive => "its first re-center (c)",
     };
     Ok(Outcome::Done(format!(
-        "{} vault seeded {} — dark until {until}",
+        "{} vault seeded with the {} ladder — dark until {until}",
         config.base.symbol,
         posture.label()
     )))

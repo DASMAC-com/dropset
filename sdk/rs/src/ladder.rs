@@ -285,7 +285,8 @@ impl TightLadder {
                 inner = offset_ppm;
                 LadderLevel {
                     offset_ppm,
-                    flip_spread_ppm: (gap * u64::from(self.flip_fraction_pct) / 100) as u32,
+                    flip_spread_ppm: u32::try_from(gap * u64::from(self.flip_fraction_pct) / 100)
+                        .unwrap_or(u32::MAX),
                     size_bps: size as u16,
                     expiry_offset_secs: self.expiry_secs,
                     expiry_offset_slots: SlotSpan::UNBOUNDED,

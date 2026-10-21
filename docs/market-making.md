@@ -606,7 +606,8 @@ Properties:
 ### The shape differs by mode
 
 The bot runs in one of two modes (`--passive` selects the second; the
-demo runs active):
+demo's bots run active, and the TUI seeds tGBP passive with no bot at
+all, re-centered by hand):
 
 - **Active** re-quotes continuously, on the ladder above. Its levels do
   not flip (`flip_spread_ppm = 0`), since a bot that re-stamps every
@@ -765,8 +766,8 @@ mode has **no heartbeat** on either path. One `SetReferencePrice`
 re-centers when **any** of:
 
 1. Price has walked beyond the inner K levels on one side
-   (`recenter_inner_levels`, 3 in passive mode — the tip and the bell's
-   first two rungs: past 10 bps on the default ladder). The walk is
+   (`recenter_inner_levels`, default 2; 3 in passive mode — the tip and
+   the bell's first two rungs: past 10 bps on the default ladder). The walk is
    the fair **mid** against the mid at the last stamp, never the
    skewed reference, so an inventory-skew shift (which the book's own
    flip fills cause) does not re-center a calm market.
