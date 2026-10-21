@@ -61,6 +61,19 @@ class ApprovalTimeTests(unittest.TestCase):
     def test_null_reaction_data_is_no_approval(self):
         self.assertIsNone(lg.approval_time(None, OPERATOR))
 
+    def test_the_glyph_form_is_an_approval_too(self):
+        data = [
+            {
+                "emoji": "\N{THUMBS UP SIGN}",
+                "reactions": [{"userId": OPERATOR, "reactedAt": "T2"}],
+            }
+        ]
+        self.assertEqual(lg.approval_time(data, OPERATOR), "T2")
+
+    def test_a_thumbs_up_without_a_timestamp_still_approves(self):
+        data = [{"emoji": "+1", "reactions": [{"userId": OPERATOR}]}]
+        self.assertEqual(lg.approval_time(data, OPERATOR), "unknown time")
+
 
 class ApprovalsTests(unittest.TestCase):
     def test_an_approved_issue_exits_zero(self):
@@ -84,6 +97,33 @@ class ApprovalsTests(unittest.TestCase):
         self.assertEqual(out, "")
         self.assertIn("ENG-9 did not resolve", err)
 
+    def test_a_malformed_issue_is_an_error_not_unapproved(self):
+        code, out, _, _ = _run(["approvals", "ENG-9"], [{"issue": ["x"]}])
+        self.assertEqual(code, lg.EXIT_ERROR)
+        self.assertEqual(out, "")
+
+    def test_a_failure_mid_batch_prints_nothing_and_exits_two(self):
+        code, out, _, _ = _run(
+            ["approvals", "ENG-1", "ENG-2"],
+            [_issue("ENG-1", _thumbs(OPERATOR)), {"issue": None}],
+        )
+        self.assertEqual(code, lg.EXIT_ERROR)
+        self.assertEqual(out, "")
+
+    def test_an_unexpected_exception_exits_two(self):
+        code, out, err, _ = _run(["approvals", "ENG-1"], [RuntimeError("boom")])
+        self.assertEqual(code, lg.EXIT_ERROR)
+        self.assertEqual(out, "")
+        self.assertIn("unexpected RuntimeError", err)
+        self.assertNotIn("boom", err)
+
+    def test_the_requested_identifier_is_printed_not_the_servers(self):
+        _, out, _, post = _run(
+            ["approvals", "ENG-1"], [_issue("ENG-777", _thumbs(OPERATOR, "T1"))]
+        )
+        self.assertEqual(out, "APPROVED ENG-1 T1\n")
+        self.assertEqual(post.call_args.args[2], {"id": "ENG-1"})
+
 
 class ResolveTests(unittest.TestCase):
     def test_a_resolved_thread(self):
@@ -97,18 +137,22 @@ class ResolveTests(unittest.TestCase):
         )
 
     def test_the_resolving_comment_is_optional(self):
-        _, out, _, post = _run(
+        code, out, _, post = _run(
             ["resolve", "c-1"], [{"commentResolve": {"success": True}}]
         )
+        self.assertEqual(code, 0)
         self.assertEqual(out, "RESOLVED c-1\n")
         self.assertIsNone(post.call_args.args[2]["resolvingCommentId"])
 
     def test_an_unsuccessful_resolve_is_an_error(self):
-        code, _, err, _ = _run(
-            ["resolve", "c-1"], [{"commentResolve": {"success": False}}]
-        )
-        self.assertEqual(code, lg.EXIT_ERROR)
-        self.assertIn("commentResolve failed", err)
+        for payload in ({"success": False}, "x", None):
+            with self.subTest(payload=payload):
+                code, out, err, _ = _run(
+                    ["resolve", "c-1"], [{"commentResolve": payload}]
+                )
+                self.assertEqual(code, lg.EXIT_ERROR)
+                self.assertEqual(out, "")
+                self.assertIn("commentResolve failed", err)
 
     def test_dry_run_sends_nothing(self):
         code, out, _, post = _run(["resolve", "c-1", "--dry-run"], [])

@@ -519,10 +519,11 @@ tail**, so the operator's Done on the first issue does not
 release work that needs the whole. The re-point is this
 session's write, never the worker's.
 
-**Dispatching is the other half.** A comment thread folded into a
-body is resolved last (`linear_gate.py resolve <comment-id>`); offer
-an unblocked task only once `linear_gate.py approvals <n>…` shows
-the operator's thumbs-up (exit 1 if none), and on their yes:
+**Dispatching is the other half.** A fold's last step resolves
+each folded comment thread (`linear_gate.py resolve <comment-id>`);
+offer an unblocked task only once `linear_gate.py approvals <n>…`
+shows the operator's thumbs-up (exit 1 if any lacks one), and on
+their yes:
 
 ```sh
 python3 .claude/tools/session_dispatch.py task 1234

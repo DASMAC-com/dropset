@@ -904,15 +904,15 @@ they differ in whether the issue is a flag or a positional. Guessed
 wrong, each call exits 2, usually on the fallback path after an MCP
 failure, which is the worst moment for it:
 
-| call                       | arguments                                  |
-| -------------------------- | ------------------------------------------ |
-| `board_batch.py state`     | `--id ENG-###`, `--state <name>`           |
-| `linear_issue.py append`   | `--id ENG-###`, one of `--file` / `--text` |
-| `linear_patch.py read`     | `ENG-###` (positional), `--out <file>`     |
-| `linear_patch.py patch`    | `ENG-###` (positional), `--ops <file>`     |
-| `linear_patch.py comment`  | `ENG-###` (positional), `--body <file>`    |
-| `linear_gate.py resolve`   | comment id, optional resolving comment id  |
-| `linear_gate.py approvals` | `ENG-###` … (positional, one or more)      |
+| call                       | arguments                                      |
+| -------------------------- | ---------------------------------------------- |
+| `board_batch.py state`     | `--id ENG-###`, `--state <name>`               |
+| `linear_issue.py append`   | `--id ENG-###`, one of `--file` / `--text`     |
+| `linear_patch.py read`     | `ENG-###` (positional), `--out <file>`         |
+| `linear_patch.py patch`    | `ENG-###` (positional), `--ops <file>`         |
+| `linear_patch.py comment`  | `ENG-###` (positional), `--body <file>`        |
+| `linear_gate.py resolve`   | comment id, optional resolving id (positional) |
+| `linear_gate.py approvals` | `ENG-###` … (positional, one or more)          |
 
 Every one takes `--dry-run` except `linear_patch.py read` and
 `linear_gate.py approvals`, a read. `linear_gate.py` is the

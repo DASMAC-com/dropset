@@ -6,8 +6,9 @@ spec with a thumbs-up on the issue, and closes a folded comment thread by
 resolving it. Neither is reachable through the MCP — ``get_issue`` and
 ``list_comments`` return no reactions, and nothing resolves a thread — so both
 ran for two days as scratchpad scripts, a dozen times each, before the ruling
-that a working shape is committed rather than re-typed. These are those scripts,
-behavior unchanged, on the shared transport.
+that a working shape is committed rather than re-typed. These are those scripts
+on the shared transport, with one change: they now fail closed, refusing where
+the scripts printed whatever came back.
 
 Subcommands
 -----------
@@ -36,8 +37,9 @@ import sys
 
 import linear_api
 
-# Linear stores the thumbs-up as its shortcode. The glyph is accepted too, so a
-# reaction written through another client cannot silently read as unapproved.
+# Linear stores the thumbs-up as its shortcode. The bare glyph is accepted too,
+# in case another client writes it; any other form reads as unapproved, which
+# fails closed.
 APPROVAL_EMOJI = frozenset({"+1", "\N{THUMBS UP SIGN}"})
 
 EXIT_UNAPPROVED = 1
@@ -91,17 +93,18 @@ def cmd_approvals(
     all_approved = True
     for identifier in identifiers:
         issue = _post(api_key, _REACTIONS_QUERY, {"id": identifier}).get("issue")
-        if not issue:
+        if not isinstance(issue, dict):
             raise LinearGateError(
                 f"{identifier} did not resolve — it may be archived, deleted, or misspelled"
             )
         when = approval_time(issue.get("reactionData"), user_id)
-        name = issue.get("identifier") or identifier
+        # The requested identifier, not the server's: a caller matching lines
+        # to the issues it asked about must never see a different name.
         if when is None:
             all_approved = False
-            lines.append(f"UNAPPROVED {name}")
+            lines.append(f"UNAPPROVED {identifier}")
         else:
-            lines.append(f"APPROVED {name} {when}")
+            lines.append(f"APPROVED {identifier} {when}")
     return lines, all_approved
 
 
@@ -116,7 +119,8 @@ def cmd_resolve(
         _RESOLVE_MUTATION,
         {"id": comment_id, "resolvingCommentId": resolving_id},
     )
-    if not (data.get("commentResolve") or {}).get("success"):
+    result = data.get("commentResolve")
+    if not (isinstance(result, dict) and result.get("success")):
         raise LinearGateError(f"commentResolve failed for {comment_id}")
     return f"RESOLVED {comment_id}{suffix}"
 
@@ -162,6 +166,12 @@ def run(argv: list[str]) -> int:
             all_approved = True
     except LinearGateError as exc:
         print(f"linear-gate: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    except Exception as exc:  # noqa: BLE001
+        # An uncaught exception exits 1, which a dispatch wrapper reads as
+        # "unapproved". Anything unforeseen is an error, exit 2. The type alone
+        # is printed: an unchecked message could quote a header value.
+        print(f"linear-gate: unexpected {type(exc).__name__}", file=sys.stderr)
         return EXIT_ERROR
     for line in lines:
         print(line)
