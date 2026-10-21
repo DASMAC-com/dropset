@@ -510,6 +510,12 @@ const HEAP_CEILING_LEGS: usize = 16;
 /// derives from).
 const DEFAULT_BUDGET_LEGS: usize = 14;
 
+/// Ceiling on a cold take that strands one atom at the heap ceiling. It
+/// measures about 200k to 212k CU; were the atom left over to walk the
+/// rest of the book rather than end the take, the 64 entries a side has
+/// left after sixteen legs would add ~2.4k CU each, well past this.
+const STRANDED_TAKE_CU: u64 = 250_000;
+
 /// The costliest take: a take on a cold ten-vault book (every vault flushed
 /// in the same transaction) sized leg by leg to the heap ceiling, on each
 /// side, with and without one atom stranded past its last leg. The deepest
@@ -547,12 +553,17 @@ fn a_cold_take_at_the_heap_ceiling_fits_the_swap_compute_budget() {
             "side {side}: a take stranding one atom failed where the exact take \
              completed: {stopped_by}"
         );
-        let Some((stranded_legs, _)) = stranded else {
+        let Some((stranded_legs, stranded_cu)) = stranded else {
             panic!("side {side}: no take stranding one atom completed");
         };
         assert_eq!(
             stranded_legs, HEAP_CEILING_LEGS,
             "side {side}: a take stranding one atom should complete {HEAP_CEILING_LEGS} legs"
+        );
+        assert!(
+            stranded_cu < STRANDED_TAKE_CU,
+            "side {side}: the take stranding one atom used {stranded_cu} CU, over the \
+             {STRANDED_TAKE_CU} it fits without walking the book"
         );
         assert!(
             cu < u64::from(SWAP_COMPUTE_UNIT_LIMIT),

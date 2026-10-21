@@ -20,7 +20,7 @@
 //!
 //! - the costliest take: a cold book (every vault flushed in the same
 //!   transaction) taken to the heap ceiling, sixteen legs, with or without a
-//!   one-atom remainder left over, about 200k to 220k CU (it varies with the
+//!   one-atom remainder left over, just over 200k to about 220k CU (it varies with the
 //!   keys a run derives) — over the 200k a bare `swap` gets, which covers the
 //!   first fourteen or fifteen legs (the test pins at least fourteen), and
 //!   under [`SWAP_COMPUTE_UNIT_LIMIT`]. A remainder stranded at the ceiling
