@@ -471,23 +471,37 @@ define open-browser
 		&& $$opener http://localhost:$(1) ) >/dev/null 2>&1 &
 endef
 
+# The frontend's server-side API keys (DFLOW_API_KEY, JUPITER_API_KEY) sit in
+# the git-ignored frontend/.env.local as `op://` references, never values. When
+# that file carries one, the dev server runs under `op run`, which resolves the
+# references into the child's environment only; a process env var wins over
+# .env files in Next, so the resolved value is what the route handlers read.
+# With no reference there is no `op` dependency at all, and the keys stay
+# unset (the keyless default). A bare `pnpm dev` over a referencing file hands
+# the route handlers the literal reference, which they refuse.
+FRONTEND_OP_REF = $(shell grep -qs '^[^\#]*op://' frontend/.env.local && echo 1)
+FRONTEND_OP = \
+	$(if $(FRONTEND_OP_REF),op run $(OP_ACCT) --env-file=.env.local --,)
+
 # Run next dev and open the browser once it's accepting connections.
 .PHONY: frontend
 frontend: check-pnpm
 	cd frontend && pnpm install
 	$(call open-browser,3000)
-	cd frontend && pnpm dev
+	cd frontend && $(FRONTEND_OP) pnpm dev
 
 # Run the frontend against a local validator and open the browser once it's up:
 # the localnet cluster + local RPC/WS, overriding the mainnet endpoints in
 # .env.local (a process env var wins over .env files in Next). Assumes a
 # validator is up with the markets seeded, which the `tui` control plane does;
-# run `make tui` alongside this, or use `make demo` to launch both.
+# run `make tui` alongside this, or use `make demo` to launch both. The
+# overrides are set by `env` inside any `op run` (FRONTEND_OP), since op run
+# also exports the file's own NEXT_PUBLIC_ lines into its child.
 .PHONY: frontend-localnet
 frontend-localnet: check-pnpm
 	cd frontend && pnpm install
 	$(call open-browser,3000)
-	cd frontend && NEXT_PUBLIC_CLUSTER=localnet \
+	cd frontend && $(FRONTEND_OP) env NEXT_PUBLIC_CLUSTER=localnet \
 		NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8899 \
 		NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8900 pnpm dev
 

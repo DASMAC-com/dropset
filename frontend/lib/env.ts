@@ -59,18 +59,31 @@ export const IS_LOCALNET = CLUSTER === "localnet";
 export const SHOW_MOCK_VAULTS =
   process.env.NEXT_PUBLIC_SHOW_MOCK_VAULTS?.trim() === "1";
 
-// External APIs. Defaults point at the dev/public endpoints we use today;
-// override to swap in a staging server, a proxy route handler, or an
-// alternative provider without editing hook code.
+// External APIs. With a server-side key set (DFLOW_API_KEY, JUPITER_API_KEY),
+// next.config.ts sets the matching *_PROXY flag and the browser calls the
+// app's own route handler, which adds the key; without one it calls the
+// keyless public endpoint directly, as before the handlers existed. An
+// explicit URL override wins over both, for a staging server or an
+// alternative provider. A route is relative: resolve it with `absoluteUrl`
+// before handing it to `new URL`.
+const DFLOW_PROXY = process.env.NEXT_PUBLIC_DFLOW_PROXY === "1";
+const JUPITER_PROXY = process.env.NEXT_PUBLIC_JUPITER_PROXY === "1";
 export const DFLOW_QUOTE_URL =
   process.env.NEXT_PUBLIC_DFLOW_QUOTE_URL?.trim() ||
-  "https://dev-quote-api.dflow.net/quote";
+  (DFLOW_PROXY ? "/api/dflow/quote" : "https://dev-quote-api.dflow.net/quote");
 export const DFLOW_ORDER_URL =
   process.env.NEXT_PUBLIC_DFLOW_ORDER_URL?.trim() ||
-  "https://dev-quote-api.dflow.net/order";
+  (DFLOW_PROXY ? "/api/dflow/order" : "https://dev-quote-api.dflow.net/order");
 export const JUPITER_SEARCH_URL =
   process.env.NEXT_PUBLIC_JUPITER_SEARCH_URL?.trim() ||
-  "https://lite-api.jup.ag/tokens/v2/search";
+  (JUPITER_PROXY
+    ? "/api/jupiter/search"
+    : "https://lite-api.jup.ag/tokens/v2/search");
+
+// Browser-only: an endpoint above as an absolute URL, against the page's own
+// origin when it is a route.
+export const absoluteUrl = (url: string): string =>
+  new URL(url, window.location.href).toString();
 
 // Max accounts per `getMultipleAccounts` call. Required, provider-specific
 // (PublicNode caps at 10 on their free tier). With a primary set, a call can

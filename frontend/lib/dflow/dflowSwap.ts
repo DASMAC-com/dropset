@@ -11,7 +11,7 @@ import {
   type Transaction,
 } from "@solana/kit";
 import { DFLOW_ORDER_TIMEOUT_MS } from "../data/timings";
-import { DFLOW_ORDER_URL, PLATFORM_FEE } from "../env";
+import { absoluteUrl, DFLOW_ORDER_URL, PLATFORM_FEE } from "../env";
 import { getErrorMessage } from "../guards";
 import { CANCEL_PATTERN, SwapError, type SwapOutcome } from "../swap/types";
 import {
@@ -37,11 +37,11 @@ async function platformFeeParams(
   return { bps: PLATFORM_FEE.bps, feeAccount };
 }
 
-// DFlow's developer endpoint. URL lives in lib/env.ts (DFLOW_ORDER_URL) so
-// dev/prod (or a proxy route handler) can diverge without editing this
-// module. Swap path uses `/order` (the unified imperative endpoint)
-// because it supports both classic SPL and Token-2022 mints — `/intent`
-// doesn't.
+// DFlow's developer endpoint, or the keyed route handler in front of the
+// production one. URL lives in lib/env.ts (DFLOW_ORDER_URL) so the choice
+// stays out of this module. Swap path uses `/order` (the unified imperative
+// endpoint) because it supports both classic SPL and Token-2022 mints —
+// `/intent` doesn't.
 
 export type DflowSwapInput = {
   inputMint: string;
@@ -77,7 +77,7 @@ export async function executeDflowSwap(
     rpc,
   } = input;
 
-  const url = new URL(DFLOW_ORDER_URL);
+  const url = new URL(absoluteUrl(DFLOW_ORDER_URL));
   url.searchParams.set("inputMint", inputMint);
   url.searchParams.set("outputMint", outputMint);
   url.searchParams.set("amount", atomicAmount.toString());

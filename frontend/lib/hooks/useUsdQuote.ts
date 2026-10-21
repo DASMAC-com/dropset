@@ -16,13 +16,14 @@ import { type ParsedJupiterRow, parseJupiterSearchResponse } from "../validate";
 // working — the canonical definition lives in lib/timings.ts.
 export const REFRESH_INTERVAL_MS = TOKEN_INFO_REFRESH_MS;
 
-// Jupiter's keyless Tokens API endpoint lives in lib/env.ts
-// (JUPITER_SEARCH_URL). Hit directly from the browser so each user's IP
-// gets its own rate-limit bucket (1 RPS keyless) instead of every session
-// funneling through our server's single IP. CORS is enabled, no API key
-// required. /tokens/v2/search returns price + market data in a single
-// batched call for up to 100 mints, which we use to power both the swap
-// UI's USD readouts and the /currencies market-data columns.
+// Jupiter's Tokens API endpoint lives in lib/env.ts (JUPITER_SEARCH_URL).
+// Keyless, it is hit directly from the browser so each user's IP gets its own
+// rate-limit bucket (1 RPS keyless) instead of every session funneling
+// through our server's single IP. With a server-side key it is the app's own
+// route handler, which adds the key. /tokens/v2/search returns price +
+// market data in a single batched call for up to 100 mints, which we use to
+// power both the swap UI's USD readouts and the /currencies market-data
+// columns.
 
 // Alias kept for grep-ability in this file; canonical name and rationale
 // live in lib/timings.ts (TOKEN_INFO_TTL_MS).

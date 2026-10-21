@@ -1113,6 +1113,28 @@ here because this section is exactly where someone looks when a
 variable fails to appear, and it once cost a wrong instruction to the
 operator ("re-source your profile and retry", which cannot work).
 
+#### The frontend's server-side API keys
+
+The frontend's route handlers read two optional server-only keys,
+`DFLOW_API_KEY` and `JUPITER_API_KEY`, which lift the per-IP limits a
+crowd behind one venue Wi-Fi would otherwise share. They follow the
+same boundary by a different mechanism: the consumer is a dev server,
+not a session, so `_ds_secrets` does not resolve them. Instead the
+git-ignored `frontend/.env.local` holds each as an `op://` reference
+under the consumer's own name, and whenever that file carries an
+uncommented `op://` line, `make frontend` (and
+`make frontend-localnet`) run the dev server under
+`op run --env-file`, so the value exists only in that process's
+environment. The app refuses an `op://`-prefixed value at startup, and
+each handler answers a 500 per request: that is what a bare `pnpm dev`
+over that file hands them. Under `make demo` the frontend runs in the
+background with its output in a log, so an `op` that cannot authorize
+shows up only there, as a frontend that never comes up. Unset, both
+keys are simply absent and the browser calls the public endpoints
+directly, so a checkout with no 1Password access loses nothing. The
+placeholders and the Vercel set-and-delete step live in
+`frontend/.env.example`.
+
 ### The cargo pool
 
 `.claude/shell/init.zsh` exports two variables (`_ds_cargo_pool`) whenever
