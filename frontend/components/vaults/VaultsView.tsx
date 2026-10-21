@@ -732,9 +732,10 @@ function VaultsInner() {
         open Dropset on a desktop browser to browse vault pairs, leaders, APR
         and TVL.
       </div>
-      {/* Center the toolbar + table as one block and size it to the table's
-          content, so the toolbar (search left, preview right) lines up with
-          the table edges however wide the table ends up. */}
+      {/* Center the toolbar + table as one block, sized to the wider of the
+          two. The table is `w-full` so it fills the block when the toolbar is
+          the wider one (the Pair column, the only one not `w-px`, takes the
+          slack), and `min-w-max` so it scrolls when it is the wider one. */}
       <div className="mx-auto hidden w-fit max-w-full sm:block">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -782,7 +783,7 @@ function VaultsInner() {
           </div>
         )}
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-auto min-w-max text-left text-sm">
+          <table className="w-full min-w-max text-left text-sm">
             <thead className="text-muted-fg text-xs uppercase">
               <tr>
                 <VaultSortHeader
