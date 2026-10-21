@@ -80,11 +80,13 @@ use crate::fx_store::store_reading;
 /// collector this PR does not otherwise touch.
 pub const SOURCE_KRAKEN: &str = "kraken";
 
-/// `spot_ticks.source` for the Orca Whirlpool pool price — the on-chain basis
-/// tape (`market-data/src/bin/orca.rs`).
+/// `spot_ticks.source` for the Orca Whirlpool pool price
+/// (`market-data/src/bin/orca.rs`).
 ///
-/// Unlike [`SOURCE_KRAKEN`], the collector writes under **this** constant rather
-/// than a private copy, so the reader and the writer cannot drift apart.
+/// Public, and the collector writes under it rather than a private copy, so a
+/// future reader of the pool tape joins on the same string by construction —
+/// the drift [`SOURCE_KRAKEN`]'s note describes. Nothing in this crate reads the
+/// series yet.
 pub const SOURCE_ORCA: &str = "orca";
 
 /// The canonical peg series every market's common-mode guard reads.
@@ -222,10 +224,9 @@ impl TickStoreReader {
     /// The peg roster's spelling of [`Self::new`] — one venue, one series.
     ///
     /// Sugar over passing the two constants by hand, kept for the same reason
-    /// [`crate::fx_store::FxStoreSource::fx`] exists: a caller wanting exactly
-    /// the peg series — the store tests do — could otherwise drift from the
-    /// constants. The estimator no longer calls it, since it also reads the
-    /// pool tapes; it builds its roster through [`Self::new`]. Baking a roster in is safe here precisely because
+    /// [`crate::fx_store::FxStoreSource::fx`] exists: every current caller wants
+    /// exactly this, and one assembling the pair itself could drift from the
+    /// constants. Baking a roster in is safe here precisely because
     /// [`Self::new`] remains the unopinionated path.
     pub fn peg(pool: PgPool) -> Self {
         Self::new(

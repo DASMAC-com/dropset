@@ -722,7 +722,7 @@ fn the_extractors_actually_found_every_roster() {
     // what covers that direction — while a scan that stops matching the file's
     // shape still does.
     assert!(
-        compose.len() >= 8,
+        compose.len() >= 9,
         "found PRODUCT_IDS defaults for only {} compose services; the scan has \
          probably stopped matching the file's shape: {:?}",
         compose.len(),

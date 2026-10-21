@@ -1087,20 +1087,27 @@ collector reads a Whirlpool account over JSON-RPC every 15 s and converts its
 square-root price to USDC per token with Orca's SDK; `tGBP-USDC` is its one
 pool today, pinned by address in the roster (`PRODUCT=POOL_ADDRESS`), because
 a lookup by mint pair would let whoever creates the next pool for that pair
-choose which one is read. The estimator offers it on the basis leg beside the
-Coinbase candle, as an **untrusted** tape. The reason is the manipulation
-caveat: a pool price is whatever the last swap left it at, so a thin pool can
-be walked to any value by anyone paying the slippage. Where the candle exists,
-the dispersion gate names a walked pool as the outlier; a market with only
-the pool resolves single-source and unverified.
+choose which one is read. The manipulation caveat is why it never stands
+alone: a pool price is whatever the last swap left it at, so a thin pool can
+be walked to any value by anyone paying the slippage.
+
+**It is recorded, and the estimator does not read it yet.** Offering it on the
+basis leg beside the Coinbase candle as a second untrusted tape gives the leg
+two sources and no majority: when they disagree beyond the dispersion band the
+leg resolves to no reading at all, and the market falls to a degraded regime
+on its last smoothed basis. So a walked pool would be a veto over live
+quoting, which a corroborator must not have. The intake waits for a shape
+where it corroborates without one.
 
 Reachability: the public mainnet-beta endpoint serves it keyless, at one
 `getMultipleAccounts` per pool per poll against a limit of 100 requests per
-10 s per IP. A keyed endpoint (`helius/rpc-url`, §12) goes ahead of it when
-configured, with the public one kept as the fallback on a connection failure,
-a timeout or a 429. Every read starts from the primary, so the collector is
-back on it as soon as it answers again. Endpoints are logged by label, never
-by URL, since the keyed URL carries its API key.
+10 s per IP. A keyed endpoint (the `helius/rpc-url` secret, resolved through
+the local enclave of §12) goes ahead of it when configured, with the public
+one kept as the fallback whenever the keyed one cannot serve: a connection
+failure, a timeout, a 429 or a 5xx, or a refused credential (401, 402, 403).
+Every read starts from the primary, so the collector is back on it as soon as
+it answers again. Endpoints are logged by label, never by URL, since the keyed
+URL carries its API key.
 
 **Pyth is keyed as of 2026-08-26**, and the way that arrived is worth
 recording. The Core upgrade put Hermes behind a bearer token

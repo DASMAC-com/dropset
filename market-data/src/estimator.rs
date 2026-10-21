@@ -14,16 +14,12 @@
 //! a static fallback (`docs/market-making.md` §1); a *published product* has to
 //! be resolved onto the store series that feed each of them:
 //!
-//! | Leg           | Series                         | Table                       |
-//! | ------------- | ------------------------------ | --------------------------- |
-//! | `fx`          | `<CCY>-USD` per FX venue       | `cex_prices`                |
-//! | `crypto_usdc` | the market's own `*-USDC` pair | `cex_prices` + `spot_ticks` |
-//! | `usdc_usd`    | `USDC-USD`, one series         | `spot_ticks`                |
-//! | `static_usd`  | a per-market constant          | — (config)                  |
-//!
-//! The crypto leg reads its pair from both tables: the Coinbase candle from
-//! `cex_prices` and the Orca pool price from `spot_ticks`, each an untrusted
-//! tape (see `crypto_candidates`).
+//! | Leg           | Series                        | Table         |
+//! | ------------- | ----------------------------- | ------------- |
+//! | `fx`          | `<CCY>-USD` per FX venue      | `cex_prices`  |
+//! | `crypto_usdc` | the market's own `*-USDC` pair | `cex_prices`  |
+//! | `usdc_usd`    | `USDC-USD`, one series        | `spot_ticks`  |
+//! | `static_usd`  | a per-market constant         | — (config)    |
 //!
 //! **The peg leg is in the other table, and that is why this crate has two
 //! readers.** `USDC-USD` is written by one collector, `market-data-kraken`, into
@@ -101,9 +97,7 @@ use crate::fx_store::{
     FxStoreSource, FX_STORE_SOURCES, SOURCE_COINBASE,
 };
 use crate::session_fence::{read_spans, session_at, FenceSpans};
-use crate::tick_store::{
-    TickStoreReader, TickStoreRow, SOURCE_KRAKEN, SOURCE_ORCA, USDC_USD_PRODUCT,
-};
+use crate::tick_store::{TickStoreReader, TickStoreRow, SOURCE_KRAKEN, USDC_USD_PRODUCT};
 
 /// How long publishing may keep failing **transiently** before the estimator
 /// halts anyway.
@@ -451,7 +445,6 @@ impl Estimator {
 
         let mut engines = HashMap::with_capacity(markets.len());
         let mut candle_products = Vec::new();
-        let mut tick_products = vec![USDC_USD_PRODUCT.to_string()];
         for m in &markets {
             let fx = m.fx_product().ok_or_else(|| {
                 anyhow!(
@@ -463,7 +456,6 @@ impl Estimator {
             candle_products.push(fx);
             if let Some(crypto) = m.crypto_product {
                 candle_products.push(crypto.to_string());
-                tick_products.push(crypto.to_string());
             }
             if engines
                 .insert(m.product_id, FairValueEngine::new(m.config()))
@@ -493,16 +485,7 @@ impl Estimator {
             ),
             // No name argument, unlike the candle reader above: the tick reader
             // is not a `Source`, so it has no framework identity to label.
-            //
-            // The peg venue plus the on-chain basis tape, over the peg series and
-            // every market's `*-USDC` pair. The reader crosses the two lists, so
-            // it also returns Kraken's `EURC-USDC` — harmless, since each leg
-            // picks its rows by `(source, product_id)` rather than by source.
-            ticks: TickStoreReader::new(
-                pool.clone(),
-                vec![SOURCE_KRAKEN.to_string(), SOURCE_ORCA.to_string()],
-                tick_products,
-            ),
+            ticks: TickStoreReader::peg(pool.clone()),
             pool,
             markets,
             engines,
@@ -707,7 +690,7 @@ impl Estimator {
             .ticks
             .latest()
             .await
-            .context("reading spot_ticks for the peg leg and the pool tapes")?;
+            .context("reading spot_ticks for the USDC/USD peg leg")?;
         let fence = read_spans(&self.pool, self.unix_now())
             .await
             .context("reading fx_session_window for the session fence")?;
@@ -832,13 +815,7 @@ fn build_legs(
 ) -> Legs {
     Legs {
         fx: fx_candidates(market, &snapshot.candles, now_unix, receipt_age),
-        crypto_usdc: crypto_candidates(
-            market,
-            &snapshot.candles,
-            &snapshot.ticks,
-            now_unix,
-            receipt_age,
-        ),
+        crypto_usdc: crypto_candidates(market, &snapshot.candles, now_unix, receipt_age),
         usdc_usd,
         static_usd: market.static_usd,
     }
@@ -872,42 +849,31 @@ fn fx_candidates(
     candidates
 }
 
-/// The crypto reference leg: the market's own `*-USDC` candle series, and the
-/// Orca pool's price for the same pair from `spot_ticks`.
+/// The crypto reference leg: the market's own `*-USDC` candle series.
 ///
-/// Both are offered as **untrusted** tapes. Two that agree resolve the leg as
-/// agreed; either alone resolves it as an explicit single-source state, and the
-/// market composes as [`dropset_fair_value::Regime::Uncorroborated`] — quoted,
-/// and not described as corroborated. Designating either believable-alone would
-/// claim corroboration that does not exist, and for the pool it would be worse:
-/// a pool price is whatever the last swap left it at, so a thin pool can be
-/// walked to any value by anyone paying the slippage. Where the candle exists,
-/// the dispersion gate is what names a walked pool as the outlier.
+/// Offered as an **untrusted** tape. One venue is all this leg has, so the
+/// engine resolves it as an explicit single-source state and the market composes
+/// as [`dropset_fair_value::Regime::Uncorroborated`] — quoted, and no longer
+/// described as corroborated. Designating it believable-alone would claim
+/// corroboration that does not exist.
 ///
 /// Empty for a pinned market, which has no such series. The engine drops a
 /// pinned market's crypto set unconditionally anyway; offering nothing here
 /// means the two agree rather than relying on that.
 fn crypto_candidates(
     market: &EstimatorMarket,
-    candles: &[FxStoreRow],
-    ticks: &[TickStoreRow],
+    rows: &[FxStoreRow],
     now_unix: i64,
     receipt_age: Duration,
 ) -> Candidates {
     let Some(product) = market.crypto_product else {
         return Candidates::none();
     };
-    let candle = candles
+    let reading = rows
         .iter()
         .find(|r| r.source == SOURCE_COINBASE && r.product_id == product)
         .and_then(|r| store_reading(r.close, r.published_at, now_unix, receipt_age));
-    let pool = ticks
-        .iter()
-        .find(|r| r.source == SOURCE_ORCA && r.product_id == product)
-        .and_then(|r| r.reading(now_unix, receipt_age));
-    Candidates::none()
-        .push(SOURCE_COINBASE, candle)
-        .push(SOURCE_ORCA, pool)
+    Candidates::none().push(SOURCE_COINBASE, reading)
 }
 
 /// The portfolio-wide USDC/USD peg leg, from `spot_ticks`.
@@ -1048,7 +1014,7 @@ impl Shutdown {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dropset_fair_value::{Anchor, ConsensusState, FxSession, Regime};
+    use dropset_fair_value::{Anchor, FxSession, Regime};
 
     fn candle(source: &str, product_id: &str, published_at: i64, close: f64) -> FxStoreRow {
         FxStoreRow {
@@ -1196,61 +1162,13 @@ mod tests {
             candle(SOURCE_COINBASE, "EURC-USDC", 1_000, 1.1410),
             candle(SOURCE_COINBASE, "AUDD-USDC", 1_000, 0.7220),
         ];
-        let resolved = crypto_candidates(&eurc(), &rows, &[], 1_060, Duration::from_secs(1))
+        let resolved = crypto_candidates(&eurc(), &rows, 1_060, Duration::from_secs(1))
             .resolve(bounds(), 0.01);
         assert_eq!(
             resolved.reading.map(|r| r.value),
             Some(1.1410),
             "EURC must compose from its own pair, not another market's"
         );
-    }
-
-    fn tick(source: &str, product_id: &str, observed_at: i64, price: f64) -> TickStoreRow {
-        TickStoreRow {
-            source: source.to_string(),
-            product_id: product_id.to_string(),
-            observed_at,
-            price,
-        }
-    }
-
-    fn tgbp() -> EstimatorMarket {
-        PUBLISHED_MARKETS[1]
-    }
-
-    /// The pool tape joins the candle on the basis leg, and two that agree
-    /// resolve it as agreed rather than single-source.
-    ///
-    /// The tick rows also carry Kraken's print of the same pair — the reader
-    /// crosses its two lists — and a same-pair Orca row for another market, so
-    /// the leg has to match on both source and pair to resolve to these two.
-    #[test]
-    fn the_pool_tape_corroborates_the_candle_on_the_basis_leg() {
-        let candles = vec![candle(SOURCE_COINBASE, "TGBP-USDC", 1_000, 1.3370)];
-        let ticks = vec![
-            tick(SOURCE_ORCA, "TGBP-USDC", 1_000, 1.3368),
-            tick(SOURCE_ORCA, "EURC-USDC", 1_000, 1.1410),
-            tick(SOURCE_KRAKEN, "TGBP-USDC", 1_000, 9.9),
-        ];
-        let resolved = crypto_candidates(&tgbp(), &candles, &ticks, 1_060, Duration::from_secs(1))
-            .resolve(bounds(), 0.01);
-        assert_eq!(resolved.state, ConsensusState::Agreed);
-        // A set, because contributors are reported in resolution order rather
-        // than in the order they were offered.
-        let mut names: Vec<&str> = resolved.contributors.iter().map(|c| c.source).collect();
-        names.sort_unstable();
-        assert_eq!(names, vec![SOURCE_COINBASE, SOURCE_ORCA]);
-    }
-
-    /// With no candle, the pool alone is single-source and **unverified** —
-    /// never trusted on its own.
-    #[test]
-    fn the_pool_tape_alone_is_never_trusted() {
-        let ticks = vec![tick(SOURCE_ORCA, "TGBP-USDC", 1_000, 1.3368)];
-        let resolved = crypto_candidates(&tgbp(), &[], &ticks, 1_060, Duration::from_secs(1))
-            .resolve(bounds(), 0.01);
-        assert_eq!(resolved.state, ConsensusState::SingleUnverified);
-        assert_eq!(resolved.reading.map(|r| r.value), Some(1.3368));
     }
 
     /// A pinned market offers no crypto candidate at all.
@@ -1260,8 +1178,7 @@ mod tests {
         // `AUDD-USDC` — so the emptiness has to come from the roster's pin
         // rather than from an absent row.
         let rows = vec![candle(SOURCE_COINBASE, "AUDD-USDC", 1_000, 0.7220)];
-        let ticks = vec![tick(SOURCE_ORCA, "AUDD-USDC", 1_000, 0.7220)];
-        let resolved = crypto_candidates(&audd(), &rows, &ticks, 1_060, Duration::from_secs(1))
+        let resolved = crypto_candidates(&audd(), &rows, 1_060, Duration::from_secs(1))
             .resolve(bounds(), 0.01);
         assert!(
             resolved.reading.is_none(),

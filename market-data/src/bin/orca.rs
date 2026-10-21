@@ -1,10 +1,11 @@
 //! The Orca Whirlpool spot-tick collector: read each roster pool's price over
 //! JSON-RPC and persist it into `spot_ticks` (docs/data-feeds.md §9).
 //!
-//! The on-chain basis tape. It is the price Jupiter routes through, which is
-//! why the estimator offers it beside the Coinbase candle — as an untrusted
-//! tape that corroborates, never one believable alone (see
-//! `dropset_feeds::venues::orca` for why a pool price cannot be).
+//! The on-chain basis tape: the price Jupiter routes through. It is a tape
+//! that can corroborate and is never believable alone (see
+//! `dropset_feeds::venues::orca` for why a pool price cannot be). It is
+//! recorded only; the estimator does not read it (docs/data-feeds.md §9 says
+//! why).
 //!
 //! **The roster pins each pool by address**: `PRODUCT=POOL_ADDRESS`, through
 //! the same `PRODUCT_IDS` grammar every collector reads. Here the pin is not an
@@ -48,26 +49,42 @@ const RPC_SECRET_NAME: &str = "helius/rpc-url";
 /// $220k on 2026-10-21, with tGBP as its token A and USDC as token B.
 const DEFAULT_PRODUCTS: &str = "TGBP-USDC=9aJrewHLYMjXiZK5u2UU4aWi4R3jFGtoKJJo4AaHYyjt";
 
-/// The quote legs a pool may be priced in, and their mainnet mints — which is
-/// what lets the adapter check a pinned pool's orientation rather than assume
-/// it. A roster entry quoting anything else fails startup.
-const QUOTE_MINTS: &[(&str, &str)] = &[("USDC", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")];
+/// The legs a roster pair may name, and their mainnet mints. Both legs are
+/// resolved, which is what lets the adapter refuse a pinned pool that trades
+/// some other token against the quote, and check its orientation rather than
+/// assume it. An entry naming a leg not listed here fails startup.
+const MINTS: &[(&str, &str)] = &[
+    ("TGBP", "2zMqyX4AYCk6mgy5UZ2S7zUaLxwERhK5WjqDzkPPbSpW"),
+    ("USDC", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
+];
 
 const DEFAULTS: TickDefaults = TickDefaults {
     base_url: dropset_feeds::venues::orca::PUBLIC_MAINNET_RPC,
     poll_interval_secs: 15,
 };
 
-/// One roster entry resolved: the product stored, the pool read, and the mint
-/// its price is quoted in.
+/// One roster entry resolved: the product stored, the pool read, and the mints
+/// of its two legs.
 #[derive(Debug, PartialEq, Eq)]
 struct OrcaPool {
     product_id: String,
     pool: Pubkey,
+    base_mint: Pubkey,
     quote_mint: Pubkey,
 }
 
-/// Resolve every roster entry to its pinned pool and its quote leg's mint.
+/// The mint of one roster leg, or an error naming the entry.
+fn leg_mint(product_id: &str, leg: &str) -> Result<Pubkey> {
+    let (_, mint) = MINTS
+        .iter()
+        .find(|(symbol, _)| *symbol == leg)
+        .ok_or_else(|| {
+            anyhow!("roster entry {product_id:?} names {leg:?}, which has no known mint")
+        })?;
+    Ok(Pubkey::from_str(mint)?)
+}
+
+/// Resolve every roster entry to its pinned pool and both legs' mints.
 fn orca_pools(entries: &[RosterEntry]) -> Result<Vec<OrcaPool>> {
     let mut out: Vec<OrcaPool> = Vec::with_capacity(entries.len());
     for entry in entries {
@@ -92,26 +109,13 @@ fn orca_pools(entries: &[RosterEntry]) -> Result<Vec<OrcaPool>> {
                 entry.product_id
             ));
         }
-        let quote = entry
-            .product_id
-            .split_once('-')
-            .map(|(_, quote)| quote)
-            .unwrap_or_default();
-        let quote_mint = QUOTE_MINTS
-            .iter()
-            .find(|(leg, _)| *leg == quote)
-            .map(|(_, mint)| Pubkey::from_str(mint))
-            .transpose()?
-            .ok_or_else(|| {
-                anyhow!(
-                    "roster entry {:?} quotes {quote:?}, which has no known mint",
-                    entry.product_id
-                )
-            })?;
+        // `parse_roster` guarantees exactly one `-` with non-empty legs.
+        let (base, quote) = entry.product_id.split_once('-').unwrap_or_default();
         out.push(OrcaPool {
             product_id: entry.product_id.clone(),
             pool,
-            quote_mint,
+            base_mint: leg_mint(&entry.product_id, base)?,
+            quote_mint: leg_mint(&entry.product_id, quote)?,
         });
     }
     Ok(out)
@@ -163,6 +167,7 @@ async fn main() -> Result<()> {
             rpc.clone(),
             entry.product_id.clone(),
             entry.pool,
+            entry.base_mint,
             entry.quote_mint,
         );
         let feed = format!("ticks:orca:{}", entry.product_id);
@@ -200,9 +205,19 @@ mod tests {
             vec![OrcaPool {
                 product_id: "TGBP-USDC".to_string(),
                 pool: Pubkey::from_str("9aJrewHLYMjXiZK5u2UU4aWi4R3jFGtoKJJo4AaHYyjt").unwrap(),
-                quote_mint: Pubkey::from_str(QUOTE_MINTS[0].1).unwrap(),
+                base_mint: Pubkey::from_str(MINTS[0].1).unwrap(),
+                quote_mint: Pubkey::from_str(MINTS[1].1).unwrap(),
             }]
         );
+    }
+
+    #[test]
+    fn a_base_leg_with_no_known_mint_fails_startup() {
+        // The base leg is resolved too, so a pool pinned under a pair whose
+        // base this table does not know cannot slip through on its quote alone.
+        let spec = "EURC-USDC=9aJrewHLYMjXiZK5u2UU4aWi4R3jFGtoKJJo4AaHYyjt";
+        let err = orca_pools(&parse_roster(spec).unwrap()).unwrap_err();
+        assert!(err.to_string().contains("\"EURC\""), "{err}");
     }
 
     #[test]

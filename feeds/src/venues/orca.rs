@@ -19,13 +19,15 @@
 //!
 //! **Orientation is checked, not assumed.** A Whirlpool's token A and B are
 //! ordered by mint address, not by which leg is the base, so a pool can price
-//! the canonical pair either way round. The caller names the quote leg's mint;
-//! the first poll reads both mints, and a pool whose mint B is the quote is
-//! read as-is, one whose mint A is the quote is inverted, and one holding
-//! neither is refused — that is a mis-pinned address, not a price.
+//! the canonical pair either way round. The caller names both legs' mints; a
+//! pool that is base/quote as A/B is read as-is, one that is quote/base is
+//! inverted, and one that is not exactly that pair is refused — that is a
+//! mis-pinned address, not a price. A pool with no liquidity in range yields no
+//! price: its `sqrt_price` is the last one traded, which nothing can trade at.
 //!
 //! **Reads go through [`RpcFailover`]**, an ordered endpoint list: primary
-//! first, the next one on a connection failure, a timeout or a 429, and back to
+//! first, the next one whenever this one cannot serve the read (see
+//! [`ReadError::Unavailable`]), and back to
 //! the primary on the very next poll, since every poll starts from the top. The
 //! cost of always retrying the primary is one call budget per poll while it is
 //! down — at a 15-second cadence and a 10-second budget that is a slow reading,
@@ -94,18 +96,28 @@ pub struct AccountData {
 }
 
 /// Why a read failed, split by whether another endpoint could do better.
+///
+/// A classification for [`RpcFailover`] to act on rather than a reportable
+/// error: the failover turns it into an `anyhow` error at its own boundary, so
+/// it carries no `Display` of its own.
 #[derive(Debug)]
 pub enum ReadError {
-    /// The endpoint could not be reached or would not serve us — a connection
-    /// failure, a timeout, a 429, or a 5xx. The next endpoint is tried.
+    /// This endpoint could not serve the read, though another might — a
+    /// connection failure or reset, a timeout, a 429 or a 5xx, a refused
+    /// credential, or a reply that was not JSON-RPC at all. The next endpoint
+    /// is tried.
     Unavailable(String),
-    /// The endpoint answered and the answer was an error. Another endpoint
-    /// would say the same, so this ends the call.
+    /// The endpoint answered with a JSON-RPC error. Another endpoint would say
+    /// the same, so this ends the call.
     Other(anyhow::Error),
 }
 
 /// The one RPC call this adapter makes, behind a seam so the failover order and
 /// the poll path are testable without a cluster.
+///
+/// The same idea as the indexer transport's `RpcTransport` (`crate::rpc`), but
+/// its own trait: that one lives behind the `rpc` feature, which this adapter
+/// does not pull in, and models a signature walk rather than an account read.
 #[async_trait]
 pub trait AccountReader: Send + Sync {
     /// `getMultipleAccounts` over `keys`, in order; `None` for an account that
@@ -131,31 +143,49 @@ impl AccountReader for RpcClient {
 
 /// Sort a client error into [`ReadError`]'s two classes.
 ///
-/// **A transport error is described from its flags, never formatted.**
-/// `reqwest`'s `Display` names the request URL, and a keyed endpoint's URL is
-/// its credential — so formatting the error would write the Helius key into
-/// every log line a failover produces.
+/// **Only an answered JSON-RPC error is formatted.** `reqwest`'s `Display`
+/// names the request URL, and a keyed endpoint's URL is its credential, so a
+/// transport error is described from its flags, and any other kind — the
+/// middleware one can wrap a `reqwest` error — by its kind alone. Formatting
+/// either would write the Helius key into every log line a failover produces.
 fn classify(err: ClientError) -> ReadError {
     match err.kind() {
-        ClientErrorKind::Reqwest(e) => {
-            let status = e.status();
-            let unavailable = e.is_timeout()
-                || e.is_connect()
-                || status.is_some_and(|s| s.as_u16() == 429 || s.is_server_error());
-            let what = match status {
-                Some(status) => format!("HTTP {status}"),
-                None if e.is_timeout() => "request timed out".to_string(),
-                None if e.is_connect() => "connection failed".to_string(),
-                None => "request failed".to_string(),
-            };
-            if unavailable {
-                ReadError::Unavailable(what)
-            } else {
-                ReadError::Other(anyhow!("RPC transport error: {what}"))
-            }
-        }
+        ClientErrorKind::Reqwest(e) => transport_class(
+            e.status().map(|s| s.as_u16()),
+            e.is_timeout(),
+            e.is_connect(),
+            e.is_builder(),
+        ),
         ClientErrorKind::Io(e) => ReadError::Unavailable(format!("I/O error: {}", e.kind())),
-        _ => ReadError::Other(anyhow!("{err}")),
+        // A reply that is not JSON-RPC (a proxy's HTML error page served with a
+        // 200) is that endpoint's problem, not the request's.
+        ClientErrorKind::SerdeJson(_) => {
+            ReadError::Unavailable("response was not JSON-RPC".to_string())
+        }
+        ClientErrorKind::RpcError(_) => ReadError::Other(anyhow!("{err}")),
+        _ => ReadError::Other(anyhow!("RPC client error")),
+    }
+}
+
+/// The failover rule for a `reqwest` error, from the facts that decide it.
+///
+/// With a status: a 429, a 5xx, or a refused credential (401, 402, 403) is this
+/// endpoint's to fix — a revoked or exhausted key must not take the feed down
+/// while the keyless fallback would serve — and any other status is the
+/// request's. With no status, the request never got an answer — a timeout, a
+/// failed connect, or a connection reset after it was set up — so the next
+/// endpoint is tried, unless the request could not even be built, which is
+/// local and the same everywhere.
+fn transport_class(status: Option<u16>, timeout: bool, connect: bool, builder: bool) -> ReadError {
+    match status {
+        Some(code @ (401..=403 | 429 | 500..=599)) => {
+            ReadError::Unavailable(format!("HTTP {code}"))
+        }
+        Some(code) => ReadError::Other(anyhow!("RPC endpoint answered HTTP {code}")),
+        None if builder => ReadError::Other(anyhow!("RPC request could not be built")),
+        None if timeout => ReadError::Unavailable("request timed out".to_string()),
+        None if connect => ReadError::Unavailable("connection failed".to_string()),
+        None => ReadError::Unavailable("request failed before an answer".to_string()),
     }
 }
 
@@ -258,6 +288,9 @@ pub struct PoolState {
     pub mint_a: Pubkey,
     pub mint_b: Pubkey,
     pub sqrt_price: u128,
+    /// The liquidity in range at the current tick — zero when every position
+    /// sits outside it or has been withdrawn.
+    pub liquidity: u128,
 }
 
 /// Decode a Whirlpool account through Orca's generated decoder, refusing
@@ -282,6 +315,7 @@ pub fn parse_whirlpool(account: &AccountData) -> Result<PoolState> {
         mint_a: pool.token_mint_a,
         mint_b: pool.token_mint_b,
         sqrt_price: pool.sqrt_price,
+        liquidity: pool.liquidity,
     })
 }
 
@@ -299,17 +333,21 @@ pub fn parse_mint_decimals(account: &AccountData) -> Result<u8> {
     Ok(account.data[MINT_DECIMALS_OFFSET])
 }
 
-/// Whether a pool must be inverted to read as quote-per-base: `false` when its
-/// mint B is the quote, `true` when its mint A is, and an error when it holds
-/// neither.
-pub fn orientation(state: &PoolState, quote_mint: &Pubkey) -> Result<bool> {
-    if state.mint_b == *quote_mint {
+/// Whether a pool must be inverted to read as quote-per-base: `false` when it is
+/// `base`/`quote` as mints A/B, `true` when it is the other way round, and an
+/// error when it is not exactly that pair.
+///
+/// Both legs are checked, not only the quote: a pinned pool that trades some
+/// other token against the quote would otherwise pass and be stored under the
+/// wrong pair.
+pub fn is_inverted(state: &PoolState, base_mint: &Pubkey, quote_mint: &Pubkey) -> Result<bool> {
+    if state.mint_a == *base_mint && state.mint_b == *quote_mint {
         Ok(false)
-    } else if state.mint_a == *quote_mint {
+    } else if state.mint_a == *quote_mint && state.mint_b == *base_mint {
         Ok(true)
     } else {
         bail!(
-            "the pool trades {} against {}, neither of which is the quote mint \
+            "the pool trades {} against {}, not {base_mint} against \
              {quote_mint} — the pinned address is the wrong pool",
             state.mint_a,
             state.mint_b
@@ -318,7 +356,7 @@ pub fn orientation(state: &PoolState, quote_mint: &Pubkey) -> Result<bool> {
 }
 
 /// The pool's price in quote per base, or `None` when it is not a positive
-/// finite number (an uninitialized or drained pool).
+/// finite number (an uninitialized pool).
 pub fn pool_price(sqrt_price: u128, decimals_a: u8, decimals_b: u8, inverted: bool) -> Option<f64> {
     let b_per_a = sqrt_price_to_price(sqrt_price, decimals_a, decimals_b);
     let price = if inverted { 1.0 / b_per_a } else { b_per_a };
@@ -341,18 +379,20 @@ pub struct OrcaSpot<T = RpcClient> {
     name: String,
     product_id: String,
     pool: Pubkey,
+    base_mint: Pubkey,
     quote_mint: Pubkey,
     meta: Option<PoolMeta>,
 }
 
 impl<T: AccountReader> OrcaSpot<T> {
-    /// Build the source for `product_id` over the pinned `pool`, whose quote
-    /// leg is `quote_mint`. Several sources share one [`RpcFailover`], so a
-    /// roster draws on one endpoint list and logs one active endpoint.
+    /// Build the source for `product_id` over the pinned `pool`, whose legs are
+    /// `base_mint` and `quote_mint`. Several sources share one [`RpcFailover`],
+    /// so a roster draws on one endpoint list and logs one active endpoint.
     pub fn new(
         rpc: Arc<RpcFailover<T>>,
         product_id: impl Into<String>,
         pool: Pubkey,
+        base_mint: Pubkey,
         quote_mint: Pubkey,
     ) -> Self {
         let product_id = product_id.into();
@@ -361,6 +401,7 @@ impl<T: AccountReader> OrcaSpot<T> {
             name: spot_feed_name(&product_id),
             product_id,
             pool,
+            base_mint,
             quote_mint,
             meta: None,
         }
@@ -377,6 +418,11 @@ impl<T: AccountReader> OrcaSpot<T> {
             .flatten()
             .ok_or_else(|| anyhow!("pool account {} does not exist", self.pool))?;
         let state = parse_whirlpool(&account)?;
+        // No in-range liquidity: the pool keeps its last `sqrt_price`, but no
+        // swap can trade at it, so it is not a price anyone could take.
+        if state.liquidity == 0 {
+            return Ok(None);
+        }
         let meta = match self.meta {
             // A pool's mints are fixed at creation, so this only re-reads them
             // if the account somehow changed under the pinned address.
@@ -393,7 +439,7 @@ impl<T: AccountReader> OrcaSpot<T> {
 
     /// Read both mints once and fix the pool's orientation.
     async fn load_meta(&mut self, state: &PoolState) -> Result<PoolMeta> {
-        let inverted = orientation(state, &self.quote_mint)?;
+        let inverted = is_inverted(state, &self.base_mint, &self.quote_mint)?;
         let mints = self.rpc.accounts(&[state.mint_a, state.mint_b]).await?;
         let decimals = |i: usize, mint: &Pubkey| -> Result<u8> {
             let account = mints
@@ -426,8 +472,9 @@ impl<T: AccountReader + 'static> Source for OrcaSpot<T> {
     }
 
     async fn next(&mut self) -> Result<Batch<Self::Record>> {
-        // An unusable price is no record, never a zero (see the Coinbase
-        // ticker's `ticker_records` for why).
+        // An unusable price is no record, never a zero: a consumer keyed by
+        // product would cache a zero as a reading, where an empty batch lets
+        // the last real one age out.
         let records = self
             .poll()
             .await?
@@ -472,7 +519,8 @@ mod tests {
         let state = parse_whirlpool(&pool_account()).unwrap();
         assert_eq!(state.mint_a, TGBP);
         assert_eq!(state.mint_b, USDC);
-        assert!(!orientation(&state, &USDC).unwrap());
+        assert!(!is_inverted(&state, &TGBP, &USDC).unwrap());
+        assert!(state.liquidity > 0, "the captured pool is live");
         // tGBP has 9 decimals and USDC 6.
         let price = pool_price(state.sqrt_price, 9, 6, false).unwrap();
         assert!((price - 1.336_860_207_99).abs() < 1e-9, "got {price}");
@@ -484,8 +532,9 @@ mod tests {
             mint_a: USDC,
             mint_b: TGBP,
             sqrt_price: 0,
+            liquidity: 1,
         };
-        assert!(orientation(&state, &USDC).unwrap());
+        assert!(is_inverted(&state, &TGBP, &USDC).unwrap());
         // The same pool seen from USDC's side: 1/1.3368… tGBP per USDC, and
         // inverting it recovers USDC per tGBP.
         let sqrt_price = parse_whirlpool(&pool_account()).unwrap().sqrt_price;
@@ -495,10 +544,57 @@ mod tests {
     }
 
     #[test]
-    fn a_pool_holding_neither_quote_mint_is_refused() {
+    fn a_pool_without_the_quote_mint_is_refused() {
         let state = parse_whirlpool(&pool_account()).unwrap();
-        let err = orientation(&state, &Pubkey::new_unique()).unwrap_err();
+        let err = is_inverted(&state, &TGBP, &Pubkey::new_unique()).unwrap_err();
         assert!(err.to_string().contains("wrong pool"), "{err}");
+    }
+
+    #[test]
+    fn a_pool_trading_another_token_against_the_quote_is_refused() {
+        // The quote matches, so a quote-only check would pass this and store
+        // some other token's USDC price as tGBP's.
+        let state = parse_whirlpool(&pool_account()).unwrap();
+        let err = is_inverted(&state, &Pubkey::new_unique(), &USDC).unwrap_err();
+        assert!(err.to_string().contains("wrong pool"), "{err}");
+    }
+
+    #[test]
+    fn the_failover_rule_tries_the_next_endpoint_only_where_it_could_help() {
+        let fails_over = |status, timeout, connect, builder| {
+            matches!(
+                transport_class(status, timeout, connect, builder),
+                ReadError::Unavailable(_)
+            )
+        };
+        // Rate limit, server error, and a refused credential: this endpoint's.
+        for code in [401, 402, 403, 429, 500, 503] {
+            assert!(fails_over(Some(code), false, false, false), "HTTP {code}");
+        }
+        // Any other status is the request's, the same everywhere.
+        for code in [400, 404, 413] {
+            assert!(!fails_over(Some(code), false, false, false), "HTTP {code}");
+        }
+        // No answer at all: a timeout, a failed connect, or a reset after one.
+        assert!(fails_over(None, true, false, false));
+        assert!(fails_over(None, false, true, false));
+        assert!(fails_over(None, false, false, false));
+        // A request that could not be built is local.
+        assert!(!fails_over(None, false, false, true));
+    }
+
+    #[test]
+    fn a_non_transport_error_is_described_without_its_text() {
+        // `Custom` stands in for every kind `classify` declines to format: its
+        // message must not reach the log, since a wrapped transport error
+        // would carry the endpoint URL.
+        let err = ClientError::from(ClientErrorKind::Custom(
+            "https://keyed.example/?api-key=secret".to_string(),
+        ));
+        let ReadError::Other(described) = classify(err) else {
+            panic!("an unrecognized kind is not a reason to fail over");
+        };
+        assert!(!described.to_string().contains("secret"), "{described}");
     }
 
     #[test]
@@ -627,6 +723,7 @@ mod tests {
             failover(vec![FakeEndpoint::serving()]),
             "TGBP-USDC",
             POOL,
+            TGBP,
             USDC,
         );
         let batch = source.next().await.unwrap();
@@ -638,6 +735,19 @@ mod tests {
         // (pool + mints, then pool alone), not four.
         source.next().await.unwrap();
         assert_eq!(source.rpc.endpoints[0].1.calls(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_pool_with_no_liquidity_in_range_yields_no_record() {
+        // The captured pool with its `liquidity` (bytes 49..65, after the
+        // discriminator, config, bump, tick spacing, seed and both fee rates)
+        // zeroed: its `sqrt_price` is still the live one, which is the trap.
+        let mut endpoint = FakeEndpoint::serving();
+        let drained = endpoint.accounts.get_mut(&POOL).unwrap();
+        drained.data[49..65].fill(0);
+        assert_eq!(parse_whirlpool(drained).unwrap().liquidity, 0);
+        let mut source = OrcaSpot::new(failover(vec![endpoint]), "TGBP-USDC", POOL, TGBP, USDC);
+        assert!(source.next().await.unwrap().records.is_empty());
     }
 
     #[tokio::test]
