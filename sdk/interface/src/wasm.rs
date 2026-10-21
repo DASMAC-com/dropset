@@ -229,6 +229,7 @@ pub struct VaultSlab {
     indices: Vec<u32>,
     seq_numbers: Vec<u64>,
     leaders: Vec<u8>,
+    reference_prices: Vec<u32>,
     base_atoms: Vec<u64>,
     quote_atoms: Vec<u64>,
     total_shares: Vec<u64>,
@@ -257,6 +258,12 @@ impl VaultSlab {
     #[wasm_bindgen(getter)]
     pub fn leaders(&self) -> Vec<u8> {
         self.leaders.clone()
+    }
+    /// The vault's reference price, as raw `Price` bits: quote atoms per
+    /// base atom. Not matchable (zero or infinity) while the book is dark.
+    #[wasm_bindgen(getter)]
+    pub fn reference_prices(&self) -> Vec<u32> {
+        self.reference_prices.clone()
     }
     /// Base reserve in atoms.
     #[wasm_bindgen(getter)]
@@ -328,6 +335,7 @@ pub fn vaults(market_data: &[u8]) -> Result<VaultSlab, JsError> {
         indices: Vec::with_capacity(n),
         seq_numbers: Vec::with_capacity(n),
         leaders: Vec::with_capacity(32 * n),
+        reference_prices: Vec::with_capacity(n),
         base_atoms: Vec::with_capacity(n),
         quote_atoms: Vec::with_capacity(n),
         total_shares: Vec::with_capacity(n),
@@ -343,6 +351,7 @@ pub fn vaults(market_data: &[u8]) -> Result<VaultSlab, JsError> {
         slab.indices.push(idx);
         slab.seq_numbers.push(v.seq.get());
         slab.leaders.extend_from_slice(&v.leader);
+        slab.reference_prices.push(v.reference_price.price.get());
         slab.base_atoms.push(v.base_atoms.get());
         slab.quote_atoms.push(v.quote_atoms.get());
         slab.total_shares.push(v.total_shares.get());

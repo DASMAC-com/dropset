@@ -27,6 +27,7 @@ export const vaultslab_min_leader_shares: (a: number) => [number, number];
 export const vaultslab_outside_deposits_approved: (a: number) => [number, number];
 export const vaultslab_perf_fee_rates: (a: number) => [number, number];
 export const vaultslab_quote_atoms: (a: number) => [number, number];
+export const vaultslab_reference_prices: (a: number) => [number, number];
 export const vaultslab_seq_numbers: (a: number) => [number, number];
 export const vaultslab_total_shares: (a: number) => [number, number];
 export const price_base_for_quote: (a: number, b: bigint) => bigint;

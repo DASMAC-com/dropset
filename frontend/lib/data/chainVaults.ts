@@ -5,6 +5,7 @@ import {
   fetchAllMaybeVaultDepositorHeader,
   findVaultDepositorPda,
   initSimulator,
+  isMatchablePrice,
   type VaultDepositorHeader,
   type VaultSummary,
 } from "@dropset/sdk";
@@ -15,6 +16,7 @@ import { CLUSTER, GET_MULTIPLE_ACCOUNTS_BATCH_SIZE } from "../env";
 import { stablecoinDecimals, stablecoinMint } from "./currencies";
 import type { VaultPosition } from "./positions";
 import {
+  quoteUsdRate,
   resolveVaultMarket,
   tokenUsdPrice,
   VAULT_PAIR_ROSTER,
@@ -56,20 +58,26 @@ const chainVps = (summary: VaultSummary): number =>
       Number(summary.totalShares)
     : 0;
 
-// One decoded vault in the UI's shape. TVL is valued at the same placeholder
-// token prices as the dialog's USD readouts (tokenUsdPrice), and the 24h
-// figures are null: they need history a single account read cannot give.
+// One decoded vault in the UI's shape. TVL values the base leg in quote at
+// the vault's own reference price, then the whole in USD (quoteUsdRate); only
+// a dark book falls back to the indicative table for the base leg.
 export function chainVault(
   summary: VaultSummary,
   market: string,
   base: string,
   quote: string,
 ): Vault {
-  const baseReserve = atomsToUnits(summary.baseAtoms, stablecoinDecimals(base));
-  const quoteReserve = atomsToUnits(
-    summary.quoteAtoms,
-    stablecoinDecimals(quote),
-  );
+  const baseDecimals = stablecoinDecimals(base);
+  const quoteDecimals = stablecoinDecimals(quote);
+  const baseReserve = atomsToUnits(summary.baseAtoms, baseDecimals);
+  const quoteReserve = atomsToUnits(summary.quoteAtoms, quoteDecimals);
+  // An atoms ratio, rescaled to whole tokens as chainPosition's entry price.
+  const refPrice = isMatchablePrice(summary.referencePrice)
+    ? decodePrice(summary.referencePrice) * 10 ** (baseDecimals - quoteDecimals)
+    : null;
+  const quoteUsd = quoteUsdRate(base, quote, refPrice);
+  const baseUsd =
+    refPrice !== null ? refPrice * quoteUsd.rate : tokenUsdPrice(base);
   return {
     chain: {
       index: summary.index,
@@ -84,10 +92,10 @@ export function chainVault(
     },
     vaultPubkey: chainVaultId(market, summary.seq),
     leader: summary.leader,
-    volume24h: null,
-    fees24h: null,
-    tvl:
-      baseReserve * tokenUsdPrice(base) + quoteReserve * tokenUsdPrice(quote),
+    refPrice,
+    quoteUsd: quoteUsd.rate,
+    usdIndicative: refPrice === null || quoteUsd.indicative,
+    tvl: baseReserve * baseUsd + quoteReserve * quoteUsd.rate,
     baseReserve,
     quoteReserve,
     totalShares: Number(summary.totalShares),

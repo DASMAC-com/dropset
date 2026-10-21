@@ -272,6 +272,17 @@ export class VaultSlab {
         return v1;
     }
     /**
+     * The vault's reference price, as raw `Price` bits: quote atoms per
+     * base atom. Not matchable (zero or infinity) while the book is dark.
+     * @returns {Uint32Array}
+     */
+    get reference_prices() {
+        const ret = wasm.vaultslab_reference_prices(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
      * Per-market vault numbers: with the market, each vault's identity.
      * @returns {BigUint64Array}
      */

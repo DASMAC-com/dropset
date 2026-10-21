@@ -109,6 +109,11 @@ export class VaultSlab {
      */
     readonly quote_atoms: BigUint64Array;
     /**
+     * The vault's reference price, as raw `Price` bits: quote atoms per
+     * base atom. Not matchable (zero or infinity) while the book is dark.
+     */
+    readonly reference_prices: Uint32Array;
+    /**
      * Per-market vault numbers: with the market, each vault's identity.
      */
     readonly seq_numbers: BigUint64Array;
@@ -225,6 +230,7 @@ export interface InitOutput {
     readonly vaultslab_outside_deposits_approved: (a: number) => [number, number];
     readonly vaultslab_perf_fee_rates: (a: number) => [number, number];
     readonly vaultslab_quote_atoms: (a: number) => [number, number];
+    readonly vaultslab_reference_prices: (a: number) => [number, number];
     readonly vaultslab_seq_numbers: (a: number) => [number, number];
     readonly vaultslab_total_shares: (a: number) => [number, number];
     readonly price_base_for_quote: (a: number, b: bigint) => bigint;

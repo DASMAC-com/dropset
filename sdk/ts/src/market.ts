@@ -162,6 +162,11 @@ export type VaultSummary = {
   index: number;
   seq: bigint;
   leader: Address;
+  /**
+   * The vault's reference price — quote atoms per base atom. Not
+   * `isMatchablePrice` (zero or infinity) while the book is dark.
+   */
+  referencePrice: PriceBits;
   baseAtoms: bigint;
   quoteAtoms: bigint;
   totalShares: bigint;
@@ -204,6 +209,7 @@ export function decodeDropsetVaults(data: ReadonlyUint8Array): VaultSummary[] {
     const indices = slab.indices;
     const seqNumbers = slab.seq_numbers;
     const leaders = slab.leaders;
+    const referencePrices = slab.reference_prices;
     const baseAtoms = slab.base_atoms;
     const quoteAtoms = slab.quote_atoms;
     const totalShares = slab.total_shares;
@@ -221,6 +227,7 @@ export function decodeDropsetVaults(data: ReadonlyUint8Array): VaultSummary[] {
         index: indices[i]!,
         seq: seqNumbers[i]!,
         leader: addressDecoder.decode(leaders.subarray(32 * i, 32 * i + 32)),
+        referencePrice: referencePrices[i]!,
         baseAtoms: baseAtoms[i]!,
         quoteAtoms: quoteAtoms[i]!,
         totalShares: totalShares[i]!,

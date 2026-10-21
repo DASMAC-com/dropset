@@ -407,6 +407,7 @@ test('the vaults reader returns each active vault with its shares and deposit fl
   const data = buildMarket((dv, b) => {
     for (let i = 0; i < 32; i++) dv.setUint8(b + V_LEADER + i, 7);
     dv.setBigUint64(b + V_SEQ, 3n, true);
+    dv.setUint32(b + V_REF_PRICE, enc(12_500_000), true);
     dv.setBigUint64(b + V_BASE_ATOMS, 1_000_000n, true);
     dv.setBigUint64(b + V_QUOTE_ATOMS, 1_250_000n, true);
     dv.setBigUint64(b + V_TOTAL_SHARES, 900_000n, true);
@@ -422,6 +423,7 @@ test('the vaults reader returns each active vault with its shares and deposit fl
     index: 0,
     seq: 3n,
     leader: getAddressDecoder().decode(new Uint8Array(32).fill(7)),
+    referencePrice: enc(12_500_000),
     baseAtoms: 1_000_000n,
     quoteAtoms: 1_250_000n,
     totalShares: 900_000n,

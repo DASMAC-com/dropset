@@ -76,10 +76,15 @@ export type Vault = Omit<VaultRaw, "volume24h" | "fees24h"> & {
     perfFeeRatePpm: number;
     frozen: boolean;
   } | null;
-  // Null on a live vault: 24h volume and fees need history, which no single
-  // account read can give.
-  volume24h: number | null;
-  fees24h: number | null;
+  // The vault's live reference price in whole quote tokens per base token,
+  // read off its own sector. Null on a mock row and while the book is dark
+  // (a non-matchable price); see vaultRefPrice for the stand-in.
+  refPrice: number | null;
+  // USD per quote token, and whether that rate (or TVL's base leg) fell back
+  // to the indicative TOKEN_USD table rather than an on-chain price. See
+  // quoteUsdRate.
+  quoteUsd: number;
+  usdIndicative: boolean;
   // The leader's opt-in to outside depositors. Outside deposits need it, the
   // admin's `outsideDepositsApproved`, and an unfrozen vault — see depositsOpen.
   allowOutsideDepositors: boolean;
@@ -187,10 +192,7 @@ export type FxPairGroup = {
   label: string;
   nickname: string;
   vaults: GroupedVault[];
-  volume24h: number | null;
-  fees24h: number | null;
   tvl: number;
-  apr24h: number | null;
 };
 
 // FX dealer nicknames for the majors we list (NZD/"Kiwi" excluded for now).
@@ -241,9 +243,9 @@ export const resolveVaultMarket = (
   };
 };
 
-// Hard-coded mock USD prices per token symbol, used only for the dialog's
-// approximate USD readouts (the quote leg isn't always a USD stable, e.g.
-// USD/JPY quotes GYEN). Swap for a real oracle / price feed later.
+// Hard-coded indicative USD prices per token symbol: the fallback when a vault
+// has no on-chain price to value a leg at (a dark book, or a pair with no USD
+// leg), and the mock rows' rate.
 const TOKEN_USD: Record<string, number> = {
   USDC: 1,
   USDT: 1,
@@ -259,8 +261,28 @@ const TOKEN_USD: Record<string, number> = {
 // USD price for a stablecoin symbol; defaults to 1 (a USD stable) when unknown.
 export const tokenUsdPrice = (symbol: string): number => TOKEN_USD[symbol] ?? 1;
 
+const isUsd = (symbol: string): boolean =>
+  currencyForStablecoin(symbol) === "USD";
+
+// USD per quote token for a market, from the vault's own reference price
+// `refPrice` (quote per base) wherever one leg is a USD stable: 1 for a
+// USD-quoted market, 1 / refPrice for a USD-based one (USD/JPY quotes GYEN).
+// Every roster pair has a USD leg, so the table is reached only by a dark
+// book on a USD-based market, or a cross pair; `indicative` says so.
+export const quoteUsdRate = (
+  base: string,
+  quote: string,
+  refPrice: number | null,
+): { rate: number; indicative: boolean } => {
+  if (isUsd(quote)) return { rate: 1, indicative: false };
+  if (isUsd(base) && refPrice !== null && refPrice > 0)
+    return { rate: 1 / refPrice, indicative: false };
+  return { rate: tokenUsdPrice(quote), indicative: true };
+};
+
 // The fixture predates the leader opt-in flag, so a mock vault reads the
 // admin approval as both halves of the gate — the two only differ on-chain.
+// Its 24h figures are dropped: the view shows nothing indexer-fed.
 export const MOCK_VAULT_MARKETS: VaultMarket[] = (
   vaultsData as { markets: MarketRaw[] }
 ).markets.map((m) =>
@@ -269,9 +291,12 @@ export const MOCK_VAULT_MARKETS: VaultMarket[] = (
     m.base,
     m.quote,
     m.fxMove24h,
-    m.vaults.map((v) => ({
+    m.vaults.map(({ volume24h: _v, fees24h: _f, ...v }) => ({
       ...v,
       chain: null,
+      refPrice: null,
+      quoteUsd: tokenUsdPrice(m.quote),
+      usdIndicative: true,
       allowOutsideDepositors: v.outsideDepositsApproved,
       name: null,
     })),
@@ -312,21 +337,6 @@ export const findVaultBySeq = (
   return null;
 };
 
-// Annualized 24h fee yield to depositors, as a fraction (0.1234 = 12.34%).
-// Returns null when TVL is zero so the UI can render an em dash rather than a
-// divide-by-zero Infinity.
-const DAYS_PER_YEAR = 365;
-const annualizedYield = (fees24h: number | null, tvl: number): number | null =>
-  fees24h !== null && tvl > 0 ? (fees24h / tvl) * DAYS_PER_YEAR : null;
-
-// Sum of 24h figures that may be unknown: null only when every term is, so a
-// group mixing live and mock rows still totals the rows that have a figure.
-const sumKnown = (a: number | null, b: number | null): number | null =>
-  a === null ? b : b === null ? a : a + b;
-
-export const vaultApr24h = (v: Vault): number | null =>
-  annualizedYield(v.fees24h, v.tvl);
-
 // Quote tokens per base token in the vault's current reserves. Deposits and
 // withdrawals must preserve this ratio (a pro-rata basket), so the UI fixes
 // one leg and derives the other from it. Returns null for an empty vault
@@ -335,6 +345,12 @@ export const vaultReserveRatio = (v: Vault): number | null =>
   v.baseReserve > 0 && v.quoteReserve > 0
     ? v.quoteReserve / v.baseReserve
     : null;
+
+// The price a position is marked at (PnL's `refNow`), quote per base: the
+// vault's live reference price, else its reserve ratio as the stand-in (a
+// mock row, or a dark book).
+export const vaultRefPrice = (v: Vault): number | null =>
+  v.refPrice ?? vaultReserveRatio(v);
 
 // Parts-per-million is how the protocol stores share fractions (1_000_000 =
 // 100%); see Ppm32 in docs/architecture.md.
@@ -391,8 +407,8 @@ export const mockMaxDeposit = (v: Vault): { base: number; quote: number } => ({
 
 // Group vaults into FX pairs, preserving first-seen order of both the groups
 // and the vaults within. Derived from the resolved currency codes so USDC- and
-// USDT-quoted markets fold into one "EUR / USD" group. Pair-level metrics sum
-// across every vault; APR is TVL-weighted (total fees / total TVL).
+// USDT-quoted markets fold into one "EUR / USD" group. The pair's TVL sums
+// across every vault.
 export const groupVaultMarkets = (markets: VaultMarket[]): FxPairGroup[] => {
   const order: string[] = [];
   const groups = new Map<string, FxPairGroup>();
@@ -411,23 +427,15 @@ export const groupVaultMarkets = (markets: VaultMarket[]): FxPairGroup[] => {
         label: `${m.baseCurrency} / ${m.quoteCurrency}`,
         nickname: FX_NICKNAMES[`${m.baseCurrency}/${m.quoteCurrency}`] ?? "",
         vaults: [],
-        volume24h: null,
-        fees24h: null,
         tvl: 0,
-        apr24h: null,
       };
       groups.set(key, group);
       order.push(key);
     }
     for (const vault of m.vaults) {
       group.vaults.push({ market: m, vault });
-      group.volume24h = sumKnown(group.volume24h, vault.volume24h);
-      group.fees24h = sumKnown(group.fees24h, vault.fees24h);
       group.tvl += vault.tvl;
     }
-  }
-  for (const group of groups.values()) {
-    group.apr24h = annualizedYield(group.fees24h, group.tvl);
   }
   return order.map((key) => {
     const g = groups.get(key);
@@ -439,31 +447,13 @@ export const groupVaultMarkets = (markets: VaultMarket[]): FxPairGroup[] => {
 export const MOCK_VAULT_FX_GROUPS: FxPairGroup[] =
   groupVaultMarkets(MOCK_VAULT_MARKETS);
 
-// Sortable numeric metrics. APR can be null (zero TVL); callers push nulls to
-// the bottom regardless of sort direction. "position" is the connected user's
-// position value — it depends on wallet state, so vaultMetric/groupMetric
-// return null for it and the view supplies the value.
-export type MetricKey =
-  | "apr24h"
-  | "tvl"
-  | "volume24h"
-  | "position"
-  | "leader"
-  | "pair";
+// Sortable metrics. "position" is the connected user's position value — it
+// depends on wallet state, so vaultMetric/groupMetric return null for it and
+// the view supplies the value.
+export type MetricKey = "tvl" | "position" | "leader" | "pair";
 
-export const vaultMetric = (
-  gv: GroupedVault,
-  key: MetricKey,
-): number | null => {
-  if (key === "apr24h") return vaultApr24h(gv.vault);
-  if (key === "tvl") return gv.vault.tvl;
-  if (key === "volume24h") return gv.vault.volume24h;
-  return null;
-};
+export const vaultMetric = (gv: GroupedVault, key: MetricKey): number | null =>
+  key === "tvl" ? gv.vault.tvl : null;
 
-export const groupMetric = (g: FxPairGroup, key: MetricKey): number | null => {
-  if (key === "apr24h") return g.apr24h;
-  if (key === "tvl") return g.tvl;
-  if (key === "volume24h") return g.volume24h;
-  return null;
-};
+export const groupMetric = (g: FxPairGroup, key: MetricKey): number | null =>
+  key === "tvl" ? g.tvl : null;
