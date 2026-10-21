@@ -24,7 +24,7 @@ import {
 } from "../dflow/rateLimitBudget";
 import { gateNowSlot, gateNowUnix, syncChainClock } from "../eclob/chainClock";
 import { eclobRouteInput } from "../eclob/route";
-import { DFLOW_QUOTE_URL, PLATFORM_FEE } from "../env";
+import { absoluteUrl, DFLOW_QUOTE_URL, PLATFORM_FEE } from "../env";
 import { parseAmountToBase } from "../format/balance";
 import { getErrorMessage } from "../guards";
 import { INITIAL_QUOTE, type QuoteState } from "../quote";
@@ -169,7 +169,7 @@ export const useRouterQuote = (
           // the configured rate goes in unconditionally.
           platformFeeBps: PLATFORM_FEE ? PLATFORM_FEE.bps : 0,
           aggregator: {
-            quoteUrl: DFLOW_QUOTE_URL,
+            quoteUrl: absoluteUrl(DFLOW_QUOTE_URL),
             inputMint,
             outputMint,
             slippageBps: SLIPPAGE,
