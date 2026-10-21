@@ -526,7 +526,7 @@ fn a_cold_take_at_the_heap_ceiling_fits_the_swap_compute_budget() {
             legs_in_default,
             stranded,
             stopped_by,
-            stopped_stranding,
+            stopped_on_stranded,
         } = cold_take_to_the_heap_ceiling(side);
         println!(
             "cold side-{side} take to the heap ceiling over {VAULTS} vaults: {legs} \
@@ -543,7 +543,7 @@ fn a_cold_take_at_the_heap_ceiling_fits_the_swap_compute_budget() {
             "side {side}: the next leg should stop on the heap, stopped on: {stopped_by}"
         );
         assert!(
-            !stopped_stranding,
+            !stopped_on_stranded,
             "side {side}: a take stranding one atom failed where the exact take \
              completed: {stopped_by}"
         );
@@ -552,7 +552,7 @@ fn a_cold_take_at_the_heap_ceiling_fits_the_swap_compute_budget() {
         };
         assert_eq!(
             stranded_legs, HEAP_CEILING_LEGS,
-            "side {side}: legs a take stranding one atom completes"
+            "side {side}: a take stranding one atom should complete {HEAP_CEILING_LEGS} legs"
         );
         assert!(
             cu < u64::from(SWAP_COMPUTE_UNIT_LIMIT),
@@ -631,7 +631,7 @@ fn cold_take_to_the_heap_ceiling(side: u8) -> ColdCeiling {
                 }
                 Err(stopped_by) => {
                     ceiling.stopped_by = stopped_by;
-                    ceiling.stopped_stranding = remainder == 1;
+                    ceiling.stopped_on_stranded = remainder == 1;
                     return ceiling;
                 }
             }
@@ -656,7 +656,7 @@ struct ColdCeiling {
     stopped_by: String,
     /// Whether that failure was a one-atom-over size, i.e. a stranded take
     /// failed where the exact take of the same legs completed.
-    stopped_stranding: bool,
+    stopped_on_stranded: bool,
 }
 
 /// A one-atom sell on a fully flipped ten-vault book, the most entries a
