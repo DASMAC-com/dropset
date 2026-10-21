@@ -130,6 +130,9 @@ pub enum PassivePrompt {
 pub struct CeremonyPrompt {
     pub action: Action,
     pub plan: Vec<String>,
+    /// An emergency action's vaults, as `plan` lists them — all its job may
+    /// touch, once confirmed, on every market the plan read.
+    pub planned: Option<crate::emergency::Planned>,
     pub buf: String,
 }
 
@@ -1220,7 +1223,7 @@ impl App {
             }
             KeyCode::Enter => {
                 if let Some(prompt) = self.ceremony_prompt.take() {
-                    self.confirm_ceremony(prompt.action, &prompt.buf);
+                    self.confirm_ceremony(prompt.action, prompt.planned, &prompt.buf);
                 }
             }
             KeyCode::Char(c) if prompt.buf.len() < MAX_CONFIRM_CHARS => prompt.buf.push(c),
@@ -1231,8 +1234,14 @@ impl App {
     /// Start `action` if `word` is exactly `yes`, re-checking what an open
     /// prompt could have outlived — and the chain's genesis hash itself, read
     /// again now, so the last thing before a mainnet write is proof of which
-    /// chain it goes to.
-    fn confirm_ceremony(&mut self, action: Action, word: &str) {
+    /// chain it goes to. An emergency action's job is confined to the
+    /// `planned` vaults the operator just read, on every market the plan read.
+    fn confirm_ceremony(
+        &mut self,
+        action: Action,
+        planned: Option<crate::emergency::Planned>,
+        word: &str,
+    ) {
         let label = action.label();
         if !is_confirmation(word) {
             self.log(
@@ -1253,7 +1262,14 @@ impl App {
             self.log(LogKind::Err, "A job is already running.".to_string());
             return;
         }
-        self.start_job(action);
+        match planned {
+            Some(planned) => {
+                self.job_running = true;
+                self.log(LogKind::Info, format!("\u{25b6} {label}"));
+                action::dispatch_emergency(&self.ctx, action, Some(planned), self.tx.clone());
+            }
+            None => self.start_job(action),
+        }
     }
 
     /// The active cluster's menu — what the panel draws and what the number
@@ -1376,10 +1392,11 @@ impl App {
             // ticket does: the operator is about to read the result, and a
             // frame that waits is better than a prompt over a stale plan.
             match action::ceremony_plan(action, &self.ctx) {
-                Ok(plan) => {
+                Ok((plan, planned)) => {
                     self.ceremony_prompt = Some(CeremonyPrompt {
                         action,
                         plan,
+                        planned,
                         buf: String::new(),
                     })
                 }

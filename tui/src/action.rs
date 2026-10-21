@@ -1078,21 +1078,10 @@ pub fn dispatch(
                 Ok(format!("Reset {total} ladders to the default shape"))
             });
         }
+        // Unplanned: only localnet dispatches these here — mainnet's confirmed
+        // prompt goes through [`dispatch_emergency`] with its plan's vaults.
         Action::KillLadders | Action::CloseVaults | Action::DrainLeader => {
-            let op = emergency_op(action);
-            job::spawn_recorded(tx, action.label(), record, move |log| {
-                let client = chain::rpc(&rpc_url);
-                emergency::execute(
-                    op,
-                    &client,
-                    &wallet,
-                    &repo_root,
-                    cluster,
-                    operator_leader.as_deref(),
-                    operator_quote.as_ref(),
-                    log,
-                )
-            });
+            dispatch_emergency(ctx, action, None, tx);
         }
         // Wipe is handled by the event loop (owns the validator). The leader
         // commands open its amount → confirm prompt instead, and dispatch
@@ -1128,6 +1117,38 @@ pub fn dispatch_passive(ctx: &JobContext, ticket: crate::passive::Ticket, tx: Se
     });
 }
 
+/// Spawn the job that sends an emergency `action`, confined to the vaults
+/// its confirmed plan listed when there was one ([`emergency::execute`]).
+pub fn dispatch_emergency(
+    ctx: &JobContext,
+    action: Action,
+    planned: Option<emergency::Planned>,
+    tx: Sender<JobEvent>,
+) {
+    let op = emergency_op(action);
+    let rpc_url = ctx.rpc_url.clone();
+    let repo_root = ctx.repo_root.clone();
+    let wallet = ctx.wallet();
+    let cluster = ctx.cluster;
+    let operator_leader = ctx.leader.clone();
+    let operator_quote = ctx.quote.as_ref().map(Keypair::insecure_clone);
+    let record = ctx.ceremony_log.clone();
+    job::spawn_recorded(tx, action.label(), record, move |log| {
+        let client = chain::rpc(&rpc_url);
+        emergency::execute(
+            op,
+            &client,
+            &wallet,
+            &repo_root,
+            cluster,
+            operator_leader.as_deref(),
+            operator_quote.as_ref(),
+            planned.as_ref(),
+            log,
+        )
+    });
+}
+
 /// Spawn the job that sends a confirmed leader `ticket`. The leader key is
 /// resolved here, per pair, exactly as the ceremony's vault steps resolve it:
 /// the committed role key on localnet, the operator's `--leader` on mainnet.
@@ -1153,8 +1174,13 @@ pub fn dispatch_leader(ctx: &JobContext, ticket: crate::leader::Ticket, tx: Send
 ///
 /// Refuses (`Err`) when the step has nothing to do or cannot proceed, so the
 /// operator is never asked to confirm a no-op. The step re-checks everything
-/// again when it runs; this is what the operator reads, not what guards.
-pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
+/// again when it runs; this is what the operator reads, not what guards. An
+/// emergency action also returns the vaults its lines list, which bound what
+/// its job may touch on every market the plan read.
+pub fn ceremony_plan(
+    action: Action,
+    ctx: &JobContext,
+) -> Result<(Vec<String>, Option<emergency::Planned>)> {
     let client = chain::rpc(&ctx.rpc_url);
     let admin = ctx.wallet.pubkey();
     let roster = market::roster(ctx.cluster);
@@ -1177,7 +1203,7 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
                     plan.sha256
                 );
             }
-            return Ok(plan.lines());
+            return Ok((plan.lines(), None));
         }
         Action::CloseBuffers => {
             for (buffer, lamports) in publish::stranded_buffers(&client, &admin)? {
@@ -1199,7 +1225,8 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
                 &admin,
                 ctx.leader.as_deref(),
                 ctx.quote.as_ref(),
-            );
+            )
+            .map(|(lines, planned)| (lines, Some(planned)));
         }
         Action::InitRegistry => {
             if accounts::registry_fresh(&client, ctx.cluster)?.is_some() {
@@ -1294,7 +1321,7 @@ pub fn ceremony_plan(action: Action, ctx: &JobContext) -> Result<Vec<String>> {
     if work == 0 {
         anyhow::bail!("nothing to do — every roster target is already done");
     }
-    Ok(lines)
+    Ok((lines, None))
 }
 
 /// The [`emergency::Op`] an emergency action sends. Only called from those
