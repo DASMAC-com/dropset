@@ -5,16 +5,21 @@ the top-level dir so the bare ``import prune_worktrees`` below resolves).
 """
 
 import os
+import subprocess
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from prune_worktrees import (
     _read_merged,
+    _real_alive,
     is_base,
     normalize_branch,
     parse_worktrees,
     prune,
+    stale_lock,
+    tier_of,
 )
 
 PORCELAIN = """\
@@ -72,7 +77,11 @@ class FakeGit:
         refs_fail=False,
         delete_fails=(),
         on_main=(),
+        locked=(),
     ):
+        # Paths `git worktree remove` refuses even with one `--force`: a live
+        # session holds the lock.
+        self.locked = set(locked)
         # Branches with no upstream whose every commit is on `origin/main` —
         # the never-pushed architect worktree.
         self.on_main = set(on_main)
@@ -105,9 +114,14 @@ class FakeGit:
             if branch in self.no_upstream:
                 return 128, "", "no upstream configured"
             return 0, "%s\n" % self.unpushed.get(branch, 0), ""
+        if args[:2] == ["worktree", "unlock"]:
+            self.locked.discard(args[2])
+            return 0, "", ""
         if args[:2] == ["worktree", "remove"]:
-            path = args[2]
-            if path in self.dirty:
+            path = args[-1]
+            if path in self.locked:
+                return 1, "", "cannot remove a locked working tree"
+            if path in self.dirty and "--force" not in args:
                 return 1, "", "contains modified or untracked files, use --force"
             return 0, "", ""
         if args[0] == "-C":
@@ -117,8 +131,12 @@ class FakeGit:
                     (0, " M src/lib.rs\n", "") if path in self.modified else (0, "", "")
                 )
             if args[2] == "rev-list":
-                branch = path.rsplit("/", 1)[-1]
-                if args[4].startswith("origin/main.."):
+                spec = args[4]
+                if "@" in spec:
+                    branch = spec.split("@", 1)[0]
+                else:
+                    branch = spec.split("..", 1)[1]
+                if spec.startswith("origin/main.."):
                     return 0, "0\n" if branch in self.on_main else "1\n", ""
                 if branch in self.no_upstream:
                     return 128, "", "no upstream configured"
@@ -261,6 +279,225 @@ class PruneTests(unittest.TestCase):
         self.assertEqual(out["removed"], [])
         self.assertFalse(out["pruned"])
         self.assertNotIn(["worktree", "prune"], git.calls)
+
+
+ADVISOR_PORCELAIN = """\
+worktree /repo/dropset
+HEAD abc
+branch refs/heads/main
+
+worktree /repo/dropset/.claude/worktrees/1957
+HEAD def
+branch refs/heads/eng-1957
+
+worktree /repo/dropset/.claude/worktrees/1958
+HEAD 012
+branch refs/heads/eng-1958
+"""
+ADVISOR_PATH = "/repo/dropset/.claude/worktrees/1957"
+EXECUTOR_PATH = "/repo/dropset/.claude/worktrees/1958"
+
+
+def tiers(**by_path):
+    return lambda path: by_path.get(path)
+
+
+class TierGateTests(unittest.TestCase):
+    """The gate follows the launch's recorded tier, never the branch name.
+
+    The caller (``upkeep``) has already confirmed the issue completed or
+    canceled; an In Review issue never reaches ``merged``, so its worktree is
+    in ``left`` whatever its tier.
+    """
+
+    TIERS = staticmethod(tiers(**{ADVISOR_PATH: "advisor", EXECUTOR_PATH: "executor"}))
+
+    def test_a_done_advisor_worktree_with_no_upstream_and_a_spec_file_is_removed(self):
+        git = FakeGit(
+            ADVISOR_PORCELAIN,
+            no_upstream=["eng-1957"],
+            on_main=["eng-1957"],
+            modified=[ADVISOR_PATH],
+            dirty=[ADVISOR_PATH],
+        )
+        out = prune({"eng-1957"}, dry_run=False, git=git, tier=self.TIERS)
+        self.assertEqual([r["branch"] for r in out["removed"]], ["eng-1957"])
+        self.assertIn(["worktree", "remove", "--force", ADVISOR_PATH], git.calls)
+        self.assertIn(["branch", "-D", "eng-1957"], git.calls)
+
+    def test_an_in_review_advisor_worktree_is_kept(self):
+        git = FakeGit(ADVISOR_PORCELAIN, no_upstream=["eng-1957"])
+        out = prune(set(), dry_run=False, git=git, tier=self.TIERS)
+        self.assertIn("eng-1957", [t["branch"] for t in out["left"]])
+        self.assertFalse(any(c[:2] == ["worktree", "remove"] for c in git.calls))
+
+    def test_an_advisor_commit_beyond_main_is_refused(self):
+        git = FakeGit(ADVISOR_PORCELAIN, no_upstream=["eng-1957"])
+        out = prune({"eng-1957"}, dry_run=False, git=git, tier=self.TIERS)
+        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-1957"])
+        self.assertIn("beyond origin/main", out["skipped"][0]["reason"])
+        self.assertNotIn(["branch", "-D", "eng-1957"], git.calls)
+
+    def test_a_locked_advisor_worktree_still_refuses(self):
+        git = FakeGit(ADVISOR_PORCELAIN, on_main=["eng-1957"], locked=[ADVISOR_PATH])
+        out = prune({"eng-1957"}, dry_run=False, git=git, tier=self.TIERS)
+        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-1957"])
+        self.assertNotIn(["branch", "-D", "eng-1957"], git.calls)
+
+    def test_an_executor_worktree_with_no_upstream_and_its_own_commit_is_refused(self):
+        git = FakeGit(ADVISOR_PORCELAIN, no_upstream=["eng-1958"])
+        out = prune({"eng-1958"}, dry_run=False, git=git, tier=self.TIERS)
+        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-1958"])
+        self.assertIn("no upstream", out["skipped"][0]["reason"])
+
+    def test_an_executor_worktree_with_uncommitted_work_is_refused(self):
+        git = FakeGit(ADVISOR_PORCELAIN, modified=[EXECUTOR_PATH])
+        out = prune({"eng-1958"}, dry_run=False, git=git, tier=self.TIERS)
+        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-1958"])
+        self.assertFalse(any(c[:2] == ["worktree", "remove"] for c in git.calls))
+
+    def test_an_unknown_tier_gets_the_executor_gate(self):
+        git = FakeGit(ADVISOR_PORCELAIN, modified=[ADVISOR_PATH])
+        out = prune({"eng-1957"}, dry_run=False, git=git, tier=tiers())
+        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-1957"])
+        self.assertIn("uncommitted", out["skipped"][0]["reason"])
+
+
+LOCK = "claude session 1957 (pid 4242 start Wed Oct 21 23:12:13 2026)"
+LOCKED_PORCELAIN = ADVISOR_PORCELAIN.replace(
+    "branch refs/heads/eng-1957\n", f"branch refs/heads/eng-1957\nlocked {LOCK}\n"
+).replace(
+    "branch refs/heads/eng-1958\n", f"branch refs/heads/eng-1958\nlocked {LOCK}\n"
+)
+
+
+class LockTests(unittest.TestCase):
+    """A live session's lock holds every tier; only an advisor's stale Claude
+    Code lock — measured to outlive its session — is lifted."""
+
+    TIERS = staticmethod(TierGateTests.TIERS)
+
+    def git(self):
+        return FakeGit(
+            LOCKED_PORCELAIN,
+            on_main=["eng-1957"],
+            locked=[ADVISOR_PATH, EXECUTOR_PATH],
+        )
+
+    def test_a_live_lock_holds_an_advisor_tree(self):
+        git = self.git()
+        out = prune(
+            {"eng-1957"}, False, git=git, tier=self.TIERS, alive=lambda p, s: True
+        )
+        self.assertIn("live session", out["skipped"][0]["reason"])
+        self.assertFalse(any(c[:2] == ["worktree", "remove"] for c in git.calls))
+
+    def test_a_stale_lock_is_lifted_and_the_advisor_tree_removed(self):
+        git = self.git()
+        out = prune(
+            {"eng-1957"}, False, git=git, tier=self.TIERS, alive=lambda p, s: False
+        )
+        self.assertEqual([r["branch"] for r in out["removed"]], ["eng-1957"])
+        self.assertLess(
+            git.calls.index(["worktree", "unlock", ADVISOR_PATH]),
+            git.calls.index(["worktree", "remove", "--force", ADVISOR_PATH]),
+        )
+
+    def test_a_dry_run_unlocks_nothing(self):
+        git = self.git()
+        out = prune(
+            {"eng-1957"}, True, git=git, tier=self.TIERS, alive=lambda p, s: False
+        )
+        self.assertEqual([r["branch"] for r in out["removed"]], ["eng-1957"])
+        self.assertNotIn(["worktree", "unlock", ADVISOR_PATH], git.calls)
+
+    def test_an_executor_stale_lock_is_never_lifted(self):
+        git = self.git()
+        out = prune(
+            {"eng-1958"}, False, git=git, tier=self.TIERS, alive=lambda p, s: False
+        )
+        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-1958"])
+        self.assertNotIn(["worktree", "unlock", EXECUTOR_PATH], git.calls)
+
+    def test_stale_lock_reads_only_a_claude_session_lock(self):
+        dead = lambda p, s: False  # noqa: E731
+        self.assertTrue(stale_lock(LOCK, dead))
+        self.assertFalse(stale_lock(LOCK, lambda p, s: True))
+        self.assertFalse(stale_lock("held by the operator", dead))
+        self.assertFalse(stale_lock("", dead))
+        self.assertFalse(stale_lock(None, dead))
+
+    def test_the_real_probe_sees_this_process_alive_whatever_the_start_text(self):
+        # The guard against the measured UTC-vs-local mismatch: a live pid
+        # must read alive even when the recorded start text differs.
+        self.assertTrue(_real_alive(os.getpid(), "Thu Jan  1 00:00:00 1970"))
+
+    def test_the_real_probe_reads_a_vanished_pid_dead(self):
+        # A child that has exited and been reaped names no process.
+        child = subprocess.Popen(["true"])
+        child.wait()
+        self.assertFalse(_real_alive(child.pid, ""))
+
+    def test_a_probe_error_other_than_no_such_process_reads_alive(self):
+        with mock.patch("prune_worktrees.os.kill", side_effect=PermissionError):
+            self.assertTrue(_real_alive(1, ""))
+
+    def test_a_lock_that_changed_since_the_listing_is_not_lifted(self):
+        class Relaunched(FakeGit):
+            def __call__(self, args):
+                if args[:2] == ["worktree", "list"] and self.calls:
+                    self.calls.append(args)
+                    fresh = LOCK.replace("pid 4242", "pid 5151")
+                    return 0, LOCKED_PORCELAIN.replace(LOCK, fresh), ""
+                return super().__call__(args)
+
+        git = Relaunched(LOCKED_PORCELAIN, on_main=["eng-1957"], locked=[ADVISOR_PATH])
+        out = prune(
+            {"eng-1957"}, False, git=git, tier=self.TIERS, alive=lambda p, s: False
+        )
+        self.assertEqual(out["skipped"][0]["reason"], "lock changed")
+        self.assertNotIn(["worktree", "unlock", ADVISOR_PATH], git.calls)
+
+    def test_the_lock_line_is_parsed(self):
+        trees = parse_worktrees(LOCKED_PORCELAIN)
+        self.assertEqual(trees[1]["locked"], LOCK)
+        self.assertNotIn("locked", trees[0])
+
+
+class TierOfTests(unittest.TestCase):
+    def _markers(self, files):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        markers = os.path.join(d.name, ".claude", "session-substrate")
+        os.makedirs(markers)
+        for name, text in files.items():
+            with open(os.path.join(markers, name), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        return d.name
+
+    def test_a_tier_file_names_the_tier(self):
+        base = self._markers({"1957": "anthropic\n", "1957.tier": "advisor\n"})
+        self.assertEqual(tier_of(base, f"{base}/.claude/worktrees/1957"), "advisor")
+
+    def test_a_bare_marker_is_an_executor(self):
+        base = self._markers({"1958": "bedrock\n"})
+        self.assertEqual(tier_of(base, f"{base}/.claude/worktrees/1958"), "executor")
+
+    def test_a_pre_rename_directory_and_marker_key_resolve(self):
+        base = self._markers({"eng-814": "bedrock\n"})
+        self.assertEqual(tier_of(base, f"{base}/.claude/worktrees/ceo-814"), "executor")
+
+    def test_an_advisor_marker_never_lifts_the_gate_on_a_pre_rename_tree(self):
+        # The marker keys on the number: an `explore 814` that reused a legacy
+        # `eng-814` task tree must not hand that tree the advisor gate.
+        base = self._markers({"814": "anthropic\n", "814.tier": "advisor\n"})
+        self.assertIsNone(tier_of(base, f"{base}/.claude/worktrees/eng-814"))
+        self.assertEqual(tier_of(base, f"{base}/.claude/worktrees/814"), "advisor")
+
+    def test_no_marker_is_unknown(self):
+        base = self._markers({})
+        self.assertIsNone(tier_of(base, f"{base}/.claude/worktrees/1959"))
+        self.assertIsNone(tier_of(base, f"{base}/.claude/worktrees/scratch"))
 
 
 class StrayBranchTests(unittest.TestCase):

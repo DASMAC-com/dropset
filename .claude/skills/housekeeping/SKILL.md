@@ -396,18 +396,21 @@ What the command does, so the report reads right:
 
 - reads the terminal and open PR sets and the PR
   notifications, field-selected, in one `gh` call each;
-- ties each worktree and `eng-<n>` / `worktree-<n>` /
-  `worktree-eng-<n>` branch to its
-  issue by number, and reads the status types in **one**
-  field-selected GraphQL call. The `worktree-<n>` form is what
-  a read-only architect or explore session leaves behind — it
-  never renames its branch — so its worktree is reclaimed once
-  ratification moves the issue to Done;
-- hands the eligible set to `prune_worktrees.py`, whose gate
-  still refuses any tree with uncommitted changes or unpushed
-  commits (bare `git worktree remove`, never `--force`). A
-  branch with no upstream is removed only when every commit on
-  it is already on `origin/main`;
+- ties each worktree and branch to its issue **by number,
+  never by prefix** — `eng-<n>`, which every verb now creates,
+  and the older `worktree-<n>`, `worktree-eng-<n>`,
+  `worktree-ceo-<n>` and `worktree-exp-<n>` spellings — and
+  reads the status types in **one**
+  field-selected GraphQL call;
+- hands the eligible set to `prune_worktrees.py`, which gates
+  by the **tier** the launch's substrate marker records. An
+  executor tree (or an unmarked one) is refused with
+  uncommitted changes or unpushed commits (bare
+  `git worktree remove`), and with no upstream unless every
+  commit is already on `origin/main`. An advisor tree
+  (`architect`, `explore`) takes one `--force` — its spec file
+  is expendable once the issue is Done — and is held only by
+  its own commit beyond `origin/main` or a live session's lock;
 - dismisses each eligible PR's notification thread as
   **done**, one at a time — never mark-all.
 

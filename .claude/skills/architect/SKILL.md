@@ -78,10 +78,10 @@ says anything about an `ENG-###` scope.
 **Keyed on the issue, the worktree is pruner-eligible.** It
 is kept while the issue is In Progress or In Review and
 becomes eligible once the issue is Done (or canceled).
-The pruner still refuses a dirty tree, so a worktree holding
-an untracked spec file is reported on every pass and removed
-by hand — nothing in it is lost, since Linear holds the
-record. A pre-rename
+The launch records the advisor tier, so the pruner then
+removes it, spec file and all — nothing in it is lost, since
+Linear holds the record; only a commit of its own, or a live
+session's lock, holds it back. A pre-rename
 `ceo-<topic>` worktree is reported rather than deleted and is
 cleaned by hand when its thread closes.
 

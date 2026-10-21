@@ -638,6 +638,7 @@ _ds_session() {
     fi
     ANTHROPIC_MODEL="$model" claude --resume "$sid" --permission-mode auto
   else
+    [[ -n "$worktree" ]] && _ds_worktree_ensure "$worktree"
     ANTHROPIC_MODEL="$model" claude --session-id "$sid" -n "$name" \
       --permission-mode auto "${worktree_flag[@]}" "${prompt_arg[@]}"
   fi
@@ -746,8 +747,9 @@ _DS_SUBSTRATE_DIR="$_DS_REPO/.claude/session-substrate"
 # directory is named by the number alone (operator ruling: the prefix is dead
 # screen estate, and the number is what the operator looks up). Anything else
 # passes through lowercased, which keeps a free-form `exp-<name>` usable. Git
-# BRANCHES are the one place the `eng-` prefix survives: `init-pr` renames to
-# it, because Linear's GitHub integration links on that form.
+# BRANCHES are the one place the `eng-` prefix survives, for every verb that
+# takes a worktree (`_ds_worktree_ensure`), because Linear's GitHub integration
+# links on that form.
 #
 # `10#` forces base ten, so a padded `0123` names issue 123, not octal 83.
 #
@@ -799,6 +801,36 @@ _ds_launch_dir() {
   _ds_worktree_of "$1" || print -r -- "$1"
 }
 
+# Internal: pre-create an issue-keyed worktree on its `eng-<n>` branch, before
+# `claude -w <n>` runs. ONE SCHEME FOR EVERY VERB THAT TAKES A WORKTREE — `task`,
+# `explore` and `architect` alike: the directory is the bare number and the
+# branch is `eng-<n>` (operator ruling, 2026-10-20). The CLI has no flag to
+# choose the branch and names it `worktree-<n>`, which only `init-pr` ever
+# renamed, so a read-only session's branch read differently from a task's. But
+# `-w` REUSES an existing worktree — every `task` relaunch relies on that — so
+# creating it here first is how the branch gets the scheme's name.
+#
+# A no-op for an existing directory (pre-rename spellings included, which
+# `_ds_launch_dir` has already resolved) and for a worded tag. An `eng-<n>`
+# branch that outlived its worktree is checked out where it stands, not reset
+# to `origin/main` — it may hold the earlier session's work. `--no-track`:
+# from `origin/main` git would otherwise set main as the upstream, and then
+# `git status` and the pruner's unpushed count would read against the wrong
+# branch. Best-effort: on any failure it warns and the CLI creates the worktree
+# itself, under the old branch name, which the pruner still resolves.
+_ds_worktree_ensure() {
+  local dir="$1" branch="eng-$1" wt="$_DS_REPO/.claude/worktrees/$1"
+  [[ "$dir" == <-> && ! -d "$wt" ]] || return 0
+  if git -C "$_DS_REPO" show-ref --verify --quiet "refs/heads/$branch"; then
+    git -C "$_DS_REPO" worktree add --quiet "$wt" "$branch"
+  else
+    git -C "$_DS_REPO" worktree add --quiet --no-track -b "$branch" "$wt" \
+      origin/main
+  fi || print -u2 "dropset: could not pre-create worktree $dir on $branch —" \
+    "the CLI will create it as worktree-$dir"
+  return 0
+}
+
 # Internal: the substrate-marker key for a tag. A marker written before the
 # rename sits under `eng-<n>`; reading it there keeps a pre-rename Bedrock
 # session resuming on Bedrock instead of silently moving to the seat.
@@ -809,6 +841,16 @@ _ds_marker_key() {
     tag="eng-$tag"
   fi
   print -r -- "$tag"
+}
+
+# Internal: may an advisor launch record its tier for this tag? Only when the
+# marker already says advisor (a reopen) or no worktree exists yet (this launch
+# creates it). The advisor `.tier` LIFTS the pruner's executor refusal, so it
+# must never land on an unmarked tree another launch made — a hand-run
+# `claude -w <n>` may hold uncommitted work there.
+_ds_advisor_may_mark() {
+  [[ "$(cat "$_DS_SUBSTRATE_DIR/$1.tier" 2>/dev/null)" == advisor ]] \
+    || ! _ds_worktree_of "$1" >/dev/null
 }
 
 # Resolve a tier to the model and substrate a launch uses. Prints two lines,
@@ -951,12 +993,14 @@ _ds_substrate_read() {
 # Which tier a `task resume <n>` re-pins. Prints `executor`, `advisor` or
 # `helper`.
 #
-# A `<key>.tier` file reading `advisor` or `helper` wins: `architect` and
-# `chore` write one beside their substrate marker, so `architect <n> bedrock`
-# resumes on Bedrock AND on the advisor model, and a chore on the helper model.
-# Otherwise a marker's PRESENCE is the tier record — present
-# means an executor session (`task`, which clears any `.tier` it finds), absent
-# means the issue-keyed `explore` that writes none (see `explore` for why).
+# A `<key>.tier` file reading `advisor` or `helper` wins: `architect`,
+# `explore` and `chore` write one beside their substrate marker, so
+# `architect <n> bedrock` resumes on Bedrock AND on the advisor model, and a
+# chore on the helper model. Otherwise a marker's PRESENCE is the tier record —
+# present means an executor session (`task`, which clears any `.tier` it
+# finds), absent means an issue-keyed `explore` from before it wrote one. The
+# pruner (`prune_worktrees.tier_of`) reads the same files but treats absent as
+# unknown: it is the destructive side.
 # The tier lives in its own file because session_metrics.py reads the marker
 # as one bare word, so a second field in it would break that reader.
 _ds_resume_tier() {
@@ -1201,9 +1245,10 @@ _ds_seat_guard() {
 # inference, only the subscription, so it is retired and kept briefly as an
 # alias that says so.
 #
-# Creates the bare-number worktree directory (`task 882` → `882`) whose branch
-# arrives named `worktree-882` — there is no CLI flag to choose the branch, so
-# `init-pr` renames it to `eng-882`, the form Linear's GitHub integration links.
+# Creates the bare-number worktree directory (`task 882` → `882`) on branch
+# `eng-882`, the form Linear's GitHub integration links — pre-created by
+# `_ds_worktree_ensure`, since the CLI cannot choose the branch. Should that
+# fail, the CLI's `worktree-882` arrives and `init-pr` renames it.
 #
 # Three things ride the launch, and each was a parity gap when this helper was
 # committed — the operator's own profile had been passing all three, and the
@@ -1288,7 +1333,9 @@ _ds_task_start() {
   # happened to quit — and never at all if the terminal were closed instead.
   _ds_substrate_write "$tag" "$substrate"
 
-  ANTHROPIC_MODEL="$model" claude -w "$(_ds_launch_dir "$tag")" -n "$tag" \
+  local dir="$(_ds_launch_dir "$tag")"
+  _ds_worktree_ensure "$dir"
+  ANTHROPIC_MODEL="$model" claude -w "$dir" -n "$tag" \
     --permission-mode auto \
     /init-pr
 }
@@ -1423,11 +1470,11 @@ _ds_task_resume() {
 # THE COST OF SHARING THE TAG: `<n>` names a worktree that three session
 # kinds (`task`, `explore`, `architect`) can claim, with different substrates
 # and different tiers, while the
-# substrate marker keys on the tag alone. That is why nothing is written to it
-# below — and the marker's resulting ABSENCE is what tells `task resume <n>`
-# (and `fleet`, which types it) to re-pin the advisor tier on the anthropic
-# substrate. See `_ds_resume_tier`. `explore <n>` remains the natural resume
-# verb; the other two now land on the same model.
+# substrate marker keys on the tag alone. That is why the marker below is
+# written only where none exists, with an advisor `.tier` — which tells
+# `task resume <n>` (and `fleet`, which types it) to re-pin the advisor tier on
+# the anthropic substrate. See `_ds_resume_tier`. `explore <n>` remains the
+# natural resume verb; the other two now land on the same model.
 #
 # THE `resume` TWIN IS GONE, and dropping it removes a wart rather than a
 # feature. `explore <name>` now creates the session if absent and resumes it if
@@ -1447,9 +1494,10 @@ _ds_task_resume() {
 # takes no `bedrock` word because the one override the operator ratified is the
 # credit-pinch case for `plan` and `architect`; explore carries no such pinch.
 # It is PINNED to the anthropic substrate, deliberately ignoring
-# `DS_MODEL_ADVISOR_SUBSTRATE`: it writes no substrate marker (see below), so a
-# marker-less `task resume <n>` always resumes it on anthropic, and launching it
-# anywhere else would make that resume switch provider mid-conversation.
+# `DS_MODEL_ADVISOR_SUBSTRATE`: a pre-marker explore worktree has no marker
+# (see below), so its `task resume <n>` always resumes on anthropic, and
+# launching it anywhere else would make that resume switch provider
+# mid-conversation.
 #
 # The model pin, the permission mode and the start-or-resume probe all come
 # from `_ds_session`, which gets each right on both branches by construction —
@@ -1523,25 +1571,26 @@ explore() {
   { read -r model; read -r substrate; } <<< "$(_ds_tier advisor anthropic)"
   [[ -n "$substrate" ]] || return 1
   _ds_substrate_enter "$substrate" 'explore' || return 1
-  # NO SUBSTRATE MARKER IS WRITTEN HERE, DELIBERATELY, and the reason is the
-  # whole hazard of keying this worktree to `<n>`: the marker is keyed on the
-  # WORKTREE TAG ALONE, and `_ds_task_start` writes that same key. So
-  # `task 1196` (bedrock) followed by `explore 1196` would flip the marker to
-  # `seat`, and the next `task resume 1196` — or `fleet`, which types exactly
-  # that for every in-flight issue — would silently resume the IMPLEMENTATION
-  # session on the seat and eat the subscription window. That is the failure this
-  # file calls silent in both directions, caused by the fix for it.
+  # THE MARKER IS WRITTEN ONLY WHERE NONE EXISTS. The hazard is real: the
+  # marker is keyed on the WORKTREE TAG ALONE, and `_ds_task_start` writes that
+  # same key, so `task 1196` (bedrock) followed by an unconditional write here
+  # would flip it to anthropic, and the next `task resume 1196` — or `fleet` —
+  # would silently resume the IMPLEMENTATION session on the seat. An
+  # `architect <n>` thread's marker is left alone for the same reason: the two
+  # share one worktree, and its substrate is the one the thread chose.
   #
-  # Not writing costs nothing: an absent marker already reads as seat, which is
-  # correct for a seat-only verb. An intermediate revision did write it, to make
-  # a comment's "the substrate marker records it" claim true; the honest fix was
-  # to correct the claim instead.
-  #
-  # One residue: `architect <n>` DOES write a marker (with an advisor `.tier`),
-  # so an `explore <n>` on a number an architect thread already holds inherits
-  # that thread's substrate on `task resume <n>`. The two would share one
-  # worktree anyway, and `task resume` reaches one session per worktree, so it
-  # is accepted rather than coded around.
+  # Writing one at all is what the issue-keyed purge needs: the pruner reads
+  # the TIER from this marker (`advisor` lifts its executor refusal), and the
+  # fleet cost tool reads the substrate — an unmarked explore worktree used to
+  # meter as unattributed. It costs the resume nothing: absent already read as
+  # the advisor tier on anthropic, which is exactly what is written. And only
+  # for a worktree this launch creates (`_ds_advisor_may_mark`): an unmarked
+  # tree some other launch made may hold its uncommitted work.
+  if [[ "$raw" == <-> && ! -f "$_DS_SUBSTRATE_DIR/$(_ds_marker_key "$tag")" ]] \
+    && _ds_advisor_may_mark "$tag"
+  then
+    _ds_substrate_write "$tag" "$substrate" advisor
+  fi
   _ds_session "$(_ds_topic_sid explore "$raw")" "$name" "$prompt" \
     "$model" "$(_ds_launch_dir "$tag")"
 }
@@ -1848,10 +1897,11 @@ housekeeping() {
 # which makes the worktree's contents expendable by construction. So the
 # protection no longer needs a PR to exist.
 #
-# Its worktree, being keyed on the issue, is eligible for the pruner once that
-# issue's status type is completed or canceled. The pruner still refuses a dirty
-# tree, so one holding an untracked spec file — the usual case — is reported on
-# every pass and removed by hand.
+# Its worktree, being keyed on the issue (`<n>` on branch `eng-<n>`, as every
+# verb's is), is eligible for the pruner once that issue's status type is
+# completed or canceled — never while it is In Review. The advisor `.tier` this
+# verb records lifts the pruner's executor refusal, so an untracked spec file
+# no longer holds the worktree back; only a commit of its own does.
 architect() {
   local tag model substrate
   if [[ -z "$1" || -n "$3" || ( -n "$2" && "$2" != (anthropic|bedrock) ) ]]
@@ -1886,8 +1936,11 @@ architect() {
   if [[ -n "$executor_owned" ]]; then
     print -u2 "architect: $tag carries a task session's substrate marker —" \
       'leaving it, so a task resume of it re-pins the executor tier.'
-  else
+  elif _ds_advisor_may_mark "$tag"; then
     _ds_substrate_write "$tag" "$substrate" advisor
+  else
+    print -u2 "architect: worktree $tag was made by another launch with no" \
+      'marker — leaving it unmarked, so the pruner keeps its executor gate.'
   fi
   _ds_session "$(_ds_topic_sid architect "$tag")" \
     "$tag" "/architect ENG-$tag" "$model" "$(_ds_launch_dir "$tag")"
