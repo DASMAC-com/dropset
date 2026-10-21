@@ -755,10 +755,13 @@ export function VaultActionDialog({
   // USD value of the basket, for display only ("Total Deposit" + per-leg ≈).
   // Each leg's quote-denominated value × the quote token's USD price, so the
   // legs and the total share one basis and read as real USD even when the
-  // quote leg isn't a USD stable (e.g. GYEN).
+  // quote leg isn't a USD stable (e.g. GYEN). The base leg is priced at the
+  // vault's reference price, not the basket ratio, which measures holdings.
   const quoteUsd = vault.quoteUsd;
   const baseUsdValue =
-    (Number.isFinite(base) ? base : 0) * (ratio ?? 0) * quoteUsd;
+    (Number.isFinite(base) ? base : 0) *
+    (vaultRefPrice(vault) ?? ratio ?? 0) *
+    quoteUsd;
   const quoteUsdValue = (Number.isFinite(quote) ? quote : 0) * quoteUsd;
   const depositUsd = baseUsdValue + quoteUsdValue;
   // The largest deposit the vault can take before the new shares would dilute

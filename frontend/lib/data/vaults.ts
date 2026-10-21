@@ -264,9 +264,9 @@ export const tokenUsdPrice = (symbol: string): number => TOKEN_USD[symbol] ?? 1;
 const isUsd = (symbol: string): boolean =>
   currencyForStablecoin(symbol) === "USD";
 
-// USD per quote token for a market, from the vault's own reference price
-// `refPrice` (quote per base) wherever one leg is a USD stable: 1 for a
-// USD-quoted market, 1 / refPrice for a USD-based one (USD/JPY quotes GYEN).
+// USD per quote token for a market wherever one leg is a USD stable: 1 for a
+// USD-quoted market, and 1 / refPrice for a USD-based one (USD/JPY quotes
+// GYEN), from the vault's own reference price `refPrice` (quote per base).
 // Every roster pair has a USD leg, so the table is reached only by a dark
 // book on a USD-based market, or a cross pair; `indicative` says so.
 export const quoteUsdRate = (

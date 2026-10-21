@@ -59,8 +59,9 @@ const chainVps = (summary: VaultSummary): number =>
     : 0;
 
 // One decoded vault in the UI's shape. TVL values the base leg in quote at
-// the vault's own reference price, then the whole in USD (quoteUsdRate); only
-// a dark book falls back to the indicative table for the base leg.
+// the vault's own reference price, then the whole in USD (quoteUsdRate). A
+// dark book falls back to the indicative table for the base leg, and, on a
+// USD-based market, for the quote leg too (see quoteUsdRate).
 export function chainVault(
   summary: VaultSummary,
   market: string,
@@ -75,9 +76,9 @@ export function chainVault(
   const refPrice = isMatchablePrice(summary.referencePrice)
     ? decodePrice(summary.referencePrice) * 10 ** (baseDecimals - quoteDecimals)
     : null;
-  const quoteUsd = quoteUsdRate(base, quote, refPrice);
+  const usdRate = quoteUsdRate(base, quote, refPrice);
   const baseUsd =
-    refPrice !== null ? refPrice * quoteUsd.rate : tokenUsdPrice(base);
+    refPrice !== null ? refPrice * usdRate.rate : tokenUsdPrice(base);
   return {
     chain: {
       index: summary.index,
@@ -93,9 +94,9 @@ export function chainVault(
     vaultPubkey: chainVaultId(market, summary.seq),
     leader: summary.leader,
     refPrice,
-    quoteUsd: quoteUsd.rate,
-    usdIndicative: refPrice === null || quoteUsd.indicative,
-    tvl: baseReserve * baseUsd + quoteReserve * quoteUsd.rate,
+    quoteUsd: usdRate.rate,
+    usdIndicative: refPrice === null || usdRate.indicative,
+    tvl: baseReserve * baseUsd + quoteReserve * usdRate.rate,
     baseReserve,
     quoteReserve,
     totalShares: Number(summary.totalShares),

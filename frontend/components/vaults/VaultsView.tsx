@@ -53,7 +53,7 @@ import {
 // The table shows only what the chain gives. APR, 24h volume and the pair's
 // 24h figures need trade history, so they return with the indexer rather than
 // rendering blank here; a depositor's PnL stays on their position, marked at
-// the vault's live reference price.
+// the vault's reference price (vaultRefPrice).
 
 // Pin the generic shared header to this table's metric keys so the literal
 // `sortKey` props type-check against `sort` / `onToggle`.
@@ -756,9 +756,10 @@ function VaultsInner() {
             </label>
           </div>
           <p className="text-muted-fg text-xs">
-            Read live from the chain, TVL at each vault's reference price.
+            Read live from the chain. TVL is valued at each vault's reference
+            price.
             {liveIndicative &&
-              " Where a vault's book is dark, its TVL uses indicative token prices."}
+              " Where a vault has no on-chain USD price (its book is dark), its TVL uses indicative token prices."}
           </p>
         </div>
         {/* Active URL pin (?base=&quote=&leader=) shown as removable chips on
