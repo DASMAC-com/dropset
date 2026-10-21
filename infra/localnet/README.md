@@ -23,14 +23,13 @@ Tower consensus instead, where slots run nearer 250ms.
 A single node starts Alpenglow at genesis, so the localnet cannot
 rehearse mainnet's Tower-to-Alpenglow switch.
 
-Two launch flags in `tui/src/validator.rs` are stopgaps, to be dropped
-once the standard validator does without them:
-
-- `--ticks-per-slot 32`: the 4.3 test validator paces slots by tick
-  count (~400ms by default), whatever the slot-time features say.
-- `--deactivate-feature` on SIMD-0500, which refuses to deploy pre-v3
-  programs and would reject the v0-held program build
-  ([`docs/program-build.md`](../../docs/program-build.md)).
+One launch flag in `tui/src/validator.rs` is a stopgap, to be dropped
+once the standard validator does without it: `--ticks-per-slot 32`,
+because the 4.3 test validator paces slots by tick count (~400ms by
+default), whatever the slot-time features say. Every feature the
+validator knows is left active, SIMD-0500's refusal of pre-v3 programs
+included, since the program builds for sBPF v3
+([`docs/program-build.md`](../../docs/program-build.md)).
 
 CI starts no validator: the Rust suites run on litesvm, whose feature
 set comes from its crate pin rather than the validator binary.

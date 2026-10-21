@@ -27,7 +27,7 @@
 //!
 //! # What is checked elsewhere, deliberately
 //!
-//! Two families of `.equ` symbols are pinned by *behavior* in
+//! Three families of `.equ` symbols are pinned by *behavior* in
 //! `tests/asm_parity.rs` and are not restated here, because a runtime check
 //! against the real thing beats a second const:
 //!
@@ -40,6 +40,9 @@
 //!   serialization rather than against another number. Only their
 //!   *relationships* are asserted below, since those are what the fused
 //!   load depends on.
+//! * **Syscall ids** (`SYS_MEMCPY_`) — a wrong hash still loads but names
+//!   no registered syscall, so every parity case that reaches the profile
+//!   write fails at the call with `ProgramFailedToComplete`.
 
 use crate::{LiquidityProfile, Market, MarketHeader, ReferencePrice, Vault};
 use core::mem::{offset_of, size_of};
@@ -99,9 +102,9 @@ const DISC_SIZE: u64 = 8;
 // silently reintroduce the unchecked-copy class this module exists to
 // close. Failing here on a count change forces that decision to be made
 // out loud: either add an assertion, or bump the count with a note saying
-// why the new symbol needs none (the `E_*` and `DISCRIM_*` families are
-// pinned by behavior instead — see the module header).
-const _: () = assert!(equ::COUNT == 32);
+// why the new symbol needs none (the `E_*`, `DISCRIM_*` and `SYS_*`
+// families are pinned by behavior instead — see the module header).
+const _: () = assert!(equ::COUNT == 33);
 
 // ── account 0: signer ───────────────────────────────────────────────────
 const _: () = assert!(equ::SIGNER_IS_SIGNER_OFF == NUM_ACCOUNTS_SIZE + HDR_IS_SIGNER);
