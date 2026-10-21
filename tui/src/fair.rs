@@ -16,7 +16,7 @@
 use anyhow::{bail, Context, Result};
 use dropset_market_data::estimator::published_product;
 use dropset_market_data::fair_price::{FairPriceRow, FairPriceSource, MAX_PUBLISHED_FAIR_AGE};
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -24,16 +24,34 @@ use std::time::Duration;
 pub const DATABASE_URL_ENV: &str = "DROPSET_TUI_DATABASE_URL";
 
 /// The read-only role 0002 creates — the one the dashboards log in as.
-const READER_ROLE: &str = "dropset_ro";
+pub const READER_ROLE: &str = "dropset_ro";
 
 /// How long one read may take, connect included, before it reads as
 /// unavailable — the prompt waits on it.
 const READ_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// A configured fair-price database.
-#[derive(Clone, Debug)]
+///
+/// No derived `Debug`: the connect options carry the password, and a
+/// `{:?}` would put it in the log pane and its on-disk mirror.
+#[derive(Clone)]
 pub struct FairDb {
     options: PgConnectOptions,
+}
+
+impl std::fmt::Debug for FairDb {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FairDb")
+            .field("host", &self.options.get_host())
+            .field("user", &self.options.get_username())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Whether `host` is this machine — a loopback address or a Unix socket
+/// directory — where an unverified connection has no path to intercept.
+fn is_local(host: &str) -> bool {
+    host.starts_with('/') || matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
 }
 
 impl FairDb {
@@ -41,7 +59,11 @@ impl FairDb {
     ///
     /// # Errors
     ///
-    /// When it is set but unparseable or logs in as any role but the reader.
+    /// When it is set but unparseable, logs in as any role but the reader,
+    /// or names a remote host without a verified TLS connection
+    /// (`sslmode=verify-ca` or `verify-full`). The fair it reads becomes the
+    /// center a quote key signs, so a connection anyone on the path could
+    /// answer is refused rather than trusted.
     pub fn from_env() -> Result<Option<Self>> {
         match std::env::var(DATABASE_URL_ENV) {
             Ok(url) if !url.is_empty() => Self::from_url(&url).map(Some),
@@ -56,6 +78,17 @@ impl FairDb {
             bail!(
                 "{DATABASE_URL_ENV} must log in as {READER_ROLE}, the read-only role — not {}",
                 options.get_username()
+            );
+        }
+        let verified = matches!(
+            options.get_ssl_mode(),
+            PgSslMode::VerifyCa | PgSslMode::VerifyFull
+        );
+        if !is_local(options.get_host()) && !verified {
+            bail!(
+                "{DATABASE_URL_ENV} names the remote host {} — add sslmode=verify-full \
+                 (and sslrootcert=<CA file> for a private CA)",
+                options.get_host()
             );
         }
         Ok(Self {
@@ -82,7 +115,7 @@ impl FairDb {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        runtime.block_on(async {
+        let rows = runtime.block_on(async {
             tokio::time::timeout(READ_TIMEOUT, async {
                 let pool = PgPoolOptions::new()
                     .max_connections(1)
@@ -96,7 +129,12 @@ impl FairDb {
             })
             .await
             .context("timed out")?
-        })
+        });
+        // A timed-out hostname lookup still holds a blocking-pool thread,
+        // which a plain drop would wait on, past the timeout, on the UI
+        // thread. Abandon it instead.
+        runtime.shutdown_background();
+        rows
     }
 }
 
@@ -273,5 +311,24 @@ mod tests {
         assert!(err.contains(READER_ROLE), "{err}");
         assert!(FairDb::from_url("not a url").is_err());
         assert!(!Fair::Off.governs() && !Fair::Unpublished.governs());
+    }
+
+    #[test]
+    fn a_remote_host_needs_a_verified_connection() {
+        let remote = "postgres://dropset_ro:pw@db.example.com:5432/dropset";
+        let err = FairDb::from_url(remote).unwrap_err().to_string();
+        assert!(err.contains("sslmode=verify-full"), "{err}");
+        // Encryption without verification answers no one on the path.
+        assert!(FairDb::from_url(&format!("{remote}?sslmode=require")).is_err());
+        assert!(FairDb::from_url(&format!("{remote}?sslmode=verify-full")).is_ok());
+        assert!(FairDb::from_url("postgres://dropset_ro:pw@localhost/dropset").is_ok());
+    }
+
+    #[test]
+    fn the_password_never_reaches_a_debug_and_an_unpublished_market_never_connects() {
+        let db = FairDb::from_url("postgres://dropset_ro:SECRETpw@127.0.0.1:5432/dropset").unwrap();
+        assert!(!format!("{db:?}").contains("SECRETpw"));
+        // A market the estimator does not roster returns before connecting.
+        assert_eq!(db.read("NOPE"), Fair::Unpublished);
     }
 }

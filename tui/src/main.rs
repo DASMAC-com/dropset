@@ -268,10 +268,12 @@ fn print_help() {
          Entry verifies the genesis hash and requires a typed confirmation, and\n    \
          every ceremony step shows its plan under its own typed confirmation.\n\n\
          FAIR PRICE:\n    \
-         Optional. Set {} to a Postgres URL logging in as dropset_ro\n    \
+         Optional. Set {} to a Postgres URL logging in as {}\n    \
          (localnet: postgres://dropset_ro:dropset_ro@127.0.0.1:5432/dropset) and a\n    \
          blank passive center is the estimator's fair; a paused or stale fair\n    \
-         refuses the blank. Unset, it is the vault's live reference or the book mid.",
+         refuses the blank. Unset, it is the vault's live reference or the book mid.\n    \
+         A remote host needs sslmode=verify-full (sslrootcert=<CA file> for a\n    \
+         private CA).",
         ceremony::CEREMONY_LOG_ENV,
         wallet::OP_ACCOUNT_ENV,
         wallet::EPHEMERAL_WALLET,
@@ -279,7 +281,8 @@ fn print_help() {
         keys::LEADER_VAR,
         keys::QUOTE_VAR,
         cluster::MAINNET_RPC_ENV,
-        fair::DATABASE_URL_ENV
+        fair::DATABASE_URL_ENV,
+        fair::READER_ROLE
     );
 }
 

@@ -33,11 +33,11 @@ use crate::fair::Fair;
 use crate::job::Logger;
 use crate::market;
 use anyhow::{anyhow, bail, Context, Result};
-use dropset_sdk::clock::{WallSpan, WallTime};
+use dropset_sdk::clock::{SlotTime, WallSpan, WallTime};
 use dropset_sdk::ladder::{
     build_profile, passive_shape_warnings, LadderLevel, PassiveLadder, PassiveShape,
 };
-use dropset_sdk::layout::{MarketView as SlabView, Position, Vault, N_LEVELS};
+use dropset_sdk::layout::{Level, MarketView as SlabView, Position, Vault, N_LEVELS};
 use dropset_sdk::price::Price;
 use dropset_sdk::quoting::{profile_bytes, set_liquidity_profile_ix, set_reference_price_ix};
 use dropset_util::decimals::human_to_atoms_ratio;
@@ -447,27 +447,11 @@ pub fn prepare(
     let live = reference
         .is_matchable()
         .then(|| book::human_price(reference, market.base_decimals, market.quote_decimals));
-    let (center, center_source) = match (parse_price(&form.price), live) {
-        (Some(typed), _) => (typed, "typed"),
-        _ if !form.price.is_empty() => bail!("enter a positive number, e.g. 1.324"),
-        // With an estimator to ask, a blank center is its fair and nothing
-        // older: a paused or unreadable one is a reason to stop, not to keep
-        // quoting yesterday's center.
-        (None, _) if fair.governs() => match fair.price() {
-            Some(price) => (price, "the estimator's fair"),
-            None => bail!("{} — type a price", fair.describe()),
-        },
-        // A blank re-stamp is the daily keep-alive: same center, fresh stamp.
-        (None, Some(live)) => (live, "the vault's live reference, re-stamped"),
-        // Only a two-sided book has a mid; one side alone is not a center.
-        (None, None) if !market.asks.is_empty() && !market.bids.is_empty() => {
-            let mid = book::mid_price(market).context("the book has no mid")?;
-            (mid, "the book mid")
-        }
-        (None, None) => {
-            bail!("the vault has no reference and the book is not two-sided — type a price")
-        }
-    };
+    // Only a two-sided book has a mid; one side alone is not a center.
+    let mid = (!market.asks.is_empty() && !market.bids.is_empty())
+        .then(|| book::mid_price(market))
+        .flatten();
+    let (center, center_source) = resolve_center(&form.price, live, mid, fair)?;
     let ratio = human_to_atoms_ratio(center, market.base_decimals, market.quote_decimals);
     let price = Price::from_value(ratio).with_context(|| format!("encode the center {center}"))?;
     let (levels, mut warnings) = match form.op {
@@ -479,12 +463,11 @@ pub fn prepare(
         PassiveOp::Recenter => (Vec::new(), Vec::new()),
     };
     warnings.extend(live.and_then(|live| center_warning(center, live, "live reference")));
-    if center_source != "the estimator's fair" {
-        warnings.extend(
-            fair.price()
-                .and_then(|f| center_warning(center, f, "estimator's fair")),
-        );
-    }
+    // Silent when the center is the fair itself.
+    warnings.extend(
+        fair.price()
+            .and_then(|f| center_warning(center, f, "estimator's fair")),
+    );
     Ok(Ticket {
         op: form.op,
         market: market.address,
@@ -499,6 +482,40 @@ pub fn prepare(
         price,
         warnings,
     })
+}
+
+/// The center `typed` names, or — blank — the one the session's sources give,
+/// with where it came from. Split out of [`prepare`] so the precedence is
+/// testable without a chain: a typed price wins; with an estimator to ask, a
+/// blank center is its fair and nothing older, since a paused or unreadable
+/// one is a reason to stop, not to keep quoting yesterday's center; without
+/// one, the vault's `live` reference, then the two-sided book's `mid`.
+fn resolve_center(
+    typed: &str,
+    live: Option<f64>,
+    mid: Option<f64>,
+    fair: &Fair,
+) -> Result<(f64, &'static str)> {
+    if let Some(typed) = parse_price(typed) {
+        return Ok((typed, "typed"));
+    }
+    if !typed.is_empty() {
+        bail!("enter a positive number, e.g. 1.324");
+    }
+    if fair.governs() {
+        return match fair.price() {
+            Some(price) => Ok((price, "the estimator's fair")),
+            None => bail!("{} — type a price", fair.describe()),
+        };
+    }
+    match (live, mid) {
+        // A blank re-stamp is the daily keep-alive: same center, fresh stamp.
+        (Some(live), _) => Ok((live, "the vault's live reference, re-stamped")),
+        (None, Some(mid)) => Ok((mid, "the book mid")),
+        (None, None) => {
+            bail!("the vault has no reference and the book is not two-sided — type a price")
+        }
+    }
 }
 
 /// A warning when `center` sits more than [`CENTER_DEVIATION_WARN`] from
@@ -539,34 +556,54 @@ pub fn vault_lines(
         .filter(|v| v.seq.get() == seat.seq)
         .with_context(|| format!("vault #{} moved between two reads — reopen", seat.seq))?;
     let legs = Legs {
-        base: (config.base.symbol, market.base_decimals),
-        quote: (config.quote.symbol, market.quote_decimals),
+        base: Leg {
+            symbol: config.base.symbol,
+            decimals: market.base_decimals,
+        },
+        quote: Leg {
+            symbol: config.quote.symbol,
+            decimals: market.quote_decimals,
+        },
     };
-    Ok(ladder_state(
-        vault,
-        seat.seq,
-        &legs,
-        dropset_sdk::time::now_unix(),
-    ))
+    // Expiry is dual-domain, so the view needs both clocks.
+    let slot = client.get_slot().context("current slot")?;
+    let now = (
+        dropset_sdk::time::now_unix_u32(),
+        SlotTime::new(slot.min(u64::from(u32::MAX)) as u32),
+    );
+    Ok(ladder_state(vault, seat.seq, &legs, now))
 }
 
-/// Each leg's symbol and mint decimals.
-struct Legs {
-    base: (&'static str, u8),
-    quote: (&'static str, u8),
+/// One leg's symbol and mint decimals.
+#[derive(Clone, Copy)]
+struct Leg {
+    symbol: &'static str,
+    decimals: u8,
 }
 
-impl Legs {
-    fn price(&self, bits: u32) -> f64 {
-        book::human_price(Price::from_bits(bits), self.base.1, self.quote.1)
+impl Leg {
+    /// `atoms` of this leg in whole units, with its symbol.
+    fn amount(self, atoms: u64) -> String {
+        let units = atoms as f64 / 10f64.powi(i32::from(self.decimals));
+        format!("{units:.2} {}", self.symbol)
     }
 }
 
-fn amount(atoms: u64, (symbol, decimals): (&str, u8)) -> String {
-    format!(
-        "{:.2} {symbol}",
-        atoms as f64 / 10f64.powi(i32::from(decimals))
-    )
+/// The market's two legs.
+struct Legs {
+    base: Leg,
+    quote: Leg,
+}
+
+impl Legs {
+    /// A stored price's bits in human quote-per-base.
+    fn price(&self, bits: u32) -> f64 {
+        book::human_price(
+            Price::from_bits(bits),
+            self.base.decimals,
+            self.quote.decimals,
+        )
+    }
 }
 
 /// What `vault` rests and what has flipped since its last stamp, outermost
@@ -574,10 +611,18 @@ fn amount(atoms: u64, (symbol, decimals): (&str, u8)) -> String {
 /// visit that ends on a re-center or re-stamp, "since the stamp" is "since
 /// the last visit". Until the first taker after a stamp nothing has traded,
 /// and the profile rests exactly as posted.
-fn ladder_state(vault: &Vault, seq: u64, legs: &Legs, now_unix: i64) -> Vec<String> {
+///
+/// A level is dead once either of its deadlines is at or past `now` — the
+/// matcher rests one only inside both.
+fn ladder_state(
+    vault: &Vault,
+    seq: u64,
+    legs: &Legs,
+    (now_wall, now_slot): (WallTime, SlotTime),
+) -> Vec<String> {
     let rp = &vault.reference_price;
-    let stamped = i64::from(rp.quote_unix.get());
-    let hours = now_unix.saturating_sub(stamped).max(0) as f64 / 3_600.0;
+    let stamped = rp.quote_unix.get();
+    let hours = f64::from(now_wall.get().saturating_sub(stamped)) / 3_600.0;
     let mut lines = vec![format!(
         "vault #{seq}  stamped {hours:.1} h ago at {}",
         book::fmt_price(legs.price(rp.price.get()))
@@ -587,10 +632,18 @@ fn ladder_state(vault: &Vault, seq: u64, legs: &Legs, now_unix: i64) -> Vec<Stri
         lines.push("no ladder rests on this vault".to_string());
         return lines;
     }
-    let now = WallTime::new(now_unix.clamp(0, i64::from(u32::MAX)) as u32);
+    let dead = |(wall, slot): (WallTime, SlotTime)| wall <= now_wall || slot <= now_slot;
+    let used = |sizes: &[Level; N_LEVELS], i: usize| sizes[i].size_bps.get() > 0;
     if rp.flush_armed() {
-        let (wall, _) = profile.asks[0].deadlines(rp);
-        lines.push(if wall <= now {
+        // Every rung of a posted ladder shares one life, so the first used
+        // one — on either side — names it.
+        let first = (0..N_LEVELS)
+            .find_map(|i| used(&profile.asks, i).then_some(&profile.asks[i]))
+            .or_else(|| {
+                (0..N_LEVELS).find_map(|i| used(&profile.bids, i).then_some(&profile.bids[i]))
+            })
+            .expect("a nonzero side sum has a used level");
+        lines.push(if dead(first.deadlines(rp)) {
             "nothing traded since the stamp, and the ladder has expired".to_string()
         } else {
             "nothing traded since the stamp — every level rests as posted".to_string()
@@ -598,8 +651,8 @@ fn ladder_state(vault: &Vault, seq: u64, legs: &Legs, now_unix: i64) -> Vec<Stri
         return lines;
     }
     let mut flipped = 0;
-    let mut level = |side: &str, i: usize, p: &Position, own, other| {
-        let expired = if p.wall_deadline() <= now {
+    let mut level = |side: &str, i: usize, p: &Position, own: Leg, other: Leg| {
+        let expired = if dead((p.wall_deadline(), p.slot_deadline())) {
             "  expired"
         } else {
             ""
@@ -610,7 +663,7 @@ fn ladder_state(vault: &Vault, seq: u64, legs: &Legs, now_unix: i64) -> Vec<Stri
             flipped += 1;
             format!(
                 "  flipped {} @ {}",
-                amount(p.flip_size.get(), other),
+                other.amount(p.flip_size.get()),
                 book::fmt_price(legs.price(p.flip_price.get()))
             )
         };
@@ -618,11 +671,9 @@ fn ladder_state(vault: &Vault, seq: u64, legs: &Legs, now_unix: i64) -> Vec<Stri
             "{side} L{}  {:>12}  rests {}{flip}{expired}",
             i + 1,
             book::fmt_price(legs.price(p.price.get())),
-            amount(p.size.get(), own),
+            own.amount(p.size.get()),
         )
     };
-    let used =
-        |sizes: &[dropset_sdk::layout::Level; N_LEVELS], i: usize| sizes[i].size_bps.get() > 0;
     let mut rungs: Vec<String> = (0..N_LEVELS)
         .rev()
         .filter(|&i| used(&profile.asks, i))
@@ -635,7 +686,8 @@ fn ladder_state(vault: &Vault, seq: u64, legs: &Legs, now_unix: i64) -> Vec<Stri
     );
     lines.push(match flipped {
         0 => "traded since the stamp, but no level has flipped yet".to_string(),
-        n => format!("{n} level(s) flipped since the stamp:"),
+        1 => "1 level flipped since the stamp:".to_string(),
+        n => format!("{n} levels flipped since the stamp:"),
     });
     lines.extend(rungs);
     lines
@@ -916,9 +968,16 @@ mod tests {
     }
 
     const NOW: i64 = 1_800_000_000;
+    const AT: (WallTime, SlotTime) = (WallTime::new(NOW as u32), SlotTime::new(1_000));
     const LEGS: Legs = Legs {
-        base: ("TGBP", 6),
-        quote: ("USDC", 6),
+        base: Leg {
+            symbol: "TGBP",
+            decimals: 6,
+        },
+        quote: Leg {
+            symbol: "USDC",
+            decimals: 6,
+        },
     };
 
     #[test]
@@ -928,12 +987,12 @@ mod tests {
         v.remaining.asks[0].size = 500_000.into();
         v.remaining.asks[0].flip_size = 662_000.into();
         v.remaining.asks[0].flip_price = Price::from_value(0.9998).unwrap().as_u32().into();
-        let lines = ladder_state(&v, 4, &LEGS, NOW);
+        let lines = ladder_state(&v, 4, &LEGS, AT);
         assert!(
             lines[0].starts_with("vault #4  stamped 1.0 h ago"),
             "{lines:?}"
         );
-        assert_eq!(lines[1], "1 level(s) flipped since the stamp:");
+        assert_eq!(lines[1], "1 level flipped since the stamp:");
         // Outermost ask first, down to the outermost bid.
         assert_eq!(lines.len(), 2 + 4);
         assert!(lines[2].starts_with("ask L2"), "{lines:?}");
@@ -949,32 +1008,90 @@ mod tests {
 
     #[test]
     fn the_vault_view_reads_a_quiet_stamp_and_an_empty_profile() {
-        let lines = ladder_state(&ladder_vault(true), 4, &LEGS, NOW);
+        let lines = ladder_state(&ladder_vault(true), 4, &LEGS, AT);
         assert_eq!(lines.len(), 2);
         assert!(lines[1].contains("rests as posted"), "{lines:?}");
         let mut empty = ladder_vault(false);
         empty.profile = Zeroable::zeroed();
         assert_eq!(
-            ladder_state(&empty, 4, &LEGS, NOW)[1],
+            ladder_state(&empty, 4, &LEGS, AT)[1],
             "no ladder rests on this vault"
         );
-        // An expired rung is named as such.
+        // An expired rung is named as such, in either clock.
         let mut lapsed = ladder_vault(false);
         lapsed.remaining.bids[1].expires_at_unix = ((NOW - 1) as u32).into();
-        let lines = ladder_state(&lapsed, 4, &LEGS, NOW);
+        lapsed.remaining.asks[1].expires_at_slot = 999.into();
+        let lines = ladder_state(&lapsed, 4, &LEGS, AT);
+        assert!(lines[2].ends_with("expired"), "{lines:?}");
         assert!(lines.last().unwrap().ends_with("expired"), "{lines:?}");
+        assert!(!lines[3].ends_with("expired"), "{lines:?}");
         assert!(lines[1].contains("no level has flipped"), "{lines:?}");
     }
 
     #[test]
+    fn a_one_sided_quiet_ladder_reads_its_life_from_the_side_it_posts() {
+        // Bids alone: the unused ask rungs carry a zero (dead) life, which
+        // must not read as the ladder having expired.
+        let mut v = ladder_vault(true);
+        v.profile.asks = Zeroable::zeroed();
+        let lines = ladder_state(&v, 4, &LEGS, AT);
+        assert!(lines[1].contains("rests as posted"), "{lines:?}");
+        v.profile.bids[0].expiry_offset_secs = 60.into();
+        v.profile.bids[1].expiry_offset_secs = 60.into();
+        let lines = ladder_state(&v, 4, &LEGS, AT);
+        assert!(lines[1].contains("has expired"), "{lines:?}");
+    }
+
+    fn live_fair(price: f64) -> Fair {
+        Fair::Live {
+            product: "TGBP-USDC",
+            price,
+            age_secs: 2,
+            regime: "normal".into(),
+        }
+    }
+
+    #[test]
     fn a_governing_fair_is_the_blank_center_and_a_paused_one_refuses() {
-        let mut form = Form::new(PassiveOp::Recenter);
-        form.fair = Fair::Paused {
+        let (live, mid) = (Some(1.30), Some(1.31));
+        // A typed price beats every source.
+        assert_eq!(
+            resolve_center("1.5", live, mid, &live_fair(1.32)).unwrap(),
+            (1.5, "typed")
+        );
+        assert!(resolve_center("1.x", live, mid, &live_fair(1.32)).is_err());
+        // A live fair is the blank center, over the reference and the mid.
+        assert_eq!(
+            resolve_center("", live, mid, &live_fair(1.32)).unwrap(),
+            (1.32, "the estimator's fair")
+        );
+        // A paused or unusable fair refuses — no fallback to the reference.
+        let paused = Fair::Paused {
             product: "TGBP-USDC",
             regime: "paused".into(),
         };
+        let err = resolve_center("", live, mid, &paused)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("paused") && err.contains("type a price"),
+            "{err}"
+        );
+        assert!(resolve_center("", live, mid, &Fair::Unusable("stale".into())).is_err());
+        // No estimator to ask: the reference, then the mid, then nothing.
+        for none in [Fair::Off, Fair::Unpublished] {
+            assert_eq!(resolve_center("", live, mid, &none).unwrap().0, 1.30);
+            assert_eq!(resolve_center("", None, mid, &none).unwrap().0, 1.31);
+            assert!(resolve_center("", None, None, &none).is_err());
+        }
+        // The form says the same before the ticket is built.
+        let mut form = Form::new(PassiveOp::Recenter);
+        form.fair = paused;
         assert!(form.lines()[0].contains("type one — the estimator is paused"));
-        form.fair = Fair::Off;
+        form.fair = live_fair(1.32);
+        let line = &form.lines()[0];
+        assert!(line.ends_with("fair 1.3200 (TGBP-USDC, 2 s old)"), "{line}");
+        form.fair = Fair::Unpublished;
         assert!(form.lines()[0].contains("live reference"));
     }
 

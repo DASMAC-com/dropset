@@ -91,7 +91,7 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 tempfile = "3"
 # The fair-price read's per-read current-thread runtime and its timeout.
-tokio = { version = "1", features = ["rt", "time"] }
+tokio = { version = "1", features = ["net", "rt", "time"] }
 
 # Build a `FillEvent`'s borsh body when exercising the fill decoder's
 # emitting-program check (fills.rs tests). Not needed at runtime — the SDK's
