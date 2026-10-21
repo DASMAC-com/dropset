@@ -701,7 +701,7 @@ migrations or generation inputs, and whether it spans crates.
      necessary and not sufficient; sub-question count is where the
      remaining variance lives (`history.md` → "Sub-question count").
      Any sub-question the main loop can answer gets *answered* in the
-     brief — a known answer is a fact with a question mark on it. More
+     material — a known answer is a fact with a question mark on it. More
      than three means you are surveying, or the lens should split.
    - **A cap the ask can satisfy.** When the question is genuinely "do
      these two large files agree in their entirety", either **hoist the
@@ -810,9 +810,8 @@ migrations or generation inputs, and whether it spans crates.
        "Straggler grep into build output"). Add **one** small new-logic
        lens only when genuinely new additions rode along, and never turn
        correctness / completeness / style loose on unchanged logic. This
-       holds at any
-       size: it overrides the full-tier "four substantive lenses"
-       default.
+       holds at any size: it overrides the full-tier "four substantive
+       lenses" default.
      - **mechanical repo-wide reformat** — discount the reformat noise
        from the sizing; one `move-fidelity` lens, scoped to whether a
        semantic change rode along.

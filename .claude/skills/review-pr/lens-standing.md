@@ -29,7 +29,8 @@ scratchpad. Read that file; do not re-derive the diff by shelling out to
 - Read every file you do need **once, up front**, and reason from that copy.
   Slice-read the large ones — Grep to the section, then `Read` with
   `offset`/`limit`. Re-reading a file on each turn pays for it on each turn.
-- Your lens section below states a cap in turns and tool calls. It is a
+- Your lens section below states a cap in tool calls, and usually in turns
+  too. It is a
   **hard stop**: at the cap, report what you have and flag anything
   unresolved. Do not continue past it.
 - **Do NOT re-open a file a finding already cites** unless you are resolving a
@@ -107,8 +108,8 @@ finding.
 ## Report
 
 Return each finding with its file path, line number, **the exact `+`/`-`
-diff line it rests on**, severity (**blocking** / **warning** / **nit**),
-and a one-line rationale. Then:
+diff line (or excerpt line) it rests on**, severity (**blocking** /
+**warning** / **nit**), and a one-line rationale. Then:
 
 - **Checks to run**: concerns you could not settle in scope, each phrased
   as the check that would settle it. Use this slot rather than speculating

@@ -26,8 +26,9 @@ the independent read is what catches a miss.
 - Identify issues the first pass missed.
 - Push back on rationale that doesn't hold up.
 - Apply the **pre-emit gate** to your own new findings too: quote the
-  exact `+`/`-` diff line, or drop it — and drop any inherited finding
-  that cites no concrete changed line.
+  exact `+`/`-` diff line (or, for stale unchanged text, the excerpt
+  line), or drop it — and drop any inherited finding that cites no
+  concrete evidence line.
 - **Challenge from what you were given.** Reason from the findings and
   the diff plus one up-front read of any file a finding cites,
   shelling out again only for a **genuine** dispute.
