@@ -1091,13 +1091,15 @@ choose which one is read. The manipulation caveat is why it never stands
 alone: a pool price is whatever the last swap left it at, so a thin pool can
 be walked to any value by anyone paying the slippage.
 
-**It is recorded, and the estimator does not read it yet.** Offering it on the
-basis leg beside the Coinbase candle as a second untrusted tape gives the leg
-two sources and no majority: when they disagree beyond the dispersion band the
-leg resolves to no reading at all, and the market falls to a degraded regime
-on its last smoothed basis. So a walked pool would be a veto over live
-quoting, which a corroborator must not have. The intake waits for a shape
-where it corroborates without one.
+**The estimator reads it as a corroborator, never as a peer.** Offered beside
+the Coinbase candle as a second untrusted tape, it would give the leg two
+sources and no majority: any disagreement beyond the dispersion band resolves
+the leg to nothing and degrades the market, so a walked pool would hold a veto
+over live quoting. The candle is instead the leg's designated tape, the pool
+is offered only while the candle is fresh, and a disagreement names the pool
+the outlier — recorded in `fair_price.crypto_leg_outlier` — without moving
+the regime. The rule and its cost are in `market-making.md`, "A designated
+tape and its corroborator".
 
 Reachability: the public mainnet-beta endpoint serves it keyless, at one
 `getMultipleAccounts` per pool per poll against a limit of 100 requests per
