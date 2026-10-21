@@ -47,7 +47,8 @@ QUEUE_PREFIX = "gh-readonly-queue/main/pr-"
 FAIL_RE = re.compile(
     r"(panicked at|^.*\bFAILED\b|error\[E|^.*\berror:|assertion .*failed|"
     r"test result: FAILED|--- FAIL|Error: Process completed|"
-    r"thread '.*' panicked|\.\.\.\.* ?Failed$|\[(FAIL|TIMEOUT)\]|::error::)"
+    r"thread '.*' panicked|\.\.\.\.* ?Failed$|\[(FAIL|TIMEOUT)\]|"
+    r"\b(FAIL|TIMEOUT) \[|::error::)"
 )
 # A pre-commit result line: ``<stamp> <hook name>.....<postfix?><color?>Passed``.
 # The postfix is a skipped hook's ``(no files to check)``. The color escape
@@ -144,6 +145,7 @@ def analyse(payload: dict, steps_for: str | None = None) -> dict:
     # name -> [(minutes, ref, conclusion)]
     job_durations: dict[str, list[tuple[float, str, str | None]]] = {}
     step_durations: dict[str, list[float]] = {}
+    unstarted: list[str] = []
     for ref, ref_runs in entries.items():
         starts, ends, failed_jobs = [], [], []
         conclusions = set()
@@ -173,6 +175,10 @@ def analyse(payload: dict, steps_for: str | None = None) -> dict:
                 if conclusion == "success" and (best is None or d > best[0]):
                     best = (d, job["name"])
         if not starts:
+            # Queued but not yet picked up: no span to measure, but still an
+            # entry in flight, which the header must count.
+            if None in conclusions:
+                unstarted.append(ref[len(QUEUE_PREFIX) :].split("-")[0])
             continue
         rows.append(
             {
@@ -190,25 +196,32 @@ def analyse(payload: dict, steps_for: str | None = None) -> dict:
     rows.sort(key=lambda r: r["started"])
     return {
         "rows": rows,
+        "unstarted": unstarted,
         "job_durations": job_durations,
         "step_durations": step_durations,
     }
 
 
+def is_green(row: dict) -> bool:
+    """Every run succeeded, or was skipped wholesale by an ``if:``."""
+    return "success" in row["conclusions"] and set(row["conclusions"]) <= {
+        "success",
+        "skipped",
+    }
+
+
 def render(payload: dict, full: bool, steps_for: str | None = None) -> list[str]:
     a = analyse(payload, steps_for)
-    # An entry with a run still going and nothing failed yet is in flight: its
-    # span is partial and it is not (yet) a failure, so it joins neither.
-    in_flight = [
-        r for r in a["rows"] if "none" in r["conclusions"] and not r["failed_jobs"]
-    ]
+    # An entry with a run still going is in flight, failed job or not: its span
+    # is partial, so it joins none of the statistics below.
+    in_flight = [r for r in a["rows"] if "none" in r["conclusions"]]
     rows = [r for r in a["rows"] if r not in in_flight]
     walls = [r["wall_min"] for r in rows]
-    green = [r["wall_min"] for r in rows if r["conclusions"] == ["success"]]
+    green = [r["wall_min"] for r in rows if is_green(r)]
     out = [
         f"merge_group runs since {payload['since']}: "
         f"{len(payload['runs'])} runs, {len(rows)} settled queue entries, "
-        f"{len(in_flight)} in flight",
+        f"{len(in_flight) + len(a['unstarted'])} in flight",
         f"entry critical path (all):   {stats(walls)}",
         f"entry critical path (green): {stats(green)}",
         "",
@@ -228,18 +241,19 @@ def render(payload: dict, full: bool, steps_for: str | None = None) -> list[str]
             slowest[r["slowest_job"]] = slowest.get(r["slowest_job"], 0) + 1
     for name, n in sorted(slowest.items(), key=lambda kv: (-kv[1], kv[0])):
         out.append(f"  {name:28s} {n}")
-    not_green = [r for r in rows if r["conclusions"] != ["success"]]
+    not_green = [r for r in rows if not is_green(r)]
     out += ["", f"entries not all-green: {len(not_green)}"]
     for r in not_green:
         out.append(
             f"  pr-{r['pr']} {r['started'][:16]} {r['weekday']} "
             f"{r['wall_min']}m {r['conclusions']} {r['failed_jobs']}"
         )
-    if in_flight:
-        out.append(
-            "in flight (excluded above): "
-            + " ".join(f"pr-{r['pr']}" for r in in_flight)
-        )
+    flying = [
+        f"pr-{r['pr']}" + (f"{r['failed_jobs']}" if r["failed_jobs"] else "")
+        for r in in_flight
+    ] + [f"pr-{pr}(unstarted)" for pr in a["unstarted"]]
+    if flying:
+        out.append("in flight (excluded above): " + " ".join(flying))
     if steps_for:
         out += [
             "",
@@ -333,7 +347,17 @@ def main(argv: list[str] | None = None) -> int:
             print("  " + line[:220])
         return 0
     if args.hook_timing:
-        rows = hook_rows(job_log(args.hook_timing))
+        lines = job_log(args.hook_timing)
+        rows = hook_rows(lines)
+        if lines and not rows:
+            # A drifted pre-commit line format would otherwise read as a clean
+            # "0 hook results".
+            print(
+                f"job {args.hook_timing}: {len(lines)} log lines but no "
+                "pre-commit result line matched; is this a Lint job?",
+                file=sys.stderr,
+            )
+            return 1
         total = sum(r[0] for r in rows)
         print(
             f"job {args.hook_timing}: {len(rows)} hook results spanning "

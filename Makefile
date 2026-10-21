@@ -1283,7 +1283,7 @@ session-metrics:
 
 # Measure the merge-queue critical path, per-job durations and failed entries
 # from GitHub Actions run data (the ci-infra audit's instrument; see
-# docs/ci.md § 4). Reads through `gh`, no token needed. Pass flags via ARGS,
+# docs/ci.md § 4). Reads through an authenticated `gh`. Pass flags via ARGS,
 # e.g. `make ci-metrics ARGS='--days 14 --cache /tmp/ci.json --steps Tests'`.
 .PHONY: ci-metrics
 ci-metrics:

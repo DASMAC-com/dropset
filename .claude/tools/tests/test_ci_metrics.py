@@ -14,7 +14,7 @@ import json
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 import ci_metrics as cm
@@ -136,10 +136,45 @@ class AnalyseTests(unittest.TestCase):
             {"id": 41, "head_branch": f"{Q}4-ddd", "conclusion": None}
         )
         payload["jobs"]["41"] = [job("Tests", "13:00", "13:01")]
+        # pr-5: a job already failed but a run is still going, so its span is
+        # partial — in flight, not not-green. pr-6: queued, no job started.
+        payload["runs"] += [
+            {"id": 51, "head_branch": f"{Q}5-eee", "conclusion": None},
+            {"id": 52, "head_branch": f"{Q}5-eee", "conclusion": "failure"},
+            {"id": 61, "head_branch": f"{Q}6-fff", "conclusion": None},
+        ]
+        payload["jobs"]["51"] = [job("Tests", "14:00", "14:01")]
+        payload["jobs"]["52"] = [job("Lint", "14:00", "14:02", "failure")]
+        payload["jobs"]["61"] = [
+            {"name": "Tests", "started_at": None, "completed_at": None}
+        ]
         out = "\n".join(cm.render(payload, full=False))
-        self.assertIn("3 settled queue entries, 1 in flight", out)
+        self.assertIn("3 settled queue entries, 3 in flight", out)
         self.assertIn("entries not all-green: 1", out)
-        self.assertIn("in flight (excluded above): pr-4", out)
+        self.assertIn("entry critical path (all):   n=3 ", out)
+        self.assertIn(
+            "in flight (excluded above): pr-4 pr-5['Lint=failure'] pr-6(unstarted)",
+            out,
+        )
+
+    def test_a_settled_entry_with_no_started_job_is_not_in_flight(self):
+        payload = json.loads(json.dumps(PAYLOAD))
+        payload["runs"].append(
+            {"id": 71, "head_branch": f"{Q}7-ggg", "conclusion": "startup_failure"}
+        )
+        payload["jobs"]["71"] = []
+        out = "\n".join(cm.render(payload, full=False))
+        self.assertIn("3 settled queue entries, 0 in flight", out)
+
+    def test_a_wholly_skipped_run_keeps_the_entry_green(self):
+        payload = json.loads(json.dumps(PAYLOAD))
+        payload["runs"][1]["conclusion"] = "skipped"
+        rows = {r["pr"]: r for r in cm.analyse(payload)["rows"]}
+        self.assertTrue(cm.is_green(rows["1"]))
+        self.assertFalse(cm.is_green(rows["2"]))
+        out = "\n".join(cm.render(payload, full=False))
+        self.assertIn("entry critical path (green): n=2 ", out)
+        self.assertIn("entries not all-green: 1", out)
 
 
 class MergePagesTests(unittest.TestCase):
@@ -166,6 +201,8 @@ class StatsTests(unittest.TestCase):
 GH_LOG = [
     "Tests\tRun nextest\t2026-10-20T10:02:00.1234567Z     Running 120 tests",
     "Tests\tRun nextest\t2026-10-20T10:03:00.1234567Z         PASS [0.1s] ok",
+    "Tests\tRun nextest\t2026-10-20T10:04:00.0000000Z "
+    "        FAIL [   0.004s] dropset::tests bad_test",
     "Tests\tRun nextest\t2026-10-20T10:04:01.0000000Z "
     "thread 'bad_test' panicked at src/lib.rs:1",
     "Tests\tRun nextest\t2026-10-20T10:05:00.0000000Z ::error::Process exit 1",
@@ -189,10 +226,11 @@ class LogReaderTests(unittest.TestCase):
 
     def test_failed_lines(self):
         hits = cm.failed_lines(cm.strip_log_prefix(GH_LOG))
-        self.assertEqual(len(hits), 3)
-        self.assertIn("panicked at", hits[0])
-        self.assertIn("::error::", hits[1])
-        self.assertIn("error[E0425]", hits[2])
+        self.assertEqual(len(hits), 4)
+        self.assertIn("FAIL [   0.004s] dropset::tests bad_test", hits[0])
+        self.assertIn("panicked at", hits[1])
+        self.assertIn("::error::", hits[2])
+        self.assertIn("error[E0425]", hits[3])
 
     def test_hook_timing_ordering_colors_and_postfix(self):
         rows = cm.hook_rows(LINT_LOG)
@@ -234,8 +272,34 @@ class MainTests(unittest.TestCase):
             with redirect_stdout(buf):
                 cm.main(["--failed-log", "7", "--limit", "1"])
         out = buf.getvalue()
-        self.assertIn("job 7: 5 log lines, 3 failure-shaped lines; first 1:", out)
+        self.assertIn("job 7: 6 log lines, 4 failure-shaped lines; first 1:", out)
         self.assertNotIn("::error::", out)
+
+    def test_hook_timing_mode(self):
+        buf = io.StringIO()
+        with mock.patch.object(cm, "job_log", return_value=LINT_LOG):
+            with redirect_stdout(buf):
+                self.assertEqual(cm.main(["--hook-timing", "8"]), 0)
+        out = buf.getvalue().splitlines()
+        self.assertIn("job 8: 4 hook results spanning 3.1m", out[0])
+        self.assertEqual(out[1].split()[1:], ["cspell", "Failed"])
+
+    def test_hook_timing_with_no_matching_line_fails_loudly(self):
+        err = io.StringIO()
+        lines = cm.strip_log_prefix(GH_LOG)
+        with mock.patch.object(cm, "job_log", return_value=lines):
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                self.assertEqual(cm.main(["--hook-timing", "9"]), 1)
+        self.assertIn("no pre-commit result line matched", err.getvalue())
+
+    def test_cache_written_when_absent(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "payload.json")
+            with mock.patch.object(cm, "fetch", return_value=PAYLOAD):
+                with redirect_stdout(io.StringIO()):
+                    cm.main(["--cache", path])
+            with open(path) as fh:
+                self.assertEqual(json.load(fh), PAYLOAD)
 
 
 if __name__ == "__main__":
