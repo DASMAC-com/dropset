@@ -14,12 +14,16 @@
 //! a static fallback (`docs/market-making.md` §1); a *published product* has to
 //! be resolved onto the store series that feed each of them:
 //!
-//! | Leg           | Series                        | Table         |
-//! | ------------- | ----------------------------- | ------------- |
-//! | `fx`          | `<CCY>-USD` per FX venue      | `cex_prices`  |
-//! | `crypto_usdc` | the market's own `*-USDC` pair | `cex_prices`  |
-//! | `usdc_usd`    | `USDC-USD`, one series        | `spot_ticks`  |
-//! | `static_usd`  | a per-market constant         | — (config)    |
+//! | Leg           | Series                         | Table                       |
+//! | ------------- | ------------------------------ | --------------------------- |
+//! | `fx`          | `<CCY>-USD` per FX venue       | `cex_prices`                |
+//! | `crypto_usdc` | the market's own `*-USDC` pair | `cex_prices` + `spot_ticks` |
+//! | `usdc_usd`    | `USDC-USD`, one series         | `spot_ticks`                |
+//! | `static_usd`  | a per-market constant          | — (config)                  |
+//!
+//! The crypto leg reads its pair from both tables: the Coinbase candle from
+//! `cex_prices` and the Orca pool price from `spot_ticks`, each an untrusted
+//! tape (see `crypto_candidates`).
 //!
 //! **The peg leg is in the other table, and that is why this crate has two
 //! readers.** `USDC-USD` is written by one collector, `market-data-kraken`, into
@@ -703,7 +707,7 @@ impl Estimator {
             .ticks
             .latest()
             .await
-            .context("reading spot_ticks for the USDC/USD peg leg")?;
+            .context("reading spot_ticks for the peg leg and the pool tapes")?;
         let fence = read_spans(&self.pool, self.unix_now())
             .await
             .context("reading fx_session_window for the session fence")?;

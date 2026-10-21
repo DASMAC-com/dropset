@@ -222,9 +222,10 @@ impl TickStoreReader {
     /// The peg roster's spelling of [`Self::new`] — one venue, one series.
     ///
     /// Sugar over passing the two constants by hand, kept for the same reason
-    /// [`crate::fx_store::FxStoreSource::fx`] exists: every current caller wants
-    /// exactly this, and one assembling the pair itself could drift from the
-    /// constants. Baking a roster in is safe here precisely because
+    /// [`crate::fx_store::FxStoreSource::fx`] exists: a caller wanting exactly
+    /// the peg series — the store tests do — could otherwise drift from the
+    /// constants. The estimator no longer calls it, since it also reads the
+    /// pool tapes; it builds its roster through [`Self::new`]. Baking a roster in is safe here precisely because
     /// [`Self::new`] remains the unopinionated path.
     pub fn peg(pool: PgPool) -> Self {
         Self::new(
