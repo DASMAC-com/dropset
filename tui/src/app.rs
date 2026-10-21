@@ -234,6 +234,10 @@ pub struct App {
     pub(crate) passive_prompt: Option<PassivePrompt>,
     /// The open ceremony prompt, if any — takes every keystroke while open.
     pub(crate) ceremony_prompt: Option<CeremonyPrompt>,
+    /// Each market's posture: an active one is seeded for and run by its
+    /// maker bot, a passive one is seeded with the passive book and never
+    /// spawns one. `P` flips the selected market's.
+    pub(crate) postures: market::Postures,
     /// The per-market maker-bot child processes the operator starts and stops.
     pub(crate) bots: BotManager,
     /// The per-market taker-bot child processes — opt-in, off by default. The
@@ -325,6 +329,7 @@ impl App {
         } else {
             Identity::Unchecked
         };
+        let postures = market::Postures::for_roster(ctx.cluster);
         Ok(Self {
             ctx,
             validator,
@@ -350,6 +355,7 @@ impl App {
             leader_prompt: None,
             passive_prompt: None,
             ceremony_prompt: None,
+            postures,
             bots: BotManager::new(),
             takers: BotManager::new(),
             click_targets: Vec::new(),
@@ -659,6 +665,8 @@ impl App {
             // prompt, and the same entries are in the menu.
             KeyCode::Char('p') => self.run_action(Action::PassiveLadder),
             KeyCode::Char('c') => self.run_action(Action::PassiveRecenter),
+            // The selected market's posture: active (maker-run) or passive.
+            KeyCode::Char('P') => self.toggle_posture(),
             // The kill switch, one keystroke from its typed-`yes` prompt.
             // Mainnet only: localnet runs its writes without a prompt, so
             // there a stray `K` would zero every demo ladder on the spot.
@@ -775,6 +783,11 @@ impl App {
         if self.bots.is_running(symbol) {
             self.bots.stop(symbol);
             self.log(LogKind::Ok, format!("[{symbol}] bot stopped"));
+        } else if self.postures.of(symbol) == market::Posture::Passive {
+            self.log(
+                LogKind::Err,
+                format!("[{symbol}] is passive — no maker; re-center with c, or P for active"),
+            );
         } else {
             let log = Logger::new(self.tx.clone());
             let cmd = bot::maker_command(&self.ctx.repo_root, symbol, &self.ctx.rpc_url);
@@ -827,9 +840,48 @@ impl App {
         self.dirty = true;
     }
 
+    /// Flip the selected market's [`market::Posture`]. The roster default
+    /// picks the ladder the bootstrap seeds (tGBP passive, the rest active),
+    /// and a deposit reads the flipped one. On a market already seeded, going
+    /// passive stops its maker — post the passive book with `p` — and going
+    /// active leaves the resting book for its maker's first quote to replace.
+    ///
+    /// Localnet only, like the bot toggles: a mainnet vault is seeded through
+    /// the ceremony, and a flip here would change what that deposit writes
+    /// without the plan ever saying so.
+    fn toggle_posture(&mut self) {
+        if self.refuse_on_mainnet("Posture") {
+            return;
+        }
+        let Some(symbol) = self.selected_symbol() else {
+            self.log(LogKind::Err, "No market selected.".to_string());
+            return;
+        };
+        let Some(posture) = self.postures.toggle(symbol) else {
+            self.log(
+                LogKind::Err,
+                format!("[{symbol}] is not on this cluster's roster"),
+            );
+            return;
+        };
+        if posture == market::Posture::Passive && self.bots.is_running(symbol) {
+            self.bots.stop(symbol);
+            self.log(
+                LogKind::Ok,
+                format!("[{symbol}] bot stopped — post the passive book with p"),
+            );
+        }
+        self.log(
+            LogKind::Ok,
+            format!("[{symbol}] posture {}", posture.label()),
+        );
+        self.dirty = true;
+    }
+
     /// Toggle every market's maker bot at once (the "flash liquidity across the
     /// board" control): if any maker is running, stop them all; otherwise start
-    /// one per discovered market that isn't already running.
+    /// one per discovered active market that isn't already running — a
+    /// passive market never gets one.
     fn toggle_all_bots(&mut self) {
         if self.refuse_on_mainnet("Maker bots") {
             return;
@@ -851,6 +903,7 @@ impl App {
                     .find(|(mint, _)| *mint == m.base_mint)
                     .map(|(_, s)| *s)
             })
+            .filter(|s| self.postures.of(s) == market::Posture::Active)
             .collect();
         let log = Logger::new(self.tx.clone());
         for symbol in symbols {
@@ -1203,6 +1256,17 @@ impl App {
         }
     }
 
+    /// The on-chain spot print for `market`, read now — only when `fair`
+    /// shows the database answered, so an unreachable one costs the form a
+    /// single timeout rather than two.
+    fn read_spot(&self, market: &accounts::MarketView, fair: &fair::Fair) -> Option<fair::Spot> {
+        if !matches!(fair, fair::Fair::Live { .. } | fair::Fair::Paused { .. }) {
+            return None;
+        }
+        let config = market::config_for(&self.ctx.repo_root, self.ctx.cluster, &market.base_mint)?;
+        self.fair_db.as_ref()?.spot(config.base.symbol)
+    }
+
     /// Send `ticket` if `word` is exactly `yes`, re-checking the same gates
     /// [`App::confirm_leader`] does.
     fn confirm_passive(&mut self, ticket: passive::Ticket, word: &str) {
@@ -1408,6 +1472,7 @@ impl App {
             let mut form = passive::Form::new(op);
             if let Some(market) = self.chain.selected_market(self.selected_market).cloned() {
                 form.fair = self.read_fair(&market);
+                let spot = self.read_spot(&market, &form.fair);
                 form.vault = match self.roster_quote {
                     None => vec!["no quote key — the vault view needs one".to_string()],
                     Some(quote) => passive::vault_lines(
@@ -1416,6 +1481,8 @@ impl App {
                         self.ctx.cluster,
                         &market,
                         &quote,
+                        &form.fair,
+                        spot,
                     )
                     .unwrap_or_else(|e| vec![format!("vault view — {e:#}")]),
                 };
@@ -1460,6 +1527,7 @@ impl App {
             self.swap_units,
             self.swap_side,
             self.spread_bps,
+            &self.postures,
         );
     }
 

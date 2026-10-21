@@ -14,11 +14,18 @@
 //! otherwise, on a session pinned read-only besides. It reuses market-data's
 //! [`FairPriceSource`] and [`FairPriceRow::fair_value`], so what reads as
 //! paused or malformed here is exactly what the maker bot refuses.
+//!
+//! The same database also serves the newest on-chain spot print
+//! ([`FairDb::spot`]), which the passive pane shows beside the fair and
+//! nothing ever centers on.
 
 use anyhow::{bail, Context, Result};
 use dropset_market_data::estimator::published_product;
 use dropset_market_data::fair_price::{FairPriceRow, FairPriceSource, MAX_PUBLISHED_FAIR_AGE};
+use dropset_market_data::tick_store::TickStoreReader;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
+use sqlx::PgPool;
+use std::future::Future;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -112,21 +119,60 @@ impl FairDb {
         }
     }
 
+    /// The newest [`SPOT_SOURCE`] print for the market whose base is
+    /// `base_symbol`, under the estimator's product id — `None` when there is
+    /// none, it does not decode as a price, or the read fails. Shown beside
+    /// the fair, never centered on, so a miss is silence rather than an error.
+    pub fn spot(&self, base_symbol: &str) -> Option<Spot> {
+        let product = published_product(base_symbol)?;
+        let rows = self
+            .query(|pool| async move {
+                TickStoreReader::new(
+                    pool,
+                    vec![SPOT_SOURCE.to_string()],
+                    vec![product.to_string()],
+                )
+                .latest()
+                .await
+            })
+            .ok()?;
+        let row = rows.into_iter().find(|r| r.product_id == product)?;
+        (row.price.is_finite() && row.price > 0.0).then(|| Spot {
+            price: row.price,
+            // A writer clock ahead of this one reads as fresh, not negative.
+            age_secs: dropset_sdk::time::now_unix()
+                .saturating_sub(row.observed_at)
+                .max(0),
+        })
+    }
+
     fn latest(&self, product: &str) -> Result<Vec<FairPriceRow>> {
+        self.query(|pool| async move {
+            FairPriceSource::new("tui", pool, vec![product.to_string()])
+                .latest()
+                .await
+        })
+    }
+
+    /// Run `read` on a one-connection pool, the whole of it — connect
+    /// included — inside [`READ_TIMEOUT`].
+    fn query<T, F, Fut>(&self, read: F) -> Result<T>
+    where
+        F: FnOnce(PgPool) -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let rows = runtime.block_on(async {
+        let out = runtime.block_on(async {
             tokio::time::timeout(READ_TIMEOUT, async {
                 let pool = PgPoolOptions::new()
                     .max_connections(1)
                     .connect_with(self.options.clone())
                     .await?;
-                let rows = FairPriceSource::new("tui", pool.clone(), vec![product.to_string()])
-                    .latest()
-                    .await;
+                let out = read(pool.clone()).await;
                 pool.close().await;
-                rows
+                out
             })
             .await
             .context("timed out")?
@@ -135,8 +181,19 @@ impl FairDb {
         // which a plain drop would wait on, past the timeout, on the UI
         // thread. Abandon it instead.
         runtime.shutdown_background();
-        rows
+        out
     }
+}
+
+/// The `spot_ticks` source the passive pane shows beside the fair: the
+/// on-chain venue the market's flow is likeliest to arb against.
+pub const SPOT_SOURCE: &str = "orca";
+
+/// A [`SPOT_SOURCE`] print, human quote-per-base.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spot {
+    pub price: f64,
+    pub age_secs: i64,
 }
 
 /// What a blank center would be, as of one read.

@@ -140,6 +140,7 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
                 &leader,
                 &quote_authority,
                 market::Funding::MintBoth,
+                market::Posture::Active,
                 &log,
             )
         },

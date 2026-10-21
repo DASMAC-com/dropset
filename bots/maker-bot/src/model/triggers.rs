@@ -155,7 +155,7 @@ mod tests {
         let mut t = base();
         t.since_last_set = Duration::from_secs(30 * 24 * 3600);
         t.skew_bps = 15.0;
-        // +9 bps: inside the passive bound (two inner rungs, 10 bps out).
+        // +9 bps: inside the passive bound (three inner rungs, 10 bps out).
         t.mid = 0.73 * 1.0009;
         t.candidate = t.mid;
         assert!(!should_set_reference(&t, &passive()));
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn passive_re_centers_once_price_walks_past_the_inner_levels() {
-        // Four inner rungs put the bound at 20 bps, clear of the active 10 bps
+        // Four inner rungs put the bound at 16 bps, clear of the active 10 bps
         // drift trigger, so this can only pass on the passive bound.
         let strat = StrategyConfig {
             recenter_inner_levels: 4,
@@ -171,7 +171,7 @@ mod tests {
         };
         let mut t = base();
         t.mid = 0.73 * 1.0011;
-        assert!(!should_set_reference(&t, &strat), "11 bps is inside 20");
+        assert!(!should_set_reference(&t, &strat), "11 bps is inside 16");
         t.mid = 0.73 * 1.0021;
         assert!(should_set_reference(&t, &strat));
         t.mid = 0.73 * (1.0 - 0.0021);
