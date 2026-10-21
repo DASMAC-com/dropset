@@ -385,7 +385,7 @@ pub fn published_product(symbol: &str) -> Option<&'static str> {
 
 // The ladder vocabulary lives in the SDK so the TUI's passive-ladder action
 // builds through the same rules as this bot.
-pub use dropset_sdk::ladder::{LadderLevel, PASSIVE_FLIP_SPREAD_PPM, PASSIVE_SPACING_PPM};
+pub use dropset_sdk::ladder::{LadderLevel, TightLadder};
 
 /// The spec's hand-shaped ladder (§2 + the §3 expiry table): top-of-book at
 /// 50 bps taking 40% of the leg and expiring fastest, widening and shrinking
@@ -457,40 +457,26 @@ pub const DEFAULT_LADDER: [LadderLevel; 4] = [
     },
 ];
 
-/// One passive rung at the standard spacing and flip spread. Neither expiry
-/// domain is bounded: a passive book is meant to be walked away from, so
-/// nothing but a re-center or a kill switch ends it.
-const fn passive_level(rung: u32, size_bps: u16) -> LadderLevel {
-    LadderLevel {
-        offset_ppm: rung * PASSIVE_SPACING_PPM,
-        flip_spread_ppm: PASSIVE_FLIP_SPREAD_PPM,
-        size_bps,
-        expiry_offset_secs: WallSpan::UNBOUNDED,
-        expiry_offset_slots: SlotSpan::UNBOUNDED,
-    }
-}
-
-/// The passive-mode ladder (§2): a **bell**, largest at the center and
-/// shrinking outward, packed tight — eight rungs from 5 to 40 bps against
-/// [`DEFAULT_LADDER`]'s four from 50 to 500, because a passive book earns
-/// only its flip spread and has to sit where the flow is.
+/// The passive-mode ladder (§2): the SDK's passive-tight-8 book at its
+/// defaults — a 2% tip at 3 bps, then a **bell** from 6 out to 100 bps —
+/// built through the same [`TightLadder`] the TUI posts and seeds, so the two
+/// never diverge. Tight at the top, because a passive book earns only its
+/// flip spread and has to sit where the flow is; wide at the edge, so a day's
+/// drift does not walk it one-sided.
 ///
 /// A flipped level keeps its size and only changes direction, so after price
 /// walks through a grow-outward ladder the large outer rungs end up flipped
 /// next to the market and the small inner ones far from it: the shape inverts
 /// on every move. A bell is the shape that survives a flip, because the size
-/// near the market stays largest whichever way the levels have turned.
-/// `Σ size_bps = 10000` per side.
-pub const DEFAULT_PASSIVE_LADDER: [LadderLevel; 8] = [
-    passive_level(1, 2_000),
-    passive_level(2, 1_800),
-    passive_level(3, 1_500),
-    passive_level(4, 1_300),
-    passive_level(5, 1_100),
-    passive_level(6, 900),
-    passive_level(7, 800),
-    passive_level(8, 600),
-];
+/// near the market stays largest whichever way the levels have turned; the
+/// tip is the one declared exception. `Σ size_bps = 10000` per side.
+pub fn default_passive_ladder() -> Vec<LadderLevel> {
+    TightLadder::default().levels()
+}
+
+/// How many inner rungs a passive book's re-center bound counts: the tip and
+/// the bell's first two, putting the bound at 10 bps on the default ladder.
+const PASSIVE_RECENTER_INNER_LEVELS: usize = 3;
 
 /// Whether the bot re-quotes continuously or sets a book and leaves it (§3).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -599,6 +585,9 @@ pub struct StrategyConfig {
     pub mode: StrategyMode,
     /// The quote ladder.
     pub ladder: Vec<LadderLevel>,
+    /// Whether [`Self::ladder`]'s L1 is a declared tip, which the passive
+    /// shape check exempts from the grow-outward rule.
+    pub ladder_tip: bool,
     /// Passive re-center trigger: re-center once the reference has walked past
     /// this many inner levels on one side. Ignored in active mode.
     pub recenter_inner_levels: usize,
@@ -758,6 +747,7 @@ impl Default for StrategyConfig {
         Self {
             mode: StrategyMode::Active,
             ladder: DEFAULT_LADDER.to_vec(),
+            ladder_tip: false,
             recenter_inner_levels: 2,
             skew_bps_per_pct_tvl: 0.5,
             skew_cap_bps: 20.0,
@@ -771,14 +761,18 @@ impl Default for StrategyConfig {
 }
 
 impl StrategyConfig {
-    /// Switch to passive mode on its bell ladder. The ladder changes with the
-    /// mode because the right ladder differs by mode (§2): passive wants
-    /// tight spacing, flip spreads and unbounded expiry, none of which suit
-    /// a bot that re-stamps every 30 s.
+    /// Switch to passive mode on [`default_passive_ladder`]. The ladder
+    /// changes with the mode because the right ladder differs by mode (§2):
+    /// passive wants tight spacing, flip spreads and unbounded expiry, none of
+    /// which suit a bot that re-stamps every 30 s. The re-center bound counts
+    /// `PASSIVE_RECENTER_INNER_LEVELS` rungs, so the tip does not pull it in
+    /// to 6 bps.
     pub fn into_passive(self) -> Self {
         Self {
             mode: StrategyMode::Passive,
-            ladder: DEFAULT_PASSIVE_LADDER.to_vec(),
+            ladder: default_passive_ladder(),
+            ladder_tip: true,
+            recenter_inner_levels: PASSIVE_RECENTER_INNER_LEVELS,
             ..self
         }
     }
@@ -922,28 +916,21 @@ mod tests {
     }
 
     /// The passive ladder fills the level cap, commits the full leg, and is a
-    /// bell: offsets widen outward while sizes shrink, so the center is the
-    /// largest rung (§2 per-mode shape rule).
+    /// bell behind its tip: offsets widen outward while sizes shrink from L2,
+    /// so the bell's center is the largest rung (§2 per-mode shape rule).
     #[test]
-    fn passive_ladder_is_a_full_leg_bell() {
-        let total: u32 = DEFAULT_PASSIVE_LADDER
-            .iter()
-            .map(|l| l.size_bps as u32)
-            .sum();
+    fn passive_ladder_is_a_full_leg_bell_behind_a_tip() {
+        let ladder = default_passive_ladder();
+        let total: u32 = ladder.iter().map(|l| l.size_bps as u32).sum();
         assert_eq!(total, 10_000);
-        assert_eq!(DEFAULT_PASSIVE_LADDER.len(), 8);
-        for w in DEFAULT_PASSIVE_LADDER.windows(2) {
+        assert_eq!(ladder.len(), 8);
+        assert!(ladder[0].size_bps < ladder[1].size_bps, "L1 is the tip");
+        for w in ladder.windows(2) {
             assert!(w[1].offset_ppm > w[0].offset_ppm);
+        }
+        for w in ladder[1..].windows(2) {
             assert!(w[1].size_bps < w[0].size_bps);
         }
-    }
-
-    /// The bot's table is the SDK builder's default output, so the TUI's
-    /// passive-ladder action and this bot deploy the same book.
-    #[test]
-    fn passive_ladder_matches_the_shared_builder() {
-        let shared = dropset_sdk::ladder::PassiveLadder::default().levels();
-        assert_eq!(DEFAULT_PASSIVE_LADDER.to_vec(), shared);
     }
 
     /// Switching to passive swaps the ladder with the mode and leaves every
@@ -953,17 +940,19 @@ mod tests {
     fn into_passive_swaps_the_ladder_and_bounds_the_recenter() {
         let active = StrategyConfig::default();
         assert_eq!(active.mode, StrategyMode::Active);
+        assert!(!active.ladder_tip);
         let passive = StrategyConfig::default().into_passive();
         assert_eq!(passive.mode, StrategyMode::Passive);
-        assert_eq!(passive.ladder, DEFAULT_PASSIVE_LADDER.to_vec());
+        assert_eq!(passive.ladder, default_passive_ladder());
+        assert!(passive.ladder_tip);
         assert_eq!(passive.skew_cap_bps, active.skew_cap_bps);
-        // Two inner rungs at 5 bps spacing: re-center past 10 bps.
+        // The tip and the bell's first two rungs: re-center past 10 bps.
         assert_eq!(passive.recenter_offset_ppm(), Some(1_000));
         let wide = StrategyConfig {
             recenter_inner_levels: 99,
             ..passive.clone()
         };
-        assert_eq!(wide.recenter_offset_ppm(), Some(4_000));
+        assert_eq!(wide.recenter_offset_ppm(), Some(10_000));
         let empty = StrategyConfig {
             ladder: Vec::new(),
             ..passive

@@ -39,6 +39,7 @@ use crate::keys::LazyKey;
 use anyhow::{Context, Result};
 use bytemuck::Zeroable;
 use dropset_sdk::clock::{SlotSpan, WallSpan};
+use dropset_sdk::ladder::{build_profile, TightLadder};
 use dropset_sdk::layout::LiquidityProfile;
 use dropset_sdk::quoting::{profile_bytes, set_liquidity_profile_ix, PROFILE_BYTES};
 use solana_client::rpc_client::RpcClient;
@@ -124,6 +125,63 @@ pub struct PairConfig {
     /// depth) lives in [`SEED_LADDER`] / [`ladder_at_spread_bps`], not
     /// here — every market opens with the same shape.
     pub expiry_offset_secs: WallSpan,
+    /// The posture the market opens in unless the operator picks the other.
+    pub posture: Posture,
+}
+
+/// How a market is run: by a maker bot, or as a set-and-forget passive book.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Posture {
+    /// Seeded with the opening ladder and quoted by its maker bot.
+    Active,
+    /// Seeded with the passive-tight-8 book and run with no maker: the
+    /// operator re-centers it from the passive form, exactly as on mainnet.
+    Passive,
+}
+
+impl Posture {
+    pub fn label(self) -> &'static str {
+        match self {
+            Posture::Active => "active",
+            Posture::Passive => "passive",
+        }
+    }
+}
+
+/// Each market's posture for this session, by base symbol: the roster's
+/// default until the operator flips one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Postures(Vec<(&'static str, Posture)>);
+
+impl Postures {
+    /// The roster defaults for `cluster`.
+    pub fn for_roster(cluster: Cluster) -> Self {
+        Self(
+            roster(cluster)
+                .iter()
+                .map(|c| (c.base.symbol, c.posture))
+                .collect(),
+        )
+    }
+
+    /// `symbol`'s posture — active for a market off the roster.
+    pub fn of(&self, symbol: &str) -> Posture {
+        self.0
+            .iter()
+            .find(|(s, _)| *s == symbol)
+            .map_or(Posture::Active, |(_, p)| *p)
+    }
+
+    /// Flip `symbol` between the two postures, returning the new one; `None`
+    /// for a market off the roster.
+    pub fn toggle(&mut self, symbol: &str) -> Option<Posture> {
+        let (_, posture) = self.0.iter_mut().find(|(s, _)| *s == symbol)?;
+        *posture = match posture {
+            Posture::Active => Posture::Passive,
+            Posture::Passive => Posture::Active,
+        };
+        Some(*posture)
+    }
 }
 
 /// The seven FX-stablecoin markets the localnet bootstrap brings up, each a
@@ -197,12 +255,23 @@ const fn fx_pair(
         reference_price,
         // Never expires in wall time; re-armed by the maker bot.
         expiry_offset_secs: WallSpan::UNBOUNDED,
+        posture: Posture::Active,
+    }
+}
+
+/// `config` opening [`Posture::Passive`].
+const fn passive(config: PairConfig) -> PairConfig {
+    PairConfig {
+        posture: Posture::Passive,
+        ..config
     }
 }
 
 pub const MARKET_EURC: PairConfig = fx_market("EURC", "keys/EURC.json", 6, 1.14);
 pub const MARKET_VCHF: PairConfig = fx_market("VCHF", "keys/VCHF.json", 9, 1.235);
-pub const MARKET_TGBP: PairConfig = fx_market("TGBP", "keys/TGBP.json", 9, 1.324);
+// The demo shows tGBP passive beside the rest active — the posture it runs
+// in on mainnet.
+pub const MARKET_TGBP: PairConfig = passive(fx_market("TGBP", "keys/TGBP.json", 9, 1.324));
 pub const MARKET_ZARP: PairConfig = fx_market("ZARP", "keys/ZARP.json", 6, 0.0605);
 pub const MARKET_MXNE: PairConfig = fx_market("MXNe", "keys/MXNe.json", 9, 0.0573);
 pub const MARKET_XSGD: PairConfig = fx_market("XSGD", "keys/XSGD.json", 6, 0.7705);
@@ -594,7 +663,9 @@ pub enum Funding {
 /// fresh from the chain — never assumed. Sector indices recycle, so on a
 /// market anyone else has used the leader's vault need not be sector 0.
 ///
-/// `funding` says where the deposit comes from; see [`Funding`].
+/// `funding` says where the deposit comes from; see [`Funding`]. `posture`
+/// picks the ladder: a passive market opens dark just the same, and its
+/// first re-center is what stamps it live.
 #[allow(clippy::too_many_arguments)]
 pub fn seed_vault(
     client: &RpcClient,
@@ -606,6 +677,7 @@ pub fn seed_vault(
     market: &MarketView,
     vault_idx: u32,
     funding: Funding,
+    posture: Posture,
     log: &Logger,
 ) -> Result<()> {
     // 0. Refuse before the first send. A `Mint*` mode against a real
@@ -641,16 +713,21 @@ pub fn seed_vault(
         }
     }
 
-    // 1. Quote ladder — a multi-rung symmetric ladder at the default spread, so
-    //    the maker's first quote fans the book out across several price levels
-    //    (not the single rung it would otherwise start from) at the tighter
-    //    default spread. Shape only: it rests inert, pricing nothing, until a
-    //    reference price is stamped.
-    log.log("set_liquidity_profile");
-    let bytes = ladder_profile_bytes(
-        &ladder_at_spread_bps(DEFAULT_SPREAD_BPS),
-        config.expiry_offset_secs,
-    );
+    // 1. Quote ladder — for an active market, a multi-rung symmetric ladder at
+    //    the default spread, so the maker's first quote fans the book out
+    //    across several price levels (not the single rung it would otherwise
+    //    start from) at the tighter default spread; for a passive one, the
+    //    passive-tight-8 book the operator's first re-center brings live.
+    //    Shape only: it rests inert, pricing nothing, until a reference price
+    //    is stamped.
+    log.log(format!("set_liquidity_profile ({})", posture.label()));
+    let bytes = match posture {
+        Posture::Active => ladder_profile_bytes(
+            &ladder_at_spread_bps(DEFAULT_SPREAD_BPS),
+            config.expiry_offset_secs,
+        ),
+        Posture::Passive => profile_bytes(&build_profile(&TightLadder::default().levels())),
+    };
     let ix = set_liquidity_profile_ix(
         cluster.deployment(),
         quote.pubkey(),
@@ -1137,5 +1214,31 @@ mod tests {
             assert!(w[1].0 > w[0].0, "offsets must widen outward");
             assert!(w[1].1 < w[0].1, "depth must thin outward");
         }
+    }
+
+    /// The demo runs tGBP passive beside the rest active, and the operator
+    /// can flip any roster market but nothing off it.
+    #[test]
+    fn the_demo_opens_tgbp_passive_and_the_rest_active() {
+        let mut postures = Postures::for_roster(Cluster::Localnet);
+        for config in PAIRS {
+            let expected = if config.base.symbol == "TGBP" {
+                Posture::Passive
+            } else {
+                Posture::Active
+            };
+            assert_eq!(
+                postures.of(config.base.symbol),
+                expected,
+                "{}",
+                config.base.symbol
+            );
+        }
+        assert_eq!(postures.toggle("EURC"), Some(Posture::Passive));
+        assert_eq!(postures.toggle("TGBP"), Some(Posture::Active));
+        assert_eq!(postures.of("EURC"), Posture::Passive);
+        assert_eq!(postures.toggle("NOPE"), None);
+        assert_eq!(postures.of("NOPE"), Posture::Active);
+        assert!(MAINNET_PAIRS.iter().all(|c| c.posture == Posture::Active));
     }
 }

@@ -26,9 +26,9 @@ use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 
 /// Number of grouped control rows the "runtime actions" pane renders (bots,
-/// swap, eCLOB peg, eCLOB shape, vault, view) — its box height is this plus
-/// the top/bottom borders.
-const RUNTIME_ACTIONS_ROWS: u16 = 6;
+/// swap, eCLOB peg, eCLOB shape, passive ladder, vault, view — mainnet's six
+/// leave one blank) — its box height is this plus the top/bottom borders.
+const RUNTIME_ACTIONS_ROWS: u16 = 7;
 
 /// Inner rows of the leader pane: address, status, wallet, vault, stake.
 const LEADER_PANE_ROWS: u16 = 5;
@@ -642,6 +642,10 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
             tag("shape"),
             Span::styled("f thin far side · g reset · G reset all", market_style),
         ]),
+        Line::from(vec![
+            tag("ladder"),
+            Span::styled("p passive ladder · c re-center · P posture", market_style),
+        ]),
         vault_line,
         Line::from(vec![tag("view"), Span::styled("r refresh · q quit", live)]),
     ];
@@ -1118,8 +1122,8 @@ fn draw_markets(f: &mut Frame<'_>, app: &App, area: Rect) {
 
 /// One markets-list row for market `i`: selection marker · liquidity glyph ·
 /// flag · ticker · book mid (or "idle") · the leader's reference price (the fair
-/// value the maker pegs to) · a green ● when its maker is running · a cyan ●
-/// when its taker is.
+/// value the maker pegs to) · `passive` for a passive-posture market · a green
+/// ● when its maker is running · a cyan ● when its taker is.
 fn market_row(app: &App, i: usize, market: &crate::accounts::MarketView) -> Line<'static> {
     let symbol = symbol_for(&app.mint_symbols, &market.base_mint, "?");
     let flag = flag_for(symbol);
@@ -1157,6 +1161,11 @@ fn market_row(app: &App, i: usize, market: &crate::accounts::MarketView) -> Line
         Span::styled("  ref ", Style::new().fg(Color::DarkGray)),
         Span::styled(format!("{reference:>11}"), Style::new().fg(Color::DarkGray)),
     ];
+    // Passive markets run with no maker, so say so rather than leave the
+    // missing ● to read as a maker the operator forgot to start.
+    if app.postures.of(symbol) == crate::market::Posture::Passive {
+        spans.push(Span::styled("  passive", Style::new().fg(Color::Yellow)));
+    }
     if app.bots.is_running(symbol) {
         spans.push(Span::styled(
             "  \u{25cf} maker",

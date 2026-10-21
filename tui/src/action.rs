@@ -705,7 +705,8 @@ impl JobContext {
 /// here. `selected` picks which discovered market the market-scoped actions
 /// (the probe swap, the explorer targets) act on; `swap_units` is the
 /// taker-selected notional (whole units of the input token) and `swap_side`
-/// the direction a [`Action::ProbeSwap`] takes.
+/// the direction a [`Action::ProbeSwap`] takes. `postures` picks the ladder
+/// each market is seeded with.
 #[allow(clippy::too_many_arguments)]
 pub fn dispatch(
     action: Action,
@@ -716,7 +717,9 @@ pub fn dispatch(
     swap_units: u64,
     swap_side: SwapSide,
     reshape_spread_bps: u32,
+    postures: &market::Postures,
 ) {
+    let postures = postures.clone();
     let rpc_url = ctx.rpc_url.clone();
     let repo_root = ctx.repo_root.clone();
     let wallet_path = ctx.wallet_path.clone();
@@ -818,7 +821,15 @@ pub fn dispatch(
                         market::quote_authority(&repo_root, config, operator_quote.as_ref())?;
                     let leader = market::leader(&repo_root, config, operator_leader.as_deref())?;
                     do_deposit(
-                        &client, &wallet, &repo_root, cluster, config, &leader, &quote, funding,
+                        &client,
+                        &wallet,
+                        &repo_root,
+                        cluster,
+                        config,
+                        &leader,
+                        &quote,
+                        funding,
+                        postures.of(config.base.symbol),
                         log,
                     )
                 })
@@ -876,6 +887,7 @@ pub fn dispatch(
                             let rpc_url = rpc_url.clone();
                             let wallet = wallet.insecure_clone();
                             let repo_root = &repo_root;
+                            let postures = &postures;
                             let log = log.clone();
                             scope.spawn(move || -> Result<()> {
                                 let client = chain::rpc(&rpc_url);
@@ -907,6 +919,7 @@ pub fn dispatch(
                                     &leader,
                                     &leader,
                                     market::Funding::MintBaseOnly,
+                                    postures.of(config.base.symbol),
                                     &log,
                                 )?
                                 .log_skip(&log);
@@ -1960,6 +1973,7 @@ pub(crate) fn do_deposit(
     leader: &Keypair,
     quote: &Keypair,
     funding: market::Funding,
+    posture: market::Posture,
     log: &Logger,
 ) -> Result<Outcome> {
     let (base_mint, quote_mint) = market::pair_mints(repo_root, config)?;
@@ -1991,12 +2005,17 @@ pub(crate) fn do_deposit(
     let market = accounts::read_market_at(client, cluster, market_address)
         .context("could not read the market back — refusing")?;
     market::seed_vault(
-        client, cluster, wallet, leader, quote, config, &market, seat.idx, funding, log,
+        client, cluster, wallet, leader, quote, config, &market, seat.idx, funding, posture, log,
     )?;
     log.accounts_changed();
+    let until = match posture {
+        market::Posture::Active => "a maker bot quotes it",
+        market::Posture::Passive => "its first re-center (c)",
+    };
     Ok(Outcome::Done(format!(
-        "{} vault seeded — dark until a maker bot quotes it",
-        config.base.symbol
+        "{} vault seeded {} — dark until {until}",
+        config.base.symbol,
+        posture.label()
     )))
 }
 

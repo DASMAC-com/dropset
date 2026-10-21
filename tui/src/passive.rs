@@ -8,8 +8,10 @@
 //! The same two halves as [`crate::leader`] around the operator's typed `yes`:
 //! [`prepare`] reads the vault fresh and builds a [`Ticket`] from the
 //! [`Form`]; the panel previews it; [`execute`] sends exactly that ticket. The
-//! ladder comes from [`dropset_sdk::ladder::PassiveLadder`], the builder the
-//! maker bot's passive mode uses, so the two cannot drift on the shape rules.
+//! ladder comes from [`dropset_sdk::ladder`]: by default its passive-tight-8
+//! [`TightLadder`], the builder the maker bot's passive mode uses, so the two
+//! cannot drift on the shape rules; an evenly spaced [`PassiveLadder`] is the
+//! alternative.
 //!
 //! Both writes are the vault's quote authority's to sign, so the vault is
 //! found by that key and the leader — the custody key — is never needed: a
@@ -17,9 +19,10 @@
 //!
 //! A blank center is the estimator's fair when a fair-price database is
 //! configured ([`crate::fair`]), and the vault's live reference or the book
-//! mid when none is. The form opens over [`vault_lines`], what rested and
-//! what flipped since the last stamp, so the daily visit sees the fills
-//! before it re-centers.
+//! mid when none is. The form opens over [`vault_lines`] — where the fair
+//! sits against the stamped center, then what rested and what flipped since
+//! the last stamp — so the daily visit sees the drift and the fills before it
+//! re-centers.
 //!
 //! The stop is not here: the emergency kill (`K` on mainnet) zeroes every
 //! level on the quote key's vaults, passive ones included.
@@ -29,13 +32,14 @@ use crate::book;
 use crate::chain;
 use crate::cluster::Cluster;
 use crate::emergency::{self, SectorSeat};
-use crate::fair::Fair;
+use crate::fair::{Fair, Spot, SPOT_SOURCE};
 use crate::job::Logger;
 use crate::market;
 use anyhow::{anyhow, bail, Context, Result};
 use dropset_sdk::clock::{SlotTime, WallSpan, WallTime};
 use dropset_sdk::ladder::{
-    build_profile, passive_shape_warnings, LadderLevel, PassiveLadder, PassiveShape,
+    build_profile, passive_shape_warnings, LadderLevel, PassiveLadder, PassiveShape, TightLadder,
+    MAX_TIP_BPS,
 };
 use dropset_sdk::layout::{Level, MarketView as SlabView, Position, Vault, N_LEVELS};
 use dropset_sdk::price::Price;
@@ -69,22 +73,59 @@ impl PassiveOp {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {
     Price,
+    Shape,
+    Horizon,
+    Tip,
+    FlipFraction,
     Spacing,
     Levels,
-    Shape,
     FlipSpread,
     Expiry,
 }
 
-const DEPLOY_FIELDS: [Field; 6] = [
+/// Which builder a deploy posts through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Book {
+    /// [`TightLadder`], the default: a tip, then a bell over geometric offsets.
+    Tight,
+    /// [`PassiveLadder`] in its bell or uniform shape, at one spacing.
+    Spaced,
+}
+
+/// The shape line's three choices, in the order `→` steps through them.
+const SHAPES: [(Book, PassiveShape); 3] = [
+    (Book::Tight, PassiveShape::Bell),
+    (Book::Spaced, PassiveShape::Bell),
+    (Book::Spaced, PassiveShape::Uniform),
+];
+
+// Both deploy lists keep the shape on line 1, so switching book leaves the
+// cursor where it was.
+const TIGHT_FIELDS: [Field; 6] = [
     Field::Price,
+    Field::Shape,
+    Field::Horizon,
+    Field::Tip,
+    Field::FlipFraction,
+    Field::Expiry,
+];
+const SPACED_FIELDS: [Field; 6] = [
+    Field::Price,
+    Field::Shape,
     Field::Spacing,
     Field::Levels,
-    Field::Shape,
     Field::FlipSpread,
     Field::Expiry,
 ];
 const RECENTER_FIELDS: [Field; 1] = [Field::Price];
+
+/// The visit horizon steps by a day, up to a week between visits.
+const MAX_HORIZON_DAYS: u32 = 7;
+/// The tip steps by half a percent of the leg, up to the builder's cap.
+const TIP_STEP_BPS: u16 = 50;
+/// The flip fraction steps by a tenth of the gap, from a tenth to the whole.
+const FLIP_FRACTION_STEP_PCT: u32 = 10;
+const MAX_FLIP_FRACTION_PCT: u32 = 100;
 
 /// The spacing steps by 1 bp, between 1 and 100 bps — eight rungs at the
 /// widest still sit within 8% of the center.
@@ -117,6 +158,9 @@ const MAX_PRICE_CHARS: usize = 16;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Form {
     pub op: PassiveOp,
+    /// Which of the two ladders below a deploy posts.
+    pub book: Book,
+    pub tight: TightLadder,
     pub ladder: PassiveLadder,
     /// Typed human quote-per-base; blank takes the estimator's fair, or —
     /// with no fair-price database — re-stamps the vault's live reference,
@@ -135,6 +179,8 @@ impl Form {
     pub fn new(op: PassiveOp) -> Self {
         Self {
             op,
+            book: Book::Tight,
+            tight: TightLadder::default(),
             ladder: PassiveLadder::default(),
             price: String::new(),
             cursor: 0,
@@ -144,9 +190,41 @@ impl Form {
     }
 
     pub fn fields(&self) -> &'static [Field] {
-        match self.op {
-            PassiveOp::Deploy => &DEPLOY_FIELDS,
-            PassiveOp::Recenter => &RECENTER_FIELDS,
+        match (self.op, self.book) {
+            (PassiveOp::Deploy, Book::Tight) => &TIGHT_FIELDS,
+            (PassiveOp::Deploy, Book::Spaced) => &SPACED_FIELDS,
+            (PassiveOp::Recenter, _) => &RECENTER_FIELDS,
+        }
+    }
+
+    /// The rungs a deploy posts.
+    pub fn levels(&self) -> Vec<LadderLevel> {
+        match self.book {
+            Book::Tight => self.tight.levels(),
+            Book::Spaced => self.ladder.levels(),
+        }
+    }
+
+    /// Whether [`Self::levels`]' L1 is a declared tip.
+    pub fn has_tip(&self) -> bool {
+        self.book == Book::Tight
+    }
+
+    fn shape_at(&self) -> usize {
+        let shape = match self.book {
+            Book::Tight => PassiveShape::Bell,
+            Book::Spaced => self.ladder.shape,
+        };
+        SHAPES
+            .iter()
+            .position(|&s| s == (self.book, shape))
+            .unwrap_or(0)
+    }
+
+    fn expiry_mut(&mut self) -> &mut WallSpan {
+        match self.book {
+            Book::Tight => &mut self.tight.expiry_secs,
+            Book::Spaced => &mut self.ladder.expiry_secs,
         }
     }
 
@@ -163,10 +241,39 @@ impl Form {
     /// Step the current field by `delta` (`←` is `-1`, `→` is `+1`).
     pub fn step(&mut self, delta: i32) {
         let field = self.field();
-        let l = &mut self.ladder;
         let up = delta > 0;
+        let at = self.shape_at();
+        let t = &mut self.tight;
+        let l = &mut self.ladder;
         match field {
             Field::Price => {}
+            Field::Shape => {
+                let next = if up {
+                    (at + 1) % SHAPES.len()
+                } else {
+                    (at + SHAPES.len() - 1) % SHAPES.len()
+                };
+                let (book, shape) = SHAPES[next];
+                self.book = book;
+                if book == Book::Spaced {
+                    l.shape = shape;
+                }
+            }
+            Field::Horizon => {
+                t.horizon_days = stepped(t.horizon_days, 1, up).clamp(1, MAX_HORIZON_DAYS);
+            }
+            Field::Tip => {
+                t.tip_size_bps = if up {
+                    t.tip_size_bps.saturating_add(TIP_STEP_BPS)
+                } else {
+                    t.tip_size_bps.saturating_sub(TIP_STEP_BPS)
+                }
+                .clamp(TIP_STEP_BPS, MAX_TIP_BPS);
+            }
+            Field::FlipFraction => {
+                t.flip_fraction_pct = stepped(t.flip_fraction_pct, FLIP_FRACTION_STEP_PCT, up)
+                    .clamp(FLIP_FRACTION_STEP_PCT, MAX_FLIP_FRACTION_PCT);
+            }
             Field::Spacing => {
                 l.spacing_ppm = stepped(l.spacing_ppm, SPACING_STEP_PPM, up)
                     .clamp(SPACING_STEP_PPM, MAX_SPACING_PPM);
@@ -179,27 +286,19 @@ impl Form {
                 }
                 .clamp(1, N_LEVELS);
             }
-            Field::Shape => {
-                l.shape = match l.shape {
-                    PassiveShape::Bell => PassiveShape::Uniform,
-                    PassiveShape::Uniform => PassiveShape::Bell,
-                };
-            }
             Field::FlipSpread => {
                 l.flip_spread_ppm =
                     stepped(l.flip_spread_ppm, FLIP_STEP_PPM, up).min(MAX_FLIP_SPREAD_PPM);
             }
             Field::Expiry => {
-                let at = EXPIRY_PRESETS
-                    .iter()
-                    .position(|e| *e == l.expiry_secs)
-                    .unwrap_or(0);
+                let expiry = self.expiry_mut();
+                let at = EXPIRY_PRESETS.iter().position(|e| e == expiry).unwrap_or(0);
                 let next = if up {
                     (at + 1).min(EXPIRY_PRESETS.len() - 1)
                 } else {
                     at.saturating_sub(1)
                 };
-                l.expiry_secs = EXPIRY_PRESETS[next];
+                *expiry = EXPIRY_PRESETS[next];
             }
         }
     }
@@ -224,6 +323,13 @@ impl Form {
     /// The form's lines, the edited one marked — what the prompt draws.
     pub fn lines(&self) -> Vec<String> {
         let l = &self.ladder;
+        let t = &self.tight;
+        let reach = |levels: Vec<LadderLevel>| match (levels.first(), levels.last()) {
+            (Some(inner), Some(outer)) => {
+                format!("{} to {}", bps(inner.offset_ppm), bps(outer.offset_ppm))
+            }
+            _ => String::new(),
+        };
         self.fields()
             .iter()
             .enumerate()
@@ -235,20 +341,35 @@ impl Form {
                         _ => format!("type one — {}", self.fair.describe()),
                     },
                     Field::Price => self.price.clone(),
+                    Field::Shape => match (self.book, l.shape) {
+                        (Book::Tight, _) => "tight-8 (a tip, then a bell)".to_string(),
+                        (Book::Spaced, PassiveShape::Bell) => "bell, evenly spaced".to_string(),
+                        (Book::Spaced, PassiveShape::Uniform) => {
+                            "uniform, evenly spaced".to_string()
+                        }
+                    },
+                    Field::Horizon => {
+                        let days = if t.horizon_days == 1 { "day" } else { "days" };
+                        format!("{} {days} — {}", t.horizon_days, reach(t.levels()))
+                    }
+                    Field::Tip => format!("{:.1}% of the leg at L1", t.tip_size_bps as f64 / 100.0),
+                    Field::FlipFraction => format!("{}% of each rung's gap", t.flip_fraction_pct),
                     Field::Spacing => bps(l.spacing_ppm),
                     Field::Levels => format!("{} a side", l.levels),
-                    Field::Shape => match l.shape {
-                        PassiveShape::Bell => "bell".to_string(),
-                        PassiveShape::Uniform => "uniform".to_string(),
-                    },
                     Field::FlipSpread => bps(l.flip_spread_ppm),
-                    Field::Expiry => expiry_label(l.expiry_secs),
+                    Field::Expiry => expiry_label(match self.book {
+                        Book::Tight => t.expiry_secs,
+                        Book::Spaced => l.expiry_secs,
+                    }),
                 };
                 let name = match field {
                     Field::Price => "center price",
+                    Field::Shape => "shape",
+                    Field::Horizon => "visit horizon",
+                    Field::Tip => "tip size",
+                    Field::FlipFraction => "flip fraction",
                     Field::Spacing => "spacing",
                     Field::Levels => "levels",
-                    Field::Shape => "shape",
                     Field::FlipSpread => "flip spread",
                     Field::Expiry => "expiry",
                 };
@@ -456,8 +577,8 @@ pub fn prepare(
     let price = Price::from_value(ratio).with_context(|| format!("encode the center {center}"))?;
     let (levels, mut warnings) = match form.op {
         PassiveOp::Deploy => {
-            let levels = form.ladder.levels();
-            let warnings = passive_shape_warnings(&levels);
+            let levels = form.levels();
+            let warnings = passive_shape_warnings(&levels, form.has_tip());
             (levels, warnings)
         }
         PassiveOp::Recenter => (Vec::new(), Vec::new()),
@@ -534,14 +655,17 @@ fn center_warning(center: f64, against: f64, what: &str) -> Option<String> {
 }
 
 /// The per-vault view the form opens over: the quote key's vault on `market`,
-/// read fresh, level by level — see `ladder_state`. Its symbols name the
-/// legs.
+/// read fresh — its drift from `fair` (and `spot`, when stored; see
+/// `drift_lines`), then level by level (see `ladder_state`). Its symbols
+/// name the legs.
 pub fn vault_lines(
     client: &RpcClient,
     repo_root: &Path,
     cluster: Cluster,
     market: &MarketView,
     quote_authority: &Pubkey,
+    fair: &Fair,
+    spot: Option<Spot>,
 ) -> Result<Vec<String>> {
     let config = market::config_for(repo_root, cluster, &market.base_mint)
         .context("the selected market is not in this cluster's roster")?;
@@ -571,7 +695,86 @@ pub fn vault_lines(
         dropset_sdk::time::now_unix_u32(),
         SlotTime::new(slot.min(u64::from(u32::MAX)) as u32),
     );
-    Ok(ladder_state(vault, seat.seq, &legs, now))
+    let mut lines = ladder_state(vault, seat.seq, &legs, now);
+    // Under the stamp line, where the operator reads the center from.
+    lines.splice(1..1, drift_lines(vault, &legs, fair, spot));
+    Ok(lines)
+}
+
+/// Where the market has walked since the stamp, as the daily visit decides a
+/// re-center: the fair beside the center the book rests on, the gap in bps
+/// and in the rungs it has walked past on its side, the [`Spot`] beside the
+/// fair when one is stored, and either side with nothing left resting.
+/// Empty for a vault posting no ladder — `ladder_state` says so.
+fn drift_lines(vault: &Vault, legs: &Legs, fair: &Fair, spot: Option<Spot>) -> Vec<String> {
+    let profile = &vault.profile;
+    if profile.size_bps_sums() == (0, 0) {
+        return Vec::new();
+    }
+    let rp = &vault.reference_price;
+    let mut lines = Vec::new();
+    let center = Price::from_bits(rp.price.get())
+        .is_matchable()
+        .then(|| legs.price(rp.price.get()));
+    let used = |side: &[Level; N_LEVELS]| -> Vec<u32> {
+        side.iter()
+            .filter(|l| l.size_bps.get() > 0)
+            .map(|l| l.price_offset.get())
+            .collect()
+    };
+    match (center, fair.price()) {
+        (None, _) => lines.push("center  none stamped — the book is dark".to_string()),
+        (Some(center), Some(fair)) => {
+            let gap_bps = (fair / center - 1.0) * 1e4;
+            let side = if gap_bps > 0.0 {
+                used(&profile.asks)
+            } else {
+                used(&profile.bids)
+            };
+            let walked = side
+                .iter()
+                .filter(|&&offset| f64::from(offset) <= gap_bps.abs() * 100.0)
+                .count();
+            lines.push(format!(
+                "fair {} · center {} · gap {gap_bps:+.1} bps, past {walked} of {} rungs",
+                book::fmt_price(fair),
+                book::fmt_price(center),
+                side.len()
+            ));
+        }
+        (Some(center), None) => lines.push(format!(
+            "center {} · {}",
+            book::fmt_price(center),
+            fair.describe()
+        )),
+    }
+    if let Some(spot) = spot {
+        let against = fair
+            .price()
+            .map(|f| format!("{:+.1} bps vs fair, ", (spot.price / f - 1.0) * 1e4))
+            .unwrap_or_default();
+        lines.push(format!(
+            "{SPOT_SOURCE} spot {} ({against}{} s old)",
+            book::fmt_price(spot.price),
+            spot.age_secs
+        ));
+    }
+    // A stamp's flush is still pending, so every posted rung rests as posted.
+    let armed = rp.flush_armed();
+    let rests = |sizes: &[Level; N_LEVELS], left: &[Position; N_LEVELS]| {
+        (0..N_LEVELS).any(|i| sizes[i].size_bps.get() > 0 && (armed || left[i].size.get() > 0))
+    };
+    for (side, sizes, left) in [
+        ("ask", &profile.asks, &vault.remaining.asks),
+        ("bid", &profile.bids, &vault.remaining.bids),
+    ] {
+        if !rests(sizes, left) {
+            lines.push(format!(
+                "no {side} rests — the book is one-sided until a re-center"
+            ));
+        }
+    }
+    lines
 }
 
 /// One leg's symbol and mint decimals.
@@ -768,18 +971,100 @@ mod tests {
     use bytemuck::Zeroable;
 
     #[test]
-    fn the_deploy_form_starts_on_the_shared_default_ladder() {
+    fn the_deploy_form_starts_on_the_shared_tight_ladder() {
         let form = Form::new(PassiveOp::Deploy);
-        assert_eq!(form.ladder, PassiveLadder::default());
+        assert_eq!(form.book, Book::Tight);
+        assert_eq!(form.levels(), TightLadder::default().levels());
+        assert!(form.has_tip());
         assert_eq!(form.field(), Field::Price);
-        assert_eq!(form.fields().len(), DEPLOY_FIELDS.len());
+        assert_eq!(form.fields(), &TIGHT_FIELDS);
+        let lines = form.lines();
+        assert!(
+            lines[2].ends_with("1 day — 3.0 bps to 100.0 bps"),
+            "{lines:?}"
+        );
+        assert!(lines[3].ends_with("2.0% of the leg at L1"), "{lines:?}");
+        assert!(lines[4].ends_with("100% of each rung's gap"), "{lines:?}");
         // A re-center edits the price alone.
         assert_eq!(Form::new(PassiveOp::Recenter).fields(), &[Field::Price]);
     }
 
     #[test]
-    fn stepping_clamps_every_field_to_its_range() {
+    fn the_shape_line_steps_through_tight_bell_and_uniform() {
         let mut form = Form::new(PassiveOp::Deploy);
+        form.move_cursor(1);
+        assert_eq!(form.field(), Field::Shape);
+        form.step(1);
+        assert_eq!(
+            (form.book, form.ladder.shape),
+            (Book::Spaced, PassiveShape::Bell)
+        );
+        assert_eq!(form.fields(), &SPACED_FIELDS);
+        assert_eq!(form.field(), Field::Shape, "the cursor stays on the shape");
+        assert_eq!(form.levels(), PassiveLadder::default().levels());
+        assert!(!form.has_tip());
+        form.step(1);
+        assert_eq!(form.ladder.shape, PassiveShape::Uniform);
+        form.step(1);
+        assert_eq!(form.book, Book::Tight);
+        form.step(-1);
+        assert_eq!(
+            (form.book, form.ladder.shape),
+            (Book::Spaced, PassiveShape::Uniform)
+        );
+    }
+
+    #[test]
+    fn stepping_clamps_every_tight_field_to_its_range() {
+        let mut form = Form::new(PassiveOp::Deploy);
+        form.move_cursor(2);
+        assert_eq!(form.field(), Field::Horizon);
+        for _ in 0..20 {
+            form.step(1);
+        }
+        assert_eq!(form.tight.horizon_days, MAX_HORIZON_DAYS);
+        for _ in 0..20 {
+            form.step(-1);
+        }
+        assert_eq!(form.tight.horizon_days, 1);
+        form.step(1);
+        form.step(1);
+        // Three days widens every rung by sqrt(3).
+        assert_eq!(form.levels()[7].offset_ppm, 17_321);
+        form.move_cursor(1);
+        assert_eq!(form.field(), Field::Tip);
+        for _ in 0..50 {
+            form.step(1);
+        }
+        assert_eq!(form.tight.tip_size_bps, MAX_TIP_BPS);
+        for _ in 0..50 {
+            form.step(-1);
+        }
+        assert_eq!(form.tight.tip_size_bps, TIP_STEP_BPS);
+        form.move_cursor(1);
+        assert_eq!(form.field(), Field::FlipFraction);
+        for _ in 0..20 {
+            form.step(1);
+        }
+        assert_eq!(form.tight.flip_fraction_pct, MAX_FLIP_FRACTION_PCT);
+        for _ in 0..20 {
+            form.step(-1);
+        }
+        assert_eq!(form.tight.flip_fraction_pct, FLIP_FRACTION_STEP_PCT);
+        form.move_cursor(1);
+        assert_eq!(form.field(), Field::Expiry);
+        form.step(1);
+        assert_eq!(form.tight.expiry_secs, EXPIRY_PRESETS[1]);
+        assert_eq!(form.ladder.expiry_secs, WallSpan::UNBOUNDED);
+        // Every setting the form allows posts a sound tight ladder.
+        assert!(passive_shape_warnings(&form.levels(), form.has_tip()).is_empty());
+    }
+
+    #[test]
+    fn stepping_clamps_every_spaced_field_to_its_range() {
+        let mut form = Form::new(PassiveOp::Deploy);
+        form.move_cursor(1);
+        form.step(1);
         form.move_cursor(1);
         assert_eq!(form.field(), Field::Spacing);
         for _ in 0..200 {
@@ -796,9 +1081,6 @@ mod tests {
         }
         assert_eq!(form.ladder.levels, 1);
         form.move_cursor(1);
-        form.step(1);
-        assert_eq!(form.ladder.shape, PassiveShape::Uniform);
-        form.move_cursor(1);
         assert_eq!(form.field(), Field::FlipSpread);
         for _ in 0..10 {
             form.step(-1);
@@ -814,6 +1096,7 @@ mod tests {
             form.step(1);
         }
         assert_eq!(form.ladder.expiry_secs, *EXPIRY_PRESETS.last().unwrap());
+        assert_eq!(form.tight.expiry_secs, WallSpan::UNBOUNDED);
         // The cursor clamps at the last line.
         form.move_cursor(5);
         assert_eq!(form.field(), Field::Expiry);
@@ -1040,6 +1323,73 @@ mod tests {
         v.profile.bids[1].expiry_offset_secs = 60.into();
         let lines = ladder_state(&v, 4, &LEGS, AT);
         assert!(lines[1].contains("has expired"), "{lines:?}");
+    }
+
+    /// [`ladder_vault`] with its two rungs a side at 5 and 10 bps.
+    fn spaced_vault(flush: bool) -> Vault {
+        let mut v = ladder_vault(flush);
+        for (i, offset) in [500u32, 1_000].into_iter().enumerate() {
+            v.profile.asks[i].price_offset = offset.into();
+            v.profile.bids[i].price_offset = offset.into();
+        }
+        v
+    }
+
+    #[test]
+    fn the_drift_names_the_fair_the_center_and_the_rungs_walked_past() {
+        // The fair 7 bps above the 1.0 center: past the 5 bps ask, not the 10.
+        let lines = drift_lines(&spaced_vault(true), &LEGS, &live_fair(1.0007), None);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].ends_with("gap +7.0 bps, past 1 of 2 rungs"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[0].starts_with("fair 1.0007 · center 1.0000"),
+            "{lines:?}"
+        );
+        // Below it the bids are the side walked through.
+        let lines = drift_lines(&spaced_vault(true), &LEGS, &live_fair(0.998), None);
+        assert!(
+            lines[0].ends_with("gap -20.0 bps, past 2 of 2 rungs"),
+            "{lines:?}"
+        );
+        // No fair: the center and why.
+        let lines = drift_lines(&spaced_vault(true), &LEGS, &Fair::Off, None);
+        assert_eq!(lines[0], "center 1.0000 · no fair-price database");
+        // A dark vault has no center to measure from.
+        let mut dark = spaced_vault(true);
+        dark.reference_price.price = 0.into();
+        let lines = drift_lines(&dark, &LEGS, &live_fair(1.0), None);
+        assert_eq!(lines[0], "center  none stamped — the book is dark");
+        // An empty profile is ladder_state's to report.
+        let mut empty = spaced_vault(true);
+        empty.profile = Zeroable::zeroed();
+        assert!(drift_lines(&empty, &LEGS, &live_fair(1.0), None).is_empty());
+    }
+
+    #[test]
+    fn the_drift_shows_the_spot_beside_the_fair_and_an_emptied_side() {
+        let spot = Spot {
+            price: 1.0002,
+            age_secs: 40,
+        };
+        let lines = drift_lines(&spaced_vault(true), &LEGS, &live_fair(1.0), Some(spot));
+        assert_eq!(lines[1], "orca spot 1.0002 (+2.0 bps vs fair, 40 s old)");
+        let lines = drift_lines(&spaced_vault(true), &LEGS, &Fair::Off, Some(spot));
+        assert_eq!(lines[1], "orca spot 1.0002 (40 s old)");
+        // Every ask lifted since the stamp: the book is one-sided.
+        let mut lifted = spaced_vault(false);
+        for p in &mut lifted.remaining.asks {
+            p.size = 0.into();
+        }
+        let lines = drift_lines(&lifted, &LEGS, &Fair::Off, None);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[1].starts_with("no ask rests"), "{lines:?}");
+        // Before the stamp's flush everything rests as posted.
+        let mut armed = spaced_vault(true);
+        armed.remaining.asks = Zeroable::zeroed();
+        assert_eq!(drift_lines(&armed, &LEGS, &Fair::Off, None).len(), 1);
     }
 
     fn live_fair(price: f64) -> Fair {

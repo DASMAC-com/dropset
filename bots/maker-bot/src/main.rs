@@ -256,7 +256,11 @@ fn run_live(cfg: &BotConfig, args: &Args) -> Result<()> {
         ));
     }
     println!("[strategy] {:?} mode", cfg.strategy.mode);
-    for warning in ladder::shape_warnings(&cfg.strategy.ladder, cfg.strategy.mode) {
+    for warning in ladder::shape_warnings(
+        &cfg.strategy.ladder,
+        cfg.strategy.mode,
+        cfg.strategy.ladder_tip,
+    ) {
         eprintln!("[strategy] ladder: {warning}");
     }
     if args.recenter && cfg.strategy.mode == StrategyMode::Active {
