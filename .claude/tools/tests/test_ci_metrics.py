@@ -153,18 +153,40 @@ class AnalyseTests(unittest.TestCase):
         self.assertIn("entries not all-green: 1", out)
         self.assertIn("entry critical path (all):   n=3 ", out)
         self.assertIn(
-            "in flight (excluded above): pr-4 pr-5['Lint=failure'] pr-6(unstarted)",
+            "in flight (excluded above): pr-4 pr-5['Lint=failure'] "
+            "pr-6(no job finished)",
             out,
         )
 
-    def test_a_settled_entry_with_no_started_job_is_not_in_flight(self):
+    def test_a_running_entry_with_no_finished_job_is_in_flight(self):
+        payload = json.loads(json.dumps(PAYLOAD))
+        payload["runs"].append(
+            {"id": 81, "head_branch": f"{Q}8-hhh", "conclusion": None}
+        )
+        payload["jobs"]["81"] = [
+            {
+                "name": "Tests",
+                "started_at": "2026-10-20T15:00:00Z",
+                "completed_at": None,
+                "conclusion": None,
+            }
+        ]
+        out = "\n".join(cm.render(payload, full=False))
+        self.assertIn("3 settled queue entries, 1 in flight", out)
+        self.assertIn("in flight (excluded above): pr-8(no job finished)", out)
+
+    def test_a_settled_entry_with_no_job_run_is_a_not_green_dequeue(self):
         payload = json.loads(json.dumps(PAYLOAD))
         payload["runs"].append(
             {"id": 71, "head_branch": f"{Q}7-ggg", "conclusion": "startup_failure"}
         )
         payload["jobs"]["71"] = []
         out = "\n".join(cm.render(payload, full=False))
-        self.assertIn("3 settled queue entries, 0 in flight", out)
+        self.assertIn("4 settled queue entries, 0 in flight", out)
+        self.assertIn("entries not all-green: 2", out)
+        self.assertIn("pr-7 no job ran ['startup_failure']", out)
+        # No span, so the critical-path statistics are unchanged.
+        self.assertIn("entry critical path (all):   n=3 ", out)
 
     def test_a_wholly_skipped_run_keeps_the_entry_green(self):
         payload = json.loads(json.dumps(PAYLOAD))
@@ -207,6 +229,9 @@ GH_LOG = [
     "thread 'bad_test' panicked at src/lib.rs:1",
     "Tests\tRun nextest\t2026-10-20T10:05:00.0000000Z ::error::Process exit 1",
     "Tests\tBuild\t2026-10-20T10:05:01.0000000Z error[E0425]: cannot find value",
+    # The shape CI's `--color=always` pre-commit run prints a failed hook in.
+    "Lint\tRun pre-commit\t2026-10-20T10:06:00.0000000Z "
+    "cspell...............^[[41mFailed^[[m",
 ]
 
 LINT_LOG = [
@@ -226,7 +251,8 @@ class LogReaderTests(unittest.TestCase):
 
     def test_failed_lines(self):
         hits = cm.failed_lines(cm.strip_log_prefix(GH_LOG))
-        self.assertEqual(len(hits), 4)
+        self.assertEqual(len(hits), 5)
+        self.assertIn("cspell", hits[4])
         self.assertIn("FAIL [   0.004s] dropset::tests bad_test", hits[0])
         self.assertIn("panicked at", hits[1])
         self.assertIn("::error::", hits[2])
@@ -272,7 +298,7 @@ class MainTests(unittest.TestCase):
             with redirect_stdout(buf):
                 cm.main(["--failed-log", "7", "--limit", "1"])
         out = buf.getvalue()
-        self.assertIn("job 7: 6 log lines, 4 failure-shaped lines; first 1:", out)
+        self.assertIn("job 7: 7 log lines, 5 failure-shaped lines; first 1:", out)
         self.assertNotIn("::error::", out)
 
     def test_hook_timing_mode(self):
@@ -286,11 +312,23 @@ class MainTests(unittest.TestCase):
 
     def test_hook_timing_with_no_matching_line_fails_loudly(self):
         err = io.StringIO()
-        lines = cm.strip_log_prefix(GH_LOG)
+        # GH_LOG minus its trailing pre-commit line: a Tests log, no hooks.
+        lines = cm.strip_log_prefix(GH_LOG[:-1])
         with mock.patch.object(cm, "job_log", return_value=lines):
             with redirect_stdout(io.StringIO()), redirect_stderr(err):
                 self.assertEqual(cm.main(["--hook-timing", "9"]), 1)
         self.assertIn("no pre-commit result line matched", err.getvalue())
+
+    def test_hook_timing_single_result_line_is_not_a_drift(self):
+        with mock.patch.object(cm, "job_log", return_value=LINT_LOG[:1]):
+            with redirect_stdout(io.StringIO()) as buf:
+                self.assertEqual(cm.main(["--hook-timing", "10"]), 0)
+        self.assertIn("0 hook results", buf.getvalue())
+
+    def test_hook_timing_empty_log_fails_loudly(self):
+        with mock.patch.object(cm, "job_log", return_value=[]):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(cm.main(["--hook-timing", "11"]), 1)
 
     def test_cache_written_when_absent(self):
         with tempfile.TemporaryDirectory() as d:

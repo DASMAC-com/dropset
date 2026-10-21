@@ -44,19 +44,20 @@ from datetime import datetime, timedelta, timezone
 REPO = "DASMAC-com/dropset"
 QUEUE_PREFIX = "gh-readonly-queue/main/pr-"
 
+# What sits between a pre-commit hook's dot leader and its result word: an
+# optional skipped-hook postfix ``(no files to check)``, then color escapes.
+# CI runs pre-commit with ``--color=always``, and ``gh run view --log`` renders
+# the escape caret-style (``^[[42m``); a raw ``\x1b[`` is accepted too.
+PRE_RESULT = r"\.{3,}(?:\([^)]*\))?(?:\x1b\[[0-9;]*m|\^\[\[[0-9;]*m)*"
 FAIL_RE = re.compile(
     r"(panicked at|^.*\bFAILED\b|error\[E|^.*\berror:|assertion .*failed|"
     r"test result: FAILED|--- FAIL|Error: Process completed|"
-    r"thread '.*' panicked|\.\.\.\.* ?Failed$|\[(FAIL|TIMEOUT)\]|"
+    rf"thread '.*' panicked|{PRE_RESULT}Failed|\[(FAIL|TIMEOUT)\]|"
     r"\b(FAIL|TIMEOUT) \[|::error::)"
 )
 # A pre-commit result line: ``<stamp> <hook name>.....<postfix?><color?>Passed``.
-# The postfix is a skipped hook's ``(no files to check)``. The color escape
-# appears raw (``\x1b[``) or caret-rendered (``^[[``) depending on how the log
-# was captured.
 HOOK_RE = re.compile(
-    r"^(\d{4}-\d\d-\d\dT[\d:.]+Z) (.+?)\.{3,}(?:\([^)]*\))?"
-    r"(?:\x1b\[[0-9;]*m|\^\[\[[0-9;]*m)*(Passed|Failed|Skipped)"
+    rf"^(\d{{4}}-\d\d-\d\dT[\d:.]+Z) (.+?){PRE_RESULT}(Passed|Failed|Skipped)"
 )
 
 
@@ -145,7 +146,7 @@ def analyse(payload: dict, steps_for: str | None = None) -> dict:
     # name -> [(minutes, ref, conclusion)]
     job_durations: dict[str, list[tuple[float, str, str | None]]] = {}
     step_durations: dict[str, list[float]] = {}
-    unstarted: list[str] = []
+    spanless: list[dict] = []
     for ref, ref_runs in entries.items():
         starts, ends, failed_jobs = [], [], []
         conclusions = set()
@@ -175,10 +176,16 @@ def analyse(payload: dict, steps_for: str | None = None) -> dict:
                 if conclusion == "success" and (best is None or d > best[0]):
                     best = (d, job["name"])
         if not starts:
-            # Queued but not yet picked up: no span to measure, but still an
-            # entry in flight, which the header must count.
-            if None in conclusions:
-                unstarted.append(ref[len(QUEUE_PREFIX) :].split("-")[0])
+            # No job has finished: queued or running (in flight), or settled
+            # without a job ever running (a startup_failure, a cancel before
+            # pickup). No span to measure, but the entry must still be counted.
+            spanless.append(
+                {
+                    "pr": ref[len(QUEUE_PREFIX) :].split("-")[0],
+                    "conclusions": sorted(c or "none" for c in conclusions),
+                    "failed_jobs": failed_jobs,
+                }
+            )
             continue
         rows.append(
             {
@@ -196,7 +203,7 @@ def analyse(payload: dict, steps_for: str | None = None) -> dict:
     rows.sort(key=lambda r: r["started"])
     return {
         "rows": rows,
-        "unstarted": unstarted,
+        "spanless": spanless,
         "job_durations": job_durations,
         "step_durations": step_durations,
     }
@@ -213,15 +220,20 @@ def is_green(row: dict) -> bool:
 def render(payload: dict, full: bool, steps_for: str | None = None) -> list[str]:
     a = analyse(payload, steps_for)
     # An entry with a run still going is in flight, failed job or not: its span
-    # is partial, so it joins none of the statistics below.
+    # is partial, so it joins none of the per-entry statistics below. Its
+    # completed jobs are still valid durations, so the per-job table keeps them.
     in_flight = [r for r in a["rows"] if "none" in r["conclusions"]]
     rows = [r for r in a["rows"] if r not in in_flight]
+    spanless_flying = [s for s in a["spanless"] if "none" in s["conclusions"]]
+    # Settled with no job ever run: a dequeue with no span, never green.
+    never_ran = [s for s in a["spanless"] if s not in spanless_flying]
     walls = [r["wall_min"] for r in rows]
     green = [r["wall_min"] for r in rows if is_green(r)]
     out = [
         f"merge_group runs since {payload['since']}: "
-        f"{len(payload['runs'])} runs, {len(rows)} settled queue entries, "
-        f"{len(in_flight) + len(a['unstarted'])} in flight",
+        f"{len(payload['runs'])} runs, "
+        f"{len(rows) + len(never_ran)} settled queue entries, "
+        f"{len(in_flight) + len(spanless_flying)} in flight",
         f"entry critical path (all):   {stats(walls)}",
         f"entry critical path (green): {stats(green)}",
         "",
@@ -242,16 +254,22 @@ def render(payload: dict, full: bool, steps_for: str | None = None) -> list[str]
     for name, n in sorted(slowest.items(), key=lambda kv: (-kv[1], kv[0])):
         out.append(f"  {name:28s} {n}")
     not_green = [r for r in rows if not is_green(r)]
-    out += ["", f"entries not all-green: {len(not_green)}"]
+    out += ["", f"entries not all-green: {len(not_green) + len(never_ran)}"]
     for r in not_green:
         out.append(
             f"  pr-{r['pr']} {r['started'][:16]} {r['weekday']} "
             f"{r['wall_min']}m {r['conclusions']} {r['failed_jobs']}"
         )
+    for s in never_ran:
+        out.append(f"  pr-{s['pr']} no job ran {s['conclusions']}")
     flying = [
         f"pr-{r['pr']}" + (f"{r['failed_jobs']}" if r["failed_jobs"] else "")
         for r in in_flight
-    ] + [f"pr-{pr}(unstarted)" for pr in a["unstarted"]]
+    ] + [
+        f"pr-{s['pr']}(no job finished)"
+        + (f"{s['failed_jobs']}" if s["failed_jobs"] else "")
+        for s in spanless_flying
+    ]
     if flying:
         out.append("in flight (excluded above): " + " ".join(flying))
     if steps_for:
@@ -349,9 +367,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.hook_timing:
         lines = job_log(args.hook_timing)
         rows = hook_rows(lines)
-        if lines and not rows:
-            # A drifted pre-commit line format would otherwise read as a clean
-            # "0 hook results".
+        if not any(HOOK_RE.match(line) for line in lines):
+            # A drifted pre-commit line format (or an empty log) would
+            # otherwise read as a clean "0 hook results". Test the lines, not
+            # the rows: the first matched line never yields a row.
             print(
                 f"job {args.hook_timing}: {len(lines)} log lines but no "
                 "pre-commit result line matched; is this a Lint job?",

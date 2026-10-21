@@ -238,8 +238,9 @@ It groups the last `--days` of `merge_group` runs by queue entry and reports
 each entry's critical path (earliest job start to latest job completion
 across every workflow), per-job duration percentiles, which job was slowest
 per entry, and the entries that were not all-green with their failed jobs.
-An entry with a run still going is in flight: it is left out of every
-statistic and named on a line of its own.
+An entry with a run still going is in flight: it is left out of the
+per-entry statistics and named on a line of its own, though its completed
+jobs still count toward the per-job durations.
 `--steps JOB` breaks one job down by step, `--failed-log JOB_ID` classifies
 a dequeue from its log's failure-shaped lines, and `--hook-timing JOB_ID`
 ranks the pre-commit hooks inside one Lint job. The first fetch of a week
