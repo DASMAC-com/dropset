@@ -288,6 +288,88 @@ class CliTests(unittest.TestCase):
         self.assertIn("1 appended section(s)", err)
 
 
+class LensTests(unittest.TestCase):
+    """``--lens``: the standing half, then the lens file, its cap filled."""
+
+    LENS_BODY = (
+        "# Lens: correctness\n\n"
+        "<!-- default-cap: ≤ 4 turns / ≤ 6 tool calls -->\n\n"
+        f"**Your cap: {lp.CAP_PLACEHOLDER}, hard stop.**\n"
+    )
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        doc = self.root / lp.BRIEF_DOC
+        doc.parent.mkdir(parents=True, exist_ok=True)
+        doc.write_text(DOC, encoding="utf-8")
+        standing = self.root / lp.LENS_STANDING
+        standing.parent.mkdir(parents=True, exist_ok=True)
+        standing.write_text("## Standing marker\n", encoding="utf-8")
+        lens = self.root / lp.LENS_DIR / "correctness.md"
+        lens.parent.mkdir(parents=True, exist_ok=True)
+        lens.write_text(self.LENS_BODY, encoding="utf-8")
+
+    def test_the_lens_file_follows_the_standing_half(self):
+        out = lp.compose(self.root, [], ["A fact."], lens="correctness")
+        self.assertLess(out.index("## Standing marker"), out.index("# Lens:"))
+        self.assertIn("`correctness` lens", out)
+
+    def test_the_default_cap_fills_the_placeholder_and_is_stripped(self):
+        out = lp.compose(self.root, [], ["A fact."], lens="correctness")
+        self.assertIn("**Your cap: ≤ 4 turns / ≤ 6 tool calls, hard stop.**", out)
+        self.assertNotIn("{{cap}}", out)
+        self.assertNotIn("`", out.split("Your cap:")[1].split("hard stop")[0])
+        self.assertNotIn("default-cap", out)
+
+    def test_an_explicit_cap_overrides_the_default(self):
+        out = lp.compose(
+            self.root, [], ["A fact."], lens="correctness", cap="≤ 6 turns / ≤ 9"
+        )
+        self.assertIn("Your cap: ≤ 6 turns / ≤ 9, hard stop", out)
+        self.assertNotIn("≤ 4 turns", out)
+
+    def test_an_unknown_lens_is_refused_naming_the_known_ones(self):
+        with self.assertRaises(lp.LensPreambleError) as ctx:
+            lp.compose(self.root, [], ["A fact."], lens="vibes")
+        self.assertIn("correctness", str(ctx.exception))
+
+    def test_a_cap_without_a_lens_is_refused(self):
+        with self.assertRaises(lp.LensPreambleError):
+            lp.compose(self.root, [], ["A fact."], cap="≤ 4 turns")
+
+    def test_an_explicit_standing_append_is_not_duplicated(self):
+        out = lp.compose(self.root, [lp.LENS_STANDING], ["A fact."], lens="correctness")
+        self.assertEqual(out.count("## Standing marker"), 1)
+
+    def test_a_placeholder_with_no_cap_anywhere_is_refused(self):
+        lens = self.root / lp.LENS_DIR / "correctness.md"
+        lens.write_text(f"# Lens\n\nCap: {lp.CAP_PLACEHOLDER}.\n", encoding="utf-8")
+        with self.assertRaises(lp.LensPreambleError) as ctx:
+            lp.compose(self.root, [], ["A fact."], lens="correctness")
+        self.assertIn("default-cap", str(ctx.exception))
+
+    def test_the_cli_names_the_lens_on_the_summary_line(self):
+        target = self.root / "brief.md"
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = lp.run(
+                [
+                    "lens_preamble.py",
+                    "--root",
+                    str(self.root),
+                    "--out",
+                    str(target),
+                    "--lens",
+                    "correctness",
+                    "--no-facts",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("lens correctness", err.getvalue())
+
+
 class RealDocTests(unittest.TestCase):
     """Guards the wiring against the actual committed doc — the failure this
     tool's own tests would otherwise miss, since every other test builds its
@@ -313,6 +395,30 @@ class RealDocTests(unittest.TestCase):
         self.assertIn("Negative scope", out)
         self.assertIn("read-only", out)
         self.assertIn(lp.FACTS_HEADING, out)
+
+    def test_the_lens_table_and_the_lens_files_match_both_ways(self):
+        """A lens the skill names cannot be missing its file, and a file the
+        table does not name is an orphan nothing can compose."""
+        root = Path(__file__).resolve().parents[3]
+        lens_dir = root / lp.LENS_DIR
+        if not lens_dir.is_dir():  # pragma: no cover
+            self.skipTest(f"{lens_dir} not present")
+        on_disk = sorted(p.stem for p in lens_dir.glob("*.md"))
+        self.assertEqual(on_disk, sorted(lp.LENSES))
+
+    def test_every_committed_lens_composes_with_its_cap_filled(self):
+        root = Path(__file__).resolve().parents[3]
+        if not (root / lp.LENS_DIR).is_dir():  # pragma: no cover
+            self.skipTest(f"{lp.LENS_DIR} not present")
+        for lens in lp.LENSES:
+            with self.subTest(lens=lens):
+                text = (root / lp.lens_path(lens)).read_text(encoding="utf-8")
+                self.assertIn(lp.CAP_PLACEHOLDER, text)
+                self.assertRegex(text, lp.DEFAULT_CAP_RE)
+                out = lp.compose(root, [], ["A fact."], lens=lens)
+                self.assertNotIn(lp.CAP_PLACEHOLDER, out)
+                self.assertIn("hard stop", out)
+                self.assertIn("Pre-emit gate", out)
 
 
 if __name__ == "__main__":
