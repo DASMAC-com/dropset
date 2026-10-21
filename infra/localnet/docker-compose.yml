@@ -629,6 +629,37 @@ services:
     profiles:
     - 'fx'
     restart: 'unless-stopped'
+  orca:
+    # The Orca Whirlpool spot collector: read each roster pool's price over
+    # JSON-RPC and write it to `spot_ticks` — the on-chain basis tape the
+    # estimator offers beside the Coinbase candle (docs/data-feeds.md §9).
+    #
+    # Each roster entry pins its pool: `PRODUCT=POOL_ADDRESS`. Its own override
+    # variable, not the bare `PRODUCT_IDS` the coinbase legs share, because an
+    # entry here means a pool address and would refuse a bare pair.
+    #
+    # Keyless by default, so it comes up with `make collectors-up` on the public
+    # mainnet-beta endpoint. `HELIUS_RPC_URL` puts a keyed endpoint ahead of it,
+    # with the public one kept as the fallback; it is resolved from the secrets
+    # enclave by the same `op run` that starts the keyed FX venues, which is why
+    # that bring-up names this service too. Empty means the public endpoint
+    # alone.
+    build:
+      context: '../..'
+      dockerfile: 'infra/localnet/collectors.Dockerfile'
+    command:
+    - 'market-data-orca'
+    depends_on:
+      migrate:
+        condition: 'service_completed_successfully'
+    environment:
+      DATABASE_URL: 'postgres://dropset:dropset@postgres:5432/dropset'
+      HELIUS_RPC_URL: '${HELIUS_RPC_URL:-}'
+      POLL_INTERVAL_SECS: '${TICK_POLL_INTERVAL_SECS:-15}'
+      PRODUCT_IDS: >-
+        ${ORCA_PRODUCT_IDS:-TGBP-USDC=9aJrewHLYMjXiZK5u2UU4aWi4R3jFGtoKJJo4AaHYyjt}
+      RUST_LOG: 'info'
+    restart: 'unless-stopped'
   postgres:
     # The one shared `dropset` database: indexer tables, market-data price
     # tables, and the maker go-between tables as they land (docs/data-feeds.md

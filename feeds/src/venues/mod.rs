@@ -25,6 +25,10 @@
 //!   rather than another fallback; [`erapi`] yields the provider's own refresh
 //!   instants, without which a once-daily snapshot would be stored as though it
 //!   described the moment it happened to be fetched.
+//! - **Chain-state venues** — [`orca`] reads a pool account over JSON-RPC
+//!   rather than a REST endpoint, so it rides its own `orca` feature and its own
+//!   endpoint failover rather than [`crate::HttpClient`]. Per product, like the
+//!   Coinbase ticker: one source reads one pool.
 //!
 //! **The batched-poll contract — stated here, not encoded in a trait.** Every
 //! batched quote venue above exposes exactly one inherent `poll` covering its
@@ -109,6 +113,8 @@ pub mod frankfurter;
 pub mod kraken;
 #[cfg(feature = "http")]
 pub mod oanda;
+#[cfg(feature = "orca")]
+pub mod orca;
 #[cfg(feature = "http")]
 pub mod pyth;
 #[cfg(feature = "http")]
@@ -130,6 +136,8 @@ pub use frankfurter::{FrankfurterSnapshot, FrankfurterSnapshotSource, Frankfurte
 pub use kraken::KrakenSource;
 #[cfg(feature = "http")]
 pub use oanda::OandaCandles;
+#[cfg(feature = "orca")]
+pub use orca::{OrcaSpot, RpcFailover};
 #[cfg(feature = "http")]
 pub use pyth::{FxQuote, PythFeed, PythHermesSource};
 #[cfg(feature = "http")]
@@ -264,7 +272,10 @@ pub type Quotes<K> = HashMap<K, f64>;
 /// requests a minute proves it still satisfies the tier it was chosen for. The
 /// point is to catch a floor lowered without re-checking the venue — a one-time
 /// live measurement cannot, since it decays the moment either side changes.
-#[cfg(test)]
+///
+/// Gated on `http` as well as `test`: every caller is an HTTP venue's floor,
+/// and a build of the `orca` venue alone would otherwise flag it unused.
+#[cfg(all(test, feature = "http"))]
 pub(crate) fn requests_per_window(
     interval: std::time::Duration,
     window: std::time::Duration,

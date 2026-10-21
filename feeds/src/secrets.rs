@@ -258,11 +258,8 @@ impl SecretProvider {
     /// tried, in every store's own spelling, because the failure an operator
     /// actually hits is "I put it somewhere, but not where this looked".
     pub fn resolve(&self, name: &str) -> Result<String> {
-        validate_name(name)?;
-        for backend in &self.backends {
-            if let Some(value) = backend.resolve(name)? {
-                return Ok(value);
-            }
+        if let Some(value) = self.resolve_optional(name)? {
+            return Ok(value);
         }
         let tried = self
             .backends
@@ -271,6 +268,21 @@ impl SecretProvider {
             .collect::<Vec<_>>()
             .join(", ");
         bail!("the secret {name:?} is not set — looked for {tried}")
+    }
+
+    /// Resolve a secret the caller can do without: `Ok(None)` when no store
+    /// carries it, while a store that *should* answer and cannot is still an
+    /// error. That split is the point — a broken 1Password setup must not
+    /// quietly read as "not configured", which for an optional credential
+    /// would silently select the caller's fallback.
+    pub fn resolve_optional(&self, name: &str) -> Result<Option<String>> {
+        validate_name(name)?;
+        for backend in &self.backends {
+            if let Some(value) = backend.resolve(name)? {
+                return Ok(Some(value));
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -492,6 +504,35 @@ mod tests {
         assert!(err.contains("NO_SUCH_API_KEY"), "{err}");
         assert!(err.contains("op://example-vault/no-such/api-key"), "{err}");
         assert!(err.contains("1Password vault \"example-vault\""), "{err}");
+    }
+
+    /// A backend that was supposed to answer and could not — the `op`-broken
+    /// case an optional secret must not mistake for "not configured".
+    struct Broken;
+
+    impl Backend for Broken {
+        fn describe(&self) -> String {
+            "a broken store".to_string()
+        }
+        fn key_for(&self, name: &str) -> String {
+            name.to_string()
+        }
+        fn resolve(&self, _name: &str) -> Result<Option<String>> {
+            bail!("store unreachable")
+        }
+    }
+
+    #[test]
+    fn an_optional_secret_is_none_when_absent_but_errors_when_a_store_breaks() {
+        let absent = SecretProvider::new(vec![Box::new(NeverHasIt(OnePasswordBackend::new(
+            "example-vault",
+            None,
+        )))]);
+        assert_eq!(absent.resolve_optional("no-such/api-key").unwrap(), None);
+        // A broken store is still an error: reading it as absent would quietly
+        // select the caller's fallback.
+        let broken = SecretProvider::new(vec![Box::new(Broken)]);
+        assert!(broken.resolve_optional("no-such/api-key").is_err());
     }
 
     #[test]
