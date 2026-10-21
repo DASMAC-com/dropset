@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -230,15 +231,19 @@ def _real_alive(pid: int, start: str) -> bool:
     """Whether ``pid`` is running at all. ``start`` is deliberately NOT
     compared: the lock records it in UTC while ``ps`` prints local time, so a
     string compare read every live session as dead (measured). A reused pid
-    therefore reads as alive — the tree is skipped, the safe direction."""
+    therefore reads as alive — the tree is skipped, the safe direction.
+
+    Fails CLOSED: only ``ProcessLookupError`` means dead. A ``ps`` probe could
+    not tell a dead pid from its own failure (both rc 1, empty output), and a
+    permission error means the process exists."""
     del start
-    proc = subprocess.run(
-        ["ps", "-o", "pid=", "-p", str(pid)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return proc.returncode == 0 and bool(proc.stdout.strip())
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 def stale_lock(reason: str | None, alive=_real_alive) -> bool:
@@ -306,6 +311,15 @@ def prune(
             removed.append({"path": path, "branch": branch})
             continue
         if unlock:
+            # Re-read the lock first: a session relaunched on the tree since
+            # the listing holds a fresh lock, which must not be lifted.
+            _, now, _ = git(["worktree", "list", "--porcelain"])
+            current = next((t for t in parse_worktrees(now) if t["path"] == path), {})
+            if current.get("locked") != lock:
+                skipped.append(
+                    {"path": path, "branch": branch, "reason": "lock changed"}
+                )
+                continue
             git(["worktree", "unlock", path])
         # An executor gets no --force: a dirty or locked worktree refuses, which
         # is the safe outcome — record it as skipped and move on. An advisor

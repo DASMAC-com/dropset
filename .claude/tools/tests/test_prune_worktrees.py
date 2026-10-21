@@ -5,9 +5,11 @@ the top-level dir so the bare ``import prune_worktrees`` below resolves).
 """
 
 import os
+import subprocess
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from prune_worktrees import (
     _read_merged,
@@ -429,6 +431,32 @@ class LockTests(unittest.TestCase):
         # The guard against the measured UTC-vs-local mismatch: a live pid
         # must read alive even when the recorded start text differs.
         self.assertTrue(_real_alive(os.getpid(), "Thu Jan  1 00:00:00 1970"))
+
+    def test_the_real_probe_reads_a_vanished_pid_dead(self):
+        # A child that has exited and been reaped names no process.
+        child = subprocess.Popen(["true"])
+        child.wait()
+        self.assertFalse(_real_alive(child.pid, ""))
+
+    def test_a_probe_error_other_than_no_such_process_reads_alive(self):
+        with mock.patch("prune_worktrees.os.kill", side_effect=PermissionError):
+            self.assertTrue(_real_alive(1, ""))
+
+    def test_a_lock_that_changed_since_the_listing_is_not_lifted(self):
+        class Relaunched(FakeGit):
+            def __call__(self, args):
+                if args[:2] == ["worktree", "list"] and self.calls:
+                    self.calls.append(args)
+                    fresh = LOCK.replace("pid 4242", "pid 5151")
+                    return 0, LOCKED_PORCELAIN.replace(LOCK, fresh), ""
+                return super().__call__(args)
+
+        git = Relaunched(LOCKED_PORCELAIN, on_main=["eng-1957"], locked=[ADVISOR_PATH])
+        out = prune(
+            {"eng-1957"}, False, git=git, tier=self.TIERS, alive=lambda p, s: False
+        )
+        self.assertEqual(out["skipped"][0]["reason"], "lock changed")
+        self.assertNotIn(["worktree", "unlock", ADVISOR_PATH], git.calls)
 
     def test_the_lock_line_is_parsed(self):
         trees = parse_worktrees(LOCKED_PORCELAIN)

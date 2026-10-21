@@ -1409,7 +1409,8 @@ disk, so a pre-marker explore worktree, a free-form one, a number
 whose marker a `task <n>` wrote first, a tree some other launch
 made before `explore` or `architect` reached it (neither records
 its tier on a tree it did not create), and a pre-rename-named
-directory all get the executor gate. A worded
+directory all get the executor gate — permanently, so a spec file
+left in one is removed by hand. A worded
 `ceo-<topic>` or `exp-<name>` worktree matches no issue: it is
 reported as unresolvable, never removed. A
 canceled issue whose PR is still open is always flagged, never
