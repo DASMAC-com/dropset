@@ -50,12 +50,12 @@ pub fn deploy_program(
         deploy_dir.clone(),
         cargo_target_dir(repo_root).join("deploy"),
     ] {
-        std::fs::create_dir_all(&dir).context("create deploy dir")?;
+        std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
         std::fs::copy(
             repo_root.join("keys/AAAA.json"),
             dir.join("dropset-keypair.json"),
         )
-        .context("stage program keypair")?;
+        .with_context(|| format!("stage program keypair in {}", dir.display()))?;
     }
 
     let mut sync = Command::new("anchor");
@@ -95,9 +95,9 @@ pub fn deploy_program(
 }
 
 /// Where cargo writes this workspace's build: the shared pool the shell init
-/// exports as `CARGO_TARGET_DIR` (resolved against `repo_root` if relative,
-/// as cargo resolves it against the working directory), else `target/`.
-pub fn cargo_target_dir(repo_root: &Path) -> PathBuf {
+/// exports as `CARGO_TARGET_DIR` (always absolute; a relative value is taken
+/// against `repo_root`), else `target/`.
+fn cargo_target_dir(repo_root: &Path) -> PathBuf {
     match std::env::var_os("CARGO_TARGET_DIR") {
         Some(dir) if !dir.is_empty() => repo_root.join(dir),
         _ => repo_root.join("target"),

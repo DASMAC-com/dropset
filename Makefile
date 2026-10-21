@@ -324,10 +324,18 @@ sdk-test: check-pnpm
 # and dies with `SectorOverflow`). The `tui-prebuild-explorer` prerequisite
 # warms the explorer's Docker image too, so after `make clean && make tui`
 # every in-TUI command runs without building.
+#
+# Under the shared cargo pool the bots land in the pool's debug/, which every
+# worktree's build overwrites, so they are copied into this worktree's
+# target/debug/, where the TUI execs them; without the pool they are there.
+TUI_BOTS := dropset-maker-bot dropset-taker-bot
 .PHONY: tui-prebuild
 tui-prebuild: check-toolchain program-keypair tui-prebuild-explorer
 	anchor keys sync && anchor build --no-idl
-	cargo build -p dropset-maker-bot -p dropset-taker-bot
+	cargo build $(TUI_BOTS:%=-p %)
+	$(if $(filter-out $(CURDIR)/target,$(CARGO_TARGET)), \
+		mkdir -p target/debug && \
+		cp $(TUI_BOTS:%=$(CARGO_TARGET)/debug/%) target/debug/)
 
 # Warm the local explorer's Docker image so the `docker compose up` the TUI
 # runs in the background at launch is instant. `create` resolves the image the
