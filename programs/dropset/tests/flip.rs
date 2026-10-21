@@ -510,19 +510,35 @@ const HEAP_CEILING_LEGS: usize = 16;
 /// derives from).
 const DEFAULT_BUDGET_LEGS: usize = 14;
 
-/// The costliest take that fills without stranding dust: a take on a cold
-/// ten-vault book (every vault flushed in the same transaction) sized leg
-/// by leg to the heap ceiling, on each side. The deepest of them needs the
-/// [`SWAP_COMPUTE_UNIT_LIMIT`] clients send; the first
-/// [`DEFAULT_BUDGET_LEGS`] legs must fit what a bare `swap` gets.
+/// Ceiling on a cold take that strands one atom at the heap ceiling. It
+/// measures about 200k to 212k CU; were the atom left over to walk the
+/// rest of the book rather than end the take, the 64 entries a side has
+/// left after sixteen legs would add ~2.4k CU each, well past this.
+const STRANDED_TAKE_CU: u64 = 250_000;
+
+/// The costliest take: a take on a cold ten-vault book (every vault flushed
+/// in the same transaction) sized leg by leg to the heap ceiling, on each
+/// side, with and without one atom stranded past its last leg. The deepest
+/// of them needs the [`SWAP_COMPUTE_UNIT_LIMIT`] clients send; the first
+/// [`DEFAULT_BUDGET_LEGS`] legs must fit what a bare `swap` gets. The
+/// stranded take must complete at the ceiling too: the atom left over ends
+/// the walk rather than opening a seventeenth leg or a dust walk.
 #[test]
 fn a_cold_take_at_the_heap_ceiling_fits_the_swap_compute_budget() {
     for side in [SELL, BUY] {
-        let (legs, cu, legs_in_default, stopped_by) = cold_take_to_the_heap_ceiling(side);
+        let ColdCeiling {
+            legs,
+            cu,
+            legs_in_default,
+            stranded,
+            stopped_by,
+            stopped_on_stranded,
+        } = cold_take_to_the_heap_ceiling(side);
         println!(
             "cold side-{side} take to the heap ceiling over {VAULTS} vaults: {legs} \
              legs, costliest {cu} CU, {legs_in_default} legs within the default \
-             budget; the next leg failed on: {stopped_by}"
+             budget, stranding one atom {stranded:?} (legs, CU); the next leg failed \
+             on: {stopped_by}"
         );
         assert_eq!(
             legs, HEAP_CEILING_LEGS,
@@ -531,6 +547,23 @@ fn a_cold_take_at_the_heap_ceiling_fits_the_swap_compute_budget() {
         assert!(
             stopped_by.contains("heap"),
             "side {side}: the next leg should stop on the heap, stopped on: {stopped_by}"
+        );
+        assert!(
+            !stopped_on_stranded,
+            "side {side}: a take stranding one atom failed where the exact take \
+             completed: {stopped_by}"
+        );
+        let Some((stranded_legs, stranded_cu)) = stranded else {
+            panic!("side {side}: no take stranding one atom completed");
+        };
+        assert_eq!(
+            stranded_legs, HEAP_CEILING_LEGS,
+            "side {side}: a take stranding one atom should complete {HEAP_CEILING_LEGS} legs"
+        );
+        assert!(
+            stranded_cu < STRANDED_TAKE_CU,
+            "side {side}: the take stranding one atom used {stranded_cu} CU, over the \
+             {STRANDED_TAKE_CU} it fits without walking the book"
         );
         assert!(
             cu < u64::from(SWAP_COMPUTE_UNIT_LIMIT),
@@ -542,19 +575,11 @@ fn a_cold_take_at_the_heap_ceiling_fits_the_swap_compute_budget() {
             "side {side}: only {legs_in_default} legs fit the {} a bare swap gets",
             common::DEFAULT_INSTRUCTION_CU
         );
-        assert!(
-            cu < u64::from(SWAP_COMPUTE_UNIT_LIMIT),
-            "side {side}: the costliest cold take used {cu} CU, over the \
-             {SWAP_COMPUTE_UNIT_LIMIT} a client sends ahead of a bare swap"
-        );
     }
 }
 
 /// Size `side` takes on fresh cold books one leg at a time, from one full
-/// tie group up, until one fails. Returns the most legs a take completed,
-/// the costliest completing take's CU, the most legs a take completed
-/// within [`common::DEFAULT_INSTRUCTION_CU`], and the failure that stopped
-/// it.
+/// tie group up, until one fails.
 ///
 /// Legs move ten at a time across the identical vaults when sized by limit
 /// price, so the sizes are built from input atoms instead: what the first
@@ -562,7 +587,7 @@ fn a_cold_take_at_the_heap_ceiling_fits_the_swap_compute_budget() {
 /// primed twin (the build is deterministic, and priming the measured book
 /// would warm it). Each size also runs one atom over, the remainder a
 /// level-capped leg can leave behind.
-fn cold_take_to_the_heap_ceiling(side: u8) -> (usize, u64, usize, String) {
+fn cold_take_to_the_heap_ceiling(side: u8) -> ColdCeiling {
     let (dust_limit, budget) = if side == SELL {
         (Price::ZERO.as_u32(), 20_000_000)
     } else {
@@ -596,7 +621,7 @@ fn cold_take_to_the_heap_ceiling(side: u8) -> (usize, u64, usize, String) {
     }
     let (first_group, per_leg) = (consumed[0], consumed[1] / u64::from(VAULTS));
 
-    let (mut legs, mut cu, mut legs_in_default) = (0, 0, 0);
+    let mut ceiling = ColdCeiling::default();
     for extra in 0..u64::from(VAULTS) {
         for remainder in [0, 1] {
             let (mut f, taker) = ten_vault_book();
@@ -605,17 +630,44 @@ fn cold_take_to_the_heap_ceiling(side: u8) -> (usize, u64, usize, String) {
             match send_at_max_cu(&mut f, &taker, take) {
                 Ok(meta) => {
                     let filled = common::events::fills(&meta).len();
-                    legs = legs.max(filled);
-                    cu = cu.max(meta.compute_units_consumed);
-                    if meta.compute_units_consumed < common::DEFAULT_INSTRUCTION_CU {
-                        legs_in_default = legs_in_default.max(filled);
+                    let used = meta.compute_units_consumed;
+                    ceiling.legs = ceiling.legs.max(filled);
+                    ceiling.cu = ceiling.cu.max(used);
+                    if used < common::DEFAULT_INSTRUCTION_CU {
+                        ceiling.legs_in_default = ceiling.legs_in_default.max(filled);
+                    }
+                    if remainder == 1 {
+                        ceiling.stranded = Some((filled, used));
                     }
                 }
-                Err(stopped_by) => return (legs, cu, legs_in_default, stopped_by),
+                Err(stopped_by) => {
+                    ceiling.stopped_by = stopped_by;
+                    ceiling.stopped_on_stranded = remainder == 1;
+                    return ceiling;
+                }
             }
         }
     }
-    (legs, cu, legs_in_default, String::new())
+    ceiling
+}
+
+/// What [`cold_take_to_the_heap_ceiling`] measured on one side.
+#[derive(Default)]
+struct ColdCeiling {
+    /// The most legs a take completed.
+    legs: usize,
+    /// The costliest completing take's CU.
+    cu: u64,
+    /// The most legs a take completed within
+    /// [`common::DEFAULT_INSTRUCTION_CU`].
+    legs_in_default: usize,
+    /// The deepest completing take that stranded one atom: its legs and CU.
+    stranded: Option<(usize, u64)>,
+    /// The failure that stopped the sizing.
+    stopped_by: String,
+    /// Whether that failure was a one-atom-over size, i.e. a stranded take
+    /// failed where the exact take of the same legs completed.
+    stopped_on_stranded: bool,
 }
 
 /// A one-atom sell on a fully flipped ten-vault book, the most entries a
