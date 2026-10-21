@@ -1911,6 +1911,7 @@ dependencies = [
  "bs58",
  "bytemuck",
  "crossterm",
+ "dropset-market-data",
  "dropset-math-core",
  "dropset-sdk",
  "dropset-util",
@@ -1932,7 +1933,9 @@ dependencies = [
  "solana-signer",
  "solana-transaction 3.1.0",
  "solana-transaction-status-client-types",
+ "sqlx",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

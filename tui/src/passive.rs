@@ -15,6 +15,12 @@
 //! found by that key and the leader — the custody key — is never needed: a
 //! daily visit loads only the quote key.
 //!
+//! A blank center is the estimator's fair when a fair-price database is
+//! configured ([`crate::fair`]), and the vault's live reference or the book
+//! mid when none is. The form opens over [`vault_lines`], what rested and
+//! what flipped since the last stamp, so the daily visit sees the fills
+//! before it re-centers.
+//!
 //! The stop is not here: the emergency kill (`K` on mainnet) zeroes every
 //! level on the quote key's vaults, passive ones included.
 
@@ -23,14 +29,15 @@ use crate::book;
 use crate::chain;
 use crate::cluster::Cluster;
 use crate::emergency::{self, SectorSeat};
+use crate::fair::Fair;
 use crate::job::Logger;
 use crate::market;
-use anyhow::{bail, Context, Result};
-use dropset_sdk::clock::WallSpan;
+use anyhow::{anyhow, bail, Context, Result};
+use dropset_sdk::clock::{WallSpan, WallTime};
 use dropset_sdk::ladder::{
     build_profile, passive_shape_warnings, LadderLevel, PassiveLadder, PassiveShape,
 };
-use dropset_sdk::layout::N_LEVELS;
+use dropset_sdk::layout::{MarketView as SlabView, Position, Vault, N_LEVELS};
 use dropset_sdk::price::Price;
 use dropset_sdk::quoting::{profile_bytes, set_liquidity_profile_ix, set_reference_price_ix};
 use dropset_util::decimals::human_to_atoms_ratio;
@@ -107,15 +114,21 @@ pub const EXPIRY_PRESETS: [WallSpan; 5] = [
 const MAX_PRICE_CHARS: usize = 16;
 
 /// The open form: the ladder's parameters and the price to center it on.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Form {
     pub op: PassiveOp,
     pub ladder: PassiveLadder,
-    /// Typed human quote-per-base; blank re-stamps the vault's live
-    /// reference, or centers on the book mid when it has none.
+    /// Typed human quote-per-base; blank takes the estimator's fair, or —
+    /// with no fair-price database — re-stamps the vault's live reference,
+    /// or centers on the book mid when it has none.
     pub price: String,
     /// Index into [`Form::fields`] of the line being edited.
     pub cursor: usize,
+    /// The fair as the form opened — what a blank center reads as. The
+    /// ticket reads it again, fresh.
+    pub fair: Fair,
+    /// [`vault_lines`] as the form opened, or the reason it could not read.
+    pub vault: Vec<String>,
 }
 
 impl Form {
@@ -125,6 +138,8 @@ impl Form {
             ladder: PassiveLadder::default(),
             price: String::new(),
             cursor: 0,
+            fair: Fair::Off,
+            vault: Vec::new(),
         }
     }
 
@@ -214,9 +229,11 @@ impl Form {
             .enumerate()
             .map(|(i, field)| {
                 let value = match field {
-                    Field::Price if self.price.is_empty() => {
-                        "live reference (or book mid)".to_string()
-                    }
+                    Field::Price if self.price.is_empty() => match &self.fair {
+                        Fair::Off | Fair::Unpublished => "live reference (or book mid)".to_string(),
+                        Fair::Live { .. } => self.fair.describe(),
+                        _ => format!("type one — {}", self.fair.describe()),
+                    },
                     Field::Price => self.price.clone(),
                     Field::Spacing => bps(l.spacing_ppm),
                     Field::Levels => format!("{} a side", l.levels),
@@ -408,7 +425,8 @@ fn pick_seat(seats: Vec<SectorSeat>, quote_authority: &Pubkey) -> Result<SectorS
 }
 
 /// Read the vault `quote_authority` signs for on `market` fresh and build the
-/// ticket `form` describes. Sends nothing.
+/// ticket `form` describes, a blank center taking `fair` — read fresh by the
+/// caller — when it governs. Sends nothing.
 pub fn prepare(
     client: &RpcClient,
     repo_root: &Path,
@@ -416,6 +434,7 @@ pub fn prepare(
     market: &MarketView,
     quote_authority: &Pubkey,
     form: &Form,
+    fair: &Fair,
 ) -> Result<Ticket> {
     let config = market::config_for(repo_root, cluster, &market.base_mint)
         .context("the selected market is not in this cluster's roster")?;
@@ -431,6 +450,13 @@ pub fn prepare(
     let (center, center_source) = match (parse_price(&form.price), live) {
         (Some(typed), _) => (typed, "typed"),
         _ if !form.price.is_empty() => bail!("enter a positive number, e.g. 1.324"),
+        // With an estimator to ask, a blank center is its fair and nothing
+        // older: a paused or unreadable one is a reason to stop, not to keep
+        // quoting yesterday's center.
+        (None, _) if fair.governs() => match fair.price() {
+            Some(price) => (price, "the estimator's fair"),
+            None => bail!("{} — type a price", fair.describe()),
+        },
         // A blank re-stamp is the daily keep-alive: same center, fresh stamp.
         (None, Some(live)) => (live, "the vault's live reference, re-stamped"),
         // Only a two-sided book has a mid; one side alone is not a center.
@@ -452,7 +478,13 @@ pub fn prepare(
         }
         PassiveOp::Recenter => (Vec::new(), Vec::new()),
     };
-    warnings.extend(live.and_then(|live| center_warning(center, live)));
+    warnings.extend(live.and_then(|live| center_warning(center, live, "live reference")));
+    if center_source != "the estimator's fair" {
+        warnings.extend(
+            fair.price()
+                .and_then(|f| center_warning(center, f, "estimator's fair")),
+        );
+    }
     Ok(Ticket {
         op: form.op,
         market: market.address,
@@ -469,18 +501,144 @@ pub fn prepare(
     })
 }
 
-/// A warning when `center` sits more than [`CENTER_DEVIATION_WARN`] from the
-/// vault's `live` reference — the one check between a mistyped digit and a
-/// book that is swept on arrival.
-fn center_warning(center: f64, live: f64) -> Option<String> {
-    let off = center / live - 1.0;
+/// A warning when `center` sits more than [`CENTER_DEVIATION_WARN`] from
+/// `against` — the vault's live reference or the estimator's fair, named by
+/// `what` — the one check between a mistyped digit and a book that is swept
+/// on arrival.
+fn center_warning(center: f64, against: f64, what: &str) -> Option<String> {
+    let off = center / against - 1.0;
     (off.abs() > CENTER_DEVIATION_WARN).then(|| {
         format!(
-            "the center is {:+.1}% from the live reference {} — check the digits",
+            "the center is {:+.1}% from the {what} {} — check the digits",
             off * 100.0,
-            book::fmt_price(live)
+            book::fmt_price(against)
         )
     })
+}
+
+/// The per-vault view the form opens over: the quote key's vault on `market`,
+/// read fresh, level by level — see `ladder_state`. Its symbols name the
+/// legs.
+pub fn vault_lines(
+    client: &RpcClient,
+    repo_root: &Path,
+    cluster: Cluster,
+    market: &MarketView,
+    quote_authority: &Pubkey,
+) -> Result<Vec<String>> {
+    let config = market::config_for(repo_root, cluster, &market.base_mint)
+        .context("the selected market is not in this cluster's roster")?;
+    let seat = passive_seat(client, cluster, &market.address, quote_authority)?;
+    let account =
+        chain::fetch_fresh(client, &market.address, "market")?.context("market not found")?;
+    let view = SlabView::load(&account.data)
+        .map_err(|_| anyhow!("{} does not decode as a market slab", market.address))?;
+    let vault = view
+        .sectors()
+        .get(seat.idx as usize)
+        .filter(|v| v.seq.get() == seat.seq)
+        .with_context(|| format!("vault #{} moved between two reads — reopen", seat.seq))?;
+    let legs = Legs {
+        base: (config.base.symbol, market.base_decimals),
+        quote: (config.quote.symbol, market.quote_decimals),
+    };
+    Ok(ladder_state(
+        vault,
+        seat.seq,
+        &legs,
+        dropset_sdk::time::now_unix(),
+    ))
+}
+
+/// Each leg's symbol and mint decimals.
+struct Legs {
+    base: (&'static str, u8),
+    quote: (&'static str, u8),
+}
+
+impl Legs {
+    fn price(&self, bits: u32) -> f64 {
+        book::human_price(Price::from_bits(bits), self.base.1, self.quote.1)
+    }
+}
+
+fn amount(atoms: u64, (symbol, decimals): (&str, u8)) -> String {
+    format!(
+        "{:.2} {symbol}",
+        atoms as f64 / 10f64.powi(i32::from(decimals))
+    )
+}
+
+/// What `vault` rests and what has flipped since its last stamp, outermost
+/// ask down to outermost bid. A stamp zeroes every flipped counter, so for a
+/// visit that ends on a re-center or re-stamp, "since the stamp" is "since
+/// the last visit". Until the first taker after a stamp nothing has traded,
+/// and the profile rests exactly as posted.
+fn ladder_state(vault: &Vault, seq: u64, legs: &Legs, now_unix: i64) -> Vec<String> {
+    let rp = &vault.reference_price;
+    let stamped = i64::from(rp.quote_unix.get());
+    let hours = now_unix.saturating_sub(stamped).max(0) as f64 / 3_600.0;
+    let mut lines = vec![format!(
+        "vault #{seq}  stamped {hours:.1} h ago at {}",
+        book::fmt_price(legs.price(rp.price.get()))
+    )];
+    let profile = &vault.profile;
+    if profile.size_bps_sums() == (0, 0) {
+        lines.push("no ladder rests on this vault".to_string());
+        return lines;
+    }
+    let now = WallTime::new(now_unix.clamp(0, i64::from(u32::MAX)) as u32);
+    if rp.flush_armed() {
+        let (wall, _) = profile.asks[0].deadlines(rp);
+        lines.push(if wall <= now {
+            "nothing traded since the stamp, and the ladder has expired".to_string()
+        } else {
+            "nothing traded since the stamp — every level rests as posted".to_string()
+        });
+        return lines;
+    }
+    let mut flipped = 0;
+    let mut level = |side: &str, i: usize, p: &Position, own, other| {
+        let expired = if p.wall_deadline() <= now {
+            "  expired"
+        } else {
+            ""
+        };
+        let flip = if p.flip_size.get() == 0 {
+            String::new()
+        } else {
+            flipped += 1;
+            format!(
+                "  flipped {} @ {}",
+                amount(p.flip_size.get(), other),
+                book::fmt_price(legs.price(p.flip_price.get()))
+            )
+        };
+        format!(
+            "{side} L{}  {:>12}  rests {}{flip}{expired}",
+            i + 1,
+            book::fmt_price(legs.price(p.price.get())),
+            amount(p.size.get(), own),
+        )
+    };
+    let used =
+        |sizes: &[dropset_sdk::layout::Level; N_LEVELS], i: usize| sizes[i].size_bps.get() > 0;
+    let mut rungs: Vec<String> = (0..N_LEVELS)
+        .rev()
+        .filter(|&i| used(&profile.asks, i))
+        .map(|i| level("ask", i, &vault.remaining.asks[i], legs.base, legs.quote))
+        .collect();
+    rungs.extend(
+        (0..N_LEVELS)
+            .filter(|&i| used(&profile.bids, i))
+            .map(|i| level("bid", i, &vault.remaining.bids[i], legs.quote, legs.base)),
+    );
+    lines.push(match flipped {
+        0 => "traded since the stamp, but no level has flipped yet".to_string(),
+        n => format!("{n} level(s) flipped since the stamp:"),
+    });
+    lines.extend(rungs);
+    lines
 }
 
 /// Send the confirmed `ticket`, signed by the vault's `quote_authority` and
@@ -555,6 +713,7 @@ pub fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytemuck::Zeroable;
 
     #[test]
     fn the_deploy_form_starts_on_the_shared_default_ladder() {
@@ -716,10 +875,107 @@ mod tests {
 
     #[test]
     fn a_center_far_from_the_live_reference_is_warned() {
-        assert_eq!(center_warning(1.33, 1.324), None);
-        let warning = center_warning(13.24, 1.324).unwrap();
+        assert_eq!(center_warning(1.33, 1.324, "live reference"), None);
+        let warning = center_warning(13.24, 1.324, "live reference").unwrap();
         assert!(warning.contains("+900.0%"), "{warning}");
-        assert!(center_warning(1.20, 1.324).is_some());
+        assert!(warning.contains("live reference"), "{warning}");
+        assert!(center_warning(1.20, 1.324, "estimator's fair").is_some());
+    }
+
+    /// A vault stamped at 1.0 an hour before `NOW`, posting a two-rung ladder
+    /// a side — the price bits are whatever 1.0 encodes, since base and quote
+    /// share decimals here.
+    fn ladder_vault(flush: bool) -> Vault {
+        let mut v = Vault::zeroed();
+        let one = Price::from_value(1.0).unwrap().as_u32();
+        v.reference_price.price = one.into();
+        v.reference_price.quote_unix = ((NOW - 3_600) as u32).into();
+        v.reference_price.stamp = (if flush {
+            dropset_sdk::layout::FLUSH_BIT
+        } else {
+            0
+        } | 7)
+            .into();
+        for i in 0..2 {
+            for l in [&mut v.profile.asks[i], &mut v.profile.bids[i]] {
+                l.size_bps = 2_500.into();
+                l.expiry_offset_secs = WallSpan::UNBOUNDED.get().into();
+                l.expiry_offset_slots = u32::MAX.into();
+            }
+            let p = Position {
+                price: one.into(),
+                size: 1_000_000.into(),
+                expires_at_unix: u32::MAX.into(),
+                expires_at_slot: u32::MAX.into(),
+                ..Position::zeroed()
+            };
+            v.remaining.asks[i] = p;
+            v.remaining.bids[i] = p;
+        }
+        v
+    }
+
+    const NOW: i64 = 1_800_000_000;
+    const LEGS: Legs = Legs {
+        base: ("TGBP", 6),
+        quote: ("USDC", 6),
+    };
+
+    #[test]
+    fn the_vault_view_names_each_flipped_rung_since_the_stamp() {
+        let mut v = ladder_vault(false);
+        // A taker lifted half of the inner ask: its proceeds rest as a bid.
+        v.remaining.asks[0].size = 500_000.into();
+        v.remaining.asks[0].flip_size = 662_000.into();
+        v.remaining.asks[0].flip_price = Price::from_value(0.9998).unwrap().as_u32().into();
+        let lines = ladder_state(&v, 4, &LEGS, NOW);
+        assert!(
+            lines[0].starts_with("vault #4  stamped 1.0 h ago"),
+            "{lines:?}"
+        );
+        assert_eq!(lines[1], "1 level(s) flipped since the stamp:");
+        // Outermost ask first, down to the outermost bid.
+        assert_eq!(lines.len(), 2 + 4);
+        assert!(lines[2].starts_with("ask L2"), "{lines:?}");
+        assert!(lines[5].starts_with("bid L2"), "{lines:?}");
+        let inner = &lines[3];
+        assert!(
+            inner.starts_with("ask L1") && inner.contains("rests 0.50 TGBP"),
+            "{inner}"
+        );
+        assert!(inner.contains("flipped 0.66 USDC @ 0.9998"), "{inner}");
+        assert!(!lines[2].contains("flipped"));
+    }
+
+    #[test]
+    fn the_vault_view_reads_a_quiet_stamp_and_an_empty_profile() {
+        let lines = ladder_state(&ladder_vault(true), 4, &LEGS, NOW);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].contains("rests as posted"), "{lines:?}");
+        let mut empty = ladder_vault(false);
+        empty.profile = Zeroable::zeroed();
+        assert_eq!(
+            ladder_state(&empty, 4, &LEGS, NOW)[1],
+            "no ladder rests on this vault"
+        );
+        // An expired rung is named as such.
+        let mut lapsed = ladder_vault(false);
+        lapsed.remaining.bids[1].expires_at_unix = ((NOW - 1) as u32).into();
+        let lines = ladder_state(&lapsed, 4, &LEGS, NOW);
+        assert!(lines.last().unwrap().ends_with("expired"), "{lines:?}");
+        assert!(lines[1].contains("no level has flipped"), "{lines:?}");
+    }
+
+    #[test]
+    fn a_governing_fair_is_the_blank_center_and_a_paused_one_refuses() {
+        let mut form = Form::new(PassiveOp::Recenter);
+        form.fair = Fair::Paused {
+            product: "TGBP-USDC",
+            regime: "paused".into(),
+        };
+        assert!(form.lines()[0].contains("type one — the estimator is paused"));
+        form.fair = Fair::Off;
+        assert!(form.lines()[0].contains("live reference"));
     }
 
     #[test]

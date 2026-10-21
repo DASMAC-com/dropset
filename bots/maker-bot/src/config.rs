@@ -378,13 +378,9 @@ pub const MARKETS: [MarketConfig; 9] = [
 /// estimator's own roster rather than from a flag here, so rostering a market
 /// in the estimator switches this bot over with no edit on this side — the
 /// roster is expected to move, and a second list would be a second place to
-/// forget. Joined on the base symbol, the same join
-/// `market-data/tests/estimator_roster_agreement.rs` uses.
+/// forget. The join itself is the estimator's, shared with the TUI's seed.
 pub fn published_product(symbol: &str) -> Option<&'static str> {
-    dropset_market_data::estimator::PUBLISHED_MARKETS
-        .iter()
-        .map(|m| m.product_id)
-        .find(|p| p.split_once('-').map(|(base, _)| base) == Some(symbol))
+    dropset_market_data::estimator::published_product(symbol)
 }
 
 // The ladder vocabulary lives in the SDK so the TUI's passive-ladder action

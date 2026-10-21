@@ -138,11 +138,15 @@ fn draw_passive_prompt(f: &mut Frame<'_>, app: &App, area: Rect) {
     let hint = Style::new().fg(Color::DarkGray);
     let warn = Style::new().fg(Color::Yellow);
     let (label, body, entry, keys) = match prompt {
+        // The form, then the vault as it opened: what flipped since the last
+        // stamp is what the daily visit looks at before re-centering.
         PassivePrompt::Form(form) => (
             form.op.label(),
             form.lines()
                 .into_iter()
                 .map(|l| Line::from(Span::styled(l, input)))
+                .chain((!form.vault.is_empty()).then(|| Line::from("")))
+                .chain(form.vault.iter().map(|l| Line::from(l.clone())))
                 .collect::<Vec<_>>(),
             "Enter preview".to_string(),
             "\u{2191}\u{2193} field · \u{2190}\u{2192} step · digits type the price · Esc cancel",
