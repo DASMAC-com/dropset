@@ -1,3 +1,5 @@
+// cspell:word hostaddr
+
 //! The fair-price estimator's current value — what a blank passive center
 //! seeds from.
 //!
@@ -48,10 +50,11 @@ impl std::fmt::Debug for FairDb {
     }
 }
 
-/// Whether `host` is this machine — a loopback address or a Unix socket
-/// directory — where an unverified connection has no path to intercept.
+/// Whether `host` — the one sqlx will dial, after any `host=` / `hostaddr=`
+/// override — is a loopback address, where an unverified connection has no
+/// path to intercept. A Unix-socket URL keeps sqlx's default `localhost`.
 fn is_local(host: &str) -> bool {
-    host.starts_with('/') || matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
+    matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
 }
 
 impl FairDb {
@@ -60,8 +63,9 @@ impl FairDb {
     /// # Errors
     ///
     /// When it is set but unparseable, logs in as any role but the reader,
-    /// or names a remote host without a verified TLS connection
-    /// (`sslmode=verify-ca` or `verify-full`). The fair it reads becomes the
+    /// or names a remote host without a TLS connection verified to that host
+    /// (`sslmode=verify-full`; `verify-ca` checks no hostname, so any
+    /// certificate from a trusted CA would pass). The fair it reads becomes the
     /// center a quote key signs, so a connection anyone on the path could
     /// answer is refused rather than trusted.
     pub fn from_env() -> Result<Option<Self>> {
@@ -80,10 +84,7 @@ impl FairDb {
                 options.get_username()
             );
         }
-        let verified = matches!(
-            options.get_ssl_mode(),
-            PgSslMode::VerifyCa | PgSslMode::VerifyFull
-        );
+        let verified = matches!(options.get_ssl_mode(), PgSslMode::VerifyFull);
         if !is_local(options.get_host()) && !verified {
             bail!(
                 "{DATABASE_URL_ENV} names the remote host {} — add sslmode=verify-full \
@@ -320,6 +321,10 @@ mod tests {
         assert!(err.contains("sslmode=verify-full"), "{err}");
         // Encryption without verification answers no one on the path.
         assert!(FairDb::from_url(&format!("{remote}?sslmode=require")).is_err());
+        assert!(FairDb::from_url(&format!("{remote}?sslmode=verify-ca")).is_err());
+        // The gate judges the host sqlx dials, after a query override.
+        let detour = "postgres://dropset_ro:pw@localhost/dropset?host=db.example.com";
+        assert!(FairDb::from_url(detour).is_err());
         assert!(FairDb::from_url(&format!("{remote}?sslmode=verify-full")).is_ok());
         assert!(FairDb::from_url("postgres://dropset_ro:pw@localhost/dropset").is_ok());
     }
