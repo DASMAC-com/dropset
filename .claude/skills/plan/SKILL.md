@@ -521,7 +521,7 @@ session's write, never the worker's.
 
 **Dispatching is the other half.** A fold's last step resolves
 each folded comment thread (`linear_gate.py resolve <comment-id>`);
-offer an unblocked task only once `linear_gate.py approvals <n>…`
+offer an unblocked task only once `linear_gate.py approvals ENG-<n>…`
 shows the operator's thumbs-up (exit 1 if any lacks one), and on
 their yes:
 

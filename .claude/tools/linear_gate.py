@@ -22,7 +22,7 @@ Subcommands
 
 The assignee is ``LINEAR_ASSIGNEE_ID`` from the environment — never a
 hard-coded UUID, per ``docs/conventions/linear-automation.md``. Any failure
-(transport, GraphQL, a missing variable) exits **2**, so it can never read as
+inside a run (transport, GraphQL, a missing variable) exits **2**, so it can never read as
 "unapproved".
 
 Stdlib only, and deliberately **not** a Cargo workspace member — see
