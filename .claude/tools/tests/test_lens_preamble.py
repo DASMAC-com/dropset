@@ -350,6 +350,21 @@ class LensTests(unittest.TestCase):
             lp.compose(self.root, [], ["A fact."], lens="correctness")
         self.assertIn("default-cap", str(ctx.exception))
 
+    def test_a_whitespace_only_cap_falls_back_to_the_default(self):
+        # A blank cap would otherwise ship "Your cap: , hard stop" — a lens
+        # with no hard stop, which is what the cap exists to prevent.
+        out = lp.compose(self.root, [], ["A fact."], lens="correctness", cap="  ")
+        self.assertIn("Your cap: ≤ 4 turns / ≤ 6 tool calls, hard stop", out)
+
+    def test_a_cap_for_a_file_with_no_placeholder_is_refused(self):
+        lens = self.root / lp.LENS_DIR / "correctness.md"
+        lens.write_text("# Lens\n\nNo cap here.\n", encoding="utf-8")
+        with self.assertRaises(lp.LensPreambleError):
+            lp.compose(self.root, [], ["A fact."], lens="correctness", cap="≤ 2")
+        # Without a cap the file composes as written.
+        out = lp.compose(self.root, [], ["A fact."], lens="correctness")
+        self.assertIn("No cap here.", out)
+
     def test_the_cli_names_the_lens_on_the_summary_line(self):
         target = self.root / "brief.md"
         err = io.StringIO()

@@ -529,12 +529,13 @@ migrations or generation inputs, and whether it spans crates.
    | tests  | completeness; correctness when the diff changes pinned logic |
    | docs   | doc-freshness                                                |
 
-   - **Each brief NAMES its slice**, and a lens scoped to one tree gets
-     that tree's `--only` diff (a tools lens `--only '.claude/tools/**'`;
-     a conventions lens `docs/conventions/**` plus `CLAUDE.md`).
-   - **A second slice needs a one-line justification** in the brief —
+   - **Each lens's material NAMES its slice**, and a lens scoped to one
+     tree gets that tree's `--only` diff (a tools lens
+     `--only '.claude/tools/**'`; a conventions lens
+     `docs/conventions/**` plus `CLAUDE.md`).
+   - **A second slice needs a one-line justification** in the material —
      why its question spans the seam. Print each lens's **slice count
-     and handed-in byte count** beside the brief, so an over-broad
+     and handed-in byte count** at spawn, so an over-broad
      hand-in shows at fan-out time. This is scoping only; nothing here
      argues for fewer or shallower lenses.
    - **When generated output dominates the diff**, the completeness
@@ -572,7 +573,7 @@ migrations or generation inputs, and whether it spans crates.
    - **A prose or cross-file-consistency lens usually keeps the whole
      slice** — splitting destroys the relation it checks. That
      exemption **lifts its turn cap with it**, roughly in proportion
-     (≈3× the ceiling, ≈3× the turns), stated in the brief; otherwise
+     (≈3× the ceiling, ≈3× the turns), passed as `--cap`; otherwise
      it overruns by construction and a hard stop discards the findings
      least recoverable by a narrower re-run.
    - **The exemplar band shifts with size**: a 509-line slice
@@ -667,9 +668,9 @@ migrations or generation inputs, and whether it spans crates.
    ```
 
    **Excerpts inline: if the main loop has read it, the excerpt goes
-   in the brief.** This is the single highest-value lever in the step,
+   in the material.** This is the single highest-value lever in the step,
    for **every** lens, and it is *input*-scoping, not fewer lenses
-   (`history.md` → "Cold-reading held context"). A brief never names a
+   (`history.md` → "Cold-reading held context"). Material never names a
    file path the main loop could have quoted — reference and prior-art
    files included (the module the change imitates, the type it must
    stay compatible with), since a named path is an instruction to go
@@ -686,7 +687,7 @@ migrations or generation inputs, and whether it spans crates.
    are handed" section is the shaping rule for its material** — the
    docs lens's claim → excerpt table, the style lens's sibling excerpts
    pasted, the freshness lenses' positive scope — and its "never" half
-   is what a brief must not hand over.
+   is what the material must not hand over.
 
    **Bound every lens; the brief files carry the wording.** The scope
    line, the hard-stop cap in turns **and** tool calls (`history.md` →
@@ -790,7 +791,8 @@ migrations or generation inputs, and whether it spans crates.
    merely-small-but-subtle. Name in the summary any tier below the full
    one and every lens a gate below skips.
 
-   - **Trivial short-circuit — one scoped reviewer, no cross-check.**
+   - **Trivial short-circuit — one scoped reviewer (plus the gated
+     freshness lenses), no cross-check.**
      Small and confined to one of: comment / doc / Markdown only, a
      config or workflow tweak, a rename, or a handful of lines with no
      new control flow. The one reviewer is the `correctness` lens,
@@ -807,8 +809,8 @@ migrations or generation inputs, and whether it spans crates.
        handed the Grep-tool straggler hit-list (`history.md` →
        "Straggler grep into build output"). Add **one** small new-logic
        lens only when genuinely new additions rode along, and never turn
-       correctness /
-       completeness / style loose on unchanged logic. This holds at any
+       correctness / completeness / style loose on unchanged logic. This
+       holds at any
        size: it overrides the full-tier "four substantive lenses"
        default.
      - **mechanical repo-wide reformat** — discount the reformat noise
@@ -982,7 +984,9 @@ migrations or generation inputs, and whether it spans crates.
    The standing suppressions (`history.md` → "Security lens on
    tooling") and the pre-emit gate — quote the changed line or drop
    it; severity **blocking** / **warning** / **nit**, no numeric scale
-   (`history.md` → "Speculative findings") — are in every brief too.
+   (`history.md` → "Speculative findings"), a convention claim citing
+   its definition site (`history.md` → "Convention by analogy") — are in
+   every brief too.
 
    Spawn the lenses as parallel `Agent` calls in a single message, each
    with its three-line prompt.

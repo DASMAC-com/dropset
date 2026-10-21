@@ -1,6 +1,6 @@
 # Lens: adversarial cross-check
 
-<!-- default-cap: ≤ 6 turns / 8–10 tool calls -->
+<!-- default-cap: 8–10 tool calls -->
 
 **Your cap: `{{cap}}`, hard stop** — higher than the primary lenses',
 because this is the pass that overruns most and returns most per turn.

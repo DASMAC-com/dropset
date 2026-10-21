@@ -47,7 +47,7 @@ resident. ``--lens`` appends ``lens-standing.md`` and then that file, and fills
 the file's ``CAP_PLACEHOLDER`` code span from ``--cap`` or, absent it, from the
 file's own ``<!-- default-cap: ... -->`` line. An unknown name is refused, and
 ``LENSES`` is the table a unittest holds equal to the directory listing, so a
-lens the skill names cannot be missing its file, nor a file be orphaned.
+name the tool accepts cannot be missing its file, nor a file be orphaned.
 
 Usage::
 
@@ -92,8 +92,10 @@ BRIEF_MARKER = "**Prepend this standing brief to *every* `Agent` prompt:**"
 LENS_STANDING = Path(".claude/skills/review-pr/lens-standing.md")
 LENS_DIR = Path(".claude/skills/review-pr/lenses")
 
-# Every lens the review-pr tier table names, each with a file in ``LENS_DIR``.
-# The unittest holds this equal to the directory listing in both directions.
+# Every review-pr lens with its own brief file in ``LENS_DIR`` (the reduced
+# tier's reformat and value-rewiring lenses reuse ``move-fidelity`` and
+# ``correctness``). The unittest holds this equal to the directory listing in
+# both directions.
 LENSES = (
     "ci-skip-list",
     "comment-accuracy",
@@ -216,15 +218,20 @@ def fill_cap(text: str, cap: str | None, name: str) -> str:
     """
     match = DEFAULT_CAP_RE.search(text)
     body = DEFAULT_CAP_RE.sub("", text, count=1) if match else text
+    cap = (cap or "").strip() or None
     if CAP_PLACEHOLDER not in body:
+        if cap:
+            raise LensPreambleError(
+                f"--cap was given but {name} has no {CAP_PLACEHOLDER} to fill"
+            )
         return body
-    chosen = cap or (match.group(1) if match else None)
+    chosen = cap or (match.group(1).strip() if match else None)
     if not chosen:
         raise LensPreambleError(
             f"{name} has a {CAP_PLACEHOLDER} placeholder but no default-cap line, "
             "and no --cap was given"
         )
-    return body.replace(CAP_PLACEHOLDER, chosen.strip())
+    return body.replace(CAP_PLACEHOLDER, chosen)
 
 
 def compose(

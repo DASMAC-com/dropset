@@ -38,8 +38,8 @@ scratchpad. Read that file; do not re-derive the diff by shelling out to
   the diff + the provided grep — don't re-derive** it with a sweep of your
   own.
 - The exemplar to match: **read once, adjudicate, report.** The cheapest
-  lenses on record finished in two turns with zero cold reads, crediting
-  the facts and excerpts they were handed.
+  lenses on record finished in two turns, one with zero cold reads, all
+  crediting the facts and excerpts they were handed.
 - **A resume is a report-now order.** If you are resumed after stopping,
   report now in **at most 2 more tool calls**; do not start a new line of
   inquiry.
@@ -47,22 +47,25 @@ scratchpad. Read that file; do not re-derive the diff by shelling out to
 ## The lint gate owns the compile-time facts
 
 **Unused-import / does-it-resolve / does-it-compile / unused-symbol checks
-are owned by the lint gate** the review ran green before this fan-out: for
+are owned by the lint gate** the review runs before this fan-out: for
 Rust `cargo clippy --all-targets -- -D warnings` **plus** `rustdoc` (a
 full-workspace `cargo doc` under `-D warnings`, settling intra-doc links in
 the program crate and its generated SDK copy); `ruff check` for Python;
 `biome` and `tsc` for TS/JS. Never cold-read a file to confirm a symbol
 resolves, and refute any finding resting on such a claim. Your facts name
 the hook covering this diff and say when one could not run (a fresh
-worktree with no frontend deps, say); where the gate did not run, the gate
-proves nothing, and you read for yourself.
+worktree with no frontend deps, say) or when lint was skipped or is
+failing; in any of those cases the gate proves nothing, and you read for
+yourself.
 
 ## Before you emit a finding
 
 **Pre-emit gate — quote the changed line, or drop it.** Every finding quotes
-the exact `+`/`-` diff line it rests on. One that cannot is **dropped, not
-emitted** — an unsupported finding costs more to adjudicate than it can be
-worth. There is **no** numeric confidence scale; severity is **blocking** /
+the exact `+`/`-` diff line it rests on — or, for a claim that unchanged
+text has gone stale, the excerpt line it rests on. One that cannot point at
+its evidence in the material you were given is **dropped, not emitted** —
+an unsupported finding costs more to adjudicate than it can be worth.
+There is **no** numeric confidence scale; severity is **blocking** /
 **warning** / **nit**.
 
 A claim that the diff **violates a convention** cites the convention's

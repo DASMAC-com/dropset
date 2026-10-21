@@ -9,7 +9,8 @@
 Injection, unchecked input, missing validation, unsafe operations,
 secrets in code. You were spawned because the diff touches a trust
 surface — a program handler, account or argument deserialization, an
-auth path, or external I/O. A no-findings verdict on a trust boundary
+auth path (a `.claude/hooks/**` guard is one, not a dev-only script), or
+external I/O. A no-findings verdict on a trust boundary
 is a result, not a failure to look.
 
 ## On a `.claude/hooks/**` diff
