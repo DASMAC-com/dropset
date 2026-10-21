@@ -39,9 +39,9 @@ async function platformFeeParams(
 
 // DFlow's developer endpoint, or the keyed route handler in front of the
 // production one. URL lives in lib/env.ts (DFLOW_ORDER_URL) so the choice
-// stays out of this module. Swap path uses `/order` (the unified imperative endpoint)
-// because it supports both classic SPL and Token-2022 mints — `/intent`
-// doesn't.
+// stays out of this module. Swap path uses `/order` (the unified imperative
+// endpoint) because it supports both classic SPL and Token-2022 mints —
+// `/intent` doesn't.
 
 export type DflowSwapInput = {
   inputMint: string;

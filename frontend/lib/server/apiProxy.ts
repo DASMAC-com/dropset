@@ -26,18 +26,18 @@ export type KeyedUpstream = {
 // DFlow's production Trade API takes the key; the developer endpoint is the
 // keyless one the browser called directly before (https://pond.dflow.net,
 // "Endpoints").
-export const DFLOW_QUOTE: KeyedUpstream = {
+export const DFLOW_QUOTE_UPSTREAM: KeyedUpstream = {
   keyVar: "DFLOW_API_KEY",
   keyedUrl: "https://quote-api.dflow.net/quote",
   keylessUrl: "https://dev-quote-api.dflow.net/quote",
 };
-export const DFLOW_ORDER: KeyedUpstream = {
+export const DFLOW_ORDER_UPSTREAM: KeyedUpstream = {
   keyVar: "DFLOW_API_KEY",
   keyedUrl: "https://quote-api.dflow.net/order",
   keylessUrl: "https://dev-quote-api.dflow.net/order",
 };
 // Jupiter's keyed host serves the same Tokens API path as lite-api.
-export const JUPITER_SEARCH: KeyedUpstream = {
+export const JUPITER_SEARCH_UPSTREAM: KeyedUpstream = {
   keyVar: "JUPITER_API_KEY",
   keyedUrl: "https://api.jup.ag/tokens/v2/search",
   keylessUrl: "https://lite-api.jup.ag/tokens/v2/search",
@@ -93,9 +93,12 @@ export async function forward(
   const headers: Record<string, string> = { accept: "application/json" };
   if (key) headers["x-api-key"] = key;
 
+  // A redirect is refused rather than followed: fetch would re-send the
+  // custom key header to whatever host the redirect names, and neither API
+  // redirects a JSON call.
   let res: Response;
   try {
-    res = await fetch(url, { headers, signal: req.signal });
+    res = await fetch(url, { headers, redirect: "error", signal: req.signal });
   } catch {
     return Response.json(
       { msg: `Network error reaching ${url.hostname}` },
@@ -111,12 +114,13 @@ export async function forward(
   return new Response(res.body, { status: res.status, headers: out });
 }
 
-// The build-time switches next.config.ts bakes into the browser bundle: "1" when the
-// key is set and the browser should call the route, "" when it should keep
-// calling the public endpoint directly. Keyless traffic stays in the browser
-// on purpose: through the proxy every user would share the server's one IP
-// and its one per-IP quota. Throws (failing the build or dev start) on an
-// unresolved reference, and logs each upstream's mode by hostname once.
+// The build-time switches next.config.ts bakes into the browser bundle: "1"
+// when the key is set and the browser should call the route, "" when it
+// should keep calling the public endpoint directly. Keyless traffic stays in
+// the browser on purpose: through the proxy every user would share the
+// server's one IP and its one per-IP quota. Throws (failing the build or dev
+// start) on an unresolved reference, and logs each upstream's mode by
+// hostname on every config load (Next loads the config more than once).
 export function proxyFlags(env: Env = process.env): {
   NEXT_PUBLIC_DFLOW_PROXY: string;
   NEXT_PUBLIC_JUPITER_PROXY: string;
@@ -131,7 +135,7 @@ export function proxyFlags(env: Env = process.env): {
     return keyed ? "1" : "";
   };
   return {
-    NEXT_PUBLIC_DFLOW_PROXY: flag("DFlow", DFLOW_QUOTE),
-    NEXT_PUBLIC_JUPITER_PROXY: flag("Jupiter", JUPITER_SEARCH),
+    NEXT_PUBLIC_DFLOW_PROXY: flag("DFlow", DFLOW_QUOTE_UPSTREAM),
+    NEXT_PUBLIC_JUPITER_PROXY: flag("Jupiter", JUPITER_SEARCH_UPSTREAM),
   };
 }

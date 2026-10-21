@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  DFLOW_ORDER,
-  DFLOW_QUOTE,
+  DFLOW_ORDER_UPSTREAM,
+  DFLOW_QUOTE_UPSTREAM,
   forward,
-  JUPITER_SEARCH,
+  JUPITER_SEARCH_UPSTREAM,
   type KeyedUpstream,
   proxyFlags,
   serverKey,
@@ -11,7 +11,11 @@ import {
 
 const KEY = "sk-test-0123456789";
 
-type Seen = { url: string; headers: Record<string, string> };
+type Seen = {
+  url: string;
+  headers: Record<string, string>;
+  redirect: RequestRedirect | undefined;
+};
 
 // Stub the upstream fetch: record what the proxy sent, answer with `reply`.
 const stubUpstream = (reply: () => Response): Seen[] => {
@@ -20,12 +24,16 @@ const stubUpstream = (reply: () => Response): Seen[] => {
     seen.push({
       url: input.toString(),
       headers: { ...(init?.headers as Record<string, string>) },
+      redirect: init?.redirect,
     });
     return reply();
   });
   return seen;
 };
 
+// An upstream that echoes the key back in a header, so the not-echoed
+// assertions test the proxy's header allow-list rather than a stub that
+// never mentions the key.
 const ok = () =>
   new Response(JSON.stringify({ outAmount: "42" }), {
     status: 200,
@@ -33,6 +41,7 @@ const ok = () =>
       "content-type": "application/json",
       "x-ratelimit-limit": "60",
       "x-ratelimit-remaining": "59",
+      "x-api-key": KEY,
       "set-cookie": "upstream=1",
     },
   });
@@ -50,9 +59,9 @@ afterEach(() => {
 });
 
 const PROXIES: [string, KeyedUpstream][] = [
-  ["DFlow quote", DFLOW_QUOTE],
-  ["DFlow order", DFLOW_ORDER],
-  ["Jupiter search", JUPITER_SEARCH],
+  ["DFlow quote", DFLOW_QUOTE_UPSTREAM],
+  ["DFlow order", DFLOW_ORDER_UPSTREAM],
+  ["Jupiter search", JUPITER_SEARCH_UPSTREAM],
 ];
 
 describe.each(PROXIES)("%s proxy", (_, upstream) => {
@@ -65,6 +74,8 @@ describe.each(PROXIES)("%s proxy", (_, upstream) => {
     expect(seen).toHaveLength(1);
     expect(seen[0]?.url).toBe(`${upstream.keyedUrl}?inputMint=A&amount=7`);
     expect(seen[0]?.headers["x-api-key"]).toBe(KEY);
+    // A redirect would carry the header to another host; it is refused.
+    expect(seen[0]?.redirect).toBe("error");
     expect(res.status).toBe(200);
     expect(await visible(res)).not.toContain(KEY);
   });
@@ -106,7 +117,7 @@ describe("forward", () => {
           },
         }),
     );
-    const res = await forward(DFLOW_QUOTE, request("amount=1"), {
+    const res = await forward(DFLOW_QUOTE_UPSTREAM, request("amount=1"), {
       DFLOW_API_KEY: KEY,
     });
 
@@ -120,13 +131,13 @@ describe("forward", () => {
     vi.stubGlobal("fetch", async () => {
       throw new TypeError("fetch failed");
     });
-    const res = await forward(DFLOW_ORDER, request("amount=1"), {
+    const res = await forward(DFLOW_ORDER_UPSTREAM, request("amount=1"), {
       DFLOW_API_KEY: KEY,
     });
 
     expect(res.status).toBe(502);
     const body = await res.text();
-    expect(body).toContain("quote-api.dflow.net");
+    expect(body).toContain("Network error reaching quote-api.dflow.net");
     expect(body).not.toContain(KEY);
   });
 });
@@ -160,7 +171,9 @@ describe("proxyFlags", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     proxyFlags({ DFLOW_API_KEY: KEY, JUPITER_API_KEY: KEY });
     const lines = log.mock.calls.flat().join("\n");
-    expect(lines).toContain("quote-api.dflow.net");
+    expect(lines).toContain(
+      "keyed, via the route handler to quote-api.dflow.net",
+    );
     expect(lines).toContain("api.jup.ag");
     expect(lines).not.toContain(KEY);
   });
