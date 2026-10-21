@@ -76,7 +76,7 @@ seat quality, different job — so different sessions, not a mode
 toggle. Launched with **`architect <n>`** (model-pinned,
 idempotent, one resumable session per governing issue, named
 `<n>`). It bootstraps minimally — the Planning document,
-plan's rulings, the track umbrellas, no more — and makes **no scheduling
+plan's rulings, no more — and makes **no scheduling
 writes** to the board: it files its own Linear tasks and moves its
 own governing issue to In Review, but places no edges,
 re-prioritizes nothing, closes nothing and touches no other issue.
@@ -92,10 +92,10 @@ repo-bound — a ratified spec included — lands later via a
 **follow-up worker task**. **`explore` shares all of this**, audits
 included.
 
-**A spec FILE is optional; ratification is not — no task is filed
-from an unratified design, only marked stubs.** The loop is write
-→ operator edits **in place** → read back **once** → ratify → file
-tasks, with
+**A spec FILE is optional; ratification is not — tasks are filed
+into Backlog and move to Todo only on the per-tab yes.** The loop is
+write → operator edits **in place** → read back **once** → ratify,
+with
 `AskUserQuestion` reserved for calls the draft cannot proceed
 without; say where the design lives in plain text. Open
 items carry greppable **`NEEDS-CONFIRM`** / **`NEEDS-FEEDBACK`**
@@ -153,7 +153,8 @@ merged-with-follow-up-outstanding, and **Done** means operator-ratified
 complete — never merely merged. Linear's GitHub integration makes **no
 state transition on merge** (a team setting), so the In Review state
 `review-pr` writes at the enqueue handoff persists until an explicit
-approval moves it to Done.
+approval moves it to Done. Before it, **Backlog** awaits the operator's
+review and **Todo** is reviewed and dispatchable.
 Two consequences elsewhere: `housekeeping` prunes a worktree on the
 issue's **status type** (completed / canceled), never on PR-merged; and
 the fleet-resume launcher resumes In Progress **or** In Review. Detail:
@@ -175,14 +176,12 @@ consistent by construction; a human filters the Linear board by it. It
 is a **Linear-title signal only — never a PR title** (PR titles keep
 `type(ENG-###): Subject`).
 
-**A `Claude:` filing lands PARKED, never in Backlog** — state `Todo`
-plus the **`Claude meta`** milestone, in the creating call: the
-filer-safe substitute for the blocking edge no filer may place, keeping
-strays out of the operator's "Next" view. A **promoted** batch issue is
-the one meta issue not parked; an assembled batch not promoted stays
-parked, and
-promoting it later is the usual two halves (clear the milestone **and**
-move Todo → Backlog).
+**A `Claude:` filing lands PARKED** — state `Backlog` plus the
+**`Claude meta`** milestone, in the creating call: the filer-safe
+substitute for the blocking edge no filer may place. A **promoted**
+batch issue is the one meta issue not parked; an assembled batch not
+promoted stays parked, and promoting it later is the usual milestone
+clear.
 
 **The planning bootstrap is the single assimilation point** — once a
 day it sweeps the milestone **plus any open, unpulled batch** (every
@@ -231,27 +230,25 @@ match the **stored** text exactly once, and Linear rewrites an
 `ENG-###` into a mention node, so never anchor on one. Detail:
 `docs/conventions/linear-automation.md`.
 
-### Parked findings sit in Todo, never Backlog
+### Backlog reviews, Todo pulls
 
-An issue carrying a **parking milestone** — `Audit findings`,
-`Trim levers` for session trim levers, or `Claude meta` for
-agent-infra strays — is *parked*: filed so it is not lost,
-deliberately **not** in the pull queue. Backlog
-means pullable and the operator's "Next" view is the unblocked
-Backlog, so a filing skill sets state **`Todo` plus the
-milestone, in the creating call**. Promotion is a
-planning-session act with **two** halves — clear the milestone
-**and** move Todo → Backlog. Every full bootstrap says each parked
-count **out loud**, so a parked issue is invisible to the queue
-without being invisible to the operator; a genuinely urgent
-stray (a broken guard, an actively hurting verb) can be
-promoted on the spot rather than waiting for the rhythm.
+**Backlog** with no milestone is a spec awaiting the operator's
+review; **Todo** with no milestone is reviewed and dispatchable, body
+frozen. The operator's Backlog → Todo move **is** the approval —
+planning never makes it — and a fold into a Todo body drops it back.
+The dispatch gate is **state Todo plus unblocked**; the Next view is
+the unblocked Todo. An issue carrying a **parking milestone** —
+`Audit findings`, `Trim levers`, or `Claude meta` — is *parked* in
+either state, so a filing skill sets **`Backlog` plus the milestone,
+in the creating call**, and promotion is **one write, the milestone
+clear**. Every full bootstrap says each parked count **out loud**;
+a genuinely urgent stray (a broken guard) is promoted on the spot.
 
 `Claude meta` differs in where promotion leads: a parked meta
 **stray** is consumed by the next **batch assembly**, not
 pulled on its own, and a meta-flavored *audit* finding is
 promoted by swapping its milestone from `Audit findings` to
-`Claude meta`, not by moving it to Backlog. A **promoted
+`Claude meta`. A **promoted
 batch** is the carve-out, pulled on its own (see "Claude:
 meta-work prefix" above). Detail:
 `docs/conventions/linear-automation.md`, including "An
@@ -265,8 +262,8 @@ document. A planning session files an **audit issue** — a
 Backlog task naming **one** audit-registry target, with scope,
 rationale, and sequencing — and the session that pulls it runs
 exactly that as one scoped `audit-scope` run. Findings still land **parked**
-(`Todo` plus the `Audit findings` milestone), and promotion is
-still the planning session's two-halves act.
+(`Backlog` plus the `Audit findings` milestone), and promotion is
+still the planning session's milestone clear.
 
 Cadence is kept by the **audit heartbeat**: every full planning
 bootstrap reads the Planning document's bounded **audit-state

@@ -49,7 +49,7 @@ UUIDs out of every committed file.
 
 **The trim-lever pipeline runs on a milestone, not a document.**
 `session-metrics` is the **producer**: at session end it files each
-trim lever as its own small **parked issue** — state `Todo` plus the
+trim lever as its own small **parked issue** — state `Backlog` plus the
 `Trim levers` project milestone, keyed by a `**Fingerprint**:` — and on
 a fingerprint hit it **appends that session's evidence** to the lever
 that already exists rather than filing a duplicate, so recurrence
@@ -410,6 +410,10 @@ So:
   reads Done.
 - **Done means operator-ratified complete.** Never merely merged.
 
+Before a session starts, **Backlog** and **Todo** are review states, not
+session states: Backlog awaits the operator's review and Todo is
+reviewed and dispatchable (see "Backlog reviews, Todo pulls").
+
 **The team's Git workflow automation makes no state transition on
 merge**, which states this reading natively: the **In Review** written
 at `review-pr`'s enqueue handoff is simply the state the issue keeps
@@ -521,22 +525,41 @@ also covering the board schema, four live tracks, the current phase,
 feeds roster detail, migration numbering, the calendar track,
 session-metrics state, standing decisions and verification debt.
 
-## Parked findings sit in **Todo**, never Backlog
+## Backlog reviews, Todo pulls
+
+The state and the milestone together say where an issue sits:
+
+| State                        | Milestone | Meaning                                             |
+| ---------------------------- | --------- | --------------------------------------------------- |
+| Backlog                      | none      | a spec awaiting the operator's review — the inbox   |
+| Backlog or Todo              | parking   | **parked**: hidden from the operator's project view |
+| Todo                         | none      | reviewed and dispatchable; the body is frozen       |
+| In Progress, In Review, Done | —         | the session state machine, unchanged (see above)    |
+
+**The operator's move from Backlog to Todo is the approval.** Planning
+never makes that move (an architect makes it only on the operator's
+per-tab yes), and that single-writer rule is why "state is Todo" proves
+approval with no reaction read. **Withdrawal** is the reverse move. A
+**fold into a Todo body drops it back to Backlog**, because the body the
+operator approved is no longer the body on the issue.
+
+**The dispatch gate is two checks: state Todo, and unblocked** — the
+retired thumbs-up reaction plays no part. An
+unresolved comment thread on a Todo issue is *not* a refusal, since only
+the operator may make that move (operator, 2026-10-21). The **fold
+protocol**: fold the comment into the body, reply on the thread saying
+how it was addressed, and resolve it — so a resolved thread means
+addressed-and-how, never approval. The operator's **Next** view is the
+unblocked Todo; it is Linear's server-side blocker filter, which is why a
+planning hold is expressed as an edge (see "Blocking relations").
 
 An issue stamped with a parking milestone — `Audit findings` for audit
 output, `Trim levers` for session trim levers, `Claude meta` for
-agent-infra strays — is **parked**: filed so
-it is not lost, deliberately *not* in the pull queue. Backlog means
-pullable, and the operator's "Next" view is the unblocked Backlog, so a
-parked finding filed as Backlog surfaces as available work and has to be
-moved by hand. One audit rotation filed fifteen findings that way in a
-single pass.
-
-So a filing skill sets **state `Todo` plus the milestone, in the creating
-call** (per "Relations and state belong in the CREATING call"). Promotion
-is then a planning-session act with two halves: **clear the milestone and
-move Todo → Backlog**. Doing only one leaves the board lying about
-whether the work is available.
+agent-infra strays — is **parked**: filed so it is not lost, deliberately
+*not* in the inbox or the queue. A filing skill sets **state `Backlog`
+plus the milestone, in the creating call** (per "Relations and state
+belong in the CREATING call"). **Promotion is one write, the milestone
+clear**, which lands the issue in the inbox for the operator's review.
 
 Nothing about parking places or implies a blocking edge — see "Blocking
 relations", where the meta batch's one remaining edge has since been
@@ -545,7 +568,7 @@ the filing path: an automated filer may never place one, so a milestone
 is how a filer keeps its own output out of the pull queue.
 
 **Where promotion leads differs by milestone.** `Audit findings` and
-`Trim levers` promote into pullable Backlog work. `Claude meta` does
+`Trim levers` promote into the inbox. `Claude meta` does
 not: a parked meta **stray** is consumed by the next **batch assembly**
 rather than pulled on its own, so "promotion" there means being folded
 into a batch. And a meta-flavored *audit* finding is promoted by
@@ -553,13 +576,13 @@ into a batch. And a meta-flavored *audit* finding is promoted by
 stays parked, changing which rhythm will pick it up, rather than
 becoming available work.
 
-**A batch's own promotion is the same two halves**, and which batch is
+**A batch's own promotion is the same milestone clear**, and which batch is
 pulled follows from that: a **promoted** batch is pulled on its own,
 while an assembled batch the bootstrap does not promote stays parked
 like any other meta issue. The fold-input question is settled below,
 under "An already-assembled parked batch is a promotion candidate, not
 a fold input" — read it there rather than restating it, because the
-distinction turns on **parked vs. Backlog** and a shortened version
+distinction turns on **parked vs. not parked** and a shortened version
 loses exactly that.
 
 Worth recording *why* this needed saying at all, since neither statement
@@ -579,8 +602,8 @@ that is actively hurting — is promoted on the spot rather than waiting
 for the daily rhythm.
 
 **Every meta issue gets a review at every full bootstrap** (a warm
-same-day relaunch after a cycle skips it) — parked, in the
-operator's **Next** view (unblocked Backlog) and in the **Blocked** view
+same-day relaunch after a cycle skips it) — parked, in the inbox, in the
+operator's **Next** view (unblocked Todo) and in the **Blocked** view
 — and each ends doable, blocked, or killed. It runs whether or not the
 Planning document names a lane: without it, "promote a file-disjoint
 subset" collapses into the named lane and most batches are never
@@ -627,27 +650,12 @@ derivable — and the three parking names are the closed set.
 
 One place the two kinds *do* behave alike, which is easy to
 misattribute: `board_batch.py list` drops **every** milestoned issue by
-default, delivery milestones included. That default exists to keep the
-Todo *umbrella* read clean, and umbrellas carry no milestone of either
-kind, so it is correct for that read without implying a delivery
-milestone parks anything.
-
-**This gives `Todo` two meanings, so every Todo read must say which it
-wants.** Todo is both the board's *umbrella / initiative* tier (what a
-planning bootstrap surfaces unprompted) and now the *parked* tier. The
-discriminator is the **milestone**: an umbrella carries none, a parked
-finding carries one. So a Todo read that means "the umbrellas" must
-exclude milestone-carrying issues — otherwise one audit rotation's
-findings (fifteen, in one measured pass) pollute the bootstrap read that
-is supposed to show the standing tracks.
-
-That already holds by construction, and it is worth knowing *why* rather
-than rediscovering it: `board_batch.py list` drops milestoned issues
-**by default** (`--include-milestoned` opts back in), and the `plan`
-bootstrap says so where it reads the Todo set. Its step 8 then handles
-parked findings deliberately and separately. The rule is written down
-here because the *default* is what makes it true — a hand-rolled Todo
-read that skips the tool would not inherit it.
+default, delivery milestones included (`--include-milestoned` opts back
+in). That default once kept a Todo *umbrella* tier clean; the umbrellas
+folded into the Planning document on the review-inbox ratification, and
+the default now exists to separate the inbox and the queue from the
+parked lanes — which it does without implying a delivery milestone parks
+anything. A hand-rolled read that skips the tool does not inherit it.
 
 ## The `Claude:` meta-work prefix
 
@@ -717,8 +725,8 @@ product code on the board.
 
 ### A meta filing is parked, and assimilated once a day
 
-Every `Claude:` filing lands **state `Todo` plus the `Claude meta`
-milestone, in the creating call** — parked, never Backlog. A **promoted**
+Every `Claude:` filing lands **state `Backlog` plus the `Claude meta`
+milestone, in the creating call** — parked, never in the inbox. A **promoted**
 batch issue is the sole exception, since it is the thing meant to be
 pulled; an assembled batch that is not promoted stays parked like any
 other meta issue.
@@ -742,29 +750,27 @@ meta class is size-bound too" above). One writer, one rhythm:
 nothing else proposes meta merges.
 
 **Assembling a batch and promoting it are now two different acts, and
-only the promoted one goes to Backlog.** Under the retired
+only the promoted one leaves the milestone.** Under the retired
 one-giant-batch form there was exactly one survivor, so "file it Backlog,
 Urgent" and "promote it" were the same step and the prose did not have to
 distinguish them. With several batches per bootstrap it does:
 
-- A batch the bootstrap **promotes** goes to **Backlog, Urgent** — by
-  the ordinary **two-halves** act, clearing the `Claude meta` milestone
-  **and** moving Todo → Backlog. Doing only the state half leaves it
-  parked *and* pullable at once (see "Parked findings sit in Todo, never
-  Backlog") and corrupts the parked count.
-- Every **other** batch stays **parked** — `Todo` plus `Claude meta`,
+- A batch the bootstrap **promotes** has its `Claude meta` milestone
+  **cleared** and goes **Urgent**, landing in the inbox for the
+  operator's review (see "Backlog reviews, Todo pulls").
+- Every **other** batch stays **parked** — `Backlog` plus `Claude meta`,
   exactly like the strays it was folded from — and is promoted at a
-  later bootstrap by that same two-halves act.
+  later bootstrap by that same milestone clear.
 
 **An already-assembled parked batch is a promotion candidate, not a fold
 input.** The fold pool is **strays**, plus any open unpulled batch
-sitting in *Backlog*; a batch that is **parked** is not re-folded, only
-re-considered for promotion. The reason is mechanical: `merge-tasks`
-only merges and there is no split operation, so re-folding a parked
-batch could only *grow* it — past the 4–5-part bound, and back toward
-the one-giant-batch form this rule exists to retire. Under the retired
-form that growth *was* the rule, which is exactly why the distinction
-did not need stating before.
+sitting *outside the milestone*; a batch that is **parked** is not
+re-folded, only re-considered for promotion. The reason is mechanical:
+`merge-tasks` only merges and there is no split operation, so
+re-folding a parked batch could only *grow* it — past the 4–5-part
+bound, and back toward the one-giant-batch form this rule exists to
+retire. Under the retired form that growth *was* the rule, which is
+exactly why the distinction did not need stating before.
 
 Getting this wrong is not cosmetic: filing every survivor to
 Backlog/Urgent would restore the "seven strays unblocked in Next" failure
@@ -915,11 +921,13 @@ failure, which is the worst moment for it:
 | `linear_gate.py approvals` | `ENG-###` … (positional, one or more)          |
 
 Every one takes `--dry-run` except `linear_patch.py read` and
-`linear_gate.py approvals`, a read. `linear_gate.py` is the
-thumbs-up dispatch gate, which the MCP cannot reach: `approvals`
-prints whether each issue carries a `+1` by `LINEAR_ASSIGNEE_ID`
-in `reactionData`, exiting 1 if any lacks one (2 on any failure);
-`resolve` runs `commentResolve` on a folded thread.
+`linear_gate.py approvals`, a read. `linear_gate.py` covers the
+dispatch gate's calls the MCP cannot reach: `approvals` is the
+gate's read half, exiting non-zero on any state other than Todo and
+printing each issue's open-thread count as information only, never a
+refusal (the gate itself is state Todo plus unblocked — see "Backlog
+reviews, Todo pulls"); `resolve` runs `commentResolve`, the fold's last
+call.
 
 **Insertions include no separator of their own.** `append`, `prepend`,
 `insert_before` and `insert_after` splice the text in *immediately*
@@ -1475,7 +1483,7 @@ but "the place a human does it".
 
 **A planning dispatch hold is an edge too** (operator ruling,
 2026-10-08). The operator's Next view means *dispatchable right now*, so
-an unblocked Backlog issue the planning session is holding behind an
+an unblocked Todo issue the planning session is holding behind an
 in-flight surface or a sequencing reason is a lie in it: the operator
 sees it, expects to launch it, and cannot see a hold recorded only in
 the Planning document. So the planning session expresses its own holds
