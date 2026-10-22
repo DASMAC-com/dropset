@@ -182,8 +182,9 @@ Five reminders neither states:
   excepted, via `linear_issue.py tick`.
 
 - **A false compile error on code you just wrote is the cargo pool
-  first.** With `RUSTC_WORKSPACE_WRAPPER` unset (a session launched
-  before the per-checkout keys), run `cargo clean -p <crate>` and re-run
+  first.** With `CARGO_TARGET_DIR` set but `RUSTC_WORKSPACE_WRAPPER`
+  unset (a session launched before the per-checkout keys, or a branch
+  that predates the wrapper), run `cargo clean -p <crate>` and re-run
   before debugging (`docs/conventions/local-integrations.md` → "The
   cargo pool").
 

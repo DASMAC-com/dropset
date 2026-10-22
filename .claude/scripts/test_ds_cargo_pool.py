@@ -217,6 +217,42 @@ class EachCheckoutGetsItsOwnKeys(CargoPoolHarness):
         _, conf = self._keys(self.base, self.worktree, env=pinned)
         self.assertEqual(conf, "/scratch/c")
 
+    def _inherited(self, checkout):
+        """The keys a child shell inherits from one keyed on `checkout`: the
+        exports arrive, the ownership map does not."""
+        return {
+            "RUSTC_WORKSPACE_WRAPPER": str(checkout / WRAPPER),
+            "CLIPPY_CONF_DIR": str(checkout),
+        }
+
+    def test_an_inherited_key_still_follows_a_cd(self):
+        self.assertEqual(
+            self._keys(self.worktree, self.base, env=self._inherited(self.worktree)),
+            (str(self.base / WRAPPER), str(self.base)),
+        )
+
+    def test_an_inherited_key_is_unset_on_leaving(self):
+        self.assertEqual(
+            self._keys(self.outside, env=self._inherited(self.worktree)),
+            (_UNSET, _UNSET),
+        )
+
+    def test_an_inherited_key_is_dropped_on_a_stale_branch(self):
+        self.assertEqual(
+            self._keys(self.stale, env=self._inherited(self.worktree)),
+            (_UNSET, _UNSET),
+        )
+
+    def test_a_pin_of_another_shape_is_not_mistaken_for_a_key(self):
+        pinned = {
+            "RUSTC_WORKSPACE_WRAPPER": str(self.worktree / "other-wrapper"),
+            "CLIPPY_CONF_DIR": str(self.worktree / "tui"),
+        }
+        self.assertEqual(
+            self._keys(self.base, self.outside, env=pinned),
+            (pinned["RUSTC_WORKSPACE_WRAPPER"], pinned["CLIPPY_CONF_DIR"]),
+        )
+
     def test_the_wrapper_passes_its_command_through(self):
         out = subprocess.run(
             [str(REPO / WRAPPER), "printf", "%s|", "a b", "c"],

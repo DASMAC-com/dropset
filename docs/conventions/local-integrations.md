@@ -1171,10 +1171,12 @@ so the session — and every Bash command its agent runs — inherits the pool.
   its own driver but tracks `CLIPPY_CONF_DIR`, so the second key makes it
   rebuild instead. No `clippy.toml` exists, so the second key changes no
   lint configuration (a future one belongs at the root). These two follow a
-  `cd` into another checkout. A branch that predates the wrapper gets
-  neither, and so keeps the old sharing until it rebases. Cargo's own
-  content-hash freshness (`-Zchecksum-freshness`) would retire both keys,
-  but it is nightly-only.
+  `cd` into another checkout. A child shell inherits them without the
+  hook's record of what it exported, so the hook treats any value shaped
+  like one of its own keys as its own; a hand pin is any other value. A
+  branch that predates the wrapper gets neither, and so keeps the old
+  sharing until it rebases. Cargo's own content-hash freshness
+  (`-Zchecksum-freshness`) would retire both keys, but it is nightly-only.
 
 **Scoped to dropset checkouts, never machine-wide.** A `chpwd` hook
 re-evaluates on every directory change: inside the base repo or any
@@ -1214,9 +1216,10 @@ it. **A hand-typed `anchor build` gets none of this.** Go through
 **Cleaning.** `make clean` removes the worktree's own `target/` (plus its
 `node_modules` and `.next`), never the pool. Under the pool that `target/`
 holds the Anchor outputs, the copied bots and, until the editor joins,
-rust-analyzer's checks. Never run `cargo clean` in a checkout: it wipes the
-whole pool, every worktree's build with it. The worktree pruner
-no longer frees build artifacts, so the pool is the place disk accumulates.
+rust-analyzer's checks. Never run a bare `cargo clean` in a checkout: it
+wipes the whole pool, every worktree's build with it, while
+`cargo clean -p <crate>` touches only that crate. The worktree pruner no
+longer frees build artifacts, so the pool is the place disk accumulates.
 When it grows too large, delete it while no build is running:
 `rm -rf "$CARGO_TARGET_DIR"`. The next build in each worktree is then cold.
 
@@ -1231,7 +1234,8 @@ error from check, clippy or test) in a session without the per-checkout
 keys — launched before them, or on a branch that predates the wrapper — is
 the shared slot. Answer it with `cargo clean -p <crate>` for that one
 crate, then re-run (never a bare `cargo clean`, which wipes the pool).
-`printenv RUSTC_WORKSPACE_WRAPPER` tells you which case you are in.
+You are in that case when `CARGO_TARGET_DIR` is set and
+`RUSTC_WORKSPACE_WRAPPER` is not.
 
 **The editor is not in the pool yet.** VS Code launched from the Dock does
 not inherit shell exports, so its rust-analyzer still checks into each

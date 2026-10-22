@@ -300,24 +300,26 @@ repos:
     pass_filenames: false
   repo: 'local'
 # shfmt formats and shellcheck lints the committed shell-integration scripts
-# under `.claude/scripts/`. Both hooks pip-install a prebuilt binary, so neither
-# needs Go nor Docker (matching the taplo / hadolint-py pattern). They are
-# scoped to `.claude/scripts/` so the POSIX-sh scripts under `.github/` are left
-# byte-for-byte as they are. These are user shell-integration scripts, not skill
-# helpers, so bash + shfmt is the deliberate call here (skill helpers stay
-# Python per docs/conventions/skill-tooling.md).
+# under `.claude/scripts/`, plus the cargo pool's POSIX-sh wrapper under
+# `.claude/shell/`, which has no `.sh` suffix. Both hooks pip-install a
+# prebuilt binary, so neither needs Go nor Docker (matching the taplo /
+# hadolint-py pattern). They are scoped to `.claude/` so the POSIX-sh scripts
+# under `.github/` are left byte-for-byte as they are. These are user
+# shell-integration scripts, not skill helpers, so bash + shfmt is the
+# deliberate call here (skill helpers stay Python per
+# docs/conventions/skill-tooling.md).
 - hooks:
   - args:
     - '-w'
     - '-i'
     - '2'
     - '-ci'
-    files: '^\.claude/scripts/.*\.sh$'
+    files: '^\.claude/(scripts/.*\.sh|shell/rustc-workspace-wrapper)$'
     id: 'shfmt'
   repo: 'https://github.com/maxwinterstein/shfmt-py'
   rev: 'v3.7.0.1'
 - hooks:
-  - files: '^\.claude/scripts/.*\.sh$'
+  - files: '^\.claude/(scripts/.*\.sh|shell/rustc-workspace-wrapper)$'
     id: 'shellcheck'
   repo: 'https://github.com/shellcheck-py/shellcheck-py'
   rev: 'v0.10.0.1'
