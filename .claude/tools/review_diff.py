@@ -74,6 +74,11 @@ Prints JSON::
       "rust_reachable": false,     // any path a cargo build actually consumes?
       "rust_fixture_hits": [],     // …including via a fixture a test reads
       "runs_artifact_gates": false,// any generation input touched?
+      "ignored_test_changed": false,// a changed .rs file holds an #[ignore]d test?
+      "runs_tools_tests": false,   // a tools / hooks / scripts / keys / Grafana path?
+      "targets": [                 // step 11's suites; null when a rebase is due
+        {"target": "make test", "run": false, "reason": "…"}, …
+      ],
       "added_shape": {"added": 412, "comment": 250, "ratio": 0.607},
       "prose_heavy": true,         // added lines are mostly comment prose
       "ready": true,               // exactly `not blockers`
@@ -95,10 +100,16 @@ it can never drift from the reasons. Four things block:
   there is no source to review (the step 9/10 gates still apply — this is
   reported as its own reason rather than as "nothing to review").
 
+``targets`` is the skip predicates resolved into the suite list step 11 runs
+(:func:`resolve_targets`), one reason per entry. It is ``null`` while the base
+is stale and interacting, or unverified: a suite launched before the rebase
+runs against a tree that will not merge, so the list is withheld until the
+freshness check passes rather than trusted to be read in order.
+
 ``--gate-only`` keeps the verdict fields — including the skip predicates
 (``runs_rust_suites`` / ``rust_reachable`` / ``rust_fixture_hits`` /
-``runs_artifact_gates``) and ``prose_heavy``, which together answer "what may I
-skip?" — and drops the unbounded inventory (``commits``, ``files``, ``slices``,
+``runs_artifact_gates``), ``prose_heavy`` and ``targets``, which together answer
+"what may I skip?" — and drops the unbounded inventory (``commits``, ``files``, ``slices``,
 ``diff_path``, ``diff_lines``). ``added_shape`` is dropped too, but for a
 different reason: three integers are bounded by construction, so it is not
 inventory — it merely *justifies* a fan-out choice, and a fan-out reads the full
@@ -367,6 +378,113 @@ def rust_is_reachable(paths) -> bool:
     suite that runs unnecessarily.
     """
     return any(matches_any(p, RUST_REACHABLE) for p in paths)
+
+
+#: Paths the assembly fast path's offsets move with. `make test` runs
+#: `asm_parity` too, but that target SKIPS silently when the reference build
+#: (`dropset_ref.so`) is absent, so a green `make test` on a relayout is
+#: vacuous; only `make test-parity` builds the oracle and refuses to skip.
+ASM_PARITY_INPUTS = (
+    "programs/dropset/src/asm/**",
+    "programs/dropset/src/asm_offsets.rs",
+    "programs/dropset/src/state/market/layout.rs",
+)
+
+#: Trees whose Python tests `make tools-tests` runs — the lint workflow's step,
+#: which no path filter skips. The Grafana mirror is here because its
+#: dashboard checks live among the tool tests.
+TOOLS_TESTS_INPUTS = (
+    ".claude/tools/**",
+    ".claude/hooks/**",
+    ".claude/scripts/**",
+    "keys/**",
+    "market-data/grafana/**",
+)
+
+#: The attribute an `#[ignore]`d test carries, with or without a reason.
+IGNORE_ATTR = "#[ignore"
+
+
+def ignored_test_files(paths, read=None) -> list[str]:
+    """The changed `.rs` files whose post-image holds an `#[ignore]`d test.
+
+    Every local Rust target skips ignored tests, so a change to one can
+    otherwise only ever fail in CI's Tests (Postgres) job. Keyed on the FILE,
+    not on the attribute line: editing an ignored test's body leaves the
+    attribute untouched, and the over-broad direction costs one suite run.
+    """
+    read = read or _read_post_image
+    return sorted(
+        p for p in paths if p.endswith(".rs") and IGNORE_ATTR in (read(p) or "")
+    )
+
+
+def resolve_targets(
+    runs_rust_suites: bool,
+    rust_reachable: bool,
+    rust_fixture_hits: list[str],
+    parity_hits: list[str],
+    ignored_hits: list[str],
+    tools_hits: list[str],
+) -> list[dict]:
+    """The step-11 suite list: every target, whether to run it, and why.
+
+    One entry per target, in run order, each ``{"target", "run", "reason"}``.
+    The order matters for the Rust pair — `make test` first — and the reason
+    is what the review summary records for a skip. What stays the session's
+    judgement is outside this list: the CI-mirror carve-out for a
+    `.github/**`-only diff, and running a cheap check some changed path
+    reaches although no flag names it.
+    """
+    if rust_fixture_hits:
+        rust = (True, f"a Rust test reads {', '.join(rust_fixture_hits)}")
+    elif not runs_rust_suites:
+        rust = (
+            False,
+            "every path is outside CI's code filter, so the PR's Tests job "
+            "no-ops (the merge queue still runs it)",
+        )
+    elif not rust_reachable:
+        rust = (False, "no path a cargo build consumes changed")
+    else:
+        rust = (True, "the diff reaches the Rust build")
+
+    def entry(target, run, reason):
+        return {"target": target, "run": run, "reason": reason}
+
+    def gated(target, hits, why_run, why_skip):
+        if hits:
+            return entry(target, True, f"{why_run}: {', '.join(hits)}")
+        return entry(target, False, why_skip)
+
+    return [
+        entry("make test", *rust),
+        entry("make test-no-teardown", *rust),
+        gated(
+            "make test-parity",
+            parity_hits,
+            "the asm offsets moved, and `make test` skips asm_parity without "
+            "the oracle",
+            "no asm offset input changed",
+        ),
+        gated(
+            "make test-postgres",
+            ignored_hits,
+            "a file with an #[ignore]d test changed, which the targets above skip",
+            "no file with an #[ignore]d test changed",
+        ),
+        entry(
+            "pnpm --filter @dropset/sdk test",
+            True,
+            "sdk.yml has no path filter, and the suite is node-only",
+        ),
+        gated(
+            "make tools-tests",
+            tools_hits,
+            "a tool, hook, script, key or Grafana path changed",
+            "no tool, hook, script, key or Grafana path changed",
+        ),
+    ]
 
 
 #: A Rust ``include_str!`` / ``include_bytes!`` naming a path literal. The target
@@ -1790,6 +1908,28 @@ def gate(
 
     crates = crate_rollup(files)
 
+    ignored_hits = ignored_test_files(gate_paths)
+    tools_hits = [p for p in gate_paths if matches_any(p, TOOLS_TESTS_INPUTS)]
+    # No targets on a base that must be rebased first: the suites would run
+    # against a tree that will not merge. Withholding the list, rather than
+    # trusting a sentence to say "await the gate", is what makes launching a
+    # suite in the same message as this check impossible to get right by
+    # accident. The other blockers (an empty diff) gate the fan-out, not the
+    # suites, so they leave the list alone.
+    stale = fetch_error is not None or (drift is not None and not drift["disjoint"])
+    targets = (
+        None
+        if stale
+        else resolve_targets(
+            runs_rust_suites,
+            rust_reachable,
+            rust_fixture_hits,
+            [p for p in gate_paths if matches_any(p, ASM_PARITY_INPUTS)],
+            ignored_hits,
+            tools_hits,
+        )
+    )
+
     verdict = {
         "base": base,
         "base_ref": base_ref,
@@ -1821,6 +1961,11 @@ def gate(
         # despite the path list" signal.
         "rust_fixture_hits": rust_fixture_hits,
         "runs_artifact_gates": runs_artifact_gates,
+        "ignored_test_changed": bool(ignored_hits),
+        "runs_tools_tests": bool(tools_hits),
+        # Step 11's suite list (see `resolve_targets`); null until the base
+        # needs no rebase.
+        "targets": targets,
         # The added-line prose classification behind `prose_heavy`, reported so the
         # lens decision can be justified rather than merely asserted.
         "added_shape": added_shape,
@@ -1862,6 +2007,11 @@ GATE_ONLY_FIELDS = (
     "rust_fixture_hits",
     "runs_artifact_gates",
     "prose_heavy",
+    # Step 11 reads its suites from the re-check, so the list rides along: six
+    # entries, bounded by construction.
+    "ignored_test_changed",
+    "runs_tools_tests",
+    "targets",
 )
 
 

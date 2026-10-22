@@ -1116,6 +1116,54 @@ class GateTests(unittest.TestCase):
         with self.assertRaisesRegex(rd.ReviewDiffError, "--out is required"):
             rd.run(["review_diff.py", "--base", "main", "--no-fetch"])
 
+    def targets_by_name(self, verdict):
+        return {t["target"]: t for t in verdict["targets"]}
+
+    def test_an_asm_relayout_resolves_the_parity_target(self):
+        # The relayout whose green `make test` was vacuous: asm_parity skipped
+        # without the oracle, and nothing said to run the target that builds it.
+        self.commit("programs/dropset/src/asm/entrypoint.s", "mov r0, 0\n", "Asm")
+        targets = self.targets_by_name(rd.gate("main", self.out, fetch=False))
+        self.assertTrue(targets["make test"]["run"])
+        self.assertTrue(targets["make test-parity"]["run"])
+        self.assertIn("entrypoint.s", targets["make test-parity"]["reason"])
+        self.assertFalse(targets["make test-postgres"]["run"])
+
+    def test_an_ignored_test_file_resolves_the_postgres_target(self):
+        self.commit(
+            "feeds/tests/store.rs",
+            '#[test]\n#[ignore = "needs docker"]\nfn store() {}\n',
+            "Ignored test",
+        )
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertTrue(v["ignored_test_changed"])
+        self.assertTrue(self.targets_by_name(v)["make test-postgres"]["run"])
+
+    def test_a_tools_change_skips_rust_and_runs_tools_tests(self):
+        self.commit(".claude/tools/x.py", "x = 1\n", "Tool")
+        v = rd.gate("main", self.out, fetch=False)
+        targets = self.targets_by_name(v)
+        self.assertTrue(v["runs_tools_tests"])
+        self.assertTrue(targets["make tools-tests"]["run"])
+        self.assertFalse(targets["make test"]["run"])
+        self.assertIn("code filter", targets["make test"]["reason"])
+
+    def test_an_interacting_stale_base_withholds_the_targets(self):
+        # Suites launched before the rebase build a tree that will not merge,
+        # so there is no list to launch them from until the rebase is done.
+        self.advance_base("a.rs", "fn landed() {}\n")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertFalse(v["ready"])
+        self.assertIsNone(v["targets"])
+
+    def test_a_disjoint_stale_base_still_resolves_the_targets(self):
+        self.advance_base("landed.rs", "fn landed() {}\n")
+        self.assertIsNotNone(rd.gate("main", self.out, fetch=False)["targets"])
+
+    def test_an_unverified_base_withholds_the_targets(self):
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        self.assertIsNone(rd.gate("main", self.out, fetch=True)["targets"])
+
 
 class GateOnlyProjectionTests(unittest.TestCase):
     """`gate_only` as a pure projection, independent of any repo."""
@@ -1132,6 +1180,64 @@ class GateOnlyProjectionTests(unittest.TestCase):
 
     def test_the_projection_never_invents_a_value(self):
         self.assertEqual(rd.gate_only({}), {})
+
+    def test_the_resolved_targets_survive_the_projection(self):
+        # Step 11 reads its suites from the --gate-only re-check.
+        self.assertIn("targets", rd.GATE_ONLY_FIELDS)
+
+
+class ResolveTargetsTests(unittest.TestCase):
+    """`resolve_targets` and `ignored_test_files` as pure functions."""
+
+    def resolve(self, **overrides):
+        args = {
+            "runs_rust_suites": True,
+            "rust_reachable": True,
+            "rust_fixture_hits": [],
+            "parity_hits": [],
+            "ignored_hits": [],
+            "tools_hits": [],
+        }
+        args.update(overrides)
+        return {t["target"]: t for t in rd.resolve_targets(**args)}
+
+    def test_make_test_comes_first(self):
+        # test-no-teardown leaves a feature-off build behind; order is load-
+        # bearing, so the list carries it.
+        order = [t["target"] for t in rd.resolve_targets(True, True, [], [], [], [])]
+        self.assertEqual(order[:2], ["make test", "make test-no-teardown"])
+
+    def test_every_entry_carries_a_reason(self):
+        for target in self.resolve(runs_rust_suites=False).values():
+            self.assertTrue(target["reason"], target)
+
+    def test_unreachable_rust_skips_both_rust_targets(self):
+        targets = self.resolve(rust_reachable=False)
+        for name in ("make test", "make test-no-teardown"):
+            self.assertFalse(targets[name]["run"])
+            self.assertIn("cargo build consumes", targets[name]["reason"])
+
+    def test_a_fixture_hit_overrides_the_path_filter(self):
+        targets = self.resolve(
+            runs_rust_suites=False,
+            rust_reachable=False,
+            rust_fixture_hits=["docs/fixture.json"],
+        )
+        self.assertTrue(targets["make test"]["run"])
+        self.assertIn("docs/fixture.json", targets["make test"]["reason"])
+
+    def test_the_sdk_suite_always_runs(self):
+        targets = self.resolve(runs_rust_suites=False, rust_reachable=False)
+        self.assertTrue(targets["pnpm --filter @dropset/sdk test"]["run"])
+
+    def test_ignored_test_files_keys_on_the_file_not_the_line(self):
+        files = {
+            "a.rs": "#[test]\n#[ignore]\nfn a() {}\n",
+            "b.rs": "#[test]\nfn b() {}\n",
+            "c.py": "# #[ignore]\n",
+            "gone.rs": None,
+        }
+        self.assertEqual(rd.ignored_test_files(files, read=files.get), ["a.rs"])
 
 
 class RustTestRangeTests(unittest.TestCase):

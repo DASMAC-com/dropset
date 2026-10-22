@@ -202,9 +202,16 @@ test: program
 # Feature-off coverage: build the program WITHOUT `admin-teardown` and
 # assert every teardown instruction returns `TeardownDisabled` — only the
 # feature-off-gated test target is run.
+#
+# It then rebuilds the default-feature program, pass or fail, keeping the
+# test run's exit status. Left behind, the feature-off `dropset.so` fails the
+# admin-teardown tests of any later bare `cargo test` with `Custom(6043)`,
+# which reads exactly like a regression. CI runs the cargo command directly,
+# so the rebuild costs local runs only.
 .PHONY: test-no-teardown
 test-no-teardown: program-no-teardown
-	cargo test --no-default-features --test teardown_disabled
+	cargo test --no-default-features --test teardown_disabled; \
+		status=$$?; $(MAKE) program || exit 1; exit $$status
 
 # Rust↔ASM parity: deploy both artifacts and assert the assembly fast path
 # (the default `dropset.so`) matches the reference kernel — identical stamp
