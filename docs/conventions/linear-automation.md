@@ -563,9 +563,9 @@ clear**, which lands the issue in the inbox for the operator's review.
 
 Nothing about parking places or implies a blocking edge — see "Blocking
 relations", where the meta batch's one remaining edge has since been
-retired outright. Parking is in fact the **substitute** for that edge on
-the filing path: an automated filer may never place one, so a milestone
-is how a filer keeps its own output out of the pull queue.
+retired outright. A Backlog filing is already out of the queue by state;
+the milestone is what keeps a filer's own output out of the operator's
+**inbox**, so the review sees only what planning chose to promote.
 
 **Where promotion leads differs by milestone.** `Audit findings` and
 `Trim levers` promote into the inbox. `Claude meta` does
@@ -577,7 +577,8 @@ stays parked, changing which rhythm will pick it up, rather than
 becoming available work.
 
 **A batch's own promotion is the same milestone clear**, and which batch is
-pulled follows from that: a **promoted** batch is pulled on its own,
+pulled follows from that: a **promoted** batch is pulled on its own
+once the operator approves it,
 while an assembled batch the bootstrap does not promote stays parked
 like any other meta issue. The fold-input question is settled below,
 under "An already-assembled parked batch is a promotion candidate, not
@@ -727,18 +728,19 @@ product code on the board.
 
 Every `Claude:` filing lands **state `Backlog` plus the `Claude meta`
 milestone, in the creating call** — parked, never in the inbox. A **promoted**
-batch issue is the sole exception, since it is the thing meant to be
-pulled; an assembled batch that is not promoted stays parked like any
+batch issue is the sole exception, since it is the thing meant for the
+operator's review; an assembled batch that is not promoted stays parked like any
 other meta issue.
 
 **The motivating failure is structural, not cosmetic.** An automated
 filer may never place a blocking edge (see "Blocking relations"), so
 before this rule every meta stray filed between folds landed
 *unblocked* in Backlog and sat in the operator's "Next" view until the
-next planning bootstrap swept it — one bootstrap found seven. Parking is
-the filer-safe equivalent of the edge the filer is not allowed to place:
-a milestone removes the issue from the queue by construction while
-touching none of the human-curated edge machinery.
+next planning bootstrap swept it — one bootstrap found seven. Parking
+was the filer-safe equivalent of the edge the filer is not allowed to
+place; under the review inbox the state keeps a filing out of Next and
+the milestone keeps it out of the inbox, still touching none of the
+human-curated edge machinery.
 
 **The planning bootstrap is the single assimilation point.** Once a day
 it sweeps the milestone and folds the parked strays into **small themed
@@ -772,9 +774,9 @@ bound, and back toward the one-giant-batch form this rule exists to
 retire. Under the retired form that growth *was* the rule, which is
 exactly why the distinction did not need stating before.
 
-Getting this wrong is not cosmetic: filing every survivor to
-Backlog/Urgent would restore the "seven strays unblocked in Next" failure
-the parking milestone exists to prevent, and would make the disjoint-set
+Getting this wrong is not cosmetic: clearing every survivor's milestone
+would flood the operator's inbox with the strays the parking milestone
+exists to hold back, and would make the disjoint-set
 bound below unreachable — there would never be a remainder to leave
 parked.
 
@@ -805,7 +807,7 @@ This does not reintroduce an edge — it removes the last thing standing
 in for one. The precondition existed to make the retired "wait for the
 one in flight" edge true by construction, and with serialization itself
 abandoned there is nothing left for either of them to encode. What
-bounds the operator's Next view instead is that the planning session
+bounds the operator's inbox instead is that the planning session
 promotes only a **file-disjoint** set — judged on the same collision
 clusters product work is judged on, so meta **loses** its special case
 rather than gaining a new one — with the remainder left parked under the

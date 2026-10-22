@@ -153,8 +153,8 @@ merged-with-follow-up-outstanding, and **Done** means operator-ratified
 complete — never merely merged. Linear's GitHub integration makes **no
 state transition on merge** (a team setting), so the In Review state
 `review-pr` writes at the enqueue handoff persists until an explicit
-approval moves it to Done. Before it, **Backlog** awaits the operator's
-review and **Todo** is reviewed and dispatchable.
+approval moves it to Done. Before a session, **Backlog** with no
+milestone awaits review and **Todo** is approved.
 Two consequences elsewhere: `housekeeping` prunes a worktree on the
 issue's **status type** (completed / canceled), never on PR-merged; and
 the fleet-resume launcher resumes In Progress **or** In Review. Detail:
@@ -177,8 +177,8 @@ is a **Linear-title signal only — never a PR title** (PR titles keep
 `type(ENG-###): Subject`).
 
 **A `Claude:` filing lands PARKED** — state `Backlog` plus the
-**`Claude meta`** milestone, in the creating call: the filer-safe
-substitute for the blocking edge no filer may place. A **promoted**
+**`Claude meta`** milestone, in the creating call, keeping strays out
+of the operator's review inbox. A **promoted**
 batch issue is the one meta issue not parked; an assembled batch not
 promoted stays parked, and promoting it later is the usual milestone
 clear.
@@ -189,7 +189,7 @@ open, unblocked `Claude:`-prefixed Backlog issue not In Progress or In
 Review), folds them into **small themed batches of roughly 4–5
 parts**, and promotes a **file-disjoint** subset, parking or killing the
 rest. It does **not** gate on a meta issue being in flight: file
-contention is paid as an occasional **rebase**, and the Next view is
+contention is paid as an occasional **rebase**, and the inbox is
 bounded by the disjoint-set test (judged on collision clusters, as for
 product work), never a state check or a bare count. Assembly consumes
 the pool *as of bootstrap*; a later stray waits for the next one.
@@ -249,7 +249,7 @@ a genuinely urgent stray (a broken guard) is promoted on the spot.
 pulled on its own, and a meta-flavored *audit* finding is
 promoted by swapping its milestone from `Audit findings` to
 `Claude meta`. A **promoted
-batch** is the carve-out, pulled on its own (see "Claude:
+batch** is the carve-out, pulled once approved (see "Claude:
 meta-work prefix" above). Detail:
 `docs/conventions/linear-automation.md`, including "An
 already-assembled parked batch is a promotion candidate, not a
@@ -292,7 +292,7 @@ bootstrap: sweep the milestone, fold into **small themed
 splits by surface) and close the originals (the coherence floor
 still governs audit findings and product filings). A rejected
 lever is **closed with its reason**, and
-dedup-against-resolved makes that permanent. The old inbox
+dedup-against-resolved makes that permanent. The old trim inbox
 document is retired — it outgrew the tool-result cap between
 mining passes. Detail: `docs/conventions/linear-automation.md`
 and the two skills.
