@@ -38,7 +38,9 @@ use dropset_market_data::estimator::{
     Estimator, EstimatorMarket, Halt, Ticked, MAX_PUBLISH_RETRY_WINDOW, PUBLISHED_MARKETS,
 };
 use dropset_market_data::fx_store::{MAX_STORE_SILENCE, SOURCE_COINBASE};
-use dropset_market_data::tick_store::{TickStoreReader, SOURCE_KRAKEN, USDC_USD_PRODUCT};
+use dropset_market_data::tick_store::{
+    TickStoreReader, SOURCE_KRAKEN, SOURCE_ORCA, USDC_USD_PRODUCT,
+};
 use sqlx::{PgPool, Row};
 
 /// Wednesday 2026-10-14 12:00 UTC, inside an FX session.
@@ -230,15 +232,22 @@ async fn a_full_tick_publishes_every_market() {
             "{} must anchor on the FX leg with every leg fresh",
             market.product_id
         );
-        // **No MVP market composes as `ok`, with every leg fresh**, and that is a
+        // **Only TGBP composes as `ok` with every leg fresh**, and that is a
         // roster fact rather than a defect — worth asserting so it is a decision
-        // on the record rather than a surprise on a dashboard. EURC's and TGBP's
-        // bases rest on one venue each, so they are `uncorroborated`; AUDD and
-        // CADC are `fx_pinned`.
-        // Both gate as `unverified`: quoted, and not described as corroborated.
+        // on the record rather than a surprise on a dashboard. TGBP's candle is
+        // its designated basis tape (it has a pool corroborator), so even alone
+        // it reads `SingleTrusted` — the cost accepted when that rule was
+        // chosen. EURC's basis rests on one venue with no designation, so it is
+        // `uncorroborated`; AUDD and CADC are `fx_pinned`. Those gate as
+        // `unverified`: quoted, and not described as corroborated.
+        let health = if market.pool_corroborator.is_some() {
+            "ok"
+        } else {
+            "unverified"
+        };
         assert_eq!(
-            row.health, "unverified",
-            "{} composes on an uncorroborated or pinned basis",
+            row.health, health,
+            "{} composes on the wrong corroboration",
             market.product_id
         );
         // Every leg is inside its band, so the common-mode guard is quiet.
@@ -345,6 +354,56 @@ async fn the_peg_leg_comes_from_the_tick_table() {
     );
 }
 
+/// TGBP's pool corroborator reaches the composition **from `spot_ticks`**,
+/// observed through the one column it decides: `crypto_leg_outlier`.
+///
+/// A pool walked far from the candle must be named on the row while the
+/// regime and the mid stay the candle's. If the tick reader stopped asking for
+/// the pool series the row would read NULL here, so this is what pins the
+/// reader's roster rather than the mapping alone.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn a_walked_pool_is_flagged_on_the_published_row() {
+    let (_pg, pool) = start_pg().await;
+    let now = IN_SESSION;
+    insert_bucket(&pool, "oanda", "GBP-USD", now, 1.3240).await;
+    insert_bucket(&pool, "twelvedata", "GBP-USD", now, 1.3242).await;
+    insert_bucket(&pool, SOURCE_COINBASE, "TGBP-USDC", now, 1.3250).await;
+    insert_tick(&pool, SOURCE_ORCA, "TGBP-USDC", now, 1.10).await;
+
+    let tgbp: EstimatorMarket = PUBLISHED_MARKETS[1];
+    assert_eq!(tgbp.pool_corroborator, Some("TGBP-USDC"), "the premise");
+    let mut estimator = pinned(
+        Estimator::new(pool.clone(), vec![tgbp], Duration::from_secs(15)).expect("constructible"),
+        now,
+    );
+    estimator.tick_once().await.expect("must not halt");
+
+    let row = sqlx::query(
+        "SELECT regime, degrade, crypto_leg_outlier, fair
+         FROM fair_price WHERE product_id = $1 ORDER BY ts DESC LIMIT 1",
+    )
+    .bind(tgbp.product_id)
+    .fetch_one(&pool)
+    .await
+    .expect("published");
+    let outlier: Option<String> = row.try_get("crypto_leg_outlier").expect("outlier");
+    let regime: String = row.try_get("regime").expect("regime");
+    let degrade: Option<String> = row.try_get("degrade").expect("degrade");
+    let fair: Option<f64> = row.try_get("fair").expect("fair");
+    assert_eq!(
+        outlier.as_deref(),
+        Some(SOURCE_ORCA),
+        "the pool row did not reach the composition"
+    );
+    assert_eq!(regime, "normal", "a walked pool must not move the regime");
+    assert_eq!(degrade, None);
+    assert!(
+        fair.is_some_and(|f| (f - 1.3250).abs() < 1e-3),
+        "the mid is the candle's, got {fair:?}"
+    );
+}
+
 /// A pinned market publishes on the FX anchor with no crypto leg at all.
 #[tokio::test]
 #[ignore = "requires a Docker daemon (Postgres container)"]
@@ -417,10 +476,13 @@ async fn a_tick_outside_the_session_publishes_the_weekend_regimes() {
             .await
             .unwrap_or_else(|| panic!("{} published no row", market.product_id));
         // `uncorroborated` rather than `crypto_only`: it shadows the regime it
-        // composes as when the leg rests on one venue, and each crypto
-        // reference here is Coinbase alone.
+        // composes as when the leg rests on one venue with no designation, and each
+        // crypto reference here is Coinbase alone. TGBP's candle is designated,
+        // so it reads `crypto_only` on its own.
         let (anchor, regime) = if market.pinned_basis.is_some() {
             ("static", "degraded")
+        } else if market.pool_corroborator.is_some() {
+            ("crypto_reference", "crypto_only")
         } else {
             ("crypto_reference", "uncorroborated")
         };

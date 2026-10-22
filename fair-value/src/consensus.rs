@@ -748,6 +748,30 @@ impl Consensus {
     pub fn healthy(&self) -> &[Option<Candidate>] {
         &self.healthy
     }
+
+    /// The designated source **anchoring** this leg's value, if one does: the
+    /// set's one trusted candidate, not itself the outlier, and so the whole of
+    /// the reading.
+    ///
+    /// This is what lets a consumer tell a corroborator's disagreement from a
+    /// leg that is actually sick. A dispersed leg whose anchor held still
+    /// quotes on the designated source, and the one that disagreed is named in
+    /// [`Consensus::outlier`]; a dispersed leg whose anchor was contradicted, or
+    /// that never had one, is resolving on a median or on nothing.
+    ///
+    /// Keyed on the lone trusted candidate rather than on any trusted
+    /// contributor, because an odd median's middle is a singleton contributor
+    /// too. A median that happens to land on one of two designated sources is
+    /// still a median, and must not read as anchored.
+    pub fn anchor(&self) -> Option<Candidate> {
+        let dominant = self.contributors.dominant()?;
+        lone_trusted(&self.healthy).filter(|c| c.source == dominant.source)
+    }
+
+    /// Whether a designated source anchors this leg — see [`Consensus::anchor`].
+    pub fn anchored(&self) -> bool {
+        self.anchor().is_some()
+    }
 }
 
 /// The resolution of one leg's candidate set.
@@ -1633,6 +1657,65 @@ mod tests {
         assert_eq!(c.outlier, Some("frankfurter"));
         assert_eq!(credits(&c), [("pyth-hermes", 1.0)]);
         assert_eq!(c.reading.unwrap().value, 1.140, "the leg is not dark");
+    }
+
+    #[test]
+    fn a_dispersed_pair_names_its_outlier_only_when_one_is_designated() {
+        // The pair the tGBP basis leg runs on. With the candle designated, a
+        // pool that disagrees is named by construction and the leg is anchored
+        // — what lets the engine flag it without degrading. With no designation, the
+        // same pair resolves to nothing, and the name it reports is settled by
+        // float rounding at the midpoint rather than by any signal, so a reader
+        // must not take it as "the pool was the outlier".
+        let anchored = Candidates::none()
+            .push_trusted("coinbase", Some(r(1.324)))
+            .push("orca", Some(r(1.10)))
+            .resolve(STALE, BAND);
+        assert_eq!(anchored.state, ConsensusState::Dispersed);
+        assert_eq!(anchored.outlier, Some("orca"));
+        assert!(anchored.anchored());
+        assert_eq!(credits(&anchored), [("coinbase", 1.0)]);
+
+        let bare = Candidates::none()
+            .push("coinbase", Some(r(1.324)))
+            .push("orca", Some(r(1.10)))
+            .resolve(STALE, BAND);
+        assert_eq!(bare.state, ConsensusState::Dispersed);
+        assert!(bare.reading.is_none(), "no majority, no designation");
+        assert!(!bare.anchored());
+    }
+
+    #[test]
+    fn a_contradicted_designation_is_not_anchored() {
+        // Three sources outvote the designated one, so the median stands and the
+        // leg is sick in the sense the degrade exists to price.
+        let c = Candidates::none()
+            .push_trusted("coinbase", Some(r(0.60)))
+            .push("orca", Some(r(1.140)))
+            .push("kraken", Some(r(1.141)))
+            .resolve(STALE, BAND);
+        assert_eq!(c.outlier, Some("coinbase"));
+        assert!(!c.anchored());
+    }
+
+    #[test]
+    fn a_median_landing_on_one_of_two_designations_is_not_anchored() {
+        // Two designations means no lone anchor, so this resolves on the median
+        // — whose middle member happens to be designated. The singleton
+        // contributor is that source, and reading "anchored" off it would let a
+        // genuinely sick leg skip its degrade.
+        let c = Candidates::none()
+            .push_trusted("coinbase", Some(r(1.140)))
+            .push_trusted("kraken", Some(r(1.141)))
+            .push("orca", Some(r(0.60)))
+            .resolve(STALE, BAND);
+        assert_eq!(c.state, ConsensusState::Dispersed);
+        assert_eq!(
+            credits(&c),
+            [("coinbase", 1.0)],
+            "the premise: a lone middle"
+        );
+        assert!(!c.anchored());
     }
 
     #[test]

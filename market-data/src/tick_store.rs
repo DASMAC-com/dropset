@@ -84,9 +84,9 @@ pub const SOURCE_KRAKEN: &str = "kraken";
 /// (`market-data/src/bin/orca.rs`).
 ///
 /// Public, and the collector writes under it rather than a private copy, so a
-/// future reader of the pool tape joins on the same string by construction —
-/// the drift [`SOURCE_KRAKEN`]'s note describes. Nothing in this crate reads the
-/// series yet.
+/// reader of the pool tape joins on the same string by construction — the
+/// drift [`SOURCE_KRAKEN`]'s note describes. The estimator reads it as a basis
+/// corroborator (`EstimatorMarket::pool_corroborator`).
 pub const SOURCE_ORCA: &str = "orca";
 
 /// The canonical peg series every market's common-mode guard reads.

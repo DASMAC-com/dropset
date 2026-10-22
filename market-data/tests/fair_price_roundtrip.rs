@@ -100,13 +100,15 @@ struct StoredRow {
     leg_stale_tape_secs: i64,
     leg_stale_reference_secs: i64,
     fx_tape_live: Option<bool>,
+    crypto_leg_outlier: Option<String>,
 }
 
 async fn read_row(pool: &PgPool, product_id: &str, ts: i64) -> StoredRow {
     let row = sqlx::query(
         "SELECT fair, anchor, regime, degrade, health, basis, basis_age_secs,
                 basis_outlier, uncertain, basis_breach, usdc_breach,
-                leg_stale_tape_secs, leg_stale_reference_secs, fx_tape_live
+                leg_stale_tape_secs, leg_stale_reference_secs, fx_tape_live,
+                crypto_leg_outlier
              FROM fair_price WHERE product_id = $1 AND ts = $2",
     )
     .bind(product_id)
@@ -134,6 +136,9 @@ async fn read_row(pool: &PgPool, product_id: &str, ts: i64) -> StoredRow {
             .try_get("leg_stale_reference_secs")
             .expect("leg_stale_reference_secs"),
         fx_tape_live: row.try_get("fx_tape_live").expect("fx_tape_live"),
+        crypto_leg_outlier: row
+            .try_get("crypto_leg_outlier")
+            .expect("crypto_leg_outlier"),
     }
 }
 
@@ -311,6 +316,45 @@ async fn fx_tape_live_follows_the_fx_leg_contributors() {
         Some(false),
         "only a daily fix was credited"
     );
+}
+
+/// `crypto_leg_outlier` (0023) names the source a dispersed basis leg judged
+/// the outlier, and is NULL on a leg that agreed.
+///
+/// The dispersed case is the tGBP shape — a designated candle beside a walked
+/// pool — so the row it writes is `normal` with `degrade` NULL and this column
+/// set: the flag the regime deliberately does not raise, and a row on which a
+/// transposition with `degrade` (the other nullable TEXT) reads back swapped.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn crypto_leg_outlier_names_the_dispersed_legs_outlier() {
+    let (_pg, pool) = start_pg().await;
+    let age = Duration::from_secs(1);
+    let mut engine = FairValueEngine::new(FairValueConfig::default());
+    let legs = Legs {
+        fx: Candidates::none().push_trusted("pyth-hermes", Some(Reading::new(1.0, age))),
+        crypto_usdc: Candidates::none()
+            .push_trusted("coinbase", Some(Reading::new(1.0, age)))
+            .push("orca", Some(Reading::new(0.80, age))),
+        usdc_usd: Candidates::none().push("kraken", Some(Reading::new(1.0, age))),
+        static_usd: 1.0,
+    };
+    let walked = engine.compose(legs, Duration::from_secs(5), ClockCtx::in_session());
+    assert_eq!(walked.regime, Regime::Normal, "the premise: no degrade");
+    publish(&pool, 1_700_000_500, "TGBP-USDC", &walked, STALE)
+        .await
+        .expect("publish a flagged composition");
+    let got = read_row(&pool, "TGBP-USDC", 1_700_000_500).await;
+    assert_eq!(got.crypto_leg_outlier.as_deref(), Some("orca"));
+    assert_eq!(got.regime, "normal");
+    assert_eq!(got.degrade, None);
+
+    // `composed()`'s crypto pair agrees, so nothing is recorded.
+    publish(&pool, 1_700_000_501, "TGBP-USDC", &composed(), STALE)
+        .await
+        .expect("publish an agreeing composition");
+    let got = read_row(&pool, "TGBP-USDC", 1_700_000_501).await;
+    assert_eq!(got.crypto_leg_outlier, None);
 }
 
 /// A row stamped far ahead of the reader's clock is not read, so it cannot
