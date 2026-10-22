@@ -102,7 +102,7 @@ FAMILIES = (
 TOOLCHAIN_ABORT_RE = re.compile(
     r"^(anchor-cli \S+ required"
     r"|cargo build-sbf not found"
-    r"|solana(?:-test-validator)? \S+ or later required"
+    r"|solana-(?:cli|test-validator) \S+ or later required"
     r"|wasm-pack not found"
     r"|pnpm not found)"
 )
@@ -157,8 +157,17 @@ def commit_family(family: Family, sign: bool) -> tuple[str | None, str | None]:
 
     ``(None, None)`` means nothing moved. A commit the pre-commit hooks reject
     is re-staged and retried once, since a whitespace or end-of-file fixer
-    rewrites the file and fails the first attempt by design.
+    rewrites the file and fails the first attempt by design. A git error (a
+    held index lock, a path that matches nothing) is reported, not raised, so
+    one family's failure still leaves a JSON verdict.
     """
+    try:
+        return _commit_family(family, sign)
+    except subprocess.CalledProcessError as exc:
+        return None, "git %s failed: %s" % (exc.cmd[1], (exc.stderr or "").strip())
+
+
+def _commit_family(family: Family, sign: bool) -> tuple[str | None, str | None]:
     _git(["add", "-A", "--", *family.paths])
     if (
         _git(

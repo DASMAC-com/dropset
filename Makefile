@@ -207,7 +207,8 @@ test: program
 # test run's exit status. Left behind, the feature-off `dropset.so` fails the
 # admin-teardown tests of any later bare `cargo test` with `Custom(6043)`,
 # which reads exactly like a regression. CI runs the cargo command directly,
-# so the rebuild costs local runs only.
+# so the rebuild costs local runs only. The line holds `$(MAKE)`, so even
+# `make -n test-no-teardown` really runs it.
 .PHONY: test-no-teardown
 test-no-teardown: program-no-teardown
 	cargo test --no-default-features --test teardown_disabled; \

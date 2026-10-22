@@ -1183,7 +1183,19 @@ class GateOnlyProjectionTests(unittest.TestCase):
 
     def test_the_resolved_targets_survive_the_projection(self):
         # Step 11 reads its suites from the --gate-only re-check.
-        self.assertIn("targets", rd.GATE_ONLY_FIELDS)
+        verdict = {
+            "targets": [{"target": "make test", "run": True, "reason": "r"}],
+            "ignored_test_changed": True,
+            "runs_tools_tests": False,
+            "files": ["a"],
+        }
+        self.assertEqual(
+            rd.gate_only(verdict),
+            {
+                k: verdict[k]
+                for k in ("targets", "ignored_test_changed", "runs_tools_tests")
+            },
+        )
 
 
 class ResolveTargetsTests(unittest.TestCase):
@@ -1202,8 +1214,6 @@ class ResolveTargetsTests(unittest.TestCase):
         return {t["target"]: t for t in rd.resolve_targets(**args)}
 
     def test_make_test_comes_first(self):
-        # test-no-teardown leaves a feature-off build behind; order is load-
-        # bearing, so the list carries it.
         order = [t["target"] for t in rd.resolve_targets(True, True, [], [], [], [])]
         self.assertEqual(order[:2], ["make test", "make test-no-teardown"])
 
@@ -1237,13 +1247,33 @@ class ResolveTargetsTests(unittest.TestCase):
         self.assertTrue(targets["pnpm --filter @dropset/sdk test"]["run"])
 
     def test_ignored_test_files_keys_on_the_file_not_the_line(self):
+        ignored = "#[test]\n#[ignore]\nfn a() {}\n"
         files = {
-            "a.rs": "#[test]\n#[ignore]\nfn a() {}\n",
-            "b.rs": "#[test]\nfn b() {}\n",
-            "c.py": "# #[ignore]\n",
-            "gone.rs": None,
+            "feeds/tests/a.rs": ignored,
+            "feeds/tests/b.rs": "#[test]\nfn b() {}\n",
+            "feeds/c.py": "# #[ignore]\n",
+            "feeds/tests/gone.rs": None,
+            # Ignored tests no CI job selects: test-postgres would not run them.
+            "tui/src/e2e.rs": ignored,
+            "market-data/tests/oanda_direction.rs": ignored,
         }
-        self.assertEqual(rd.ignored_test_files(files, read=files.get), ["a.rs"])
+        self.assertEqual(
+            rd.ignored_test_files(files, read=files.get), ["feeds/tests/a.rs"]
+        )
+
+    def test_every_asm_offset_input_resolves_the_parity_target(self):
+        for path in (
+            "programs/dropset/src/asm/entrypoint.s",
+            "programs/dropset/src/asm_offsets.rs",
+            "programs/dropset/src/state/market/layout.rs",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(rd.matches_any(path, rd.ASM_PARITY_INPUTS))
+
+    def test_a_grafana_change_runs_the_tools_tests(self):
+        self.assertTrue(
+            rd.matches_any("market-data/grafana/dash.json", rd.TOOLS_TESTS_INPUTS)
+        )
 
 
 class RustTestRangeTests(unittest.TestCase):

@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -84,6 +84,85 @@ class RegenTests(unittest.TestCase):
         )
         [entry] = ra.regenerate([family], sign=False)
         self.assertEqual(entry["status"], "committed")
+
+    def test_a_hook_rejected_commit_is_restaged_and_retried(self):
+        # A whitespace / end-of-file fixer rewrites the file and fails the first
+        # commit by design; the retry must commit the fixer's version.
+        hooks = self.repo / ".git" / "hooks"
+        hook = hooks / "pre-commit"
+        marker = self.repo / ".git" / "hook-ran"
+        hook.write_text(
+            f"#!{PY}\n"
+            "import os, sys\n"
+            f"if not os.path.exists({str(marker)!r}):\n"
+            f"    open({str(marker)!r}, 'w').close()\n"
+            "    open('idl.json', 'w').write('fixed\\n')\n"
+            "    sys.exit(1)\n",
+            encoding="utf-8",
+        )
+        hook.chmod(0o755)
+        git(self.repo, "config", "core.hooksPath", str(hooks))
+        [entry] = ra.regenerate([self.family(writer("idl.json", "v2\n"))], sign=False)
+        self.assertEqual(entry["status"], "committed", entry)
+        self.assertEqual(git(self.repo, "show", "HEAD:idl.json"), "fixed\n")
+
+    def test_a_git_error_is_reported_not_raised(self):
+        # A pathspec matching nothing makes `git add` fail; the verdict must
+        # still be JSON with a failed entry, never a traceback.
+        family = ra.Family("idl", [PY, "-c", "pass"], ["no-such-dir"], "Rebuild IDL")
+        [entry] = ra.regenerate([family], sign=False)
+        self.assertEqual(entry["status"], "failed")
+        self.assertIn("git add failed", entry["detail"])
+
+    def test_every_makefile_toolchain_message_reads_as_unverifiable(self):
+        # The exact lines the Makefile's check targets print before `exit 1`.
+        for line in (
+            "anchor-cli 1.2.1 required",
+            "cargo build-sbf not found (install Solana toolchain)",
+            "solana-cli 4.3 or later required",
+            "solana-test-validator 4.3 or later required",
+            "wasm-pack not found (cargo install wasm-pack)",
+            "pnpm not found (npm i -g pnpm)",
+        ):
+            with self.subTest(line=line):
+                cmd = [PY, "-c", f"print({line!r}); exit(2)"]
+                [entry] = ra.regenerate([self.family(cmd)], sign=False)
+                self.assertEqual(entry["status"], "unverifiable")
+
+    def test_child_output_cannot_reach_the_json_on_stdout(self):
+        # The lock-wait echo writes to stdout; the tool routes it to stderr so
+        # the verdict stays one parseable document.
+        def noisy(cmd, log):
+            sys.stdout.write("⏳ Blocking waiting for file lock\n")
+            return 0, "Blocking waiting for file lock"
+
+        families = [self.family(writer("idl.json", "v2\n"))]
+        real = ra.regenerate
+        out = io.StringIO()
+        with (
+            mock.patch.object(ra.run_quiet, "stream_to_log", noisy),
+            mock.patch.object(ra, "regenerate", lambda: real(families, sign=False)),
+            redirect_stdout(out),
+            redirect_stderr(io.StringIO()),
+        ):
+            ra.main(["--force"])
+        self.assertIn("families", json.loads(out.getvalue()))
+
+    def test_an_unverifiable_family_is_not_verified(self):
+        families = [self.family([PY, "-c", "print('pnpm not found'); exit(1)"])]
+        real = ra.regenerate
+        out = io.StringIO()
+        with (
+            mock.patch.object(ra, "regenerate", lambda: real(families, sign=False)),
+            redirect_stdout(out),
+        ):
+            code = ra.main(["--force"])
+        self.assertEqual(code, ra.EXIT_UNVERIFIABLE)
+        self.assertFalse(json.loads(out.getvalue())["verified"])
+
+    def test_the_idl_is_rebuilt_before_the_clients_built_from_it(self):
+        names = [f.name for f in ra.FAMILIES]
+        self.assertLess(names.index("idl"), names.index("sdk"))
 
     def test_only_the_family_paths_are_committed(self):
         (self.repo / "unrelated.txt").write_text("wip\n", encoding="utf-8")

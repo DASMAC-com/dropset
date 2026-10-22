@@ -69,9 +69,10 @@ run whose summary has scrolled away.
 **Test counts.** A run whose log carries cargo, nextest or ``node --test``
 summaries appends their totals to its one-line result (``— 120 passed, 0
 failed, 3 skipped``), and ``inspect MUTATED --compare BASELINE`` prints the
-per-key deltas between two runs plus a mutation verdict — ``caught`` (same
-tests ran, more failed), ``not-caught``, or ``inconclusive`` (fewer ran, so the
-invocation excluded the target). It exits 0 only on ``caught``. Mutation
+per-key deltas between two runs plus a mutation verdict — ``caught`` (more
+failed, even if a fail-fast run stopped early), ``not-caught``, or
+``inconclusive`` (no new failure and fewer ran, so the invocation may have
+excluded the target). It exits 0 only on ``caught``. Mutation
 verification compares counts because an exit code cannot tell a caught
 mutation from a run that silently selected less.
 
@@ -149,12 +150,18 @@ CARGO_RESULT_RE = re.compile(r"^\s*test result:")
 # exactly like one that caught the mutation (``inspect --compare``).
 #   cargo:   `test result: ok. 12 passed; 0 failed; 1 ignored; …` (one per binary)
 #   nextest: `Summary [ 1.2s] 12 tests run: 11 passed, 1 failed, 3 skipped`
+#            (`3/12 tests run: …` when a failure cancelled the rest)
 #   node:    `# pass 12` / `ℹ fail 0` (the TAP and spec reporters)
 CARGO_COUNTS_RE = re.compile(
     r"^\s*test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored"
 )
-NEXTEST_SUMMARY_RE = re.compile(r"^\s*Summary \[[^\]]*\]\s+\d+ tests? run: (.*)$")
-NEXTEST_PART_RE = re.compile(r"(\d+) (passed|failed|skipped)\b")
+NEXTEST_SUMMARY_RE = re.compile(
+    r"^\s*Summary \[[^\]]*\]\s+\d+(?:/\d+)? tests? run: (.*)$"
+)
+# A test that timed out or failed to launch is a failure for verification's purpose: a
+# mutation that makes a test hang has been caught.
+NEXTEST_PART_RE = re.compile(r"(\d+) (passed|failed|skipped|timed out|exec failed)\b")
+NEXTEST_KEYS = {"timed out": "failed", "exec failed": "failed"}
 NODE_COUNT_RE = re.compile(r"^[#ℹ] (pass|fail|skipped) (\d+)\s*$")
 NODE_KEYS = {"pass": "passed", "fail": "failed", "skipped": "skipped"}
 
@@ -385,7 +392,7 @@ def add_test_counts(line, counts):
     match = NEXTEST_SUMMARY_RE.match(line)
     if match:
         for value, key in NEXTEST_PART_RE.findall(match.group(1)):
-            counts[key] += int(value)
+            counts[NEXTEST_KEYS.get(key, key)] += int(value)
         return True
     match = NODE_COUNT_RE.match(line)
     if match:
@@ -404,11 +411,15 @@ def format_counts(counts):
 def compare_counts(baseline, mutated):
     """The mutation-verification verdict for two runs' counts.
 
-    Returns ``(verdict, reason)``. Fewer tests ran in total → ``inconclusive``,
-    since the invocation excluded the target and a failure proves nothing; same
-    total with more failures → ``caught``; otherwise ``not-caught``, which
-    means the TEST is wrong until proven otherwise, never the fix.
+    Returns ``(verdict, reason)``. More failures → ``caught``, whatever the
+    total: ``cargo test`` and nextest are fail-fast by default, so a run that
+    caught the mutation routinely stops before the later binaries. No new
+    failure with fewer tests run → ``inconclusive``, since the invocation may
+    have excluded the target; otherwise ``not-caught``, which means the TEST is
+    wrong until proven otherwise, never the fix.
     """
+    if mutated["failed"] > baseline["failed"]:
+        return "caught", "%d new failure(s)" % (mutated["failed"] - baseline["failed"])
     ran_before = baseline["passed"] + baseline["failed"]
     ran_after = mutated["passed"] + mutated["failed"]
     if ran_after < ran_before:
@@ -416,8 +427,6 @@ def compare_counts(baseline, mutated):
             ran_after,
             ran_before,
         )
-    if mutated["failed"] > baseline["failed"]:
-        return "caught", "%d new failure(s)" % (mutated["failed"] - baseline["failed"])
     return "not-caught", "no new failure"
 
 
@@ -802,9 +811,18 @@ def compare_logs(baseline_path, summary):
     except OSError as exc:
         sys.stderr.write("run_quiet.py: cannot read %s: %s\n" % (baseline_path, exc))
         return 2
-    if baseline is None or summary.counts is None:
-        missing = baseline_path if baseline is None else "the inspected log"
-        sys.stdout.write("run-quiet compare | no test summary in %s\n" % missing)
+    missing = [
+        name
+        for name, counts in (
+            (baseline_path, baseline),
+            ("the inspected log", summary.counts),
+        )
+        if counts is None
+    ]
+    if missing:
+        sys.stdout.write(
+            "run-quiet compare | no test summary in %s\n" % " or ".join(missing)
+        )
         return 2
     for key in ("passed", "failed", "skipped"):
         before, after = baseline[key], summary.counts[key]

@@ -407,18 +407,31 @@ REASON_PATHS = 3
 #: The attribute an `#[ignore]`d test carries, with or without a reason.
 IGNORE_ATTR = "#[ignore"
 
+#: What `make test-postgres` selects — the crates its `-p` flags name, less the
+#: binary its `-E` filter excludes. An ignored test outside this set runs in no
+#: CI job, so its change triggers nothing. Mirror the target when it changes;
+#: `postgres_ci_wiring.py` keeps the target itself honest.
+POSTGRES_TEST_ROOTS = ("feeds/**", "indexer/**", "market-data/**", "db-schema/**")
+POSTGRES_TEST_EXCLUDES = ("market-data/tests/oanda_direction.rs",)
+
 
 def ignored_test_files(paths, read=None) -> list[str]:
-    """The changed `.rs` files whose post-image holds an `#[ignore]`d test.
+    """The changed `.rs` files under `make test-postgres`'s selection whose
+    post-image holds an `#[ignore]`d test.
 
-    Every local Rust target skips ignored tests, so a change to one can
+    Every other local Rust target skips ignored tests, so a change to one can
     otherwise only ever fail in CI's Tests (Postgres) job. Keyed on the FILE,
     not on the attribute line: editing an ignored test's body leaves the
     attribute untouched, and the over-broad direction costs one suite run.
     """
     read = read or _read_post_image
     return sorted(
-        p for p in paths if p.endswith(".rs") and IGNORE_ATTR in (read(p) or "")
+        p
+        for p in paths
+        if p.endswith(".rs")
+        and matches_any(p, POSTGRES_TEST_ROOTS)
+        and p not in POSTGRES_TEST_EXCLUDES
+        and IGNORE_ATTR in (read(p) or "")
     )
 
 
@@ -432,9 +445,10 @@ def resolve_targets(
 ) -> list[dict]:
     """The step-11 suite list: every target, whether to run it, and why.
 
-    One entry per target, in run order, each ``{"target", "run", "reason"}``.
-    The order matters for the Rust pair — `make test` first — and the reason
-    is what the review summary records for a skip. What stays the session's
+    One entry per target, in run order, each ``{"target", "run", "reason"}``;
+    the reason is what the review summary records for a skip. `make test`
+    stays first by habit only: `make test-no-teardown` now restores the
+    default-feature build it replaces, so the old order trap is gone. What stays the session's
     judgement is outside this list: the CI-mirror carve-out for a
     `.github/**`-only diff, and running a cheap check some changed path
     reaches although no flag names it.

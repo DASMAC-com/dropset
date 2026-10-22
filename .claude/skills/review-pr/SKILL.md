@@ -393,8 +393,8 @@ migrations or generation inputs, and whether it spans crates.
 
    The tool **owns** three path lists — the generated-family excludes,
    the mirror of `test.yml`'s `code` filter, and the generation inputs
-   — which is why steps 9 and 10 read `runs_rust_suites` and
-   `runs_artifact_gates` off the verdict. Change them there, never in
+   — which is why step 9's `regen_artifacts.py` imports its path gate
+   and step 11 reads `targets` off the verdict. Change them there, never in
    prose. `--out` is required (except with `--gate-only`, which
    writes no diff) but **not** validated against the scratchpad root,
    so substitute the real path (a guessed one is created, not
@@ -1047,10 +1047,12 @@ migrations or generation inputs, and whether it spans crates.
    **When the `vectors` family reports `committed`**, learn whether
    book behavior moved or only the embedded market bytes from the
    one-line-per-file verdict (exit 1 when an expected output changed),
-   never a `git diff` of the byte arrays:
+   never a `git diff` of the byte arrays. Compare against the parent
+   of the family's reported `commit` — the default `HEAD` already holds
+   the regenerated vectors, so it reads `unchanged` whatever moved:
 
    ```sh
-   python3 .claude/tools/vector_diff.py
+   python3 .claude/tools/vector_diff.py --ref <commit>~1
    ```
 
    When `lint_rerun` is `true`, re-run `make lint` through the quiet
@@ -1076,7 +1078,7 @@ migrations or generation inputs, and whether it spans crates.
 
    **Whether CI runs a gate is per-WORKFLOW, not per-diff.**
    `make idl`'s gate sits inside `test.yml`'s path-filtered job
-   (step 11 owns that filter); `make sdk`,
+   (whose filter step 11's `targets` mirrors); `make sdk`,
    `make check-conformance-vectors`, the WASM glue gate and the
    `sdk/ts` suite live in **`sdk.yml`, which has no path filter** and
    so applies to every PR (`history.md` → "Per-workflow
@@ -1157,9 +1159,9 @@ migrations or generation inputs, and whether it spans crates.
    re-derive the list. It resolves CI's `code` filter
    (`CODE_FILTER_EXCLUDES`, kept in parity with `test.yml`), whether
    a cargo build can reach the diff, the fixtures a Rust test reads,
-   an asm relayout (`make test-parity`; plain `make test` skips
-   `asm_parity` without its oracle, so check the count line reads
-   `0 skipped`), a file holding an `#[ignore]`d test
+   an asm relayout (`make test-parity` — plain `make test` silently
+   skips `asm_parity` without its oracle, so only a `test-parity` pass
+   is the evidence), a file holding an `#[ignore]`d test
    (`make test-postgres`), and a tools / Grafana change
    (`make tools-tests`) — the provenance is in `history.md` →
    "Unreachable suites", "Fixture-coupled dequeue" and "Ignored test
@@ -1195,13 +1197,14 @@ migrations or generation inputs, and whether it spans crates.
      python3 .claude/tools/run_quiet.py inspect <mutated> --compare <baseline>
      ```
 
-     Its verdict is `caught` (same tests ran, more
-     failed), `not-caught`, or `inconclusive` (fewer ran — the
-     invocation excluded the target). A feature-gated target needs
-     `--all-features` (or the explicit `--features`); take the
-     invocation CI uses, and narrow `--files` / `--test`, never the
-     package set. After adding tests, confirm `passed` moved by the
-     number added.
+     Its verdict is `caught` (more tests failed — a fail-fast run that
+     stopped early still counts), `not-caught`, or `inconclusive` (no
+     new failure and fewer ran — the invocation excluded the target).
+     A feature-gated target needs `--all-features` (or the explicit
+     `--features`), and the same holds for any conditional
+     compilation; take the invocation CI uses, and narrow `--files` /
+     `--test`, never the package set. After adding tests, confirm
+     `passed` moved by the number added.
 
    - **Expect the first fixture not to bite**; budget one rewrite per
      mutation-verified test.

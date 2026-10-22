@@ -877,15 +877,43 @@ class TestCounts(unittest.TestCase):
         self.assertIn("passed 5 → 4 (-1)", out)
         self.assertIn("caught: 1 new failure(s)", out)
 
-    def test_a_failure_with_fewer_tests_run_is_inconclusive(self):
-        # The exit-code reading calls this caught; it is the narrowed
-        # invocation the count rule exists to expose.
+    def test_a_fail_fast_run_that_stopped_early_is_still_caught(self):
+        # cargo test stops at the first failing binary, so a caught mutation
+        # routinely runs fewer tests than its baseline.
+        code, out = self._compare(
+            [CARGO_BINARY_A, "test result: ok. 5 passed; 0 failed; 0 ignored;"],
+            ["test result: FAILED. 9 passed; 1 failed; 2 ignored;"],
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("caught", out)
+
+    def test_fewer_tests_and_no_new_failure_is_inconclusive(self):
+        # The narrowed invocation the count rule exists to expose: the exit
+        # code reads clean, but the target may never have run.
         code, out = self._compare(
             ["test result: ok. 5 passed; 0 failed; 0 ignored;"],
-            ["test result: FAILED. 0 passed; 1 failed; 0 ignored;"],
+            ["test result: ok. 3 passed; 0 failed; 0 ignored;"],
         )
         self.assertEqual(code, 1)
         self.assertIn("inconclusive", out)
+
+    def test_a_cancelled_nextest_run_and_a_timeout_are_counted(self):
+        self.assertEqual(
+            self._counts(
+                [
+                    "     Summary [   2.0s] 4/12 tests run: 2 passed, 1 failed, "
+                    "1 timed out, 0 skipped"
+                ]
+            ),
+            {"passed": 2, "failed": 2, "skipped": 0},
+        )
+
+    def test_an_unreadable_baseline_is_refused(self):
+        mutated = self._log([CARGO_BINARY_A], "mutated.log")
+        missing = os.path.join(self.root, "gone.log")
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = rq.main(["inspect", mutated, "--compare", missing])
+        self.assertEqual(code, 2)
 
     def test_an_unchanged_run_is_not_caught(self):
         code, out = self._compare(
