@@ -1320,8 +1320,9 @@ included — run in their own worktree, but that worktree is
 TEMPORARY WORKING STATE and the session is READ-ONLY toward the
 repo: no commits, no PR.** Durable state is captured in
 **Linear**; a spec file is **optional** but the operator's
-ratification is not — **no task is filed from an unratified
-design**, only marked stubs — and anything repo-bound
+ratification is not — tasks are filed into **Backlog** during the
+session and moved to **Todo** at close on the operator's per-tab
+yes — and anything repo-bound
 lands later via a **follow-up worker task**. This is the
 canonical statement of the mechanism; the `architect` and `plan`
 skills state their own duties and point here rather than
@@ -1544,7 +1545,8 @@ irreplaceable at any point.
 **The read-back protocol** — write the design (a file or the
 issue body), name where it is in
 plain text, let the operator edit it in place, read it back
-**once**, ratify, and only then file tasks — plus the `NEEDS-CONFIRM` /
+**once**, ratify, and only then move the filed tasks to Todo —
+plus the `NEEDS-CONFIRM` /
 `NEEDS-FEEDBACK` markers and the top-of-file index of open items,
 is specified in
 the `architect` skill and applies to explore-style spec tasks
