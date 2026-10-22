@@ -153,12 +153,13 @@ Backlog until the operator has ratified the whole spec **and**
 reviewed the filed tasks themselves, here in the tab; the
 operator then makes the Backlog → Todo move, as for every other
 spec (operator, 2026-10-22). Ratifying a design is not reviewing
-a task list, and the review is the operator's. The one shape
-that is **not** a breach: at close the session may ask — once,
-naming the tasks — "may I mark these Todo?", and on an explicit
-yes it executes that move, because a move the operator directs
-in the tab is the operator's own. What is forbidden is a move on
-this session's judgment that the tasks are ratified. An
+a task list, and the review is the operator's. What is **not** a
+breach: an explicit instruction from the operator, in this tab,
+to move named tasks, which the session executes, because a move
+the operator directs is the operator's own. The usual way it
+arises is a single ask at close, naming the tasks: "may I mark
+these Todo?". What is forbidden is a move on this session's
+judgment that the tasks are ratified or reviewed. An
 unratified task stays in Backlog or is canceled.
 
 **What it must not write, and this is the real monopoly:**
@@ -287,9 +288,10 @@ The loop is **mandatory**, file or no file:
 1. **They edit again**, and give an **explicit yes** per task,
    in this tab — a ratification may still nudge the spec, but
    mostly it agrees it.
-1. **The operator reviews the filed tasks**, as filed, and makes
-   the Todo move themselves (or directs it; see "What this
-   session may write"). Only then is the session complete.
+1. **The operator reviews the filed tasks**, as filed; the Todo
+   move is theirs to make or to direct (see "What this session
+   may write"). Only after that review can the session close as
+   Done.
 
 **A session that cannot reach the operator stops at In Review
 with its tasks still in Backlog**, the design copied into the
@@ -345,9 +347,10 @@ Review when the deliverable is handed off → Done only on the
 operator's ratification**.
 
 Two yeses, not one: the **design yes** inside the loop, given per
-task, comes before In Review and licenses **no** Todo move — the
-operator's task review does; the **close yes** (see "Lifecycle"
-below) is what moves the issue to Done.
+task, comes before In Review and licenses **no** Todo move — only
+the operator's own move, or their explicit direction in this tab,
+does; the **close yes** (see "Lifecycle" below) is what moves the
+issue to Done.
 
 **Never self-mark Done.** That is the measured mistake which
 produced the invalid state described under "This session is

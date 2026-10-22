@@ -1551,7 +1551,7 @@ irreplaceable at any point.
 issue body), name where it is in
 plain text, let the operator edit it in place, read it back
 **once**, ratify, and leave the filed tasks for the operator's
-review and Todo move —
+review and Todo move (theirs to make or to direct) —
 plus the `NEEDS-CONFIRM` /
 `NEEDS-FEEDBACK` markers and the top-of-file index of open items,
 is specified in

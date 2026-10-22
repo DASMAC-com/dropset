@@ -87,9 +87,10 @@ the document's state sections.
 1. **Architect read-back.** Fold the operator's comments into the
    spec in place; the spec file in an architect worktree is
    expendable once the rulings are on the issue. The spec lives at
-   the worktree root, never under a repo-shaped path. Tasks are
-   filed into Backlog as the design settles, and the read-back
-   ends in the operator's explicit per-task yes (2026-10-19).
+   the worktree root, never under a repo-shaped path. The
+   read-back ends in the operator's explicit yes (2026-10-19),
+   now given per task on tasks filed into Backlog as the design
+   settles.
    **An architect never moves a task it filed to Todo**
    (2026-10-22): the operator reviews the filed tasks in its tab
    and makes the move, or explicitly directs it there — never on
