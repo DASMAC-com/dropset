@@ -1,8 +1,8 @@
 //! `withdraw` integration tests — the outside-depositor exit path.
 //! Covers partial exit (basis reduction, PDA stays open), full exit
 //! (PDA close + counter decrement), the share-balance / slippage
-//! rejections, and realized-FX crystallization across a reference-price
-//! move.
+//! rejections, realized-FX crystallization across a reference-price
+//! move, and a withdraw after a performance fee has accrued.
 //!
 //! Note on the `signer == leader` rejection: it is a defensive check in
 //! the handler, but is unreachable through normal flow — `deposit`
@@ -13,8 +13,10 @@
 mod common;
 
 use anchor_v2_testing::{Keypair, Signer};
-use common::fixture::Fixture;
-use dropset::Price;
+use common::fixture::{simple_profile, Fixture};
+use common::{events, SIGNER_FUNDING_LAMPORTS};
+use dropset::{Price, RealizeEvent};
+use dropset_math_core::share::{compute_pro_rata_slice, realize_perf_fee};
 use solana_pubkey::Pubkey;
 
 const SEED_BASE: u64 = 1_000_000;
@@ -268,4 +270,140 @@ fn realized_price_positive_when_reference_rises() {
         vd.realized_pnl.get(),
         "yield + fx == pnl"
     );
+}
+
+/// Perf-fee vault (10%) led by a distinct keypair, seeded, opened to
+/// outside deposits, with one outside depositor `alice`. When `trade` is
+/// set, a taker then round-trips against the ladder — buys base at the
+/// ask, sells it back at the bid — so the vault keeps both legs' spread
+/// with its inventory back near the reference ratio. That lifts the
+/// value per share, `isqrt(base · quote) / total_shares`, past the HWM,
+/// and the next realize accrues a fee. (A single one-sided fill of this
+/// size would not: pushing inventory off the ratio costs the geometric
+/// mean more than the premium earns.) Returns `(leader, alice)`.
+fn perf_fee_vault_with_depositor(f: &mut Fixture, trade: bool) -> (Keypair, Keypair) {
+    let admin = f.authority.insecure_clone();
+    let leader = f.funded_keypair(10 * SIGNER_FUNDING_LAMPORTS);
+    f.create_vault(100_000, leader.pubkey(), true, leader.pubkey())
+        .expect("create_vault");
+    let px = Price::encode(10_850_000, 0).unwrap();
+    f.set_reference_price(&leader, 0, px.as_u32(), 0)
+        .expect("set_reference_price");
+    f.set_liquidity_profile(&leader, 0, simple_profile(5_000, 10_000, u32::MAX))
+        .expect("set_liquidity_profile");
+    f.deposit_leader_as(&leader, 0, SEED_BASE, SEED_QUOTE, SEED_BASE, SEED_QUOTE)
+        .expect("seed");
+    f.set_outside_deposits_approved(&admin, 0, true)
+        .expect("admin approves");
+    let alice = f.funded_depositor(400_000, 400_000);
+    f.deposit(&alice, 0, 100_000, 0, 400_000, 400_000)
+        .expect("outside deposit");
+    if trade {
+        let taker = f.funded_depositor(0, 200_000);
+        f.swap(&taker, 0, 100_000, Price::INFINITY.as_u32(), 1)
+            .expect("taker buys base at the ask premium");
+        let bought = f.token_balance(&f.base_ata(&taker.pubkey()));
+        f.swap(&taker, 1, bought, Price::ZERO.as_u32(), 1)
+            .expect("taker sells it back at the bid discount");
+    }
+    (leader, alice)
+}
+
+/// Withdraw half of `alice`'s shares and assert the handler's order —
+/// realize, re-read the share count, slice — against the
+/// `dropset-math-core` kernels the shared share vectors pin for the TS
+/// SDK (`sdk/conformance/share_vectors.json`). Returns the fee shares
+/// the realize minted.
+fn assert_withdraw_matches_kernels(f: &mut Fixture, alice: &Keypair) -> u64 {
+    let pre = f.vault(0);
+    let shares_in = f.vault_depositor(0, &alice.pubkey()).unwrap().shares.get() / 2;
+    let (b_ata, q_ata) = (f.base_ata(&alice.pubkey()), f.quote_ata(&alice.pubkey()));
+    let (b_before, q_before) = (f.token_balance(&b_ata), f.token_balance(&q_ata));
+
+    let r = realize_perf_fee(
+        pre.base_atoms.get(),
+        pre.quote_atoms.get(),
+        pre.total_shares.get(),
+        pre.leader_shares.get(),
+        pre.hwm.get(),
+        pre.perf_fee_rate.get(),
+    );
+    let (want_base, want_quote) = compute_pro_rata_slice(
+        shares_in,
+        r.total_shares_after,
+        pre.base_atoms.get(),
+        pre.quote_atoms.get(),
+    );
+
+    let meta = f
+        .withdraw_meta(alice, 0, shares_in, 0, 0)
+        .expect("withdraw");
+
+    // The payout is the slice against the realized share count.
+    let ev = events::withdraw(&meta);
+    assert_eq!((ev.base_out, ev.quote_out), (want_base, want_quote));
+    assert_eq!(f.token_balance(&b_ata) - b_before, want_base);
+    assert_eq!(f.token_balance(&q_ata) - q_before, want_quote);
+
+    // The fee shares went to the leader and stay in the vault: only
+    // alice's slice left the inventory and only her shares were burned.
+    let post = f.vault(0);
+    assert_eq!(
+        post.leader_shares.get(),
+        pre.leader_shares.get() + r.shares_minted
+    );
+    assert_eq!(post.total_shares.get(), r.total_shares_after - shares_in);
+    assert_eq!(post.hwm.get(), r.hwm_after);
+    assert_eq!(post.base_atoms.get(), pre.base_atoms.get() - want_base);
+    assert_eq!(post.quote_atoms.get(), pre.quote_atoms.get() - want_quote);
+
+    // A `RealizeEvent` rides along exactly when the realize minted.
+    let realize_events = events::count::<RealizeEvent>(&meta);
+    assert_eq!(realize_events, usize::from(r.shares_minted > 0));
+    if r.shares_minted > 0 {
+        let rev = events::realize(&meta);
+        assert_eq!(rev.shares_minted, r.shares_minted);
+        // Every `RealizeEvent` call site reports the post-instruction
+        // totals, so here that is after alice's burn, not the realize's.
+        assert_eq!(rev.total_shares_after, post.total_shares.get());
+    }
+    r.shares_minted
+}
+
+#[test]
+fn withdraw_after_perf_fee_accrual_pays_the_fee_diluted_slice() {
+    let mut f = Fixture::bootstrap();
+    let (_leader, alice) = perf_fee_vault_with_depositor(&mut f, true);
+
+    // Sized against the stored (pre-realize) share count, the slice would
+    // hand alice part of the leader's fee.
+    let pre = f.vault(0);
+    let shares_in = f.vault_depositor(0, &alice.pubkey()).unwrap().shares.get() / 2;
+    let (stale_base, stale_quote) = compute_pro_rata_slice(
+        shares_in,
+        pre.total_shares.get(),
+        pre.base_atoms.get(),
+        pre.quote_atoms.get(),
+    );
+
+    let minted = assert_withdraw_matches_kernels(&mut f, &alice);
+    assert!(minted > 0, "the trade accrued a perf fee");
+
+    let paid_base = pre.base_atoms.get() - f.vault(0).base_atoms.get();
+    let paid_quote = pre.quote_atoms.get() - f.vault(0).quote_atoms.get();
+    assert!(
+        paid_base < stale_base && paid_quote < stale_quote,
+        "the fee-diluted payout is below the stale-count slice"
+    );
+}
+
+#[test]
+fn withdraw_without_accrual_pays_the_stored_count_slice() {
+    let mut f = Fixture::bootstrap();
+    let (_leader, alice) = perf_fee_vault_with_depositor(&mut f, false);
+
+    let minted = assert_withdraw_matches_kernels(&mut f, &alice);
+    // The outside deposit's floored share count can leave value per share
+    // a few quanta above the HWM; that gain is sub-quantum, so no fee.
+    assert_eq!(minted, 0, "no trade, no fee");
 }
