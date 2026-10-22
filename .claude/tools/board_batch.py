@@ -79,6 +79,7 @@ mixing the two would blur exactly the boundary the paragraph above draws.
 Usage:
     python3 .claude/tools/board_batch.py list
     python3 .claude/tools/board_batch.py list --state Todo
+    python3 .claude/tools/board_batch.py list --updated-since P1D
     python3 .claude/tools/board_batch.py view
     python3 .claude/tools/board_batch.py fields --updates updates.json
     python3 .claude/tools/board_batch.py priorities --updates priorities.json

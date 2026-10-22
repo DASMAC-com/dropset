@@ -449,8 +449,8 @@ def open_parked(matches: list[dict]) -> list[dict]:
     Only a **parked** lever — open *and* still carrying the milestone — accepts
     new evidence. Everything else has moved on: **folded** (closed, its content
     copied into an aggregated task) is already queued for action, **rejected**
-    (closed with a reason) is settled, and **promoted** (milestone cleared, moved
-    to Backlog) is being worked.
+    (closed with a reason) is settled, and **promoted** (milestone cleared) is
+    being worked.
 
     Selecting the parked one is what keeps accumulation working after the first
     fold: the fold copies each ``**Fingerprint**:`` line into the aggregated task,
