@@ -19,6 +19,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 import vector_diff as vd
 
@@ -81,6 +82,25 @@ class SummarizeTests(unittest.TestCase):
         line, changed = vd.summarize(old, {"sizes": [1, 2, 4]}, 8)
         self.assertTrue(changed)
         self.assertIn("sizes[2]: 3 -> 4", line)
+
+    def test_a_scalar_whose_type_changed_is_a_field_change(self):
+        # Python's `1 == 1.0` and `0 == False` must not hide a type change.
+        line, changed = vd.summarize({"a": 1, "b": 0}, {"a": 1.0, "b": False}, 8)
+        self.assertTrue(changed)
+        self.assertIn("a: 1 -> 1.0", line)
+        self.assertIn("b: 0 -> false", line)
+
+    def test_a_list_that_grows_into_byte_shape_is_a_field_change(self):
+        line, changed = vd.summarize({"sizes": [1, 2]}, {"sizes": [1] * 40}, 8)
+        self.assertTrue(changed)
+        self.assertIn("sizes[2] (added)", line)
+
+    def test_non_string_case_names_fall_back_to_index_matching(self):
+        old = {"cases": [{"name": [1], "v": 1}, {"name": 2, "v": 2}]}
+        new = {"cases": [{"name": [1], "v": 1}, {"name": 2, "v": 3}]}
+        line, changed = vd.summarize(old, new, 8)
+        self.assertTrue(changed)
+        self.assertIn("cases[1].v: 2 -> 3", line)
 
     def test_comment_prose_is_never_a_field(self):
         def reword(doc):
@@ -168,13 +188,33 @@ class RunTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("cases.buy_small.quote.fills: 1 -> 2", out)
 
-    def test_a_path_missing_at_the_ref_is_an_error(self):
+    def test_an_added_file_is_a_field_change_on_the_default_glob(self):
         self._write("c.json", BASE)
         try:
-            with self.assertRaises(vd.VectorDiffError):
-                self._run(["sdk/conformance/c.json"])
+            code, out, _ = self._run([])
         finally:
             (self.dir / "c.json").unlink()
+        self.assertEqual(code, 1)
+        self.assertIn("c.json: fields: file added (absent at the ref)", out)
+
+    def test_a_deleted_file_is_still_visited_and_is_a_field_change(self):
+        # The glob alone would never see it: `git add -A` staged the deletion.
+        (self.dir / "b.json").unlink()
+        code, out, _ = self._run([])
+        self.assertEqual(code, 1)
+        self.assertIn("b.json: fields: file deleted (present at the ref)", out)
+
+    def test_main_maps_an_error_to_exit_two(self):
+        (self.dir / "a.json").write_text("{not json", encoding="utf-8")
+        err = io.StringIO()
+        with (
+            mock.patch.object(vd.sys, "argv", ["vector_diff.py"]),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(err),
+        ):
+            code = vd.main()
+        self.assertEqual(code, 2)
+        self.assertIn("error: sdk/conformance/a.json is not valid JSON", err.getvalue())
 
 
 if __name__ == "__main__":

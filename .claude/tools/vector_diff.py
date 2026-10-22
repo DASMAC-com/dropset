@@ -22,7 +22,10 @@ Prints one line per file — ``unchanged``, ``bytes-only`` (naming the byte arra
 that moved) or ``fields`` (naming the changed paths, capped unless ``--all``).
 A **byte array** is a list of at least ``MIN_BYTE_ARRAY`` integers, each in
 ``0..=255``: account data, never an expected output. ``_comment`` is prose and
-reported as such, never as a field.
+reported as such, never as a field. A file added or deleted since the ref reads
+as ``fields`` — a whole expected-output set appearing or vanishing — and the
+default set is the working tree's glob **plus** the ref's listing, so a
+deleted file is never silently skipped.
 
 Exit 0 when no field changed (``unchanged`` / ``bytes-only``), 1 when one did,
 2 on error. Stdlib only, and deliberately **not** a Cargo workspace member — see
@@ -36,11 +39,13 @@ import argparse
 import glob
 import json
 import os
+import subprocess
 import sys
 
 import show_at_ref
 
-VECTOR_GLOB = "sdk/conformance/*.json"
+VECTOR_DIR = "sdk/conformance"
+VECTOR_GLOB = f"{VECTOR_DIR}/*.json"
 
 # Shortest integer list read as account bytes. Real accounts run to hundreds of
 # bytes; an expected-output list (a handful of sizes or prices) sits far below.
@@ -71,7 +76,9 @@ def _named(items: list) -> dict | None:
     Matching by name keeps an inserted case from shifting every later index into
     a spurious change.
     """
-    if not items or not all(isinstance(x, dict) and "name" in x for x in items):
+    if not items or not all(
+        isinstance(x, dict) and isinstance(x.get("name"), str) for x in items
+    ):
         return None
     keyed = {x["name"]: x for x in items}
     return keyed if len(keyed) == len(items) else None
@@ -79,7 +86,9 @@ def _named(items: list) -> dict | None:
 
 def compare(old, new, path: str, fields: list[str], byte_arrays: list[str]) -> None:
     """Append every difference under ``path`` to ``fields`` or ``byte_arrays``."""
-    if is_byte_array(old) or is_byte_array(new):
+    # Both sides, not either: a list that grows into byte shape, or a byte array
+    # replaced by another type, is a change of meaning, not a byte move.
+    if is_byte_array(old) and is_byte_array(new):
         if old != new:
             byte_arrays.append(path or "<root>")
         return
@@ -107,7 +116,9 @@ def compare(old, new, path: str, fields: list[str], byte_arrays: list[str]) -> N
             else:
                 compare(old[i], new[i], sub, fields, byte_arrays)
         return
-    if old != new:
+    # Type first: Python's `1 == 1.0 == True` would read a re-serialized output
+    # as unchanged, and a strict u64 or bool consumer would not.
+    if type(old) is not type(new) or old != new:
         fields.append(f"{path or '<root>'}: {_short(old)} -> {_short(new)}")
 
 
@@ -159,13 +170,40 @@ def _parse(text: str, label: str) -> dict:
     return doc
 
 
-def diff_file(ref: str, path: str, limit: int | None) -> tuple[str, bool]:
+def paths_at_ref(ref: str, paths: list[str]) -> set[str]:
+    """The paths among ``paths`` that exist at ``ref``."""
+    if ref.startswith("-"):
+        raise VectorDiffError(f"invalid ref: {ref!r}")
+    try:
+        completed = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", ref, "--", *paths],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise VectorDiffError(f"cannot run git: {exc}") from exc
+    if completed.returncode != 0:
+        raise VectorDiffError(
+            f"git ls-tree {ref} failed: {completed.stderr.strip() or completed.returncode}"
+        )
+    return set(completed.stdout.split())
+
+
+def diff_file(ref: str, path: str, at_ref: bool, limit: int | None) -> tuple[str, bool]:
+    # A file the regeneration added or deleted is a whole expected-output set
+    # appearing or vanishing: a behavior change, never an error or a skip.
+    if not at_ref:
+        return "fields: file added (absent at the ref)", True
+    if not os.path.exists(path):
+        return "fields: file deleted (present at the ref)", True
     try:
         old_text = show_at_ref.read_blob(ref, path)
     except show_at_ref.ShowAtRefError as exc:
         raise VectorDiffError(str(exc)) from exc
     try:
-        with open(path, encoding="utf-8") as handle:
+        # errors="replace" matches read_blob's decode of the ref side.
+        with open(path, encoding="utf-8", errors="replace") as handle:
             new_text = handle.read()
     except OSError as exc:
         raise VectorDiffError(f"cannot read {path}: {exc}") from exc
@@ -193,13 +231,24 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run(argv: list[str]) -> int:
     args = build_parser().parse_args(argv[1:])
-    paths = args.paths or sorted(glob.glob(VECTOR_GLOB))
+    if args.paths:
+        paths = args.paths
+        at_ref = paths_at_ref(args.ref, paths)
+    else:
+        # Union with the ref's listing, so a file the regeneration deleted is
+        # still visited rather than silently missing from the glob.
+        at_ref = {
+            p
+            for p in paths_at_ref(args.ref, [VECTOR_DIR])
+            if os.path.dirname(p) == VECTOR_DIR and p.endswith(".json")
+        }
+        paths = sorted(set(glob.glob(VECTOR_GLOB)) | at_ref)
     if not paths:
         raise VectorDiffError(f"no files match {VECTOR_GLOB}; run from the repo root")
     limit = None if args.all else DEFAULT_LIMIT
     changed = False
     for path in paths:
-        line, behavior = diff_file(args.ref, path, limit)
+        line, behavior = diff_file(args.ref, path, path in at_ref, limit)
         changed |= behavior
         print(f"{os.path.basename(path)}: {line}")
     return 1 if changed else 0
