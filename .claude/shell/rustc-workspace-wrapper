@@ -1,0 +1,14 @@
+#!/bin/sh
+# The cargo pool's per-checkout key: a passthrough `RUSTC_WORKSPACE_WRAPPER`.
+#
+# Cargo hashes a workspace crate's path relative to the workspace root, so every
+# worktree builds each workspace crate into the SAME artifact slot of the shared
+# target directory, and judges it fresh by comparing this checkout's source
+# mtimes against the last build's — whichever worktree ran it. An edit older
+# than another worktree's build is then silently skipped: a false compile error,
+# or worse a pass on code that was never compiled. Cargo mixes the workspace
+# wrapper's path into the workspace crates' fingerprints (and only theirs), so
+# a wrapper at a per-checkout path gives each checkout its own slots while the
+# dependencies stay shared. It does nothing else. `_ds_cargo_pool` in init.zsh
+# exports it; see docs/conventions/local-integrations.md → "The cargo pool".
+exec "$@"

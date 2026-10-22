@@ -104,6 +104,34 @@ _ds_cargo_pool() {
     export CARGO_TARGET_DIR="${CARGO_HOME:-$HOME/.cargo}/target/dropset"
     _DS_CARGO_POOL_OWNED[CARGO_TARGET_DIR]="$CARGO_TARGET_DIR"
   fi
+  # PER-CHECKOUT KEYS. Every worktree builds each workspace crate into the same
+  # artifact slot, judged fresh by source mtime against whichever worktree built
+  # it last, so an edit older than a sibling's build is silently skipped. A
+  # workspace wrapper at this checkout's own path re-keys the workspace crates
+  # (and only them) for check, build and test; clippy replaces that wrapper with
+  # its driver, but tracks CLIPPY_CONF_DIR, so a per-checkout value makes it
+  # rebuild rather than reuse. Unlike the two above, these follow a `cd` into
+  # another checkout. A branch that predates the wrapper gets neither, which is
+  # the old behavior, never another checkout's path.
+  local checkout="$_DS_REPO" rest="${PWD:A}/" wrapper value
+  if [[ "$rest" == "$_DS_REPO/.claude/worktrees/"?* ]]; then
+    rest="${rest#"$_DS_REPO/.claude/worktrees/"}"
+    checkout="$_DS_REPO/.claude/worktrees/${rest%%/*}"
+  fi
+  wrapper="$checkout/.claude/shell/rustc-workspace-wrapper"
+  [[ -x "$wrapper" ]] || checkout="" wrapper=""
+  for var value in RUSTC_WORKSPACE_WRAPPER "$wrapper" CLIPPY_CONF_DIR "$checkout"
+  do
+    [[ -n "${(P)var-}" && "${(P)var}" != "${_DS_CARGO_POOL_OWNED[$var]-}" ]] &&
+      continue
+    if [[ -n "$value" ]]; then
+      export "$var=$value"
+      _DS_CARGO_POOL_OWNED[$var]="$value"
+    else
+      unset "$var"
+      unset "_DS_CARGO_POOL_OWNED[$var]"
+    fi
+  done
   # Probed only when the bound is unset, so a `cd` within a pooled checkout
   # forks nothing.
   [[ -n "${CARGO_BUILD_JOBS-}" ]] && return 0
