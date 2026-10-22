@@ -1,29 +1,25 @@
 #!/usr/bin/env python3
-"""The thumbs-up dispatch gate's two halves, which the Linear MCP does not expose.
+"""The dispatch gate's two halves, which the Linear MCP does not expose in one read.
 
-A planning session dispatches a task only once the operator has ratified its
-spec with a thumbs-up on the issue, and closes a folded comment thread by
-resolving it. Neither is reachable through the MCP — ``get_issue`` and
-``list_comments`` return no reactions, and nothing resolves a thread — so both
-ran for two days as scratchpad scripts, a dozen times each, before the ruling
-that a working shape is committed rather than re-typed. These are those scripts
-on the shared transport, with one change: they now fail closed, refusing where
-the scripts printed whatever came back.
+Backlog is the operator's review inbox and Todo the approved queue: the
+operator's own move from one to the other *is* the approval, since nobody else
+may make it. A planning session dispatches a task only once it sits in Todo,
+and closes a folded comment thread by resolving it — which the MCP cannot do.
 
 Subcommands
 -----------
 
-``approvals`` read each issue's ``reactionData`` and print one line per issue:
-              whether a ``+1`` by the configured assignee exists, and when.
-              Exits **1** if any issue lacks one, so a dispatch wrapper can
-              refuse mechanically.
+``approvals`` read each issue's state and comment threads and print one line
+              per issue: its state and how many top-level threads are still
+              unresolved. Exits **1** if any issue is not in Todo, so a
+              dispatch wrapper can refuse mechanically. The open-thread count
+              is information for the fold, never a refusal: a thread the
+              operator forgot to resolve does not block a launch.
 ``resolve``   resolve a comment thread via ``commentResolve``, optionally
               naming the comment that resolved it.
 
-The assignee is ``LINEAR_ASSIGNEE_ID`` from the environment — never a
-hard-coded UUID, per ``docs/conventions/linear-automation.md``. Any failure
-inside a run (transport, GraphQL, a missing variable) exits **2**, so it can never read as
-"unapproved".
+Any failure inside a run (transport, GraphQL, a missing variable) exits **2**,
+so it can never read as "unapproved".
 
 Stdlib only, and deliberately **not** a Cargo workspace member — see
 ``docs/conventions/skill-tooling.md``. Tests live in
@@ -37,17 +33,27 @@ import sys
 
 import linear_api
 
-# Linear stores the thumbs-up as its shortcode. The bare glyph is accepted too,
-# in case another client writes it; any other form reads as unapproved, which
-# fails closed.
-APPROVAL_EMOJI = frozenset({"+1", "\N{THUMBS UP SIGN}"})
+# The approved queue. Compared by name, case-insensitively: Todo and Backlog
+# share the "unstarted" / "backlog" types with no other distinguishing field.
+APPROVED_STATE = "Todo"
 
 EXIT_UNAPPROVED = 1
 EXIT_ERROR = 2
 
-_REACTIONS_QUERY = """
-query IssueReactions($id: String!) {
-  issue(id: $id) { identifier reactionData }
+# Linear's page ceiling. A spec with more comments than this has bigger
+# problems; the count is then printed as a lower bound rather than refused.
+_COMMENT_PAGE = 250
+
+_GATE_QUERY = """
+query IssueGate($id: String!, $first: Int!) {
+  issue(id: $id) {
+    identifier
+    state { name }
+    comments(first: $first) {
+      nodes { resolvedAt parent { id } }
+      pageInfo { hasNextPage }
+    }
+  }
 }
 """
 
@@ -64,47 +70,55 @@ class LinearGateError(Exception):
     """A user-facing failure: surfaced to stderr, exits ``EXIT_ERROR``."""
 
 
-def approval_time(reaction_data: object, user_id: str) -> str | None:
-    """The ``reactedAt`` of ``user_id``'s thumbs-up, or ``None`` if absent.
+def open_threads(comments: object) -> str:
+    """How many top-level threads are unresolved, as printed.
 
-    ``reactionData`` is a list of ``{emoji, reactions: [{userId, reactedAt}]}``.
-    Anything else — ``null`` on an issue nobody reacted to — is no approval.
+    A thread is a comment with no parent; a reply's own ``resolvedAt`` means
+    nothing. A truncated page prints as a lower bound (``N+``).
     """
-    if not isinstance(reaction_data, list):
-        return None
-    for entry in reaction_data:
-        if not isinstance(entry, dict) or entry.get("emoji") not in APPROVAL_EMOJI:
-            continue
-        for reaction in entry.get("reactions") or []:
-            if isinstance(reaction, dict) and reaction.get("userId") == user_id:
-                return str(reaction.get("reactedAt") or "unknown time")
-    return None
+    if not isinstance(comments, dict):
+        raise LinearGateError("issue comments came back malformed")
+    nodes = comments.get("nodes")
+    if not isinstance(nodes, list):
+        raise LinearGateError("issue comments came back malformed")
+    count = sum(
+        1
+        for node in nodes
+        if isinstance(node, dict)
+        and node.get("parent") is None
+        and node.get("resolvedAt") is None
+    )
+    truncated = bool((comments.get("pageInfo") or {}).get("hasNextPage"))
+    return f"{count}+" if truncated else str(count)
 
 
 def _post(api_key: str, query: str, variables: dict) -> dict:
     return linear_api.post(api_key, query, variables, error=LinearGateError)
 
 
-def cmd_approvals(
-    api_key: str, user_id: str, identifiers: list[str]
-) -> tuple[list[str], bool]:
-    """One line per issue, and whether every issue carried the approval."""
+def cmd_approvals(api_key: str, identifiers: list[str]) -> tuple[list[str], bool]:
+    """One line per issue, and whether every issue sits in Todo."""
     lines = []
     all_approved = True
     for identifier in identifiers:
-        issue = _post(api_key, _REACTIONS_QUERY, {"id": identifier}).get("issue")
+        issue = _post(
+            api_key, _GATE_QUERY, {"id": identifier, "first": _COMMENT_PAGE}
+        ).get("issue")
         if not isinstance(issue, dict):
             raise LinearGateError(
                 f"{identifier} did not resolve — it may be archived, deleted, or misspelled"
             )
-        when = approval_time(issue.get("reactionData"), user_id)
+        state = (issue.get("state") or {}).get("name")
+        if not isinstance(state, str) or not state:
+            raise LinearGateError(f"{identifier} came back with no state")
+        threads = open_threads(issue.get("comments"))
+        approved = state.casefold() == APPROVED_STATE.casefold()
+        all_approved = all_approved and approved
         # The requested identifier, not the server's: a caller matching lines
-        # to the issues it asked about must never see a different name.
-        if when is None:
-            all_approved = False
-            lines.append(f"UNAPPROVED {identifier}")
-        else:
-            lines.append(f"APPROVED {identifier} {when}")
+        # to the issues it asked about must never see a different name. The
+        # state goes last because a state name may contain a space.
+        verdict = "APPROVED" if approved else "UNAPPROVED"
+        lines.append(f"{verdict} {identifier} open-threads={threads} state={state}")
     return lines, all_approved
 
 
@@ -127,13 +141,13 @@ def cmd_resolve(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="The thumbs-up dispatch gate: approval probe and thread resolve.",
+        description="The dispatch gate: approval probe and thread resolve.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     approvals = sub.add_parser(
         "approvals",
-        help="report each issue's thumbs-up by $LINEAR_ASSIGNEE_ID; exit 1 if any lacks one",
+        help="report each issue's state and open threads; exit 1 if any is not in Todo",
     )
     approvals.add_argument("identifiers", nargs="+", metavar="ENG-###")
 
@@ -155,8 +169,7 @@ def run(argv: list[str]) -> int:
     try:
         api_key = linear_api.env_var("LINEAR_API_KEY", error=LinearGateError)
         if args.command == "approvals":
-            user_id = linear_api.env_var("LINEAR_ASSIGNEE_ID", error=LinearGateError)
-            lines, all_approved = cmd_approvals(api_key, user_id, args.identifiers)
+            lines, all_approved = cmd_approvals(api_key, args.identifiers)
         else:
             lines = [
                 cmd_resolve(

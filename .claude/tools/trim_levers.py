@@ -82,11 +82,12 @@ REQUEST_TIMEOUT = 30
 # sweeping up trim levers.
 MILESTONE_NAME = "Trim levers"
 
-# Parked findings sit in Todo, never Backlog: Backlog means pullable, and the
-# operator's Next view is the unblocked Backlog, so a parked lever there would
-# surface as available work. Promotion in a planning session is what moves a lever
-# Todo -> Backlog and clears the milestone.
-PARKED_STATE = "Todo"
+# Parked findings sit in Backlog, the operator's review inbox, never Todo: Todo is
+# the approved queue and only the operator moves an issue into it. The milestone
+# is what keeps a parked lever out of the inbox views, so a mistaken milestone
+# clear surfaces it for review rather than marking it approved. Promotion is
+# then a single write: clear the milestone.
+PARKED_STATE = "Backlog"
 
 # One page of a listing read. The parked pool is small by construction — it drains
 # through folds — but the read follows the cursor anyway, because the sibling
@@ -448,8 +449,8 @@ def open_parked(matches: list[dict]) -> list[dict]:
     Only a **parked** lever — open *and* still carrying the milestone — accepts
     new evidence. Everything else has moved on: **folded** (closed, its content
     copied into an aggregated task) is already queued for action, **rejected**
-    (closed with a reason) is settled, and **promoted** (milestone cleared, moved
-    to Backlog) is being worked.
+    (closed with a reason) is settled, and **promoted** (milestone cleared) is
+    being worked.
 
     Selecting the parked one is what keeps accumulation working after the first
     fold: the fold copies each ``**Fingerprint**:`` line into the aggregated task,

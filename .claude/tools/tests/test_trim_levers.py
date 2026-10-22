@@ -48,10 +48,10 @@ ENV = {
 def _node(
     identifier="ENG-1",
     title="A lever",
-    state="Todo",
+    state="Backlog",
     milestone="Trim levers",
     fingerprint="a:b",
-    state_type="unstarted",
+    state_type="backlog",
     description=None,
 ):
     """A probe/listing result node.
@@ -210,9 +210,15 @@ class FileLeverTests(unittest.TestCase):
                     }
                 }
             if "States" in query:
+                # Both pre-session states, so the pick is proven, not assumed.
                 return {
                     "team": {
-                        "states": {"nodes": [{"id": "st-1", "name": tl.PARKED_STATE}]}
+                        "states": {
+                            "nodes": [
+                                {"id": "st-todo", "name": "Todo"},
+                                {"id": "st-1", "name": "Backlog"},
+                            ]
+                        }
                     }
                 }
             self.created = variables["input"]
@@ -237,9 +243,11 @@ class FileLeverTests(unittest.TestCase):
             )
         self.assertTrue(line.startswith("FILED ENG-7 "))
         # Milestone, state and assignee all in the creating call — filing then
-        # amending would cost a second full body echo and buy nothing.
+        # amending would cost a second full body echo and buy nothing. Parked
+        # means Backlog plus the milestone: Todo is the operator's approval.
         self.assertEqual(self.created["projectMilestoneId"], "ms-1")
         self.assertEqual(self.created["stateId"], "st-1")
+        self.assertEqual(tl.PARKED_STATE, "Backlog")
         self.assertEqual(self.created["assigneeId"], "me")
 
     def test_the_confirmation_carries_no_body_text(self):
