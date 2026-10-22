@@ -59,7 +59,8 @@ test('the mainnet id matches the committed public key file', () => {
     'utf8',
   );
   assert.strictEqual(DROPSET_MAINNET_PROGRAM_ADDRESS, file.trim());
-  // The operator-ground eBook vanity key.
+  // Pin the operator-ground vanity prefix, so all copies swapped together
+  // to some other key cannot pass.
   assert.ok(DROPSET_MAINNET_PROGRAM_ADDRESS.startsWith('eBook'));
 });
 

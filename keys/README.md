@@ -50,7 +50,7 @@ are the operator's, held in 1Password and configured through the TUI's
 git-ignored keys file, `tui/keys.env` (start from the committed
 `tui/keys.env.example`). An SDK consumer never needs them.
 
-That file is one of the repo's two secrets-reference homes. The other is
+`tui/keys.env` is one of the repo's two secrets-reference homes. The other is
 the localnet collectors enclave, `infra/localnet/secrets.local.env`, which
 holds the data stack's credentials (`docs/data-feeds.md` §12). Each keeps
 references only; the values stay in 1Password.
