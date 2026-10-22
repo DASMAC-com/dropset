@@ -32,6 +32,14 @@ A candidate, in any of these forms:
 - nothing — in which case run `/session-metrics` for this
   session first and take its top candidate.
 
+**Prefer a candidate that eliminates turns.** A multi-turn flow
+with no judgment in it, collapsed into one tool run, beats a
+shape whose tool would only shrink a payload — deleting a turn
+removes every replay it would have paid
+(`docs/conventions/context-economy.md` → "Session length is
+itself a cost lever"). Size the win in turns removed per run,
+not only bytes.
+
 ## Step 1: demand provenance
 
 **Refuse to harden a shape with no measured recurrence.**

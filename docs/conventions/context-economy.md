@@ -69,6 +69,17 @@ itself, so the decision belongs to whoever splits the work. The fold
 rules in `docs/conventions/linear-automation.md` and the `plan`,
 `merge-tasks` and `trim-context` skills are where it is implemented.
 
+**Turns are the quantity to minimize; lines and result sizes are
+proxies for them.** So a lever that **deletes turns** outranks a lever
+that shrinks a result: converting a multi-turn flow with no judgment in
+it into one deterministic tool run removes every replay those turns
+would have paid, where a narrower result only lowers one term of the
+sum. Deterministic over conversational is the default wherever a flow
+holds no judgment — the one-run `init-pr` bootstrap and the queue watch
+that dismisses a merged PR's notifications itself are the worked
+instances. Every `session-metrics` run asks the question explicitly:
+**which of this session's turns could have been eliminated entirely?**
+
 **The line band: target 300–800 changed lines per PR.** Measured across
 the fleet on 2026-09-11 — per-session cost at verified Bedrock rates,
 joined to merged-PR line counts. Read the table as **two separate
