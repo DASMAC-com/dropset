@@ -57,6 +57,23 @@ Note the cost being avoided is **context, in failure tails** — the bytes are
 hook output on a fail, so wrapping a full sweep in ``run_quiet.py`` does nothing
 (it already is wrapped). The only lever is *fewer full sweeps*.
 
+``--files <paths…>`` lints exactly the named paths, so a narrower-than-branch
+check needs no hand-spelled ``pre-commit run --config … --files …`` (whose
+``--config`` is mandatory and whose default name fails with
+``InvalidConfigError``).
+
+Two failure shapes are handled here rather than in prose:
+
+* **A fix-then-fail hook** (``mdformat``, ``ruff format``, ``biome``, the
+  dictionary sorter …) rewrites a file and fails by design. When the run fails
+  and pre-commit says a hook modified files, the tool re-runs **once** and
+  reports only that second result — a second failure is the real one.
+* **A missing ``biome`` / ``tsc``.** Both run through the frontend's
+  ``node_modules``; when a JS/TS/CSS path is in the set and the binary is
+  absent, the tool installs the frontend dependencies first. If the install
+  fails, those hooks are skipped and reported **unverifiable** — CI runs them —
+  so the remaining hooks still return a verdict.
+
 Stdlib only. This is a Python skill-tool under ``.claude/tools/`` — deliberately
 **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
 """
@@ -104,6 +121,17 @@ _LS_OTHERS = [
     "--exclude-standard",
     "-z",
 ]
+
+
+# pre-commit's own line for a hook that rewrote a file.
+MODIFIED_MARKER = "files were modified by this hook"
+
+# The hooks that run through `frontend/node_modules`, and the suffixes that
+# select them (the union of their `types_or`, plus the module variants).
+FRONTEND_HOOKS = ("biome", "tsc")
+FRONTEND_SUFFIXES = (".css", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
+
+_FRONTEND_INSTALL = ["pnpm", "--dir", "frontend", "install"]
 
 
 def repo_root() -> str:
@@ -229,6 +257,95 @@ def changed_files(root: str, base_ref: str = DEFAULT_BASE) -> list[str]:
     return existing(parse_ls_files(tracked + "\0" + untracked), root)
 
 
+def missing_frontend_hooks(
+    root: str, hook_args: list[str], files: list[str]
+) -> list[str]:
+    """The frontend hooks this run would select whose binary is absent.
+
+    Empty when no JS/TS/CSS path is in the set, or when ``hook_args`` names a
+    hook that is not a frontend one.
+    """
+    if not any(f.endswith(FRONTEND_SUFFIXES) for f in files):
+        return []
+    selected = [h for h in FRONTEND_HOOKS if not hook_args or h in hook_args]
+    bin_dir = os.path.join(root, "frontend", "node_modules", ".bin")
+    return [h for h in selected if not os.path.exists(os.path.join(bin_dir, h))]
+
+
+def ensure_frontend_hooks(
+    root: str, hook_args: list[str], files: list[str]
+) -> list[str]:
+    """Install the frontend dependencies if a selected hook's binary is absent.
+
+    Returns the hooks that still cannot run afterwards — the ones to skip and report
+    unverifiable. The install's output is captured: on success it is noise, and
+    on failure its last lines are all the diagnosis the caller needs.
+    """
+    missing = missing_frontend_hooks(root, hook_args, files)
+    if not missing:
+        return []
+    print(
+        f"lint-paths: {', '.join(missing)} not installed — "
+        f"running `{' '.join(_FRONTEND_INSTALL)}`",
+        file=sys.stderr,
+    )
+    proc = subprocess.run(_FRONTEND_INSTALL, cwd=root, capture_output=True, text=True)
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout).strip().splitlines()[-5:]
+        for line in tail:
+            print(f"lint-paths:   {line}", file=sys.stderr)
+    return missing_frontend_hooks(root, hook_args, files)
+
+
+def run_pre_commit(
+    cmd: list[str], root: str, env: dict | None = None
+) -> tuple[int, bool]:
+    """Run pre-commit, mirroring its output, and say whether a hook rewrote a
+    file. Returns ``(exit code, modified)``."""
+    modified = False
+    with subprocess.Popen(
+        cmd,
+        cwd=root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    ) as proc:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            sys.stdout.write(line)
+            modified = modified or MODIFIED_MARKER in line
+    sys.stdout.flush()
+    return proc.returncode, modified
+
+
+def lint(config: str, hook_args: list[str], files: list[str], root: str) -> int:
+    """Run the hooks over ``files``, absorbing the two by-design failures."""
+    env = None
+    unverifiable = ensure_frontend_hooks(root, hook_args, files)
+    if unverifiable:
+        skip = [s for s in os.environ.get("SKIP", "").split(",") if s]
+        env = {**os.environ, "SKIP": ",".join(skip + unverifiable)}
+    cmd = pre_commit_cmd(config, hook_args, files)
+
+    code, modified = run_pre_commit(cmd, root, env)
+    if code != 0 and modified:
+        print(
+            "lint-paths: a hook rewrote files — re-running once; only a second "
+            "failure is real",
+            file=sys.stderr,
+        )
+        code, _ = run_pre_commit(cmd, root, env)
+
+    if unverifiable:
+        print(
+            f"lint-paths: UNVERIFIABLE locally: {', '.join(unverifiable)} "
+            "(frontend install failed) — CI runs them; do not gate on them",
+            file=sys.stderr,
+        )
+    return code
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="lint_paths.py",
@@ -244,12 +361,20 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_CONFIG,
         help=f"the pre-commit config to run (default: {DEFAULT_CONFIG})",
     )
-    parser.add_argument(
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument(
         "--changed",
         action="store_true",
         help="lint only this branch's own files — everything differing from "
         "the merge-base with the base ref, plus untracked-not-ignored paths. "
         "The post-edit check; the full sweep stays for the checkpoints.",
+    )
+    scope.add_argument(
+        "--files",
+        nargs="+",
+        metavar="PATH",
+        help="lint exactly these paths (relative to the repo root); end the "
+        "list with `--` before any hook id",
     )
     parser.add_argument(
         "--base",
@@ -298,7 +423,15 @@ def main(argv: list[str] | None = None) -> int:
             hook_args = [PROSE_HOOK]
 
     root = repo_root()
-    files = changed_files(root, args.base) if args.changed else lint_files(root)
+    if args.files:
+        files = existing(sorted(set(args.files)), root)
+        if not files:
+            print("lint-paths: none of the --files paths exist", file=sys.stderr)
+            return 1
+    elif args.changed:
+        files = changed_files(root, args.base)
+    else:
+        files = lint_files(root)
 
     if args.print_only:
         for path in files:
@@ -325,10 +458,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    return subprocess.run(
-        pre_commit_cmd(args.config, hook_args, files),
-        cwd=root,
-    ).returncode
+    return lint(args.config, hook_args, files, root)
 
 
 if __name__ == "__main__":

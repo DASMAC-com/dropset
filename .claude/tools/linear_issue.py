@@ -35,11 +35,16 @@ a state name to its UUID and validates the team prefix::
     board_batch.py state --id ENG-123 --state "In Review"
 
 Splitting on that line is deliberate: a second implementation of the state
-resolution would be a place for the two to disagree.
+resolution would be a place for the two to disagree. The one exception is
+``tick``, whose state move must ride the **same** write as its ticks — a tick
+that landed without its state move, or the reverse, is the half-applied save
+the MCP's atomic ``patch`` existed to prevent — and which resolves the name
+with the ``create`` path's resolver, not a third one.
 
 Subcommands::
 
     linear_issue.py append --id ENG-123 --file notes.md
+    linear_issue.py tick   --id ENG-123 --box "Part 1 text" --box "Part 2 text"
     linear_issue.py find   --query "reference price" --limit 5
     linear_issue.py create --title "…" --body-file body.md \
         --state Todo --milestone "Audit findings"
@@ -60,6 +65,7 @@ Each prints ONE line of accounting on success; ``find`` prints its rows.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 
 import linear_api
@@ -138,6 +144,159 @@ def append_body(api_key: str, identifier: str, text: str, *, dry_run: bool) -> s
         f"APPENDED to {issue['identifier']} | {len(addition)} char(s) | "
         f"body now {len(body)} char(s)"
     )
+
+
+_TICK_QUERY = """
+query TickIssue($id: String!) {
+  issue(id: $id) {
+    id identifier description
+    state { name type }
+    team { states { nodes { id name } } }
+  }
+}
+"""
+
+_TICK_MUTATION = """
+mutation Tick($id: String!, $input: IssueUpdateInput!) {
+  issueUpdate(id: $id, input: $input) { success }
+}
+"""
+
+
+class _WriteFailed(LinearIssueError):
+    """The tick's write failed — the one failure a re-fetch can cure."""
+
+
+#: State types a tick never moves the issue out of.
+TERMINAL_STATE_TYPES = frozenset({"completed", "canceled"})
+
+_BOX = re.compile(r"^(\s*[-*] \[)([ xX])(\] )(.*)$")
+# Linear stores a typed `ENG-###` as a link to the issue; a box is matched on
+# its text with that markup folded back to the bare tag, so a tag-bearing box
+# needs no special path.
+_MENTION_LINK = re.compile(r"\[([A-Z]+-\d+)\]\([^)]*\)")
+_MENTION_URL = re.compile(r"https://linear\.app/[^/\s]+/issue/([A-Z]+-\d+)[^\s)]*")
+
+
+def _normalize(text: str) -> str:
+    text = _MENTION_LINK.sub(r"\1", text)
+    text = _MENTION_URL.sub(r"\1", text)
+    return " ".join(text.split())
+
+
+def tick_boxes(body: str, boxes: list[str]) -> tuple[str, int, int]:
+    """Tick each named checklist box in ``body``.
+
+    Returns ``(new body, ticked, already ticked)``. Matching is per line on the
+    box's text, mention markup folded and whitespace collapsed — an exact match
+    first, else a unique prefix. Naming one text N times ticks its first N
+    open occurrences; a text whose occurrences outnumber its mentions is
+    refused as ambiguous rather than guessed. Every box is resolved before any
+    is ticked, so a refusal leaves the body untouched.
+    """
+    lines = body.split("\n")
+    parsed = [(i, _BOX.match(line)) for i, line in enumerate(lines)]
+    found = [(i, m) for i, m in parsed if m]
+
+    wanted: dict[str, int] = {}
+    for box in boxes:
+        key = _normalize(box.removeprefix("- [ ] ").removeprefix("- [x] "))
+        if not key:
+            raise LinearIssueError("refusing to tick a blank box text")
+        wanted[key] = wanted.get(key, 0) + 1
+
+    to_tick: list[int] = []
+    already = 0
+    for key, count in wanted.items():
+        hits = [(i, m) for i, m in found if _normalize(m.group(4)) == key]
+        if not hits:
+            hits = [(i, m) for i, m in found if _normalize(m.group(4)).startswith(key)]
+        if not hits:
+            raise LinearIssueError(f"no checklist box reads {key!r}")
+        open_hits = [i for i, m in hits if m.group(2) == " "]
+        if len(open_hits) > count:
+            raise LinearIssueError(
+                f"{len(open_hits)} open boxes read {key!r} — name it once per "
+                "box to tick, or quote more of it"
+            )
+        already += min(len(hits) - len(open_hits), count - len(open_hits))
+        to_tick.extend(open_hits)
+
+    for i in to_tick:
+        m = _BOX.match(lines[i])
+        lines[i] = f"{m.group(1)}x{m.group(3)}{m.group(4)}"
+    return "\n".join(lines), len(to_tick), already
+
+
+def _tick_once(
+    api_key: str, identifier: str, boxes: list[str], state: str | None, dry_run: bool
+) -> str:
+    data = _post(api_key, _TICK_QUERY, {"id": identifier})
+    issue = data.get("issue") or {}
+    if not issue.get("id"):
+        raise LinearIssueError(f"no issue {identifier}")
+    stored = issue.get("description") or ""
+    body, ticked, already = tick_boxes(stored, boxes) if boxes else (stored, 0, 0)
+
+    current = issue.get("state") or {}
+    plan = [f"{ticked} box(es) ticked", f"{already} already ticked"]
+    update: dict = {}
+    if ticked:
+        update["description"] = body
+    if state and current.get("name", "").lower() != state.lower():
+        if current.get("type") in TERMINAL_STATE_TYPES:
+            plan.append(f"state left at {current.get('name')} (terminal)")
+        else:
+            nodes = (((issue.get("team") or {}).get("states")) or {}).get("nodes") or []
+            update["stateId"] = _resolve_named(nodes, state, "workflow state")
+            plan.append(f"state {current.get('name')} → {state}")
+    elif state:
+        plan.append(f"state already {current.get('name')}")
+
+    verb = "WOULD TICK" if dry_run else "TICKED"
+    if not update:
+        return f"NOTHING TO WRITE for {issue['identifier']} | {', '.join(plan)}"
+    if dry_run:
+        return f"{verb} {issue['identifier']} | {', '.join(plan)}"
+    try:
+        result = _post(api_key, _TICK_MUTATION, {"id": issue["id"], "input": update})
+    except LinearIssueError as exc:
+        raise _WriteFailed(str(exc)) from exc
+    if not (result.get("issueUpdate") or {}).get("success"):
+        raise _WriteFailed(f"the tick write for {identifier} reported failure")
+    return f"{verb} {issue['identifier']} | {', '.join(plan)}"
+
+
+def tick(
+    api_key: str,
+    identifier: str,
+    boxes: list[str],
+    *,
+    state: str | None = "In Progress",
+    dry_run: bool = False,
+) -> str:
+    """Tick checklist boxes and move the state, in one zero-echo write.
+
+    The body and the state change ride one ``issueUpdate``, so a tick never
+    lands without its state move or the reverse. A box that cannot be resolved
+    is refused before anything is written. A failed **write** re-fetches once,
+    rebuilds from the fresh body and retries once — never from the stale
+    snapshot, which would overwrite whatever diverged — then stops and leaves
+    the issue alone. A resolution refusal is not retried: re-reading the body
+    it was just read from cannot change it.
+    """
+    try:
+        return _tick_once(api_key, identifier, boxes, state, dry_run)
+    except _WriteFailed:
+        pass
+    try:
+        return (
+            _tick_once(api_key, identifier, boxes, state, dry_run) + " | retried once"
+        )
+    except _WriteFailed as second:
+        raise LinearIssueError(
+            f"{second} — failed twice; leaving {identifier} alone"
+        ) from second
 
 
 def find(
@@ -345,7 +504,8 @@ def _add_dry_run(parser: argparse.ArgumentParser, *, top_level: bool) -> None:
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="linear_issue.py",
-        description="Zero-echo Linear issue body append and title-only search.",
+        description="Zero-echo Linear issue body append, checklist tick, filing "
+        "and title-only search.",
     )
     _add_dry_run(parser, top_level=True)
     subs = parser.add_subparsers(dest="command", required=True)
@@ -356,6 +516,26 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     source = append.add_mutually_exclusive_group(required=True)
     source.add_argument("--file", help="read the addition from this file")
     source.add_argument("--text", help="the addition, inline")
+
+    tick_cmd = subs.add_parser(
+        "tick", help="tick checklist boxes and move the state, zero echo"
+    )
+    _add_dry_run(tick_cmd, top_level=False)
+    tick_cmd.add_argument("--id", required=True, help="ENG-### identifier")
+    tick_cmd.add_argument(
+        "--box",
+        action="append",
+        default=[],
+        help="a box's text (repeatable; name a duplicate box once per tick)",
+    )
+    tick_cmd.add_argument(
+        "--state",
+        default="In Progress",
+        help="target state NAME (default In Progress; never leaves Done/Canceled)",
+    )
+    tick_cmd.add_argument(
+        "--keep-state", action="store_true", help="tick only; write no state"
+    )
 
     create = subs.add_parser("create", help="file one issue, zero echo")
     _add_dry_run(create, top_level=False)
@@ -392,6 +572,11 @@ def run(argv: list[str]) -> int:
     if args.command == "append":
         text = args.text if args.text is not None else _read_file(args.file)
         print(append_body(api_key, args.id, text, dry_run=args.dry_run))
+        return 0
+
+    if args.command == "tick":
+        state = None if args.keep_state else args.state
+        print(tick(api_key, args.id, args.box, state=state, dry_run=args.dry_run))
         return 0
 
     if args.command == "create":
