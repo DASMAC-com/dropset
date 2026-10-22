@@ -423,7 +423,11 @@ branch whose issue cannot be resolved is reported as
 **grandfathered** pre-rename `ceo-<topic>` / `exp-<name>`
 worktrees, which are cleaned by hand as their threads close.
 Report the `prune` line's removed / held-back counts and every
-flag; preview first with the same command minus `--apply`.
+flag; preview first with the same command minus `--apply`. A
+name in the pruner's `unmatched` list matched no worktree and
+no local branch — normally its own session already removed it
+(`wrap` does at close), the benign case: report it and re-list
+nothing. Only a name that should still exist is worth a look.
 
 **3. Spelling-escape hygiene — run cspell, file the
 drift as one aggregated issue.** **Opt-in — run this step
