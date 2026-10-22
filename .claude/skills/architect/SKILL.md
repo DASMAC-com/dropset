@@ -144,8 +144,9 @@ absolute rule and they are not the same thing.
   them by the fold protocol (`plan` step 1): fold, reply saying
   how, resolve.
 - **Its own governing issue's state**, In Progress → In Review
-  at handoff. Never Done — that is the operator's. This is the
-  session's **only** state write.
+  at handoff. Never Done — that is the operator's. Bar canceling
+  its own unratified tasks, this is the only state write the
+  session makes on its own judgment.
 
 **It never moves a task it filed to Todo.** Its tasks stay in
 Backlog until the operator has ratified the whole spec **and**
