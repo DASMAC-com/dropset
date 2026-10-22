@@ -12,9 +12,11 @@ from __future__ import annotations
 import io
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 import lint_paths as lp
 
@@ -225,6 +227,164 @@ class ChangedNarrowsToTheBranch(unittest.TestCase):
         # to the whole tree would turn that into a surprise full sweep.
         with self.assertRaises(subprocess.CalledProcessError):
             lp.changed_files(self.root, "origin/nonexistent")
+
+
+class FilesFlag(unittest.TestCase):
+    """``--files`` takes exactly the named paths, so the prose stops teaching
+    the hand-spelled pre-commit form."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = os.path.realpath(self._tmp.name)
+        _git("init", "-q", cwd=self.root)
+        for name in ("a.md", "b.md"):
+            with open(os.path.join(self.root, name), "w", encoding="utf-8") as fh:
+                fh.write("x\n")
+        cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, cwd)
+
+    def test_the_named_existing_paths_only_and_the_rest_named(self):
+        with (
+            redirect_stdout(io.StringIO()) as out,
+            redirect_stderr(io.StringIO()) as err,
+        ):
+            code = lp.main(["--files", "b.md", "gone.md", "--print"])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.getvalue().split(), ["b.md"])
+        # A dropped path is said out loud, never a silent shrink to a pass.
+        self.assertIn("gone.md", err.getvalue())
+
+    def test_a_hook_id_follows_the_separator(self):
+        with mock.patch.object(lp, "lint", return_value=0) as lint:
+            lp.main(["--files", "a.md", "--", "cspell"])
+        self.assertEqual(lint.call_args.args[:2], (lp.DEFAULT_CONFIG, ["cspell"]))
+        self.assertEqual(lint.call_args.args[2], ["a.md"])
+
+    def test_no_existing_path_is_a_failure(self):
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(lp.main(["--files", "gone.md"]), 1)
+
+    def test_files_and_changed_are_exclusive(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            lp.main(["--files", "a.md", "--changed"])
+
+
+class FixThenFail(unittest.TestCase):
+    """A rewriting hook fails by design: one automatic re-run, and only its
+    result counts."""
+
+    def _lint(self, runs):
+        with (
+            mock.patch.object(lp, "ensure_frontend_hooks", return_value=[]),
+            mock.patch.object(lp, "run_pre_commit", side_effect=runs) as rpc,
+            redirect_stderr(io.StringIO()) as err,
+        ):
+            code = lp.lint("cfg.yml", [], ["a.md"], "/root")
+        return code, rpc.call_count, err.getvalue()
+
+    def test_a_rewrite_then_pass_is_a_pass_with_the_commit_reminder(self):
+        code, calls, err = self._lint([(1, True), (0, False)])
+        self.assertEqual((code, calls), (0, 2))
+        self.assertIn("re-running once", err)
+        # CI lints what is committed; the passing rewrite still needs a commit.
+        self.assertIn("stage and commit", err)
+
+    def test_a_second_failure_is_real(self):
+        code, calls, _ = self._lint([(1, True), (1, True)])
+        self.assertEqual((code, calls), (1, 2))
+
+    def test_a_failure_without_a_rewrite_is_not_re_run(self):
+        code, calls, _ = self._lint([(1, False)])
+        self.assertEqual((code, calls), (1, 1))
+
+    def test_a_pass_is_not_re_run(self):
+        code, calls, _ = self._lint([(0, False)])
+        self.assertEqual((code, calls), (0, 1))
+
+    def test_the_marker_is_read_from_pre_commit_output(self):
+        script = (
+            "import sys; print('mdformat...Failed'); "
+            f"print('- {lp.MODIFIED_MARKER}'); sys.exit(1)"
+        )
+        with redirect_stdout(io.StringIO()) as out:
+            code, modified = lp.run_pre_commit(
+                [sys.executable, "-c", script], os.getcwd()
+            )
+        self.assertEqual((code, modified), (1, True))
+        # The output is mirrored, not swallowed.
+        self.assertIn("mdformat...Failed", out.getvalue())
+
+
+class FrontendHooks(unittest.TestCase):
+    """A missing ``biome`` / ``tsc``: install, else skip and say unverifiable."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = self._tmp.name
+        self.bin = os.path.join(self.root, "frontend", "node_modules", ".bin")
+
+    def _install_bins(self, *names):
+        os.makedirs(self.bin, exist_ok=True)
+        for name in names:
+            open(os.path.join(self.bin, name), "w").close()
+
+    def test_no_frontend_path_needs_nothing(self):
+        self.assertEqual(lp.missing_frontend_hooks(self.root, [], ["a.rs"]), [])
+
+    def test_a_ts_path_without_node_modules_misses_both(self):
+        self.assertEqual(
+            lp.missing_frontend_hooks(self.root, [], ["sdk/ts/x.ts"]),
+            ["biome", "tsc"],
+        )
+
+    def test_a_css_only_set_selects_biome_not_tsc(self):
+        # tsc's types_or is ts/tsx only; installing for it would be wasted, and
+        # reporting it unverifiable would name a hook that never runs.
+        self.assertEqual(lp.missing_frontend_hooks(self.root, [], ["a.css"]), ["biome"])
+
+    def test_a_missing_pnpm_is_an_unverifiable_hook_not_a_crash(self):
+        with (
+            mock.patch.object(
+                lp.subprocess, "run", side_effect=FileNotFoundError("pnpm")
+            ),
+            redirect_stderr(io.StringIO()) as err,
+        ):
+            self.assertEqual(
+                lp.ensure_frontend_hooks(self.root, [], ["x.ts"]), ["biome", "tsc"]
+            )
+        self.assertIn("pnpm", err.getvalue())
+
+    def test_a_non_frontend_hook_id_needs_nothing(self):
+        self.assertEqual(lp.missing_frontend_hooks(self.root, ["cspell"], ["x.ts"]), [])
+
+    def test_an_install_that_provides_the_bins_clears_them(self):
+        def install(*_a, **_k):
+            self._install_bins("biome", "tsc")
+            return subprocess.CompletedProcess([], 0, "", "")
+
+        with (
+            mock.patch.object(lp.subprocess, "run", side_effect=install) as run,
+            redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(lp.ensure_frontend_hooks(self.root, [], ["x.ts"]), [])
+        self.assertEqual(run.call_args.args[0], lp._FRONTEND_INSTALL)
+
+    def test_a_failed_install_skips_and_reports_unverifiable(self):
+        failed = subprocess.CompletedProcess([], 1, "", "ERR_PNPM offline")
+        with (
+            mock.patch.object(lp.subprocess, "run", return_value=failed),
+            mock.patch.object(lp, "run_pre_commit", return_value=(0, False)) as rpc,
+            redirect_stderr(io.StringIO()) as err,
+        ):
+            code = lp.lint("cfg.yml", [], ["x.ts"], self.root)
+        self.assertEqual(code, 0)
+        env = rpc.call_args.args[2]
+        self.assertEqual(env["SKIP"].split(",")[-2:], ["biome", "tsc"])
+        self.assertIn("UNVERIFIABLE locally: biome, tsc", err.getvalue())
+        self.assertIn("ERR_PNPM offline", err.getvalue())
 
 
 if __name__ == "__main__":

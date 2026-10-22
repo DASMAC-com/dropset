@@ -10,6 +10,7 @@ everywhere). Run via the repo's ``make tools-tests``.
 from __future__ import annotations
 
 import io
+import json
 import os
 import subprocess
 import tempfile
@@ -180,14 +181,154 @@ class CliTests(unittest.TestCase):
             analyze.return_value = {"conclusion": "x"}
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 with mock.patch.object(ro, "summarize", return_value="s"):
-                    ro.run(["rebase_overlap.py", "--from", "old"])
+                    ro.run(["rebase_overlap.py", "--from", "old", "--full"])
         analyze.assert_called_once_with("old", "origin/main", "HEAD")
 
-    def test_from_is_required(self):
+    def test_a_source_is_required(self):
         """The pre-fetch base tip cannot be recovered afterwards, so guessing it
-        would silently compare the wrong range."""
+        would silently compare the wrong range: one of --base / --from."""
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             ro.run(["rebase_overlap.py"])
+
+    def test_base_and_from_are_exclusive(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            ro.run(["rebase_overlap.py", "--base", "main", "--from", "old"])
+
+    def test_the_default_output_drops_the_lists(self):
+        payload = {
+            "base_commits": 1,
+            "base_commit_subjects": ["a1 one"],
+            "base_files": ["x.ts", "y.ts"],
+            "branch_files": ["z.rs"],
+            "overlap": [],
+            "runs_artifact_gates": False,
+            "runs_rust_suites": False,
+            "rerun": {},
+        }
+        out = io.StringIO()
+        with mock.patch.object(ro, "analyze", return_value=payload):
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                ro.run(["rebase_overlap.py", "--from", "old"])
+        printed = json.loads(out.getvalue())
+        self.assertNotIn("base_files", printed)
+        self.assertNotIn("base_commit_subjects", printed)
+        self.assertEqual(printed["base_file_count"], 2)
+        self.assertEqual(printed["branch_file_count"], 1)
+        self.assertIn("overlap", printed)
+        # Steps 9 and 11 read these off the default output.
+        self.assertIn("runs_artifact_gates", printed)
+        self.assertIn("runs_rust_suites", printed)
+        self.assertIn("rerun", printed)
+
+        full = io.StringIO()
+        with mock.patch.object(ro, "analyze", return_value=payload):
+            with redirect_stdout(full), redirect_stderr(io.StringIO()):
+                ro.run(["rebase_overlap.py", "--from", "old", "--full"])
+        self.assertEqual(json.loads(full.getvalue())["base_files"], ["x.ts", "y.ts"])
+
+    def test_to_is_refused_with_base(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            ro.run(["rebase_overlap.py", "--base", "main", "--to", "origin/x"])
+
+
+class RerunVerdictTests(unittest.TestCase):
+    """Each verdict replaces a rule the review applied by eye to the file list,
+    so each rule's trigger and its non-trigger are pinned."""
+
+    def _rerun(self, base_files, overlap=(), ci=None, gen=None):
+        result = {
+            "base_files": list(base_files),
+            "overlap": list(overlap),
+            "runs_artifact_gates": (
+                rd.touches_generation_input(base_files) if gen is None else gen
+            ),
+            "runs_rust_suites": rd.touches_ci_code(base_files) if ci is None else ci,
+        }
+        return ro.rerun_verdicts(result)
+
+    def test_an_empty_overlap_asserts_lint(self):
+        self.assertFalse(self._rerun(["frontend/a.ts"])["lint"]["run"])
+
+    def test_an_overlap_re_runs_lint(self):
+        v = self._rerun(["shared.rs"], overlap=["shared.rs"])["lint"]
+        self.assertTrue(v["run"])
+        self.assertIn("1 file(s) overlap", v["reason"])
+
+    def test_a_lint_config_change_re_runs_lint_whatever_the_overlap(self):
+        for path in ("cfg/pre-commit-lint.yml", ".pre-commit-config.yaml"):
+            v = self._rerun([path])["lint"]
+            self.assertTrue(v["run"], path)
+            self.assertIn(path, v["reason"])
+
+    def test_a_program_change_rebuilds_the_program(self):
+        self.assertTrue(self._rerun(["programs/dropset/src/lib.rs"])["program"]["run"])
+        self.assertFalse(self._rerun(["sdk/rs/src/lib.rs"])["program"]["run"])
+
+    def test_a_frontend_manifest_change_reinstalls(self):
+        for path in ("pnpm-lock.yaml", "frontend/package.json"):
+            self.assertTrue(self._rerun([path])["frontend_install"]["run"], path)
+        for path in ("frontend/app/package.ts", "frontend/sub/package.json"):
+            self.assertFalse(self._rerun([path])["frontend_install"]["run"], path)
+
+    def test_artifact_gates_restate_the_predicate(self):
+        self.assertTrue(self._rerun([], gen=True)["artifact_gates"]["run"])
+        self.assertFalse(self._rerun([], gen=False)["artifact_gates"]["run"])
+
+    def test_enqueue_unverified_needs_only_an_empty_overlap(self):
+        ok = self._rerun(["a.rs"], ci=True)["may_enqueue_unverified"]
+        self.assertTrue(ok["run"])
+        # The condition the tool cannot see is named, never silently assumed.
+        self.assertIn("unchanged since its last green", ok["reason"])
+        self.assertFalse(
+            self._rerun(["a.rs"], overlap=["a.rs"], ci=True)["may_enqueue_unverified"][
+                "run"
+            ]
+        )
+        # A delta outside CI's code filter is the safest case, not a reason to
+        # verify locally: the queue runs the whole suite whatever the paths.
+        self.assertTrue(
+            self._rerun(["README.md"], ci=False)["may_enqueue_unverified"]["run"]
+        )
+
+    def test_a_dictionary_change_re_runs_lint(self):
+        # A word dropped upstream fails cspell on a file the delta never touched.
+        self.assertTrue(self._rerun(["cfg/dictionary.txt"])["lint"]["run"])
+
+    def test_analyze_attaches_the_block(self):
+        with (
+            mock.patch.object(ro, "merge_base", return_value="mb"),
+            mock.patch.object(ro, "commit_subjects", return_value=[]),
+            mock.patch.object(ro, "changed_files", return_value=["pnpm-lock.yaml"]),
+        ):
+            result = ro.analyze("old", "new")
+        self.assertTrue(result["rerun"]["frontend_install"]["run"])
+
+    def test_the_summary_names_each_re_run(self):
+        text = ro.summarize(
+            {
+                "base_commits": 1,
+                "base_files": ["pnpm-lock.yaml"],
+                "overlap": [],
+                "runs_artifact_gates": False,
+                "runs_rust_suites": False,
+                "rerun": self._rerun(["pnpm-lock.yaml"]),
+            }
+        )
+        self.assertIn("re-run: frontend_install", text)
+
+    def test_the_enqueue_permission_is_not_listed_as_a_re_run(self):
+        text = ro.summarize(
+            {
+                "base_commits": 1,
+                "base_files": ["a.rs"],
+                "overlap": [],
+                "runs_artifact_gates": False,
+                "runs_rust_suites": True,
+                "rerun": self._rerun(["a.rs"], ci=True),
+            }
+        )
+        self.assertNotIn("re-run:", text)
+        self.assertIn("may enqueue unverified", text)
 
 
 class AncestorGuardTests(unittest.TestCase):
@@ -262,6 +403,88 @@ class AncestorGuardTests(unittest.TestCase):
     def test_is_ancestor_agrees_with_git_in_both_directions(self):
         self.assertTrue(ro.is_ancestor(self.fork_point, self.main_tip))
         self.assertFalse(ro.is_ancestor(self.main_tip, self.fork_point))
+
+
+class FetchModeTests(unittest.TestCase):
+    """``--base``: capture the merge-base, fetch, triage — on a real clone,
+    since the property is the ordering against a remote that moved."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        tmp = os.path.realpath(self._tmp.name)
+        self.upstream = os.path.join(tmp, "upstream")
+        self.clone = os.path.join(tmp, "clone")
+        os.mkdir(self.upstream)
+        self._git(self.upstream, "init", "-q", "-b", "main")
+        self.fork_point = self._commit(self.upstream, "base.md")
+        subprocess.run(
+            ["git", "clone", "-q", self.upstream, self.clone],
+            check=True,
+            capture_output=True,
+        )
+        self._git(self.clone, "checkout", "-q", "-b", "feature")
+        self._commit(self.clone, "mine.md")
+        # main moves upstream after the clone last fetched.
+        self.upstream_tip = self._commit(self.upstream, "pnpm-lock.yaml")
+        self._cwd = os.getcwd()
+        os.chdir(self.clone)
+        self.addCleanup(os.chdir, self._cwd)
+
+    def _git(self, cwd: str, *args: str) -> str:
+        return subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.email=t@example.com",
+                "-c",
+                "user.name=Test",
+                *args,
+            ],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    def _commit(self, cwd: str, rel: str) -> str:
+        with open(os.path.join(cwd, rel), "w", encoding="utf-8") as fh:
+            fh.write(rel + "\n")
+        self._git(cwd, "add", rel)
+        self._git(cwd, "commit", "-q", "-m", f"add {rel}", "--no-gpg-sign")
+        return self._git(cwd, "rev-parse", "HEAD")
+
+    def test_capture_reads_the_merge_base_then_fetches(self):
+        previous, new = ro.capture_and_fetch("main")
+        self.assertEqual(previous, self.fork_point)
+        self.assertEqual(new, "origin/main")
+        self.assertEqual(self._git(self.clone, "rev-parse", new), self.upstream_tip)
+
+    def test_the_cli_triages_before_the_rebase(self):
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = ro.run(["rebase_overlap.py", "--base", "main"])
+        self.assertEqual(code, 0)
+        printed = json.loads(out.getvalue())
+        self.assertEqual(printed["base_commits"], 1)
+        self.assertEqual(printed["overlap"], [])
+        self.assertEqual(printed["branch_file_count"], 1)
+        self.assertTrue(printed["rerun"]["frontend_install"]["run"])
+        self.assertNotIn("warning", printed)
+
+    def test_a_run_after_the_rebase_warns_and_names_the_from(self):
+        """The wrong order: fetch, rebase, THEN triage. The delta reads 0
+        commits for a base that moved, so the report must say so."""
+        self._git(self.clone, "fetch", "-q", "origin", "main")
+        self._git(self.clone, "rebase", "-q", "origin/main")
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            ro.run(["rebase_overlap.py", "--base", "main"])
+        printed = json.loads(out.getvalue())
+        self.assertEqual(printed["base_commits"], 0)
+        self.assertIn("NOT an all-clear", printed["warning"])
+        self.assertIn(f"--from {self.fork_point} --to origin/main", printed["warning"])
+        self.assertIn("WARNING", err.getvalue())
 
 
 if __name__ == "__main__":

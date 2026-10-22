@@ -1166,6 +1166,15 @@ aliases, so an ops file assembled for either path applies unchanged —
 which it did not always: a fold was once rejected on its first op with
 `'replace' needs a string 'text'`, after the fold had been composed.
 
+**A CHECKLIST TICK is the third exception**, on the same footing as the
+fold: `linear_issue.py tick` keeps the refusal, in its own form — a box
+text matches exactly, else by prefix, and must match as many boxes as it
+is named, never sharing one with another text — and sends back the stored
+body with only the box markers changed, so no text is rebuilt by hand. Its
+state move (never out of Done / Canceled) rides the same write. Its
+concurrency is `append`'s: an edit landing between its read and its write
+is overwritten, since the API has no conditional write.
+
 **And a fold's CANCELS are not body writes at all.** Canceling a
 non-survivor through `save_issue` re-echoes its whole body to change one
 enum — ≈6.0k for one cancel plus ≈6.1k for the `get_issue` before it, and

@@ -9,7 +9,9 @@ is the grown body rather than a replacement.
 
 from __future__ import annotations
 
+import io
 import unittest
+from contextlib import redirect_stdout
 
 import linear_issue as li
 
@@ -310,6 +312,204 @@ class CreateIssue(_Stubbed):
         self.install([{"issueCreate": {"success": False}}])
         with self.assertRaises(li.LinearIssueError):
             li.create_issue("k", team_id="t", project_id="p", title="t", body="b")
+
+
+class TickBoxes(unittest.TestCase):
+    """The pure resolution: which lines a box text ticks, or why it refuses."""
+
+    BODY = "\n".join(
+        [
+            "## Parts",
+            "- [ ] Add the re-run block",
+            "- [ ] Wire the probe",
+            "- [x] Already landed",
+            "* [ ] Fold the levers from [ENG-1986](https://linear.app/d/issue/ENG-1986/x)",
+        ]
+    )
+
+    def test_an_exact_box_is_ticked_and_nothing_else_moves(self):
+        body, ticked, already = li.tick_boxes(self.BODY, ["Wire the probe"])
+        self.assertEqual((ticked, already), (1, 0))
+        self.assertIn("- [x] Wire the probe", body)
+        self.assertIn("- [ ] Add the re-run block", body)
+
+    def test_a_tag_bearing_box_matches_on_the_bare_tag(self):
+        # Linear stores the tag as a link; the stored markup is kept as is.
+        body, ticked, _ = li.tick_boxes(self.BODY, ["Fold the levers from ENG-1986"])
+        self.assertEqual(ticked, 1)
+        self.assertIn("* [x] Fold the levers from [ENG-1986](", body)
+
+    def test_a_unique_prefix_matches(self):
+        _, ticked, _ = li.tick_boxes(self.BODY, ["Add the re-run"])
+        self.assertEqual(ticked, 1)
+
+    def test_an_already_ticked_box_is_counted_not_rewritten(self):
+        body, ticked, already = li.tick_boxes(self.BODY, ["Already landed"])
+        self.assertEqual((body, ticked, already), (self.BODY, 0, 1))
+
+    def test_an_unknown_box_refuses(self):
+        with self.assertRaisesRegex(li.LinearIssueError, "no checklist box"):
+            li.tick_boxes(self.BODY, ["Not a box"])
+
+    def test_duplicate_boxes_need_one_mention_each(self):
+        body = "- [ ] Run lint\n## B\n- [ ] Run lint\n"
+        with self.assertRaisesRegex(li.LinearIssueError, "2 box"):
+            li.tick_boxes(body, ["Run lint"])
+        new, ticked, _ = li.tick_boxes(body, ["Run lint", "Run lint"])
+        self.assertEqual(ticked, 2)
+        self.assertNotIn("[ ]", new)
+
+    def test_a_prefix_never_lands_on_a_longer_box_past_a_ticked_one(self):
+        # `Part 1` is ticked already; a prefix match must not fall through to
+        # the open `Part 12`.
+        body = "- [x] Part 1: foo\n- [ ] Part 12: bar\n"
+        with self.assertRaisesRegex(li.LinearIssueError, "2 box"):
+            li.tick_boxes(body, ["Part 1"])
+
+    def test_two_texts_may_not_claim_one_box(self):
+        with self.assertRaisesRegex(li.LinearIssueError, "both name one box"):
+            li.tick_boxes(self.BODY, ["Wire the probe", "Wire the"])
+
+    def test_naming_a_box_more_times_than_it_exists_refuses(self):
+        with self.assertRaisesRegex(li.LinearIssueError, "named 2 time"):
+            li.tick_boxes(self.BODY, ["Wire the probe", "Wire the probe"])
+
+    def test_a_pasted_marker_in_any_form_is_stripped(self):
+        for pasted in (
+            "- [ ] Wire the probe",
+            "* [X] Wire the probe",
+            "  - [x] Wire the probe",
+        ):
+            _, ticked, _ = li.tick_boxes(self.BODY, [pasted])
+            self.assertEqual(ticked, 1, pasted)
+
+    def test_a_refusal_ticks_nothing(self):
+        # Every box resolves before any is ticked: no half-applied body.
+        with self.assertRaises(li.LinearIssueError):
+            li.tick_boxes(self.BODY, ["Wire the probe", "Not a box"])
+
+
+class Tick(_Stubbed):
+    @staticmethod
+    def issue(description="- [ ] One\n- [ ] Two", state=("Backlog", "unstarted")):
+        return {
+            "issue": {
+                "id": "u1",
+                "identifier": "ENG-1",
+                "description": description,
+                "state": {"name": state[0], "type": state[1]},
+                "team": {
+                    "states": {
+                        "nodes": [
+                            {"id": "s-ip", "name": "In Progress"},
+                            {"id": "s-ir", "name": "In Review"},
+                        ]
+                    }
+                },
+            }
+        }
+
+    @staticmethod
+    def ok(success=True):
+        return {"issueUpdate": {"success": success}}
+
+    def test_ticks_and_state_ride_one_write(self):
+        recorder = self.install([self.issue(), self.ok()])
+        line = li.tick("k", "ENG-1", ["One"])
+        update = recorder.calls[-1][1]["input"]
+        self.assertEqual(update["stateId"], "s-ip")
+        self.assertEqual(update["description"], "- [x] One\n- [ ] Two")
+        self.assertEqual(len(recorder.calls), 2)
+        self.assertIn("TICKED ENG-1", line)
+
+    def test_the_body_never_reaches_the_returned_line(self):
+        self.install([self.issue("- [ ] One\nSECRET BODY"), self.ok()])
+        self.assertNotIn("SECRET", li.tick("k", "ENG-1", ["One"]))
+
+    def test_in_review_is_reclaimed(self):
+        recorder = self.install([self.issue(state=("In Review", "started")), self.ok()])
+        li.tick("k", "ENG-1", [])
+        self.assertEqual(recorder.calls[-1][1]["input"], {"stateId": "s-ip"})
+
+    def test_a_terminal_state_is_never_regressed(self):
+        recorder = self.install([self.issue(state=("Done", "completed")), self.ok()])
+        line = li.tick("k", "ENG-1", ["One"])
+        self.assertNotIn("stateId", recorder.calls[-1][1]["input"])
+        self.assertIn("terminal", line)
+
+    def test_canceled_is_terminal_too(self):
+        recorder = self.install([self.issue(state=("Canceled", "canceled"))])
+        line = li.tick("k", "ENG-1", [])
+        self.assertEqual(len(recorder.calls), 1)
+        self.assertIn("terminal", line)
+
+    def test_the_cli_wires_repeated_boxes_and_keep_state(self):
+        recorder = self.install([self.issue(), self.ok()])
+        real = li.linear_api.env_var
+        self.addCleanup(lambda: setattr(li.linear_api, "env_var", real))
+        li.linear_api.env_var = lambda *_a, **_k: "k"
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = li.run(
+                [
+                    "linear_issue.py",
+                    "tick",
+                    "--id",
+                    "ENG-1",
+                    "--box",
+                    "One",
+                    "--box",
+                    "Two",
+                    "--keep-state",
+                ]
+            )
+        self.assertEqual(code, 0)
+        update = recorder.calls[-1][1]["input"]
+        self.assertEqual(update, {"description": "- [x] One\n- [x] Two"})
+        self.assertIn("2 box(es) ticked", out.getvalue())
+
+    def test_nothing_to_tick_and_already_in_progress_writes_nothing(self):
+        recorder = self.install([self.issue(state=("In Progress", "started"))])
+        line = li.tick("k", "ENG-1", [])
+        self.assertEqual(len(recorder.calls), 1)
+        self.assertIn("NOTHING TO WRITE", line)
+
+    def test_a_failed_write_re_fetches_and_retries_once(self):
+        recorder = self.install(
+            [
+                self.issue(),
+                self.ok(success=False),
+                # The second read reflects an edit made in between; the retry
+                # rebuilds from it rather than the stale snapshot.
+                self.issue("- [ ] One\n- [ ] Two\n- [ ] Three"),
+                self.ok(),
+            ]
+        )
+        line = li.tick("k", "ENG-1", ["One"])
+        self.assertIn("retried once", line)
+        self.assertIn("Three", recorder.calls[-1][1]["input"]["description"])
+
+    def test_a_second_failure_stops(self):
+        self.install([self.issue(), self.ok(False), self.issue(), self.ok(False)])
+        with self.assertRaisesRegex(li.LinearIssueError, "leaving ENG-1 alone"):
+            li.tick("k", "ENG-1", ["One"])
+
+    def test_a_resolution_refusal_is_not_retried(self):
+        recorder = self.install([self.issue()])
+        with self.assertRaises(li.LinearIssueError):
+            li.tick("k", "ENG-1", ["Missing"])
+        self.assertEqual(len(recorder.calls), 1)
+
+    def test_dry_run_reads_but_never_writes(self):
+        recorder = self.install([self.issue()])
+        line = li.tick("k", "ENG-1", ["One"], dry_run=True)
+        self.assertEqual(len(recorder.calls), 1)
+        self.assertIn("WOULD TICK", line)
+
+    def test_keep_state_writes_no_state(self):
+        recorder = self.install([self.issue(), self.ok()])
+        li.tick("k", "ENG-1", ["One"], state=None)
+        self.assertNotIn("stateId", recorder.calls[-1][1]["input"])
 
 
 if __name__ == "__main__":
