@@ -1720,7 +1720,6 @@ dependencies = [
  "solana-native-token",
  "solana-program-log",
  "solana-pubkey 4.3.0",
- "solana-rent 4.4.0",
  "solana-sdk-ids",
  "wincode",
 ]
