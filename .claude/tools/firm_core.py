@@ -1,7 +1,7 @@
 """Permission-rule generalization and coverage — the source of truth.
 
-Pure-stdlib helpers behind ``allowlist.py`` (the firming and ``housekeeping``
-reader) and ``hook_wiring.py``. Turns a just-approved tool call into the
+Pure-stdlib helpers behind ``allowlist.py`` (the firming and upkeep reader)
+and ``hook_wiring.py``. Turns a just-approved tool call into the
 reusable allow-rule it should have been (``generalize``), decides whether an
 allowlist already covers a rule (``is_covered``), and flags the one dangerous
 outcome the safety floor forbids (``is_bareverb_wildcard``).

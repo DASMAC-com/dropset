@@ -35,7 +35,7 @@ session with **no** marker (or an unrecognized one) is ``unattributed`` and is
 never priced into the Bedrock total — that is the share the bill comparison
 cannot account for, reported rather than guessed. ``explore`` landed here
 until it wrote a marker; an older explore worktree still does. A base-repo
-session (``plan``, ``housekeeping``, ``chore``) reads as ``seat``.
+session (``plan``, ``chore``) reads as ``seat``.
 
 Two blind spots, both visible only as bill-side drift: ``plan bedrock`` is a
 base-repo launch that writes no marker; and a marker is one file per worktree

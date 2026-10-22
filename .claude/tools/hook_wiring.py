@@ -37,8 +37,8 @@ disabled by commenting it into an ``echo`` takes) no longer counts as wiring.
 
 CI cannot catch this. The settings files are git-ignored, so a PR cannot
 install wiring and a CI runner has none to inspect; the check has to run on the
-machine that owns the settings. ``housekeeping`` is the natural driver — it
-already runs day-to-day upkeep from the base repo, where the settings resolve.
+machine that owns the settings. ``upkeep.py`` is the driver — it runs the
+day's upkeep from the base repo, where the settings resolve.
 
 **iTerm pointer drift.** The live iTerm integration is meant to be pure
 pointers — ``~/.claude/scripts/iterm-*`` and the AutoLaunch reorderer are

@@ -242,7 +242,7 @@ def citations(text: str) -> list[tuple[str, str]]:
     required the path, the arrow and the quoted anchor to share one line — and
     under MD013's 80-column limit they routinely do not. The live tree carries
     **14** citations whose path and arrow end one line with the anchor on the
-    next, in `review-pr`, `plan`, `audit`, `audit-scope`, `housekeeping`,
+    next, in `review-pr`, `plan`, `audit`, `audit-scope`,
     `linear-task`, `merge-tasks`, `session-metrics`, `trim-context`,
     `pr-title-description` and `cspell-audit` — the highest-traffic skills,
     which is to say exactly the drift this tool exists to catch.

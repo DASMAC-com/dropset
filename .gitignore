@@ -28,8 +28,8 @@ sdk/ts/dist/
 .claude/settings.json
 .claude/settings.local.json
 
-# Cadence bookkeeping for the monthly permission refresh (housekeeping step
-# 7c), written beside the allowlist it tracks by
+# Cadence bookkeeping for the monthly permission refresh (the upkeep pass's
+# refresh gate), written beside the allowlist it tracks by
 # .claude/tools/allowlist.py refresh-record. Machine-local like the allowlist
 # itself — the last-refresh time is a fact about one operator's passes, not
 # about the repo, and committing it would make every machine think the others'

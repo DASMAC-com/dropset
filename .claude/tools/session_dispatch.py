@@ -8,7 +8,7 @@ own.
 
     python3 .claude/tools/session_dispatch.py task 1234
     python3 .claude/tools/session_dispatch.py task anthropic 1234
-    python3 .claude/tools/session_dispatch.py task 1234 + plan + housekeeping
+    python3 .claude/tools/session_dispatch.py task 1234 + chore 1240 + plan
     python3 .claude/tools/session_dispatch.py --dry-run plan
 
 **A dispatch opens a TAB in the dispatching session's own window**, never a new
@@ -161,11 +161,6 @@ def validate(argv: list[str]) -> list[str]:
         if len(args) > 1 or (args and args[0] not in _SUBSTRATES):
             raise ValueError("`plan` takes nothing, or anthropic or bedrock")
         return ["plan", *args]
-
-    if verb == "housekeeping":
-        if args:
-            raise ValueError("`housekeeping` takes no arguments")
-        return [verb]
 
     raise ValueError(f"unknown verb {verb!r}")
 

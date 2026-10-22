@@ -436,12 +436,6 @@ class VerbLaunch(SubstrateHarness):
         self.assertNotIn("MODEL=", out)
         self.assertIn("USE=unset", out)
 
-    def test_housekeeping_runs_the_executor_model_on_anthropic_always(self):
-        result, out = self._launch(
-            "housekeeping", env={"DS_MODEL_EXECUTOR_SUBSTRATE": "bedrock"}
-        )
-        self.assertIn("MODEL=work-model[1m] USE=unset", out, result.stderr)
-
     def test_architect_takes_the_override_after_the_number(self):
         result, out = self._launch("architect 12")
         self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
@@ -1068,7 +1062,6 @@ class VerbSurface(unittest.TestCase):
             "explore",
             "chore",
             "plan",
-            "housekeeping",
             "architect",
             "fleet",
             "cdds",
@@ -1078,7 +1071,9 @@ class VerbSurface(unittest.TestCase):
                 self.assertTrue(self._defined(verb), f"{verb} is not defined")
 
     def test_retired_verbs_are_gone(self):
-        for verb in ("aps", "raps", "naps", "rnaps", "paps", "haps", "caps", "faps"):
+        # `housekeeping` too: deleted, not aliased, once `plan` absorbed it.
+        retired = ("aps", "raps", "naps", "rnaps", "paps", "haps", "caps", "faps")
+        for verb in (*retired, "housekeeping"):
             with self.subTest(verb=verb):
                 self.assertFalse(
                     self._defined(verb), f"{verb} still defined; the cut is not clean"

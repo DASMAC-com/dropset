@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Cadence gate for ``housekeeping`` step 8 (the auto-memory staleness scan).
+"""Cadence gate for the upkeep pass's auto-memory staleness scan.
 
 The staleness scan reads the entire saved-memory store and repo-verifies every
-reference — the dominant compute of a housekeeping pass. The store changes
-slowly, so re-running that scan on every 30-minute ``/loop`` iteration is
+reference — the dominant compute of an upkeep pass. The store changes
+slowly, so re-running that scan on every pass is
 wasteful (per ``CLAUDE.md`` → "Context economy"). This tool decides whether a
 fresh scan is warranted, so the skill can skip it when nothing has moved.
 

@@ -1206,7 +1206,8 @@ skill-size:
 # wiring is deliberately uncommitted (both settings files are git-ignored), so
 # a guard can sit committed and inert indefinitely — as two of three did until
 # 2026-08-14. CI cannot check this: it has no settings to inspect, which is why
-# it is a make target `housekeeping` drives from the base repo instead. Reports
+# it is a make target run by hand from the base repo instead (the upkeep pass
+# calls the same tool daily). Reports
 # only; wiring a guard is the operator's call. Exits 0 clean / 1 unwired /
 # 2 if the scan itself could not run.
 .PHONY: hook-wiring

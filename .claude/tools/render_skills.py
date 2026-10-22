@@ -3,7 +3,7 @@
 """Render shared prose blocks into skill files, and gate their freshness.
 
 Changing a convention today means editing the convention doc **and** every
-skill that restates it, enforced by a review lens plus a housekeeping pass —
+skill that restates it, enforced by a review lens plus an upkeep check —
 which is to say, by an agent remembering to look. That hand-sync tax is paid on
 every meta batch, and it is measurable: one batch updated the same
 search-shape rule in three separate files, and the same cspell rule in two.

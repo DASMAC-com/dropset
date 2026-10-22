@@ -510,7 +510,7 @@ def index_by_number(issues: list[dict]) -> dict[int, dict]:
 
 
 #: Workflow-state TYPES that mean a blocker no longer blocks. Deliberately the
-#: same status types `housekeeping` prunes a worktree on: both are answering "is
+#: same status types `upkeep.py` prunes a worktree on: both are answering "is
 #: this finished?", and answering it two different ways would be a drift nobody
 #: would notice.
 RESOLVED_STATE_TYPES = ("completed", "canceled")

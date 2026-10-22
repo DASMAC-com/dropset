@@ -340,14 +340,12 @@ class DailySessionIdTests(unittest.TestCase):
         )
 
     def test_the_shape_is_a_uuid(self):
-        got = rs.daily_session_id("housekeeping", "20260101")
+        got = rs.daily_session_id("plan", "20260101")
         self.assertRegex(got, r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
 
-    def test_the_kind_and_the_date_both_change_the_id(self):
-        # The kind keeps a day's planning and housekeeping sessions apart; the
-        # full date keeps `plan-18` in August from colliding with September's.
+    def test_the_date_changes_the_id(self):
+        # The full date keeps `plan-18` in August from colliding with September's.
         base = rs.daily_session_id("plan", "20260910")
-        self.assertNotEqual(base, rs.daily_session_id("housekeeping", "20260910"))
         self.assertNotEqual(base, rs.daily_session_id("plan", "20260911"))
 
     def test_the_cli_prints_just_the_id(self):
@@ -378,9 +376,11 @@ class DailySessionIdTests(unittest.TestCase):
         something indistinguishable from an answer and names a session that never
         existed — which the caller then reads as a lost transcript. `architect` is
         included because it is the plausible wrong guess: it *is* a seat verb, but
-        it is seeded by topic rather than by day.
+        it is seeded by topic rather than by day; `housekeeping` because it was a
+        daily kind until its verb retired.
         """
-        for kind in ("Plan", "PLAN", "plan-18", "architect", "explore", ""):
+        kinds = ("Plan", "PLAN", "plan-18", "architect", "explore", "housekeeping", "")
+        for kind in kinds:
             with self.assertRaises(rs.ResolveSessionError, msg=kind):
                 rs.daily_session_id(kind, "20260910")
 
@@ -389,7 +389,7 @@ class DailySessionIdTests(unittest.TestCase):
             with self.assertRaises(rs.ResolveSessionError, msg=date):
                 rs.daily_session_id("plan", date)
 
-    def test_both_launcher_kinds_are_accepted(self):
+    def test_every_launcher_kind_is_accepted(self):
         # The other half: the guard must not reject what the launcher really seeds.
         for kind in rs.DAILY_KINDS:
             self.assertRegex(
@@ -398,10 +398,10 @@ class DailySessionIdTests(unittest.TestCase):
             )
 
     def test_DAILY_KINDS_matches_the_launcher(self):
-        # Pinned against the `_ds_daily_session` callers in
-        # `.claude/shell/init.zsh`. If a third daily verb is added there, this
+        # Pinned against the `_ds_daily_sid` callers in
+        # `.claude/shell/init.zsh`. If a second daily verb is added there, this
         # fails and points at the list that needs it.
-        self.assertEqual(rs.DAILY_KINDS, ("plan", "housekeeping"))
+        self.assertEqual(rs.DAILY_KINDS, ("plan",))
 
 
 class CycleIdTests(unittest.TestCase):
@@ -455,28 +455,6 @@ class CycleIdTests(unittest.TestCase):
                 counter.write_text(text)
                 self.assertEqual(rs.read_cycle(repo, "20260910"), want, msg=text)
 
-    def test_housekeeping_ignores_the_plan_counter(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            counter = rs.cycle_counter_path(Path(tmp), "20260910")
-            counter.parent.mkdir(parents=True)
-            counter.write_text("1\n")
-            out = io.StringIO()
-            with redirect_stdout(out):
-                rs.run(
-                    [
-                        "resolve_session.py",
-                        "--daily-id",
-                        "housekeeping",
-                        "--date",
-                        "20260910",
-                        "--repo",
-                        tmp,
-                    ]
-                )
-        self.assertEqual(
-            out.getvalue().strip(), rs.daily_session_id("housekeeping", "20260910")
-        )
-
     def test_plan_defaults_to_the_launch_date(self):
         with mock.patch.dict(os.environ, {"DS_PLAN_DATE": "20260910"}):
             self.assertEqual(rs.launch_date(), "20260910")
@@ -494,7 +472,7 @@ class CycleIdTests(unittest.TestCase):
 
     def test_a_cycle_outside_plan_or_below_zero_is_refused(self):
         for argv in (
-            ["--daily-id", "housekeeping", "--cycle", "1"],
+            ["--daily-id", "explore", "--cycle", "1"],
             ["--daily-id", "plan", "--cycle", "-1"],
         ):
             with self.assertRaises(rs.ResolveSessionError, msg=argv):
