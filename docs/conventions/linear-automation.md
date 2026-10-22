@@ -872,8 +872,9 @@ Two carve-outs:
 The skills that author PR prose follow this: `pr-title-description`
 (the PR body) and `review-pr` (any PR comment it posts, and the body
 refresh) keep `ENG-###` in the title scope and omit it from
-body/comments; `init-pr` seeds only the bare-`ENG-###` title + an empty
-body, so it already complies.
+body/comments; `init-pr` seeds only the
+`chore(<ENG-###>): Bootstrap the worktree` title + an empty body, so it
+already complies.
 
 ## Partial edits — the `patch` argument
 
@@ -1191,7 +1192,8 @@ operator's decision and is never called by automation.
 "Fewer calls" is easy to satisfy inside one skill and still lose, because
 a single issue is touched by **two** skills across a worktree session:
 `init-pr` reads the body and moves it to In Progress, `review-pr` moves
-it to In Review at the handoff. Each of those echoes the entire body.
+it to In Review at the handoff. On the MCP, each of those echoed the
+entire body (both have since moved to zero-echo tools).
 
 One measured session paid **24.5k across three calls on one issue** —
 `get_issue` 8.2k, `save_issue` 8.2k, `save_issue` 8.1k, the top three
@@ -1218,10 +1220,12 @@ reports the count in its summary, so a fourth write is visible rather
 than merely regrettable.
 
 **Count writes and ECHOES separately — they are no longer the same
-number.** Of those three, only the first two echo: the In-Review
-transition goes through `board_batch.py state`. So the nominal profile
-is three writes and **two** echoes, dropping to one echo on an issue
-with no checklist (nothing to tick, so nothing to write at step 3).
+number.** Of those three, only the second echoes: the bootstrap moves
+the state with `linear_patch.py state` and reads the body to a file, and
+the In-Review transition goes through `board_batch.py state`. So the
+nominal profile is three writes and **one** echo, dropping to zero on
+an issue with no checklist (nothing to tick, so nothing to write at
+step 3).
 
 One fourth write is **sanctioned**: an issue rewritten mid-run by an
 operator scope reframe. That recurs whenever direction changes during
