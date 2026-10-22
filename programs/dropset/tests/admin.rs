@@ -80,6 +80,31 @@ fn add_admin_grows_and_funds_rent() {
     assert!(after.lamports > before.lamports);
 }
 
+/// The program funds rent at whatever rate the cluster's Rent sysvar
+/// carries, not a rate compiled into the binary: raise the sysvar to a rate
+/// no compiled-in constant matches — above `DEFAULT_LAMPORTS_PER_BYTE`, so
+/// the grow needs a top-up under either build — and the realloc tops the
+/// registry up to exactly that rate's floor.
+#[test]
+fn add_admin_funds_rent_at_the_sysvar_rate() {
+    let (mut svm, authority) = setup();
+    let mut rent = svm.get_sysvar::<solana_rent::Rent>();
+    rent.lamports_per_byte = solana_rent::DEFAULT_LAMPORTS_PER_BYTE * 3 / 2 + 1;
+    svm.set_sysvar(&rent);
+
+    send_ixn(
+        &mut svm,
+        &authority,
+        add_ixn(authority.pubkey(), Pubkey::new_unique()),
+    )
+    .expect("add");
+
+    assert_eq!(
+        svm.get_account(&registry_pda()).unwrap().lamports,
+        rent_for(&svm, 2)
+    );
+}
+
 #[test]
 fn add_admin_rejects_duplicate() {
     let (mut svm, authority) = setup();
