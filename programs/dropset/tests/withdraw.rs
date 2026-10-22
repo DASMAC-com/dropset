@@ -363,6 +363,8 @@ fn assert_withdraw_matches_kernels(f: &mut Fixture, alice: &Keypair) -> u64 {
     if r.shares_minted > 0 {
         let rev = events::realize(&meta);
         assert_eq!(rev.shares_minted, r.shares_minted);
+        // Every `RealizeEvent` call site reports the post-instruction
+        // totals, so here that is after alice's burn, not the realize's.
         assert_eq!(rev.total_shares_after, post.total_shares.get());
     }
     r.shares_minted
@@ -401,5 +403,7 @@ fn withdraw_without_accrual_pays_the_stored_count_slice() {
     let (_leader, alice) = perf_fee_vault_with_depositor(&mut f, false);
 
     let minted = assert_withdraw_matches_kernels(&mut f, &alice);
-    assert_eq!(minted, 0, "no trade, no gain over the HWM, no fee");
+    // The outside deposit's floored share count can leave value per share
+    // a few quanta above the HWM; that gain is sub-quantum, so no fee.
+    assert_eq!(minted, 0, "no trade, no fee");
 }
