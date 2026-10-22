@@ -419,6 +419,14 @@ untracked per-directory content, which step 3 handles.
    Present the description and checklist as the plan of work. The
    user's own instructions win.
 
+   **Then start implementing in the same turn — the bootstrap is not
+   a checkpoint.** The dispatch was the authorization to build, so a
+   plan stated and then left waiting for "proceed" costs the operator
+   one guaranteed turn per launch. State the plan as a report in
+   passing, never as a question. The only legitimate stops are a
+   genuine decision point (consult the live planning session first,
+   then `AskUserQuestion`) or a blocked precondition.
+
 1. **Claim the migration number now if the task adds one** under
    `db-schema/migrations/`:
 
