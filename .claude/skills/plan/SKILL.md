@@ -197,8 +197,7 @@ scoping signal:**
   milestone, not this phase. Out of scope for a bootstrap read
   unless the operator names it.
 
-Two calls, since `list` defaults to Backlog and drops milestoned
-issues client-side:
+Two calls; `list` defaults to Backlog, milestoned issues dropped:
 
 ```sh
 python3 .claude/tools/board_batch.py list --include-milestoned \
@@ -209,13 +208,13 @@ python3 .claude/tools/board_batch.py list --include-milestoned \
 python3 .claude/tools/board_batch.py list --state Todo
 ```
 
-The Backlog call keeps parked issues, tagged, for the meta review
-below. **Stamp three counts** from them: the inbox (untagged
-Backlog), its Urgent subset, and Todo. Pull a full body only when
-a decision turns on it.
+The first keeps parked issues, tagged, for the meta review.
+**Say three counts**: the inbox (untagged Backlog), its Urgent
+subset, and Todo. Pull a body only when a decision turns on it.
 
-**Poll the inbox** — inbox specs changed since the prior stamp
-(`<WHEN>` is `<YYYY-MM-DD>T00:00:00Z`):
+**Poll the inbox** — inbox specs changed since the day before
+the prior stamp (`<WHEN>` as `<YYYY-MM-DD>T00:00:00Z`), skipping
+any a live architect or explore session owns:
 
 ```sh
 python3 .claude/tools/board_batch.py list --updated-since <WHEN>
@@ -283,8 +282,8 @@ folded, so an old In Progress audit is live, not stalled.
 **Fold the `Claude meta` pool into SMALL THEMED batches — by
 default, unprompted.** Every `Claude:` filing lands parked
 (Backlog plus `Claude meta`). The pool is that milestone **plus
-every open, unblocked, unpulled `Claude:` issue in Backlog or
-Todo** — without that clause an unpulled batch is
+every open, unblocked `Claude:` inbox issue** — never Todo, which
+is approved — without that clause an unpulled batch is
 duplicated rather than absorbed. Group by the surface each issue
 changes and fold each group into its lowest-numbered survivor via
 `/merge-tasks`. Routine bookkeeping; no per-fold proposal.
@@ -400,12 +399,14 @@ with no refactor-later burden a later issue will undo.
   implementation sessions never place edges.
 - **A hold is an edge or it does not exist** (ruling 2). An issue
   held behind an in-flight surface or a sequencing reason gets a
-  blocking edge on that blocker at dispatch time, so it shows as
-  Blocked, not Next. A completed blocker stops blocking on its
-  own; removing a hold edge on a re-sequence is the operator's
-  call too, asked in step 8's ask and run through step 3.
-- **A promoted `Claude:` batch is Urgent** (operator rule,
-  2026-08-17), so agent-infra is reviewed first. Meta lands
+  blocking edge on that blocker, asked in step 8's ask at
+  bootstrap or as one question when found mid-session, so it
+  shows as Blocked, not Next; a row awaiting that answer is not
+  dispatched. A completed blocker stops blocking on its own;
+  removing a hold edge on a re-sequence is the operator's call
+  too, asked the same way and run through step 3.
+- **A promoted `Claude:` batch is Urgent**, so agent-infra goes
+  first (operator rule, 2026-08-17). Meta lands
   as short batches (step 1), several possibly in flight, with no
   edge and no exception to the proposal-per-edge rule.
 
@@ -568,7 +569,7 @@ tier, no PR, In Review at handoff.
   that line is unratified: its tasks stay in Backlog for review.
 - **A ratified spec FILE is folded in first** (usually the
   design landed as tasks, and there is none): an implementer
-  cannot read the architect's worktree, so **copy it into the
+  cannot read an architect or explore worktree, so **copy it into the
   implementing issue's body, then delete the file.** One still in
   its read-back is live work.
 

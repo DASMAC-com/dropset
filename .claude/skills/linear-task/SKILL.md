@@ -88,7 +88,8 @@ what to file.
      construction. The planning
      bootstrap folds that milestone into small themed
      batch issues once a day. A non-meta filing is
-     unaffected and still goes to Backlog.
+     unaffected and still goes to Backlog, correctly: it is
+     a spec awaiting review.
 
    - **Description** — Markdown. Capture *why* this
      is deferred and enough context to act on it

@@ -331,9 +331,10 @@ The state machine is **In Progress while the session runs → In
 Review when the deliverable is handed off → Done only on the
 operator's ratification**.
 
-Two yeses, not one: the **design yes** inside the loop is what
-licenses the move to Todo, and comes before In Review; the **close yes**
-(see "Lifecycle" below) is what moves the issue to Done.
+Two yeses, not one: the **design yes** inside the loop, given per
+task, is what licenses the move to Todo, and comes before In
+Review; the **close yes** (see "Lifecycle" below) is what moves
+the issue to Done.
 
 **Never self-mark Done.** That is the measured mistake which
 produced the invalid state described under "This session is
