@@ -1226,6 +1226,12 @@ class ResolveTargetsTests(unittest.TestCase):
         self.assertTrue(targets["make test"]["run"])
         self.assertIn("docs/fixture.json", targets["make test"]["reason"])
 
+    def test_a_reason_names_a_bounded_number_of_paths(self):
+        hits = [f".claude/tools/t{i}.py" for i in range(10)]
+        reason = self.resolve(tools_hits=hits)["make tools-tests"]["reason"]
+        self.assertIn("t2.py and 7 more", reason)
+        self.assertNotIn("t3.py", reason)
+
     def test_the_sdk_suite_always_runs(self):
         targets = self.resolve(runs_rust_suites=False, rust_reachable=False)
         self.assertTrue(targets["pnpm --filter @dropset/sdk test"]["run"])

@@ -401,6 +401,9 @@ TOOLS_TESTS_INPUTS = (
     "market-data/grafana/**",
 )
 
+#: How many paths a target's reason names before summarizing the rest.
+REASON_PATHS = 3
+
 #: The attribute an `#[ignore]`d test carries, with or without a reason.
 IGNORE_ATTR = "#[ignore"
 
@@ -436,8 +439,16 @@ def resolve_targets(
     `.github/**`-only diff, and running a cheap check some changed path
     reaches although no flag names it.
     """
+
+    def named(paths):
+        # Capped: `--gate-only` carries this list, and its promise is a payload
+        # bounded whatever the branch's size.
+        shown = ", ".join(paths[:REASON_PATHS])
+        extra = len(paths) - REASON_PATHS
+        return f"{shown} and {extra} more" if extra > 0 else shown
+
     if rust_fixture_hits:
-        rust = (True, f"a Rust test reads {', '.join(rust_fixture_hits)}")
+        rust = (True, f"a Rust test reads {named(rust_fixture_hits)}")
     elif not runs_rust_suites:
         rust = (
             False,
@@ -454,7 +465,7 @@ def resolve_targets(
 
     def gated(target, hits, why_run, why_skip):
         if hits:
-            return entry(target, True, f"{why_run}: {', '.join(hits)}")
+            return entry(target, True, f"{why_run}: {named(hits)}")
         return entry(target, False, why_skip)
 
     return [
