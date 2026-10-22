@@ -11,10 +11,11 @@ Bootstrap the current worktree: fetch main, set up the branch, push a
 draft PR so CI caches start warming while work continues. This is the
 first skill an agent runs after `claude --worktree <tag>` starts.
 
-Two cheap pre-checks come **first**, before anything that mutates the
-worktree: the `gh` credential (with commit signing), and whether the
-issue already has a merged PR. Each catches a failure that is
-otherwise discovered late and expensively.
+Every deterministic act of the bootstrap is **one tool call**; the
+skill keeps only the turns that hold a judgment — adjudicating a stop.
+The tool's two cheap pre-checks still come **first**, before anything
+that mutates the worktree: the `gh` credential (with commit signing),
+and whether the issue already has a merged PR.
 
 There is **no model check**: `task` pins the executor tier's model at
 launch and refuses to start when it does not resolve (see
@@ -25,75 +26,85 @@ The measured incidents behind the rules below live in
 [`history.md`](history.md) — one provenance line here, the figures
 there.
 
-## Step 0b: pre-check the GitHub credential and signing
+## Step 0: run the bootstrap
 
 ```sh
-gh auth status
+python3 .claude/tools/init_pr_bootstrap.py --tag <n> \
+  --spec-out <scratchpad>/spec.md
 ```
 
-If it reports no valid credential, **stop** and tell the user to
-re-authenticate — don't rename, rebase, or commit first (anonymous
-reads succeed on this repo, so a dead token otherwise surfaces only at
-`git push`). Read the **scope set** too: step 9 needs `notifications`,
-which a re-auth silently drops; the one-time fix is
-`gh auth refresh -h github.com -s notifications`.
+In order: the `gh` credential, the merged-PR pre-check, the branch
+helper (`init_pr_branch.py --link-env` — tag, operator-file symlinks,
+measured facts, signing verdict), `git fetch origin main`, the
+`worktree-` rename, the rebase onto `origin/main`, the frontend install
+when `node_modules` is absent, the empty signed commit
+`chore(<ENG-###>): Bootstrap the worktree`, the push, the draft PR
+with that subject as its title (byte-identical, which the Semantic PR
+workflow compares while one commit is on the branch), the notification
+mute, the Linear In Progress move, and the issue body spilled to
+`--spec-out`. The manifest's shape is in the tool's docstring; report
+the PR URL, any `failed` step and any `notes` in a line each.
 
-**Signing is read from the helper call below — its `signing` field —
-never by probing the ssh agent here.** Act on it before step 4's
-rename, the first thing that costs anything to undo:
+**Every step is idempotent, so the remedy for any stop is to fix the
+cause and re-run the same command** — it resumes, never redoes. Read
+`stopped_at`:
 
-| `signing`                 | Configuration                                                                      | Action                                                      |
-| ------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `external-signer`         | `gpg.format = ssh`, `gpg.ssh.program` is a non-`ssh-keygen` signer (`op-ssh-sign`) | Proceed — the signer reaches its own backend, not an agent. |
-| `external-signer-missing` | Same, but the signer resolves neither on disk nor on `PATH`                        | **Stop and ask**: reinstall it or fix `gpg.ssh.program`.    |
-| `agent-ok`                | `gpg.format = ssh`, agent-based (no program, or `ssh-keygen`), agent holds keys    | Proceed.                                                    |
-| `agent-locked`            | Same, agent empty or unreachable                                                   | **Stop and ask**: unlock the 1Password app.                 |
-| `gpg`                     | `gpg.format` unset or non-`ssh`                                                    | Proceed; nothing to check.                                  |
+| `stopped_at`   | Cause                                                                                          | Action                                                                                                                                                                                                                           |
+| -------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth`         | No valid `gh` credential                                                                       | Tell the user to re-authenticate. Nothing was mutated.                                                                                                                                                                           |
+| `merged_check` | A **merged** PR is on the issue, or the tag is neither `###` nor `eng-###`                     | Merged: `AskUserQuestion` — stand down, or proceed with genuine follow-up scope (re-run with `--allow-merged`). Done means operator-ratified, not merged, so a merged issue in the queue is a contradiction, not an instruction. |
+| `branch`       | Signing is `external-signer-missing` (reinstall it or fix `gpg.ssh.program`) or `agent-locked` | Ask; unlock the 1Password app or fix the signer, then re-run.                                                                                                                                                                    |
+| `rebase`       | A conflict; the tool already ran `git rebase --abort`                                          | Tell the user; never resolve it here.                                                                                                                                                                                            |
+| `commit`       | Signing failed (`failed to fill whole buffer` = 1Password locked)                              | **An unpushed-state alarm**: say so, ask the user to unlock, re-run.                                                                                                                                                             |
+| anything else  | The step's `detail`                                                                            | Fix the cause and re-run.                                                                                                                                                                                                        |
 
-On any stop in this step, ask rather than retrying more than once or working
-around it; nothing is lost, since no commit was written yet.
+On a stop, ask rather than retrying more than once or working around
+it. `external-signer` proves only that the signing path is **wired**,
+so the `branch` step also runs the dangling-commit probe
+(`signing_probe.py`) before the rename and stops on `LOCKED`, its
+instruction in `detail` — relay it. Add no agent probe (`ssh-add -l`,
+`ssh-keygen -Y sign`), which an external signer never consults, nor a
+`--show-signature` read, which tests verification, not signing.
 
-`external-signer` proves only that the signing path is **wired**; a
-locked app still fails at step 6. To prove it unlocked before the
-rename, run the dangling-commit probe — never an agent probe
-(`ssh-add -l`, `ssh-keygen -Y sign`), which an external signer never
-consults, nor a `--show-signature` read, which tests verification, not
-signing — and on `LOCKED` stop and relay its instruction:
+A `failed` step is best-effort and never stops the run: `mute` fails
+without the `notifications` scope (the note names the one-time
+`gh auth refresh -h github.com -s notifications`, and the upkeep
+pass's notification sweep catches the rest once the issue closes —
+armed, or by hand via `upkeep.py prune --apply`); `linear_state` — say so; `install` — re-run
+`python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install`
+by hand, since the `biome` and `tsc` hooks fail the first full
+`make lint` without it; `spec` — fall back to `get_issue`.
 
-```sh
-python3 .claude/tools/signing_probe.py
-```
+Two **measured facts** in `facts` are acted on, not reasoned about
+from the diff:
 
-## Step 0c: pre-check that the issue is not already merged
+- **`env_link`** / **`secrets_env_link`** (`frontend/.env.local`, and
+  the secrets enclave file `make collectors-up` reads): `failed` means
+  copy that file by hand; `no-source` / `no-base` just mean there was
+  nothing to link.
+- **`program_so`: on `absent`, do not build at bootstrap.** Any
+  litesvm test under `programs/dropset/tests/` needs
+  `python3 .claude/tools/run_quiet.py -- make program` first (it
+  copies the committed keypair; the failing tests' own
+  `anchor keys sync && anchor build` suggestion is wrong for this
+  repo).
 
-```sh
-gh pr list --repo DASMAC-com/dropset --search "<ENG-###>" \
-  --state all --json number,title,state,mergedAt
-```
-
-- **A merged PR is a STOP.** Touch nothing. Say "ENG-### already
-  merged as PR #N; the issue looks mis-stated or mis-queued" and ask
-  via `AskUserQuestion` whether to stand down or proceed with genuine
-  follow-up scope. Done means operator-ratified, not merged (per
-  `docs/conventions/linear-automation.md`), so a merged issue sitting
-  in Backlog is a contradiction, not an instruction.
-- **A closed-not-merged PR is a warning** — name it and carry on.
-- **None, or only open ones**, is normal; say nothing.
-
-`gh` rather than the MCP because this is a field-selected read of a
-few rows and reuses the existing `Bash(gh pr list:*)` rule.
+The tool fetches from inside this worktree and never runs
+`git -C <base_repo> pull` — the harness's worktree isolation refuses
+git operations outside it; fast-forwarding the base checkout is
+whoever works there's job.
 
 ## Input
 
 An optional Linear tag like `eng-123`; otherwise infer it from the
 worktree directory name — the bare number (`123`), or `eng-123` in
-a pre-rename worktree; the helper normalizes either to `eng-123`,
+a pre-rename worktree; the tool normalizes either to `eng-123`,
 the form the branch and the PR scope carry. If it is neither
 (case-insensitive), stop and ask.
 
 **With no other context** — just the tag, no task instructions — the
 linked Linear issue is the full specification: surface its
-description and checklist as the plan of work (step 12) and proceed
+description and checklist as the plan of work (step 1) and proceed
 straight into the task. Instructions the user *did* give win.
 
 ## Decision points use `AskUserQuestion`
@@ -172,9 +183,9 @@ Five reminders neither states:
   read (a rebase, a hook autofix, a sibling session), and take
   `--stat` first when the question is which files moved.
 
-- **Write the issue body on the zero-echo path.** Step 10's echo is the
-  one licensed one. After it, a body **append** (a progress or deferral
-  note) goes through
+- **Write the issue body on the zero-echo path.** The bootstrap read
+  it without an echo; keep it that way. A body **append** (a progress
+  or deferral note) goes through
   `python3 .claude/tools/linear_issue.py append --id <ENG-###> --file <path>`,
   never `save_issue`, which echoes the whole body again, larger
   each time it grows. Only an **anchored** edit stays on the MCP
@@ -194,210 +205,16 @@ Five reminders neither states:
   mangles an existing import), and surfaces as an error naming the
   *correct* symbol.
 
-## The branch/worktree helper tool
-
-Tag validation, base-repo resolution, branch-name normalization, the
-signing verdict, and the two operator-file symlinks
-(`frontend/.env.local`, `infra/localnet/secrets.local.env`) live in
-`.claude/tools/init_pr_branch.py`. Run it **once**, near the top:
-
-```sh
-python3 .claude/tools/init_pr_branch.py --tag <eng-###> --link-env
-```
-
-```json
-{
-  "tag": "eng-603",          // from `603` or `eng-603`, lowercased
-  "tag_valid": true,         // false (+ non-zero exit) for anything else
-  "base_repo": "/…/dropset", // the refs/heads/main worktree, or null
-  "current_branch": "worktree-603",
-  "normalized_branch": "eng-603",
-  "rename_needed": true,     // true iff a `worktree-` prefix is replaced
-  "env_link": "created",     // frontend/.env.local
-  "secrets_env_link": "exists",  // infra/localnet/secrets.local.env
-  "frontend_node_modules": "absent",  // present / absent / no-frontend
-  "program_so": "absent",    // present / absent / no-program
-  "signing": "external-signer",       // the step-0b table
-  "signing_program": "/…/op-ssh-sign" // null when none is configured
-}
-```
-
-Steps 1–4 and step 0b read their answers from this one call. The
-`frontend_node_modules`, `program_so` and `signing` fields are
-**measured facts** rather than predictions: act on them, don't reason
-from the diff. `--link-env` keeps the command line free of absolute
-paths, so it reduces to one stable allow-rule. Allow-rules already
-reach every worktree (`docs/conventions/local-integrations.md` → "How
-settings files resolve across worktrees"); what a cold one lacks is
-untracked per-directory content, which step 3 handles.
-
 ## Steps
-
-1. **Validate the tag.** If `tag_valid` is `false`, stop and ask for a
-   valid `eng-###`. Otherwise use the lowercased `tag`.
-
-1. **Fetch the latest `main`**, from inside this worktree:
-
-   ```sh
-   git fetch origin main
-   ```
-
-   This updates the shared `origin/main` ref that step 5 rebases onto.
-   Never `git -C <base_repo> pull --ff-only` — the harness's worktree
-   isolation refuses git operations outside this worktree. (The
-   repo's worktree edit-path guard is a different thing; it covers
-   file-mutating tools, not `Bash`.) Fast-forwarding the base repo's
-   checkout is whoever works there's job.
-
-1. **Read the cold-worktree fields** from the helper's JSON. Nothing
-   here blocks the bootstrap.
-
-   - **`env_link`** (`frontend/.env.local`) and **`secrets_env_link`**
-     (the secrets enclave file `make collectors-up` reads; without it
-     the keyed venues are skipped) each report `created` / `exists`
-     (left untouched, never clobbered) / `no-source` / `no-base` (main
-     isn't checked out anywhere) / `failed` (mention it; copy by hand).
-     Read the two independently.
-
-   - **`frontend_node_modules`: on `absent`, install now**, whatever the
-     task touches — the `biome` and `tsc` hooks run on the whole tree,
-     so the first full `make lint` fails without it:
-
-     ```sh
-     python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install
-     ```
-
-   - **`program_so`: on `absent`, do not build at bootstrap.** Note
-     that any litesvm test under `programs/dropset/tests/` needs
-     `python3 .claude/tools/run_quiet.py -- make program` first (it
-     copies the committed keypair; the failing tests' own
-     `anchor keys sync && anchor build` suggestion is wrong for this
-     repo).
-
-1. **Normalize the branch name.** `task <n>` pre-creates the
-   worktree `<n>` on branch `eng-<n>`, the form Linear's GitHub
-   integration links, so this is normally a no-op; when that
-   pre-create failed, `claude -w <n>` named the branch
-   `worktree-<n>` instead. If `rename_needed` is `true`:
-
-   ```sh
-   git branch -m <current_branch> <normalized_branch>
-   ```
-
-   Otherwise this is a no-op.
-
-1. **Rebase onto the fetched upstream:**
-
-   ```sh
-   git rebase origin/main
-   ```
-
-   `origin/main`, never the local `main`, which may be stale. On
-   conflicts, `git rebase --abort` and tell the user; never resolve
-   them here.
-
-1. **Create an empty, signed commit** with a conforming semantic
-   subject:
-
-   ```sh
-   git commit --allow-empty -S -m "chore(<ENG-###>): Bootstrap the worktree"
-   ```
-
-   `-S` is mandatory (branch protection). The message must be
-   byte-identical to the step-8 PR title: with one commit on the
-   branch, the Semantic PR workflow compares the two.
-
-1. **Push:**
-
-   ```sh
-   git push -u origin <eng-###>
-   ```
-
-1. **Open a draft PR** with an empty body and the bootstrap commit's
-   subject as its title:
-
-   ```txt
-   mcp__github__create_pull_request(
-     owner: "DASMAC-com",
-     repo: "dropset",
-     title: "chore(<ENG-###>): Bootstrap the worktree",
-     head: "<eng-###>",
-     base: "main",
-     body: "",
-     draft: true,
-   )
-   ```
-
-   Never the bare tag: it cannot satisfy the Semantic PR workflow
-   (type, `^ENG-[0-9]+$` scope, capitalized subject), so the
-   `opened` run always fails and stays in the checks rollup forever.
-   `pr-title-description` rewrites the title during review. Keep the
-   returned `number` and URL.
-
-1. **Unsubscribe from the PR's notifications** — best-effort; on any
-   error, note it and continue. No MCP tool covers a per-PR
-   subscription, so this is a documented `gh` exception
-   (`docs/conventions/github-mcp.md`). Resolve the GraphQL node id
-   (the MCP returns the numeric id), then set `IGNORED`:
-
-   ```sh
-   gh pr view <number> --repo DASMAC-com/dropset --json id
-   ```
-
-   ```sh
-   gh api graphql -F id=<node_id> -f query='
-     mutation($id: ID!) {
-       updateSubscription(
-         input: { subscribableId: $id, state: IGNORED }
-       ) { subscribable { viewerSubscription } }
-     }'
-   ```
-
-   Success reads back `viewerSubscription: "UNSUBSCRIBED"`. Without
-   the `notifications` scope it fails with `INSUFFICIENT_SCOPES`; if
-   step 0b flagged that, say so rather than re-diagnosing.
-   The upkeep pass's notification sweep catches what this misses
-   once its issue closes (armed, or by hand via `upkeep.py prune --apply`).
-
-1. **Mark the Linear issue In Progress** via the MCP; on failure, warn
-   and continue:
-
-   ```txt
-   mcp__claude_ai_Linear__save_issue(
-     id: "<ENG-###>",
-     state: "In Progress"
-   )
-   ```
-
-   **Keep the response — it echoes the whole issue body**, which step
-   12 needs. This is the one deliberate exception to routing a
-   state-only write through the zero-echo `board_batch.py state`: here
-   the echo *is* how the session obtains the spec, so the zero-echo
-   path would only move the cost to a `get_issue`. Do not "optimize"
-   it (see `docs/conventions/linear-automation.md`).
-
-1. **Print the PR URL** and confirm the issue moved to In Progress.
 
 1. **Surface the task when no other context was given.**
 
-   - **Read the description from step 10's response — don't
-     re-fetch.** Use `get_issue` only if that write failed or was
-     skipped. Do pull `list_comments`: acceptance criteria sometimes live in an
-     anchored comment.
-
-   - **On a long spec, spill the body to a scratchpad file on the
-     first read** (or use the harness's persisted copy if it
-     overflowed) and work from it thereafter:
-
-     ```sh
-     python3 .claude/tools/read_result.py --field description \
-       --headings <persisted-result-or-spill>
-     python3 .claude/tools/read_result.py --field description \
-       --section 'What changes' <persisted-result-or-spill>
-     ```
-
-     Read the whole body once, to plan; after that, a heading map or
-     a section, never the field again.
+   - **Read the spec from the manifest's `spec_path` — once, whole,
+     to plan.** The bootstrap wrote it there with zero echo; after
+     that, Grep its `^#` headings and slice-read a section, never the
+     whole file again. Use `get_issue` only if the `spec` step
+     failed. Do pull `list_comments`: acceptance criteria sometimes
+     live in an anchored comment.
 
    - **An ambiguous tag gets an `AskUserQuestion`, never a
      speculative fetch of candidates.**

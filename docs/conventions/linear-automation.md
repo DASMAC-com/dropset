@@ -1360,10 +1360,11 @@ through `board_batch.py state`, which echoes nothing. So on a
 checklist-free issue `review-pr` makes no echoing write at all, and on
 one with a checklist it makes exactly one.
 
-Do not re-derive the old pair as fixable waste; it was fixed. What
-remains for the whole session is `init-pr`'s bootstrap write, and that
-one is deliberate — see the three-write budget above, where the echo
-does double duty as the spec the session is about to surface.
+Do not re-derive the old pair as fixable waste; it was fixed. The
+bootstrap write no longer echoes either: `init_pr_bootstrap.py` moves
+the issue with `linear_patch.py state` and spills the body to a file
+with `linear_patch.py read --out`, so the spec reaches context once,
+as a file the session reads to plan and slices thereafter.
 
 Two techniques worth keeping, both measured working:
 

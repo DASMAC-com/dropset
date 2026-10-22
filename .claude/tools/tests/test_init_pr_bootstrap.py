@@ -36,7 +36,10 @@ class FakeRunner:
         self.calls: list[list[str]] = []
         helper_json = json.dumps({**HELPER, **(helper or {})})
         self.table = [
-            (["gh", "auth", "status"], (0, "Token scopes: 'notifications', 'repo'", "")),
+            (
+                ["gh", "auth", "status"],
+                (0, "Token scopes: 'notifications', 'repo'", ""),
+            ),
             (["gh", "pr", "list"], (0, json.dumps(list(prs)), "")),
             (["init_pr_branch.py"], (0, helper_json, "")),
             (["git", "fetch"], (0, "", "")),
@@ -49,7 +52,10 @@ class FakeRunner:
             (["git", "push"], (0, "", "")),
             (["gh", "pr", "create"], (0, PR_URL + "\n", "")),
             (["gh", "pr", "view"], (0, json.dumps({"id": "PR_node"}), "")),
-            (["gh", "api", "graphql"], (0, '{"viewerSubscription":"UNSUBSCRIBED"}', "")),
+            (
+                ["gh", "api", "graphql"],
+                (0, '{"viewerSubscription":"UNSUBSCRIBED"}', ""),
+            ),
             (["linear_patch.py", "state"], (0, "SET ENG-42", "")),
             (["linear_patch.py", "read"], (0, "WROTE 1234 bytes", "")),
         ]
@@ -177,9 +183,7 @@ class MidRunFailureTests(unittest.TestCase):
         self.assertFalse(runner.ran("git", "commit"))
 
     def test_a_signing_failure_stops_before_the_push(self):
-        runner = FakeRunner(
-            {("git", "commit"): (1, "", "failed to fill whole buffer")}
-        )
+        runner = FakeRunner({("git", "commit"): (1, "", "failed to fill whole buffer")})
         result = bootstrap(runner).execute()
         self.assertEqual(result["stopped_at"], "commit")
         self.assertIn("1Password", result["steps"][-1]["detail"])
@@ -208,7 +212,9 @@ class ResumeTests(unittest.TestCase):
     def test_a_rerun_reuses_the_commit_and_the_open_pr(self):
         runner = FakeRunner(
             {("git", "log"): (0, "chore(ENG-42): Bootstrap the worktree\n", "")},
-            prs=[{"number": 700, "state": "OPEN", "headRefName": "eng-42", "url": PR_URL}],
+            prs=[
+                {"number": 700, "state": "OPEN", "headRefName": "eng-42", "url": PR_URL}
+            ],
         )
         result = bootstrap(runner).execute()
         got = statuses(result)

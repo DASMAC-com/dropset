@@ -161,7 +161,16 @@ which drifted behind it twice:
   `Bash(gh api graphql:*)` for the mutation — so no new permission is
   needed.
 
-- **The credential pre-check** (`init-pr` step 0b) — `gh auth status`,
+- **The draft PR at bootstrap** (`init_pr_bootstrap.py`) —
+  `gh pr create --draft`. The bootstrap is one tool run so that none
+  of its deterministic acts costs a turn, and a tool process cannot
+  call the MCP; routing this one write back through the skill would
+  restore the turn the tool exists to remove. It touches only the new
+  PR's own title, body and draft state, the same low blast radius as
+  the pre-approved `create_pull_request`.
+
+- **The credential pre-check** (`init_pr_bootstrap.py`'s `auth`
+  step) — `gh auth status`,
   run before anything that mutates the worktree. This one needs no
   payload or transport argument at all: the question *is* whether the
   `gh` CLI itself holds a working credential, so there is nothing for
@@ -364,8 +373,10 @@ writes to confirm-on-use:
   the failing job's step conclusions
   (`actions/jobs/<id>`, or a run's `actions/runs/<id>/jobs`) are read
   inside `wait_for_checks.py`, which filters in Python. Reads only — the
-  one `gh api` **write** in the skills is `init-pr`'s
-  `updateSubscription` mutation, which rides the GraphQL rule.
+  `gh api` **writes** are `init-pr`'s `updateSubscription` mutation,
+  which rides the GraphQL rule, and the notification-thread `DELETE`s
+  that `wait_for_checks.py --queue` and `upkeep.py` make in their own
+  processes.
 
   The ruleset call site passes a `--jq` filter containing a `|`. That is a
   command **flag**, not a shell pipe, so the compound guard does not
@@ -377,7 +388,8 @@ writes to confirm-on-use:
   consuming tool rather than to drop the carve-out.
 
 - **Pre-approve (routine PR-authoring writes):** `create_pull_request`
-  (init-pr) and `update_pull_request` (pr-title-description, review-pr).
+  (the fallback when `init-pr`'s bootstrap tool cannot run) and
+  `update_pull_request` (pr-title-description, review-pr).
   The skills call these on every run to open
   and maintain the draft PR,
   and they touch only the PR's own title / body / draft-state — low
