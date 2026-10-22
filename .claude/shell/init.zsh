@@ -1738,8 +1738,9 @@ chore() {
 #     and a design thought. Add it only if an architect session is actually
 #     found wanting one.
 #   * The 5-hour window. On its default anthropic substrate a planning session
-#     is the day's first subscription session, so it opens the window — the
-#     job the retired `housekeeping` verb was kept on the seat for.
+#     is normally the day's first subscription session, so it opens the
+#     window — the job the retired `housekeeping` verb was kept on the seat
+#     for.
 #
 # `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not `plan-05`.
 #

@@ -325,7 +325,9 @@ Concrete rules:
     prompts a human to firm them. Most passes pay one cheap call and
     skip.
   - **Pruning** — the upkeep pass's `allowlist.py cruft` report, the
-    removals approved at `plan`'s bootstrap gate.
+    removals approved at `plan`'s bootstrap gate;
+    `allowlist.py prune-dead` (dead globs, ungated) is by hand now, on
+    no schedule.
 
   What is deliberately *not* on that list is a per-session sweep. It
   was retired on measurement and the slow clock replaces it rather than

@@ -1314,8 +1314,8 @@ worktree cannot be named without a name. `plan` remains a
 and its approvals ride `plan`'s bootstrap gate. An alias would keep a
 name whose meaning changed from a session with a closing gate to a
 script. The 30-minute `/loop` cadence went with it and has no
-replacement: its remaining use was audit cadence, and audits are
-planning-filed board work.
+replacement; the daily pass and `upkeep.py prune --apply` by hand
+cover upkeep, and audits are planning-filed board work.
 
 #### Architect and explore sessions: temporary worktree, no PR
 
@@ -1720,7 +1720,7 @@ tools a session needs, and the verbs that actually broke on Bedrock
 broke on capability.
 
 **The 5-hour subscription window is `plan`'s to open.** On its default
-anthropic substrate, the day's planning session is its first
+anthropic substrate, the day's planning session is normally its first
 subscription session, so it opens the window for free. That was the
 retired `housekeeping` verb's one non-capability reason to stay on the
 seat; with `plan` covering it, the exception went with the verb.

@@ -6,8 +6,8 @@ section below states the rule in brief and points to the full detail in
 open the linked doc when you need the rationale, the edge cases, or
 verbatim material (e.g. the sub-agent brief). When you change a
 convention, update both its `docs/conventions/` file **and** any skill
-that references it — `review-pr`'s `CLAUDE.md`-freshness lens and
-the upkeep pass both check this stays in sync.
+that references it — `review-pr`'s `CLAUDE.md`-freshness lens checks
+this stays in sync (the upkeep pass checks only that citations resolve).
 
 ## Commits and PRs
 
