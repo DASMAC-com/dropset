@@ -42,6 +42,7 @@ class FakeRunner:
             ),
             (["gh", "pr", "list"], (0, json.dumps(list(prs)), "")),
             (["init_pr_branch.py"], (0, helper_json, "")),
+            (["signing_probe.py"], (0, "signing-probe | signed", "")),
             (["git", "fetch"], (0, "", "")),
             (["git", "branch", "-m"], (0, "", "")),
             (["git", "rebase", "origin/main"], (0, "up to date", "")),
@@ -165,6 +166,14 @@ class StopBeforeMutationTests(unittest.TestCase):
                 result = bootstrap(runner).execute()
                 self.assertEqual(result["stopped_at"], "branch")
                 self.assertNoMutation(runner)
+
+    def test_a_locked_signing_probe_stops_before_the_rename(self):
+        locked = "signing-probe | LOCKED | unlock the 1Password app | no answer"
+        runner = FakeRunner({("signing_probe.py",): (1, "", locked)})
+        result = bootstrap(runner).execute()
+        self.assertEqual(result["stopped_at"], "branch")
+        self.assertIn("LOCKED", result["steps"][-1]["detail"])
+        self.assertNoMutation(runner)
 
     def test_a_missing_notifications_scope_is_a_note_not_a_stop(self):
         runner = FakeRunner({("gh", "auth", "status"): (0, "Token scopes: 'repo'", "")})

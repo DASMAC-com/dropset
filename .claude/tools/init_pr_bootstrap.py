@@ -15,9 +15,10 @@ any mutation** to hand it back:
 * a dead ``gh`` credential (``auth``);
 * a **merged** PR already on the issue (``merged_check``) — a contradiction the
   operator adjudicates; ``--allow-merged`` proceeds once they have;
-* an invalid tag, or a signing verdict of ``external-signer-missing`` /
+* an invalid tag, a signing verdict of ``external-signer-missing`` /
   ``agent-locked`` (``branch``), read from `init_pr_branch.py`, which this
-  tool drives rather than duplicates.
+  tool drives rather than duplicates — or a ``LOCKED`` answer from
+  `signing_probe.py`, which proves the signer unlocked, not merely wired.
 
 After the first mutation a failure still stops the run, and the manifest names
 what completed and what did not. Every step is **idempotent** — the rename and
@@ -252,6 +253,11 @@ class Bootstrap:
         signing = self.helper.get("signing")
         if signing in SIGNING_STOPS:
             raise Stop(f"signing is {signing}: {SIGNING_STOPS[signing]}")
+        # The verdict proves the signer is wired, not unlocked; a dangling
+        # signed commit proves it before the rename, the first mutation.
+        code, out, err = self.run([sys.executable, str(TOOLS / "signing_probe.py")], 60)
+        if code != 0:
+            raise Stop(_tail(err or out) or f"signing_probe.py exit {code}")
         self.branch = self.helper.get("normalized_branch")
         if not self.branch:
             raise Stop("init_pr_branch.py reported no normalized_branch")
