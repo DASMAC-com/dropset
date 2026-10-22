@@ -224,8 +224,9 @@ Handle their open threads by **the fold protocol**, which every
 reviser reuses: fold the comment into the body, reply saying how
 it was addressed, then resolve the thread
 (`linear_gate.py resolve <comment-id>`). Resolved means
-addressed-and-how, never approval. A fold into an approved (Todo)
-body moves it back to Backlog, priority and edges unchanged.
+addressed-and-how, never approval. Never fold an In Progress
+spec; a fold into an approved (Todo) body moves it back to
+Backlog, priority and edges unchanged.
 
 **The one relay is "please review the Urgent specs (N)".** Keep
 the Urgent set small, a few at a time, and the inbox stocked so
@@ -282,8 +283,8 @@ folded, so an old In Progress audit is live, not stalled.
 **Fold the `Claude meta` pool into SMALL THEMED batches — by
 default, unprompted.** Every `Claude:` filing lands parked
 (Backlog plus `Claude meta`). The pool is that milestone **plus
-every open, unblocked `Claude:` inbox issue** — never Todo, which
-is approved — without that clause an unpulled batch is
+every open, unblocked `Claude:` inbox issue** (never Todo) —
+without that clause an unpulled batch is
 duplicated rather than absorbed. Group by the surface each issue
 changes and fold each group into its lowest-numbered survivor via
 `/merge-tasks`. Routine bookkeeping; no per-fold proposal.
@@ -300,8 +301,8 @@ Promotion stays subject to any freeze in `rulings.md`.
   one, never padding. Which rule yields when they disagree: same
   doc → "Which one yields in the interim".
 
-- **Fold strays, promote batches.** An already-assembled parked
-  batch is a promotion candidate, never a fold input —
+- **Fold strays, promote batches.** An already-assembled batch,
+  parked or promoted, is never a fold input —
   `/merge-tasks` cannot split, so a re-fold only grows it.
 
 - **Survivors file parked**; only the ones you promote enter the
@@ -316,8 +317,8 @@ Promotion stays subject to any freeze in `rulings.md`.
 - **Assembly consumes the pool as of this bootstrap.** A later
   stray waits for the next one.
 
-- **Never fold an issue that is In Progress** — that mutates a
-  spec a session is implementing. **Never fold across the meta /
+- **Never fold an In Progress issue** — a session is
+  implementing it. **Never fold across the meta /
   product boundary.**
 
 - **Append to a batch with the zero-echo writer**, never
@@ -527,7 +528,8 @@ session's write, never the worker's.
 **Dispatching is the other half; Todo is its standing
 authorization.** The gate is two checks: state Todo
 (`linear_gate.py approvals ENG-<n>…`, exit 1 if any is not; In
-Progress or In Review is a resume) and unblocked (Next). An open
+Progress or In Review is a resume) and unblocked (Next, no
+pending hold: step 2). An open
 thread on a Todo issue is no refusal — only the operator makes
 that move (2026-10-21); the probe's count feeds a later fold.
 Dispatch unblocked Todo as slots open under the fleet ceiling, in
