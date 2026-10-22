@@ -1250,7 +1250,16 @@ migrations or generation inputs, and whether it spans crates.
      The target regenerates the price/quoting vectors, stages
      `sdk/conformance/`, then `git diff --cached --exit-code`s it —
      so a **non-zero exit means the vectors were stale and are now
-     staged**. Commit them:
+     staged**. To learn whether book behavior moved or only the
+     embedded market bytes, read the one-line-per-file verdict
+     (exit 1 when an expected output changed), never a `git diff`
+     of the byte arrays:
+
+     ```sh
+     python3 .claude/tools/vector_diff.py
+     ```
+
+     Then commit them:
 
      ```sh
      git commit -S -m "Regenerate conformance vectors"
