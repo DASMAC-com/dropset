@@ -120,6 +120,12 @@ stated design intent.
 >   count is heading into the dozens, re-read this clause before
 >   answering — and if you still believe the count, say so explicitly.
 
+**A findings agent's model tier is the spawning skill's call** — passed
+as `model` on the `Agent` call, or inherited from the launcher's
+sub-agent default when none is passed — never chosen by the agent
+itself. `audit-scope` step 1 is the worked instance: judging lanes take
+the default, mechanical lanes pass `sonnet`.
+
 **Pass the material inline.** Whatever the agent must reason over —
 the diff, the commit log, the issue set — goes **in the prompt**, so
 no agent re-fetches it by shelling out. (For content too large or

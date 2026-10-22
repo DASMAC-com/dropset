@@ -267,7 +267,11 @@ not re-litigated per session:
 
 - **Sonnet-tier task workers are rejected** (operator, 2026-09-11).
   The ~60% token saving does not pay for the redo risk on a PR. Compact
-  PRs and the levers below are the ratified levers instead.
+  PRs and the levers below are the ratified levers instead. It scopes to
+  implementers whose output lands in a PR: a read-only mechanical
+  findings lane, whose error mode is a false positive a skeptic kills
+  downstream, may run on the helper tier (operator, 2026-10-22; the
+  worked instance is `audit-scope` step 1).
 - **The Bedrock auto-mode classifier's ~7% overhead is accepted burn.**
   It buys the substrate routing and is not a target for trimming. The
   ~7% was September's Sonnet spend as a share of Opus spend; on Opus 5.5
