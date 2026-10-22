@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Run an architect session, launched with `architect <n>` on its governing issue — a long-horizon design conversation asking whether the thing on the board is the right thing to build. Bootstraps from the Planning document and the track umbrellas only. Produces Linear tasks, filed only after the operator ratifies the design in a mandatory read-back, plus an optional on-disk spec file the operator edits in place, with NEEDS- markers on open items. Makes no scheduling writes: it files its own tasks and moves only its own issue to In Review, then hands conclusions to planning through the Planning document's notes and a direct message. Runs in a temporary worktree but is READ-ONLY toward the repo — no commits, no PR.
+description: Run an architect session, launched with `architect <n>` on its governing issue — a long-horizon design conversation asking whether the thing on the board is the right thing to build. Bootstraps from the Planning document only. Produces Linear tasks, filed into Backlog as the design settles and moved to Todo at close only once the operator ratifies them in a mandatory read-back, plus an optional on-disk spec file the operator edits in place, with NEEDS- markers on open items. Makes no scheduling writes: it files its own tasks, moves only its ratified tasks to Todo and its own issue to In Review, then hands conclusions to planning through the Planning document's notes and a direct message. Runs in a temporary worktree but is READ-ONLY toward the repo — no commits, no PR.
 user-invocable: true
 model: fable
 ---
@@ -108,16 +108,12 @@ pin prevents.
 
 ## Bootstrap: minimal, deliberately
 
-Read **these**, each one cheap read:
-
-1. **The Planning document** (`LINEAR_PLANNING_DOC_ID`), plus
-   the committed standing decisions and rulings in
-   `.claude/skills/plan/rulings.md`. This is the non-negotiable
-   read — strategy direction, settled decisions, the vocabulary
-   the operator uses. Arguing architecture without it re-derives
-   settled ground.
-1. **The track umbrellas** — the Todo tier, milestone-carrying
-   issues excluded.
+Read **the Planning document** (`LINEAR_PLANNING_DOC_ID`), plus
+the committed standing decisions and rulings in
+`.claude/skills/plan/rulings.md`. This is the non-negotiable
+read — strategy direction, settled decisions, the vocabulary the
+operator uses. Arguing architecture without it re-derives
+settled ground.
 
 That is the whole bootstrap. **No Backlog read, no parked
 counts, no audit heartbeat, no folds, no PR checks.** Those
@@ -141,16 +137,25 @@ absolute rule and they are not the same thing.
   decided. This is not a concession, it is the mechanism the
   whole design rests on: durable state must reach Linear
   *before* the handoff, so a session that could not file would
-  have no way to make its output durable. They are filed **only
-  after the operator ratifies the design** (see "The loop"
-  below); before that, a task exists only as a marked stub.
+  have no way to make its output durable. They are filed **into
+  Backlog during the session**, as the design settles, as the
+  reviewable units the operator ratifies one by one (see "The
+  loop" below). The session owns them and handles comments on
+  them by the fold protocol (`plan` step 1): fold, reply saying
+  how, resolve.
+- **Its ratified tasks' state**, Backlog → Todo at close, on the
+  operator's explicit yes in this tab — the one carve-out from
+  "only the operator moves an issue to Todo", recorded in the
+  handoff with where and when the yes was given. An unratified
+  task stays in Backlog or is canceled.
 - **Its own governing issue's state**, In Progress → In Review
   at handoff. Never Done — that is the operator's.
 
 **What it must not write, and this is the real monopoly:**
 
 - **no blocking edges**, ever;
-- **no re-prioritizing**, no closing, no milestone changes;
+- **no re-prioritizing**, no milestone changes, no closing beyond
+  its own unratified tasks;
 - **nothing on another issue** — not its state, not its body.
 
 The scheduling monopoly stays with the planning session. Two
@@ -207,27 +212,28 @@ skipped at bootstrap.
 
 ## The deliverable: Linear tasks, and optionally a spec file
 
-**Linear tasks are the durable output, and they are filed only
-from a ratified design.** What is optional is the spec *file*,
-never the ratification. Reach for a file only when the thinking
-is too large to hold in the governing issue's body, or when a
+**Linear tasks are the durable output, and only a ratified one
+reaches Todo.** What is optional is the spec *file*, never the
+ratification. Reach for a file only when the thinking is too
+large to hold in the governing issue's body, or when a
 longer-term repo artifact is genuinely warranted; a short design
 can be written into that body instead. Either way it goes
-through the read-back loop below **before any task is filed**.
+through the read-back loop below **before any task moves to
+Todo**.
 
 This is a correction worth stating plainly, because the 09-11
 shape made the file the *point*: it isn't. **The file is an
-iteration medium; Linear is the record.** It is also a second
-correction: an earlier version said a design "can be ratified
-purely as Linear tasks", and on 2026-10-19 a session read that
-as license to file seven tasks and hand off without the
-operator ever seeing the design. Filing is not ratifying.
+iteration medium; Linear is the record.** Filing is not
+ratifying: on 2026-10-19 a session filed seven tasks and handed
+off without the operator ever seeing the design.
 
-**A task may exist before ratification only as a marked stub**
-— its body carries a stub note saying the design is unratified.
-A stub is never assembled into a meta batch or promoted; when
-the review settles, it is rewritten to the ratified spec or
-closed if the review removed it.
+**A task is filed unratified, into Backlog** — the review inbox,
+which is exactly where a spec awaiting review belongs. That is why
+the earlier marked-stub form and its "no task is filed from an
+unratified design" rule retired: Backlog already says "awaiting
+review", and only Todo says "approved". When the review settles,
+each task is rewritten to the ratified spec, or canceled if the
+review removed it.
 
 When you do write one, it goes in the worktree at:
 
@@ -256,25 +262,26 @@ an artifact:
   is in Linear by then. If that is not true, the fix is to
   write the Linear task, not to protect the file.
 
-### The loop: write, edit, read back ONCE — then file
+### The loop: write, edit, read back ONCE — then ratify
 
 The loop is **mandatory**, file or no file:
 
 1. **Write the design** — the spec file, or the governing
-   issue's body. Say where it is, in plain text, the moment it
+   issue's body — and file its tasks into Backlog as they
+   settle. Say where it is, in plain text, the moment it
    exists: in this tab **and** in a message to any live
    planning session.
 1. **The operator edits it directly**, in a real editor or as
-   comments on the issue, between turns.
+   comments on the issue and its tasks, between turns.
 1. **Read it back exactly once** and fold their edits and
    comments in place.
-1. **They edit again**, and give an **explicit yes** — in this
-   tab, or a thumbs-up on the issue. Only then file the tasks.
+1. **They edit again**, and give an **explicit yes** per task,
+   in this tab. Only then move the ratified tasks to Todo.
 
 **A session that cannot reach the operator stops at In Review
-with no task filed beyond marked stubs**, the design copied into
-the governing issue's body first so a spec file is never the
-only copy. It never files to save time.
+with its tasks still in Backlog**, the design copied into the
+governing issue's body first so a spec file is never the only
+copy. It never moves a task to Todo to save time.
 
 **One read-back per round is the budget.** Re-reading the file
 to check whether it changed is the failure mode: a spec is
@@ -324,9 +331,10 @@ The state machine is **In Progress while the session runs → In
 Review when the deliverable is handed off → Done only on the
 operator's ratification**.
 
-Two yeses, not one: the **design yes** inside the loop is what
-licenses filing, and comes before In Review; the **close yes**
-(see "Lifecycle" below) is what moves the issue to Done.
+Two yeses, not one: the **design yes** inside the loop, given per
+task, is what licenses the move to Todo, and comes before In
+Review; the **close yes** (see "Lifecycle" below) is what moves
+the issue to Done.
 
 **Never self-mark Done.** That is the measured mistake which
 produced the invalid state described under "This session is
@@ -432,12 +440,11 @@ duplicating them into the Planning document is how the document
 grows without bound between close-out rewrites.
 
 **Both channels open with the ratification** — where and when the
-operator said yes (this tab, or a thumbs-up on the issue, with
-the date) — **before** it lists any filed task. A design still
-in its read-back loop says so instead, and has no tasks to list
-beyond marked stubs. Planning treats a handoff **without** that
-line as unratified and parks its tasks pending the operator's
-review.
+operator said yes (this tab, with the date) — **before** it lists
+the tasks moved to Todo. A design still in its read-back loop
+says so instead, and its tasks stay in Backlog. Planning treats a
+handoff **without** that line as unratified, its tasks awaiting
+the operator's review in Backlog.
 
 **Move the governing issue to In Review as part of this
 handoff** — that is what the handoff *is*. Then stop: Done is

@@ -25,7 +25,8 @@ complementary halves:
   into a Python tool).
 
 Each recommendation lands as **its own parked Linear issue** —
-one lever, one issue, stamped with the `Trim levers` milestone
+one lever, one issue, filed in Backlog with the `Trim levers`
+milestone in the creating call (parked: out of the review inbox)
 and keyed by a `**Fingerprint**:` — which `trim-context` later
 folds into **small themed** propose-only skill-improvement
 tasks (roughly 4–5 levers each), parked

@@ -44,7 +44,7 @@ rotation samples real code between the structural passes:
 5. FILE       — another random non-generated file  → engine steps 2–5
 6. LAYOUT     — repo-layout + spec-health pass      → one agent
 7. FILE       — another random non-generated file  → engine steps 2–5
-→ per unit: cross-check, dedup, file/fold findings (parked: Todo + milestone)
+→ per unit: cross-check, dedup, file/fold findings (parked: Backlog + milestone)
 → at the end: DONE
 ```
 
