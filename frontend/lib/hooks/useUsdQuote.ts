@@ -91,8 +91,8 @@ const JUPITER_BATCH_MAX = 100;
 
 // One batched call for `mints`. Every mint in the batch is cached, `null`
 // when Jupiter has no row for it; a failed call caches nothing, so the next
-// mount or refresh tick retries.
-const fetchBatch = async (mints: string[]): Promise<void> => {
+// mount or refresh tick retries. Resolves whether the call succeeded.
+const fetchBatch = async (mints: string[]): Promise<boolean> => {
   try {
     const res = await fetch(`${JUPITER_SEARCH_URL}?query=${mints.join(",")}`, {
       signal: AbortSignal.timeout(JUPITER_FETCH_TIMEOUT_MS),
@@ -101,13 +101,13 @@ const fetchBatch = async (mints: string[]): Promise<void> => {
       console.warn(
         `Jupiter token info HTTP ${res.status} for ${mints.length} mints`,
       );
-      return;
+      return false;
     }
     const body: unknown = await res.json();
     const rows = parseJupiterSearchResponse(body);
     if (rows === null) {
       console.warn("Jupiter token info returned non-array");
-      return;
+      return false;
     }
     const byId = new Map<string, ParsedJupiterRow>();
     for (const r of rows) byId.set(r.id, r);
@@ -117,8 +117,10 @@ const fetchBatch = async (mints: string[]): Promise<void> => {
       cache.set(mint, { info: row ? project(row) : null, fetchedAt: at });
     }
     notify();
+    return true;
   } catch (e) {
     console.warn(`Jupiter token info fetch failed: ${getErrorMessage(e)}`);
+    return false;
   }
 };
 
@@ -135,9 +137,10 @@ const flush = () => {
   const mints = [...batch.keys()];
   for (let i = 0; i < mints.length; i += JUPITER_BATCH_MAX) {
     const chunk = mints.slice(i, i + JUPITER_BATCH_MAX);
-    fetchBatch(chunk).then(() => {
+    // A failed call resolves `null`, never an expired entry still cached.
+    fetchBatch(chunk).then((ok) => {
       for (const mint of chunk)
-        batch.get(mint)?.(cache.get(mint)?.info ?? null);
+        batch.get(mint)?.(ok ? (cache.get(mint)?.info ?? null) : null);
     });
   }
 };

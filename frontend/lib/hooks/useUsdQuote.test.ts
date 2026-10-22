@@ -84,6 +84,39 @@ describe("Jupiter requests per page", () => {
     ]);
   });
 
+  it("splits more than 100 mints into one call per 100, resolving each", async () => {
+    const m = await load();
+    const mints = Array.from({ length: 150 }, (_, i) => `mint${i}`);
+    const infos = await Promise.all(mints.map(m.requestTokenInfo));
+    expect(queried(fetchMock).map((c) => c.length)).toEqual([100, 50]);
+    expect(infos.every((info) => info?.usdPrice === 1)).toBe(true);
+  });
+
+  it("makes no request on a tick inside the tick age", async () => {
+    const m = await load();
+    await m.prefetchAllTokenInfo([FROM, TO]);
+    now += TOKEN_INFO_TICK_MAX_AGE_MS - 1;
+    await m.prefetchAllTokenInfo([FROM, TO], TOKEN_INFO_TICK_MAX_AGE_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("joins a call already in flight instead of sending another", async () => {
+    const m = await load();
+    const first = m.requestTokenInfo(FROM);
+    await Promise.resolve();
+    const second = m.requestTokenInfo(FROM);
+    await Promise.all([first, second]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves null from a failed call, not the expired cached price", async () => {
+    const m = await load();
+    await m.requestTokenInfo(FROM);
+    now += TOKEN_INFO_TTL_MS;
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 429 }));
+    expect(await m.requestTokenInfo(FROM)).toBeNull();
+  });
+
   it("caches nothing from a failed call, so the next mount retries", async () => {
     const m = await load();
     fetchMock.mockResolvedValueOnce(new Response("", { status: 429 }));
