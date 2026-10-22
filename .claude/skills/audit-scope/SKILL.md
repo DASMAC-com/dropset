@@ -141,9 +141,11 @@ Optional (ask on a scoped run if not provided):
 
    **The plan prints one row per lane: lane, tier.** A
    lane is one spawned agent — each dimension (after any
-   split below), each focus area, and the skeptic. Every
-   lane that judges passes **no** `model`: it runs on the
-   launcher's sub-agent default, the executor tier. A lane
+   split below), each focus area, and the skeptic, its
+   re-spawn rounds counted within it. Dimension agents and
+   the skeptic judge, so they pass **no** `model`: they run
+   on the launcher's sub-agent default, the executor tier.
+   A lane
    that enumerates or cross-references rather than judges —
    the hierarchy dimension's directory child counts,
    doc-named symbols still existing, unreferenced dictionary
@@ -208,6 +210,10 @@ Optional (ask on a scoped run if not provided):
    asked for, and the fan-out was invisible to the
    rotation's own plan. If a dimension reads as lanes,
    make it separate agents here, where they are counted.
+   A dimension with a **mechanical half** (hierarchy's child
+   counts, doc-freshness's symbol sweep) splits the same
+   way: spawn the mechanical lane first and pass its output
+   inline to the judging lane, spawned with the rest.
 
    At minimum (spelling and term consistency are **not**
    lanes — cspell runs under `make lint`, and step 5 drops
@@ -345,8 +351,8 @@ Optional (ask on a scoped run if not provided):
    upstream of the skeptic, which earns its cost.
 
 1. **Adversarial cross-check.** Spawn a fresh skeptic
-   sub-agent (brief it with the same sub-agent brief) with
-   the collected findings and the
+   sub-agent (brief it with the same sub-agent brief; no
+   `model`, per step 1) with the collected findings and the
    scope. It kills false positives, challenges weak
    rationale, and surfaces anything the first pass missed. On material
    disagreement, re-spawn the relevant dimension agent to
@@ -356,9 +362,11 @@ Optional (ask on a scoped run if not provided):
    Brief the skeptic with two further duties, both
    borrowed from Gstack's review and cso skills:
 
-   - **Sideways sweep.** For each finding it upholds, grep
-     the fingerprint's pattern at every other site in scope,
-     once, with `--files-only`, then widen the finding's
+   - **Sideways sweep.** For each finding it upholds, search
+     the fingerprinted pattern — the offending code or text,
+     not the slug — at every other site in scope, once,
+     paths only (`search_source.py --files-only`, or Grep's
+     files-with-matches mode), then widen the finding's
      prose to name the siblings — or record that it is a
      single instance. A pattern found at one site and fixed
      there leaves its siblings to the next audit.

@@ -149,8 +149,9 @@ since seams are where contract drift hides:
 
 `fingerprint_slug`: `layout:<topic-slug>` or `docs:<topic-slug>`.
 
-Every structural agent returns `path:line` anchors, severity, a one-line
-rationale and the slug, and ends with the self-deflation clause.
+Every structural agent returns `path:line` anchors, severity, an
+`evidence_state` (`SKILL.md` step 3), a one-line rationale and the slug,
+and ends with the self-deflation clause.
 
 ## Structural cross-check
 
@@ -192,6 +193,8 @@ parked call, but they are not atomically fixable, so the body is:
 
 - `**Severity**: <high|med|low>` — the announce line, the `DONE` tally
   and the push all read it.
+- `**Evidence state**: <observed|reproduced|inferred>` — what the
+  skeptic's kill rule reads.
 - `**Concern**:` what is structurally wrong and why it matters.
 - `**Evidence**:` the files / instructions / spec sections involved,
   with `path:line` anchors.
