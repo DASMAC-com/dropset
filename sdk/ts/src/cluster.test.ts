@@ -135,8 +135,7 @@ test('fee accounts pinned to registry state have no default', async () => {
   const { feeMint: _, ...withoutFeeMint } = createMarketInput;
   const programAddress = dropsetProgramAddress('mainnet');
   // @ts-expect-error -- `feeMint` has no default
-  await getCreateMarketInstructionAsync(withoutFeeMint, { programAddress });
-  const ix = await getCreateMarketInstructionAsync(createMarketInput, { programAddress });
+  const ix = await getCreateMarketInstructionAsync(withoutFeeMint, { programAddress });
   assert.ok(ix.accounts.every((a) => isAddress(a.address)));
 });
 
