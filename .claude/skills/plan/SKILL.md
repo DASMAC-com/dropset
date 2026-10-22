@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a planning session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), surfaces the Todo umbrellas, runs the audit heartbeat (file an audit issue or decline with a recorded reason), and folds the parked `Claude meta` pool into small themed edge-free batches, promoting a file-disjoint subset. Then keeps the board coherent: the Queue honest, blocking edges curated by a human, file collisions reconciled by reading, parked findings offered for promotion, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
+description: Run a planning session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), polls the Backlog review inbox, runs the audit heartbeat (file an audit issue or decline with a recorded reason), and folds the parked `Claude meta` pool into small themed edge-free batches, promoting a file-disjoint subset. Then keeps the board coherent: Todo dispatched as standing authorization, blocking edges curated by a human, file collisions reconciled by reading, parked findings promoted to keep the inbox stocked, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
 user-invocable: true
 model: fable
 ---
@@ -114,7 +114,7 @@ operator lever, never this mechanism.
 
 ## Steps
 
-**1. Bootstrap, and surface the umbrellas unprompted.** Read
+**1. Bootstrap.** Read
 [`rulings.md`](rulings.md) first — the rules this session obeys.
 Then fetch the Planning document with
 `mcp__claude_ai_Linear__get_document` — the last session's
@@ -188,30 +188,50 @@ write, and never fold levers by hand while a sub-agent can.
 Then read the board. **Which tier an issue sits in is the whole
 scoping signal:**
 
-- **Backlog is the pullable set** — the Queue (step 2). A
-  genuinely startable work item belongs here and nowhere else.
-- **Todo holds the live tracks** — umbrellas and initiatives,
-  parents that accrue children. Not a staging area: a work item
-  stranded in Todo is invisible to the operator.
-- **A project milestone means parked** — not this phase. Out of
-  scope for a bootstrap read unless the operator names it.
-  Structure is no proxy for this: child count was considered and
-  rejected (`history.md`).
+- **Backlog is the review inbox** — specs awaiting the
+  operator's review. Priority there is review order.
+- **Todo is the approved queue** — the operator's move to Todo is
+  standing authorization to dispatch (step 5); priority there is
+  advisory. Planning never moves an issue to Todo.
+- **A project milestone means parked** — Backlog plus a parking
+  milestone, not this phase. Out of scope for a bootstrap read
+  unless the operator names it.
 
-Linear's list API has no milestone filter, so the drop is
-client-side. Two calls, since `list` defaults to Backlog:
+Two calls, since `list` defaults to Backlog and drops milestoned
+issues client-side:
 
 ```sh
-python3 .claude/tools/board_batch.py list
+python3 .claude/tools/board_batch.py list --include-milestoned \
+  --show-milestone
 ```
 
 ```sh
-python3 .claude/tools/board_batch.py list --state Todo \
-  --include-milestoned --show-milestone
+python3 .claude/tools/board_batch.py list --state Todo
 ```
 
-The Todo call keeps parked issues, tagged, for the meta review
-below. Pull a full body only when a decision turns on it.
+The Backlog call keeps parked issues, tagged, for the meta review
+below. **Stamp three counts** from them: the inbox (untagged
+Backlog), its Urgent subset, and Todo. Pull a full body only when
+a decision turns on it.
+
+**Poll the inbox** — inbox specs changed since the prior stamp
+(`<WHEN>` is `<YYYY-MM-DD>T00:00:00Z`):
+
+```sh
+python3 .claude/tools/board_batch.py list --updated-since <WHEN>
+```
+
+Handle their open threads by **the fold protocol**, which every
+reviser reuses: fold the comment into the body, reply saying how
+it was addressed, then resolve the thread
+(`linear_gate.py resolve <comment-id>`). Resolved means
+addressed-and-how, never approval. A fold into an approved (Todo)
+body moves it back to Backlog, priority and edges unchanged.
+
+**The one relay is "please review the Urgent specs (N)".** Keep
+the Urgent set small, a few at a time, and the inbox stocked so
+the operator is never idle: when it runs thin, stage more specs
+before anything else.
 
 **Then read Next as the operator sees it** — their named Linear
 view, filtered by Linear rather than reconstructed:
@@ -220,18 +240,10 @@ view, filtered by Linear rather than reconstructed:
 python3 .claude/tools/board_batch.py view
 ```
 
-**Verify Next against the holds.** Name every row there this
-session would hold, with its blocker, in the dispatch ask; on the
-operator's yes it gets a blocking edge in the same breath,
-through step 3's `edges` (dry run first): a hold is an edge or it
-does not exist. A row the operator neither dispatches nor holds
-stays in Next as dispatchable. Every
-un-milestoned Todo item is either **acted on** or **parked** —
-say that discipline out loud when the set has grown.
-
-**Then say the umbrellas out loud, unasked** — "these tracks are
-open: …" — and **fire step 8's parked-findings offer now**, with
-them; it is numbered 8 because `audit-scope` cites it so.
+**Verify Next against the holds.** Name each row this session
+would hold, with its blocker, in step 8's ask; on a yes it gets a
+blocking edge through step 3's `edges` (dry run first): a hold is
+an edge or it does not exist.
 
 **Run the audit heartbeat — every full bootstrap, unprompted.**
 The document
@@ -257,7 +269,7 @@ criterion fired, with evidence), and its **sequencing** as prose.
 It competes in the queue like any capacity spend — an audit that
 cannot win that argument should not run this week. The pulling
 session runs it as one scoped `audit-scope` run, which that pull
-authorizes, fan-out included; findings file parked (`Todo` plus
+authorizes, fan-out included; findings file parked (Backlog plus
 `Audit findings`).
 
 It dispatches as **`explore <tag>`, never `task <tag>`**
@@ -269,10 +281,10 @@ audit sits **In Progress** until its findings are ratified and
 folded, so an old In Progress audit is live, not stalled.
 
 **Fold the `Claude meta` pool into SMALL THEMED batches — by
-default, unprompted.** Every `Claude:` filing lands parked (`Todo`
-plus `Claude meta`). The pool is that milestone **plus every
-open, unblocked, unpulled `Claude:` Backlog issue** (not In
-Progress or In Review) — without that clause an unpulled batch is
+default, unprompted.** Every `Claude:` filing lands parked
+(Backlog plus `Claude meta`). The pool is that milestone **plus
+every open, unblocked, unpulled `Claude:` issue in Backlog or
+Todo** — without that clause an unpulled batch is
 duplicated rather than absorbed. Group by the surface each issue
 changes and fold each group into its lowest-numbered survivor via
 `/merge-tasks`. Routine bookkeeping; no per-fold proposal.
@@ -293,8 +305,8 @@ Promotion stays subject to any freeze in `rulings.md`.
   batch is a promotion candidate, never a fold input —
   `/merge-tasks` cannot split, so a re-fold only grows it.
 
-- **Survivors file parked**; only the ones you promote go to
-  Backlog, Urgent. Assembling and promoting are two acts.
+- **Survivors file parked**; only the ones you promote enter the
+  inbox, Urgent. Assembling and promoting are two acts.
 
 - **Nothing serializes batches** — no edge, no in-flight gate.
   Several may be open at once; their file contention is paid as
@@ -329,29 +341,23 @@ the two listings:
 1. **Before assembly, kill on doubt**, per issue: one that cannot
    name a concrete recurring cost larger than its
    landing-plus-ratification cost goes on a kill list (titles
-   first; read only a kill candidate's body). An architect
-   **stub** (its body says the design is unratified) is never
-   assembled or promoted.
+   first; read only a kill candidate's body).
 1. After assembly, group the batches by the surface each rewrites
    (`review-pr`, `init-pr`, the shell init file, guard hooks,
    tools, conventions, AWS) from **titles alone**. A
    `[blocked by …]` row stays blocked behind its human-placed
-   edge and is never slated.
+   edge and is never promoted.
 1. Mark each group **free**, or **in flight** when an In Progress
    / In Review meta issue (`list --state`) already rewrites that
    surface.
-1. Offer the slate (from the free groups) and the kill list in
-   step 8's `AskUserQuestion`, recommended set first.
-1. On a yes, promote each with both halves in one
-   `board_batch.py fields` write (milestone `null`, Todo →
-   Backlog, Urgent), and close each kill `Canceled` with its
-   reason, as `trim-context` step 6 does.
+1. Promote a file-disjoint set from the free groups in one
+   `board_batch.py fields` write (milestone `null`, Urgent); the
+   operator reviews each in the inbox.
+1. Offer the kill list in step 8's `AskUserQuestion`; on a yes,
+   close each kill `Canceled` with its reason, as `trim-context`
+   step 6 does.
 1. Record promoted, killed, blocked, each held group with why,
    and the parked count under the `In-session notes` heading.
-
-**Promotion is always BOTH halves** — clear the milestone *and*
-move Todo → Backlog. One half alone leaves an issue parked and
-pullable at once and corrupts the parked count.
 
 **Bound the Planning document.** It grows between close-out
 rewrites: other sessions append, and an abrupt close skips the
@@ -381,27 +387,25 @@ find** — an edge whose blocker is already closed, and an
 unblocked Urgent issue sitting behind one. Both are visible in
 this read, and invisible until something looks.
 
-**2. Keep the Queue honest.** The Queue — the unblocked Backlog,
+**2. Keep the Queue honest.** The Queue — the unblocked Todo,
 which the operator calls **"Next"** — is the safe-to-start set:
 an implementation session pulls from it and runs to completion
 without re-planning, so every member must be startable *now*,
 with no refactor-later burden a later issue will undo.
 
-- An issue is in Next **iff** it is in Backlog with no live
+- An issue is in Next **iff** it is in Todo with no live
   blocking edge. "Put it in Next" means resolving or re-scoping
   what blocks it — **never** silently dropping a real dependency.
-- **Priority within Next is the pull order** — the lever, not a
-  label.
-- **Edges and priorities are curated here**; implementation
-  sessions never place edges.
+- **Edges and Backlog priorities are curated here**;
+  implementation sessions never place edges.
 - **A hold is an edge or it does not exist** (ruling 2). An issue
   held behind an in-flight surface or a sequencing reason gets a
   blocking edge on that blocker at dispatch time, so it shows as
   Blocked, not Next. A completed blocker stops blocking on its
   own; removing a hold edge on a re-sequence is the operator's
-  call too, asked in the same dispatch ask and run through step 3.
-- **`Claude:` meta-work is Urgent once unblocked** (operator
-  rule, 2026-08-17), so agent-infra is the next pull. Meta lands
+  call too, asked in step 8's ask and run through step 3.
+- **A promoted `Claude:` batch is Urgent** (operator rule,
+  2026-08-17), so agent-infra is reviewed first. Meta lands
   as short batches (step 1), several possibly in flight, with no
   edge and no exception to the proposal-per-edge rule.
 
@@ -519,11 +523,15 @@ tail**, so the operator's Done on the first issue does not
 release work that needs the whole. The re-point is this
 session's write, never the worker's.
 
-**Dispatching is the other half.** A fold's last step resolves
-each folded comment thread (`linear_gate.py resolve <comment-id>`);
-offer an unblocked task only once `linear_gate.py approvals ENG-<n>…`
-shows the operator's thumbs-up (exit 1 if any lacks one), and on
-their yes:
+**Dispatching is the other half; Todo is its standing
+authorization.** The gate is two checks: state Todo
+(`linear_gate.py approvals ENG-<n>…`, exit 1 if any is not; In
+Progress or In Review is a resume) and unblocked (Next). An open
+thread on a Todo issue is no refusal — only the operator makes
+that move (2026-10-21); the probe's count feeds a later fold.
+Dispatch unblocked Todo as slots open under the fleet ceiling, in
+file-disjoint sets, with no per-dispatch ask. Moving an issue
+back to Backlog is the operator's "not now".
 
 ```sh
 python3 .claude/tools/session_dispatch.py task 1234
@@ -544,8 +552,6 @@ A **minor non-repo job** (a key file, a local deploy, a one-off
 probe) dispatches as **`chore <n>`**, not `task <n>`: the helper
 tier, no PR, In Review at handoff.
 
-- **The ask-then-yes IS the authorization**, as for `fleet go`;
-  the tool never dispatches unasked.
 - **The substrate stays at the call site** — `task anthropic 1234`
   for work needing web research; see
   `docs/conventions/local-integrations.md`.
@@ -555,18 +561,16 @@ tier, no PR, In Review at handoff.
 - **A batch is all-or-nothing on validation** — fix the typo and
   re-run the whole call.
 - **An `architect` kick-off is this fixed text, never a
-  paraphrase:** "The read-back is mandatory: file no task beyond
-  marked stubs until the operator ratifies the design, and open
-  your handoff with where and when they did." Never call the
-  read-back optional. A handoff lacking that line is unratified:
-  hold its tasks in Todo, out of Next, pending review.
-- **A ratified spec FILE is folded in first.** `architect` and
-  `explore` are read-only toward the repo, and usually their
-  design landed as tasks, so there is nothing to fold. A spec file
-  sits untracked in that session's temporary worktree, which a
-  dispatched implementer cannot read: **copy it into the
-  implementing issue's body, then delete the file.** Fold only a
-  spec reported **ratified**; one in its read-back is live work.
+  paraphrase:** "The read-back is mandatory: file tasks into
+  Backlog as the design settles, move to Todo only those the
+  operator ratifies, and open your handoff with where and when
+  they did." Never call the read-back optional. A handoff lacking
+  that line is unratified: its tasks stay in Backlog for review.
+- **A ratified spec FILE is folded in first** (usually the
+  design landed as tasks, and there is none): an implementer
+  cannot read the architect's worktree, so **copy it into the
+  implementing issue's body, then delete the file.** One still in
+  its read-back is live work.
 
 **6. Write back — incrementally, then rewritten at the gate.**
 Write after each major decision: planning sessions are often
@@ -640,19 +644,18 @@ immediately closed with its reason** (or left closed if one is
 already parked), so the fingerprint probe stops the next fold
 re-deriving it.
 
-**8. Offer the parked audit findings — don't wait to be asked.**
-`audit-scope` files confirmed findings under the **Audit
-findings** milestone: parked, searchable, costing a bootstrap
-nothing. This step is how planning absorbs them.
+**8. Promote the parked findings, and ask once.** `audit-scope`
+files confirmed findings under the **Audit findings** milestone:
+parked, searchable, costing a bootstrap nothing. This step is how
+planning absorbs them, and the **`Follow-ups` milestone** too, so
+`review-pr`'s deferred items never sit indefinitely.
 
-**At bootstrap, a count and a prompt, never a listing** — "N
-audit findings are parked — slate any in?", asked with step 1's
-meta slate, kill list and upkeep items — the bootstrap's one
-consolidated question. **The `Follow-ups` milestone gets the same
-line** ("N follow-ups are parked — slate any in?"), so
-`review-pr`'s deferred items never sit indefinitely; bodies stay
-unread unless yes, and promotion is the same two-halves write.
-On a yes:
+**At bootstrap, say each count, never a listing.** Promotion is
+planning's own write, made when the inbox needs stocking; the
+operator reviews each promoted issue there. **The consolidated
+ask** carries only what needs the operator's word — the meta kill
+list, the holds' edges, Discuss items and the upkeep's destructive
+items. To promote:
 
 - List the milestone **field-selected** (title, priority).
 - **Select a parallelizable batch, using the collision
@@ -664,9 +667,9 @@ On a yes:
 - **Sequence against the live tracks**: a finding touching a
   mid-flight track's files rides with it or waits.
 - Fetch a body **only** for a finding being promoted.
-- **Promote with both halves** — clear the milestone and move
-  Todo → Backlog — in one `board_batch.py fields` write. Never
-  close it and file a fresh copy.
+- **Promote by clearing the milestone** in one
+  `board_batch.py fields` write. Never close it and file a fresh
+  copy.
 
 **Do not re-adjudicate a finding.** `audit-scope` cross-checks
 adversarially before filing; the only question left is whether it

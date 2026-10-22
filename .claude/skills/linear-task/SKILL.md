@@ -80,14 +80,12 @@ what to file.
      product / on-chain / SDK / frontend code gets no
      prefix.
 
-     **A `Claude:` filing is PARKED, not Backlog** — set
-     state **`Todo` plus the `Claude meta` milestone, in
-     the creating call**. An automated filer may never
-     place a blocking edge, so a meta stray filed
-     straight into Backlog lands *unblocked* in the
-     operator's Next view and clutters it until a
-     planning bootstrap sweeps it; the milestone keeps it
-     out of the queue by construction. The planning
+     **A `Claude:` filing is PARKED** — set state
+     **Backlog plus the `Claude meta` milestone, in the
+     creating call**. Without the milestone a meta stray
+     lands in the operator's review inbox one at a time,
+     unbatched; the milestone keeps it out of the inbox by
+     construction. The planning
      bootstrap folds that milestone into small themed
      batch issues once a day. A non-meta filing is
      unaffected and still goes to Backlog.

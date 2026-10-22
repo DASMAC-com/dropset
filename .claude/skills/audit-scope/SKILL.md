@@ -1,6 +1,6 @@
 ---
 name: audit-scope
-description: Use to audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — and when pulling a planning-filed audit issue, which names its target and runs as an `explore` task in its own worktree with the issue held In Progress until ratification-plus-fold. Audits across the dimensions the scope's platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness) with an adversarial sub-agent cross-check this invocation authorizes. Files confirmed findings as the fewest coherent Linear issues, each sized to a short session, PARKED (Todo plus the `Audit findings` milestone) with no relations or edges. With `--rotation N`, runs N bounded RANDOM seven-unit rotations instead (four random files plus a subsystem, an interface and a repo-layout pass) — an ad-hoc breadth sweep, never a default.
+description: Use to audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — and when pulling a planning-filed audit issue, which names its target and runs as an `explore` task in its own worktree with the issue held In Progress until ratification-plus-fold. Audits across the dimensions the scope's platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness) with an adversarial sub-agent cross-check this invocation authorizes. Files confirmed findings as the fewest coherent Linear issues, each sized to a short session, PARKED (Backlog plus the `Audit findings` milestone) with no relations or edges. With `--rotation N`, runs N bounded RANDOM seven-unit rotations instead (four random files plus a subsystem, an interface and a repo-layout pass) — an ad-hoc breadth sweep, never a default.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -24,18 +24,15 @@ This replaces the old `audit-codebase`, which wrote a
 gitignored checklist. Findings now live as real Linear
 issues — so they dedup and search like any other — but
 **parked**, so filing them does not put work in the pull
-queue. A planning session decides which get slated in
+queue. A planning session decides which to promote
 (`plan` step 8).
 
-**Parked means state `Todo` plus the milestone**, both set in
-the creating call. The milestone alone is not enough: the
-operator's "Next" view is the *unblocked Backlog*, so a
-finding filed as Backlog shows up there as available work
-whatever milestone it carries — one rotation filed fifteen
-that way and they had to be moved by hand. Promotion is then
-two halves, clear the milestone **and** move Todo → Backlog.
-See `docs/conventions/linear-automation.md` → "Parked
-findings sit in **Todo**, never Backlog".
+**Parked means state Backlog plus the milestone**, both set in
+the creating call. The milestone is what keeps a finding out of
+the review inbox, and promotion is one write: clearing it. Never
+Todo — that state is the operator's approval, and only they set
+it. See `docs/conventions/linear-automation.md` → "Backlog
+reviews, Todo pulls".
 
 **The adversarial sub-agent cross-check is authorized by the
 invocation.** Invoking this skill (scoped or `--rotation`,
@@ -385,7 +382,7 @@ Optional (ask on a scoped run if not provided):
      Parked means *not in the pull queue*: a first-class
      open issue for dedup and search,
      but out of scope for a planning bootstrap until
-     somebody slates it in. That promotion is the `plan`
+     somebody promotes it. That promotion is the `plan`
      skill's call (its step 8), never this one's, and it is
      done by **clearing the milestone** — not by closing the
      finding and filing a fresh copy. The milestone already
@@ -413,7 +410,7 @@ Optional (ask on a scoped run if not provided):
      python3 .claude/tools/linear_issue.py create \
        --title '<file>: <imperative fix, no trailing period>' \
        --body-file <scratchpad>/finding-N.md \
-       --state Todo --milestone 'Audit findings' --priority 3
+       --state Backlog --milestone 'Audit findings' --priority 3
      ```
 
      `--priority 2` for a high-severity security finding.
@@ -436,8 +433,8 @@ Optional (ask on a scoped run if not provided):
 
      State, milestone and priority are writer *parameters*,
      which is what lets one filer serve this skill's
-     `Todo` + `Audit findings` parking and a planning
-     session's Backlog-plus-priority follow-up filings
+     Backlog + `Audit findings` parking and a planning
+     session's plain Backlog follow-up filings
      (27 calls / ≈30.1k in one measured pass) without a
      second implementation.
 
@@ -452,7 +449,7 @@ Optional (ask on a scoped run if not provided):
      **A meta finding stays parked under `Audit findings`,
      not `Claude meta`.** Audit output parks under its own
      milestone whatever surface it names, so file it the
-     same way as every other finding here — state `Todo`
+     same way as every other finding here — state Backlog
      plus `Audit findings`. Promoting a meta-flavored
      finding is then a **milestone swap** to `Claude meta`
      (a planning-session act), after which the next batch

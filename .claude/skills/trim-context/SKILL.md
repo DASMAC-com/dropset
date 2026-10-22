@@ -1,6 +1,6 @@
 ---
 name: trim-context
-description: Use to fold the parked trim levers `session-metrics` files into propose-only skill-improvement tasks — standalone, or as `plan`'s bootstrap fold sub-agent. Sweeps the `Trim levers` milestone and files small themed `Claude:` tasks of roughly 4–5 levers each, one `# Part N` section per lever keeping its `**Fingerprint**:`, themselves PARKED (Todo plus the `Claude meta` milestone). Then closes the originals; a rejected lever is closed with its reason, which suppresses refiling. Never edits a skill or convention doc — filing a task is the proposal.
+description: Use to fold the parked trim levers `session-metrics` files into propose-only skill-improvement tasks — standalone, or as `plan`'s bootstrap fold sub-agent. Sweeps the `Trim levers` milestone and files small themed `Claude:` tasks of roughly 4–5 levers each, one `# Part N` section per lever keeping its `**Fingerprint**:`, themselves PARKED (Backlog plus the `Claude meta` milestone). Then closes the originals; a rejected lever is closed with its reason, which suppresses refiling. Never edits a skill or convention doc — filing a task is the proposal.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -15,7 +15,7 @@ trim lever as its own small **parked issue**, stamped with the
 `Trim levers` project milestone and keyed by a `**Fingerprint**:`.
 `trim-context` is the periodic **fold**: it sweeps that milestone, folds
 the parked levers into small themed propose-only **parked** tasks of
-roughly 4–5 levers each (state `Todo` plus the `Claude meta` milestone,
+roughly 4–5 levers each (Backlog plus the `Claude meta` milestone,
 so the next planning bootstrap's batch assembly consumes them), and
 closes the originals.
 
@@ -55,8 +55,8 @@ machine, on the pattern the `Audit findings` milestone already proved.
 
 ## Linear destination
 
-This skill sweeps a milestone and **files** one parked task — `Todo`
-plus the `Claude meta` milestone, not Backlog — so it needs
+This skill sweeps a milestone and **files** one parked task — Backlog
+plus the `Claude meta` milestone — so it needs
 the env-resolved filing destination `linear-task` uses. Resolve each
 variable with its **own** bare `printenv` (one `Bash(printenv:*)`
 allow-rule covers them all) — never a combined `printenv A B C`,
@@ -332,13 +332,10 @@ skill or convention doc, so each task is meta-work — prepend the
 **`Claude:`** prefix to its title, per `CLAUDE.md` → "Claude: meta-work
 prefix".
 
-**They park rather than going to Backlog:** state **`Todo` plus the
-`Claude meta` milestone**, in the creating call. The next planning
-bootstrap sweeps that milestone and consumes each task as a part of one
-of its batches, so they reach a session that way rather than by sitting
-unblocked in the operator's Next view. The `Trim levers` milestone, this
-skill's own writer, and the per-lever fold below are all unchanged — only
-where the *output* lands moved, and how many outputs there are.
+**They park:** state **Backlog plus the `Claude meta` milestone**, in
+the creating call. The next planning bootstrap sweeps that milestone and
+consumes each task as a part of one of its batches, so they reach the
+operator's review inbox batched rather than one stray at a time.
 
 **Compose the bodies with the tool, not by hand — one call for the whole
 fold, however many tasks it splits into:**
@@ -441,7 +438,7 @@ path from the compose summary:
 python3 .claude/tools/linear_issue.py create \
   --title 'Claude: <this task's theme>' \
   --body-file <scratchpad>/tasks/01-<slug>.md \
-  --state Todo --milestone 'Claude meta' --priority 3
+  --state Backlog --milestone 'Claude meta' --priority 3
 ```
 
 The `--title` is the **whole** Linear title, prefix included — the same
