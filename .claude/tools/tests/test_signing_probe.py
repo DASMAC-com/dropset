@@ -79,6 +79,42 @@ class RealRepo(unittest.TestCase):
         self.assertEqual(self._git("rev-parse", "HEAD"), before)
 
 
+class GitFailure(unittest.TestCase):
+    def test_a_failure_without_s_is_not_a_locked_signer(self):
+        """A failure the UNSIGNED probe shares (no identity, a broken object
+        store) is git's — exit 2, never an unlock instruction."""
+        broken = subprocess.CompletedProcess([], 128, "", "fatal: bad object\n")
+        with (
+            mock.patch.object(sp, "has_head", return_value=True),
+            mock.patch.object(sp.subprocess, "run", return_value=broken) as run,
+        ):
+            code, line = sp.probe()
+        self.assertEqual(code, 2)
+        self.assertIn("fatal: bad object", line)
+        self.assertNotIn("LOCKED", line)
+        # Only the unsigned probe ran.
+        self.assertEqual(run.call_count, 1)
+        self.assertIn("--no-gpg-sign", run.call_args.args[0])
+
+
+class Timeout(unittest.TestCase):
+    def test_a_silent_signer_reads_locked(self):
+        ok = subprocess.CompletedProcess([], 0, "abc\n", "")
+
+        def run(cmd, **_kw):
+            if "-S" in cmd:
+                raise subprocess.TimeoutExpired(cmd, sp.TIMEOUT_SECONDS)
+            return ok
+
+        with (
+            mock.patch.object(sp, "has_head", return_value=True),
+            mock.patch.object(sp.subprocess, "run", side_effect=run),
+        ):
+            code, line = sp.probe()
+        self.assertEqual(code, 1)
+        self.assertIn("no answer from the signer", line)
+
+
 class Signed(unittest.TestCase):
     def test_a_successful_probe_reports_the_dangling_sha(self):
         done = subprocess.CompletedProcess([], 0, "0123456789abcdef\n", "")

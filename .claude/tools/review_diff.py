@@ -1751,8 +1751,8 @@ def gate(
             )
         blockers.append(
             f"{base_ref} has {len(base_ahead)} commit(s) HEAD lacks and they "
-            f"interact with this branch ({'; '.join(reasons)}) — rebase onto "
-            f"{base_ref}, triage with rebase_overlap.py, and re-run this gate"
+            f"interact with this branch ({'; '.join(reasons)}) — triage with "
+            f"rebase_overlap.py --base, rebase onto {base_ref}, and re-run this gate"
         )
     if not files and only:
         # Checked BEFORE the bare no-files case: with `--only` the inventory is

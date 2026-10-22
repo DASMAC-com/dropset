@@ -21,9 +21,12 @@ run before any rebase, checkpoint or bootstrap. Usage::
 
 Prints one line and exits 0 on ``signed``; on ``locked`` exits 1 with the
 unlock instruction for this machine's signing configuration (read with
-``init_pr_branch.signing_state``, the one classifier) and the signer's last
+``init_pr_branch.signing_state``, the one classifier) and the signer's first
 error line. Exit 2 is a probe that could not run at all — no ``HEAD``, not a
-repository — which says nothing about signing.
+repository, no committer identity — which says nothing about signing: an
+unsigned ``commit-tree`` runs first, so only a failure that ``-S`` alone adds
+reads as locked. A signer still silent after ``TIMEOUT_SECONDS`` (an unlock
+prompt nobody is answering) reads as locked too.
 
 Standard library only. A Python skill-tool under ``.claude/tools/`` —
 deliberately **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill
@@ -48,6 +51,10 @@ _PROBE = [
     "signing-probe",
     "HEAD^{tree}",
 ]
+
+# Long enough for a human to answer an unlock prompt, short enough that an
+# unattended probe reports instead of hanging.
+TIMEOUT_SECONDS = 90
 
 # What to do about a locked signer, keyed by `signing_state`'s verdict.
 _UNLOCK = {
@@ -84,22 +91,45 @@ def has_head() -> bool:
     )
 
 
+def _first_error(proc: subprocess.CompletedProcess) -> str:
+    errors = [line for line in (proc.stderr or "").strip().splitlines() if line.strip()]
+    return errors[0] if errors else f"exit {proc.returncode}"
+
+
+def _run(cmd: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=False,
+        timeout=TIMEOUT_SECONDS,
+    )
+
+
 def probe() -> tuple[int, str]:
     """Run the probe. Returns ``(exit code, one line)``."""
     if not has_head():
         return 2, "signing-probe | cannot run: no HEAD commit here"
-    proc = subprocess.run(
-        _PROBE, capture_output=True, text=True, errors="replace", check=False
-    )
-    if proc.returncode == 0:
-        sha = proc.stdout.strip()[:12]
-        return 0, f"signing-probe | signed | {sha} (dangling, no ref moved)"
-    errors = [line for line in proc.stderr.strip().splitlines() if line.strip()]
-    detail = errors[0] if errors else f"exit {proc.returncode}"
+    # Unsigned first: a failure here (no identity, a broken object store) is
+    # git's, not the signer's, and must not read as an unlock instruction.
+    unsigned = _run(["--no-gpg-sign" if arg == "-S" else arg for arg in _PROBE])
+    if unsigned.returncode != 0:
+        return 2, f"signing-probe | cannot run: {_first_error(unsigned)}"
     instruction = unlock_instruction(
         _git_config("gpg.format"), _git_config("gpg.ssh.program")
     )
-    return 1, f"signing-probe | LOCKED | {instruction} | {detail}"
+    try:
+        proc = _run(_PROBE)
+    except subprocess.TimeoutExpired:
+        return 1, (
+            f"signing-probe | LOCKED | {instruction} | no answer from the signer "
+            f"within {TIMEOUT_SECONDS}s"
+        )
+    if proc.returncode == 0:
+        sha = proc.stdout.strip()[:12]
+        return 0, f"signing-probe | signed | {sha} (dangling, no ref moved)"
+    return 1, f"signing-probe | LOCKED | {instruction} | {_first_error(proc)}"
 
 
 def main() -> int:

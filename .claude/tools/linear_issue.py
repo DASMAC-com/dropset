@@ -174,6 +174,8 @@ _BOX = re.compile(r"^(\s*[-*] \[)([ xX])(\] )(.*)$")
 # Linear stores a typed `ENG-###` as a link to the issue; a box is matched on
 # its text with that markup folded back to the bare tag, so a tag-bearing box
 # needs no special path.
+# A `--box` text pasted with its own checkbox marker, in any form.
+_BOX_PREFIX = re.compile(r"^\s*[-*] \[[ xX]\] ")
 _MENTION_LINK = re.compile(r"\[([A-Z]+-\d+)\]\([^)]*\)")
 _MENTION_URL = re.compile(r"https://linear\.app/[^/\s]+/issue/([A-Z]+-\d+)[^\s)]*")
 
@@ -189,10 +191,12 @@ def tick_boxes(body: str, boxes: list[str]) -> tuple[str, int, int]:
 
     Returns ``(new body, ticked, already ticked)``. Matching is per line on the
     box's text, mention markup folded and whitespace collapsed — an exact match
-    first, else a unique prefix. Naming one text N times ticks its first N
-    open occurrences; a text whose occurrences outnumber its mentions is
-    refused as ambiguous rather than guessed. Every box is resolved before any
-    is ticked, so a refusal leaves the body untouched.
+    first, else a prefix. A text names as many boxes as it is passed times, and
+    must match exactly that many: more matches is ambiguous, fewer is a box
+    that is not there, and two texts may not claim one box. A prefix counts
+    ticked boxes too, so ``Part 1`` never lands on ``Part 12`` because the
+    ``Part 1`` box was already ticked. Every box is resolved before any is
+    ticked, so a refusal leaves the body untouched.
     """
     lines = body.split("\n")
     parsed = [(i, _BOX.match(line)) for i, line in enumerate(lines)]
@@ -200,12 +204,13 @@ def tick_boxes(body: str, boxes: list[str]) -> tuple[str, int, int]:
 
     wanted: dict[str, int] = {}
     for box in boxes:
-        key = _normalize(box.removeprefix("- [ ] ").removeprefix("- [x] "))
+        key = _normalize(_BOX_PREFIX.sub("", box))
         if not key:
             raise LinearIssueError("refusing to tick a blank box text")
         wanted[key] = wanted.get(key, 0) + 1
 
     to_tick: list[int] = []
+    claimed: dict[int, str] = {}
     already = 0
     for key, count in wanted.items():
         hits = [(i, m) for i, m in found if _normalize(m.group(4)) == key]
@@ -213,13 +218,19 @@ def tick_boxes(body: str, boxes: list[str]) -> tuple[str, int, int]:
             hits = [(i, m) for i, m in found if _normalize(m.group(4)).startswith(key)]
         if not hits:
             raise LinearIssueError(f"no checklist box reads {key!r}")
-        open_hits = [i for i, m in hits if m.group(2) == " "]
-        if len(open_hits) > count:
+        if len(hits) != count:
             raise LinearIssueError(
-                f"{len(open_hits)} open boxes read {key!r} — name it once per "
-                "box to tick, or quote more of it"
+                f"{len(hits)} box(es) read {key!r} but it was named {count} "
+                "time(s) — name it once per box, or quote more of it"
             )
-        already += min(len(hits) - len(open_hits), count - len(open_hits))
+        for i, _ in hits:
+            if i in claimed:
+                raise LinearIssueError(
+                    f"{key!r} and {claimed[i]!r} both name one box — quote more of it"
+                )
+            claimed[i] = key
+        open_hits = [i for i, m in hits if m.group(2) == " "]
+        already += len(hits) - len(open_hits)
         to_tick.extend(open_hits)
 
     for i in to_tick:
@@ -279,11 +290,19 @@ def tick(
 
     The body and the state change ride one ``issueUpdate``, so a tick never
     lands without its state move or the reverse. A box that cannot be resolved
-    is refused before anything is written. A failed **write** re-fetches once,
-    rebuilds from the fresh body and retries once — never from the stale
-    snapshot, which would overwrite whatever diverged — then stops and leaves
-    the issue alone. A resolution refusal is not retried: re-reading the body
-    it was just read from cannot change it.
+    is refused before anything is written. A failed **write** (a transport
+    error or ``success: false``) re-fetches once, rebuilds from the fresh body
+    and retries once, then stops and leaves the issue alone; a write that
+    landed but whose answer was lost re-reads as ``NOTHING TO WRITE``. A
+    resolution refusal is not retried: re-reading the body it was just read
+    from cannot change it.
+
+    **Concurrency is ``append``'s, not compare-and-swap.** The body is read and
+    written back in one call, milliseconds apart, and Linear's API has no
+    conditional write — so an edit landing inside that window is overwritten,
+    as with ``append``. That window replaces a worse one: the MCP ``patch``
+    flow built its ops from a body held since session start. A write that
+    moves only the state never sends ``description`` at all.
     """
     try:
         return _tick_once(api_key, identifier, boxes, state, dry_run)

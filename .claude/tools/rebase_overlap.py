@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word reflog
 """Triage what a rebase actually pulled in, and whether it can stale anything.
 
 When ``main`` moves under a long-running review, ``review-pr`` rebases and then
@@ -105,9 +106,17 @@ from review_diff import (
 )
 
 
-# A base change to either file changes WHICH checks run, so lint re-runs
-# whatever the overlap.
-LINT_CONFIG = frozenset({"cfg/pre-commit-lint.yml", ".pre-commit-config.yaml"})
+# A base change to any of these changes WHICH checks run or what they accept —
+# a word dropped from the dictionary fails cspell on a file the delta never
+# touched — so lint re-runs whatever the overlap.
+LINT_CONFIG = frozenset(
+    {
+        "cfg/pre-commit-lint.yml",
+        ".pre-commit-config.yaml",
+        "cfg/dictionary.txt",
+        "cfg/skill-size-baseline.json",
+    }
+)
 
 
 def is_frontend_dep(path: str) -> bool:
@@ -227,20 +236,24 @@ def rerun_verdicts(result: dict) -> dict:
     """What a rebase forces the caller to re-run, each with its reason.
 
     The rebase and every freshness gate always run; only these re-runs vary.
-    Each rule is one the review used to apply by eye to ``base_files``:
+    Each rule is one the review used to apply by eye to ``base_files``, and
+    each incident behind it is a ``review-pr`` ``history.md`` entry:
 
-    * ``lint`` — a non-empty overlap re-runs it (``review_diff.py`` and
-      ``make lint`` provably cannot change their answer on files the delta did
-      not touch), and so does a base change to the lint config, which changes
-      *which* checks run.
+    * ``lint`` — a non-empty overlap re-runs it, ``review_diff.py`` included
+      ("Empty-overlap re-runs"), and so does a base change to a ``LINT_CONFIG``
+      file ("Lint-config base delta"). An empty overlap asserts the earlier
+      result; a cross-file check (clippy, rustdoc, tsc) flipped by an API the
+      base changed is the residual the merge queue's re-run catches.
     * ``program`` — a base change under ``programs/`` leaves the built ``.so``
       stale, and a scoped ``cargo test`` against it reports the base's changes
-      as this branch's regressions.
-    * ``frontend_install`` — see ``is_frontend_dep``.
+      as this branch's regressions ("Stale program after rebase").
+    * ``frontend_install`` — see ``is_frontend_dep`` ("Stale node_modules
+      after rebase").
     * ``artifact_gates`` — ``runs_artifact_gates``, restated as a verdict.
     * ``may_enqueue_unverified`` — a re-run forced only by a rebase may push and
-      enqueue and let the queue verify, when the overlap is empty and the
-      queue's suite covers the delta. The third condition — the branch's own
+      enqueue and let the queue verify, when the overlap is empty: the queue
+      runs the whole suite against the merged result whatever the paths, so it
+      covers any delta ("Rebase race"). The other condition — the branch's own
       diff unchanged since its last green local pass — is the caller's to
       check; the tool cannot see it.
     """
@@ -281,14 +294,10 @@ def rerun_verdicts(result: dict) -> dict:
 
     if overlap:
         enqueue = _verdict(False, "overlap non-empty — verify locally")
-    elif not result["runs_rust_suites"]:
-        enqueue = _verdict(
-            False, "the queue's suite does not cover the delta — verify locally"
-        )
     else:
         enqueue = _verdict(
             True,
-            "overlap empty and the queue's suite covers the delta — provided the "
+            "overlap empty and the queue re-runs the whole suite — provided the "
             "branch's own diff is unchanged since its last green local pass",
         )
 
@@ -328,6 +337,39 @@ def capture_and_fetch(base: str, branch: str = "HEAD") -> tuple[str, str]:
     previous = merge_base(branch, tracking)
     _git(["fetch", "origin", base])
     return previous, tracking
+
+
+def last_head_action(branch: str = "HEAD") -> str:
+    """The subject of ``branch``'s newest reflog entry, or ``""``."""
+    try:
+        return _git(["reflog", "-1", "--format=%gs", branch]).strip()
+    except ReviewDiffError:
+        return ""
+
+
+def just_rebased_warning(result: dict, base: str, branch: str = "HEAD") -> str | None:
+    """A warning when a ``--base`` report may be a post-rebase false all-clear.
+
+    Run AFTER a rebase onto the fetched tip, the branch's merge-base IS that
+    tip, so the triage reports a 0-commit delta for a base that moved — the
+    plausible false all-clear ``check_from_is_ancestor`` refuses in the
+    ``--from`` mode. That shape (newest reflog entry a rebase, 0 commits) is
+    also what an honest later re-check looks like when nothing moved, so this
+    warns rather than refusing, and names the ``--from`` that triages the
+    rebase from ``ORIG_HEAD``, the pre-rebase branch.
+    """
+    if result["base_commits"] or not last_head_action(branch).startswith("rebase"):
+        return None
+    try:
+        previous = merge_base("ORIG_HEAD", f"origin/{base}")
+        hint = f"--from {previous}"
+    except ReviewDiffError:
+        hint = "--from <the pre-rebase merge-base>"
+    return (
+        "HEAD's last action was a rebase and the delta is 0 commits: if that "
+        "rebase was not triaged before it ran, this is NOT an all-clear — "
+        f"triage it with {hint}"
+    )
 
 
 def summarize(result: dict) -> str:
@@ -383,8 +425,8 @@ def run(argv: list[str]) -> int:
     parser.add_argument(
         "--to",
         dest="new_base",
-        default="origin/main",
-        help="the base tip after (with --from)",
+        default=None,
+        help="the base tip after (with --from; default origin/main)",
     )
     parser.add_argument("--branch", default="HEAD", help="the branch under review")
     parser.add_argument(
@@ -395,11 +437,18 @@ def run(argv: list[str]) -> int:
     args = parser.parse_args(argv[1:])
 
     if args.base:
+        if args.new_base is not None:
+            parser.error("--to applies to --from; --base always means origin/<base>")
         previous_base, new_base = capture_and_fetch(args.base, args.branch)
     else:
-        previous_base, new_base = args.previous_base, args.new_base
+        previous_base, new_base = args.previous_base, args.new_base or "origin/main"
     check_from_is_ancestor(previous_base, new_base)
     result = analyze(previous_base, new_base, args.branch)
+    if args.base:
+        warning = just_rebased_warning(result, args.base, args.branch)
+        if warning:
+            result["warning"] = warning
+            print(f"rebase-overlap: WARNING: {warning}", file=sys.stderr)
     json.dump(result if args.full else compact(result), sys.stdout, indent=2)
     print()
     print(summarize(result), file=sys.stderr)

@@ -215,6 +215,20 @@ class CliTests(unittest.TestCase):
         self.assertEqual(printed["base_file_count"], 2)
         self.assertEqual(printed["branch_file_count"], 1)
         self.assertIn("overlap", printed)
+        # Steps 9 and 11 read these off the default output.
+        self.assertIn("runs_artifact_gates", printed)
+        self.assertIn("runs_rust_suites", printed)
+        self.assertIn("rerun", printed)
+
+        full = io.StringIO()
+        with mock.patch.object(ro, "analyze", return_value=payload):
+            with redirect_stdout(full), redirect_stderr(io.StringIO()):
+                ro.run(["rebase_overlap.py", "--from", "old", "--full"])
+        self.assertEqual(json.loads(full.getvalue())["base_files"], ["x.ts", "y.ts"])
+
+    def test_to_is_refused_with_base(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            ro.run(["rebase_overlap.py", "--base", "main", "--to", "origin/x"])
 
 
 class RerunVerdictTests(unittest.TestCase):
@@ -260,7 +274,7 @@ class RerunVerdictTests(unittest.TestCase):
         self.assertTrue(self._rerun([], gen=True)["artifact_gates"]["run"])
         self.assertFalse(self._rerun([], gen=False)["artifact_gates"]["run"])
 
-    def test_enqueue_unverified_needs_no_overlap_and_queue_coverage(self):
+    def test_enqueue_unverified_needs_only_an_empty_overlap(self):
         ok = self._rerun(["a.rs"], ci=True)["may_enqueue_unverified"]
         self.assertTrue(ok["run"])
         # The condition the tool cannot see is named, never silently assumed.
@@ -270,9 +284,15 @@ class RerunVerdictTests(unittest.TestCase):
                 "run"
             ]
         )
-        self.assertFalse(
+        # A delta outside CI's code filter is the safest case, not a reason to
+        # verify locally: the queue runs the whole suite whatever the paths.
+        self.assertTrue(
             self._rerun(["README.md"], ci=False)["may_enqueue_unverified"]["run"]
         )
+
+    def test_a_dictionary_change_re_runs_lint(self):
+        # A word dropped upstream fails cspell on a file the delta never touched.
+        self.assertTrue(self._rerun(["cfg/dictionary.txt"])["lint"]["run"])
 
     def test_analyze_attaches_the_block(self):
         with (
@@ -450,6 +470,21 @@ class FetchModeTests(unittest.TestCase):
         self.assertEqual(printed["overlap"], [])
         self.assertEqual(printed["branch_file_count"], 1)
         self.assertTrue(printed["rerun"]["frontend_install"]["run"])
+        self.assertNotIn("warning", printed)
+
+    def test_a_run_after_the_rebase_warns_and_names_the_from(self):
+        """The wrong order: fetch, rebase, THEN triage. The delta reads 0
+        commits for a base that moved, so the report must say so."""
+        self._git(self.clone, "fetch", "-q", "origin", "main")
+        self._git(self.clone, "rebase", "-q", "origin/main")
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            ro.run(["rebase_overlap.py", "--base", "main"])
+        printed = json.loads(out.getvalue())
+        self.assertEqual(printed["base_commits"], 0)
+        self.assertIn("NOT an all-clear", printed["warning"])
+        self.assertIn(f"--from {self.fork_point}", printed["warning"])
+        self.assertIn("WARNING", err.getvalue())
 
 
 if __name__ == "__main__":

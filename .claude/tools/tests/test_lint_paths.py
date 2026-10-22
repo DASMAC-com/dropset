@@ -245,11 +245,16 @@ class FilesFlag(unittest.TestCase):
         os.chdir(self.root)
         self.addCleanup(os.chdir, cwd)
 
-    def test_the_named_existing_paths_only(self):
-        with redirect_stdout(io.StringIO()) as out:
+    def test_the_named_existing_paths_only_and_the_rest_named(self):
+        with (
+            redirect_stdout(io.StringIO()) as out,
+            redirect_stderr(io.StringIO()) as err,
+        ):
             code = lp.main(["--files", "b.md", "gone.md", "--print"])
         self.assertEqual(code, 0)
         self.assertEqual(out.getvalue().split(), ["b.md"])
+        # A dropped path is said out loud, never a silent shrink to a pass.
+        self.assertIn("gone.md", err.getvalue())
 
     def test_a_hook_id_follows_the_separator(self):
         with mock.patch.object(lp, "lint", return_value=0) as lint:
@@ -279,10 +284,12 @@ class FixThenFail(unittest.TestCase):
             code = lp.lint("cfg.yml", [], ["a.md"], "/root")
         return code, rpc.call_count, err.getvalue()
 
-    def test_a_rewrite_then_pass_is_a_pass(self):
+    def test_a_rewrite_then_pass_is_a_pass_with_the_commit_reminder(self):
         code, calls, err = self._lint([(1, True), (0, False)])
         self.assertEqual((code, calls), (0, 2))
         self.assertIn("re-running once", err)
+        # CI lints what is committed; the passing rewrite still needs a commit.
+        self.assertIn("stage and commit", err)
 
     def test_a_second_failure_is_real(self):
         code, calls, _ = self._lint([(1, True), (1, True)])
@@ -332,6 +339,23 @@ class FrontendHooks(unittest.TestCase):
             lp.missing_frontend_hooks(self.root, [], ["sdk/ts/x.ts"]),
             ["biome", "tsc"],
         )
+
+    def test_a_css_only_set_selects_biome_not_tsc(self):
+        # tsc's types_or is ts/tsx only; installing for it would be wasted, and
+        # reporting it unverifiable would name a hook that never runs.
+        self.assertEqual(lp.missing_frontend_hooks(self.root, [], ["a.css"]), ["biome"])
+
+    def test_a_missing_pnpm_is_an_unverifiable_hook_not_a_crash(self):
+        with (
+            mock.patch.object(
+                lp.subprocess, "run", side_effect=FileNotFoundError("pnpm")
+            ),
+            redirect_stderr(io.StringIO()) as err,
+        ):
+            self.assertEqual(
+                lp.ensure_frontend_hooks(self.root, [], ["x.ts"]), ["biome", "tsc"]
+            )
+        self.assertIn("pnpm", err.getvalue())
 
     def test_a_non_frontend_hook_id_needs_nothing(self):
         self.assertEqual(lp.missing_frontend_hooks(self.root, ["cspell"], ["x.ts"]), [])

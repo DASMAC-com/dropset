@@ -126,10 +126,12 @@ _LS_OTHERS = [
 # pre-commit's own line for a hook that rewrote a file.
 MODIFIED_MARKER = "files were modified by this hook"
 
-# The hooks that run through `frontend/node_modules`, and the suffixes that
-# select them (the union of their `types_or`, plus the module variants).
-FRONTEND_HOOKS = ("biome", "tsc")
-FRONTEND_SUFFIXES = (".css", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
+# The hooks that run through `frontend/node_modules`, each with the suffixes
+# that select it (its `types_or`, plus the module variants).
+FRONTEND_HOOKS = {
+    "biome": (".css", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"),
+    "tsc": (".ts", ".tsx"),
+}
 
 _FRONTEND_INSTALL = ["pnpm", "--dir", "frontend", "install"]
 
@@ -265,9 +267,12 @@ def missing_frontend_hooks(
     Empty when no JS/TS/CSS path is in the set, or when ``hook_args`` names a
     hook that is not a frontend one.
     """
-    if not any(f.endswith(FRONTEND_SUFFIXES) for f in files):
-        return []
-    selected = [h for h in FRONTEND_HOOKS if not hook_args or h in hook_args]
+    selected = [
+        hook
+        for hook, suffixes in FRONTEND_HOOKS.items()
+        if (not hook_args or hook in hook_args)
+        and any(f.endswith(suffixes) for f in files)
+    ]
     bin_dir = os.path.join(root, "frontend", "node_modules", ".bin")
     return [h for h in selected if not os.path.exists(os.path.join(bin_dir, h))]
 
@@ -289,9 +294,15 @@ def ensure_frontend_hooks(
         f"running `{' '.join(_FRONTEND_INSTALL)}`",
         file=sys.stderr,
     )
-    proc = subprocess.run(_FRONTEND_INSTALL, cwd=root, capture_output=True, text=True)
-    if proc.returncode != 0:
+    try:
+        proc = subprocess.run(
+            _FRONTEND_INSTALL, cwd=root, capture_output=True, text=True
+        )
+        failed = proc.returncode != 0
         tail = (proc.stderr or proc.stdout).strip().splitlines()[-5:]
+    except OSError as exc:  # `pnpm` itself missing
+        failed, tail = True, [str(exc)]
+    if failed:
         for line in tail:
             print(f"lint-paths:   {line}", file=sys.stderr)
     return missing_frontend_hooks(root, hook_args, files)
@@ -330,12 +341,21 @@ def lint(config: str, hook_args: list[str], files: list[str], root: str) -> int:
 
     code, modified = run_pre_commit(cmd, root, env)
     if code != 0 and modified:
+        # The same hook set again — on a full sweep, a second full sweep; the
+        # fix-then-fail shape is why, and it is one sweep, never a loop.
         print(
             "lint-paths: a hook rewrote files — re-running once; only a second "
             "failure is real",
             file=sys.stderr,
         )
         code, _ = run_pre_commit(cmd, root, env)
+        # The rewrite is in the working tree, not a commit: CI lints what is
+        # committed, so a pass here still leaves the fix to stage and commit.
+        print(
+            "lint-paths: hook rewrites are uncommitted — stage and commit them "
+            "(`git status` lists them)",
+            file=sys.stderr,
+        )
 
     if unverifiable:
         print(
@@ -424,7 +444,16 @@ def main(argv: list[str] | None = None) -> int:
 
     root = repo_root()
     if args.files:
-        files = existing(sorted(set(args.files)), root)
+        named = sorted(set(args.files))
+        files = existing(named, root)
+        dropped = sorted(set(named) - set(files))
+        if dropped:
+            # Paths are repo-root-relative; a typo or a cwd-relative path must
+            # not silently shrink the set to a pass.
+            print(
+                f"lint-paths: no such path (repo-root-relative): {', '.join(dropped)}",
+                file=sys.stderr,
+            )
         if not files:
             print("lint-paths: none of the --files paths exist", file=sys.stderr)
             return 1
