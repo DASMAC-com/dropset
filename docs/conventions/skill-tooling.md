@@ -93,7 +93,7 @@ inventory and keeps the compare network-free),
 `convention_refs.py` (reports skill/doc citations whose target file or
 anchor no longer resolves, distinguishing the two — it replaced four
 prose bullets that took eight greps and ~1.2k per housekeeping pass to
-print one line, and both `housekeeping` step 5 and `review-pr`'s
+print one line, and both the upkeep pass and `review-pr`'s
 freshness lens call it so the periodic and PR paths cannot drift),
 `planning_doc.py` (a scoped reader for the Planning document — the MCP
 `get_document` has no slice accessor and returns a document that only
@@ -109,7 +109,7 @@ them), and
 `render_review.py` (measures or contact-sheets rendered deck pages
 instead of reading them at print resolution — the one tool with an
 optional dependency, per the lazy-import rule above), alongside the
-`allowlist.py` / `housekeeping` / `cspell-audit` glue.
+`allowlist.py` / `upkeep.py` / `cspell-audit` glue.
 `.claude/tools/` is the single home for skill glue: there is **no**
 top-level `tools/` tree.
 
@@ -155,7 +155,7 @@ exists to reject.
 **Do not rely on something catching it later.** The `firm-perms` skill
 that used to sweep approvals into rules is retired, and the ordinary path
 is an explicit `allowlist.py add`. There *is* a periodic adder again —
-`housekeeping` step 7c mines recent transcripts on a roughly **monthly**
+the upkeep pass mines recent transcripts on a roughly **monthly**
 gate (`allowlist.py refresh-due`) — but a month is far too slow to help
 the PR that adds a tool, and it proposes rather than writes. The prompt
 that motivated this was found by hand-probing after it got annoying, not

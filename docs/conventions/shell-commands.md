@@ -130,8 +130,8 @@ Concrete rules:
     wasted turn, costing wall-clock as well as context. Scope to the
     subdirectory you mean (`.claude/skills`, `.claude/tools`,
     `.claude/hooks`); never sweep the parent bare. It bites hardest in
-    the skill family that runs from the base repo — `housekeeping` and
-    `plan` — which is precisely where the worktrees are.
+    the skill family that runs from the base repo — `plan` and
+    `chore` — which is precisely where the worktrees are.
 
     **Better: don't hand-roll the exclude list.** There is a committed
     tool for this shape, which prunes the generated families and the
@@ -303,8 +303,8 @@ Concrete rules:
   **There is no sweep mode any more.** A `/firm-perms sweep` used to
   collapse piled-up per-arg entries behind a propose-then-confirm gate,
   and a bare `/firm-perms` took a single-approval fast firm. Both are
-  retired with that skill; `add` is the whole interface, and
-  `housekeeping` step 7a still prunes accumulated cruft.
+  retired with that skill; `add` is the whole interface, and the upkeep
+  pass still reports accumulated cruft for pruning.
 
   **Where firming lives now**, since the retirement removed the *sweep*
   and not the *need*, and a practice with no home quietly stops
@@ -316,14 +316,16 @@ Concrete rules:
   - **On demand, in bulk** — the `fewer-permission-prompts` skill, when
     a session has visibly been prompting and you want the backlog
     mined in one go.
-  - **On a slow clock** — `housekeeping` step 7c, gated to roughly
-    monthly by `allowlist.py refresh-due`. This is the *only*
+  - **On a slow clock** — the upkeep pass's refresh gate, roughly
+    monthly by `allowlist.py refresh-due`; it mines and proposes, and
+    the candidates ride `plan`'s bootstrap gate. This is the *only*
     periodic adder, and it exists because the classifier that made the
     per-session sweep unnecessary is also what makes the remaining
     churn invisible: nobody sees the prompts any more, so nothing
     prompts a human to firm them. Most passes pay one cheap call and
     skip.
-  - **Pruning** — `housekeeping` step 7a, unchanged.
+  - **Pruning** — the upkeep pass's `allowlist.py cruft` report, the
+    removals approved at `plan`'s bootstrap gate.
 
   What is deliberately *not* on that list is a per-session sweep. It
   was retired on measurement and the slow clock replaces it rather than

@@ -14,9 +14,9 @@ lever proposed — "at most once per day, *or* when the store changed"):
 * the memory store changed since the last scan (a memory added / removed /
   edited — detected by a content signature over every ``*.md`` in the store);
 * at least ``--min-interval-hours`` have elapsed since the last scan (default
-  20h) — the daily floor, so the morning one-shot still re-scans to catch
+  20h) — the daily floor, so the morning pass still re-scans to catch
   staleness the repo introduced around otherwise-unchanged memories, while a
-  30-minute loop inside that window skips.
+  same-day relaunch inside that window skips.
 
 Two subcommands, each taking the memory directory as a positional argument:
 

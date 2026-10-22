@@ -1,6 +1,6 @@
 ---
 name: purge-conversations
-description: Reclaim disk from Claude Code's local state — old session transcripts (`~/.claude/projects`), the file-history store (`~/.claude/file-history`), and the CLI cache (`~/Library/Caches/claude-cli-nodejs`) — under an age rule with open-PR protection. The deterministic filesystem logic lives in the committed `.claude/tools/prune_conversations.py` (dry-run by default, hard-delete only on `--apply`); this skill drives the GitHub PR lookups over the MCP, hands the tool the worktree branches with an open PR, shows the grouped dry-run manifest, gets one approval via AskUserQuestion, then applies and reports bytes freed. Offered by `housekeeping`; nothing is deleted without an explicit yes.
+description: Reclaim disk from Claude Code's local state — old session transcripts (`~/.claude/projects`), the file-history store (`~/.claude/file-history`), and the CLI cache (`~/Library/Caches/claude-cli-nodejs`) — under an age rule with open-PR protection. The deterministic filesystem logic lives in the committed `.claude/tools/prune_conversations.py` (dry-run by default, hard-delete only on `--apply`); this skill drives the GitHub PR lookups over the MCP, hands the tool the worktree branches with an open PR, shows the grouped dry-run manifest, gets one approval via AskUserQuestion, then applies and reports bytes freed. Offered at `plan`'s bootstrap gate; nothing is deleted without an explicit yes.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -139,8 +139,8 @@ invariant".
   `$CLAUDE_CONFIG_DIR` / `$HOME` (the tool reuses
   `claude_home()`); the dropset root is discovered at
   runtime from `git worktree list`; the slug is `slugify()`.
-- **`housekeeping` offers it** via `AskUserQuestion` (per
-  its step-9 `/session-metrics` offer pattern) — never an
+- **`plan` offers it** at its bootstrap's `AskUserQuestion`,
+  from the upkeep pass's dry-run line — never an
   unattended auto-step; nothing deletes without a yes.
 
 ## Safety invariant
@@ -324,8 +324,8 @@ and bytes freed — or, on "no", that nothing was deleted.
 
 ## Notes
 
-- **Distinct from the memory-freshness step.** `housekeeping`
-  step 8 curates the auto-memory *knowledge store* for
+- **Distinct from the memory-freshness step.** The upkeep
+  pass's memory audit curates the auto-memory *knowledge store* for
   staleness; this skill reclaims *disk* from transcripts and
   caches. Different targets, different rules.
 - Shell discipline (per `CLAUDE.md`): every command is a

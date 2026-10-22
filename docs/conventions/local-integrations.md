@@ -54,8 +54,8 @@ make hook-wiring
 
 It names every committed **guard** hook that cannot fire, and **writes
 nothing** — wiring a hook grants it the right to block tool calls,
-which stays the operator's decision. `housekeeping` runs it each pass
-(its step 7b) so the gap cannot re-open silently.
+which stays the operator's decision. The upkeep pass (`upkeep.py`, run
+by the `plan` launcher) runs it daily so the gap cannot re-open silently.
 
 Its scope is the **guard** hooks — every `.py` under `.claude/hooks/`.
 The iTerm2 tab-color scripts live in `.claude/scripts/` and their
@@ -88,11 +88,9 @@ purpose (absolute, relative, or through a variable are all valid), so a
 path this check cannot resolve is given the benefit of the doubt — the
 narrowing is only where the answer is knowable.
 
-`housekeeping` deliberately calls
-`python3 .claude/tools/hook_wiring.py` rather than this `make` target:
-that spelling already falls under the pre-approved
-`Bash(python3 .claude/tools/:*)` rule, so an unattended pass never
-stops to ask. The `make` target is the operator-facing spelling. Both
+The upkeep pass calls `hook_wiring.py` directly rather than this `make`
+target, since it is a Python tool composing other tools. The `make`
+target is the operator-facing spelling. Both
 run the same check — don't collapse them into one.
 
 ## The compound-shell guard hook
@@ -1287,19 +1285,18 @@ clean cut with **no aliases** — the family is small and every launcher
 is the operator's own muscle memory, so a half-migration leaving both
 names alive was the outcome to avoid.
 
-| Verb                 | Job                                        | Substrate              | Tier             |
-| -------------------- | ------------------------------------------ | ---------------------- | ---------------- |
-| `task <n>`           | worktree session on Linear task n          | executor's (Bedrock)   | executor         |
-| `task anthropic <n>` | same, when the work needs web research     | anthropic              | executor         |
-| `task resume [n]`    | resume by number (bare = the picker)       | as recorded            | re-pinned        |
-| `explore <n\|name>`  | research / audit, read-only, temp worktree | anthropic, always      | advisor          |
-| `chore [s] <n>`      | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper           |
-| `plan [bedrock]`     | upkeep pass, then daily planning session   | advisor's, or override | advisor          |
-| `housekeeping`       | upkeep; also the 5-hour-window opener      | anthropic, always      | executor's model |
-| `architect <n> [b]`  | design thread, read-only, temp worktree    | advisor's, or override | advisor          |
-| `fleet [go]`         | batch resume                               | per-window             | re-pinned        |
-| `models [check]`     | print the tier table; `check` it for free  | —                      | —                |
-| `cdds [n]`           | not a session verb — navigation            | —                      | —                |
+| Verb                 | Job                                        | Substrate              | Tier      |
+| -------------------- | ------------------------------------------ | ---------------------- | --------- |
+| `task <n>`           | worktree session on Linear task n          | executor's (Bedrock)   | executor  |
+| `task anthropic <n>` | same, when the work needs web research     | anthropic              | executor  |
+| `task resume [n]`    | resume by number (bare = the picker)       | as recorded            | re-pinned |
+| `explore <n\|name>`  | research / audit, read-only, temp worktree | anthropic, always      | advisor   |
+| `chore [s] <n>`      | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    |
+| `plan [bedrock]`     | upkeep pass, then daily planning session   | advisor's, or override | advisor   |
+| `architect <n> [b]`  | design thread, read-only, temp worktree    | advisor's, or override | advisor   |
+| `fleet [go]`         | batch resume                               | per-window             | re-pinned |
+| `models [check]`     | print the tier table; `check` it for free  | —                      | —         |
+| `cdds [n]`           | not a session verb — navigation            | —                      | —         |
 
 `[b]` is the same optional `anthropic` / `bedrock` word `plan` takes;
 `[s]` is the same word in `task`'s position, before the number.
@@ -1309,9 +1306,16 @@ replacement. **The tier table itself is in "Model tiers" below.**
 **`explore resume` is gone**, and `explore` now requires a name.
 Both follow from the worktree home below: `explore <n|name>` is
 idempotent, so the `resume` twin would be a pure synonym, and a
-worktree cannot be named without a name. `plan` and
-`housekeeping` remain **base-repo** seat verbs — they touch the
-board, not a branch.
+worktree cannot be named without a name. `plan` remains a
+**base-repo** seat verb — it touches the board, not a branch.
+
+**`housekeeping` is retired — deleted, not aliased.** Its upkeep is
+`upkeep.py`, which the `plan` launcher runs before the session starts,
+and its approvals ride `plan`'s bootstrap gate. An alias would keep a
+name whose meaning changed from a session with a closing gate to a
+script. The 30-minute `/loop` cadence went with it and has no
+replacement: its remaining use was audit cadence, and audits are
+planning-filed board work.
 
 #### Architect and explore sessions: temporary worktree, no PR
 
@@ -1355,8 +1359,8 @@ sections point here.
 | `chore 1843`           | none (base)        | none             | helper   | nothing to prune                                       |
 
 The session name is the worktree column (`1843` for a chore).
-The named exceptions: `plan-<day>` and `housekeeping-<day>` keep
-their day-keyed names (they have no issue), and a free-form explore
+The named exceptions: `plan-<day>` keeps its day-keyed name (it
+has no issue), and a free-form explore
 keeps `exp-<name>`. **Git branches keep the `eng-` prefix**, because
 Linear's GitHub integration links branches and PRs on that form;
 `claude -w` cannot choose a branch name (it would say
@@ -1384,8 +1388,8 @@ the thread lived in was never reached.
 **Pruning is one rule for every session kind.** A worktree or
 local branch survives iff it is tied to an **open PR**, or to an
 issue whose **status type** is neither completed nor canceled;
-everything else is cleanup-eligible (`upkeep.py`, which the
-`housekeeping` skill drives through `upkeep.py prune`). It decides
+everything else is cleanup-eligible (`upkeep.py`, daily, or its
+`prune --apply` by hand). It decides
 **by the issue, never by the prefix**: `eng-<n>` and every older
 spelling (`worktree-<n>`, `worktree-eng-<n>`, `worktree-ceo-<n>`,
 `worktree-exp-<n>`) resolve to issue `<n>`. So every issue-keyed worktree is
@@ -1494,7 +1498,7 @@ awaiting operator feedback with **its issue already marked Done
 while the read-back loop was still open**, and no part of the
 cleanup machinery recognized any of it as live work. The 09-11
 fix was a worktree **plus an open PR**, reasoning that
-`housekeeping` will not prune a worktree holding unpushed work.
+the pruner will not remove a worktree holding unpushed work.
 That is **superseded rather than unsolved** — and the
 distinction matters, because the PR argument is otherwise
 tempting enough to reinvent. The failure was the spec file being
@@ -1554,19 +1558,21 @@ unchanged. Naming the path out loud is a **hard requirement**:
 the operator works the file through an editor, and cannot edit a
 path they were never told.
 
-**What did not change:** `plan` and `housekeeping` are still
-base-repo seat verbs, and the **substrate** rule below is
+**What did not change:** `plan` is still a
+base-repo seat verb, and the **substrate** rule below is
 untouched — the worktree home moved where these sessions run,
 not which provider they run against.
 
-`plan` and `housekeeping` additionally **gate their launch on a usable
+`plan` additionally **gates its launch on a usable
 AWS session** — see "The AWS login gate" below. No other verb does.
 
 #### The AWS login gate
 
-**`plan` and `housekeeping` refuse to launch without a usable AWS
-session.** Both read cost and account data — the planning bootstrap
-reports spend, and the upkeep pass runs the monthly permission refresh —
+**`plan` refuses to launch without a usable AWS session** — the only
+gated verb, since the retired `housekeeping` verb took its gate with it.
+It reads cost and account data — the upkeep pass it runs first reports
+spend and runs the monthly permission refresh, and the planning
+bootstrap reports that spend —
 and `aws login` is **interactive**, so a session that discovers an
 expired token mid-conversation cannot self-heal. Measured: a planning
 session's Cost Explorer read failed on an expired session and the spend
@@ -1658,8 +1664,8 @@ Three deliberate bounds on the gate:
   actually found wanting one.
 
 **One consequence worth knowing: `aws login` blocks on the operator.** That
-is exactly right for a verb the operator types — which `plan` and
-`housekeeping` are, being the seat verbs that open the day. It would be
+is exactly right for a verb the operator types — which `plan` is,
+being the seat verb that opens the day. It would be
 wrong for a verb typed into a tab by automation, so note that
 `session_dispatch.py` dispatches `task` verbs, which run on Bedrock and
 are deliberately **not** gated. Keep it that way: gating a dispatched
@@ -1705,7 +1711,7 @@ than being turned into a constant.
 **The rule is capability, not attendance.** A session runs on Bedrock
 unless it needs something Bedrock lacks — web search, web fetch, deep
 research — or it is a **seat session by role** (`plan`, `architect`,
-`housekeeping`, `explore`). Sub-agents are *not* a differentiator:
+`explore`). Sub-agents are *not* a differentiator:
 Opus-spawning-Opus sub-agents are verified working on Bedrock.
 
 An earlier framing split on **attendance** (unattended work goes to
@@ -1713,10 +1719,11 @@ Bedrock) and was superseded. Who is watching says nothing about which
 tools a session needs, and the verbs that actually broke on Bedrock
 broke on capability.
 
-`housekeeping` is the deliberate exception that is *not* a capability
-call: it would run on Bedrock perfectly well, and it stays on the seat
-because the operator uses it to **open the 5-hour subscription window**
-at the start of a day. Moving it would silently retire that.
+**The 5-hour subscription window is `plan`'s to open.** On its default
+anthropic substrate, the day's planning session is its first
+subscription session, so it opens the window for free. That was the
+retired `housekeeping` verb's one non-capability reason to stay on the
+seat; with `plan` covering it, the exception went with the verb.
 
 **What a Bedrock launch exports:** `CLAUDE_CODE_USE_BEDROCK=1`,
 `AWS_REGION`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` (the background tier,
@@ -1765,7 +1772,7 @@ non-repo jobs that merit neither, on a cheaper (Sonnet-class) model.
 | Tier         | Verbs                        | Default substrate   | Unset                |
 | ------------ | ---------------------------- | ------------------- | -------------------- |
 | `ADVISOR`    | `plan` `architect` `explore` | anthropic           | refuses to launch    |
-| `EXECUTOR`   | `task` (`housekeeping`)      | bedrock             | refuses to launch    |
+| `EXECUTOR`   | `task`                       | bedrock             | refuses to launch    |
 | `HELPER`     | `chore`                      | bedrock             | refuses to launch    |
 | `BACKGROUND` | Claude Code's small slot     | follows the session | warns (Bedrock only) |
 
@@ -1811,9 +1818,7 @@ are decisions rather than omissions:
 - **The auto-mode classifier has no tier.** Claude Code chooses its
   model itself and exposes no setting for it.
 
-`housekeeping` takes the executor tier's **model** but always the
-anthropic substrate, since opening the subscription window is its
-point. A Bedrock model without a `[1m]` window suffix **warns and is
+A Bedrock model without a `[1m]` window suffix **warns and is
 still honored**, because Bedrock defaults an unsuffixed id to the 200k
 window and reports nothing. The retired `DS_BEDROCK_MODEL` and
 `DS_BEDROCK_FAST_MODEL` are named on launch if still set.
@@ -1851,8 +1856,8 @@ modes include `none` is not retained under it. The operator accepts
 that for the pinch. An executor
 onto anthropic is rare and exists for one capability reason — web
 search and web fetch are unavailable on Bedrock — so reach for it when
-a task needs live web research, not by habit. `explore` and
-`housekeeping` take no override. The old `task local` spelling — it
+a task needs live web research, not by habit. `explore` takes no
+override. The old `task local` spelling — it
 never meant local inference, only the subscription — is a deprecated
 alias that prints its replacement.
 
@@ -1963,8 +1968,8 @@ drives the real zsh functions.
   and the self-refresh. It runs inside `make tools-tests`.
 
 - **`cdds`** — `cd` to the base repo checkout. The starting point for
-  anything that must not run inside a worktree (`housekeeping`, a
-  planning session). **It fast-forwards `main` on the way in**, through
+  anything that must not run inside a worktree (a planning session).
+  **It fast-forwards `main` on the way in**, through
   the shared `_ds_pull` helper described below. With a tag
   (`cdds 1077`), the pull happens in the base repo *before* the `cd`, so
   the worktree gets fresh `origin` refs through the shared object store
@@ -1998,7 +2003,7 @@ drives the real zsh functions.
   `task resume` finds the session through `resolve_session.py` — the
   tag's worktree, then the transcript whose cwd stamps point into it —
   never by the name. `/init-pr` runs the bootstrap without being
-  asked, the same trick `plan` and `housekeeping` use.
+  asked, the same trick `plan` uses.
 
 - **`task anthropic <n>`** — the same thing on the **subscription**,
   for work that needs web search or deep research (`task bedrock <n>`
@@ -2068,7 +2073,7 @@ drives the real zsh functions.
   interactive picker** — `-r/--resume` matches on session *ID*, and a
   name is not one, so it meant "pick from a list". That is the same
   underlying fact that made the old planning verb wrong, and it is why
-  `plan` / `housekeeping` / `architect` compute an id of their own.
+  `plan` / `architect` compute an id of their own.
   `explore` now computes one too, from its name, so the wart is gone
   rather than documented.
 
@@ -2187,22 +2192,13 @@ drives the real zsh functions.
     program.
 
   This **supersedes** hand-naming a base-repo session `planning-<day>`
-  and resuming it by that name. `plan` and `housekeeping` are now the
-  only **base-repo** session verbs — `explore` moved to its own
+  and resuming it by that name. `plan` is now the
+  only daily **base-repo** session verb — `explore` moved to its own
   worktree, so it is no longer the general-purpose base-repo entry
   point it once was.
 
   `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not
   `plan-05`.
-
-- **`housekeeping`** — start **or resume** today's **housekeeping** session, so
-  a day's upkeep is one verb rather than a hand-started session. Same
-  contract as `plan`, with three substitutions: the display name is
-  `housekeeping-<day-of-month>`, the initial prompt is `/housekeeping`,
-  and the session-id seed carries its own prefix so a day's planning and
-  housekeeping sessions cannot collide. It pins the **executor** tier's
-  model — upkeep, not board decisions — but always on the anthropic
-  substrate, since opening the subscription window is its point.
 
 - **`architect <n>`** — start **or resume** an **architect** session on
   the design thread governed by issue `<n>`, its only argument: the CEO
@@ -2218,7 +2214,7 @@ drives the real zsh functions.
   no PR").
 
   It keys on the **issue, not the date**, which is the one substantive
-  difference from `plan` / `housekeeping`: a design thread outlives a day, so
+  difference from `plan`: a design thread outlives a day, so
   `_ds_topic_sid` omits the date from the seed. Putting the date in
   would silently start a fresh conversation each morning and lose the
   thread — the failure the verb exists to prevent. Each issue gets its
@@ -2234,8 +2230,8 @@ drives the real zsh functions.
   push** it, which is why the pruner gates them by tier rather than by
   pushed state.
 
-  All four standing verbs share one core, `_ds_session`, which takes
-  an already-computed id — `plan` and `housekeeping` hand it a daily id,
+  All three standing verbs share one core, `_ds_session`, which takes
+  an already-computed id — `plan` hands it a daily id,
   `architect` and `explore` a computed one keyed on their argument (a
   topic for `architect`; for `explore` a topic *or* an issue number,
   which is why the table above reads `<n|name>`). That split is
@@ -2378,7 +2374,7 @@ drives the real zsh functions.
   per command, in order, gaps preserved — since a short response would
   otherwise shift every tag/tty pairing by one.
 
-#### Why `plan` and `housekeeping` compute a session id
+#### Why `plan` computes a session id
 
 The idempotency is **forced, not over-engineered**, and the reasoning is
 worth recording because the obvious implementation is the one that was
@@ -2411,8 +2407,8 @@ time.
 
 The split is deliberate and matches the session kinds: **implementation**
 sessions (`task` / `task resume`) run one deterministic spec to completion and
-are addressed by their Linear number; the **daily standing** sessions (`plan`,
-`housekeeping`) run in the base repo, recur daily, and are addressed by the day
+are addressed by their Linear number; the **daily standing** session (`plan`)
+runs in the base repo, recurs daily, and is addressed by the day
 they started. `architect` and `explore` are a third kind and fit neither row —
 they take a worktree like the first but are addressed by **topic** (or, for an
 issue-keyed explore task, by its number) and are idempotent like the second.
@@ -2509,7 +2505,7 @@ python3 .claude/tools/iterm_deploy.py --apply  # link, then restart monitors
 
 **The deploy is a pointer, the same shape as `init.zsh`.** The local
 config holds only a link and the code is whatever the base checkout's
-`main` has, so a fast-forward (which `housekeeping` does) *is* the deploy.
+`main` has, so a fast-forward (which the upkeep pass does) *is* the deploy.
 This used to say "copy", and a copy is the measured failure: a deploy
 made once by hand ran three months and several merged fixes behind
 `main`, so the operator kept seeing flicker a merged fix had already

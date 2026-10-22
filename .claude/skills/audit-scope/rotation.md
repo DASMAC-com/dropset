@@ -16,7 +16,7 @@ rotations to run back to back; each samples afresh.
 ## When to reach for it
 
 **An ad-hoc invocation, never a default.** No skill runs it:
-`housekeeping` runs no audit, and auditing reaches the board as a
+the upkeep pass runs no audit, and auditing reaches the board as a
 planning-filed audit issue naming one target, run as a scoped
 `audit-scope`. The reason is **targeting, not cost** — a random rotation
 in a heavy-feature phase audits code about to be rewritten, and one pass

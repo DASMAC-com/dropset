@@ -7,7 +7,7 @@ open the linked doc when you need the rationale, the edge cases, or
 verbatim material (e.g. the sub-agent brief). When you change a
 convention, update both its `docs/conventions/` file **and** any skill
 that references it — `review-pr`'s `CLAUDE.md`-freshness lens and
-`housekeeping` both check this stays in sync.
+the upkeep pass both check this stays in sync.
 
 ## Commits and PRs
 
@@ -40,7 +40,7 @@ recommended default **first**. Full detail:
 ## Linear automation
 
 Filing skills (`linear-task`, `audit-scope`,
-`trim-context`, `housekeeping`, `plan`) resolve team / project /
+`trim-context`, `plan`) resolve team / project /
 assignee and the Planning document id from **environment variables**
 (`LINEAR_*`), never hard-coded UUIDs — each via its **own** bare
 `printenv` (a combined `printenv A B C` returns only the first on macOS
@@ -155,7 +155,7 @@ state transition on merge** (a team setting), so the In Review state
 `review-pr` writes at the enqueue handoff persists until an explicit
 approval moves it to Done. Before a session, **Backlog** with no
 milestone awaits review and **Todo** is approved.
-Two consequences elsewhere: `housekeeping` prunes a worktree on the
+Two consequences elsewhere: the upkeep pass prunes a worktree on the
 issue's **status type** (completed / canceled), never on PR-merged; and
 the fleet-resume launcher resumes In Progress **or** In Review. Detail:
 `docs/conventions/linear-automation.md`.
@@ -169,8 +169,7 @@ incidental comment fix in product code where it names retired agent
 material — carry
 a leading **`Claude:`** token on their **Linear issue title** (capital
 C, colon, space) so agent-infra work batches apart from product code.
-Filing skills (`linear-task`, `audit-scope`, `housekeeping`,
-`plan`)
+Filing skills (`linear-task`, `audit-scope`, `plan`)
 emit it at filing time, so the prefix and the touched paths stay
 consistent by construction; a human filters the Linear board by it. It
 is a **Linear-title signal only — never a PR title** (PR titles keep
@@ -193,8 +192,7 @@ contention is paid as an occasional **rebase**, and the inbox is
 bounded by the disjoint-set test (judged on collision clusters, as for
 product work), never a state check or a bare count. Assembly consumes
 the pool *as of bootstrap*; a later stray waits for the next one.
-`housekeeping`'s propose-merges-among-meta step is **retired** — one
-writer, one rhythm. Detail: `docs/conventions/linear-automation.md`.
+One writer, one rhythm. Detail: `docs/conventions/linear-automation.md`.
 
 ### Keep Linear tags out of PR bodies and comments
 
@@ -257,8 +255,8 @@ fold input".
 
 ### An audit is a board issue, not a directive
 
-**`housekeeping` runs no audit at all** and reads no Planning
-document. A planning session files an **audit issue** — a
+**No upkeep pass runs an audit.** A planning session files an
+**audit issue** — a
 Backlog task naming **one** audit-registry target, with scope,
 rationale, and sequencing — and the session that pulls it runs
 exactly that as one scoped `audit-scope` run. Findings still land **parked**
@@ -358,9 +356,9 @@ IAM-creating deploys run from the admin login, and wiring the MCP to
 assume it is ruled out. Both servers' wiring is user-local.
 
 **A session cannot log itself in** — `aws login` is interactive — so the
-two seat verbs that read cost data, `plan` and `housekeeping`, **gate
-their own launch** on credentials that resolve (probe, log in, re-probe,
-refuse); `architect` deliberately does not. The profile is an **optional**
+one seat verb that reads cost data, `plan`, **gates its own launch** on
+credentials that resolve (probe, log in, re-probe, refuse); `architect`
+deliberately does not. The profile is an **optional**
 `DS_AWS_PROFILE` in the untracked runtime config; unset means the CLI's
 own default. Note the gate's bound: `sts:GetCallerIdentity` is
 authorization-free, so it rules out an **expired** session and not a live
@@ -470,10 +468,11 @@ always-re-prompt patterns: `docs/conventions/shell-commands.md`.
 
 **Firming has three homes and no per-session sweep.** `allowlist.py add`
 ad hoc (the dominant path), `fewer-permission-prompts` on demand, and
-`housekeeping` step 7c on a roughly **monthly** gate — the only periodic
-adder, because the auto permission-mode classifier that made a
+the upkeep pass's refresh gate on a roughly **monthly** clock — the only
+periodic adder, because the auto permission-mode classifier that made a
 per-session sweep unnecessary is also what makes the remaining churn
-invisible. Step 7a still prunes. Do not reinstate a per-session pass;
+invisible. It proposes; `plan`'s bootstrap gate approves. The same pass
+reports cruft to prune. Do not reinstate a per-session pass;
 the bar is net-negative instruction cost.
 
 ## Local integrations and guard hooks
@@ -492,11 +491,11 @@ written into a config file. Both settings files are git-ignored, so all
 of it is opt-in. `settings.local.json` is **one shared file resolved
 through worktrees to the main checkout**, so wiring it once makes it
 live everywhere. A committed guard is **inert until wired**:
-`make hook-wiring` (also run by `housekeeping` each pass) names every
+`make hook-wiring` (its tool also runs in the daily upkeep pass) names every
 guard that
 cannot fire — unwired, under a `matcher` that never selects its tools,
 or pointed at a missing path — and writes nothing. The **session
-helpers** (`cdds`, `task`, `explore`, `chore`, `plan`, `housekeeping`,
+helpers** (`cdds`, `task`, `explore`, `chore`, `plan`,
 `architect`, `fleet`) are the exception that *is* committed, at
 `.claude/shell/init.zsh`, sourced from the base checkout by one guarded
 line in the shell profile; only their 1Password coordinates stay
@@ -509,13 +508,14 @@ wiring, the helper family, and the iTerm setup:
 
 A session runs on **Bedrock** unless it needs something Bedrock lacks —
 web search, web fetch, deep research — or it is a **seat session by
-role** (`plan`, `architect`, `housekeeping`, `explore`). Sub-agents are
+role** (`plan`, `architect`, `explore`). Sub-agents are
 not a differentiator. `task <n>` and `chore <n>` are Bedrock, with
-`anthropic` before `<n>` the web-research escape; `housekeeping` stays
-on the seat because the operator uses it to open the 5-hour window.
+`anthropic` before `<n>` the web-research escape. `plan`, on the seat,
+opens the 5-hour window; the `housekeeping` verb kept there for that is
+retired, its upkeep now `upkeep.py` run by the `plan` launcher.
 
 Models are named by **role tier** — advisor (`plan`, `architect`,
-`explore`), executor (`task`, `housekeeping`), helper
+`explore`), executor (`task`), helper
 (`chore`), background — each set in
 the untracked runtime config (`DS_MODEL_<TIER>[_SUBSTRATE]`). Each verb
 pins its tier at launch and refuses an unresolved one, so no skill

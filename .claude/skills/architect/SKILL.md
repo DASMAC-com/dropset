@@ -61,7 +61,7 @@ one is the trap:
    Done while the read-back loop was open, and **no part of the
    cleanup machinery recognized any of it as live work**.
 1. The 09-11 fix was a worktree **plus an open PR**, reasoning
-   that `housekeeping` will not prune a worktree holding
+   that the pruner will not remove a worktree holding
    uncommitted or unpushed work. **Superseded 2026-09-14** —
    and superseded rather than *unsolved*, which is the part
    worth understanding. The failure was the spec file being the

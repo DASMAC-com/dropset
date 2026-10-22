@@ -346,7 +346,7 @@ untracked per-directory content, which step 3 handles.
    Success reads back `viewerSubscription: "UNSUBSCRIBED"`. Without
    the `notifications` scope it fails with `INSUFFICIENT_SCOPES`; if
    step 0b flagged that, say so rather than re-diagnosing.
-   `housekeeping`'s notification sweep catches what this misses.
+   The upkeep pass's notification sweep catches what this misses.
 
 1. **Mark the Linear issue In Progress** via the MCP; on failure, warn
    and continue:

@@ -408,6 +408,7 @@ class GatedVerbSurface(unittest.TestCase):
         guard = self.source.index("_ds_substrate_enter \"$substrate\" 'plan'")
         gate = self.source.index("_ds_aws_login 'plan'")
         self.assertLess(guard, gate, "plan probes before clearing the env")
+
     def test_architect_is_deliberately_not_gated(self):
         # It argues design rather than reading cost data, and a browser login is a
         # poor thing to stand between the operator and a design thought.

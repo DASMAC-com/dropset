@@ -8,7 +8,7 @@ All GitHub operations — opening PRs, updating titles and bodies,
 reading the diff, watching checks, pulling failing-job logs — go
 through the **GitHub MCP server** (`mcp__github__*`), not the `gh`
 CLI, **with the deliberate exceptions below**. The skills (`init-pr`,
-`pr-title-description`, `review-pr`, `housekeeping`, `linear-task`)
+`pr-title-description`, `review-pr`, `linear-task`)
 are written against it. `gh` survives in the cases enumerated below —
 count them from the list rather than from a number in this sentence,
 which drifted behind it twice:
@@ -161,7 +161,7 @@ which drifted behind it twice:
   operator grant
   (`gh auth refresh -h github.com -s notifications`); without it the
   call fails with `INSUFFICIENT_SCOPES`. It's **best-effort**:
-  `init-pr` continues if it errors, and `housekeeping`'s merged-PR
+  `init-pr` continues if it errors, and the upkeep pass's finished-PR
   notification sweep is the catch-all for anything it misses. Both
   commands reuse allow-rules already listed below —
   `Bash(gh pr view:*)` for the node-id lookup and
@@ -179,13 +179,13 @@ which drifted behind it twice:
   reports the **scope set**, which is where the `notifications` scope
   above is confirmed. Covered by `Bash(gh auth status:*)`.
 
-- **The field-selected `gh pr list --json` read** (`housekeeping`) —
+- **The field-selected `gh pr list --json` read** (`upkeep.py`) —
   `gh` has a `merged` state filter the MCP `list_pull_requests` lacks
   **and** selects only the fields the decision needs, so one
   field-selected read replaces a list-every-closed-PR call (~104k
   tokens of full bodies, replayed every later turn — see
   [context economy](context-economy.md)) *plus* the per-PR body
-  fetches it would otherwise need. `housekeeping`'s worktree-prune uses
+  fetches it would otherwise need. The upkeep pass's worktree-prune uses
   `gh pr list --state merged` selecting only
   `number,headRefName,mergedAt` (with `--limit 100`) **once** to learn
   which worktree branches merged, in place of one full-body
@@ -353,7 +353,7 @@ writes to confirm-on-use:
   `Bash(gh pr checks:*)`, `Bash(gh pr view:*)`,
   `Bash(gh api graphql:*)`, and `Bash(gh pr list:*)` — the polled /
   field-selected reads
-  `review-pr`, `pr-title-description`, and `housekeeping` use in place
+  `review-pr`, `pr-title-description`, and `upkeep.py` use in place
   of the full-object MCP calls (see "GitHub
   via MCP" above and [context economy](context-economy.md)).
   `init-pr`'s notification unsubscribe also rides on these two —
