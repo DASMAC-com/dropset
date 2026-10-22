@@ -1178,7 +1178,7 @@ so the session — and every Bash command its agent runs — inherits the pool.
 
 **Scoped to dropset checkouts, never machine-wide.** A `chpwd` hook
 re-evaluates on every directory change: inside the base repo or any
-worktree under it both are exported, and leaving unsets the ones the hook
+worktree under it all four are exported, and leaving unsets the ones the hook
 set while they still hold its value (a value pinned by hand survives). In
 another Anchor repo the pool
 would be actively harmful: Anchor reads the program keypair from the
@@ -1187,8 +1187,8 @@ so `anchor keys sync` would re-key that repo.
 
 **The off switch** is `DS_CARGO_POOL=0` in the runtime config, set
 **before** the line that sources the init (set later, it takes effect at
-the next `cd`). Both variables then stay unset
-and everything behaves as before. A value of either variable that is
+the next `cd`). All four then stay unset
+and everything behaves as before. A value of any of them that is
 already exported wins over the default. CI never sources the init, so its
 builds are unchanged.
 
