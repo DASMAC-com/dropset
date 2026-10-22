@@ -157,6 +157,28 @@ codama.update(
   ]),
 );
 
+// An `address = registry.default_fee_config.mint` constraint lands in the
+// IDL as an account `address`, which Codama turns into a literal public-key
+// default: the TS builder sent the field path itself as the key, and the
+// Rust builder's `pubkey!` of it panicked. Drop any default that is not a
+// base58 address, making the account a required input: the value lives
+// on-chain, not in the IDL.
+const BASE58_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+codama.update(
+  bottomUpTransformerVisitor([
+    {
+      select: '[instructionAccountNode]',
+      transform: (node) => {
+        const value = node.defaultValue;
+        if (value?.kind !== 'publicKeyValueNode' || BASE58_ADDRESS.test(value.publicKey)) {
+          return node;
+        }
+        return { ...node, defaultValue: undefined };
+      },
+    },
+  ]),
+);
+
 /**
  * Make the program address a required input of the generated TS client.
  *

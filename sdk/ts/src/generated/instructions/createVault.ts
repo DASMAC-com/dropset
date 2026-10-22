@@ -14,7 +14,7 @@ export const CREATE_VAULT_DISCRIMINATOR = new Uint8Array([4]);
 
 export function getCreateVaultDiscriminatorBytes() { return fixEncoderSize(getBytesEncoder(), 1).encode(CREATE_VAULT_DISCRIMINATOR); }
 
-export type CreateVaultInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountPayer extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountFeeMint extends string | AccountMeta<string> = "market.fee_config.mint", TAccountFeeTokenProgram extends string | AccountMeta<string> = "market.fee_config.token_program", TAccountPayerFeeSource extends string | AccountMeta<string> = string, TAccountRegistryFeeTreasury extends string | AccountMeta<string> = string, TAccountSystemProgram extends string | AccountMeta<string> = "11111111111111111111111111111111", TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
+export type CreateVaultInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountPayer extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountFeeMint extends string | AccountMeta<string> = string, TAccountFeeTokenProgram extends string | AccountMeta<string> = string, TAccountPayerFeeSource extends string | AccountMeta<string> = string, TAccountRegistryFeeTreasury extends string | AccountMeta<string> = string, TAccountSystemProgram extends string | AccountMeta<string> = "11111111111111111111111111111111", TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
 Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountPayer extends string ? WritableSignerAccount<TAccountPayer> & AccountSignerMeta<TAccountPayer> : TAccountPayer, TAccountRegistry extends string ? ReadonlyAccount<TAccountRegistry> : TAccountRegistry, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, TAccountFeeMint extends string ? ReadonlyAccount<TAccountFeeMint> : TAccountFeeMint, TAccountFeeTokenProgram extends string ? ReadonlyAccount<TAccountFeeTokenProgram> : TAccountFeeTokenProgram, TAccountPayerFeeSource extends string ? WritableAccount<TAccountPayerFeeSource> : TAccountPayerFeeSource, TAccountRegistryFeeTreasury extends string ? WritableAccount<TAccountRegistryFeeTreasury> : TAccountRegistryFeeTreasury, TAccountSystemProgram extends string ? ReadonlyAccount<TAccountSystemProgram> : TAccountSystemProgram, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
 
 export type CreateVaultInstructionData = { discriminator: ReadonlyUint8Array; perfFeeRate: number; quoteAuthority: Address; allowOutsideDepositors: boolean; leaderOverride: Address; name: string;  };
@@ -55,12 +55,12 @@ market: Address<TAccountMarket>;
  * Mint the create-vault fee is paid in. Pinned to the value
  * `create_market` stamped into `market.fee_config.mint`.
  */
-feeMint?: Address<TAccountFeeMint>;
+feeMint: Address<TAccountFeeMint>;
 /**
  * Token program owning `fee_mint`. Pinned to the value stamped at
  * market creation.
  */
-feeTokenProgram?: Address<TAccountFeeTokenProgram>;
+feeTokenProgram: Address<TAccountFeeTokenProgram>;
 /**
  * Caller's source ATA for the fee mint. Only read on the
  * non-admin path; admin path skips the transfer entirely.
@@ -98,12 +98,6 @@ const args = { ...input,  };
 
 
 // Resolve default values.
-if (!accounts.feeMint.value) {
-accounts.feeMint.value = 'market.fee_config.mint' as Address<'market.fee_config.mint'>;
-}
-if (!accounts.feeTokenProgram.value) {
-accounts.feeTokenProgram.value = 'market.fee_config.token_program' as Address<'market.fee_config.token_program'>;
-}
 if (!accounts.systemProgram.value) {
 accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>;
 }
@@ -137,12 +131,12 @@ market: Address<TAccountMarket>;
  * Mint the create-vault fee is paid in. Pinned to the value
  * `create_market` stamped into `market.fee_config.mint`.
  */
-feeMint?: Address<TAccountFeeMint>;
+feeMint: Address<TAccountFeeMint>;
 /**
  * Token program owning `fee_mint`. Pinned to the value stamped at
  * market creation.
  */
-feeTokenProgram?: Address<TAccountFeeTokenProgram>;
+feeTokenProgram: Address<TAccountFeeTokenProgram>;
 /**
  * Caller's source ATA for the fee mint. Only read on the
  * non-admin path; admin path skips the transfer entirely.
@@ -180,12 +174,6 @@ const args = { ...input,  };
 
 
 // Resolve default values.
-if (!accounts.feeMint.value) {
-accounts.feeMint.value = 'market.fee_config.mint' as Address<'market.fee_config.mint'>;
-}
-if (!accounts.feeTokenProgram.value) {
-accounts.feeTokenProgram.value = 'market.fee_config.token_program' as Address<'market.fee_config.token_program'>;
-}
 if (!accounts.systemProgram.value) {
 accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>;
 }

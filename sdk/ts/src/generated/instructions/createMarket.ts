@@ -14,7 +14,7 @@ export const CREATE_MARKET_DISCRIMINATOR = new Uint8Array([3]);
 
 export function getCreateMarketDiscriminatorBytes() { return fixEncoderSize(getBytesEncoder(), 1).encode(CREATE_MARKET_DISCRIMINATOR); }
 
-export type CreateMarketInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountPayer extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountBaseMint extends string | AccountMeta<string> = string, TAccountQuoteMint extends string | AccountMeta<string> = string, TAccountBaseTokenProgram extends string | AccountMeta<string> = string, TAccountQuoteTokenProgram extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountBaseTreasury extends string | AccountMeta<string> = string, TAccountQuoteTreasury extends string | AccountMeta<string> = string, TAccountFeeMint extends string | AccountMeta<string> = "registry.default_fee_config.mint", TAccountFeeTokenProgram extends string | AccountMeta<string> = "registry.default_fee_config.token_program", TAccountPayerFeeSource extends string | AccountMeta<string> = string, TAccountRegistryFeeTreasury extends string | AccountMeta<string> = string, TAccountSystemProgram extends string | AccountMeta<string> = "11111111111111111111111111111111", TAccountAssociatedTokenProgram extends string | AccountMeta<string> = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
+export type CreateMarketInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountPayer extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountBaseMint extends string | AccountMeta<string> = string, TAccountQuoteMint extends string | AccountMeta<string> = string, TAccountBaseTokenProgram extends string | AccountMeta<string> = string, TAccountQuoteTokenProgram extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountBaseTreasury extends string | AccountMeta<string> = string, TAccountQuoteTreasury extends string | AccountMeta<string> = string, TAccountFeeMint extends string | AccountMeta<string> = string, TAccountFeeTokenProgram extends string | AccountMeta<string> = string, TAccountPayerFeeSource extends string | AccountMeta<string> = string, TAccountRegistryFeeTreasury extends string | AccountMeta<string> = string, TAccountSystemProgram extends string | AccountMeta<string> = "11111111111111111111111111111111", TAccountAssociatedTokenProgram extends string | AccountMeta<string> = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
 Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountPayer extends string ? WritableSignerAccount<TAccountPayer> & AccountSignerMeta<TAccountPayer> : TAccountPayer, TAccountRegistry extends string ? WritableAccount<TAccountRegistry> : TAccountRegistry, TAccountBaseMint extends string ? ReadonlyAccount<TAccountBaseMint> : TAccountBaseMint, TAccountQuoteMint extends string ? ReadonlyAccount<TAccountQuoteMint> : TAccountQuoteMint, TAccountBaseTokenProgram extends string ? ReadonlyAccount<TAccountBaseTokenProgram> : TAccountBaseTokenProgram, TAccountQuoteTokenProgram extends string ? ReadonlyAccount<TAccountQuoteTokenProgram> : TAccountQuoteTokenProgram, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, TAccountBaseTreasury extends string ? WritableAccount<TAccountBaseTreasury> : TAccountBaseTreasury, TAccountQuoteTreasury extends string ? WritableAccount<TAccountQuoteTreasury> : TAccountQuoteTreasury, TAccountFeeMint extends string ? ReadonlyAccount<TAccountFeeMint> : TAccountFeeMint, TAccountFeeTokenProgram extends string ? ReadonlyAccount<TAccountFeeTokenProgram> : TAccountFeeTokenProgram, TAccountPayerFeeSource extends string ? WritableAccount<TAccountPayerFeeSource> : TAccountPayerFeeSource, TAccountRegistryFeeTreasury extends string ? WritableAccount<TAccountRegistryFeeTreasury> : TAccountRegistryFeeTreasury, TAccountSystemProgram extends string ? ReadonlyAccount<TAccountSystemProgram> : TAccountSystemProgram, TAccountAssociatedTokenProgram extends string ? ReadonlyAccount<TAccountAssociatedTokenProgram> : TAccountAssociatedTokenProgram, ...TRemainingAccounts]>;
 
 export type CreateMarketInstructionData = { discriminator: ReadonlyUint8Array;  };
@@ -101,14 +101,14 @@ quoteTreasury: Address<TAccountQuoteTreasury>;
  * so a wrong mint here yields `ConstraintAddress` before the
  * handler runs.
  */
-feeMint?: Address<TAccountFeeMint>;
+feeMint: Address<TAccountFeeMint>;
 /**
  * Token program that owns `fee_mint`. Pinned to the value the
  * registry stamped at `init`, so a caller-supplied mismatch is
  * rejected up front. The `Interface<TokenInterface>` bound is
  * belt-and-braces — the address check already implies it.
  */
-feeTokenProgram?: Address<TAccountFeeTokenProgram>;
+feeTokenProgram: Address<TAccountFeeTokenProgram>;
 /**
  * Caller's source ATA holding the fee mint. Only read on the
  * non-admin path — admins skip the transfer entirely, so the
@@ -139,12 +139,6 @@ const accounts = originalAccounts as Record<keyof typeof originalAccounts, Resol
 // Resolve default values.
 if (!accounts.market.value) {
 accounts.market.value = await getProgramDerivedAddress({ programAddress, seeds: [getAddressEncoder().encode(expectAddress(accounts.baseMint.value)), getAddressEncoder().encode(expectAddress(accounts.quoteMint.value))] });
-}
-if (!accounts.feeMint.value) {
-accounts.feeMint.value = 'registry.default_fee_config.mint' as Address<'registry.default_fee_config.mint'>;
-}
-if (!accounts.feeTokenProgram.value) {
-accounts.feeTokenProgram.value = 'registry.default_fee_config.token_program' as Address<'registry.default_fee_config.token_program'>;
 }
 if (!accounts.systemProgram.value) {
 accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>;
@@ -225,14 +219,14 @@ quoteTreasury: Address<TAccountQuoteTreasury>;
  * so a wrong mint here yields `ConstraintAddress` before the
  * handler runs.
  */
-feeMint?: Address<TAccountFeeMint>;
+feeMint: Address<TAccountFeeMint>;
 /**
  * Token program that owns `fee_mint`. Pinned to the value the
  * registry stamped at `init`, so a caller-supplied mismatch is
  * rejected up front. The `Interface<TokenInterface>` bound is
  * belt-and-braces — the address check already implies it.
  */
-feeTokenProgram?: Address<TAccountFeeTokenProgram>;
+feeTokenProgram: Address<TAccountFeeTokenProgram>;
 /**
  * Caller's source ATA holding the fee mint. Only read on the
  * non-admin path — admins skip the transfer entirely, so the
@@ -261,12 +255,6 @@ const accounts = originalAccounts as Record<keyof typeof originalAccounts, Resol
 
 
 // Resolve default values.
-if (!accounts.feeMint.value) {
-accounts.feeMint.value = 'registry.default_fee_config.mint' as Address<'registry.default_fee_config.mint'>;
-}
-if (!accounts.feeTokenProgram.value) {
-accounts.feeTokenProgram.value = 'registry.default_fee_config.token_program' as Address<'registry.default_fee_config.token_program'>;
-}
 if (!accounts.systemProgram.value) {
 accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>;
 }
