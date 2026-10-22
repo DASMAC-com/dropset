@@ -184,11 +184,11 @@ promoted stays parked, and promoting it later is the usual milestone
 clear.
 
 **The planning bootstrap is the single assimilation point** — once a
-day it sweeps the milestone **plus any inbox batch** (every
-open, unblocked `Claude:`-prefixed Backlog issue with no milestone),
-folds them into **small themed batches of roughly 4–5
-parts**, and promotes a **file-disjoint** subset, parking or killing the
-rest. It does **not** gate on a meta issue being in flight: file
+day it sweeps the milestone **plus any inbox stray** (an open,
+unblocked `Claude:` Backlog issue with no milestone; an assembled
+batch is never re-folded), folds them into **small themed batches of
+roughly 4–5 parts**, and promotes a **file-disjoint** subset, parking
+or killing the rest. It does **not** gate on a meta issue being in flight: file
 contention is paid as an occasional **rebase**, and the inbox is
 bounded by the disjoint-set test (judged on collision clusters, as for
 product work), never a state check or a bare count. Assembly consumes

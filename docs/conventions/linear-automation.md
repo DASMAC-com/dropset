@@ -560,10 +560,6 @@ agent-infra strays — is **parked**: filed so it is not lost, deliberately
 plus the milestone, in the creating call** (per "Relations and state
 belong in the CREATING call"). **Promotion is one write, the milestone
 clear**, which lands the issue in the inbox for the operator's review.
-An issue still parked in Todo from before the review inbox is promoted
-by the same write with its state set to Backlog, since clearing its
-milestone alone would make planning the writer of an approval.
-
 Nothing about parking places or implies a blocking edge — see "Blocking
 relations", where the meta batch's one remaining edge has since been
 retired outright. A Backlog filing is already out of the queue by state;
@@ -768,8 +764,7 @@ distinguish them. With several batches per bootstrap it does:
   later bootstrap by that same milestone clear.
 
 **An already-assembled parked batch is a promotion candidate, not a fold
-input.** The fold pool is **strays**, plus any open unpulled batch
-sitting in the inbox; a batch that is **parked** is not
+input.** The fold pool is **strays** only; a batch that is **parked** is not
 re-folded, only re-considered for promotion. The reason is mechanical:
 `merge-tasks` only merges and there is no split operation, so
 re-folding a parked batch could only *grow* it — past the 4–5-part
@@ -783,21 +778,19 @@ exists to hold back, and would make the disjoint-set
 bound below unreachable — there would never be a remainder to leave
 parked.
 
-**The pool is the milestone PLUS any open, unpulled batch** — every
-open, unblocked `Claude:`-prefixed issue in Backlog with **no
-milestone**, i.e. promoted but not yet approved. Lowest number survives,
-so yesterday's inbox batch is swallowed by today's assembly rather
-than sitting beside it. An **approved** batch (Todo) is never a fold
-input: folding it would drop it back to Backlog and so undo the
-operator's move, which planning never writes.
+**The pool is the milestone PLUS any inbox stray** — every open,
+unblocked `Claude:`-prefixed issue in Backlog with **no milestone** that
+is not itself an assembled batch. **An already-assembled batch, parked
+or promoted, is never a fold input**: a parked one is only re-considered
+for promotion (above); a promoted one awaits the operator's review,
+which a fold would re-park mid-review; and an approved one (Todo) would
+drop back to Backlog, undoing the operator's move.
 
-That clause keeps a batch from being **duplicated** across bootstraps,
-and the history is worth keeping because the gap is easy to reopen: the
-pool was once a title scan of Backlog, which swallowed a prior batch
-incidentally, and narrowing it to the milestone lost that — a batch
-awaiting review sits in the inbox, neither parked nor in flight, so
-neither the milestone sweep nor a state check covers it. What the
-clause no longer has to do is maintain "exactly one meta issue
+This retires the clause that swallowed yesterday's unpulled batch into
+today's assembly to keep a batch from being **duplicated** across
+bootstraps. An unpulled batch now awaits the operator rather than the
+next assembly, and its parts are already closed into it, so nothing is
+left to duplicate. Nor does the pool maintain "exactly one meta issue
 unblocked in Next", which is deliberately retired (below).
 
 **Assembly is NOT gated on a meta issue being in flight** — operator
