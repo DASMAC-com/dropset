@@ -68,7 +68,8 @@ and the SDKs expose it as `DROPSET_MAINNET_ID` (Rust) and
 `DROPSET_MAINNET_PROGRAM_ADDRESS` (TS), resolved per cluster through
 `Deployment::program_id` / `dropsetProgramAddress`. Parity tests in both
 SDKs pin those copies to this file, so changing the id means editing the
-file, the feature-gated `declare_id!` and both SDK constants together.
+file, the feature-gated `declare_id!` and both SDK constants together,
+along with the two tests' vanity-prefix pins.
 
 ## The mock token mints
 
