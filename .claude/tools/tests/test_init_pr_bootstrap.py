@@ -230,11 +230,55 @@ class ResumeTests(unittest.TestCase):
         result = bootstrap(runner).execute()
         self.assertEqual(result["pr"]["number"], 700)
 
-    def test_the_push_carries_a_lease_so_a_rebased_rerun_lands(self):
+    REJECTED = {
+        ("git", "push", "-u"): (1, "", "! [rejected] (non-fast-forward)"),
+        ("git", "ls-remote"): (0, "abc123\trefs/heads/eng-42\n", ""),
+    }
+
+    def test_a_plain_push_is_tried_first_and_carries_no_force(self):
         runner = FakeRunner()
         bootstrap(runner).execute()
-        push = next(c for c in runner.calls if c[:2] == ["git", "push"])
-        self.assertIn("--force-with-lease", push)
+        pushes = [c for c in runner.calls if c[:2] == ["git", "push"]]
+        self.assertEqual(pushes, [["git", "push", "-u", "origin", "eng-42"]])
+
+    def test_a_rejected_push_replaces_a_remote_holding_only_the_bootstrap(self):
+        subject = "chore(ENG-42): Bootstrap the worktree\n"
+        runner = FakeRunner(
+            {
+                **self.REJECTED,
+                ("git", "log", "--format=%s", "origin/main..abc123"): (0, subject, ""),
+            }
+        )
+        result = bootstrap(runner).execute()
+        self.assertIsNone(result["stopped_at"])
+        self.assertTrue(runner.ran("git", "push", "--force-with-lease=eng-42:abc123"))
+
+    def test_a_rejected_push_never_forces_over_other_work(self):
+        runner = FakeRunner(
+            {
+                **self.REJECTED,
+                ("git", "log", "--format=%s", "origin/main..abc123"): (
+                    0,
+                    "chore(ENG-42): Bootstrap the worktree\nfeat(ENG-42): Real work\n",
+                    "",
+                ),
+            }
+        )
+        result = bootstrap(runner).execute()
+        self.assertEqual(result["stopped_at"], "push")
+        forced = [c for c in runner.calls if any("force" in a for a in c)]
+        self.assertEqual(forced, [])
+
+    def test_an_open_pr_the_search_missed_is_found_by_head(self):
+        listing = json.dumps(
+            [{"number": 701, "state": "OPEN", "headRefName": "eng-42", "url": PR_URL}]
+        )
+        runner = FakeRunner(
+            {("gh", "pr", "list", "--repo", boot.REPO, "--head"): (0, listing, "")}
+        )
+        result = bootstrap(runner).execute()
+        self.assertEqual(result["pr"]["number"], 701)
+        self.assertFalse(runner.ran("gh", "pr", "create"))
 
 
 class MergedMatchTests(unittest.TestCase):

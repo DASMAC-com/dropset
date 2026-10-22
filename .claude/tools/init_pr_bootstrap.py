@@ -308,14 +308,46 @@ class Bootstrap:
         return "ok", self.subject
 
     def step_push(self) -> tuple[str, str]:
-        # With lease: on a resumed run the rebase may have replayed an
-        # already-pushed bootstrap commit onto a newer main, which a plain push
-        # rejects. The lease still refuses to clobber anything this checkout has
-        # not seen.
-        self._ok(["git", "push", "--force-with-lease", "-u", "origin", self.branch])
-        return "ok", f"origin/{self.branch}"
+        code, _, err = self.run(["git", "push", "-u", "origin", self.branch], 120)
+        if code == 0:
+            return "ok", f"origin/{self.branch}"
+        # Rejected. On a resumed run the rebase may have replayed an
+        # already-pushed bootstrap commit onto a newer main; replace the remote
+        # branch only when that commit is ALL it carries, with the lease pinned
+        # to the sha just read — never a bare lease, whose shared tracking ref
+        # may predate another session's push.
+        out = self._ok(["git", "ls-remote", "origin", f"refs/heads/{self.branch}"])
+        sha = out.split()[0] if out.strip() else ""
+        if not sha:
+            raise Stop(f"push rejected: {_tail(err) or f'exit {code}'}")
+        self._ok(["git", "fetch", "origin", self.branch])
+        theirs = self._ok(["git", "log", "--format=%s", f"origin/main..{sha}"])
+        if any(s != self.subject for s in theirs.splitlines()):
+            raise Stop(
+                f"origin/{self.branch} carries commits beyond the bootstrap "
+                "commit; reconcile by hand, never force here"
+            )
+        self._ok(
+            [
+                "git", "push", f"--force-with-lease={self.branch}:{sha}",
+                "-u", "origin", self.branch,
+            ]
+        )  # fmt: skip
+        return "ok", f"origin/{self.branch} (replaced its rebased bootstrap commit)"
 
     def step_pr(self) -> tuple[str, str]:
+        if not self.pr:
+            # Authoritative by head ref: the search index behind
+            # `merged_check` can lag a PR created moments ago.
+            out = self._ok(
+                [
+                    "gh", "pr", "list", "--repo", REPO, "--head", self.branch,
+                    "--state", "open", "--json", "number,url,headRefName,state",
+                ]
+            )  # fmt: skip
+            for p in json.loads(out or "[]"):
+                if p.get("state") == "OPEN" and p.get("headRefName") == self.branch:
+                    self.pr = {"number": p["number"], "url": p.get("url")}
         if self.pr:
             return "skipped", f"reusing open PR #{self.pr['number']}"
         out = self._ok(
