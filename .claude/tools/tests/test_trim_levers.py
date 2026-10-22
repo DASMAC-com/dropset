@@ -48,10 +48,10 @@ ENV = {
 def _node(
     identifier="ENG-1",
     title="A lever",
-    state="Todo",
+    state="Backlog",
     milestone="Trim levers",
     fingerprint="a:b",
-    state_type="unstarted",
+    state_type="backlog",
     description=None,
 ):
     """A probe/listing result node.
