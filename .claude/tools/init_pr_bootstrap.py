@@ -94,6 +94,9 @@ STEPS = (
     "spec",
 )
 
+# Steps whose failure is reported as `failed` and never stops the run.
+BEST_EFFORT = frozenset({"install", "mute", "linear_state", "spec"})
+
 # Signing verdicts from `init_pr_branch.py` that must stop the run before the
 # rename, the first act that costs anything to undo.
 SIGNING_STOPS = {
@@ -200,7 +203,14 @@ class Bootstrap:
                 "--state", "all", "--json", "number,title,state,headRefName,url",
             ]
         )  # fmt: skip
-        prs = json.loads(out or "[]")
+        # `--search` is full-text, so a PR that merely mentions the tag is a
+        # hit; only one on this branch or scoped to this issue counts.
+        prs = [
+            p
+            for p in json.loads(out or "[]")
+            if p.get("headRefName") == self.tag
+            or f"({self.scope})" in (p.get("title") or "")
+        ]
         merged = [p for p in prs if p.get("state") == "MERGED"]
         closed = [p for p in prs if p.get("state") == "CLOSED"]
         for p in prs:
@@ -234,12 +244,17 @@ class Bootstrap:
             self.helper = json.loads(out)
         except json.JSONDecodeError:
             raise Stop(f"init_pr_branch.py gave no JSON: {_tail(err)}")
+        if not isinstance(self.helper, dict):
+            self.helper = {}
+            raise Stop(f"init_pr_branch.py gave no JSON object: {_tail(out)}")
         if not self.helper.get("tag_valid"):
             raise Stop(f"invalid tag {self.raw_tag!r}; want ### or eng-###")
         signing = self.helper.get("signing")
         if signing in SIGNING_STOPS:
             raise Stop(f"signing is {signing}: {SIGNING_STOPS[signing]}")
         self.branch = self.helper.get("normalized_branch")
+        if not self.branch:
+            raise Stop("init_pr_branch.py reported no normalized_branch")
         for key in ("env_link", "secrets_env_link"):
             if self.helper.get(key) == "failed":
                 self.notes.append(f"{key} failed; copy that file by hand")
@@ -261,8 +276,9 @@ class Bootstrap:
         if code != 0:
             self.run(["git", "rebase", "--abort"], 60)
             raise Stop(
-                f"rebase onto origin/main conflicted and was aborted; resolve by "
-                f"hand, never here ({_tail(err or out)})"
+                "rebase onto origin/main failed (a conflict, or a dirty tree) and "
+                f"any rebase in progress was aborted; resolve by hand, never here "
+                f"({_tail(err or out)})"
             )
         return "ok", _tail(out, 120) or "rebased"
 
@@ -292,7 +308,11 @@ class Bootstrap:
         return "ok", self.subject
 
     def step_push(self) -> tuple[str, str]:
-        self._ok(["git", "push", "-u", "origin", self.branch])
+        # With lease: on a resumed run the rebase may have replayed an
+        # already-pushed bootstrap commit onto a newer main, which a plain push
+        # rejects. The lease still refuses to clobber anything this checkout has
+        # not seen.
+        self._ok(["git", "push", "--force-with-lease", "-u", "origin", self.branch])
         return "ok", f"origin/{self.branch}"
 
     def step_pr(self) -> tuple[str, str]:
@@ -363,6 +383,14 @@ class Bootstrap:
                 status, detail = getattr(self, f"step_{name}")()
             except Stop as exc:
                 status, detail, stopped_at = "stopped", str(exc), name
+            except Exception as exc:  # noqa: BLE001 — the manifest must print
+                # An unexpected reply (non-JSON, a write error) is reported, not
+                # raised: a traceback would lose the record of what completed.
+                detail = f"{type(exc).__name__}: {exc}"
+                if name in BEST_EFFORT:
+                    status = "failed"
+                else:
+                    status, stopped_at = "stopped", name
             self.steps.append({"step": name, "status": status, "detail": detail})
             if stopped_at:
                 break

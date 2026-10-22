@@ -230,6 +230,59 @@ class ResumeTests(unittest.TestCase):
         result = bootstrap(runner).execute()
         self.assertEqual(result["pr"]["number"], 700)
 
+    def test_the_push_carries_a_lease_so_a_rebased_rerun_lands(self):
+        runner = FakeRunner()
+        bootstrap(runner).execute()
+        push = next(c for c in runner.calls if c[:2] == ["git", "push"])
+        self.assertIn("--force-with-lease", push)
+
+
+class MergedMatchTests(unittest.TestCase):
+    def test_a_merged_pr_that_only_mentions_the_tag_is_ignored(self):
+        prs = [
+            {"number": 8, "state": "MERGED", "headRefName": "eng-7", "title": "x"},
+            {"number": 9, "state": "CLOSED", "headRefName": "eng-7", "title": "y"},
+        ]
+        result = bootstrap(FakeRunner(prs=prs)).execute()
+        self.assertIsNone(result["stopped_at"])
+        self.assertEqual(result["notes"], [])
+
+    def test_a_merged_pr_scoped_to_the_issue_stops_from_any_branch(self):
+        prs = [
+            {
+                "number": 8,
+                "state": "MERGED",
+                "headRefName": "other",
+                "title": "fix(ENG-42): Thing",
+            }
+        ]
+        result = bootstrap(FakeRunner(prs=prs)).execute()
+        self.assertEqual(result["stopped_at"], "merged_check")
+
+
+class UnexpectedReplyTests(unittest.TestCase):
+    def test_a_non_json_mute_reply_fails_the_step_not_the_run(self):
+        runner = FakeRunner({("gh", "pr", "view"): (0, "not json", "")})
+        result = bootstrap(runner).execute()
+        self.assertIsNone(result["stopped_at"])
+        mute = next(s for s in result["steps"] if s["step"] == "mute")
+        self.assertEqual(mute["status"], "failed")
+        self.assertIn("JSONDecodeError", mute["detail"])
+
+    def test_a_non_json_pr_list_stops_with_a_manifest(self):
+        runner = FakeRunner({("gh", "pr", "list"): (0, "<html>", "")})
+        result = bootstrap(runner).execute()
+        self.assertEqual(result["stopped_at"], "merged_check")
+        self.assertFalse(runner.ran("git", "fetch"))
+
+    def test_a_helper_reply_that_is_not_an_object_stops(self):
+        for reply in ("[]", json.dumps({**HELPER, "normalized_branch": ""})):
+            with self.subTest(reply=reply):
+                runner = FakeRunner({("init_pr_branch.py",): (0, reply, "")})
+                result = bootstrap(runner).execute()
+                self.assertEqual(result["stopped_at"], "branch")
+                self.assertFalse(runner.ran("git", "fetch"))
+
 
 if __name__ == "__main__":
     unittest.main()
