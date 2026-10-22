@@ -1169,8 +1169,10 @@ so the session — and every Bash command its agent runs — inherits the pool.
   affected, not only clippy. The wrapper's path re-keys the workspace
   crates alone, so dependencies stay shared. Clippy swaps that wrapper for
   its own driver but tracks `CLIPPY_CONF_DIR`, so the second key makes it
-  rebuild instead. No `clippy.toml` exists, so the second key changes no
-  lint configuration (a future one belongs at the root). These two follow a
+  rebuild instead. Clippy thus still has one slot per crate, and two
+  worktrees alternating `cargo clippy` re-lint each other's crates. No
+  `clippy.toml` exists, so the second key changes no lint configuration (a
+  future one belongs at the root). These two follow a
   `cd` into another checkout. A child shell inherits them without the
   hook's record of what it exported, so the hook treats any value shaped
   like one of its own keys as its own; a hand pin is any other value. A
@@ -1191,7 +1193,8 @@ so `anchor keys sync` would re-key that repo.
 **before** the line that sources the init (set later, it takes effect at
 the next `cd`). All four then stay unset
 and everything behaves as before. A value of any of them that is
-already exported wins over the default. CI never sources the init, so its
+already exported wins over the default (for the two keys, a value not
+shaped like a key; see above). CI never sources the init, so its
 builds are unchanged.
 
 **Two carve-outs: the Anchor build and the TUI's bots.** Anchor reads the

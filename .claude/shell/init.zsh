@@ -82,7 +82,8 @@ fi
 #
 # `DS_CARGO_POOL=0` in the runtime config turns it off, and must be set BEFORE
 # the line that sources this file. An already-exported value of any variable it
-# sets wins, the same override shape as `_ds_secrets`. The directory sits under Cargo
+# sets wins (for the per-checkout keys, one not shaped like a key), the same
+# override shape as `_ds_secrets`. The directory sits under Cargo
 # home, beside the registry, so it is cleaned with the rest of Cargo's state.
 # See docs/conventions/local-integrations.md → "The cargo pool".
 # Each variable the hook exported, mapped to the value it exported. Leaving a
