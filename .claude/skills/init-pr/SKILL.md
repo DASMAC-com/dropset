@@ -56,8 +56,9 @@ around it; nothing is lost, since no commit was written yet.
 `external-signer` proves only that the signing path is **wired**; a
 locked app still fails at step 6. To prove it unlocked before the
 rename, run the dangling-commit probe — never an agent probe
-(`ssh-add -l`), which an external signer never consults — and on
-`LOCKED` stop and relay its instruction:
+(`ssh-add -l`, `ssh-keygen -Y sign`), which an external signer never
+consults, nor a `--show-signature` read, which tests verification, not
+signing — and on `LOCKED` stop and relay its instruction:
 
 ```sh
 python3 .claude/tools/signing_probe.py
@@ -177,7 +178,8 @@ Four reminders neither states:
   `python3 .claude/tools/linear_issue.py append --id <ENG-###> --file <path>`,
   never `save_issue`, which echoes the whole body again, larger
   each time it grows. Only an **anchored** edit stays on the MCP
-  `patch`, where the abort is worth the echo.
+  `patch`, where the abort is worth the echo — checklist ticks
+  excepted, via `linear_issue.py tick`.
 
 - **`replace_all` is safe only when search and replacement are
   disjoint.** A replacement that contains the search string rewrites

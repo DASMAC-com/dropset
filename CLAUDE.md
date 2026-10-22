@@ -221,7 +221,8 @@ for a rejected call; the table is in the convention doc. `patch` does
 **append** — which has no anchor and so nothing for an ambiguity abort
 to protect — the zero-echo path is
 `.claude/tools/linear_issue.py append`. **Anchored** one-off edits stay
-on the MCP `patch`, where the abort is worth the echo; a **fold**'s ops
+on the MCP `patch`, where the abort is worth the echo — checklist ticks
+excepted, via `linear_issue.py tick`; a **fold**'s ops
 file goes through
 `.claude/tools/linear_patch.py patch --ops <path> ENG-###` — same ops,
 same atomic abort, no echo (MCP argument spellings accepted as

@@ -1098,6 +1098,15 @@ keeping: the MCP `patch` does anchor matching with **atomic abort on
 ambiguity**, safety that has correctly refused writes whose anchor
 matched two locations rather than guessing.
 
+**Checklist ticks are the one anchored carve-out.**
+`linear_issue.py tick` matches box lines in-process under the same
+refuse-on-ambiguity rule (a box named once per occurrence, never two
+texts on one box), sends back the stored body with only the box markers
+changed — `append`'s exposure, no hand-rebuilt text — and moves the state
+in the same write. Its concurrency is `append`'s: an edit landing between
+its read and its write is overwritten, since the API has no conditional
+write.
+
 **An `append` is the exception, and the distinction is anchoring.** An
 append has no anchor, so there is nothing to match ambiguously and
 nothing for an atomic abort to protect — "add at the end" is well

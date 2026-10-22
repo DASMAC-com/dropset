@@ -104,7 +104,8 @@ migrations or generation inputs, and whether it spans crates.
    after a fan-out, CI wait or pause: a rebase re-signs every commit it
    replays, so a locked signer leaves the worktree mid-rebase
    (`history.md` → "Signer locked mid-rebase"). On `LOCKED`, stop and
-   relay its unlock instruction:
+   relay its unlock instruction; exit 2 is git failing, not the signer
+   — report its line:
 
    ```sh
    python3 .claude/tools/signing_probe.py
@@ -143,7 +144,9 @@ migrations or generation inputs, and whether it spans crates.
    the tool's docstring; `history.md` → "Hand-rolled rebase triage").
    The rebase and every freshness gate always run; only re-runs vary.
    `lint: false` means assert — note "base moved to `<sha>`; overlap
-   empty; results from `<sha>` still stand". `program` →
+   empty; results from `<sha>` still stand"; `lint: true` re-runs
+   `review_diff.py` too. A `warning` field means the triage ran after a
+   rebase — re-run with the `--from` it names. `program` →
    `python3 .claude/tools/run_quiet.py -- make program` before any
    suite; `frontend_install` →
    `python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install`
@@ -206,8 +209,8 @@ migrations or generation inputs, and whether it spans crates.
      box for a non-checkbox requirement.
 
    - **Ticks that must wait for the fan-out ride step 20's In Review
-     write** — never a write of their own (`history.md` →
-     "Deferred-tick echoes").
+     write** (`tick --state "In Review"`) — never a write of their own
+     (`history.md` → "Deferred-tick echoes").
 
    - **A body addition that ticks nothing** — a deferral note, a
      remaining-scope line — goes through
@@ -249,7 +252,8 @@ migrations or generation inputs, and whether it spans crates.
    sorter) it re-runs once and reports only the second result; when
    `biome` / `tsc` lack frontend `node_modules` it installs them, and
    if that fails, skips them and prints `UNVERIFIABLE locally` — never
-   gate on such a hook; CI runs it. Stage nothing for the re-run.
+   gate on such a hook; CI runs it. A rewrite that then passed is still
+   uncommitted: stage and commit it signed.
 
    **Spelling pre-flight before the first full run** whenever the diff
    adds any comment, doc comment or markdown. The trigger is the SHAPE
@@ -1649,7 +1653,7 @@ migrations or generation inputs, and whether it spans crates.
    push, enqueue, and let the queue verify — it re-runs the whole Rust
    suite against the merged result, fail-closed. Both required:
    `rebase_overlap.py`'s `rerun.may_enqueue_unverified` is `true` (no
-   overlap, and the queue's suite covers the delta), and the branch's
+   overlap; the queue's full run covers any delta), and the branch's
    own diff is **unchanged** since the last green local pass. Otherwise
    verify locally. Say in the summary that the re-verify was skipped
    and why.
@@ -1665,6 +1669,10 @@ migrations or generation inputs, and whether it spans crates.
    python3 .claude/tools/board_batch.py state \
      --id <ENG-###> --state "In Review"
    ```
+
+   With step-3 ticks deferred to here, the same move carries them in
+   one write instead:
+   `linear_issue.py tick --id <ENG-###> --state "In Review" --box …`.
 
    **One write, no retry loop**: if it disagrees, verify once, report
    the discrepancy and move on (`history.md` → "State-write echo").
