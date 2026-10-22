@@ -583,7 +583,7 @@ mod tests {
         assert_eq!(last, swap);
     }
 
-    /// Both legs of the synthetic market use USDC-style decimals, so a human
+    /// By default both legs of the synthetic market use USDC-style decimals, so a human
     /// price of 1.0 is also an atoms-ratio of 1.0 and the arithmetic below
     /// reads directly.
     const DECIMALS: u8 = 6;
@@ -603,7 +603,7 @@ mod tests {
     const INVENTORY_ATOMS: u64 = 10_000_000;
 
     /// The encoded price `1.0 + offset_ppm / 1e6`. `px(0)` is exactly 1.0 —
-    /// the reference every fixture quotes at, so with both legs at the same
+    /// the reference every [`market_bytes`] fixture quotes at, so with both legs at the same
     /// decimals a base atom and a quote atom are interchangeable and the
     /// arithmetic below reads directly.
     fn px(offset_ppm: u32) -> Price {
