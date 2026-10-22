@@ -146,7 +146,8 @@ migrations or generation inputs, and whether it spans crates.
    `lint: false` means assert — note "base moved to `<sha>`; overlap
    empty; results from `<sha>` still stand"; `lint: true` re-runs
    `review_diff.py` too. A `warning` field means the triage ran after a
-   rebase — re-run with the `--from` it names. `program` →
+   rebase that was **not triaged first** — re-run with the `--from` it
+   names; after one already triaged here, it is noise. `program` →
    `python3 .claude/tools/run_quiet.py -- make program` before any
    suite; `frontend_install` →
    `python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install`
@@ -253,7 +254,9 @@ migrations or generation inputs, and whether it spans crates.
    `biome` / `tsc` lack frontend `node_modules` it installs them, and
    if that fails, skips them and prints `UNVERIFIABLE locally` — never
    gate on such a hook; CI runs it. A rewrite that then passed is still
-   uncommitted: stage and commit it signed.
+   uncommitted, and the quiet runner hides the notice on a pass, so
+   check `git status --short` after every lint run and commit any
+   rewrite signed.
 
    **Spelling pre-flight before the first full run** whenever the diff
    adds any comment, doc comment or markdown. The trigger is the SHAPE

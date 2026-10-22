@@ -113,7 +113,10 @@ def probe() -> tuple[int, str]:
         return 2, "signing-probe | cannot run: no HEAD commit here"
     # Unsigned first: a failure here (no identity, a broken object store) is
     # git's, not the signer's, and must not read as an unlock instruction.
-    unsigned = _run(["--no-gpg-sign" if arg == "-S" else arg for arg in _PROBE])
+    try:
+        unsigned = _run(["--no-gpg-sign" if arg == "-S" else arg for arg in _PROBE])
+    except subprocess.TimeoutExpired:
+        return 2, f"signing-probe | cannot run: git hung for {TIMEOUT_SECONDS}s"
     if unsigned.returncode != 0:
         return 2, f"signing-probe | cannot run: {_first_error(unsigned)}"
     instruction = unlock_instruction(

@@ -483,7 +483,7 @@ class FetchModeTests(unittest.TestCase):
         printed = json.loads(out.getvalue())
         self.assertEqual(printed["base_commits"], 0)
         self.assertIn("NOT an all-clear", printed["warning"])
-        self.assertIn(f"--from {self.fork_point}", printed["warning"])
+        self.assertIn(f"--from {self.fork_point} --to origin/main", printed["warning"])
         self.assertIn("WARNING", err.getvalue())
 
 

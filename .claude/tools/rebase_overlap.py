@@ -357,14 +357,21 @@ def just_rebased_warning(result: dict, base: str, branch: str = "HEAD") -> str |
     also what an honest later re-check looks like when nothing moved, so this
     warns rather than refusing, and names the ``--from`` that triages the
     rebase from ``ORIG_HEAD``, the pre-rebase branch.
+
+    The residual it cannot see: a rebase not triaged first, followed by the base
+    moving AGAIN before ``--base`` runs reports the new commits only — a
+    partial all-clear with no 0-commit signature. Running ``--base`` before
+    every rebase, as the skill orders, is the guard; this is the backstop.
     """
-    if result["base_commits"] or not last_head_action(branch).startswith("rebase"):
+    # `rebase (finish): …`, and `pull --rebase (finish): …` for a pull.
+    action = last_head_action(branch).split(":", 1)[0]
+    if result["base_commits"] or "rebase" not in action:
         return None
     try:
         previous = merge_base("ORIG_HEAD", f"origin/{base}")
-        hint = f"--from {previous}"
+        hint = f"--from {previous} --to origin/{base}"
     except ReviewDiffError:
-        hint = "--from <the pre-rebase merge-base>"
+        hint = f"--from <the pre-rebase merge-base> --to origin/{base}"
     return (
         "HEAD's last action was a rebase and the delta is 0 commits: if that "
         "rebase was not triaged before it ran, this is NOT an all-clear — "
