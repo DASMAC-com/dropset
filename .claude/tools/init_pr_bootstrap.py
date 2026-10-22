@@ -75,6 +75,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from init_pr_branch import normalize_tag
+from signing_probe import TIMEOUT_SECONDS as PROBE_TIMEOUT
 
 REPO = "DASMAC-com/dropset"
 TOOLS = Path(__file__).resolve().parent
@@ -255,7 +256,11 @@ class Bootstrap:
             raise Stop(f"signing is {signing}: {SIGNING_STOPS[signing]}")
         # The verdict proves the signer is wired, not unlocked; a dangling
         # signed commit proves it before the rename, the first mutation.
-        code, out, err = self.run([sys.executable, str(TOOLS / "signing_probe.py")], 60)
+        # Outlast the probe's own unlock window (one per git call it makes), so
+        # a slow unlock reports the probe's LOCKED line, not our timeout.
+        code, out, err = self.run(
+            [sys.executable, str(TOOLS / "signing_probe.py")], 2 * PROBE_TIMEOUT + 20
+        )
         if code != 0:
             raise Stop(_tail(err or out) or f"signing_probe.py exit {code}")
         self.branch = self.helper.get("normalized_branch")
