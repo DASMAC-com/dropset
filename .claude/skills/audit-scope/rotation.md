@@ -58,6 +58,12 @@ unit, so findings land promptly. Prepend the sub-agent brief to every
 structural agent and don't narrow it — a structural unit is *meant* to
 range over its subject.
 
+**Tiers follow the engine's lane rule** (`SKILL.md` step 1). A FILE
+unit's lanes take it as written; each structural agent judges, so it
+and its skeptic pass **no** `model` and run on the launcher's sub-agent
+default, the executor tier. With no plan gate, the lane-and-tier rows
+appear in each unit's coverage lines instead (below).
+
 ## Start of each rotation
 
 1. **Sync the worktree to `main`**, two bare commands:
@@ -211,7 +217,10 @@ document are refiled every pass.
 
 ## Announce and finish
 
-Per filed issue, one line — counts and titles only, never bodies:
+Each unit's announcement opens with its coverage lines — one per lane
+the unit planned, in the `COVERAGE` form of `SKILL.md` step 7 — so a
+unit cut short says what it skipped. Then, per filed issue, one line —
+counts and titles only, never bodies:
 
 ```txt
 FILED ENG-### [<dimension>/<severity>] <subject> — <title>

@@ -5,6 +5,8 @@ disable-model-invocation: false
 user-invocable: true
 ---
 
+<!-- cspell:word Gstack -->
+
 <!-- cspell:word unvalidated -->
 
 # `audit-scope`
@@ -137,6 +139,23 @@ Optional (ask on a scoped run if not provided):
    searching. A rotation skips this — it picks its
    own files and there's no one to gate.
 
+   **The plan prints one row per lane: lane, tier.** A
+   lane is one spawned agent — each dimension (after any
+   split below), each focus area, and the skeptic. Every
+   lane that judges passes **no** `model`: it runs on the
+   launcher's sub-agent default, the executor tier. A lane
+   that enumerates or cross-references rather than judges —
+   the hierarchy dimension's directory child counts,
+   doc-named symbols still existing, unreferenced dictionary
+   words — is marked **mechanical** and passes
+   `model: sonnet`, which the launcher maps to the helper
+   tier. That is not the standing rejection of Sonnet-tier
+   task workers (2026-09-11), which covers implementers: a
+   read-only lane whose error mode is a false positive the
+   skeptic kills downstream is not one (operator-confirmed,
+   2026-10-22). No lane pins `haiku` — a lane that cheap is
+   a Python tool.
+
 1. **Classify the scope by platform kind.** Match the
    scope's paths to a platform/subsystem so the right
    checklist runs. Read the **Audit
@@ -190,7 +209,9 @@ Optional (ask on a scoped run if not provided):
    rotation's own plan. If a dimension reads as lanes,
    make it separate agents here, where they are counted.
 
-   At minimum:
+   At minimum (spelling and term consistency are **not**
+   lanes — cspell runs under `make lint`, and step 5 drops
+   what it catches):
 
    - **Security / pen-testing** — use the checklist for
      the scope's kind:
@@ -301,42 +322,27 @@ Optional (ask on a scoped run if not provided):
    - **One sub-agent per extra focus area.**
 
    Each sub-agent returns findings with `file`, `line`,
-   `dimension`, `severity` (high/med/low), a deterministic
+   `dimension`, `severity` (high/med/low), an
+   `evidence_state`, a deterministic
    `fingerprint_slug` (`<topic>:<detail>` with no file
    component — the *what*; each part lowercased, every run
    of non-alphanumeric characters collapsed to a single
    `-`, leading/trailing `-` trimmed, so two passes over
    one issue yield one key), a `title`, a one-line
-   `rationale`, and a `fix_sketch`.
+   `rationale`, and a `fix_sketch`. `evidence_state` is
+   **observed** (the agent read the offending text at the
+   cited site), **reproduced** (it ran the failing path) or
+   **inferred** (reasoned to, not read or run) — a separate
+   judgement from severity, with no numeric confidence
+   scale, matching `review-pr`.
 
    **Every dimension prompt ends with the self-deflation
-   clause**, and it is not optional boilerplate — it is the
+   clause** from `docs/conventions/sub-agent-brief.md`,
+   appended verbatim — not optional boilerplate but the
    cheapest noise gate in this skill. Measured: five
    dimension agents returned **46** findings and two
-   skeptics (~2.7M input) killed **37** — an ~80%
-   false-positive rate at the dimension stage, with three
-   findings refiling the audited document's own stated
-   design intent. The skeptics earn their cost and are not
-   the problem; the problem is upstream, in what gets
-   returned. Tell each agent, in these terms:
-
-   - **Drop what the artifact states as deliberate.** If the
-     file, its doc comment, or a sibling convention names
-     the thing as an intentional tradeoff, it is not a
-     finding — re-filing an artifact's own stated intent is
-     the single most common false positive.
-   - **Drop what hurts no reader materially.** Name who is
-     hurt and how; if you cannot, drop it.
-   - **Return a considered-and-dropped list** — the
-     candidates you rejected, one line of reason each. This
-     is what makes the deflation checkable rather than a
-     claim, and it lets the cross-check see what was already
-     weighed.
-   - **State the expected order of magnitude up front.** A
-     scoped audit of one document or module returns **a
-     handful** of findings, not forty. An agent returning
-     dozens should re-read this clause before answering, and
-     say so if it still believes the count.
+   skeptics killed **37**, an ~80% false-positive rate
+   upstream of the skeptic, which earns its cost.
 
 1. **Adversarial cross-check.** Spawn a fresh skeptic
    sub-agent (brief it with the same sub-agent brief) with
@@ -346,6 +352,18 @@ Optional (ask on a scoped run if not provided):
    disagreement, re-spawn the relevant dimension agent to
    defend or retract; iterate at most 2 more rounds, then
    accept the survivors. This is the primary noise gate.
+
+   Brief the skeptic with two further duties, both
+   borrowed from Gstack's review and cso skills:
+
+   - **Sideways sweep.** For each finding it upholds, grep
+     the fingerprint's pattern at every other site in scope,
+     once, with `--files-only`, then widen the finding's
+     prose to name the siblings — or record that it is a
+     single instance. A pattern found at one site and fixed
+     there leaves its siblings to the next audit.
+   - **Evidence state.** Kill an **inferred** high it cannot
+     raise to observed or reproduced.
 
 1. **Linter screen.** Drop any finding an existing lint
    rule (`make lint` — clippy, eslint, prettier, cspell, …)
@@ -479,6 +497,7 @@ Optional (ask on a scoped run if not provided):
      - `**File**: <path>:<line>` (clickable)
 
      - `**Dimension**: <dimension>` / `**Severity**: <high|med|low>`
+       / `**Evidence state**: <observed|reproduced|inferred>`
 
      - `**What**:` the precise problem.
 
@@ -550,6 +569,20 @@ Optional (ask on a scoped run if not provided):
    dimension and severity, deduped count, and the filed
    issue identifiers. A rotation announces per unit and
    closes with its `DONE` line instead (`rotation.md`).
+
+   **Every audit record opens with a coverage line per
+   planned lane** — the tally here, and the record a pulled
+   audit issue receives (`linear_issue.py append`) —
+   borrowed from Gstack's cso skill:
+
+   ```txt
+   COVERAGE <lane> (<tier>): complete
+   COVERAGE <lane> (<tier>): partial — <what was left>
+   COVERAGE <lane> (<tier>): not assessed — <not spawned, why>
+   ```
+
+   A run that ends early still writes it: "ten lanes, none
+   complete" is a record, and silence is not.
 
 ## Notes
 
