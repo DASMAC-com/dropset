@@ -33,7 +33,7 @@ use crate::DROPSET_ID;
 
 /// The mainnet program id: the public half of the 1Password-held program
 /// keypair, mirrored from `keys/dropset-mainnet.pubkey`.
-pub const DROPSET_MAINNET_ID: Pubkey = pubkey!("FXv1Dsy4CL5UvvkAAcPmzHZCvaotJMi9TfYLraj99KUL");
+pub const DROPSET_MAINNET_ID: Pubkey = pubkey!("eBookZxYPxRsgi48cYW6wCaaae3XKe2ezsSfA8aVoLT");
 
 /// The cluster a program id is resolved for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

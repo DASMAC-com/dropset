@@ -45,20 +45,12 @@ prefix (`GGGG`, `HHHH`, …) into this directory.
 ## Mainnet signing keys
 
 No mainnet signing key lives here, and the TUI refuses any key in this
-directory on mainnet, since its secret is public. The mainnet TUI reads one
-1Password reference per key from its own git-ignored keys file,
-`tui/keys.env`. To start one, copy the committed placeholder file
-`tui/keys.env.example`. It holds three keys:
+directory on mainnet, since its secret is public. The mainnet signing keys
+are the operator's, held in 1Password and configured through the TUI's
+git-ignored keys file, `tui/keys.env` (start from the committed
+`tui/keys.env.example`). An SDK consumer never needs them.
 
-- the admin wallet
-- the vault leader (Lead), the custody key, which the TUI resolves only
-  when a custody step first needs it
-- the vault quote authority (Quote), which signs the ladder, the re-centre
-  and the emergency kill, and which create-vault sets on every new vault
-
-On localnet `EEEE.json` is both leader and quote authority.
-
-That file is one of the repo's two secrets-reference homes. The other is
+`tui/keys.env` is one of the repo's two secrets-reference homes. The other is
 the localnet collectors enclave, `infra/localnet/secrets.local.env`, which
 holds the data stack's credentials (`docs/data-feeds.md` §12). Each keeps
 references only; the values stay in 1Password.
@@ -66,7 +58,7 @@ references only; the values stay in 1Password.
 ## The mainnet program id
 
 `dropset-mainnet.pubkey` is the one non-localnet key here, and it is
-**public-key only**: the mainnet program id (`FXv1…`). Its keypair is
+**public-key only**: the mainnet program id (`eBook…`). Its keypair is
 held in 1Password and never enters the repo, a build, or an agent
 session; only the publish step reads it, by its 1Password reference.
 
@@ -76,7 +68,8 @@ and the SDKs expose it as `DROPSET_MAINNET_ID` (Rust) and
 `DROPSET_MAINNET_PROGRAM_ADDRESS` (TS), resolved per cluster through
 `Deployment::program_id` / `dropsetProgramAddress`. Parity tests in both
 SDKs pin those copies to this file, so changing the id means editing the
-file, the feature-gated `declare_id!` and both SDK constants together.
+file, the feature-gated `declare_id!` and both SDK constants together,
+along with the two tests' vanity-prefix pins.
 
 ## The mock token mints
 
