@@ -7,8 +7,8 @@ read or extend the ``permissions.allow`` array without whole-reading the
 This is now the **whole** firming interface: the ``firm-perms`` skill that used to
 wrap it was retired on 2026-09-10, measured unused as a verb while the tool itself
 stayed in daily use. ``upkeep.py`` drives ``cruft`` and the refresh gate, and
-``plan``'s bootstrap gate acts on what they report; anything else firms a rule
-with ``add``.
+``plan``'s bootstrap gate acts on what they report; ``prune-dead`` is run by
+hand; anything else firms a rule with ``add``.
 
 The allowlist subcommands below (plus the ``refresh-due`` / ``refresh-record``
 cadence pair) all print JSON to stdout; ``covers`` and ``cruft`` only read the

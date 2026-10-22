@@ -180,16 +180,16 @@ which drifted behind it twice:
   above is confirmed. Covered by `Bash(gh auth status:*)`.
 
 - **The field-selected `gh pr list --json` read** (`upkeep.py`) —
-  `gh` has a `merged` state filter the MCP `list_pull_requests` lacks
-  **and** selects only the fields the decision needs, so one
-  field-selected read replaces a list-every-closed-PR call (~104k
-  tokens of full bodies, replayed every later turn — see
+  `gh` selects only the fields the decision needs, so a field-selected
+  read replaces a list-every-closed-PR call (~104k tokens of full
+  bodies, replayed every later turn — see
   [context economy](context-economy.md)) *plus* the per-PR body
-  fetches it would otherwise need. The upkeep pass's worktree-prune uses
-  `gh pr list --state merged` selecting only
-  `number,headRefName,mergedAt` (with `--limit 100`) **once** to learn
-  which worktree branches merged, in place of one full-body
-  `list_pull_requests` per branch. `--json` is a flag, not a pipe, so
+  fetches it would otherwise need. The upkeep pass's worktree-prune
+  reads `gh pr list --state closed` and `--state open`, each selecting
+  only `number,headRefName,state`, **once** apiece: the closed set ties
+  a finished branch to its PR, and the open set is the open-PR
+  survival test, in place of one full-body `list_pull_requests` per
+  branch. `--json` is a flag, not a pipe, so
   it reduces to the `Bash(gh pr list:*)` allow-rule (a routine,
   low-blast-radius read). (`pr-title-description` no longer does a
   style lookup at all — its title and body formats are standardized in

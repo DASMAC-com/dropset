@@ -2005,7 +2005,7 @@ migrations or generation inputs, and whether it spans crates.
      (already cleared) → skip.
 
    - [ ] **Reclaim the worktree's disk** — the multi-GB `target/` and
-     `node_modules` are dead weight until the upkeep pass prunes it:
+     `node_modules` are dead weight until the worktree is pruned:
 
      ```sh
      make clean

@@ -5,7 +5,7 @@ The staleness scan reads the entire saved-memory store and repo-verifies every
 reference — the dominant compute of an upkeep pass. The store changes
 slowly, so re-running that scan on every pass is
 wasteful (per ``CLAUDE.md`` → "Context economy"). This tool decides whether a
-fresh scan is warranted, so the skill can skip it when nothing has moved.
+fresh scan is warranted, so ``upkeep.py`` can skip it when nothing has moved.
 
 The gate scans when **any** of these holds (the union of the two signals the
 lever proposed — "at most once per day, *or* when the store changed"):
@@ -15,8 +15,8 @@ lever proposed — "at most once per day, *or* when the store changed"):
   edited — detected by a content signature over every ``*.md`` in the store);
 * at least ``--min-interval-hours`` have elapsed since the last scan (default
   20h) — the daily floor, so the morning pass still re-scans to catch
-  staleness the repo introduced around otherwise-unchanged memories, while a
-  same-day relaunch inside that window skips.
+  staleness the repo introduced around otherwise-unchanged memories, while an
+  early next-day pass still inside that window skips.
 
 Two subcommands, each taking the memory directory as a positional argument:
 

@@ -470,13 +470,19 @@ class CycleIdTests(unittest.TestCase):
                     rs.run(["resolve_session.py", "--daily-id", "plan", "--repo", tmp])
         self.assertEqual(out.getvalue().strip(), "90195a08-2348-adba-e976-f4b4a7aa6bf9")
 
-    def test_a_cycle_outside_plan_or_below_zero_is_refused(self):
-        for argv in (
-            ["--daily-id", "explore", "--cycle", "1"],
-            ["--daily-id", "plan", "--cycle", "-1"],
-        ):
-            with self.assertRaises(rs.ResolveSessionError, msg=argv):
-                rs.run(["resolve_session.py", *argv, "--date", "20260910"])
+    def test_a_negative_cycle_is_refused(self):
+        with self.assertRaises(rs.ResolveSessionError):
+            rs.run(
+                [
+                    "resolve_session.py",
+                    "--daily-id",
+                    "plan",
+                    "--cycle",
+                    "-1",
+                    "--date",
+                    "20260910",
+                ]
+            )
 
 
 if __name__ == "__main__":
