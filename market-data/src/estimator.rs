@@ -214,7 +214,8 @@ pub const PUBLISHED_MARKETS: [EstimatorMarket; 4] = [
         // book is thin, so a minute with no trade leaves no candle — the gap
         // the candle collector's roster note already expects of AUDD.
         crypto_product: Some("TGBP-USDC"),
-        // The Orca Whirlpool the demo token routes through.
+        // The series the Orca collector writes for the Whirlpool the demo token
+        // routes through — its roster's `TGBP-USDC` entry.
         pool_corroborator: Some("TGBP-USDC"),
         pinned_basis: None,
         static_usd: 1.324,
@@ -475,8 +476,8 @@ impl Estimator {
             if let Some(crypto) = m.crypto_product {
                 candle_products.push(crypto.to_string());
             }
-            if let Some(pool) = m.pool_corroborator {
-                tick_products.push(pool.to_string());
+            if let Some(pool_product) = m.pool_corroborator {
+                tick_products.push(pool_product.to_string());
             }
             if engines
                 .insert(m.product_id, FairValueEngine::new(m.config()))
@@ -897,6 +898,8 @@ fn fx_candidates(
 /// untrusted corroborator — see [`EstimatorMarket::pool_corroborator`]. An
 /// agreeing pool corroborates; a disagreeing one is named the outlier while
 /// the value stays the candle's, and the engine flags rather than degrades.
+/// Either way the engine fuses the anchor alone, so the pool never moves the
+/// mid — not even from inside the band.
 /// The cost, accepted when the rule was chosen: a lone candle reads
 /// `SingleTrusted`, not `SingleUnverified`, so a market whose pool is dark no
 /// longer says `Uncorroborated`. The pool is offered only while the candle is
@@ -1117,6 +1120,22 @@ mod tests {
         }
     }
 
+    /// A pool corroborator only on a market with a crypto leg to corroborate.
+    ///
+    /// `crypto_candidates` returns before reading the pool on a pinned market,
+    /// so one configured there would be silently ignored while still widening
+    /// the tick query — the same looks-wired gap the test above guards.
+    #[test]
+    fn a_pool_corroborates_only_a_market_with_a_crypto_leg() {
+        for m in PUBLISHED_MARKETS {
+            assert!(
+                m.pool_corroborator.is_none() || m.crypto_product.is_some(),
+                "{} has a pool corroborator but no crypto leg",
+                m.product_id
+            );
+        }
+    }
+
     /// Every published id satisfies 0011's canonical-shape CHECK.
     ///
     /// A violation is a `PublishError::Permanent` — it halts the estimator on
@@ -1235,9 +1254,13 @@ mod tests {
     }
 
     fn pool_tick(observed_at: i64, price: f64) -> TickStoreRow {
+        pool_tick_for("TGBP-USDC", observed_at, price)
+    }
+
+    fn pool_tick_for(product_id: &str, observed_at: i64, price: f64) -> TickStoreRow {
         TickStoreRow {
             source: SOURCE_ORCA.to_string(),
-            product_id: "TGBP-USDC".to_string(),
+            product_id: product_id.to_string(),
             observed_at,
             price,
         }
@@ -1315,14 +1338,15 @@ mod tests {
     }
 
     /// A market without a corroborator offers its candle untrusted, so a
-    /// lone print still composes as uncorroborated.
+    /// lone print still composes as uncorroborated — even with a pool row for
+    /// its own pair in the store, so the emptiness is the roster's doing.
     #[test]
     fn a_market_without_a_pool_keeps_its_candle_untrusted() {
         let rows = vec![candle(SOURCE_COINBASE, "EURC-USDC", 1_000, 1.1410)];
         let c = crypto_candidates(
             &eurc(),
             &rows,
-            &[pool_tick(1_050, 1.1410)],
+            &[pool_tick_for("EURC-USDC", 1_050, 1.1410)],
             1_060,
             Duration::from_secs(1),
             bounds(),

@@ -749,21 +749,28 @@ impl Consensus {
         &self.healthy
     }
 
-    /// Whether a designated source **anchors** this leg's value: it answered,
-    /// it was not itself the outlier, and so it is the whole of the reading.
+    /// The designated source **anchoring** this leg's value, if one does: the
+    /// set's one trusted candidate, not itself the outlier, and so the whole of
+    /// the reading.
     ///
     /// This is what lets a consumer tell a corroborator's disagreement from a
     /// leg that is actually sick. A dispersed leg whose anchor held still
     /// quotes on the designated source, and the one that disagreed is named in
     /// [`Consensus::outlier`]; a dispersed leg whose anchor was contradicted, or
     /// that never had one, is resolving on a median or on nothing.
+    ///
+    /// Keyed on the lone trusted candidate rather than on any trusted
+    /// contributor, because an odd median's middle is a singleton contributor
+    /// too. A median that happens to land on one of two designated sources is
+    /// still a median, and must not read as anchored.
+    pub fn anchor(&self) -> Option<Candidate> {
+        let dominant = self.contributors.dominant()?;
+        lone_trusted(&self.healthy).filter(|c| c.source == dominant.source)
+    }
+
+    /// Whether a designated source anchors this leg — see [`Consensus::anchor`].
     pub fn anchored(&self) -> bool {
-        self.contributors.dominant().is_some_and(|d| {
-            self.healthy
-                .iter()
-                .flatten()
-                .any(|c| c.trusted && c.source == d.source)
-        })
+        self.anchor().is_some()
     }
 }
 
@@ -1688,6 +1695,26 @@ mod tests {
             .push("kraken", Some(r(1.141)))
             .resolve(STALE, BAND);
         assert_eq!(c.outlier, Some("coinbase"));
+        assert!(!c.anchored());
+    }
+
+    #[test]
+    fn a_median_landing_on_one_of_two_designations_is_not_anchored() {
+        // Two designations means no lone anchor, so this resolves on the median
+        // — whose middle member happens to be designated. The singleton
+        // contributor is that source, and reading "anchored" off it would let a
+        // genuinely sick leg skip its degrade.
+        let c = Candidates::none()
+            .push_trusted("coinbase", Some(r(1.140)))
+            .push_trusted("kraken", Some(r(1.141)))
+            .push("orca", Some(r(0.60)))
+            .resolve(STALE, BAND);
+        assert_eq!(c.state, ConsensusState::Dispersed);
+        assert_eq!(
+            credits(&c),
+            [("coinbase", 1.0)],
+            "the premise: a lone middle"
+        );
         assert!(!c.anchored());
     }
 

@@ -14,7 +14,14 @@
 -- judged the outlier on this tick's crypto leg, and is set whenever that leg
 -- was dispersed — including on a leg with no designation, where `degrade`
 -- already reads `leg_dispersed`. It says nothing about whether the market
--- degraded; `regime` and `degrade` say that.
+-- degraded; `regime` and `degrade` say that. On a pair with no designation the
+-- name is settled by rounding at the midpoint rather than by any signal, so
+-- read it there as "these two disagree", not "this one is wrong".
+--
+-- **Not `basis_outlier`.** That column (0011) records the basis estimator
+-- refusing this tick's *observation* as too far from its running estimate;
+-- this one records which *source* disagreed with the others on the crypto
+-- leg. Either can be set without the other.
 --
 -- **Nullable, and NULL means two things a consumer need not tell apart:** the
 -- leg was not dispersed, or the row predates this column. Both read as "no

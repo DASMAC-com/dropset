@@ -321,13 +321,11 @@ pub fn fx_tape_live(fv: &FairValue) -> bool {
 /// The source judged the outlier on this composition's crypto (basis) leg, when
 /// that leg was dispersed — the `crypto_leg_outlier` column (0023).
 ///
-/// Gated on the leg's state rather than read straight off the outlier, so the
-/// column states a dispersion and nothing else.
+/// Gated on the leg's state as well as read off the outlier, so the column
+/// states a dispersion and nothing else even if a resolution ever named an
+/// outlier on an agreeing leg (none does today).
 pub fn crypto_leg_outlier(fv: &FairValue) -> Option<&'static str> {
-    fv.crypto_leg
-        .dispersed()
-        .then_some(fv.crypto_leg.outlier)
-        .flatten()
+    fv.crypto_leg.outlier.filter(|_| fv.crypto_leg.dispersed())
 }
 
 /// The inverse of [`anchor_name`].

@@ -473,6 +473,9 @@ corroborator (`EstimatorMarket::pool_corroborator`), and the rule is:
 
 - **Agreement corroborates without blending.** The designation anchors, so
   the value is the candle's alone and the pool appears in the judged count.
+  That holds for the fused estimate too: an anchored basis leg fuses its
+  anchor alone, since the fused value is what the mid prices off, and a pool
+  walked to just inside the band would otherwise pull the mid toward it.
 - **Disagreement flags the pool and moves nothing.** With a designation in
   the pair, the outlier is the other member by construction, the leg
   keeps the candle's value, and the engine does not degrade on a dispersion
@@ -480,8 +483,10 @@ corroborator (`EstimatorMarket::pool_corroborator`), and the rule is:
   published row's `crypto_leg_outlier` (0023). Only the designated tape
   decides `Degraded`: a contradicted anchor or a leg with none still does.
 - **The pool never stands alone.** It is offered only while the candle is
-  fresh at the tape bound, so a dark candle leaves the leg absent and the
-  market on `NoBasisLeg`, never composed on a print anyone can move.
+  fresh at the tape bound, so a dark candle leaves the leg absent: the
+  market degrades on its carried basis (`NoBasisLeg`) and, once that
+  expires, falls to the static peg — never composed on a print anyone can
+  move.
 
 The cost, accepted when the rule was chosen: a lone candle now reads
 `SingleTrusted` rather than `SingleUnverified`, so tGBP no longer reports
