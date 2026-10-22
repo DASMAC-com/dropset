@@ -5,6 +5,7 @@ import { ALL_STABLECOIN_MINTS, stablecoinMint } from "../data/currencies";
 import {
   JUPITER_FETCH_TIMEOUT_MS,
   TOKEN_INFO_REFRESH_MS,
+  TOKEN_INFO_TICK_MAX_AGE_MS,
   TOKEN_INFO_TTL_MS,
 } from "../data/timings";
 import { JUPITER_SEARCH_URL } from "../env";
@@ -80,99 +81,95 @@ const subscribe = (l: () => void) => {
 };
 const getVersion = () => cacheVersion;
 
-const fetchInfo = (mint: string): Promise<TokenInfo | null> => {
+const isFresh = (mint: string, maxAgeMs: number): boolean => {
+  const hit = cache.get(mint);
+  return hit !== undefined && Date.now() - hit.fetchedAt < maxAgeMs;
+};
+
+// /tokens/v2/search takes at most this many comma-separated mints per call.
+const JUPITER_BATCH_MAX = 100;
+
+// One batched call for `mints`. Every mint in the batch is cached, `null`
+// when Jupiter has no row for it; a failed call caches nothing, so the next
+// mount or refresh tick retries. Resolves whether the call succeeded.
+const fetchBatch = async (mints: string[]): Promise<boolean> => {
+  try {
+    const res = await fetch(`${JUPITER_SEARCH_URL}?query=${mints.join(",")}`, {
+      signal: AbortSignal.timeout(JUPITER_FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      console.warn(
+        `Jupiter token info HTTP ${res.status} for ${mints.length} mints`,
+      );
+      return false;
+    }
+    const body: unknown = await res.json();
+    const rows = parseJupiterSearchResponse(body);
+    if (rows === null) {
+      console.warn("Jupiter token info returned non-array");
+      return false;
+    }
+    const byId = new Map<string, ParsedJupiterRow>();
+    for (const r of rows) byId.set(r.id, r);
+    const at = Date.now();
+    for (const mint of mints) {
+      const row = byId.get(mint);
+      cache.set(mint, { info: row ? project(row) : null, fetchedAt: at });
+    }
+    notify();
+    return true;
+  } catch (e) {
+    console.warn(`Jupiter token info fetch failed: ${getErrorMessage(e)}`);
+    return false;
+  }
+};
+
+// Mints requested in the current tick, flushed together on the next
+// microtask. A page's mount runs every component's effects in one pass —
+// children before parents, so each swap row and /currencies row asks for its
+// own mint before the page-level warm-up does — and the queue folds all of
+// them into one call instead of one per mint.
+const queued = new Map<string, (info: TokenInfo | null) => void>();
+
+const flush = () => {
+  const batch = new Map(queued);
+  queued.clear();
+  const mints = [...batch.keys()];
+  for (let i = 0; i < mints.length; i += JUPITER_BATCH_MAX) {
+    const chunk = mints.slice(i, i + JUPITER_BATCH_MAX);
+    // A failed call resolves `null`, never an expired entry still cached.
+    fetchBatch(chunk).then((ok) => {
+      for (const mint of chunk)
+        batch.get(mint)?.(ok ? (cache.get(mint)?.info ?? null) : null);
+    });
+  }
+};
+
+// Request one mint's info, joining a call already in flight or queued.
+export const requestTokenInfo = (mint: string): Promise<TokenInfo | null> => {
   const existing = inflight.get(mint);
   if (existing) return existing;
-  const p = (async () => {
-    try {
-      const res = await fetch(`${JUPITER_SEARCH_URL}?query=${mint}`, {
-        signal: AbortSignal.timeout(JUPITER_FETCH_TIMEOUT_MS),
-      });
-      if (!res.ok) {
-        console.warn(`Jupiter token info HTTP ${res.status} for ${mint}`);
-        return null;
-      }
-      const body: unknown = await res.json();
-      const rows = parseJupiterSearchResponse(body);
-      if (rows === null) {
-        console.warn(`Jupiter token info returned non-array for ${mint}`);
-        return null;
-      }
-      const row = rows.find((r) => r.id === mint);
-      const info = row ? project(row) : null;
-      cache.set(mint, { info, fetchedAt: Date.now() });
-      notify();
-      return info;
-    } catch (e) {
-      console.warn(
-        `Jupiter token info fetch failed for ${mint}: ${getErrorMessage(e)}`,
-      );
-      return null;
-    } finally {
-      inflight.delete(mint);
-    }
-  })();
+  if (queued.size === 0) queueMicrotask(flush);
+  const p = new Promise<TokenInfo | null>((resolve) =>
+    queued.set(mint, resolve),
+  );
   inflight.set(mint, p);
+  p.then(() => {
+    if (inflight.get(mint) === p) inflight.delete(mint);
+  });
   return p;
 };
 
-// Warm the cache for a list of mints in a single batched call so the UI has
-// prices + market data ready before the user opens the picker or browses
-// /currencies. Skips mints that are already fresh or already in flight, and
-// dedupes parallel per-mint fetches onto the same network request via the
-// inflight map.
-export const prefetchAllTokenInfo = (mints: string[]): Promise<void> => {
-  const now = Date.now();
-  const need = mints.filter((m) => {
-    const hit = cache.get(m);
-    if (hit && now - hit.fetchedAt < CACHE_TTL_MS) return false;
-    return !inflight.has(m);
-  });
-  if (need.length === 0) return Promise.resolve();
-  const batch = (async () => {
-    try {
-      const res = await fetch(`${JUPITER_SEARCH_URL}?query=${need.join(",")}`, {
-        signal: AbortSignal.timeout(JUPITER_FETCH_TIMEOUT_MS),
-      });
-      if (!res.ok) {
-        console.warn(
-          `Jupiter prefetch HTTP ${res.status} for ${need.length} mints — per-mint fetchInfo will retry on demand`,
-        );
-        return;
-      }
-      const body: unknown = await res.json();
-      const rows = parseJupiterSearchResponse(body);
-      if (rows === null) {
-        console.warn(
-          "Jupiter prefetch returned non-array — per-mint fetchInfo will retry",
-        );
-        return;
-      }
-      const byId = new Map<string, ParsedJupiterRow>();
-      for (const r of rows) byId.set(r.id, r);
-      const at = Date.now();
-      for (const mint of need) {
-        const row = byId.get(mint);
-        cache.set(mint, {
-          info: row ? project(row) : null,
-          fetchedAt: at,
-        });
-      }
-      notify();
-    } catch (e) {
-      console.warn(
-        `Jupiter prefetch failed: ${getErrorMessage(e)} — per-mint fetchInfo will retry`,
-      );
-    }
-  })();
-  for (const mint of need) {
-    const p = batch.then(() => cache.get(mint)?.info ?? null);
-    inflight.set(mint, p);
-    p.finally(() => {
-      if (inflight.get(mint) === p) inflight.delete(mint);
-    });
-  }
-  return batch;
+// Warm the cache for `mints`, skipping any fetched within `maxAgeMs`. A
+// page mount passes the TTL, so a cached navigation makes no request; a
+// refresh tick passes the shorter tick age.
+export const prefetchAllTokenInfo = async (
+  mints: readonly string[],
+  maxAgeMs: number = CACHE_TTL_MS,
+): Promise<void> => {
+  await Promise.all(
+    mints.filter((m) => m && !isFresh(m, maxAgeMs)).map(requestTokenInfo),
+  );
 };
 
 export type UsdQuote = { value: number | null; loading: boolean };
@@ -203,7 +200,7 @@ export function useUsdQuote(stablecoin: string, amount: string): UsdQuote {
     setPrice(null);
     setLoading(true);
     let cancelled = false;
-    fetchInfo(mint).then((info) => {
+    requestTokenInfo(mint).then((info) => {
       if (cancelled) return;
       setPrice(info?.usdPrice ?? null);
       setLoading(false);
@@ -243,10 +240,8 @@ export const useLiquidityLookup = (): ((mint: string) => Liquidity) => {
 export const useTokenInfo = (mint: string): TokenInfo | null => {
   useSyncExternalStore(subscribe, getVersion, getVersion);
   useEffect(() => {
-    if (!mint) return;
-    const hit = cache.get(mint);
-    if (hit && Date.now() - hit.fetchedAt < CACHE_TTL_MS) return;
-    fetchInfo(mint);
+    if (!mint || isFresh(mint, CACHE_TTL_MS)) return;
+    requestTokenInfo(mint);
   }, [mint]);
   return cache.get(mint)?.info ?? null;
 };
@@ -275,8 +270,8 @@ export const sortByVolumeDesc = <T extends { mint: string }>(
   });
 
 // Warm and keep-warm the Jupiter token-info cache for `mints`: the swap pair
-// on /swap, the whole catalogue on /currencies and in an open picker. The
-// keyless API rate-limits per IP, which a conference crowd shares, so the
+// on /swap, the whole catalogue on /currencies and in an open picker; /vaults
+// mounts no consumer and requests nothing. The keyless API rate-limits per IP, which a conference crowd shares, so the
 // swap page never refreshes mints it isn't showing. Ticks skip while the
 // tab is hidden.
 export const useTokenInfoRefresh = (mints: readonly string[]): void => {
@@ -286,7 +281,8 @@ export const useTokenInfoRefresh = (mints: readonly string[]): void => {
     const list = key ? key.split(",") : [];
     prefetchAllTokenInfo(list);
     const id = window.setInterval(() => {
-      if (document.visibilityState === "visible") prefetchAllTokenInfo(list);
+      if (document.visibilityState === "visible")
+        prefetchAllTokenInfo(list, TOKEN_INFO_TICK_MAX_AGE_MS);
     }, TOKEN_INFO_REFRESH_MS);
     return () => window.clearInterval(id);
   }, [key]);
