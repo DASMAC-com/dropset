@@ -1,18 +1,13 @@
 # cspell:word cdylib
 
 [dependencies]
-# Deliberately without `const-rent`: `rent_exempt_lamports` reads the
-# cluster's Rent sysvar at runtime via pinocchio's `Rent::get()`, so PDAs are
-# funded at whatever rate the cluster charges — no rate is compiled in. The
-# formula, `(ACCOUNT_STORAGE_OVERHEAD + space) * lamports_per_byte`, never
-# applies the `exemption_threshold`, so it is exact only where SIMD-0194
-# (`agave_feature_set::deprecate_rent_exemption_threshold`) is active, as it
-# is on mainnet-beta, devnet, testnet and a default test validator; on a
-# cluster without it the PDA is under-funded and the rent check rejects it.
-# `const-rent` would instead compile in `DEFAULT_LAMPORTS_PER_BYTE`, which
-# over-funds every PDA once SIMD-0437 lowers the live rate and cannot follow
-# later rate changes without a redeploy; the sysvar read costs one syscall
-# per `init`/`realloc`.
+# Deliberately without `const-rent` (only the `testing` dev-dependency below
+# turns it on, for host builds): the `.so` funds PDAs from the cluster's Rent
+# sysvar via pinocchio's `Rent::get()`, so no rate is compiled in. That read
+# skips `exemption_threshold`, so it is exact where SIMD-0194
+# (`agave_feature_set::deprecate_rent_exemption_threshold`) is active, as on
+# every public cluster; a compiled-in `DEFAULT_LAMPORTS_PER_BYTE` over-funds
+# now that SIMD-0437 has lowered the rate (`tests/admin.rs` pins this).
 anchor-lang.workspace = true
 # Canonical consensus arithmetic — `Price` codec, pure matcher math, and
 # the share/NAV/PnL kernels (interface.md § SDK). Pulled with
@@ -57,6 +52,7 @@ solana-keypair.workspace = true
 solana-loader-v3-interface.workspace = true
 solana-native-token.workspace = true
 solana-pubkey.workspace = true
+solana-rent.workspace = true
 
 [features]
 # Feature-gated teardown surface (force-withdraw + close instructions).

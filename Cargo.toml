@@ -39,6 +39,7 @@ solana-loader-v3-interface = { version = "6", features = ["bincode"] }
 solana-native-token = "3"
 solana-program-log = { version = "1.1", features = ["macro"] }
 solana-pubkey = { version = "4.1", features = ["curve25519"] }
+solana-rent = "4"
 solana-sdk-ids = "3"
 wincode = { version = "0.6", features = ["derive"] }
 
