@@ -296,6 +296,20 @@ class RerunVerdictTests(unittest.TestCase):
         )
         self.assertIn("re-run: frontend_install", text)
 
+    def test_the_enqueue_permission_is_not_listed_as_a_re_run(self):
+        text = ro.summarize(
+            {
+                "base_commits": 1,
+                "base_files": ["a.rs"],
+                "overlap": [],
+                "runs_artifact_gates": False,
+                "runs_rust_suites": True,
+                "rerun": self._rerun(["a.rs"], ci=True),
+            }
+        )
+        self.assertNotIn("re-run:", text)
+        self.assertIn("may enqueue unverified", text)
+
 
 class AncestorGuardTests(unittest.TestCase):
     """The guard against a non-ancestor ``--from``.

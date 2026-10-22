@@ -355,9 +355,14 @@ def summarize(result: dict) -> str:
             "base delta touches no generation input and nothing outside CI's "
             "code filter — assert the gates once rather than re-running them"
         )
-    reruns = [name for name, v in result.get("rerun", {}).items() if v["run"]]
+    verdicts = dict(result.get("rerun", {}))
+    # A permission, not a re-run, so it is said apart from the list.
+    enqueue = verdicts.pop("may_enqueue_unverified", None)
+    reruns = [name for name, v in verdicts.items() if v["run"]]
     if reruns:
         parts.append("re-run: " + ", ".join(reruns))
+    if enqueue and enqueue["run"]:
+        parts.append("a rebase-only re-run may enqueue unverified")
     return " | ".join(parts)
 
 
