@@ -6,8 +6,9 @@ read or extend the ``permissions.allow`` array without whole-reading the
 
 This is now the **whole** firming interface: the ``firm-perms`` skill that used to
 wrap it was retired on 2026-09-10, measured unused as a verb while the tool itself
-stayed in daily use. ``housekeeping`` step 7a drives ``prune-dead`` and
-``cruft``; anything else firms a rule with ``add``.
+stayed in daily use. ``upkeep.py`` drives ``cruft`` and the refresh gate, and
+``plan``'s bootstrap gate acts on what they report; ``prune-dead`` is run by
+hand; anything else firms a rule with ``add``.
 
 The allowlist subcommands below (plus the ``refresh-due`` / ``refresh-record``
 cadence pair) all print JSON to stdout; ``covers`` and ``cruft`` only read the
@@ -42,8 +43,8 @@ deliberately without reading it first — that is the whole point).
   command.
 * ``cruft`` — return only the **suspicious** entries
   (``{index, rule, category, reason}``) plus the total ``count``, so the audit
-  reasons over a short shortlist instead of the whole array. Categories mirror
-  ``housekeeping`` step 7: ``over-broad`` (a bare-verb wildcard or an unscoped
+  reasons over a short shortlist instead of the whole array. Categories:
+  ``over-broad`` (a bare-verb wildcard or an unscoped
   file-access root), ``dead-glob`` (a Bash rule with a ``*`` left of its
   trailing ``:*``, which the harness reads as a literal star, so the rule
   matches only a command carrying that star), ``subsumed`` (a narrower rule an earlier one already

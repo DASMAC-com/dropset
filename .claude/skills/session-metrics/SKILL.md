@@ -31,7 +31,7 @@ and keyed by a `**Fingerprint**:` — which `trim-context` later
 folds into **small themed** propose-only skill-improvement
 tasks (roughly 4–5 levers each), parked
 under the `Claude meta` milestone, on its
-own or as `housekeeping`'s Session Metrics step. This is the
+own or as `plan`'s bootstrap fold. This is the
 feedback loop that systematizes, every session, the by-hand
 analysis that motivated this work.
 
@@ -85,7 +85,7 @@ and prints, as compact Markdown (or `--json`):
   mostly theirs.
 
   **Only a Bedrock session gets a dollar figure.** A **seat**
-  session (`plan`, `architect`, `explore`, `housekeeping`)
+  session (`plan`, `architect`, `explore`)
   bills against the Claude subscription, whose internal
   pricing is not transparent, so it reports its token profile
   and says so instead — printing a worker-rate equivalent
@@ -467,7 +467,7 @@ skipped because it matched a closed (rejected) one.
   parked lever issues) and never authors a code or skill diff,
   never commits, never pushes. The skill-improvement edits
   its recommendations imply are folded — propose-only — by
-  `trim-context` (run on its own or by `housekeeping`) and
+  `trim-context` (run on its own or by `plan`'s bootstrap) and
   applied later by a human.
 - **Runs standalone or at handoff.** `review-pr` runs it
   unprompted, once, immediately before its close question after a

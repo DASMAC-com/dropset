@@ -157,12 +157,14 @@ class Grammar(unittest.TestCase):
             with self.subTest(argv=argv), self.assertRaises(ValueError):
                 session_dispatch.validate(argv)
 
-    def test_verbs_that_take_no_arguments(self):
-        for verb in ("plan", "housekeeping"):
-            with self.subTest(verb=verb):
-                self.assertEqual(session_dispatch.validate([verb]), [verb])
-                with self.assertRaises(ValueError):
-                    session_dispatch.validate([verb, "extra"])
+    def test_plan_takes_no_other_argument(self):
+        self.assertEqual(session_dispatch.validate(["plan"]), ["plan"])
+        with self.assertRaises(ValueError):
+            session_dispatch.validate(["plan", "extra"])
+
+    def test_the_retired_housekeeping_verb_is_unknown(self):
+        with self.assertRaises(ValueError):
+            session_dispatch.validate(["housekeeping"])
 
     def test_fleet_and_fleet_go(self):
         self.assertEqual(session_dispatch.validate(["fleet"]), ["fleet"])
@@ -254,9 +256,9 @@ class SplitVerbs(unittest.TestCase):
     def test_several_verbs_split_on_the_separator(self):
         self.assertEqual(
             session_dispatch.split_verbs(
-                ["task", "anthropic", "1234", "+", "plan", "+", "housekeeping"]
+                ["task", "anthropic", "1234", "+", "plan", "+", "fleet"]
             ),
-            [["task", "anthropic", "1234"], ["plan"], ["housekeeping"]],
+            [["task", "anthropic", "1234"], ["plan"], ["fleet"]],
         )
 
     def test_nothing_at_all_is_one_empty_group(self):
@@ -271,7 +273,7 @@ class SplitVerbs(unittest.TestCase):
         for argv in (
             ["plan", "+"],
             ["+", "plan"],
-            ["plan", "+", "+", "housekeeping"],
+            ["plan", "+", "+", "fleet"],
         ):
             with self.subTest(argv=argv):
                 with self.assertRaises(ValueError):

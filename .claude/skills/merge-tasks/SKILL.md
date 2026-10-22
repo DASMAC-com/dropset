@@ -391,8 +391,8 @@ planning-session work.
   coherent PRs** (`docs/conventions/linear-automation.md` →
   "Fold coupled findings into one issue"); when coupled
   issues nonetheless landed separately, `merge-tasks` folds
-  them back into one. `housekeeping` proactively proposes
-  such merge groups. The **coherence floor** — never fold
+  them back into one, usually on a planning session's
+  proposal. The **coherence floor** — never fold
   across separate apps, languages, or deploy units — is
   enforced by the `cross_area` warning in step 4: don't
   confirm a merge that mixes unrelated surfaces.

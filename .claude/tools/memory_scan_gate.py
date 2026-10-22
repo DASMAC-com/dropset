@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Cadence gate for ``housekeeping`` step 8 (the auto-memory staleness scan).
+"""Cadence gate for the upkeep pass's auto-memory staleness scan.
 
 The staleness scan reads the entire saved-memory store and repo-verifies every
-reference — the dominant compute of a housekeeping pass. The store changes
-slowly, so re-running that scan on every 30-minute ``/loop`` iteration is
+reference — the dominant compute of an upkeep pass. The store changes
+slowly, so re-running that scan on every pass is
 wasteful (per ``CLAUDE.md`` → "Context economy"). This tool decides whether a
-fresh scan is warranted, so the skill can skip it when nothing has moved.
+fresh scan is warranted, so ``upkeep.py`` can skip it when nothing has moved.
 
 The gate scans when **any** of these holds (the union of the two signals the
 lever proposed — "at most once per day, *or* when the store changed"):
@@ -14,9 +14,9 @@ lever proposed — "at most once per day, *or* when the store changed"):
 * the memory store changed since the last scan (a memory added / removed /
   edited — detected by a content signature over every ``*.md`` in the store);
 * at least ``--min-interval-hours`` have elapsed since the last scan (default
-  20h) — the daily floor, so the morning one-shot still re-scans to catch
-  staleness the repo introduced around otherwise-unchanged memories, while a
-  30-minute loop inside that window skips.
+  20h) — the daily floor, so the morning pass still re-scans to catch
+  staleness the repo introduced around otherwise-unchanged memories, while an
+  early next-day pass still inside that window skips.
 
 Two subcommands, each taking the memory directory as a positional argument:
 

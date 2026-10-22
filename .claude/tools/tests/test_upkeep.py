@@ -371,7 +371,7 @@ class PassTests(unittest.TestCase):
         )
 
     def test_the_prune_subset_runs_only_the_cleanup_steps(self):
-        # What `upkeep.py prune` drives for the housekeeping skill.
+        # What `upkeep.py prune` drives for a by-hand cleanup.
         run = FakeRun(notifications=[("t10", 10)])
         ctx = make_ctx(run)
         run_pass(ctx, upkeep.PRUNE_STEPS)

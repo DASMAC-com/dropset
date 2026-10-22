@@ -1,6 +1,6 @@
 ---
 name: cspell-audit
-description: Enforce spelling-escape hygiene — every word in cfg/dictionary.txt must be used in at least two files (a word used in only one file is moved to an inline cspell escape in that file and dropped from the global dictionary, unless the sole file can't host a comment, e.g. JSON), and every file's inline escapes sit in one contiguous block at the top. Fixes directly when invoked; housekeeping runs the same check read-only and files the drift as one aggregated issue — Backlog when any escape lands in product code, parked under `Claude meta` when every touched file is on the meta surface.
+description: Enforce spelling-escape hygiene — every word in cfg/dictionary.txt must be used in at least two files (a word used in only one file is moved to an inline cspell escape in that file and dropped from the global dictionary, unless the sole file can't host a comment, e.g. JSON), and every file's inline escapes sit in one contiguous block at the top. Fixes directly when invoked; run it by hand when the dictionary grows or escapes drift.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -187,30 +187,21 @@ matching entries (still report the rest).
    example directives shown inside a fence; judge only the
    real top-of-file block.
 
-1. **Act by mode.**
-
-   - **Direct run (default):** apply both reconciliations.
-     For each *move-inline* word, Edit its sole file to add
-     the format-appropriate `cspell:word` escape **into
-     that file's top block** (create the block if absent,
-     append a line if it exists); for each *move-inline* or
-     *dead* word, Edit `cfg/dictionary.txt` to drop the
-     line (removing lines preserves whatever order the
-     file is already in). For each **mis-placed** file,
-     Edit it to gather its escapes into the top block in
-     the file's comment style — **one word per directive,
-     one per line, in every format** (in Markdown the
-     single-word `<!-- … -->` comments end up
-     blank-line-separated, which is mdformat's doing and
-     expected), removing the old scattered or packed
-     copies. If the plan is large, show it to the user
-     before applying.
-   - **Delegated run (`housekeeping`):** edit **nothing**.
-     Return the violations — for a dictionary word: the
-     word, file count, sole file, and recommended action;
-     for a mis-placed file: its path and that its escapes
-     need regrouping — so the caller files them as one
-     aggregated issue. See "Use from housekeeping".
+1. **Apply both reconciliations.** For each *move-inline*
+   word, Edit its sole file to add the format-appropriate
+   `cspell:word` escape **into that file's top block**
+   (create the block if absent, append a line if it
+   exists); for each *move-inline* or *dead* word, Edit
+   `cfg/dictionary.txt` to drop the line (removing lines
+   preserves whatever order the file is already in). For
+   each **mis-placed** file, Edit it to gather its escapes
+   into the top block in the file's comment style — **one
+   word per directive, one per line, in every format** (in
+   Markdown the single-word `<!-- … -->` comments end up
+   blank-line-separated, which is mdformat's doing and
+   expected), removing the old scattered or packed copies.
+   If the plan is large, show it to the user before
+   applying.
 
    **Two consequences of the dictionary's `merge=union`
    attribute** (per `docs/conventions/docs-and-style.md` →
@@ -249,41 +240,3 @@ matching entries (still report the rest).
    left in the dictionary because their file can't host a
    comment (JSON), and files whose escapes were regrouped
    into a top block.
-
-## Use from `housekeeping`
-
-The `housekeeping` skill runs this check only when opted in
-(`housekeeping cspell`) — escape drift is slow, so it's
-upkeep, not part of an audit rotation. It invokes
-`cspell-audit` in delegated mode (read-only, no edits)
-and files the run's violations
-as a **single aggregated** issue — **not** one
-issue per finding, because cspell fixes are trivial,
-file-disjoint, and belong in one PR.
-
-**Backlog or parked depends on where the fix lands, so
-decide it rather than defaulting.** Moving a word out of
-`cfg/dictionary.txt` edits that file (meta) *and* the one
-file hosting the new inline escape (anything). If every
-such file is on the meta surface — `.claude/**`,
-`CLAUDE.md`, `docs/conventions/**`, `cfg/**` — the issue is
-a `Claude:` filing and parks under `Claude meta` (per
-`CLAUDE.md` → "Claude: meta-work prefix"). If any escape
-lands in product code, it is not meta and goes to Backlog
-as an ordinary task. Each finding is a
-bullet carrying its own `**Fingerprint**:` line, so one
-issue = one PR while later passes still dedup each finding
-individually. The fingerprint is stable across runs and
-keyed by the violation kind:
-
-- dictionary drift → `dictionary:<word>`
-- mis-placed escapes → `cspell-placement:<path>`
-
-Across passes, `housekeeping` files only **new** findings
-(fingerprints not already open) and **appends** them to the
-existing aggregated issue when one is open, opening a fresh
-one only when none exists — so a 30-minute loop never
-duplicates work. This keeps the housekeeping pass
-non-editing: it never touches source, it just files the
-finding — a word to move or a file's escapes to regroup —
-for a normal PR to fix.

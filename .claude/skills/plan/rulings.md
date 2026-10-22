@@ -29,8 +29,9 @@ the document's state sections.
 
 1. **Tier names are advisor / executor / helper / background.**
    Advisor: `plan`, `architect`, `explore`, on the Anthropic
-   subscription. Executor: task workers on Bedrock, and
-   `housekeeping`, which stays on the seat. Helper: `chore`
+   subscription. Executor: task workers on Bedrock (`housekeeping`,
+   once the seat exception here, is retired — `plan` opens the
+   5-hour window now). Helper: `chore`
    sessions, Sonnet-class, Bedrock by default, pinned with the 1M
    suffix in the runtime config.
    Model ids live only in the operator's runtime config; unset
@@ -224,8 +225,9 @@ the document's state sections.
    tool-usage lens.
 1. **Verbs**: `task`, `task anthropic`, `task resume`, `chore`,
    `chore anthropic`, `explore`, `plan`, `plan cycle`, `architect`
-   (bare number, idempotent), `fleet`, and `housekeeping` until its
-   retirement lands. Audit issues dispatch as
+   (bare number, idempotent), and `fleet`; `housekeeping` is
+   retired, its upkeep run by the `plan` launcher. Audit issues
+   dispatch as
    `explore`.
 1. **Announce a fleet-wide toolchain change** (a global anchor or
    solana install) to every program-building session by message

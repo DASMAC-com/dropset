@@ -55,8 +55,7 @@ the board as a first-class Backlog issue filed by a planning
 session's audit heartbeat, naming one target from
 `docs/conventions/audit-registry.md` with its scope and
 rationale; the session that pulls it invokes this skill once,
-scoped to that target. `housekeeping` runs no audit and reads
-no directive — that path is retired. The broad random
+scoped to that target; no upkeep pass runs one. The broad random
 rotation is `--rotation N`, an ad-hoc invocation.
 
 ## Two ways it runs

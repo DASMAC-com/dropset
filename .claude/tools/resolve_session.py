@@ -302,9 +302,10 @@ def resolve(tag: str, repo: Path) -> dict:
     return verdict
 
 
-#: The kinds `.claude/shell/init.zsh` actually seeds a daily id with — the only
-#: two `_ds_daily_session` callers. Anything else has no session to name.
-DAILY_KINDS = ("plan", "housekeeping")
+#: The kinds `.claude/shell/init.zsh` actually seeds a daily id with — only
+#: `plan`, since the `housekeeping` verb retired. Anything else has no session
+#: to name.
+DAILY_KINDS = ("plan",)
 
 _DAILY_DATE_RE = re.compile(r"^\d{8}$")
 
@@ -352,7 +353,7 @@ def launch_date() -> str:
 
 
 def daily_session_id(kind: str, date: str, cycle: int = 0) -> str:
-    """The session id a daily verb (`plan`, `housekeeping`) computes for itself.
+    """The session id a daily verb (`plan`) computes for itself.
 
     A seat session's id is **deterministic**, not discovered: an md5 of
     ``dropset-<kind>-<YYYYMMDD>`` formatted as a UUID. So a session wanting its
@@ -416,8 +417,8 @@ def run(argv: list[str]) -> int:
         "--daily-id",
         default=None,
         metavar="KIND",
-        help="print the deterministic session id for a daily verb (plan, "
-        "housekeeping) and exit — compute your own id rather than listing the "
+        help="print the deterministic session id for a daily verb (plan) and "
+        "exit — compute your own id rather than listing the "
         "projects directory to find it",
     )
     parser.add_argument(
@@ -461,22 +462,15 @@ def run(argv: list[str]) -> int:
     repo = Path(os.path.abspath(args.repo if args.repo else Path.cwd()))
 
     if args.daily_id:
-        if args.date:
-            date = args.date
-        elif args.daily_id == "plan":
-            date = launch_date()
-        else:
-            date = datetime.now().strftime("%Y%m%d")
+        # `plan` is the only daily kind; `daily_session_id` refuses any other.
+        date = args.date or launch_date()
         cycle = args.cycle
         # Validated like the kind and the date, and for the same reason: a
         # wrong value still hashes to a well-formed id naming no session.
-        if cycle is not None and (args.daily_id != "plan" or cycle < 0):
-            raise ResolveSessionError(
-                f"--cycle applies only to --daily-id plan and must be >= 0, got "
-                f"{cycle} for {args.daily_id!r} — only planning sessions cycle."
-            )
+        if cycle is not None and cycle < 0:
+            raise ResolveSessionError(f"--cycle must be >= 0, got {cycle}")
         if cycle is None:
-            cycle = read_cycle(repo, date) if args.daily_id == "plan" else 0
+            cycle = read_cycle(repo, date)
         print(daily_session_id(args.daily_id, date, cycle))
         return 0
 

@@ -158,10 +158,11 @@ through the credentialed server. The rules:
   cost is visible and free.
 
   **Where the SSO session comes from.** A session cannot log in for
-  itself — `aws login` is interactive — so the two seat verbs that read
-  cost data, `plan` and `housekeeping`, **gate their own launch** on
-  credentials that resolve: they probe, log in if the probe fails,
-  re-probe, and refuse to launch if that still fails. See
+  itself — `aws login` is interactive — so the one seat verb that reads
+  cost data, `plan`, **gates its own launch** on credentials that
+  resolve: it probes, logs in if the probe fails, re-probes, and
+  refuses to launch if that still fails (the retired `housekeeping`
+  verb was gated the same way). See
   [local integrations](local-integrations.md) → "The AWS login gate".
   The consequence for anything reading cost data from inside a session
   is that credentials are a launch-time precondition, not something to

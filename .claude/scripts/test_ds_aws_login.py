@@ -338,15 +338,13 @@ class TheGateActuallyGates(unittest.TestCase):
     def _run_verb(self, verb, *, sts_rc, login_rc=0, post_login_sts_rc=0):
         # `_ds_seat_guard` and the launcher are both stubbed: this case is about
         # the gate's effect on the launch, and nothing else. `plan` reaches
-        # `_ds_session` directly (its cycle loop computes the id), so both
-        # launcher entry points are stubbed. The substrate dir is pointed at
+        # `_ds_session` directly (its cycle loop computes the id). The substrate dir is pointed at
         # this case's temp dir, since the cycle loop clears its marker there
         # and must never touch the base checkout's live one.
         script = (
             'source "%s" 2>/dev/null; %s'
             '_DS_SUBSTRATE_DIR="$CALLS.state"; '
             "_ds_seat_guard() { : }; "
-            '_ds_daily_session() { print -r -- "1|LAUNCHED" >> "$CALLS" }; '
             '_ds_session() { print -r -- "1|LAUNCHED" >> "$CALLS" }; '
             "%s" % (INIT, _STUB, verb)
         )
@@ -388,15 +386,6 @@ class TheGateActuallyGates(unittest.TestCase):
         _, launched = self._run_verb("plan", sts_rc=0)
         self.assertTrue(launched, "plan did not launch on a valid session")
 
-    def test_housekeeping_does_not_launch_when_the_gate_refuses(self):
-        result, launched = self._run_verb("housekeeping", sts_rc=1, post_login_sts_rc=1)
-        self.assertFalse(launched, "housekeeping launched despite no AWS session")
-        self.assertEqual(result.returncode, 1, result.stderr)
-
-    def test_housekeeping_launches_when_credentials_are_valid(self):
-        _, launched = self._run_verb("housekeeping", sts_rc=0)
-        self.assertTrue(launched, "housekeeping did not launch on a valid session")
-
 
 class GatedVerbSurface(unittest.TestCase):
     """Which verbs carry the gate is an operator ruling, so pin it in the text
@@ -405,14 +394,10 @@ class GatedVerbSurface(unittest.TestCase):
     def setUp(self):
         self.source = INIT.read_text(encoding="utf-8")
 
-    def test_plan_and_housekeeping_are_gated(self):
+    def test_plan_is_gated(self):
         # `plan` spells the refusal as an `if !` so it can undo a `plan bedrock`'s
-        # exports first; both forms refuse the launch.
-        for gate in (
-            "if ! _ds_aws_login 'plan'; then",
-            "_ds_aws_login 'housekeeping' || return 1",
-        ):
-            self.assertIn(gate, self.source, "lost its AWS login gate: %s" % gate)
+        # exports first.
+        self.assertIn("if ! _ds_aws_login 'plan'; then", self.source)
 
     def test_the_gate_runs_after_the_seat_guard(self):
         # Ordering matters: the seat guard clears an `AWS_REGION` inherited from a
@@ -420,13 +405,9 @@ class GatedVerbSurface(unittest.TestCase):
         # probing first would probe the Bedrock launcher's environment. `plan`
         # reaches the guard through `_ds_substrate_enter`, which also carries
         # its `bedrock` override.
-        for verb, call in (
-            ("plan", "_ds_substrate_enter \"$substrate\" 'plan'"),
-            ("housekeeping", "_ds_seat_guard 'housekeeping'"),
-        ):
-            guard = self.source.index(call)
-            gate = self.source.index("_ds_aws_login '%s'" % verb)
-            self.assertLess(guard, gate, "%s probes before clearing the env" % verb)
+        guard = self.source.index("_ds_substrate_enter \"$substrate\" 'plan'")
+        gate = self.source.index("_ds_aws_login 'plan'")
+        self.assertLess(guard, gate, "plan probes before clearing the env")
 
     def test_architect_is_deliberately_not_gated(self):
         # It argues design rather than reading cost data, and a browser login is a

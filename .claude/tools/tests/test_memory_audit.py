@@ -266,7 +266,7 @@ class IndexByteCap(unittest.TestCase):
         self.assertEqual(result["index_bytes"], len(text) + 2)
 
     def test_the_default_cap_is_twelve_thousand_bytes(self):
-        # The figure the housekeeping skill and context-economy doc both cite.
+        # The figure the context-economy doc cites.
         result = audit(self._sized(1), _repo([]))
         self.assertEqual(result["max_index_bytes"], 12_000)
 

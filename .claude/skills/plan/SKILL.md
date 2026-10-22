@@ -151,6 +151,8 @@ are operator-only and ride step 8's `AskUserQuestion`:
   an exit-code-only parse check;
 - **permission-refresh candidates**, when listed —
   `allowlist.py add` per approved rule;
+- **stale memories**, when the `memory` line lists any — delete
+  each approved memory file **and** its `MEMORY.md` pointer;
 - **the transcript-purge apply** — `/purge-conversations`, this
   yes being its approval.
 

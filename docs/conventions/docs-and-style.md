@@ -322,6 +322,4 @@ single insertion point over resolving the collisions it creates.
 
 The `cspell-audit` skill reconciles the dictionary against actual usage
 **and** normalizes escape placement on this rule; run it when the
-dictionary grows or escapes drift. `housekeeping` runs the same check
-read-only and files any drift — a dictionary entry to move, or
-mis-placed escapes to regroup — as a Backlog task.
+dictionary grows or escapes drift. Nothing runs it on a schedule.

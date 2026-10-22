@@ -781,7 +781,7 @@ migrations or generation inputs, and whether it spans crates.
      into the catalogue as "no convention governs this surface".
 
    - **Run the citation check in the main loop** — the same tool
-     `housekeeping` step 5 calls, so the two paths cannot drift on what
+     the upkeep pass calls, so the two paths cannot drift on what
      dangles. It separates `missing-file` from `missing-anchor` and
      exits 1 on any; fold the result into the catalogue and hand the
      lens only the judgement half, whether the prose still describes
@@ -1886,7 +1886,7 @@ migrations or generation inputs, and whether it spans crates.
      (already cleared) → skip.
 
    - [ ] **Reclaim the worktree's disk** — the multi-GB `target/` and
-     `node_modules` are dead weight until `housekeeping` prunes it:
+     `node_modules` are dead weight until the worktree is pruned:
 
      ```sh
      make clean

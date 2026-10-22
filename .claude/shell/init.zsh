@@ -278,7 +278,7 @@ _ds_pull_impl() {
 }
 
 # `cd` to the base repo checkout. The starting point for anything that must not
-# run inside a worktree (`housekeeping`, a planning session).
+# run inside a worktree (a planning session).
 #
 # It fast-forwards `main` on the way in, via `_ds_pull` — see there for why that
 # is safe on a navigation command, and why it never touches a worktree's own
@@ -504,7 +504,7 @@ _ds_aws_login() {
 # The full date is in the seed so that `plan-18` in August and `plan-18` in
 # September cannot collide; the display name stays day-only by operator choice,
 # and this id is what actually disambiguates them. The kind prefix keeps a
-# day's planning and housekeeping sessions apart for the same reason.
+# second daily verb, should one return, from colliding with `plan`'s ids.
 #
 # An optional $2 is the planning CYCLE: N > 0 appends `-cN`, a fresh id under
 # the same display name (see `plan`). Cycle 0 is the bare seed, so ids computed
@@ -525,7 +525,7 @@ _ds_daily_sid() {
     "${raw:0:8}-${raw:8:4}-${raw:12:4}-${raw:16:4}-${raw:20:12}"
 }
 
-# Internal: start-or-resume today's session of one kind, in the base repo.
+# Internal: the start-or-resume core, given an already-computed session id.
 #
 # THE IDEMPOTENCY IS FORCED, NOT OVER-ENGINEERED. It would be simpler to ask
 # the CLI whether a named session exists, and there is no way to: `claude` has
@@ -535,9 +535,6 @@ _ds_daily_sid() {
 # only deterministic handle is a session id we compute ourselves, with the
 # on-disk transcript as the existence check.
 #
-#   $1 kind (seeds the id, e.g. `plan`)   $2 display name   $3 initial prompt
-#   $4 model to pin, resolved by `_ds_tier`
-#
 # The model rides BOTH branches; the name and the initial prompt ride only the
 # create path. That split is the point, and getting it wrong is silent: `-n`
 # sets a display name and the prompt bootstraps a skill, so re-passing either
@@ -545,14 +542,9 @@ _ds_daily_sid() {
 # session is reopened many times a day. Pinning it only on create would honor
 # the pin on the day's FIRST launch and quietly drop to the saved default on
 # every reopen after it — the "still works, so nobody notices" slip.
-_ds_daily_session() {
-  _ds_session "$(_ds_daily_sid "$1")" "$2" "$3" "$4"
-}
-
-# Internal: the start-or-resume core, given an already-computed session id.
 #
-# Split out from `_ds_daily_session` so a session keyed by something other than
-# the date can reuse it unchanged. `plan` and `housekeeping` key on the day; `architect` keys
+# The caller computes the id, so one core serves every key: `plan` keys on the
+# day (`_ds_daily_sid`, inside its cycle loop); `architect` keys
 # on its ISSUE, because a design thread outlives a day and resuming it tomorrow is
 # the whole point. Everything below the id — the idempotency, the model pin
 # riding both branches, the permission mode — is identical for both, and the
@@ -679,7 +671,7 @@ _ds_topic_sid() {
 #
 # THE RULE IS CAPABILITY, NOT ATTENDANCE. A session runs on Bedrock unless it
 # needs something Bedrock lacks — web search, web fetch, deep research — or it
-# is a seat session by role (`plan`, `architect`, `housekeeping`, `explore`).
+# is a seat session by role (`plan`, `architect`, `explore`).
 # Sub-agents are NOT a differentiator: Opus-spawning-Opus sub-agents are
 # verified working on Bedrock.
 #
@@ -692,7 +684,7 @@ _ds_topic_sid() {
 # Model tiers: which model a verb launches, named by ROLE, never by model.
 #
 #   ADVISOR      plan, architect, explore        default substrate: anthropic
-#   EXECUTOR     task, housekeeping              default substrate: bedrock
+#   EXECUTOR     task                            default substrate: bedrock
 #   HELPER       chore                           default substrate: bedrock
 #   BACKGROUND   Claude Code's small-model slot  follows the session's substrate
 #
@@ -1281,7 +1273,7 @@ _ds_seat_guard() {
 #     finds the session through `resolve_session.py` — the tag's worktree, then
 #     the transcript whose cwd stamps point into it — never by the name.
 #   * `/init-pr` as the initial prompt, so the bootstrap runs without being
-#     asked for — the same trick `plan` and `housekeeping` use for their own skills.
+#     asked for — the same trick `plan` uses for its own skill.
 task() {
   case "$1" in
     local)
@@ -1740,6 +1732,15 @@ chore() {
 #     that variable, so probing first would probe under the Bedrock launcher's
 #     environment rather than the operator's own. On `plan bedrock` the probe
 #     runs under the launcher's region, which is the region the session uses.
+#     It is the ONLY gated verb, now `housekeeping` is retired. `architect` is
+#     deliberately NOT gated — it argues design rather than reading cost data,
+#     and an interactive login is a poor thing to stand between the operator
+#     and a design thought. Add it only if an architect session is actually
+#     found wanting one.
+#   * The 5-hour window. On its default anthropic substrate a planning session
+#     is normally the day's first subscription session, so it opens the
+#     window — the job the retired `housekeeping` verb was kept on the seat
+#     for.
 #
 # `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not `plan-05`.
 #
@@ -1818,40 +1819,6 @@ plan() {
   }
 }
 
-# Start OR resume today's HOUSEKEEPING session — the same contract as `plan`,
-# so a day's upkeep is one verb rather than a hand-started session.
-#
-# The EXECUTOR tier's model: housekeeping is upkeep, not board decisions, so it
-# does not inherit the advisor tier — but every managed verb pins through the
-# config, so it no longer floats on the saved default either.
-#
-# **The anthropic substrate, always, and this one is not a capability call.**
-# Housekeeping could run on Bedrock perfectly well; the operator uses it to OPEN
-# the 5-hour subscription window at the start of a day, which only a
-# subscription session does. So it takes the executor MODEL but never the
-# executor tier's substrate, and takes no override.
-#
-# It carries the same `_ds_aws_login` gate as `plan`, with the same two
-# warn-and-launch escapes, and for the same reason: this pass reports spend and
-# runs the monthly permission refresh, both of which need credentials the
-# session cannot obtain for itself. `architect` is
-# deliberately NOT gated — it argues design rather than reading cost data, and an
-# interactive login is a poor thing to stand between the operator and a design
-# thought. Add it only if an architect session is actually found wanting one.
-housekeeping() {
-  if [[ -n "$1" ]]; then
-    print -u2 'Usage: housekeeping   (no arguments; name derived from the date)'
-    return 1
-  fi
-  local model substrate
-  { read -r model; read -r substrate; } <<< "$(_ds_tier executor anthropic)"
-  [[ -n "$substrate" ]] || return 1
-  _ds_seat_guard 'housekeeping'
-  _ds_aws_login 'housekeeping' || return 1
-  _ds_daily_session housekeeping "housekeeping-$(date +%-d)" /housekeeping \
-    "$model"
-}
-
 # Start OR resume an ARCHITECT session on one design thread — the CEO hat. Same
 # seat quality as `plan` and the same idempotency; a different job.
 #
@@ -1891,7 +1858,7 @@ housekeeping() {
 # protected by nothing — the first one sat awaiting feedback with its issue
 # already marked Done and nothing recognized it as live work. The fix attempted
 # on 09-11 was a worktree plus an **open PR**, on the reasoning that
-# `housekeeping` will not prune a worktree holding unpushed work. That is now
+# the pruner will not remove a worktree holding unpushed work. That is now
 # superseded rather than unsolved: the failure was the spec file being the only
 # copy of live work, and what prevents it is **durable state living in Linear**,
 # which makes the worktree's contents expendable by construction. So the

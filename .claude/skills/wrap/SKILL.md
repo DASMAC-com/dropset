@@ -169,7 +169,7 @@ captured in Linear, since the worktree's contents are expendable.
 Check 3's resting state is **In Review** with the durable state on
 the issue. The close below is unchanged for `architect` / `explore`.
 A **`chore`** has no worktree at all — it runs in the base checkout,
-which `plan`, `housekeeping` and other chores share — so check 7 is
+which `plan` and other chores share — so check 7 is
 skipped, and check 1 becomes `git status --short` in the base
 checkout: it should be clean, and any dirt is named (an item if this
 session made it, otherwise reported as unattributed). The close is

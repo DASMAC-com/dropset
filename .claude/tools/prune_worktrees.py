@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Worktree-prune helper — the deterministic git side of ``housekeeping`` step
-2: given the set of branches whose PR has **merged** (the skill reads that from
-``gh pr list`` — the one network call), remove each merged branch's worktree
+"""Worktree-prune helper — the deterministic git side of ``upkeep.py``'s prune
+step: given the set of branches confirmed finished (the caller reads that from
+the board and ``gh pr list``), remove each one's worktree
 and local branch, skip anything dirty or locked, tidy stale admin entries, and
-return a tally. The skill just reports the counts (per ``CLAUDE.md`` → "Skill
+return a tally. The caller just reports the counts (per ``CLAUDE.md`` → "Skill
 tooling" / "Context economy"), instead of driving the
 ``git worktree remove`` / ``git branch -D`` / ``git worktree prune`` trio by
 hand per merged branch.
@@ -264,8 +264,8 @@ def prune(
     """Remove each merged branch's worktree + local branch, skipping unsafe ones.
 
     Two gates, and both matter: ``merged`` restricts the candidates to branches
-    the caller has confirmed finished — a merged PR for ``housekeeping``, a
-    completed or canceled issue with no open PR for ``upkeep`` — and
+    the caller has confirmed finished — for ``upkeep``, a completed or canceled
+    issue with no open PR — and
     :func:`unsafe_reason` then refuses any of
     those still holding uncommitted or unpushed work — or, for an advisor
     worktree, :func:`advisor_unsafe_reason`. ``git`` is an injectable

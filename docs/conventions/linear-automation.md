@@ -5,7 +5,7 @@
 # Linear automation
 
 Skills that **file** Linear issues (`linear-task`,
-`audit-scope`, `trim-context`, `housekeeping`, `plan`) resolve the
+`audit-scope`, `trim-context`, `plan`) resolve the
 filing destination — team, project, assignee — from **environment
 variables**, never hard-coded UUIDs. (Skills that only **update**
 an existing issue by id — `init-pr`, `review-pr` — need no
@@ -73,8 +73,8 @@ refiling permanently. Every full `plan` bootstrap spawns
 `trim-context` as a background sub-agent — the way `review-pr` spawns
 its reviewers — gated only on a non-empty pool in upkeep's `parked`
 line; its capped report is the completion notification, and its reads
-never enter the planning prefix. It also runs standalone, and
-`housekeeping` still delegates to it until that verb retires.
+never enter the planning prefix. It also runs standalone; the
+`housekeeping` verb that used to delegate to it is retired.
 
 Every write in that pipeline goes through
 `.claude/tools/trim_levers.py` rather than the MCP — see the carve-out
@@ -421,7 +421,7 @@ through the merge and after it. `review-pr`'s outcome-watch step runs
 its follow-up tail and moves to Done only on an explicit
 `AskUserQuestion` approval. Two consequences elsewhere:
 
-- **`housekeeping` prunes on the issue's status TYPE, not on
+- **The upkeep pass prunes on the issue's status TYPE, not on
   PR-merged** — only `completed` or `canceled`. A merged PR whose issue
   reads In Review is a live session, and pruning its worktree is how
   work has been lost before.
@@ -441,8 +441,8 @@ now except an explicit approval.
 
 Auditing is **planning-filed board work**. It is not a step in any
 automated pass, and no skill reads an audit directive from the Planning
-document — that path is retired, along with `housekeeping`'s only
-Planning-document read.
+document — that path is retired, along with the `housekeeping` skill
+that once read it.
 
 **Why the directive path went.** An audit is a real capacity spend, and
 routing it through a document made it an invisible daily tax: three
@@ -698,7 +698,7 @@ batches together and can be filtered, staged, and reviewed apart from
 product code on the board.
 
 - **Filing skills emit it.** `linear-task`, `audit-scope`,
-  `housekeeping`, and `plan` prepend `Claude:` to a title when **every
+  and `plan` prepend `Claude:` to a title when **every
   path the fix will edit** is on the meta surface above. `/merge-tasks`
   applies it when every issue it consolidates is meta. (`plan` matters
   here in particular: a planning session is where most meta-work issues
@@ -747,7 +747,6 @@ batches** via `merge-tasks` — lowest number surviving in each, every
 finding's `**Fingerprint**:` line preserved, and each batch carrying
 **roughly 4–5 parts** rather than the whole pool (see "The `Claude:`
 meta class is size-bound too" above). One writer, one rhythm:
-`housekeeping`'s propose-merges-among-meta step is **retired**, so
 nothing else proposes meta merges.
 
 **Assembling a batch and promoting it are now two different acts, and
@@ -1480,7 +1479,7 @@ removes the wasted round trip entirely.
 
 **No automated writer files a blocking edge — ever.** Not a filing
 skill (`linear-task`, `audit-scope`, `trim-context`,
-`housekeeping`, `merge-tasks`, `plan`),
+`merge-tasks`, `plan`),
 not an autonomous audit rotation. This holds for edges an agent believes are
 genuinely semantic, not just for file-overlap ones.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Staleness candidates for ``housekeeping`` step 8's auto-memory review.
+"""Staleness candidates for the upkeep pass's auto-memory review.
 
-The step-8 *cadence gate* is already a tool (``memory_scan_gate.py``); the scan
+The *cadence gate* is already a tool (``memory_scan_gate.py``); the scan
 that gate authorizes was the last step in the pass still prescribed as prose, so
 every pass improvised the same three shapes against the memory store. Measured on
 one pass (session ``eea25c27``): the improvised reads were ≈3.2k of ≈8.3k total
@@ -12,8 +12,7 @@ over-long index lines when the decision needed only the count.
 
 So this prints **slug + one-line reason** candidates and a summary, and **never a
 memory body** — the report is what enters the main loop, and a body would defeat
-the point. `housekeeping` step 8 drives it between the gate's ``check`` and
-``record``.
+the point. `upkeep.py` drives it between the gate's ``check`` and ``record``.
 
 WHAT IT CHECKS, and each one's confidence, because they are not equal:
 
@@ -37,9 +36,9 @@ existence lives in Linear, this is a stdlib-only offline tool, and a check that
 cannot run is worse than an absent one because its silence reads as a pass. Verify
 an ``ENG-###`` through the Linear MCP if a candidate's reason turns on one.
 
-The tool decides nothing and deletes nothing: `housekeeping` keeps the autonomy
-bound (attended = confirm via ``AskUserQuestion`` before deleting; one-shot =
-list only), because losing a still-good memory is worse than keeping a stale one.
+The tool decides nothing and deletes nothing: a purge is the operator's yes at
+``plan``'s bootstrap gate, because losing a still-good memory is worse than
+keeping a stale one.
 
 Stdlib only; a Python skill-tool under ``.claude/tools/`` — deliberately **not** a
 Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
@@ -65,7 +64,7 @@ DEFAULT_MAX_INDEX_LINE = 160
 #: skills before their cap, it only grows: appending is free and folding costs
 #: work. Bytes as `wc -c` reports them, matching `skill_size.py`. CI has no home
 #: directory, so unlike that cap this one runs in the local tier, from
-#: `housekeeping` step 8.
+#: `upkeep.py`.
 DEFAULT_MAX_INDEX_BYTES = 12_000
 
 #: How many over-long lines to name. The count is the decision input; the worst
@@ -286,8 +285,8 @@ def audit(
                     # `exc.strerror`, never `str(exc)`. The latter is
                     # `[Errno N] msg: '<full path>'`, and this store lives under
                     # the operator's home — so it would put an absolute
-                    # `/Users/<name>/…` path into a report that `housekeeping`
-                    # files, one copy-paste from a Linear body. The slug already
+                    # `/Users/<name>/…` path into a report that `upkeep.py`
+                    # splices into the Planning document. The slug already
                     # names which memory it was.
                     "reason": f"cannot read the memory file: "
                     f"{exc.strerror or 'unreadable'}",
@@ -441,7 +440,7 @@ Usage:
                              [--max-index-line N] [--max-index-bytes N]
                              [--json]
 
-Print staleness CANDIDATES for housekeeping step 8 — slug + one-line reason,
+Print staleness CANDIDATES for the upkeep memory review — slug + one-line reason,
 never a memory body. Exit 0 whether or not anything was found: candidates are
 input to a human decision, not a failure.
 

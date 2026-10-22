@@ -147,9 +147,7 @@ class GeneralizeOtherTools(unittest.TestCase):
         )
 
     def test_skill_rule(self):
-        self.assertEqual(
-            fc.generalize("Skill", {"skill": "housekeeping"}), "Skill(housekeeping)"
-        )
+        self.assertEqual(fc.generalize("Skill", {"skill": "plan"}), "Skill(plan)")
 
     def test_read_path_worktree_collapsed(self):
         self.assertEqual(

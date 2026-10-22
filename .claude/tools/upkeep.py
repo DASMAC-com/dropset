@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # cspell:word defang
-"""The model-free morning upkeep pass — the mechanical half of ``housekeeping``,
-composed from the committed helpers that skill drove one call at a time.
+"""The model-free morning upkeep pass — what the retired ``housekeeping`` skill
+did, composed from the committed helpers it drove one call at a time. The
+``plan`` launcher runs it; its approvals ride ``plan``'s bootstrap gate.
 
 Usage (from the base repo root; a worktree is refused):
 
@@ -9,8 +10,9 @@ Usage (from the base repo root; a worktree is refused):
     python3 .claude/tools/upkeep.py ran-today
     python3 .claude/tools/upkeep.py prune [--apply] [--json]
 
-``prune`` runs steps 4–7 alone, disarmed unless ``--apply`` — the
-``housekeeping`` skill's prune step, so both passes apply the one rule below.
+``prune`` runs steps 4–7 alone, disarmed unless ``--apply`` — the operator's
+by-hand cleanup on a machine whose pass is not armed, applying the one rule
+below rather than a second one that drifts.
 
 ``run`` executes twelve steps in order, each under its own timeout and each
 **best-effort**: a failure is a report line, never an abort of later steps.
@@ -810,9 +812,8 @@ STEPS = (
 )
 
 
-# The cleanup half alone — the `prune` subcommand, which is what the
-# `housekeeping` skill's prune step drives, so the interactive pass and this one
-# apply ONE survival rule rather than two that drift.
+# The cleanup half alone — the `prune` subcommand, so a by-hand prune and the
+# daily pass apply ONE survival rule rather than two that drift.
 PRUNE_STEPS = ("prs", "board", "prune", "notifications")
 
 
@@ -1053,9 +1054,8 @@ def run(argv: list[str]) -> int:
             return 0
 
     if args.cmd == "prune":
-        # Armed by the flag, not the environment: the caller is the
-        # `housekeeping` skill, whose prune step has always run in-pass. The
-        # gates that make that safe are the board rule and the pruner's
+        # Armed by the flag, not the environment: the caller is the operator,
+        # whose `--apply` is the approval. The gates that make that safe are the board rule and the pruner's
         # dirty/unpushed refusal, not a prompt. No document write and no stamp
         # — this is not the day's pass.
         ctx = Ctx(base=base, armed=args.apply, now=now, lookup=linear_lookup)

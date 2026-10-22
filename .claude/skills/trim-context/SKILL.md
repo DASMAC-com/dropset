@@ -474,9 +474,7 @@ The existing zero-echo writers missed it because both are
 **producer-side** — they write *levers*. This is the consumer side, and
 `linear_issue.py create` is the general filer for it: state, milestone
 and priority are parameters, so the same writer serves this fold,
-`audit-scope`'s parked findings, and `housekeeping`'s aggregated
-convention-drift and cspell tasks, which are the same
-one-aggregated-`Claude:`-task-per-pass shape.
+and `audit-scope`'s parked findings.
 
 **Autonomy bound:** filing a task *proposes* a fix — this skill **never**
 edits a skill, a convention doc, or `CLAUDE.md`; that lands later through
