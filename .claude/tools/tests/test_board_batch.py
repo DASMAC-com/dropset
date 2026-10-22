@@ -856,6 +856,42 @@ class CliTests(unittest.TestCase):
         self.assertIn("Live", printed)
         self.assertNotIn("Parked", printed)
 
+    def _listing_filter(self, argv: list[str]) -> dict:
+        sent = []
+
+        def fake_post(api_key, query, variables):
+            sent.append(variables["filter"])
+            return {"issues": {"nodes": []}}
+
+        with mock.patch.object(bb, "_post", side_effect=fake_post):
+            with mock.patch("sys.stdout"), mock.patch("sys.stderr"):
+                self.assertEqual(run(["board_batch.py", "list", *argv]), 0)
+        return sent[0]
+
+    def test_updated_since_takes_a_timestamp_into_the_request_filter(self):
+        got = self._listing_filter(["--updated-since", "2026-10-21T09:00:00Z"])
+        self.assertEqual(got["updatedAt"], {"gte": "2026-10-21T09:00:00Z"})
+        self.assertEqual(got["state"], {"name": {"in": ["Backlog"]}})
+
+    def test_updated_since_signs_a_duration_as_that_long_ago(self):
+        # A signed value needs the `=` form, or argparse reads it as a flag.
+        for raw, sent in (("P1D", "-P1D"), ("PT6H", "-PT6H"), ("-P2W", "-P2W")):
+            with self.subTest(raw=raw):
+                got = self._listing_filter([f"--updated-since={raw}"])
+                self.assertEqual(got["updatedAt"], {"gte": sent})
+
+    def test_the_default_listing_sends_no_activity_filter(self):
+        self.assertNotIn("updatedAt", self._listing_filter([]))
+
+    def test_an_unparseable_updated_since_is_refused_before_any_request(self):
+        for raw in ("yesterday", "P", "PT", "1D"):
+            with self.subTest(raw=raw):
+                with mock.patch.object(bb, "_post") as post:
+                    with mock.patch("sys.stderr"):
+                        with self.assertRaises(SystemExit):
+                            run(["board_batch.py", "list", "--updated-since", raw])
+                post.assert_not_called()
+
     def test_an_empty_updates_file_is_refused(self):
         path = self._write({})
         with mock.patch.object(

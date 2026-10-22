@@ -15,6 +15,8 @@ ids, never a committed token):
 
 * ``list`` — compact open-Backlog listing: ``number | priority | title``, one
   line each. Roughly 600 tokens where the MCP equivalent measured ~11k.
+  ``--updated-since WHEN`` narrows it to issues changed since an ISO timestamp
+  or duration, so planning's review-inbox poll is one call.
 * ``view [--name NAME]`` — the same compact listing of the operator's named
   custom view (default ``Next``), resolved by name and filtered by Linear, so
   the planning session sees the same issue set the operator sees (sorted by
@@ -96,6 +98,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime
 
 import linear_api
 
@@ -363,9 +366,13 @@ def _page_through(
 
 
 def fetch_issues(
-    api_key: str, project_id: str, states: list[str] | None = None
+    api_key: str,
+    project_id: str,
+    states: list[str] | None = None,
+    updated_since: str | None = None,
 ) -> list[dict]:
-    """Issues in the project, optionally filtered to named workflow states.
+    """Issues in the project, optionally filtered to named workflow states and
+    to activity since ``updated_since`` (see :func:`parse_updated_since`).
 
     The **listing** read. Write paths must not use this: they want
     :func:`fetch_issues_by_number`, whose cost tracks the payload rather than
@@ -374,7 +381,34 @@ def fetch_issues(
     issue_filter: dict = {"project": {"id": {"eq": project_id}}}
     if states:
         issue_filter["state"] = {"name": {"in": states}}
+    if updated_since:
+        issue_filter["updatedAt"] = {"gte": updated_since}
     return _fetch_filtered(api_key, issue_filter)
+
+
+_ISO_DURATION = re.compile(
+    r"-?P(?=\d|T\d)(\d+Y)?(\d+M)?(\d+W)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+S)?)?"
+)
+
+
+def parse_updated_since(raw: str) -> str:
+    """An ISO timestamp, or an ISO duration meaning "that long ago".
+
+    Linear's ``updatedAt`` comparator takes both, a duration only when negative
+    (``-P2D`` is two days ago), so an unsigned one is signed here: nobody asking
+    for activity since ``P2D`` means two days in the future. Anything else is
+    refused at parse time rather than sent and silently matched against nothing.
+    """
+    value = raw.strip()
+    if _ISO_DURATION.fullmatch(value):
+        return value if value.startswith("-") else f"-{value}"
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{raw!r} is neither an ISO timestamp nor an ISO duration (e.g. P2D)"
+        ) from None
+    return value
 
 
 def fetch_open_in_milestones(
@@ -1037,6 +1071,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="append each issue's milestone name",
     )
+    listing.add_argument(
+        "--updated-since",
+        type=parse_updated_since,
+        default=None,
+        metavar="WHEN",
+        help="only issues changed since WHEN: an ISO timestamp, or an ISO "
+        "duration ago (P1D, PT6H)",
+    )
 
     view = sub.add_parser("view", help="the operator's named custom view, as listed")
     view.add_argument("--name", default="Next", help="custom view name (default Next)")
@@ -1112,7 +1154,7 @@ def run(argv: list[str]) -> int:
             lines = format_listing(issues, show_milestone=True)
         else:
             states = None if args.state == "all" else [args.state]
-            issues = fetch_issues(api_key, project_id, states)
+            issues = fetch_issues(api_key, project_id, states, args.updated_since)
             if not args.include_milestoned:
                 issues = drop_milestoned(issues)
             lines = format_listing(issues, show_milestone=args.show_milestone)
