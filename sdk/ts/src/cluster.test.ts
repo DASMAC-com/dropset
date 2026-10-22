@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { address, createNoopSigner } from '@solana/kit';
+import { address, createNoopSigner, isAddress } from '@solana/kit';
 
 import {
   assertDropsetProgramAddress,
@@ -49,6 +49,8 @@ const createMarketInput = {
   quoteTokenProgram: FRESH,
   baseTreasury: FRESH,
   quoteTreasury: FRESH,
+  feeMint: FRESH,
+  feeTokenProgram: FRESH,
   payerFeeSource: FRESH,
   registryFeeTreasury: FRESH,
 };
@@ -124,6 +126,18 @@ test('generated builders require a program address', async () => {
       }),
     /programAddress/,
   );
+});
+
+test('fee accounts pinned to registry state have no default', async () => {
+  // An `address = registry.default_fee_config.mint` constraint used to
+  // render as a literal default, so an omitted fee account sent the field
+  // path itself as the key. The value lives on-chain: the caller passes it.
+  const { feeMint: _, ...withoutFeeMint } = createMarketInput;
+  const programAddress = dropsetProgramAddress('mainnet');
+  // @ts-expect-error -- `feeMint` has no default
+  await getCreateMarketInstructionAsync(withoutFeeMint, { programAddress });
+  const ix = await getCreateMarketInstructionAsync(createMarketInput, { programAddress });
+  assert.ok(ix.accounts.every((a) => isAddress(a.address)));
 });
 
 test('an async builder derives its defaulted PDAs under its own program', async () => {

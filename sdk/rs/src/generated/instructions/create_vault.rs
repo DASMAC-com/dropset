@@ -155,8 +155,8 @@ impl CreateVaultInstructionArgs {
 ///   0. `[writable, signer]` payer
 ///   1. `[]` registry
 ///   2. `[writable]` market
-///   3. `[optional]` fee_mint (default to `market.fee_config.mint`)
-///   4. `[optional]` fee_token_program (default to `market.fee_config.token_program`)
+///   3. `[]` fee_mint
+///   4. `[]` fee_token_program
 ///   5. `[writable]` payer_fee_source
 ///   6. `[writable]` registry_fee_treasury
 ///   7. `[optional]` system_program (default to `11111111111111111111111111111111`)
@@ -209,7 +209,6 @@ impl CreateVaultBuilder {
         self.market = Some(market);
         self
     }
-    /// `[optional account, default to 'market.fee_config.mint']`
     /// Mint the create-vault fee is paid in. Pinned to the value
     /// `create_market` stamped into `market.fee_config.mint`.
     #[inline(always)]
@@ -217,7 +216,6 @@ impl CreateVaultBuilder {
         self.fee_mint = Some(fee_mint);
         self
     }
-    /// `[optional account, default to 'market.fee_config.token_program']`
     /// Token program owning `fee_mint`. Pinned to the value stamped at
     /// market creation.
     #[inline(always)]
@@ -307,12 +305,10 @@ impl CreateVaultBuilder {
             payer: self.payer.expect("payer is not set"),
             registry: self.registry.expect("registry is not set"),
             market: self.market.expect("market is not set"),
-            fee_mint: self
-                .fee_mint
-                .unwrap_or(solana_pubkey::pubkey!("market.fee_config.mint")),
+            fee_mint: self.fee_mint.expect("fee_mint is not set"),
             fee_token_program: self
                 .fee_token_program
-                .unwrap_or(solana_pubkey::pubkey!("market.fee_config.token_program")),
+                .expect("fee_token_program is not set"),
             payer_fee_source: self.payer_fee_source.expect("payer_fee_source is not set"),
             registry_fee_treasury: self
                 .registry_fee_treasury

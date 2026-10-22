@@ -197,8 +197,8 @@ impl Default for CreateMarketInstructionData {
 ///   6. `[writable]` market
 ///   7. `[writable]` base_treasury
 ///   8. `[writable]` quote_treasury
-///   9. `[optional]` fee_mint (default to `registry.default_fee_config.mint`)
-///   10. `[optional]` fee_token_program (default to `registry.default_fee_config.token_program`)
+///   9. `[]` fee_mint
+///   10. `[]` fee_token_program
 ///   11. `[writable]` payer_fee_source
 ///   12. `[writable]` registry_fee_treasury
 ///   13. `[optional]` system_program (default to `11111111111111111111111111111111`)
@@ -312,7 +312,6 @@ impl CreateMarketBuilder {
         self.quote_treasury = Some(quote_treasury);
         self
     }
-    /// `[optional account, default to 'registry.default_fee_config.mint']`
     /// Mint the create-market fee is charged in. The `address` constraint
     /// binds it to whatever was stamped onto the registry at `init`,
     /// so a wrong mint here yields `ConstraintAddress` before the
@@ -322,7 +321,6 @@ impl CreateMarketBuilder {
         self.fee_mint = Some(fee_mint);
         self
     }
-    /// `[optional account, default to 'registry.default_fee_config.token_program']`
     /// Token program that owns `fee_mint`. Pinned to the value the
     /// registry stamped at `init`, so a caller-supplied mismatch is
     /// rejected up front. The `Interface<TokenInterface>` bound is
@@ -399,12 +397,10 @@ impl CreateMarketBuilder {
             market: self.market.expect("market is not set"),
             base_treasury: self.base_treasury.expect("base_treasury is not set"),
             quote_treasury: self.quote_treasury.expect("quote_treasury is not set"),
-            fee_mint: self
-                .fee_mint
-                .unwrap_or(solana_pubkey::pubkey!("registry.default_fee_config.mint")),
-            fee_token_program: self.fee_token_program.unwrap_or(solana_pubkey::pubkey!(
-                "registry.default_fee_config.token_program"
-            )),
+            fee_mint: self.fee_mint.expect("fee_mint is not set"),
+            fee_token_program: self
+                .fee_token_program
+                .expect("fee_token_program is not set"),
             payer_fee_source: self.payer_fee_source.expect("payer_fee_source is not set"),
             registry_fee_treasury: self
                 .registry_fee_treasury
