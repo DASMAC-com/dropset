@@ -147,8 +147,14 @@ or, under ``--queue``::
       "last": {"gql_state": "MERGED", "entry_state": null, …},
       "queue_runs": [{"run_id": "…", "name": "…", "conclusion": "…", …}],
       "failing_runs": [],
+      "notifications": {"dismissed": 1, "failed": 0, "error": null},
       "log_path": "/…/wait-for-queue-285.log"
     }
+
+``notifications`` is filled only on ``merged``: the watch marks the PR's GitHub
+notification threads done itself, so no session turn sits between the merge and
+the dismissal. Best-effort — a failure is reported there, never changes the
+conclusion. See :func:`dismiss_pr_notifications`.
 
 Exit code is 0 when ``conclusion`` is ``pass`` (or ``merged``, or
 ``mergeable``), else 1 — so a
@@ -791,6 +797,43 @@ def wait_queue(
         "error": error,
         "log_path": str(log),
     }
+
+
+# `all=true`: the default lists UNREAD threads only, and a thread read but never
+# marked done still sits in the inbox.
+NOTIFICATIONS_PATH = "/notifications?all=true&per_page=50"
+
+
+def dismiss_pr_notifications(pr: int, repo: str) -> dict:
+    """Mark every notification thread for ``repo``'s PR ``pr`` as done.
+
+    Called on a ``merged`` queue verdict. ``DELETE`` on a thread is GitHub's
+    "mark as done"; marking it read would leave it in the inbox. Never raises:
+    the merge already happened, so a failed dismissal is reported, and
+    ``housekeeping``'s notification sweep is the fallback.
+    """
+    suffix = f"/repos/{repo}/pulls/{pr}"
+    try:
+        threads = _gh_json(["api", NOTIFICATIONS_PATH], "notification list")
+    except WaitForChecksError as exc:
+        return {"dismissed": 0, "failed": 0, "error": str(exc)}
+    ids = [
+        str(t["id"])
+        for t in threads or []
+        if isinstance(t, dict)
+        and ((t.get("subject") or {}).get("url") or "").endswith(suffix)
+    ]
+    failed = 0
+    error = None
+    for tid in ids:
+        try:
+            code, _, err = _gh(["api", "-X", "DELETE", f"/notifications/threads/{tid}"])
+        except WaitForChecksError as exc:
+            code, err = 1, str(exc)
+        if code != 0:
+            failed += 1
+            error = err.strip() or f"exit {code}"
+    return {"dismissed": len(ids) - failed, "failed": failed, "error": error}
 
 
 def read_checks(pr: int, repo: str) -> list[dict]:
@@ -1596,6 +1639,10 @@ def run(argv: list[str]) -> int:
             timeout=QUEUE_TIMEOUT if args.timeout is None else args.timeout,
             since=args.since,
         )
+        if verdict["conclusion"] == "merged":
+            verdict["notifications"] = dismiss_pr_notifications(
+                args.queue_pr, args.repo
+            )
     else:
         interval = DEFAULT_INTERVAL if args.interval is None else args.interval
         timeout = DEFAULT_TIMEOUT if args.timeout is None else args.timeout

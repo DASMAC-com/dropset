@@ -972,13 +972,35 @@ class QueueModeCliTests(unittest.TestCase):
             )
             return {"conclusion": conclusion, "pr": pr}
 
+        real_dismiss = wfc.dismiss_pr_notifications
+        out = io.StringIO()
+
+        def dismiss(pr, repo):
+            seen.setdefault("dismissed", []).append((pr, repo))
+            return {"dismissed": 1, "failed": 0, "error": None}
+
         wfc.wait_queue = stub
+        wfc.dismiss_pr_notifications = dismiss
         try:
-            with redirect_stdout(io.StringIO()):
+            with redirect_stdout(out):
                 code = wfc.run(["wait_for_checks.py", "--queue", "285", *extra])
         finally:
             wfc.wait_queue = real
+            wfc.dismiss_pr_notifications = real_dismiss
+        seen["verdict"] = json.loads(out.getvalue())
         return code, seen
+
+    def test_a_merge_dismisses_the_prs_notifications(self):
+        _, seen = self._queue_mode("merged")
+        self.assertEqual(seen["dismissed"], [(285, wfc.DEFAULT_REPO)])
+        self.assertEqual(seen["verdict"]["notifications"]["dismissed"], 1)
+
+    def test_no_other_conclusion_dismisses(self):
+        for conclusion in ("dequeued", "closed", "not_queued", "timeout"):
+            with self.subTest(conclusion=conclusion):
+                _, seen = self._queue_mode(conclusion)
+                self.assertNotIn("dismissed", seen)
+                self.assertNotIn("notifications", seen["verdict"])
 
     def test_queue_mode_uses_its_own_pacing_defaults(self):
         code, seen = self._queue_mode("merged")
@@ -1024,6 +1046,60 @@ class QueueModeCliTests(unittest.TestCase):
         with self.assertRaises(wfc.WaitForChecksError):
             with redirect_stdout(io.StringIO()):
                 wfc.run(["wait_for_checks.py", "--queue", "285", "--no-watch"])
+
+
+REPO = wfc.DEFAULT_REPO
+
+
+class DismissNotificationsTests(unittest.TestCase):
+    THREADS = [
+        {
+            "id": "11",
+            "subject": {"url": f"https://api.github.com/repos/{REPO}/pulls/285"},
+        },
+        {
+            "id": "12",
+            "subject": {"url": f"https://api.github.com/repos/{REPO}/pulls/2850"},
+        },
+        {"id": "13", "subject": {"url": "https://api.github.com/repos/o/r/pulls/285"}},
+        {
+            "id": "14",
+            "subject": {"url": f"https://api.github.com/repos/{REPO}/pulls/285"},
+        },
+        {"id": "15", "subject": {"url": None}},
+    ]
+
+    def _run(self, list_reply, delete_code=0):
+        calls = []
+
+        def fake(args):
+            calls.append(args)
+            if args[:2] == ["api", "-X"]:
+                return delete_code, "", "HTTP 404" if delete_code else ""
+            return list_reply
+
+        real = wfc._gh
+        wfc._gh = fake
+        self.addCleanup(setattr, wfc, "_gh", real)
+        return wfc.dismiss_pr_notifications(285, REPO), calls
+
+    def test_only_this_prs_threads_are_marked_done(self):
+        result, calls = self._run((0, json.dumps(self.THREADS), ""))
+        deleted = [c[-1] for c in calls if c[:2] == ["api", "-X"]]
+        self.assertEqual(
+            deleted, ["/notifications/threads/11", "/notifications/threads/14"]
+        )
+        self.assertEqual(result, {"dismissed": 2, "failed": 0, "error": None})
+
+    def test_a_failed_list_is_reported_not_raised(self):
+        result, calls = self._run((1, "", "HTTP 401"))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result["dismissed"], 0)
+        self.assertIn("HTTP 401", result["error"])
+
+    def test_a_failed_delete_is_counted(self):
+        result, _ = self._run((0, json.dumps(self.THREADS), ""), delete_code=1)
+        self.assertEqual(result, {"dismissed": 0, "failed": 2, "error": "HTTP 404"})
 
 
 class ConflictingPrTests(unittest.TestCase):

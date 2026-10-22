@@ -1635,7 +1635,9 @@ migrations or generation inputs, and whether it spans crates.
    It polls the GraphQL `mergeQueueEntry` probe, the
    `gh pr view --json state,mergedAt` read, and this PR's
    `gh-readonly-queue/…/pr-<number>-…` runs each minute, stays silent
-   while queued, and exits 0 only on `merged`. It owns the reasoning
+   while queued, and exits 0 only on `merged` — having first marked the
+   PR's notification threads done (`notifications` in the verdict). It
+   owns the reasoning
    this step used to spell out
    (`docs/conventions/github-mcp.md` → "The merge-queue handoff"):
    key on `mergeQueueEntry` (`autoMergeRequest` only keeps a classic
@@ -1726,29 +1728,13 @@ migrations or generation inputs, and whether it spans crates.
    `AskUserQuestion` is a deferral the user chose; an unasked one is a
    dropped step.
 
-   - [ ] **Dismiss this PR's notification**, `state: "done"`. Read the
-     thread id with a field-selected `gh` (a documented exception,
-     `docs/conventions/github-mcp.md`) — the MCP list embeds a full
-     repository object per notification (`history.md` → "Notification
-     list cost"):
-
-     ```sh
-     gh api /notifications --jq '.[] | {id, url: .subject.url}'
-     ```
-
-     Pick the thread whose `subject.url` ends in this PR's number, then
-     dismiss it — never `mark_all_notifications_read`:
-
-     ```txt
-     mcp__github__dismiss_notification(
-       threadID: "<this PR's notification id>",
-       state: "done",
-     )
-     ```
-
-     `"done"`, **not** `"read"`, which leaves the thread in the inbox.
-     The list is a fixed cost read once — never re-fetch it. No match
-     (already cleared) → skip.
+   - [ ] **The PR's notification is already dismissed** — the watch
+     marked its threads done on `merged`, before it exited, so no turn
+     is spent on it. Read the verdict's `notifications`: `error: null`
+     needs nothing (`dismissed: 0` just means already cleared). On an
+     error, say so in the report and leave it; `housekeeping`'s
+     notification sweep is the fallback. Never dismiss by hand or
+     `mark_all_notifications_read`.
 
    - [ ] **Reclaim the worktree's disk** — the multi-GB `target/` and
      `node_modules` are dead weight until the worktree is pruned:

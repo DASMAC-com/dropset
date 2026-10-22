@@ -110,25 +110,18 @@ which drifted behind it twice:
   `review_diff.py --overlap`, which exist so the per-PR file lists never
   reach a transcript at all.)
 
-- **The post-merge notification lookup** (`review-pr`) — reading the
-  one thread id whose `subject.url` ends in a PR's number, so the
-  merged PR's own notification can be dismissed. Same reasoning as the
-  reads above, and it was simply missed when that carve-out was
-  written: `mcp__github__list_notifications` returned **3.7k tokens in
-  a single call** for that one id — the 6th-largest result of one
-  session — because it embeds the complete repository object (every
-  `*_url` template) once per notification, repeated per notification.
-  A field-selected read is the fix:
-
-  ```text
-  gh api /notifications --jq '.[] | {id, url: .subject.url}'
-  ```
-
-  The **dismissal itself stays on the MCP**
-  (`dismiss_notification`) — it is a small write with no payload
-  problem, and only the *read* is the expensive half. Whichever
-  transport is used, the list is a fixed cost to be **read once**:
-  never re-fetch it to re-find the id.
+- **The post-merge notification dismissal** (`review-pr`) — done
+  **inside** `wait_for_checks.py --queue`, which on a `merged` verdict
+  lists the notification threads and marks each one whose `subject.url`
+  ends in the PR's number as done (`DELETE /notifications/threads/{id}`),
+  in its own process, before it exits. That leaves no turn between the
+  merge and the dismissal, and no list payload in any transcript:
+  `mcp__github__list_notifications` once returned **3.7k tokens in a
+  single call** for that one id, because it embeds the complete
+  repository object (every `*_url` template) once per notification.
+  The dismissal is best-effort — a failure is reported in the verdict's
+  `notifications` field, and `housekeeping`'s merged-PR sweep is the
+  fallback.
 
 - **Unsubscribing from a new PR's notifications** (`init-pr`) — right
   after the draft PR is created, so its lifecycle (CI, assignment,
