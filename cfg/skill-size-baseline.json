@@ -1,7 +1,7 @@
 {
   "exceptions": {
     ".claude/skills/review-pr/SKILL.md": {
-      "ceiling": 103117,
+      "ceiling": 99120,
       "issue": "ENG-1981"
     },
     "CLAUDE.md": {
