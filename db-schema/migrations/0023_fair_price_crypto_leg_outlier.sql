@@ -1,6 +1,5 @@
 -- Record which source disagreed on each published composition's crypto
--- (basis) leg, so a corroborator's dispersion is visible on the row rather
--- than only in the estimator's log.
+-- (basis) leg, so a corroborator's dispersion is visible on the row at all.
 --
 -- A market whose basis leg pairs a designated tape with an untrusted
 -- corroborator — tGBP's Coinbase candle beside its Orca pool — composes on the

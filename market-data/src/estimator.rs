@@ -900,6 +900,7 @@ fn fx_candidates(
 /// the value stays the candle's, and the engine flags rather than degrades.
 /// Either way the engine fuses the anchor alone, so the pool never moves the
 /// mid — not even from inside the band.
+///
 /// The cost, accepted when the rule was chosen: a lone candle reads
 /// `SingleTrusted`, not `SingleUnverified`, so a market whose pool is dark no
 /// longer says `Uncorroborated`. The pool is offered only while the candle is

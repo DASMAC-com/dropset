@@ -480,8 +480,9 @@ corroborator (`EstimatorMarket::pool_corroborator`), and the rule is:
   the pair, the outlier is the other member by construction, the leg
   keeps the candle's value, and the engine does not degrade on a dispersion
   whose anchor held. The flag is the leg report's `Dispersed` state and the
-  published row's `crypto_leg_outlier` (0023). Only the designated tape
-  decides `Degraded`: a contradicted anchor or a leg with none still does.
+  published row's `crypto_leg_outlier` (0023). On this leg only the
+  designated tape's dispersion decides `Degraded`: a contradicted anchor or
+  a leg with none still degrades.
 - **The pool never stands alone.** It is offered only while the candle is
   fresh at the tape bound, so a dark candle leaves the leg absent: the
   market degrades on its carried basis (`NoBasisLeg`) and, once that
