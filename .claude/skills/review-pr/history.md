@@ -819,9 +819,7 @@ to move and by how much.
 - **Gate in prose only.** A market-calendar spec designated its
   §6.1/§6.2 acceptance tests as re-runnable gates and none existed as a
   file; the session ran fourteen ad-hoc `psql` calls, wrote every query
-  in the house style, and threw them all away. The same rule is why the
-  Grafana alert rules have `grafana_check.py`: they were a named gate
-  nothing in CI parsed.
+  in the house style, and threw them all away.
 
 ## Step 11: the test suite
 

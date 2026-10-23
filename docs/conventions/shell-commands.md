@@ -379,26 +379,14 @@ don't write them, in ad-hoc shell or in committed skills/scripts:
   URL (`-o /dev/null` once for each), or use a head-only request (`-I`)
   so there is no body to dump in the first place.
 
-  **Better, for more than a couple of endpoints: use the tool.**
-
-  ```sh
-  python3 .claude/tools/probe_endpoints.py --out-dir <dir> \
-    --url ecb=https://example.invalid/rates.csv
-  ```
-
-  It writes every body to the output directory and never to
-  stdout, and prints one row per endpoint. Be honest about the saving —
-  it is **prompt-churn and wall-clock, not tokens**, since writing
-  bodies to a file already keeps them out of context. What it removes is
-  N prompts and N hand-composed format strings, each a fresh chance to
-  omit the timeout or forget the redirect.
-
-  It also **flags redirects explicitly**, which matters here more than
-  it looks: the feeds HTTP client refuses redirects by standing policy,
-  so *reachable* does not imply *reachable by our client*. One session
-  found a central-bank CSV endpoint that resolved only through a 301,
-  and caught it purely because its hand-written format string happened
-  to include the redirect count.
+  Print where a response redirects too
+  (`-w '%{http_code} %{redirect_url}'` — a 3xx with a non-empty URL;
+  `%{num_redirects}` counts only redirects followed under `-L`): the
+  feeds HTTP client refuses redirects by standing policy, so *reachable*
+  does not imply *reachable by our client*. One session found a central-bank
+  CSV endpoint that resolved only through a 301, and caught it purely
+  because its hand-written format string happened to include the
+  redirect count.
 
 **A refused or blocked call leaves its question UNANSWERED.** That is
 the shared failure mode behind every entry above, and it is silent: the

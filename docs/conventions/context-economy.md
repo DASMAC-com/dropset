@@ -1588,21 +1588,19 @@ Two rules keep the cap from turning into deletion:
   deliverable. The copy you **look at** is the thing to shrink. So:
 
   - **Contact-sheet the recurring question.** "Did any page clip?" is one
-    thumbnail-grid read, not N full-page reads. Use
-    `python3 .claude/tools/render_review.py --montage`, which extracts
-    the page images, scales them down, and writes one grid — collapsing
-    a 12-read sweep to 1.
-  - **Read a single page downscaled** (`--page N`), never the native
-    render. Every judgment these sessions actually made — does the page
-    overflow, does the headline wrap, is the footer crowded — is
-    identical at ~1200px and costs roughly a tenth.
+    thumbnail-grid read, not N full-page reads — collapsing a 12-read
+    sweep to 1.
+  - **Read a single page downscaled**, never the native render. Every
+    judgment these sessions actually made — does the page overflow,
+    does the headline wrap, is the footer crowded — is identical at
+    ~1200px and costs roughly a tenth.
   - **Re-read only the page a change can touch.** After editing one
     slide, re-render and re-read *that* slide; a fresh full-deck sweep
     per round is what turned one page into ≈321k.
   - **Measure before you look.** If the question can be stated as a
     number — content bounding box, footer clearance, distinct-image
-    count, whether two exports are byte-identical — the tool's
-    `--measure` mode answers it for a few hundred tokens. In one session
+    count, whether two exports are byte-identical — a measurement
+    answers it for a few hundred tokens. In one session
     the cheap checks did the real work and *disproved* two hypotheses
     eyeballing had suggested; that same session then paid ≈284k
     re-reading a frame to confirm a spacing change the bounding-box
