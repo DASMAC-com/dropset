@@ -679,8 +679,8 @@ since CloudFormation cannot delete an attached managed policy.
 
 **Re-seeding the rates.** When the default model changes, update the
 four `TokenRate*` values in the parameter file to that model's Bedrock
-rates (Cost Explorer's cost ÷ usage quantity per usage type gives them
-exactly) and redeploy.
+rates, as `python3 .claude/tools/fleet_cost.py rates <day>` prints them
+for a day that billed the model, and redeploy.
 
 **Running cost** is at most $1.60 a month: CloudWatch bills a
 standard alarm $0.10 per month for each metric its expression lists,
