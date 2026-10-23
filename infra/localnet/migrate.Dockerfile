@@ -42,15 +42,15 @@ RUN cargo chef prepare --recipe-path recipe.json
 # dependencies exactly as it did before the mounts, while a local daemon
 # rebuilds only the workspace crates that changed. The target id is
 # per image and per checkout (the CHECKOUT build arg, which compose fills
-# from DS_CHECKOUT): cargo judges a workspace crate fresh by mtime, so a
-# target shared across worktrees could silently ship a sibling's build. A
-# bare `docker build` without the arg falls back to one `shared` target.
-# `sharing=locked` serializes
-# concurrent builds of one image over the registry and git caches, whose
-# cargo lock lives outside the mount; the target needs no such flag, since
-# cargo locks its own build directory. A mount is not part of any layer, so
-# the binary is copied out to /app/bin for the runtime stage. `docker
-# builder prune` reclaims the caches. The paths are ENV rather than ARG
+# from DS_CHECKOUT, else the caller's directory): cargo judges a workspace
+# crate fresh by mtime, so a target shared across worktrees could silently
+# ship a sibling's build. A bare `docker build` without the arg falls back
+# to one `shared` target. Every cache is `sharing=locked`, serializing
+# concurrent builds of one image: cargo's registry lock lives outside the
+# registry mount, and the bin copy after `cargo build` runs outside cargo's
+# own lock on the target. A mount is not part of any layer, so the binary
+# is copied out to /app/bin for the runtime stage. `docker builder prune`
+# reclaims the caches. The paths and the target id are ENV rather than ARG
 # because an ARG ends with its stage and the builder is a new one; spelled
 # inline, a mount overflows 80 columns.
 FROM chef AS cook
@@ -62,11 +62,11 @@ RUN --mount=type=cache,id=migrate-reg,target=$REG,sharing=locked \
 
 FROM cook AS builder
 ARG CHECKOUT=shared
-ENV TGT_ID=migrate-tgt-$CHECKOUT
+ENV ID=migrate-tgt-$CHECKOUT
 COPY . .
 RUN --mount=type=cache,id=migrate-reg,target=$REG,sharing=locked \
     --mount=type=cache,id=migrate-git,target=$GIT,sharing=locked \
-    --mount=type=cache,id=$TGT_ID,target=$TGT,from=cook,source=$TGT \
+    --mount=type=cache,id=$ID,target=$TGT,from=cook,source=$TGT,sharing=locked \
     cargo build --release -p dropset-db-schema --bin dropset-migrate \
     && mkdir -p /app/bin \
     && cp target/release/dropset-migrate /app/bin/

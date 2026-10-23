@@ -67,7 +67,7 @@ services:
     # store itself: it has no `op`, and it is handed a resolved value.
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -100,7 +100,7 @@ services:
     # made the series look stale (docs/data-feeds.md §10).
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -129,7 +129,7 @@ services:
     # comes up with `make collectors-up`.
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -171,7 +171,7 @@ services:
     # either, for an unrelated reason — see its own service comment.)
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -231,7 +231,7 @@ services:
     # alarm.
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -300,7 +300,7 @@ services:
     # currencies returns 13 — so `erapi` is the only keyless source for it.
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -438,7 +438,7 @@ services:
     # Decode + persist + aggregate. Polls the host-run validator's events.
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/indexer.Dockerfile'
     command:
@@ -458,7 +458,7 @@ services:
     # The /v1 REST surface, on loopback http://localhost:8080.
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/indexer.Dockerfile'
     command:
@@ -500,7 +500,7 @@ services:
     # polls rather than leaving it to look like an outage.
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -537,7 +537,7 @@ services:
     # line and reporting begins on its own once `migrate` has run.
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/bots.Dockerfile'
     command:
@@ -574,7 +574,7 @@ services:
     # start against a schema that does not exist yet.
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/migrate.Dockerfile'
     command:
@@ -635,7 +635,7 @@ services:
     # is not obviously right.
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -670,7 +670,7 @@ services:
     # alone.
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -758,7 +758,7 @@ services:
     #     --profile pyth up pyth
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -792,7 +792,7 @@ services:
     # are operator-driven; this only exists to make localnet books look alive.
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/bots.Dockerfile'
     command:
@@ -823,7 +823,7 @@ services:
     # stay inside the same daily budget, and logs the effective value.
     build:
       args:
-        CHECKOUT: '${DS_CHECKOUT:-shared}'
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
