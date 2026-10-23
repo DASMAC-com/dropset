@@ -3,6 +3,7 @@
 # cspell:word localoptions
 # cspell:word localtraps
 # cspell:word ncpu
+# cspell:word uuidgen
 #
 # Dropset session helpers — source this from ~/.zshrc:
 #
@@ -680,6 +681,7 @@ _ds_session() {
     ANTHROPIC_MODEL="$model" claude --resume "$sid" --permission-mode auto
   else
     [[ -n "$worktree" ]] && _ds_worktree_ensure "$worktree"
+    _ds_session_mark "$sid"
     ANTHROPIC_MODEL="$model" claude --session-id "$sid" -n "$name" \
       --permission-mode auto "${worktree_flag[@]}" "${prompt_arg[@]}"
   fi
@@ -728,7 +730,9 @@ _ds_topic_sid() {
 #
 # THE RULE IS CAPABILITY, NOT ATTENDANCE. A session runs on Bedrock unless it
 # needs something Bedrock lacks — web search, web fetch, deep research — or it
-# is a seat session by role (`plan`, `architect`).
+# is a seat session by role (`architect`). `plan` left the seat by default for
+# pricing: a base-repo planning session on the subscription has no dollar
+# figure, and `plan anthropic` remains the way back.
 # Sub-agents are NOT a differentiator: Opus-spawning-Opus sub-agents are
 # verified working on Bedrock.
 #
@@ -740,10 +744,12 @@ _ds_topic_sid() {
 # ---------------------------------------------------------------------------
 # Model tiers: which model a verb launches, named by ROLE, never by model.
 #
-#   ADVISOR      plan, architect                 default substrate: anthropic
+#   ADVISOR      architect                       default substrate: anthropic
+#                plan                            default substrate: bedrock
 #                explore                         default substrate: bedrock
 #   EXECUTOR     task                            default substrate: bedrock
 #                explore's sub-agents            (Bedrock launches only)
+#                the `opus` alias                (Bedrock launches only)
 #   HELPER       chore                           default substrate: bedrock
 #                explore's `sonnet` alias        (Bedrock launches only)
 #   BACKGROUND   Claude Code's small-model slot  follows the session's substrate
@@ -792,6 +798,11 @@ _ds_topic_sid() {
 # Code's sub-agent docs); the helper id goes to `ANTHROPIC_DEFAULT_SONNET_MODEL`,
 # so a skill's `sonnet` alias resolves to the runtime config's pin rather than
 # Claude Code's built-in table. The `[1m]` suffix rides along unchanged.
+#
+# Every Bedrock launch also points `ANTHROPIC_DEFAULT_OPUS_MODEL` at the
+# executor id, so a spawn that names `model: opus` (the `plan` skill's lever
+# fold) runs on the executor model rather than inheriting the advisor's. Only
+# the alias moves: the session's own model is the explicit `ANTHROPIC_MODEL`.
 #
 # The auto-mode permission classifier is deliberately absent: Claude Code picks
 # its model itself and exposes no configuration for it, so it has no tier.
@@ -998,13 +1009,10 @@ _ds_substrate_enter() {
 
 # Record the substrate a session launched on, keyed by worktree tag.
 #
-# The key is a parameter rather than a hard-coded tag because a base-repo
-# session would key on its computed session id — but **no verb does that
-# today**, and every call site (`task`, `architect`, `explore`, `chore`) passes a
-# worktree tag. Said plainly
-# because the earlier wording here described session-id keying as if it
-# shipped, which it does not: every base-repo verb is seat-only, so none of
-# them has a substrate worth recording.
+# Every call site (`task`, `architect`, `explore`, `chore`) passes a worktree
+# tag. The per-SESSION record beside it is `_ds_session_mark`'s: one tag can
+# hold several sessions on different substrates, and a base-repo session
+# (`plan`) has no tag at all.
 #
 # WHY A MARKER AT ALL: a resume must land on the substrate its session started
 # on, and the slip is silent in BOTH directions. A Bedrock session resumed onto
@@ -1030,6 +1038,37 @@ _ds_substrate_write() {
     rm -f "$_DS_SUBSTRATE_DIR/$key.tier" 2>/dev/null
   fi
   return 0
+}
+
+# Record the substrate a NEW session launched on, keyed by its session id:
+# `sessions/<id>` holding `bedrock` or `anthropic`. Read by `plan`'s reopen and
+# by the pricing tools, which before it could not tell a Bedrock base-repo
+# session from a seat one, and reclassified a worktree's earlier sessions
+# whenever a relaunch on the other substrate overwrote its tag marker.
+#
+# Decided by `CLAUDE_CODE_USE_BEDROCK`, so it runs after the caller has entered
+# its substrate. CREATE-ONLY: an existing record is never rewritten, so a
+# resume (which never calls this) and a repeated create alike leave the
+# substrate the session started on. Best-effort, like `_ds_substrate_write`.
+_ds_session_mark() {
+  local dir="$_DS_SUBSTRATE_DIR/sessions" substrate=anthropic
+  [[ -n "$1" && ! -e "$dir/$1" ]] || return 0
+  [[ -n "$CLAUDE_CODE_USE_BEDROCK" ]] && substrate=bedrock
+  mkdir -p "$dir" 2>/dev/null || return 0
+  print -r -- "$substrate" >| "$dir/$1" 2>/dev/null
+  return 0
+}
+
+# Internal: a fresh random session id, lowercased the way Claude Code writes
+# one, for a launch with no computed id to key its `_ds_session_mark` on.
+_ds_new_sid() {
+  local raw
+  if (( $+commands[uuidgen] )); then
+    raw="$(uuidgen)"
+  else
+    raw="$(</proc/sys/kernel/random/uuid)"
+  fi
+  print -r -- "${raw:l}"
 }
 
 # Read back a recorded substrate. Prints `bedrock` or `anthropic`.
@@ -1123,6 +1162,13 @@ _ds_bedrock_env() {
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="$DS_MODEL_BACKGROUND"
   else
     unset ANTHROPIC_DEFAULT_HAIKU_MODEL
+  fi
+  # The `opus` alias goes to the executor (see "Model tiers"). Unset, the
+  # alias falls back to Claude Code's own table, as the haiku slot does.
+  if [[ -n "$DS_MODEL_EXECUTOR" ]]; then
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="$DS_MODEL_EXECUTOR"
+  else
+    unset ANTHROPIC_DEFAULT_OPUS_MODEL
   fi
   export ENABLE_PROMPT_CACHING_1H=1
 
@@ -1220,7 +1266,7 @@ _ds_model_probe() {
 # TWO CLASSES OF VARIABLE, and conflating them is what made earlier versions of
 # this wrong in both directions.
 #
-# The four Claude ones are **owned**: nothing but this launcher sets them, so
+# The five Claude ones are **owned**: nothing but this launcher sets them, so
 # clearing them outright is always right.
 #
 # `AWS_REGION` and `AWS_BEARER_TOKEN_BEDROCK` are **shared** with the operator's
@@ -1245,7 +1291,7 @@ _ds_substrate_unset() {
   # Owned outright by this launcher: nothing else in the operator's shell sets
   # them, so they are cleared unconditionally.
   unset CLAUDE_CODE_USE_BEDROCK ANTHROPIC_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
-  unset ENABLE_PROMPT_CACHING_1H
+  unset ANTHROPIC_DEFAULT_OPUS_MODEL ENABLE_PROMPT_CACHING_1H
 
   # `AWS_REGION` and the bearer token are SHARED with the operator, so this
   # UNDOES a launch rather than clearing them. Absent a recorded launch they
@@ -1391,10 +1437,14 @@ _ds_task_start() {
   # session, so an after-the-fact write would land whenever the operator
   # happened to quit — and never at all if the terminal were closed instead.
   _ds_substrate_write "$tag" "$substrate"
+  # A task always starts a NEW session, so it gets a fresh id to key the
+  # per-session record on; the tag marker above is what its resume reads.
+  local sid="$(_ds_new_sid)"
+  _ds_session_mark "$sid"
 
   local dir="$(_ds_launch_dir "$tag")"
   _ds_worktree_ensure "$dir"
-  ANTHROPIC_MODEL="$model" claude -w "$dir" -n "$tag" \
+  ANTHROPIC_MODEL="$model" claude -w "$dir" -n "$tag" --session-id "$sid" \
     --permission-mode auto \
     /init-pr
 }
@@ -1568,7 +1618,7 @@ _ds_task_resume() {
 # fans out sub-agents, and one (1813, 10-22) ran ten at 1.0M–2.3M input each on
 # the subscription and spent the session window and most of the weekly one. So
 # the substrate is Bedrock with no word, deliberately ignoring
-# `DS_MODEL_ADVISOR_SUBSTRATE` (which `plan` and `architect` read), and
+# `DS_MODEL_ADVISOR_SUBSTRATE` (which only `architect` reads), and
 # `explore anthropic` is the web-research escape, in `task`'s position. Its
 # sub-agents default to the executor tier (below).
 #
@@ -1840,15 +1890,34 @@ chore() {
   _ds_session "$(_ds_topic_sid chore "$tag")" "$tag" "/chore $tag" "$model" ''
 }
 
+# Internal: the current planning cycle recorded in counter file $1, or 0.
+# `10#` so a hand-edited `01` reads as 1, matching resolve_session's int().
+_ds_plan_cycle() {
+  local cycle=0
+  [[ -r "$1" ]] && cycle="$(<"$1")"
+  [[ "$cycle" == <-> ]] && print -r -- $(( 10#$cycle )) || print -r -- 0
+}
+
 # Start OR resume today's PLANNING session. The name is derived from the date.
 #
-#   plan             the advisor tier on its configured substrate (anthropic)
-#   plan bedrock     the advisor tier on Bedrock — the credit-pinch override
-#   plan anthropic   the advisor tier on the subscription, whatever the config
+#   plan             the advisor tier on Bedrock
+#   plan anthropic   the advisor tier on the subscription — the override
+#   plan bedrock     the default, spelled out; a no-op
+#
+# BEDROCK BY DEFAULT, whatever `DS_MODEL_ADVISOR_SUBSTRATE` says (that governs
+# `architect` alone), so a planning session is priced like a worker rather
+# than vanishing into the subscription's opaque allowance. Its lever fold's
+# `model: opus` spawn lands on the executor model there (`_ds_bedrock_env`).
+#
+# A REOPEN KEEPS THE SUBSTRATE ITS SESSION RECORDED (`_ds_session_mark`), read
+# from today's current cycle before anything is entered. A word that disagrees
+# warns and is ignored, as `architect <n>` keeps a thread on its own provider;
+# a session with no record (one opened before the record existed) reads as
+# anthropic, as an unmarked reopen does everywhere.
 #
 # Retention: on Bedrock a Fable-class model falls under the account's standing
 # AWS human-review opt-in (a model allowing mode `none` does not); the operator
-# accepts that in a pinch.
+# accepts that as standing.
 #
 # Idempotent by design — a planning session is opened and reopened many times
 # in a day, and having to remember which state it is in is the friction this
@@ -1874,17 +1943,15 @@ chore() {
 #     AFTER the seat guard on purpose: the guard clears an `AWS_REGION`
 #     inherited from a previous `task` in the same tab, and the AWS CLI reads
 #     that variable, so probing first would probe under the Bedrock launcher's
-#     environment rather than the operator's own. On `plan bedrock` the probe
-#     runs under the launcher's region, which is the region the session uses.
+#     environment rather than the operator's own. On Bedrock the probe runs
+#     under the launcher's region, which is the region the session uses.
 #     It is the ONLY gated verb, now `housekeeping` is retired. `architect` is
 #     deliberately NOT gated — it argues design rather than reading cost data,
 #     and an interactive login is a poor thing to stand between the operator
 #     and a design thought. Add it only if an architect session is actually
 #     found wanting one.
-#   * The 5-hour window. On its default anthropic substrate a planning session
-#     is normally the day's first subscription session, so it opens the
-#     window — the job the retired `housekeeping` verb was kept on the seat
-#     for.
+#   * The 5-hour window. Only `plan anthropic` opens it now; on its Bedrock
+#     default a planning session spends no subscription allowance at all.
 #
 # `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not `plan-05`.
 #
@@ -1912,31 +1979,41 @@ chore() {
 # cleared by the `always` block on every way out. `DS_PLAN_TAB_RIGHTMOST=0` in
 # the runtime config skips it, and the planning tab then sorts like any other.
 plan() {
-  local model substrate day counter cycle name rc relaunch=''
+  local model substrate day counter cycle name rc relaunch='' word="$1" sid
   local marker="$_DS_SUBSTRATE_DIR/plan-cycle-pending"
   if [[ -n "$2" || ( -n "$1" && "$1" != (anthropic|bedrock) ) ]]; then
     print -u2 'Usage: plan [anthropic|bedrock]   (the name is derived from the date)'
     return 1
   fi
-  { read -r model; read -r substrate; } <<< "$(_ds_tier advisor "$1")"
+  day="$(date +%Y%m%d)" name="plan-$(date +%-d)"
+  counter="$_DS_SUBSTRATE_DIR/plan-cycle-$day"
+  sid="$(_ds_daily_sid plan "$(_ds_plan_cycle "$counter")" "$day")"
+  if _ds_session_exists "$sid"; then
+    local recorded="$(_ds_substrate_read "sessions/$sid")"
+    if [[ ! -f "$_DS_SUBSTRATE_DIR/sessions/$sid" ]]; then
+      print -u2 "plan: $name has no substrate record — reopening on anthropic," \
+        'where an unmarked reopen reads.'
+    elif [[ -n "$word" && "$word" != "$recorded" ]]; then
+      print -u2 "plan: $name is recorded on $recorded — keeping it; a session" \
+        'keeps its substrate.'
+    fi
+    word="$recorded"
+  fi
+  { read -r model; read -r substrate; } <<< \
+    "$(_ds_tier advisor "${word:-bedrock}")"
   [[ -n "$substrate" ]] || return 1
   _ds_substrate_enter "$substrate" 'plan' || return 1
-  # A refused login must not leave a `plan bedrock`'s exports — the bearer token
+  # A refused login must not leave a Bedrock launch's exports — the bearer token
   # included — behind in the tab with no session to show for them.
   if ! _ds_aws_login 'plan'; then
     _ds_substrate_unset
     return 1
   fi
   _ds_upkeep
-  day="$(date +%Y%m%d)" name="plan-$(date +%-d)"
-  counter="$_DS_SUBSTRATE_DIR/plan-cycle-$day"
   [[ "${DS_PLAN_TAB_RIGHTMOST:-1}" == 1 ]] && _ds_iterm_role plan
   {
   while true; do
-    cycle=0
-    [[ -r "$counter" ]] && cycle="$(<"$counter")"
-    # `10#` so a hand-edited `01` reads as 1, matching resolve_session's int().
-    [[ "$cycle" == <-> ]] && cycle=$(( 10#$cycle )) || cycle=0
+    cycle="$(_ds_plan_cycle "$counter")"
     if [[ -n "$relaunch" ]]; then
       # Fail CLOSED: 0 is "held", 1 is "free", anything else is unanswered.
       python3 "$_DS_REPO/.claude/tools/plan_cycle.py" live-name "$name"

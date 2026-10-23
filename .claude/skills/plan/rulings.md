@@ -28,10 +28,11 @@ the document's state sections.
 ## The numbered rulings
 
 1. **Tier names are advisor / executor / helper / background.**
-   Advisor: `plan` and `architect` on the Anthropic subscription,
+   Advisor: `architect` and `explore anthropic` on the Anthropic
+   subscription, `plan` on Bedrock (its lever fold on the executor),
    `explore` on Bedrock with executor-tier sub-agents. Executor:
    task workers on Bedrock (`housekeeping`, once the seat exception
-   here, is retired — `plan` opens the 5-hour window now). Helper: `chore`
+   here, is retired). Helper: `chore`
    sessions, Sonnet-class, Bedrock by default, pinned with the 1M
    suffix in the runtime config.
    Model ids live only in the operator's runtime config; unset

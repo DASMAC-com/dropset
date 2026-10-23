@@ -46,6 +46,7 @@ _NEEDS_ZSH = "the session helpers are zsh; no zsh on this machine"
 #: operator running Bedrock sessions has exported.
 _SUITE_OWNED_ENV = (
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
     "ANTHROPIC_MODEL",
     "AWS_BEARER_TOKEN_BEDROCK",
@@ -160,7 +161,7 @@ class TierResolution(SubstrateHarness):
         self.assertEqual(lines, ["next-model[1m]", "anthropic"])
 
     def test_the_override_beats_the_configured_substrate(self):
-        # `plan bedrock` in a credit pinch: one word, no config edit.
+        # `architect <n> bedrock`: one word, no config edit.
         result, lines = self._tier(
             "advisor", "bedrock", env={"DS_MODEL_ADVISOR_SUBSTRATE": "anthropic"}
         )
@@ -252,25 +253,100 @@ class VerbLaunch(SubstrateHarness):
         )
         return result, result.stdout
 
-    def test_plan_launches_the_advisor_tier_on_anthropic(self):
-        result, out = self._launch("plan")
-        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+    def test_plan_launches_the_advisor_tier_on_bedrock(self):
+        # Whatever the advisor config says: that governs `architect` alone.
+        result, out = self._launch(
+            "plan", env={**self._TOKEN, "DS_MODEL_ADVISOR_SUBSTRATE": "anthropic"}
+        )
+        self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
         # No `--model` flag: the environment is the one delivery mechanism.
         self.assertNotIn("--model", out)
         self.assertIn("AFTER=unset", out)
-
-    def test_plan_bedrock_is_the_pinch_override(self):
         result, out = self._launch("plan bedrock", env=self._TOKEN)
         self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
+
+    def test_plan_anthropic_is_the_seat_override(self):
+        result, out = self._launch("plan anthropic", env=self._TOKEN)
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
 
     def test_plan_rejects_any_other_word(self):
         result, out = self._launch("plan local")
         self.assertIn("RC=1", out)
         self.assertNotIn("MODEL=", out)
 
+    def _plan_transcript(self):
+        """Write a transcript for today's first `plan` id, so the launch reopens."""
+        return (
+            "sid=$(_ds_daily_sid plan 0 $(date +%Y%m%d)); "
+            'mkdir -p "$CLAUDE_CONFIG_DIR/projects/some-slug"; '
+            ': >| "$CLAUDE_CONFIG_DIR/projects/some-slug/$sid.jsonl"; '
+        )
+
+    def test_a_plan_reopen_lands_on_the_mornings_substrate(self):
+        # The morning's `plan anthropic` recorded the seat; a bare reopen must
+        # not drift onto the Bedrock default mid-day.
+        self._launch("plan anthropic")
+        result, out = self._launch(self._plan_transcript() + "plan", env=self._TOKEN)
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+        self.assertIn("--resume", out)
+
+    def test_a_plan_reopen_warns_and_keeps_a_mismatched_word(self):
+        self._launch("plan", env=self._TOKEN)
+        result, out = self._launch(
+            self._plan_transcript() + "plan anthropic", env=self._TOKEN
+        )
+        self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
+        self.assertIn("recorded on bedrock", result.stderr)
+
+    def test_an_unrecorded_plan_reopen_reads_as_anthropic(self):
+        # A session opened before the record existed was a seat session.
+        result, out = self._launch(self._plan_transcript() + "plan", env=self._TOKEN)
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+        self.assertIn("no substrate record", result.stderr)
+
+    _SESSIONS = 'print -r -- "SESSIONS=$(cat $_DS_SUBSTRATE_DIR/sessions/*)"'
+
+    def test_every_launch_path_records_its_session_once(self):
+        # `_ds_session` (plan, architect, explore, chore) and `_ds_task_start`.
+        for verb, word in (
+            ("plan", "bedrock"),
+            ("plan anthropic", "anthropic"),
+            ("architect 12", "anthropic"),
+            ("explore 12", "bedrock"),
+            ("chore 12", "bedrock"),
+            ("task 7", "bedrock"),
+            ("task anthropic 7", "anthropic"),
+        ):
+            with self.subTest(verb=verb):
+                result, out = self._launch(
+                    f"rm -rf $_DS_SUBSTRATE_DIR; {verb}; {self._SESSIONS}",
+                    env=self._TOKEN,
+                )
+                self.assertIn(f"SESSIONS={word}\n", out, result.stderr)
+
+    def test_a_task_session_id_is_passed_and_recorded(self):
+        result, out = self._launch(
+            "task 7; ls $_DS_SUBSTRATE_DIR/sessions", env=self._TOKEN
+        )
+        sid = out.splitlines()[-3]
+        self.assertIn(f"--session-id {sid} ", out, result.stderr)
+
+    def test_a_resume_never_rewrites_the_session_record(self):
+        self._launch("plan", env=self._TOKEN)
+        result, out = self._launch(
+            # A hand-edited record proves the resume did not write.
+            self._plan_transcript()
+            + 'print -r -- bedrock >| "$_DS_SUBSTRATE_DIR/sessions/$sid"; '
+            + "_ds_session_mark $sid; CLAUDE_CODE_USE_BEDROCK= _ds_session_mark $sid; "
+            + f"plan; {self._SESSIONS}",
+            env=self._TOKEN,
+        )
+        self.assertIn("--resume", out, result.stderr)
+        self.assertIn("SESSIONS=bedrock\n", out)
+
     def test_a_plan_after_a_task_in_the_same_tab_is_not_on_bedrock(self):
         # The inherited Bedrock pin must lose to the verb's own tier.
-        result, out = self._launch("task 7; plan", env=self._TOKEN)
+        result, out = self._launch("task 7; plan anthropic", env=self._TOKEN)
         lines = [ln for ln in out.splitlines() if ln.startswith("MODEL=")]
         self.assertEqual(len(lines), 2, out)
         self.assertTrue(lines[0].startswith("MODEL=work-model[1m] USE=1"))
@@ -1211,6 +1287,25 @@ class BedrockEnvGate(SubstrateHarness):
         self.assertIn("rc=0", result.stdout)
         self.assertIn("FAST=unset", result.stdout)
         self.assertIn("DS_MODEL_BACKGROUND is unset", result.stderr)
+
+    def test_the_opus_alias_is_the_executor_and_a_seat_verb_clears_it(self):
+        # The `plan` skill's lever fold names `model: opus`; on Bedrock that
+        # must be the executor, not the advisor the session itself runs.
+        probe = 'print -r -- "OPUS=${ANTHROPIC_DEFAULT_OPUS_MODEL-unset}"'
+        result = self._zsh(
+            f"_ds_bedrock_env; {probe}; _ds_seat_guard plan; {probe}",
+            env={**_CONFIG, "AWS_BEARER_TOKEN_BEDROCK": "placeholder-key"},
+        )
+        self.assertIn("OPUS=work-model[1m]\nOPUS=unset\n", result.stdout)
+        # Unset, no stale pin from an earlier launch survives.
+        result = self._zsh(
+            f"_ds_bedrock_env; {probe}",
+            env={
+                "AWS_BEARER_TOKEN_BEDROCK": "placeholder-key",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "stale-id",
+            },
+        )
+        self.assertIn("OPUS=unset", result.stdout)
 
     def test_the_region_is_overridable(self):
         result = self._zsh(
