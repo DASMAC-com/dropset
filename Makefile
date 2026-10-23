@@ -658,6 +658,16 @@ demo: check-docker
 	@set -m; $(DEMO_FRONTEND) & group=$$!; set +m; \
 	trap '$(DEMO_CLEANUP)' INT TERM EXIT; $(MAKE) --no-print-directory tui
 
+# The pre-demo smoke check, run from a second terminal against a `make demo`
+# stack already up: one pass / fail / expected line per surface — collectors,
+# estimator, validator, each roster market against its posture, a tGBP-USDC
+# quote, the frontend and Grafana — exiting non-zero on any fail. Reads only.
+# Keyless mode and the FX weekend are named expected states, not fails. What
+# each line means: docs/demo.md. ARGS passes `--rpc-url` / `--database-url`.
+.PHONY: demo-check
+demo-check:
+	cargo run -q -p dropset-tui --bin dropset-demo-check -- $(ARGS)
+
 # === Localnet Docker stacks ===
 
 # Localnet Docker stack: the local Solana Explorer (infra/localnet). The

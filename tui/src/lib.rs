@@ -15,6 +15,7 @@ pub mod bot;
 pub mod ceremony;
 pub mod chain;
 pub mod cluster;
+pub mod demo_check;
 pub mod deploy;
 #[cfg(test)]
 mod e2e;
