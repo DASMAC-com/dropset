@@ -7,7 +7,8 @@
 //! certificates, so a chain through any of them must not verify. Every Dropset
 //! binary bundles its roots through rustls — none reads the OS bundle — which
 //! makes the lockfile's `rustls-webpki` (its distrusted-SPKI list, checked on
-//! leaves and trust anchors alike) and `webpki-roots` the whole fix. This test
+//! every certificate in the path and on the trust anchor) and `webpki-roots`
+//! the whole fix. This test
 //! verifies that from inside the runtime: it drives the crate's own
 //! [`HttpClient`] (rustls, default roots) at the advisory's two probe hosts,
 //! one chaining to an emSign root and one to the Sectigo cross-sign under AAA
