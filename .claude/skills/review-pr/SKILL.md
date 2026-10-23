@@ -1289,9 +1289,11 @@ migrations or generation inputs, and whether it spans crates.
    now, sign here instead** — the tool pushes with its own pinned
    lease, so the CI run that follows is on signed commits and step 20
    has nothing to do. On `LOCKED` (exit 1) it moved nothing: push as
-   above and leave the signing to step 20. Exit 2 is a refusal (a merge
-   commit, a remote commit this branch never held) — report it and
-   hold, as step 20 does:
+   above and leave the signing to step 20. On exit 2, read the refusal:
+   a merge commit or a dirty tree still pushes as above, unsigned —
+   never hold work back before the CI wait; only **"never held"** (the
+   remote carries a commit this branch lacks) holds, since a forced
+   push of any kind would drop it — report it and reconcile:
 
    ```sh
    python3 .claude/tools/resign_branch.py resign --base <base>

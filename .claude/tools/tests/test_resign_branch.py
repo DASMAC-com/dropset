@@ -189,9 +189,25 @@ class RealRepo(unittest.TestCase):
         # tracking ref onto the unseen commit; that must not read as seen.
         self.git("fetch", "-q", "origin")
         head = self.git("rev-parse", "HEAD")
+        tracked = self.git("rev-parse", "refs/remotes/origin/eng-1")
         with self.assertRaisesRegex(rb.Refused, "never held"):
             rb.resign("main", push=True)
         self.assertEqual(self.git("rev-parse", "HEAD"), head)
+        self.assertEqual(self.git("rev-parse", "refs/remotes/origin/eng-1"), tracked)
+
+    def test_a_rerun_after_a_failed_push_still_pushes(self):
+        self.commit("a")
+        self.git("push", "-q", "-u", "origin", "eng-1")
+        # Signed locally, never pushed: the state a failed push leaves.
+        self.assertEqual(rb.resign("main", push=False)[0], 0)
+        code, line = rb.resign("main", push=True)
+        self.assertEqual(code, 0, line)
+        self.assertIn("nothing to sign | pushed", line)
+        self.assertEqual(
+            self.git("ls-remote", "origin", "refs/heads/eng-1").split()[0],
+            self.git("rev-parse", "HEAD"),
+        )
+        self.assertIn("already matches", rb.resign("main", push=True)[1])
 
     def test_a_merge_commit_is_refused_before_moving(self):
         self.commit("a")

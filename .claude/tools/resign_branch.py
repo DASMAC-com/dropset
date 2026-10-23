@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word autosquash
 """Count a branch's unsigned commits, and sign them all in one pass at the
 merge gate.
 
@@ -22,25 +23,29 @@ Usage::
 not verification, which would demand an ``allowedSignersFile`` and says
 nothing about whether the merge gate's check will see one.
 
-``resign`` does nothing when every commit is signed. Otherwise it runs
-`signing_probe.py`'s probe first and exits 1 with its ``LOCKED`` line, moving
-no ref, so the ask to the operator is the single "unlock and I sign and
-enqueue". Then it replays the branch onto **its own merge base**
-(``git rebase --force-rebase --gpg-sign``) — a re-sign, never a rebase onto a
-newer main — and pushes with a lease pinned to the remote sha read just
-before. A linear branch replayed onto its own merge base cannot conflict and
-keeps its tree; a branch carrying a **merge commit** would be linearized, so it
-is refused up front, and a tree that differs after the replay anyway is reset
-to the old head. The push is refused before anything moves when the remote
-tip is a commit this branch never held — neither an ancestor of ``HEAD`` nor a
-tip in the branch's own reflog — since forcing would drop another session's
-work.
+``resign`` signs any unsigned commits, then makes the remote match. With
+unsigned commits it runs `signing_probe.py`'s probe first and exits 1 with its
+``LOCKED`` line, moving no ref, so the ask to the operator is the single
+"unlock and I sign and enqueue". Then it replays the branch onto **its own
+merge base** (``git rebase --force-rebase --no-autosquash --gpg-sign``) — a
+re-sign, never a rebase onto a newer main. A linear branch replayed onto its
+own merge base cannot conflict and keeps its tree; a branch carrying a **merge
+commit** would be linearized, so it is refused up front, and a tree that
+differs after the replay anyway is reset to the old head.
+
+Unless ``--no-push``, it then pushes whenever ``origin/<branch>`` differs from
+``HEAD`` — **even with nothing to sign**, so a re-run after a failed push still
+lands the signed branch — with a lease pinned to the remote sha read at the
+start. It refuses before anything moves (and fetches nothing, so the
+remote-tracking ref every worktree shares is left alone) when the remote tip
+is a commit this branch never held — neither an ancestor of ``HEAD`` nor a tip
+in the branch's own reflog — since forcing would drop another session's work.
 
 Exit 2 is anything that is not the signer: a dirty tree, a merge commit, no
 merge base, a failed rebase (aborted), a re-sign that changed the tree or left
-a commit unsigned (reset), an unseen remote tip. Only a push the lease rejects
-at the last moment exits 2 with the branch already re-signed locally — the
-tree unchanged, so re-running is safe. Every line starts ``resign-branch |``.
+a commit unsigned (reset), an unseen remote tip, a failed push. After a failed
+push the branch is already re-signed locally with its tree unchanged, and a
+re-run pushes it. Every line starts ``resign-branch |``.
 
 Standard library only. A Python skill-tool under ``.claude/tools/`` —
 deliberately **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill
@@ -129,34 +134,25 @@ def _was_branch_tip(branch: str, sha: str, head: str) -> bool:
     return sha in reflog.stdout.split()
 
 
-def resign(base: str, push: bool) -> tuple[int, str]:
-    mb = merge_base(base)
-    unsigned, total = unsigned_commits(mb)
-    if not unsigned:
-        return 0, f"{PREFIX} nothing to sign | {total} commit(s), all signed"
+def _sign_in_place(mb: str, old_head: str, unsigned: list[str]) -> tuple[int, str]:
+    """Re-sign ``mb..HEAD``; ``(1, line)`` on a locked signer, else ``(0, "")``."""
     if _git("status", "--porcelain", "--untracked-files=no").stdout.strip():
         raise Refused("uncommitted changes; commit them (unsigned is fine) first")
     if _git("rev-list", "--merges", f"{mb}..HEAD").stdout.strip():
         # A plain rebase would linearize the merge — a real replay that can
         # conflict or change the tree, not a re-sign.
         raise Refused("the branch carries a merge commit; rebase it linear first")
-    branch = _git("symbolic-ref", "--short", "HEAD").stdout.strip()
-    old_head = _git("rev-parse", "HEAD").stdout.strip()
-    old_tree = _git("rev-parse", "HEAD^{tree}").stdout.strip()
-    remote = _remote_sha(branch) if push else ""
-    if remote:
-        _git("fetch", "-q", "origin", branch)
-        if not _was_branch_tip(branch, remote, old_head):
-            raise Refused(
-                f"origin/{branch} ({remote[:9]}) holds commits this branch never "
-                "held; reconcile by hand, never force here"
-            )
     code, line = probe()
     if code == 1:
         return 1, f"{PREFIX} {len(unsigned)} unsigned, nothing moved | {line}"
     if code != 0:
         raise Refused(line)
-    done = _git("rebase", "--force-rebase", "--gpg-sign", mb, check=False)
+    old_tree = _git("rev-parse", "HEAD^{tree}").stdout.strip()
+    # `--no-autosquash`: a configured `rebase.autoSquash` would otherwise fold
+    # `fixup!` commits — history changed under an unchanged tree.
+    done = _git(
+        "rebase", "--force-rebase", "--no-autosquash", "--gpg-sign", mb, check=False
+    )
     if done.returncode != 0:
         _git("rebase", "--abort", check=False)
         raise Refused(f"rebase failed and was aborted, HEAD is {old_head[:9]} again")
@@ -168,13 +164,41 @@ def resign(base: str, push: bool) -> tuple[int, str]:
             "the tree changed" if changed else f"{len(left)} commit(s) stayed unsigned"
         )
         raise Refused(f"{why} in the re-sign; HEAD reset to {old_head[:9]}")
+    return 0, ""
+
+
+def resign(base: str, push: bool) -> tuple[int, str]:
+    mb = merge_base(base)
+    unsigned, total = unsigned_commits(mb)
+    if not unsigned and not push:
+        return 0, f"{PREFIX} nothing to sign | {total} commit(s), all signed"
+    branch = _git("symbolic-ref", "--short", "HEAD").stdout.strip()
+    old_head = _git("rev-parse", "HEAD").stdout.strip()
+    remote = _remote_sha(branch) if push else ""
+    # No fetch: it would move the tracking ref every worktree shares onto the
+    # very commit being refused. A tip this branch held is already local.
+    if remote and remote != old_head and not _was_branch_tip(branch, remote, old_head):
+        raise Refused(
+            f"origin/{branch} ({remote[:9]}) holds commits this branch never "
+            "held; reconcile by hand, never force here"
+        )
+    signed = f"signed {len(unsigned)} of {total}" if unsigned else "nothing to sign"
+    if unsigned:
+        code, line = _sign_in_place(mb, old_head, unsigned)
+        if code:
+            return code, line
     if not push:
-        return 0, f"{PREFIX} signed {len(unsigned)} of {total} | not pushed"
+        return 0, f"{PREFIX} {signed} | not pushed"
+    head = _git("rev-parse", "HEAD").stdout.strip()
+    if remote == head:
+        return 0, f"{PREFIX} {signed} | origin/{branch} already matches"
+    # Pushed even with nothing to sign: a re-run after a failed push holds
+    # a signed branch the remote does not have yet.
     if remote:
         _git("push", f"--force-with-lease={branch}:{remote}", "origin", branch)
     else:
         _git("push", "-u", "origin", branch)
-    return 0, f"{PREFIX} signed {len(unsigned)} of {total} | pushed origin/{branch}"
+    return 0, f"{PREFIX} {signed} | pushed origin/{branch}"
 
 
 def main(argv: list[str] | None = None) -> int:
