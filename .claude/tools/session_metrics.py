@@ -150,7 +150,8 @@ class Rates:
 # Opus 5 carried, and verified against Cost Explorer by usage type on the
 # 2026-10-13 fleet day: that day's billed quantity per tier times these four
 # rates reproduced the bill to the cent. The public Price List API carries no
-# current Anthropic model, so that by-usage-type read is the only check.
+# current Anthropic model, so that by-usage-type read is the only check, and
+# `fleet_cost.py rates <day>` runs it: re-seed or verify a row from its output.
 RATES_BY_MODEL: dict[str, Rates] = {
     "claude-opus-5": Rates(5.50, 27.50, 0.55, 11.00, verified="2026-09-11"),
     "claude-opus-5-5": Rates(4.40, 22.00, 0.22, 8.80, verified="2026-10-13"),
@@ -158,14 +159,15 @@ RATES_BY_MODEL: dict[str, Rates] = {
     # first-party list price ($0.10 / $0.50, cache read 0.1x and 1h write 2x
     # input), at the up-to-100K-prompt tier, which background calls stay in.
     "claude-haiku-5-5": Rates(0.11, 0.55, 0.011, 0.22, verified=None),
-    # The audit lanes. Both apply the Opus 5.5 row's measured 1.10x Bedrock
-    # premium (4.40 against a 4.00 list) to the first-party list price, with
-    # the 1h write at 2x input. That premium is an assumption carried over, not
-    # a measurement: Bedrock is partner-priced, so each row stays unverified
-    # until a billed day reproduces it. Each cache read is its own list figure:
-    # 0.1x input for Sonnet 5.5, but $0.25 (0.025x) for Fable 5.1.
+    # The advisor tier. Seeded at the Opus 5.5 row's 1.10x Bedrock premium over
+    # the first-party list price, cache read $0.25 list (0.025x input), 1h
+    # write 2x input. The first Bedrock Fable day, 2026-10-22, billed exactly
+    # these four rates by usage type (no long-context tier billed), but that
+    # day had not settled when read, so the row stays unverified until it has.
     "claude-fable-5-1": Rates(11.00, 55.00, 0.275, 22.00, verified=None),
-    "claude-sonnet-5-5": Rates(2.20, 11.00, 0.22, 4.40, verified=None),
+    # An audit lane. Cache read is 0.05x input: AWS halved it on 2026-10-07,
+    # and 2026-10-21 billed every tier at these rates.
+    "claude-sonnet-5-5": Rates(2.20, 11.00, 0.11, 4.40, verified="2026-10-21"),
 }
 
 # The key a message with no recorded model is accumulated under. It is never

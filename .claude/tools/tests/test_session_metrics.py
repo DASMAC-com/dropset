@@ -838,20 +838,21 @@ class Costing(unittest.TestCase):
         self.assertAlmostEqual(report["subagent_cost"].total(), 1.10, places=6)
         self.assertAlmostEqual(report["total_cost"].total(), 28.60, places=6)
 
-    def test_the_audit_lane_rows_price_unverified(self):
+    def test_the_fable_and_sonnet_rows(self):
         # Both seeded at the Opus 5.5 row's 1.10x Bedrock premium over list;
-        # Fable 5.1's cache read is its own list figure, not 0.1x input.
+        # each cache read is its own figure, not 0.1x input. Sonnet's was
+        # verified by usage type against a settled day, Fable's not yet.
         expected = {
-            "claude-fable-5-1": (11.00, 55.00, 22.00, 0.275),
-            "claude-sonnet-5-5": (2.20, 11.00, 4.40, 0.22),
+            "claude-fable-5-1": ((11.00, 55.00, 22.00, 0.275), None),
+            "claude-sonnet-5-5": ((2.20, 11.00, 4.40, 0.11), "2026-10-21"),
         }
-        for model, (inp, out, write, read) in expected.items():
+        for model, ((inp, out, write, read), verified) in expected.items():
             cost = sm.Cost.price(self.MILLION_EACH, model)
             self.assertAlmostEqual(cost.input, inp, places=6, msg=model)
             self.assertAlmostEqual(cost.output, out, places=6, msg=model)
             self.assertAlmostEqual(cost.cache_write, write, places=6, msg=model)
             self.assertAlmostEqual(cost.cache_read, read, places=6, msg=model)
-            self.assertIsNone(sm.RATES_BY_MODEL[model].verified, model)
+            self.assertEqual(sm.RATES_BY_MODEL[model].verified, verified, model)
 
     def test_rollup_names_each_sub_agent_model_and_prices_it_at_its_row(self):
         # The audit shape: a judgment lane on Fable, a mechanical lane on

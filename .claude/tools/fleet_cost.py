@@ -2,7 +2,7 @@
 """Price the fleet's Bedrock spend from transcripts and reconcile it with the bill.
 
 The Bedrock side of the fleet cost picture (``subscription_usage.py`` is the
-seat side). Three subcommands, each over **complete UTC days** — AWS reports
+seat side). Four subcommands, each over **complete UTC days** — AWS reports
 in UTC, so every day boundary here is a UTC one, on both sides:
 
 ``meter``
@@ -29,6 +29,14 @@ in UTC, so every day boundary here is a UTC one, on both sides:
     priced at the deployed stack's ``TokenRate*`` parameters, exactly as the
     alarms do. Billed above the estimate means the cap is leaking; the estimate
     far above billed means it trips early.
+
+``rates``
+    For one day, the per-million rate each Bedrock-edition service billed per
+    tier (cost over quantity by usage type), every usage type listed by name so
+    a long-context or other tier shows rather than averaging in, and whether
+    the model's ``RATES_BY_MODEL`` row reproduces the bill to the cent. A
+    provisional day is fine: a rate is a ratio, so a partly billed day yields
+    it too.
 
 **Substrate classes.** ``bedrock`` and ``seat`` come from a marker. A worktree
 session with **no** marker (or an unrecognized one) is ``unattributed`` and is
@@ -64,14 +72,16 @@ date is refused.
 
 Stdout is a ranked summary (about ten lines a day); ``--json`` emits the full
 breakdown. Exit codes: 0 reported with no settled day flagged; 1 at least one
-settled day flagged; 2 a usage error, or an AWS call that failed or returned a
-shape this tool does not recognize.
+settled day flagged (for ``rates``: a row that misses its bill, or cannot be
+judged because an unrecognized usage type billed, on any day); 2 a usage error,
+or an AWS call that failed or returned a shape this tool does not recognize.
 
 Usage::
 
     python3 .claude/tools/fleet_cost.py meter [--day YYYY-MM-DD]... [--top N]
     python3 .claude/tools/fleet_cost.py reconcile [--day YYYY-MM-DD]...
     python3 .claude/tools/fleet_cost.py spend-cap [--day YYYY-MM-DD]...
+    python3 .claude/tools/fleet_cost.py rates YYYY-MM-DD
 
 The AWS reads run the CLI under ``DS_AWS_PROFILE`` when it is set, else the
 CLI's own default. Stdlib only; a Python skill-tool under ``.claude/tools/`` —
@@ -104,8 +114,8 @@ SPEND_CAP_STACK = "dropset-bedrock-agent"
 #
 # The stack's defaults mirror the Opus 5.5 row of `RATES_BY_MODEL`, so every
 # token is estimated at Opus rates whatever model spent it. Against the other
-# rows that is conservative for Sonnet 5.5 (0.5x on input, output and cache
-# write, 1.0x on cache read) and Haiku 5.5, but NOT for Fable 5.1: a Fable
+# rows that is conservative for Sonnet 5.5 (0.5x on every tier) and Haiku
+# 5.5, but NOT for Fable 5.1: a Fable
 # token bills 2.5x the estimate on input, output and cache write, and 1.25x
 # on cache read, so a Fable-heavy day under-estimates and can leak past the
 # cap. Changing the stack parameters is an operator deploy decision.
@@ -515,6 +525,145 @@ def fetch_billed(days: list[str]) -> dict[str, dict[str, float]]:
     return {day: billed.get(day, {}) for day in days}
 
 
+def parse_usage(response: dict) -> dict[str, dict[str, tuple[float, float]]]:
+    """Cost Explorer's response grouped by service and usage type ->
+    ``{service: {usage_type: (quantity, dollars)}}``, Bedrock-edition services
+    only, summed over every period in the response. A response carrying a
+    ``NextPageToken`` is refused rather than read as the whole day.
+    """
+    if response.get("NextPageToken"):
+        raise ValueError("response is paginated; only the first page arrived")
+    out: dict[str, dict[str, tuple[float, float]]] = {}
+    for period in response.get("ResultsByTime", []):
+        for group in period.get("Groups", []):
+            service, usage_type = group["Keys"]
+            if not service.endswith(EDITION_SUFFIX):
+                continue
+            metrics = group["Metrics"]
+            quantity = float(metrics["UsageQuantity"]["Amount"])
+            dollars = float(metrics["UnblendedCost"]["Amount"])
+            q, d = out.setdefault(service, {}).get(usage_type, (0.0, 0.0))
+            out[service][usage_type] = (q + quantity, d + dollars)
+    return out
+
+
+def fetch_usage(day: str) -> dict[str, dict[str, tuple[float, float]]]:
+    response = aws(
+        [
+            "ce",
+            "get-cost-and-usage",
+            "--time-period",
+            f"Start={day},End={next_day(day)}",
+            "--granularity",
+            "DAILY",
+            "--metrics",
+            "UsageQuantity",
+            "UnblendedCost",
+            "--filter",
+            json.dumps({"Dimensions": {"Key": "RECORD_TYPE", "Values": ["Usage"]}}),
+            "--group-by",
+            "Type=DIMENSION,Key=SERVICE",
+            "Type=DIMENSION,Key=USAGE_TYPE",
+        ]
+    )
+    try:
+        return parse_usage(response)
+    except SHAPE_ERRORS as exc:
+        raise _shape_error("Cost Explorer", exc) from exc
+
+
+# A usage type reads `<region>-MP:<region>_<tier>_tokens_standard-Units` (an
+# older model files `InputTokenCount` / `OutputTokenCount` instead), and its
+# `UsageQuantity` is in MILLIONS of tokens, so cost over quantity is already
+# the per-million rate. Only the standard service tier and the 1h write map to a
+# `Rates` field; anything else (a 5-minute write, a long-context or priority
+# tier) is reported by name and kept out of every rate.
+# Matched WHOLE, region prefix included, so a qualifier on either side of the
+# tier (`USW2_batch_input_tokens_standard`) falls through to unrecognized.
+USAGE_TIER_RE = re.compile(
+    r"[A-Z0-9]+-MP:[A-Z0-9]+_(?:"
+    r"(?:(input|output|cache_read)_tokens|(cache_write)_tokens_1h)_standard"
+    r"|(Input|Output)TokenCount"
+    r")-Units"
+)
+
+
+def tier_of(usage_type: str) -> str | None:
+    """The `Rates` field a usage type bills, or ``None`` for one this tool
+    does not recognize (a long-context or other tier, reported by name)."""
+    match = USAGE_TIER_RE.fullmatch(usage_type)
+    if not match:
+        return None
+    plain, write, legacy = match.groups()
+    if write:
+        return "cache_write_1h"
+    return plain or legacy.lower()
+
+
+def model_for_service(service: str) -> str | None:
+    """The `RATES_BY_MODEL` key that bills under ``service``, if any."""
+    for model in sm.RATES_BY_MODEL:
+        if service_for_model(model) == service:
+            return model
+    return None
+
+
+def derive_rates(usage: dict[str, tuple[float, float]]) -> dict:
+    """One service's usage types -> the per-million rate each tier billed at,
+    as cost over quantity, beside every usage type with its own figures.
+
+    Usage types are summed per tier before dividing, so a tier billed under two
+    names (say, one per region) still yields one rate; an unrecognized type is
+    left out of every rate and listed, never averaged in.
+    """
+    tiers: dict[str, list[float]] = {}
+    types = []
+    for usage_type, (quantity, dollars) in sorted(usage.items()):
+        tier = tier_of(usage_type)
+        rate = dollars / quantity if quantity else None
+        types.append(
+            {
+                "usage_type": usage_type,
+                "tier": tier,
+                "quantity": quantity,
+                "dollars": dollars,
+                "rate": rate,
+            }
+        )
+        if tier:
+            q, d = tiers.setdefault(tier, [0.0, 0.0])
+            tiers[tier] = [q + quantity, d + dollars]
+    rates = {tier: (d / q if q else None) for tier, (q, d) in tiers.items()}
+    return {"rates": rates, "usage_types": types}
+
+
+# "To the cent": each billed line is rounded, so a row that is exactly right
+# can still differ from the summed bill by a fraction of a cent.
+CENT = 0.01
+
+
+def check_rates(model: str | None, derived: dict) -> dict:
+    """Billed quantity per tier priced at the model's row, against the bill —
+    the same check that verified the Opus 5.5 row. ``matches`` is ``None`` when
+    there is no row or an unrecognized usage type carried dollars."""
+    rates = sm.RATES_BY_MODEL.get(model) if model else None
+    unknown = sum(t["dollars"] for t in derived["usage_types"] if t["tier"] is None)
+    if rates is None:
+        return {"model": model, "priced": None, "billed": None, "matches": None}
+    priced = billed = 0.0
+    for t in derived["usage_types"]:
+        if t["tier"] is None:
+            continue
+        priced += t["quantity"] * getattr(rates, t["tier"])
+        billed += t["dollars"]
+    return {
+        "model": model,
+        "priced": priced,
+        "billed": billed,
+        "matches": None if unknown else abs(priced - billed) < CENT,
+    }
+
+
 def fetch_estimate(days: list[str]) -> dict[str, float]:
     """The spend-cap alarms' estimate per UTC day, at the deployed rates."""
     stacks = aws(["cloudformation", "describe-stacks", "--stack-name", SPEND_CAP_STACK])
@@ -691,6 +840,59 @@ def resolve_days(given: list[str] | None, today: datetime.date) -> list[str]:
     return [date.isoformat() for date in dates]
 
 
+def render_rates(service: str, derived: dict, check: dict) -> list[str]:
+    def rate(tier: str) -> str:
+        value = derived["rates"].get(tier)
+        return "-" if value is None else f"{value:.4f}"
+
+    lines = [
+        f"{service.removesuffix(EDITION_SUFFIX)}  per 1M: input {rate('input')}  "
+        f"output {rate('output')}  cache read {rate('cache_read')}  "
+        f"cache write {rate('cache_write_1h')}"
+    ]
+    for t in derived["usage_types"]:
+        lines.append(
+            f"  {t['usage_type']:<48} {t['tier'] or 'UNRECOGNIZED':<14} "
+            f"{t['quantity']:>12,.4f}M  {money(t['dollars'])}"
+        )
+    if check["matches"] is not None:
+        verdict = "reproduces the bill" if check["matches"] else "DOES NOT match"
+        lines.append(
+            f"  row {check['model']}: {money(check['priced'])} priced vs "
+            f"{money(check['billed'])} billed, {verdict}"
+        )
+    elif check["model"] is None:
+        lines.append("  no RATES_BY_MODEL row bills under this service")
+    else:
+        lines.append(f"  row {check['model']}: not judged, an unrecognized type billed")
+    return lines
+
+
+def rates_main(day: str, as_json: bool) -> int:
+    """Per-model rates the bill implies for ``day``. Exit 1 when a model's row
+    fails to reproduce its bill or cannot be judged because an unrecognized
+    usage type billed, 2 on an AWS error, else 0."""
+    try:
+        usage = fetch_usage(day)
+    except AwsError as exc:
+        print(f"fleet_cost: {exc}", file=sys.stderr)
+        return 2
+    report: dict = {"day": day, "services": {}}
+    lines = [f"{day} (UTC) rates billed, by Bedrock-edition service"]
+    mismatched = False
+    for service in sorted(usage):
+        derived = derive_rates(usage[service])
+        check = check_rates(model_for_service(service), derived)
+        cannot_judge = check["model"] is not None and check["matches"] is None
+        mismatched |= check["matches"] is False or cannot_judge
+        report["services"][service] = {**derived, "check": check}
+        lines += render_rates(service, derived, check)
+    if not usage:
+        lines.append("  no Bedrock-edition usage billed")
+    print(json.dumps(report, indent=2) if as_json else "\n".join(lines))
+    return 1 if mismatched else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -704,14 +906,19 @@ def main(argv: list[str] | None = None) -> int:
         cmd.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE)
         cmd.add_argument("--top", type=int, default=5, help="issues to list per run")
         cmd.add_argument("--json", action="store_true", help="emit the full breakdown")
+    cmd = sub.add_parser("rates")
+    cmd.add_argument("day", help="a complete UTC day")
+    cmd.add_argument("--json", action="store_true", help="emit the full breakdown")
     args = parser.parse_args(argv)
 
     today = datetime.datetime.now(datetime.timezone.utc).date()
     try:
-        days = resolve_days(args.day, today)
+        days = resolve_days([args.day] if args.command == "rates" else args.day, today)
     except ValueError as exc:
         print(f"fleet_cost: {exc}", file=sys.stderr)
         return 2
+    if args.command == "rates":
+        return rates_main(days[0], args.json)
     provisional = (today - datetime.timedelta(days=1)).isoformat()
 
     def label(day: str) -> str:

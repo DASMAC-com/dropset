@@ -269,6 +269,139 @@ class UnitTest(unittest.TestCase):
             {DAY: {"Claude Opus 5.5 (Amazon Bedrock Edition)": 190.83}},
         )
 
+    # The 2026-10-13 Opus 5.5 bill by usage type, quantity in millions of
+    # tokens as Cost Explorer reports it, each cost rounded to the cent (so the
+    # lines sum to $190.84 against the day's billed $190.83).
+    OPUS_SERVICE = "Claude Opus 5.5 (Amazon Bedrock Edition)"
+    OPUS_USAGE = {
+        "USW2-MP:USW2_cache_read_tokens_standard-Units": (387.9575, 85.35),
+        "USW2-MP:USW2_cache_write_tokens_1h_standard-Units": (8.0587, 70.92),
+        "USW2-MP:USW2_input_tokens_standard-Units": (1.2747, 5.61),
+        "USW2-MP:USW2_output_tokens_standard-Units": (1.3163, 28.96),
+    }
+
+    def usage_response(
+        self, usage: dict[str, tuple[float, float]], service: str = OPUS_SERVICE
+    ) -> dict:
+        groups = [
+            {
+                "Keys": [service, usage_type],
+                "Metrics": {
+                    "UsageQuantity": {"Amount": str(q)},
+                    "UnblendedCost": {"Amount": str(d)},
+                },
+            }
+            for usage_type, (q, d) in usage.items()
+        ]
+        groups.append(
+            {
+                "Keys": ["Amazon Bedrock", "USW2-ModelUnits"],
+                "Metrics": {
+                    "UsageQuantity": {"Amount": "1"},
+                    "UnblendedCost": {"Amount": "0"},
+                },
+            }
+        )
+        return {"ResultsByTime": [{"TimePeriod": {"Start": DAY}, "Groups": groups}]}
+
+    def test_tier_of_maps_only_the_standard_tiers(self) -> None:
+        cases = {
+            "USW2-MP:USW2_input_tokens_standard-Units": "input",
+            "USW2-MP:USW2_output_tokens_standard-Units": "output",
+            "USW2-MP:USW2_cache_read_tokens_standard-Units": "cache_read",
+            "USW2-MP:USW2_cache_write_tokens_1h_standard-Units": "cache_write_1h",
+            "USW2-MP:USW2_InputTokenCount-Units": "input",
+            "USW2-MP:USW2_OutputTokenCount-Units": "output",
+            "USW2-MP:USW2_cache_write_tokens_5m_standard-Units": None,
+            "USW2-MP:USW2_input_tokens_long_context-Units": None,
+            "USW2-MP:USW2_input_tokens_priority-Units": None,
+            # A qualifier BEFORE the tier must not fold into the standard rate.
+            "USW2-MP:USW2_batch_input_tokens_standard-Units": None,
+            "USW2-MP:USW2_LongContext_InputTokenCount-Units": None,
+        }
+        for usage_type, tier in cases.items():
+            self.assertEqual(fc.tier_of(usage_type), tier, usage_type)
+
+    def test_rates_reproduce_the_verified_opus_row(self) -> None:
+        usage = fc.parse_usage(self.usage_response(self.OPUS_USAGE))
+        self.assertEqual(list(usage), [self.OPUS_SERVICE])
+        derived = fc.derive_rates(usage[self.OPUS_SERVICE])
+        row = sm.RATES_BY_MODEL["claude-opus-5-5"]
+        for tier, rate in derived["rates"].items():
+            self.assertAlmostEqual(rate, getattr(row, tier), places=2, msg=tier)
+        check = fc.check_rates(fc.model_for_service(self.OPUS_SERVICE), derived)
+        self.assertEqual(check["model"], "claude-opus-5-5")
+        self.assertTrue(check["matches"])
+        self.assertAlmostEqual(check["billed"], 190.84, places=2)
+
+    def test_an_unrecognized_tier_is_listed_not_averaged_in(self) -> None:
+        usage = {
+            **self.OPUS_USAGE,
+            "USW2-MP:USW2_input_tokens_long_context-Units": (1.0, 8.80),
+        }
+        derived = fc.derive_rates(usage)
+        self.assertAlmostEqual(derived["rates"]["input"], 4.40, places=2)
+        unknown = [t for t in derived["usage_types"] if t["tier"] is None]
+        self.assertEqual(len(unknown), 1)
+        self.assertAlmostEqual(unknown[0]["rate"], 8.80)
+        self.assertIsNone(fc.check_rates("claude-opus-5-5", derived)["matches"])
+        status, out = self.run_rates(self.usage_response(usage))
+        self.assertEqual(status, 1)
+        self.assertIn("UNRECOGNIZED", out)
+        self.assertIn("not judged, an unrecognized type billed", out)
+
+    def run_rates(self, response: dict, *flags: str) -> tuple[int, str]:
+        out = io.StringIO()
+        with (
+            mock.patch.object(fc, "aws", return_value=response),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            status = fc.main(["rates", "2026-10-13", *flags])
+        return status, out.getvalue()
+
+    def test_a_service_with_no_row_and_an_empty_day_report_and_pass(self) -> None:
+        legacy = {"USW2-MP:USW2_InputTokenCount-Units": (0.0004, 0.0013)}
+        service = "Claude Sonnet 4.5 (Amazon Bedrock Edition)"
+        status, out = self.run_rates(self.usage_response(legacy, service))
+        self.assertEqual(status, 0)
+        self.assertIn("no RATES_BY_MODEL row bills under this service", out)
+        status, out = self.run_rates({"ResultsByTime": []})
+        self.assertEqual(status, 0)
+        self.assertIn("no Bedrock-edition usage billed", out)
+
+    def test_rates_json_carries_the_derived_rates_and_check(self) -> None:
+        status, out = self.run_rates(self.usage_response(self.OPUS_USAGE), "--json")
+        self.assertEqual(status, 0)
+        entry = json.loads(out)["services"][self.OPUS_SERVICE]
+        self.assertAlmostEqual(entry["rates"]["output"], 22.00, places=2)
+        self.assertEqual(len(entry["usage_types"]), 4)
+        self.assertTrue(entry["check"]["matches"])
+
+    def test_a_malformed_or_paginated_usage_response_exits_two(self) -> None:
+        malformed = self.usage_response(self.OPUS_USAGE)
+        del malformed["ResultsByTime"][0]["Groups"][0]["Metrics"]["UsageQuantity"]
+        paginated = {**self.usage_response(self.OPUS_USAGE), "NextPageToken": "x"}
+        for response in (malformed, paginated):
+            self.assertEqual(self.run_rates(response)[0], 2)
+
+    def test_rates_exits_one_when_a_row_misses_its_bill(self) -> None:
+        drifted = {**self.OPUS_USAGE}
+        drifted["USW2-MP:USW2_input_tokens_standard-Units"] = (1.2747, 6.61)
+        cases = ((self.OPUS_USAGE, 0), (drifted, 1))
+        for usage, status in cases:
+            response = self.usage_response(usage)
+            out = io.StringIO()
+            with (
+                mock.patch.object(fc, "aws", return_value=response),
+                contextlib.redirect_stdout(out),
+            ):
+                self.assertEqual(fc.main(["rates", "2026-10-13"]), status)
+            self.assertIn("Claude Opus 5.5", out.getvalue())
+        with mock.patch.object(fc, "aws", side_effect=fc.AwsError("denied")):
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(fc.main(["rates", "2026-10-13"]), 2)
+
     def test_estimate_normalizes_the_local_offset(self) -> None:
         # The 10-13 UTC bucket, as the CLI renders it on a Pacific machine.
         response = {
