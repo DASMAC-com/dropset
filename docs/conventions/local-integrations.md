@@ -1350,8 +1350,9 @@ old form until then.
 A Bedrock `explore` pins its sub-agents to the executor tier (see
 "Model tiers" below); every other verb's sub-agents inherit the
 session's model, except a spawn naming `model: opus` (`plan`'s lever
-fold), which any Bedrock launch maps to the executor. A launch into an existing session or worktree keeps
-the substrate its marker records — a switch means a fresh worktree.
+fold), which any Bedrock launch maps to the executor. A launch into
+an existing session or worktree keeps the substrate its marker
+records — a switch means a fresh worktree.
 The table names verbs and tiers only, never a model class or id.
 `task local <n>` still works for now, printing a line naming its
 replacement. **The tier table itself is in "Model tiers" below.**
