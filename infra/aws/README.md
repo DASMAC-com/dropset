@@ -456,8 +456,8 @@ content to be retained, which is what keeps executor-tier traffic out of
 review while its model allows `none`. The opt-in dates from when
 Fable 5.1 was the ratified agent model, and it is kept because a
 Fable-class model has to keep working without an infrastructure
-change — `plan bedrock`, the advisor tier's credit-pinch override,
-depends on it. So read the opt-in as removing a
+change — `plan`, whose default is the advisor tier on Bedrock, and
+`architect <n> bedrock` depend on it. So read the opt-in as removing a
 constraint on which models are selectable, not as a statement about
 what happens to executor-tier traffic.
 
