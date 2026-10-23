@@ -36,7 +36,7 @@ in UTC, so every day boundary here is a UTC one, on both sides:
     a long-context or other tier shows rather than averaging in, and whether
     the model's ``RATES_BY_MODEL`` row reproduces the bill to the cent. A
     provisional day is fine: a rate is a ratio, so a partly billed day yields
-    it too. Exit 1 when a row misses its bill.
+    it too.
 
 **Substrate classes.** ``bedrock`` and ``seat`` come from a marker. A worktree
 session with **no** marker (or an unrecognized one) is ``unattributed`` and is
@@ -72,8 +72,9 @@ date is refused.
 
 Stdout is a ranked summary (about ten lines a day); ``--json`` emits the full
 breakdown. Exit codes: 0 reported with no settled day flagged; 1 at least one
-settled day flagged; 2 a usage error, or an AWS call that failed or returned a
-shape this tool does not recognize.
+settled day flagged (for ``rates``: a row that misses its bill, or cannot be
+judged because an unrecognized usage type billed, on any day); 2 a usage error,
+or an AWS call that failed or returned a shape this tool does not recognize.
 
 Usage::
 
@@ -527,8 +528,11 @@ def fetch_billed(days: list[str]) -> dict[str, dict[str, float]]:
 def parse_usage(response: dict) -> dict[str, dict[str, tuple[float, float]]]:
     """Cost Explorer's response grouped by service and usage type ->
     ``{service: {usage_type: (quantity, dollars)}}``, Bedrock-edition services
-    only, summed over every period in the response.
+    only, summed over every period in the response. A response carrying a
+    ``NextPageToken`` is refused rather than read as the whole day.
     """
+    if response.get("NextPageToken"):
+        raise ValueError("response is paginated; only the first page arrived")
     out: dict[str, dict[str, tuple[float, float]]] = {}
     for period in response.get("ResultsByTime", []):
         for group in period.get("Groups", []):
@@ -574,16 +578,20 @@ def fetch_usage(day: str) -> dict[str, dict[str, tuple[float, float]]]:
 # the per-million rate. Only the standard service tier and the 1h write map to a
 # `Rates` field; anything else (a 5-minute write, a long-context or priority
 # tier) is reported by name and kept out of every rate.
+# Matched WHOLE, region prefix included, so a qualifier on either side of the
+# tier (`USW2_batch_input_tokens_standard`) falls through to unrecognized.
 USAGE_TIER_RE = re.compile(
-    r"_(?:(input|output|cache_read)_tokens|(cache_write)_tokens_1h)_standard-Units$"
-    r"|_(Input|Output)TokenCount-Units$"
+    r"[A-Z0-9]+-MP:[A-Z0-9]+_(?:"
+    r"(?:(input|output|cache_read)_tokens|(cache_write)_tokens_1h)_standard"
+    r"|(Input|Output)TokenCount"
+    r")-Units"
 )
 
 
 def tier_of(usage_type: str) -> str | None:
     """The `Rates` field a usage type bills, or ``None`` for one this tool
     does not recognize (a long-context or other tier, reported by name)."""
-    match = USAGE_TIER_RE.search(usage_type)
+    match = USAGE_TIER_RE.fullmatch(usage_type)
     if not match:
         return None
     plain, write, legacy = match.groups()
@@ -862,7 +870,8 @@ def render_rates(service: str, derived: dict, check: dict) -> list[str]:
 
 def rates_main(day: str, as_json: bool) -> int:
     """Per-model rates the bill implies for ``day``. Exit 1 when a model's row
-    fails to reproduce its bill, 2 on an AWS error, else 0."""
+    fails to reproduce its bill or cannot be judged because an unrecognized
+    usage type billed, 2 on an AWS error, else 0."""
     try:
         usage = fetch_usage(day)
     except AwsError as exc:
@@ -874,7 +883,8 @@ def rates_main(day: str, as_json: bool) -> int:
     for service in sorted(usage):
         derived = derive_rates(usage[service])
         check = check_rates(model_for_service(service), derived)
-        mismatched |= check["matches"] is False
+        cannot_judge = check["model"] is not None and check["matches"] is None
+        mismatched |= check["matches"] is False or cannot_judge
         report["services"][service] = {**derived, "check": check}
         lines += render_rates(service, derived, check)
     if not usage:
