@@ -6,6 +6,8 @@
 
 <!-- cspell:word repoint -->
 
+<!-- cspell:word Zchecksum -->
+
 # Local integrations
 
 This doc covers the **user-local Claude Code configuration** the repo
@@ -1135,29 +1137,52 @@ placeholders and the Vercel set-and-delete step live in
 
 ### The cargo pool
 
-`.claude/shell/init.zsh` exports two variables (`_ds_cargo_pool`) whenever
+`.claude/shell/init.zsh` exports four variables (`_ds_cargo_pool`) whenever
 the shell is inside a dropset checkout, so every cargo there pools its
-compile load with no Makefile or CI in the loop. Cargo reads both from the
+compile load with no Makefile or CI in the loop. Cargo reads them from the
 environment, and every session verb `cd`s into the repo before launching,
 so the session — and every Bash command its agent runs — inherits the pool.
 
 - **`CARGO_TARGET_DIR`** is `$CARGO_HOME/target/dropset` (Cargo home
   defaults to `~/.cargo`): one build directory for every worktree, beside
   the registry. Dependencies compile once instead of per worktree (20–30
-  GB each). Intermediate artifacts from different branches coexist,
-  because cargo keys each by a fingerprint of its exact inputs; the final
-  binaries it copies to the top of `debug/` or `release/` are last-build-wins
-  (see the carve-outs below). Cargo locks the directory for
+  GB each). Dependency artifacts from different branches coexist, because
+  cargo keys each by its exact version and features; the final binaries it
+  copies to the top of `debug/` or `release/` are last-build-wins (see the
+  carve-outs below). Cargo locks the directory for
   a build's length, so two worktrees building at once take turns at full
   width. The only visible change is cargo's one-line
   `Blocking waiting for file lock on …` message.
 - **`CARGO_BUILD_JOBS`** is the core count minus two (left unset on a
   machine with two cores or fewer), so no single cargo asks for the whole
   machine. It also bounds any cargo outside the lock.
+- **`RUSTC_WORKSPACE_WRAPPER`** and **`CLIPPY_CONF_DIR`** are the
+  per-checkout keys: the checkout's own
+  `.claude/shell/rustc-workspace-wrapper` (a passthrough) and the
+  checkout's root. Without them a workspace crate is **not** keyed by its
+  inputs. Cargo hashes its path relative to the workspace root, the same in
+  every worktree, so all worktrees share one artifact slot per crate. Cargo
+  then judges that slot fresh by this checkout's source mtimes against the
+  last build, whichever worktree ran it. An edit older than a sibling's
+  build is silently skipped: a false `no method named …` on code just
+  written, or a pass on code never compiled. Check, build and test are all
+  affected, not only clippy. The wrapper's path re-keys the workspace
+  crates alone, so dependencies stay shared. Clippy swaps that wrapper for
+  its own driver but tracks `CLIPPY_CONF_DIR`, so the second key makes it
+  rebuild instead. Clippy thus still has one slot per crate, and two
+  worktrees alternating `cargo clippy` re-lint each other's crates. No
+  `clippy.toml` exists, so the second key changes no lint configuration (a
+  future one belongs at the root). These two follow a
+  `cd` into another checkout. A child shell inherits them without the
+  hook's record of what it exported, so the hook treats any value shaped
+  like one of its own keys as its own; a hand pin is any other value. A
+  branch that predates the wrapper gets neither, and so keeps the old
+  sharing until it rebases. Cargo's own content-hash freshness
+  (`-Zchecksum-freshness`) would retire both keys, but it is nightly-only.
 
 **Scoped to dropset checkouts, never machine-wide.** A `chpwd` hook
 re-evaluates on every directory change: inside the base repo or any
-worktree under it both are exported, and leaving unsets the ones the hook
+worktree under it all four are exported, and leaving unsets the ones the hook
 set while they still hold its value (a value pinned by hand survives). In
 another Anchor repo the pool
 would be actively harmful: Anchor reads the program keypair from the
@@ -1166,9 +1191,10 @@ so `anchor keys sync` would re-key that repo.
 
 **The off switch** is `DS_CARGO_POOL=0` in the runtime config, set
 **before** the line that sources the init (set later, it takes effect at
-the next `cd`). Both variables then stay unset
-and everything behaves as before. A value of either variable that is
-already exported wins over the default. CI never sources the init, so its
+the next `cd`). All four then stay unset
+and everything behaves as before. A value of any of them that is
+already exported wins over the default (for the two keys, a value not
+shaped like a key; see above). CI never sources the init, so its
 builds are unchanged.
 
 **Two carve-outs: the Anchor build and the TUI's bots.** Anchor reads the
@@ -1193,9 +1219,10 @@ it. **A hand-typed `anchor build` gets none of this.** Go through
 **Cleaning.** `make clean` removes the worktree's own `target/` (plus its
 `node_modules` and `.next`), never the pool. Under the pool that `target/`
 holds the Anchor outputs, the copied bots and, until the editor joins,
-rust-analyzer's checks. Never run `cargo clean` in a checkout: it wipes the
-whole pool, every worktree's build with it. The worktree pruner
-no longer frees build artifacts, so the pool is the place disk accumulates.
+rust-analyzer's checks. Never run a bare `cargo clean` in a checkout: it
+wipes the whole pool, every worktree's build with it, while
+`cargo clean -p <crate>` touches only that crate. The worktree pruner no
+longer frees build artifacts, so the pool is the place disk accumulates.
 When it grows too large, delete it while no build is running:
 `rm -rf "$CARGO_TARGET_DIR"`. The next build in each worktree is then cold.
 
@@ -1205,10 +1232,18 @@ the pool fills as sessions relaunch. The first build into the empty pool is
 a full cold build. Each existing worktree's own `target/` is dead weight
 once its session runs pooled; delete it with `make clean` in that worktree.
 
+**A false error on code you just wrote** (a `no method named …` or type
+error from check, clippy or test) in a session without the per-checkout
+keys — launched before them, or on a branch that predates the wrapper — is
+the shared slot. Answer it with `cargo clean -p <crate>` for that one
+crate, then re-run (never a bare `cargo clean`, which wipes the pool).
+You are in that case when `CARGO_TARGET_DIR` is set and
+`RUSTC_WORKSPACE_WRAPPER` is not.
+
 **The editor is not in the pool yet.** VS Code launched from the Dock does
 not inherit shell exports, so its rust-analyzer still checks into each
 worktree's `target/` with an unbounded job count. A follow-up task hands it
-the same two values and bounds its checks. Until that lands, the pool is not
+the same values and bounds its checks. Until that lands, the pool is not
 complete.
 
 ### Session helpers (`.claude/shell/init.zsh`)

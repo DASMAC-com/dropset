@@ -152,7 +152,7 @@ shape (dry runs included), never polling a backgrounded log,
 `make tools-tests` whole, `wait_for_checks.py` for CI, and never
 re-reading what you authored. A refused search leaves its question
 unanswered, never zero hits (`docs/conventions/shell-commands.md`).
-Four reminders neither states:
+Five reminders neither states:
 
 - **Lint the changed set** with one bare command; full `make lint`
   only before committing and at the end:
@@ -180,6 +180,13 @@ Four reminders neither states:
   each time it grows. Only an **anchored** edit stays on the MCP
   `patch`, where the abort is worth the echo — checklist ticks
   excepted, via `linear_issue.py tick`.
+
+- **A false compile error on code you just wrote is the cargo pool
+  first.** With `CARGO_TARGET_DIR` set but `RUSTC_WORKSPACE_WRAPPER`
+  unset (a session launched before the per-checkout keys, or a branch
+  that predates the wrapper), run `cargo clean -p <crate>` and re-run
+  before debugging (`docs/conventions/local-integrations.md` → "The
+  cargo pool").
 
 - **`replace_all` is safe only when search and replacement are
   disjoint.** A replacement that contains the search string rewrites

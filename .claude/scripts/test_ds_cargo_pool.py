@@ -37,9 +37,16 @@ _SUITE_OWNED_ENV = (
     "CARGO_BUILD_JOBS",
     "CARGO_HOME",
     "CARGO_TARGET_DIR",
+    "CLIPPY_CONF_DIR",
     "DS_CARGO_POOL",
+    "RUSTC_WORKSPACE_WRAPPER",
     "_DS_REPO",
 )
+
+#: The per-checkout key, relative to a checkout root.
+WRAPPER = Path(".claude") / "shell" / "rustc-workspace-wrapper"
+
+_KEYS = ("RUSTC_WORKSPACE_WRAPPER", "CLIPPY_CONF_DIR")
 
 _UNSET = "<unset>"
 
@@ -58,13 +65,21 @@ class CargoPoolHarness(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.outside = self._tmp.name
 
-    def _pool(self, *dirs, env=None, resource=False, pin=""):
-        """Source the init in `dirs[0]`, `cd` through the rest, and return
-        (CARGO_TARGET_DIR, CARGO_BUILD_JOBS) as the last directory sees them.
+    def _pool(
+        self,
+        *dirs,
+        env=None,
+        resource=False,
+        pin="",
+        init=INIT,
+        names=("CARGO_TARGET_DIR", "CARGO_BUILD_JOBS"),
+    ):
+        """Source `init` in `dirs[0]`, `cd` through the rest, and return the
+        `names` variables as the last directory sees them.
         `resource` sources it a second time first, as `_ds_reload_init` does;
         `pin` runs before the hops, the way an operator pins a value by hand."""
         start, *rest = dirs
-        source = 'source "%s" 2>/dev/null; ' % INIT
+        source = 'source "%s" 2>/dev/null; ' % init
         hops = "".join('cd "%s"; ' % d for d in rest)
         script = 'cd "%s"; %s%s%s%s' % (
             start,
@@ -73,8 +88,7 @@ class CargoPoolHarness(unittest.TestCase):
             pin,
             hops,
         )
-        script += 'print -r -- "${CARGO_TARGET_DIR-%s}"; ' % _UNSET
-        script += 'print -r -- "${CARGO_BUILD_JOBS-%s}"' % _UNSET
+        script += "; ".join('print -r -- "${%s-%s}"' % (n, _UNSET) for n in names)
         child_env = {**os.environ}
         for name in _SUITE_OWNED_ENV:
             child_env.pop(name, None)
@@ -86,8 +100,7 @@ class CargoPoolHarness(unittest.TestCase):
             check=True,
             env=child_env,
         )
-        target, jobs = result.stdout.splitlines()
-        return target, jobs
+        return tuple(result.stdout.splitlines())
 
 
 class TheSwitchOffLeavesBothUnset(CargoPoolHarness):
@@ -146,6 +159,108 @@ class AnExportedValueWins(CargoPoolHarness):
         pin = "export CARGO_TARGET_DIR=/scratch/t; "
         target, jobs = self._pool(REPO, self.outside, pin=pin)
         self.assertEqual((target, jobs), ("/scratch/t", _UNSET))
+
+
+class EachCheckoutGetsItsOwnKeys(CargoPoolHarness):
+    """The per-checkout keys, against a fake base repo with two worktrees: one
+    carrying the wrapper, one whose branch predates it. `:A` resolves the temp
+    directory through any symlink, so expectations use the resolved path."""
+
+    def setUp(self):
+        super().setUp()
+        self.base = Path(self.outside).resolve() / "repo"
+        self.init = self.base / ".claude" / "shell" / "init.zsh"
+        self.init.parent.mkdir(parents=True)
+        shutil.copy(INIT, self.init)
+        self.worktree = self.base / ".claude" / "worktrees" / "7"
+        self.stale = self.base / ".claude" / "worktrees" / "6"
+        for checkout in (self.base, self.worktree):
+            wrapper = checkout / WRAPPER
+            wrapper.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(REPO / WRAPPER, wrapper)
+        (self.worktree / "tui").mkdir()
+        self.stale.mkdir(parents=True)
+
+    def _keys(self, *dirs, **kwargs):
+        return self._pool(*dirs, init=self.init, names=_KEYS, **kwargs)
+
+    def test_the_base_repo_keys_on_itself(self):
+        self.assertEqual(
+            self._keys(self.base), (str(self.base / WRAPPER), str(self.base))
+        )
+
+    def test_a_worktree_subdirectory_keys_on_the_worktree(self):
+        self.assertEqual(
+            self._keys(self.worktree / "tui"),
+            (str(self.worktree / WRAPPER), str(self.worktree)),
+        )
+
+    def test_the_keys_follow_a_cd_between_checkouts(self):
+        self.assertEqual(
+            self._keys(self.base, self.worktree),
+            (str(self.worktree / WRAPPER), str(self.worktree)),
+        )
+
+    def test_a_branch_without_the_wrapper_gets_no_keys(self):
+        self.assertEqual(self._keys(self.worktree, self.stale), (_UNSET, _UNSET))
+
+    def test_leaving_the_checkout_unsets_the_keys(self):
+        self.assertEqual(self._keys(self.worktree, self.outside), (_UNSET, _UNSET))
+
+    def test_the_switch_off_exports_no_keys(self):
+        self.assertEqual(
+            self._keys(self.worktree, env={"DS_CARGO_POOL": "0"}), (_UNSET, _UNSET)
+        )
+
+    def test_a_pinned_key_survives_a_cd_between_checkouts(self):
+        pinned = {"CLIPPY_CONF_DIR": "/scratch/c"}
+        _, conf = self._keys(self.base, self.worktree, env=pinned)
+        self.assertEqual(conf, "/scratch/c")
+
+    def _inherited(self, checkout):
+        """The keys a child shell inherits from one keyed on `checkout`: the
+        exports arrive, the ownership map does not."""
+        return {
+            "RUSTC_WORKSPACE_WRAPPER": str(checkout / WRAPPER),
+            "CLIPPY_CONF_DIR": str(checkout),
+        }
+
+    def test_an_inherited_key_still_follows_a_cd(self):
+        self.assertEqual(
+            self._keys(self.worktree, self.base, env=self._inherited(self.worktree)),
+            (str(self.base / WRAPPER), str(self.base)),
+        )
+
+    def test_an_inherited_key_is_unset_on_leaving(self):
+        self.assertEqual(
+            self._keys(self.outside, env=self._inherited(self.worktree)),
+            (_UNSET, _UNSET),
+        )
+
+    def test_an_inherited_key_is_dropped_on_a_stale_branch(self):
+        self.assertEqual(
+            self._keys(self.stale, env=self._inherited(self.worktree)),
+            (_UNSET, _UNSET),
+        )
+
+    def test_a_pin_of_another_shape_is_not_mistaken_for_a_key(self):
+        pinned = {
+            "RUSTC_WORKSPACE_WRAPPER": str(self.worktree / "other-wrapper"),
+            "CLIPPY_CONF_DIR": str(self.worktree / "tui"),
+        }
+        self.assertEqual(
+            self._keys(self.base, self.outside, env=pinned),
+            (pinned["RUSTC_WORKSPACE_WRAPPER"], pinned["CLIPPY_CONF_DIR"]),
+        )
+
+    def test_the_wrapper_passes_its_command_through(self):
+        out = subprocess.run(
+            [str(REPO / WRAPPER), "printf", "%s|", "a b", "c"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        self.assertEqual(out, "a b|c|")
 
 
 if __name__ == "__main__":
