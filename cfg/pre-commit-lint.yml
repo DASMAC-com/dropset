@@ -18,9 +18,20 @@ repos:
 # cfn-lint validates the CloudFormation templates under infra/aws/. It is
 # scoped by `files` so it only parses those templates (not every repo YAML),
 # and runs in addition to yamllint, which still enforces house style on them.
+#
+# `language_version` pins the hook's interpreter to the Python CI's Lint job
+# runs (`PYTHON_VERSION` in `.github/workflows/lint.yml`). Without it,
+# pre-commit builds the environment under the Python it itself runs on, and
+# cfn-lint v1.53.0 declares `requires-python <3.15`: on 2026-10-22 the local
+# pre-commit was found running on 3.15 and the install failed with "requires a
+# different Python: 3.15.0 not in '<3.15,>=3.10'", taking local `make lint`
+# down. Keep the pin in step with CI's version while it stays under the cap;
+# CI cannot move past the cap until a cfn-lint release lifts it, and then the
+# pin can be dropped.
 - hooks:
   - files: '^infra/aws/.*\.yml$'
     id: 'cfn-lint'
+    language_version: 'python3.14'
   repo: 'https://github.com/aws-cloudformation/cfn-lint'
   rev: 'v1.53.0'
 - hooks:
