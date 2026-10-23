@@ -127,6 +127,31 @@ keys
 decks
 brand-assets
 
+# === Trees no image build reads ===
+
+# Not a size argument: each of these is small. They are here because every
+# image's `COPY . .` layer is keyed on whatever survives this file, so an edit
+# to any of them otherwise invalidates that layer and re-runs the workspace
+# build in all four Rust images. Nothing below is a build input. The only
+# `include_str!`s that reach outside a crate's own `src`, `queries` and
+# `migrations` (the compose file, the Makefile, the test fixtures) sit in
+# `tests/` trees or `#[cfg(test)]` modules, and no manifest declares an
+# explicit test, bench or example target whose path this would remove. The
+# Dockerfiles live under infra/ too, but a build reads its Dockerfile outside
+# the context, so excluding it here does not hide it.
+docs
+frontend
+infra
+cfg
+.github
+**/tests
+Makefile
+Anchor.toml
+pnpm-lock.yaml
+pnpm-workspace.yaml
+CLAUDE.md
+README.md
+
 # === Editor and OS litter ===
 
 **/.DS_Store

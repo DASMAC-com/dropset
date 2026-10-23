@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Multi-stage build for the collector binaries, using cargo-chef to cache the
 # dependency graph so only first-time and source-changing builds pay the full
 # compile. The app depends on `dropset-feeds` with its `http`, `store` and
@@ -12,10 +13,11 @@
 # fine, so nothing caught it until a container ran.
 #
 # The build step needs no edit for a new collector (building the package builds
-# its bins), but the runtime COPY below does: it enumerates them rather than
-# globbing, because `market-data-*` in `target/release/` would also match
-# cargo's `.d` dependency files. A bin added to `market-data/Cargo.toml` without
-# a line there reproduces exactly the failure above, so add both together.
+# its bins, and every executable `market-data-*` is copied out of the target
+# cache), but the runtime COPY below does: it enumerates them rather than
+# globbing, so the image's contents are stated in this file. A bin added to
+# `market-data/Cargo.toml` without a line there reproduces exactly the failure
+# above, so add both together.
 #
 # There is no migrate binary here: schema provisioning belongs to
 # `dropset-migrate` (migrate.Dockerfile), the single schema owner
@@ -51,12 +53,38 @@ FROM chef AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-FROM chef AS builder
+# Cache mounts make a rebuild after a source change incremental. The cargo
+# registry and git checkouts persist across builds, and the build step's
+# target directory is a persistent cache seeded from the cook stage's target
+# (`from=cook`) the first time it is created. So a builder that keeps no
+# mount cache, such as a fresh CI runner, starts from the cooked
+# dependencies exactly as it did before the mounts, while a local daemon
+# rebuilds only the workspace crates that changed. The ids are per image
+# so two images never share a target, and `sharing=locked` serializes
+# concurrent builds of one image over the registry and git caches, whose
+# cargo lock lives outside the mount; the target needs no such flag, since
+# cargo locks its own build directory. A mount is not part of any layer, so
+# the binaries are copied out to /app/bin for the runtime stage. `docker
+# builder prune` reclaims the caches. The paths are ENV rather than ARG
+# because an ARG ends with its stage and the builder is a new one; spelled
+# inline, a mount overflows 80 columns.
+FROM chef AS cook
+ENV REG=/usr/local/cargo/registry GIT=/usr/local/cargo/git TGT=/app/target
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json \
+RUN --mount=type=cache,id=collectors-reg,target=$REG,sharing=locked \
+    --mount=type=cache,id=collectors-git,target=$GIT,sharing=locked \
+    cargo chef cook --release --recipe-path recipe.json \
     -p dropset-market-data
+
+FROM cook AS builder
 COPY . .
-RUN cargo build --release -p dropset-market-data
+RUN --mount=type=cache,id=collectors-reg,target=$REG,sharing=locked \
+    --mount=type=cache,id=collectors-git,target=$GIT,sharing=locked \
+    --mount=type=cache,id=collectors-tgt,target=$TGT,from=cook,source=$TGT \
+    cargo build --release -p dropset-market-data \
+    && mkdir -p /app/bin \
+    && find target/release -maxdepth 1 -type f -perm -u+x \
+    -name 'market-data-*' -exec cp {} /app/bin/ \;
 
 FROM debian:bookworm-slim AS runtime
 # ca-certificates only (every collector's HTTPS venue + Postgres TLS).
@@ -67,24 +95,24 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 # The candle collectors, writing `cex_prices`...
-COPY --from=builder /app/target/release/market-data-alphavantage \
-    /app/target/release/market-data-coinbase \
-    /app/target/release/market-data-oanda \
-    /app/target/release/market-data-twelvedata \
+COPY --from=builder /app/bin/market-data-alphavantage \
+    /app/bin/market-data-coinbase \
+    /app/bin/market-data-oanda \
+    /app/bin/market-data-twelvedata \
     /usr/local/bin/
 # ...and the tick collectors, writing `spot_ticks`.
-COPY --from=builder /app/target/release/market-data-coinbase-ticker \
-    /app/target/release/market-data-erapi \
-    /app/target/release/market-data-frankfurter \
-    /app/target/release/market-data-kraken \
-    /app/target/release/market-data-orca \
-    /app/target/release/market-data-pyth \
+COPY --from=builder /app/bin/market-data-coinbase-ticker \
+    /app/bin/market-data-erapi \
+    /app/bin/market-data-frankfurter \
+    /app/bin/market-data-kraken \
+    /app/bin/market-data-orca \
+    /app/bin/market-data-pyth \
     /usr/local/bin/
 # The fair-value estimator, which is neither: it READS both tables and
 # publishes `fair_price`. Its own COPY rather than a line in either group
 # above, so the two comments stay true — grouping it with the tick collectors
 # would make this image claim it writes `spot_ticks`.
-COPY --from=builder /app/target/release/market-data-estimator \
+COPY --from=builder /app/bin/market-data-estimator \
     /usr/local/bin/
 # The keyless reference feed is the default; every other service overrides it
 # with its own `command:`.
