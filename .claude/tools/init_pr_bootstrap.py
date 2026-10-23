@@ -15,10 +15,17 @@ any mutation** to hand it back:
 * a dead ``gh`` credential (``auth``);
 * a **merged** PR already on the issue (``merged_check``) — a contradiction the
   operator adjudicates; ``--allow-merged`` proceeds once they have;
-* an invalid tag, a signing verdict of ``external-signer-missing`` /
-  ``agent-locked`` (``branch``), read from `init_pr_branch.py`, which this
-  tool drives rather than duplicates — or a ``LOCKED`` answer from
-  `signing_probe.py`, which proves the signer unlocked, not merely wired.
+* an invalid tag (``branch``), read from `init_pr_branch.py`, which this tool
+  drives rather than duplicates.
+
+A signer that cannot sign is **advisory, never a stop** (``docs/conventions/
+commits-and-prs.md`` → "Signing defers to the merge gate"): a verdict of
+``external-signer-missing`` / ``agent-locked``, or a ``LOCKED`` answer from
+`signing_probe.py` (which proves the signer unlocked, not merely wired), adds a
+note and runs the rebase and the bootstrap commit with ``--no-gpg-sign``. A
+signed commit that fails anyway falls back to an unsigned one the same way.
+``facts.signing_deferred`` says which happened; `resign_branch.py` signs the
+branch at the merge gate.
 
 After the first mutation a failure still stops the run, and the manifest names
 what completed and what did not. Every step is **idempotent** — the rename and
@@ -46,7 +53,8 @@ Prints JSON::
       "steps": [{"step": "auth", "status": "ok", "detail": "…"}, …],
       "remaining": [],           // steps never reached because of the stop
       "notes": ["…"],            // e.g. a missing `notifications` scope
-      "facts": {"program_so": "absent", "signing": "external-signer", …},
+      "facts": {"program_so": "absent", "signing": "external-signer",
+                "signing_deferred": false, …},
       "spec_path": "<scratchpad>/spec.md"
     }
 
@@ -99,9 +107,9 @@ STEPS = (
 # Steps whose failure is reported as `failed` and never stops the run.
 BEST_EFFORT = frozenset({"install", "mute", "linear_state", "spec"})
 
-# Signing verdicts from `init_pr_branch.py` that must stop the run before the
-# rename, the first act that costs anything to undo.
-SIGNING_STOPS = {
+# Signing verdicts from `init_pr_branch.py` that defer signing: the run goes on
+# unsigned, with the remedy in a note.
+SIGNING_DEFERRALS = {
     "external-signer-missing": "the configured signer resolves nowhere; "
     "reinstall it or fix gpg.ssh.program",
     "agent-locked": "the ssh agent holds no keys; unlock the 1Password app",
@@ -163,6 +171,7 @@ class Bootstrap:
         self.pr: dict | None = None
         self.notes: list[str] = []
         self.steps: list[dict] = []
+        self.signing_deferred = False
 
     # -- plumbing -----------------------------------------------------------
 
@@ -180,6 +189,14 @@ class Bootstrap:
     @property
     def subject(self) -> str:
         return f"chore({self.scope}): Bootstrap the worktree"
+
+    def _defer_signing(self, reason: str) -> None:
+        if not self.signing_deferred:
+            self.notes.append(
+                f"signing deferred ({reason}); committing unsigned — the merge "
+                "gate signs the branch with resign_branch.py"
+            )
+        self.signing_deferred = True
 
     # -- steps --------------------------------------------------------------
 
@@ -252,17 +269,22 @@ class Bootstrap:
         if not self.helper.get("tag_valid"):
             raise Stop(f"invalid tag {self.raw_tag!r}; want ### or eng-###")
         signing = self.helper.get("signing")
-        if signing in SIGNING_STOPS:
-            raise Stop(f"signing is {signing}: {SIGNING_STOPS[signing]}")
-        # The verdict proves the signer is wired, not unlocked; a dangling
-        # signed commit proves it before the rename, the first mutation.
-        # Outlast the probe's own unlock window (one per git call it makes), so
-        # a slow unlock reports the probe's LOCKED line, not our timeout.
-        code, out, err = self.run(
-            [sys.executable, str(TOOLS / "signing_probe.py")], 2 * PROBE_TIMEOUT + 20
-        )
-        if code != 0:
-            raise Stop(_tail(err or out) or f"signing_probe.py exit {code}")
+        if signing in SIGNING_DEFERRALS:
+            self._defer_signing(f"signing is {signing}: {SIGNING_DEFERRALS[signing]}")
+        else:
+            # The verdict proves the signer is wired, not unlocked; a dangling
+            # signed commit proves it before the rebase replays anything.
+            # Outlast the probe's own unlock window (one per git call it
+            # makes), so a slow unlock reports its LOCKED line, not our timeout.
+            code, out, err = self.run(
+                [sys.executable, str(TOOLS / "signing_probe.py")],
+                2 * PROBE_TIMEOUT + 20,
+            )
+            if code == 1:
+                self._defer_signing(_tail(err or out, 200))
+            elif code != 0:
+                # Exit 2 is git failing, not the signer.
+                raise Stop(_tail(err or out) or f"signing_probe.py exit {code}")
         self.branch = self.helper.get("normalized_branch")
         if not self.branch:
             raise Stop("init_pr_branch.py reported no normalized_branch")
@@ -283,7 +305,10 @@ class Bootstrap:
         return "ok", f"{current} -> {self.branch}"
 
     def step_rebase(self) -> tuple[str, str]:
-        code, out, err = self.run(["git", "rebase", "origin/main"], 120)
+        cmd = ["git", "rebase", "origin/main"]
+        if self.signing_deferred:
+            cmd.append("--no-gpg-sign")
+        code, out, err = self.run(cmd, 120)
         if code != 0:
             self.run(["git", "rebase", "--abort"], 60)
             raise Stop(
@@ -308,15 +333,19 @@ class Bootstrap:
         out = self._ok(["git", "log", "--format=%s", "origin/main..HEAD"])
         if self.subject in out.splitlines():
             return "skipped", "bootstrap commit already on the branch"
-        code, _, err = self.run(
-            ["git", "commit", "--allow-empty", "-S", "-m", self.subject], 120
-        )
+        commit = ["git", "commit", "--allow-empty", "-m", self.subject]
+        if not self.signing_deferred:
+            code, _, err = self.run([*commit[:3], "-S", *commit[3:]], 120)
+            if code == 0:
+                return "ok", self.subject
+            # `failed to fill whole buffer` is a locked 1Password app.
+            self._defer_signing(f"signed commit failed: {_tail(err, 160)}")
+        code, _, err = self.run([*commit[:3], "--no-gpg-sign", *commit[3:]], 120)
         if code != 0:
             raise Stop(
-                "signed commit failed — nothing is pushed yet; `failed to fill "
-                f"whole buffer` means 1Password is locked ({_tail(err)})"
+                f"commit failed even unsigned — nothing is pushed yet ({_tail(err)})"
             )
-        return "ok", self.subject
+        return "ok", f"{self.subject} (unsigned)"
 
     def step_push(self) -> tuple[str, str]:
         code, _, err = self.run(["git", "push", "-u", "origin", self.branch], 120)
@@ -448,6 +477,7 @@ class Bootstrap:
                 "signing",
             )
         }
+        facts["signing_deferred"] = self.signing_deferred
         return {
             "tag": self.tag,
             "branch": self.branch,
