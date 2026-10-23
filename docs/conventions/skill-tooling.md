@@ -28,15 +28,15 @@ coupling skill tooling to the program's toolchain.
 - **Stdlib only** where practical (JSON + filesystem), so a tool runs
   with a bare `python3` and needs no install step.
 
-  Where a tool genuinely needs a third-party package — `render_review.py`
-  needs Pillow to touch pixels at all — **import it lazily, at the use
-  site**, so the module still imports without it. Three things follow,
-  and they are what keep the exception from eroding the rule: the
-  dependency-free paths (argument parsing, path/ordering logic) keep
-  working and stay testable; the tests that *do* need it are guarded
-  with `unittest.skipUnless` so `make tools-tests` passes either way;
-  and the failure, when it comes, is one clear line naming the install
-  rather than an `ImportError` traceback. CI's lint job installs
+  Where a tool genuinely needs a third-party package (none does today)
+  **import it lazily, at the use site**, so the module still imports
+  without it. Three things follow, and they are what keep the
+  exception from eroding the rule: the dependency-free paths (argument
+  parsing, path/ordering logic) keep working and stay testable; the
+  tests that *do* need it are guarded with `unittest.skipUnless` so
+  `make tools-tests` passes either way; and the failure, when it comes,
+  is one clear line naming the install rather than an `ImportError`
+  traceback. CI's lint job installs
   `pre-commit` and nothing else, so a hard import would make the whole
   suite un-runnable there.
 
@@ -106,10 +106,7 @@ as a scoped pre-commit hook), `lens_preamble.py` (composes a lens brief from the
 [sub-agent brief](sub-agent-brief.md) plus a skill's own committed
 sections — for `review-pr`, `--lens` appends the standing half and that
 lens's file under `lenses/` — so a skill never reads them to quote
-them), and
-`render_review.py` (measures or contact-sheets rendered deck pages
-instead of reading them at print resolution — the one tool with an
-optional dependency, per the lazy-import rule above), alongside the
+them), alongside the
 `allowlist.py` / `upkeep.py` / `cspell-audit` glue.
 `.claude/tools/` is the single home for skill glue: there is **no**
 top-level `tools/` tree.
@@ -134,9 +131,8 @@ with worktrees.
 
 A skill-tool that writes temp output writes it to a directory named
 `claude-<tool-name>/` under the system temp root — `run_quiet.py` to
-`claude-run-quiet/`, `render_review.py` to `claude-render-review/`,
-and so on. The matching **tool-scoped** Read glob goes into the
-documented allowlist setup **in the same PR that adds the tool**:
+`claude-run-quiet/`, and so on. The matching **tool-scoped** Read glob
+goes into the documented allowlist setup **in the same PR that adds the tool**:
 
 ```txt
 Read(/var/folders/**/claude-run-quiet/**)

@@ -67,7 +67,9 @@ shape that can only be expressed in **forbidden** forms —
 inline interpreter one-liners, a stopgap grant, a compound —
 is worth hardening on the first occurrence, because every
 repetition of it is a permission prompt that can never be
-firmed. `grafana_check.py` came from exactly that case.
+firmed. `read_result.py` came from exactly that case: a
+throwaway scratchpad script, re-authored per session, to slice
+a spilled tool result.
 
 ## Step 2: design the narrow tool
 
