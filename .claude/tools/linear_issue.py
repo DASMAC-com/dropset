@@ -48,6 +48,8 @@ Subcommands::
     linear_issue.py find   --query "reference price" --limit 5
     linear_issue.py create --title "…" --body-file body.md \
         --state Todo --milestone "Audit findings"
+    linear_issue.py create --title "…" --body-file body.md \
+        --verb chore --substrate anthropic     # → "[Chore/Anthropic] …"
 
 ``create`` is the filer for the **bulk** callers, whose bodies are long by
 design because the fold convention asks for a part and a fingerprint per
@@ -74,9 +76,60 @@ import linear_api
 #: full issue objects never are, but a cap still beats an unbounded scan.
 MAX_FIND = 100
 
+#: The verb half of a ``[<Verb>/<Substrate>]`` title token, lowercased input to
+#: canonical spelling. ``Operator`` is the one verb with no substrate half.
+TOKEN_VERBS = {
+    "task": "Task",
+    "chore": "Chore",
+    "explore": "Explore",
+    "architect": "Architect",
+    "operator": "Operator",
+}
+TOKEN_SUBSTRATES = {"bedrock": "Bedrock", "anthropic": "Anthropic"}
+
 
 class LinearIssueError(Exception):
     """A failure worth one clean stderr line, never a traceback."""
+
+
+def title_token(verb: str | None, substrate: str | None) -> str:
+    """The ``[<Verb>/<Substrate>]`` token a title leads with, or ``""``.
+
+    A token is always **whole**: a half-token would silently change meaning
+    the day a verb's default substrate flips, so one of the pair without the
+    other is refused. The one elision is ``[Task/Bedrock]``, the default of
+    defaults, which is never written — the caller omits both flags instead.
+    ``[Operator]`` marks work with no agent, so it takes no substrate.
+    """
+    if verb is None and substrate is None:
+        return ""
+    canon_verb = TOKEN_VERBS.get((verb or "").strip().lower())
+    if verb is not None and canon_verb is None:
+        raise LinearIssueError(
+            f"unknown --verb {verb!r} — have: {', '.join(TOKEN_VERBS.values())}"
+        )
+    canon_sub = TOKEN_SUBSTRATES.get((substrate or "").strip().lower())
+    if substrate is not None and canon_sub is None:
+        raise LinearIssueError(
+            f"unknown --substrate {substrate!r} — have: "
+            f"{', '.join(TOKEN_SUBSTRATES.values())}"
+        )
+    if canon_verb == "Operator":
+        if canon_sub is not None:
+            raise LinearIssueError(
+                "--verb operator takes no --substrate: [Operator] has no agent"
+            )
+        return "[Operator]"
+    if canon_verb is None or canon_sub is None:
+        raise LinearIssueError(
+            "--verb and --substrate go together: a token is always whole"
+        )
+    if (canon_verb, canon_sub) == ("Task", "Bedrock"):
+        raise LinearIssueError(
+            "[Task/Bedrock] is the default and is never written — omit both "
+            "--verb and --substrate"
+        )
+    return f"[{canon_verb}/{canon_sub}]"
 
 
 def _post(api_key: str, query: str, variables: dict) -> dict:
@@ -414,6 +467,8 @@ def create_issue(
     milestone: str | None = None,
     priority: int | None = None,
     assignee_id: str | None = None,
+    verb: str | None = None,
+    substrate: str | None = None,
     dry_run: bool = False,
 ) -> str:
     """File one issue in a single zero-echo call, and return one line.
@@ -441,11 +496,18 @@ def create_issue(
     `milestone`. That refusal is right for a *field write* (a name reaching
     Linear dies as an unnamed validation error), and a filer that cannot name
     its own milestone would just push the lookup back into the transcript.
+
+    ``verb`` / ``substrate`` prefix the title with its launch-line token
+    (`title_token`), built here so the token and the filing stay consistent by
+    construction, as the ``Claude:`` prefix does.
     """
     if not title.strip():
         raise LinearIssueError("--title must not be blank")
     if not body.strip():
         raise LinearIssueError("--body-file must not be empty")
+    token = title_token(verb, substrate)
+    if token:
+        title = f"{token} {title.strip()}"
 
     plan = [f"{len(body)} char(s)"]
     if state:
@@ -572,6 +634,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     create.add_argument(
         "--assignee", default=None, help="assignee id (default $LINEAR_ASSIGNEE_ID)"
     )
+    create.add_argument(
+        "--verb",
+        default=None,
+        help="title-token verb: task, chore, explore, architect, operator",
+    )
+    create.add_argument(
+        "--substrate",
+        default=None,
+        help="title-token substrate: bedrock, anthropic (omit with operator)",
+    )
 
     find_cmd = subs.add_parser("find", help="title-only search")
     find_cmd.add_argument("--query", required=True, help="text to match in titles")
@@ -626,6 +698,8 @@ def run(argv: list[str]) -> int:
                 milestone=args.milestone,
                 priority=args.priority,
                 assignee_id=assignee,
+                verb=args.verb,
+                substrate=args.substrate,
                 dry_run=args.dry_run,
             )
         )

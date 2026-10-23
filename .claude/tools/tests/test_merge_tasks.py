@@ -128,6 +128,40 @@ class TouchesTests(unittest.TestCase):
         self.assertEqual(strip_claude_prefix("Claude: Do x"), "Do x")
         self.assertEqual(strip_claude_prefix("Do x"), "Do x")
 
+    def test_strip_claude_prefix_skips_a_leading_token(self):
+        self.assertEqual(strip_claude_prefix("[Chore/Bedrock] Claude: Do x"), "Do x")
+        self.assertEqual(strip_claude_prefix("[Explore/Anthropic] Do x"), "Do x")
+        self.assertEqual(strip_claude_prefix("[Operator] Grind keys"), "Grind keys")
+
+    def test_a_non_token_bracket_word_is_kept(self):
+        self.assertEqual(strip_claude_prefix("[SDK] Add y"), "[SDK] Add y")
+        self.assertEqual(mt.add_claude_prefix("[SDK] Add y"), "Claude: [SDK] Add y")
+
+    def test_extra_spaces_after_the_token_do_not_double_the_prefix(self):
+        self.assertEqual(strip_claude_prefix("[Chore/Bedrock]  Claude: X"), "X")
+        self.assertEqual(
+            mt.add_claude_prefix("[Chore/Bedrock]  Claude: X"),
+            "[Chore/Bedrock] Claude: X",
+        )
+
+    def test_a_bracket_mid_title_is_not_a_token(self):
+        self.assertEqual(
+            strip_claude_prefix("Claude: Fix [Chore/Bedrock] parsing"),
+            "Fix [Chore/Bedrock] parsing",
+        )
+
+    def test_add_claude_prefix_goes_after_the_token_once(self):
+        self.assertEqual(
+            mt.add_claude_prefix("[Chore/Anthropic] Do x"),
+            "[Chore/Anthropic] Claude: Do x",
+        )
+        self.assertEqual(
+            mt.add_claude_prefix("[Chore/Anthropic] Claude: Do x"),
+            "[Chore/Anthropic] Claude: Do x",
+        )
+        self.assertEqual(mt.add_claude_prefix("Do x"), "Claude: Do x")
+        self.assertEqual(mt.add_claude_prefix("Claude: Do x"), "Claude: Do x")
+
 
 class DemoteHeadingsTests(unittest.TestCase):
     """A folded body is appended UNDER an outer `# Part N`, so its own
@@ -268,6 +302,29 @@ class AssembleTests(unittest.TestCase):
         self.assertTrue(out["all_meta"])
         self.assertEqual(out["title"], "Claude: Refine the audit dedup")
         self.assertFalse(out["cross_area"])
+
+    def test_a_tokened_folded_issue_heads_its_part_with_neither_prefix(self):
+        data = self._issues()
+        data["issues"][1]["title"] = "[Chore/Bedrock] Claude: Tweak trim-context"
+        out = assemble(data)
+        self.assertIn("# Part 1 — Tweak trim-context\n", out["description"])
+        self.assertNotIn("[Chore/Bedrock]", out["description"])
+
+    def test_a_tokened_survivor_keeps_its_token_ahead_of_the_prefix(self):
+        data = self._issues()
+        data["issues"][0]["title"] = "[Chore/Anthropic] Refine the audit dedup"
+        out = assemble(data)
+        self.assertEqual(
+            out["title"], "[Chore/Anthropic] Claude: Refine the audit dedup"
+        )
+
+    def test_a_tokened_survivor_already_prefixed_is_not_prefixed_twice(self):
+        data = self._issues()
+        data["issues"][0]["title"] = "[Chore/Anthropic] Claude: Refine the audit dedup"
+        out = assemble(data)
+        self.assertEqual(
+            out["title"], "[Chore/Anthropic] Claude: Refine the audit dedup"
+        )
 
     def test_cross_area_when_mixing_meta_and_product(self):
         data = self._issues()

@@ -112,6 +112,15 @@ META_BASES = (".claude", "docs/conventions", "cfg")
 
 CLAUDE_PREFIX = "Claude: "
 
+# The ``[<Verb>/<Substrate>]`` (or substrate-less ``[Operator]``) launch-line
+# token a title may lead with, ahead of the ``Claude:`` prefix. The grammar is
+# ``docs/conventions/linear-automation.md``'s; ``linear_issue.py create``
+# writes it. Matched as the closed set, not any bracketed word, so a product
+# title such as ``[SDK] Add y`` keeps its bracket; keep this copy in sync.
+_TITLE_TOKEN_RE = re.compile(
+    r"(\[(?:Task|Chore|Explore|Architect)/(?:Bedrock|Anthropic)\]|\[Operator\]) +"
+)
+
 _NUM_RE = re.compile(r"(\d+)")
 
 
@@ -264,8 +273,32 @@ def extract_touches(body: str) -> tuple[str, list[str]]:
     return "\n".join(kept).rstrip() + "\n", globs
 
 
+def split_title_token(title: str) -> tuple[str, str]:
+    """Split a leading ``[<Verb>/<Substrate>]`` launch-line token off a title.
+
+    Returns ``(token, rest)``: ``token`` is ``""`` when the title has none,
+    and ``rest`` starts at the text after the token's space(s), which is
+    where the ``Claude:`` prefix sits (token first, prefix second).
+    """
+    match = _TITLE_TOKEN_RE.match(title)
+    if not match:
+        return "", title
+    return match.group(1), title[match.end() :]
+
+
 def strip_claude_prefix(title: str) -> str:
-    return title[len(CLAUDE_PREFIX) :] if title.startswith(CLAUDE_PREFIX) else title
+    """The title with its leading token and ``Claude:`` prefix both removed —
+    the form a folded ``# Part N`` heading carries."""
+    _, rest = split_title_token(title)
+    return rest[len(CLAUDE_PREFIX) :] if rest.startswith(CLAUDE_PREFIX) else rest
+
+
+def add_claude_prefix(title: str) -> str:
+    """The title with ``Claude:`` after any leading token, added only once."""
+    token, rest = split_title_token(title)
+    if not rest.startswith(CLAUDE_PREFIX):
+        rest = CLAUDE_PREFIX + rest
+    return f"{token} {rest}" if token else rest
 
 
 # Any Linear tag in an anchor is fatal: Linear rewrites `ENG-123` into an
@@ -450,9 +483,10 @@ def assemble(data: dict) -> dict:
     # proven meta, withholds the prefix rather than silently mislabeling
     # possible product work as meta.
     all_meta = meta_count == len(issues)
+    # The survivor's own token, if any, stays ahead of the prefix.
     title = survivor.get("title") or survivor_id
-    if all_meta and not title.startswith(CLAUDE_PREFIX):
-        title = CLAUDE_PREFIX + title
+    if all_meta:
+        title = add_claude_prefix(title)
 
     # Cross-area: the merge mixes meta-work issues with product-code ones.
     cross_area = meta_count > 0 and non_meta_count > 0
