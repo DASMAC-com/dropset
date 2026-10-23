@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Multi-stage build for the collector binaries, using cargo-chef to cache the
 # dependency graph so only first-time and source-changing builds pay the full
 # compile. The app depends on `dropset-feeds` with its `http`, `store` and
@@ -12,10 +13,11 @@
 # fine, so nothing caught it until a container ran.
 #
 # The build step needs no edit for a new collector (building the package builds
-# its bins), but the runtime COPY below does: it enumerates them rather than
-# globbing, because `market-data-*` in `target/release/` would also match
-# cargo's `.d` dependency files. A bin added to `market-data/Cargo.toml` without
-# a line there reproduces exactly the failure above, so add both together.
+# its bins, and every executable `market-data-*` is copied out of the target
+# cache), but the runtime COPY below does: it enumerates them rather than
+# globbing, so the image's contents are stated in this file. A bin added to
+# `market-data/Cargo.toml` without a line there reproduces exactly the failure
+# above, so add both together.
 #
 # There is no migrate binary here: schema provisioning belongs to
 # `dropset-migrate` (migrate.Dockerfile), the single schema owner
@@ -51,12 +53,53 @@ FROM chef AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-FROM chef AS builder
+# Cache mounts make a rebuild after a source change incremental. The cargo
+# registry and git checkouts persist across builds, and the build step's
+# target directory is a persistent cache seeded from the cook stage's target
+# (`from=cook`) the first time it is created. So a builder that keeps no
+# mount cache, such as a fresh CI runner, starts from the cooked
+# dependencies exactly as it did before the mounts, while a local daemon
+# rebuilds only the workspace crates that changed. The builder bind-mounts
+# the source rather than COPYing it, as Docker's Rust guide does: a COPY
+# layer reused from cache restores the mtimes of the build that made it, so
+# cargo, which reads a persistent target by mtime, would call a reverted
+# crate fresh. A bind mount carries the host's mtimes, so cargo is as fresh
+# as a host build, short of host/VM clock skew (prune the `*-tgt-*` cache to
+# force a rebuild); writes to the source tree are discarded. The target id is
+# per image and per checkout (the CHECKOUT build arg, which compose fills
+# from DS_CHECKOUT, else the caller's directory): cargo judges a workspace
+# crate fresh by mtime, so a target shared across worktrees could silently
+# ship a sibling's build. A bare `docker build` without the arg falls back
+# to one `shared` target. Every cache is `sharing=locked`, serializing
+# concurrent builds of one image: cargo's registry lock lives outside the
+# registry mount, and the bin copy after `cargo build` runs outside cargo's
+# own lock on the target. A mount is not part of any layer, so the binaries
+# are copied out to /out for the runtime stage. `docker builder prune`
+# reclaims the caches. The paths and the target id are ENV rather than ARG
+# because an ARG ends with its stage and the builder is a new one; spelled
+# inline, a mount overflows 80 columns.
+FROM chef AS cook
+ENV REG=/usr/local/cargo/registry GIT=/usr/local/cargo/git TGT=/app/target
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json \
+RUN --mount=type=cache,id=collectors-reg,target=$REG,sharing=locked \
+    --mount=type=cache,id=collectors-git,target=$GIT,sharing=locked \
+    cargo chef cook --release --recipe-path recipe.json \
     -p dropset-market-data
-COPY . .
-RUN cargo build --release -p dropset-market-data
+
+FROM cook AS builder
+ARG CHECKOUT=shared
+ENV ID=collectors-tgt-$CHECKOUT
+# The `rm` drops last build's bins from the cache, so the `find` below copies
+# only what this build produced and a runtime COPY naming a removed bin fails.
+RUN --mount=type=bind,target=/app,rw \
+    --mount=type=cache,id=collectors-reg,target=$REG,sharing=locked \
+    --mount=type=cache,id=collectors-git,target=$GIT,sharing=locked \
+    --mount=type=cache,id=$ID,target=$TGT,from=cook,source=$TGT,sharing=locked \
+    rm -f target/release/market-data-* \
+    && cargo build --release -p dropset-market-data \
+    && mkdir -p /out \
+    && find target/release -maxdepth 1 -type f -perm -u+x \
+    -name 'market-data-*' -exec cp {} /out/ \;
 
 FROM debian:bookworm-slim AS runtime
 # ca-certificates only, for shell tooling run in the image: the collectors'
@@ -69,24 +112,24 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 # The candle collectors, writing `cex_prices`...
-COPY --from=builder /app/target/release/market-data-alphavantage \
-    /app/target/release/market-data-coinbase \
-    /app/target/release/market-data-oanda \
-    /app/target/release/market-data-twelvedata \
+COPY --from=builder /out/market-data-alphavantage \
+    /out/market-data-coinbase \
+    /out/market-data-oanda \
+    /out/market-data-twelvedata \
     /usr/local/bin/
 # ...and the tick collectors, writing `spot_ticks`.
-COPY --from=builder /app/target/release/market-data-coinbase-ticker \
-    /app/target/release/market-data-erapi \
-    /app/target/release/market-data-frankfurter \
-    /app/target/release/market-data-kraken \
-    /app/target/release/market-data-orca \
-    /app/target/release/market-data-pyth \
+COPY --from=builder /out/market-data-coinbase-ticker \
+    /out/market-data-erapi \
+    /out/market-data-frankfurter \
+    /out/market-data-kraken \
+    /out/market-data-orca \
+    /out/market-data-pyth \
     /usr/local/bin/
 # The fair-value estimator, which is neither: it READS both tables and
 # publishes `fair_price`. Its own COPY rather than a line in either group
 # above, so the two comments stay true — grouping it with the tick collectors
 # would make this image claim it writes `spot_ticks`.
-COPY --from=builder /app/target/release/market-data-estimator \
+COPY --from=builder /out/market-data-estimator \
     /usr/local/bin/
 # The keyless reference feed is the default; every other service overrides it
 # with its own `command:`.

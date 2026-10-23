@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Multi-stage build for `dropset-migrate`, the shared database's migration
 # runner (docs/data-feeds.md §8), using cargo-chef to cache the dependency
 # graph so only first-time and source-changing builds pay the full compile.
@@ -33,11 +34,48 @@ FROM chef AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-FROM chef AS builder
+# Cache mounts make a rebuild after a source change incremental. The cargo
+# registry and git checkouts persist across builds, and the build step's
+# target directory is a persistent cache seeded from the cook stage's target
+# (`from=cook`) the first time it is created. So a builder that keeps no
+# mount cache, such as a fresh CI runner, starts from the cooked
+# dependencies exactly as it did before the mounts, while a local daemon
+# rebuilds only the workspace crates that changed. The builder bind-mounts
+# the source rather than COPYing it, as Docker's Rust guide does: a COPY
+# layer reused from cache restores the mtimes of the build that made it, so
+# cargo, which reads a persistent target by mtime, would call a reverted
+# crate fresh. A bind mount carries the host's mtimes, so cargo is as fresh
+# as a host build, short of host/VM clock skew (prune the `*-tgt-*` cache to
+# force a rebuild); writes to the source tree are discarded. The target id is
+# per image and per checkout (the CHECKOUT build arg, which compose fills
+# from DS_CHECKOUT, else the caller's directory): cargo judges a workspace
+# crate fresh by mtime, so a target shared across worktrees could silently
+# ship a sibling's build. A bare `docker build` without the arg falls back
+# to one `shared` target. Every cache is `sharing=locked`, serializing
+# concurrent builds of one image: cargo's registry lock lives outside the
+# registry mount, and the bin copy after `cargo build` runs outside cargo's
+# own lock on the target. A mount is not part of any layer, so the binary
+# is copied out to /out for the runtime stage. `docker builder prune`
+# reclaims the caches. The paths and the target id are ENV rather than ARG
+# because an ARG ends with its stage and the builder is a new one; spelled
+# inline, a mount overflows 80 columns.
+FROM chef AS cook
+ENV REG=/usr/local/cargo/registry GIT=/usr/local/cargo/git TGT=/app/target
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json --bin dropset-migrate
-COPY . .
-RUN cargo build --release -p dropset-db-schema --bin dropset-migrate
+RUN --mount=type=cache,id=migrate-reg,target=$REG,sharing=locked \
+    --mount=type=cache,id=migrate-git,target=$GIT,sharing=locked \
+    cargo chef cook --release --recipe-path recipe.json --bin dropset-migrate
+
+FROM cook AS builder
+ARG CHECKOUT=shared
+ENV ID=migrate-tgt-$CHECKOUT
+RUN --mount=type=bind,target=/app,rw \
+    --mount=type=cache,id=migrate-reg,target=$REG,sharing=locked \
+    --mount=type=cache,id=migrate-git,target=$GIT,sharing=locked \
+    --mount=type=cache,id=$ID,target=$TGT,from=cook,source=$TGT,sharing=locked \
+    cargo build --release -p dropset-db-schema --bin dropset-migrate \
+    && mkdir -p /out \
+    && cp target/release/dropset-migrate /out/
 
 FROM debian:bookworm-slim AS runtime
 # ca-certificates only, for shell tooling run in the image: the migrator's
@@ -48,6 +86,6 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/dropset-migrate \
+COPY --from=builder /out/dropset-migrate \
     /usr/local/bin/dropset-migrate
 CMD ["dropset-migrate"]

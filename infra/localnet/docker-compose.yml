@@ -66,6 +66,8 @@ services:
     # exports it under exactly this spelling. A container never reaches a secret
     # store itself: it has no `op`, and it is handed a resolved value.
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -97,6 +99,8 @@ services:
     # bucket lands ~45s sooner instead of up to a minute late, which is what
     # made the series look stale (docs/data-feeds.md §10).
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -124,6 +128,8 @@ services:
     # finest bucket its endpoint offers (docs/data-feeds.md §9). Keyless, so it
     # comes up with `make collectors-up`.
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -164,6 +170,8 @@ services:
     # the coverage that is the only reason to run it. (OANDA does not chain
     # either, for an unrelated reason — see its own service comment.)
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -222,6 +230,8 @@ services:
     # collide with itself and raise the estimator's own duplicate-publisher
     # alarm.
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -289,6 +299,8 @@ services:
     # ECB reference set does not carry it — a live probe of all 14 roster
     # currencies returns 13 — so `erapi` is the only keyless source for it.
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -425,6 +437,8 @@ services:
   indexer:
     # Decode + persist + aggregate. Polls the host-run validator's events.
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/indexer.Dockerfile'
     command:
@@ -443,6 +457,8 @@ services:
   indexer-api:
     # The /v1 REST surface, on loopback http://localhost:8080.
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/indexer.Dockerfile'
     command:
@@ -483,6 +499,8 @@ services:
     # response, and the collector reports it as a roster mistake after a few
     # polls rather than leaving it to look like an outage.
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -518,6 +536,8 @@ services:
     # and its sink is best-effort, so the early batches are dropped with a log
     # line and reporting begins on its own once `migrate` has run.
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/bots.Dockerfile'
     command:
@@ -553,6 +573,8 @@ services:
     # service gates on it via `service_completed_successfully`, so no app can
     # start against a schema that does not exist yet.
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/migrate.Dockerfile'
     command:
@@ -612,6 +634,8 @@ services:
     # trades a maintained constant for a boot-time network dependency, so it
     # is not obviously right.
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -645,6 +669,8 @@ services:
     # that bring-up names this service too. Empty means the public endpoint
     # alone.
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -731,6 +757,8 @@ services:
     #     docker compose -f infra/localnet/docker-compose.yml \
     #     --profile pyth up pyth
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
@@ -763,6 +791,8 @@ services:
     # until the operator explicitly starts it with `make taker-up`. Real takes
     # are operator-driven; this only exists to make localnet books look alive.
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/bots.Dockerfile'
     command:
@@ -792,6 +822,8 @@ services:
     # roster the collector widens that interval itself so the pairs together
     # stay inside the same daily budget, and logs the effective value.
     build:
+      args:
+        CHECKOUT: '${DS_CHECKOUT:-${PWD}}'
       context: '../..'
       dockerfile: 'infra/localnet/collectors.Dockerfile'
     command:
