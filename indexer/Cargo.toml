@@ -1,4 +1,3 @@
-# cspell:word rustls
 # Prototype off-chain event indexer for the Dropset eCLOB (docs/indexer.md).
 # Subscribes to the program's `emit_cpi!` events, decodes them with the
 # shared `dropset_sdk::events` codec, persists raw legs under the frozen

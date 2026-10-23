@@ -39,7 +39,9 @@ RUN cargo build --release \
     --bin dropset-maker-bot --bin dropset-taker-bot
 
 FROM debian:bookworm-slim AS runtime
-# ca-certificates for the price-feed / RPC TLS. Intentionally unpinned: a thin
+# ca-certificates only, for shell tooling run in the image: the bots verify
+# price-feed and RPC TLS against rustls's compiled-in roots, never this OS
+# bundle, so their trust moves with Cargo.lock. Intentionally unpinned: a thin
 # runtime base where pinning the Debian package version would only rot.
 # hadolint ignore=DL3008
 RUN apt-get update \

@@ -1,4 +1,3 @@
-# cspell:word rustls
 # The market-data collection app (docs/data-feeds.md §7), and the first
 # consumer of the shared `feeds` framework — so it proves the source →
 # store-sink path end to end. Eleven binaries: ten collectors, one per

@@ -1,4 +1,3 @@
-# cspell:word rustls
 # The single schema owner for the shared `dropset` database
 # (docs/data-feeds.md §8). Every table in that instance — the framework's
 # cursor store, the indexer's event and rollup tables, the market-data price

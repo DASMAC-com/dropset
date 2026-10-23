@@ -242,6 +242,9 @@ test-parity: check-nextest program-parity
 # target among them gated on something other than Docker: it needs a network
 # and the OANDA credential, and a required check must not depend on a live
 # third-party venue. It stays operator-run, and its own module doc says so.
+# `tls_distrust` is filtered out for the same reason: it needs the network to
+# reach the eMudhra probe hosts, and runs as `make tls-distrust-check`. One
+# `-E`, since nextest unions several: two `not` filters would select all.
 # Excluded by `binary_id` rather than by package, so the rest of
 # `dropset-market-data` is still covered, and rather than by bare `binary`,
 # which matches the unqualified name in every selected crate. A rename fails
@@ -249,14 +252,25 @@ test-parity: check-nextest program-parity
 # feeds transports are named explicitly because a `-p` selection does not
 # enable them.
 POSTGRES_TEST_FEATURES := store http rpc stream
+POSTGRES_TEST_EXCLUDED := binary_id(dropset-market-data::oanda_direction) \
+	| binary_id(dropset-feeds::tls_distrust)
 
 .PHONY: test-postgres
 test-postgres: check-nextest
 	cargo nextest run --run-ignored all \
-		-E 'not binary_id(dropset-market-data::oanda_direction)' \
+		-E 'not ($(POSTGRES_TEST_EXCLUDED))' \
 		-p dropset-feeds -p dropset-indexer -p dropset-market-data \
 		-p dropset-db-schema \
 		--features '$(addprefix dropset-feeds/,$(POSTGRES_TEST_FEATURES))'
+
+# Prove the Rust TLS stack refuses the distrusted eMudhra intermediates: the
+# feeds HTTP client (rustls, compiled-in roots, the same lock every binary and
+# image builds from) must fail both advisory probe hosts with a certificate
+# error. Needs the network, so it is `#[ignore]`d and operator-run; the deploy
+# ceremony runs it as a pre-check.
+.PHONY: tls-distrust-check
+tls-distrust-check:
+	cargo test -p dropset-feeds --features http --test tls_distrust -- --ignored
 
 # === SDK & codegen ===
 
@@ -411,6 +425,9 @@ endef
 #     explorer indexes the localnet; mainnet links go to the hosted one).
 #   * No `--bootstrap`. Auto-bootstrap is refused by the binary in mainnet
 #     mode, so passing it would be an error rather than a no-op.
+#   * Run `make tls-distrust-check` first, from the commit you build: the RPC
+#     reads the ceremony signs against trust the same compiled-in roots. Never
+#     clear a failure by disabling certificate verification.
 #
 # The endpoint has no default on purpose: a wrong-but-present URL fails
 # silently, while an absent one fails here with a message. The binary then
