@@ -556,8 +556,11 @@ sessions — the roll-call is the confirmation to relay.
 **Type the line the title token says** (`linear-automation.md` →
 "The verb/substrate title token"): `[Chore/Bedrock]` on 1234 is
 `chore bedrock 1234`, no token is `task 1234`. **Refuse `task <n>`**
-on a token naming another verb or `[Operator]`. File a minor
-non-repo job (a key file, a local deploy, a probe)
+on a token naming another verb, and dispatch nothing for
+`[Operator]`. Until the launcher reorder lands, `[Explore/Bedrock]`
+is `explore <n>` and `[Architect/Bedrock]` `architect <n> bedrock`;
+until the title sweep, judge a token-less legacy issue by its body.
+File operator-attended agent work (a key file, a local deploy)
 `[Chore/Bedrock]` — helper tier, no PR, In Review at handoff — and
 an item the operator executes by hand `[Operator]`.
 

@@ -1325,7 +1325,7 @@ names alive was the outcome to avoid.
 | `task <n>`              | worktree session on Linear task n          | executor's (Bedrock)   | executor  | the session's       | none (the one elision)    |
 | `task anthropic <n>`    | same, when the work needs web research     | anthropic              | executor  | the session's       | `[Task/Anthropic]`        |
 | `task resume [n]`       | resume by number (bare = the picker)       | as recorded            | re-pinned | as recorded         | —                         |
-| `explore [a] <n\|name>` | research / audit, read-only, temp worktree | Bedrock, or `[a]`      | advisor   | executor on Bedrock | `[Explore/<Substrate>]`   |
+| `explore [a] <n\|name>` | research / audit, read-only, temp worktree | Bedrock, or `[a]`      | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
 | `chore [s] <n>`         | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    | the session's       | `[Chore/<Substrate>]`     |
 | `plan [bedrock]`        | upkeep pass, then daily planning session   | advisor's, or override | advisor   | the session's       | — (no issue)              |
 | `architect [b] <n>`     | design thread, read-only, temp worktree    | advisor's, or override | advisor   | the session's       | `[Architect/<Substrate>]` |
@@ -1339,15 +1339,19 @@ escape. **Every issue verb takes the line in one order — verb,
 substrate, number** — so a title token lowercased and followed by the
 issue number is the launch line: `[Chore/Anthropic]` on 1234 is
 `chore anthropic 1234` (the grammar is in `linear-automation.md` →
-"The verb/substrate title token"). `architect` once took its word after
-the number; the launcher's move to this order is a sibling change, and
-until it lands the old `architect <n> bedrock` is the form it accepts.
+"The verb/substrate title token"). Two verbs predate the order, and
+the launcher and `session_dispatch.py` move to it in a sibling change;
+**until it lands**, `architect` takes its word after the number
+(`architect <n> bedrock`), and `explore` takes `anthropic` alone, so
+`[Explore/Bedrock]` is typed as the bare `explore <n>`. The dispatch
+tool and the `architect` launcher refuse the new form, but a hand-typed
+`explore bedrock <n>` opens a session *named* `bedrock` — so type the
+old form until then.
 A Bedrock `explore` pins its sub-agents to the executor tier (see
 "Model tiers" below); every other verb's sub-agents inherit the
 session's model. A launch into an existing session or worktree keeps
 the substrate its marker records — a switch means a fresh worktree.
-The table names tier, verb and config variable only, never a model
-class or id.
+The table names verbs and tiers only, never a model class or id.
 `task local <n>` still works for now, printing a line naming its
 replacement. **The tier table itself is in "Model tiers" below.**
 
@@ -1920,7 +1924,8 @@ running.
 
 **The substrate override** is the two substrate names and nothing else,
 as an optional literal word: `task anthropic <n>`, `plan bedrock`,
-`architect bedrock <n>`. The one that will actually get used is the
+`architect bedrock <n>` (`architect <n> bedrock` until the launcher
+reorder lands; see "The verb table"). The one that will actually get used is the
 advisor tier onto Bedrock in a credit pinch. **Retention:** a
 Fable-class model on Bedrock falls under the account's standing AWS
 human-review opt-in, which is a condition of Fable access and cannot be
@@ -2286,7 +2291,8 @@ drives the real zsh functions.
 - **`architect <n>`** — start **or resume** an **architect** session on
   the design thread governed by issue `<n>`, its only argument: the CEO
   hat, and the complement to `plan` rather than a variant of it. Same
-  tier, same optional substrate word (before the number), same
+  tier, same optional substrate word (before the number once the
+  launcher reorder lands, after it until then), same
   idempotency; the different halves are the briefing
   (`/architect ENG-<n>`), what it may write — **no scheduling
   writes**: it files its own tasks and moves its own governing issue to
@@ -2332,7 +2338,7 @@ drives the real zsh functions.
   on every reopen. A worktree-slug hit resumes from inside the worktree.
 
   `architect` records its substrate in the marker **and** an `advisor`
-  tier beside it (`<n>.tier`), so `architect bedrock <n>` comes back on
+  tier beside it (`<n>.tier`), so a Bedrock `architect` comes back on
   Bedrock and the advisor model through `task resume`, `fleet`, and a
   bare `architect <n>` reopen alike. It never overwrites a marker a
   `task` session wrote on the same number.

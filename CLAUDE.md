@@ -198,7 +198,7 @@ A Linear title's leading **`[<Verb>/<Substrate>]`** (`Task` /
 issue's **launch line**: `[Chore/Anthropic]` on 1234 is
 `chore anthropic 1234`. No token is Task on Bedrock, the only
 elision; it precedes `Claude:`, `[Operator]` marks hand-executed
-items, and it never reaches a PR title. Detail: same doc.
+items, and the token never reaches a PR title. Detail: same doc.
 
 ### Keep Linear tags out of PR bodies and comments
 
