@@ -537,8 +537,9 @@ The state and the milestone together say where an issue sits:
 | In Progress, In Review, Done | —         | the session state machine, unchanged (see above)    |
 
 **The operator's move from Backlog to Todo is the approval.** Planning
-never makes that move (an architect makes it only on the operator's
-per-tab yes), and that single-writer rule is why "state is Todo" proves
+never makes that move, nor does an architect on its own judgment (it
+executes one only when the operator directs it in the tab), and that
+single-writer rule is why "state is Todo" proves
 approval with no reaction read. **Withdrawal** is the reverse move. A
 **fold into a Todo body drops it back to Backlog**, because the body the
 operator approved is no longer the body on the issue.

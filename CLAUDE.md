@@ -93,7 +93,9 @@ repo-bound — a ratified spec included — lands later via a
 included.
 
 **A spec FILE is optional; ratification is not — tasks are filed
-into Backlog and move to Todo only on the per-tab yes.** The loop is
+into Backlog, and the session never moves one to Todo: the
+operator reviews them in the tab and moves them, or directs the
+move there.** The loop is
 write → operator edits **in place** → read back **once** → ratify,
 with
 `AskUserQuestion` reserved for calls the draft cannot proceed

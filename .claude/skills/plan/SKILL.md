@@ -567,10 +567,13 @@ tier, no PR, In Review at handoff.
   re-run the whole call.
 - **An `architect` kick-off is this fixed text, never a
   paraphrase:** "The read-back is mandatory: file tasks into
-  Backlog as the design settles, move to Todo only those the
-  operator ratifies, and open your handoff with where and when
-  they did." Never call the read-back optional. A handoff lacking
-  that line is unratified: its tasks stay in Backlog for review.
+  Backlog as the design settles, never move them to Todo
+  yourself, and open your handoff with the task list and whether
+  the operator has reviewed it." Never call the read-back
+  optional. A handoff lacking that line is unratified: its tasks
+  stay in Backlog for review. The dispatch gate is unchanged
+  (state Todo plus unblocked); the operator makes an architect's
+  Todo moves, or directs them in its tab.
 - **A ratified spec FILE is folded in first** (usually the
   design landed as tasks, and there is none): an implementer
   cannot read an architect or explore worktree, so **copy it into the
