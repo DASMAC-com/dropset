@@ -71,7 +71,8 @@ A `failed` step is best-effort and never stops the run: `mute` fails
 without the `notifications` scope (the note names the one-time
 `gh auth refresh -h github.com -s notifications`, and the upkeep
 pass's notification sweep catches the rest once the issue closes —
-armed, or by hand via `upkeep.py prune --apply`); `linear_state` — say so; `install` — re-run
+armed, or by hand via `upkeep.py prune --apply`); `linear_state` —
+say so; `install` — re-run
 `python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install`
 by hand, since the `biome` and `tsc` hooks fail the first full
 `make lint` without it; `spec` — fall back to `get_issue`.

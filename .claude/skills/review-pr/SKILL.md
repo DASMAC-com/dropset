@@ -1732,8 +1732,8 @@ migrations or generation inputs, and whether it spans crates.
      marked its threads done on `merged`, before it exited, so no turn
      is spent on it. Read the verdict's `notifications`: `error: null`
      needs nothing (`dismissed: 0` just means already cleared). On an
-     error, say so in the report and leave it; `housekeeping`'s
-     notification sweep is the fallback. Never dismiss by hand or
+     error, say so in the report and leave it; the upkeep pass's
+     finished-PR notification sweep is the fallback. Never dismiss by hand or
      `mark_all_notifications_read`.
 
    - [ ] **Reclaim the worktree's disk** — the multi-GB `target/` and

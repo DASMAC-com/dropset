@@ -810,7 +810,7 @@ def dismiss_pr_notifications(pr: int, repo: str) -> dict:
     Called on a ``merged`` queue verdict. ``DELETE`` on a thread is GitHub's
     "mark as done"; marking it read would leave it in the inbox. Never raises:
     the merge already happened, so a failed dismissal is reported, and
-    ``housekeeping``'s notification sweep is the fallback.
+    the upkeep pass's finished-PR notification sweep is the fallback.
     """
     suffix = f"/repos/{repo}/pulls/{pr}"
     try:

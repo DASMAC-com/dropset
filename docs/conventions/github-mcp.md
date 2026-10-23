@@ -120,8 +120,8 @@ which drifted behind it twice:
   single call** for that one id, because it embeds the complete
   repository object (every `*_url` template) once per notification.
   The dismissal is best-effort — a failure is reported in the verdict's
-  `notifications` field, and `housekeeping`'s merged-PR sweep is the
-  fallback.
+  `notifications` field, and the upkeep pass's finished-PR notification
+  sweep is the fallback.
 
 - **Unsubscribing from a new PR's notifications** (`init-pr`) — right
   after the draft PR is created, so its lifecycle (CI, assignment,
@@ -184,9 +184,9 @@ which drifted behind it twice:
 - **The merged-PR pre-check** (`init_pr_bootstrap.py`'s
   `merged_check` step) — `gh pr list --search <ENG-###> --state all`
   with a `--json` field selection, a few rows. Same reasoning as the
-  `housekeeping` read below (a `merged` filter and field selection the
-  MCP lacks), and in-process for the same reason as the draft PR: a
-  tool cannot call the MCP.
+  `upkeep.py` read below (only the fields the decision needs), and
+  in-process for the same reason as the draft PR: a tool cannot call
+  the MCP.
 
 - **The field-selected `gh pr list --json` read** (`upkeep.py`) —
   `gh` selects only the fields the decision needs, so a field-selected
