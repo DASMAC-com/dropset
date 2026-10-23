@@ -346,6 +346,12 @@ python3 .claude/tools/trim_levers.py compose \
   --groups-file <scratchpad>/groups.json --out-dir <scratchpad>/tasks
 ```
 
+**Order parts, and tasks, turns-eliminated first.** A lever that
+collapses a judgment-free multi-turn flow into one tool run leads its
+task, and a task of such levers leads the fold, ahead of levers that
+only shrink a payload (`docs/conventions/context-economy.md` →
+"Session length is itself a cost lever").
+
 `groups.json` carries the themes you chose in step 3 — a JSON array of
 `{"title": …, "levers": […]}` objects, one per task. That grouping is
 the one part of the fold the tool cannot decide for you; everything

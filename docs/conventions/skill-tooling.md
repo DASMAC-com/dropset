@@ -53,7 +53,8 @@ coupling skill tooling to the program's toolchain.
   is later rewritten.
 
 Today `.claude/tools/` holds `session_metrics.py` (the
-`session-metrics` core), `init_pr_branch.py` (the `init-pr`
+`session-metrics` core), `init_pr_bootstrap.py` (the whole `init-pr`
+bootstrap in one run, driving the next), `init_pr_branch.py` (the `init-pr`
 branch/worktree checks **and**, under `--link-env`, the two
 operator-file symlinks `frontend/.env.local` and
 `infra/localnet/secrets.local.env` — so it is not purely

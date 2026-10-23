@@ -332,6 +332,17 @@ sub-agent, harden into a tool), and where you can, name the
 **concrete** skill step or convention-doc rule to edit.
 Keep it tight; this is a recommendation, not a patch.
 
+**Ask which turns could have been eliminated entirely — every
+run.** Walk the session for stretches of consecutive turns with no
+judgment inside (a chain of deterministic acts, a poll-and-react
+loop, a lookup-then-act pair) and name each as a lever: the flow,
+the turns it spent, and the one tool run that would replace it.
+**A turn-eliminating lever ranks above any lever that merely
+shrinks a payload** (`docs/conventions/context-economy.md` →
+"Session length is itself a cost lever"), since deleting a turn
+removes every replay it would have paid. Rank within each class
+as below.
+
 **Rank levers by estimated dollars saved, not tokens.** Dollars
 are what the credit spend is billed against, and the two orders
 differ: a cache-read-heavy sink priced at $0.22/Mtok can rank

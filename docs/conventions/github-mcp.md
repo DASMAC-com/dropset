@@ -110,25 +110,18 @@ which drifted behind it twice:
   `review_diff.py --overlap`, which exist so the per-PR file lists never
   reach a transcript at all.)
 
-- **The post-merge notification lookup** (`review-pr`) — reading the
-  one thread id whose `subject.url` ends in a PR's number, so the
-  merged PR's own notification can be dismissed. Same reasoning as the
-  reads above, and it was simply missed when that carve-out was
-  written: `mcp__github__list_notifications` returned **3.7k tokens in
-  a single call** for that one id — the 6th-largest result of one
-  session — because it embeds the complete repository object (every
-  `*_url` template) once per notification, repeated per notification.
-  A field-selected read is the fix:
-
-  ```text
-  gh api /notifications --jq '.[] | {id, url: .subject.url}'
-  ```
-
-  The **dismissal itself stays on the MCP**
-  (`dismiss_notification`) — it is a small write with no payload
-  problem, and only the *read* is the expensive half. Whichever
-  transport is used, the list is a fixed cost to be **read once**:
-  never re-fetch it to re-find the id.
+- **The post-merge notification dismissal** (`review-pr`) — done
+  **inside** `wait_for_checks.py --queue`, which on a `merged` verdict
+  lists the notification threads and marks each one whose `subject.url`
+  ends in the PR's number as done (`DELETE /notifications/threads/{id}`),
+  in its own process, before it exits. That leaves no turn between the
+  merge and the dismissal, and no list payload in any transcript:
+  `mcp__github__list_notifications` once returned **3.7k tokens in a
+  single call** for that one id, because it embeds the complete
+  repository object (every `*_url` template) once per notification.
+  The dismissal is best-effort — a failure is reported in the verdict's
+  `notifications` field, and the upkeep pass's finished-PR notification
+  sweep is the fallback.
 
 - **Unsubscribing from a new PR's notifications** (`init-pr`) — right
   after the draft PR is created, so its lifecycle (CI, assignment,
@@ -151,8 +144,9 @@ which drifted behind it twice:
     }'
   ```
 
-  The MCP `create_pull_request` returns the PR's *numeric* database id,
-  not the node id, so `init-pr` first resolves the node id with
+  `gh pr create` prints only the PR's URL (and the MCP
+  `create_pull_request` only its *numeric* database id), so the
+  bootstrap first resolves the node id with
   `gh pr view <number> --json id` (gh's `id` field over its GraphQL
   *is* the node id). A success returns
   `viewerSubscription: "UNSUBSCRIBED"` (GitHub normalizes the `IGNORED`
@@ -163,12 +157,20 @@ which drifted behind it twice:
   call fails with `INSUFFICIENT_SCOPES`. It's **best-effort**:
   `init-pr` continues if it errors, and the upkeep pass's finished-PR
   notification sweep is the catch-all for anything it misses. Both
-  commands reuse allow-rules already listed below —
-  `Bash(gh pr view:*)` for the node-id lookup and
-  `Bash(gh api graphql:*)` for the mutation — so no new permission is
-  needed.
+  commands run inside `init_pr_bootstrap.py`'s own process, so the
+  directory-wide `Bash(python3 .claude/tools/:*)` rule covers them and
+  no new permission is needed.
 
-- **The credential pre-check** (`init-pr` step 0b) — `gh auth status`,
+- **The draft PR at bootstrap** (`init_pr_bootstrap.py`) —
+  `gh pr create --draft`. The bootstrap is one tool run so that none
+  of its deterministic acts costs a turn, and a tool process cannot
+  call the MCP; routing this one write back through the skill would
+  restore the turn the tool exists to remove. It touches only the new
+  PR's own title, body and draft state, the same low blast radius as
+  the pre-approved `create_pull_request`.
+
+- **The credential pre-check** (`init_pr_bootstrap.py`'s `auth`
+  step) — `gh auth status`,
   run before anything that mutates the worktree. This one needs no
   payload or transport argument at all: the question *is* whether the
   `gh` CLI itself holds a working credential, so there is nothing for
@@ -177,7 +179,14 @@ which drifted behind it twice:
   expired — which is exactly the state this check exists to catch, and
   why an MCP call would give a **false all-clear**. The same output
   reports the **scope set**, which is where the `notifications` scope
-  above is confirmed. Covered by `Bash(gh auth status:*)`.
+  above is confirmed. Run in-process, as is the bootstrap's next read.
+
+- **The merged-PR pre-check** (`init_pr_bootstrap.py`'s
+  `merged_check` step) — `gh pr list --search <ENG-###> --state all`
+  with a `--json` field selection, a few rows. Same reasoning as the
+  `upkeep.py` read below (only the fields the decision needs), and
+  in-process for the same reason as the draft PR: a tool cannot call
+  the MCP.
 
 - **The field-selected `gh pr list --json` read** (`upkeep.py`) —
   `gh` selects only the fields the decision needs, so a field-selected
@@ -356,11 +365,8 @@ writes to confirm-on-use:
   `review-pr`, `pr-title-description`, and `upkeep.py` use in place
   of the full-object MCP calls (see "GitHub
   via MCP" above and [context economy](context-economy.md)).
-  `init-pr`'s notification unsubscribe also rides on these two —
-  `Bash(gh pr view:*)` for the node-id lookup and
-  `Bash(gh api graphql:*)` for the `updateSubscription` mutation (the
-  one write on the `gh api graphql` rule) — so it needs no allow-rule
-  of its own. These are
+  `init-pr`'s bootstrap makes its `gh` calls inside its own process,
+  under the tools-directory rule, so it needs none of these. These are
   Bash globs, not `mcp__github__*` entries, but they're pre-approved on
   the same rationale (routine, low-blast-radius calls).
 
@@ -371,8 +377,10 @@ writes to confirm-on-use:
   the failing job's step conclusions
   (`actions/jobs/<id>`, or a run's `actions/runs/<id>/jobs`) are read
   inside `wait_for_checks.py`, which filters in Python. Reads only — the
-  one `gh api` **write** in the skills is `init-pr`'s
-  `updateSubscription` mutation, which rides the GraphQL rule.
+  `gh api` **writes** are the bootstrap's `updateSubscription`
+  mutation and the notification-thread `DELETE`s of
+  `wait_for_checks.py --queue` and `upkeep.py`, each made in its own
+  tool's process.
 
   The ruleset call site passes a `--jq` filter containing a `|`. That is a
   command **flag**, not a shell pipe, so the compound guard does not
@@ -384,15 +392,13 @@ writes to confirm-on-use:
   consuming tool rather than to drop the carve-out.
 
 - **Pre-approve (routine PR-authoring writes):** `create_pull_request`
-  (init-pr) and `update_pull_request` (pr-title-description, review-pr).
-  The skills call these on every run to open
+  (`init-pr`'s fallback when the bootstrap's `pr` step stops twice —
+  its `stopped_at` table) and `update_pull_request`
+  (pr-title-description, review-pr). The skills call these to open
   and maintain the draft PR,
   and they touch only the PR's own title / body / draft-state — low
   blast radius — so gating them behind a confirm prompt each run buys no
-  safety. Pre-approving them is deliberate. (`init-pr`'s notification
-  unsubscribe is also a routine write, but it's a GraphQL mutation
-  covered by the `Bash(gh api graphql:*)` companion rule above, not a
-  dedicated allow-rule.)
+  safety. Pre-approving them is deliberate.
 
 - **Confirm-on-use (merges, deletes, pushes, issue/actions
   mutations):** `merge_pull_request`, `delete_file`, `push_files`,
