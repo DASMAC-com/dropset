@@ -121,13 +121,15 @@ pub struct MarketConfig {
     /// it whenever the feeds answer.
     pub static_usd: f64,
     /// Whether this market refuses to quote without a **live tape** on its FX
-    /// leg — the MVP pairs, which are the ones intended to take real fills.
+    /// leg — tGBP and the MVP pairs, which are the ones intended to take real
+    /// fills.
     ///
     /// The roster deliberately splits here. Most markets have no intraday FX
     /// source and never will under the no-new-venues rule, so a daily ECB fix
     /// is all they will ever have and requiring a tape would simply dark them
     /// — and `make demo` is supposed to rest a book on every roster pair. The
-    /// MVP pairs are different: they are the ones that will quote on mainnet,
+    /// mainnet-bound pairs are different: they are the ones that will quote on
+    /// mainnet (tGBP first, the MVP pairs in the second wave),
     /// so pricing them off a day-old fix is the exact risk the fail-closed
     /// posture exists to decline.
     ///
@@ -206,7 +208,9 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "EURC",
         base_keypair_file: "keys/EURC.json",
-        mainnet_mint: Some(pubkey!("HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr")),
+        // EURC, AUDD and CADC are the mainnet second wave, behind tGBP: off
+        // the mainnet roster until that wave is run.
+        mainnet_mint: None,
         base_decimals: 6,
         currency: "EUR",
         pyth_feed_id: "a995d00bb36a63cef7fd2c287dc105fc8f3d93779f062f09551b0af3e81ec30b",
@@ -238,7 +242,7 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "TGBP",
         base_keypair_file: "keys/TGBP.json",
-        mainnet_mint: None,
+        mainnet_mint: Some(pubkey!("2zMqyX4AYCk6mgy5UZ2S7zUaLxwERhK5WjqDzkPPbSpW")),
         base_decimals: 9,
         currency: "GBP",
         pyth_feed_id: "84c2dde9633d93d1bcad84e7dc41c9d56578b7ec52fabedc1f335d673df0a7c1",
@@ -338,7 +342,8 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "AUDD",
         base_keypair_file: "keys/AUDD.json",
-        mainnet_mint: Some(pubkey!("AUDDttiEpCydTm7joUMbYddm72jAWXZnCpPZtDoxqBSw")),
+        // Second wave, as EURC.
+        mainnet_mint: None,
         base_decimals: 6,
         currency: "AUD",
         pyth_feed_id: "67a6f93030420c1c9e3fe37c1ab6b77966af82f995944a9fefce357a22854a80",
@@ -354,7 +359,8 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "CADC",
         base_keypair_file: "keys/CADC.json",
-        mainnet_mint: Some(pubkey!("9ewjJpmD1ES83RDRFnHs7V2hUdH76WAVjdvu6UV6WNo7")),
+        // Second wave, as EURC.
+        mainnet_mint: None,
         base_decimals: 6,
         currency: "CAD",
         pyth_feed_id: "3112b03a41c910ed446852aacf67118cb1bec67b2cd0b9a214c58cc0eaa2ecca",
@@ -1223,9 +1229,12 @@ mod tests {
         check("USDC", QUOTE_DECIMALS);
     }
 
-    /// The mainnet roster is the three MVP pairs, and each address is the
-    /// frontend's `currencies.json` mint — the same pin the TUI's
-    /// `mainnet_mints_match_the_frontend_currency_data` holds its copy to, so
+    /// The mainnet roster is tGBP alone until the second wave (EURC, AUDD,
+    /// CADC) is run, and each address is the frontend's `currencies.json`
+    /// mint (decimals are pinned for every market by
+    /// `base_decimals_match_the_frontend_currency_data`) — the same pin the
+    /// TUI's `mainnet_mints_match_the_frontend_currency_data` holds its copy
+    /// to, so
     /// the maker and the ceremony cannot disagree about which mint a market
     /// is. A typo here would leave the maker discovering no market at all,
     /// or the wrong one.
@@ -1253,7 +1262,7 @@ mod tests {
             .filter(|m| m.mainnet_mint.is_some())
             .map(|m| m.symbol)
             .collect();
-        assert_eq!(mainnet, ["EURC", "AUDD", "CADC"]);
+        assert_eq!(mainnet, ["TGBP"]);
         for m in MARKETS {
             if let Some(mint) = m.mainnet_mint {
                 assert_eq!(mint.to_string(), listed(m.symbol), "{} mint", m.symbol);

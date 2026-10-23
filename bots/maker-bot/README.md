@@ -93,8 +93,9 @@ the supervisor loop:
 cargo run -p dropset-maker-bot
 ```
 
-Mainnet — quote the mainnet roster (EURC, AUDD, CADC on their real
-mints) with the leader key from the secrets chain. Nothing is airdropped;
+Mainnet — quote the mainnet roster (tGBP on its real mint; EURC, AUDD
+and CADC join with the second wave) with the leader key from the secrets
+chain. Nothing is airdropped;
 fund the leader first:
 
 ```sh
