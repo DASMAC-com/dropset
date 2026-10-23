@@ -41,8 +41,9 @@ RUN cargo chef prepare --recipe-path recipe.json
 # the source rather than COPYing it, as Docker's Rust guide does: a COPY
 # layer reused from cache restores the mtimes of the build that made it, so
 # cargo, which reads a persistent target by mtime, would call a reverted
-# crate fresh. A bind mount carries the context's current mtimes, exactly as
-# a host build sees them; writes under it are discarded. The target id is
+# crate fresh. A bind mount carries the host's mtimes, so cargo is as fresh
+# as a host build, short of host/VM clock skew (prune the `*-tgt-*` cache to
+# force a rebuild); writes to the source tree are discarded. The target id is
 # per image and per checkout (the CHECKOUT build arg, which compose fills
 # from DS_CHECKOUT, else the caller's directory): cargo judges a workspace
 # crate fresh by mtime, so a target shared across worktrees could silently
