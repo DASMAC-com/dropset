@@ -148,6 +148,26 @@ class PricedCheckTests(unittest.TestCase):
         self.assertGreater(got["next_turn_usd"], got["usd_threshold"])
         self.assertFalse(got["due"])
 
+    def test_a_failed_last_request_does_not_hide_the_prefix(self):
+        # A failed request is recorded as an all-zero `<synthetic>` record.
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx, priced():
+            fx.transcript(
+                [
+                    assistant(0, pc.TOKEN_THRESHOLD, 0, ADVISOR),
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "model": "<synthetic>",
+                            "usage": {"input_tokens": 0, "output_tokens": 0},
+                        },
+                    },
+                ]
+            )
+            got = pc.check(fx.repo, DATE)
+        self.assertEqual(got["model"], ADVISOR)
+        self.assertEqual(got["prefix_tokens"], pc.TOKEN_THRESHOLD)
+        self.assertTrue(got["due"])
+
     def test_an_unpriced_sub_agent_withholds_only_the_session_figure(self):
         with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx, priced():
             path = fx.transcript([assistant(0, 10, 0, WORKER)])
@@ -180,6 +200,14 @@ class FallbackCheckTests(unittest.TestCase):
             got = pc.check(fx.repo, DATE)
         self.assertEqual(got["prefix_tokens"], 3202)
         self.assertEqual(got["model"], sm.UNRECORDED_MODEL)
+        self.assertFalse(got["due"])
+
+    def test_no_assistant_record_reads_as_an_undue_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            fx.transcript([{"type": "user", "message": {"content": "hi"}}])
+            got = pc.check(fx.repo, DATE)
+        self.assertEqual(got["prefix_tokens"], 0)
+        self.assertIn("fallback", got)
         self.assertFalse(got["due"])
 
     def test_due_on_tokens(self):
@@ -282,6 +310,15 @@ class SnoozeTests(unittest.TestCase):
             (state / pc.SNOOZE).write_text(
                 json.dumps({"sid": sid, "tokens": 9, "messages": 55})
             )
+            got = pc.check(fx.repo, DATE)
+        self.assertEqual(got["token_threshold"], pc.TOKEN_THRESHOLD)
+
+    def test_a_non_object_snooze_file_reads_as_none(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            fx.transcript([assistant(0, 1, 0)])
+            state = fx.repo / rs.STATE_DIR
+            state.mkdir(parents=True)
+            (state / pc.SNOOZE).write_text("[]\n")
             got = pc.check(fx.repo, DATE)
         self.assertEqual(got["token_threshold"], pc.TOKEN_THRESHOLD)
 

@@ -22,7 +22,7 @@ Usage::
   next one, at the 1h write rate; ``session_usd`` is the session to date,
   sub-agents included, priced as session metrics prices it. ``due`` fires on
   ``replay_usd``: a fresh session pays the write too, so cycling does not save
-  it, and at 80x the read rate one tool result's write would otherwise swamp
+  it, and at 40-80x the read rate one tool result's write would otherwise swamp
   the length signal. A seat session records the same model id as a Bedrock one, so it is
   priced at Bedrock rates too, as ``fleet_cost.py`` prices it; only a model
   with no row falls back to the token threshold, and the line says so. Exit 0
@@ -104,7 +104,12 @@ def transcript_path(repo: Path, sid: str) -> Path:
 
 
 def _assistant_usage(line: str) -> tuple[dict, str] | None:
-    """An assistant record's usage block and the model it recorded."""
+    """An assistant record's usage block and the model it recorded.
+
+    A zero-usage record — a failed request, recorded as a ``<synthetic>`` model
+    — is skipped, so the search walks back to the last real prefix. Failures
+    cluster in long sessions, exactly where a zero would hide a due cycle.
+    """
     try:
         entry = json.loads(line)
     except json.JSONDecodeError:
@@ -113,7 +118,7 @@ def _assistant_usage(line: str) -> tuple[dict, str] | None:
         return None
     message = entry.get("message") or {}
     usage = message.get("usage")
-    if not isinstance(usage, dict):
+    if not isinstance(usage, dict) or not prefix_of(usage):
         return None
     return usage, sm._model_of(message)
 
@@ -187,7 +192,7 @@ def thresholds(repo: Path, sid: str) -> tuple[float, int]:
         saved = json.loads((repo / rs.STATE_DIR / SNOOZE).read_text())
         if saved.get("sid") == sid:
             return float(saved["usd"]), int(saved["tokens"])
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         pass
     return USD_THRESHOLD, TOKEN_THRESHOLD
 
