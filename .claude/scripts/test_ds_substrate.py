@@ -339,10 +339,13 @@ class VerbLaunch(SubstrateHarness):
     def test_a_task_with_no_id_source_launches_nothing(self):
         result, out = self._launch(
             "_ds_new_sid() { :; }; task 7; "
-            'print -r -- "TASK_RC=$? USE=${CLAUDE_CODE_USE_BEDROCK-unset}"',
+            'print -r -- "TASK_RC=$? USE=${CLAUDE_CODE_USE_BEDROCK-unset}"; '
+            # A refusal must not flip an earlier session's tag marker.
+            "[[ -e $_DS_SUBSTRATE_DIR/7 ]] && print -r -- MARKED",
             env=self._TOKEN,
         )
         self.assertNotIn("MODEL=", out)
+        self.assertNotIn("MARKED", out)
         self.assertIn("TASK_RC=1", out)
         self.assertIn("USE=unset", out)
         self.assertIn("could not generate a session id", result.stderr)

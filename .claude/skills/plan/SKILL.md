@@ -161,8 +161,9 @@ are operator-only and ride step 8's `AskUserQuestion`:
 after saying the parked counts, unless the report's line reads
 `Trim levers 0`. Invoking `plan` is the authorization (ruling 11).
 One fresh background `general-purpose` `Agent` — never a fork,
-`model: opus`, which a Bedrock launch maps to the executor tier: a
-fold is carried-out work, not a planning judgment — whose brief is
+`model: opus`, which a Bedrock launch maps to the executor tier (on
+`plan anthropic`, Claude Code's own Opus): a fold is carried-out
+work, not a planning judgment — whose brief is
 pointers, not content: the
 canonical brief from
 

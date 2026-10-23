@@ -730,9 +730,10 @@ _ds_topic_sid() {
 #
 # THE RULE IS CAPABILITY, NOT ATTENDANCE. A session runs on Bedrock unless it
 # needs something Bedrock lacks — web search or deep research (web fetch works
-# there, measured 2026-10-23) — or it is a seat session by role (`architect`). `plan` left the seat by default for
-# pricing: a base-repo planning session on the subscription has no dollar
-# figure, and `plan anthropic` remains the way back.
+# there, measured 2026-10-23) — or it is a seat session by role (`architect`).
+# `plan` left the seat by default for pricing: a base-repo planning session on
+# the subscription has no dollar figure, and `plan anthropic` remains the way
+# back.
 # Sub-agents are NOT a differentiator: Opus-spawning-Opus sub-agents are
 # verified working on Bedrock.
 #
@@ -1437,12 +1438,9 @@ _ds_task_start() {
   _ds_secrets
   _ds_substrate_enter "$substrate" 'task' || return 1
 
-  # Recorded BEFORE the launch, not after: `claude` blocks for the life of the
-  # session, so an after-the-fact write would land whenever the operator
-  # happened to quit — and never at all if the terminal were closed instead.
-  _ds_substrate_write "$tag" "$substrate"
   # A task always starts a NEW session, so it gets a fresh id to key the
-  # per-session record on; the tag marker above is what its resume reads.
+  # per-session record on; the tag marker below is what its resume reads.
+  # Generated before either is written, so a refusal leaves both untouched.
   local sid
   sid="$(_ds_new_sid)"
   if [[ -z "$sid" ]]; then
@@ -1451,6 +1449,11 @@ _ds_task_start() {
     _ds_substrate_unset
     return 1
   fi
+
+  # Recorded BEFORE the launch, not after: `claude` blocks for the life of the
+  # session, so an after-the-fact write would land whenever the operator
+  # happened to quit — and never at all if the terminal were closed instead.
+  _ds_substrate_write "$tag" "$substrate"
   _ds_session_mark "$sid"
 
   local dir="$(_ds_launch_dir "$tag")"
