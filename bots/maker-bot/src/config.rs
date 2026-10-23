@@ -121,13 +121,15 @@ pub struct MarketConfig {
     /// it whenever the feeds answer.
     pub static_usd: f64,
     /// Whether this market refuses to quote without a **live tape** on its FX
-    /// leg — the MVP pairs, which are the ones intended to take real fills.
+    /// leg — tGBP and the MVP pairs, which are the ones intended to take real
+    /// fills.
     ///
     /// The roster deliberately splits here. Most markets have no intraday FX
     /// source and never will under the no-new-venues rule, so a daily ECB fix
     /// is all they will ever have and requiring a tape would simply dark them
     /// — and `make demo` is supposed to rest a book on every roster pair. The
-    /// MVP pairs are different: they are the ones that will quote on mainnet,
+    /// mainnet-bound pairs are different: they are the ones that will quote on
+    /// mainnet (tGBP first, the MVP pairs in the second wave),
     /// so pricing them off a day-old fix is the exact risk the fail-closed
     /// posture exists to decline.
     ///
@@ -206,7 +208,8 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "EURC",
         base_keypair_file: "keys/EURC.json",
-        // Second wave: off the mainnet roster until that wave is run.
+        // EURC, AUDD and CADC are the mainnet second wave, behind tGBP: off
+        // the mainnet roster until that wave is run.
         mainnet_mint: None,
         base_decimals: 6,
         currency: "EUR",
