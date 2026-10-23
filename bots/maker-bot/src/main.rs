@@ -1386,7 +1386,7 @@ mod tests {
     fn mainnet_selects_only_the_mainnet_roster() {
         let all = args_on(Cluster::Mainnet, &[]).selected();
         let symbols: Vec<&str> = all.iter().map(|m| m.symbol).collect();
-        assert_eq!(symbols, ["EURC", "AUDD", "CADC"]);
+        assert_eq!(symbols, ["EURC", "TGBP", "AUDD", "CADC"]);
         assert!(args_on(Cluster::Mainnet, &["IDRX"]).selected().is_empty());
     }
 

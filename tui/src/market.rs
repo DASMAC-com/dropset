@@ -304,10 +304,19 @@ pub const PAIRS: [&PairConfig; 9] = [
     &MARKET_CADC,
 ];
 
-// The mainnet MVP pairs. Addresses and decimals are the issuers' own, as
-// recorded in the frontend's `currencies.json` — the test
-// `mainnet_mints_match_the_frontend_currency_data` holds the two copies equal,
-// so neither can drift from the other unnoticed.
+// The mainnet pairs: tGBP, the first wave, and the three MVP pairs behind it.
+// Addresses and decimals are the issuers' own, as recorded in the frontend's
+// `currencies.json` — the test `mainnet_mints_match_the_frontend_currency_data`
+// holds the two copies equal, so neither can drift from the other unnoticed.
+//
+// tGBP opens passive, as its localnet rehearsal does: its mainnet book is the
+// passive ladder the operator re-centres, not an always-on maker.
+pub const MAINNET_TGBP: PairConfig = passive(mainnet_fx_market(
+    "TGBP",
+    pubkey!("2zMqyX4AYCk6mgy5UZ2S7zUaLxwERhK5WjqDzkPPbSpW"),
+    9,
+    1.324,
+));
 pub const MAINNET_EURC: PairConfig = mainnet_fx_market(
     "EURC",
     pubkey!("HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr"),
@@ -328,7 +337,8 @@ pub const MAINNET_CADC: PairConfig = mainnet_fx_market(
 );
 
 /// Every mainnet pair the ceremony brings up.
-pub const MAINNET_PAIRS: [&PairConfig; 3] = [&MAINNET_EURC, &MAINNET_AUDD, &MAINNET_CADC];
+pub const MAINNET_PAIRS: [&PairConfig; 4] =
+    [&MAINNET_TGBP, &MAINNET_EURC, &MAINNET_AUDD, &MAINNET_CADC];
 
 /// The pairs a `cluster` session brings up.
 pub fn roster(cluster: Cluster) -> &'static [&'static PairConfig] {
@@ -1009,7 +1019,7 @@ mod tests {
     #[test]
     fn mainnet_roster_references_real_mints_and_operator_leaders() {
         let symbols = |c: Cluster| roster(c).iter().map(|p| p.base.symbol).collect::<Vec<_>>();
-        assert_eq!(symbols(Cluster::Mainnet), ["EURC", "AUDD", "CADC"]);
+        assert_eq!(symbols(Cluster::Mainnet), ["TGBP", "EURC", "AUDD", "CADC"]);
         assert_eq!(symbols(Cluster::Localnet).len(), PAIRS.len());
         for c in MAINNET_PAIRS {
             assert!(
@@ -1246,7 +1256,17 @@ mod tests {
         assert_eq!(postures.of("EURC"), Posture::Passive);
         assert_eq!(postures.toggle("NOPE"), None);
         assert_eq!(postures.of("NOPE"), Posture::Active);
-        assert!(MAINNET_PAIRS.iter().all(|c| c.posture == Posture::Active));
+        // Mainnet opens tGBP in the same posture as its rehearsal.
+        let mainnet = Postures::for_roster(Cluster::Mainnet);
+        for config in MAINNET_PAIRS {
+            let expected = if config.base.symbol == "TGBP" {
+                Posture::Passive
+            } else {
+                Posture::Active
+            };
+            assert_eq!(config.posture, expected, "{}", config.base.symbol);
+            assert_eq!(mainnet.of(config.base.symbol), expected);
+        }
     }
 
     /// A passive market opens on the shared tight ladder, never the active

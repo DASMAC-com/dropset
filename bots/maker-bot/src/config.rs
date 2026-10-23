@@ -238,7 +238,7 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "TGBP",
         base_keypair_file: "keys/TGBP.json",
-        mainnet_mint: None,
+        mainnet_mint: Some(pubkey!("2zMqyX4AYCk6mgy5UZ2S7zUaLxwERhK5WjqDzkPPbSpW")),
         base_decimals: 9,
         currency: "GBP",
         pyth_feed_id: "84c2dde9633d93d1bcad84e7dc41c9d56578b7ec52fabedc1f335d673df0a7c1",
@@ -1223,8 +1223,9 @@ mod tests {
         check("USDC", QUOTE_DECIMALS);
     }
 
-    /// The mainnet roster is the three MVP pairs, and each address is the
-    /// frontend's `currencies.json` mint — the same pin the TUI's
+    /// The mainnet roster is tGBP plus the three MVP pairs, and each address
+    /// is the frontend's `currencies.json` mint (decimals are pinned for every
+    /// market by `base_decimals_match_the_frontend_currency_data`) — the same pin the TUI's
     /// `mainnet_mints_match_the_frontend_currency_data` holds its copy to, so
     /// the maker and the ceremony cannot disagree about which mint a market
     /// is. A typo here would leave the maker discovering no market at all,
@@ -1253,7 +1254,7 @@ mod tests {
             .filter(|m| m.mainnet_mint.is_some())
             .map(|m| m.symbol)
             .collect();
-        assert_eq!(mainnet, ["EURC", "AUDD", "CADC"]);
+        assert_eq!(mainnet, ["EURC", "TGBP", "AUDD", "CADC"]);
         for m in MARKETS {
             if let Some(mint) = m.mainnet_mint {
                 assert_eq!(mint.to_string(), listed(m.symbol), "{} mint", m.symbol);

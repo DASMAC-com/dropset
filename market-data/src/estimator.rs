@@ -1180,6 +1180,47 @@ mod tests {
         }
     }
 
+    /// Every published market is a pair of tokens the frontend's
+    /// `currencies.json` lists, with its base filed under the currency this
+    /// roster composes it from — and tGBP-USDC, the first mainnet market, is
+    /// among them.
+    ///
+    /// The estimator carries no mint or decimals, so the symbols and the
+    /// currency are what it can disagree with the roster about; the maker and
+    /// the TUI pin the mint and decimals of the same pair against the same
+    /// file. A base filed under another currency would publish a fair value
+    /// off the wrong country's cross.
+    #[test]
+    fn published_markets_match_the_frontend_currency_data() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../frontend/lib/data/currencies.json"
+        );
+        let raw = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let currencies: serde_json::Value =
+            serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {path}: {e}"));
+        // The currency key each listed symbol is filed under.
+        let filed_under = |symbol: &str| -> String {
+            currencies
+                .as_object()
+                .expect("currencies.json is a currency-keyed object")
+                .iter()
+                .find(|(_, entry)| {
+                    entry["stablecoins"]
+                        .as_array()
+                        .is_some_and(|coins| coins.iter().any(|coin| coin["symbol"] == symbol))
+                })
+                .map(|(currency, _)| currency.clone())
+                .unwrap_or_else(|| panic!("{symbol} is not listed in currencies.json"))
+        };
+        assert_eq!(published_product("TGBP"), Some("TGBP-USDC"));
+        for m in PUBLISHED_MARKETS {
+            let (base, quote) = m.product_id.split_once('-').expect("BASE-QUOTE");
+            assert_eq!(filed_under(base), m.currency, "{} currency", m.product_id);
+            assert_eq!(filed_under(quote), "USD", "{} quote", m.product_id);
+        }
+    }
+
     /// No two markets share a published id, which would fork a basis EMA.
     #[test]
     fn published_ids_are_unique() {
