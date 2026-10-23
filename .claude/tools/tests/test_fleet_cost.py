@@ -35,6 +35,9 @@ ONE_MESSAGE = (
     sm.RATES_BY_MODEL["claude-opus-5-5"].input
     + sm.RATES_BY_MODEL["claude-opus-5-5"].output
 )
+# A Claude-shaped id with no rate row, so it bills under a named service but
+# refuses to price.
+UNPRICED_MODEL = "claude-opus-9-1"
 
 
 def record(
@@ -69,11 +72,12 @@ class WalkTest(unittest.TestCase):
         bedrock = self.projects / "bedrock"
         (bedrock / "s1" / "subagents").mkdir(parents=True)
         # One message streamed as three content-block lines, then one on a
-        # model with no rate.
+        # model with no rate (a fictional one, so a new rate row cannot price
+        # it).
         self.write(
             bedrock / "s1.jsonl",
             [record("msg_a", worker)] * 3
-            + [record("msg_fable", worker, model="claude-fable-5-1")],
+            + [record("msg_unpriced", worker, model=UNPRICED_MODEL)],
         )
         self.write(
             bedrock / "s1" / "subagents" / "agent.jsonl", [record("msg_sub", worker)]
@@ -128,13 +132,13 @@ class WalkTest(unittest.TestCase):
 
     def test_an_unpriced_model_is_named_and_kept_out_of_the_services(self) -> None:
         summary = fc.day_summary(self.meter, DAY)
-        self.assertEqual(summary["unpriced"], ["claude-fable-5-1"])
-        self.assertIn("claude-fable-5-1", summary["bedrock_tokens"])
+        self.assertEqual(summary["unpriced"], [UNPRICED_MODEL])
+        self.assertIn(UNPRICED_MODEL, summary["bedrock_tokens"])
         rec = fc.reconcile_day(
             summary,
             {
                 "Claude Opus 5.5 (Amazon Bedrock Edition)": 3 * ONE_MESSAGE / 0.918,
-                "Claude Fable 5.1 (Amazon Bedrock Edition)": 4.0,
+                "Claude Opus 9.1 (Amazon Bedrock Edition)": 4.0,
             },
             0.15,
         )
@@ -229,6 +233,7 @@ class UnitTest(unittest.TestCase):
             "claude-opus-5-5": "Claude Opus 5.5 (Amazon Bedrock Edition)",
             "claude-opus-5": "Claude Opus 5 (Amazon Bedrock Edition)",
             "claude-fable-5-1": "Claude Fable 5.1 (Amazon Bedrock Edition)",
+            "claude-sonnet-5-5": "Claude Sonnet 5.5 (Amazon Bedrock Edition)",
             "claude-haiku-4-5-20251001": "Claude Haiku 4.5 (Amazon Bedrock Edition)",
             "us.anthropic.claude-haiku-4-5-20251001-v1:0": (
                 "Claude Haiku 4.5 (Amazon Bedrock Edition)"

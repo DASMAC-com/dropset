@@ -158,6 +158,14 @@ RATES_BY_MODEL: dict[str, Rates] = {
     # first-party list price ($0.10 / $0.50, cache read 0.1x and 1h write 2x
     # input), at the up-to-100K-prompt tier, which background calls stay in.
     "claude-haiku-5-5": Rates(0.11, 0.55, 0.011, 0.22, verified=None),
+    # The audit lanes. Both apply the Opus 5.5 row's measured 1.10x Bedrock
+    # premium (4.40 against a 4.00 list) to the first-party list price, with
+    # the 1h write at 2x input. That premium is an assumption carried over, not
+    # a measurement: Bedrock is partner-priced, so each row stays unverified
+    # until a billed day reproduces it. Each cache read is its own list figure:
+    # 0.1x input for Sonnet 5.5, but $0.25 (0.025x) for Fable 5.1.
+    "claude-fable-5-1": Rates(11.00, 55.00, 0.275, 22.00, verified=None),
+    "claude-sonnet-5-5": Rates(2.20, 11.00, 0.22, 4.40, verified=None),
 }
 
 # The key a message with no recorded model is accumulated under. It is never
@@ -372,6 +380,17 @@ class SubAgentLine:
 
     def total_input(self) -> int:
         return self.input + self.cache_creation + self.cache_read
+
+    def models(self) -> list[str]:
+        """The models this agent billed tokens on, heaviest first, so a lane
+        left on a stale alias is visible at close."""
+
+        def weight(t: Tokens) -> int:
+            return t.input + t.cache_creation + t.cache_read + t.output
+
+        billed = [(m, t) for m, t in self.by_model.items() if t.billable()]
+        billed.sort(key=lambda mt: (-weight(mt[1]), mt[0]))
+        return [m for m, _ in billed]
 
 
 @dataclass
@@ -1477,10 +1496,15 @@ def to_markdown(report: dict, session_label: str) -> str:
     subagents: list[SubAgentLine] = report["subagents"]
     if subagents:
         out.append(f"\n### Sub-agents ({len(subagents)})\n\n")
-        out.append("| agent | turns | ≈input | output |\n|---|--:|--:|--:|\n")
+        out.append(
+            "| agent | model | turns | ≈input | output |\n|---|---|--:|--:|--:|\n"
+        )
         for a in subagents:
+            # Code spans, so `<unrecorded>` is not swallowed as an HTML tag.
+            models = ", ".join(f"`{m}`" for m in a.models()) or "—"
             out.append(
-                f"| {a.agent} | {a.turns} | {human(a.total_input())} | {human(a.output)} |\n"
+                f"| {a.agent} | {models} | {a.turns} | {human(a.total_input())} | "
+                f"{human(a.output)} |\n"
             )
 
     candidates: list[HardeningCandidate] = report["hardening_candidates"]
@@ -1562,6 +1586,7 @@ def to_json(report: dict) -> str:
                 "output": obj.output,
                 "cache_creation": obj.cache_creation,
                 "cache_read": obj.cache_read,
+                "models": obj.models(),
                 "by_model": obj.by_model,
             }
         if isinstance(obj, HardeningCandidate):
