@@ -108,6 +108,7 @@ frontmatter
 getpid
 gifs
 globbable
+gpgsig
 gpgsign
 granularities
 greppable

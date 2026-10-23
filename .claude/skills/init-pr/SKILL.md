@@ -14,8 +14,9 @@ first skill an agent runs after `claude --worktree <tag>` starts.
 Every deterministic act of the bootstrap is **one tool call**; the
 skill keeps only the turns that hold a judgment — adjudicating a stop.
 The tool's two cheap pre-checks still come **first**, before anything
-that mutates the worktree: the `gh` credential (with commit signing),
-and whether the issue already has a merged PR.
+that mutates the worktree: the `gh` credential, and whether the issue
+already has a merged PR. Commit signing is probed too, but only to
+decide whether to commit signed — it never stops the run.
 
 There is **no model check**: `task` pins the executor tier's model at
 launch and refuses to start when it does not resolve (see
@@ -37,7 +38,8 @@ In order: the `gh` credential, the merged-PR pre-check, the branch
 helper (`init_pr_branch.py --link-env` — tag, operator-file symlinks,
 measured facts, signing verdict), `git fetch origin main`, the
 `worktree-` rename, the rebase onto `origin/main`, the frontend install
-when `node_modules` is absent, the empty signed commit
+when `node_modules` is absent, the empty commit (signed when the
+signer answers)
 `chore(<ENG-###>): Bootstrap the worktree`, the push, the draft PR
 with that subject as its title (byte-identical, which the Semantic PR
 workflow compares while one commit is on the branch), the notification
@@ -49,23 +51,32 @@ the PR URL, any `failed` step and any `notes` in a line each.
 cause and re-run the same command** — it resumes, never redoes. Read
 `stopped_at`:
 
-| `stopped_at`   | Cause                                                                                                                                                                      | Action                                                                                                                                                                                                                                                                           |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auth`         | No valid `gh` credential                                                                                                                                                   | Tell the user to re-authenticate. Nothing was mutated.                                                                                                                                                                                                                           |
-| `merged_check` | A **merged** PR on this branch or scoped to this issue; or an invalid tag                                                                                                  | Merged: `AskUserQuestion` — stand down, or proceed with genuine follow-up scope (re-run with `--allow-merged`). Done means operator-ratified, not merged, so a merged issue in the queue is a contradiction, not an instruction. Invalid tag: ask for a valid `###` / `eng-###`. |
-| `branch`       | Signing is `external-signer-missing` (reinstall it or fix `gpg.ssh.program`), `agent-locked`, or `signing_probe.py` answered `LOCKED`; or the helper failed (see `detail`) | Signing: relay the instruction in `detail` (usually: unlock the 1Password app), then re-run; a probe `cannot run` line is git failing, not the signer — report it. Helper: fix what `detail` names.                                                                              |
-| `rebase`       | A conflict or a dirty tree; any rebase in progress was already aborted                                                                                                     | Tell the user; never resolve it here.                                                                                                                                                                                                                                            |
-| `commit`       | Signing failed (`failed to fill whole buffer` = 1Password locked)                                                                                                          | **An unpushed-state alarm**: say so, ask the user to unlock, re-run.                                                                                                                                                                                                             |
-| `pr`           | `gh pr create` failed or printed no URL                                                                                                                                    | If a re-run fails the same way, open the draft with `mcp__github__create_pull_request` (same title, empty body, `draft: true`), then re-run — the open PR is reused.                                                                                                             |
-| anything else  | The step's `detail` (an unexpected reply reads `<ExceptionType>: …`)                                                                                                       | Fix the cause and re-run. Steps never reached are in `remaining`.                                                                                                                                                                                                                |
+| `stopped_at`   | Cause                                                                                                             | Action                                                                                                                                                                                                                                                                           |
+| -------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth`         | No valid `gh` credential                                                                                          | Tell the user to re-authenticate. Nothing was mutated.                                                                                                                                                                                                                           |
+| `merged_check` | A **merged** PR on this branch or scoped to this issue; or an invalid tag                                         | Merged: `AskUserQuestion` — stand down, or proceed with genuine follow-up scope (re-run with `--allow-merged`). Done means operator-ratified, not merged, so a merged issue in the queue is a contradiction, not an instruction. Invalid tag: ask for a valid `###` / `eng-###`. |
+| `branch`       | The helper failed, or `signing_probe.py` printed a `cannot run` line (git failing, not the signer) — see `detail` | Fix what `detail` names, then re-run.                                                                                                                                                                                                                                            |
+| `rebase`       | A conflict or a dirty tree; any rebase in progress was already aborted                                            | Tell the user; never resolve it here.                                                                                                                                                                                                                                            |
+| `commit`       | The commit failed **even unsigned** — git itself, not the signer                                                  | **An unpushed-state alarm**: say so, fix the cause, re-run.                                                                                                                                                                                                                      |
+| `pr`           | `gh pr create` failed or printed no URL                                                                           | If a re-run fails the same way, open the draft with `mcp__github__create_pull_request` (same title, empty body, `draft: true`), then re-run — the open PR is reused.                                                                                                             |
+| anything else  | The step's `detail` (an unexpected reply reads `<ExceptionType>: …`)                                              | Fix the cause and re-run. Steps never reached are in `remaining`.                                                                                                                                                                                                                |
 
 On a stop, ask rather than retrying more than once or working around
-it. `external-signer` proves only that the signing path is **wired**,
-so the `branch` step also runs the dangling-commit probe
-(`signing_probe.py`) before the rename and stops on `LOCKED`, its
-instruction in `detail` — relay it. Add no agent probe (`ssh-add -l`,
-`ssh-keygen -Y sign`), which an external signer never consults, nor a
-`--show-signature` read, which tests verification, not signing.
+it.
+
+**A signer that cannot sign is never a stop** — signing defers to the
+merge gate (`docs/conventions/commits-and-prs.md` → "Signing defers to
+the merge gate"). `external-signer` proves only that the signing path
+is **wired**, so the `branch` step also runs the dangling-commit probe
+(`signing_probe.py`); on `LOCKED`, `external-signer-missing` or
+`agent-locked`, or a signed bootstrap commit that fails anyway, the
+tool rebases and commits with `--no-gpg-sign`, pushes, and sets
+`facts.signing_deferred`. Report the note's unlock instruction in one
+line and **start the task anyway** — never wait for the unlock;
+`review-pr` signs the branch in one pass at the gate. Add no agent
+probe (`ssh-add -l`, `ssh-keygen -Y sign`), which an external signer
+never consults, nor a `--show-signature` read, which tests
+verification, not signing.
 
 A `failed` step is best-effort and never stops the run: `mute` fails
 without the `notifications` scope (the note names the one-time

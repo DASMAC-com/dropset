@@ -27,16 +27,24 @@ printf '%s\\n' '-----BEGIN SSH SIGNATURE-----' 'c3R1Yg==' \\
 """
 
 
+def commit_object(*lines):
+    return "\n".join(lines) + "\n"
+
+
 class IsSigned(unittest.TestCase):
     def test_a_gpgsig_header_is_a_signature(self):
-        obj = "tree t\nauthor a\ngpgsig -----BEGIN SSH SIGNATURE-----\n x\n\nmsg\n"
+        obj = commit_object(
+            "tree t", "author a", "gpgsig -----BEGIN SSH SIGNATURE-----", " x", "", "m"
+        )
         self.assertTrue(rb.is_signed(obj))
 
     def test_a_sha256_signature_header_counts(self):
-        self.assertTrue(rb.is_signed("tree t\ngpgsig-sha256 sig\n\nmsg\n"))
+        obj = commit_object("tree t", "gpgsig-sha256 sig", "", "m")
+        self.assertTrue(rb.is_signed(obj))
 
     def test_gpgsig_in_the_message_is_not_a_signature(self):
-        self.assertFalse(rb.is_signed("tree t\nauthor a\n\ngpgsig in the body\n"))
+        obj = commit_object("tree t", "author a", "", "gpgsig in the body")
+        self.assertFalse(rb.is_signed(obj))
 
 
 @unittest.skipUnless(shutil.which("false"), "needs a `false` binary")
@@ -133,12 +141,32 @@ class RealRepo(unittest.TestCase):
             self.git("rev-parse", "HEAD"),
         )
 
-    def test_a_remote_commit_the_branch_lacks_refuses_before_moving(self):
+    def test_a_branch_rebased_onto_a_newer_base_still_pushes(self):
         self.commit("a")
         self.git("push", "-q", "-u", "origin", "eng-1")
-        self.commit("b")
+        self.git("checkout", "-q", "main")
+        self.commit("m", sign=True)
         self.git("push", "-q")
-        self.git("reset", "-q", "--hard", "HEAD~1")
+        self.git("checkout", "-q", "eng-1")
+        self.git("rebase", "-q", "--no-gpg-sign", "main")
+        code, line = rb.resign("main", push=True)
+        self.assertEqual(code, 0, line)
+        self.assertIn("signed 1 of 1", line)
+
+    def test_a_remote_commit_this_checkout_never_saw_refuses_before_moving(self):
+        self.commit("a")
+        self.git("push", "-q", "-u", "origin", "eng-1")
+        other = os.path.join(os.path.dirname(self.root), "other")
+        self.git("clone", "-q", "-b", "eng-1", self.remote, other)
+        with open(os.path.join(other, "b"), "w") as f:
+            f.write("b")
+        for args in (
+            ("add", "b"),
+            ("-c", "user.name=O", "-c", "user.email=o@example.com",
+             "commit", "-q", "--no-gpg-sign", "-m", "b"),
+            ("push", "-q"),
+        ):  # fmt: skip
+            self.git("-C", other, *args)
         head = self.git("rev-parse", "HEAD")
         with self.assertRaises(rb.Refused):
             rb.resign("main", push=True)

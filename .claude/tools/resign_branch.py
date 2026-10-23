@@ -29,8 +29,9 @@ enqueue". Then it replays the branch onto **its own merge base**
 (``git rebase --force-rebase --gpg-sign``) — a re-sign, never a rebase onto a
 newer main, so no conflict is possible and the tree is unchanged — and pushes
 with a lease pinned to the remote sha read just before. The push is refused
-(exit 2, before anything moves) when the remote holds a commit the local branch
-lacks: forcing would drop another session's work.
+(exit 2, before anything moves) when the remote tip is a commit this checkout
+has never seen — neither its recorded tracking ref nor an ancestor of
+``HEAD`` — since forcing would drop another session's work.
 
 Exit 2 is anything that is not the signer: a dirty tree, no merge base, a
 failed rebase (aborted), a refused push. Every line starts ``resign-branch |``.
@@ -119,13 +120,25 @@ def resign(base: str, push: bool) -> tuple[int, str]:
     old_head = _git("rev-parse", "HEAD").stdout.strip()
     remote = _remote_sha(branch) if push else ""
     if remote:
-        # The lease must protect work this checkout has not seen: the remote
-        # tip has to be the local tip or an ancestor of it.
+        # The lease must protect work this checkout has not seen. Seen means
+        # the remote tip is what our tracking ref last recorded (a bare
+        # lease's test — a rebase onto a newer base leaves it no ancestor of
+        # HEAD) or an ancestor of HEAD. Read the tracking ref before the fetch
+        # that would overwrite it.
+        tracked = _git(
+            "rev-parse", "-q", "--verify", f"refs/remotes/origin/{branch}", check=False
+        ).stdout.strip()
         _git("fetch", "-q", "origin", branch)
-        if _git("merge-base", "--is-ancestor", remote, old_head, check=False).returncode:
+        seen = (
+            remote == tracked
+            or not _git(
+                "merge-base", "--is-ancestor", remote, old_head, check=False
+            ).returncode
+        )
+        if not seen:
             raise Refused(
-                f"origin/{branch} ({remote[:9]}) holds commits this branch lacks; "
-                "reconcile by hand, never force here"
+                f"origin/{branch} ({remote[:9]}) holds commits this checkout has "
+                "not seen; reconcile by hand, never force here"
             )
     code, line = probe()
     if code == 1:
