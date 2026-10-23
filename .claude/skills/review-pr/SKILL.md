@@ -151,8 +151,9 @@ migrations or generation inputs, and whether it spans crates.
    `python3 .claude/tools/run_quiet.py -- make program` before any
    suite; `frontend_install` →
    `python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install`
-   before any typecheck or lint. `runs_artifact_gates` /
-   `runs_rust_suites` stay for steps 9 and 11; `--full` adds the file
+   before any typecheck or lint. `runs_artifact_gates` stays for step
+   9's rebase re-run question (step 11 reads `review_diff.py`'s
+   `targets` instead); `--full` adds the file
    lists. A **hot surface** (overlap with several open PRs, per
    `review_diff.py --overlap`) predicts repeated rebases — advisory, for
    a narrower *next* PR (`history.md` → "Hot-surface tails").
@@ -392,8 +393,8 @@ migrations or generation inputs, and whether it spans crates.
 
    The tool **owns** three path lists — the generated-family excludes,
    the mirror of `test.yml`'s `code` filter, and the generation inputs
-   — which is why steps 9 and 10 read `runs_rust_suites` and
-   `runs_artifact_gates` off the verdict. Change them there, never in
+   — which is why step 9's `regen_artifacts.py` imports its path gate
+   and step 11 reads `targets` off the verdict. Change them there, never in
    prose. `--out` is required (except with `--gate-only`, which
    writes no diff) but **not** validated against the scratchpad root,
    so substitute the real path (a guessed one is created, not
@@ -1020,27 +1021,43 @@ migrations or generation inputs, and whether it spans crates.
    PR on a committed generated file stale against its source:
    `test.yml` regenerates the **IDL**, and `sdk.yml` the **SDK
    clients**, the **conformance vectors** and the **committed WASM
-   glue**, each via a `git diff --exit-code`. Refresh them here and
-   commit any diff. **Run this step again after any step-7 / step-8
-   fix that touches a generation input** — it is not one-shot (`history.md` →
-   "Stale twice").
+   glue**. One call applies step 5's path gate, runs all four targets
+   in dependency order through the quiet runner's capture, and commits
+   any diff signed under its canonical message:
 
-   **First, the path gate.** Step 5's `runs_artifact_gates` answers
-   whether the diff touches a generation input, from the inputs the
-   tool owns:
+   ```sh
+   python3 .claude/tools/regen_artifacts.py --base <base>
+   ```
 
-   - **IDL** ← `programs/**`, **doc comments included**: Anchor
-     captures a `///` on an `#[derive(Accounts)]` field into the IDL.
-   - **SDK clients** ← `sdk/idl/**`, `sdk/codama/**`.
-   - **Conformance vectors** ← `sdk/math-core/**`,
-     `sdk/interface/**`.
-   - **Committed WASM glue** ← `sdk/interface/**`, built by
-     `make wasm` into `sdk/ts/src/wasm/`.
+   Read each family's `status` and record it in the summary:
+   `fresh`, `committed`, `skipped` (no generation input changed — a
+   rule, not a judgment call), `failed` (a build or commit error:
+   read its `log`, and it is blocking), or **`unverifiable`** (a
+   toolchain check aborted the target: name it, continue with the
+   committed artifact, and never count it as green — the tool exits
+   3). It runs all four whenever any input moved, even when the
+   author says they regenerated, since a subset spot-check has twice
+   let a stale artifact reach a required-CI failure (`history.md` →
+   "Partial regeneration"). **Run it again after any step-7 / step-8
+   fix that touches a generation input** — it is not one-shot
+   (`history.md` → "Stale twice"). A run that seems hung is the cargo
+   build lock until shown otherwise (its `⏳` line names it): wait, or
+   ask the user to stop the other build.
 
-   When it is **`false`**, **skip the gates and say so in the
-   summary** — a rule, not a per-run judgment call. The flag keys on
-   inputs, so a crate the generators depend on transitively still
-   trips it.
+   **When the `vectors` family reports `committed`**, learn whether
+   book behavior moved or only the embedded market bytes from the
+   one-line-per-file verdict (exit 1 when an expected output changed),
+   never a `git diff` of the byte arrays. Compare against the parent
+   of the family's reported `commit` — the default `HEAD` already holds
+   the regenerated vectors, so it reads `unchanged` whatever moved:
+
+   ```sh
+   python3 .claude/tools/vector_diff.py --ref <commit>~1
+   ```
+
+   When `lint_rerun` is `true`, re-run `make lint` through the quiet
+   runner with step 4's fix-and-retry logic — a regenerated file can
+   still trip the whitespace / EOF hooks.
 
    **A re-run forced by a rebase asks a narrower question.** The
    first run over the author's own diff stands as above; when this
@@ -1061,123 +1078,18 @@ migrations or generation inputs, and whether it spans crates.
 
    **Whether CI runs a gate is per-WORKFLOW, not per-diff.**
    `make idl`'s gate sits inside `test.yml`'s path-filtered job
-   (step 11 owns that filter); `make sdk`,
+   (whose filter step 11's `targets` mirrors); `make sdk`,
    `make check-conformance-vectors`, the WASM glue gate and the
    `sdk/ts` suite live in **`sdk.yml`, which has no path filter** and
    so applies to every PR (`history.md` → "Per-workflow
    re-derivation").
 
-   Otherwise, when the diff *does* touch an input: **run all four
-   gates — even when the author says they already regenerated** —
-   since a subset spot-check has twice let a stale artifact reach a
-   required-CI failure (`history.md` → "Partial regeneration"). Go in
-   dependency order (program → IDL → SDK), each through the quiet
-   runner. **A target that appears to
-   hang is the cargo build lock** until shown otherwise — a
-   concurrent build in another worktree; the runner echoes cargo's
-   `Blocking waiting for file lock …` live and flags it in its
-   summary. Wait, or ask the user to stop the other build; don't
-   diagnose with `pgrep`. **An absent toolchain** (`make idl` or
-   `make wasm` aborting at `check-toolchain` / `check-wasm`) makes
-   that gate unverifiable locally: say so in the report, continue
-   with the committed artifact, and don't gate the PR on it.
-
-   - **IDL** (needs the Solana/Anchor toolchain):
-
-     ```sh
-     python3 .claude/tools/run_quiet.py -- make idl
-     ```
-
-     ```sh
-     git diff --exit-code -- sdk/idl/dropset.json
-     ```
-
-     If the diff is non-empty, commit it:
-
-     ```sh
-     git add sdk/idl/dropset.json
-     git commit -S -m "Rebuild IDL"
-     ```
-
-   - **SDK clients** (Node + pnpm + Rust; no Solana
-     toolchain needed, so always runnable):
-
-     ```sh
-     python3 .claude/tools/run_quiet.py -- make sdk
-     ```
-
-     ```sh
-     git add -A -- sdk/ts/src/generated sdk/rs/src/generated
-     ```
-
-     ```sh
-     git diff --cached --exit-code -- sdk/ts/src/generated sdk/rs/src/generated
-     ```
-
-     If staged changes remain, commit them:
-
-     ```sh
-     git commit -S -m "Regenerate SDK clients"
-     ```
-
-   - **Conformance vectors** (Rust only; no Solana
-     toolchain needed):
-
-     ```sh
-     python3 .claude/tools/run_quiet.py -- make check-conformance-vectors
-     ```
-
-     The target regenerates the price/quoting vectors, stages
-     `sdk/conformance/`, then `git diff --cached --exit-code`s it —
-     so a **non-zero exit means the vectors were stale and are now
-     staged**. To learn whether book behavior moved or only the
-     embedded market bytes, read the one-line-per-file verdict
-     (exit 1 when an expected output changed), never a `git diff`
-     of the byte arrays:
-
-     ```sh
-     python3 .claude/tools/vector_diff.py
-     ```
-
-     Then commit them:
-
-     ```sh
-     git commit -S -m "Regenerate conformance vectors"
-     ```
-
-   - **Committed WASM glue** (needs `wasm-pack`):
-
-     ```sh
-     python3 .claude/tools/run_quiet.py -- make wasm
-     ```
-
-     ```sh
-     git add -A -- sdk/ts/src/wasm
-     ```
-
-     ```sh
-     git diff --cached --exit-code -- sdk/ts/src/wasm
-     ```
-
-     If staged changes remain, commit them:
-
-     ```sh
-     git commit -S -m "Rebuild WASM bindings"
-     ```
-
-     **Two gates sit on this artifact.** `sdk.yml` compares the
-     committed glue (`dropset_interface.js`, `.d.ts`, `.wasm.d.ts`)
-     against a fresh build, excluding the optimized `.wasm` binary
-     because `wasm-opt` isn't byte-reproducible across platforms;
-     `sdk/ts/src/wasm.conformance.test.ts` runs the **committed**
-     binary against the conformance vectors. So an interface change
-     that skips `make wasm` fails CI twice, and a stale binary is a
-     real behavioral divergence, not a formatting nit.
-
-   If any artifact commit was made, re-run `make lint` through the
-   quiet runner (`python3 .claude/tools/run_quiet.py -- make lint`) —
-   a regenerated file can still trip whitespace / EOF hooks — with
-   step 4's fix-and-retry logic.
+   **Two gates sit on the WASM glue.** `sdk.yml` compares the
+   committed glue against a fresh build (the optimized `.wasm` binary
+   excluded, since `wasm-opt` isn't byte-reproducible), and
+   `sdk/ts/src/wasm.conformance.test.ts` runs the **committed**
+   binary against the conformance vectors — so a stale binary is a
+   real behavioral divergence, not a formatting nit.
 
 1. **Refresh the Audit registry if the diff changed the
    platform shape.** Rotations read the subsystems,
@@ -1224,84 +1136,47 @@ migrations or generation inputs, and whether it spans crates.
    `.claude/tools/` with a test (`history.md` → "Gate in prose
    only").
 
-1. **Run the test suite (mirror CI).** The `Tests` workflow runs
-   `make test` and `make test-no-teardown`; run both locally so the
-   green checks GitHub needs for auto-merge are already verified
-   here.
-
-   **Re-check base freshness immediately before the run.** Step 5's
-   `base_fresh` is several steps old, and a sibling session merging
-   its PR moves `origin/<base>` underneath this one (worktrees share
-   one `.git`):
+1. **Run the test suite (mirror CI).** Read the suites from a
+   base-freshness re-check — **its own call, awaited before the push
+   or any suite launch**, since step 5's verdict is several steps old
+   and a sibling session merging its PR moves `origin/<base>`
+   underneath this one (worktrees share one `.git`):
 
    ```sh
    python3 .claude/tools/review_diff.py --base <base> --gate-only
    ```
 
-   If `ready` is `false`, rebase onto `origin/<base>` and *then* run
-   the suites, so the expensive builds run once, against the tree that
-   will merge (`history.md` → "Suites before the rebase"). A disjoint
-   drift (`ready: true`, `base_fresh: false`) needs no rebase. Switch
-   to a full `--split --out` run only when the slices need
-   regenerating (after a rebase, for a re-spawn).
-   Any rebase here takes the signing probe first (step 2).
+   **`targets` is `null` while a rebase is due** (a stale base that
+   interacts with the branch, or an unverified one): rebase onto
+   `origin/<base>` — signing probe first (step 2) — and re-check, so
+   the expensive builds run once, against the tree that will merge
+   (`history.md` → "Suites before the rebase"). Switch to a full
+   `--split --out` run only when the slices need regenerating.
+   Otherwise `targets` lists every suite in run order as
+   `{target, run, reason}`. Run each `run: true` entry through the
+   quiet runner (`python3 .claude/tools/run_quiet.py -- <target>`),
+   and record every skip with its `reason` in the summary — never
+   re-derive the list. It resolves CI's `code` filter
+   (`CODE_FILTER_EXCLUDES`, kept in parity with `test.yml`), whether
+   a cargo build can reach the diff, the fixtures a Rust test reads,
+   an asm relayout (`make test-parity` — plain `make test` silently
+   skips `asm_parity` without its oracle, so only a `test-parity` pass
+   is the evidence), a file holding an `#[ignore]`d test
+   (`make test-postgres`), and a tools / Grafana change
+   (`make tools-tests`) — the provenance is in `history.md` →
+   "Unreachable suites", "Fixture-coupled dequeue" and "Ignored test
+   reddened CI". The `code` filter is **`pull_request`-only**, so a
+   `merge_group` run executes the full suite regardless.
 
-   **Choose the targets from step 5's flags — read them, never
-   re-derive them** — and record every skip with its reason in the
-   summary:
+   Two calls stay judgement, outside the list:
 
-   - **`runs_rust_suites`** mirrors `test.yml`'s `code` path filter
-     (frontend, decks, brand assets, docs, markdown, `.claude`, the
-     TS SDK and several non-test workflows excluded, under
-     `predicate-quantifier: every`) through
-     `CODE_FILTER_EXCLUDES` in `review_diff.py` — change that when
-     the workflow's filter changes. **`false` → skip both Rust
-     targets**: CI isn't running them either. The filter is
-     **`pull_request`-only**, so a `merge_group` run executes the full
-     suite regardless and a green path-filtered PR check proves
-     nothing about leaving the queue.
-   - **`rust_reachable` `false` → skip them even when
-     `runs_rust_suites` is `true`.** That flag fails open by design;
-     this one measures whether the diff touches anything a `cargo`
-     build consumes (a `.rs` file, a `Cargo.toml`, the lockfile, a
-     toolchain file or `.cargo/config.toml`, a `build.rs`, an `.s`
-     source, a migration, a
-     conformance vector, **or a fixture a Rust test reads**). Mirroring
-     buys something only when the local
-     run could fail because of the diff (`history.md` → "Unreachable
-     suites").
-   - **`rust_fixture_hits` non-empty → run the full local Rust
-     suite**, naming the paths in the summary. The tool scans every
-     tracked `.rs` file for `include_str!` / `include_bytes!`
-     targets and for runtime reads of a `CARGO_MANIFEST_DIR` path or
-     a bare-literal `fs::read`, so it sees a path CI's filter excludes
-     but a Rust test reads — every PR-side Tests job no-ops while the merge
-     queue runs the full suite (`history.md` → "Fixture-coupled
-     dequeue"). This is the one case where the path lists say not
-     to.
-   - **The inverse half is a judgement, not a flag**: run a check
-     when some changed path is reachable from it even if the diff
-     misses its trigger's enumerated tree list (`history.md` →
-     "Missed trigger").
+   - **The inverse half**: run a check when some changed path is
+     reachable from it even if the diff misses its trigger's
+     enumerated tree list (`history.md` → "Missed trigger").
    - **The CI-mirror carve-out**: when the diff is confined to
      `.github/**` and CI is already green on the head commit, treat
      CI as the mirror and skip the local suite (`history.md` →
      "Half-applied build").
-   - When both flags are `true`, run both targets.
-
-   Run them through the quiet runner, **`make test` first**:
-
-   ```sh
-   python3 .claude/tools/run_quiet.py -- make test
-   python3 .claude/tools/run_quiet.py -- make test-no-teardown
-   ```
-
-   `test-no-teardown` leaves a `--no-default-features` program build,
-   so a later bare `cargo test -p dropset` fails **15 unrelated**
-   admin-teardown tests with `Custom(6043)` — the anchor-v2 runtime
-   feature guard, reading exactly like a regression (`history.md` →
-   "Teardown-feature build"). Keep this order, or re-run
-   `make program` before any scoped `cargo test`.
 
    **Batch independent program mutations into one sBPF build.**
    Verifying a finding by mutating the program costs a
@@ -1314,20 +1189,30 @@ migrations or generation inputs, and whether it spans crates.
    defect and confirm the new test fails **on its behavioral
    assertion**, not on a precondition:
 
-   - **Verify by test count, not exit code.** Equal counts plus a
-     failure is the signal; a **lower** count means the invocation
-     excluded the target, so the run is *inconclusive*. A
-     feature-gated target needs `--all-features` (or the explicit
-     `--features`) — the default run is a different, empty one. Take
-     the invocation CI uses; if you must narrow, narrow `--files` /
+   - **Verify by test count, not exit code.** The runner's summary
+     line carries the counts, and this prints the deltas between two
+     runs' logs:
+
+     ```sh
+     python3 .claude/tools/run_quiet.py inspect <mutated> --compare <baseline>
+     ```
+
+     Its verdict is `caught` (more tests failed — a fail-fast run that
+     stopped early still counts), `not-caught`, or `inconclusive` (no
+     new failure and fewer ran — the invocation excluded the target).
+     A feature-gated target needs `--all-features` (or the explicit
+     `--features`), and the same holds for any conditional
+     compilation; take the invocation CI uses, and narrow `--files` /
      `--test`, never the package set. After adding tests, confirm
-     `N passed` moved by the number added. This holds for any
-     conditional compilation, not only cargo features.
+     `passed` moved by the number added.
+
    - **Expect the first fixture not to bite**; budget one rewrite per
      mutation-verified test.
+
    - **A mutation that passes means the TEST is wrong until proven
      otherwise, not the fix** — never remove a correct fix on that
      reading.
+
    - **This lever deliberately adds cost** and must not be folded
      into a saving: budget two extra suite runs per mutation and say
      so, so a later metrics pass does not read them as churn. Batch
@@ -1340,19 +1225,6 @@ migrations or generation inputs, and whether it spans crates.
    pass. A citation written before a later edit to the same file is
    stale — re-derive it, never arithmetic it forward (`history.md` →
    "Forward-computed citations"; `docs/conventions/docs-and-style.md`).
-
-   **When the diff adds or changes an `#[ignore]`d test, run the
-   Tests (Postgres) job's own target before pushing** — the targets
-   above skip
-   ignored tests, so one can otherwise only ever fail in CI
-   (`history.md` → "Ignored test reddened CI"). The job runs exactly
-   this target, so it carries the job's crate selection and its
-   credential-gated exclusion; a bare workspace-wide
-   `--run-ignored all` selects tests no CI run can satisfy:
-
-   ```sh
-   python3 .claude/tools/run_quiet.py -- make test-postgres
-   ```
 
    **One cargo target at a time per worktree** — a blocked build is
    **waited on, never raced**: two builds on one `target/` produced a
@@ -1376,18 +1248,10 @@ migrations or generation inputs, and whether it spans crates.
      so explicitly in the report (do not claim CI
      will pass), rather than counting it as green.
 
-   - **Also run the `sdk/ts` node test suite** — the SDK job's
-     mirror, wanted even when `runs_rust_suites` is `false`, since
-     `sdk.yml` has no path filter. It is **node-only**, so **always
-     runnable locally**, and
-     the *only* local gate that catches an on-chain layout change
-     breaking the SDK's hand-built fixture (`market.test.ts`).
-     Install the workspace deps once if needed
-     (`pnpm --filter @dropset/sdk install`), then:
-
-     ```sh
-     python3 .claude/tools/run_quiet.py -- pnpm --filter @dropset/sdk test
-     ```
+   - The `sdk/ts` suite is the *only* local gate that catches an
+     on-chain layout change breaking the SDK's hand-built fixture
+     (`market.test.ts`); install its deps once if needed
+     (`pnpm --filter @dropset/sdk install`).
 
    - If a test fails, fix it when the fix is
      mechanical (commit signed, then re-run the
@@ -1460,10 +1324,11 @@ migrations or generation inputs, and whether it spans crates.
    check is green: **zero blocking issues** (every Linear checklist
    item addressed); `make lint` passes, with any hook `lint_paths.py`
    printed `UNVERIFIABLE` noted, not gated; the generated artifacts
-   are fresh and committed (IDL — or honestly reported unverifiable without the
-   toolchain — SDK clients, conformance vectors); `make test` and
-   `make test-no-teardown` pass or are honestly reported unverifiable;
-   the **`sdk/ts` node suite passes** (always runnable); the title
+   are fresh and committed (every `regen_artifacts.py` family fresh,
+   committed or skipped, or an `unverifiable` one honestly reported);
+   every `run: true` entry of step 11's `targets` passes or is
+   honestly reported unverifiable, and the **`sdk/ts` node suite
+   passes** (always runnable); the title
    passes `Semantic PR`; and step 16's gate is `green`. Then:
 
    ```txt
@@ -1584,8 +1449,8 @@ migrations or generation inputs, and whether it spans crates.
    the tier that ran (and the proposed one, so an override is named),
    the lenses that ran, and each skipped lens with its reason — **a
    yield skip is never silent**; the cross-check; in-flight overlap
-   and what was decided; lint, artifacts and each suite (`make test`,
-   `make test-no-teardown`, `sdk/ts`) as pass / fail / **unverified**,
+   and what was decided; lint, artifacts and each `targets` entry
+   (run or skipped with its reason) as pass / fail / **unverified**,
    never a guessed pass; the freshness and skip-list
    verdicts, or "skipped (surface gate)"; findings found / fixed /
    blocking-open, the fix-cycle count, and each warning or nit with

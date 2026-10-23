@@ -793,5 +793,141 @@ class CargoFailureWindow(unittest.TestCase):
         self.assertNotIn("failures block", printed)
 
 
+#: One summary line per runner, in each runner's real shape.
+CARGO_BINARY_A = (
+    "test result: ok. 10 passed; 0 failed; 2 ignored; 0 measured; "
+    "0 filtered out; finished in 0.40s"
+)
+CARGO_BINARY_B = (
+    "test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; "
+    "0 filtered out; finished in 0.10s"
+)
+NEXTEST_SUMMARY = (
+    "     Summary [   1.234s] 12 tests run: 11 passed, 1 failed, 3 skipped"
+)
+
+
+class TestCounts(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = self._tmp.name
+
+    def _log(self, lines, name="run.log"):
+        path = os.path.join(self.root, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("".join(ln + "\n" for ln in lines))
+        return path
+
+    def _counts(self, lines):
+        return rq.read_tail_and_count(self._log(lines), 0).counts
+
+    def test_cargo_binaries_are_summed_and_ignored_reads_as_skipped(self):
+        self.assertEqual(
+            self._counts(["Running x", CARGO_BINARY_A, "Running y", CARGO_BINARY_B]),
+            {"passed": 14, "failed": 1, "skipped": 2},
+        )
+
+    def test_nextest_summary_is_parsed(self):
+        self.assertEqual(
+            self._counts([NEXTEST_SUMMARY]),
+            {"passed": 11, "failed": 1, "skipped": 3},
+        )
+
+    def test_node_tap_and_spec_reporters_are_parsed(self):
+        for prefix in ("#", "ℹ"):
+            with self.subTest(prefix=prefix):
+                self.assertEqual(
+                    self._counts(
+                        [
+                            f"{prefix} tests 9",
+                            f"{prefix} pass 8",
+                            f"{prefix} fail 1",
+                            f"{prefix} skipped 0",
+                        ]
+                    ),
+                    {"passed": 8, "failed": 1, "skipped": 0},
+                )
+
+    def test_a_log_with_no_summary_has_no_counts(self):
+        # None, not zeros: "ran nothing" and "is not a test run" must differ.
+        self.assertIsNone(self._counts(["Compiling dropset", "Finished"]))
+
+    def test_the_run_summary_line_carries_the_counts(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = rq.run(0, "suite", [PY, "-c", f"print({CARGO_BINARY_A!r})"])
+        self.assertEqual(code, 0)
+        self.assertIn("— 10 passed, 0 failed, 2 skipped", out.getvalue())
+
+    def _compare(self, baseline_lines, mutated_lines):
+        baseline = self._log(baseline_lines, "baseline.log")
+        mutated = self._log(mutated_lines, "mutated.log")
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = rq.main(["inspect", mutated, "--compare", baseline])
+        return code, out.getvalue()
+
+    def test_same_tests_with_a_new_failure_is_caught(self):
+        code, out = self._compare(
+            ["test result: ok. 5 passed; 0 failed; 0 ignored;"],
+            ["test result: FAILED. 4 passed; 1 failed; 0 ignored;"],
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("passed 5 → 4 (-1)", out)
+        self.assertIn("caught: 1 new failure(s)", out)
+
+    def test_a_fail_fast_run_that_stopped_early_is_still_caught(self):
+        # cargo test stops at the first failing binary, so a caught mutation
+        # routinely runs fewer tests than its baseline.
+        code, out = self._compare(
+            [CARGO_BINARY_A, "test result: ok. 5 passed; 0 failed; 0 ignored;"],
+            ["test result: FAILED. 9 passed; 1 failed; 2 ignored;"],
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("caught", out)
+
+    def test_fewer_tests_and_no_new_failure_is_inconclusive(self):
+        # The narrowed invocation the count rule exists to expose: the exit
+        # code reads clean, but the target may never have run.
+        code, out = self._compare(
+            ["test result: ok. 5 passed; 0 failed; 0 ignored;"],
+            ["test result: ok. 3 passed; 0 failed; 0 ignored;"],
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("inconclusive", out)
+
+    def test_a_cancelled_nextest_run_and_a_timeout_are_counted(self):
+        self.assertEqual(
+            self._counts(
+                [
+                    "     Summary [   2.0s] 4/12 tests run: 2 passed, 1 failed, "
+                    "1 timed out, 0 skipped"
+                ]
+            ),
+            {"passed": 2, "failed": 2, "skipped": 0},
+        )
+
+    def test_an_unreadable_baseline_is_refused(self):
+        mutated = self._log([CARGO_BINARY_A], "mutated.log")
+        missing = os.path.join(self.root, "gone.log")
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = rq.main(["inspect", mutated, "--compare", missing])
+        self.assertEqual(code, 2)
+
+    def test_an_unchanged_run_is_not_caught(self):
+        code, out = self._compare(
+            ["test result: ok. 5 passed; 0 failed; 0 ignored;"],
+            ["test result: ok. 5 passed; 0 failed; 0 ignored;"],
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("not-caught", out)
+
+    def test_a_log_without_counts_is_refused(self):
+        code, out = self._compare(["error: could not compile"], [CARGO_BINARY_A])
+        self.assertEqual(code, 2)
+        self.assertIn("no test summary", out)
+
+
 if __name__ == "__main__":
     unittest.main()

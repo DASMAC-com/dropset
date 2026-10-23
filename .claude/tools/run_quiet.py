@@ -66,6 +66,16 @@ With no flags this reprints the failure summary — the failed-hook index, the
 spelling index, and the tail — which is what you want after coming back to a
 run whose summary has scrolled away.
 
+**Test counts.** A run whose log carries cargo, nextest or ``node --test``
+summaries appends their totals to its one-line result (``— 120 passed, 0
+failed, 3 skipped``), and ``inspect MUTATED --compare BASELINE`` prints the
+per-key deltas between two runs plus a mutation verdict — ``caught`` (more
+failed, even if a fail-fast run stopped early), ``not-caught``, or
+``inconclusive`` (no new failure and fewer ran, so the invocation may have
+excluded the target). It exits 0 only on ``caught``. Mutation
+verification compares counts because an exit code cannot tell a caught
+mutation from a run that silently selected less.
+
 This subcommand exists because the logs live under the system temp dir, outside
 the workspace, and a session that needs more than the summary has to reach in
 there. The Grep tool handles it and is the prescribed path — but it is not
@@ -133,6 +143,27 @@ CARGO_FAILURES_RE = re.compile(r"^\s*failures:\s*$")
 # swallow every later binary's passing output — re-buying exactly the region
 # this replaces. `test result:` closes the failing binary's report.
 CARGO_RESULT_RE = re.compile(r"^\s*test result:")
+
+# The test-count summaries of the three runners this repo wraps, summed over the
+# whole log. They exist for mutation verification, where an exit code is the
+# wrong signal: a mutated run that fails because it selected FEWER tests looks
+# exactly like one that caught the mutation (``inspect --compare``).
+#   cargo:   `test result: ok. 12 passed; 0 failed; 1 ignored; …` (one per binary)
+#   nextest: `Summary [ 1.2s] 12 tests run: 11 passed, 1 failed, 3 skipped`
+#            (`3/12 tests run: …` when a failure cancelled the rest)
+#   node:    `# pass 12` / `ℹ fail 0` (the TAP and spec reporters)
+CARGO_COUNTS_RE = re.compile(
+    r"^\s*test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored"
+)
+NEXTEST_SUMMARY_RE = re.compile(
+    r"^\s*Summary \[[^\]]*\]\s+\d+(?:/\d+)? tests? run: (.*)$"
+)
+# A test that timed out or failed to launch is a failure for verification's purpose: a
+# mutation that makes a test hang has been caught.
+NEXTEST_PART_RE = re.compile(r"(\d+) (passed|failed|skipped|timed out|exec failed)\b")
+NEXTEST_KEYS = {"timed out": "failed", "exec failed": "failed"}
+NODE_COUNT_RE = re.compile(r"^[#ℹ] (pass|fail|skipped) (\d+)\s*$")
+NODE_KEYS = {"pass": "passed", "fail": "failed", "skipped": "skipped"}
 
 # Cap on the failure window, so a suite failing in fifty places still reports a
 # bounded amount. Larger than the default tail because this region is the
@@ -342,8 +373,61 @@ def stream_to_log(cmd, log_file):
 LogSummary = collections.namedtuple(
     "LogSummary",
     "lines tail_text failed truncated unknown_words unknown_truncated "
-    "failure_text failure_truncated failure_closed failure_blocks",
+    "failure_text failure_truncated failure_closed failure_blocks counts",
 )
+
+
+def add_test_counts(line, counts):
+    """Fold one log line's test-count summary into ``counts``; True on a match.
+
+    ``counts`` is a ``{"passed", "failed", "skipped"}`` dict summed over every
+    summary line, since a workspace run prints one per test binary. cargo's
+    ``ignored`` is folded into ``skipped``: both mean "selected, not run".
+    """
+    match = CARGO_COUNTS_RE.match(line)
+    if match:
+        for key, value in zip(("passed", "failed", "skipped"), match.groups()):
+            counts[key] += int(value)
+        return True
+    match = NEXTEST_SUMMARY_RE.match(line)
+    if match:
+        for value, key in NEXTEST_PART_RE.findall(match.group(1)):
+            counts[NEXTEST_KEYS.get(key, key)] += int(value)
+        return True
+    match = NODE_COUNT_RE.match(line)
+    if match:
+        counts[NODE_KEYS[match.group(1)]] += int(match.group(2))
+        return True
+    return False
+
+
+def format_counts(counts):
+    """``"12 passed, 0 failed, 3 skipped"``, or ``""`` when nothing was parsed."""
+    if counts is None:
+        return ""
+    return "%(passed)d passed, %(failed)d failed, %(skipped)d skipped" % counts
+
+
+def compare_counts(baseline, mutated):
+    """The mutation-verification verdict for two runs' counts.
+
+    Returns ``(verdict, reason)``. More failures → ``caught``, whatever the
+    total: ``cargo test`` and nextest are fail-fast by default, so a run that
+    caught the mutation routinely stops before the later binaries. No new
+    failure with fewer tests run → ``inconclusive``, since the invocation may
+    have excluded the target; otherwise ``not-caught``, which means the TEST is
+    wrong until proven otherwise, never the fix.
+    """
+    if mutated["failed"] > baseline["failed"]:
+        return "caught", "%d new failure(s)" % (mutated["failed"] - baseline["failed"])
+    ran_before = baseline["passed"] + baseline["failed"]
+    ran_after = mutated["passed"] + mutated["failed"]
+    if ran_after < ran_before:
+        return "inconclusive", "%d test(s) ran, %d in the baseline" % (
+            ran_after,
+            ran_before,
+        )
+    return "not-caught", "no new failure"
 
 
 def read_tail_and_count(path, tail):
@@ -376,11 +460,14 @@ def read_tail_and_count(path, tail):
     failure_truncated = False
     failure_closed = False
     failure_blocks = 0
+    counts = {"passed": 0, "failed": 0, "skipped": 0}
+    counted = False
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             count += 1
             if tail > 0:
                 dq.append(line)
+            counted = add_test_counts(line, counts) or counted
             # Collect from the FIRST `failures:` marker onward. First, not last:
             # cargo prints the marker twice — once before the per-test detail and
             # once before the bare name list — and the detail is the half worth
@@ -431,6 +518,7 @@ def read_tail_and_count(path, tail):
         failure_truncated,
         failure_closed,
         failure_blocks,
+        counts if counted else None,
     )
 
 
@@ -461,17 +549,20 @@ def run(tail, label, cmd):
     # A run that spent minutes queued behind another cargo process should say so
     # in its one-line result, not just look slow.
     waited = " — waited on a cargo file lock" if lock_wait else ""
+    # A test run reports what it ran, pass or fail, so a mutation check or a
+    # "did N passed move by the tests I added" read needs no second call.
+    tests = " — %s" % format_counts(summary.counts) if summary.counts else ""
 
     if code == 0:
         sys.stdout.write(
-            "✓ %s (exit 0, %d lines; log: %s)%s\n"
-            % (display, summary.lines, log_path, waited)
+            "✓ %s (exit 0, %d lines; log: %s)%s%s\n"
+            % (display, summary.lines, log_path, tests, waited)
         )
         return 0
 
     sys.stdout.write(
-        "✗ %s (exit %d, %d lines; log: %s)%s\n"
-        % (display, code, summary.lines, log_path, waited)
+        "✗ %s (exit %d, %d lines; log: %s)%s%s\n"
+        % (display, code, summary.lines, log_path, tests, waited)
     )
     if summary.failed:
         more = " (truncated, more omitted)" if summary.truncated else ""
@@ -535,11 +626,16 @@ def write_failure_region(summary, tail):
 #: ``failing`` is ignored. They are separate views of one log rather than
 #: composable filters, and a caller asking for both wants the narrower one.
 #: With neither, the full failure summary is reprinted.
-InspectArgs = collections.namedtuple("InspectArgs", "path grep context tail failing")
+#: ``compare`` (a baseline log path) takes precedence over both: it prints the
+#: two runs' test counts and the mutation verdict, and nothing else.
+InspectArgs = collections.namedtuple(
+    "InspectArgs", "path grep context tail failing compare"
+)
 
 
 def parse_inspect_args(argv):
-    """Parse ``inspect LOG [--grep RE] [--context N] [--tail N] [--failing]``.
+    """Parse ``inspect LOG [--grep RE] [--context N] [--tail N] [--failing]
+    [--compare BASELINE]``.
 
     ``argv`` still carries the ``inspect`` verb as its first element, so the
     caller does not have to strip it.
@@ -550,11 +646,20 @@ def parse_inspect_args(argv):
     context = 0
     tail = DEFAULT_TAIL
     failing = False
+    compare = None
     i = 0
     n = len(rest)
     while i < n:
         arg = rest[i]
-        if arg == "--grep":
+        if arg == "--compare":
+            if i + 1 >= n:
+                raise UsageError("--compare needs a baseline log path")
+            compare = rest[i + 1]
+            i += 2
+        elif arg.startswith("--compare="):
+            compare = arg[len("--compare=") :]
+            i += 1
+        elif arg == "--grep":
             if i + 1 >= n:
                 raise UsageError("--grep needs a pattern")
             grep = rest[i + 1]
@@ -596,7 +701,7 @@ def parse_inspect_args(argv):
             )
     if path is None:
         raise UsageError("inspect needs a log path")
-    return InspectArgs(path, grep, context, tail, failing)
+    return InspectArgs(path, grep, context, tail, failing, compare)
 
 
 def grep_log(path, pattern, context):
@@ -658,6 +763,9 @@ def inspect(args):
         sys.stderr.write("run_quiet.py: cannot read %s: %s\n" % (args.path, exc))
         return 2
 
+    if args.compare is not None:
+        return compare_logs(args.compare, summary)
+
     if args.grep is not None:
         lines, matches, truncated = grep_log(args.path, args.grep, args.context)
         for line in lines:
@@ -691,10 +799,44 @@ def inspect(args):
     return 0
 
 
+def compare_logs(baseline_path, summary):
+    """Print a mutated run's counts against its baseline's, and the verdict.
+
+    Exit 0 on ``caught``, 1 on ``not-caught`` or ``inconclusive``, 2 when
+    either log carries no test summary — so a status-only caller cannot read a
+    run that never reached the tests as a caught mutation.
+    """
+    try:
+        baseline = read_tail_and_count(baseline_path, 0).counts
+    except OSError as exc:
+        sys.stderr.write("run_quiet.py: cannot read %s: %s\n" % (baseline_path, exc))
+        return 2
+    missing = [
+        name
+        for name, counts in (
+            (baseline_path, baseline),
+            ("the inspected log", summary.counts),
+        )
+        if counts is None
+    ]
+    if missing:
+        sys.stdout.write(
+            "run-quiet compare | no test summary in %s\n" % " or ".join(missing)
+        )
+        return 2
+    for key in ("passed", "failed", "skipped"):
+        before, after = baseline[key], summary.counts[key]
+        sys.stdout.write("%s %d → %d (%+d)\n" % (key, before, after, after - before))
+    verdict, reason = compare_counts(baseline, summary.counts)
+    sys.stdout.write("run-quiet compare | %s: %s\n" % (verdict, reason))
+    return 0 if verdict == "caught" else 1
+
+
 USAGE = (
     "usage: run_quiet.py [--tail N] [--label L] -- CMD ARGS...\n"
     "       run_quiet.py inspect LOG [--grep RE] [--context N] "
     "[--tail N] [--failing]\n"
+    "       run_quiet.py inspect LOG --compare BASELINE_LOG\n"
 )
 
 

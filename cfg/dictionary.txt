@@ -226,6 +226,8 @@ rebalances
 recalibratable
 refspec
 regclass
+regen
+relayout
 rels
 reorderer
 repeg

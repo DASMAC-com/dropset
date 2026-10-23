@@ -272,9 +272,7 @@ untracked per-directory content, which step 3 handles.
      `python3 .claude/tools/run_quiet.py -- make program` first (it
      copies the committed keypair; the failing tests' own
      `anchor keys sync && anchor build` suggestion is wrong for this
-     repo). Also note `make test-no-teardown` leaves a
-     `--no-default-features` `.so` behind that fails ~15 teardown tests
-     in a later scoped `cargo test`.
+     repo).
 
 1. **Normalize the branch name.** `task <n>` pre-creates the
    worktree `<n>` on branch `eng-<n>`, the form Linear's GitHub
