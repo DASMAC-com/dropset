@@ -21,12 +21,13 @@ repos:
 #
 # `language_version` pins the hook's interpreter to the Python CI's Lint job
 # runs (`PYTHON_VERSION` in `.github/workflows/lint.yml`). Without it,
-# pre-commit builds the environment under whatever `python3` is on PATH, and
+# pre-commit builds the environment under the Python it itself runs on, and
 # cfn-lint v1.53.0 declares `requires-python <3.15`: on 2026-10-22 the local
-# default was found at 3.15 and the install failed with "requires a different
-# Python: 3.15.0 not in '<3.15,>=3.10'", taking local `make lint` down. Keep
-# the pin in step with CI's version while it stays under the cap; once a
-# cfn-lint release lifts the cap, drop it.
+# pre-commit was found running on 3.15 and the install failed with "requires a
+# different Python: 3.15.0 not in '<3.15,>=3.10'", taking local `make lint`
+# down. Keep the pin in step with CI's version while it stays under the cap;
+# CI cannot move past the cap until a cfn-lint release lifts it, and then the
+# pin can be dropped.
 - hooks:
   - files: '^infra/aws/.*\.yml$'
     id: 'cfn-lint'
