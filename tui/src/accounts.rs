@@ -351,7 +351,7 @@ pub fn poll(
 /// `quote_slot == 0` on every market, so reading that as `Stale` would show a
 /// yellow "quotes have aged" dot for a maker that was never launched — the
 /// default opening state, not a corner case.
-fn maker_liveness(head_slot: Option<u64>, quote_slot: Option<u32>) -> Liveness {
+pub(crate) fn maker_liveness(head_slot: Option<u64>, quote_slot: Option<u32>) -> Liveness {
     match (head_slot, quote_slot) {
         // Never quoted — no signal, not an aged one.
         (_, Some(0)) => Liveness::Unknown,

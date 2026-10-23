@@ -21,6 +21,12 @@ path = "src/main.rs"
 name = "dropset-teardown"
 path = "src/bin/teardown.rs"
 
+# Pre-demo smoke check: one pass / fail / expected line per surface of a
+# `make demo` stack already up. Reads only. `make demo-check`.
+[[bin]]
+name = "dropset-demo-check"
+path = "src/bin/demo_check.rs"
+
 [dependencies]
 anyhow = "1"
 # Decode the base58 `data` of an `emit_cpi!` event inner instruction (the
@@ -111,7 +117,8 @@ name = "dropset_tui"
 path = "src/lib.rs"
 
 [package]
-# Two binaries live here (dropset-tui, dropset-teardown), so a bare
+# Three binaries live here (dropset-tui, dropset-teardown,
+# dropset-demo-check), so a bare
 # `cargo run -p dropset-tui` (what `make tui` runs) is ambiguous without this.
 default-run = "dropset-tui"
 description = "Localnet control-plane TUI for the Dropset eCLOB program."
