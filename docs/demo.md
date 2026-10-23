@@ -20,7 +20,7 @@ and every market opens **dark**. Once the log reads `Bootstrap complete`:
 ## 2. Run the check
 
 From a second terminal: `make demo-check`. One line per surface, then
-`demo stack ready` or the count of fails, with exit code 1 on any fail.
+`demo stack ready` or the count of fails, exiting non-zero on any fail.
 
 | Line                   | Pass means                                                                  |
 | ---------------------- | --------------------------------------------------------------------------- |
@@ -32,16 +32,24 @@ From a second terminal: `make demo-check`. One line per surface, then
 | `quote TGBP-USDC`      | A \$10 buy fills through `simulate_swap`, the code the frontend's WASM runs |
 | `frontend` / `grafana` | `localhost:3000` / `localhost:3200` answering                               |
 
+The quote line is chain-side: it proves the book quotes, not that the page
+renders one. Step 4 is the browser half.
+
 `EXPECTED` is not a fail. There are two such states:
 
 - **Keyless.** Launched without the OANDA and Twelve Data keys, the stack has
   no FX tape and the FX-fed markets halt. **An empty tGBP-USDC book on such a
-  stack is correct.** The keyed collectors read as not started.
-- **The FX weekend**, Friday 22:00 to Sunday 22:00 UTC, when a keyed
-  collector's newest candle ages past its bound.
+  stack is correct.** Keyless is read from the keyed containers being absent
+  altogether; a keyed container that exists but stopped is a crash, and fails.
+  Keyless excuses only the halt: an empty book, a paused fair. A one-sided book
+  or a ladder that does not flip still fails.
+- **The FX weekend**, Friday 21:00 to Sunday 22:00 UTC (both daylight-time
+  offsets), on the keyed collector lines only: a newest candle from the Friday
+  close is excused, an older one is not. The estimator keeps publishing over
+  the weekend, at `degraded` or `uncorroborated`.
 
-The estimator line passes on a `degraded` regime. The regime is named so you
-can say why, not to fail the run.
+The estimator line passes on a `degraded` regime, the stack's usual state for
+tGBP. The regime is named so you can say why, not to fail the run.
 
 ## 3. Look at the TUI
 
@@ -57,10 +65,14 @@ can say why, not to fail the run.
 
 ## 4. Try it in the browser
 
-Open `localhost:3000`, choose tGBP-USDC, and quote a swap. The quote should
-match the check's `quote TGBP-USDC` line. The localnet frontend points its RPC
-at `127.0.0.1:8899`, which a phone resolves to itself, so the phone half of a
-demo runs against mainnet, not this stack.
+Open `localhost:3000`, choose tGBP-USDC, and quote a \$10 buy. It should match
+the check's `quote TGBP-USDC` line, unless `NEXT_PUBLIC_PLATFORM_FEE_BPS` is
+set: the check quotes with no platform fee.
+
+The localnet frontend points its RPC at `127.0.0.1:8899`, which a phone
+resolves to itself, so the phone can't reach this stack. On the phone, open the
+deployed frontend, connect a mobile wallet, and quote a mainnet pair (EURC,
+AUDD or CADC against USDC; tGBP is not on the mainnet roster).
 
 ## 5. Tear down
 

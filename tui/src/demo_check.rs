@@ -14,20 +14,22 @@
 //!   localnet id;
 //! - **markets** — each roster market's book against its posture: a resting
 //!   flipping ladder on a passive market, a live maker on an active one;
-//! - **frontend** — the dev server answering, and a tGBP-USDC quote through
-//!   `simulate_swap`, the function the frontend's WASM build wraps;
-//! - **grafana** — its health endpoint answering.
+//! - **quote** — a tGBP-USDC quote through `simulate_swap`, the function the
+//!   frontend's WASM build wraps, over the live market account. Chain-side
+//!   only: the page itself is not driven;
+//! - **frontend** and **grafana** — each server answering.
 //!
 //! **Keyless is a state, not a failure.** A stack brought up without the
 //! OANDA and Twelve Data credentials has no FX tape, so the FX-fed markets
-//! halt; the check reads the keyed containers' absence as that mode and says
-//! so rather than failing every market it explains.
+//! halt; the check reads the keyed containers' absence as that mode and
+//! excuses exactly the halt it causes — an empty book, a paused fair —
+//! while anything else wrong on a market still fails.
 
 use crate::accounts::{self, Liveness, MarketView};
 use crate::chain;
 use crate::cluster::Cluster;
 use crate::market::{self, PairConfig, Posture};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use dropset_market_data::estimator::PUBLISHED_MARKETS;
 use dropset_market_data::fair_price::{FairPriceRow, FairPriceSource};
 use dropset_sdk::clock::SlotTime;
@@ -35,8 +37,10 @@ use dropset_sdk::layout::{Level, MarketView as SlabView, N_LEVELS};
 use dropset_sdk::matching::{simulate_swap, SwapSide};
 use dropset_sdk::price::Price;
 use solana_client::rpc_client::RpcClient;
+use solana_pubkey::Pubkey;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use std::future::Future;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
@@ -45,8 +49,14 @@ use std::time::Duration;
 
 /// The read-only role the dashboards log in as, on the stack's published port.
 pub const DEFAULT_DATABASE_URL: &str = "postgres://dropset_ro:dropset_ro@127.0.0.1:5432/dropset";
-pub const FRONTEND_PORT: u16 = 3000;
-pub const GRAFANA_PORT: u16 = 3200;
+
+/// The `next dev` port `make frontend-localnet` serves on.
+const FRONTEND_PORT: u16 = 3000;
+
+/// Grafana's loopback host port in the compose file.
+const GRAFANA_PORT: u16 = 3200;
+
+/// The compose file every stack service is defined in, from the repo root.
 const COMPOSE_FILE: &str = "infra/localnet/docker-compose.yml";
 
 /// The credentialed FX collectors whose absence is keyless mode.
@@ -56,69 +66,134 @@ const KEYED_FX: [&str; 2] = ["oanda", "twelvedata"];
 /// its default 15 s ticks.
 const FAIR_MAX_AGE_SECS: i64 = 60;
 
-/// The quote size the frontend check simulates, in USDC atoms ($10).
+/// The quote size the quote check simulates, in USDC atoms ($10).
 const QUOTE_AMOUNT_IN: u64 = 10_000_000;
 
 /// How long an HTTP probe waits — generous, since a cold `next dev` compiles
 /// the page on its first request.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long one database read may take, connect included.
+const READ_TIMEOUT: Duration = Duration::from_secs(5);
+
+const MINUTE: i64 = 60;
+const HOUR: i64 = 60 * MINUTE;
+const DAY: i64 = 24 * HOUR;
+
+/// The store table a collector writes, which fixes its time column.
+#[derive(Clone, Copy)]
+enum Table {
+    /// `cex_prices`, aged by `bucket_start`.
+    Candles,
+    /// `spot_ticks`, aged by `observed_at`.
+    Ticks,
+}
+
+impl Table {
+    fn name(self) -> &'static str {
+        match self {
+            Table::Candles => "cex_prices",
+            Table::Ticks => "spot_ticks",
+        }
+    }
+
+    fn time_column(self) -> &'static str {
+        match self {
+            Table::Candles => "bucket_start",
+            Table::Ticks => "observed_at",
+        }
+    }
+}
+
 /// One collector service, the store table and `source` it writes, and how old
 /// its newest row may be at its own cadence.
 struct Collector {
     service: &'static str,
-    table: &'static str,
-    time_column: &'static str,
+    table: Table,
     source: &'static str,
     max_age_secs: i64,
+    /// Started only under the `fx` profile, with credentials.
     keyed: bool,
 }
 
-const fn collector(
-    service: &'static str,
-    candles: bool,
-    source: &'static str,
-    max_age_secs: i64,
-    keyed: bool,
-) -> Collector {
-    let (table, time_column) = if candles {
-        ("cex_prices", "bucket_start")
-    } else {
-        ("spot_ticks", "observed_at")
-    };
-    Collector {
-        service,
-        table,
-        time_column,
-        source,
-        max_age_secs,
-        keyed,
-    }
-}
-
-const MINUTE: i64 = 60;
-const DAY: i64 = 24 * 60 * MINUTE;
-
-/// The collectors `make collectors-up` starts. The two daily tiers stamp the
+/// Every collector a demo stack can run: the keyless ones `make
+/// collectors-up` always starts, and the keyed three it starts under the `fx`
+/// profile when the secrets enclave exists. The two daily tiers stamp the
 /// vendor's snapshot time rather than the poll's, so their bound is the
 /// publication gap (Frankfurter's spans a weekend); alphavantage's is its
 /// daily candle.
 const COLLECTORS: [Collector; 9] = [
-    collector("coinbase", true, "coinbase", 10 * MINUTE, false),
-    collector("coinbase-ticker", false, "coinbase", 5 * MINUTE, false),
-    collector("kraken", false, "kraken", 5 * MINUTE, false),
-    collector("orca", false, "orca", 5 * MINUTE, false),
-    collector("erapi", false, "erapi", 2 * DAY, false),
-    collector("frankfurter", false, "frankfurter", 4 * DAY, false),
-    collector("oanda", true, "oanda", 15 * MINUTE, true),
-    collector("twelvedata", true, "twelvedata", 2 * 60 * MINUTE, true),
-    collector("alphavantage", true, "alphavantage", 3 * DAY, true),
+    Collector {
+        service: "coinbase",
+        table: Table::Candles,
+        source: "coinbase",
+        max_age_secs: 10 * MINUTE,
+        keyed: false,
+    },
+    Collector {
+        service: "coinbase-ticker",
+        table: Table::Ticks,
+        source: "coinbase",
+        max_age_secs: 5 * MINUTE,
+        keyed: false,
+    },
+    Collector {
+        service: "kraken",
+        table: Table::Ticks,
+        source: "kraken",
+        max_age_secs: 5 * MINUTE,
+        keyed: false,
+    },
+    Collector {
+        service: "orca",
+        table: Table::Ticks,
+        source: "orca",
+        max_age_secs: 5 * MINUTE,
+        keyed: false,
+    },
+    Collector {
+        service: "erapi",
+        table: Table::Ticks,
+        source: "erapi",
+        max_age_secs: 2 * DAY,
+        keyed: false,
+    },
+    Collector {
+        service: "frankfurter",
+        table: Table::Ticks,
+        source: "frankfurter",
+        max_age_secs: 4 * DAY,
+        keyed: false,
+    },
+    Collector {
+        service: "oanda",
+        table: Table::Candles,
+        source: "oanda",
+        max_age_secs: 15 * MINUTE,
+        keyed: true,
+    },
+    Collector {
+        service: "twelvedata",
+        table: Table::Candles,
+        source: "twelvedata",
+        max_age_secs: 2 * HOUR,
+        keyed: true,
+    },
+    Collector {
+        service: "alphavantage",
+        table: Table::Candles,
+        source: "alphavantage",
+        max_age_secs: 3 * DAY,
+        keyed: true,
+    },
 ];
 
 /// One surface's outcome.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verdict {
+    /// The surface does what the demo needs of it.
     Pass,
+    /// It does not, and the run exits non-zero.
     Fail,
     /// Not healthy, and not wrong either: a named state the stack is in.
     Expected,
@@ -173,22 +248,27 @@ pub struct Targets<'a> {
 
 /// Every surface, in order.
 pub fn run(targets: &Targets<'_>) -> Vec<Check> {
-    let containers = containers(targets.repo_root);
-    let keyless = match &containers {
-        Ok(states) => is_keyless(states),
-        Err(_) => false,
-    };
     let mut checks = Vec::new();
-    if keyless {
-        checks.push(Check::new(
-            "mode",
-            Verdict::Expected,
-            "keyless — no OANDA / Twelve Data collector, so the FX-fed markets halt",
-        ));
-    }
     let now = dropset_sdk::time::now_unix();
     let db = Db::connect(targets.database_url);
-    checks.extend(collector_checks(&containers, db.as_ref().ok(), now));
+    let keyless = match containers(targets.repo_root) {
+        Ok(states) => {
+            let keyless = is_keyless(&states);
+            if keyless {
+                checks.push(Check::new(
+                    "mode",
+                    Verdict::Expected,
+                    "keyless — no OANDA / Twelve Data container, so the FX-fed markets halt",
+                ));
+            }
+            checks.extend(collector_checks(&states, keyless, db.as_ref().ok(), now));
+            keyless
+        }
+        Err(e) => {
+            checks.push(Check::new("collectors", Verdict::Fail, format!("{e:#}")));
+            false
+        }
+    };
     checks.push(match &db {
         Ok(db) => estimator_check(db, now, keyless),
         Err(e) => Check::new("estimator", Verdict::Fail, format!("database: {e:#}")),
@@ -199,7 +279,7 @@ pub fn run(targets: &Targets<'_>) -> Vec<Check> {
     checks.push(validator);
     if up {
         checks.extend(market_checks(&client, targets.repo_root, keyless));
-        checks.push(quote_check(&client, targets.repo_root));
+        checks.push(quote_check(&client, targets.repo_root, keyless));
     }
     checks.push(http_check("frontend", FRONTEND_PORT, "/"));
     checks.push(http_check("grafana", GRAFANA_PORT, "/api/health"));
@@ -218,13 +298,22 @@ impl Db {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let pool = runtime.block_on(
-            PgPoolOptions::new()
-                .max_connections(1)
-                .acquire_timeout(Duration::from_secs(3))
-                .connect(url),
-        )?;
+        let connect = PgPoolOptions::new().max_connections(1).connect(url);
+        let pool = Self::bounded(&runtime, async { Ok(connect.await?) })?;
         Ok(Self { runtime, pool })
+    }
+
+    /// Run `read` inside [`READ_TIMEOUT`], so a hung query fails its line
+    /// rather than the whole run.
+    fn bounded<T>(
+        runtime: &tokio::runtime::Runtime,
+        read: impl Future<Output = Result<T>>,
+    ) -> Result<T> {
+        runtime.block_on(async {
+            tokio::time::timeout(READ_TIMEOUT, read)
+                .await
+                .context("timed out")?
+        })
     }
 
     /// The newest row `c` has written, in Unix seconds; `Ok(None)` for none.
@@ -232,17 +321,18 @@ impl Db {
         // Both names are compiled constants, never input.
         let sql = format!(
             "SELECT max({}) FROM {} WHERE source = $1",
-            c.time_column, c.table
+            c.table.time_column(),
+            c.table.name()
         );
         let query = sqlx::query_scalar(&sql)
             .bind(c.source)
             .fetch_one(&self.pool);
-        Ok(self.runtime.block_on(query)?)
+        Self::bounded(&self.runtime, async { Ok(query.await?) })
     }
 
     fn fair_rows(&self, products: Vec<String>) -> Result<Vec<FairPriceRow>> {
         let source = FairPriceSource::new("demo-check", self.pool.clone(), products);
-        self.runtime.block_on(source.latest())
+        Self::bounded(&self.runtime, source.latest())
     }
 }
 
@@ -287,23 +377,19 @@ fn state_of<'a>(states: &'a [(String, String)], service: &str) -> Option<&'a str
         .map(|(_, st)| st.as_str())
 }
 
-/// Keyless: neither keyed FX collector is running.
+/// Keyless: neither keyed FX collector has a container at all. A container
+/// that exists but has stopped is a keyed stack whose collector died, which
+/// its own line fails — it must not excuse the markets as keyless.
 fn is_keyless(states: &[(String, String)]) -> bool {
-    KEYED_FX
-        .iter()
-        .all(|s| state_of(states, s) != Some("running"))
+    KEYED_FX.iter().all(|s| state_of(states, s).is_none())
 }
 
 fn collector_checks(
-    containers: &Result<Vec<(String, String)>>,
+    states: &[(String, String)],
+    keyless: bool,
     db: Option<&Db>,
     now: i64,
 ) -> Vec<Check> {
-    let states = match containers {
-        Ok(states) => states,
-        Err(e) => return vec![Check::new("collectors", Verdict::Fail, format!("{e:#}"))],
-    };
-    let keyless = is_keyless(states);
     COLLECTORS
         .iter()
         .map(|c| {
@@ -336,7 +422,7 @@ fn collector_verdict(
             return Check::new(
                 surface,
                 Verdict::Fail,
-                format!("running; no {} row from `{}`", c.table, c.source),
+                format!("running; no {} row from `{}`", c.table.name(), c.source),
             )
         }
         Some(Ok(Some(ts))) => ts,
@@ -344,44 +430,48 @@ fn collector_verdict(
     let age = now.saturating_sub(newest).max(0);
     let evidence = format!(
         "running; newest {} row {} old (bound {})",
-        c.table,
+        c.table.name(),
         fmt_age(age),
         fmt_age(c.max_age_secs)
     );
-    let verdict = if age <= c.max_age_secs {
-        Verdict::Pass
-    } else if c.keyed && fx_market_closed(now) {
-        return Check::new(
+    if age <= c.max_age_secs {
+        return Check::new(surface, Verdict::Pass, evidence);
+    }
+    // Over the weekend a keyed venue prints nothing, so its newest candle is
+    // the close's — excused only if it is that recent.
+    match fx_weekend_close(now) {
+        Some(close) if c.keyed && newest >= close - c.max_age_secs => Check::new(
             surface,
             Verdict::Expected,
             format!("{evidence} — FX market closed"),
-        );
-    } else {
-        Verdict::Fail
-    };
-    Check::new(surface, verdict, evidence)
+        ),
+        _ => Check::new(surface, Verdict::Fail, evidence),
+    }
 }
 
-/// Whether the FX market is shut for the weekend: Friday 22:00 to Sunday
-/// 22:00 UTC, when the keyed venues print no candles.
-fn fx_market_closed(now: i64) -> bool {
-    let days = now.div_euclid(DAY);
-    let hour = now.rem_euclid(DAY) / (60 * MINUTE);
-    // 1970-01-01 was a Thursday: 0 = Thursday … 1 = Friday, 2 = Saturday,
-    // 3 = Sunday.
-    match days.rem_euclid(7) {
-        1 => hour >= 22,
-        2 => true,
-        3 => hour < 22,
-        _ => false,
-    }
+/// When `now` falls in the FX weekend, the Friday close it follows. The
+/// window is Friday 21:00 to Sunday 22:00 UTC — the union of the summer and
+/// winter sessions (the close and the reopen each move an hour with New York
+/// daylight time), so a closed market is never failed; the price is that a
+/// keyed collector stalled in the hour either side reads as closed.
+fn fx_weekend_close(now: i64) -> Option<i64> {
+    let midnight = now - now.rem_euclid(DAY);
+    let hour = now.rem_euclid(DAY) / HOUR;
+    // 1970-01-01 was a Thursday: 1 = Friday, 2 = Saturday, 3 = Sunday.
+    let friday_midnight = match now.div_euclid(DAY).rem_euclid(7) {
+        1 if hour >= 21 => midnight,
+        2 => midnight - DAY,
+        3 if hour < 22 => midnight - 2 * DAY,
+        _ => return None,
+    };
+    Some(friday_midnight + 21 * HOUR)
 }
 
 fn fmt_age(secs: i64) -> String {
     match secs {
         s if s < 2 * MINUTE => format!("{s} s"),
-        s if s < 2 * 60 * MINUTE => format!("{} min", s / MINUTE),
-        s if s < 2 * DAY => format!("{} h", s / (60 * MINUTE)),
+        s if s < 2 * HOUR => format!("{} min", s / MINUTE),
+        s if s < 2 * DAY => format!("{} h", s / HOUR),
         s => format!("{} d", s / DAY),
     }
 }
@@ -398,52 +488,68 @@ fn estimator_check(db: &Db, now: i64, keyless: bool) -> Check {
 }
 
 /// Every published product carries a row younger than [`FAIR_MAX_AGE_SECS`];
-/// the evidence spells out tGBP-USDC's composition.
+/// the evidence spells out tGBP-USDC's composition. A `degraded` regime still
+/// passes — the line names it so the operator can say why. A `paused` one is
+/// the keyless halt when keyless, and a failure otherwise.
 fn fair_verdict(products: &[String], rows: &[FairPriceRow], now: i64, keyless: bool) -> Check {
     let mut missing = Vec::new();
     for product in products {
         match rows.iter().find(|r| &r.product_id == product) {
-            Some(r) if now - r.ts <= FAIR_MAX_AGE_SECS => {}
-            Some(r) => missing.push(format!("{product} {} old", fmt_age(now - r.ts))),
+            Some(r) if now.saturating_sub(r.ts) <= FAIR_MAX_AGE_SECS => {}
+            Some(r) => missing.push(format!(
+                "{product} {} old",
+                fmt_age(now.saturating_sub(r.ts).max(0))
+            )),
             None => missing.push(format!("{product} absent")),
         }
     }
-    let tgbp = rows.iter().find(|r| r.product_id == "TGBP-USDC").map(|r| {
-        let basis = match (r.basis, r.basis_age_secs) {
-            (Some(b), Some(age)) => format!("basis {b:.5} ({age} s)"),
-            (Some(b), None) => format!("basis {b:.5}"),
-            _ => "no basis".to_string(),
-        };
-        let degrade = r
-            .degrade
-            .as_deref()
-            .map(|d| format!(" ({d})"))
-            .unwrap_or_default();
-        format!(
-            "TGBP-USDC {}{degrade}, anchor {}, {basis}",
-            r.regime, r.anchor
-        )
-    });
-    let tgbp = tgbp.unwrap_or_else(|| "TGBP-USDC no row".to_string());
-    if missing.is_empty() {
-        let paused = rows.iter().any(|r| r.regime == "paused");
-        let verdict = if paused && !keyless {
-            Verdict::Fail
-        } else {
-            Verdict::Pass
-        };
-        Check::new(
-            "estimator",
-            verdict,
-            format!("{} markets fresh; {tgbp}", products.len()),
-        )
-    } else {
-        Check::new(
+    let tgbp = rows
+        .iter()
+        .find(|r| r.product_id == "TGBP-USDC")
+        .map_or_else(|| "TGBP-USDC no row".to_string(), describe_fair);
+    if !missing.is_empty() {
+        return Check::new(
             "estimator",
             Verdict::Fail,
             format!("stale: {}; {tgbp}", missing.join(", ")),
-        )
+        );
     }
+    let paused: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.regime == "paused")
+        .map(|r| r.product_id.as_str())
+        .collect();
+    let fresh = format!("{} markets fresh; {tgbp}", products.len());
+    match (paused.is_empty(), keyless) {
+        (true, _) => Check::new("estimator", Verdict::Pass, fresh),
+        (false, true) => Check::new(
+            "estimator",
+            Verdict::Expected,
+            format!("{fresh}; paused {} — keyless", paused.join(", ")),
+        ),
+        (false, false) => Check::new(
+            "estimator",
+            Verdict::Fail,
+            format!("{fresh}; paused {}", paused.join(", ")),
+        ),
+    }
+}
+
+fn describe_fair(r: &FairPriceRow) -> String {
+    let basis = match (r.basis, r.basis_age_secs) {
+        (Some(b), Some(age)) => format!("basis {b:.5} ({age} s)"),
+        (Some(b), None) => format!("basis {b:.5}"),
+        _ => "no basis".to_string(),
+    };
+    let degrade = r
+        .degrade
+        .as_deref()
+        .map(|d| format!(" ({d})"))
+        .unwrap_or_default();
+    format!(
+        "{} {}{degrade}, anchor {}, {basis}",
+        r.product_id, r.regime, r.anchor
+    )
 }
 
 fn validator_check(client: &RpcClient) -> Check {
@@ -512,6 +618,16 @@ fn market_view(
     Ok(accounts::read_market_at(client, Cluster::Localnet, address))
 }
 
+/// The market account's raw data — [`MarketView`] keeps only what it decoded,
+/// and both the profile read and the quote need the slab itself.
+fn market_data(client: &RpcClient, address: &Pubkey) -> Result<Vec<u8>> {
+    Ok(client.get_account(address).context("read market")?.data)
+}
+
+fn load_slab(data: &[u8]) -> Result<SlabView<'_>> {
+    SlabView::load(data).map_err(|e| anyhow!("market does not decode: {e:?}"))
+}
+
 fn book_state(
     client: &RpcClient,
     repo_root: &Path,
@@ -521,22 +637,13 @@ fn book_state(
     let Some(view) = market_view(client, repo_root, config)? else {
         return Ok(None);
     };
-    let account = client.get_account(&view.address).context("read market")?;
-    let slab = SlabView::load(&account.data)
-        .map_err(|e| anyhow::anyhow!("market does not decode: {e:?}"))?;
+    let data = market_data(client, &view.address)?;
+    let slab = load_slab(&data)?;
     let Some((_, vault)) = slab.active_vaults().next() else {
         return Ok(None);
     };
-    let posted = |side: &[Level; N_LEVELS]| -> (usize, usize) {
-        let rungs = side.iter().filter(|l| l.size_bps.get() > 0);
-        let flipping = rungs
-            .clone()
-            .filter(|l| l.flip_spread_ppm.get() > 0)
-            .count();
-        (rungs.count(), flipping)
-    };
-    let (ask_rungs, ask_flips) = posted(&vault.profile.asks);
-    let (bid_rungs, bid_flips) = posted(&vault.profile.bids);
+    let (ask_rungs, ask_flips) = rung_counts(&vault.profile.asks);
+    let (bid_rungs, bid_flips) = rung_counts(&vault.profile.bids);
     Ok(Some(BookState {
         asks: view.asks.len(),
         bids: view.bids.len(),
@@ -546,9 +653,20 @@ fn book_state(
     }))
 }
 
+/// `(posted, flipping)` rungs on one side of a profile: posted is a non-zero
+/// size, and a posted rung flips when its flip spread is non-zero.
+fn rung_counts(side: &[Level; N_LEVELS]) -> (usize, usize) {
+    let posted = side.iter().filter(|l| l.size_bps.get() > 0);
+    let flipping = posted
+        .clone()
+        .filter(|l| l.flip_spread_ppm.get() > 0)
+        .count();
+    (posted.count(), flipping)
+}
+
 /// A passive market passes on a two-sided resting book whose rungs flip; an
 /// active one on a two-sided book its maker stamped recently. Keyless, an
-/// empty or unquoted book is the halt that mode causes.
+/// empty book is the halt that mode causes; anything else wrong still fails.
 fn market_verdict(surface: String, posture: Posture, s: BookState, keyless: bool) -> Check {
     let book = format!("{} asks / {} bids resting", s.asks, s.bids);
     let two_sided = s.asks > 0 && s.bids > 0;
@@ -562,17 +680,16 @@ fn market_verdict(surface: String, posture: Posture, s: BookState, keyless: bool
             format!("active; {book}; maker {}", liveness_label(s.liveness)),
         ),
     };
-    let verdict = match (healthy, keyless) {
-        (true, _) => Verdict::Pass,
-        (false, true) => Verdict::Expected,
-        (false, false) => Verdict::Fail,
-    };
-    let evidence = if verdict == Verdict::Expected {
-        format!("{evidence} — halted, keyless")
-    } else {
-        evidence
-    };
-    Check::new(surface, verdict, evidence)
+    let halted = s.asks == 0 && s.bids == 0;
+    match (healthy, keyless && halted) {
+        (true, _) => Check::new(surface, Verdict::Pass, evidence),
+        (false, true) => Check::new(
+            surface,
+            Verdict::Expected,
+            format!("{evidence} — halted, keyless"),
+        ),
+        (false, false) => Check::new(surface, Verdict::Fail, evidence),
+    }
 }
 
 fn liveness_label(l: Liveness) -> &'static str {
@@ -584,63 +701,65 @@ fn liveness_label(l: Liveness) -> &'static str {
 }
 
 /// A $10 tGBP buy through [`simulate_swap`] — the function the frontend's
-/// WASM build exports, so a quote here is the quote the page would show over
-/// the same account.
-fn quote_check(client: &RpcClient, repo_root: &Path) -> Check {
-    let surface = "quote TGBP-USDC";
+/// WASM build exports, over the same account, with no platform fee. It
+/// proves the chain-side quote; the page itself is not driven.
+fn quote_check(client: &RpcClient, repo_root: &Path, keyless: bool) -> Check {
     let config = &market::MARKET_TGBP;
     let quote = market_view(client, repo_root, config).and_then(|view| {
         let view = view.context("no market on chain")?;
-        let account = client.get_account(&view.address).context("read market")?;
-        let slab = SlabView::load(&account.data)
-            .map_err(|e| anyhow::anyhow!("market does not decode: {e:?}"))?;
+        let data = market_data(client, &view.address)?;
+        let slab = load_slab(&data)?;
         let slot = client.get_slot().context("slot")?;
         Ok(simulate_swap(
             &slab,
             SwapSide::Buy,
             QUOTE_AMOUNT_IN,
             Price::INFINITY,
-            SlotTime::new(slot.min(u64::from(u32::MAX)) as u32),
+            SlotTime::new(u32::try_from(slot).unwrap_or(u32::MAX)),
             dropset_sdk::time::now_unix_u32(),
             0,
         ))
     });
     match quote {
-        Ok(q) if q.out_amount > 0 => {
-            let out = q.out_amount as f64 / 10f64.powi(i32::from(config.base.decimals));
-            Check::new(
-                surface,
-                Verdict::Pass,
-                format!("$10 buys {out:.4} TGBP across {} legs", q.legs),
-            )
-        }
-        Ok(_) => Check::new(
-            surface,
-            Verdict::Fail,
-            "$10 buy fills nothing — the book is empty",
-        ),
-        Err(e) => Check::new(surface, Verdict::Fail, format!("{e:#}")),
+        Ok(q) => quote_verdict(q.out_amount, q.legs, config.base.decimals, keyless),
+        Err(e) => Check::new("quote TGBP-USDC", Verdict::Fail, format!("{e:#}")),
     }
 }
 
-/// A plain HTTP/1.0 GET on loopback, passing on a 2xx status.
-fn http_check(surface: &str, port: u16, path: &str) -> Check {
-    match http_status(port, path) {
-        Ok(status) if (200..300).contains(&status) => Check::new(
+/// A fill passes; an empty one is the keyless halt when keyless, and a
+/// failure otherwise.
+fn quote_verdict(out_amount: u64, legs: u32, base_decimals: u8, keyless: bool) -> Check {
+    let surface = "quote TGBP-USDC";
+    if out_amount > 0 {
+        let out = out_amount as f64 / 10f64.powi(i32::from(base_decimals));
+        return Check::new(
             surface,
             Verdict::Pass,
-            format!("http://localhost:{port}{path} → {status}"),
-        ),
-        Ok(status) => Check::new(
+            format!("$10 buys {out:.4} TGBP across {legs} legs (chain-side simulate_swap)"),
+        );
+    }
+    let empty = "$10 buy fills nothing — the book is empty";
+    if keyless {
+        Check::new(
             surface,
-            Verdict::Fail,
-            format!("http://localhost:{port}{path} → {status}"),
-        ),
-        Err(e) => Check::new(
-            surface,
-            Verdict::Fail,
-            format!("http://localhost:{port}{path}: {e:#}"),
-        ),
+            Verdict::Expected,
+            format!("{empty} — halted, keyless"),
+        )
+    } else {
+        Check::new(surface, Verdict::Fail, empty)
+    }
+}
+
+/// A plain HTTP/1.0 GET on loopback, passing on any 2xx or 3xx — a redirect
+/// is the server answering.
+fn http_check(surface: &str, port: u16, path: &str) -> Check {
+    let url = format!("http://localhost:{port}{path}");
+    match http_status(port, path) {
+        Ok(status) if (200..400).contains(&status) => {
+            Check::new(surface, Verdict::Pass, format!("{url} → {status}"))
+        }
+        Ok(status) => Check::new(surface, Verdict::Fail, format!("{url} → {status}")),
+        Err(e) => Check::new(surface, Verdict::Fail, format!("{url}: {e:#}")),
     }
 }
 
@@ -667,12 +786,20 @@ fn parse_status(head: &str) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dropset_sdk::layout::Level;
 
     fn states(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs
             .iter()
             .map(|(s, st)| (s.to_string(), st.to_string()))
             .collect()
+    }
+
+    fn collector(service: &str) -> &'static Collector {
+        COLLECTORS
+            .iter()
+            .find(|c| c.service == service)
+            .expect("a rostered collector")
     }
 
     fn row(product: &str, ts: i64, regime: &str) -> FairPriceRow {
@@ -696,6 +823,7 @@ mod tests {
 
     // A Thursday, 12:00 UTC.
     const THURSDAY_NOON: i64 = 1_792_670_400;
+    const FRIDAY_MIDNIGHT: i64 = THURSDAY_NOON + 12 * HOUR;
 
     #[test]
     fn ps_output_parses_service_and_state() {
@@ -707,16 +835,29 @@ mod tests {
     }
 
     #[test]
-    fn keyless_is_both_keyed_fx_collectors_down() {
+    fn keyless_is_both_keyed_fx_containers_absent() {
         assert!(is_keyless(&states(&[("kraken", "running")])));
-        assert!(is_keyless(&states(&[("oanda", "exited")])));
         assert!(!is_keyless(&states(&[("oanda", "running")])));
         assert!(!is_keyless(&states(&[("twelvedata", "running")])));
     }
 
     #[test]
+    fn a_crashed_keyed_collector_is_not_keyless_mode() {
+        let crashed = states(&[("oanda", "exited"), ("twelvedata", "restarting")]);
+        assert!(!is_keyless(&crashed));
+        let c = collector_verdict(
+            collector("oanda"),
+            Some("exited"),
+            None,
+            THURSDAY_NOON,
+            false,
+        );
+        assert_eq!(c.verdict, Verdict::Fail, "{c}");
+    }
+
+    #[test]
     fn a_collector_passes_within_its_bound_and_fails_past_it() {
-        let kraken = &COLLECTORS[2];
+        let kraken = collector("kraken");
         let now = THURSDAY_NOON;
         let fresh = collector_verdict(
             kraken,
@@ -738,11 +879,34 @@ mod tests {
     }
 
     #[test]
+    fn a_collector_fails_without_a_database_or_a_row() {
+        let kraken = collector("kraken");
+        let now = THURSDAY_NOON;
+        let unreachable = collector_verdict(kraken, Some("running"), None, now, false);
+        assert!(
+            unreachable.evidence.contains("database unreachable"),
+            "{unreachable}"
+        );
+        let errored = collector_verdict(
+            kraken,
+            Some("running"),
+            Some(Err(anyhow!("boom"))),
+            now,
+            false,
+        );
+        assert_eq!(errored.verdict, Verdict::Fail);
+        let empty = collector_verdict(kraken, Some("running"), Some(Ok(None)), now, false);
+        assert!(
+            empty.evidence.contains("no spot_ticks row from `kraken`"),
+            "{empty}"
+        );
+    }
+
+    #[test]
     fn a_missing_keyed_collector_is_expected_only_when_keyless() {
-        let oanda = &COLLECTORS[6];
-        let keyless = collector_verdict(oanda, None, None, THURSDAY_NOON, true);
+        let keyless = collector_verdict(collector("oanda"), None, None, THURSDAY_NOON, true);
         assert_eq!(keyless.verdict, Verdict::Expected);
-        let kraken = &COLLECTORS[2];
+        let kraken = collector("kraken");
         assert_eq!(
             collector_verdict(kraken, None, None, THURSDAY_NOON, true).verdict,
             Verdict::Fail
@@ -754,29 +918,48 @@ mod tests {
     }
 
     #[test]
-    fn a_stale_keyed_collector_is_expected_over_the_fx_weekend() {
-        let oanda = &COLLECTORS[6];
-        // Saturday 12:00 UTC, the newest candle from Friday evening.
-        let saturday = THURSDAY_NOON + 2 * DAY;
-        let c = collector_verdict(
+    fn a_keyed_collector_is_excused_over_the_weekend_only_back_to_the_close() {
+        let oanda = collector("oanda");
+        let saturday_noon = FRIDAY_MIDNIGHT + DAY + 12 * HOUR;
+        let close = FRIDAY_MIDNIGHT + 21 * HOUR;
+        let at_close = collector_verdict(
             oanda,
             Some("running"),
-            Some(Ok(Some(saturday - 15 * 3600))),
-            saturday,
+            Some(Ok(Some(close - 60))),
+            saturday_noon,
             false,
         );
-        assert_eq!(c.verdict, Verdict::Expected, "{c}");
+        assert_eq!(at_close.verdict, Verdict::Expected, "{at_close}");
+        // Stuck since Wednesday: the weekend does not excuse it.
+        let wednesday = FRIDAY_MIDNIGHT - 2 * DAY;
+        let stuck = collector_verdict(
+            oanda,
+            Some("running"),
+            Some(Ok(Some(wednesday))),
+            saturday_noon,
+            false,
+        );
+        assert_eq!(stuck.verdict, Verdict::Fail, "{stuck}");
     }
 
     #[test]
-    fn the_fx_weekend_runs_friday_22_to_sunday_22_utc() {
-        let friday = THURSDAY_NOON + DAY;
-        assert!(!fx_market_closed(THURSDAY_NOON));
-        assert!(!fx_market_closed(friday + 9 * 3600)); // Friday 21:00
-        assert!(fx_market_closed(friday + 10 * 3600)); // Friday 22:00
-        assert!(fx_market_closed(friday + DAY)); // Saturday noon
-        assert!(fx_market_closed(friday + 2 * DAY + 9 * 3600)); // Sunday 21:00
-        assert!(!fx_market_closed(friday + 2 * DAY + 10 * 3600)); // Sunday 22:00
+    fn the_fx_weekend_runs_friday_21_to_sunday_22_utc() {
+        let close = FRIDAY_MIDNIGHT + 21 * HOUR;
+        assert_eq!(fx_weekend_close(THURSDAY_NOON), None);
+        assert_eq!(fx_weekend_close(FRIDAY_MIDNIGHT + 20 * HOUR), None);
+        assert_eq!(fx_weekend_close(close), Some(close));
+        assert_eq!(
+            fx_weekend_close(FRIDAY_MIDNIGHT + DAY + 12 * HOUR),
+            Some(close)
+        );
+        assert_eq!(
+            fx_weekend_close(FRIDAY_MIDNIGHT + 2 * DAY + 21 * HOUR),
+            Some(close)
+        );
+        assert_eq!(
+            fx_weekend_close(FRIDAY_MIDNIGHT + 2 * DAY + 22 * HOUR),
+            None
+        );
     }
 
     #[test]
@@ -818,8 +1001,25 @@ mod tests {
         );
         assert_eq!(
             fair_verdict(&products, &rows, now, true).verdict,
-            Verdict::Pass
+            Verdict::Expected
         );
+    }
+
+    fn level(size_bps: u16, flip_spread_ppm: u32) -> Level {
+        let mut l: Level = bytemuck::Zeroable::zeroed();
+        l.size_bps = size_bps.into();
+        l.flip_spread_ppm = flip_spread_ppm.into();
+        l
+    }
+
+    #[test]
+    fn only_posted_rungs_count_and_only_posted_flips() {
+        let mut side = [level(0, 0); N_LEVELS];
+        side[0] = level(2_500, 50);
+        side[1] = level(2_500, 0);
+        // Zero size with a flip spread: neither posted nor flipping.
+        side[2] = level(0, 50);
+        assert_eq!(rung_counts(&side), (2, 1));
     }
 
     fn book(asks: usize, bids: usize, flipping: usize, liveness: Liveness) -> BookState {
@@ -871,15 +1071,41 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_book_is_the_keyless_halt_not_a_failure() {
-        let c = market_verdict(
+    fn keyless_excuses_an_empty_book_and_nothing_else() {
+        let empty = market_verdict(
             "m".into(),
             Posture::Passive,
             book(0, 0, 0, Liveness::Unknown),
             true,
         );
-        assert_eq!(c.verdict, Verdict::Expected);
-        assert!(c.evidence.ends_with("halted, keyless"), "{c}");
+        assert_eq!(empty.verdict, Verdict::Expected);
+        assert!(empty.evidence.ends_with("halted, keyless"), "{empty}");
+        let no_flip = market_verdict(
+            "m".into(),
+            Posture::Passive,
+            book(4, 4, 0, Liveness::Unknown),
+            true,
+        );
+        assert_eq!(no_flip.verdict, Verdict::Fail, "{no_flip}");
+        let one_sided = market_verdict(
+            "m".into(),
+            Posture::Active,
+            book(4, 0, 0, Liveness::Live),
+            true,
+        );
+        assert_eq!(one_sided.verdict, Verdict::Fail, "{one_sided}");
+    }
+
+    #[test]
+    fn an_empty_quote_is_the_keyless_halt_and_a_failure_otherwise() {
+        let filled = quote_verdict(7_540_000_000, 2, 9, false);
+        assert_eq!(filled.verdict, Verdict::Pass);
+        assert!(
+            filled.evidence.contains("7.5400 TGBP across 2 legs"),
+            "{filled}"
+        );
+        assert_eq!(quote_verdict(0, 0, 9, true).verdict, Verdict::Expected);
+        assert_eq!(quote_verdict(0, 0, 9, false).verdict, Verdict::Fail);
     }
 
     #[test]
@@ -887,5 +1113,22 @@ mod tests {
         assert_eq!(parse_status("HTTP/1.1 200 OK\r\n"), Some(200));
         assert_eq!(parse_status("HTTP/1.0 503 Service Unavailable"), Some(503));
         assert_eq!(parse_status("SSH-2.0-OpenSSH"), None);
+    }
+
+    #[test]
+    fn an_http_probe_reads_a_live_listener() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 256];
+            let _ = conn.read(&mut buf);
+            conn.write_all(b"HTTP/1.1 307 Temporary Redirect\r\n\r\n")
+                .unwrap();
+        });
+        let c = http_check("frontend", port, "/");
+        server.join().unwrap();
+        assert_eq!(c.verdict, Verdict::Pass, "{c}");
+        assert!(c.evidence.ends_with("→ 307"), "{c}");
     }
 }
