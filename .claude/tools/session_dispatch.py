@@ -111,13 +111,20 @@ def validate(argv: list[str]) -> list[str]:
         # retired, since `explore <n|name>` now resumes an existing session
         # itself. `_NAME` admits a bare number, which is the issue-keyed form an
         # audit dispatch uses — `explore 1196` lands in the `1196` worktree.
+        # `anthropic` alone, in `task`'s position: Bedrock is already the
+        # default, so the shell takes no `bedrock` word here — and refuses
+        # either word as a name, so `explore bedrock` is no `exp-bedrock`.
+        word = ["anthropic"] if args and args[0] == "anthropic" else []
+        args = args[len(word) :]
         if args and args[0] == "resume":
             raise ValueError(
                 "`explore resume` is retired — dispatch `explore <n|name>`, "
                 "which resumes an existing session itself"
             )
-        if len(args) != 1 or not _NAME.match(args[0]):
-            raise ValueError("`explore` takes one lowercase name or issue number")
+        if len(args) != 1 or not _NAME.match(args[0]) or args[0] in _SUBSTRATES:
+            raise ValueError(
+                "`explore` takes [anthropic] and one lowercase name or issue number"
+            )
         # `_NAME` admits `0` and `eng-0`; the shell refuses both, since 0 is not a
         # Linear issue number. Mirror that here rather than letting the dispatch
         # succeed: it would open a tab, type the verb, and leave a session that
@@ -126,7 +133,7 @@ def validate(argv: list[str]) -> list[str]:
         # all-or-nothing property, since one bad verb must dispatch none.
         if re.fullmatch(r"(?:eng-)?0+", args[0], re.ASCII):
             raise ValueError("`explore` needs a real issue number; 0 is not one")
-        return ["explore", args[0]]
+        return ["explore", *word, args[0]]
 
     if verb == "chore":
         # `task`'s substrate words, but no `resume`: `chore <n>` resumes an

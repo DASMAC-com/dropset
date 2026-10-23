@@ -1320,21 +1320,26 @@ clean cut with **no aliases** — the family is small and every launcher
 is the operator's own muscle memory, so a half-migration leaving both
 names alive was the outcome to avoid.
 
-| Verb                 | Job                                        | Substrate              | Tier      |
-| -------------------- | ------------------------------------------ | ---------------------- | --------- |
-| `task <n>`           | worktree session on Linear task n          | executor's (Bedrock)   | executor  |
-| `task anthropic <n>` | same, when the work needs web research     | anthropic              | executor  |
-| `task resume [n]`    | resume by number (bare = the picker)       | as recorded            | re-pinned |
-| `explore <n\|name>`  | research / audit, read-only, temp worktree | anthropic, always      | advisor   |
-| `chore [s] <n>`      | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    |
-| `plan [bedrock]`     | upkeep pass, then daily planning session   | advisor's, or override | advisor   |
-| `architect <n> [b]`  | design thread, read-only, temp worktree    | advisor's, or override | advisor   |
-| `fleet [go]`         | batch resume                               | per-window             | re-pinned |
-| `models [check]`     | print the tier table; `check` it for free  | —                      | —         |
-| `cdds [n]`           | not a session verb — navigation            | —                      | —         |
+| Verb                    | Job                                        | Substrate              | Tier      |
+| ----------------------- | ------------------------------------------ | ---------------------- | --------- |
+| `task <n>`              | worktree session on Linear task n          | executor's (Bedrock)   | executor  |
+| `task anthropic <n>`    | same, when the work needs web research     | anthropic              | executor  |
+| `task resume [n]`       | resume by number (bare = the picker)       | as recorded            | re-pinned |
+| `explore [a] <n\|name>` | research / audit, read-only, temp worktree | Bedrock, or `[a]`      | advisor   |
+| `chore [s] <n>`         | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    |
+| `plan [bedrock]`        | upkeep pass, then daily planning session   | advisor's, or override | advisor   |
+| `architect <n> [b]`     | design thread, read-only, temp worktree    | advisor's, or override | advisor   |
+| `fleet [go]`            | batch resume                               | per-window             | re-pinned |
+| `models [check]`        | print the tier table; `check` it for free  | —                      | —         |
+| `cdds [n]`              | not a session verb — navigation            | —                      | —         |
 
 `[b]` is the same optional `anthropic` / `bedrock` word `plan` takes;
-`[s]` is the same word in `task`'s position, before the number.
+`[s]` is the same word in `task`'s position, before the number; `[a]`
+is `anthropic` alone in that position, the web-research escape. A
+Bedrock `explore` also pins its sub-agents to the executor tier (see
+"Model tiers" below), and a launch into an existing session or
+worktree keeps the substrate its marker records — a switch means a
+fresh worktree.
 `task local <n>` still works for now, printing a line naming its
 replacement. **The tier table itself is in "Model tiers" below.**
 
@@ -1463,21 +1468,27 @@ knowing before relying on the inheritance:**
 - **`fleet` reaches such a session through `task resume <n>`**,
   which re-pins the tier as well as the substrate: an untagged
   worktree — no marker — resumes on the **advisor** tier, so an
-  issue-keyed explore session comes back on the right model. An
+  issue-keyed explore session comes back on the right model — and,
+  when its session exists and no architect thread shares the number,
+  is handed to `explore <n>` itself, the one path that pins its
+  sub-agent tiers. An
   architect session gets there through its `<n>.tier` file instead,
   and keeps its recorded substrate; a `helper` `.tier` hands the
   resume to `chore <n>`, since a chore has no worktree to resolve.
   (This closed the first part of ENG-1402.)
-- **An explore session writes its marker only where none
-  exists, and only on a worktree it creates.** The marker keys on
-  the **worktree tag alone**, which `task <n>` also writes — so an
-  unconditional write would let `explore 1196` flip a `bedrock`
-  marker to `seat` and make the next `task resume 1196` resume the
-  *implementation* session on the seat, silently; an architect
-  thread's marker is left alone likewise. Writing one at all
-  (`anthropic`, advisor `.tier`) is what lets the pruner lift the
-  executor gate and the fleet cost tool meter the session as seat
-  rather than unattributed.
+- **An explore session writes its marker only on a worktree it
+  creates**, and launches into any other tree on the substrate that
+  tree's marker records. The marker keys on the **worktree tag
+  alone**, which `task <n>` also writes — so an unconditional write
+  would let `explore anthropic 1196` flip a `bedrock` marker and
+  make the next `task resume 1196` resume the *implementation*
+  session on the seat, silently; an architect thread's marker is
+  left alone likewise. Writing one at all (its
+  substrate, advisor `.tier`) is what lets a reopen keep its
+  provider, the pruner lift the executor gate, and the fleet cost
+  tool meter the session rather than leave it unattributed. A
+  free-form `exp-<name>` tag is marked too, for the reopen; the
+  pruner matches no such tag.
 
 Both are the same root: `<n>` is not a single-owner namespace. It
 names a worktree several session kinds can claim, with different
@@ -1747,9 +1758,12 @@ than being turned into a constant.
 
 **The rule is capability, not attendance.** A session runs on Bedrock
 unless it needs something Bedrock lacks — web search, web fetch, deep
-research — or it is a **seat session by role** (`plan`, `architect`,
-`explore`). Sub-agents are *not* a differentiator:
+research — or it is a **seat session by role** (`plan`, `architect`).
+Sub-agents are *not* a differentiator:
 Opus-spawning-Opus sub-agents are verified working on Bedrock.
+`explore` left the seat once an audit's sub-agent fan-out (ten at
+1.0M–2.3M input each) spent the session window and most of the
+weekly one; `explore anthropic` is its web-research escape.
 
 An earlier framing split on **attendance** (unattended work goes to
 Bedrock) and was superseded. Who is watching says nothing about which
@@ -1766,7 +1780,10 @@ seat; with `plan` covering it, the exception went with the verb.
 `AWS_REGION`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` (the background tier,
 when `DS_MODEL_BACKGROUND` is set; otherwise it is unset),
 `ENABLE_PROMPT_CACHING_1H=1`, and `AWS_BEARER_TOKEN_BEDROCK` resolved
-from 1Password at launch. An anthropic launch exports none of them —
+from 1Password at launch. A Bedrock `explore` adds two, scoped to its
+launch: `CLAUDE_CODE_SUBAGENT_MODEL` (the executor tier) and
+`ANTHROPIC_DEFAULT_SONNET_MODEL` (the helper tier; see "Model tiers").
+An anthropic launch exports none of them —
 **the absence of `CLAUDE_CODE_USE_BEDROCK` IS the seat pin**, which is
 why an anthropic launch *clears* those variables rather than merely
 warning about them (see below). **Neither exports the model**: every
@@ -1806,12 +1823,12 @@ decides, the executor carries the work out — so the nouns describe the
 roles and outlive any model. **Helper** is the third role: minor
 non-repo jobs that merit neither, on a cheaper (Sonnet-class) model.
 
-| Tier         | Verbs                        | Default substrate   | Unset                |
-| ------------ | ---------------------------- | ------------------- | -------------------- |
-| `ADVISOR`    | `plan` `architect` `explore` | anthropic           | refuses to launch    |
-| `EXECUTOR`   | `task`                       | bedrock             | refuses to launch    |
-| `HELPER`     | `chore`                      | bedrock             | refuses to launch    |
-| `BACKGROUND` | Claude Code's small slot     | follows the session | warns (Bedrock only) |
+| Tier         | Verbs                                  | Default substrate            | Unset                |
+| ------------ | -------------------------------------- | ---------------------------- | -------------------- |
+| `ADVISOR`    | `plan` `architect` `explore`           | anthropic; `explore` bedrock | refuses to launch    |
+| `EXECUTOR`   | `task`, Bedrock `explore`'s sub-agents | bedrock                      | refuses to launch    |
+| `HELPER`     | `chore`, Bedrock `explore`'s `sonnet`  | bedrock                      | refuses to launch    |
+| `BACKGROUND` | Claude Code's small slot               | follows the session          | warns (Bedrock only) |
 
 **The model id lives ONLY in the runtime config, never in the repo.**
 Models ship every couple of months and the tiers exist to hot-swap
@@ -1852,6 +1869,17 @@ are decisions rather than omissions:
   first-party id is
   portable and `models check` maps it the same way; a Bedrock-form id
   must be the exact profile id.
+- **A Bedrock `explore` pins two more slots** from the same config.
+  The executor id goes to `CLAUDE_CODE_SUBAGENT_MODEL`, the default
+  for every sub-agent that names no model (a per-call model and agent
+  frontmatter still win, per Claude Code's sub-agent docs), so an
+  audit's fan-out runs the executor tier with no skill text; the
+  helper id goes to `ANTHROPIC_DEFAULT_SONNET_MODEL`, so the one alias
+  a skill names (`sonnet`, a mechanical lane) resolves to the runtime
+  config rather than Claude Code's built-in table. The `[1m]` suffix
+  is kept, so sub-agents get the 1M window. Both are scoped to the
+  launch, and either tier unset refuses it — an unpinned sub-agent
+  would silently inherit the advisor model.
 - **The auto-mode classifier has no tier.** Claude Code chooses its
   model itself and exposes no setting for it.
 
@@ -1893,8 +1921,10 @@ modes include `none` is not retained under it. The operator accepts
 that for the pinch. An executor
 onto anthropic is rare and exists for one capability reason — web
 search and web fetch are unavailable on Bedrock — so reach for it when
-a task needs live web research, not by habit. `explore` takes no
-override. The old `task local` spelling — it
+a task needs live web research, not by habit. `explore anthropic`
+is the same escape for an explore session; `explore` reads no
+substrate variable and takes no `bedrock` word, since Bedrock is
+already its default. The old `task local` spelling — it
 never meant local inference, only the subscription — is a deprecated
 alias that prints its replacement.
 
@@ -1913,12 +1943,12 @@ window, and a seat session resumed onto Bedrock quietly spends credits
 on attended work. Neither errors. **An absent marker reads as
 `anthropic`**, the conservative default, which is also correct for
 every session predating markers (the retired `seat` value reads the
-same). `task`, `architect` and `chore` write a marker, and a marker's
-**presence** is the tier record unless a `<key>.tier` file sits
-beside it (`advisor` from `architect`, `helper` from `chore`):
-present resumes the executor tier, absent the advisor tier — which is
-what lets `task resume <n>` bring an issue-keyed explore session back
-on the right model. `architect` and `chore` write that `.tier` file,
+same). `task`, `architect`, `explore` and `chore` write a marker, and
+a marker's **presence** is the tier record unless a `<key>.tier` file
+sits beside it (`advisor` from `architect` and `explore`, `helper`
+from `chore`): present resumes the executor tier, absent the advisor
+tier — which is what lets `task resume <n>` bring a pre-marker explore
+session back on the right model. Those three write that `.tier` file,
 and a `task` launch removes it; the tier is a separate
 file because `session_metrics.py` reads the marker as one bare word.
 The bare `task resume` picker cannot know
@@ -2094,13 +2124,21 @@ drives the real zsh functions.
   subject in their first message, so inventing one would be a guess to
   correct.
 
-  **The advisor tier, pinned to the anthropic substrate.** Explore
-  work is thinking-heavy, so it runs the top tier like `plan` and
-  `architect`, but it ignores `DS_MODEL_ADVISOR_SUBSTRATE` and takes no
-  override word: it records `anthropic` with an advisor `.tier` (only
-  where no marker exists, never for a free-form tag), so a
-  `task resume <n>` of it resumes on anthropic, and launching it
-  anywhere else would make that resume switch provider.
+  **The advisor tier, on Bedrock.** Explore work is thinking-heavy,
+  so it runs the top tier like `plan` and `architect` — but its audits
+  fan out sub-agents, so it runs on Bedrock with no word, ignoring
+  `DS_MODEL_ADVISOR_SUBSTRATE`, with sub-agents on the executor tier
+  (see "Model tiers"). `explore anthropic <n|name>` launches on the
+  subscription, in `task`'s position. **A launch into an existing
+  session or worktree takes the substrate the marker records** —
+  anthropic where there is none, so an unmarked or seat-marked tree
+  stays on the seat, and a tree `task` marked `bedrock` stays there;
+  only a launch that creates its worktree chooses, and writes the
+  marker with an advisor `.tier`. So a session's reopen always reads
+  back the substrate it started on. A word that disagrees with the
+  record refuses rather than switching provider mid-conversation; a
+  switch means a fresh worktree. It was once pinned to anthropic
+  because a pre-marker worktree always resumed there.
 
 - **`explore resume <name>` is RETIRED** — the verb now prints a
   one-line pointer to the plain form rather than launching. Two reasons,

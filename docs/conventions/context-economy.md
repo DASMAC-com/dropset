@@ -235,9 +235,9 @@ the last row.
 **The rate basis is Opus 5.5 on Bedrock**, and the bands re-seed at
 the next rate swap. A band, never a point: the measured spread inside
 one line band ran $39 to $140. Bands bind **Bedrock workers only**. A
-seat-bound issue (`architect`, `explore`) states its seat and token
-profile instead, because the subscription's internal pricing is
-opaque and a seat dollar figure would be invented.
+seat-bound issue (`architect`, `explore anthropic`) states its seat
+and token profile instead, because the subscription's internal
+pricing is opaque and a seat dollar figure would be invented.
 
 **At close** `session-metrics` appends one line through the zero-echo
 issue writer (`.claude/tools/linear_issue.py append`) — for a Bedrock

@@ -1728,7 +1728,7 @@ def resolve_substrate(cwd: str | None) -> tuple[str, str]:
     records ``message.model`` as the plain ``claude-opus-5``, byte-identical to
     what a seat Opus session records, and no region-prefixed or
     inference-profile form appears in any local transcript. Nor is the model *name* a usable
-    proxy, since seat verbs (`plan`, `explore`) also run on Opus. The
+    proxy, since seat verbs (`plan`, `architect`) also run on Opus. The
     only durable signal is the marker a launch writes, which is exactly what the
     resume verbs already steer by.
 

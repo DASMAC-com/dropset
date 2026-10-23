@@ -511,11 +511,11 @@ wiring, the helper family, and the iTerm setup:
 
 A session runs on **Bedrock** unless it needs something Bedrock lacks —
 web search, web fetch, deep research — or it is a **seat session by
-role** (`plan`, `architect`, `explore`). Sub-agents are
-not a differentiator. `task <n>` and `chore <n>` are Bedrock, with
-`anthropic` before `<n>` the web-research escape. `plan`, on the seat,
-opens the 5-hour window; the `housekeeping` verb kept there for that is
-retired, its upkeep now `upkeep.py` run by the `plan` launcher.
+role** (`plan`, `architect`). Sub-agents are not a differentiator.
+`task`, `chore` and `explore` are Bedrock, with `anthropic` before the
+argument the web-research escape. `plan`, on the seat, opens the
+5-hour window; the `housekeeping` verb is retired, its upkeep now
+`upkeep.py` run by the `plan` launcher.
 
 Models are named by **role tier** — advisor (`plan`, `architect`,
 `explore`), executor (`task`), helper
