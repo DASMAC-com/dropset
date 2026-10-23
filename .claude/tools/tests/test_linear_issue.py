@@ -313,6 +313,84 @@ class CreateIssue(_Stubbed):
         with self.assertRaises(li.LinearIssueError):
             li.create_issue("k", team_id="t", project_id="p", title="t", body="b")
 
+    def _dry(self, **token) -> str:
+        rec = self.install([])
+        line = li.create_issue(
+            "k",
+            team_id="t",
+            project_id="p",
+            title="Claude: Do x",
+            body="b",
+            dry_run=True,
+            **token,
+        )
+        self.assertEqual(rec.calls, [])
+        return line
+
+    def test_verb_and_substrate_prefix_the_whole_token(self):
+        line = self._dry(verb="chore", substrate="anthropic")
+        self.assertIn("WOULD FILE [Chore/Anthropic] Claude: Do x |", line)
+
+    def test_token_input_is_case_insensitive_and_written_canonically(self):
+        line = self._dry(verb="EXPLORE", substrate="Bedrock")
+        self.assertIn("WOULD FILE [Explore/Bedrock] Claude: Do x |", line)
+
+    def test_operator_writes_a_substrate_less_token(self):
+        line = self._dry(verb="Operator")
+        self.assertIn("WOULD FILE [Operator] Claude: Do x |", line)
+
+    def test_no_flags_writes_no_token(self):
+        line = self._dry()
+        self.assertIn("WOULD FILE Claude: Do x |", line)
+
+    def test_the_token_reaches_the_creating_call(self):
+        rec = self.install([self.CREATED])
+        li.create_issue(
+            "k",
+            team_id="t",
+            project_id="p",
+            title="Do x",
+            body="b",
+            verb="architect",
+            substrate="bedrock",
+        )
+        self.assertEqual(rec.calls[0][1]["input"]["title"], "[Architect/Bedrock] Do x")
+
+    def test_refusals_write_nothing(self):
+        cases = {
+            "operator with a substrate": {"verb": "operator", "substrate": "bedrock"},
+            "the silent default": {"verb": "task", "substrate": "bedrock"},
+            "verb alone": {"verb": "chore"},
+            "substrate alone": {"substrate": "anthropic"},
+            "unknown verb": {"verb": "plan", "substrate": "bedrock"},
+            "unknown substrate": {"verb": "chore", "substrate": "vertex"},
+        }
+        for name, token in cases.items():
+            with self.subTest(name), self.assertRaises(li.LinearIssueError):
+                self._dry(**token)
+
+    def test_the_default_refusal_says_to_omit_both_flags(self):
+        with self.assertRaises(li.LinearIssueError) as ctx:
+            self._dry(verb="Task", substrate="BEDROCK")
+        self.assertIn("omit both", str(ctx.exception))
+
+    def test_the_cli_wires_verb_and_substrate(self):
+        args = li._parse_args(
+            [
+                "prog",
+                "create",
+                "--title",
+                "t",
+                "--body-file",
+                "f",
+                "--verb",
+                "chore",
+                "--substrate",
+                "anthropic",
+            ]
+        )
+        self.assertEqual((args.verb, args.substrate), ("chore", "anthropic"))
+
 
 class TickBoxes(unittest.TestCase):
     """The pure resolution: which lines a box text ticks, or why it refuses."""
