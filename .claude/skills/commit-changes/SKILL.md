@@ -166,51 +166,49 @@ changes here belong to this session.
      — a blocked commit here means the trailer
      got written, not that the guard is wrong.
 
-1. Commit, **signed**:
+1. Commit, **signed** when the signer answers:
 
    ```sh
    git commit -S -m "<message>"
    ```
 
-   The `-S` is mandatory — branch protection on
-   this repo requires every commit to have a
-   verified signature.
+   Try `-S` first. Branch protection requires a
+   verified signature on every commit **on main**
+   only — the ruleset targets the default branch,
+   so a feature branch accepts unsigned pushes.
 
-   **A `failed to fill whole buffer` error means the
-   1Password SSH agent is locked** — it is not a git
-   or a key problem, and the
-   message says nothing to suggest otherwise. It
-   appears mid-session, after earlier commits in
-   the same run signed fine, because the agent
-   locks on its own timer. Nothing an agent can do
-   fixes it: ask the user to unlock 1Password, then
-   retry the same commit. One run stalled on two
-   consecutive attempts before this was diagnosed.
+   **On a signing failure, commit unsigned and keep
+   going — never stop, never wait for an unlock**
+   (`docs/conventions/commits-and-prs.md` →
+   "Signing defers to the merge gate").
+   `failed to fill whole buffer` is the 1Password
+   app locked on its own timer, mid-session, after earlier
+   commits signed fine; nothing an agent does
+   fixes it, and stopping for it is how a finished
+   PR sat overnight as a local commit. Re-run the
+   same commit with the global `commit.gpgsign`
+   overridden:
 
-   **Treat a failed signing attempt as an
-   unpushed-state alarm, and say so loudly.** A
-   blocked commit leaves verified work sitting
-   uncommitted for as long as the signer stays
-   locked — and that is precisely the window in
-   which a worktree has twice been removed from
-   under a session, the second time losing a
-   tested review fix that had to be reauthored
-   from the transcript. The interim mitigation for
-   that hazard is **load-bearing**: the
-   checkpoint-commit convention is the only reason
-   the first instance lost nothing, because every
-   commit had already been pushed. A locked signer
-   is exactly what prevents it working.
+   ```sh
+   git commit --no-gpg-sign -m "<message>"
+   ```
 
-   So on a signing failure, do not simply retry
-   quietly. State plainly that there is
-   **uncommitted work at risk**, name what is
-   unsaved, and ask the user to unlock. If the
-   session is about to wait on anything long (a
-   sub-agent fan-out, a CI wait, a backoff), say
-   that the wait is happening with work unsaved —
-   an unattended stretch is how the window gets
-   long enough to matter.
+   Then push as below. A blocked commit was always
+   the real hazard — verified work uncommitted is
+   exactly the window in which a worktree has twice
+   been removed under a session — so the unsigned
+   commit-and-push **is** the mitigation, and the
+   checkpoint cadence stays as frequent as ever.
+   `review-pr` signs the whole branch at the merge
+   gate in one pass.
+
+   **State the unsigned count** after the push, in
+   one line from the committed counter, so the
+   exposure is always visible:
+
+   ```sh
+   python3 .claude/tools/resign_branch.py count
+   ```
 
    **And a message file for `git commit -F` is
    session-scoped.** The scratchpad does not
@@ -243,6 +241,13 @@ changes here belong to this session.
    ```sh
    git push -u origin <branch>
    ```
+
+   If a push of **unsigned** commits is ever
+   refused (a ruleset that has grown to cover
+   feature branches), keep committing locally and
+   raise the unpushed state as the alarm it is:
+   say plainly what is unpushed, and that the
+   worktree must not be pruned until it is.
 
 1. Print the commit hash, short summary, and push
    result.

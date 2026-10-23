@@ -99,22 +99,40 @@ migrations or generation inputs, and whether it spans crates.
    python3 .claude/tools/rebase_overlap.py --base <base>
    ```
 
-   **Prove signing first if the session has idled since its last signed
+   **Probe signing first if the session has idled since its last signed
    commit** — here, and at every later re-rebase (steps 5, 6 and 11)
    after a fan-out, CI wait or pause: a rebase re-signs every commit it
    replays, so a locked signer leaves the worktree mid-rebase
-   (`history.md` → "Signer locked mid-rebase"). On `LOCKED`, stop and
-   relay its unlock instruction; exit 2 is git failing, not the signer
-   — report its line:
+   (`history.md` → "Signer locked mid-rebase"). Exit 2 is git failing,
+   not the signer — report its line:
 
    ```sh
    python3 .claude/tools/signing_probe.py
    ```
 
-   Then rebase:
+   Then rebase — on `signed`:
 
    ```sh
    git rebase origin/<base>
+   ```
+
+   **On `LOCKED`, never stop: rebase unsigned and carry on**
+   (`docs/conventions/commits-and-prs.md` → "Signing defers to the merge
+   gate"). The whole flow — lint, fixes, CI — runs on unsigned commits,
+   and step 20 signs the branch once:
+
+   ```sh
+   git rebase --no-gpg-sign origin/<base>
+   ```
+
+   Every "commit signed" below means the same: `-S` while the signer
+   answers, `--no-gpg-sign` once it does not (`commit-changes`).
+   **State the unsigned count at every gate** — this step, the step-12
+   push, the CI wait, the handoff — in one line, so the exposure stays
+   visible:
+
+   ```sh
+   python3 .claude/tools/resign_branch.py count --base <base>
    ```
 
    - **On conflict: `git rebase --abort`, catalogue it as blocking
@@ -1267,6 +1285,20 @@ migrations or generation inputs, and whether it spans crates.
    git push --force-with-lease
    ```
 
+   **If the branch carries unsigned commits and the signer answers
+   now, sign here instead** — the tool pushes with its own pinned
+   lease, so the CI run that follows is on signed commits and step 20
+   has nothing to do. On `LOCKED` (exit 1) it moved nothing: push as
+   above and leave the signing to step 20. On exit 2, read the refusal:
+   a merge commit or a dirty tree still pushes as above, unsigned —
+   never hold work back before the CI wait; only **"never held"** (the
+   remote carries a commit this branch lacks) holds, since a forced
+   push of any kind would drop it — report it and reconcile:
+
+   ```sh
+   python3 .claude/tools/resign_branch.py resign --base <base>
+   ```
+
 1. **Update the PR title and description.** Invoke
    `/pr-title-description` so both reflect the branch's final state
    (after lint and review fixes). **No Linear tags in the body or in
@@ -1361,9 +1393,10 @@ migrations or generation inputs, and whether it spans crates.
 
    **Make the working state survivable before any long unattended
    wait** — this one and the step-5 fan-out (`history.md` → "Worktree
-   deleted under a wait"). Run step 2's `signing_probe.py`, then make
-   the checkpoint commit immediately before the wait: **a signing
-   failure is an unpushed-state alarm** — clear `LOCKED` first.
+   deleted under a wait"). Make the checkpoint commit and push it
+   immediately before the wait — **unsigned if the signer is locked**,
+   never held back for an unlock: an unpushed commit is the alarm, an
+   unsigned one is not.
 
    **Wait with the tool — never poll.** One call snapshots the working
    diff (uncommitted and untracked work included, so recovery is one
@@ -1377,8 +1410,8 @@ migrations or generation inputs, and whether it spans crates.
      --verdict-out <scratchpad>/ci.json
    ```
 
-   A `snapshot.error` means the spill did not happen — say so, as for a
-   signing failure.
+   A `snapshot.error` means the spill did not happen — say so: the wait
+   is running with that work unprotected.
 
    **The never-poll rule, for every wait in this skill** (this one,
    the step-20 mergeability re-read, the step-22 queue watch): no
@@ -1535,6 +1568,28 @@ migrations or generation inputs, and whether it spans crates.
    verify locally. Say in the summary that the re-verify was skipped
    and why.
 
+   **Then the final signing pass — nothing is enqueued unsigned.**
+   Branch protection requires every commit on main signed, so a branch
+   still carrying unsigned commits (step 2's count) is signed here, in
+   one pass, before the enqueue:
+
+   ```sh
+   python3 .claude/tools/resign_branch.py resign --base <base>
+   ```
+
+   It replays the linear branch onto its own merge base, signing each
+   commit (tree unchanged, so no conflict), and force-pushes with a
+   pinned lease — routine, no approval needed. Exit 0 with
+   `nothing to sign` is the common case. **On `LOCKED` (exit 1) it
+   moved nothing**, and the handoff question below becomes the one
+   operator turn the deferral costs: "ready to merge — unlock
+   1Password and I sign and enqueue", re-running this after the yes.
+   Exit 2 is a refusal (a dirty tree, a merge commit on the branch, a
+   remote commit this branch never held) — report it and hold. **A
+   re-sign changes every SHA, so the required checks re-run** on the
+   new head; `gh pr merge --auto` below waits for them, and step 22's
+   watch covers the enqueue.
+
    Then move the issue (the step-3 tag) to **In Review**, with or just
    before the prompt — skip only if no tag resolved. A state-only write
    takes the zero-echo path
@@ -1557,7 +1612,8 @@ migrations or generation inputs, and whether it spans crates.
    Ask with `AskUserQuestion`, printing **both identifiers** — the
    Linear tag (`ENG-536`) and the PR number (`#138`) — with "yes, add
    it to the merge queue" **first** and "skip, I'll merge by hand"
-   second.
+   second. With the signer locked, the first option reads "unlocked —
+   sign and enqueue", and the unsigned count is in the question.
 
    - **On approve**, enqueue — the skill's one `gh` **write**; the MCP
      has no merge-queue tool and `merge_pull_request` merges

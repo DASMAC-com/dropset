@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# cspell:word reflog
 """Triage what a rebase actually pulled in, and whether it can stale anything.
 
 When ``main`` moves under a long-running review, ``review-pr`` rebases and then

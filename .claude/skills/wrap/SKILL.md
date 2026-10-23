@@ -88,10 +88,13 @@ everything below it is recoverable and that one is not.
 
    **Only pushed work survives a prune**, and this repo has
    lost work to that twice — once benignly, once for real. So
-   this check is not a formality, and neither is its failure
-   mode: **a signing failure here is an unpushed-state alarm.**
-   A commit that will not sign is a commit that does not exist
-   yet, however finished the work feels.
+   this check is not a formality. **A locked signer is no reason
+   to leave work uncommitted**: commit and push with
+   `--no-gpg-sign` (`commit-changes`) — an unsigned pushed
+   commit survives a prune, and the merge gate signs it. An
+   **open** PR still carrying unsigned commits
+   (`python3 .claude/tools/resign_branch.py count`) is an
+   outstanding item: name the count.
 
    Anything outstanding → **NOT CLEAR**, and say precisely
    what: N modified files, or N commits ahead of the remote.

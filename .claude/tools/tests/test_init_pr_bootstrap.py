@@ -90,6 +90,10 @@ def statuses(result):
     return {s["step"]: s["status"] for s in result["steps"]}
 
 
+def statuses_detail(result, step):
+    return next(s["detail"] for s in result["steps"] if s["step"] == step)
+
+
 class HappyPathTests(unittest.TestCase):
     def test_a_clean_run_completes_every_step(self):
         runner = FakeRunner()
@@ -159,20 +163,12 @@ class StopBeforeMutationTests(unittest.TestCase):
         self.assertEqual(result["stopped_at"], "merged_check")
         self.assertFalse(runner.ran("gh", "pr", "list"))
 
-    def test_a_locked_signer_stops_before_the_rename(self):
-        for signing in boot.SIGNING_STOPS:
-            with self.subTest(signing=signing):
-                runner = FakeRunner(helper={"signing": signing})
-                result = bootstrap(runner).execute()
-                self.assertEqual(result["stopped_at"], "branch")
-                self.assertNoMutation(runner)
-
-    def test_a_locked_signing_probe_stops_before_the_rename(self):
-        locked = "signing-probe | LOCKED | unlock the 1Password app | no answer"
-        runner = FakeRunner({("signing_probe.py",): (1, "", locked)})
+    def test_a_probe_that_cannot_run_stops_before_the_rename(self):
+        broken = "signing-probe | cannot run: no HEAD commit here"
+        runner = FakeRunner({("signing_probe.py",): (2, "", broken)})
         result = bootstrap(runner).execute()
         self.assertEqual(result["stopped_at"], "branch")
-        self.assertIn("LOCKED", result["steps"][-1]["detail"])
+        self.assertIn("cannot run", result["steps"][-1]["detail"])
         self.assertNoMutation(runner)
 
     def test_a_missing_notifications_scope_is_a_note_not_a_stop(self):
@@ -191,13 +187,74 @@ class MidRunFailureTests(unittest.TestCase):
         self.assertEqual(result["remaining"][0], "install")
         self.assertFalse(runner.ran("git", "commit"))
 
-    def test_a_signing_failure_stops_before_the_push(self):
-        runner = FakeRunner({("git", "commit"): (1, "", "failed to fill whole buffer")})
+    def test_a_commit_failing_even_unsigned_stops_before_the_push(self):
+        runner = FakeRunner({("git", "commit"): (1, "", "no identity")})
         result = bootstrap(runner).execute()
         self.assertEqual(result["stopped_at"], "commit")
-        self.assertIn("1Password", result["steps"][-1]["detail"])
+        self.assertIn("even unsigned", result["steps"][-1]["detail"])
         self.assertFalse(runner.ran("git", "push"))
+        # Not the signer, so no deferral is recorded.
+        self.assertFalse(result["facts"]["signing_deferred"])
+        self.assertFalse(any("signing deferred" in n for n in result["notes"]))
 
+
+class SigningDeferralTests(unittest.TestCase):
+    """A signer that cannot sign defers signing to the merge gate; never stops."""
+
+    def assertDeferred(self, runner, result):
+        self.assertIsNone(result["stopped_at"])
+        self.assertTrue(result["facts"]["signing_deferred"])
+        self.assertEqual(sum("signing deferred" in n for n in result["notes"]), 1)
+        self.assertTrue(runner.ran("git", "commit", "--allow-empty", "--no-gpg-sign"))
+        self.assertTrue(runner.ran("git", "push"))
+
+    def test_a_locked_signer_verdict_commits_unsigned_without_probing(self):
+        for signing in boot.SIGNING_DEFERRALS:
+            with self.subTest(signing=signing):
+                runner = FakeRunner(helper={"signing": signing})
+                result = bootstrap(runner).execute()
+                self.assertDeferred(runner, result)
+                self.assertFalse(runner.ran("signing_probe.py"))
+                self.assertFalse(runner.ran("git", "commit", "--allow-empty", "-S"))
+
+    def test_a_locked_probe_rebases_and_commits_unsigned(self):
+        locked = "signing-probe | LOCKED | unlock the 1Password app | no answer"
+        runner = FakeRunner({("signing_probe.py",): (1, "", locked)})
+        result = bootstrap(runner).execute()
+        self.assertDeferred(runner, result)
+        self.assertTrue(runner.ran("git", "rebase", "origin/main", "--no-gpg-sign"))
+        self.assertTrue(any("LOCKED" in n for n in result["notes"]))
+
+    def test_a_failed_signed_commit_falls_back_to_unsigned(self):
+        runner = FakeRunner(
+            {
+                ("git", "commit", "--allow-empty", "-S"): (
+                    1,
+                    "",
+                    "failed to fill whole buffer",
+                )
+            }
+        )
+        result = bootstrap(runner).execute()
+        self.assertDeferred(runner, result)
+        self.assertIn("(unsigned)", statuses_detail(result, "commit"))
+
+    def test_a_working_signer_signs_and_defers_nothing(self):
+        runner = FakeRunner()
+        result = bootstrap(runner).execute()
+        self.assertFalse(result["facts"]["signing_deferred"])
+        self.assertFalse(runner.ran("git", "commit", "--allow-empty", "--no-gpg-sign"))
+        self.assertFalse(runner.ran("git", "rebase", "origin/main", "--no-gpg-sign"))
+
+    def test_a_crashed_probe_stops_rather_than_deferring(self):
+        crash = "Traceback (most recent call last): ImportError"
+        runner = FakeRunner({("signing_probe.py",): (1, "", crash)})
+        result = bootstrap(runner).execute()
+        self.assertEqual(result["stopped_at"], "branch")
+        self.assertFalse(result["facts"]["signing_deferred"])
+
+
+class BestEffortTests(unittest.TestCase):
     def test_best_effort_steps_fail_without_stopping(self):
         runner = FakeRunner(
             {

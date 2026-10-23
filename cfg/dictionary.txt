@@ -108,6 +108,7 @@ frontmatter
 getpid
 gifs
 globbable
+gpgsig
 gpgsign
 granularities
 greppable
@@ -225,6 +226,7 @@ readback
 reauthored
 rebalances
 recalibratable
+reflog
 refspec
 regclass
 regen

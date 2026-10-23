@@ -62,7 +62,8 @@
   no trailing period. Optional body explains the *why*, wrapped at 72
   chars.
 - Sign commits (`git commit -S`); branch protection requires verified
-  signatures.
+  signatures on main. **A locked signer defers signing, never halts
+  work** — see "Signing defers to the merge gate" below.
 - **Every PR is linked to its own task.** A session that finds
   mid-flight that its issue will not fit one PR never opens a second
   PR on the same issue: it finishes one self-contained PR, messages
@@ -70,6 +71,45 @@
   there. The **planning session** files the follow-ups and re-points
   the blocking edges to the chain's tail, because the operator's Done
   on the first issue is what releases its dependents.
+
+## Signing defers to the merge gate
+
+Operator ruling, 2026-09-15: **a signing failure must never halt
+work.** The 1Password app locks on its own timer, and a session that
+stopped for it has left a finished PR sitting overnight as a local
+unsigned commit, and another stalled an hour with its fix commit
+staged. The one place the operator's presence is genuinely required is
+the merge gate, so that is where the ask lands.
+
+- **What the ruleset gates.** The `main` ruleset's `required_signatures`
+  targets the default branch only (`~DEFAULT_BRANCH`), so a feature
+  branch accepts unsigned pushes. Every commit **on main** stays
+  signed; nothing is enqueued unsigned.
+- **Until the gate**, a locked signer means commit with
+  `--no-gpg-sign` (the global `commit.gpgsign` would otherwise sign
+  and fail), push anyway, and rebase with `--no-gpg-sign`.
+  `init_pr_bootstrap.py` does it for the bootstrap commit and reports
+  `facts.signing_deferred`; `commit-changes` and `review-pr` do it for
+  every later commit and rebase.
+- **At the gate**, `review-pr` runs
+  `python3 .claude/tools/resign_branch.py resign` before the enqueue:
+  one pass that replays the branch onto its own merge base signing
+  each commit, then force-pushes with a pinned lease. Still locked, it
+  moves nothing, and the handoff question becomes the single "unlock
+  and I sign and enqueue" — one operator turn, not one per commit. The
+  re-sign changes every SHA, so the required checks re-run before the
+  queue takes it. When the signer answers earlier, `review-pr` signs
+  at its pre-CI push instead, and the gate has nothing to do. The tool
+  rides the `python3 .claude/tools/` grant, so the pass runs
+  unattended without a `git rebase` allow-rule.
+- **The loss rule's compensating controls ride with it.**
+  Unsigned-and-*unpushed* is the state that lost work before, so the
+  deferral is only safe because the unsigned commit is still **pushed**:
+  checkpoint commits stay as frequent as ever, the prune refusal on
+  unpushed work stays absolute, and each gate states the unsigned count
+  (`resign_branch.py count`) so the exposure is always visible. If a
+  push of unsigned commits is ever refused, keep committing locally and
+  treat the unpushed state as the alarm it is.
 
 ## The PR workflow and skill handoffs
 
