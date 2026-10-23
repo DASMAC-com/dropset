@@ -115,9 +115,11 @@ CLAUDE_PREFIX = "Claude: "
 # The ``[<Verb>/<Substrate>]`` (or substrate-less ``[Operator]``) launch-line
 # token a title may lead with, ahead of the ``Claude:`` prefix. The grammar is
 # ``docs/conventions/linear-automation.md``'s; ``linear_issue.py create``
-# writes it. Matched loosely (any bracketed word pair) so a token this copy
-# does not know still never lands inside a folded heading.
-_TITLE_TOKEN_RE = re.compile(r"(\[[A-Za-z]+(?:/[A-Za-z]+)?\]) ")
+# writes it. Matched as the closed set, not any bracketed word, so a product
+# title such as ``[SDK] Add y`` keeps its bracket; keep this copy in sync.
+_TITLE_TOKEN_RE = re.compile(
+    r"(\[(?:Task|Chore|Explore|Architect)/(?:Bedrock|Anthropic)\]|\[Operator\]) +"
+)
 
 _NUM_RE = re.compile(r"(\d+)")
 
@@ -275,7 +277,7 @@ def split_title_token(title: str) -> tuple[str, str]:
     """Split a leading ``[<Verb>/<Substrate>]`` launch-line token off a title.
 
     Returns ``(token, rest)``: ``token`` is ``""`` when the title has none,
-    and ``rest`` starts at the text after the token's one space, which is
+    and ``rest`` starts at the text after the token's space(s), which is
     where the ``Claude:`` prefix sits (token first, prefix second).
     """
     match = _TITLE_TOKEN_RE.match(title)

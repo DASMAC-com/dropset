@@ -133,6 +133,17 @@ class TouchesTests(unittest.TestCase):
         self.assertEqual(strip_claude_prefix("[Explore/Anthropic] Do x"), "Do x")
         self.assertEqual(strip_claude_prefix("[Operator] Grind keys"), "Grind keys")
 
+    def test_a_non_token_bracket_word_is_kept(self):
+        self.assertEqual(strip_claude_prefix("[SDK] Add y"), "[SDK] Add y")
+        self.assertEqual(mt.add_claude_prefix("[SDK] Add y"), "Claude: [SDK] Add y")
+
+    def test_extra_spaces_after_the_token_do_not_double_the_prefix(self):
+        self.assertEqual(strip_claude_prefix("[Chore/Bedrock]  Claude: X"), "X")
+        self.assertEqual(
+            mt.add_claude_prefix("[Chore/Bedrock]  Claude: X"),
+            "[Chore/Bedrock] Claude: X",
+        )
+
     def test_a_bracket_mid_title_is_not_a_token(self):
         self.assertEqual(
             strip_claude_prefix("Claude: Fix [Chore/Bedrock] parsing"),

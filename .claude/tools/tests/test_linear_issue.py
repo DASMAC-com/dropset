@@ -335,6 +335,10 @@ class CreateIssue(_Stubbed):
         line = self._dry(verb="EXPLORE", substrate="Bedrock")
         self.assertIn("WOULD FILE [Explore/Bedrock] Claude: Do x |", line)
 
+    def test_task_on_anthropic_is_written_since_only_bedrock_is_elided(self):
+        line = self._dry(verb="task", substrate="anthropic")
+        self.assertIn("WOULD FILE [Task/Anthropic] Claude: Do x |", line)
+
     def test_operator_writes_a_substrate_less_token(self):
         line = self._dry(verb="Operator")
         self.assertIn("WOULD FILE [Operator] Claude: Do x |", line)
