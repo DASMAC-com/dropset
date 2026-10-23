@@ -846,6 +846,55 @@ than going straight to Backlog, and the next assembly consumes it as a
 part. The trim levers keep their own milestone, writer and fold — that
 pipeline is unchanged; only where its *output* lands moved.
 
+## The verb/substrate title token
+
+**A Linear title says which verb and substrate the issue runs on**, as
+a bracket token at its head: `[<Verb>/<Substrate>] <title>`. Verb is
+`Task`, `Chore`, `Explore` or `Architect`; Substrate is `Bedrock` or
+`Anthropic`. **The token is the issue's launch line**: lowercased and
+followed by the issue number, it is what the operator (or a dispatch)
+types. `[Chore/Anthropic]` on 1234 is `chore anthropic 1234`; an
+architect thread titled `[Architect/Bedrock] Linear orchestration flow`
+on its governing issue launches as `architect bedrock <n>`. The verb
+table it reads against, with each verb's default substrate, is in
+`local-integrations.md` → "The verb table".
+
+- **One elision.** A title with no token is `Task` on `Bedrock`. Every
+  other combination is written whole — a verb's own default included
+  (`[Explore/Bedrock]`) — because defaults move, and a half-token
+  would silently change meaning when one does.
+- **It precedes `Claude:`**: `[Chore/Anthropic] Claude: Rotate the …`.
+  The two are independent — one routes the launch, the other batches
+  agent-infra work.
+- **`[Operator]` takes no substrate.** It marks an item the operator
+  executes by hand with no agent session, so it has no launch line.
+- **A Linear-title signal only** — never a PR title, branch or worktree
+  name, which keep their own forms.
+- **The title is the authority.** The operator re-routes an issue by
+  editing its token, and whoever launches types the line the token
+  says. No other field records the routing, so nothing can disagree
+  with it.
+
+**The defaults are binding at launch, advisory at filing.** A
+token-less title launches as `task <n>`, full stop. At filing, the
+filer writes the verb's **default substrate** from the verb table
+unless the issue states a reason to differ — web research (Bedrock has
+no web search or fetch) or seat budget — so the substrate judgment is
+made once, in the table, rather than re-argued per issue.
+
+**Who writes it.** `linear-task` asks for the verb and substrate and
+omits the token for a default task; `plan` writes `[Explore/Bedrock]`
+on an audit issue (`[Explore/Anthropic]` when the audit needs the
+web), `[Chore/Bedrock]` on operator-attended agent work, and
+`[Operator]` on an item the operator executes; `architect` writes it on
+each task it files. Audit findings, trim batches and merge outputs are
+default tasks and carry no token. **The dispatch gate reads it**:
+planning types the line the token says, and refuses `task <n>` on an
+issue whose token names another verb or `[Operator]`. Until the
+launcher reorder lands, `explore` and `architect` still take the older
+forms the verb table names, and a token-less legacy issue is judged by
+its body until the one-time title sweep.
+
 ## Keep Linear tags out of PR bodies and comments
 
 **Do not put Linear issue tags (`ENG-###`, e.g. `ENG-513`) in PR

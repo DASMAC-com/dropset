@@ -71,9 +71,8 @@ only here: `docs/conventions/linear-automation.md`.
 
 Long-horizon **design** conversations run in their own session, not
 in a planning session: `plan` keeps the board coherent, `architect`
-asks whether the thing on the board is the right thing to build. Same
-seat quality, different job — so different sessions, not a mode
-toggle. Launched with **`architect <n>`** (model-pinned,
+asks whether the thing on the board is the right thing to build.
+Launched with **`architect <n>`** (model-pinned,
 idempotent, one resumable session per governing issue, named
 `<n>`). It bootstraps minimally — the Planning document,
 plan's rulings, no more — and makes **no scheduling
@@ -140,10 +139,7 @@ language-domain), each finding keeping its `**Fingerprint**:`, never
 across separate apps / languages / deploy units (the coherence floor).
 That floor is no license to grow without bound: **a coherent set larger
 than a short session splits into sequential PRs** of roughly 4–5
-findings (see "Context economy" below).
-
-**`**Touches**:` is retired** — no filing emits it; existing lines are
-inert history the fold tools still carry. Detail:
+findings (see "Context economy" below). Detail:
 `docs/conventions/linear-automation.md`.
 
 ### The Linear state tracks the session, not the PR
@@ -181,8 +177,7 @@ is a **Linear-title signal only — never a PR title** (PR titles keep
 **`Claude meta`** milestone, in the creating call, keeping strays out
 of the operator's review inbox. A **promoted**
 batch issue is the one meta issue not parked; an assembled batch not
-promoted stays parked, and promoting it later is the usual milestone
-clear.
+promoted stays parked.
 
 **The planning bootstrap is the single assimilation point** — once a
 day it sweeps the milestone **plus any inbox stray** (an open,
@@ -195,6 +190,15 @@ bounded by the disjoint-set test (judged on collision clusters, as for
 product work), never a state check or a bare count. Assembly consumes
 the pool *as of bootstrap*; a later stray waits for the next one.
 One writer, one rhythm. Detail: `docs/conventions/linear-automation.md`.
+
+### The verb/substrate title token
+
+A Linear title's leading **`[<Verb>/<Substrate>]`** (`Task` /
+`Chore` / `Explore` / `Architect`, `Bedrock` / `Anthropic`) is the
+issue's **launch line**: `[Chore/Anthropic]` on 1234 is
+`chore anthropic 1234`. No token is Task on Bedrock, the only
+elision; it precedes `Claude:`, `[Operator]` marks hand-executed
+items, and the token never reaches a PR title. Detail: same doc.
 
 ### Keep Linear tags out of PR bodies and comments
 
@@ -293,10 +297,8 @@ bootstrap: sweep the milestone, fold into **small themed
 splits by surface) and close the originals (the coherence floor
 still governs audit findings and product filings). A rejected
 lever is **closed with its reason**, and
-dedup-against-resolved makes that permanent. The old trim inbox
-document is retired — it outgrew the tool-result cap between
-mining passes. Detail: `docs/conventions/linear-automation.md`
-and the two skills.
+dedup-against-resolved makes that permanent. Detail:
+`docs/conventions/linear-automation.md` and the two skills.
 
 ### Blocking relations
 
@@ -514,8 +516,7 @@ web search, web fetch, deep research — or it is a **seat session by
 role** (`plan`, `architect`). Sub-agents are not a differentiator.
 `task`, `chore` and `explore` are Bedrock, with `anthropic` before the
 argument the web-research escape. `plan`, on the seat, opens the
-5-hour window; the `housekeeping` verb is retired, its upkeep now
-`upkeep.py` run by the `plan` launcher.
+5-hour window.
 
 Models are named by **role tier** — advisor (`plan`, `architect`,
 `explore`), executor (`task`), helper

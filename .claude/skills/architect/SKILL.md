@@ -99,8 +99,9 @@ too.
 
 **There is no in-session model check.** `architect` pins the
 advisor tier at launch and refuses to start when it does not
-resolve; `architect <n> bedrock` is the credit-pinch
-override, as for `plan`.
+resolve; `architect bedrock <n>` is the credit-pinch
+override, as for `plan` (`architect <n> bedrock` until the
+launcher reorder lands).
 
 For an architect session specifically: doing long-horizon
 design on the executor tier is the cheap-tier slip that
@@ -142,7 +143,11 @@ absolute rule and they are not the same thing.
   reviewable units the operator ratifies one by one (see "The
   loop" below). The session owns them and handles comments on
   them by the fold protocol (`plan` step 1): fold, reply saying
-  how, resolve.
+  how, resolve. **Each title carries its launch line** — the
+  `[<Verb>/<Substrate>]` token, before any `Claude:`, omitted
+  only for a task on Bedrock; `[Operator]` for an item the
+  operator executes by hand (`docs/conventions/linear-automation.md`
+  → "The verb/substrate title token").
 - **Its own governing issue's state**, In Progress → In Review
   at handoff. Never Done — that is the operator's. Bar canceling
   its own unratified tasks, this is the only state write the

@@ -91,6 +91,20 @@ what to file.
      unaffected and still goes to Backlog, correctly: it is
      a spec awaiting review.
 
+     **Ask the verb and substrate** with the
+     `AskUserQuestion` selector, the default — Task on
+     Bedrock — first. A default task carries **no**
+     token; anything else gets a leading
+     `[<Verb>/<Substrate>]` (Verb `Task`, `Chore`,
+     `Explore` or `Architect`; Substrate `Bedrock` or
+     `Anthropic`), written whole even when it names the
+     verb's own default substrate, and **before**
+     `Claude:` (e.g. `[Chore/Anthropic] Claude: …`).
+     Offer the verb's default substrate unless the to-do
+     states a reason to differ (web research, seat
+     budget). Per `docs/conventions/linear-automation.md`
+     → "The verb/substrate title token".
+
    - **Description** — Markdown. Capture *why* this
      is deferred and enough context to act on it
      cold: what was uncovered, where in the code,
