@@ -28,15 +28,16 @@ coupling skill tooling to the program's toolchain.
 - **Stdlib only** where practical (JSON + filesystem), so a tool runs
   with a bare `python3` and needs no install step.
 
-  Where a tool genuinely needs a third-party package (none does today)
-  **import it lazily, at the use site**, so the module still imports
-  without it. Three things follow, and they are what keep the
-  exception from eroding the rule: the dependency-free paths (argument
-  parsing, path/ordering logic) keep working and stay testable; the
-  tests that *do* need it are guarded with `unittest.skipUnless` so
-  `make tools-tests` passes either way; and the failure, when it comes,
-  is one clear line naming the install rather than an `ImportError`
-  traceback. CI's lint job installs
+  Where a tool genuinely needs a third-party package — `iterm_api.py`
+  needs `iterm2`, imported only in the driver mode it runs under
+  iTerm's own interpreter — **import it lazily, at the use site**, so
+  the module still imports without it. Three things follow, and they
+  are what keep the exception from eroding the rule: the
+  dependency-free paths (argument parsing, path/ordering logic) keep
+  working and stay testable; the tests that *do* need it are guarded
+  with `unittest.skipUnless` so `make tools-tests` passes either way;
+  and the failure, when it comes, is one clear line naming the install
+  rather than an `ImportError` traceback. CI's lint job installs
   `pre-commit` and nothing else, so a hard import would make the whole
   suite un-runnable there.
 
