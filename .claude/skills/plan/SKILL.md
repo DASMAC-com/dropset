@@ -92,19 +92,13 @@ operator lever, never this mechanism.
   python3 .claude/tools/plan_cycle.py check
   ```
 
-  It prices the last usage at its model's `RATES_BY_MODEL` row
-  (a seat session at Bedrock rates too): `replay_usd`, the
-  prefix read back; `next_turn_usd`, that plus the expected
-  cache write; and `session_usd`, the session to date. `due`
-  fires when `replay_usd` — the part a cycle saves — reaches
-  `usd_threshold` (about $0.069, the
-  ratified 250k prefix at the advisor cache-read rate); a model
-  with no row falls back to the 250k token threshold and names
-  itself in `fallback`. On `"due": true`, and no
+  It prices the prefix in dollars (the seat at Bedrock rates);
+  `due` fires when `replay_usd` reaches `usd_threshold` (250k
+  at the advisor read rate), or 250k tokens for an unpriced
+  model. On `"due": true`, and no
   fold sub-agent still running (its notification would be lost),
   ask once: cycle now? — yes recommended. On no, run
-  `plan_cycle.py snooze` (+$0.014, or +50k tokens on the
-  fallback).
+  `plan_cycle.py snooze`.
 
 - **The procedure.** A one-line FYI to every live worker with an
   unanswered consult — planning is cycling, re-send anything
