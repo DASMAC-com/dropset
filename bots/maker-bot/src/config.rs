@@ -1230,9 +1230,11 @@ mod tests {
     }
 
     /// The mainnet roster is tGBP alone until the second wave (EURC, AUDD,
-    /// CADC) is run, and each address is the frontend's `currencies.json` mint (decimals are pinned for every
-    /// market by `base_decimals_match_the_frontend_currency_data`) — the same pin the TUI's
-    /// `mainnet_mints_match_the_frontend_currency_data` holds its copy to, so
+    /// CADC) is run, and each address is the frontend's `currencies.json`
+    /// mint (decimals are pinned for every market by
+    /// `base_decimals_match_the_frontend_currency_data`) — the same pin the
+    /// TUI's `mainnet_mints_match_the_frontend_currency_data` holds its copy
+    /// to, so
     /// the maker and the ceremony cannot disagree about which mint a market
     /// is. A typo here would leave the maker discovering no market at all,
     /// or the wrong one.
