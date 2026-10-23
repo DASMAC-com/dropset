@@ -28,12 +28,12 @@ coupling skill tooling to the program's toolchain.
 - **Stdlib only** where practical (JSON + filesystem), so a tool runs
   with a bare `python3` and needs no install step.
 
-  Where a tool genuinely needs a third-party package — `iterm_api.py`
-  needs `iterm2`, imported only in the driver mode it runs under
-  iTerm's own interpreter — **import it lazily, at the use site**, so
-  the module still imports without it. Three things follow, and they
-  are what keep the exception from eroding the rule: the
-  dependency-free paths (argument parsing, path/ordering logic) keep
+  Where a tool genuinely needs a third-party package, **import it
+  lazily, at the use site**, so the module still imports without it
+  (`iterm_api.py` imports `iterm2` only in the driver mode it runs
+  under iTerm's own interpreter, so it has no install to name). Three
+  things follow, and they are what keep the exception from eroding the
+  rule: the dependency-free paths (argument parsing, path/ordering logic) keep
   working and stay testable; the tests that *do* need it are guarded
   with `unittest.skipUnless` so `make tools-tests` passes either way;
   and the failure, when it comes, is one clear line naming the install
@@ -103,12 +103,12 @@ grows, so one measured read was a session's largest main-loop result at
 ≈7.9k for four short passages; ask a live planning session first, use
 this when none is live), `check_home_paths.py` (the
 committed-agent-material hygiene guard, wired
-as a scoped pre-commit hook), `lens_preamble.py` (composes a lens brief from the
-[sub-agent brief](sub-agent-brief.md) plus a skill's own committed
-sections — for `review-pr`, `--lens` appends the standing half and that
-lens's file under `lenses/` — so a skill never reads them to quote
-them), alongside the
-`allowlist.py` / `upkeep.py` / `cspell-audit` glue.
+as a scoped pre-commit hook), and `lens_preamble.py` (composes a lens
+brief from the [sub-agent brief](sub-agent-brief.md) plus a skill's own
+committed sections — for `review-pr`, `--lens` appends the standing
+half and that lens's file under `lenses/` — so a skill never reads
+them to quote them), alongside the `allowlist.py` / `upkeep.py` /
+`cspell-audit` glue.
 `.claude/tools/` is the single home for skill glue: there is **no**
 top-level `tools/` tree.
 

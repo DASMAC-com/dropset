@@ -67,9 +67,9 @@ shape that can only be expressed in **forbidden** forms —
 inline interpreter one-liners, a stopgap grant, a compound —
 is worth hardening on the first occurrence, because every
 repetition of it is a permission prompt that can never be
-firmed. `read_result.py` came from exactly that case: a
-throwaway scratchpad script, re-authored per session, to slice
-a spilled tool result.
+firmed. `read_result.py` is that shape: a throwaway scratchpad
+script to slice a spilled tool result, written twice before
+it was committed — once more than the exception requires.
 
 ## Step 2: design the narrow tool
 

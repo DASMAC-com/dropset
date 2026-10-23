@@ -379,9 +379,11 @@ don't write them, in ad-hoc shell or in committed skills/scripts:
   URL (`-o /dev/null` once for each), or use a head-only request (`-I`)
   so there is no body to dump in the first place.
 
-  Print the redirect count too (`-w '%{num_redirects}'`): the feeds
-  HTTP client refuses redirects by standing policy, so *reachable* does
-  not imply *reachable by our client*. One session found a central-bank
+  Print where a response redirects too
+  (`-w '%{http_code} %{redirect_url}'` — a 3xx with a non-empty URL;
+  `%{num_redirects}` counts only redirects followed under `-L`): the
+  feeds HTTP client refuses redirects by standing policy, so *reachable*
+  does not imply *reachable by our client*. One session found a central-bank
   CSV endpoint that resolved only through a 301, and caught it purely
   because its hand-written format string happened to include the
   redirect count.
