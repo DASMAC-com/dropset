@@ -15,10 +15,20 @@ Usage::
     python3 .claude/tools/plan_cycle.py live-name plan-8
 
 * ``check`` prints one JSON line — the session's prefix (input + cache read +
-  cache write on the last assistant usage), its inbound peer-message count, the
-  two thresholds, and ``due``. Exit 0 either way; the caller branches on ``due``.
+  cache write on the last assistant usage), two dollar figures priced at that
+  usage's model's ``session_metrics.RATES_BY_MODEL`` row, the thresholds, and
+  ``due``. ``replay_usd`` is the prefix at the cache-read rate — the replay a
+  cycle saves; ``next_turn_usd`` adds the last turn's cache write, the expected
+  next one, at the 1h write rate; ``session_usd`` is the session to date,
+  sub-agents included, priced as session metrics prices it. ``due`` fires on
+  ``replay_usd``: a fresh session pays the write too, so cycling does not save
+  it, and at 80x the read rate one tool result's write would otherwise swamp
+  the length signal. A seat session records the same model id as a Bedrock one, so it is
+  priced at Bedrock rates too, as ``fleet_cost.py`` prices it; only a model
+  with no row falls back to the token threshold, and the line says so. Exit 0
+  either way; the caller branches on ``due``.
 * ``snooze`` is the "No" answer: it moves both thresholds past the current
-  values by ``SNOOZE_TOKENS`` / ``SNOOZE_MESSAGES``.
+  values by ``SNOOZE_USD`` / ``SNOOZE_TOKENS``.
 * ``cycle`` writes the marker the launcher looks for, then ends this session's
   client. Run it only after the close-out rewrite has verified.
 * ``live-name NAME`` is the launcher's guard: exit 0 when a live session already
@@ -46,12 +56,24 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import resolve_session as rs  # noqa: E402
+import session_metrics as sm  # noqa: E402
 
-#: Ratified starting values (the cycle design, 2026-10-05).
+#: Ratified starting values (the cycle design, 2026-10-05). Now only the
+#: fallback for a model with no rate row, and the source of the dollar values.
 TOKEN_THRESHOLD = 250_000
-MESSAGE_THRESHOLD = 40
 SNOOZE_TOKENS = 50_000
-SNOOZE_MESSAGES = 15
+
+PER_MTOK = 1_000_000
+
+#: The advisor tier's cache-read rate per million tokens when the dollar
+#: threshold replaced the token one. The dollar values below are the token
+#: points priced at it, so on the advisor model the replay trips at exactly
+#: 250k and day-one behavior is unchanged. Re-derive both after about a week of priced planning
+#: days from the measured bootstrap cost: a cycle pays when a fresh bootstrap
+#: costs less than the replay it saves.
+ADVISOR_CACHE_READ = 0.275
+USD_THRESHOLD = TOKEN_THRESHOLD * ADVISOR_CACHE_READ / PER_MTOK
+SNOOZE_USD = SNOOZE_TOKENS * ADVISOR_CACHE_READ / PER_MTOK
 
 #: How much of the transcript's tail is read to find the last usage. The prefix
 #: is on the most recent assistant record, so the head is never needed; a miss
@@ -81,28 +103,23 @@ def transcript_path(repo: Path, sid: str) -> Path:
     return rs.claude_home() / "projects" / rs.slugify(repo) / f"{sid}.jsonl"
 
 
-def _usage_prefix(line: str) -> int | None:
+def _assistant_usage(line: str) -> tuple[dict, str] | None:
+    """An assistant record's usage block and the model it recorded."""
     try:
         entry = json.loads(line)
     except json.JSONDecodeError:
         return None
     if entry.get("type") != "assistant":
         return None
-    usage = (entry.get("message") or {}).get("usage")
+    message = entry.get("message") or {}
+    usage = message.get("usage")
     if not isinstance(usage, dict):
         return None
-    return sum(
-        int(usage.get(k) or 0)
-        for k in (
-            "input_tokens",
-            "cache_read_input_tokens",
-            "cache_creation_input_tokens",
-        )
-    )
+    return usage, sm._model_of(message)
 
 
-def last_prefix(transcript: Path) -> int:
-    """The prefix the next turn replays: the last assistant usage's input side."""
+def last_usage(transcript: Path) -> tuple[dict, str]:
+    """The last assistant usage — the prefix the next turn replays — and its model."""
     size = transcript.stat().st_size
     with transcript.open("rb") as fh:
         fh.seek(max(size - TAIL_BYTES, 0))
@@ -111,47 +128,68 @@ def last_prefix(transcript: Path) -> int:
     if size > TAIL_BYTES:
         lines = lines[1:]  # the first line of a mid-file seek is partial
     for line in reversed(lines):
-        prefix = _usage_prefix(line)
-        if prefix is not None:
-            return prefix
+        found = _assistant_usage(line)
+        if found is not None:
+            return found
     if size > TAIL_BYTES:
         for line in reversed(transcript.read_text(errors="replace").splitlines()):
-            prefix = _usage_prefix(line)
-            if prefix is not None:
-                return prefix
-    return 0
+            found = _assistant_usage(line)
+            if found is not None:
+                return found
+    return {}, sm.UNRECORDED_MODEL
 
 
-def inbound_messages(transcript: Path) -> int:
-    """User records whose origin is a peer session — one per received message."""
-    count = 0
-    with transcript.open(encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            if '"peer"' not in line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            origin = entry.get("origin")
-            if entry.get("type") == "user" and isinstance(origin, dict):
-                count += origin.get("kind") == "peer"
-    return count
+def _tokens(usage: dict, key: str) -> int:
+    return int(usage.get(key) or 0)
 
 
-def thresholds(repo: Path, sid: str) -> tuple[int, int]:
+def prefix_of(usage: dict) -> int:
+    return sum(
+        _tokens(usage, k)
+        for k in (
+            "input_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+        )
+    )
+
+
+def replay_usd(usage: dict, rates: sm.Rates) -> float:
+    """The whole prefix read back from cache: what grows with length."""
+    return prefix_of(usage) * rates.cache_read / PER_MTOK
+
+
+def next_turn_usd(usage: dict, rates: sm.Rates) -> float:
+    """The next turn's cost: the replay plus a cache write the size of the last
+    one. Output is left out — it is not known yet, and it is not what grows
+    with the prefix.
+    """
+    written = _tokens(usage, "cache_creation_input_tokens")
+    return replay_usd(usage, rates) + written * rates.cache_write_1h / PER_MTOK
+
+
+def session_usd(transcript: Path, sid: str) -> float | None:
+    """The session to date, sub-agents included, or ``None`` when any billable
+    model in it has no rate row (session metrics withholds a partial sum).
+    """
+    cost = sm.aggregate(transcript, sid)["total_cost"]
+    return None if cost is None else cost.total()
+
+
+def thresholds(repo: Path, sid: str) -> tuple[float, int]:
     """The snoozed thresholds for this session, or the ratified defaults.
 
     Keyed by session id, so a snooze never outlives the session it was given in:
-    a fresh cycle starts from the defaults.
+    a fresh cycle starts from the defaults. A file in the retired message-count
+    shape reads as no snooze.
     """
     try:
         saved = json.loads((repo / rs.STATE_DIR / SNOOZE).read_text())
         if saved.get("sid") == sid:
-            return int(saved["tokens"]), int(saved["messages"])
+            return float(saved["usd"]), int(saved["tokens"])
     except (OSError, ValueError, KeyError, TypeError):
         pass
-    return TOKEN_THRESHOLD, MESSAGE_THRESHOLD
+    return USD_THRESHOLD, TOKEN_THRESHOLD
 
 
 def check(repo: Path, date: str) -> dict:
@@ -162,27 +200,45 @@ def check(repo: Path, date: str) -> dict:
             f"no transcript for this cycle's session {sid} at {transcript} — "
             f"was this session started by the `plan` launcher?"
         )
-    prefix = last_prefix(transcript)
-    inbound = inbound_messages(transcript)
-    tokens, messages = thresholds(repo, sid)
-    return {
+    usage, model = last_usage(transcript)
+    prefix = prefix_of(usage)
+    usd, tokens = thresholds(repo, sid)
+    status = {
         "sid": sid,
+        "model": model,
         "prefix_tokens": prefix,
-        "inbound_messages": inbound,
         "token_threshold": tokens,
-        "message_threshold": messages,
-        "due": prefix >= tokens or inbound >= messages,
+        "usd_threshold": round(usd, 6),
     }
+    rates = sm.RATES_BY_MODEL.get(model)
+    if rates is None:
+        status.update(
+            replay_usd=None,
+            next_turn_usd=None,
+            session_usd=None,
+            fallback=f"no rate row for {model}: due on the token threshold",
+            due=prefix >= tokens,
+        )
+        return status
+    replay = replay_usd(usage, rates)
+    session = session_usd(transcript, sid)
+    status.update(
+        replay_usd=round(replay, 6),
+        next_turn_usd=round(next_turn_usd(usage, rates), 6),
+        session_usd=None if session is None else round(session, 6),
+        due=replay >= usd,
+    )
+    return status
 
 
 def snooze(repo: Path, date: str) -> dict:
     status = check(repo, date)
+    replay = status["replay_usd"] or 0.0
     saved = {
         "sid": status["sid"],
+        "usd": max(replay, status["usd_threshold"]) + SNOOZE_USD,
         "tokens": max(status["prefix_tokens"], status["token_threshold"])
         + SNOOZE_TOKENS,
-        "messages": max(status["inbound_messages"], status["message_threshold"])
-        + SNOOZE_MESSAGES,
     }
     state = repo / rs.STATE_DIR
     state.mkdir(parents=True, exist_ok=True)
@@ -258,7 +314,7 @@ def run(argv: list[str]) -> int:
         "sets, else today)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("check", help="report prefix, inbound count and whether due")
+    sub.add_parser("check", help="report prefix, dollar figures and whether due")
     sub.add_parser("snooze", help="push both thresholds out (the 'No' answer)")
     sub.add_parser("cycle", help="write the marker and end this client")
     live = sub.add_parser("live-name", help="exit 0 iff a live session holds NAME")
