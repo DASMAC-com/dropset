@@ -1468,7 +1468,10 @@ knowing before relying on the inheritance:**
 - **`fleet` reaches such a session through `task resume <n>`**,
   which re-pins the tier as well as the substrate: an untagged
   worktree — no marker — resumes on the **advisor** tier, so an
-  issue-keyed explore session comes back on the right model. An
+  issue-keyed explore session comes back on the right model — and,
+  when its session exists and no architect thread shares the number,
+  is handed to `explore <n>` itself, the one path that pins its
+  sub-agent tiers. An
   architect session gets there through its `<n>.tier` file instead,
   and keeps its recorded substrate; a `helper` `.tier` hands the
   resume to `chore <n>`, since a chore has no worktree to resolve.

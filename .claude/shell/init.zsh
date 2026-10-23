@@ -1455,6 +1455,18 @@ _ds_task_resume() {
     chore "$tag"
     return
   fi
+  # An explore session goes back through its own verb too: only it pins the
+  # sub-agent tiers, so resuming it here would put every sub-agent of a
+  # Bedrock audit on the advisor model. Only when no architect thread shares
+  # the number — with both, which one `--continue` reaches is not this
+  # function's to know, and the generic path below stands.
+  if [[ "$tag" == <-> && "$(_ds_resume_tier "$key")" == advisor ]] \
+    && _ds_session_exists "$(_ds_topic_sid explore "$tag")" \
+    && ! _ds_session_exists "$(_ds_topic_sid architect "$tag")"
+  then
+    explore "$tag"
+    return
+  fi
   substrate="$(_ds_substrate_read "$key")"
   { read -r model; read -r substrate; } <<< \
     "$(_ds_tier "$(_ds_resume_tier "$key")" "$substrate")"
@@ -1532,10 +1544,11 @@ _ds_task_resume() {
 # kinds (`task`, `explore`, `architect`) can claim, with different substrates
 # and different tiers, while the
 # substrate marker keys on the tag alone. That is why the marker below is
-# written only where none exists, with an advisor `.tier` — which tells
-# `task resume <n>` (and `fleet`, which types it) to re-pin the advisor tier on
-# the recorded substrate. See `_ds_resume_tier`. `explore <n>` remains the
-# natural resume verb; the other two now land on the same model.
+# written only for a tree this launch creates, with an advisor `.tier`, and
+# why a launch into any other tree takes the substrate it records. `task
+# resume <n>` (and `fleet`, which types it) hands an explore session back to
+# this verb, so the sub-agent pins ride the resume too; see
+# `_ds_task_resume`.
 #
 # THE `resume` TWIN IS GONE, and dropping it removes a wart rather than a
 # feature. `explore <name>` now creates the session if absent and resumes it if
@@ -1663,8 +1676,15 @@ explore() {
         'its substrate, so a switch means a fresh worktree.'
       return 1
     fi
-    [[ -z "$override" && "$recorded" == anthropic ]] && print -u2 \
-      "explore: $name is recorded on anthropic — launching there."
+    if [[ -z "$override" && "$recorded" == anthropic ]]; then
+      if [[ -f "$_DS_SUBSTRATE_DIR/$key" ]]; then
+        print -u2 "explore: $name is recorded on anthropic — launching there."
+      else
+        print -u2 "explore: $name has a worktree or session but no marker —" \
+          'launching on anthropic, where an unmarked reopen reads; a Bedrock' \
+          'audit wants a fresh worktree.'
+      fi
+    fi
     override="$recorded"
   fi
 

@@ -85,10 +85,11 @@ task, in its own worktree** — operator rule, 2026-09-11,
 covering every audit however it was targeted. Launch it
 with the plain verb naming the issue's tag (`explore 1196`);
 the worktree is implicit in the verb, and it takes the
-issue's own tag for both worktree and branch. It runs on
-Bedrock with sub-agents defaulting to the executor tier;
-`explore anthropic <tag>` is for an audit that needs web
-research. The mechanism, its reasoning, and what the worktree's
+issue's own tag for both worktree and branch. A fresh
+worktree runs on Bedrock with sub-agents defaulting to the
+executor tier (an existing one keeps the substrate its
+marker records); `explore anthropic <tag>` is for an audit
+that needs web research. The mechanism, its reasoning, and what the worktree's
 protection does and does not cover are owned by
 `docs/conventions/local-integrations.md` → "Architect and
 explore sessions: temporary worktree, no PR". Don't restate

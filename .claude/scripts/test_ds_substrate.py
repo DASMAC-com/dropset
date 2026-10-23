@@ -469,6 +469,36 @@ class VerbLaunch(SubstrateHarness):
         self.assertIn("USE=unset SUB=unset", out, result.stderr)
         self.assertIn("MARK=anthropic advisor", out)
 
+    def test_task_resume_hands_an_explore_session_back_to_its_own_verb(self):
+        # `fleet` types `task resume <n>`; only `explore` pins the sub-agent
+        # tiers, so a Bedrock audit must come back through it.
+        setup = (
+            self._TREE.format(13)
+            + self._explore_transcript(13)
+            + "_ds_substrate_write 13 bedrock advisor; "
+        )
+        result, out = self._launch(setup + "task resume 13", env=self._TOKEN)
+        self.assertIn(
+            "USE=1 SUB=work-model[1m] SONNET=help-model[1m] ARGS=--resume",
+            out,
+            result.stderr,
+        )
+        # An architect thread on the same number: which session the resume
+        # reaches is not knowable here, so the generic path stands.
+        architect = (
+            "thread_sid=$(_ds_topic_sid architect 13); "
+            ': >| "$CLAUDE_CONFIG_DIR/projects/some-slug/$thread_sid.jsonl"; '
+        )
+        result, out = self._launch(
+            setup + architect + "python3() { :; }; task resume 13", env=self._TOKEN
+        )
+        self.assertIn("SUB=unset", out, result.stderr)
+
+    def test_an_unmarked_tree_says_why_it_lands_on_the_seat(self):
+        result, out = self._launch(self._TREE.format(12) + "explore 12")
+        self.assertIn("no marker", result.stderr)
+        self.assertNotIn("recorded on anthropic", result.stderr)
+
     def test_a_reopen_whose_word_matches_its_record_proceeds(self):
         result, out = self._launch(
             self._explore_transcript(12)
