@@ -40,7 +40,8 @@ COPY . .
 RUN cargo build --release -p dropset-db-schema --bin dropset-migrate
 
 FROM debian:bookworm-slim AS runtime
-# ca-certificates only (for Postgres TLS against a managed instance).
+# ca-certificates only, for shell tooling run in the image: the migrator's
+# Postgres TLS goes through rustls, which never reads this OS bundle.
 # Intentionally unpinned: a thin runtime base where pinning the Debian package
 # version would only rot.
 # hadolint ignore=DL3008

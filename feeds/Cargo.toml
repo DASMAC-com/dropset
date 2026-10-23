@@ -1,4 +1,3 @@
-# cspell:word rustls
 # The shared ingestion framework (docs/data-feeds.md): source → records →
 # sinks. A `Source` (poll or subscribe) yields typed records; a runner fans
 # each batch to one or more `Sink`s — a durable Postgres store sink behind a
@@ -74,6 +73,15 @@ http = "1"
 # test needs this edge. `test-support` brings the shared throwaway-Postgres
 # start (db-schema/src/testing.rs).
 dropset-db-schema = { path = "../db-schema", features = ["test-support"] }
+# Names the certificate error tests/tls_distrust.rs matches in a refused
+# handshake's source chain. The same 0.23 line `reqwest` pulls, with no
+# features of its own: enabling a second crypto provider here would leave
+# rustls unable to pick a default at runtime.
+rustls = { version = "0.23", default-features = false }
+# Names the distrust refusal itself (`webpki::Error::CertDistrusted`), so an
+# expired or misnamed probe certificate cannot pass the test. The floor is the
+# release that added the distrust list: the lock cannot resolve below it.
+rustls-webpki = { version = "0.103.16", default-features = false }
 sqlx = { version = "0.8", default-features = false, features = [
   "runtime-tokio",
   "tls-rustls",

@@ -1,4 +1,3 @@
-# cspell:word rustls
 # Localnet market-maker bot for the FX-stablecoin demo markets. A supervisor
 # over many <token>/USDC markets quoting on the eCLOB per
 # docs/market-making.md: poll a batched tiered price feed, compose a

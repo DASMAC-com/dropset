@@ -38,8 +38,11 @@ RUN cargo build --release -p dropset-indexer \
     --bin dropset-indexer --bin dropset-indexer-api
 
 FROM debian:bookworm-slim AS runtime
-# ca-certificates only (for the RPC/db TLS). Intentionally unpinned: a thin
-# runtime base where pinning the Debian package version would only rot.
+# ca-certificates only, for shell tooling run in the image: the indexer's RPC
+# and Postgres TLS goes through rustls, which never reads this OS bundle. RPC
+# certificates verify against compiled-in roots, so that trust moves with
+# Cargo.lock. Intentionally unpinned: a thin runtime base where pinning the
+# Debian package version would only rot.
 # hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \

@@ -165,6 +165,7 @@ moneyness
 mpsc
 mtimes
 mtok
+mudhra
 multisigs
 mxne
 myrc
@@ -252,6 +253,7 @@ rsplit
 rustc
 rustdoc
 rustflags
+rustls
 rustup
 samp
 sbpf
@@ -341,6 +343,7 @@ vgbp
 vwap
 wakeup
 webfetch
+webpki
 wincode
 wordmark
 worktree
