@@ -685,6 +685,14 @@ _ds_session() {
   fi
 }
 
+# Internal: does a transcript for session id $1 exist? The same glob
+# `_ds_session` tests, for a verb that must pick a substrate before it launches.
+_ds_session_exists() {
+  local -a found
+  found=("${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$1".jsonl(N))
+  (( ${#found} ))
+}
+
 # Internal: set this iTerm session's `user.ds_role` variable to $1 ('' clears).
 #
 # A session variable rather than a title match, so a rename never breaks it, and
@@ -720,7 +728,7 @@ _ds_topic_sid() {
 #
 # THE RULE IS CAPABILITY, NOT ATTENDANCE. A session runs on Bedrock unless it
 # needs something Bedrock lacks — web search, web fetch, deep research — or it
-# is a seat session by role (`plan`, `architect`, `explore`).
+# is a seat session by role (`plan`, `architect`).
 # Sub-agents are NOT a differentiator: Opus-spawning-Opus sub-agents are
 # verified working on Bedrock.
 #
@@ -732,9 +740,12 @@ _ds_topic_sid() {
 # ---------------------------------------------------------------------------
 # Model tiers: which model a verb launches, named by ROLE, never by model.
 #
-#   ADVISOR      plan, architect, explore        default substrate: anthropic
+#   ADVISOR      plan, architect                 default substrate: anthropic
+#                explore                         default substrate: bedrock
 #   EXECUTOR     task                            default substrate: bedrock
+#                explore's sub-agents            (Bedrock launches only)
 #   HELPER       chore                           default substrate: bedrock
+#                explore's `sonnet` alias        (Bedrock launches only)
 #   BACKGROUND   Claude Code's small-model slot  follows the session's substrate
 #
 # The names are capability-per-role on purpose, after the advisor/executor
@@ -774,6 +785,13 @@ _ds_topic_sid() {
 # model. Claude Code maps a first-party id in this slot to its `us.anthropic.`
 # profile, as it does the primary model's (measured from its request log), so a
 # first-party id is portable; a Bedrock-form id must be the exact profile id.
+#
+# A Bedrock `explore` launch fills two more slots, the same way. The executor
+# id goes to `CLAUDE_CODE_SUBAGENT_MODEL`, the default for every sub-agent that
+# names no model (a per-call model and agent frontmatter still win, per Claude
+# Code's sub-agent docs); the helper id goes to `ANTHROPIC_DEFAULT_SONNET_MODEL`,
+# so a skill's `sonnet` alias resolves to the runtime config's pin rather than
+# Claude Code's built-in table. The `[1m]` suffix rides along unchanged.
 #
 # The auto-mode permission classifier is deliberately absent: Claude Code picks
 # its model itself and exposes no configuration for it, so it has no tier.
@@ -1484,8 +1502,10 @@ _ds_task_resume() {
 # Start OR resume an EXPLORE session — research, audits, and any other task
 # whose deliverable is a spec or a findings document rather than a code change.
 #
-#   explore <n>       an explore task with a Linear issue: worktree and name `<n>`
-#   explore <name>    one without: worktree and name `exp-<name>`
+#   explore <n>                 an explore task with a Linear issue: worktree and
+#                               name `<n>`, the advisor tier on Bedrock
+#   explore <name>              one without: worktree and name `exp-<name>`
+#   explore anthropic <n|name>  either, on the Anthropic subscription
 #
 # **It runs in its own worktree, and it is IDEMPOTENT** — both reverse what this
 # verb shipped with, and both are the same operator ruling that moved
@@ -1514,7 +1534,7 @@ _ds_task_resume() {
 # substrate marker keys on the tag alone. That is why the marker below is
 # written only where none exists, with an advisor `.tier` — which tells
 # `task resume <n>` (and `fleet`, which types it) to re-pin the advisor tier on
-# the anthropic substrate. See `_ds_resume_tier`. `explore <n>` remains the
+# the recorded substrate. See `_ds_resume_tier`. `explore <n>` remains the
 # natural resume verb; the other two now land on the same model.
 #
 # THE `resume` TWIN IS GONE, and dropping it removes a wart rather than a
@@ -1530,21 +1550,31 @@ _ds_task_resume() {
 # separate launchers with identical bodies bar one flag. The idempotency above
 # folds in the third.
 #
-# **The advisor tier, and no substrate override.** Explore work is
-# thinking-heavy, so it runs the top tier like `plan` and `architect` do. It
-# takes no `bedrock` word because the one override the operator ratified is the
-# credit-pinch case for `plan` and `architect`; explore carries no such pinch.
-# It is PINNED to the anthropic substrate, deliberately ignoring
-# `DS_MODEL_ADVISOR_SUBSTRATE`: a pre-marker explore worktree has no marker
-# (see below), so its `task resume <n>` always resumes on anthropic, and
-# launching it anywhere else would make that resume switch provider
-# mid-conversation.
+# **The advisor tier, on Bedrock.** Explore work is thinking-heavy, so it runs
+# the top tier like `plan` and `architect` do — but not on the seat. An audit
+# fans out sub-agents, and one (1813, 10-22) ran ten at 1.0M–2.3M input each on
+# the subscription and spent the session window and most of the weekly one. So
+# the substrate is Bedrock with no word, deliberately ignoring
+# `DS_MODEL_ADVISOR_SUBSTRATE` (which `plan` and `architect` read), and
+# `explore anthropic` is the web-research escape, in `task`'s position. Its
+# sub-agents default to the executor tier (below).
+#
+# This was once PINNED to anthropic, because a pre-marker explore worktree has
+# no marker and so always resumed on the seat. An issue-keyed launch now writes
+# its marker and a reopen reads it back, so that hazard is gone for every
+# session this verb starts; an unmarked session that already exists still reads
+# as anthropic and resumes there.
 #
 # The model pin, the permission mode and the start-or-resume probe all come
 # from `_ds_session`, which gets each right on both branches by construction —
 # the old hand-rolled resume branch here dropped the pin on every reopen.
 explore() {
-  local raw="$1" tag name
+  local override='' tag name
+  if [[ "$1" == anthropic ]]; then
+    override=anthropic
+    shift
+  fi
+  local raw="$1"
 
   if [[ "$raw" == 'resume' ]]; then
     print -u2 'explore: `resume` is retired —' \
@@ -1552,7 +1582,9 @@ explore() {
     return 1
   fi
   if [[ -z "$raw" || -n "$2" ]]; then
-    print -u2 'Usage: explore <n> | explore <name>   (a name is required: it names a worktree)'
+    print -u2 'Usage: explore [anthropic] <n|name>   (a name is required: it' \
+      'names a worktree; a session keeps its substrate, so a switch means a' \
+      'fresh one)'
     return 1
   fi
   # The name reaches a session name, a worktree and a branch, so hold it to the
@@ -1608,9 +1640,43 @@ explore() {
     tag="exp-$raw" name="exp-$raw"
   fi
 
+  # A REOPEN KEEPS THE SUBSTRATE ITS SESSION STARTED ON: the recorded marker,
+  # or anthropic where there is none, since an unmarked explore session was
+  # launched on the seat. An explicit word that disagrees refuses rather than
+  # switching provider mid-conversation.
+  local sid key recorded
+  sid="$(_ds_topic_sid explore "$raw")"
+  key="$(_ds_marker_key "$tag")"
+  if _ds_session_exists "$sid"; then
+    recorded="$(_ds_substrate_read "$key")"
+    if [[ -n "$override" && "$override" != "$recorded" ]]; then
+      print -u2 "explore: $name started on $recorded — a session keeps its" \
+        'substrate, so a switch means a fresh one.'
+      return 1
+    fi
+    override="$recorded"
+  fi
+
   local model substrate
-  { read -r model; read -r substrate; } <<< "$(_ds_tier advisor anthropic)"
+  { read -r model; read -r substrate; } <<< \
+    "$(_ds_tier advisor "${override:-bedrock}")"
   [[ -n "$substrate" ]] || return 1
+
+  # SUB-AGENTS DEFAULT TO THE EXECUTOR TIER on Bedrock, and the one alias a
+  # skill names (`sonnet`, a mechanical lane) resolves to the helper tier, so
+  # no skill carries a model id. `local -x` scopes both to this launch the way
+  # `ANTHROPIC_MODEL` is scoped to the `claude` command: they cannot outlive
+  # the session into the tab. Both tiers are required — without the first,
+  # every sub-agent silently inherits the advisor model.
+  if [[ "$substrate" == bedrock ]]; then
+    local subagent_model='' helper_model=''
+    { read -r subagent_model; } <<< "$(_ds_tier executor bedrock)"
+    { read -r helper_model; } <<< "$(_ds_tier helper bedrock)"
+    [[ -n "$subagent_model" && -n "$helper_model" ]] || return 1
+    local -x CLAUDE_CODE_SUBAGENT_MODEL="$subagent_model"
+    local -x ANTHROPIC_DEFAULT_SONNET_MODEL="$helper_model"
+  fi
+
   _ds_substrate_enter "$substrate" 'explore' || return 1
   # THE MARKER IS WRITTEN ONLY WHERE NONE EXISTS. The hazard is real: the
   # marker is keyed on the WORKTREE TAG ALONE, and `_ds_task_start` writes that
@@ -1620,20 +1686,18 @@ explore() {
   # `architect <n>` thread's marker is left alone for the same reason: the two
   # share one worktree, and its substrate is the one the thread chose.
   #
-  # Writing one at all is what the issue-keyed purge needs: the pruner reads
-  # the TIER from this marker (`advisor` lifts its executor refusal), and the
-  # fleet cost tool reads the substrate — an unmarked explore worktree used to
-  # meter as unattributed. It costs the resume nothing: absent already read as
-  # the advisor tier on anthropic, which is exactly what is written. And only
-  # for a worktree this launch creates (`_ds_advisor_may_mark`): an unmarked
-  # tree some other launch made may hold its uncommitted work.
-  if [[ "$raw" == <-> && ! -f "$_DS_SUBSTRATE_DIR/$(_ds_marker_key "$tag")" ]] \
-    && _ds_advisor_may_mark "$tag"
-  then
+  # Writing one at all is what the reopen above and the issue-keyed purge
+  # need: the reopen reads the SUBSTRATE back (now that a launch may be on
+  # either), the pruner reads the TIER (`advisor` lifts its executor refusal),
+  # and the fleet cost tool reads the substrate — an unmarked explore worktree
+  # used to meter as unattributed. A free-form `exp-<name>` tag is marked too,
+  # for the reopen; the pruner never matches one. And only for a worktree this
+  # launch creates (`_ds_advisor_may_mark`): an unmarked tree some other launch
+  # made may hold its uncommitted work.
+  if [[ ! -f "$_DS_SUBSTRATE_DIR/$key" ]] && _ds_advisor_may_mark "$tag"; then
     _ds_substrate_write "$tag" "$substrate" advisor
   fi
-  _ds_session "$(_ds_topic_sid explore "$raw")" "$name" "$prompt" \
-    "$model" "$(_ds_launch_dir "$tag")"
+  _ds_session "$sid" "$name" "$prompt" "$model" "$(_ds_launch_dir "$tag")"
 }
 
 # Internal: the model-free morning upkeep pass (.claude/tools/upkeep.py), run in

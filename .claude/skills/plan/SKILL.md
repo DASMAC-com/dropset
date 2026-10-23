@@ -469,7 +469,7 @@ filing skill binds this session:
   a **`**Cost band**:`** line beside the fingerprint — a dollar
   range, a line band and the substrate, from
   `docs/conventions/context-economy.md` → "Cost bands". A band,
-  never a point. A seat-bound issue (`architect`, `explore`)
+  never a point. A seat-bound issue (`architect`)
   states its seat and a token profile instead: dollar bands bind
   Bedrock workers only.
 

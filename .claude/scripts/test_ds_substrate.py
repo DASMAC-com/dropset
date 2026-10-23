@@ -46,9 +46,11 @@ _NEEDS_ZSH = "the session helpers are zsh; no zsh on this machine"
 #: operator running Bedrock sessions has exported.
 _SUITE_OWNED_ENV = (
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
     "ANTHROPIC_MODEL",
     "AWS_BEARER_TOKEN_BEDROCK",
     "AWS_REGION",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
     "CLAUDE_CODE_USE_BEDROCK",
     "DS_BEDROCK_FAST_MODEL",
     "DS_BEDROCK_MODEL",
@@ -229,7 +231,11 @@ class VerbLaunch(SubstrateHarness):
 
     _STUBS = (
         'claude() { print -r -- "MODEL=${ANTHROPIC_MODEL-unset}'
-        ' USE=${CLAUDE_CODE_USE_BEDROCK-unset} ARGS=$*"; }; '
+        " USE=${CLAUDE_CODE_USE_BEDROCK-unset}"
+        # Through `printenv`, a child process, so only an EXPORT is seen.
+        " SUB=$(printenv CLAUDE_CODE_SUBAGENT_MODEL || print unset)"
+        " SONNET=$(printenv ANTHROPIC_DEFAULT_SONNET_MODEL || print unset)"
+        ' ARGS=$*"; }; '
         "_ds_base() { :; }; _ds_secrets() { :; }; _ds_aws_login() { :; }; "
         "_ds_pull() { :; }; "
         # The model probe's transport: argv and stdin logged apart, so a case
@@ -303,26 +309,104 @@ class VerbLaunch(SubstrateHarness):
         self.assertNotIn("MODEL=", out)
         self.assertIn("must be anthropic or bedrock", result.stderr)
 
-    def test_explore_is_pinned_to_anthropic_whatever_the_advisor_config(self):
-        # It writes no marker, so a resume always lands on anthropic; launching
-        # it anywhere else would make that resume switch provider.
+    _MARK = (
+        'print -r -- "MARK=$(<$_DS_SUBSTRATE_DIR/{0}) $(<$_DS_SUBSTRATE_DIR/{0}.tier)"'
+    )
+
+    def test_explore_is_bedrock_whatever_the_advisor_config(self):
+        # An audit's sub-agent fan-out is what moved it off the seat, so the
+        # advisor substrate `plan` and `architect` read must not move it back.
         result, out = self._launch(
-            "explore 12",
-            env={**self._TOKEN, "DS_MODEL_ADVISOR_SUBSTRATE": "bedrock"},
+            "explore 12; " + self._MARK.format(12),
+            env={**self._TOKEN, "DS_MODEL_ADVISOR_SUBSTRATE": "anthropic"},
         )
-        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+        self.assertIn(
+            "MODEL=judge-model[1m] USE=1 SUB=work-model[1m] SONNET=help-model[1m]",
+            out,
+            result.stderr,
+        )
         self.assertIn("-n 12 --permission-mode auto -w 12", out)
+        self.assertIn("MARK=bedrock advisor", out)
+        # Scoped to the launch: neither outlives it into the tab.
+        result, out = self._launch(
+            'explore 12; print -r -- "LEAK=${CLAUDE_CODE_SUBAGENT_MODEL-unset}'
+            '/${ANTHROPIC_DEFAULT_SONNET_MODEL-unset}"',
+            env=self._TOKEN,
+        )
+        self.assertIn("LEAK=unset/unset", out, result.stderr)
         # The prefixed spelling names the same issue, worktree and session.
-        result, out = self._launch("explore eng-12")
+        result, out = self._launch("explore eng-12", env=self._TOKEN)
         self.assertIn("-n 12 --permission-mode auto -w 12", out, result.stderr)
 
-    def test_free_form_explore_keeps_its_exp_name(self):
-        result, out = self._launch("explore pricing-survey")
+    def test_explore_anthropic_is_the_seat_with_no_tier_exports(self):
+        result, out = self._launch(
+            "explore anthropic 12; " + self._MARK.format(12), env=self._TOKEN
+        )
+        self.assertIn(
+            "MODEL=judge-model[1m] USE=unset SUB=unset SONNET=unset",
+            out,
+            result.stderr,
+        )
+        self.assertIn("MARK=anthropic advisor", out)
+
+    def test_a_bedrock_explore_refuses_an_unset_sub_agent_tier(self):
+        # Unpinned, every sub-agent would silently inherit the advisor model.
+        for var in ("DS_MODEL_EXECUTOR", "DS_MODEL_HELPER"):
+            with self.subTest(var=var):
+                result, out = self._launch("explore 12", env={**self._TOKEN, var: ""})
+                self.assertIn("RC=1", out)
+                self.assertNotIn("MODEL=", out)
+                self.assertIn(f"{var} is unset", result.stderr)
+
+    def _explore_transcript(self, raw):
+        """Write a transcript for `explore <raw>`'s id, so the launch reopens."""
+        return (
+            f"sid=$(_ds_topic_sid explore {raw}); "
+            'mkdir -p "$CLAUDE_CONFIG_DIR/projects/some-slug"; '
+            ': >| "$CLAUDE_CONFIG_DIR/projects/some-slug/$sid.jsonl"; '
+        )
+
+    def test_an_explore_reopen_keeps_its_recorded_substrate(self):
+        # Unmarked: a session from before the Bedrock default, so the seat.
+        result, out = self._launch(
+            self._explore_transcript(12) + "explore 12", env=self._TOKEN
+        )
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+        self.assertIn("ARGS=--resume", out)
+        # Marked bedrock: back on Bedrock, sub-agent pins included.
+        result, out = self._launch(
+            self._explore_transcript(13)
+            + "_ds_substrate_write 13 bedrock advisor; explore 13",
+            env=self._TOKEN,
+        )
+        self.assertIn("USE=1 SUB=work-model[1m]", out, result.stderr)
+
+    def test_an_explore_reopen_refuses_a_word_that_switches_provider(self):
+        result, out = self._launch(
+            self._explore_transcript(12)
+            + "_ds_substrate_write 12 bedrock advisor; explore anthropic 12",
+            env=self._TOKEN,
+        )
+        self.assertIn("RC=1", out)
+        self.assertNotIn("MODEL=", out)
+        self.assertIn("keeps its substrate", result.stderr)
+
+    def test_free_form_explore_keeps_its_exp_name_and_is_marked(self):
+        result, out = self._launch(
+            "explore pricing-survey; " + self._MARK.format("exp-pricing-survey"),
+            env=self._TOKEN,
+        )
         self.assertIn(
             "-n exp-pricing-survey --permission-mode auto -w exp-pricing-survey",
             out,
             result.stderr,
         )
+        self.assertIn("MARK=bedrock advisor", out)
+
+    def test_explore_rejects_a_bare_substrate_word(self):
+        result, out = self._launch("explore anthropic")
+        self.assertIn("RC=1", out)
+        self.assertIn("Usage: explore [anthropic]", result.stderr)
 
     def test_chore_launches_the_helper_tier_on_bedrock_with_no_worktree(self):
         result, out = self._launch("chore eng-7", env=self._TOKEN)
