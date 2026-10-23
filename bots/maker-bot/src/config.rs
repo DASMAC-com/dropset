@@ -206,7 +206,8 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "EURC",
         base_keypair_file: "keys/EURC.json",
-        mainnet_mint: Some(pubkey!("HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr")),
+        // Second wave: off the mainnet roster until that wave is run.
+        mainnet_mint: None,
         base_decimals: 6,
         currency: "EUR",
         pyth_feed_id: "a995d00bb36a63cef7fd2c287dc105fc8f3d93779f062f09551b0af3e81ec30b",
@@ -338,7 +339,8 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "AUDD",
         base_keypair_file: "keys/AUDD.json",
-        mainnet_mint: Some(pubkey!("AUDDttiEpCydTm7joUMbYddm72jAWXZnCpPZtDoxqBSw")),
+        // Second wave, as EURC.
+        mainnet_mint: None,
         base_decimals: 6,
         currency: "AUD",
         pyth_feed_id: "67a6f93030420c1c9e3fe37c1ab6b77966af82f995944a9fefce357a22854a80",
@@ -354,7 +356,8 @@ pub const MARKETS: [MarketConfig; 9] = [
     MarketConfig {
         symbol: "CADC",
         base_keypair_file: "keys/CADC.json",
-        mainnet_mint: Some(pubkey!("9ewjJpmD1ES83RDRFnHs7V2hUdH76WAVjdvu6UV6WNo7")),
+        // Second wave, as EURC.
+        mainnet_mint: None,
         base_decimals: 6,
         currency: "CAD",
         pyth_feed_id: "3112b03a41c910ed446852aacf67118cb1bec67b2cd0b9a214c58cc0eaa2ecca",
@@ -1223,8 +1226,8 @@ mod tests {
         check("USDC", QUOTE_DECIMALS);
     }
 
-    /// The mainnet roster is tGBP plus the three MVP pairs, and each address
-    /// is the frontend's `currencies.json` mint (decimals are pinned for every
+    /// The mainnet roster is tGBP alone until the second wave (EURC, AUDD,
+    /// CADC) is run, and each address is the frontend's `currencies.json` mint (decimals are pinned for every
     /// market by `base_decimals_match_the_frontend_currency_data`) — the same pin the TUI's
     /// `mainnet_mints_match_the_frontend_currency_data` holds its copy to, so
     /// the maker and the ceremony cannot disagree about which mint a market
@@ -1254,7 +1257,7 @@ mod tests {
             .filter(|m| m.mainnet_mint.is_some())
             .map(|m| m.symbol)
             .collect();
-        assert_eq!(mainnet, ["EURC", "TGBP", "AUDD", "CADC"]);
+        assert_eq!(mainnet, ["TGBP"]);
         for m in MARKETS {
             if let Some(mint) = m.mainnet_mint {
                 assert_eq!(mint.to_string(), listed(m.symbol), "{} mint", m.symbol);
