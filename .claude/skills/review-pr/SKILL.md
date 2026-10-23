@@ -1406,8 +1406,8 @@ migrations or generation inputs, and whether it spans crates.
      --verdict-out <scratchpad>/ci.json
    ```
 
-   A `snapshot.error` means the spill did not happen — say so, as for a
-   signing failure.
+   A `snapshot.error` means the spill did not happen — say so: the wait
+   is running with that work unprotected.
 
    **The never-poll rule, for every wait in this skill** (this one,
    the step-20 mergeability re-read, the step-22 queue watch): no
