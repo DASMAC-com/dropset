@@ -37,8 +37,12 @@ RUN cargo chef prepare --recipe-path recipe.json
 # (`from=cook`) the first time it is created. So a builder that keeps no
 # mount cache, such as a fresh CI runner, starts from the cooked
 # dependencies exactly as it did before the mounts, while a local daemon
-# rebuilds only the workspace crates that changed. The ids are per image
-# so two images never share a target, and `sharing=locked` serializes
+# rebuilds only the workspace crates that changed. The target id is
+# per image and per checkout (the CHECKOUT build arg, which compose fills
+# from DS_CHECKOUT): cargo judges a workspace crate fresh by mtime, so a
+# target shared across worktrees could silently ship a sibling's build. A
+# bare `docker build` without the arg falls back to one `shared` target.
+# `sharing=locked` serializes
 # concurrent builds of one image over the registry and git caches, whose
 # cargo lock lives outside the mount; the target needs no such flag, since
 # cargo locks its own build directory. A mount is not part of any layer, so
@@ -55,10 +59,12 @@ RUN --mount=type=cache,id=bots-reg,target=$REG,sharing=locked \
     --bin dropset-maker-bot --bin dropset-taker-bot
 
 FROM cook AS builder
+ARG CHECKOUT=shared
+ENV TGT_ID=bots-tgt-$CHECKOUT
 COPY . .
 RUN --mount=type=cache,id=bots-reg,target=$REG,sharing=locked \
     --mount=type=cache,id=bots-git,target=$GIT,sharing=locked \
-    --mount=type=cache,id=bots-tgt,target=$TGT,from=cook,source=$TGT \
+    --mount=type=cache,id=$TGT_ID,target=$TGT,from=cook,source=$TGT \
     cargo build --release \
     --bin dropset-maker-bot --bin dropset-taker-bot \
     && mkdir -p /app/bin \

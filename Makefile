@@ -148,6 +148,11 @@ program-keypair:
 # forwards trailing args to the IDL build's `cargo test` too, which rejects
 # it. Absolute, because anchor runs the build from the program's directory.
 export SBF_OUT_PATH := $(CURDIR)/target/deploy
+
+# Keys each localnet image's BuildKit target cache to this checkout. The
+# compose file passes it as the CHECKOUT build arg; the Dockerfiles say why a
+# target shared across worktrees is unsafe.
+export DS_CHECKOUT ?= $(CURDIR)
 ANCHOR_OUT := --idl $(CURDIR)/target/idl --idl-ts $(CURDIR)/target/types
 
 .PHONY: program
