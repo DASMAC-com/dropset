@@ -130,10 +130,19 @@ class Grammar(unittest.TestCase):
                     session_dispatch.validate(["explore", "anthropic", target]),
                     ["explore", "anthropic", target],
                 )
+        self.assertEqual(
+            session_dispatch.validate(["explore", "anthropic", "eng-1196"]),
+            ["explore", "anthropic", "eng-1196"],
+        )
         for argv in (
             ["explore", "bedrock", "1196"],
             ["explore", "anthropic"],
             ["explore", "anthropic", "0"],
+            # The shell strips the word, then refuses the retired twin.
+            ["explore", "anthropic", "resume"],
+            # A substrate word is never a name, in either grammar.
+            ["explore", "bedrock"],
+            ["explore", "anthropic", "anthropic"],
         ):
             with self.subTest(argv=argv):
                 with self.assertRaises(ValueError):

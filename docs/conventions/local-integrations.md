@@ -1337,8 +1337,9 @@ names alive was the outcome to avoid.
 `[s]` is the same word in `task`'s position, before the number; `[a]`
 is `anthropic` alone in that position, the web-research escape. A
 Bedrock `explore` also pins its sub-agents to the executor tier (see
-"Model tiers" below), and a reopen keeps the substrate its session
-started on — a switch means a fresh session.
+"Model tiers" below), and a launch into an existing session or
+worktree keeps the substrate its marker records — a switch means a
+fresh worktree.
 `task local <n>` still works for now, printing a line naming its
 replacement. **The tier table itself is in "Model tiers" below.**
 
@@ -1472,13 +1473,14 @@ knowing before relying on the inheritance:**
   and keeps its recorded substrate; a `helper` `.tier` hands the
   resume to `chore <n>`, since a chore has no worktree to resolve.
   (This closed the first part of ENG-1402.)
-- **An explore session writes its marker only where none
-  exists, and only on a worktree it creates.** The marker keys on
-  the **worktree tag alone**, which `task <n>` also writes — so an
-  unconditional write would let `explore 1196` flip a `bedrock`
-  marker to `seat` and make the next `task resume 1196` resume the
-  *implementation* session on the seat, silently; an architect
-  thread's marker is left alone likewise. Writing one at all (its
+- **An explore session writes its marker only on a worktree it
+  creates**, and launches into any other tree on the substrate that
+  tree's marker records. The marker keys on the **worktree tag
+  alone**, which `task <n>` also writes — so an unconditional write
+  would let `explore anthropic 1196` flip a `bedrock` marker and
+  make the next `task resume 1196` resume the *implementation*
+  session on the seat, silently; an architect thread's marker is
+  left alone likewise. Writing one at all (its
   substrate, advisor `.tier`) is what lets a reopen keep its
   provider, the pruner lift the executor gate, and the fleet cost
   tool meter the session rather than leave it unattributed. A
@@ -2124,14 +2126,16 @@ drives the real zsh functions.
   fan out sub-agents, so it runs on Bedrock with no word, ignoring
   `DS_MODEL_ADVISOR_SUBSTRATE`, with sub-agents on the executor tier
   (see "Model tiers"). `explore anthropic <n|name>` launches on the
-  subscription, in `task`'s position. It records its substrate with an
-  advisor `.tier` only where no marker exists, and a **reopen keeps
-  the substrate its session started on** — the marker, or anthropic
-  for an unmarked session, which predates this default. A word that
-  disagrees with an existing session refuses rather than switching
-  provider mid-conversation; a switch means a fresh session. It was
-  once pinned to anthropic because a pre-marker worktree always
-  resumed there; every launch now writing its marker retired that.
+  subscription, in `task`'s position. **A launch into an existing
+  session or worktree takes the substrate the marker records** —
+  anthropic where there is none, so an unmarked or seat-marked tree
+  stays on the seat, and a tree `task` marked `bedrock` stays there;
+  only a launch that creates its worktree chooses, and writes the
+  marker with an advisor `.tier`. So a session's reopen always reads
+  back the substrate it started on. A word that disagrees with the
+  record refuses rather than switching provider mid-conversation; a
+  switch means a fresh worktree. It was once pinned to anthropic
+  because a pre-marker worktree always resumed there.
 
 - **`explore resume <name>` is RETIRED** — the verb now prints a
   one-line pointer to the plain form rather than launching. Two reasons,

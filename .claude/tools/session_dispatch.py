@@ -111,16 +111,17 @@ def validate(argv: list[str]) -> list[str]:
         # retired, since `explore <n|name>` now resumes an existing session
         # itself. `_NAME` admits a bare number, which is the issue-keyed form an
         # audit dispatch uses — `explore 1196` lands in the `1196` worktree.
+        # `anthropic` alone, in `task`'s position: Bedrock is already the
+        # default, so the shell takes no `bedrock` word here — and refuses
+        # either word as a name, so `explore bedrock` is no `exp-bedrock`.
+        word = ["anthropic"] if args and args[0] == "anthropic" else []
+        args = args[len(word) :]
         if args and args[0] == "resume":
             raise ValueError(
                 "`explore resume` is retired — dispatch `explore <n|name>`, "
                 "which resumes an existing session itself"
             )
-        # `anthropic` alone, in `task`'s position: Bedrock is already the
-        # default, so the shell takes no `bedrock` word here.
-        word = ["anthropic"] if args and args[0] == "anthropic" else []
-        args = args[len(word) :]
-        if len(args) != 1 or not _NAME.match(args[0]):
+        if len(args) != 1 or not _NAME.match(args[0]) or args[0] in _SUBSTRATES:
             raise ValueError(
                 "`explore` takes [anthropic] and one lowercase name or issue number"
             )

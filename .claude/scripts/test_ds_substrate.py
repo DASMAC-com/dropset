@@ -404,9 +404,80 @@ class VerbLaunch(SubstrateHarness):
         self.assertIn("MARK=bedrock advisor", out)
 
     def test_explore_rejects_a_bare_substrate_word(self):
-        result, out = self._launch("explore anthropic")
+        for verb in (
+            "explore anthropic",
+            "explore bedrock",
+            "explore anthropic anthropic",
+        ):
+            with self.subTest(verb=verb):
+                result, out = self._launch(verb)
+                self.assertIn("RC=1", out)
+                self.assertIn("Usage: explore [anthropic]", result.stderr)
+
+    _TREE = 'mkdir -p "$_DS_REPO/.claude/worktrees/{0}"; '
+
+    def test_a_fresh_explore_inherits_another_verbs_marker(self):
+        # `architect 12` on the seat marked the shared tree: a fresh `explore
+        # 12` must launch there too, or its reopen would switch provider.
+        result, out = self._launch(
+            self._TREE.format(12)
+            + "_ds_substrate_write 12 anthropic advisor; explore 12; explore 12; "
+            + self._MARK.format(12),
+            env=self._TOKEN,
+        )
+        self.assertEqual(out.count("USE=unset SUB=unset"), 2, out + result.stderr)
+        self.assertIn("recorded on anthropic", result.stderr)
+        self.assertIn("MARK=anthropic advisor", out)
+        # A `task` session's bedrock marker: inherited, and left as it was.
+        result, out = self._launch(
+            self._TREE.format(13)
+            + "_ds_substrate_write 13 bedrock; explore 13; "
+            + 'print -r -- "TIER=$(<$_DS_SUBSTRATE_DIR/13.tier)"',
+            env=self._TOKEN,
+        )
+        self.assertIn("USE=1 SUB=work-model[1m]", out, result.stderr)
+        self.assertIn("TIER=\n", out + "\n")
+        # And a word that disagrees with it refuses before launching.
+        result, out = self._launch(
+            self._TREE.format(13)
+            + "_ds_substrate_write 13 bedrock; explore anthropic 13",
+            env=self._TOKEN,
+        )
         self.assertIn("RC=1", out)
-        self.assertIn("Usage: explore [anthropic]", result.stderr)
+        self.assertNotIn("MODEL=", out)
+        self.assertIn("a switch means a fresh worktree", result.stderr)
+
+    def test_a_tree_it_may_not_mark_launches_where_its_reopen_will_read(self):
+        # Some other launch made the tree and left no marker; explore may not
+        # mark it, and an absent marker reads anthropic, so it launches there.
+        result, out = self._launch(
+            self._TREE.format(12)
+            + 'explore 12; print -r -- "EXISTS=$([[ -f $_DS_SUBSTRATE_DIR/12 ]] && print y || print n)"',
+            env=self._TOKEN,
+        )
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+        self.assertIn("EXISTS=n", out)
+
+    def test_a_stale_marker_with_no_tree_or_session_is_rewritten(self):
+        # A pruned tree's leftover marker names no live session, so a fresh
+        # launch takes its own word and records it.
+        result, out = self._launch(
+            "_ds_substrate_write exp-survey bedrock advisor; "
+            "explore anthropic survey; " + self._MARK.format("exp-survey"),
+            env=self._TOKEN,
+        )
+        self.assertIn("USE=unset SUB=unset", out, result.stderr)
+        self.assertIn("MARK=anthropic advisor", out)
+
+    def test_a_reopen_whose_word_matches_its_record_proceeds(self):
+        result, out = self._launch(
+            self._explore_transcript(12)
+            + "_ds_substrate_write 12 anthropic advisor; explore anthropic 12",
+            env=self._TOKEN,
+        )
+        self.assertIn("RC=0", out, result.stderr)
+        self.assertIn("USE=unset", out)
+        self.assertIn("ARGS=--resume", out)
 
     def test_chore_launches_the_helper_tier_on_bedrock_with_no_worktree(self):
         result, out = self._launch("chore eng-7", env=self._TOKEN)

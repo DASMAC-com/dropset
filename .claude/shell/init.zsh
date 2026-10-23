@@ -1000,7 +1000,7 @@ _ds_substrate_enter() {
 #
 # The key is a parameter rather than a hard-coded tag because a base-repo
 # session would key on its computed session id — but **no verb does that
-# today**, and every call site (`task`, `architect`, `chore`) passes a
+# today**, and every call site (`task`, `architect`, `explore`, `chore`) passes a
 # worktree tag. Said plainly
 # because the earlier wording here described session-id keying as if it
 # shipped, which it does not: every base-repo verb is seat-only, so none of
@@ -1560,10 +1560,11 @@ _ds_task_resume() {
 # sub-agents default to the executor tier (below).
 #
 # This was once PINNED to anthropic, because a pre-marker explore worktree has
-# no marker and so always resumed on the seat. An issue-keyed launch now writes
-# its marker and a reopen reads it back, so that hazard is gone for every
-# session this verb starts; an unmarked session that already exists still reads
-# as anthropic and resumes there.
+# no marker and so always resumed on the seat. Now a launch into an existing
+# session or worktree takes the substrate the marker records (absent reads as
+# anthropic, so an unmarked tree stays on the seat), and only a launch that
+# creates its worktree chooses — and writes the marker. So the substrate a
+# session starts on is always the one its reopen reads back.
 #
 # The model pin, the permission mode and the start-or-resume probe all come
 # from `_ds_session`, which gets each right on both branches by construction —
@@ -1581,10 +1582,12 @@ explore() {
       '`explore <n|name>` now resumes an existing session itself'
     return 1
   fi
-  if [[ -z "$raw" || -n "$2" ]]; then
+  # A substrate word is never a name: `explore bedrock` would otherwise make
+  # an `exp-bedrock` worktree for an operator reaching for `task`'s grammar.
+  if [[ -z "$raw" || -n "$2" || "$raw" == (anthropic|bedrock) ]]; then
     print -u2 'Usage: explore [anthropic] <n|name>   (a name is required: it' \
       'names a worktree; a session keeps its substrate, so a switch means a' \
-      'fresh one)'
+      'fresh worktree)'
     return 1
   fi
   # The name reaches a session name, a worktree and a branch, so hold it to the
@@ -1640,20 +1643,28 @@ explore() {
     tag="exp-$raw" name="exp-$raw"
   fi
 
-  # A REOPEN KEEPS THE SUBSTRATE ITS SESSION STARTED ON: the recorded marker,
-  # or anthropic where there is none, since an unmarked explore session was
-  # launched on the seat. An explicit word that disagrees refuses rather than
-  # switching provider mid-conversation.
-  local sid key recorded
+  # AN EXISTING SESSION OR WORKTREE KEEPS THE SUBSTRATE ITS MARKER RECORDS —
+  # anthropic where there is none, as `_ds_substrate_read` has it. The marker
+  # keys on the worktree, which `task` and `architect` share, so a fresh
+  # explore session in a tree another verb marked inherits that verb's
+  # substrate; launching anywhere else would leave the marker naming the
+  # wrong provider, and the next reopen would switch mid-conversation. The
+  # same holds for an unmarked tree some other launch made, which this verb
+  # may not mark. An explicit word that disagrees refuses. Only a launch with
+  # no session and no worktree takes the word or the Bedrock default, and it
+  # writes the marker below, over any stale one a pruned tree left.
+  local sid key recorded=''
   sid="$(_ds_topic_sid explore "$raw")"
   key="$(_ds_marker_key "$tag")"
-  if _ds_session_exists "$sid"; then
+  if _ds_session_exists "$sid" || _ds_worktree_of "$tag" >/dev/null; then
     recorded="$(_ds_substrate_read "$key")"
     if [[ -n "$override" && "$override" != "$recorded" ]]; then
-      print -u2 "explore: $name started on $recorded — a session keeps its" \
-        'substrate, so a switch means a fresh one.'
+      print -u2 "explore: $name is recorded on $recorded — a session keeps" \
+        'its substrate, so a switch means a fresh worktree.'
       return 1
     fi
+    [[ -z "$override" && "$recorded" == anthropic ]] && print -u2 \
+      "explore: $name is recorded on anthropic — launching there."
     override="$recorded"
   fi
 
@@ -1678,10 +1689,10 @@ explore() {
   fi
 
   _ds_substrate_enter "$substrate" 'explore' || return 1
-  # THE MARKER IS WRITTEN ONLY WHERE NONE EXISTS. The hazard is real: the
-  # marker is keyed on the WORKTREE TAG ALONE, and `_ds_task_start` writes that
-  # same key, so `task 1196` (bedrock) followed by an unconditional write here
-  # would flip it to anthropic, and the next `task resume 1196` — or `fleet` —
+  # THE MARKER IS WRITTEN ONLY FOR A TREE THIS LAUNCH CREATES. The hazard is
+  # real: the marker is keyed on the WORKTREE TAG ALONE, and `_ds_task_start`
+  # writes that same key, so `task 1196` (bedrock) followed by an
+  # unconditional write from `explore anthropic 1196` would flip it, and the next `task resume 1196` — or `fleet` —
   # would silently resume the IMPLEMENTATION session on the seat. An
   # `architect <n>` thread's marker is left alone for the same reason: the two
   # share one worktree, and its substrate is the one the thread chose.
@@ -1692,9 +1703,9 @@ explore() {
   # and the fleet cost tool reads the substrate — an unmarked explore worktree
   # used to meter as unattributed. A free-form `exp-<name>` tag is marked too,
   # for the reopen; the pruner never matches one. And only for a worktree this
-  # launch creates (`_ds_advisor_may_mark`): an unmarked tree some other launch
-  # made may hold its uncommitted work.
-  if [[ ! -f "$_DS_SUBSTRATE_DIR/$key" ]] && _ds_advisor_may_mark "$tag"; then
+  # launch creates — `recorded` is empty exactly then: an unmarked tree some
+  # other launch made may hold its uncommitted work.
+  if [[ -z "$recorded" ]]; then
     _ds_substrate_write "$tag" "$substrate" advisor
   fi
   _ds_session "$sid" "$name" "$prompt" "$model" "$(_ds_launch_dir "$tag")"
