@@ -162,8 +162,8 @@ RATES_BY_MODEL: dict[str, Rates] = {
     # premium (4.40 against a 4.00 list) to the first-party list price, with
     # the 1h write at 2x input. That premium is an assumption carried over, not
     # a measurement: Bedrock is partner-priced, so each row stays unverified
-    # until a billed day reproduces it. Fable 5.1's list cache read is $0.25,
-    # not 0.1x input, so its row does not follow the ratio the others do.
+    # until a billed day reproduces it. Each cache read is its own list figure:
+    # 0.1x input for Sonnet 5.5, but $0.25 (0.025x) for Fable 5.1.
     "claude-fable-5-1": Rates(11.00, 55.00, 0.275, 22.00, verified=None),
     "claude-sonnet-5-5": Rates(2.20, 11.00, 0.22, 4.40, verified=None),
 }

@@ -855,7 +855,7 @@ class Costing(unittest.TestCase):
 
     def test_rollup_names_each_sub_agent_model_and_prices_it_at_its_row(self):
         # The audit shape: a judgment lane on Fable, a mechanical lane on
-        # Sonnet, one million output tokens each.
+        # Sonnet. Unequal output, so swapping the two rows changes the total.
         agg = sm.SessionAggregator()
         agg.ingest_main_line(
             assistant_with_id("m1", '{"output_tokens":1000000}', "", "claude-opus-5-5")
@@ -869,13 +869,14 @@ class Costing(unittest.TestCase):
         agg.ingest_subagent_line(
             "lens-naming",
             assistant_with_id(
-                "msg_name", '{"output_tokens":1000000}', "", "claude-sonnet-5-5"
+                "msg_name", '{"output_tokens":3000000}', "", "claude-sonnet-5-5"
             ),
         )
         report = agg.finish(sm.SUBSTRATE_BEDROCK)
         self.assertEqual(report["unpriced_models"], [])
-        self.assertAlmostEqual(report["subagent_cost"].total(), 55.00 + 11.00)
-        self.assertAlmostEqual(report["total_cost"].total(), 22.00 + 55.00 + 11.00)
+        # 1M Fable output plus 3M Sonnet; the swapped attribution is 176.00.
+        self.assertAlmostEqual(report["subagent_cost"].total(), 55.00 + 33.00)
+        self.assertAlmostEqual(report["total_cost"].total(), 22.00 + 55.00 + 33.00)
 
         by_agent = {a.agent: a.models() for a in report["subagents"]}
         self.assertEqual(
@@ -905,6 +906,20 @@ class Costing(unittest.TestCase):
         )
         # The zero-usage synthetic record bills nothing, so it is not listed.
         self.assertEqual(line.models(), ["claude-fable-5-1", "claude-sonnet-5-5"])
+
+    def test_a_sub_agent_with_no_billed_model_renders_a_dash(self):
+        # Only a zero-usage synthetic record: the row stays, the model reads
+        # as absent rather than vanishing.
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(assistant_with_id("m1", '{"output_tokens":1000}', ""))
+        agg.ingest_subagent_line(
+            "lens-idle",
+            assistant_with_id(
+                "msg_idle", '{"input_tokens":0,"output_tokens":0}', "", "<synthetic>"
+            ),
+        )
+        md = sm.to_markdown(agg.finish(sm.SUBSTRATE_BEDROCK), "s")
+        self.assertIn("| lens-idle | — | 1 |", md)
 
 
 class SubstrateDetection(unittest.TestCase):
