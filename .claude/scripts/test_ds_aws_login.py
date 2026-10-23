@@ -45,6 +45,10 @@ _SUITE_OWNED_ENV = (
     "AWS_REGION",
     "CLAUDE_CODE_USE_BEDROCK",
     "DS_AWS_PROFILE",
+    # The Bedrock launcher resolves a bearer token from these, so a case must
+    # not inherit the operator's: CI has none.
+    "DS_OP_ACCOUNT",
+    "DS_OP_BEDROCK_REF",
     "_DS_REPO",
 )
 
@@ -113,6 +117,10 @@ class GateHarness(unittest.TestCase):
         child_env.update(
             {
                 "CALLS": str(self.calls),
+                # `plan`'s reopen check globs the transcript tree, so a case
+                # must never see the operator's real sessions: today's live
+                # `plan` would turn a create into a reopen on its substrate.
+                "CLAUDE_CONFIG_DIR": f"{self.calls}.claude-home",
                 "STS_RC": str(sts_rc),
                 "LOGIN_RC": str(login_rc),
                 "POST_LOGIN_STS_RC": str(post_login_sts_rc),
@@ -354,6 +362,10 @@ class TheGateActuallyGates(unittest.TestCase):
         child_env.update(
             {
                 "CALLS": str(self.calls),
+                # `plan`'s reopen check globs the transcript tree, so a case
+                # must never see the operator's real sessions: today's live
+                # `plan` would turn a create into a reopen on its substrate.
+                "CLAUDE_CONFIG_DIR": f"{self.calls}.claude-home",
                 "STS_RC": str(sts_rc),
                 "LOGIN_RC": str(login_rc),
                 "POST_LOGIN_STS_RC": str(post_login_sts_rc),
@@ -375,15 +387,21 @@ class TheGateActuallyGates(unittest.TestCase):
         )
         return result, "LAUNCHED" in self.calls.read_text(encoding="utf-8")
 
+    # `plan anthropic`, not the Bedrock default: the Bedrock gate refuses with no
+    # bearer token (CI has none), which would make the refusal case pass for
+    # the wrong reason and the launch case fail. The AWS gate is the same on
+    # both substrates, and the seat guard is stubbed above.
     def test_plan_does_not_launch_when_the_gate_refuses(self):
-        result, launched = self._run_verb("plan", sts_rc=1, post_login_sts_rc=1)
+        result, launched = self._run_verb(
+            "plan anthropic", sts_rc=1, post_login_sts_rc=1
+        )
         self.assertFalse(launched, "plan launched despite an unusable AWS session")
         self.assertEqual(result.returncode, 1, result.stderr)
 
     def test_plan_launches_when_credentials_are_valid(self):
         # The other half — a gate that refused everything would pass the case
         # above while making the verb useless.
-        _, launched = self._run_verb("plan", sts_rc=0)
+        _, launched = self._run_verb("plan anthropic", sts_rc=0)
         self.assertTrue(launched, "plan did not launch on a valid session")
 
 
@@ -395,8 +413,8 @@ class GatedVerbSurface(unittest.TestCase):
         self.source = INIT.read_text(encoding="utf-8")
 
     def test_plan_is_gated(self):
-        # `plan` spells the refusal as an `if !` so it can undo a `plan bedrock`'s
-        # exports first.
+        # `plan` spells the refusal as an `if !` so it can undo a Bedrock
+        # launch's exports first.
         self.assertIn("if ! _ds_aws_login 'plan'; then", self.source)
 
     def test_the_gate_runs_after_the_seat_guard(self):

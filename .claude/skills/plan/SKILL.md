@@ -70,8 +70,9 @@ it lands.
 The **base repo**, never a worktree. Start or resume with a bare
 `plan` — idempotent; it creates or resumes today's
 `plan-<day-of-month>` on the advisor tier's model, with `/plan`
-as a new session's prompt. `plan bedrock` is the credit-pinch
-override. There is no in-session model check: the launcher pins
+as a new session's prompt, on Bedrock; `plan anthropic` is the
+seat override, and a reopen keeps the substrate its session
+recorded. There is no in-session model check: the launcher pins
 the model and refuses an unresolved tier. Verbs:
 `docs/conventions/local-integrations.md`.
 
@@ -159,8 +160,11 @@ are operator-only and ride step 8's `AskUserQuestion`:
 **Spawn the lever fold — every full bootstrap, unasked**, right
 after saying the parked counts, unless the report's line reads
 `Trim levers 0`. Invoking `plan` is the authorization (ruling 11).
-One fresh background `general-purpose` `Agent` — never a fork, no
-model override — whose brief is pointers, not content: the
+One fresh background `general-purpose` `Agent` — never a fork,
+`model: opus`, which a Bedrock launch maps to the executor tier (on
+`plan anthropic`, Claude Code's own Opus): a fold is carried-out
+work, not a planning judgment — whose brief is
+pointers, not content: the
 canonical brief from
 
 ```sh

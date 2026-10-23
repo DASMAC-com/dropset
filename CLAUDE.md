@@ -365,7 +365,7 @@ IAM-creating deploys run from the admin login, and wiring the MCP to
 assume it is ruled out. Both servers' wiring is user-local.
 
 **A session cannot log itself in** — `aws login` is interactive — so the
-one seat verb that reads cost data, `plan`, **gates its own launch** on
+one verb that reads cost data, `plan`, **gates its own launch** on
 credentials that resolve (probe, log in, re-probe, refuse); `architect`
 deliberately does not. The profile is an **optional**
 `DS_AWS_PROFILE` in the untracked runtime config; unset means the CLI's
@@ -516,18 +516,17 @@ wiring, the helper family, and the iTerm setup:
 ### Session substrate: capability, not attendance
 
 A session runs on **Bedrock** unless it needs something Bedrock lacks —
-web search, web fetch, deep research — or it is a **seat session by
-role** (`plan`, `architect`). Sub-agents are not a differentiator.
-`task`, `chore` and `explore` are Bedrock, with `anthropic` before the
-argument the web-research escape. `plan`, on the seat, opens the
-5-hour window.
+web search or deep research (web fetch works there) — or it is a **seat
+session by role** (`architect`). Sub-agents are not a differentiator.
+`task`, `chore`, `explore` and `plan` are Bedrock, with `anthropic`
+the escape (`plan anthropic` puts planning back on the seat).
 
 Models are named by **role tier** — advisor (`plan`, `architect`,
 `explore`), executor (`task`), helper
 (`chore`), background — each set in
 the untracked runtime config (`DS_MODEL_<TIER>[_SUBSTRATE]`). Each verb
 pins its tier at launch and refuses an unresolved one, so no skill
-checks its own model; `plan bedrock` is the credit-pinch override.
+checks its own model.
 
 A launch **records its substrate** in an untracked marker that resume
 verbs re-export (re-pinning the tier); an absent marker reads as

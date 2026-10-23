@@ -246,9 +246,10 @@ the last row.
 **The rate basis is Opus 5.5 on Bedrock**, and the bands re-seed at
 the next rate swap. A band, never a point: the measured spread inside
 one line band ran $39 to $140. Bands bind **Bedrock workers only**. A
-seat-bound issue (`architect`, `explore anthropic`) states its seat
-and token profile instead, because the subscription's internal
-pricing is opaque and a seat dollar figure would be invented.
+seat-bound issue (`architect`, `explore anthropic`, `plan anthropic`)
+states its seat and token profile instead, because the subscription's
+internal pricing is opaque and a seat dollar figure would be invented.
+A default `plan` runs on Bedrock and is priced like a worker.
 
 **At close** `session-metrics` appends one line through the zero-echo
 issue writer (`.claude/tools/linear_issue.py append`) — for a Bedrock
@@ -321,13 +322,16 @@ all measured 2026-10-14/15 over the Opus 5.5 fleet days 10-08 to 10-13
   fleet the cap never leaks and trips at most about 1% early. Its
   `TokenRate*` stack parameters mirror the Opus 5.5 row of
   `RATES_BY_MODEL` and must move with it.
-- **Substrate comes from the launch marker.** A worktree session with no
-  marker is reported as `unattributed` and kept out of the total —
-  `explore` lands there by design, since it writes none. Two blind spots
-  surface only as bill-side drift: `plan bedrock`, a base-repo launch
-  that writes no marker; and a relaunch on the other substrate, which
-  overwrites the worktree's one marker and so reclassifies its earlier
-  sessions too.
+- **Substrate comes from the launch marker** — the session's own
+  record (`sessions/<id>`, written at create) first, then its
+  worktree's tag marker. A worktree session with neither is reported as
+  `unattributed` and kept out of the total; an older explore worktree
+  lands there, since explore once wrote none. The per-session record
+  closed two blind spots that surfaced only as bill-side drift: a
+  Bedrock `plan`, a base-repo launch with no tag marker; and a relaunch
+  on the other substrate, which overwrites the tag marker and so
+  reclassified the worktree's earlier sessions. A session launched
+  before the record still classifies the old way.
 - **It runs daily, unprompted.** The `upkeep` pass the `plan` launcher
   runs calls `reconcile` and reads the seat allowance, which has no bill
   line, with `subscription_usage.py --log`. Each pass that gets a reading

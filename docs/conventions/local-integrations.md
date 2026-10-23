@@ -1327,7 +1327,7 @@ names alive was the outcome to avoid.
 | `task resume [n]`       | resume by number (bare = the picker)       | as recorded            | re-pinned | as recorded         | —                         |
 | `explore [a] <n\|name>` | research / audit, read-only, temp worktree | Bedrock, or `[a]`      | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
 | `chore [s] <n>`         | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    | the session's       | `[Chore/<Substrate>]`     |
-| `plan [bedrock]`        | upkeep pass, then daily planning session   | advisor's, or override | advisor   | the session's       | — (no issue)              |
+| `plan [a]`              | upkeep pass, then daily planning session   | Bedrock, or `[a]`      | advisor   | the session's       | — (no issue)              |
 | `architect [b] <n>`     | design thread, read-only, temp worktree    | advisor's, or override | advisor   | the session's       | `[Architect/<Substrate>]` |
 | `fleet [go]`            | batch resume                               | per-window             | re-pinned | per-window          | —                         |
 | `models [check]`        | print the tier table; `check` it for free  | —                      | —         | —                   | —                         |
@@ -1349,8 +1349,10 @@ tool and the `architect` launcher refuse the new form, but a hand-typed
 old form until then.
 A Bedrock `explore` pins its sub-agents to the executor tier (see
 "Model tiers" below); every other verb's sub-agents inherit the
-session's model. A launch into an existing session or worktree keeps
-the substrate its marker records — a switch means a fresh worktree.
+session's model, except a spawn naming `model: opus` (`plan`'s lever
+fold), which any Bedrock launch maps to the executor. A launch into
+an existing session or worktree keeps the substrate its marker
+records — a switch means a fresh worktree.
 The table names verbs and tiers only, never a model class or id.
 `task local <n>` still works for now, printing a line naming its
 replacement. **The tier table itself is in "Model tiers" below.**
@@ -1359,7 +1361,7 @@ replacement. **The tier table itself is in "Model tiers" below.**
 Both follow from the worktree home below: `explore <n|name>` is
 idempotent, so the `resume` twin would be a pure synonym, and a
 worktree cannot be named without a name. `plan` remains a
-**base-repo** seat verb — it touches the board, not a branch.
+**base-repo** verb — it touches the board, not a branch.
 
 **`housekeeping` is retired — deleted, not aliased.** Its upkeep is
 `upkeep.py`, which the `plan` launcher runs before the session starts,
@@ -1618,10 +1620,10 @@ unchanged. Naming the path out loud is a **hard requirement**:
 the operator works the file through an editor, and cannot edit a
 path they were never told.
 
-**What did not change:** `plan` is still a
-base-repo seat verb, and the **substrate** rule below is
-untouched — the worktree home moved where these sessions run,
-not which provider they run against.
+**What did not change:** `plan` is still a base-repo verb — the
+worktree home moved where these sessions run, not which provider
+they run against (`plan`'s own move to Bedrock is the substrate
+section's, below).
 
 `plan` additionally **gates its launch on a usable
 AWS session** — see "The AWS login gate" below. No other verb does.
@@ -1725,7 +1727,7 @@ Three deliberate bounds on the gate:
 
 **One consequence worth knowing: `aws login` blocks on the operator.** That
 is exactly right for a verb the operator types — which `plan` is,
-being the seat verb that opens the day. It would be
+being the verb that opens the day. It would be
 wrong for a verb typed into a tab by automation, so note that
 `session_dispatch.py` dispatches `task` verbs, which run on Bedrock and
 are deliberately **not** gated. Keep it that way: gating a dispatched
@@ -1769,31 +1771,44 @@ than being turned into a constant.
 #### Substrate: which provider a session runs against
 
 **The rule is capability, not attendance.** A session runs on Bedrock
-unless it needs something Bedrock lacks — web search, web fetch, deep
-research — or it is a **seat session by role** (`plan`, `architect`).
+unless it needs something Bedrock lacks — web search or deep research
+(web fetch works there; see below) — or it is a **seat session by
+role** (`architect`).
 Sub-agents are *not* a differentiator:
 Opus-spawning-Opus sub-agents are verified working on Bedrock.
 `explore` left the seat once an audit's sub-agent fan-out (ten at
 1.0M–2.3M input each) spent the session window and most of the
-weekly one; `explore anthropic` is its web-research escape.
+weekly one; `explore anthropic` is its web-research escape. `plan`
+left it so a planning session is priced: on the seat it has no dollar
+figure. `plan anthropic` is its way back.
+
+**What Bedrock actually lacks**, measured 2026-10-23 from a Bedrock
+`task` session's tool listing (the harness's tool set follows the
+provider, not the verb): **`WebSearch` is absent**; `WebFetch` is
+listed and answered a live fetch, and no deep-research tool is
+listed. So the capability reason to leave
+Bedrock is web **search**; a known URL fetches fine.
 
 An earlier framing split on **attendance** (unattended work goes to
 Bedrock) and was superseded. Who is watching says nothing about which
 tools a session needs, and the verbs that actually broke on Bedrock
 broke on capability.
 
-**The 5-hour subscription window is `plan`'s to open.** On its default
-anthropic substrate, the day's planning session is normally its first
-subscription session, so it opens the window for free. That was the
-retired `housekeeping` verb's one non-capability reason to stay on the
-seat; with `plan` covering it, the exception went with the verb.
+**The 5-hour subscription window has no verb opening it by default.**
+It was the retired `housekeeping` verb's one non-capability reason to
+stay on the seat, then `plan`'s; with `plan` on Bedrock, the day's
+first anthropic-substrate session opens it — an `architect`, or any
+verb's `anthropic` escape.
 
 **What a Bedrock launch exports:** `CLAUDE_CODE_USE_BEDROCK=1`,
 `AWS_REGION`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` (the background tier,
 when `DS_MODEL_BACKGROUND` is set; otherwise it is unset),
-`ENABLE_PROMPT_CACHING_1H=1`, and `AWS_BEARER_TOKEN_BEDROCK` resolved
-from 1Password at launch. A Bedrock `explore` adds two, scoped to its
-launch: `CLAUDE_CODE_SUBAGENT_MODEL` (the executor tier) and
+`ANTHROPIC_DEFAULT_OPUS_MODEL` (the executor tier, so a `model: opus`
+spawn — `plan`'s lever fold — runs on the executor; likewise unset
+when unconfigured), `ENABLE_PROMPT_CACHING_1H=1`, and
+`AWS_BEARER_TOKEN_BEDROCK` resolved from 1Password at launch. A
+Bedrock `explore` adds two, scoped to its launch:
+`CLAUDE_CODE_SUBAGENT_MODEL` (the executor tier) and
 `ANTHROPIC_DEFAULT_SONNET_MODEL` (the helper tier; see "Model tiers").
 An anthropic launch exports none of them —
 **the absence of `CLAUDE_CODE_USE_BEDROCK` IS the seat pin**, which is
@@ -1804,7 +1819,7 @@ assignment scoped to that one command, the same on both substrates, so
 no pin outlives the session into the tab.
 
 **Two classes, and conflating them gets it wrong in both directions.**
-The four Claude variables are *owned* — nothing else sets them, so they
+The five Claude variables are *owned* — nothing else sets them, so they
 are cleared outright. `AWS_REGION` and `AWS_BEARER_TOKEN_BEDROCK` are
 *shared* with the operator's own environment: an `AWS_REGION` from the
 shell profile, or a bearer token exported by hand (which the `${VAR:-…}`
@@ -1835,12 +1850,12 @@ decides, the executor carries the work out — so the nouns describe the
 roles and outlive any model. **Helper** is the third role: minor
 non-repo jobs that merit neither, on a cheaper (Sonnet-class) model.
 
-| Tier         | Verbs                                  | Default substrate            | Unset                |
-| ------------ | -------------------------------------- | ---------------------------- | -------------------- |
-| `ADVISOR`    | `plan` `architect` `explore`           | anthropic; `explore` bedrock | refuses to launch    |
-| `EXECUTOR`   | `task`, Bedrock `explore`'s sub-agents | bedrock                      | refuses to launch    |
-| `HELPER`     | `chore`, Bedrock `explore`'s `sonnet`  | bedrock                      | refuses to launch    |
-| `BACKGROUND` | Claude Code's small slot               | follows the session          | warns (Bedrock only) |
+| Tier         | Verbs                                                            | Default substrate                   | Unset                |
+| ------------ | ---------------------------------------------------------------- | ----------------------------------- | -------------------- |
+| `ADVISOR`    | `plan` `architect` `explore`                                     | anthropic; `plan` `explore` bedrock | refuses to launch    |
+| `EXECUTOR`   | `task`, Bedrock `explore`'s sub-agents, the Bedrock `opus` alias | bedrock                             | refuses to launch    |
+| `HELPER`     | `chore`, Bedrock `explore`'s `sonnet`                            | bedrock                             | refuses to launch    |
+| `BACKGROUND` | Claude Code's small slot                                         | follows the session                 | warns (Bedrock only) |
 
 **The model id lives ONLY in the runtime config, never in the repo.**
 Models ship every couple of months and the tiers exist to hot-swap
@@ -1850,7 +1865,7 @@ in this doc. A new model is one edit to the runtime config:
 
 ```sh
 DS_MODEL_ADVISOR='<model-id>[1m]'
-DS_MODEL_ADVISOR_SUBSTRATE=anthropic   # optional; the default
+DS_MODEL_ADVISOR_SUBSTRATE=anthropic   # optional; the default; architect only
 DS_MODEL_EXECUTOR='<model-id>[1m]'
 DS_MODEL_EXECUTOR_SUBSTRATE=bedrock       # optional; the default
 DS_MODEL_HELPER='<model-id>[1m]'
@@ -1923,21 +1938,25 @@ in-skill model guards that used to spend a turn asking which model was
 running.
 
 **The substrate override** is the two substrate names and nothing else,
-as an optional literal word: `task anthropic <n>`, `plan bedrock`,
+as an optional literal word: `task anthropic <n>`, `plan anthropic`,
 `architect bedrock <n>` (`architect <n> bedrock` until the launcher
-reorder lands; see "The verb table"). The one that will actually get used is the
-advisor tier onto Bedrock in a credit pinch. **Retention:** a
+reorder lands; see "The verb table"). `plan` reads no substrate
+variable: Bedrock is its default, `plan anthropic` the seat override,
+and `plan bedrock` a no-op spelling. A bare `plan` reopen lands on the
+substrate the day's current session recorded; a word that disagrees
+warns and is ignored, and a session with no record reads as anthropic.
+**Retention:** a
 Fable-class model on Bedrock falls under the account's standing AWS
 human-review opt-in, which is a condition of Fable access and cannot be
 narrowed per model (see `infra/aws/README.md`); a model whose allowed
 modes include `none` is not retained under it. The operator accepts
-that for the pinch. An executor
+that as standing for `plan`. An executor
 onto anthropic is rare and exists for one capability reason — web
-search and web fetch are unavailable on Bedrock — so reach for it when
-a task needs live web research, not by habit. `explore anthropic`
-is the same escape for an explore session; `explore` reads no
-substrate variable and takes no `bedrock` word, since Bedrock is
-already its default. The old `task local` spelling — it
+search is unavailable on Bedrock (see "What Bedrock actually lacks") —
+so reach for it when a task needs live web research, not by habit.
+`explore anthropic` is the same escape for an explore session;
+`explore` reads no substrate variable and takes no `bedrock` word,
+since Bedrock is already its default. The old `task local` spelling — it
 never meant local inference, only the subscription — is a deprecated
 alias that prints its replacement.
 
@@ -1966,6 +1985,19 @@ and a `task` launch removes it; the tier is a separate
 file because `session_metrics.py` reads the marker as one bare word.
 The bare `task resume` picker cannot know
 which session will be chosen, so it resumes unpinned.
+
+**A per-session record sits beside the tag marker.** Every new session
+of every verb — `_ds_session` (`plan`, `architect`, `explore`,
+`chore`) and `task`'s own launch, which now passes a fresh
+`--session-id` — writes `sessions/<session-id>` holding `bedrock` or
+`anthropic`, decided by whether `CLAUDE_CODE_USE_BEDROCK` is set. It
+is written on create and never on a resume; a create overwrites, since
+it is reached only while no transcript exists, so an earlier record
+belongs to an attempt that never started a session. `plan`'s reopen
+reads it, and so do `session_metrics.py` and `fleet_cost.py`, ahead of
+the tag marker — the only record a base-repo session has, and the only
+one a relaunch on the other substrate cannot overwrite. `task resume`
+does not read it.
 
 **Two guards, pointing opposite ways.** A Bedrock launch **hard-gates**
 on the environment being present — no bearer token means no launch,
@@ -2177,8 +2209,9 @@ drives the real zsh functions.
   session. It derives the session name `plan-<day-of-month>` from
   today's date (run on the 14th → `plan-14`), `cd`s to the base repo,
   and launches Claude Code on the advisor tier with `/plan` as the
-  initial prompt. The optional word is the substrate override —
-  `plan bedrock` in a credit pinch; see "Model tiers" for its
+  initial prompt, on Bedrock. The optional word is the substrate
+  override — `plan anthropic` for the seat; a reopen keeps the
+  substrate its session recorded. See "Model tiers" for the
   retention line.
 
   `plan` is **idempotent by design** — if today's latest `plan-<day>`

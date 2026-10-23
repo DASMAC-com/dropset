@@ -880,11 +880,14 @@ class SessionAggregator:
 
     # -- finishing -------------------------------------------------------- #
 
-    def finish(self, substrate: str | None = None) -> dict:
+    def finish(
+        self, substrate: str | None = None, session_id: str | None = None
+    ) -> dict:
         """Rank and truncate into the final report dict.
 
         ``substrate`` overrides the marker lookup; passing ``None`` (the
-        default) resolves it from the session's own recorded working directory.
+        default) resolves it from the session's own record (by
+        ``session_id``) or its recorded working directory.
         """
         total_input = self.totals.total_input()
         cache_hit_rate = (
@@ -941,7 +944,7 @@ class SessionAggregator:
         candidates = candidates[:HARDENING_TOP_N]
 
         if substrate is None:
-            substrate, substrate_reason = resolve_substrate(self.cwd)
+            substrate, substrate_reason = resolve_substrate(self.cwd, session_id)
         else:
             substrate_reason = "given explicitly"
 
@@ -1694,8 +1697,13 @@ def base_repo_from_cwd(cwd: str | None) -> Path | None:
     return Path(head)
 
 
-def read_substrate_marker(cwd: str | None) -> str | None:
-    """The substrate recorded for this session's worktree, or ``None``.
+def read_substrate_marker(cwd: str | None, session_id: str | None = None) -> str | None:
+    """The substrate recorded for this session, or ``None``.
+
+    The per-session record (``sessions/<id>``, written at create, never on a resume, by
+    `_ds_session_mark`) wins: it is the only one a base-repo session has, and
+    the only one a later relaunch of the same worktree cannot overwrite. A
+    session from before it existed falls back to its worktree's tag marker.
 
     ``None`` means *no marker was found* — a base-repo session, a marker never
     written, or one cleaned up when the worktree was pruned. It is deliberately
@@ -1703,10 +1711,21 @@ def read_substrate_marker(cwd: str | None) -> str | None:
     the two it is, even though both land on the same headline.
     """
     base = base_repo_from_cwd(cwd)
+    if session_id:
+        # A base-repo session's cwd IS the base checkout.
+        root = base if base is not None else (Path(cwd) if cwd else None)
+        if root is not None:
+            recorded = _read_marker(root / SUBSTRATE_DIR / "sessions" / session_id)
+            if recorded is not None:
+                return recorded
     tag = tag_from_cwd(cwd)
     if base is None or not tag:
         return None
-    marker = base / SUBSTRATE_DIR / tag
+    return _read_marker(base / SUBSTRATE_DIR / tag)
+
+
+def _read_marker(marker: Path) -> str | None:
+    """One marker file's bare word, or ``None`` when absent or unreadable."""
     try:
         recorded = marker.read_text(encoding="utf-8").strip()
     except (OSError, ValueError):
@@ -1722,7 +1741,9 @@ def read_substrate_marker(cwd: str | None) -> str | None:
     return recorded or None
 
 
-def resolve_substrate(cwd: str | None) -> tuple[str, str]:
+def resolve_substrate(
+    cwd: str | None, session_id: str | None = None
+) -> tuple[str, str]:
     """Decide a session's billing substrate, returning ``(substrate, reason)``.
 
     **The transcript cannot answer this, which is why the marker is consulted
@@ -1740,7 +1761,7 @@ def resolve_substrate(cwd: str | None) -> tuple[str, str]:
     token profile rather than to inventing a number. A missing figure is a
     visible gap; a wrong one silently corrupts the reconciliation.
     """
-    recorded = read_substrate_marker(cwd)
+    recorded = read_substrate_marker(cwd, session_id)
     if recorded == SUBSTRATE_BEDROCK:
         return SUBSTRATE_BEDROCK, "recorded by the launch verb"
     if recorded in (SUBSTRATE_SEAT, SUBSTRATE_ANTHROPIC):
@@ -1748,7 +1769,9 @@ def resolve_substrate(cwd: str | None) -> tuple[str, str]:
     if recorded is None:
         if tag_from_cwd(cwd) is None:
             if base_repo_from_cwd(cwd) is None:
-                return SUBSTRATE_SEAT, "base-repo session, so a seat verb"
+                return SUBSTRATE_SEAT, (
+                    "base-repo session with no session record, which reads as seat"
+                )
             # Inside the worktrees directory but carrying no tag component. That
             # is a malformed path, not a base-repo session, so it does not get
             # the base-repo reason string.
@@ -1834,7 +1857,7 @@ def aggregate(transcript: Path, session_id: str, substrate: str | None = None) -
             for line in _read_lines(entry):
                 agg.ingest_subagent_line(label, line)
 
-    return agg.finish(substrate)
+    return agg.finish(substrate, session_id)
 
 
 def short_id(session_id: str) -> str:

@@ -1032,6 +1032,30 @@ class SubstrateDetection(unittest.TestCase):
         self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
         self.assertIn("base-repo", reason)
 
+    def _write_session(self, session_id, text):
+        (self.markers / "sessions").mkdir(parents=True, exist_ok=True)
+        (self.markers / "sessions" / session_id).write_text(text, encoding="utf-8")
+
+    def test_a_base_repo_session_record_is_read(self):
+        # A Bedrock `plan` is a base-repo session: before the per-session
+        # record it had no marker and read as seat, unpriced.
+        self._write_session("sid-1", "bedrock\n")
+        substrate, reason = sm.resolve_substrate(str(self.base), "sid-1")
+        self.assertEqual(substrate, sm.SUBSTRATE_BEDROCK)
+        self.assertIn("launch verb", reason)
+        # Another session in the same checkout is not affected.
+        substrate, _ = sm.resolve_substrate(str(self.base), "sid-2")
+        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+
+    def test_a_session_record_beats_a_relaunched_tag_marker(self):
+        # The relaunch blind spot: a later anthropic launch rewrote the tag
+        # marker, which must not reclassify the earlier Bedrock session.
+        self._write("eng-1364", "anthropic\n")
+        self._write_session("sid-1", "bedrock\n")
+        self.assertEqual(sm.read_substrate_marker(self.worktree, "sid-1"), "bedrock")
+        # No record for this one: the tag marker still answers.
+        self.assertEqual(sm.read_substrate_marker(self.worktree, "sid-2"), "anthropic")
+
     def test_an_unrecognized_marker_fails_toward_seat(self):
         self._write("eng-1364", "vertex")
         substrate, reason = sm.resolve_substrate(self.worktree)
@@ -1068,6 +1092,15 @@ class SubstrateDetection(unittest.TestCase):
 
         from_marker = sm.aggregate(transcript, "session")
         self.assertEqual(from_marker["substrate"], sm.SUBSTRATE_BEDROCK)
+
+    def test_the_session_id_reaches_the_lookup_through_aggregate(self):
+        # A Bedrock `plan`: base-repo cwd, so only the session record answers.
+        # Drop `session_id` from `aggregate`'s `finish` call and this reads seat.
+        self._write_session("plan-sid", "bedrock\n")
+        transcript = pathlib.Path(self._tmp.name) / "plan-sid.jsonl"
+        transcript.write_text(self._record(str(self.base)) + "\n", encoding="utf-8")
+        report = sm.aggregate(transcript, "plan-sid")
+        self.assertEqual(report["substrate"], sm.SUBSTRATE_BEDROCK)
 
     def test_the_cli_flag_reaches_the_report(self):
         # The one hop no direct-call test can reach: argparse's value into

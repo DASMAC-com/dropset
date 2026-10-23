@@ -38,17 +38,19 @@ in UTC, so every day boundary here is a UTC one, on both sides:
     provisional day is fine: a rate is a ratio, so a partly billed day yields
     it too.
 
-**Substrate classes.** ``bedrock`` and ``seat`` come from a marker. A worktree
-session with **no** marker (or an unrecognized one) is ``unattributed`` and is
-never priced into the Bedrock total — that is the share the bill comparison
-cannot account for, reported rather than guessed. ``explore`` landed here
-until it wrote a marker; an older explore worktree still does. A base-repo
-session (``plan``, ``chore``) reads as ``seat``.
+**Substrate classes.** ``bedrock`` and ``seat`` come from a marker: the
+session's own record (``sessions/<id>``, written when the launch creates
+it) first, then its worktree's tag marker. A worktree session with **no**
+marker (or an unrecognized one) is ``unattributed`` and is never priced into
+the Bedrock total — that is the share the bill comparison cannot account for,
+reported rather than guessed. ``explore`` landed here until it wrote a marker;
+an older explore worktree still does. A base-repo session with no record reads
+as ``seat``.
 
-Two blind spots, both visible only as bill-side drift: ``plan bedrock`` is a
-base-repo launch that writes no marker; and a marker is one file per worktree
-tag, overwritten by each launch, so relaunching a worktree on the other
-substrate reclassifies that worktree's EARLIER sessions too.
+The per-session record closed the two old blind spots — a Bedrock ``plan``
+had no marker, and a relaunch on the other substrate rewrote the tag marker
+and so reclassified a worktree's earlier sessions — for every session
+launched since it shipped. An older session still classifies the old way.
 
 **The bill is matched per service, not by a fixed list of names.** Cost
 Explorer files each model as its own Marketplace service, ``Claude <Family>
@@ -149,7 +151,7 @@ CLASSIFIER_OVERHEAD = 0.082
 # --------------------------------------------------------------------------- #
 
 
-def classify(cwd: str | None) -> str:
+def classify(cwd: str | None, session_id: str | None = None) -> str:
     """A session's substrate class, from its launch marker.
 
     Unlike ``session_metrics.resolve_substrate``, which degrades an unknown to
@@ -157,7 +159,7 @@ def classify(cwd: str | None) -> str:
     fleet total needs the third answer: a worktree session with no marker is
     neither priced nor silently waved through as seat.
     """
-    recorded = sm.read_substrate_marker(cwd)
+    recorded = sm.read_substrate_marker(cwd, session_id)
     if recorded == sm.SUBSTRATE_BEDROCK:
         return BEDROCK
     if recorded in (sm.SUBSTRATE_SEAT, sm.SUBSTRATE_ANTHROPIC):
@@ -355,8 +357,8 @@ def walk(projects: Path, days: list[str]) -> Meter:
             except OSError:
                 meter.unreadable += 1
                 continue
-            substrate, issue = classify(cwd), issue_of(cwd) or prompted
             session = transcript.stem
+            substrate, issue = classify(cwd, session), issue_of(cwd) or prompted
             files = [
                 transcript,
                 *sorted((project / session / "subagents").glob("*.jsonl")),

@@ -211,6 +211,23 @@ class WalkTest(unittest.TestCase):
         meter = fc.walk(self.projects, [DAY])
         self.assertIn(("ENG-2031", 1), fc.issue_session_counts(meter, [DAY], fc.SEAT))
 
+    def test_a_session_record_closes_both_blind_spots(self) -> None:
+        # A Bedrock `plan` (base repo, no tag) and a worktree session whose
+        # tag marker a later anthropic launch rewrote: each session's own
+        # record classifies it.
+        base = Path(self.tmp.name) / "repo"
+        sessions = base / sm.SUBSTRATE_DIR / "sessions"
+        sessions.mkdir()
+        (sessions / "s8").write_text("bedrock\n")
+        (sessions / "s9").write_text("bedrock\n")
+        self.write(self.projects / "plan" / "s8.jsonl", [record("msg_h", str(base))])
+        relaunched = f"{base}/.claude/worktrees/1700"
+        self.write(self.projects / "loose" / "s9.jsonl", [record("msg_i", relaunched)])
+        summary = fc.day_summary(fc.walk(self.projects, [DAY]), DAY)
+        self.assertEqual(summary["substrates"]["bedrock"]["sessions"], 4)
+        # s3 and s5, unchanged: no record, so the old reading stands.
+        self.assertEqual(summary["substrates"]["seat"]["sessions"], 2)
+
     def test_issue_of_reads_every_pre_rename_spelling(self) -> None:
         for tag in ("1651", "eng-1651", "ceo-1651", "exp-1651"):
             cwd = f"/repo/.claude/worktrees/{tag}"
