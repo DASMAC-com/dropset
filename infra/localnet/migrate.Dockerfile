@@ -40,7 +40,12 @@ RUN cargo chef prepare --recipe-path recipe.json
 # (`from=cook`) the first time it is created. So a builder that keeps no
 # mount cache, such as a fresh CI runner, starts from the cooked
 # dependencies exactly as it did before the mounts, while a local daemon
-# rebuilds only the workspace crates that changed. The target id is
+# rebuilds only the workspace crates that changed. The builder bind-mounts
+# the source rather than COPYing it, as Docker's Rust guide does: a COPY
+# layer reused from cache restores the mtimes of the build that made it, so
+# cargo, which reads a persistent target by mtime, would call a reverted
+# crate fresh. A bind mount carries the context's current mtimes, exactly as
+# a host build sees them; writes under it are discarded. The target id is
 # per image and per checkout (the CHECKOUT build arg, which compose fills
 # from DS_CHECKOUT, else the caller's directory): cargo judges a workspace
 # crate fresh by mtime, so a target shared across worktrees could silently
@@ -49,7 +54,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 # concurrent builds of one image: cargo's registry lock lives outside the
 # registry mount, and the bin copy after `cargo build` runs outside cargo's
 # own lock on the target. A mount is not part of any layer, so the binary
-# is copied out to /app/bin for the runtime stage. `docker builder prune`
+# is copied out to /out for the runtime stage. `docker builder prune`
 # reclaims the caches. The paths and the target id are ENV rather than ARG
 # because an ARG ends with its stage and the builder is a new one; spelled
 # inline, a mount overflows 80 columns.
@@ -63,13 +68,13 @@ RUN --mount=type=cache,id=migrate-reg,target=$REG,sharing=locked \
 FROM cook AS builder
 ARG CHECKOUT=shared
 ENV ID=migrate-tgt-$CHECKOUT
-COPY . .
-RUN --mount=type=cache,id=migrate-reg,target=$REG,sharing=locked \
+RUN --mount=type=bind,target=/app,rw \
+    --mount=type=cache,id=migrate-reg,target=$REG,sharing=locked \
     --mount=type=cache,id=migrate-git,target=$GIT,sharing=locked \
     --mount=type=cache,id=$ID,target=$TGT,from=cook,source=$TGT,sharing=locked \
     cargo build --release -p dropset-db-schema --bin dropset-migrate \
-    && mkdir -p /app/bin \
-    && cp target/release/dropset-migrate /app/bin/
+    && mkdir -p /out \
+    && cp target/release/dropset-migrate /out/
 
 FROM debian:bookworm-slim AS runtime
 # ca-certificates only (for Postgres TLS against a managed instance).
@@ -79,6 +84,6 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/bin/dropset-migrate \
+COPY --from=builder /out/dropset-migrate \
     /usr/local/bin/dropset-migrate
 CMD ["dropset-migrate"]

@@ -37,7 +37,12 @@ RUN cargo chef prepare --recipe-path recipe.json
 # (`from=cook`) the first time it is created. So a builder that keeps no
 # mount cache, such as a fresh CI runner, starts from the cooked
 # dependencies exactly as it did before the mounts, while a local daemon
-# rebuilds only the workspace crates that changed. The target id is
+# rebuilds only the workspace crates that changed. The builder bind-mounts
+# the source rather than COPYing it, as Docker's Rust guide does: a COPY
+# layer reused from cache restores the mtimes of the build that made it, so
+# cargo, which reads a persistent target by mtime, would call a reverted
+# crate fresh. A bind mount carries the context's current mtimes, exactly as
+# a host build sees them; writes under it are discarded. The target id is
 # per image and per checkout (the CHECKOUT build arg, which compose fills
 # from DS_CHECKOUT, else the caller's directory): cargo judges a workspace
 # crate fresh by mtime, so a target shared across worktrees could silently
@@ -46,7 +51,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 # concurrent builds of one image: cargo's registry lock lives outside the
 # registry mount, and the bin copy after `cargo build` runs outside cargo's
 # own lock on the target. A mount is not part of any layer, so the binaries
-# are copied out to /app/bin for the runtime stage. `docker builder prune`
+# are copied out to /out for the runtime stage. `docker builder prune`
 # reclaims the caches. The paths and the target id are ENV rather than ARG
 # because an ARG ends with its stage and the builder is a new one; spelled
 # inline, a mount overflows 80 columns.
@@ -61,15 +66,15 @@ RUN --mount=type=cache,id=bots-reg,target=$REG,sharing=locked \
 FROM cook AS builder
 ARG CHECKOUT=shared
 ENV ID=bots-tgt-$CHECKOUT
-COPY . .
-RUN --mount=type=cache,id=bots-reg,target=$REG,sharing=locked \
+RUN --mount=type=bind,target=/app,rw \
+    --mount=type=cache,id=bots-reg,target=$REG,sharing=locked \
     --mount=type=cache,id=bots-git,target=$GIT,sharing=locked \
     --mount=type=cache,id=$ID,target=$TGT,from=cook,source=$TGT,sharing=locked \
     cargo build --release \
     --bin dropset-maker-bot --bin dropset-taker-bot \
-    && mkdir -p /app/bin \
+    && mkdir -p /out \
     && cp target/release/dropset-maker-bot target/release/dropset-taker-bot \
-    /app/bin/
+    /out/
 
 FROM debian:bookworm-slim AS runtime
 # ca-certificates for the price-feed / RPC TLS. Intentionally unpinned: a thin
@@ -78,9 +83,9 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/bin/dropset-maker-bot \
+COPY --from=builder /out/dropset-maker-bot \
     /usr/local/bin/dropset-maker-bot
-COPY --from=builder /app/bin/dropset-taker-bot \
+COPY --from=builder /out/dropset-taker-bot \
     /usr/local/bin/dropset-taker-bot
 # The bots resolve their keypairs relative to the working dir (`keys/…`); the
 # compose services bind-mount the repo `keys/` here. Each service overrides

@@ -59,7 +59,12 @@ RUN cargo chef prepare --recipe-path recipe.json
 # (`from=cook`) the first time it is created. So a builder that keeps no
 # mount cache, such as a fresh CI runner, starts from the cooked
 # dependencies exactly as it did before the mounts, while a local daemon
-# rebuilds only the workspace crates that changed. The target id is
+# rebuilds only the workspace crates that changed. The builder bind-mounts
+# the source rather than COPYing it, as Docker's Rust guide does: a COPY
+# layer reused from cache restores the mtimes of the build that made it, so
+# cargo, which reads a persistent target by mtime, would call a reverted
+# crate fresh. A bind mount carries the context's current mtimes, exactly as
+# a host build sees them; writes under it are discarded. The target id is
 # per image and per checkout (the CHECKOUT build arg, which compose fills
 # from DS_CHECKOUT, else the caller's directory): cargo judges a workspace
 # crate fresh by mtime, so a target shared across worktrees could silently
@@ -68,7 +73,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 # concurrent builds of one image: cargo's registry lock lives outside the
 # registry mount, and the bin copy after `cargo build` runs outside cargo's
 # own lock on the target. A mount is not part of any layer, so the binaries
-# are copied out to /app/bin for the runtime stage. `docker builder prune`
+# are copied out to /out for the runtime stage. `docker builder prune`
 # reclaims the caches. The paths and the target id are ENV rather than ARG
 # because an ARG ends with its stage and the builder is a new one; spelled
 # inline, a mount overflows 80 columns.
@@ -83,17 +88,17 @@ RUN --mount=type=cache,id=collectors-reg,target=$REG,sharing=locked \
 FROM cook AS builder
 ARG CHECKOUT=shared
 ENV ID=collectors-tgt-$CHECKOUT
-COPY . .
 # The `rm` drops last build's bins from the cache, so the `find` below copies
 # only what this build produced and a runtime COPY naming a removed bin fails.
-RUN --mount=type=cache,id=collectors-reg,target=$REG,sharing=locked \
+RUN --mount=type=bind,target=/app,rw \
+    --mount=type=cache,id=collectors-reg,target=$REG,sharing=locked \
     --mount=type=cache,id=collectors-git,target=$GIT,sharing=locked \
     --mount=type=cache,id=$ID,target=$TGT,from=cook,source=$TGT,sharing=locked \
     rm -f target/release/market-data-* \
     && cargo build --release -p dropset-market-data \
-    && mkdir -p /app/bin \
+    && mkdir -p /out \
     && find target/release -maxdepth 1 -type f -perm -u+x \
-    -name 'market-data-*' -exec cp {} /app/bin/ \;
+    -name 'market-data-*' -exec cp {} /out/ \;
 
 FROM debian:bookworm-slim AS runtime
 # ca-certificates only (every collector's HTTPS venue + Postgres TLS).
@@ -104,24 +109,24 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 # The candle collectors, writing `cex_prices`...
-COPY --from=builder /app/bin/market-data-alphavantage \
-    /app/bin/market-data-coinbase \
-    /app/bin/market-data-oanda \
-    /app/bin/market-data-twelvedata \
+COPY --from=builder /out/market-data-alphavantage \
+    /out/market-data-coinbase \
+    /out/market-data-oanda \
+    /out/market-data-twelvedata \
     /usr/local/bin/
 # ...and the tick collectors, writing `spot_ticks`.
-COPY --from=builder /app/bin/market-data-coinbase-ticker \
-    /app/bin/market-data-erapi \
-    /app/bin/market-data-frankfurter \
-    /app/bin/market-data-kraken \
-    /app/bin/market-data-orca \
-    /app/bin/market-data-pyth \
+COPY --from=builder /out/market-data-coinbase-ticker \
+    /out/market-data-erapi \
+    /out/market-data-frankfurter \
+    /out/market-data-kraken \
+    /out/market-data-orca \
+    /out/market-data-pyth \
     /usr/local/bin/
 # The fair-value estimator, which is neither: it READS both tables and
 # publishes `fair_price`. Its own COPY rather than a line in either group
 # above, so the two comments stay true — grouping it with the tick collectors
 # would make this image claim it writes `spot_ticks`.
-COPY --from=builder /app/bin/market-data-estimator \
+COPY --from=builder /out/market-data-estimator \
     /usr/local/bin/
 # The keyless reference feed is the default; every other service overrides it
 # with its own `command:`.
