@@ -274,11 +274,11 @@ session runs it as one scoped `audit-scope` run, which that pull
 authorizes, fan-out included; findings file parked (Backlog plus
 `Audit findings`).
 
-It dispatches as **`explore <tag>`, never `task <tag>`**
-(operator rule, 2026-09-11) — a temporary worktree, no PR; see
+**Title it `[Explore/Bedrock]`** (`[Explore/Anthropic]` when the
+audit needs the web): it runs as `explore`, never `task` (operator
+rule, 2026-09-11) — a temporary worktree, no PR; see
 `docs/conventions/local-integrations.md` → "Architect and explore
-sessions: temporary worktree, no PR". **Name the verb in the
-sequencing prose**, since a later puller reads only the body. An
+sessions: temporary worktree, no PR". An
 audit sits **In Progress** until its findings are ratified and
 folded, so an old In Progress audit is live, not stalled.
 
@@ -553,13 +553,14 @@ python3 .claude/tools/session_dispatch.py task 1234 + plan
 It prints one `verb -> tty` line each, then a roll-call of open
 sessions — the roll-call is the confirmation to relay.
 
-A **minor non-repo job** (a key file, a local deploy, a one-off
-probe) dispatches as **`chore <n>`**, not `task <n>`: the helper
-tier, no PR, In Review at handoff.
+**Type the line the title token says** (`linear-automation.md` →
+"The verb/substrate title token"): `[Chore/Bedrock]` on 1234 is
+`chore bedrock 1234`, no token is `task 1234`. **Refuse `task <n>`**
+on a token naming another verb or `[Operator]`. File a minor
+non-repo job (a key file, a local deploy, a probe)
+`[Chore/Bedrock]` — helper tier, no PR, In Review at handoff — and
+an item the operator executes by hand `[Operator]`.
 
-- **The substrate stays at the call site** — `task anthropic 1234`
-  for work needing web research; see
-  `docs/conventions/local-integrations.md`.
 - **Best effort.** If iTerm's Python API or Automation access is
   off, the tool fails loudly and prints the verbs — relay them
   rather than retrying. `--dry-run` shows them.
