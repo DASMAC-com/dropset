@@ -1,4 +1,3 @@
-
 # Localnet control-plane TUI. A ratatui + crossterm panel that
 # spawns a `solana-test-validator`, gates each bootstrap action on live
 # on-chain state (a derived `Phase`), and drives the eCLOB lifecycle —

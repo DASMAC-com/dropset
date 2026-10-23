@@ -1755,6 +1755,7 @@ dependencies = [
  "orca_whirlpools_core",
  "reqwest",
  "rustls",
+ "rustls-webpki",
  "serde",
  "serde_json",
  "solana-client",

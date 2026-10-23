@@ -343,6 +343,7 @@ vgbp
 vwap
 wakeup
 webfetch
+webpki
 wincode
 wordmark
 worktree

@@ -11,9 +11,11 @@
 //! verifies that from inside the runtime: it drives the crate's own
 //! [`HttpClient`] (rustls, default roots) at the advisory's two probe hosts,
 //! one chaining to an emSign root and one to the Sectigo cross-sign under AAA
-//! Certificate Services, and asserts each handshake is refused **for a
-//! certificate reason**. A DNS or connect failure fails the test rather than
-//! passing it, since it proves nothing about trust. The containers ship
+//! Certificate Services, and asserts each handshake is refused **because the
+//! chain is distrusted** — `webpki::Error::CertDistrusted`, the error the
+//! distrust list raises. Any other failure fails the test: a DNS or connect
+//! error, and equally an expired or misnamed probe certificate, would leave
+//! the check green against a lock without the fix. The containers ship
 //! binaries built from the same lock with the same compiled-in roots, so a
 //! host run exercises the same trust path.
 //!
@@ -63,6 +65,19 @@ fn certificate_error<'a>(
     None
 }
 
+/// Whether `cert` is the distrust list's refusal. rustls carries a
+/// verifier-specific failure as `CertificateError::Other`, wrapping the
+/// `webpki::Error` it came from.
+fn is_distrusted(cert: &rustls::CertificateError) -> bool {
+    match cert {
+        rustls::CertificateError::Other(other) => matches!(
+            other.0.downcast_ref::<webpki::Error>(),
+            Some(webpki::Error::CertDistrusted)
+        ),
+        _ => false,
+    }
+}
+
 #[tokio::test]
 #[ignore = "needs the network; run with `make tls-distrust-check`"]
 async fn distrusted_emudhra_chains_are_refused() {
@@ -74,8 +89,13 @@ async fn distrusted_emudhra_chains_are_refused() {
         };
         let first: &(dyn StdError + 'static) = err.as_ref();
         match certificate_error(Some(first)) {
-            Some(cert) => println!("{host}: refused ({cert:?})"),
-            None => panic!("{host} failed for a reason other than its certificate: {err:#}"),
+            Some(cert) if is_distrusted(cert) => println!("{host}: refused ({cert:?})"),
+            Some(cert) => panic!(
+                "{host} was refused for {cert:?}, not for distrust: that passes without the fix"
+            ),
+            // A status or decode error lands here too, and means the chain
+            // verified: the handshake got far enough to read a response.
+            None => panic!("{host} was not refused at the handshake: {err:#}"),
         }
     }
 }

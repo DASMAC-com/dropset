@@ -238,10 +238,11 @@ test-parity: check-nextest program-parity
 # hook) fails when a crate gains a Docker-gated test without a `-p` here.
 #
 # One invocation over all the crates so the shared dependency graph compiles
-# once. `oanda_direction` is filtered out because it is the one `#[ignore]`d
-# target among them gated on something other than Docker: it needs a network
-# and the OANDA credential, and a required check must not depend on a live
-# third-party venue. It stays operator-run, and its own module doc says so.
+# once. `oanda_direction` is filtered out because it is one of the two
+# `#[ignore]`d targets among them gated on something other than Docker: it
+# needs a network and the OANDA credential, and a required check must not
+# depend on a live third-party venue. It stays operator-run, and its own module
+# doc says so.
 # `tls_distrust` is filtered out for the same reason: it needs the network to
 # reach the eMudhra probe hosts, and runs as `make tls-distrust-check`. One
 # `-E`, since nextest unions several: two `not` filters would select all.
@@ -425,9 +426,9 @@ endef
 #     explorer indexes the localnet; mainnet links go to the hosted one).
 #   * No `--bootstrap`. Auto-bootstrap is refused by the binary in mainnet
 #     mode, so passing it would be an error rather than a no-op.
-#   * Run `make tls-distrust-check` first, from the commit you build: the RPC
-#     reads the ceremony signs against trust the same compiled-in roots. Never
-#     clear a failure by disabling certificate verification.
+#   * Run `make tls-distrust-check` first, from the commit you build: the
+#     ceremony signs against RPC reads verified with the same compiled-in
+#     roots. Never clear a failure by disabling certificate verification.
 #
 # The endpoint has no default on purpose: a wrong-but-present URL fails
 # silently, while an absent one fails here with a message. The binary then
