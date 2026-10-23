@@ -101,6 +101,14 @@ EDITION_SUFFIX = " (Amazon Bedrock Edition)"
 SPEND_CAP_STACK = "dropset-bedrock-agent"
 # The four metrics the spend-cap alarms sum, keyed by the stack parameter that
 # prices each. Dimensionless, so every model counts, as in the alarms.
+#
+# The stack's defaults mirror the Opus 5.5 row of `RATES_BY_MODEL`, so every
+# token is estimated at Opus rates whatever model spent it. Against the other
+# rows that is conservative for Sonnet 5.5 (0.5x on input, output and cache
+# write, 1.0x on cache read) and Haiku 5.5, but NOT for Fable 5.1: a Fable
+# token bills 2.5x the estimate on input, output and cache write, and 1.25x
+# on cache read, so a Fable-heavy day under-estimates and can leak past the
+# cap. Changing the stack parameters is an operator deploy decision.
 SPEND_CAP_METRICS = {
     "InputTokenCount": "TokenRateInput",
     "OutputTokenCount": "TokenRateOutput",
