@@ -323,7 +323,7 @@ all measured 2026-10-14/15 over the Opus 5.5 fleet days 10-08 to 10-13
   `TokenRate*` stack parameters mirror the Opus 5.5 row of
   `RATES_BY_MODEL` and must move with it.
 - **Substrate comes from the launch marker** — the session's own
-  record (`sessions/<id>`, written once at create) first, then its
+  record (`sessions/<id>`, written at create) first, then its
   worktree's tag marker. A worktree session with neither is reported as
   `unattributed` and kept out of the total; an older explore worktree
   lands there, since explore once wrote none. The per-session record

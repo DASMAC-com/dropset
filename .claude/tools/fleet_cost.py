@@ -39,7 +39,7 @@ in UTC, so every day boundary here is a UTC one, on both sides:
     it too.
 
 **Substrate classes.** ``bedrock`` and ``seat`` come from a marker: the
-session's own record (``sessions/<id>``, written once when the launch creates
+session's own record (``sessions/<id>``, written when the launch creates
 it) first, then its worktree's tag marker. A worktree session with **no**
 marker (or an unrecognized one) is ``unattributed`` and is never priced into
 the Bedrock total — that is the share the bill comparison cannot account for,

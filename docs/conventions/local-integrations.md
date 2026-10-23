@@ -1360,7 +1360,7 @@ replacement. **The tier table itself is in "Model tiers" below.**
 Both follow from the worktree home below: `explore <n|name>` is
 idempotent, so the `resume` twin would be a pure synonym, and a
 worktree cannot be named without a name. `plan` remains a
-**base-repo** seat verb — it touches the board, not a branch.
+**base-repo** verb — it touches the board, not a branch.
 
 **`housekeeping` is retired — deleted, not aliased.** Its upkeep is
 `upkeep.py`, which the `plan` launcher runs before the session starts,
@@ -1619,10 +1619,10 @@ unchanged. Naming the path out loud is a **hard requirement**:
 the operator works the file through an editor, and cannot edit a
 path they were never told.
 
-**What did not change:** `plan` is still a
-base-repo seat verb, and the **substrate** rule below is
-untouched — the worktree home moved where these sessions run,
-not which provider they run against.
+**What did not change:** `plan` is still a base-repo verb — the
+worktree home moved where these sessions run, not which provider
+they run against (`plan`'s own move to Bedrock is the substrate
+section's, below).
 
 `plan` additionally **gates its launch on a usable
 AWS session** — see "The AWS login gate" below. No other verb does.
@@ -1726,7 +1726,7 @@ Three deliberate bounds on the gate:
 
 **One consequence worth knowing: `aws login` blocks on the operator.** That
 is exactly right for a verb the operator types — which `plan` is,
-being the seat verb that opens the day. It would be
+being the verb that opens the day. It would be
 wrong for a verb typed into a tab by automation, so note that
 `session_dispatch.py` dispatches `task` verbs, which run on Bedrock and
 are deliberately **not** gated. Keep it that way: gating a dispatched
@@ -1770,8 +1770,9 @@ than being turned into a constant.
 #### Substrate: which provider a session runs against
 
 **The rule is capability, not attendance.** A session runs on Bedrock
-unless it needs something Bedrock lacks — web search, web fetch, deep
-research — or it is a **seat session by role** (`architect`).
+unless it needs something Bedrock lacks — web search or deep research
+(web fetch works there; see below) — or it is a **seat session by
+role** (`architect`).
 Sub-agents are *not* a differentiator:
 Opus-spawning-Opus sub-agents are verified working on Bedrock.
 `explore` left the seat once an audit's sub-agent fan-out (ten at
@@ -1794,8 +1795,9 @@ broke on capability.
 
 **The 5-hour subscription window has no verb opening it by default.**
 It was the retired `housekeeping` verb's one non-capability reason to
-stay on the seat, then `plan`'s; with `plan` on Bedrock, only a
-`plan anthropic` or an `architect` session opens it.
+stay on the seat, then `plan`'s; with `plan` on Bedrock, the day's
+first anthropic-substrate session opens it — an `architect`, or any
+verb's `anthropic` escape.
 
 **What a Bedrock launch exports:** `CLAUDE_CODE_USE_BEDROCK=1`,
 `AWS_REGION`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` (the background tier,
@@ -1980,18 +1982,21 @@ tier — which is what lets `task resume <n>` bring a pre-marker explore
 session back on the right model. Those three write that `.tier` file,
 and a `task` launch removes it; the tier is a separate
 file because `session_metrics.py` reads the marker as one bare word.
+The bare `task resume` picker cannot know
+which session will be chosen, so it resumes unpinned.
 
 **A per-session record sits beside the tag marker.** Every new session
 of every verb — `_ds_session` (`plan`, `architect`, `explore`,
 `chore`) and `task`'s own launch, which now passes a fresh
 `--session-id` — writes `sessions/<session-id>` holding `bedrock` or
 `anthropic`, decided by whether `CLAUDE_CODE_USE_BEDROCK` is set. It
-is create-only: a resume never rewrites it. `plan`'s reopen reads it,
-and so do `session_metrics.py` and `fleet_cost.py`, ahead of the tag
-marker — the only record a base-repo session has, and the only one a
-relaunch on the other substrate cannot overwrite.
-The bare `task resume` picker cannot know
-which session will be chosen, so it resumes unpinned.
+is written on create and never on a resume; a create overwrites, since
+it is reached only while no transcript exists, so an earlier record
+belongs to an attempt that never started a session. `plan`'s reopen
+reads it, and so do `session_metrics.py` and `fleet_cost.py`, ahead of
+the tag marker — the only record a base-repo session has, and the only
+one a relaunch on the other substrate cannot overwrite. `task resume`
+does not read it.
 
 **Two guards, pointing opposite ways.** A Bedrock launch **hard-gates**
 on the environment being present — no bearer token means no launch,

@@ -1093,6 +1093,15 @@ class SubstrateDetection(unittest.TestCase):
         from_marker = sm.aggregate(transcript, "session")
         self.assertEqual(from_marker["substrate"], sm.SUBSTRATE_BEDROCK)
 
+    def test_the_session_id_reaches_the_lookup_through_aggregate(self):
+        # A Bedrock `plan`: base-repo cwd, so only the session record answers.
+        # Drop `session_id` from `aggregate`'s `finish` call and this reads seat.
+        self._write_session("plan-sid", "bedrock\n")
+        transcript = pathlib.Path(self._tmp.name) / "plan-sid.jsonl"
+        transcript.write_text(self._record(str(self.base)) + "\n", encoding="utf-8")
+        report = sm.aggregate(transcript, "plan-sid")
+        self.assertEqual(report["substrate"], sm.SUBSTRATE_BEDROCK)
+
     def test_the_cli_flag_reaches_the_report(self):
         # The one hop no direct-call test can reach: argparse's value into
         # `aggregate`. Drop `args.substrate` from that call and every other test

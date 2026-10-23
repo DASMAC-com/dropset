@@ -1700,7 +1700,7 @@ def base_repo_from_cwd(cwd: str | None) -> Path | None:
 def read_substrate_marker(cwd: str | None, session_id: str | None = None) -> str | None:
     """The substrate recorded for this session, or ``None``.
 
-    The per-session record (``sessions/<id>``, written once at create by
+    The per-session record (``sessions/<id>``, written at create, never on a resume, by
     `_ds_session_mark`) wins: it is the only one a base-repo session has, and
     the only one a later relaunch of the same worktree cannot overwrite. A
     session from before it existed falls back to its worktree's tag marker.

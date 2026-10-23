@@ -729,8 +729,8 @@ _ds_topic_sid() {
 # Substrate: which provider a session runs against.
 #
 # THE RULE IS CAPABILITY, NOT ATTENDANCE. A session runs on Bedrock unless it
-# needs something Bedrock lacks — web search, web fetch, deep research — or it
-# is a seat session by role (`architect`). `plan` left the seat by default for
+# needs something Bedrock lacks — web search or deep research (web fetch works
+# there, measured 2026-10-23) — or it is a seat session by role (`architect`). `plan` left the seat by default for
 # pricing: a base-repo planning session on the subscription has no dollar
 # figure, and `plan anthropic` remains the way back.
 # Sub-agents are NOT a differentiator: Opus-spawning-Opus sub-agents are
@@ -1047,12 +1047,16 @@ _ds_substrate_write() {
 # whenever a relaunch on the other substrate overwrote its tag marker.
 #
 # Decided by `CLAUDE_CODE_USE_BEDROCK`, so it runs after the caller has entered
-# its substrate. CREATE-ONLY: an existing record is never rewritten, so a
-# resume (which never calls this) and a repeated create alike leave the
-# substrate the session started on. Best-effort, like `_ds_substrate_write`.
+# its substrate. WRITTEN ON CREATE ONLY, never on a resume (which never calls
+# this) — but every create OVERWRITES. A create is reached only while no
+# transcript exists, so an earlier record for the same id belongs to a launch
+# that never started a session (a refused model, a tab closed at startup);
+# keeping it would pin that attempt's substrate onto the session that did run,
+# and every later reopen would resume it on the wrong provider.
+# Best-effort, like `_ds_substrate_write`.
 _ds_session_mark() {
   local dir="$_DS_SUBSTRATE_DIR/sessions" substrate=anthropic
-  [[ -n "$1" && ! -e "$dir/$1" ]] || return 0
+  [[ -n "$1" ]] || return 0
   [[ -n "$CLAUDE_CODE_USE_BEDROCK" ]] && substrate=bedrock
   mkdir -p "$dir" 2>/dev/null || return 0
   print -r -- "$substrate" >| "$dir/$1" 2>/dev/null
@@ -1065,7 +1069,7 @@ _ds_new_sid() {
   local raw
   if (( $+commands[uuidgen] )); then
     raw="$(uuidgen)"
-  else
+  elif [[ -r /proc/sys/kernel/random/uuid ]]; then
     raw="$(</proc/sys/kernel/random/uuid)"
   fi
   print -r -- "${raw:l}"
@@ -1439,7 +1443,14 @@ _ds_task_start() {
   _ds_substrate_write "$tag" "$substrate"
   # A task always starts a NEW session, so it gets a fresh id to key the
   # per-session record on; the tag marker above is what its resume reads.
-  local sid="$(_ds_new_sid)"
+  local sid
+  sid="$(_ds_new_sid)"
+  if [[ -z "$sid" ]]; then
+    print -u2 'task: could not generate a session id (no uuidgen or' \
+      '/proc uuid) — refusing to launch.'
+    _ds_substrate_unset
+    return 1
+  fi
   _ds_session_mark "$sid"
 
   local dir="$(_ds_launch_dir "$tag")"
@@ -1950,8 +1961,9 @@ _ds_plan_cycle() {
 #     and an interactive login is a poor thing to stand between the operator
 #     and a design thought. Add it only if an architect session is actually
 #     found wanting one.
-#   * The 5-hour window. Only `plan anthropic` opens it now; on its Bedrock
-#     default a planning session spends no subscription allowance at all.
+#   * The 5-hour window. A planning session opens it only as
+#     `plan anthropic`; on its Bedrock default it spends no subscription
+#     allowance at all.
 #
 # `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not `plan-05`.
 #

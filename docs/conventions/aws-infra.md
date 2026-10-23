@@ -158,7 +158,7 @@ through the credentialed server. The rules:
   cost is visible and free.
 
   **Where the SSO session comes from.** A session cannot log in for
-  itself — `aws login` is interactive — so the one seat verb that reads
+  itself — `aws login` is interactive — so the one verb that reads
   cost data, `plan`, **gates its own launch** on credentials that
   resolve: it probes, logs in if the probe fails, re-probes, and
   refuses to launch if that still fails (the retired `housekeeping`

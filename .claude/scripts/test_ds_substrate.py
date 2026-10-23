@@ -304,7 +304,11 @@ class VerbLaunch(SubstrateHarness):
         self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
         self.assertIn("no substrate record", result.stderr)
 
-    _SESSIONS = 'print -r -- "SESSIONS=$(cat $_DS_SUBSTRATE_DIR/sessions/*)"'
+    # The file count rides along, so two records holding one word cannot pass.
+    _SESSIONS = (
+        "files=($_DS_SUBSTRATE_DIR/sessions/*(N)); "
+        'print -r -- "SESSIONS=${#files} $(cat $files)"'
+    )
 
     def test_every_launch_path_records_its_session_once(self):
         # `_ds_session` (plan, architect, explore, chore) and `_ds_task_start`.
@@ -322,27 +326,70 @@ class VerbLaunch(SubstrateHarness):
                     f"rm -rf $_DS_SUBSTRATE_DIR; {verb}; {self._SESSIONS}",
                     env=self._TOKEN,
                 )
-                self.assertIn(f"SESSIONS={word}\n", out, result.stderr)
+                self.assertIn(f"SESSIONS=1 {word}\n", out, result.stderr)
 
     def test_a_task_session_id_is_passed_and_recorded(self):
         result, out = self._launch(
             "task 7; ls $_DS_SUBSTRATE_DIR/sessions", env=self._TOKEN
         )
         sid = out.splitlines()[-3]
+        self.assertRegex(sid, r"^[0-9a-f-]{36}$")
         self.assertIn(f"--session-id {sid} ", out, result.stderr)
 
-    def test_a_resume_never_rewrites_the_session_record(self):
-        self._launch("plan", env=self._TOKEN)
+    def test_a_task_with_no_id_source_launches_nothing(self):
         result, out = self._launch(
-            # A hand-edited record proves the resume did not write.
+            "_ds_new_sid() { :; }; task 7; "
+            'print -r -- "TASK_RC=$? USE=${CLAUDE_CODE_USE_BEDROCK-unset}"',
+            env=self._TOKEN,
+        )
+        self.assertNotIn("MODEL=", out)
+        self.assertIn("TASK_RC=1", out)
+        self.assertIn("USE=unset", out)
+        self.assertIn("could not generate a session id", result.stderr)
+
+    def test_a_resume_never_rewrites_the_session_record(self):
+        # A value no launch writes: a rewrite of any kind would replace it.
+        result, out = self._launch(
             self._plan_transcript()
-            + 'print -r -- bedrock >| "$_DS_SUBSTRATE_DIR/sessions/$sid"; '
-            + "_ds_session_mark $sid; CLAUDE_CODE_USE_BEDROCK= _ds_session_mark $sid; "
+            + 'mkdir -p "$_DS_SUBSTRATE_DIR/sessions"; '
+            + 'print -r -- odd >| "$_DS_SUBSTRATE_DIR/sessions/$sid"; '
             + f"plan; {self._SESSIONS}",
             env=self._TOKEN,
         )
         self.assertIn("--resume", out, result.stderr)
-        self.assertIn("SESSIONS=bedrock\n", out)
+        self.assertIn("SESSIONS=1 odd\n", out)
+
+    def test_a_create_that_never_started_does_not_pin_its_substrate(self):
+        # A Bedrock `plan` that died before writing a transcript, then a
+        # `plan anthropic`: the session that ran is the seat one, so the
+        # record must say so, or every reopen moves it onto Bedrock.
+        self._launch("plan", env=self._TOKEN)
+        result, out = self._launch(f"plan anthropic; {self._SESSIONS}")
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+        self.assertIn("SESSIONS=1 anthropic\n", out)
+
+    def test_a_reopen_reads_the_current_cycles_record(self):
+        # After a cycle the day's live session is cycle 1, not cycle 0.
+        result, out = self._launch(
+            "day=$(date +%Y%m%d); mkdir -p $_DS_SUBSTRATE_DIR/sessions; "
+            "print -r -- 1 >| $_DS_SUBSTRATE_DIR/plan-cycle-$day; "
+            "sid=$(_ds_daily_sid plan 1 $day); "
+            "print -r -- anthropic >| $_DS_SUBSTRATE_DIR/sessions/$sid; "
+            'mkdir -p "$CLAUDE_CONFIG_DIR/projects/some-slug"; '
+            ': >| "$CLAUDE_CONFIG_DIR/projects/some-slug/$sid.jsonl"; '
+            'plan; print -r -- "SID=$sid"',
+            env=self._TOKEN,
+        )
+        self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
+        sid = out.split("SID=")[1].splitlines()[0]
+        self.assertIn(f"--resume {sid} ", out)
+
+    def test_the_plan_cycle_reads_padded_and_garbage_counters(self):
+        result = self._zsh(
+            "f=$_DS_REPO/c; _ds_plan_cycle $f; print -r -- 01 >| $f; "
+            "_ds_plan_cycle $f; print -r -- x >| $f; _ds_plan_cycle $f"
+        )
+        self.assertEqual(result.stdout.split(), ["0", "1", "0"], result.stderr)
 
     def test_a_plan_after_a_task_in_the_same_tab_is_not_on_bedrock(self):
         # The inherited Bedrock pin must lose to the verb's own tier.
