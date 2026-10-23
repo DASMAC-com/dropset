@@ -120,6 +120,25 @@ class Grammar(unittest.TestCase):
         with self.assertRaises(ValueError):
             session_dispatch.validate(["explore"])
 
+    def test_explore_takes_the_anthropic_escape_but_no_bedrock_word(self):
+        """The shell takes `anthropic` before the argument — Bedrock is the
+        default — and reads `bedrock` there as a name followed by a stray
+        word, so it must refuse that here too, as it does a bare word."""
+        for target in ("1196", "feeds"):
+            with self.subTest(target=target):
+                self.assertEqual(
+                    session_dispatch.validate(["explore", "anthropic", target]),
+                    ["explore", "anthropic", target],
+                )
+        for argv in (
+            ["explore", "bedrock", "1196"],
+            ["explore", "anthropic"],
+            ["explore", "anthropic", "0"],
+        ):
+            with self.subTest(argv=argv):
+                with self.assertRaises(ValueError):
+                    session_dispatch.validate(argv)
+
     def test_explore_resume_is_retired(self):
         """`explore <n|name>` resumes an existing session itself, so the twin
         would type a command the shell now refuses."""
