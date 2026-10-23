@@ -47,6 +47,14 @@ class IsSigned(unittest.TestCase):
         self.assertFalse(rb.is_signed(obj))
 
 
+class Summary(unittest.TestCase):
+    def test_past_five_shas_the_rest_are_counted(self):
+        shas = [f"{n:040d}" for n in range(7)]
+        line = rb._summary(shas, 9)
+        self.assertIn("7 unsigned of 9", line)
+        self.assertTrue(line.endswith("(+2)"))
+
+
 @unittest.skipUnless(shutil.which("false"), "needs a `false` binary")
 class RealRepo(unittest.TestCase):
     def setUp(self):
@@ -148,12 +156,22 @@ class RealRepo(unittest.TestCase):
         self.commit("m", sign=True)
         self.git("push", "-q")
         self.git("checkout", "-q", "eng-1")
-        self.git("rebase", "-q", "--no-gpg-sign", "main")
+        # The flag after the upstream, as the bootstrap's rebase spells it.
+        self.git("rebase", "-q", "main", "--no-gpg-sign")
+        self.assertIn("1 unsigned of 1", rb.count("main")[1])
         code, line = rb.resign("main", push=True)
         self.assertEqual(code, 0, line)
         self.assertIn("signed 1 of 1", line)
 
-    def test_a_remote_commit_this_checkout_never_saw_refuses_before_moving(self):
+    def test_a_branch_never_pushed_is_pushed_with_an_upstream(self):
+        self.commit("a")
+        code, line = rb.resign("main", push=True)
+        self.assertEqual(code, 0, line)
+        self.assertEqual(
+            self.git("rev-parse", "--abbrev-ref", "eng-1@{upstream}"), "origin/eng-1"
+        )
+
+    def test_a_remote_commit_this_branch_never_held_refuses_before_moving(self):
         self.commit("a")
         self.git("push", "-q", "-u", "origin", "eng-1")
         other = os.path.join(os.path.dirname(self.root), "other")
@@ -167,17 +185,47 @@ class RealRepo(unittest.TestCase):
             ("push", "-q"),
         ):  # fmt: skip
             self.git("-C", other, *args)
+        # A fetch (here, or in any worktree sharing the repo) moves the
+        # tracking ref onto the unseen commit; that must not read as seen.
+        self.git("fetch", "-q", "origin")
         head = self.git("rev-parse", "HEAD")
-        with self.assertRaises(rb.Refused):
+        with self.assertRaisesRegex(rb.Refused, "never held"):
             rb.resign("main", push=True)
+        self.assertEqual(self.git("rev-parse", "HEAD"), head)
+
+    def test_a_merge_commit_is_refused_before_moving(self):
+        self.commit("a")
+        self.git("checkout", "-q", "main")
+        self.commit("m", sign=True)
+        self.git("push", "-q")
+        self.git("checkout", "-q", "eng-1")
+        self.git("merge", "-q", "--no-gpg-sign", "--no-edit", "main")
+        head = self.git("rev-parse", "HEAD")
+        with self.assertRaisesRegex(rb.Refused, "merge commit"):
+            rb.resign("main", push=False)
         self.assertEqual(self.git("rev-parse", "HEAD"), head)
 
     def test_a_dirty_tree_is_refused(self):
         self.commit("a")
         with open("a", "w") as f:
             f.write("changed")
-        with self.assertRaises(rb.Refused):
+        with self.assertRaisesRegex(rb.Refused, "uncommitted"):
             rb.resign("main", push=False)
+
+    def test_the_cli_maps_outcomes_to_exit_codes(self):
+        self.commit("a")
+        head = self.git("rev-parse", "HEAD")
+        self.signer(shutil.which("false"))
+        self.assertEqual(rb.main(["resign", "--no-push"]), 1)
+        self.signer(self.stub)
+        with open("a", "w") as f:
+            f.write("changed")
+        self.assertEqual(rb.main(["resign", "--no-push"]), 2)
+        self.git("checkout", "-q", "--", "a")
+        self.assertEqual(self.git("rev-parse", "HEAD"), head)
+        self.assertEqual(rb.main(["resign", "--no-push"]), 0)
+        self.assertEqual(rb.main(["count"]), 0)
+        self.assertEqual(self.git("ls-remote", "origin", "refs/heads/eng-1"), "")
 
 
 if __name__ == "__main__":

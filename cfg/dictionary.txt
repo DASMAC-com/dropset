@@ -226,6 +226,7 @@ readback
 reauthored
 rebalances
 recalibratable
+reflog
 refspec
 regclass
 regen

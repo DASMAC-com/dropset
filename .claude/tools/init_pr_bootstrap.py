@@ -24,8 +24,10 @@ commits-and-prs.md`` → "Signing defers to the merge gate"): a verdict of
 `signing_probe.py` (which proves the signer unlocked, not merely wired), adds a
 note and runs the rebase and the bootstrap commit with ``--no-gpg-sign``. A
 signed commit that fails anyway falls back to an unsigned one the same way.
-``facts.signing_deferred`` says which happened; `resign_branch.py` signs the
-branch at the merge gate.
+``facts.signing_deferred`` says whether **this run** deferred — a re-run that
+finds an unsigned bootstrap commit already made reads ``false`` — so the
+branch-wide answer is `resign_branch.py count`, and `resign_branch.py` signs
+the branch at the merge gate.
 
 After the first mutation a failure still stops the run, and the manifest names
 what completed and what did not. Every step is **idempotent** — the rename and
@@ -280,10 +282,11 @@ class Bootstrap:
                 [sys.executable, str(TOOLS / "signing_probe.py")],
                 2 * PROBE_TIMEOUT + 20,
             )
-            if code == 1:
+            if code == 1 and "LOCKED" in err + out:
                 self._defer_signing(_tail(err or out, 200))
             elif code != 0:
-                # Exit 2 is git failing, not the signer.
+                # Exit 2 is git failing, not the signer; any other non-zero
+                # without the LOCKED line is the probe crashing or hanging.
                 raise Stop(_tail(err or out) or f"signing_probe.py exit {code}")
         self.branch = self.helper.get("normalized_branch")
         if not self.branch:
@@ -334,17 +337,21 @@ class Bootstrap:
         if self.subject in out.splitlines():
             return "skipped", "bootstrap commit already on the branch"
         commit = ["git", "commit", "--allow-empty", "-m", self.subject]
+        signed_err = None
         if not self.signing_deferred:
-            code, _, err = self.run([*commit[:3], "-S", *commit[3:]], 120)
+            code, _, signed_err = self.run([*commit[:3], "-S", *commit[3:]], 120)
             if code == 0:
                 return "ok", self.subject
-            # `failed to fill whole buffer` is a locked 1Password app.
-            self._defer_signing(f"signed commit failed: {_tail(err, 160)}")
         code, _, err = self.run([*commit[:3], "--no-gpg-sign", *commit[3:]], 120)
         if code != 0:
             raise Stop(
                 f"commit failed even unsigned — nothing is pushed yet ({_tail(err)})"
             )
+        if signed_err is not None:
+            # Only signing separates the two attempts, so the signed one's
+            # failure was the signer (`failed to fill whole buffer` is a
+            # locked 1Password app).
+            self._defer_signing(f"signed commit failed: {_tail(signed_err, 160)}")
         return "ok", f"{self.subject} (unsigned)"
 
     def step_push(self) -> tuple[str, str]:

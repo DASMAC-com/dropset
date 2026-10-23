@@ -1289,7 +1289,9 @@ migrations or generation inputs, and whether it spans crates.
    now, sign here instead** — the tool pushes with its own pinned
    lease, so the CI run that follows is on signed commits and step 20
    has nothing to do. On `LOCKED` (exit 1) it moved nothing: push as
-   above and leave the signing to step 20:
+   above and leave the signing to step 20. Exit 2 is a refusal (a merge
+   commit, a remote commit this branch never held) — report it and
+   hold, as step 20 does:
 
    ```sh
    python3 .claude/tools/resign_branch.py resign --base <base>
@@ -1573,17 +1575,18 @@ migrations or generation inputs, and whether it spans crates.
    python3 .claude/tools/resign_branch.py resign --base <base>
    ```
 
-   It replays the branch onto its own merge base, signing each commit
-   (the tree is unchanged, so no conflict is possible), and
-   force-pushes with a pinned lease — routine, no approval needed. Exit
-   0 with `nothing to sign` is the common case. **On `LOCKED` (exit 1)
-   it moved nothing**, and the handoff question below becomes the one
+   It replays the linear branch onto its own merge base, signing each
+   commit (tree unchanged, so no conflict), and force-pushes with a
+   pinned lease — routine, no approval needed. Exit 0 with
+   `nothing to sign` is the common case. **On `LOCKED` (exit 1) it
+   moved nothing**, and the handoff question below becomes the one
    operator turn the deferral costs: "ready to merge — unlock
    1Password and I sign and enqueue", re-running this after the yes.
-   Exit 2 is a refusal (a dirty tree, a remote commit this checkout
-   never saw) — report it and hold. **A re-sign changes every SHA, so
-   the required checks re-run** on the new head; `gh pr merge --auto`
-   below waits for them, and step 22's watch covers the enqueue.
+   Exit 2 is a refusal (a dirty tree, a merge commit on the branch, a
+   remote commit this branch never held) — report it and hold. **A
+   re-sign changes every SHA, so the required checks re-run** on the
+   new head; `gh pr merge --auto` below waits for them, and step 22's
+   watch covers the enqueue.
 
    Then move the issue (the step-3 tag) to **In Review**, with or just
    before the prompt — skip only if no tag resolved. A state-only write

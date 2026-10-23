@@ -90,6 +90,10 @@ def statuses(result):
     return {s["step"]: s["status"] for s in result["steps"]}
 
 
+def statuses_detail(result, step):
+    return next(s["detail"] for s in result["steps"] if s["step"] == step)
+
+
 class HappyPathTests(unittest.TestCase):
     def test_a_clean_run_completes_every_step(self):
         runner = FakeRunner()
@@ -189,6 +193,9 @@ class MidRunFailureTests(unittest.TestCase):
         self.assertEqual(result["stopped_at"], "commit")
         self.assertIn("even unsigned", result["steps"][-1]["detail"])
         self.assertFalse(runner.ran("git", "push"))
+        # Not the signer, so no deferral is recorded.
+        self.assertFalse(result["facts"]["signing_deferred"])
+        self.assertFalse(any("signing deferred" in n for n in result["notes"]))
 
 
 class SigningDeferralTests(unittest.TestCase):
@@ -239,10 +246,15 @@ class SigningDeferralTests(unittest.TestCase):
         self.assertFalse(runner.ran("git", "commit", "--allow-empty", "--no-gpg-sign"))
         self.assertFalse(runner.ran("git", "rebase", "origin/main", "--no-gpg-sign"))
 
+    def test_a_crashed_probe_stops_rather_than_deferring(self):
+        crash = "Traceback (most recent call last): ImportError"
+        runner = FakeRunner({("signing_probe.py",): (1, "", crash)})
+        result = bootstrap(runner).execute()
+        self.assertEqual(result["stopped_at"], "branch")
+        self.assertFalse(result["facts"]["signing_deferred"])
 
-def statuses_detail(result, step):
-    return next(s["detail"] for s in result["steps"] if s["step"] == step)
 
+class BestEffortTests(unittest.TestCase):
     def test_best_effort_steps_fail_without_stopping(self):
         runner = FakeRunner(
             {

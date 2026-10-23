@@ -11,9 +11,10 @@ this stays in sync (the upkeep pass checks only that citations resolve).
 
 ## Commits and PRs
 
-- **Sign every commit** (`git commit -S`) — branch protection requires
-  a verified signature on main. **A locked signer never halts work**:
-  commit and push with `--no-gpg-sign`, and `review-pr` signs the whole
+- **Sign every commit that reaches main** (`git commit -S`) — branch
+  protection requires a verified signature there. **A locked signer
+  never halts work**: commit and push with `--no-gpg-sign`, and
+  `review-pr` signs the whole
   branch in one pass at the merge gate (`resign_branch.py`), the one
   place the operator is needed. Nothing is enqueued unsigned.
 - **Never add AI attribution** to a commit or PR — no `Co-Authored-By:`

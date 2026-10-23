@@ -27,14 +27,20 @@ nothing about whether the merge gate's check will see one.
 no ref, so the ask to the operator is the single "unlock and I sign and
 enqueue". Then it replays the branch onto **its own merge base**
 (``git rebase --force-rebase --gpg-sign``) — a re-sign, never a rebase onto a
-newer main, so no conflict is possible and the tree is unchanged — and pushes
-with a lease pinned to the remote sha read just before. The push is refused
-(exit 2, before anything moves) when the remote tip is a commit this checkout
-has never seen — neither its recorded tracking ref nor an ancestor of
-``HEAD`` — since forcing would drop another session's work.
+newer main — and pushes with a lease pinned to the remote sha read just
+before. A linear branch replayed onto its own merge base cannot conflict and
+keeps its tree; a branch carrying a **merge commit** would be linearized, so it
+is refused up front, and a tree that differs after the replay anyway is reset
+to the old head. The push is refused before anything moves when the remote
+tip is a commit this branch never held — neither an ancestor of ``HEAD`` nor a
+tip in the branch's own reflog — since forcing would drop another session's
+work.
 
-Exit 2 is anything that is not the signer: a dirty tree, no merge base, a
-failed rebase (aborted), a refused push. Every line starts ``resign-branch |``.
+Exit 2 is anything that is not the signer: a dirty tree, a merge commit, no
+merge base, a failed rebase (aborted), a re-sign that changed the tree or left
+a commit unsigned (reset), an unseen remote tip. Only a push the lease rejects
+at the last moment exits 2 with the branch already re-signed locally — the
+tree unchanged, so re-running is safe. Every line starts ``resign-branch |``.
 
 Standard library only. A Python skill-tool under ``.claude/tools/`` —
 deliberately **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill
@@ -109,6 +115,20 @@ def _remote_sha(branch: str) -> str:
     return out.split()[0] if out.strip() else ""
 
 
+def _was_branch_tip(branch: str, sha: str, head: str) -> bool:
+    """Whether ``sha`` is work this branch has held: an ancestor of ``head`` or
+    a tip recorded in the branch's own reflog (which keeps the pre-rebase tip
+    of a branch since rebased onto a newer base).
+
+    Never the remote-tracking ref: worktrees share it, so another checkout's
+    fetch would mark a remote commit "seen" that this branch never took in.
+    """
+    if not _git("merge-base", "--is-ancestor", sha, head, check=False).returncode:
+        return True
+    reflog = _git("reflog", "show", "--format=%H", f"refs/heads/{branch}", check=False)
+    return sha in reflog.stdout.split()
+
+
 def resign(base: str, push: bool) -> tuple[int, str]:
     mb = merge_base(base)
     unsigned, total = unsigned_commits(mb)
@@ -116,29 +136,20 @@ def resign(base: str, push: bool) -> tuple[int, str]:
         return 0, f"{PREFIX} nothing to sign | {total} commit(s), all signed"
     if _git("status", "--porcelain", "--untracked-files=no").stdout.strip():
         raise Refused("uncommitted changes; commit them (unsigned is fine) first")
+    if _git("rev-list", "--merges", f"{mb}..HEAD").stdout.strip():
+        # A plain rebase would linearize the merge — a real replay that can
+        # conflict or change the tree, not a re-sign.
+        raise Refused("the branch carries a merge commit; rebase it linear first")
     branch = _git("symbolic-ref", "--short", "HEAD").stdout.strip()
     old_head = _git("rev-parse", "HEAD").stdout.strip()
+    old_tree = _git("rev-parse", "HEAD^{tree}").stdout.strip()
     remote = _remote_sha(branch) if push else ""
     if remote:
-        # The lease must protect work this checkout has not seen. Seen means
-        # the remote tip is what our tracking ref last recorded (a bare
-        # lease's test — a rebase onto a newer base leaves it no ancestor of
-        # HEAD) or an ancestor of HEAD. Read the tracking ref before the fetch
-        # that would overwrite it.
-        tracked = _git(
-            "rev-parse", "-q", "--verify", f"refs/remotes/origin/{branch}", check=False
-        ).stdout.strip()
         _git("fetch", "-q", "origin", branch)
-        seen = (
-            remote == tracked
-            or not _git(
-                "merge-base", "--is-ancestor", remote, old_head, check=False
-            ).returncode
-        )
-        if not seen:
+        if not _was_branch_tip(branch, remote, old_head):
             raise Refused(
-                f"origin/{branch} ({remote[:9]}) holds commits this checkout has "
-                "not seen; reconcile by hand, never force here"
+                f"origin/{branch} ({remote[:9]}) holds commits this branch never "
+                "held; reconcile by hand, never force here"
             )
     code, line = probe()
     if code == 1:
@@ -150,8 +161,13 @@ def resign(base: str, push: bool) -> tuple[int, str]:
         _git("rebase", "--abort", check=False)
         raise Refused(f"rebase failed and was aborted, HEAD is {old_head[:9]} again")
     left, _ = unsigned_commits(mb)
-    if left:
-        raise Refused(f"{len(left)} commit(s) still unsigned after the rebase")
+    changed = _git("rev-parse", "HEAD^{tree}").stdout.strip() != old_tree
+    if left or changed:
+        _git("reset", "-q", "--hard", old_head)
+        why = (
+            "the tree changed" if changed else f"{len(left)} commit(s) stayed unsigned"
+        )
+        raise Refused(f"{why} in the re-sign; HEAD reset to {old_head[:9]}")
     if not push:
         return 0, f"{PREFIX} signed {len(unsigned)} of {total} | not pushed"
     if remote:
