@@ -65,7 +65,6 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 
 # Rough bytes-per-token divisor for approximating a result's token cost from its
@@ -2011,9 +2010,11 @@ def to_brief(report: dict, session_label: str) -> str:
             figure += " (main {} + sub-agents {})".format(
                 money(report["session_cost"].total()), money(sub.total())
             )
-        figure += " at Bedrock rates"
-        if report["substrate"] != SUBSTRATE_BEDROCK:
-            figure += ", not billed"
+        figure += (
+            " at Bedrock rates"
+            if report["substrate"] == SUBSTRATE_BEDROCK
+            else f" {NOT_BILLED}"
+        )
     return f"Session {session_label}: {figure}; {profile}.\n"
 
 
@@ -2028,7 +2029,9 @@ def estimate_record(report: dict, session_id: str) -> dict:
         "substrate": report["substrate"],
         "cost_usd": None if total is None else round(total.total(), 6),
         "turns": report["totals"].turns,
-        "written_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "written_at": datetime.datetime.now(datetime.timezone.utc)
+        .replace(microsecond=0)
+        .isoformat(),
     }
 
 
