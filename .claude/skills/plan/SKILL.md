@@ -92,10 +92,8 @@ operator lever, never this mechanism.
   python3 .claude/tools/plan_cycle.py check
   ```
 
-  It prices the prefix in dollars (the seat at Bedrock rates);
-  `due` fires when `replay_usd` reaches `usd_threshold` (250k
-  at the advisor read rate), or 250k tokens for an unpriced
-  model. On `"due": true`, and no
+  `due` fires on dollars (250k at the advisor read rate; tokens
+  if unpriced). On `"due": true`, and no
   fold sub-agent still running (its notification would be lost),
   ask once: cycle now? — yes recommended. On no, run
   `plan_cycle.py snooze`.
