@@ -92,10 +92,11 @@ operator lever, never this mechanism.
   python3 .claude/tools/plan_cycle.py check
   ```
 
-  On `"due": true` (a 250k prefix or 40 inbound messages), and no
+  `due` fires on dollars (250k at the advisor read rate; tokens
+  if unpriced). On `"due": true`, and no
   fold sub-agent still running (its notification would be lost),
   ask once: cycle now? — yes recommended. On no, run
-  `plan_cycle.py snooze` (+50k tokens / +15 messages).
+  `plan_cycle.py snooze`.
 
 - **The procedure.** A one-line FYI to every live worker with an
   unanswered consult — planning is cycling, re-send anything

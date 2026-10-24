@@ -19,38 +19,37 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import plan_cycle as pc  # noqa: E402
 import resolve_session as rs  # noqa: E402
+import session_metrics as sm  # noqa: E402
 
 DATE = "20260910"
 
-
-def assistant(inp: int, read: int, write: int) -> dict:
-    return {
-        "type": "assistant",
-        "message": {
-            "usage": {
-                "input_tokens": inp,
-                "cache_read_input_tokens": read,
-                "cache_creation_input_tokens": write,
-                "output_tokens": 999,
-            }
-        },
-    }
-
-
-#: The record shape a received cross-session message takes in a transcript.
-PEER = {
-    "type": "user",
-    "isMeta": True,
-    "origin": {"kind": "peer", "name": "eng-1599"},
-    "message": {"content": "<cross-session-message ...>"},
+#: Placeholder model ids with rows patched in, so no test pins a real model.
+#: The advisor row carries the cache-read rate the dollar threshold derives
+#: from; round rates elsewhere keep the expected sums exact.
+ADVISOR = "test-advisor"
+WORKER = "test-worker"
+RATES = {
+    ADVISOR: sm.Rates(10.0, 50.0, pc.ADVISOR_CACHE_READ, 20.0, verified=None),
+    WORKER: sm.Rates(4.0, 20.0, 0.5, 8.0, verified=None),
 }
 
-#: The same message echoed by an attachment and a queue record, which must not
-#: count. They carry a peer origin too, so only the `type` test excludes them.
-ECHOES = [
-    {"type": "attachment", "origin": {"kind": "peer"}},
-    {"type": "queue-operation", "origin": {"kind": "peer"}},
-]
+
+def assistant(inp: int, read: int, write: int, model: str | None = None) -> dict:
+    message = {
+        "usage": {
+            "input_tokens": inp,
+            "cache_read_input_tokens": read,
+            "cache_creation_input_tokens": write,
+            "output_tokens": 999,
+        }
+    }
+    if model is not None:
+        message["model"] = model
+    return {"type": "assistant", "message": message}
+
+
+def priced():
+    return mock.patch.dict(sm.RATES_BY_MODEL, RATES)
 
 
 class Fixture:
@@ -103,30 +102,121 @@ class Fixture:
         return rc, [pid for pid, sig in sent if sig == pc.signal.SIGTERM]
 
 
-class CheckTests(unittest.TestCase):
-    def test_prefix_is_the_last_assistant_input_side(self):
-        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
-            fx.transcript([assistant(1, 10, 100), PEER, assistant(2, 200, 3000)])
+class PricedCheckTests(unittest.TestCase):
+    def test_both_dollar_figures_on_a_priced_session(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx, priced():
+            fx.transcript(
+                [
+                    assistant(0, 0, 1_000_000, WORKER),
+                    assistant(0, 1_000_000, 100_000, WORKER),
+                ]
+            )
             got = pc.check(fx.repo, DATE)
-        self.assertEqual(got["prefix_tokens"], 3202)
-        self.assertEqual(got["inbound_messages"], 1)
+        self.assertEqual(got["model"], WORKER)
+        self.assertEqual(got["prefix_tokens"], 1_100_000)
+        # 1.1M read at 0.5, plus the last 100k write at 8.0 for the next turn.
+        self.assertAlmostEqual(got["replay_usd"], 0.55)
+        self.assertAlmostEqual(got["next_turn_usd"], 0.55 + 0.8)
+        # Writes 1.1M at 8.0, reads 1M at 0.5, output 1998 at 20.0.
+        self.assertAlmostEqual(got["session_usd"], 8.8 + 0.5 + 0.03996)
+        self.assertNotIn("fallback", got)
+
+    def test_due_fires_at_the_derived_threshold_on_the_advisor_rate(self):
+        # A prefix-only turn on the advisor rate trips at the ratified 250k.
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx, priced():
+            fx.transcript([assistant(0, pc.TOKEN_THRESHOLD - 1, 0, ADVISOR)])
+            self.assertFalse(pc.check(fx.repo, DATE)["due"])
+            fx.transcript([assistant(0, pc.TOKEN_THRESHOLD, 0, ADVISOR)])
+            got = pc.check(fx.repo, DATE)
+        self.assertTrue(got["due"])
+        self.assertEqual(got["usd_threshold"], 0.06875)
+
+    def test_due_fires_on_dollars_not_tokens(self):
+        # A pricier read rate trips well under 250k tokens.
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx, priced():
+            fx.transcript([assistant(0, 150_000, 0, WORKER)])
+            got = pc.check(fx.repo, DATE)
+        self.assertLess(got["prefix_tokens"], pc.TOKEN_THRESHOLD)
+        self.assertTrue(got["due"])
+
+    def test_the_write_term_does_not_count_toward_due(self):
+        # A fresh session pays the write too, so a big one tips the marginal
+        # figure past the threshold without making the cycle due.
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx, priced():
+            fx.transcript([assistant(0, 200_000, 10_000, ADVISOR)])
+            got = pc.check(fx.repo, DATE)
+        self.assertGreater(got["next_turn_usd"], got["usd_threshold"])
         self.assertFalse(got["due"])
 
-    def test_echo_records_are_not_counted_as_messages(self):
-        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
-            fx.transcript([*ECHOES, PEER, *ECHOES, PEER, assistant(0, 0, 0)])
-            self.assertEqual(pc.check(fx.repo, DATE)["inbound_messages"], 2)
+    def test_a_failed_last_request_does_not_hide_the_prefix(self):
+        # A failed request is recorded as an all-zero `<synthetic>` record.
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx, priced():
+            fx.transcript(
+                [
+                    assistant(0, pc.TOKEN_THRESHOLD, 0, ADVISOR),
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "model": "<synthetic>",
+                            "usage": {"input_tokens": 0, "output_tokens": 0},
+                        },
+                    },
+                ]
+            )
+            got = pc.check(fx.repo, DATE)
+        self.assertEqual(got["model"], ADVISOR)
+        self.assertEqual(got["prefix_tokens"], pc.TOKEN_THRESHOLD)
+        self.assertTrue(got["due"])
 
-    def test_due_on_tokens_alone(self):
+    def test_an_unpriced_sub_agent_withholds_only_the_session_figure(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx, priced():
+            path = fx.transcript([assistant(0, 10, 0, WORKER)])
+            sid = path.stem
+            sub = path.parent / sid / "subagents" / "agent-x.jsonl"
+            sub.parent.mkdir(parents=True)
+            sub.write_text(json.dumps(assistant(5, 0, 0, "no-such-model")) + "\n")
+            got = pc.check(fx.repo, DATE)
+        self.assertIsNone(got["session_usd"])
+        self.assertIsNotNone(got["next_turn_usd"])
+
+
+class FallbackCheckTests(unittest.TestCase):
+    """A model with no rate row: due on the token threshold, said so."""
+
+    def test_the_fallback_reports_tokens_and_says_so(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            fx.transcript([assistant(0, 10, 0, "no-such-model")])
+            got = pc.check(fx.repo, DATE)
+        self.assertEqual(got["model"], "no-such-model")
+        self.assertIsNone(got["replay_usd"])
+        self.assertIsNone(got["next_turn_usd"])
+        self.assertIsNone(got["session_usd"])
+        self.assertIn("no-such-model", got["fallback"])
+        self.assertFalse(got["due"])
+
+    def test_prefix_is_the_last_assistant_input_side(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            fx.transcript([assistant(1, 10, 100), assistant(2, 200, 3000)])
+            got = pc.check(fx.repo, DATE)
+        self.assertEqual(got["prefix_tokens"], 3202)
+        self.assertEqual(got["model"], sm.UNRECORDED_MODEL)
+        self.assertFalse(got["due"])
+
+    def test_no_assistant_record_reads_as_an_undue_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            fx.transcript([{"type": "user", "message": {"content": "hi"}}])
+            got = pc.check(fx.repo, DATE)
+        self.assertEqual(got["prefix_tokens"], 0)
+        self.assertIn("fallback", got)
+        self.assertFalse(got["due"])
+
+    def test_due_on_tokens(self):
         with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
             fx.transcript([assistant(0, pc.TOKEN_THRESHOLD, 0)])
             self.assertTrue(pc.check(fx.repo, DATE)["due"])
 
-    def test_due_on_messages_alone(self):
-        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
-            fx.transcript([PEER] * pc.MESSAGE_THRESHOLD + [assistant(0, 1, 0)])
-            self.assertTrue(pc.check(fx.repo, DATE)["due"])
 
+class CheckTests(unittest.TestCase):
     def test_a_usage_only_in_the_head_is_found_by_the_fallback(self):
         with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
             filler = {"type": "user", "message": {"content": "x" * 4096}}
@@ -186,16 +276,51 @@ class CheckTests(unittest.TestCase):
 
 
 class SnoozeTests(unittest.TestCase):
-    def test_snooze_moves_both_thresholds_past_the_current_values(self):
+    def test_snooze_adds_the_dollar_step_past_the_current_figure(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx, priced():
+            fx.transcript([assistant(0, 260_000, 0, ADVISOR)])
+            before = pc.check(fx.repo, DATE)
+            pc.snooze(fx.repo, DATE)
+            got = pc.check(fx.repo, DATE)
+        self.assertTrue(before["due"])
+        self.assertAlmostEqual(
+            got["usd_threshold"], before["replay_usd"] + pc.SNOOZE_USD
+        )
+        self.assertEqual(got["token_threshold"], 260_000 + pc.SNOOZE_TOKENS)
+        self.assertFalse(got["due"])
+
+    def test_the_dollar_step_is_the_token_step_at_the_advisor_rate(self):
+        self.assertAlmostEqual(pc.SNOOZE_USD, 0.01375)
+
+    def test_snooze_moves_the_token_threshold_on_the_fallback(self):
         with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
             fx.transcript([assistant(0, 260_000, 0)])
             pc.snooze(fx.repo, DATE)
             got = pc.check(fx.repo, DATE)
         self.assertEqual(got["token_threshold"], 260_000 + pc.SNOOZE_TOKENS)
-        self.assertEqual(
-            got["message_threshold"], pc.MESSAGE_THRESHOLD + pc.SNOOZE_MESSAGES
-        )
+        self.assertAlmostEqual(got["usd_threshold"], pc.USD_THRESHOLD + pc.SNOOZE_USD)
         self.assertFalse(got["due"])
+
+    def test_a_retired_message_shape_snooze_reads_as_none(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            fx.transcript([assistant(0, 1, 0)])
+            sid = rs.daily_session_id("plan", DATE, 0)
+            state = fx.repo / rs.STATE_DIR
+            state.mkdir(parents=True)
+            (state / pc.SNOOZE).write_text(
+                json.dumps({"sid": sid, "tokens": 9, "messages": 55})
+            )
+            got = pc.check(fx.repo, DATE)
+        self.assertEqual(got["token_threshold"], pc.TOKEN_THRESHOLD)
+
+    def test_a_non_object_snooze_file_reads_as_none(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            fx.transcript([assistant(0, 1, 0)])
+            state = fx.repo / rs.STATE_DIR
+            state.mkdir(parents=True)
+            (state / pc.SNOOZE).write_text("[]\n")
+            got = pc.check(fx.repo, DATE)
+        self.assertEqual(got["token_threshold"], pc.TOKEN_THRESHOLD)
 
     def test_a_snooze_does_not_outlive_its_session(self):
         with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
