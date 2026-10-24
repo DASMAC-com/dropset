@@ -2066,8 +2066,9 @@ daily digest compares its own figure against it, and
 transcript.
 
 **Best-effort.** A failure prints one warning line and returns zero.
-The launcher still returns `claude`'s own status, and nothing after
-it, the substrate restore included, sees a difference.
+The launcher still returns `claude`'s own status. A sidecar that cannot
+be written is not a failure: the figure is already printed, and the
+digest reads a missing sidecar as none recorded.
 
 **Not a `SessionEnd` hook.** A hook's stdout goes to the debug log and
 is never shown, its default budget is 1.5 seconds, and whether it fires

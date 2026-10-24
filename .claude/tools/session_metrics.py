@@ -2101,15 +2101,26 @@ def main(argv: list[str] | None = None) -> int:
     else:
         sys.stdout.write(to_markdown(report, short_id(session_id)))
     # After the print, so a failed write cannot cost the operator the figure,
-    # and through a rename, so the digest never reads half a file.
+    # and through a rename, so the digest never reads half a file. A failed
+    # write is not a failed estimate: the figure is already out, and the digest
+    # reads a missing sidecar as none recorded.
     if args.estimate_out is not None:
         sys.stdout.flush()
-        args.estimate_out.parent.mkdir(parents=True, exist_ok=True)
         partial = args.estimate_out.with_name(args.estimate_out.name + ".tmp")
-        partial.write_text(
-            json.dumps(estimate_record(report, session_id)) + "\n", encoding="utf-8"
-        )
-        os.replace(partial, args.estimate_out)
+        try:
+            args.estimate_out.parent.mkdir(parents=True, exist_ok=True)
+            partial.write_text(
+                json.dumps(estimate_record(report, session_id)) + "\n",
+                encoding="utf-8",
+            )
+            os.replace(partial, args.estimate_out)
+        except OSError as e:
+            # `missing_ok` covers only a missing file, not an unwritable parent.
+            try:
+                partial.unlink(missing_ok=True)
+            except OSError:
+                pass
+            print(f"estimate sidecar not written: {e}", file=sys.stderr)
     return 0
 
 

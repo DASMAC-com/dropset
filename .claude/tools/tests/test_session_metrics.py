@@ -1590,6 +1590,40 @@ class ExitBrief(unittest.TestCase):
         self.assertIn("written_at", record)
 
 
+class ExitBriefSidecarFailure(unittest.TestCase):
+    """A sidecar that cannot be written keeps the brief and exits 0, so the
+    launcher does not print "no session estimate" under a printed figure."""
+
+    def test_an_unwritable_sidecar_is_not_a_failed_estimate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = pathlib.Path(tmp)
+            slug = home / "projects" / "some-slug"
+            slug.mkdir(parents=True)
+            (slug / "sid-2.jsonl").write_text(
+                assistant(ExitBrief._USAGE, "") + "\n", encoding="utf-8"
+            )
+            blocker = home / "not-a-dir"
+            blocker.write_text("", encoding="utf-8")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with (
+                mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(home)}),
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                rc = sm.main(
+                    [
+                        "--brief",
+                        "--session-id",
+                        "sid-2",
+                        "--estimate-out",
+                        str(blocker / "sessions" / "sid-2.estimate"),
+                    ]
+                )
+        self.assertEqual(rc, 0)
+        self.assertTrue(stdout.getvalue().startswith("Session sid: "))
+        self.assertIn("estimate sidecar not written", stderr.getvalue())
+
+
 class MoneyFormatting(unittest.TestCase):
     """`money()`'s thresholds are otherwise unpinned, and transposing its format
     specs would render every session's headline wrong with a green suite."""

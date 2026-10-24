@@ -753,8 +753,7 @@ _ds_session_exists() {
 #   $2 worktree tag — read only when $1 is empty
 #
 # BEST-EFFORT: a failure prints one warning line and returns 0, so it never
-# changes the exit status or the substrate restore that follows; the callers
-# return `claude`'s own status. NOT A SessionEnd HOOK: a hook's stdout goes to
+# changes the exit status; the callers return `claude`'s own status. NOT A SessionEnd HOOK: a hook's stdout goes to
 # the debug log and is never shown, and its default budget is 1.5 seconds. The
 # one case this misses, the terminal closed outright, is left to the next
 # morning's digest.
