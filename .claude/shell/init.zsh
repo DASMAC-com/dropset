@@ -730,6 +730,9 @@ _ds_session() {
     _ds_claude "$model" --session-id "$sid" -n "$name" \
       --permission-mode auto "${worktree_flag[@]}" "${prompt_arg[@]}"
   fi
+  local rc=$?
+  _ds_exit_estimate "$sid"
+  return $rc
 }
 
 # Internal: does a transcript for session id $1 exist? The same glob
@@ -738,6 +741,43 @@ _ds_session_exists() {
   local -a found
   found=("${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$1".jsonl(N))
   (( ${#found} ))
+}
+
+# Internal: THE EXIT EPILOGUE — once `claude` returns, by `/exit`, Ctrl+C or
+# Ctrl+D, print the session's cost estimate (`session_metrics.py --brief`) and
+# write its sidecar beside the substrate marker, `sessions/<sid>.estimate`,
+# which the daily digest compares its own figure against. A resumed session
+# prints its cumulative figure, since the transcript is the whole session.
+#
+#   $1 session id, or "" to resolve it by tag after exit
+#   $2 worktree tag — read only when $1 is empty
+#
+# BEST-EFFORT: a failure prints one warning line and returns 0, so it never
+# changes the exit status or the substrate restore that follows; the callers
+# return `claude`'s own status. NOT A SessionEnd HOOK: a hook's stdout goes to
+# the debug log and is never shown, and its default budget is 1.5 seconds. The
+# one case this misses, the terminal closed outright, is left to the next
+# morning's digest.
+_ds_exit_estimate() {
+  local sid="$1" mode run_from
+  if [[ -z "$sid" && -n "$2" ]]; then
+    {
+      read -r mode
+      read -r sid
+      read -r run_from
+    } <<< "$(python3 "$_DS_REPO/.claude/tools/resolve_session.py" \
+      --tag "$2" --repo "$_DS_REPO" --format lines 2>/dev/null)"
+  fi
+  if [[ -z "$sid" ]]; then
+    print -u2 'dropset: no session estimate — the session id did not resolve.'
+    return 0
+  fi
+  python3 "$_DS_REPO/.claude/tools/session_metrics.py" --brief \
+    --session-id "$sid" \
+    --estimate-out "$_DS_SUBSTRATE_DIR/sessions/$sid.estimate" 2>/dev/null ||
+    print -u2 "dropset: no session estimate for ${sid%%-*} —" \
+      'session_metrics.py failed.'
+  return 0
 }
 
 # Internal: set this iTerm session's `user.ds_role` variable to $1 ('' clears).
@@ -1512,6 +1552,9 @@ _ds_task_start() {
   _ds_claude "$model" -w "$dir" -n "$tag" --session-id "$sid" \
     --permission-mode auto \
     /init-pr
+  local rc=$?
+  _ds_exit_estimate "$sid"
+  return $rc
 }
 
 # Resume a worktree session by number: `task resume 814` resolves to the `814`
@@ -1623,6 +1666,14 @@ _ds_task_resume() {
       _ds_claude "$model" --resume "$tag" --permission-mode auto
       ;;
   esac
+  # Only the `resume` form knows its id before the launch. The other two
+  # resolve it after exit, when the newest transcript is the one just used.
+  # The no-number picker above prints no estimate: nothing names the session
+  # it picked.
+  local rc=$?
+  [[ "$mode" == resume ]] || sid=''
+  _ds_exit_estimate "$sid" "$tag"
+  return $rc
 }
 
 # Start OR resume an EXPLORE session — research, audits, and any other task

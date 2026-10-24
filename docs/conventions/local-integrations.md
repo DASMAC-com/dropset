@@ -2038,6 +2038,40 @@ diagnosing a launch.
 All of it is covered by `.claude/scripts/test_ds_substrate.py`, which
 drives the real zsh functions.
 
+#### The exit estimate
+
+**Every launch prints its session's cost estimate when `claude`
+returns**, whether by `/exit`, Ctrl+C or Ctrl+D. That covers
+`_ds_session` (`plan`, `architect`, `explore`, `chore`), `task`'s own
+launch and every `task resume` form. The epilogue, `_ds_exit_estimate`,
+runs `session_metrics.py --brief --session-id <sid>` and prints the
+one-paragraph figure, priced at Bedrock rates on either substrate (a
+seat session's says not billed). A resumed session prints its
+cumulative figure, since the transcript is the whole session.
+
+The verbs that compute their id pass it. A `task resume` that reached
+its session by `--continue` or by the tag picker resolves the id
+through `resolve_session.py` by tag after exit, when the newest
+transcript is the one just used. The bare picker prints nothing,
+because nothing names the session it picked.
+
+**The sidecar.** The same call writes `sessions/<sid>.estimate` beside
+the per-session substrate record. It holds JSON with `session_id`,
+`substrate`, `cost_usd` (the total across main and sub-agents, null
+when an unpriced model withholds it), `turns` and `written_at`. The
+daily digest compares its own figure against it, and
+`prune_conversations.py` deletes a session's sidecar along with its
+transcript.
+
+**Best-effort.** A failure prints one warning line and returns zero.
+The launcher still returns `claude`'s own status, and nothing after
+it, the substrate restore included, sees a difference.
+
+**Not a `SessionEnd` hook.** A hook's stdout goes to the debug log and
+is never shown, its default budget is 1.5 seconds, and whether it fires
+on a killed process is undocumented. The one case the epilogue misses,
+a terminal closed outright, is covered by the next morning's digest.
+
 #### The family, one line each
 
 (`init-pr` names `task` when it explains why a branch arrives as

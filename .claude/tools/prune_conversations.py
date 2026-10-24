@@ -65,8 +65,11 @@ explicit ("live worktree") instead of incidental ("within age").
 
 Safety invariant: the tool only ever deletes a directory that resolves **under**
 one of the three known roots, never follows a symlink, refuses any entry that
-escapes its root, and never touches the current session. Dry-run is the default;
-deletion requires ``--apply``. Standard library only.
+escapes its root, and never touches the current session. The one file it deletes
+outside those roots is a deleted session's **estimate sidecar**, which the
+launcher's exit epilogue writes beside the substrate marker; it goes with the
+transcript it priced. Dry-run is the default; deletion requires ``--apply``.
+Standard library only.
 """
 
 from __future__ import annotations
@@ -503,6 +506,28 @@ def session_uuids_in(slug_dir: Path) -> set[str]:
     return uuids
 
 
+#: Where the launcher's exit epilogue writes each session's estimate sidecar,
+#: relative to the base checkout — `_ds_exit_estimate` in `.claude/shell/init.zsh`.
+ESTIMATE_DIR = Path(".claude") / "session-substrate" / "sessions"
+ESTIMATE_SUFFIX = ".estimate"
+
+
+def estimate_sidecars(base: Path, records: list[Record]) -> list[Path]:
+    """The estimate sidecars of every session whose projects directory is being
+    deleted, so a sidecar is pruned with the transcript it priced. Read from
+    the directories before they go, the same join ``file-history`` uses."""
+    root = base / ESTIMATE_DIR
+    found: list[Path] = []
+    for record in records:
+        if not record.delete:
+            continue
+        for uuid in sorted(session_uuids_in(record.path)):
+            path = root / f"{uuid}{ESTIMATE_SUFFIX}"
+            if path.is_file() and not path.is_symlink():
+                found.append(path)
+    return found
+
+
 def scan_history_root(
     root: Path,
     *,
@@ -603,7 +628,9 @@ def kept_by_reason(groups: dict[str, list[Record]]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def render_manifest(groups: dict[str, list[Record]], protected: int) -> str:
+def render_manifest(
+    groups: dict[str, list[Record]], protected: int, sidecars: int = 0
+) -> str:
     """The grouped dry-run manifest: per-group count + MB, a total, and the
     kept count broken out by the reason each record was kept for.
 
@@ -641,6 +668,8 @@ def render_manifest(groups: dict[str, list[Record]], protected: int) -> str:
             lines.append(f"    - {r.path.name} ({_mb(r.size)})")
         if len(untagged) > MANIFEST_NAME_CAP:
             lines.append(f"    … and {len(untagged) - MANIFEST_NAME_CAP} more")
+    if sidecars:
+        lines.append(f"  estimate sidecars of those sessions: {sidecars} file(s)")
     lines.append(f"  TOTAL to free: {_mb(total)}")
     # Header and breakout from ONE source. `protected` arrives as a
     # caller-computed scalar, and a header that can disagree with the lines
@@ -979,9 +1008,10 @@ def run(argv: list[str]) -> int:
     for r in records:
         groups.setdefault(r.category, []).append(r)
     protected = sum(1 for r in records if not r.delete)
+    sidecars = estimate_sidecars(base_worktree(worktrees), project_records)
 
     if not args.apply:
-        print(render_manifest(groups, protected))
+        print(render_manifest(groups, protected, len(sidecars)))
         return 0
 
     freed = 0
@@ -992,7 +1022,12 @@ def run(argv: list[str]) -> int:
             freed += got
             if got:
                 deleted += 1
-    print(f"purge-conversations | deleted {deleted} dir(s) | freed {_mb(freed)}")
+    for path in sidecars:
+        path.unlink(missing_ok=True)
+    print(
+        f"purge-conversations | deleted {deleted} dir(s) and {len(sidecars)} "
+        f"estimate sidecar(s) | freed {_mb(freed)}"
+    )
     return 0
 
 

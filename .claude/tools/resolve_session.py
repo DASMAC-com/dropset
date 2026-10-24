@@ -259,6 +259,9 @@ def resolve(tag: str, repo: Path) -> dict:
     own = transcripts_in(projects / slugify(worktree))
     if own:
         verdict["mode"] = "continue"
+        # The newest transcript is the one `--continue` reaches, so after the
+        # session exits it names the session the launcher's epilogue prices.
+        verdict["session_id"] = own[0].stem
         verdict["run_from"] = str(worktree)
         verdict["reason"] = (
             f"{worktree.name} has its own transcript, so --continue addresses "
