@@ -1,3 +1,5 @@
+# cspell:word pycache
+
 # The program keypair no longer lives here — it is materialized into
 # target/deploy/ at build time from its canonical home keys/AAAA.json
 # (see the `program-keypair` Makefile target), so target/ is ignored
@@ -10,6 +12,12 @@ node_modules/
 # TS SDK publish build — emitted by `pnpm --filter @dropset/sdk run build`
 # for the npm tarball only; the workspace consumes raw TS (see sdk/ts).
 sdk/ts/dist/
+
+# Python bytecode caches — `make tools-tests` writes them under
+# .claude/hooks/, .claude/tools/ and .claude/tools/tests/, and a machine
+# with no global gitignore would otherwise stage them on `git add -A`.
+__pycache__/
+*.pyc
 
 # Background audit-loop state (see .claude/skills/audit-loop).
 .audit-loop/
