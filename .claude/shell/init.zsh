@@ -635,7 +635,9 @@ _ds_daily_sid() {
 # On Bedrock it binds every sub-agent slot to a tier (see "Model tiers"), and
 # `local -x` scopes each to this one command exactly as `ANTHROPIC_MODEL` is:
 # none outlives the session into the tab. A tier that does not resolve refuses
-# the launch, since an unbound slot silently runs Claude Code's own table.
+# the launch, since an unbound slot silently runs Claude Code's own table. The
+# refusal comes after the caller made its worktree and marker; a relaunch once
+# the tier is set reads both back, so the orphan costs nothing.
 _ds_claude() {
   local -x ANTHROPIC_MODEL="$1"
   shift
@@ -1965,7 +1967,7 @@ _ds_plan_cycle() {
 # BEDROCK BY DEFAULT, whatever `DS_MODEL_ADVISOR_SUBSTRATE` says (that governs
 # `architect` alone), so a planning session is priced like a worker rather
 # than vanishing into the subscription's opaque allowance. Its lever fold's
-# `model: opus` spawn lands on the executor model there (`_ds_bedrock_env`).
+# `model: opus` spawn lands on the executor model there (`_ds_claude`).
 #
 # A REOPEN KEEPS THE SUBSTRATE ITS SESSION RECORDED (`_ds_session_mark`), read
 # from today's current cycle before anything is entered. A word that disagrees

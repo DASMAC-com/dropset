@@ -61,9 +61,12 @@ class VerbCheckError(Exception):
 
 
 def launch_line(verb: str, substrate: str, number: str) -> str:
-    """The line to type for a token; ``task`` on Bedrock is the bare form."""
-    if (verb, substrate) == ("task", "bedrock"):
-        return f"task {number}"
+    """The line to type for a token, the substrate always spelled out.
+
+    Never the bare ``task <n>``, even for task on Bedrock: a bare launch takes
+    the runtime config's substrate, so suggesting it to an operator whose
+    executor defaults elsewhere would send them round to the same refusal.
+    """
     return f"{verb} {substrate} {number}"
 
 

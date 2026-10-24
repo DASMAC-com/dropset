@@ -65,7 +65,9 @@ class Outcomes(unittest.TestCase):
                 code, err = _run(argv, TITLES["plain"])
                 self.assertEqual(code, 1)
                 self.assertIn("the title says task on Bedrock", err)
-                self.assertIn("`task 1234`", err)
+                # Spelled out: a bare `task 1234` takes the configured
+                # substrate, which may be the one just refused.
+                self.assertIn("`task bedrock 1234`", err)
 
     def test_another_token_refuses_with_the_implied_line(self):
         code, err = _run(["task", "bedrock", "1234"], TITLES["chore_anthropic"])
