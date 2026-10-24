@@ -82,7 +82,9 @@ three ways a committed guard stays inert:
   the guard inspects, so it can never fire. This is the likeliest slip,
   because each guard's paste block below invites copying the compound
   guard's `Bash` block and swapping the script path — and
-  `worktree_edit_guard.py` under `"matcher": "Bash"` is inert.
+  `worktree_edit_guard.py` under `"matcher": "Bash"` is inert. The
+  private-key guard spans `Bash` and the edit tools, so it is
+  `MISMATCHED` until its matchers select **all** of them.
 - `MISDIRECTED` — the command's script path resolves to nothing.
 - `UNWIRED` — nothing points at it. A script merely *mentioned* in an
   argument is not wiring, so a guard disabled by commenting it into an
@@ -666,36 +668,57 @@ brief:
 1. Any `SSH_AUTH_SOCK`, `OP_SESSION_*` or `OP_SERVICE_ACCOUNT_TOKEN`
    assignment, `ssh-add`, `ssh-keygen -Y sign`, and `--session`.
 1. The **mainnet cockpit**: `make tui-mainnet`; `make teardown` (or
-   `dropset-teardown`) with a non-localnet `--rpc-url`; `dropset-tui` or
-   `cargo run -p dropset-tui` with `--cluster mainnet` or `--keys-file`.
+   `dropset-teardown`) with a non-localnet `--rpc-url`, `ARGS` given as
+   a make argument or set in the environment; `dropset-tui` or any
+   `cargo run` with `--cluster mainnet` or `--keys-file`.
    `make mainnet-demo` (watch-only, ephemeral key) is allowed by the
    hook; the cockpit binary itself refuses a mainnet run when
-   `CLAUDECODE` is set.
+   `CLAUDECODE` is non-empty.
 1. Mutation of the four **reference files** — `tui/private-keys.env`,
    `infra/localnet/secrets.local.env`, `frontend/.env.local` and
    `~/.config/1Password/ssh/agent.toml` — through `Edit` / `Write` /
    `MultiEdit`, a Bash redirection, or a mutating command (`rm`, `mv`,
-   `tee`, `sed -i`, …). Paths match by suffix after `~` expansion and
-   resolution against the checkout, the edit-path guard's approach, so
-   the base copy, every worktree's copy and a `../../../` spelling all
-   match. Reading them is allowed: they hold `op://` references, never
-   key material.
+   `cp`, `ln`, `tee`, `sed -i`, …, a directory destination included).
+   Paths match by suffix after `~` / `$HOME` expansion and resolution
+   against the checkout, the edit-path guard's approach, so the base
+   copy, every worktree's copy and a `../../../` spelling all match.
+   Reading them is allowed: the env files hold `op://` references and
+   `agent.toml` names which keys the agent offers; none holds key
+   material.
+
+The hook tokenizes the whole command once, quote-aware, so a quoted
+string spanning lines — a commit message describing this guard — stays
+one word rather than reading as commands, and glued operators
+(`ls;(op …)`) split into their parts.
 
 **What neither layer can stop**: a script whose contents a prefix rule
-and the hook's tokenizer never see (a make recipe, `python3 x.py`), an
-MCP tool that shells out, and a session or sub-agent without the
-wiring. There the layer that holds is the **1Password SSH agent's own
-per-key prompt**: a signing request from any process names the key and
-the requesting process, and the operator refuses it.
+and the hook's tokenizer never see (a make recipe, `python3 x.py`),
+variable indirection (`P=op; $P read`), a symlinked spelling of a
+reference file, a recursive delete of a parent directory, an MCP tool
+that shells out, and a session or sub-agent without the wiring. There
+the layer that holds is the **1Password SSH agent's own per-key
+prompt**: a signing request from any process names the key and the
+requesting process, and the operator refuses it.
 
 ### Wiring the private-key guard
 
 The **script** is committed with a self-test
 (`python3 .claude/hooks/no_private_key_access.py --self-test`), and
 `.claude/tools/tests/test_no_private_key_access.py` pins it under
-`make tools-tests`. Neither layer's **wiring** is committed. Unlike the
-other guards, this one's matcher names the edit tools **and** `Bash`,
-so it takes its own entry rather than joining the shared `Bash` one:
+`make tools-tests`. Neither layer's **wiring** is committed. Wiring it
+takes three things.
+
+First, set `DS_OP_PRIVATE_KEYS_VAULT` (the vault's name, its id, or
+both comma separated) in the runtime init the session helpers source,
+so every session inherits it. Unset, the hook's vault-name check is
+silently off; the other four groups still hold.
+
+Second, the hook entry. Unlike the other guards, this one's matcher
+names the edit tools **and** `Bash`, so it takes its own entry rather
+than joining the shared `Bash` one. Filed under `Bash` alone, or
+copied from the edit-path guard's block, half of it never fires —
+`make hook-wiring` reports that as `MISMATCHED`, naming the tools no
+matcher selects:
 
 <!-- markdownlint-disable MD013 -->
 
@@ -719,7 +742,7 @@ so it takes its own entry rather than joining the shared `Bash` one:
 }
 ```
 
-The deny rules go in the same file, in three groups — every direct
+Third, the deny rules, in the same file, in three groups — every direct
 `op`, the mainnet cockpit target, and edits to the four reference
 files:
 
@@ -755,7 +778,10 @@ absolute `/…/op`, or a `sh -c 'op …'` payload. Those are the shapes the
 hook covers.
 
 `make hook-wiring` reports a missing deny rule as `DENY-MISSING`, the
-way it reports an unwired guard, so the daily upkeep sees either gap.
+way it reports an unwired guard, and the upkeep pass records it as its
+own `deny-rules` line, so the daily upkeep sees either gap. It does not
+check the vault variable, which lives in the shell, not a settings
+file.
 Its rule table (`REQUIRED_DENY_RULES` in `.claude/tools/hook_wiring.py`)
 and the block above are pinned equal by `test_hook_wiring.py`; change
 both together. A rule in any of the three settings scopes counts, and

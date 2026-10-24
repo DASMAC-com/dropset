@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 import unittest
+import unittest.mock
 
 HOOKS = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -360,6 +361,129 @@ class FailOpenTests(unittest.TestCase):
             timeout=30,
         )
         self.assertEqual(result.returncode, 0)
+
+
+class ParsingTests(Base):
+    """The tokenizer shapes adversarial review found slipping through."""
+
+    def test_glued_operators_split(self):
+        self.assertBlocked(
+            "ls;(op read x)",
+            "true&&(op whoami)",
+            "ls|(op read x)",
+            "(ls)|op read x",
+            "true;>tui/private-keys.env",
+        )
+
+    def test_a_quoted_string_spanning_lines_stays_one_word(self):
+        self.assertBlocked("echo 'a\nb'; op read x", "bash -c \"true\nop read 'x'\"")
+        self.assertAllowed(
+            "git commit -m 'Subject\n\nop read is now blocked here.\n\nEnd'",
+            'git commit -m "Subject\n\nmake tui-mainnet now refuses agents"',
+            "git commit -m 'x\n\nrm tui/private-keys.env is denied\n'",
+        )
+
+    def test_backslash_newline_continuation_joins(self):
+        self.assertBlocked("op \\\nread x")
+
+    def test_ansi_c_quoting_and_stdin_shells(self):
+        self.assertBlocked(
+            "$'op' read x",
+            "bash <<< 'op read x'",
+            "echo 'op read x' | sh",
+            "printf '%s\\n' 'op read x' | bash -s",
+        )
+        self.assertAllowed("cat script.sh | bash", "bash script.sh")
+
+    def test_more_wrappers(self):
+        self.assertBlocked(
+            "time -p op whoami",
+            "watch 'op read x'",
+            "watch -n 5 op read x",
+            "parallel op read ::: x",
+            "xargs --max-args 1 op read < refs",
+        )
+
+
+class CockpitSpellingTests(Base):
+    def test_userinfo_is_never_localnet(self):
+        self.assertBlocked(
+            "make teardown ARGS='--rpc-url http://localhost:8899@api.mainnet-beta.solana.com'",
+            "dropset-teardown --rpc-url http://[::1]@api.mainnet-beta.solana.com",
+        )
+
+    def test_args_from_the_environment(self):
+        self.assertBlocked(
+            "ARGS='--rpc-url https://api.mainnet-beta.solana.com' make teardown",
+            "export ARGS='--rpc-url https://x.io'; make teardown",
+        )
+
+    def test_any_cargo_run_spelling(self):
+        self.assertBlocked(
+            "cargo r -p dropset-tui -- --cluster mainnet",
+            "cargo run --manifest-path tui/Cargo.toml -- --cluster mainnet",
+            "cargo run -- --cluster mainnet",
+            "cargo run -p=dropset-tui -- --keys-file x",
+        )
+        self.assertAllowed("cargo run -- --cluster localnet", "cargo r -p feeds")
+
+
+class HandleSpellingTests(Base):
+    def test_set_without_a_plain_assignment(self):
+        self.assertBlocked(
+            "SSH_AUTH_SOCK+=/x git log",
+            "printf -v SSH_AUTH_SOCK %s /x",
+            "read SSH_AUTH_SOCK < /tmp/s",
+            "declare -x OP_SERVICE_ACCOUNT_TOKEN=x",
+        )
+
+    def test_a_mention_is_not_an_assignment(self):
+        self.assertAllowed(
+            "grep -rn 'SSH_AUTH_SOCK=' docs/",
+            "rg OP_SERVICE_ACCOUNT_TOKEN= .claude/",
+        )
+
+    def test_identity_agent_glob(self):
+        self.assertBlocked(
+            "ssh -o IdentityAgent=~/Library/Group\\ Containers/2BUA8C4S2C*/t/agent.sock x"
+        )
+
+
+class DestinationTests(Base):
+    def test_directory_destinations(self):
+        self.assertBlocked(
+            "cp ../../../tui/private-keys.env tui/",
+            "cp -t tui /tmp/private-keys.env",
+            "mv /tmp/private-keys.env tui/",
+            "ln -s /tmp/private-keys.env tui/",
+            "echo x >& frontend/.env.local",
+            "echo x > $HOME/.config/1Password/ssh/agent.toml",
+            "echo x > ${HOME}/.config/1Password/ssh/agent.toml",
+        )
+
+    def test_reads_and_unrelated_destinations(self):
+        self.assertAllowed(
+            "cp tui/private-keys.env.example tui/",
+            "perl -Mstrict -e 1 frontend/.env.local",
+            "ls 2>&1",
+        )
+
+
+class RobustnessTests(unittest.TestCase):
+    def test_a_null_byte_path_still_blocks(self):
+        self.assertEqual(_bash("rm tui/private-keys.env\x00")[0], 2)
+
+    def test_a_non_string_cwd_does_not_raise(self):
+        payload = {
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "tui/private-keys.env"},
+            "cwd": 7,
+        }
+        self.assertEqual(guard.evaluate(payload, ENV)[0], 2)
+
+    def test_an_internal_error_fails_open(self):
+        with unittest.mock.patch.object(guard, "_scan", side_effect=RuntimeError):
+            self.assertEqual(_bash("ls"), (0, ""))
 
 
 if __name__ == "__main__":
