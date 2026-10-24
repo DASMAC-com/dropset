@@ -24,6 +24,12 @@ Three roots, two mechanisms:
   kept here too. Both of a session's directories are protected together,
   because the loss below took both and half a fix is not one.
 
+The base checkout's **session substrate records**
+(``.claude/session-substrate/sessions/<uuid>``) follow their transcripts the
+same way: deleted when this run deletes the transcript, kept while it is kept,
+and age-ruled when it no longer exists anywhere — so the directory cannot
+outlive the transcripts it describes.
+
 The **dropset set is derived forward** (``git worktree list`` → slug of each
 real worktree path), never by string-matching slug prefixes — a prefix would
 wrongly catch a sibling repo like ``dropset-beta`` whose slug starts with the
@@ -117,6 +123,14 @@ def projects_root() -> Path:
 
 def file_history_root() -> Path:
     return claude_home() / "file-history"
+
+
+def substrate_sessions_root(base_repo: Path) -> Path:
+    """``<base>/.claude/session-substrate/sessions`` — one file per session id,
+    naming the substrate its launch ran on (written by `_ds_session_mark` in
+    ``.claude/shell/init.zsh``, read by ``session_metrics`` and
+    ``fleet_cost``). A record describes a transcript, so it is purged with it."""
+    return base_repo / ".claude" / "session-substrate" / "sessions"
 
 
 def history_path() -> Path:
@@ -392,6 +406,34 @@ def decide_history(
     return Decision(False, "kept", "within age")
 
 
+def decide_marker(
+    name: str,
+    mtime_ts: float,
+    *,
+    current_uuid: str | None,
+    cutoff_ts: float,
+    purged_uuids: set[str],
+    kept_uuids: set[str],
+) -> Decision:
+    """Decide one session substrate record.
+
+    It follows its transcript: deleted when this run deletes the transcript,
+    kept while the transcript is kept. One whose transcript is in **neither**
+    set is an orphan — its transcript was purged before this rule existed, or
+    has not been written yet (the launch writes the record first) — so it gets
+    the age rule, which is what spares the second case.
+    """
+    if current_uuid is not None and name == current_uuid:
+        return Decision(False, "kept", "current session")
+    if name in kept_uuids:
+        return Decision(False, "kept", "session of a kept project")
+    if name in purged_uuids:
+        return Decision(True, "substrate-marker", "transcript purged")
+    if mtime_ts < cutoff_ts:
+        return Decision(True, "substrate-marker", "no transcript, older than threshold")
+    return Decision(False, "kept", "no transcript, within age")
+
+
 def is_within(root: Path, candidate: Path) -> bool:
     """True only when ``candidate`` resolves to a path **under** ``root`` (both
     real-path-resolved) — the guard that keeps deletion inside a known root."""
@@ -525,6 +567,39 @@ def scan_history_root(
     return records
 
 
+def scan_marker_root(
+    root: Path,
+    *,
+    current_uuid: str | None,
+    cutoff_ts: float,
+    purged: dict[str, str],
+    kept_uuids: set[str],
+) -> list[Record]:
+    """Classify every session substrate record. ``purged`` maps each session
+    id whose transcript this run deletes to that transcript's tag, so the
+    manifest names a record beside the transcript it goes with."""
+    records: list[Record] = []
+    if not root.is_dir():
+        return records
+    for entry in sorted(root.iterdir()):
+        if not entry.is_file() or entry.is_symlink():
+            continue
+        d = decide_marker(
+            entry.name,
+            entry.stat().st_mtime,
+            current_uuid=current_uuid,
+            cutoff_ts=cutoff_ts,
+            purged_uuids=set(purged),
+            kept_uuids=kept_uuids,
+        )
+        tag = None
+        if d.delete and entry.name in purged:
+            tag = f"{purged[entry.name]} / {entry.name}"
+        size = entry.stat().st_size if d.delete else 0
+        records.append(Record(entry, d.category, d.delete, d.reason, size, tag))
+    return records
+
+
 # --------------------------------------------------------------------------
 # Report + apply
 # --------------------------------------------------------------------------
@@ -535,6 +610,7 @@ CATEGORY_LABELS = {
     "non-dropset": "non-dropset transcripts",
     "file-history": "file-history (session UUID dirs)",
     "cli-cache": "CLI cache (aged)",
+    "substrate-marker": "session substrate records (with their transcripts)",
 }
 
 
@@ -625,17 +701,22 @@ def render_manifest(groups: dict[str, list[Record]], protected: int) -> str:
 
 
 def safe_delete(record: Record, roots: list[Path]) -> int:
-    """Hard-delete one record's directory after re-checking the safety
-    invariant: it must be a real (non-symlink) directory under a known root.
-    Returns bytes freed (0 on refusal)."""
+    """Hard-delete one record's directory — or, for a substrate record, its
+    file — after re-checking the safety invariant: it must be a real
+    (non-symlink) entry under a known root. Returns bytes freed (0 on
+    refusal)."""
     path = record.path
-    if path.is_symlink() or not path.is_dir():
+    is_marker = record.category == "substrate-marker"
+    if path.is_symlink() or not (path.is_file() if is_marker else path.is_dir()):
         return 0
     if not any(is_within(root, path) for root in roots):
         print(f"refusing to delete outside a known root: {path}", file=sys.stderr)
         return 0
     freed = record.size
-    shutil.rmtree(path)
+    if is_marker:
+        path.unlink()
+    else:
+        shutil.rmtree(path)
     return freed
 
 
@@ -890,7 +971,8 @@ def run(argv: list[str]) -> int:
     proj = projects_root()
     cli = cli_cache_root()
     hist = file_history_root()
-    roots = [proj, cli, hist]
+    markers = substrate_sessions_root(base_worktree(worktrees))
+    roots = [proj, cli, hist, markers]
 
     records: list[Record] = []
     project_records = scan_slug_root(
@@ -911,9 +993,12 @@ def run(argv: list[str]) -> int:
     # from the decisions just made rather than re-computed, so the two roots
     # cannot disagree about which sessions matter.
     protected_uuids: set[str] = set()
+    purged: dict[str, str] = {}
     for r in project_records:
         if not r.delete:
             protected_uuids |= session_uuids_in(r.path)
+        else:
+            purged.update(dict.fromkeys(session_uuids_in(r.path), r.tag or r.path.name))
     # The CLI cache uses the same slug scheme; re-tag a deletable slug entry as
     # the cli-cache group so the manifest separates it from transcripts.
     for r in scan_slug_root(
@@ -936,6 +1021,13 @@ def run(argv: list[str]) -> int:
         current_uuid=current_uuid,
         cutoff_ts=cutoff_ts,
         protected_uuids=protected_uuids,
+    )
+    records += scan_marker_root(
+        markers,
+        current_uuid=current_uuid,
+        cutoff_ts=cutoff_ts,
+        purged=purged,
+        kept_uuids=protected_uuids,
     )
 
     groups: dict[str, list[Record]] = {}

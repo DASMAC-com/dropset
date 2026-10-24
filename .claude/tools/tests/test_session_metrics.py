@@ -1055,6 +1055,40 @@ class SubstrateDetection(unittest.TestCase):
         self.assertEqual(sm.read_substrate_marker(self.worktree, "sid-1"), "bedrock")
         # No record for this one: the tag marker still answers.
         self.assertEqual(sm.read_substrate_marker(self.worktree, "sid-2"), "anthropic")
+        # And the reason names which of the two decided.
+        substrate, reason = sm.resolve_substrate(self.worktree, "sid-1")
+        self.assertEqual(substrate, sm.SUBSTRATE_BEDROCK)
+        self.assertIn(sm.MARKER_SESSION, reason)
+        substrate, reason = sm.resolve_substrate(self.worktree, "sid-2")
+        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertIn(sm.MARKER_TAG, reason)
+
+    def test_a_base_repo_session_record_prices_on_the_bedrock_branch(self):
+        # End to end: a Bedrock `plan` transcript in the base checkout gets a
+        # dollar headline once its session record exists.
+        self._write_session("sid-plan", "bedrock\n")
+        transcript = self.base / "sid-plan.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "cwd": str(self.base),
+                    "message": {
+                        "id": "m1",
+                        "model": "claude-opus-5-5",
+                        "role": "assistant",
+                        "usage": {"input_tokens": 1000, "output_tokens": 1000},
+                        "content": [],
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        report = sm.aggregate(transcript, "sid-plan")
+        self.assertEqual(report["substrate"], sm.SUBSTRATE_BEDROCK)
+        self.assertIn(sm.MARKER_SESSION, report["substrate_reason"])
+        self.assertIn("at Bedrock rates", sm.to_markdown(report, "sid-plan"))
 
     def test_an_unrecognized_marker_fails_toward_seat(self):
         self._write("eng-1364", "vertex")

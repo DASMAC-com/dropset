@@ -16,8 +16,9 @@ in UTC, so every day boundary here is a UTC one, on both sides:
     the transcript's model id (a seat and a Bedrock session record the same
     name). Every session is also keyed to its Linear issue the same way for
     every substrate — the worktree tag, or for a base-checkout ``chore`` its
-    bootstrap prompt: Bedrock issues are priced, seat and unattributed
-    ones are listed by session count beside them.
+    bootstrap prompt, which also keys an issue-less ``plan`` session by its
+    verb: Bedrock issues are priced, seat and unattributed ones are listed by
+    session count beside them.
 
 ``reconcile``
     ``meter`` beside Cost Explorer's billed gross for the same days, per
@@ -45,12 +46,8 @@ marker (or an unrecognized one) is ``unattributed`` and is never priced into
 the Bedrock total — that is the share the bill comparison cannot account for,
 reported rather than guessed. ``explore`` landed here until it wrote a marker;
 an older explore worktree still does. A base-repo session with no record reads
-as ``seat``.
-
-The per-session record closed the two old blind spots — a Bedrock ``plan``
-had no marker, and a relaunch on the other substrate rewrote the tag marker
-and so reclassified a worktree's earlier sessions — for every session
-launched since it shipped. An older session still classifies the old way.
+as ``seat``. A session launched before the record still classifies the old
+way.
 
 **The bill is matched per service, not by a fixed list of names.** Cost
 Explorer files each model as its own Marketplace service, ``Claude <Family>
@@ -203,6 +200,25 @@ def issue_of_prompt(text: str) -> str | None:
     return f"ENG-{int(match.group(1) or match.group(2))}"
 
 
+# The bootstrap prompt of a launch with no issue at all: `plan` types `/plan`
+# in the base checkout, as the retired `housekeeping` typed `/housekeeping`.
+PROMPT_VERB_RE = re.compile(
+    r"<command-name>/(plan|housekeeping)</command-name>"
+    r"|^/(plan|housekeeping)(?:\s|$)",
+    re.IGNORECASE,
+)
+
+
+def verb_of_prompt(text: str) -> str | None:
+    """The verb an issue-less base-checkout session ran as, from its first
+    prompt — the key it groups under in the per-issue table, so each planning
+    cycle's cost is a line of its own rather than part of ``(no issue)``."""
+    match = PROMPT_VERB_RE.search(text.strip())
+    if not match:
+        return None
+    return (match.group(1) or match.group(2)).lower()
+
+
 def service_for_model(model: str) -> str | None:
     """The Cost Explorer service a transcript model id bills under.
 
@@ -301,10 +317,11 @@ def _prompt_text(rec: dict) -> str:
 
 
 def _read_head(path: Path) -> tuple[str | None, str | None]:
-    """``(cwd, issue from the bootstrap prompt)`` — the prompt names the issue
-    a base-checkout launch ran for, where no worktree tag does. The first few
-    user records are tried, not only the first: a caveat or hook record can
-    precede the command."""
+    """``(cwd, issue or verb from the bootstrap prompt)`` — the prompt names
+    the issue a base-checkout launch ran for, where no worktree tag does, or
+    the verb of one with no issue (``plan``). The first few user records are
+    tried, not only the first: a caveat or hook record can precede the
+    command."""
     cwd = None
     users = 0
     for line in sm._read_lines(path):
@@ -317,7 +334,8 @@ def _read_head(path: Path) -> tuple[str | None, str | None]:
         if cwd is None and isinstance(rec.get("cwd"), str) and rec["cwd"].strip():
             cwd = rec["cwd"].strip()
         if rec.get("type") == "user":
-            issue = issue_of_prompt(_prompt_text(rec))
+            text = _prompt_text(rec)
+            issue = issue_of_prompt(text) or verb_of_prompt(text)
             users += 1
             if issue or users >= HEAD_USER_RECORDS:
                 return cwd, issue

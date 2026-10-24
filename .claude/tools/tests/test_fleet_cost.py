@@ -228,6 +228,42 @@ class WalkTest(unittest.TestCase):
         # s3 and s5, unchanged: no record, so the old reading stands.
         self.assertEqual(summary["substrates"]["seat"]["sessions"], 2)
 
+    def test_a_bedrock_plan_session_is_priced_under_its_verb(self) -> None:
+        base = Path(self.tmp.name) / "repo"
+        sessions = base / sm.SUBSTRATE_DIR / "sessions"
+        sessions.mkdir()
+        (sessions / "s10").write_text("bedrock\n")
+        prompt = json.dumps(
+            {
+                "type": "user",
+                "cwd": str(base),
+                "message": {
+                    "role": "user",
+                    "content": "<command-message>plan</command-message>\n"
+                    "<command-name>/plan</command-name>",
+                },
+            }
+        )
+        self.write(
+            self.projects / "plan" / "s10.jsonl", [prompt, record("msg_j", str(base))]
+        )
+        meter = fc.walk(self.projects, [DAY])
+        self.assertAlmostEqual(dict(fc.issue_costs(meter, [DAY]))["plan"], ONE_MESSAGE)
+        # The seat base-repo session with no command stays `(no issue)`.
+        self.assertIn(("(no issue)", 1), fc.issue_session_counts(meter, [DAY], fc.SEAT))
+
+    def test_verb_of_prompt(self) -> None:
+        self.assertEqual(fc.verb_of_prompt("/plan"), "plan")
+        self.assertEqual(fc.verb_of_prompt("/plan anthropic"), "plan")
+        self.assertEqual(
+            fc.verb_of_prompt("<command-name>/housekeeping</command-name>"),
+            "housekeeping",
+        )
+        self.assertIsNone(fc.verb_of_prompt("/planning notes"))
+        self.assertIsNone(fc.verb_of_prompt("run /plan later"))
+        # An issue-keyed launch is the issue regex's, not this one's.
+        self.assertIsNone(fc.verb_of_prompt("/chore 2031"))
+
     def test_issue_of_reads_every_pre_rename_spelling(self) -> None:
         for tag in ("1651", "eng-1651", "ceo-1651", "exp-1651"):
             cwd = f"/repo/.claude/worktrees/{tag}"
