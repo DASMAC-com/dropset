@@ -96,8 +96,8 @@ def fetch_title(api_key: str, identifier: str) -> str:
     data = linear_api.post(
         api_key, _TITLE_QUERY, {"id": identifier}, error=VerbCheckError
     )
-    issue = data.get("issue") or {}
-    title = issue.get("title")
+    issue = data.get("issue")
+    title = issue.get("title") if isinstance(issue, dict) else None
     if not isinstance(title, str):
         raise VerbCheckError(f"no issue {identifier}")
     return title
@@ -121,7 +121,10 @@ def run(argv: list[str], *, fetch: Callable[[str, str], str] = fetch_title) -> i
         api_key = linear_api.env_var("LINEAR_API_KEY", error=VerbCheckError)
         title = fetch(api_key, f"ENG-{number}")
     except VerbCheckError as exc:
-        print(f"{verb}: title not checked ({exc}) — launching", file=sys.stderr)
+        # The reason can quote a server's error body, so only printable
+        # characters reach the operator's terminal.
+        why = "".join(c for c in str(exc) if c.isprintable())
+        print(f"{verb}: title not checked ({why}) — launching", file=sys.stderr)
         return 0
 
     reason = decide(title, verb, substrate, number)

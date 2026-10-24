@@ -641,10 +641,10 @@ _ds_claude() {
   shift
   if [[ -n "$CLAUDE_CODE_USE_BEDROCK" ]]; then
     local executor helper
-    # The session's own `_ds_tier` call already printed any warning these ids
-    # carry, so the second resolution is quiet; an unset tier still refuses.
-    { read -r executor; } <<< "$(_ds_tier executor bedrock 2>/dev/null)"
-    { read -r helper; } <<< "$(_ds_tier helper bedrock 2>/dev/null)"
+    # Not silenced: a sub-agent tier missing its window suffix warns here,
+    # since only the session's own tier was resolved before.
+    { read -r executor; } <<< "$(_ds_tier executor bedrock)"
+    { read -r helper; } <<< "$(_ds_tier helper bedrock)"
     if [[ -z "$executor" || -z "$helper" ]]; then
       print -u2 'dropset: a Bedrock launch binds sub-agents to the executor and' \
         'helper tiers — set DS_MODEL_EXECUTOR and DS_MODEL_HELPER. Refusing.'
@@ -1216,6 +1216,10 @@ _ds_bedrock_env() {
   export CLAUDE_CODE_USE_BEDROCK=1
   export AWS_REGION="${DS_BEDROCK_REGION:-us-west-2}"
   export ENABLE_PROMPT_CACHING_1H=1
+  # The slots are `_ds_claude`'s, per command; one an older copy of this file
+  # exported into the tab must not reach a launch whose tier left it unbound.
+  unset ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL
+  unset ANTHROPIC_DEFAULT_SONNET_MODEL CLAUDE_CODE_SUBAGENT_MODEL
 
   # Resolved at launch, never held in a long-lived shell — the same lazy shape
   # and the same `${VAR:-…}` override as `_ds_secrets`, for the same reasons.
@@ -1804,9 +1808,9 @@ explore() {
   [[ -n "$substrate" ]] || return 1
 
   # Sub-agents on Bedrock default to the executor tier, as on every Bedrock
-  # launch (`_ds_claude`). `recorded` is empty exactly when no session or
-  # worktree exists, so the title guard judges only a new session.
-  if [[ -z "$recorded" ]]; then
+  # launch (`_ds_claude`). The title guard judges a new session only — one
+  # in a tree another verb made included, which is the mismatch it exists for.
+  if ! _ds_session_exists "$sid"; then
     _ds_verb_check explore "$substrate" "$raw" || return 1
   fi
   _ds_substrate_enter "$substrate" 'explore' || return 1

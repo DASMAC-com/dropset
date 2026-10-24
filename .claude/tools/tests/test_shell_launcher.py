@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -113,6 +114,27 @@ class LaunchLineGrammarTest(unittest.TestCase):
                 got = run(command)
                 self.assertEqual(got.returncode, 1)
                 self.assertIn("Usage: architect [anthropic|bedrock] <n>", got.stderr)
+
+    def test_a_new_session_reaches_the_title_guard_with_its_launch_line(self) -> None:
+        """Each issue verb parses its word-first form and hands the guard the
+        normalized launch line. The stub refuses, so nothing past the guard
+        runs and no Bedrock export is entered."""
+        stub = '_ds_verb_check() { print -u2 "guard: $*"; return 1; }; '
+        with tempfile.TemporaryDirectory() as home:
+            env = {"CLAUDE_CONFIG_DIR": home, "DS_MODEL_ADVISOR": "claude-adv-1[1m]"}
+            env.update(TIERS)
+            for command, line in (
+                ("explore bedrock eng-999991", "explore bedrock 999991"),
+                ("explore anthropic 999991", "explore anthropic 999991"),
+                ("architect bedrock 999992", "architect bedrock 999992"),
+                ("architect anthropic eng-999992", "architect anthropic 999992"),
+                ("chore bedrock 999993", "chore bedrock 999993"),
+            ):
+                with self.subTest(command=command):
+                    got = run(stub + command, **env)
+                    self.assertEqual(got.returncode, 1, got.stderr)
+                    self.assertIn(f"guard: {line}", got.stderr)
+                    self.assertNotIn("in", sections(got.stdout))
 
     def test_explore_refuses_a_word_as_its_name(self) -> None:
         for command in ("explore bedrock", "explore bedrock anthropic"):

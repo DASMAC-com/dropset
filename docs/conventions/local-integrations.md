@@ -1348,10 +1348,12 @@ title and refuses a launch line the token contradicts — no token on
 anything but `task` on Bedrock, another verb or substrate (it prints
 the implied line), `[Operator]`, or an unrecognized bracket. A
 mismatch fails closed with no force flag (fix the title); an
-unreachable Linear or a missing key warns and launches; a reopen and a
+unreachable Linear or a missing key warns and launches, as does any
+other Linear failure (a number with no issue included); a reopen and a
 name are not checked.
 Every Bedrock launch pins its sub-agents to tiers (see "Model tiers"
-below); on the subscription they inherit the session's model. A launch into
+below); on the subscription a sub-agent naming no model inherits the
+session's, and a named alias runs Claude Code's own table. A launch into
 an existing session or worktree keeps the substrate its marker
 records — a switch means a fresh worktree.
 The table names verbs and tiers only, never a model class or id.
@@ -1804,8 +1806,9 @@ verb's `anthropic` escape.
 **What a Bedrock launch exports:** `CLAUDE_CODE_USE_BEDROCK=1`,
 `AWS_REGION`, `ENABLE_PROMPT_CACHING_1H=1`, and
 `AWS_BEARER_TOKEN_BEDROCK` resolved from 1Password at launch. Every
-Bedrock launch also binds the four sub-agent slots to tiers, scoped to
-the one `claude` command (see "Model tiers").
+Bedrock launch also binds the sub-agent slots to tiers — the `haiku`
+one only when the background tier is set — scoped to the one `claude`
+command (see "Model tiers").
 An anthropic launch exports none of them —
 **the absence of `CLAUDE_CODE_USE_BEDROCK` IS the seat pin**, which is
 why an anthropic launch *clears* those variables rather than merely
@@ -2336,8 +2339,8 @@ drives the real zsh functions.
 - **`architect <n>`** — start **or resume** an **architect** session on
   the design thread governed by issue `<n>`, its only argument: the CEO
   hat, and the complement to `plan` rather than a variant of it. Same
-  tier, same optional substrate word (before the number once the
-  launcher reorder lands, after it until then), same
+  tier, same optional substrate word, before the number
+  (`architect bedrock <n>`), same
   idempotency; the different halves are the briefing
   (`/architect ENG-<n>`), what it may write — **no scheduling
   writes**: it files its own tasks and moves its own governing issue to

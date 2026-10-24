@@ -94,6 +94,12 @@ class Outcomes(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("title not checked (timed out)", err)
 
+    def test_a_server_supplied_reason_reaches_the_terminal_printable_only(self):
+        code, err = _run(["chore", "bedrock", "1234"], error="HTTP 502: \x1b[2J gone")
+        self.assertEqual(code, 0)
+        self.assertNotIn("\x1b", err)
+        self.assertIn("[2J gone", err)
+
     def test_no_key_warns_and_launches(self):
         code, err = _run(["chore", "bedrock", "1234"], TITLES["plain"], key="")
         self.assertEqual(code, 0)
