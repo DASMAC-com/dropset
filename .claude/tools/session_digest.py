@@ -65,9 +65,12 @@ import session_metrics as sm
 DIGEST_DIR = Path(".claude") / "session-metrics"
 HISTORY_NAME = "history.jsonl"
 DIGEST_GLOB = "digest-*.json"
-# Where the launcher epilogue leaves a session's exit-time estimate, one
-# `<session-id>.json` holding `{"dollars": <float>}`.
-ESTIMATE_DIR = DIGEST_DIR / "estimates"
+# Where the launcher epilogue leaves a session's exit-time estimate
+# (`session_metrics.py --estimate-out`): one `<session-id>.estimate` beside the
+# session's substrate record, a JSON object whose `cost_usd` is the figure, or
+# null when the session could not be priced.
+ESTIMATE_DIR = sm.SUBSTRATE_DIR / "sessions"
+ESTIMATE_SUFFIX = ".estimate"
 
 # How many earlier digests a header figure's median spans, how many it needs
 # before a figure can be judged, and how far above the median flags it.
@@ -242,8 +245,8 @@ def is_live(path: Path, cwd: str | None, base: Path, now_ts: float) -> bool:
 
 def read_estimate(base: Path, session_id: str) -> float | None:
     try:
-        data = json.loads((base / ESTIMATE_DIR / f"{session_id}.json").read_text())
-        return float(data["dollars"])
+        path = base / ESTIMATE_DIR / f"{session_id}{ESTIMATE_SUFFIX}"
+        return float(json.loads(path.read_text(encoding="utf-8"))["cost_usd"])
     except (OSError, ValueError, KeyError, TypeError):
         return None
 

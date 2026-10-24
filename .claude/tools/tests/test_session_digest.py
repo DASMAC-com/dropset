@@ -167,9 +167,9 @@ class EndToEndTests(DigestFixture):
             ],
             mtime=WINDOW_MTIME,
         )
-        estimates = self.base / sd.ESTIMATE_DIR
-        estimates.mkdir(parents=True)
-        (estimates / "11111111-aaaa.json").write_text('{"dollars": 20.0}')
+        # The sidecar sits beside the substrate record `mark` wrote.
+        estimate = self.base / sd.ESTIMATE_DIR / f"11111111-aaaa{sd.ESTIMATE_SUFFIX}"
+        estimate.write_text('{"session_id": "11111111-aaaa", "cost_usd": 20.0}')
 
     def test_the_digest_slices_prices_and_attributes_each_session(self):
         self.build()
