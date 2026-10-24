@@ -65,8 +65,9 @@ Usage::
 
 Exit status is grep-shaped, so a caller can branch on it without parsing:
 ``0`` when every committed guard hook can fire and no iTerm file has drifted,
-``1`` when at least one guard cannot (unwired, mismatched, or misdirected) or
-an iTerm file has drifted, and ``2`` when the scan itself could
+``1`` when at least one guard cannot (unwired, mismatched, or misdirected), a
+private-key ``permissions.deny`` rule is in no settings file, or an iTerm file
+has drifted, and ``2`` when the scan itself could
 not run (no main checkout, unreadable settings). A clean scan and a broken
 scan must never look alike — that is the failure this tool exists to prevent,
 and it would be ironic to reproduce it.
@@ -148,7 +149,32 @@ EXPECTED_TOOLS = {
     "no_git_grep.py": frozenset({"Bash"}),
     "no_destructive_bash.py": frozenset({"Bash"}),
     "worktree_edit_guard.py": frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"}),
+    "no_private_key_access.py": frozenset({"Bash", "Edit", "Write", "MultiEdit"}),
 }
+
+# The `permissions.deny` rules the private-key guard's other layer needs. A
+# deny rule is evaluated ahead of every allow and is not consulted by the
+# auto-mode classifier, so it holds with no script running — which is why its
+# absence is reported exactly like an unwired guard. The paste block in
+# local-integrations.md → "The private-key guard hook" must list exactly these;
+# `test_hook_wiring.py` pins the two together.
+#
+# Two path-rule facts shape the file rules. An `Edit(...)` rule covers every
+# built-in file-editing tool, while `Write(...)` parses but never matches — so
+# there is no Write twin. And `**/x` matches only under the session's cwd,
+# missing the base checkout's copy from a worktree; `//**/x` is anchored at the
+# filesystem root, so it matches every checkout's copy.
+REFERENCE_FILES = (
+    "//**/tui/private-keys.env",
+    "//**/infra/localnet/secrets.local.env",
+    "//**/frontend/.env.local",
+    "~/.config/1Password/ssh/agent.toml",
+)
+REQUIRED_DENY_RULES = (
+    "Bash(op:*)",
+    "Bash(make tui-mainnet:*)",
+    *(f"Edit({path})" for path in REFERENCE_FILES),
+)
 
 # Programs that run a script passed as an argument. Used only to decide whether
 # a script name sits in executable position, never to validate the interpreter.
@@ -342,6 +368,29 @@ def load_settings(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def normalize_rule(rule: str) -> str:
+    """One spelling per permission rule: whitespace trimmed, and the legacy
+    ``Bash(x:*)`` prefix form folded into the current ``Bash(x *)`` form, so
+    an operator who pasted either is not told the rule is missing."""
+    rule = rule.strip()
+    if rule.endswith(":*)"):
+        rule = rule[: -len(":*)")] + " *)"
+    return rule
+
+
+def deny_rules(settings: dict) -> set[str]:
+    """Every normalized ``permissions.deny`` rule in one settings mapping.
+
+    Shape-tolerant for the same reason as ``iter_hook_entries``."""
+    permissions = settings.get("permissions")
+    if not isinstance(permissions, dict):
+        return set()
+    deny = permissions.get("deny")
+    if not isinstance(deny, list):
+        return set()
+    return {normalize_rule(rule) for rule in deny if isinstance(rule, str)}
+
+
 def committed_hooks(repo: Path) -> list[str]:
     """Base names of every ``.py`` under ``.claude/hooks/``.
 
@@ -433,12 +482,16 @@ def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
     * ``UNWIRED`` — no reference at all (a bare mention in an argument is not
       a reference).
     """
-    sources: dict[str, list[tuple[object, str]]] = {}
+    loaded: dict[str, dict] = {}
     for name in REPO_SETTINGS:
-        sources[f".claude/{name}"] = iter_hook_entries(
-            load_settings(repo / ".claude" / name)
-        )
-    sources[str(user_settings)] = iter_hook_entries(load_settings(user_settings))
+        loaded[f".claude/{name}"] = load_settings(repo / ".claude" / name)
+    loaded[str(user_settings)] = load_settings(user_settings)
+    sources = {source: iter_hook_entries(data) for source, data in loaded.items()}
+    # A deny rule in any scope applies, so the union is what is in force.
+    denied = set().union(*(deny_rules(data) for data in loaded.values()))
+    deny_missing = [
+        rule for rule in REQUIRED_DENY_RULES if normalize_rule(rule) not in denied
+    ]
 
     wired: dict[str, list[str]] = {}
     mismatched: dict[str, list[str]] = {}
@@ -485,6 +538,7 @@ def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
         "mismatched": mismatched,
         "misdirected": misdirected,
         "unwired": unwired,
+        "deny_missing": deny_missing,
         "scanned_settings": [source for source, entries in sources.items() if entries],
         "iterm": iterm,
     }
@@ -533,6 +587,20 @@ def render(result: dict) -> str:
     else:
         lines.append("")
         lines.append("hook-wiring | every committed guard hook is wired")
+
+    lines.append("")
+    if result["deny_missing"]:
+        for rule in result["deny_missing"]:
+            lines.append(f"  DENY-MISSING  {rule}")
+        lines.append("")
+        lines.append(
+            f"deny-rules | {len(result['deny_missing'])} private-key deny "
+            "rule(s) are in no settings file. The permissions.deny block to "
+            'paste is in docs/conventions/local-integrations.md → "The '
+            'private-key guard hook"; nothing was written.'
+        )
+    else:
+        lines.append("deny-rules | every private-key deny rule is in force")
 
     iterm = result["iterm"]
     lines.append("")
@@ -596,7 +664,8 @@ def run(argv: list[str]) -> int:
         print(json.dumps(result, indent=2))
     else:
         print(render(result))
-    return 1 if inert_count(result) or result["iterm"]["drift"] else 0
+    gap = inert_count(result) or result["deny_missing"] or result["iterm"]["drift"]
+    return 1 if gap else 0
 
 
 def main() -> int:
