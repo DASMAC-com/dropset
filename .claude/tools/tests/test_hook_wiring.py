@@ -593,7 +593,12 @@ class DenyRuleTests(RepoFixture):
             _settings([WIRING, "python3 .claude/hooks/no_git_grep.py"]),
         )
         out = io.StringIO()
-        with redirect_stdout(out):
+        # `run` reads the real user settings by default; once the operator
+        # pastes the deny block there, this absence test would go red.
+        with (
+            mock.patch.object(hw, "USER_SETTINGS", self.no_user),
+            redirect_stdout(out),
+        ):
             code = hw.run(["hook_wiring.py", "--repo", str(self.repo)])
         self.assertEqual(code, 1)
         self.assertIn("DENY-MISSING  Bash(op:*)", out.getvalue())
@@ -622,7 +627,10 @@ class DenyRuleTests(RepoFixture):
             entry["matcher"]
             for b in blocks
             for entry in b.get("hooks", {}).get("PreToolUse", [])
-            if any("no_private_key_access.py" in h["command"] for h in entry["hooks"])
+            if any(
+                "no_private_key_access.py" in h.get("command", "")
+                for h in entry["hooks"]
+            )
         ]
         self.assertEqual(len(matchers), 1)
         self.assertTrue(
@@ -632,6 +640,65 @@ class DenyRuleTests(RepoFixture):
         )
         for tool in hw.EXPECTED_TOOLS["no_private_key_access.py"]:
             self.assertTrue(hw.matcher_selects(matchers[0], [tool]), tool)
+
+
+PK_WIRING = 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/no_private_key_access.py"'
+
+
+class PartialWiringTests(RepoFixture):
+    """The private-key guard needs Bash AND the edit tools selected."""
+
+    def setUp(self):
+        super().setUp()
+        (self.repo / ".claude" / "hooks" / "no_private_key_access.py").write_text(
+            "", encoding="utf-8"
+        )
+
+    def _entries(self, *matchers):
+        return {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": m,
+                        "hooks": [{"type": "command", "command": PK_WIRING}],
+                    }
+                    for m in matchers
+                ]
+            }
+        }
+
+    def test_bash_only_is_mismatched_naming_the_uncovered_tools(self):
+        self._write("settings.local.json", self._entries("Bash"))
+        result = hw.scan(self.repo, self.no_user)
+        self.assertIn("no_private_key_access.py", result["mismatched"])
+        self.assertEqual(
+            result["uncovered"]["no_private_key_access.py"],
+            ["Edit", "MultiEdit", "Write"],
+        )
+        self.assertIn("that half of it cannot fire", hw.render(result))
+
+    def test_edit_only_is_mismatched(self):
+        self._write("settings.local.json", self._entries("Edit|Write|MultiEdit"))
+        result = hw.scan(self.repo, self.no_user)
+        self.assertEqual(result["uncovered"]["no_private_key_access.py"], ["Bash"])
+
+    def test_the_documented_matcher_is_wired(self):
+        self._write("settings.local.json", self._entries("Bash|Edit|Write|MultiEdit"))
+        result = hw.scan(self.repo, self.no_user)
+        self.assertIn("no_private_key_access.py", result["wired"])
+        self.assertEqual(result["uncovered"], {})
+
+    def test_two_entries_that_cover_every_tool_are_wired(self):
+        self._write(
+            "settings.local.json", self._entries("Bash", "Edit|Write|MultiEdit")
+        )
+        self.assertIn(
+            "no_private_key_access.py", hw.scan(self.repo, self.no_user)["wired"]
+        )
+
+    def test_other_guards_still_need_only_one_tool(self):
+        self._write("settings.local.json", _settings([WIRING]))
+        self.assertIn("no_compound_bash.py", hw.scan(self.repo, self.no_user)["wired"])
 
 
 class ItermDriftTests(RepoFixture):

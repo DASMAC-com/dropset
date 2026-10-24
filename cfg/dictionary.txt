@@ -165,6 +165,7 @@ mispairing
 mispriced
 moneyness
 mpsc
+mstrict
 mtimes
 mtok
 mudhra

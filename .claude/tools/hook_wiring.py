@@ -152,6 +152,13 @@ EXPECTED_TOOLS = {
     "no_private_key_access.py": frozenset({"Bash", "Edit", "Write", "MultiEdit"}),
 }
 
+# Guards whose matchers must between them select EVERY expected tool, not just
+# one. The others inspect one family of tools, so "selects any" is the right
+# test; the private-key guard spans Bash and the edit tools, and wired under
+# only one of them (the shared `Bash` block is the likeliest paste) it reads
+# as wired while half of it never fires.
+REQUIRE_ALL_TOOLS = frozenset({"no_private_key_access.py"})
+
 # The `permissions.deny` rules the private-key guard's other layer needs. A
 # deny rule is evaluated ahead of every allow and is not consulted by the
 # auto-mode classifier, so it holds with no script running — which is why its
@@ -497,12 +504,14 @@ def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
     mismatched: dict[str, list[str]] = {}
     misdirected: dict[str, list[str]] = {}
     unwired: list[str] = []
+    uncovered: dict[str, list[str]] = {}
 
     for script in committed_hooks(repo):
         expected = EXPECTED_TOOLS.get(script, frozenset())
         ok: list[str] = []
         bad_path: list[str] = []
         bad_matcher: list[str] = []
+        covered: set[str] = set()
         for source, entries in sources.items():
             for matcher, command in entries:
                 token = script_reference(command, script)
@@ -514,12 +523,18 @@ def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
                     bad_path.append(source)
                 else:
                     ok.append(source)
+                    covered.update(t for t in expected if matcher_selects(matcher, [t]))
+        partial = script in REQUIRE_ALL_TOOLS and bool(ok) and covered != expected
         # One good reference is enough — a guard wired correctly once fires,
-        # whatever else also names it.
-        if ok:
+        # whatever else also names it — unless the guard needs every tool and
+        # its good references leave some uncovered.
+        if ok and not partial:
             wired[script] = sorted(set(ok))
         elif bad_path:
             misdirected[script] = sorted(set(bad_path))
+        elif partial:
+            mismatched[script] = sorted(set(ok))
+            uncovered[script] = sorted(expected - covered)
         elif bad_matcher:
             mismatched[script] = sorted(set(bad_matcher))
         else:
@@ -538,6 +553,7 @@ def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
         "mismatched": mismatched,
         "misdirected": misdirected,
         "unwired": unwired,
+        "uncovered": uncovered,
         "deny_missing": deny_missing,
         "scanned_settings": [source for source, entries in sources.items() if entries],
         "iterm": iterm,
@@ -558,6 +574,13 @@ def render(result: dict) -> str:
         lines.append(f"  wired    {script}  ({', '.join(sources)})")
     for script, sources in sorted(result["mismatched"].items()):
         expected = "/".join(sorted(EXPECTED_TOOLS.get(script, ())))
+        missing = result.get("uncovered", {}).get(script)
+        if missing:
+            lines.append(
+                f"  MISMATCHED  {script}  ({', '.join(sources)}) — its matchers "
+                f"never select {'/'.join(missing)}, so that half of it cannot fire"
+            )
+            continue
         lines.append(
             f"  MISMATCHED  {script}  ({', '.join(sources)}) — wired under a "
             f"matcher that never selects {expected}, so it cannot fire"
