@@ -71,13 +71,22 @@ pub const SYSVAR_CLOCK_ID: Pubkey =
 /// mismatched array length at every call site.
 pub const PROFILE_BYTES: usize = core::mem::size_of::<LiquidityProfile>();
 
+/// The canonical 1.0850 reference price every seeded fixture anchors at,
+/// as the raw `u32` bits `set_reference_price` takes.
+pub fn ref_price() -> u32 {
+    Price::encode(10_850_000, 0).unwrap().as_u32()
+}
+
 // ── PDA derivations ──────────────────────────────────────────────────
 
 pub fn registry_pda() -> Pubkey {
     Pubkey::find_program_address(&[b"registry"], &PROGRAM_ID).0
 }
 pub fn market_pda(base: &Pubkey, quote: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(&[base.as_ref(), quote.as_ref()], &PROGRAM_ID).0
+    market_pda_and_bump(base, quote).0
+}
+pub fn market_pda_and_bump(base: &Pubkey, quote: &Pubkey) -> (Pubkey, u8) {
+    Pubkey::find_program_address(&[base.as_ref(), quote.as_ref()], &PROGRAM_ID)
 }
 pub fn event_authority() -> Pubkey {
     Pubkey::find_program_address(&[b"__event_authority"], &PROGRAM_ID).0
@@ -91,6 +100,32 @@ pub fn vault_depositor_pda(market: &Pubkey, vault_idx: u32, owner: &Pubkey) -> (
             owner.as_ref(),
         ],
         &PROGRAM_ID,
+    )
+}
+
+// ── Raw account readers ──────────────────────────────────────────────
+//
+// Free functions over a bare `LiteSVM`, for tests that must run before a
+// `Fixture`'s market exists (`create_market.rs`). The `Fixture` methods
+// of the same shape delegate here.
+
+/// SPL token account `amount` (bytes 64..72, little-endian).
+pub fn read_token_balance(svm: &LiteSVM, ata: &Pubkey) -> u64 {
+    let acct = svm.get_account(ata).expect("token account exists");
+    u64::from_le_bytes(acct.data[64..72].try_into().unwrap())
+}
+
+/// SPL token account `owner` (bytes 32..64).
+pub fn read_token_account_owner(svm: &LiteSVM, ata: &Pubkey) -> Pubkey {
+    let acct = svm.get_account(ata).expect("token account exists");
+    Pubkey::new_from_array(acct.data[32..64].try_into().unwrap())
+}
+
+/// The [`MarketHeader`] after the market account's 8-byte discriminator.
+pub fn read_market_header(svm: &LiteSVM, market: &Pubkey) -> MarketHeader {
+    let acct = svm.get_account(market).expect("market");
+    bytemuck::pod_read_unaligned::<MarketHeader>(
+        &acct.data[8..8 + core::mem::size_of::<MarketHeader>()],
     )
 }
 
@@ -411,8 +446,28 @@ impl Fixture {
     /// asserting a re-created treasury ATA is still owned by the PDA it
     /// belongs to, not merely present at the right address.
     pub fn token_account_owner(&self, ata: &Pubkey) -> Pubkey {
-        let acct = self.svm.get_account(ata).expect("token account exists");
-        Pubkey::new_from_array(acct.data[32..64].try_into().unwrap())
+        read_token_account_owner(&self.svm, ata)
+    }
+
+    /// Bootstrap + one admin vault (sector 0) with `authority` as both
+    /// leader and quote authority. No reference price, profile or seed
+    /// yet; both outside-deposit flags start `false`.
+    pub fn with_vault() -> Self {
+        let mut f = Self::bootstrap();
+        f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
+            .expect("create_vault");
+        f
+    }
+
+    /// [`Self::seeded`] with both outside-deposit flags enabled on sector
+    /// 0, so a test can open a depositor position on it.
+    pub fn seeded_open(base: u64, quote: u64) -> Self {
+        let mut f = Self::seeded(base, quote);
+        let authority = f.authority.insecure_clone();
+        f.set_outside_deposits_approved(&authority, 0, true)
+            .unwrap();
+        f.set_allow_outside_depositors(&authority, 0, true).unwrap();
+        f
     }
 
     /// Bootstrap + open one admin vault (sector 0) + set a 1.0850
@@ -429,11 +484,8 @@ impl Fixture {
     /// [`ladder_profile`]). Same 1.0850 reference anchor and `quote_slot` 0;
     /// seeds `(base, quote)` via `deposit_leader`.
     pub fn seeded_with(base: u64, quote: u64, profile: [u8; PROFILE_BYTES]) -> Self {
-        let mut f = Self::bootstrap();
-        f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
-            .expect("create_vault");
-        let ref_price = Price::encode(10_850_000, 0).unwrap();
-        f.set_reference_price(&f.authority.insecure_clone(), 0, ref_price.as_u32(), 0)
+        let mut f = Self::with_vault();
+        f.set_reference_price(&f.authority.insecure_clone(), 0, ref_price(), 0)
             .expect("set_reference_price");
         f.set_liquidity_profile(&f.authority.insecure_clone(), 0, profile)
             .expect("set_liquidity_profile");
@@ -457,8 +509,7 @@ impl Fixture {
         let leader = self.funded_keypair(10 * SIGNER_FUNDING_LAMPORTS);
         self.create_vault(0, leader.pubkey(), true, leader.pubkey())
             .expect("admin opens leader's vault");
-        let px = Price::encode(10_850_000, 0).unwrap();
-        self.set_reference_price(&leader, 0, px.as_u32(), 0)
+        self.set_reference_price(&leader, 0, ref_price(), 0)
             .expect("leader sets reference price");
         self.set_liquidity_profile(&leader, 0, simple_profile(5_000, 10_000, u32::MAX))
             .expect("leader sets ladder");
@@ -466,10 +517,18 @@ impl Fixture {
             .expect("leader seeds the vault");
         self.set_outside_deposits_approved(&admin, 0, true)
             .expect("admin approves");
+        let alice = self.outside_deposit();
+        (leader, alice)
+    }
+
+    /// Fund a fresh depositor with 200_000 base / 200_000 quote and take
+    /// the canonical 50_000-base outside deposit into sector 0 from it.
+    /// The vault must already accept outside deposits.
+    pub fn outside_deposit(&mut self) -> Keypair {
         let alice = self.funded_depositor(200_000, 200_000);
         self.deposit(&alice, 0, 50_000, 0, 200_000, 200_000)
             .expect("outside deposit");
-        (leader, alice)
+        alice
     }
 
     /// Bootstrap → two admin vaults (sectors 0 then 1), each seeded with
@@ -522,7 +581,7 @@ impl Fixture {
         let auth = f.authority.insecure_clone();
         f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
             .expect("register");
-        f.set_reference_price(&auth, 0, Price::encode(10_850_000, 0).unwrap().as_u32(), 0)
+        f.set_reference_price(&auth, 0, ref_price(), 0)
             .expect("ref");
         f.set_liquidity_profile(
             &auth,
@@ -2265,8 +2324,7 @@ impl Fixture {
     // ── account-data readers ─────────────────────────────────────────
 
     pub fn token_balance(&self, ata: &Pubkey) -> u64 {
-        let acct = self.svm.get_account(ata).expect("token account exists");
-        u64::from_le_bytes(acct.data[64..72].try_into().unwrap())
+        read_token_balance(&self.svm, ata)
     }
 
     /// `Some(balance)` when the token account is initialized, `None` when it
@@ -2377,10 +2435,7 @@ impl Fixture {
     }
 
     pub fn market_header(&self) -> MarketHeader {
-        let acct = self.svm.get_account(&self.market).expect("market");
-        bytemuck::pod_read_unaligned::<MarketHeader>(
-            &acct.data[8..8 + core::mem::size_of::<MarketHeader>()],
-        )
+        read_market_header(&self.svm, &self.market)
     }
 
     pub fn vault(&self, sector_idx: u32) -> Vault {
