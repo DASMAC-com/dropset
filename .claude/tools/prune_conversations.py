@@ -679,7 +679,8 @@ def render_manifest(groups: dict[str, list[Record]], protected: int) -> str:
             continue
         size = sum(r.size for r in recs)
         total += size
-        lines.append(f"  {label}: {len(recs)} dir(s), {_mb(size)}")
+        noun = "file(s)" if category == "substrate-marker" else "dir(s)"
+        lines.append(f"  {label}: {len(recs)} {noun}, {_mb(size)}")
         tagged = sorted((r for r in recs if r.tag), key=lambda rec: rec.tag)
         untagged = sorted((r for r in recs if not r.tag), key=lambda r: r.path.name)
         if category == "substrate-marker":
