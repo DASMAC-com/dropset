@@ -5,7 +5,7 @@ One deterministic digest over every transcript the fleet produced since the
 last one, every verb and substrate, written by the upkeep pass in its own
 process; no model reads a transcript to make it. It enumerates every
 transcript under the base checkout's and its worktrees' project slugs modified
-since ``--since`` (upkeep passes its previous run stamp), runs the per-session
+since the window opened (see :func:`window_start`), runs the per-session
 aggregation of ``session_metrics.py`` on each, and writes one untracked
 Markdown file, ``<base>/.claude/session-metrics/digest-<YYYY-MM-DD>.md``, with
 a JSON twin beside it that the allowlist-refresh mining reads.
@@ -30,8 +30,9 @@ own ``Session account`` block lifted verbatim (or "no account"), and a
 ``live`` flag on a session still running — it is digested again next day.
 
 **A session spanning days** appears in each day's digest with that window's
-slice: only records stamped at or after ``--since`` are sliced, so two digests
-never count one message twice. The first request of each later UTC day
+slice: only records stamped in the window ``[since, until)`` are sliced, and
+each window opens where the last digest's closed, so two digests never count
+one message twice. The first request of each later UTC day
 re-writes the whole cached prefix, and that cache-write cost is its own line.
 
 **Seat sessions are priced at Bedrock rates**, labelled "at Bedrock rates, not
@@ -96,9 +97,21 @@ ACCOUNT_HEADING_RE = re.compile(r"^\s*(?:#{1,6}\s*|\*\*)Session account\b")
 NEXT_HEADING_RE = re.compile(r"^\s*#{1,6}\s")
 ACCOUNT_MAX_LINES = 40
 
-COMMAND_RE = re.compile(r"<command-name>/([\w:-]+)</command-name>|^/([\w:-]+)")
-# A task session's first command is the bootstrap skill, not the verb's name.
-VERB_OF_COMMAND = {"init-pr": "task"}
+COMMAND_RE = re.compile(r"<command-name>/([\w:-]+)</command-name>|^/([\w:-]+)\b")
+# The launch verbs, by the first command their bootstrap types. Only these
+# name a verb: a local command (`/model`, `/clear`) or a prompt opening with an
+# absolute path is not a launch. A task session's first command is the
+# bootstrap skill, not the verb's name.
+VERB_OF_COMMAND = {
+    "init-pr": "task",
+    "chore": "chore",
+    "plan": "plan",
+    "architect": "architect",
+    "explore": "explore",
+    "audit-scope": "explore",
+}
+# Records the harness writes around a local command; never the bootstrap.
+LOCAL_COMMAND_MARKERS = ("<local-command-stdout>", "<local-command-caveat>")
 
 
 # --------------------------------------------------------------------------- #
@@ -189,14 +202,24 @@ def scan_head(path: Path) -> Head:
             head.cwd = rec["cwd"].strip()
         kind = rec.get("type")
         if kind == "user" and users < fleet_cost.HEAD_USER_RECORDS:
-            text = fleet_cost._prompt_text(rec)
-            if text.strip():
-                users += 1
+            text = fleet_cost._prompt_text(rec).strip()
+            # A meta, caveat or local-command record is harness chrome: it
+            # neither names the launch nor spends the head budget, so a resumed
+            # session opening with `/model` still reaches its bootstrap.
+            if (
+                not text
+                or rec.get("isMeta")
+                or any(m in text for m in LOCAL_COMMAND_MARKERS)
+            ):
+                continue
+            match = COMMAND_RE.search(text)
+            command = (match.group(1) or match.group(2)) if match else None
+            if command and command not in VERB_OF_COMMAND and match.group(1):
+                continue
+            users += 1
             head.issue = head.issue or fleet_cost.issue_of_prompt(text)
-            match = COMMAND_RE.search(text.strip())
-            if head.verb is None and match:
-                command = match.group(1) or match.group(2)
-                head.verb = VERB_OF_COMMAND.get(command, command)
+            if head.verb is None and command in VERB_OF_COMMAND:
+                head.verb = VERB_OF_COMMAND[command]
         elif kind == "assistant":
             text = _assistant_text(rec)
             if "Session account" in text:
@@ -242,6 +265,23 @@ def _add(total: float | None, part: float | None) -> float | None:
     return None if total is None or part is None else total + part
 
 
+def price_parts(by_model: dict[str, sm.Tokens], unpriced: set[str]) -> float:
+    """The priced models' dollars, each unpriced billable model added to
+    ``unpriced`` instead. Summing parts, rather than refusing the whole share
+    the way :func:`price` does, keeps every header total equal to the sum of
+    the per-model lines; the unpriced remainder is named on its own line."""
+    dollars = 0.0
+    for model, tokens in by_model.items():
+        if not tokens.billable():
+            continue
+        priced = price({model: tokens})
+        if priced is None:
+            unpriced.add(model)
+        else:
+            dollars += priced
+    return dollars
+
+
 @dataclass
 class SessionDigest:
     session_id: str
@@ -250,18 +290,16 @@ class SessionDigest:
     live: bool
     report: dict
     estimate: float | None
-    # day -> {"dollars", "subagents", "rewarm", "turns"}, the window only.
+    # day -> {"dollars", "subagents", "rewarm", "turns"}, the window only,
+    # priced models only (see `price_parts`).
     days: dict[str, dict] = field(default_factory=dict)
     # model -> dollars over the window, main and sub-agents together.
     window_models: dict[str, float] = field(default_factory=dict)
     unpriced: set[str] = field(default_factory=set)
 
     @property
-    def window_dollars(self) -> float | None:
-        total: float | None = 0.0
-        for day in self.days.values():
-            total = _add(total, day["dollars"])
-        return total
+    def window_dollars(self) -> float:
+        return sum(day["dollars"] for day in self.days.values())
 
     @property
     def cumulative(self) -> float | None:
@@ -270,13 +308,13 @@ class SessionDigest:
 
 
 def digest_session(
-    path: Path, base: Path, since: str, now_ts: float
+    path: Path, base: Path, since: str, now_ts: float, until: str | None = None
 ) -> SessionDigest | None:
     """One session's digest record, or ``None`` when nothing it did falls in
-    the window and it is not running."""
+    the window ``[since, until)`` and it is not running."""
     session_id = path.stem
     head = scan_head(path)
-    report = sm.aggregate(path, session_id, None, since)
+    report = sm.aggregate(path, session_id, None, since, until)
     live = is_live(path, head.cwd, base, now_ts)
     if not report["days"] and not live:
         return None
@@ -289,21 +327,18 @@ def digest_session(
         estimate=read_estimate(base, session_id),
     )
     for day, day_slice in report["days"].items():
-        main, sub = price(day_slice.main), price(day_slice.subagents)
+        main = price_parts(day_slice.main, out.unpriced)
+        sub = price_parts(day_slice.subagents, out.unpriced)
         out.days[day] = {
-            "dollars": _add(main, sub),
+            "dollars": main + sub,
             "subagents": sub,
-            "rewarm": price(day_slice.rewarm),
+            "rewarm": price_parts(day_slice.rewarm, out.unpriced),
             "turns": day_slice.turns,
         }
         for by_model in (day_slice.main, day_slice.subagents):
             for model, tokens in by_model.items():
-                if not tokens.billable():
-                    continue
-                dollars = price({model: tokens})
-                if dollars is None:
-                    out.unpriced.add(model)
-                else:
+                dollars = price({model: tokens}) if tokens.billable() else None
+                if dollars is not None:
                     out.window_models[model] = (
                         out.window_models.get(model, 0.0) + dollars
                     )
@@ -317,15 +352,20 @@ def digest_session(
 
 def header_figures(sessions: list[SessionDigest]) -> dict:
     """The window's figures, the numbers the history records."""
-    figures: dict = {"sessions": len(sessions), "bedrock": 0.0, "seat": 0.0}
+    # A live session with nothing in the window is listed, not counted.
+    figures: dict = {
+        "sessions": sum(1 for s in sessions if s.days),
+        "bedrock": 0.0,
+        "seat": 0.0,
+    }
     sub = rewarm = 0.0
     rewarm_sessions = 0
     models: dict[str, float] = {}
     for s in sessions:
         key = "bedrock" if s.substrate == sm.SUBSTRATE_BEDROCK else "seat"
-        figures[key] += s.window_dollars or 0.0
-        sub += sum(d["subagents"] or 0.0 for d in s.days.values())
-        spent = sum(d["rewarm"] or 0.0 for d in s.days.values())
+        figures[key] += s.window_dollars
+        sub += sum(d["subagents"] for d in s.days.values())
+        spent = sum(d["rewarm"] for d in s.days.values())
         if spent:
             rewarm += spent
             rewarm_sessions += 1
@@ -339,27 +379,54 @@ def header_figures(sessions: list[SessionDigest]) -> dict:
     return figures
 
 
-def read_history(directory: Path, date: str) -> list[dict]:
-    """Earlier digests' figures, oldest first; a same-day rerun's own entry
-    is left out so it never becomes its own baseline."""
-    entries = []
+def _history_entries(directory: Path) -> list[dict]:
     try:
         lines = (directory / HISTORY_NAME).read_text(encoding="utf-8").splitlines()
     except OSError:
         return []
+    entries = []
     for line in lines:
         try:
             entry = json.loads(line)
         except ValueError:
             continue
-        if isinstance(entry, dict) and entry.get("date") != date:
+        if isinstance(entry, dict):
             entries.append(entry)
     return entries
 
 
-def write_history(directory: Path, date: str, figures: dict) -> None:
+def read_history(directory: Path, date: str) -> list[dict]:
+    """Earlier digests' figures, oldest first; a same-day rerun's own entry
+    is left out so it never becomes its own baseline."""
+    return [e for e in _history_entries(directory) if e.get("date") != date]
+
+
+def window_start(directory: Path, date: str, given: datetime.datetime):
+    """Where this digest's window opens.
+
+    The history, not upkeep's stamp, is the record of what was already
+    counted: the stamp stays put when a pass fails to reach the Planning
+    document, and a window opened from it would re-slice the last digest's
+    records. So the window opens where the last earlier digest's closed, and
+    ``given`` (``--since``) only seeds the first. A rerun on a date already
+    digested re-opens that date's own window, replacing it whole, so the
+    earlier run's hours are never dropped.
+    """
+    entries = _history_entries(directory)
+    for entry in reversed(entries):
+        if entry.get("date") == date and entry.get("since"):
+            return _instant(entry["since"])
+    for entry in reversed(entries):
+        if entry.get("date") != date and entry.get("until"):
+            return _instant(entry["until"])
+    return given
+
+
+def write_history(
+    directory: Path, date: str, figures: dict, since: str, until: str
+) -> None:
     entries = read_history(directory, date)
-    entries.append({"date": date, **figures})
+    entries.append({"date": date, "since": since, "until": until, **figures})
     text = "".join(json.dumps(e) + "\n" for e in entries[-HISTORY_KEEP:])
     (directory / HISTORY_NAME).write_text(text, encoding="utf-8")
 
@@ -394,13 +461,17 @@ def calibration_lines(calibration: dict | None, flags: list[str]) -> list[str]:
         why = (calibration or {}).get("error") or "no calibration supplied"
         return [f"**Rate calibration**: no reading — {why}."]
     day = calibration.get("day", "?")
-    rec = calibration.get("reconcile") or {}
-    tolerance = calibration.get("tolerance", fleet_cost.DEFAULT_TOLERANCE)
+    rec = calibration.get("reconcile")
+    if not isinstance(rec, dict) or rec.get("billed_matched") is None:
+        return [
+            f"**Rate calibration**: no reading — {day} carried no reconcile figure."
+        ]
+    tolerance = calibration.get("tolerance") or fleet_cost.DEFAULT_TOLERANCE
     line = (
         f"**Rate calibration** ({day}, the last settled day): "
-        f"{sm.money(rec.get('metered', 0.0))} metered, "
-        f"{sm.money(rec.get('expected', 0.0))} with the classifier, vs "
-        f"{sm.money(rec.get('billed_matched', 0.0))} billed — drift "
+        f"{sm.money(rec.get('metered') or 0.0)} metered, "
+        f"{sm.money(rec.get('expected') or 0.0)} with the classifier, vs "
+        f"{sm.money(rec['billed_matched'])} billed — drift "
         f"{_pct(rec.get('drift'))} (tolerance {tolerance:.0%})"
     )
     if rec.get("flagged"):
@@ -410,11 +481,18 @@ def calibration_lines(calibration: dict | None, flags: list[str]) -> list[str]:
     if calibration.get("rates_error"):
         lines.append(f"- rate rows not read — {calibration['rates_error']}")
         return lines
-    checks = {}
-    for service in (calibration.get("rates") or {}).get("services", {}).values():
-        check = service.get("check") or {}
+    checks: dict[str, dict] = {}
+    unrated: list[str] = []
+    rates_report = calibration.get("rates")
+    services = rates_report.get("services") if isinstance(rates_report, dict) else None
+    for service, entry in (services or {}).items():
+        check = (entry or {}).get("check") or {}
         if check.get("model"):
             checks[check["model"]] = check
+        else:
+            # A billed service no `RATES_BY_MODEL` row bills under: exactly
+            # the row-needs-adding case, so it is a flagged line, not a gap.
+            unrated.append(service.removesuffix(fleet_cost.EDITION_SUFFIX))
     for model, rates in sm.RATES_BY_MODEL.items():
         standing = f"verified {rates.verified}" if rates.verified else "unverified"
         check = checks.get(model)
@@ -430,10 +508,15 @@ def calibration_lines(calibration: dict | None, flags: list[str]) -> list[str]:
         if check.get("matches") is None:
             text += " — not judged, an unrecognized usage type billed; FLAGGED"
             flags.append(f"rate row {model} could not be judged on {day}")
-        elif row_drift is not None and abs(row_drift) > RATE_TOLERANCE:
+        elif check.get("matches") is False and (
+            row_drift is None or abs(row_drift) > RATE_TOLERANCE
+        ):
             text += " FLAGGED"
             flags.append(f"rate row {model} drift {_pct(row_drift)} on {day}")
         lines.append(text)
+    for service in sorted(unrated):
+        lines.append(f"- {service}: billed on {day} with no rate row — FLAGGED")
+        flags.append(f"{service} billed on {day} with no rate row")
     return lines
 
 
@@ -710,22 +793,31 @@ def main(argv: list[str] | None = None) -> int:
             calibration = json.loads(Path(args.calibration).read_text("utf-8"))
         except (OSError, ValueError) as exc:
             calibration = {"error": f"calibration unreadable: {exc}"}
+        if not isinstance(calibration, dict):
+            calibration = {"error": "calibration is not a JSON object"}
 
     base = Path(args.base)
     projects = Path(args.projects) if args.projects else sm.claude_home() / "projects"
-    since_text = since.strftime("%Y-%m-%dT%H:%M:%S")
     date = now.date().isoformat()
+    directory = base / DIGEST_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        since = window_start(directory, date, since)
+    except ValueError:
+        pass  # a malformed history bound falls back to --since
+    # Both bounds at whole seconds, as `utc_stamp` compares: a record is in
+    # exactly one window, `[since, until)`.
+    since_text = since.strftime("%Y-%m-%dT%H:%M:%S")
+    until_text = now.strftime("%Y-%m-%dT%H:%M:%S")
     sessions = []
     for path in discover(projects, base, since.timestamp()):
         try:
-            digest = digest_session(path, base, since_text, now.timestamp())
+            digest = digest_session(path, base, since_text, now.timestamp(), until_text)
         except OSError:
             continue
         if digest is not None:
             sessions.append(digest)
 
-    directory = base / DIGEST_DIR
-    directory.mkdir(parents=True, exist_ok=True)
     figures = header_figures(sessions)
     history = read_history(directory, date)
     text, flags = render(date, since_text, sessions, figures, history, calibration)
@@ -735,11 +827,11 @@ def main(argv: list[str] | None = None) -> int:
     (directory / f"digest-{date}.json").write_text(
         json.dumps(twin, indent=2), encoding="utf-8"
     )
-    write_history(directory, date, figures)
+    write_history(directory, date, figures, since_text, until_text)
     print(
         json.dumps(
             {
-                "sessions": len(sessions),
+                "sessions": figures["sessions"],
                 "dollars": round(figures["total"], 2),
                 "flagged": len(flags),
                 "path": str(md_path),

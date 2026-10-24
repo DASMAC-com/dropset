@@ -47,7 +47,7 @@ refuses the whole pass, since every later step assumes it.
     line, read with ``subscription_usage --log`` so each pass that gets a reading appends the one
     sample its per-day figure is derived from;
 11. the session digest (``session_metrics digest``) over every transcript since
-    the previous stamped pass, its rate-calibration line fed by step 10's
+    the last digest's window closed, its rate-calibration line fed by step 10's
     reconcile figure and the settled day's ``fleet_cost rates`` read;
 12. the memory scan gate, then the memory audit when due;
 13. the transcript-purge dry-run manifest.
@@ -771,11 +771,14 @@ def digest_calibration(ctx: Ctx) -> dict:
 
 def step_digest(ctx: Ctx) -> None:
     """Write the day's session digest (``session_metrics.py digest``) over
-    every transcript since the previous stamped pass."""
+    every transcript since the last digest closed its window; the previous
+    stamped pass seeds the first one."""
+    # Built before the file exists, so a raise here leaves nothing behind.
+    calibration = digest_calibration(ctx)
     with tempfile.NamedTemporaryFile(
         "w", suffix=".json", prefix="upkeep-calibration-", delete=False
     ) as handle:
-        json.dump(digest_calibration(ctx), handle)
+        json.dump(calibration, handle)
     args = ["digest", "--base", str(ctx.base), "--calibration", handle.name]
     if ctx.data.get("previous_run"):
         args += ["--since", ctx.data["previous_run"]]

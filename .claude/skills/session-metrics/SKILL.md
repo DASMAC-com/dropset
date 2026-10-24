@@ -486,8 +486,8 @@ skipped because it matched a closed (rejected) one.
 - **Approximate by design.** Result token counts are
   bytes ÷ 4 — adequate for *ranking* sinks, which is the
   decision the recommendations turn on. Treat the numbers as
-  relative, not billing-exact (no dollar figures are
-  reported).
+  relative, not billing-exact (sinks are sized in tokens, not
+  priced).
 - **Sink labels can carry input fragments — scrub before
   writing to Linear.** The "Largest single results" labels
   are short heads of the call's input (a Bash command, a

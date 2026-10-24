@@ -345,7 +345,8 @@ all measured 2026-10-14/15 over the Opus 5.5 fleet days 10-08 to 10-13
 The same `upkeep` pass then runs `session_metrics.py digest`, after the
 cost step and before the purge. It runs one deterministic digest over
 every transcript the base checkout and its worktrees wrote since the
-previous stamped pass, every verb and substrate, with no model involved.
+last digest closed its window, every verb and substrate, with no model
+involved. The previous stamped pass seeds only the first window.
 It writes an untracked
 `.claude/session-metrics/digest-<YYYY-MM-DD>.md` in the base checkout,
 with a JSON twin beside it, and puts one line in the report: sessions,

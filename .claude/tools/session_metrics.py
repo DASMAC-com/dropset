@@ -644,12 +644,14 @@ class SessionAggregator:
     process never holds the whole file), then :meth:`finish` into a report dict.
     """
 
-    def __init__(self, since: str | None = None) -> None:
+    def __init__(self, since: str | None = None, until: str | None = None) -> None:
         self.totals = Totals()
-        # Per-UTC-day slices (see `DaySlice`). Only records stamped at or after
-        # `since` (a `utc_stamp` string) are sliced, so consecutive digests never
-        # count one message twice; the totals above stay whole-session.
+        # Per-UTC-day slices (see `DaySlice`). Only records stamped in
+        # `[since, until)` (`utc_stamp` strings) are sliced, so consecutive
+        # digests, each opening where the last closed, never count one message
+        # twice; the totals above stay whole-session.
         self.since = since
+        self.until = until
         self.days: dict[str, DaySlice] = {}
         self._last_main_day: str | None = None
         self._pending: dict[str, _ToolCall] = {}
@@ -735,9 +737,13 @@ class SessionAggregator:
 
     def _day_slice(self, timestamp) -> DaySlice | None:
         """The slice a record stamped ``timestamp`` falls in, or ``None`` when it
-        is unstamped or before the window."""
+        is unstamped or outside the window."""
         stamp = utc_stamp(timestamp)
-        if stamp is None or (self.since is not None and stamp < self.since):
+        if (
+            stamp is None
+            or (self.since is not None and stamp < self.since)
+            or (self.until is not None and stamp >= self.until)
+        ):
             return None
         return self.days.setdefault(stamp[:10], DaySlice())
 
@@ -1949,10 +1955,12 @@ def aggregate(
     session_id: str,
     substrate: str | None = None,
     since: str | None = None,
+    until: str | None = None,
 ) -> dict:
     """Stream the main transcript and every sub-agent transcript into a report.
-    ``since`` bounds the day slices only (see `SessionAggregator`)."""
-    agg = SessionAggregator(since)
+    ``since`` and ``until`` bound the day slices only (see
+    `SessionAggregator`)."""
+    agg = SessionAggregator(since, until)
     for line in _read_lines(transcript):
         agg.ingest_main_line(line)
 

@@ -238,6 +238,102 @@ class EndToEndTests(DigestFixture):
         )
         self.assertEqual(self.run_digest()["sessions"], 0)
 
+    def test_a_transcript_written_in_the_last_hour_is_live(self):
+        self.build()
+        recent = 1_792_843_200 - 600  # ten minutes before NOW
+        for path in self.projects.rglob("11111111-aaaa.jsonl"):
+            os.utime(path, (recent, recent))
+        self.run_digest()
+        self.assertIn("`11111111` · live", self.digest_text())
+        self.assertNotIn("`22222222` · live", self.digest_text())
+
+    def test_sub_agents_render_one_line_per_model(self):
+        self.build()
+        cwd = self.worktree
+        sub = self.projects / sm.slugify(Path(cwd)) / "11111111-aaaa" / "subagents"
+        sub.mkdir(parents=True)
+        lane = assistant("s1", "2026-10-24T09:01:00.000Z", cwd, READ)
+        for name in ("a", "b"):
+            (sub / f"{name}.jsonl").write_text(
+                json.dumps({**lane, "message": {**lane["message"], "id": f"s-{name}"}})
+                + "\n"
+            )
+        summary = self.run_digest()
+        rates = sm.RATES_BY_MODEL[MODEL]
+        text = self.digest_text()
+        self.assertIn(
+            f"  - sub-agents `{MODEL}` ×2 {sm.money(2 * rates.cache_read)}", text
+        )
+        self.assertIn(f"  - main `{MODEL}`", text)
+        twin = self.twin()
+        expected = 2 * rates.cache_read / twin["figures"]["total"]
+        self.assertAlmostEqual(twin["figures"]["subagent_share"], expected)
+        self.assertEqual(summary["sessions"], 2)
+
+    def test_an_unpriced_model_leaves_the_priced_dollars_in_the_totals(self):
+        cwd = self.worktree
+        unpriced = assistant("u1", "2026-10-24T09:00:00.000Z", cwd, READ)
+        unpriced["message"]["model"] = "claude-unknown-9"
+        self.write(
+            cwd,
+            "44444444-dddd",
+            [assistant("p1", "2026-10-24T08:00:00.000Z", cwd, READ), unpriced],
+            mtime=WINDOW_MTIME,
+        )
+        self.mark("44444444-dddd", "bedrock")
+        summary = self.run_digest()
+        read = sm.RATES_BY_MODEL[MODEL].cache_read
+        self.assertAlmostEqual(summary["dollars"], round(read, 2))
+        twin = self.twin()
+        self.assertAlmostEqual(twin["figures"]["bedrock"], read)
+        self.assertAlmostEqual(twin["figures"]["models"][MODEL], read)
+        self.assertIn("**Unpriced**: `claude-unknown-9`", self.digest_text())
+
+    def test_each_window_opens_where_the_last_one_closed(self):
+        cwd = self.worktree
+        records = [
+            assistant("w1", "2026-10-24T10:00:00.000Z", cwd, READ),
+            assistant("w2", "2026-10-25T10:00:00.000Z", cwd, READ),
+        ]
+        # Written after the first close, so the next pass rediscovers it.
+        self.write(cwd, "55555555-eeee", records, mtime=1_792_886_400)
+        self.mark("55555555-eeee", "bedrock")
+        read = sm.RATES_BY_MODEL[MODEL].cache_read
+        # The first digest closes at NOW (10-24 12:00): it holds w1 only, even
+        # though w2 is already on disk.
+        self.assertAlmostEqual(self.run_digest()["dollars"], round(read, 2))
+        # The next pass hands a stale --since, as after a failed stamp; the
+        # window still opens at the last close, so w1 is not counted again.
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            sm.main(
+                [
+                    "digest",
+                    "--base",
+                    str(self.base),
+                    "--projects",
+                    str(self.projects),
+                    "--now",
+                    "2026-10-25T12:00:00Z",
+                    "--since",
+                    "2026-10-22T00:00:00Z",
+                ]
+            )
+        self.assertAlmostEqual(json.loads(out.getvalue())["dollars"], round(read, 2))
+        history = [
+            json.loads(ln)
+            for ln in (self.base / sd.DIGEST_DIR / sd.HISTORY_NAME)
+            .read_text()
+            .splitlines()
+        ]
+        self.assertEqual(
+            [(e["since"], e["until"]) for e in history],
+            [
+                ("2026-10-23T12:00:00", "2026-10-24T12:00:00"),
+                ("2026-10-24T12:00:00", "2026-10-25T12:00:00"),
+            ],
+        )
+
     def test_a_locked_worktree_is_live(self):
         self.build()
         lock = self.base / ".git" / "worktrees" / "2170"
@@ -296,6 +392,64 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(
             lines, ["**Rate calibration**: no reading — the fleet-cost read failed."]
         )
+
+    def test_a_mismatch_billed_at_zero_is_still_flagged(self):
+        flags: list[str] = []
+        lines = sd.calibration_lines(self.calibration(False, 5.0, 0.0), flags)
+        row = next(ln for ln in lines if MODEL in ln)
+        self.assertIn("drift n/a FLAGGED", row)
+        self.assertEqual(len(flags), 1)
+
+    def test_a_billed_service_with_no_rate_row_is_flagged(self):
+        calibration = self.calibration(True, 100.0, 100.0)
+        calibration["rates"]["services"]["Claude Opus 9.1 (Amazon Bedrock Edition)"] = {
+            "check": {"model": None, "priced": None, "billed": None, "matches": None}
+        }
+        flags: list[str] = []
+        lines = sd.calibration_lines(calibration, flags)
+        self.assertIn(
+            "- Claude Opus 9.1: billed on 2026-10-22 with no rate row — FLAGGED", lines
+        )
+        self.assertEqual(len(flags), 1)
+
+    def test_a_missing_reconcile_figure_is_no_reading_not_zero(self):
+        calibration = self.calibration(True, 100.0, 100.0)
+        calibration["reconcile"] = {}
+        lines = sd.calibration_lines(calibration, [])
+        self.assertEqual(
+            lines,
+            [
+                "**Rate calibration**: no reading — 2026-10-22 carried no reconcile figure."
+            ],
+        )
+
+
+class HeadScanTests(DigestFixture):
+    def head(self, records):
+        return sd.scan_head(self.write(self.worktree, "h", records))
+
+    def test_local_commands_neither_name_the_verb_nor_spend_the_budget(self):
+        cwd, t = self.worktree, "2026-10-24T08:00:00.000Z"
+        head = self.head(
+            [
+                prompt(
+                    t, cwd, "<local-command-caveat>Caveat: …</local-command-caveat>"
+                ),
+                prompt(t, cwd, "<command-name>/model</command-name>"),
+                prompt(
+                    t, cwd, "<local-command-stdout>Set model</local-command-stdout>"
+                ),
+                prompt(t, cwd, "<command-name>/clear</command-name>"),
+                prompt(t, cwd, "<command-name>/chore</command-name><command-args>2001"),
+            ]
+        )
+        self.assertEqual(head.verb, "chore")
+        self.assertEqual(head.issue, "ENG-2001")
+
+    def test_a_prompt_opening_with_a_path_names_no_verb(self):
+        t = "2026-10-24T08:00:00.000Z"
+        head = self.head([prompt(t, self.worktree, "/Users/x/repo is broken")])
+        self.assertIsNone(head.verb)
 
 
 if __name__ == "__main__":

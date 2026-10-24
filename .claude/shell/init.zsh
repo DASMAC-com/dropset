@@ -732,8 +732,8 @@ _ds_topic_sid() {
 # needs something Bedrock lacks — web search or deep research (web fetch works
 # there, measured 2026-10-23) — or it is a seat session by role (`architect`).
 # `plan` left the seat by default for pricing: a base-repo planning session on
-# the subscription has no dollar figure, and `plan anthropic` remains the way
-# back.
+# the subscription gets only a figure at Bedrock rates, never a billed one, and
+# `plan anthropic` remains the way back.
 # Sub-agents are NOT a differentiator: Opus-spawning-Opus sub-agents are
 # verified working on Bedrock.
 #
