@@ -400,7 +400,7 @@ _ds_base() {
 #     costs a round trip and can raise a Touch ID prompt, and every plain
 #     terminal tab would otherwise pay both for secrets it never uses. Only the
 #     session helpers call this, so an ordinary tab stays instant.
-#   * The `${VAR:-…}` guard makes it at most one fetch per shell, so helpers
+#   * The empty-value guard makes it at most one fetch per shell, so helpers
 #     that chain into one another don't re-prompt. It also lets an
 #     already-exported value win — the override path when a key is pinned by
 #     hand, and the escape hatch when no coordinates are set at all.
@@ -409,20 +409,48 @@ _ds_base() {
 #   * An unresolved secret WARNS rather than failing the launch. An empty key
 #     otherwise surfaces much later as an opaque MCP error mid-session, which
 #     is far worse to debug than one line at startup.
+#
+# A read that actually runs sets `_DS_OP_READ`, so `_ds_op_signout` can end
+# the authorization it opened before any agent command starts.
 _ds_secrets() {
-  if [[ -n "$DS_OP_ACCOUNT" && -n "$DS_OP_LINEAR_REF" ]]; then
-    export LINEAR_API_KEY="${LINEAR_API_KEY:-$(op read --account \
-      "$DS_OP_ACCOUNT" "$DS_OP_LINEAR_REF")}"
+  if [[ -z "$LINEAR_API_KEY" && -n "$DS_OP_ACCOUNT" \
+    && -n "$DS_OP_LINEAR_REF" ]]; then
+    export LINEAR_API_KEY="$(op read --account "$DS_OP_ACCOUNT" \
+      "$DS_OP_LINEAR_REF")"
+    _DS_OP_READ=1
   fi
-  if [[ -n "$DS_OP_ACCOUNT" && -n "$DS_OP_GITHUB_REF" ]]; then
-    export GITHUB_MCP_PAT="${GITHUB_MCP_PAT:-$(op read --account \
-      "$DS_OP_ACCOUNT" "$DS_OP_GITHUB_REF")}"
+  if [[ -z "$GITHUB_MCP_PAT" && -n "$DS_OP_ACCOUNT" \
+    && -n "$DS_OP_GITHUB_REF" ]]; then
+    export GITHUB_MCP_PAT="$(op read --account "$DS_OP_ACCOUNT" \
+      "$DS_OP_GITHUB_REF")"
+    _DS_OP_READ=1
   fi
 
   [[ -z "$LINEAR_API_KEY" ]] &&
     print -u2 '_ds_secrets: LINEAR_API_KEY unresolved'
   [[ -z "$GITHUB_MCP_PAT" ]] &&
     print -u2 '_ds_secrets: GITHUB_MCP_PAT unresolved'
+  return 0
+}
+
+# Internal: sign the 1Password CLI out once this launch's own reads are done.
+#
+# The CLI's desktop-app authorization stays warm for ten idle minutes per
+# terminal window (twelve hours hard), and every agent shell under the tab
+# would inherit it. Signing out right after the reads means no agent command
+# rides the launcher's authorization; the first `op run` an agent's make target
+# makes prompts the operator again. Commit signing is untouched: it goes
+# through the 1Password SSH agent, not the CLI sign-in.
+#
+# Only when a read ran (`_DS_OP_READ`), and the flag is cleared, so it is once
+# per launch however many helpers chain. A failure WARNS and never stops the
+# launch, as an unresolved secret does.
+_ds_op_signout() {
+  [[ -n "$_DS_OP_READ" ]] || return 0
+  _DS_OP_READ=''
+  op signout --account "$DS_OP_ACCOUNT" >/dev/null 2>&1 ||
+    print -u2 'dropset: op signout failed — the 1Password CLI authorization' \
+      'stays warm in this tab until it idles out.'
   return 0
 }
 
@@ -636,7 +664,11 @@ _ds_daily_sid() {
 # `local -x` scopes each to this one command exactly as `ANTHROPIC_MODEL` is:
 # none outlives the session into the tab. A tier that does not resolve refuses
 # the launch, since an unbound slot silently runs Claude Code's own table.
+#
+# Every 1Password read a launch makes is done by now, the Bedrock bearer token
+# included, so the CLI is signed out here first (`_ds_op_signout`).
 _ds_claude() {
+  _ds_op_signout
   local -x ANTHROPIC_MODEL="$1"
   shift
   if [[ -n "$CLAUDE_CODE_USE_BEDROCK" ]]; then
@@ -1218,10 +1250,13 @@ _ds_bedrock_env() {
   export ENABLE_PROMPT_CACHING_1H=1
 
   # Resolved at launch, never held in a long-lived shell — the same lazy shape
-  # and the same `${VAR:-…}` override as `_ds_secrets`, for the same reasons.
-  if [[ -n "$DS_OP_ACCOUNT" && -n "$DS_OP_BEDROCK_REF" ]]; then
-    export AWS_BEARER_TOKEN_BEDROCK="${AWS_BEARER_TOKEN_BEDROCK:-$(op read \
-      --account "$DS_OP_ACCOUNT" "$DS_OP_BEDROCK_REF")}"
+  # and the same empty-value override as `_ds_secrets`, for the same reasons,
+  # read before `_ds_claude` signs the CLI out.
+  if [[ -z "$AWS_BEARER_TOKEN_BEDROCK" && -n "$DS_OP_ACCOUNT" \
+    && -n "$DS_OP_BEDROCK_REF" ]]; then
+    export AWS_BEARER_TOKEN_BEDROCK="$(op read --account "$DS_OP_ACCOUNT" \
+      "$DS_OP_BEDROCK_REF")"
+    _DS_OP_READ=1
   fi
 
   # What this launch actually installed. The restore compares against these, so
@@ -1541,6 +1576,7 @@ _ds_task_resume() {
   if [[ -z "$1" ]]; then
     _ds_seat_guard 'task resume'
     _ds_secrets
+    _ds_op_signout
     claude --resume --permission-mode auto
     return
   fi
@@ -2223,6 +2259,9 @@ architect() {
 fleet() {
   _ds_base || return 1
   _ds_secrets
+  # The tool needs only the exported key, and each tab it opens is a launch
+  # that signs out on its own.
+  _ds_op_signout
   if [[ "$1" == "go" ]]; then
     python3 "$_DS_REPO/.claude/tools/fleet_resume.py" --apply
   elif [[ -z "$1" ]]; then

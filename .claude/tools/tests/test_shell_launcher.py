@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -97,6 +98,71 @@ class SharedLauncherTest(unittest.TestCase):
         self.assertEqual(got.returncode, 1)
         self.assertNotIn("in", sections(got.stdout))
         self.assertIn("DS_MODEL_HELPER", got.stderr)
+
+
+#: A stub `op` and `claude` that append each call to `$OP_LOG`, in order; the
+#: reads run in a `$(…)` substitution, so a file is the one shared record.
+OP_STUBS = """
+op() {
+  print -r -- "op $1 ${@[-1]}" >> "$OP_LOG"
+  [[ "$1" == read ]] && print -r -- secret
+  [[ "$1" != signout || -z "$OP_SIGNOUT_FAILS" ]]
+}
+claude() { print -r -- claude >> "$OP_LOG"; }
+"""
+
+OP_REFS = {
+    "DS_OP_ACCOUNT": "acct.example.com",
+    "DS_OP_LINEAR_REF": "op://vault/linear/credential",
+    "DS_OP_GITHUB_REF": "op://vault/github/credential",
+    "DS_OP_BEDROCK_REF": "op://vault/bedrock/credential",
+}
+
+
+@unittest.skipUnless(shutil.which("zsh"), "needs zsh")
+class OpSignoutTest(unittest.TestCase):
+    def launch(
+        self, command: str, **env: str
+    ) -> tuple[subprocess.CompletedProcess, list[str]]:
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "op.log"
+            log.touch()
+            got = run(OP_STUBS + command, OP_LOG=str(log), **OP_REFS, **TIERS, **env)
+            return got, log.read_text().splitlines()
+
+    def test_a_bedrock_launch_signs_out_once_after_every_read(self) -> None:
+        # Chained helpers re-run `_ds_secrets`; the reads still happen once.
+        got, calls = self.launch(
+            '_ds_secrets; _ds_bedrock_env; _ds_secrets; _ds_claude "claude-adv-1[1m]"'
+        )
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(
+            calls,
+            [
+                "op read op://vault/linear/credential",
+                "op read op://vault/github/credential",
+                "op read op://vault/bedrock/credential",
+                "op signout acct.example.com",
+                "claude",
+            ],
+        )
+
+    def test_no_read_means_no_signout(self) -> None:
+        got, calls = self.launch(
+            '_ds_secrets; _ds_claude "claude-adv-1[1m]"',
+            LINEAR_API_KEY="pinned",
+            GITHUB_MCP_PAT="pinned",
+        )
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(calls, ["claude"])
+
+    def test_a_failed_signout_warns_and_still_launches(self) -> None:
+        got, calls = self.launch(
+            '_ds_secrets; _ds_claude "claude-adv-1[1m]"', OP_SIGNOUT_FAILS="1"
+        )
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(calls[-1], "claude")
+        self.assertIn("op signout failed", got.stderr)
 
 
 @unittest.skipUnless(shutil.which("zsh"), "needs zsh")

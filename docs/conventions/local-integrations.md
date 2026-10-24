@@ -1082,7 +1082,7 @@ Four things about that shape are load-bearing:
   never use. Only the session helpers call `_ds_secrets`, so opening an
   ordinary tab stays instant.
 
-- **The `${VAR:-…}` guard makes it at most one fetch per shell.** A
+- **The empty-value guard makes it at most one fetch per shell.** A
   second call in the same shell is a no-op, so helpers that chain into
   one another don't re-prompt. It also lets an already-exported value
   win, which is the override path when a key has to be pinned by hand.
@@ -1095,6 +1095,22 @@ Four things about that shape are load-bearing:
   empty key otherwise surfaces much later as an opaque MCP error
   mid-session, which is far worse to debug than one warning line at
   startup.
+
+**The launcher signs the CLI out after its own reads.** The CLI's
+desktop-app authorization stays warm for ten idle minutes per terminal
+window (twelve hours hard), and every agent shell under the tab would
+inherit it. So once the launch's reads are done — the Bedrock bearer
+token included — `_ds_claude` runs `op signout --account` once, before
+`claude` starts (`fleet` does the same before its tool). A failed
+signout warns and does not stop the launch. Agents keep using
+1Password exactly as before, through the make targets that wrap their
+consumer in `op run`; the first such run in a session prompts the
+operator again. Commit signing is untouched: it goes through the
+1Password SSH agent, not the CLI sign-in.
+
+**A 1Password SSH prompt naming a private key, raised by any process
+but the cockpit (the deploy ceremony's key-handling commands), is
+refused.**
 
 The coordinates above are placeholders. The real account domain, vault
 name, and item titles appear only in the untracked runtime config —
