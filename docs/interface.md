@@ -56,24 +56,34 @@ integrator's only on-chain receipt for the fee they were paid.
 
 ### `FillEvent` — one per matched (sector_idx, level_idx) leg
 
-Fixed-size, `#[event(bytemuck)]`. Fields (in wire order; the `_pad` / `_pad2`
-gaps are bytemuck alignment padding and carry no data):
+Fixed-size, `#[event(bytemuck)]`, 256 bytes. The body is padding-free; fields
+in wire order:
 
-| field                                    | meaning                                                                                                         |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `market`                                 | the market account                                                                                              |
-| `taker`                                  | the transaction initiator                                                                                       |
-| `leader`                                 | the vault's economic owner (carried directly — sectors are reused, so an index is not a stable attribution key) |
-| `quote_authority`                        | the delegated quoting wallet (for off-chain wash clustering)                                                    |
-| `side`                                   | taker side: `0` = ask-side (taker **Buy**), `1` = bid-side (taker **Sell**)                                     |
-| `sector_idx`                             | the matched vault's sector index — reused across vaults, so attribute via `leader` / `quote_authority`          |
-| `level_idx`                              | which `LiquidityProfile` level on that vault                                                                    |
-| `fill_base`                              | base atoms moved on this leg                                                                                    |
-| `fill_quote`                             | quote atoms moved on this leg                                                                                   |
-| `fill_price`                             | the level's absolute `Price` this leg filled at                                                                 |
-| `base_atoms_after` / `quote_atoms_after` | the vault's inventory after this leg                                                                            |
-| `nonce_after`                            | `market.nonce` after this leg's per-leg bump (price-time priority / dedupe ordering)                            |
-| `taker_fee_atoms`                        | protocol taker fee charged on this leg, in the output asset — accrued to the market, not to the vault           |
+| field                                    | meaning                                                                                                                      |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `market`                                 | the market account                                                                                                           |
+| `taker`                                  | the transaction initiator                                                                                                    |
+| `leader`                                 | the vault's economic owner (carried directly — sectors are reused, so an index is not a stable attribution key)              |
+| `quote_authority`                        | the delegated quoting wallet (for off-chain wash clustering)                                                                 |
+| `sector_idx`                             | the matched vault's sector index — reused across vaults, so on its own it does not identify a vault                          |
+| `level_idx`                              | which `LiquidityProfile` level on that vault                                                                                 |
+| `vault_seq`                              | the vault's `Vault::seq`; `(market, sector_idx, vault_seq)` is the stable vault identity across sector reuse                 |
+| `fill_price`                             | the level's absolute `Price` this leg filled at                                                                              |
+| `flip_price`                             | the level's flip price at emit, or zero when the level cannot flip; on a flipped leg it equals `fill_price`                  |
+| `fill_base`                              | base atoms moved on this leg                                                                                                 |
+| `fill_quote`                             | quote atoms moved on this leg                                                                                                |
+| `remaining_after`                        | the consumed side's allowance left after this leg: `Position::size` on a primary leg, `Position::flip_size` on a flipped one |
+| `base_atoms_after` / `quote_atoms_after` | the vault's inventory after this leg                                                                                         |
+| `nonce_after`                            | `market.nonce` after this leg's per-leg bump (price-time priority / dedupe ordering)                                         |
+| `taker_fee_atoms`                        | protocol taker fee charged on this leg, in the output asset — accrued to the market, not to the vault                        |
+| `side`                                   | taker direction: `0` = **Buy**, `1` = **Sell** — not which array filled; `leg_kind` says that                                |
+| `leg_kind`                               | `0` = primary (consumed `Position::size`), `1` = flipped (consumed `Position::flip_size`)                                    |
+| `_reserved`                              | a 46-byte reserve for later fields, written all-zero                                                                         |
+
+The layout is pinned by compile-time asserts beside the struct in
+`programs/dropset/src/events.rs` (size 256; `vault_seq` at 136, `fill_price` at
+144, `side` at 208, `_reserved` at 210), so a decoder can be checked against
+them.
 
 ### `PlatformFeeEvent` — at most one per swap
 
@@ -133,6 +143,13 @@ also why the treasury's custody invariant is
 - **`FreezeVault`** — an admin freezes a vault: it stays on the active DLL
   (existing levels still match until expiry) but can no longer be re-quoted.
 - **`Realize`** — performance-fee accrual (leader economics).
+- **`SetLeader`** / **`SetQuoteAuthority`** — custody and quoting-delegation
+  rotations, carrying the old and new key and the unchanged other half of the
+  authority pair. An end-of-slot account diff can coalesce a rotation away, so
+  these records are how a maker learns its delegation moved.
+- **`SetVaultName`** / **`OverrideVaultName`** — a leader's rename and an
+  admin's rewrite, carrying the old and new name; the admin variant also carries
+  the `lock` it set or cleared.
 
 ### Treasury / admin events
 

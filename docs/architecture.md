@@ -353,8 +353,10 @@ interchangeable:
   accrued in the treasury, harvested later.
 - **Platform fee** — **integrator revenue**. Caller-declared per swap and
   program-capped, paid out immediately to the integrator that routed the
-  order. Not implemented yet; it is a separate future instruction-level
-  change and touches none of the accounting below.
+  order: `swap` takes `platform_fee_bps`, capped by
+  `MarketHeader.max_platform_fee`, and a zero rate skims nothing. See
+  **Order matching → Platform fee (caller-declared)**. It touches none
+  of the accounting below.
 
 The rest of this section is the taker fee.
 
@@ -1518,8 +1520,9 @@ that is not a permissionless instruction falls under one of them.
    - Steady-state: `add_admin`, `remove_admin`, `create_market`
      (see **Registry → Admin gating of market creation**),
      `FreezeVault`, `OverrideVaultName`, `SetOutsideDepositsApproved`,
-     `SetMinLeaderShare`, `SetMarketFeeConfig`, `SweepResidual`, and a
-     waived `CreateVault` fee path.
+     `SetMinLeaderShare`, `SetMarketFeeConfig`, `SetTakerFee`,
+     `SetMaxPlatformFee`, `SetRegistryDefaults`, `SetDefaultFeeConfig`,
+     `SweepResidual`, and a waived `CreateVault` fee path.
    - Feature-gated under `admin-teardown` (see **Account
      lifecycle and rent reclamation**): `force_withdraw_depositor`,
      `force_withdraw_leader`, `close_market_treasury`,
@@ -2637,11 +2640,9 @@ On every taker instruction:
    backing it, and the unquoted remainder the flush left on each leg
    never moves: what one direction can drain is bounded by the flush
    allowance. A fill against a flipped counter emits an ordinary
-   `FillEvent` at `flip_price` on that level; the event format is
-   unchanged. A consumer tells the counter apart by comparing
-   `fill_price` with the level's `price` and `flip_price` (ambiguous
-   only where the two coincide, when either reading prices the fill
-   identically): on a Buy,
+   `FillEvent` at `flip_price` on that level, with `leg_kind` set to
+   flipped, so a consumer reads which side filled from the event alone
+   (see **Events and emission → The `FillEvent` layout**): on a Buy,
    `(sector_idx, level_idx)` names either `asks[level_idx]` or the
    flipped side of `bids[level_idx]`.
 
@@ -2930,7 +2931,8 @@ token-moving or share-changing flow (`CreateVault`, the deposit and
 withdraw family — leader and force-withdraw variants included, each
 paired with a `Realize` when it crystallizes fees; the force-withdraw
 pair only on `admin-teardown` builds, inert on the immutable deploy),
-the per-leg `FillEvent` that is the take's only event, the
+the per-leg `FillEvent` plus the take's one take-level event,
+`PlatformFeeEvent` (only when a platform fee was skimmed), the
 vault-lifecycle changes (`CloseVault`, `FreezeVault`), the two
 authority rotations `SetLeader` and `SetQuoteAuthority` — a coalesced
 diff collapses an A → B → C rotation inside one slot to A → C, and an
@@ -2975,7 +2977,9 @@ ceiling is **64 inner instructions per transaction**
 (`MAX_INSTRUCTION_TRACE_LENGTH`), not bytes. With per-leg emit (one
 `emit_cpi!` per matched leg; see **Granularity** below), this count —
 not the per-CPI 10 KiB data cap — is what bounds a take: it can record
-at most `64 − (top-level ix + token CPIs)` legs in one transaction (a
+at most `64 − (top-level ix + token CPIs)` legs in one transaction, one
+fewer when a platform fee is skimmed, since its `PlatformFeeEvent` is
+one more self-CPI (a
 single `FillEvent` is a 256 B body behind a 16 B envelope, nowhere near
 the data cap).
 
@@ -3016,10 +3020,11 @@ sweep many levels across many vaults (the sorted-`Vec` fill loop in
 every matched `(sector_idx, level_idx)` leg is its own `emit_cpi!`
 `FillEvent`, accumulated by the matcher and dispatched one at a time in
 heap-pop (match) order, so a leg's inner-instruction index is a stable
-ordinal. There is **no separate take-level event**: per-take figures
-(total fill, average price, total fee) are derived off-chain by grouping
-the legs of one transaction. An aggregated `FillBatch` was considered
-and rejected — per-leg emit is the simplest fixed-size record, each
+ordinal. The one take-level event is `PlatformFeeEvent`, emitted once
+after the fills when a platform fee was skimmed; per-take fill figures
+(total fill, average price, total taker fee) are still derived off-chain
+by grouping the legs of one transaction. An aggregated `FillBatch` was
+considered and rejected — per-leg emit is the simplest fixed-size record, each
 `FillEvent` sits far inside the per-CPI 10 KiB data cap so a leg never
 splits, and the only ceiling is the 64-instruction trace count above
 (not event size). Because fills ride as inner-instruction data rather
