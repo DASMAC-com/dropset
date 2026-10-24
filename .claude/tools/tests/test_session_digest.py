@@ -299,8 +299,8 @@ class EndToEndTests(DigestFixture):
         self.write(cwd, "55555555-eeee", records, mtime=1_792_886_400)
         self.mark("55555555-eeee", "bedrock")
         read = sm.RATES_BY_MODEL[MODEL].cache_read
-        # The first digest closes at NOW (10-24 12:00): it holds w1 only, even
-        # though w2 is already on disk.
+        # The first digest closes a margin before NOW (10-24 11:55): it holds
+        # w1 only, even though w2 is already on disk.
         self.assertAlmostEqual(self.run_digest()["dollars"], round(read, 2))
         # The next pass hands a stale --since, as after a failed stamp; the
         # window still opens at the last close, so w1 is not counted again.
@@ -329,10 +329,45 @@ class EndToEndTests(DigestFixture):
         self.assertEqual(
             [(e["since"], e["until"]) for e in history],
             [
-                ("2026-10-23T12:00:00", "2026-10-24T12:00:00"),
-                ("2026-10-24T12:00:00", "2026-10-25T12:00:00"),
+                ("2026-10-23T12:00:00", "2026-10-24T11:55:00"),
+                ("2026-10-24T11:55:00", "2026-10-25T11:55:00"),
             ],
         )
+
+    def test_a_malformed_history_bound_is_skipped_not_the_history(self):
+        directory = self.base / sd.DIGEST_DIR
+        directory.mkdir(parents=True)
+        entries = [
+            {"date": "2026-10-22", "until": "2026-10-23T11:55:00"},
+            {"date": "2026-10-23", "until": 1234},
+        ]
+        (directory / sd.HISTORY_NAME).write_text(
+            "".join(json.dumps(e) + "\n" for e in entries)
+        )
+        given = sd._instant("2026-10-20T00:00:00Z")
+        start = sd.window_start(directory, "2026-10-24", given)
+        self.assertEqual(start, sd._instant("2026-10-23T11:55:00Z"))
+
+    def test_a_same_day_rerun_reopens_that_days_window(self):
+        directory = self.base / sd.DIGEST_DIR
+        directory.mkdir(parents=True)
+        entries = [
+            {
+                "date": "2026-10-23",
+                "since": "2026-10-22T09:00:00",
+                "until": "2026-10-23T09:00:00",
+            },
+            {
+                "date": "2026-10-24",
+                "since": "2026-10-23T09:00:00",
+                "until": "2026-10-24T09:00:00",
+            },
+        ]
+        (directory / sd.HISTORY_NAME).write_text(
+            "".join(json.dumps(e) + "\n" for e in entries)
+        )
+        start = sd.window_start(directory, "2026-10-24", sd._instant(NOW))
+        self.assertEqual(start, sd._instant("2026-10-23T09:00:00Z"))
 
     def test_a_locked_worktree_is_live(self):
         self.build()

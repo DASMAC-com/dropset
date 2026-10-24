@@ -123,7 +123,9 @@ TIMEOUT_TOOL = 120
 # The transcript walk alone takes about a minute, before the Cost Explorer read.
 TIMEOUT_COST = 300
 
-# How many recent digests the refresh gate mines, and how many notification
+# How many recent digests the refresh gate mines — an upper bound: the purge
+# ages digests out on the transcripts' two-day rule, so once it is applied
+# only the last few survive — and how many notification
 # PRs outside the listed sets are resolved one by one before giving up.
 MINE_DIGESTS = 7
 MAX_NOTIFICATION_LOOKUPS = 20
@@ -801,7 +803,8 @@ def step_digest(ctx: Ctx) -> None:
     ctx.record(
         "digest",
         f"{summary.get('sessions', 0)} session(s), "
-        f"{fleet_cost.money(summary.get('dollars', 0.0))} at Bedrock rates, "
+        f"Bedrock {fleet_cost.money(summary.get('bedrock', 0.0))}, seat "
+        f"{fleet_cost.money(summary.get('seat', 0.0))} {fleet_cost.sm.NOT_BILLED}, "
         f"{summary.get('flagged', 0)} flagged line(s); {path}",
         ok=bool(summary.get("path")),
     )

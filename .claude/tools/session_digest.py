@@ -86,6 +86,9 @@ RATE_TOLERANCE = 0.01
 
 # A transcript written this recently is a session still running.
 LIVE_SECONDS = 3600
+# How far before now a window closes. Transcripts are appended a record at a
+# time while the fleet runs, so the newest minutes are left to the next digest.
+UNTIL_MARGIN = datetime.timedelta(minutes=5)
 DEFAULT_SINCE_HOURS = 24
 # Rows per ranked list in a session block. The digest is read every morning,
 # so a block stays a few lines; the full tables are `session_metrics.py`'s.
@@ -413,15 +416,19 @@ def window_start(directory: Path, date: str, given: datetime.datetime):
     records. So the window opens where the last earlier digest's closed, and
     ``given`` (``--since``) only seeds the first. A rerun on a date already
     digested re-opens that date's own window, replacing it whole, so the
-    earlier run's hours are never dropped.
+    earlier run's hours are never dropped. An entry whose bound does not parse
+    is skipped, never the whole history: falling back to ``given`` would
+    re-open the window at a stamp that can sit before the last close.
     """
     entries = _history_entries(directory)
-    for entry in reversed(entries):
-        if entry.get("date") == date and entry.get("since"):
-            return _instant(entry["since"])
-    for entry in reversed(entries):
-        if entry.get("date") != date and entry.get("until"):
-            return _instant(entry["until"])
+    for same_day, key in ((True, "since"), (False, "until")):
+        for entry in reversed(entries):
+            if (entry.get("date") == date) != same_day:
+                continue
+            try:
+                return _instant(entry[key])
+            except (KeyError, AttributeError, TypeError, ValueError):
+                continue
     return given
 
 
@@ -804,14 +811,13 @@ def main(argv: list[str] | None = None) -> int:
     date = now.date().isoformat()
     directory = base / DIGEST_DIR
     directory.mkdir(parents=True, exist_ok=True)
-    try:
-        since = window_start(directory, date, since)
-    except ValueError:
-        pass  # a malformed history bound falls back to --since
+    since = window_start(directory, date, since)
     # Both bounds at whole seconds, as `utc_stamp` compares: a record is in
-    # exactly one window, `[since, until)`.
+    # exactly one window, `[since, until)`. The window closes a margin before
+    # now, so a live session's record stamped just before the close but
+    # flushed after its file was read lands in the next window, not in none.
     since_text = since.strftime("%Y-%m-%dT%H:%M:%S")
-    until_text = now.strftime("%Y-%m-%dT%H:%M:%S")
+    until_text = (now - UNTIL_MARGIN).strftime("%Y-%m-%dT%H:%M:%S")
     sessions = []
     for path in discover(projects, base, since.timestamp()):
         try:
@@ -836,6 +842,8 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "sessions": figures["sessions"],
                 "dollars": round(figures["total"], 2),
+                "bedrock": round(figures["bedrock"], 2),
+                "seat": round(figures["seat"], 2),
                 "flagged": len(flags),
                 "path": str(md_path),
             }

@@ -745,6 +745,8 @@ class PassTests(unittest.TestCase):
         {
             "sessions": 3,
             "dollars": 42.5,
+            "bedrock": 30.0,
+            "seat": 12.5,
             "flagged": 1,
             "path": f"{BASE}/.claude/session-metrics/digest-2026-10-08.md",
         }
@@ -798,7 +800,8 @@ class PassTests(unittest.TestCase):
         self.assertTrue(step["ok"])
         self.assertEqual(
             step["line"],
-            "3 session(s), $42.50 at Bedrock rates, 1 flagged line(s); "
+            "3 session(s), Bedrock $30.00, seat $12.50 at Bedrock rates, not billed, "
+            "1 flagged line(s); "
             ".claude/session-metrics/digest-2026-10-08.md",
         )
         # The settled day, never the provisional one.
