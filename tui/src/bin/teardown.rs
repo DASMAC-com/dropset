@@ -9,7 +9,8 @@
 //! confirmation. The program id is per cluster, so the target is read from
 //! the chain's genesis hash ([`Cluster::of_genesis`]): mainnet, or a loopback
 //! endpoint taken as localnet; a remote endpoint to any other chain is
-//! refused, since no deployment lives there.
+//! refused, since no deployment lives there. A non-localnet `--rpc-url` is
+//! refused outright in an agent's shell ([`dropset_tui::agent_shell`]).
 //!
 //! A loopback `--rpc-url` skips that prompt, so it is additionally held to a
 //! genesis check ([`cluster::ensure_not_mainnet`]): host classification cannot
@@ -32,7 +33,7 @@
 use anyhow::{anyhow, bail, Result};
 use dropset_tui::cluster::{self, Cluster};
 use dropset_tui::job::Logger;
-use dropset_tui::{chain, teardown, validator, wallet};
+use dropset_tui::{agent_shell, chain, teardown, validator, wallet};
 use solana_signer::Signer;
 use std::path::PathBuf;
 
@@ -47,13 +48,18 @@ fn main() -> Result<()> {
         .parent()
         .ok_or_else(|| anyhow!("locate repo root from crate dir"))?
         .to_path_buf();
-    let (keypair, _wallet_path) = wallet::load(args.wallet.as_deref(), &repo_root)?;
     let rpc_url = args
         .rpc_url
         .unwrap_or_else(|| validator::DEFAULT_RPC_URL.to_string());
+    let loopback = cluster::is_localnet(&rpc_url);
+    // A real cluster is the operator's alone, from their own terminal —
+    // refused in an agent's shell before the wallet is even read.
+    if !loopback {
+        agent_shell::refuse_agent_shell()?;
+    }
+    let (keypair, _wallet_path) = wallet::load(args.wallet.as_deref(), &repo_root)?;
     let client = chain::rpc(&rpc_url);
 
-    let loopback = cluster::is_localnet(&rpc_url);
     if loopback {
         // The prompt is skipped below on the strength of the URL alone, and a
         // URL cannot see through an SSH tunnel or a local proxy — so ask the

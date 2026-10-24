@@ -2092,10 +2092,10 @@ The new leader must be:
   because anyone can send lamports to the PDA address. See **Depositor
   positions and cost basis → Leader-and-depositor invariant**.
 
-`quote_authority` does **not** follow the leader. The intended endgame
-is the leader on a hardware wallet and the quoting delegate on the hot
-maker key; a caller that wants both rotated bundles a
-`SetQuoteAuthority` in the same transaction. `leader_shares`, the HWM,
+`quote_authority` does **not** follow the leader: custody and quoting
+rotate independently, and a caller that wants both rotated bundles a
+`SetQuoteAuthority` in the same transaction, so the two can still
+rotate together. `leader_shares`, the HWM,
 the fee rate, the flags, `seq`, the `name` and its `name_locked` lock are
 unchanged — the same vault under a new key.
 

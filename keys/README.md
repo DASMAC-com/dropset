@@ -47,13 +47,14 @@ prefix (`GGGG`, `HHHH`, …) into this directory.
 No mainnet signing key lives here, and the TUI refuses any key in this
 directory on mainnet, since its secret is public. The mainnet signing keys
 are the operator's, held in 1Password and configured through the TUI's
-git-ignored keys file, `tui/keys.env` (start from the committed
-`tui/keys.env.example`). An SDK consumer never needs them.
+git-ignored keys file, `tui/private-keys.env` (start from the committed
+`tui/private-keys.env.example`). An SDK consumer never needs them.
 
-`tui/keys.env` is one of the repo's two secrets-reference homes. The other is
-the localnet collectors enclave, `infra/localnet/secrets.local.env`, which
-holds the data stack's credentials (`docs/data-feeds.md` §12). Each keeps
-references only; the values stay in 1Password.
+`tui/private-keys.env` is one of the repo's two secrets-reference homes.
+The other is the localnet collectors enclave,
+`infra/localnet/secrets.local.env`, which holds the data stack's
+credentials (`docs/data-feeds.md` §12). Each keeps references only; the
+values stay in 1Password.
 
 ## The mainnet program id
 

@@ -46,6 +46,7 @@ cdylib
 cfgs
 chainlink
 chpwd
+claudecode
 clickhouse
 clippy
 clob

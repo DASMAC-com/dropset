@@ -15,8 +15,11 @@ close and drain by its leader.
   of time, not under pressure.
 - 1Password is unlocked and holds the admin wallet (pays the fees), the
   vault's quote key and its leader key.
-- `tui/keys.env` exists, copied from `tui/keys.env.example`, with one
-  `op://` reference per key. These are references, never files.
+- `tui/private-keys.env` exists, copied from
+  `tui/private-keys.env.example`, with one `op://` reference per key.
+  These are references, never files.
+- You are in your own terminal. The cockpit refuses an agent's shell
+  (`CLAUDECODE` set), sub-agents included.
 - The admin wallet holds some SOL for transaction fees.
 - `DROPSET_MAINNET_RPC_URL` is exported, pointing at a provider endpoint.
 

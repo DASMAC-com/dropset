@@ -442,19 +442,36 @@ endef
 # verifies the endpoint's genesis hash really is mainnet-beta's and requires a
 # typed confirmation before drawing a frame.
 #
+# Never from an agent's shell: Claude Code sets CLAUDECODE in every shell it
+# opens, and the target refuses before `cargo run` so the rule is stated even
+# when the binary is not built. The text mirrors the binary's own refusal
+# (`dropset_tui::agent_shell::REFUSAL`); keep the two in step.
+#
 # Keys are 1Password references, never files, read by the TUI itself from its
 # git-ignored keys file — one reference per key (wallet, leader, quote); copy
-# tui/keys.env.example to start one. The target is deliberately not run under
-# `op run`, so no resolved key reaches the environment. TUI_MAINNET_ARGS
-# carries `--program-key` for a first publish, or a one-off override of a
-# keys-file line; see `cargo run -p dropset-tui -- --help`.
+# tui/private-keys.env.example to start one. The target is deliberately not
+# run under `op run`, so no resolved key reaches the environment.
+# TUI_MAINNET_ARGS carries `--program-key` for a first publish, or a one-off
+# override of a keys-file line; see `cargo run -p dropset-tui -- --help`.
 #
 # `make demo` and `make tui` are untouched.
-TUI_KEYS_FILE ?= tui/keys.env
+TUI_KEYS_FILE ?= tui/private-keys.env
 TUI_MAINNET_ARGS ?=
 MAINNET_RPC_HINT := mainnet mode has no default endpoint; set it explicitly
+AGENT_SHELL_REFUSAL := Refused: CLAUDECODE is set, which marks this as an \
+	agent's shell (Claude Code sets it in every shell it opens). An agent \
+	shell, sub-agents included, never runs mainnet operations. Do not run \
+	this from a sub-agent or an agent session: the operator runs the cockpit \
+	in their own terminal.
+define refuse-agent-shell
+@if [ -n "$${CLAUDECODE}" ]; then \
+	echo "$(AGENT_SHELL_REFUSAL)"; \
+	exit 1; \
+fi
+endef
 .PHONY: tui-mainnet
 tui-mainnet:
+	$(refuse-agent-shell)
 	$(call require-env,DROPSET_MAINNET_RPC_URL,$(MAINNET_RPC_HINT))
 	cargo run -p dropset-tui -- --cluster mainnet --keys-file '$(TUI_KEYS_FILE)' \
 		$(TUI_MAINNET_ARGS)
