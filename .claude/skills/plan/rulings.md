@@ -232,7 +232,8 @@ the document's state sections.
 1. **Verbs**: `task`, `task anthropic`, `task resume`, `chore`,
    `chore anthropic`, `explore`, `explore anthropic`, `plan`,
    `plan cycle`, `architect`
-   (bare number, idempotent), and `fleet`; `housekeeping` is
+   (bare number, idempotent), and `fleet`; a substrate word always
+   precedes the number (`architect bedrock <n>`); `housekeeping` is
    retired, its upkeep run by the `plan` launcher. Audit issues
    dispatch as
    `explore`.
