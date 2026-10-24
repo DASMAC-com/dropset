@@ -133,8 +133,15 @@ NOTIFICATIONS_PATH = "/notifications?all=true&per_page=50"
 
 RESOLVED_TYPES = ("completed", "canceled")
 # The parking milestones, in report order. Trim levers leads: its count is the
-# fold sub-agent's spawn gate.
-PARKED_MILESTONES = ("Trim levers", "Claude meta", "Follow-ups", "Audit findings")
+# fold sub-agent's spawn gate. Session pending is short-lived by design: a
+# count there is a seat session that died mid-review.
+PARKED_MILESTONES = (
+    "Trim levers",
+    "Claude meta",
+    "Follow-ups",
+    "Audit findings",
+    "Session pending",
+)
 # A branch tied to an ENG issue, by its NUMBER whatever the verb: `eng-<n>`,
 # which every issue-keyed launch now creates, or a pre-scheme spelling — the
 # `worktree-<n>` that `claude -w <n>` named it, and the `worktree-eng-` /

@@ -529,16 +529,17 @@ session-metrics state, standing decisions and verification debt.
 
 The state and the milestone together say where an issue sits:
 
-| State                        | Milestone | Meaning                                             |
-| ---------------------------- | --------- | --------------------------------------------------- |
-| Backlog                      | none      | a spec awaiting the operator's review — the inbox   |
-| Backlog or Todo              | parking   | **parked**: hidden from the operator's project view |
-| Todo                         | none      | reviewed and dispatchable; the body is frozen       |
-| In Progress, In Review, Done | —         | the session state machine, unchanged (see above)    |
+| State                        | Milestone         | Meaning                                                            |
+| ---------------------------- | ----------------- | ------------------------------------------------------------------ |
+| Backlog                      | none              | a spec awaiting the operator's review — the inbox                  |
+| Backlog or Todo              | parking           | **parked**: hidden from the operator's project view                |
+| Backlog                      | `Session pending` | a seat session's filed tasks, under its in-tab review; short-lived |
+| Todo                         | none              | reviewed and dispatchable; the body is frozen                      |
+| In Progress, In Review, Done | —                 | the session state machine, unchanged (see above)                   |
 
 **The operator's move from Backlog to Todo is the approval.** Planning
-never makes that move, nor does an architect on its own judgment (it
-executes one only when the operator directs it in the tab), and that
+never makes that move, nor does a seat session on its own judgment (its
+`ratify-staged` batch executes the operator's final answer in its tab), and that
 single-writer rule is why "state is Todo" proves
 approval with no reaction read. **Withdrawal** is the reverse move. A
 **fold into a Todo body drops it back to Backlog**, because the body the
@@ -556,7 +557,8 @@ planning hold is expressed as an edge (see "Blocking relations").
 
 An issue stamped with a parking milestone — `Audit findings` for audit
 output, `Trim levers` for session trim levers, `Claude meta` for
-agent-infra strays — is **parked**: filed so it is not lost, deliberately
+agent-infra strays, `Session pending` for a seat session's tasks under
+review — is **parked**: filed so it is not lost, deliberately
 *not* in the inbox or the queue. A filing skill sets **state `Backlog`
 plus the milestone, in the creating call** (per "Relations and state
 belong in the CREATING call"). **Promotion is one write, the milestone
@@ -575,6 +577,17 @@ into a batch. And a meta-flavored *audit* finding is promoted by
 **swapping** its milestone from `Audit findings` to `Claude meta` — it
 stays parked, changing which rhythm will pick it up, rather than
 becoming available work.
+
+**`Session pending` is never promoted by planning.** It is the unified
+staging lane for every seat session's filed tasks — architect, explore
+and audit alike — so the operator reviews them in one place, in the
+filing session's own tab, through the shared `ratify-staged` skill:
+one checkbox per task, and once every task is ticked and uncommented
+the session clears the milestone and moves the whole set to Todo in one
+batch on that answer. It is **short-lived by design**: a count at
+bootstrap is a session that died mid-review, and the count-and-offer
+line is the backstop — offer to resume that session, never promote its
+tasks around it.
 
 **A batch's own promotion is the same milestone clear**, and which batch is
 pulled follows from that: a **promoted** batch is pulled on its own
@@ -638,8 +651,9 @@ one.
 
 The project's milestones split into two kinds, and only one kind parks.
 **Parking** milestones — `Audit findings`, `Trim levers`,
-`Claude meta` — mean "filed, deliberately not queued", and an issue
-carrying one is read as parked by every rule above. The rest —
+`Claude meta`, `Session pending` — mean "filed, deliberately not
+queued", and an issue carrying one is read as parked by every rule
+above. The rest —
 `Integrations`, `UX features`, `Hardening`, `Mechanisms` — are ordinary
 **delivery** milestones grouping pullable work; an issue under one of
 those is queued like any other and is *not* parked.
@@ -647,7 +661,10 @@ those is queued like any other and is *not* parked.
 Say which kind you mean when you write a rule against "a milestone",
 because the two behave oppositely. The distinction is by **name**, not
 by any field Linear exposes, so it lives here rather than being
-derivable — and the three parking names are the closed set.
+derivable — and the four parking names are the closed set.
+`Audit findings` takes no new filings once audit findings stage under
+`Session pending` like any other seat session's output, and it retires
+when its legacy contents drain.
 
 One place the two kinds *do* behave alike, which is easy to
 misattribute: `board_batch.py list` drops **every** milestoned issue by

@@ -575,14 +575,12 @@ an item the operator executes by hand `[Operator]`.
 - **A batch is all-or-nothing on validation** — fix the typo and
   re-run the whole call.
 - **An `architect` kick-off is this fixed text, never a
-  paraphrase:** "The read-back is mandatory: file tasks into
-  Backlog as the design settles, never move them to Todo
-  yourself, and open your handoff with the task list and whether
-  the operator has reviewed it." Never call the read-back
-  optional. A handoff lacking that line is unratified: its tasks
-  stay in Backlog for review. The dispatch gate is unchanged
-  (state Todo plus unblocked); the operator makes an architect's
-  Todo moves, or directs them in its tab.
+  paraphrase:** "Two stages: agree the spec and file nothing,
+  then run `ratify-staged`; open your handoff with the task list
+  and where it stands." Never call either stage optional. A
+  handoff lacking that line is unratified. The dispatch gate is
+  unchanged (state Todo plus unblocked); an architect's Todo
+  moves are its `ratify-staged` batch.
 - **A ratified spec FILE is folded in first** (usually the
   design landed as tasks, and there is none): an implementer
   cannot read an architect or explore worktree, so **copy it into the
@@ -691,6 +689,9 @@ items. To promote:
 **Do not re-adjudicate a finding.** `audit-scope` cross-checks
 adversarially before filing; the only question left is whether it
 belongs in this phase.
+
+**`Session pending` is never promoted here**: a count is a seat
+session that died mid-review — offer to resume it.
 
 ## Notes
 

@@ -81,8 +81,8 @@ idempotent, one resumable session per governing issue, named
 `<n>`). It bootstraps minimally — the Planning document,
 plan's rulings, no more — and makes **no scheduling
 writes** to the board: it files its own Linear tasks and moves its
-own governing issue to In Review, but places no edges,
-re-prioritizes nothing, closes nothing and touches no other issue.
+own governing issue to In Review, places only edges the operator
+ratified, re-prioritizes nothing and touches no other issue.
 The **scheduling** monopoly stays with the planning session, and the
 architect hands its conclusions over through the Planning document's
 `Notes for the next planning session` heading **and** a direct
@@ -95,14 +95,13 @@ repo-bound — a ratified spec included — lands later via a
 **follow-up worker task**. **`explore` shares all of this**, audits
 included.
 
-**A spec FILE is optional; ratification is not — tasks are filed
-into Backlog, and the session never moves one to Todo: the
-operator reviews them in the tab and moves them, or directs the
-move there.** The loop is
-write → operator edits **in place** → read back **once** → ratify,
-with
-`AskUserQuestion` reserved for calls the draft cannot proceed
-without; say where the design lives in plain text. Open
+**A spec FILE is optional; ratification is not — two stages,
+nothing filed before the operator's yes.** The spec loop is
+write → edits **in place** → read back **once**, ending
+in the task list; then `ratify-staged` files them under
+`Session pending`, one checkbox each, and moves the set to Todo
+in one batch on the operator's answer. Say where the design
+lives in plain text. Open
 items carry greppable **`NEEDS-CONFIRM`** / **`NEEDS-FEEDBACK`**
 markers and an index at the top; **settled text carries no marker**,
 since a marker meaning "I changed this" competes with one meaning "I
@@ -247,8 +246,9 @@ frozen. The operator's Backlog → Todo move **is** the approval —
 planning never makes it — and a fold into a Todo body drops it back.
 The dispatch gate is **state Todo plus unblocked**; the Next view is
 the unblocked Todo. An issue carrying a **parking milestone** —
-`Audit findings`, `Trim levers`, or `Claude meta` — is *parked* in
-either state, so a filing skill sets **`Backlog` plus the milestone,
+`Audit findings`, `Trim levers`, `Claude meta`, `Session pending`
+— is *parked* in either state, so a filing skill sets **`Backlog`
+plus the milestone,
 in the creating call**, and promotion is **one write, the milestone
 clear**. Every full bootstrap says each parked count **out loud**;
 a genuinely urgent stray (a broken guard) is promoted on the spot.

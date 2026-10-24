@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Run an architect session, launched with `architect <n>` on its governing issue — a long-horizon design conversation asking whether the thing on the board is the right thing to build. Bootstraps from the Planning document only. Produces Linear tasks, filed into Backlog as the design settles, ratified per task in a mandatory read-back and left in Backlog for the operator's own review and Todo move, plus an optional on-disk spec file the operator edits in place, with NEEDS- markers on open items. Makes no scheduling writes: it files its own tasks, never moves one to Todo on its own judgment, and moves its own issue to In Review, then hands conclusions to planning through the Planning document's notes and a direct message. Runs in a temporary worktree but is READ-ONLY toward the repo — no commits, no PR.
+description: Run an architect session, launched with `architect <n>` on its governing issue — a long-horizon design conversation asking whether the thing on the board is the right thing to build. Bootstraps from the Planning document only. Two reviewed stages: a spec (an optional on-disk file the operator edits in place, NEEDS- markers on open items) ending in the task list, with nothing filed before the operator's yes; then the tasks, filed Backlog plus the `Session pending` milestone and ratified per task through the shared `ratify-staged` skill, moving to Todo in one batch on the operator's final answer. Makes no scheduling writes on its own judgment: it files its own tasks, places only the edges the filing yes ratified, and moves its own issue to In Review, then hands conclusions to planning through the Planning document's notes and a direct message. Runs in a temporary worktree but is READ-ONLY toward the repo — no commits, no PR.
 user-invocable: true
 model: fable
 ---
@@ -138,40 +138,33 @@ absolute rule and they are not the same thing.
   decided. This is not a concession, it is the mechanism the
   whole design rests on: durable state must reach Linear
   *before* the handoff, so a session that could not file would
-  have no way to make its output durable. They are filed **into
-  Backlog during the session**, as the design settles, as the
-  reviewable units the operator ratifies one by one (see "The
-  loop" below). The session owns them and handles comments on
-  them by the fold protocol (`plan` step 1): fold, reply saying
-  how, resolve. **Each title carries its launch line** — the
+  have no way to make its output durable. They are filed **only
+  after the operator's filing yes**, `Backlog` plus the
+  `Session pending` milestone, and ratified one by one through
+  `ratify-staged` (see "The loop" below). **Each title carries
+  its launch line** — the
   `[<Verb>/<Substrate>]` token, before any `Claude:`, omitted
   only for a task on Bedrock; `[Operator]` for an item the
   operator executes by hand (`docs/conventions/linear-automation.md`
   → "The verb/substrate title token").
 - **Its own governing issue's state**, In Progress → In Review
-  at handoff. Never Done — that is the operator's. Bar canceling
-  its own unratified tasks, this is the only state write the
-  session makes on its own judgment.
+  at handoff. Never Done — that is the operator's. This is the
+  only state write the session makes on its own judgment.
 
-**It never moves a task it filed to Todo.** Its tasks stay in
-Backlog until the operator has ratified the whole spec **and**
-reviewed the filed tasks themselves, here in the tab; the
-operator then makes the Backlog → Todo move, as for every other
-spec (operator, 2026-10-22). Ratifying a design is not reviewing
-a task list, and the review is the operator's. What is **not** a
-breach: an explicit instruction from the operator, in this tab,
-to move named tasks, which the session executes, because a move
-the operator directs is the operator's own. The usual way it
-arises is a single ask at close, naming the tasks: "may I mark
-these Todo?". What is forbidden is a move on this session's
-judgment that the tasks are ratified or reviewed. An
-unratified task stays in Backlog or is canceled.
+**It never moves a task to Todo on its own judgment.** The one
+Todo write is `ratify-staged`'s batch at the end — every filed
+task ticked and uncommented, the whole set moved at once on the
+operator's final answer (ruling 12's carve-out), the review's
+rejects canceled. A move the operator directs is the operator's
+own; one on this session's judgment that the tasks are reviewed
+is forbidden.
 
 **What it must not write, and this is the real monopoly:**
 
-- **no blocking edges**, ever;
-- **no re-prioritizing**, no milestone changes, no closing beyond
-  its own unratified tasks;
+- **no blocking edges** beyond those the operator's filing yes
+  ratified, which it places on filing;
+- **no re-prioritizing**, no milestone changes beyond its own
+  tasks' `Session pending`, no closing beyond its own rejects;
 - **nothing on another issue** — not its state, not its body.
 
 The scheduling monopoly stays with the planning session. Two
@@ -190,7 +183,7 @@ planning session execute.
 nothing, re-prioritizes nothing, and closes nothing." The first
 clause is retired: it forbade the act that makes this session's
 output durable, which the 2026-09-14 ruling requires. The other
-three stand unchanged.)
+three stand, bar what the operator's own answers direct.)
 
 ## Flag, don't touch
 
@@ -228,8 +221,7 @@ skipped at bootstrap.
 
 ## The deliverable: Linear tasks, and optionally a spec file
 
-**Linear tasks are the durable output, and they stay in Backlog
-for the operator to move.** What is optional is the spec *file*,
+**Linear tasks are the durable output.** What is optional is the spec *file*,
 never the ratification. Reach for a file only when the thinking
 is too large to hold in the governing issue's body, or when a
 longer-term repo artifact is genuinely warranted; a short design
@@ -242,23 +234,17 @@ iteration medium; Linear is the record.** Filing is not
 ratifying: on 2026-10-19 a session filed seven tasks and handed
 off without the operator ever seeing the design.
 
-**A task is filed unratified, into Backlog** — the review inbox,
-which is exactly where a spec awaiting review belongs. That is why
-the earlier marked-stub form and its "no task is filed from an
-unratified design" rule retired: Backlog already says "awaiting
-review", and only Todo says "approved". When the review settles,
-each task is rewritten to the ratified spec, or canceled if the
-review removed it.
+**Nothing is filed during the spec stage.** The 2102 shape filed
+tasks as the design settled; it retired because the operator then
+reviewed a moving set. Now the spec ends with the task list it
+will file, and the tasks are filed only on the filing yes, parked
+under `Session pending` so the review inbox never sees them
+before the operator has.
 
-When you do write one, it goes in the worktree at:
-
-```txt
-docs/specs/<issue-number>-<topic>.md
-```
-
-(A bare number, matching the existing
-`docs/specs/1313-mainnet-laptop.md` — the literal token `ENG-`
-is not part of the filename.)
+When you do write one, it goes at the **worktree root**, never
+under a repo-shaped path (ruling 12), named
+`<issue-number>-<topic>.md` — a bare number; the literal token
+`ENG-` is not part of the filename.
 
 **You do not commit it.** If the operator decides the ratified
 spec should live in the repo for the longer term, that commit
@@ -277,29 +263,29 @@ an artifact:
   is in Linear by then. If that is not true, the fix is to
   write the Linear task, not to protect the file.
 
-### The loop: write, edit, read back ONCE — then ratify
+### The loop: two stages, spec then tasks
 
-The loop is **mandatory**, file or no file:
+Both stages are **mandatory**, file or no file.
+
+**Stage 1, the spec:**
 
 1. **Write the design** — the spec file, or the governing
-   issue's body — and file its tasks into Backlog as they
-   settle. Say where it is, in plain text, the moment it
-   exists: in this tab **and** in a message to any live
-   planning session.
+   issue's body — **ending with the task list it will file**.
+   Say where it is, in plain text, the moment it exists: in
+   this tab **and** in a message to any live planning session.
 1. **The operator edits it directly**, in a real editor or as
-   comments on the issue and its tasks, between turns.
-1. **Read it back exactly once** and fold their edits and
-   comments in place.
-1. **They edit again**, and give an **explicit yes** per task,
-   in this tab — a ratification may still nudge the spec, but
-   mostly it agrees it.
-1. **The operator reviews the filed tasks**, as filed; the Todo
-   move is theirs to make or to direct (see "What this session
-   may write"). Only after that review can the session close as
-   Done.
+   comments on the issue, between turns.
+1. **Read it back exactly once** per round and fold their edits
+   and comments in place; repeat until the operator says the
+   spec is agreed.
 
-**A session that cannot reach the operator stops at In Review
-with its tasks still in Backlog**, the design copied into the
+**Stage 2, the tasks: run `ratify-staged`** — the filing ask with
+the proposed edges, the filing into `Session pending`, the
+checkbox review rounds, the one batch to Todo and the close gate.
+A no to the filing ask returns to stage 1.
+
+**A session that cannot reach the operator stops at In Review**,
+its tasks not yet filed or still parked, the design copied into the
 governing issue's body first so a spec file is never the only
 copy.
 
@@ -308,8 +294,8 @@ to check whether it changed is the failure mode: a spec is
 consulted many times across a session, and each full read buys
 it again. Grep it, or read the section you are amending.
 
-**`AskUserQuestion` is reserved for calls that must be answered
-before the spec can be drafted at all** — a fork where both
+**In stage 1, `AskUserQuestion` is reserved for calls that must
+be answered before the spec can be drafted at all** — a fork where both
 branches produce entirely different documents. Everything else
 goes in the file as a marked open item, because **the operator
 edits faster than they answer serialized questions**. That is
@@ -351,11 +337,10 @@ The state machine is **In Progress while the session runs → In
 Review when the deliverable is handed off → Done only on the
 operator's ratification**.
 
-Two yeses, not one: the **design yes** inside the loop, given per
-task, comes before In Review and licenses **no** Todo move — only
-the operator's own move, or their explicit direction in this tab,
-does; the **close yes** (see "Lifecycle" below) is what moves the
-issue to Done.
+The yeses are distinct: the **filing yes** licenses filing and
+the edges it names, never a Todo move; the **review ticks**, with
+no comment left, license the one batch to Todo; the **close yes**
+(see "Lifecycle" below) is what moves the issue to Done.
 
 **Never self-mark Done.** That is the measured mistake which
 produced the invalid state described under "This session is
@@ -382,7 +367,8 @@ body and deletes the file — **if there was a file at all**;
 where the design landed as Linear tasks, which is the common
 case, there is nothing to fold and that step is a no-op. Either
 way the worktree can go whenever, since its contents are
-expendable — but it goes **through the close tool**, as the
+expendable — but it goes **through the close tool**, after
+`ratify-staged`'s close gate reads clear, as the
 session's **last** tool call after an `AskUserQuestion` yes
 ratifying in this tab, so Done lands before the removal (the
 branch is not `eng-###`, so name the issue):
@@ -460,12 +446,11 @@ alternatives or the failure paths: those live in Linear, and
 duplicating them into the Planning document is how the document
 grows without bound between close-out rewrites.
 
-**Both channels open with the task list** and whether the
-operator has reviewed it — where and when they ratified (this
-tab, with the date), and whether the Todo move is made or still
-pending with them. A design still in its read-back loop says so
-instead. Planning treats a handoff **without** that line as
-unratified, its tasks awaiting the operator's review in Backlog.
+**Both channels open with the task list** and where it stands —
+filed and moved to Todo in the batch (with the date), still
+under `Session pending` mid-review, or not yet filed because the spec
+is still in stage 1. Planning treats a handoff **without** that
+line as unratified, its tasks awaiting review.
 
 **Move the governing issue to In Review as part of this
 handoff** — that is what the handoff *is*. Then stop: Done is

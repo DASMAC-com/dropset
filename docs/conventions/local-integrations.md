@@ -1378,10 +1378,12 @@ included — run in their own worktree, but that worktree is
 TEMPORARY WORKING STATE and the session is READ-ONLY toward the
 repo: no commits, no PR.** Durable state is captured in
 **Linear**; a spec file is **optional** but the operator's
-ratification is not — tasks are filed into **Backlog** during the
-session and stay there until the operator reviews them in the
-tab and makes the **Todo** move (or directs it) — the session
-never makes it on its own judgment — and anything repo-bound
+ratification is not — nothing is filed before the operator's yes
+to the filing ask; the tasks are then filed **Backlog** plus the
+**`Session pending`** milestone and reviewed in the tab through
+`ratify-staged`, one checkbox per task, until every one is ticked
+and uncommented and the whole set moves to **Todo** in one batch
+on that answer — never on the session's own judgment — and anything repo-bound
 lands later via a **follow-up worker task**. This is the
 canonical statement of the mechanism; the `architect` and `plan`
 skills state their own duties and point here rather than
@@ -1541,9 +1543,9 @@ branch (`worktree-exp-<name>` for a free-form explore; see the table
 above), as any git worktree must carry one;
 these sessions simply never commit to or push it. A spec file,
 when one is warranted at all, sits **untracked** in the worktree
-at `docs/specs/<issue-number>-<topic>.md` — a bare number,
-matching the existing `docs/specs/1313-mainnet-laptop.md`; the
-literal token `ENG-` is not part of the filename.
+at the **worktree root**, never under a repo-shaped path (ruling
+12), as `<issue-number>-<topic>.md` — a bare number; the literal
+token `ENG-` is not part of the filename.
 
 **Why a worktree at all, if nothing is committed from it.** So
 the operator can iterate a spec or plan file **in a real editor**
@@ -1607,11 +1609,12 @@ irreplaceable at any point.
   issues, so there is nothing to fold — the session closes and
   the worktree is simply expendable.
 
-**The read-back protocol** — write the design (a file or the
-issue body), name where it is in
-plain text, let the operator edit it in place, read it back
-**once**, ratify, and leave the filed tasks for the operator's
-review and Todo move (theirs to make or to direct) —
+**The read-back protocol** — stage 1 writes the design (a file or
+the issue body) ending in its task list, names where it is in
+plain text, lets the operator edit it in place and reads it back
+**once** per round; stage 2 is `ratify-staged`, whose filed tasks
+sit under `Session pending` — a non-audit explore session's
+included — until the operator's review clears them —
 plus the `NEEDS-CONFIRM` /
 `NEEDS-FEEDBACK` markers and the top-of-file index of open items,
 is specified in
@@ -2329,8 +2332,8 @@ drives the real zsh functions.
   idempotency; the different halves are the briefing
   (`/architect ENG-<n>`), what it may write — **no scheduling
   writes**: it files its own tasks and moves its own governing issue to
-  In Review, but places no edges, re-prioritizes nothing, closes
-  nothing and edits no other issue — and
+  In Review, but places no edge its filing yes did not ratify,
+  re-prioritizes nothing, closes nothing and edits no other issue — and
   **where it runs**, its own temporary worktree `<n>` rather than the
   base repo (see "Architect and explore sessions: temporary worktree,
   no PR").

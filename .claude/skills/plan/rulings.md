@@ -85,17 +85,21 @@ the document's state sections.
    regular sub-agent fan-out — `review-pr`'s reviewers,
    `audit-scope`'s cross-check, `plan`'s bootstrap lever fold.
 
-1. **Architect read-back.** Fold the operator's comments into the
-   spec in place; the spec file in an architect worktree is
-   expendable once the rulings are on the issue. The spec lives at
-   the worktree root, never under a repo-shaped path. The
-   read-back ends in the operator's explicit yes (2026-10-19),
-   now given per task on tasks filed into Backlog as the design
-   settles.
-   **An architect never moves a task it filed to Todo**
-   (2026-10-22): the operator reviews the filed tasks in its tab
-   and makes the move, or explicitly directs it there — never on
-   the architect's own judgment of ratification.
+1. **Architect read-back: two stages, two questions.** Stage 1 is
+   the spec: fold the operator's comments into it in place; it
+   lives at the worktree root, never under a repo-shaped path, is
+   expendable once the rulings are on the issue, and ends with the
+   task list. Nothing is filed in stage 1. Stage 2 is the tasks,
+   through `ratify-staged` (2026-10-23): the **filing ask** names
+   the N tasks and the proposed edges, and its yes files them
+   `Backlog` plus `Session pending` and places the edges it did
+   not strike; the **review ask** is one checkbox per task, a tick
+   with no comment approving it, repeated over the held and
+   unticked until none is held. The carve-out: on that final
+   answer the session moves the whole set to Todo in one batch —
+   never on its own judgment — and its close gate asserts none is
+   still parked. The same machinery serves every advisor-tier
+   session (explore, audit).
 
 1. **Planning is read-only toward the repo.** A planning session
    writes Linear state only; a fast-forward of the base checkout
@@ -136,9 +140,9 @@ the document's state sections.
 
 1. **Parked hygiene is a rhythm.** Every full bootstrap says each
    parked milestone's count with its direction, machine-written by
-   upkeep; the lever pool folds there (ruling 23), and Follow-ups
-   and Audit findings get count-and-offer lines (`SKILL.md`
-   step 8).
+   upkeep; the lever pool folds there (ruling 23), and Follow-ups,
+   Audit findings and Session pending get count-and-offer lines
+   (`SKILL.md` step 8).
 
 1. **Alpenglow proof is explicit.** The v3 port closes only with
    a recorded end-to-end deploy on an Alpenglow-enabled 4.3
