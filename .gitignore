@@ -57,6 +57,11 @@ __pycache__/
 # marker correctly reads as "seat".
 .claude/session-substrate/
 
+# The daily session digests and their medians' history, written by the upkeep
+# pass through .claude/tools/session_metrics.py digest. Machine-local: they
+# summarize this machine's transcripts.
+.claude/session-metrics/
+
 # The local secrets enclave's operator file: which 1Password vault this
 # machine resolves credentials from, and the reference per credential
 # (docs/data-feeds.md §12). It holds *references*, never secret values —

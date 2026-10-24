@@ -340,6 +340,47 @@ all measured 2026-10-14/15 over the Opus 5.5 fleet days 10-08 to 10-13
   from a configured constant. The bootstrap says both out loud, so a rate
   change or a metering bug is flagged as soon as its day settles (D-2).
 
+### The daily digest: the telemetry check-in
+
+The same `upkeep` pass then runs `session_metrics.py digest`, after the
+cost step and before the purge. It runs one deterministic digest over
+every transcript the base checkout and its worktrees wrote since the
+last digest closed its window, every verb and substrate, with no model
+involved. The previous stamped pass seeds only the first window.
+It writes an untracked
+`.claude/session-metrics/digest-<YYYY-MM-DD>.md` in the base checkout,
+with a JSON twin beside it, and puts one line in the report: sessions,
+dollars, flagged lines, and the path.
+
+- **It opens with rate calibration**: the last settled day's reconcile
+  drift, then each `RATES_BY_MODEL` row priced against that day's
+  `fleet_cost.py rates` read, shown next to the date the row was last
+  verified. A row past tolerance is flagged.
+- **The window's figures follow, each next to its rolling median**:
+  dollars per substrate and per model, the sub-agent share, and the cost
+  of re-warming caches across days. A figure over twice its median is
+  flagged.
+- **One block per session.** Each block gives the session's per-UTC-day
+  slices and its cumulative cost, the exit-time estimate when the session
+  left one, its sinks and hardening candidates, and its own
+  `Session account` block (or "no account"). A session still running is
+  marked `live` and digested again the next day. A session resumed
+  across days shows up in each day's digest with only that window's
+  slice, so no message is counted twice. The first request of each later
+  day re-writes the cached prefix, and that cost gets its own line.
+- **The allowlist-refresh mining reads the digests** instead of
+  re-running the metrics tool once per session. The purge ages the
+  `digest-*` files out with the transcripts. The medians' `history.jsonl`
+  is never pruned.
+
+**Seat sessions are quoted at Bedrock rates, labelled "at Bedrock rates,
+not billed"**, on every surface: the session report, the digest and
+`fleet_cost.py`. The subscription is effectively Bedrock-rate usage at a
+heavy subsidy, so the figure says what the work would have cost, and the
+label stops anyone reading it as a charge. Only the reconciliation keeps
+seat figures out of its total, because that total is compared against a
+bill that seat usage never appears on.
+
 ## Resident size has a hard cap
 
 Some text is paid for before any tool runs. Three residency classes:

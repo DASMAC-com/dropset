@@ -16,8 +16,10 @@ in UTC, so every day boundary here is a UTC one, on both sides:
     the transcript's model id (a seat and a Bedrock session record the same
     name). Every session is also keyed to its Linear issue the same way for
     every substrate — the worktree tag, or for a base-checkout ``chore`` its
-    bootstrap prompt: Bedrock issues are priced, seat and unattributed
-    ones are listed by session count beside them.
+    bootstrap prompt: Bedrock issues are priced, seat ones are priced too but
+    labelled at Bedrock rates, not billed (the subscription is those rates
+    subsidized, and never enters the Bedrock total), and unattributed ones
+    are listed by session count beside them.
 
 ``reconcile``
     ``meter`` beside Cost Explorer's billed gross for the same days, per
@@ -422,11 +424,13 @@ def day_summary(meter: Meter, day: str) -> dict:
     return out
 
 
-def issue_costs(meter: Meter, days: list[str]) -> list[tuple[str, float]]:
-    """Bedrock dollars per issue over ``days``, costliest first."""
+def issue_costs(
+    meter: Meter, days: list[str], substrate: str = BEDROCK
+) -> list[tuple[str, float]]:
+    """Dollars per issue on one substrate over ``days``, costliest first."""
     totals: dict[str, float] = {}
-    for (day, substrate, issue, model), tokens in meter.by_issue.items():
-        if day in days and substrate == BEDROCK:
+    for (day, sub, issue, model), tokens in meter.by_issue.items():
+        if day in days and sub == substrate:
             totals[issue] = totals.get(issue, 0.0) + (price(tokens, model) or 0.0)
     return sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
 
@@ -815,7 +819,7 @@ def render_meter(summary: dict, label: str) -> list[str]:
         if name == BEDROCK:
             figure = money(entry["dollars"])
         elif name == SEAT:
-            figure = "subscription, not billed here"
+            figure = f"{money(entry['dollars'])} {sm.NOT_BILLED}"
         else:
             figure = f"{money(entry['dollars'])} at Bedrock rates, NOT in the total"
         lines.append(f"  {name:<13} {entry['sessions']:>3} session(s)  {figure}")
@@ -960,6 +964,11 @@ def main(argv: list[str] | None = None) -> int:
             if issues:
                 top = ", ".join(f"{i} {money(c)}" for i, c in issues[: args.top])
                 lines.append(f"costliest issues: {top}")
+            seat_issues = issue_costs(meter, days, SEAT)
+            report["seat_issue_costs"] = seat_issues
+            if seat_issues:
+                top = ", ".join(f"{i} {money(c)}" for i, c in seat_issues[: args.top])
+                lines.append(f"seat issues {sm.NOT_BILLED}: {top}")
             for substrate in (SEAT, UNATTRIBUTED):
                 counts = issue_session_counts(meter, days, substrate)
                 report[f"{substrate}_issues"] = counts

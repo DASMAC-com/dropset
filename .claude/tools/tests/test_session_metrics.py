@@ -1193,17 +1193,17 @@ class SubstrateRendering(unittest.TestCase):
         self.assertIn("`claude-opus-5` verified 2026-09-11", md)
         self.assertIn("`claude-haiku-5-5` projected, unverified", md)
 
-    def test_a_seat_session_on_an_unpriced_model_still_reports_no_figure(self):
-        # The normal seat case: its model has no Bedrock row, so the costs are
-        # None — and the seat branch must neither read them nor say "withheld".
+    def test_a_seat_session_on_an_unpriced_model_withholds_like_bedrock(self):
+        # No Bedrock row means no figure at Bedrock rates either: the seat
+        # branch refuses by name, exactly as the Bedrock one does.
         agg = sm.SessionAggregator()
         agg.ingest_main_line(assistant('{"output_tokens":1000}', "", "claude-x"))
         report = agg.finish(sm.SUBSTRATE_SEAT)
         md = sm.to_markdown(report, "abcd1234")
         self.assertIsNone(report["total_cost"])
         self.assertNotIn("$", md)
-        self.assertNotIn("Cost withheld", md)
-        self.assertIn("no dollar figure", md)
+        self.assertIn("**Cost withheld**", md)
+        self.assertIn("billed to the Claude subscription", md)
 
     def test_json_carries_the_per_model_split(self):
         agg = sm.SessionAggregator()
@@ -1218,14 +1218,14 @@ class SubstrateRendering(unittest.TestCase):
             parsed["subagents"][0]["by_model"]["claude-opus-5"]["cache_read"], 9
         )
 
-    def test_a_seat_session_shows_no_dollar_figure_at_all(self):
+    def test_a_seat_session_is_priced_at_bedrock_rates_and_labelled(self):
         md = sm.to_markdown(self._report(sm.SUBSTRATE_SEAT), "abcd1234")
-        # The regression that matters: not merely a different headline, but no
-        # dollar amount anywhere in the report.
-        self.assertNotIn("$", md)
-        self.assertNotIn("cost about", md)
-        self.assertIn("no dollar figure", md)
-        self.assertIn("subscription", md)
+        # The figure leads, as on Bedrock, but every dollar line says it was
+        # never charged, so it cannot be read as a bill line.
+        self.assertIn("**This session would have cost about $", md)
+        self.assertIn("at Bedrock rates, not billed — `claude-opus-5`", md)
+        self.assertIn("billed to the Claude subscription", md)
+        self.assertNotIn("This session cost about", md)
 
     def test_both_branches_report_the_token_profile(self):
         for substrate in (sm.SUBSTRATE_BEDROCK, sm.SUBSTRATE_SEAT):
@@ -1242,8 +1242,8 @@ class SubstrateRendering(unittest.TestCase):
         self.assertIn("substrate_reason", parsed)
 
     def test_json_still_carries_cost_fields_for_a_seat_session(self):
-        # The numbers stay in the JSON for tooling that wants them; it is the
-        # rendered report that withholds the figure.
+        # The numbers are in the JSON on both substrates, for the digest and
+        # any other tooling that prices a seat session.
         parsed = json.loads(sm.to_json(self._report(sm.SUBSTRATE_SEAT)))
         self.assertEqual(parsed["substrate"], "seat")
         # Assert the VALUES, not merely that the keys exist: the comment above
@@ -1493,10 +1493,10 @@ class ResidentProseLine(unittest.TestCase):
         self.assertNotIn("outside the", md)
         self.assertIn("| CLAUDE.md | instructions | 4.0k | 1.0k | 2 | 2.0k |", md)
 
-    def test_a_seat_session_gets_no_resident_dollar_figure(self):
+    def test_a_seat_sessions_resident_figure_is_labelled_not_billed(self):
         md = sm.to_markdown(self._priced(substrate=sm.SUBSTRATE_SEAT), "abcd1234")
         self.assertIn("**Resident instruction prose**", md)
-        self.assertNotIn("cache-read rate", md)
+        self.assertIn("at the cache-read rate (at Bedrock rates, not billed)", md)
 
     def test_a_ratio_outside_the_gate_band_is_called_out(self):
         report = self._finish(
@@ -1537,6 +1537,67 @@ class MoneyFormatting(unittest.TestCase):
     def test_the_boundaries_take_the_coarser_form(self):
         self.assertEqual(sm.money(1.0), "$1.00")
         self.assertEqual(sm.money(10.0), "$10")
+
+
+def stamped(line: str, timestamp: str) -> str:
+    """A fixture record with its record-level timestamp set."""
+    rec = json.loads(line)
+    rec["timestamp"] = timestamp
+    return json.dumps(rec)
+
+
+class DaySlices(unittest.TestCase):
+    """A session spanning UTC days is sliced per day, from its own stamps."""
+
+    def _finish(self, since=None):
+        agg = sm.SessionAggregator(since)
+        write = '{"cache_creation_input_tokens":1000,"output_tokens":10}'
+        read = '{"cache_read_input_tokens":1000,"output_tokens":10}'
+        for msg_id, usage, stamp in (
+            ("m1", write, "2026-10-22T23:00:00.000Z"),
+            ("m2", read, "2026-10-22T23:30:00.000Z"),
+            # Resumed the next UTC day: the cache is cold, so this re-writes.
+            ("m3", write, "2026-10-23T08:00:00.000Z"),
+            ("m4", read, "2026-10-23T08:05:00.000Z"),
+        ):
+            agg.ingest_main_line(stamped(assistant_with_id(msg_id, usage, ""), stamp))
+        agg.ingest_subagent_line(
+            "lens",
+            stamped(assistant_with_id("s1", read, ""), "2026-10-23T08:01:00.000Z"),
+        )
+        return agg.finish(sm.SUBSTRATE_BEDROCK)
+
+    def test_each_day_carries_its_own_turns_and_tokens(self):
+        days = self._finish()["days"]
+        self.assertEqual(list(days), ["2026-10-22", "2026-10-23"])
+        self.assertEqual(days["2026-10-22"].turns, 2)
+        self.assertEqual(days["2026-10-23"].main[MODEL].cache_creation, 1000)
+        self.assertEqual(days["2026-10-23"].subagents[MODEL].cache_read, 1000)
+
+    def test_only_a_later_days_first_request_is_the_rewarm(self):
+        days = self._finish()["days"]
+        self.assertEqual(days["2026-10-22"].rewarm, {})
+        self.assertEqual(days["2026-10-23"].rewarm[MODEL].cache_creation, 1000)
+
+    def test_since_bounds_the_slices_but_not_the_totals(self):
+        report = self._finish(since=sm.utc_stamp("2026-10-23T00:00:00+00:00"))
+        self.assertEqual(list(report["days"]), ["2026-10-23"])
+        # The re-warm is still seen: the earlier day opened it, unsliced.
+        self.assertIn(MODEL, report["days"]["2026-10-23"].rewarm)
+        self.assertEqual(report["totals"].turns, 4)
+
+    def test_utc_stamp_normalizes_offsets(self):
+        self.assertEqual(
+            sm.utc_stamp("2026-10-22T17:00:00-07:00"), "2026-10-23T00:00:00"
+        )
+        self.assertEqual(
+            sm.utc_stamp("2026-10-23T08:00:00.123Z"), "2026-10-23T08:00:00"
+        )
+        self.assertIsNone(sm.utc_stamp("yesterday"))
+
+    def test_json_carries_the_slices(self):
+        parsed = json.loads(sm.to_json(self._finish()))
+        self.assertEqual(parsed["days"]["2026-10-23"]["turns"], 2)
 
 
 class SubstrateLiteralsPinned(unittest.TestCase):

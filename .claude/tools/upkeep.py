@@ -40,14 +40,17 @@ refuses the whole pass, since every later step assumes it.
     count its fold sub-agent's spawn gate reads;
  9. convention-reference check, hook-wiring check, the skill-size watch line
     (``skill_size --utilization``), allowlist cruft, and the
-    monthly refresh gate — mining recent transcripts when due and stamping the
-    marker whatever the yield, writing no allow-rule;
+    monthly refresh gate — mining the recent session digests when due and
+    stamping the marker whatever the yield, writing no allow-rule;
 10. the fleet cost: ``fleet_cost reconcile`` per day (Bedrock metered beside
     the bill, with its drift flag) and the seat allowance, which has no bill
     line, read with ``subscription_usage --log`` so each pass that gets a reading appends the one
     sample its per-day figure is derived from;
-11. the memory scan gate, then the memory audit when due;
-12. the transcript-purge dry-run manifest.
+11. the session digest (``session_metrics digest``) over every transcript since
+    the last digest's window closed, its rate-calibration line fed by step 10's
+    reconcile figure and the settled day's ``fleet_cost rates`` read;
+12. the memory scan gate, then the memory audit when due;
+13. the transcript-purge dry-run manifest.
 
 **Arming.** Steps 6 and 7 run as dry runs and touch nothing unless
 ``DS_UPKEEP_ARMED=1`` is exported from the untracked runtime config. The
@@ -92,6 +95,7 @@ import linear_api
 import planning_doc
 import prune_conversations
 import prune_worktrees
+import session_digest
 import subscription_usage
 
 TOOLS = Path(__file__).resolve().parent
@@ -119,9 +123,11 @@ TIMEOUT_TOOL = 120
 # The transcript walk alone takes about a minute, before the Cost Explorer read.
 TIMEOUT_COST = 300
 
-# How many recent transcripts the refresh gate mines, and how many notification
+# How many recent digests the refresh gate mines — an upper bound: the purge
+# ages digests out on the transcripts' two-day rule, so once it is applied
+# only the last few survive — and how many notification
 # PRs outside the listed sets are resolved one by one before giving up.
-MINE_SESSIONS = 8
+MINE_DIGESTS = 7
 MAX_NOTIFICATION_LOOKUPS = 20
 
 # PR list bounds. A full open page means the open set may be truncated, and the
@@ -556,35 +562,36 @@ def _json_tool(
         return None
 
 
-def recent_sessions(base: Path, limit: int = MINE_SESSIONS) -> list[str]:
-    """Ids of the newest transcripts under the base checkout and its worktrees."""
-    root = prune_conversations.projects_root()
-    prefix = prune_conversations.slugify(base)
-    files = [
-        p for d in root.glob(prefix + "*") if d.is_dir() for p in d.glob("*.jsonl")
-    ]
-    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return [p.stem for p in files[:limit]]
+def recent_digests(base: Path, limit: int = MINE_DIGESTS) -> list[Path]:
+    """The newest digest twins on disk, newest first (their names sort by
+    date)."""
+    directory = base / session_digest.DIGEST_DIR
+    return sorted(directory.glob(session_digest.DIGEST_GLOB), reverse=True)[:limit]
 
 
 def mine_refresh_candidates(ctx: Ctx) -> tuple[list[str], int]:
     """``(candidates, sessions_read)``: uncovered repeated Bash shapes across
-    recent sessions, most frequent first, and how many transcripts actually
-    parsed. Read-only: the candidates go to the report, never into settings."""
+    the sessions the digests on disk cover, most frequent first, and how many
+    sessions that was. The digest already aggregated every transcript, so
+    nothing is re-run per session. A session spanning digests counts once,
+    from the newest, whose candidates are its whole session's. Read-only: the
+    candidates go to the report, never into settings."""
     counts: dict[str, int] = {}
-    read = 0
-    for sid in recent_sessions(ctx.base):
-        rc, out, _ = ctx.tool("session_metrics.py", "--session-id", sid, "--json")
-        if rc != 0:
-            continue
+    seen: set[str] = set()
+    for path in recent_digests(ctx.base):
         try:
-            report = json.loads(out)
-        except ValueError:
+            twin = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
             continue
-        read += 1
-        for c in report.get("hardening_candidates", []):
-            if c.get("cost_kind") == "prompt-churn":
-                counts[c["signature"]] = counts.get(c["signature"], 0) + c["count"]
+        for session in twin.get("sessions", []) if isinstance(twin, dict) else []:
+            sid = session.get("session_id")
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            for c in session.get("hardening_candidates", []):
+                if c.get("cost_kind") == "prompt-churn":
+                    counts[c["signature"]] = counts.get(c["signature"], 0) + c["count"]
+    read = len(seen)
     ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     return [f"{sig} ({n} calls)" for sig, n in ranked], read
 
@@ -641,7 +648,9 @@ def step_checks(ctx: Ctx) -> None:
         # A miner that read nothing is broken, not a zero yield — stamping it
         # would hide the failure for a whole month.
         ctx.record(
-            "allowlist-refresh", "refresh due; no transcript mined, not stamped", False
+            "allowlist-refresh",
+            "refresh due; no digested session mined, not stamped",
+            False,
         )
         return
     rc, _, err = ctx.tool("allowlist.py", "refresh-record", "--added", "0")
@@ -683,6 +692,7 @@ def step_cost(ctx: Ctx) -> None:
         ctx, "fleet-cost", "fleet_cost.py", "reconcile", "--json", timeout=TIMEOUT_COST
     )
     if report is not None:
+        ctx.data["fleet_cost"] = report
         days = sorted(report.get("days", {}).items())
         flagged = [
             d
@@ -737,6 +747,74 @@ def step_cost(ctx: Ctx) -> None:
     else:
         reason = first_line(out) or first_line(err) or f"exit {rc}"
         ctx.record("allowance", f"allowance read failed: {reason}", False)
+
+
+def digest_calibration(ctx: Ctx) -> dict:
+    """The digest's rate-calibration input: the cost step's reconcile figure
+    for the last settled day, and that day's billed per-million rates."""
+    report = ctx.data.get("fleet_cost")
+    if report is None:
+        return {"error": "the fleet-cost read failed this pass"}
+    days = report.get("days") or {}
+    settled = sorted(d for d, s in days.items() if not s.get("provisional"))
+    if not settled:
+        return {"error": "the fleet-cost read reported no settled day"}
+    day = settled[-1]
+    out = {
+        "day": day,
+        "tolerance": report.get("tolerance", fleet_cost.DEFAULT_TOLERANCE),
+        "reconcile": days[day].get("reconcile") or {},
+    }
+    # Exit 1 is a row that misses its bill: a finding the digest flags.
+    rc, stdout, err = ctx.tool(
+        "fleet_cost.py", "rates", day, "--json", timeout=TIMEOUT_COST
+    )
+    try:
+        if rc not in (0, 1):
+            raise ValueError(first_line(err) or f"exit {rc}")
+        out["rates"] = json.loads(stdout)
+    except ValueError as e:
+        out["rates_error"] = f"fleet_cost rates failed: {first_line(str(e))}"
+    return out
+
+
+def step_digest(ctx: Ctx) -> None:
+    """Write the day's session digest (``session_metrics.py digest``) over
+    every transcript since the last digest closed its window; the previous
+    stamped pass seeds the first one."""
+    # Built before the file exists, so a raise here leaves nothing behind.
+    calibration = digest_calibration(ctx)
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".json", prefix="upkeep-calibration-", delete=False
+    ) as handle:
+        json.dump(calibration, handle)
+    args = ["digest", "--base", str(ctx.base), "--calibration", handle.name]
+    if ctx.data.get("previous_run"):
+        args += ["--since", ctx.data["previous_run"]]
+    try:
+        summary = _json_tool(
+            ctx,
+            "digest",
+            "session_metrics.py",
+            *args,
+            ok_rcs=(0,),
+            timeout=TIMEOUT_COST,
+        )
+    finally:
+        os.unlink(handle.name)
+    if summary is None:
+        return
+    path = Path(summary.get("path") or "")
+    if path.is_relative_to(ctx.base):
+        path = path.relative_to(ctx.base)
+    ctx.record(
+        "digest",
+        f"{summary.get('sessions', 0)} session(s), "
+        f"Bedrock {fleet_cost.money(summary.get('bedrock', 0.0))}, seat "
+        f"{fleet_cost.money(summary.get('seat', 0.0))} {fleet_cost.sm.NOT_BILLED}, "
+        f"{summary.get('flagged', 0)} flagged line(s); {path}",
+        ok=bool(summary.get("path")),
+    )
 
 
 def step_memory(ctx: Ctx) -> None:
@@ -814,6 +892,7 @@ STEPS = (
     ("parked", step_parked),
     ("checks", step_checks),
     ("cost", step_cost),
+    ("digest", step_digest),
     ("memory", step_memory),
     ("purge", step_purge),
 )
@@ -999,6 +1078,15 @@ def previous_parked(path: Path) -> dict | None:
     return parked if isinstance(parked, dict) else None
 
 
+def previous_run(path: Path) -> str | None:
+    """When the last stamped pass ran — where the next digest starts."""
+    try:
+        last = json.loads(path.read_text("utf-8")).get("last_run")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return last if isinstance(last, str) and last else None
+
+
 def ran_today(path: Path, now: datetime) -> dict:
     """Whether the stamp's local calendar date is ``now``'s."""
     try:
@@ -1080,6 +1168,7 @@ def run(argv: list[str]) -> int:
     )
     ctx.data["trees"] = trees
     ctx.data["previous_parked"] = previous_parked(stamp_path(base))
+    ctx.data["previous_run"] = previous_run(stamp_path(base))
     result = run_pass(ctx)
     report = render(result)
     if not args.no_doc:
