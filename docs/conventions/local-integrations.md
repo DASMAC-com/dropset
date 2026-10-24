@@ -1325,10 +1325,10 @@ names alive was the outcome to avoid.
 | `task <n>`              | worktree session on Linear task n          | executor's (Bedrock)   | executor  | the session's       | none (the one elision)    |
 | `task anthropic <n>`    | same, when the work needs web research     | anthropic              | executor  | the session's       | `[Task/Anthropic]`        |
 | `task resume [n]`       | resume by number (bare = the picker)       | as recorded            | re-pinned | as recorded         | —                         |
-| `explore [a] <n\|name>` | research / audit, read-only, temp worktree | Bedrock, or `[a]`      | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
-| `chore [s] <n>`         | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    | the session's       | `[Chore/<Substrate>]`     |
-| `plan [a]`              | upkeep pass, then daily planning session   | Bedrock, or `[a]`      | advisor   | the session's       | — (no issue)              |
-| `architect [b] <n>`     | design thread, read-only, temp worktree    | advisor's, or override | advisor   | the session's       | `[Architect/<Substrate>]` |
+| `explore [s] <n\|name>` | research / audit, read-only, temp worktree | Bedrock, or `[s]`      | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
+| `chore [s] <n>`         | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    | executor if Bedrock | `[Chore/<Substrate>]`     |
+| `plan [a]`              | upkeep pass, then daily planning session   | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
+| `architect [b] <n>`     | design thread, read-only, temp worktree    | advisor's, or override | advisor   | executor if Bedrock | `[Architect/<Substrate>]` |
 | `fleet [go]`            | batch resume                               | per-window             | re-pinned | per-window          | —                         |
 | `models [check]`        | print the tier table; `check` it for free  | —                      | —         | —                   | —                         |
 | `cdds [n]`              | not a session verb — navigation            | —                      | —         | —                   | —                         |
@@ -1339,18 +1339,21 @@ escape. **Every issue verb takes the line in one order — verb,
 substrate, number** — so a title token lowercased and followed by the
 issue number is the launch line: `[Chore/Anthropic]` on 1234 is
 `chore anthropic 1234` (the grammar is in `linear-automation.md` →
-"The verb/substrate title token"). Two verbs predate the order, and
-the launcher and `session_dispatch.py` move to it in a sibling change;
-**until it lands**, `architect` takes its word after the number
-(`architect <n> bedrock`), and `explore` takes `anthropic` alone, so
-`[Explore/Bedrock]` is typed as the bare `explore <n>`. The dispatch
-tool and the `architect` launcher refuse the new form, but a hand-typed
-`explore bedrock <n>` opens a session *named* `bedrock` — so type the
-old form until then.
-A Bedrock `explore` pins its sub-agents to the executor tier (see
-"Model tiers" below); every other verb's sub-agents inherit the
-session's model, except a spawn naming `model: opus` (`plan`'s lever
-fold), which any Bedrock launch maps to the executor. A launch into
+"The verb/substrate title token"). The old `architect <n> bedrock`
+order is refused with a one-line hint naming the new one, until
+2026-10-30.
+**The title guard** (`.claude/tools/verb_check.py`) holds the launcher
+to that: before `claude` starts a new issue-keyed session it reads the
+title and refuses a launch line the token contradicts — no token on
+anything but `task` on Bedrock, another verb or substrate (it prints
+the implied line), `[Operator]`, or an unrecognized bracket. A
+mismatch fails closed with no force flag (fix the title); an
+unreachable Linear or a missing key warns and launches, as does any
+other Linear failure (a number with no issue included); a reopen and a
+name are not checked.
+Every Bedrock launch pins its sub-agents to tiers (see "Model tiers"
+below); on the subscription a sub-agent naming no model inherits the
+session's, and a named alias runs Claude Code's own table. A launch into
 an existing session or worktree keeps the substrate its marker
 records — a switch means a fresh worktree.
 The table names verbs and tiers only, never a model class or id.
@@ -1804,15 +1807,11 @@ first anthropic-substrate session opens it — an `architect`, or any
 verb's `anthropic` escape.
 
 **What a Bedrock launch exports:** `CLAUDE_CODE_USE_BEDROCK=1`,
-`AWS_REGION`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` (the background tier,
-when `DS_MODEL_BACKGROUND` is set; otherwise it is unset),
-`ANTHROPIC_DEFAULT_OPUS_MODEL` (the executor tier, so a `model: opus`
-spawn — `plan`'s lever fold — runs on the executor; likewise unset
-when unconfigured), `ENABLE_PROMPT_CACHING_1H=1`, and
-`AWS_BEARER_TOKEN_BEDROCK` resolved from 1Password at launch. A
-Bedrock `explore` adds two, scoped to its launch:
-`CLAUDE_CODE_SUBAGENT_MODEL` (the executor tier) and
-`ANTHROPIC_DEFAULT_SONNET_MODEL` (the helper tier; see "Model tiers").
+`AWS_REGION`, `ENABLE_PROMPT_CACHING_1H=1`, and
+`AWS_BEARER_TOKEN_BEDROCK` resolved from 1Password at launch. Every
+Bedrock launch also binds the sub-agent slots to tiers — the `haiku`
+one only when the background tier is set — scoped to the one `claude`
+command (see "Model tiers").
 An anthropic launch exports none of them —
 **the absence of `CLAUDE_CODE_USE_BEDROCK` IS the seat pin**, which is
 why an anthropic launch *clears* those variables rather than merely
@@ -1853,12 +1852,12 @@ decides, the executor carries the work out — so the nouns describe the
 roles and outlive any model. **Helper** is the third role: minor
 non-repo jobs that merit neither, on a cheaper (Sonnet-class) model.
 
-| Tier         | Verbs                                                            | Default substrate                   | Unset                |
-| ------------ | ---------------------------------------------------------------- | ----------------------------------- | -------------------- |
-| `ADVISOR`    | `plan` `architect` `explore`                                     | anthropic; `plan` `explore` bedrock | refuses to launch    |
-| `EXECUTOR`   | `task`, Bedrock `explore`'s sub-agents, the Bedrock `opus` alias | bedrock                             | refuses to launch    |
-| `HELPER`     | `chore`, Bedrock `explore`'s `sonnet`                            | bedrock                             | refuses to launch    |
-| `BACKGROUND` | Claude Code's small slot                                         | follows the session                 | warns (Bedrock only) |
+| Tier         | Verbs                                                | Default substrate                   | Unset                |
+| ------------ | ---------------------------------------------------- | ----------------------------------- | -------------------- |
+| `ADVISOR`    | `plan` `architect` `explore`                         | anthropic; `plan` `explore` bedrock | refuses to launch    |
+| `EXECUTOR`   | `task`, Bedrock sub-agents, the Bedrock `opus` alias | bedrock                             | refuses to launch    |
+| `HELPER`     | `chore`, the Bedrock `sonnet` alias                  | bedrock                             | refuses to launch    |
+| `BACKGROUND` | Claude Code's small slot                             | follows the session                 | warns (Bedrock only) |
 
 **The model id lives ONLY in the runtime config, never in the repo.**
 Models ship every couple of months and the tiers exist to hot-swap
@@ -1886,6 +1885,7 @@ are decisions rather than omissions:
   profile when it runs on Bedrock (measured from its request log), so
   an override flips the provider without a second spelling. A
   Bedrock-form id still works on Bedrock; it is just not portable.
+
 - **The background tier has no substrate variable.** It is Claude
   Code's small/fast slot, which its docs illustrate only with session
   title generation — a failure there degrades a nicety, never task
@@ -1899,17 +1899,33 @@ are decisions rather than omissions:
   first-party id is
   portable and `models check` maps it the same way; a Bedrock-form id
   must be the exact profile id.
-- **A Bedrock `explore` pins two more slots** from the same config.
-  The executor id goes to `CLAUDE_CODE_SUBAGENT_MODEL`, the default
-  for every sub-agent that names no model (a per-call model and agent
-  frontmatter still win, per Claude Code's sub-agent docs), so an
-  audit's fan-out runs the executor tier with no skill text; the
-  helper id goes to `ANTHROPIC_DEFAULT_SONNET_MODEL`, so the one alias
-  a skill names (`sonnet`, a mechanical lane) resolves to the runtime
-  config rather than Claude Code's built-in table. The `[1m]` suffix
-  is kept, so sub-agents get the 1M window. Both are scoped to the
-  launch, and either tier unset refuses it — an unpinned sub-agent
-  would silently inherit the advisor model.
+
+- **Every sub-agent lane is bound to a tier** on every Bedrock launch
+  (`task`, `chore`, `explore`, `architect`, `plan` alike), scoped to
+  the one `claude` command as `ANTHROPIC_MODEL` is:
+
+  | Agent `model:` | Slot                             | Tier       |
+  | -------------- | -------------------------------- | ---------- |
+  | (none)         | `CLAUDE_CODE_SUBAGENT_MODEL`     | executor   |
+  | `opus`         | `ANTHROPIC_DEFAULT_OPUS_MODEL`   | executor   |
+  | `sonnet`       | `ANTHROPIC_DEFAULT_SONNET_MODEL` | helper     |
+  | `haiku`        | `ANTHROPIC_DEFAULT_HAIKU_MODEL`  | background |
+
+  The slot words are Claude Code's, not ours: its Agent tool accepts
+  `opus`, `sonnet`, `haiku` or a raw model id, with no `helper` or
+  `executor` slot, so a skill wanting a helper lane must spell it
+  `sonnet`, and the binding is what makes that word mean the helper
+  tier. **Skill prose names the tier with the slot word in
+  parentheses** — "the helper tier, spelled `sonnet` in the Agent
+  call" — never the family alone. A per-call model and agent
+  frontmatter still beat the no-model default (Claude Code's sub-agent
+  docs); the `[1m]` suffix is kept, so sub-agents get the 1M window.
+  An unset executor or helper refuses a Bedrock launch, since an
+  unbound slot would silently run Claude Code's own table. On the
+  subscription nothing is bound: a sub-agent naming no model runs the
+  session's own tier. If Claude Code ever accepts custom alias names,
+  the slot words retire for the tier names.
+
 - **The auto-mode classifier has no tier.** Claude Code chooses its
   model itself and exposes no setting for it.
 
@@ -1942,8 +1958,7 @@ running.
 
 **The substrate override** is the two substrate names and nothing else,
 as an optional literal word: `task anthropic <n>`, `plan anthropic`,
-`architect bedrock <n>` (`architect <n> bedrock` until the launcher
-reorder lands; see "The verb table"). `plan` reads no substrate
+`architect bedrock <n>`. `plan` reads no substrate
 variable: Bedrock is its default, `plan anthropic` the seat override,
 and `plan bedrock` a no-op spelling. A bare `plan` reopen lands on the
 substrate the day's current session recorded; a word that disagrees
@@ -2327,8 +2342,8 @@ drives the real zsh functions.
 - **`architect <n>`** — start **or resume** an **architect** session on
   the design thread governed by issue `<n>`, its only argument: the CEO
   hat, and the complement to `plan` rather than a variant of it. Same
-  tier, same optional substrate word (before the number once the
-  launcher reorder lands, after it until then), same
+  tier, same optional substrate word, before the number
+  (`architect bedrock <n>`), same
   idempotency; the different halves are the briefing
   (`/architect ENG-<n>`), what it may write — **no scheduling
   writes**: it files its own tasks and moves its own governing issue to

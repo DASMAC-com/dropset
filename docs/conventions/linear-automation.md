@@ -908,10 +908,10 @@ web), `[Chore/Bedrock]` on operator-attended agent work, and
 each task it files. Audit findings, trim batches and merge outputs are
 default tasks and carry no token. **The dispatch gate reads it**:
 planning types the line the token says, and refuses `task <n>` on an
-issue whose token names another verb or `[Operator]`. Until the
-launcher reorder lands, `explore` and `architect` still take the older
-forms the verb table names, and a token-less legacy issue is judged by
-its body until the one-time title sweep.
+issue whose token names another verb or `[Operator]`, and **the
+launcher reads it too**: its title guard (`verb_check.py`) refuses a
+new session whose launch line the token contradicts. A token-less
+legacy issue is judged by its body until the one-time title sweep.
 
 ## Keep Linear tags out of PR bodies and comments
 

@@ -162,7 +162,7 @@ are operator-only and ride step 8's `AskUserQuestion`:
 after saying the parked counts, unless the report's line reads
 `Trim levers 0`. Invoking `plan` is the authorization (ruling 11).
 One fresh background `general-purpose` `Agent` — never a fork,
-`model: opus`, which a Bedrock launch maps to the executor tier (on
+on the executor tier (spelled `opus` in the Agent call; on
 `plan anthropic`, Claude Code's own Opus): a fold is carried-out
 work, not a planning judgment — whose brief is
 pointers, not content: the
@@ -562,9 +562,9 @@ sessions — the roll-call is the confirmation to relay.
 "The verb/substrate title token"): `[Chore/Bedrock]` on 1234 is
 `chore bedrock 1234`, no token is `task 1234`. **Refuse `task <n>`**
 on a token naming another verb, and dispatch nothing for
-`[Operator]`. Until the launcher reorder lands, `[Explore/Bedrock]`
-is `explore <n>` and `[Architect/Bedrock]` `architect <n> bedrock`;
-until the title sweep, judge a token-less legacy issue by its body.
+`[Operator]` — the launcher's title guard refuses each of these too.
+Until the title sweep, judge a token-less legacy issue by its body,
+and fix its title before dispatching anything but `task <n>`.
 File operator-attended agent work (a key file, a local deploy)
 `[Chore/Bedrock]` — helper tier, no PR, In Review at handoff — and
 an item the operator executes by hand `[Operator]`.

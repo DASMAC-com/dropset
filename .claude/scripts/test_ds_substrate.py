@@ -239,6 +239,8 @@ class VerbLaunch(SubstrateHarness):
         ' ARGS=$*"; }; '
         "_ds_base() { :; }; _ds_secrets() { :; }; _ds_aws_login() { :; }; "
         "_ds_pull() { :; }; "
+        # The title guard reads Linear; its outcomes are `test_verb_check.py`'s.
+        "_ds_verb_check() { :; }; "
         # The model probe's transport: argv and stdin logged apart, so a case
         # can tell where the token went; the reply is the env's to choose.
         'curl() { print -r -- "ARGV=$* STDIN=$(cat)" >> "$_DS_REPO/curl.log"; '
@@ -538,7 +540,7 @@ class VerbLaunch(SubstrateHarness):
             with self.subTest(verb=verb):
                 result, out = self._launch(verb)
                 self.assertIn("RC=1", out)
-                self.assertIn("Usage: explore [anthropic]", result.stderr)
+                self.assertIn("Usage: explore [anthropic|bedrock]", result.stderr)
 
     _TREE = 'mkdir -p "$_DS_REPO/.claude/worktrees/{0}"; '
 
@@ -596,8 +598,8 @@ class VerbLaunch(SubstrateHarness):
         self.assertIn("MARK=anthropic advisor", out)
 
     def test_task_resume_hands_an_explore_session_back_to_its_own_verb(self):
-        # `fleet` types `task resume <n>`; only `explore` pins the sub-agent
-        # tiers, so a Bedrock audit must come back through it.
+        # `fleet` types `task resume <n>`; an explore session comes back through
+        # its own verb, which resumes it by its computed id.
         setup = (
             self._TREE.format(13)
             + self._explore_transcript(13)
@@ -618,7 +620,13 @@ class VerbLaunch(SubstrateHarness):
         result, out = self._launch(
             setup + architect + "python3() { :; }; task resume 13", env=self._TOKEN
         )
-        self.assertIn("SUB=unset", out, result.stderr)
+        # The generic path resumes by tag, not id — and pins the sub-agent
+        # tiers too, as every Bedrock launch does.
+        self.assertIn(
+            "USE=1 SUB=work-model[1m] SONNET=help-model[1m] ARGS=--resume 13 ",
+            out,
+            result.stderr,
+        )
 
     def test_an_unmarked_tree_says_why_it_lands_on_the_seat(self):
         result, out = self._launch(self._TREE.format(12) + "explore 12")
@@ -747,33 +755,40 @@ class VerbLaunch(SubstrateHarness):
         self.assertNotIn("MODEL=", out)
         self.assertIn("USE=unset", out)
 
-    def test_architect_takes_the_override_after_the_number(self):
+    def test_architect_takes_the_override_before_the_number(self):
         result, out = self._launch("architect 12")
         self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
         # Session, worktree and governing issue all come from the one number.
         self.assertIn("-n 12 --permission-mode auto -w 12 /architect ENG-12", out)
-        result, out = self._launch("architect 12 bedrock", env=self._TOKEN)
+        result, out = self._launch("architect bedrock 12", env=self._TOKEN)
         self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
-        result, out = self._launch("architect 12 local")
+        for verb in ("architect local 12", "architect 12 local"):
+            with self.subTest(verb=verb):
+                result, out = self._launch(verb)
+                self.assertIn("RC=1", out)
+                self.assertNotIn("MODEL=", out)
+        # The retired order launches nothing and names the new one.
+        result, out = self._launch("architect 12 bedrock", env=self._TOKEN)
         self.assertIn("RC=1", out)
         self.assertNotIn("MODEL=", out)
+        self.assertIn("`architect bedrock 12`", result.stderr)
 
     def test_architect_bedrock_survives_every_resume_path(self):
         # The third defect: the override wrote no marker, so a resume came back
         # on the anthropic advisor tier.
-        self._launch("architect 12 bedrock", env=self._TOKEN)
+        self._launch("architect bedrock 12", env=self._TOKEN)
         for verb in ("architect 12", "task resume 12"):
             with self.subTest(verb=verb):
                 result, out = self._launch(verb, env=self._TOKEN)
                 self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
         # An explicit word still wins.
-        result, out = self._launch("architect 12 anthropic")
+        result, out = self._launch("architect anthropic 12")
         self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
 
     def test_architect_leaves_a_task_sessions_marker_alone(self):
         marker = 'print -r -- "MARK=$(<$_DS_SUBSTRATE_DIR/12)"'
         result, out = self._launch(
-            f"_ds_substrate_write 12 bedrock; architect 12 anthropic; {marker}"
+            f"_ds_substrate_write 12 bedrock; architect anthropic 12; {marker}"
         )
         self.assertIn("MARK=bedrock", out, result.stderr)
         self.assertIn("task session's substrate marker", result.stderr)
@@ -1318,10 +1333,9 @@ class BedrockEnvGate(SubstrateHarness):
         self.assertIn("MODEL=\n", result.stdout)
         self.assertIn("REGION=us-west-2", result.stdout)
         self.assertIn("CACHE=1", result.stdout)
-        # The background tier is pinned so background sub-turns bill to credits
-        # too, rather than quietly falling back to the subscription. Exported
-        # as configured and newline-anchored: the mapping is Claude Code's.
-        self.assertIn("FAST=bg-profile-id\n", result.stdout)
+        # No sub-agent slot is exported into the tab either: `_ds_claude` binds
+        # them per command (asserted in `test_shell_launcher.py`).
+        self.assertIn("FAST=\n", result.stdout)
 
     def test_an_unset_background_tier_warns_and_pins_nothing(self):
         # Background failures degrade niceties only, so this warns rather than
@@ -1341,12 +1355,17 @@ class BedrockEnvGate(SubstrateHarness):
     def test_the_opus_alias_is_the_executor_and_a_seat_verb_clears_it(self):
         # The `plan` skill's lever fold names `model: opus`; on Bedrock that
         # must be the executor, not the advisor the session itself runs.
+        # The slot is bound for the one `claude` command, not the tab.
         probe = 'print -r -- "OPUS=${ANTHROPIC_DEFAULT_OPUS_MODEL-unset}"'
+        stub = (
+            'claude() { print -r -- "IN=$(printenv ANTHROPIC_DEFAULT_OPUS_MODEL)"; }; '
+        )
         result = self._zsh(
-            f"_ds_bedrock_env; {probe}; _ds_seat_guard plan; {probe}",
+            f"{stub}_ds_bedrock_env; _ds_claude m; {probe}; _ds_seat_guard plan; "
+            f"{probe}",
             env={**_CONFIG, "AWS_BEARER_TOKEN_BEDROCK": "placeholder-key"},
         )
-        self.assertIn("OPUS=work-model[1m]\nOPUS=unset\n", result.stdout)
+        self.assertIn("IN=work-model[1m]\nOPUS=unset\nOPUS=unset\n", result.stdout)
         # Unset, no stale pin from an earlier launch survives.
         result = self._zsh(
             f"_ds_bedrock_env; {probe}",
