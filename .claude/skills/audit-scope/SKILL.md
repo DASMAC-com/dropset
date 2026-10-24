@@ -93,7 +93,8 @@ that needs web research. The mechanism, its reasoning, and what the worktree's
 protection does and does not cover are owned by
 `docs/conventions/local-integrations.md` → "Architect and
 explore sessions: temporary worktree, no PR". Don't restate
-them here.
+them here. A non-audit explore session's filed tasks stage under
+`Session pending` through `ratify-staged`, as an architect's do.
 
 Three duties this skill owns directly:
 

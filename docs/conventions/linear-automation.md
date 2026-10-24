@@ -529,16 +529,17 @@ session-metrics state, standing decisions and verification debt.
 
 The state and the milestone together say where an issue sits:
 
-| State                        | Milestone | Meaning                                             |
-| ---------------------------- | --------- | --------------------------------------------------- |
-| Backlog                      | none      | a spec awaiting the operator's review — the inbox   |
-| Backlog or Todo              | parking   | **parked**: hidden from the operator's project view |
-| Todo                         | none      | reviewed and dispatchable; the body is frozen       |
-| In Progress, In Review, Done | —         | the session state machine, unchanged (see above)    |
+| State                        | Milestone         | Meaning                                                            |
+| ---------------------------- | ----------------- | ------------------------------------------------------------------ |
+| Backlog                      | none              | a spec awaiting the operator's review — the inbox                  |
+| Backlog or Todo              | other parking     | **parked**: hidden from the operator's project view                |
+| Backlog                      | `Session pending` | a seat session's filed tasks, under its in-tab review; short-lived |
+| Todo                         | none              | reviewed and dispatchable; the body is frozen                      |
+| In Progress, In Review, Done | —                 | the session state machine, unchanged (see above)                   |
 
 **The operator's move from Backlog to Todo is the approval.** Planning
-never makes that move, nor does an architect on its own judgment (it
-executes one only when the operator directs it in the tab), and that
+never makes that move, nor does a seat session on its own judgment (its
+`ratify-staged` batch executes the operator's final answer in its tab), and that
 single-writer rule is why "state is Todo" proves
 approval with no reaction read. **Withdrawal** is the reverse move. A
 **fold into a Todo body drops it back to Backlog**, because the body the
@@ -556,7 +557,8 @@ planning hold is expressed as an edge (see "Blocking relations").
 
 An issue stamped with a parking milestone — `Audit findings` for audit
 output, `Trim levers` for session trim levers, `Claude meta` for
-agent-infra strays — is **parked**: filed so it is not lost, deliberately
+agent-infra strays, `Session pending` for a seat session's tasks under
+review — is **parked**: filed so it is not lost, deliberately
 *not* in the inbox or the queue. A filing skill sets **state `Backlog`
 plus the milestone, in the creating call** (per "Relations and state
 belong in the CREATING call"). **Promotion is one write, the milestone
@@ -575,6 +577,18 @@ into a batch. And a meta-flavored *audit* finding is promoted by
 **swapping** its milestone from `Audit findings` to `Claude meta` — it
 stays parked, changing which rhythm will pick it up, rather than
 becoming available work.
+
+**`Session pending` is never promoted by planning.** It is the unified
+staging lane for every seat session's filed tasks — architect and
+explore now, audit findings once their own ratification lands — so the
+operator reviews them in one place, in the
+filing session's own tab, through the shared `ratify-staged` skill:
+one checkbox per task, and once every task is ticked and uncommented
+the session clears the milestone and moves the whole set to Todo in one
+batch on that answer. It is **short-lived by design**: a count at
+bootstrap is a session that died mid-review, and the count-and-offer
+line is the backstop — offer to resume that session, never promote its
+tasks around it.
 
 **A batch's own promotion is the same milestone clear**, and which batch is
 pulled follows from that: a **promoted** batch is pulled on its own
@@ -638,8 +652,9 @@ one.
 
 The project's milestones split into two kinds, and only one kind parks.
 **Parking** milestones — `Audit findings`, `Trim levers`,
-`Claude meta` — mean "filed, deliberately not queued", and an issue
-carrying one is read as parked by every rule above. The rest —
+`Claude meta`, `Session pending` — mean "filed, deliberately not
+queued", and an issue carrying one is read as parked by every rule
+above. The rest —
 `Integrations`, `UX features`, `Hardening`, `Mechanisms` — are ordinary
 **delivery** milestones grouping pullable work; an issue under one of
 those is queued like any other and is *not* parked.
@@ -647,7 +662,10 @@ those is queued like any other and is *not* parked.
 Say which kind you mean when you write a rule against "a milestone",
 because the two behave oppositely. The distinction is by **name**, not
 by any field Linear exposes, so it lives here rather than being
-derivable — and the three parking names are the closed set.
+derivable — and the four parking names are the closed set.
+`Audit findings` takes no new filings once audit findings stage under
+`Session pending` like any other seat session's output, and it retires
+when its legacy contents drain.
 
 One place the two kinds *do* behave alike, which is easy to
 misattribute: `board_batch.py list` drops **every** milestoned issue by
@@ -1543,7 +1561,12 @@ expresses semantic rollout ordering, which is a scheduling decision, so
 it is made where somebody is actually deciding the order — the `plan`
 skill's session in the base repo, human-directed, one edge at a time.
 That is the whole of the exception: not "a skill that is allowed to",
-but "the place a human does it".
+but "the place a human does it". **The one other such place is a seat
+session's filing ask** (`ratify-staged`): the operator's in-tab yes to
+a named chain of proposed edges, each with its reason, ratifies them
+with the tasks, and the session places exactly those — an edge the
+answer strikes is not placed. That is the human-placed form, executed,
+never an automated filer deciding one.
 
 **A planning dispatch hold is an edge too** (operator ruling,
 2026-10-08). The operator's Next view means *dispatchable right now*, so
@@ -1600,8 +1623,9 @@ there is nothing left to reach — each step removed machinery rather than
 adding it, which is the right direction for a mechanism whose whole risk
 is a spurious edge dropping an issue out of the available set.
 
-So this section now has **no** exception to state: the planning session
-is still the only place a human places an edge, and **no automated
+So this section now has **no** exception to state: a human still places
+every edge — in the planning session, or through a seat session's
+filing ask — and **no automated
 writer places one at all**. A filing skill that notices a new meta issue
 neither chains it nor queues it — it parks it. Treat every edge,
 semantic ones included, under the one-at-a-time rule above.
