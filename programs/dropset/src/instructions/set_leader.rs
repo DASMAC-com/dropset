@@ -10,11 +10,10 @@
 //! time.
 //!
 //! Only the `leader` field moves. `quote_authority` deliberately does not
-//! follow: the intended endgame is the leader on a hardware wallet and the
-//! quoting delegate on the hot maker key, so a caller that wants both
-//! rotated bundles a `set_quote_authority` in the same transaction. Shares,
-//! HWM, fee rate and flags are untouched, and `seq` is unchanged — this is
-//! the same vault under a new key, not a new vault.
+//! follow: custody and quoting rotate independently, and can rotate together
+//! when a caller bundles a `set_quote_authority` in the same transaction.
+//! Shares, HWM, fee rate and flags are untouched, and `seq` is unchanged —
+//! this is the same vault under a new key, not a new vault.
 //!
 //! There is deliberately no admin path: an admin rotation would be a
 //! custody-seizure lever, and admins already hold `freeze_vault`. Allowed

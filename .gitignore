@@ -71,7 +71,11 @@ infra/localnet/secrets.local.env
 
 # The mainnet TUI's key-references file: one `op://` reference per signing
 # key (wallet, leader, quote). References, not secrets, but machine-local
-# item names; the tracked copy is tui/keys.env.example with placeholders.
+# item names; the tracked copy is tui/private-keys.env.example with
+# placeholders.
+tui/private-keys.env
+# Its old name, kept ignored so a copy left behind by the rename cannot be
+# committed by a blanket `git add`.
 tui/keys.env
 
 # macOS metadata.

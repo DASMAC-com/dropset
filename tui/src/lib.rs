@@ -9,6 +9,7 @@
 
 pub mod accounts;
 pub mod action;
+pub mod agent_shell;
 pub mod app;
 pub mod book;
 pub mod bot;

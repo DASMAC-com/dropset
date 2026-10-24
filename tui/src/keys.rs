@@ -1,6 +1,7 @@
 //! The TUI's mainnet key references — one `op://` reference per signing role,
-//! read from a git-ignored env file of the TUI's own (`tui/keys.env`, copied
-//! from the committed `tui/keys.env.example`), each overridden by its flag.
+//! read from a git-ignored env file of the TUI's own (`tui/private-keys.env`,
+//! copied from the committed `tui/private-keys.env.example`), each overridden
+//! by its flag.
 //!
 //! The file holds references, never secrets, and the TUI parses it itself: it
 //! is never `source`d, and the TUI is never run under `op run`, so no resolved
@@ -44,7 +45,7 @@ impl KeyRefs {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| {
             format!(
-                "read the keys file {} — start one by copying tui/keys.env.example",
+                "read the keys file {} — start one by copying tui/private-keys.env.example",
                 path.display()
             )
         })?;
@@ -242,7 +243,7 @@ mod tests {
 
     #[test]
     fn the_committed_example_parses() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("keys.env.example");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("private-keys.env.example");
         let refs = KeyRefs::load(&path).unwrap();
         for value in [refs.wallet, refs.leader, refs.quote] {
             assert!(value.unwrap().starts_with(wallet::OP_REFERENCE_PREFIX));

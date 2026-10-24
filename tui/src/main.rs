@@ -12,7 +12,9 @@
 //! guarded three ways, each catching something the others cannot — the
 //! endpoint must be named explicitly by environment variable, its genesis hash
 //! must actually be mainnet-beta's, and the operator must type `yes` to a
-//! real-funds banner.
+//! real-funds banner. Before any of those, mainnet refuses an agent's shell
+//! outright ([`dropset_tui::agent_shell`]): the operator runs it from their
+//! own terminal.
 //!
 //! On mainnet the menu offers the ceremony — publish (or upgrade), init,
 //! create-market, create-vault, deposit, close stranded buffers — and nothing
@@ -36,7 +38,7 @@ use anyhow::{anyhow, bail, Result};
 use dropset_tui::ceremony::{self, CeremonyLog};
 use dropset_tui::cluster::{self, Cluster};
 use dropset_tui::keys::{self, KeyRefs, LazyKey};
-use dropset_tui::{action, app, chain, explorer, fair, wallet};
+use dropset_tui::{action, agent_shell, app, chain, explorer, fair, wallet};
 use solana_signer::Signer;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU8;
@@ -47,6 +49,11 @@ fn main() -> Result<()> {
     if args.help {
         print_help();
         return Ok(());
+    }
+    // Mainnet is the operator's alone, from their own terminal — refused in
+    // an agent's shell before any key reference is read.
+    if args.cluster.is_mainnet() {
+        agent_shell::refuse_agent_shell()?;
     }
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -248,7 +255,7 @@ fn print_help() {
          [--ceremony-log <path>] [--bootstrap]\n\n\
          OPTIONS:\n        \
          --cluster <name>        localnet (default) or mainnet\n        \
-         --keys-file <path>      mainnet only: the key-references file (tui/keys.env)\n    \
+         --keys-file <path>      mainnet only: the key-references file (tui/private-keys.env)\n    \
          -w, --wallet <key>          admin keypair (default on localnet: keys/BBBB.json)\n        \
          --leader <key>          mainnet only: vault leader (custody), resolved on first use\n        \
          --quote <key>           mainnet only: vault quote authority (ladder, re-centre)\n        \
@@ -408,12 +415,12 @@ mod tests {
             "--cluster",
             "mainnet",
             "--keys-file",
-            "tui/keys.env",
+            "tui/private-keys.env",
             "--quote",
             "op://v/quote/key",
         ])
         .unwrap();
-        assert_eq!(a.keys_file.as_deref(), Some("tui/keys.env"));
+        assert_eq!(a.keys_file.as_deref(), Some("tui/private-keys.env"));
         assert_eq!(a.quote.as_deref(), Some("op://v/quote/key"));
         assert!(parse(&["--quote"]).is_err());
         assert!(parse(&["--keys-file", "--bootstrap"]).is_err());
