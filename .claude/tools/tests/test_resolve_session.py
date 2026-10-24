@@ -164,6 +164,8 @@ class ResolveTests(unittest.TestCase):
         v = resolve("eng-1024", self.fx.repo)
         self.assertEqual(v["mode"], "continue")
         self.assertEqual(v["run_from"], str(wt))
+        # Named too, so the launcher's exit estimate can price it.
+        self.assertEqual(v["session_id"], "own")
 
     def test_the_measured_bug_resolves_to_resume_by_id(self):
         # The ENG-1051 shape: worktree present, no worktree project dir, the

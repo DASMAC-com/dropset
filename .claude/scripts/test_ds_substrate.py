@@ -921,6 +921,97 @@ class VerbLaunch(SubstrateHarness):
                 self.assertIn(expected, out, result.stderr)
 
 
+class ExitEstimate(SubstrateHarness):
+    """The exit epilogue: once `claude` returns, every launcher prints the
+    session's estimate and writes its sidecar, without changing the status.
+
+    `python3` is stubbed: `resolve_session.py` answers with `RESOLVED_MODE`
+    and `RESOLVED_SID`, and `session_metrics.py` logs its argv and exits with
+    `METRICS_RC`.
+    """
+
+    _STUBS = VerbLaunch._STUBS
+    _AFTER = VerbLaunch._AFTER
+    _TOKEN = VerbLaunch._TOKEN
+    _launch = VerbLaunch._launch
+
+    _PY = (
+        "python3() { case $1 in "
+        '*/resolve_session.py) print -r -- x >> "$_DS_REPO/resolve.log"; '
+        'print -r -- "${RESOLVED_MODE:-continue}"; '
+        'print -r -- "${RESOLVED_SID-sid-9}"; print ;; '
+        '*/session_metrics.py) shift; print -r -- "METRICS $*"; '
+        "return ${METRICS_RC:-0} ;; "
+        "esac; }; "
+    )
+
+    def _metrics_lines(self, out):
+        return [line for line in out.splitlines() if line.startswith("METRICS ")]
+
+    def test_every_launch_path_prices_the_session_it_recorded(self):
+        for verb in ("plan", "architect 12", "explore 12", "chore 12", "task 7"):
+            with self.subTest(verb=verb):
+                result, out = self._launch(
+                    f"rm -rf $_DS_SUBSTRATE_DIR; {self._PY}{verb}; "
+                    "print -r -- MARKED $_DS_SUBSTRATE_DIR/sessions/*(N:t)",
+                    env=self._TOKEN,
+                )
+                metrics = self._metrics_lines(out)
+                self.assertEqual(len(metrics), 1, result.stderr)
+                sid = out.split("MARKED ", 1)[1].split()[0]
+                self.assertEqual(
+                    metrics[0],
+                    f"METRICS --brief --session-id {sid} --estimate-out "
+                    f"{self.repo}/.claude/session-substrate/sessions/{sid}.estimate",
+                )
+
+    def test_a_failed_estimate_warns_once_and_keeps_the_exit_status(self):
+        result, out = self._launch(
+            "claude() { return 3; }; " + self._PY + "task 7",
+            env={**self._TOKEN, "METRICS_RC": "1"},
+        )
+        self.assertIn("RC=3", out)
+        self.assertEqual(result.stderr.count("no session estimate"), 1, result.stderr)
+
+    def test_a_success_keeps_the_exit_status_too(self):
+        result, out = self._launch(
+            "claude() { return 4; }; " + self._PY + "plan", env=self._TOKEN
+        )
+        self.assertIn("RC=4", out, result.stderr)
+        self.assertNotIn("no session estimate", result.stderr)
+
+    def test_a_continue_resume_resolves_the_session_by_tag_after_exit(self):
+        result, out = self._launch(self._PY + "task resume 9")
+        self.assertIn("ARGS=--continue", out, result.stderr)
+        metrics = self._metrics_lines(out)
+        self.assertEqual(len(metrics), 1, result.stderr)
+        self.assertIn("--brief --session-id sid-9 ", metrics[0])
+        # Once to launch, once after exit.
+        self.assertEqual(self._resolver_calls(), 2)
+
+    def _resolver_calls(self):
+        log = self.repo / "resolve.log"
+        return len(log.read_text().splitlines()) if log.exists() else 0
+
+    def test_a_resume_by_id_prices_the_id_it_launched_without_resolving_again(self):
+        result, out = self._launch(
+            self._PY + "task resume 9", env={"RESOLVED_MODE": "resume"}
+        )
+        self.assertIn("ARGS=--resume sid-9", out, result.stderr)
+        self.assertIn("--brief --session-id sid-9 ", self._metrics_lines(out)[0])
+        self.assertEqual(self._resolver_calls(), 1)
+
+    def test_an_unresolved_session_warns_and_prices_nothing(self):
+        result, out = self._launch(
+            self._PY + "task resume 9",
+            env={"RESOLVED_MODE": "picker", "RESOLVED_SID": ""},
+        )
+        self.assertIn("ARGS=--resume 9", out, result.stderr)
+        self.assertEqual(self._metrics_lines(out), [])
+        self.assertIn("did not resolve", result.stderr)
+        self.assertIn("RC=0", out)
+
+
 class ModelsVerb(SubstrateHarness):
     """`models` — the offline table, and `check` against a stubbed `aws`."""
 

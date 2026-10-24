@@ -49,7 +49,9 @@ exists (see :func:`worktree_candidates`):
 ``mode`` is the instruction to the caller:
 
 * ``continue`` — the worktree has its own transcript; `cd` there and
-  ``claude --continue``, the original fast path.
+  ``claude --continue``, the original fast path. ``session_id`` names the
+  newest transcript, the one ``--continue`` reaches; the launcher's exit
+  estimate reads it. Branch on ``mode``, never on whether the id is set.
 * ``resume`` — a base-slug transcript's ``cwd`` stamps point into this
   worktree; run ``claude --resume <session_id>`` from ``run_from``.
 * ``picker`` — nothing resolved deterministically; fall back to
@@ -259,6 +261,9 @@ def resolve(tag: str, repo: Path) -> dict:
     own = transcripts_in(projects / slugify(worktree))
     if own:
         verdict["mode"] = "continue"
+        # The newest transcript is the one `--continue` reaches, so after the
+        # session exits it names the session the launcher's epilogue prices.
+        verdict["session_id"] = own[0].stem
         verdict["run_from"] = str(worktree)
         verdict["reason"] = (
             f"{worktree.name} has its own transcript, so --continue addresses "

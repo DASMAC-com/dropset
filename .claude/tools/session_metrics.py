@@ -1984,6 +1984,57 @@ def short_id(session_id: str) -> str:
     return session_id.split("-", 1)[0] or session_id
 
 
+def to_brief(report: dict, session_label: str) -> str:
+    """The one-paragraph estimate the launcher prints when a session exits.
+
+    Every substrate is priced at Bedrock rates. A seat session's figure says it
+    was not billed, so it reads as what the work would have cost and not as a
+    bill. Only an unpriced model withholds the figure, as in `to_markdown`.
+    """
+    totals: Totals = report["totals"]
+    total: Cost | None = report["total_cost"]
+    profile = "{} turns, input {} · output {} · cache-read {}".format(
+        totals.turns,
+        human(totals.total_input()),
+        human(totals.output),
+        human(totals.cache_read),
+    )
+    if total is None:
+        figure = "cost withheld, no Bedrock rate for {}".format(
+            ", ".join(report["unpriced_models"])
+        )
+    else:
+        sub: Cost = report["subagent_cost"]
+        figure = f"about {money(total.total())}"
+        if sub.total() > 0.0:
+            figure += " (main {} + sub-agents {})".format(
+                money(report["session_cost"].total()), money(sub.total())
+            )
+        figure += (
+            " at Bedrock rates"
+            if report["substrate"] == SUBSTRATE_BEDROCK
+            else f" {NOT_BILLED}"
+        )
+    return f"Session {session_label}: {figure}; {profile}.\n"
+
+
+def estimate_record(report: dict, session_id: str) -> dict:
+    """The sidecar the launcher writes beside the substrate marker, which the
+    daily digest compares its own figure against. ``cost_usd`` is the total
+    across the main session and its sub-agents, or null when it was withheld.
+    """
+    total: Cost | None = report["total_cost"]
+    return {
+        "session_id": session_id,
+        "substrate": report["substrate"],
+        "cost_usd": None if total is None else round(total.total(), 6),
+        "turns": report["totals"].turns,
+        "written_at": datetime.datetime.now(datetime.timezone.utc)
+        .replace(microsecond=0)
+        .isoformat(),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["digest"]:
@@ -2017,6 +2068,24 @@ def main(argv: list[str] | None = None) -> int:
             "Bedrock session would otherwise be labelled not billed"
         ),
     )
+    parser.add_argument(
+        "--brief",
+        action="store_true",
+        help=(
+            "print only the one-paragraph estimate, which the shell launcher "
+            "prints when a session exits"
+        ),
+    )
+    parser.add_argument(
+        "--estimate-out",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "also write the estimate sidecar (JSON: session_id, substrate, "
+            "cost_usd, turns, written_at) to PATH; parent directories are created"
+        ),
+    )
     args = parser.parse_args(argv)
 
     session_id = args.session_id
@@ -2028,10 +2097,33 @@ def main(argv: list[str] | None = None) -> int:
     transcript = resolve_transcript(session_id)
     report = aggregate(transcript, session_id, args.substrate)
 
-    if args.json:
+    if args.brief:
+        sys.stdout.write(to_brief(report, short_id(session_id)))
+    elif args.json:
         print(to_json(report))
     else:
         sys.stdout.write(to_markdown(report, short_id(session_id)))
+    # After the print, so a failed write cannot cost the operator the figure,
+    # and through a rename, so the digest never reads half a file. A failed
+    # write is not a failed estimate: the figure is already out, and the digest
+    # reads a missing sidecar as none recorded.
+    if args.estimate_out is not None:
+        sys.stdout.flush()
+        partial = args.estimate_out.with_name(args.estimate_out.name + ".tmp")
+        try:
+            args.estimate_out.parent.mkdir(parents=True, exist_ok=True)
+            partial.write_text(
+                json.dumps(estimate_record(report, session_id)) + "\n",
+                encoding="utf-8",
+            )
+            os.replace(partial, args.estimate_out)
+        except OSError as e:
+            # `missing_ok` covers only a missing file, not an unwritable parent.
+            try:
+                partial.unlink(missing_ok=True)
+            except OSError:
+                pass
+            print(f"estimate sidecar not written: {e}", file=sys.stderr)
     return 0
 
 
