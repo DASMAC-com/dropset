@@ -127,9 +127,7 @@ fn outside_deposit_emits_deposit_event() {
 #[test]
 fn outside_withdraw_emits_withdraw_event() {
     let (mut f, _leader) = open_gated_vault();
-    let alice = f.funded_depositor(200_000, 200_000);
-    f.deposit(&alice, 0, 50_000, 0, 200_000, 200_000)
-        .expect("outside deposit");
+    let alice = f.outside_deposit();
     let shares = f
         .vault_depositor(0, &alice.pubkey())
         .expect("PDA")

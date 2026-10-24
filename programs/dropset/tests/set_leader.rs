@@ -19,32 +19,13 @@ use solana_pubkey::Pubkey;
 const SEED_BASE: u64 = 1_000_000;
 const SEED_QUOTE: u64 = 1_085_000;
 
-/// Bootstrap + one admin vault (sector 0) with `authority` as both leader
-/// and quote authority.
-fn fixture_with_vault() -> Fixture {
-    let mut f = Fixture::bootstrap();
-    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
-        .expect("create_vault");
-    f
-}
-
-/// Seeded vault (sector 0) with both outside-deposit flags enabled, so a
-/// test can open a depositor position on it.
-fn seeded_open() -> Fixture {
-    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
-    let leader = f.authority.insecure_clone();
-    f.set_outside_deposits_approved(&leader, 0, true).unwrap();
-    f.set_allow_outside_depositors(&leader, 0, true).unwrap();
-    f
-}
-
 fn new_key(f: &mut Fixture) -> Keypair {
     f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS)
 }
 
 #[test]
 fn leader_rotates_and_emits_event() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     let next = new_key(&mut f);
     // A delegate distinct from both leaders, so the event's
@@ -74,7 +55,7 @@ fn leader_rotates_and_emits_event() {
 
 #[test]
 fn quote_authority_does_not_follow() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     let next = new_key(&mut f);
     let delegate = Pubkey::new_unique();
@@ -89,7 +70,7 @@ fn quote_authority_does_not_follow() {
 
 #[test]
 fn rotation_hands_off_the_leader_levers() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     let next = new_key(&mut f);
     f.set_leader(&leader, &next, 0).expect("rotate");
@@ -106,7 +87,7 @@ fn rotation_hands_off_the_leader_levers() {
 
 #[test]
 fn rejects_rotation_on_a_frozen_vault() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     f.freeze_vault(&leader, 0).expect("admin freezes vault");
 
@@ -122,7 +103,7 @@ fn rejects_rotation_on_a_frozen_vault() {
 
 #[test]
 fn leader_may_rotate_on_a_tombstoned_vault() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     f.close_vault(&leader, 0).expect("leader closes vault");
     assert!(f.vault(0).tombstoned.get());
@@ -135,7 +116,7 @@ fn leader_may_rotate_on_a_tombstoned_vault() {
 
 #[test]
 fn rejects_non_leader() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let stranger = new_key(&mut f);
     let next = new_key(&mut f);
     let err = f
@@ -147,7 +128,7 @@ fn rejects_non_leader() {
 
 #[test]
 fn rejects_same_leader() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     let err = f
         .set_leader(&leader, &leader, 0)
@@ -157,7 +138,7 @@ fn rejects_same_leader() {
 
 #[test]
 fn rejects_new_leader_of_a_live_vault() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     let next = new_key(&mut f);
     // Admin override seats `next` as the leader of sector 1.
@@ -172,7 +153,7 @@ fn rejects_new_leader_of_a_live_vault() {
 
 #[test]
 fn rejects_new_leader_of_a_frozen_vault() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     let next = new_key(&mut f);
     f.create_vault(0, next.pubkey(), false, next.pubkey())
@@ -188,11 +169,9 @@ fn rejects_new_leader_of_a_frozen_vault() {
 
 #[test]
 fn rejects_new_leader_holding_a_depositor_position() {
-    let mut f = seeded_open();
+    let mut f = Fixture::seeded_open(SEED_BASE, SEED_QUOTE);
     let leader = f.authority.insecure_clone();
-    let alice = f.funded_depositor(200_000, 200_000);
-    f.deposit(&alice, 0, 50_000, 0, 200_000, 200_000)
-        .expect("outside deposit");
+    let alice = f.outside_deposit();
 
     let err = f
         .set_leader(&leader, &alice, 0)
@@ -202,11 +181,9 @@ fn rejects_new_leader_holding_a_depositor_position() {
 
 #[test]
 fn accepts_new_leader_after_their_position_closes() {
-    let mut f = seeded_open();
+    let mut f = Fixture::seeded_open(SEED_BASE, SEED_QUOTE);
     let leader = f.authority.insecure_clone();
-    let alice = f.funded_depositor(200_000, 200_000);
-    f.deposit(&alice, 0, 50_000, 0, 200_000, 200_000)
-        .expect("outside deposit");
+    let alice = f.outside_deposit();
     let shares = f.vault_depositor(0, &alice.pubkey()).unwrap().shares.get();
     f.withdraw(&alice, 0, shares, 0, 0)
         .expect("full withdraw closes the PDA");
@@ -217,7 +194,7 @@ fn accepts_new_leader_after_their_position_closes() {
 
 #[test]
 fn dust_on_the_depositor_address_does_not_block() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     let next = new_key(&mut f);
     // Anyone can fund the PDA address; that must not read as a position.
@@ -232,7 +209,7 @@ fn dust_on_the_depositor_address_does_not_block() {
 
 #[test]
 fn rejects_rotation_the_new_leader_did_not_sign() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     let next = Pubkey::new_unique();
     let (pda, _) = common::fixture::vault_depositor_pda(&f.market, 0, &next);
@@ -246,11 +223,9 @@ fn rejects_rotation_the_new_leader_did_not_sign() {
 
 #[test]
 fn rejects_a_substituted_depositor_account() {
-    let mut f = seeded_open();
+    let mut f = Fixture::seeded_open(SEED_BASE, SEED_QUOTE);
     let leader = f.authority.insecure_clone();
-    let alice = f.funded_depositor(200_000, 200_000);
-    f.deposit(&alice, 0, 50_000, 0, 200_000, 200_000)
-        .expect("outside deposit");
+    let alice = f.outside_deposit();
 
     // Alice holds a position, and tries to dodge the depositor gate by
     // passing someone else's (empty) PDA in place of her own. The seeds
@@ -264,7 +239,7 @@ fn rejects_a_substituted_depositor_account() {
 
 #[test]
 fn rejects_invalid_idx() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     let next = new_key(&mut f);
     let err = f
@@ -275,7 +250,7 @@ fn rejects_invalid_idx() {
 
 #[test]
 fn rejects_empty_sector() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     // Vacate the sector by zeroing its leader — the free-list marker. The
     // VaultEmpty guard must fire before the leader-authorization check.
     f.poke_leader_empty(0);

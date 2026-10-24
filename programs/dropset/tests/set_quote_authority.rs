@@ -8,25 +8,15 @@
 mod common;
 
 use anchor_v2_testing::Signer;
-use common::{events, fixture::Fixture};
+use common::{
+    events,
+    fixture::{ref_price, Fixture},
+};
 use solana_pubkey::Pubkey;
-
-/// Bootstrap + one admin vault (sector 0) with `authority` as both leader
-/// and quote authority.
-fn fixture_with_vault() -> Fixture {
-    let mut f = Fixture::bootstrap();
-    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
-        .expect("create_vault");
-    f
-}
-
-fn valid_price() -> u32 {
-    dropset::Price::encode(10_850_000, 0).unwrap().as_u32()
-}
 
 #[test]
 fn leader_rotates_quote_authority() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     let new_authority = Pubkey::new_unique();
     // Sanity: the vault opens with the leader as its own quote authority.
@@ -42,7 +32,7 @@ fn leader_rotates_quote_authority() {
 
 #[test]
 fn rotation_emits_event() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     // Start from a delegate distinct from the leader, so the event's
     // `leader` and `old_authority` slots can't pass by coinciding.
@@ -70,7 +60,7 @@ fn rotate_and_back_emits_both_legs() {
     // The case the event exists for: A → B → A leaves the account where it
     // started, so a coalesced diff shows nothing. Each leg must still be on
     // the record.
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     let delegate = Pubkey::new_unique();
 
@@ -97,7 +87,7 @@ fn rotate_and_back_emits_both_legs() {
 fn rejects_rotation_to_the_incumbent() {
     // Rejected, as `set_leader` rejects with `SameLeader`: a no-op
     // rotation would emit an event claiming a change that never happened.
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     let err = f
         .set_quote_authority(&leader, 0, leader.pubkey())
@@ -111,7 +101,7 @@ fn rejects_rotation_to_the_incumbent() {
 
 #[test]
 fn rotation_hands_off_the_quoting_hot_path() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     // Delegate quoting to a fresh, funded key so it can sign its own tx.
     let delegate = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
@@ -119,19 +109,19 @@ fn rotation_hands_off_the_quoting_hot_path() {
         .expect("leader may delegate quoting");
 
     // The new authority can now drive the quoting hot path.
-    f.set_reference_price(&delegate, 0, valid_price(), 0)
+    f.set_reference_price(&delegate, 0, ref_price(), 0)
         .expect("rotated quote authority may set the reference price");
 
     // And the former authority (the leader) is now locked out of it.
     let err = f
-        .set_reference_price(&leader, 0, valid_price(), 0)
+        .set_reference_price(&leader, 0, ref_price(), 0)
         .expect_err("the superseded authority must lose the quoting path");
     common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
 }
 
 #[test]
 fn leader_may_revoke_delegation_to_self() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     let delegate = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
     f.set_quote_authority(&leader, 0, delegate.pubkey())
@@ -146,7 +136,7 @@ fn leader_may_revoke_delegation_to_self() {
     );
 
     let err = f
-        .set_reference_price(&delegate, 0, valid_price(), 0)
+        .set_reference_price(&delegate, 0, ref_price(), 0)
         .expect_err("the revoked delegate must lose the quoting path");
     common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
 }
@@ -160,7 +150,7 @@ fn leader_may_rotate_on_a_frozen_vault() {
     // authority; the rotated-in key still can't quote (those paths reject a
     // frozen vault), so the rotation is harmless. This pins that contract
     // against a future change that might wrongly add a frozen check.
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     f.freeze_vault(&leader, 0).expect("admin freezes vault");
 
@@ -172,7 +162,7 @@ fn leader_may_rotate_on_a_frozen_vault() {
 
 #[test]
 fn rejects_non_leader() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     // The incumbent quote authority is the leader here; prove that even a
     // distinct funded stranger cannot rotate it — only the leader may.
     let stranger = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
@@ -190,7 +180,7 @@ fn rejects_non_leader() {
 
 #[test]
 fn rejects_zero_address() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     // The zero pubkey is the free-list marker and has no private key —
     // stamping it would quote-brick the vault, so it is rejected.
@@ -206,7 +196,7 @@ fn rejects_zero_address() {
 
 #[test]
 fn rejects_invalid_idx() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     let leader = f.authority.insecure_clone();
     let err = f
         .set_quote_authority(&leader, 99, leader.pubkey())
@@ -216,7 +206,7 @@ fn rejects_invalid_idx() {
 
 #[test]
 fn rejects_empty_sector() {
-    let mut f = fixture_with_vault();
+    let mut f = Fixture::with_vault();
     // Vacate the (in-range) sector by zeroing its leader — the free-list
     // emptiness marker. The VaultEmpty guard must fire before the
     // leader-authorization check.

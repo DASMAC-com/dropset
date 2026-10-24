@@ -15,19 +15,9 @@ use solana_pubkey::Pubkey;
 const SEED_BASE: u64 = 1_000_000;
 const SEED_QUOTE: u64 = 1_085_000;
 
-/// Seeded vault with both outside-deposit flags enabled.
-fn seeded_open() -> Fixture {
-    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
-    let admin = f.authority.insecure_clone();
-    let leader = f.authority.insecure_clone();
-    f.set_outside_deposits_approved(&admin, 0, true).unwrap();
-    f.set_allow_outside_depositors(&leader, 0, true).unwrap();
-    f
-}
-
 #[test]
 fn happy_path_opens_pda_stamps_basis_and_bumps_counter() {
-    let mut f = seeded_open();
+    let mut f = Fixture::seeded_open(SEED_BASE, SEED_QUOTE);
     let alice = f.funded_depositor(200_000, 200_000);
     assert_eq!(f.market_header().outstanding_vault_depositors.get(), 0);
 
@@ -49,7 +39,7 @@ fn happy_path_opens_pda_stamps_basis_and_bumps_counter() {
 
 #[test]
 fn topoff_merges_entry_ref_price() {
-    let mut f = seeded_open();
+    let mut f = Fixture::seeded_open(SEED_BASE, SEED_QUOTE);
     let alice = f.funded_depositor(400_000, 400_000);
     f.deposit(&alice, 0, 50_000, 0, 400_000, 400_000)
         .expect("first deposit");
@@ -82,7 +72,7 @@ fn topoff_merges_entry_ref_price() {
 
 #[test]
 fn rejects_leader_as_depositor() {
-    let mut f = seeded_open();
+    let mut f = Fixture::seeded_open(SEED_BASE, SEED_QUOTE);
     // The leader's own ATAs exist (from the seed) but the handler
     // rejects `signer == leader` before any transfer.
     let leader = f.authority.insecure_clone();
@@ -98,7 +88,7 @@ fn rejects_tombstoned_vault() {
     // longer quotes and accrues no fee, so an outside depositor cannot
     // mint into it. The tombstone gate fires before the outside-deposit
     // opt-in gates.
-    let mut f = seeded_open();
+    let mut f = Fixture::seeded_open(SEED_BASE, SEED_QUOTE);
     let leader = f.authority.insecure_clone();
     let alice = f.funded_depositor(200_000, 200_000);
     f.close_vault(&leader, 0)
@@ -176,7 +166,7 @@ fn rejects_when_reference_price_zero() {
 
 #[test]
 fn rejects_basket_slippage() {
-    let mut f = seeded_open();
+    let mut f = Fixture::seeded_open(SEED_BASE, SEED_QUOTE);
     let alice = f.funded_depositor(200_000, 200_000);
     // Size 50_000 base but cap max_base_in at 10 — the derived basket
     // blows past the cap.
@@ -188,7 +178,7 @@ fn rejects_basket_slippage() {
 
 #[test]
 fn rejects_min_leader_share_violation() {
-    let mut f = seeded_open();
+    let mut f = Fixture::seeded_open(SEED_BASE, SEED_QUOTE);
     let admin = f.authority.insecure_clone();
     // Pin the floor at 99% — any meaningful outside deposit drops the
     // leader's ratio below it.
