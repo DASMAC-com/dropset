@@ -482,6 +482,57 @@ class SafeDeleteTests(unittest.TestCase):
             self.assertEqual(safe_delete(self._record(missing), [root]), 0)
 
 
+class DigestDirTests(unittest.TestCase):
+    """The session digests age out with the transcripts they summarize; the
+    medians' history file never does."""
+
+    def _dir(self, tmp):
+        directory = Path(tmp) / "repo" / pc.DIGEST_SUBDIR
+        directory.mkdir(parents=True)
+        for name, mtime in (
+            ("digest-2026-10-01.md", OLD),
+            ("digest-2026-10-01.json", OLD),
+            ("digest-2026-10-24.md", FRESH),
+            ("history.jsonl", OLD),
+        ):
+            (directory / name).write_text("x", encoding="utf-8")
+            os.utime(directory / name, (mtime, mtime))
+        return directory
+
+    def test_aged_digests_are_deleted_and_history_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = self._dir(tmp)
+            records = pc.scan_digest_dir(directory, CUTOFF)
+            doomed = sorted(r.path.name for r in records if r.delete)
+            self.assertEqual(doomed, ["digest-2026-10-01.json", "digest-2026-10-01.md"])
+            self.assertNotIn("history.jsonl", {r.path.name for r in records})
+            for r in records:
+                if r.delete:
+                    self.assertEqual(r.category, "digests")
+                    self.assertEqual(safe_delete(r, [directory]), 1)
+            self.assertEqual(
+                sorted(p.name for p in directory.iterdir()),
+                ["digest-2026-10-24.md", "history.jsonl"],
+            )
+
+    def test_a_digest_record_is_deleted_only_as_a_file_under_its_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = self._dir(tmp)
+            outside = Path(tmp) / "digest-x.md"
+            outside.write_text("x", encoding="utf-8")
+            record = Record(outside, "digests", True, "older than threshold", 1)
+            self.assertEqual(safe_delete(record, [directory]), 0)
+            self.assertTrue(outside.exists())
+
+    def test_the_manifest_names_the_digest_group(self):
+        record = Record(
+            Path("/r/digest-a.md"), "digests", True, "older than threshold", 0
+        )
+        out = render_manifest({"digests": [record]}, 0)
+        self.assertIn("session digests (aged): 1 dir(s)", out)
+        self.assertIn("- digest-a.md", out)
+
+
 class SessionUuidsInTests(unittest.TestCase):
     def test_reads_transcript_stems_and_ignores_other_files(self):
         with tempfile.TemporaryDirectory() as tmp:

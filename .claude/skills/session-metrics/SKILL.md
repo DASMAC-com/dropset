@@ -84,12 +84,12 @@ and prints, as compact Markdown (or `--json`):
   too and split out, because a fan-out session's bill is
   mostly theirs.
 
-  **Only a Bedrock session gets a dollar figure.** A **seat**
-  session (`plan`, `architect`, `explore`)
-  bills against the Claude subscription, whose internal
-  pricing is not transparent, so it reports its token profile
-  and says so instead — printing a worker-rate equivalent
-  would invent a number that appears on no bill.
+  **A seat session is priced too, labelled "at Bedrock rates,
+  not billed".** A **seat** session (`plan` on the seat,
+  `architect`) bills against the Claude subscription, which is in
+  effect those rates subsidized. The figure says what the work
+  would have cost, and the label stops anyone quoting it as a
+  charge. Quote it with the label, every time.
 
   **The substrate comes from the launch marker, not from the
   model id.** Measured 2026-09-14: a Bedrock worker's
@@ -349,9 +349,8 @@ differ: a cache-read-heavy sink priced at $0.22/Mtok can rank
 below a much smaller output-heavy one at $22.00/Mtok (Opus 5.5,
 projected). Where a
 lever's saving can only be stated in tokens, price it at the
-rates the tool reports and say which tier it lands in. For a
-**seat** session there is no dollar figure to rank by, so rank
-by token volume and say that is what you did.
+rates the tool reports and say which tier it lands in. A
+**seat** session ranks the same way, on its not-billed figure.
 
 **5. File each lever as its own parked issue.** One lever, one
 issue, keyed by a `**Fingerprint**:` — never one entry

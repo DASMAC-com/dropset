@@ -24,6 +24,10 @@ Three roots, two mechanisms:
   kept here too. Both of a session's directories are protected together,
   because the loss below took both and half a fix is not one.
 
+A fourth, smaller root is the base checkout's ``.claude/session-metrics``: the
+daily session digests summarize transcripts, so each ``digest-*`` file ages
+out on the same rule, deleted as a file rather than a directory.
+
 The **dropset set is derived forward** (``git worktree list`` → slug of each
 real worktree path), never by string-matching slug prefixes — a prefix would
 wrongly catch a sibling repo like ``dropset-beta`` whose slug starts with the
@@ -525,6 +529,32 @@ def scan_history_root(
     return records
 
 
+# The session digests `session_metrics.py digest` writes under the base
+# checkout. They summarize transcripts, so they age out with them; the
+# `history.jsonl` the digest medians read matches neither pattern and stays.
+DIGEST_SUBDIR = Path(".claude") / "session-metrics"
+DIGEST_PATTERNS = ("digest-*.md", "digest-*.json")
+
+
+def scan_digest_dir(directory: Path, cutoff_ts: float) -> list[Record]:
+    """Classify each digest file on the transcripts' age rule."""
+    records: list[Record] = []
+    if not directory.is_dir() or directory.is_symlink():
+        return records
+    for pattern in DIGEST_PATTERNS:
+        for entry in sorted(directory.glob(pattern)):
+            if not entry.is_file() or entry.is_symlink():
+                continue
+            stat = entry.stat()
+            if stat.st_mtime < cutoff_ts:
+                records.append(
+                    Record(entry, "digests", True, "older than threshold", stat.st_size)
+                )
+            else:
+                records.append(Record(entry, "kept", False, "within age", 0))
+    return records
+
+
 # --------------------------------------------------------------------------
 # Report + apply
 # --------------------------------------------------------------------------
@@ -535,6 +565,7 @@ CATEGORY_LABELS = {
     "non-dropset": "non-dropset transcripts",
     "file-history": "file-history (session UUID dirs)",
     "cli-cache": "CLI cache (aged)",
+    "digests": "session digests (aged)",
 }
 
 
@@ -625,17 +656,21 @@ def render_manifest(groups: dict[str, list[Record]], protected: int) -> str:
 
 
 def safe_delete(record: Record, roots: list[Path]) -> int:
-    """Hard-delete one record's directory after re-checking the safety
-    invariant: it must be a real (non-symlink) directory under a known root.
-    Returns bytes freed (0 on refusal)."""
+    """Hard-delete one record's directory — or a digest's file — after
+    re-checking the safety invariant: it must be a real (non-symlink) entry
+    under a known root. Returns bytes freed (0 on refusal)."""
     path = record.path
-    if path.is_symlink() or not path.is_dir():
+    is_digest = record.category == "digests"
+    if path.is_symlink() or not (path.is_file() if is_digest else path.is_dir()):
         return 0
     if not any(is_within(root, path) for root in roots):
         print(f"refusing to delete outside a known root: {path}", file=sys.stderr)
         return 0
     freed = record.size
-    shutil.rmtree(path)
+    if is_digest:
+        path.unlink()
+    else:
+        shutil.rmtree(path)
     return freed
 
 
@@ -890,7 +925,8 @@ def run(argv: list[str]) -> int:
     proj = projects_root()
     cli = cli_cache_root()
     hist = file_history_root()
-    roots = [proj, cli, hist]
+    digests = base_worktree(worktrees) / DIGEST_SUBDIR
+    roots = [proj, cli, hist, digests]
 
     records: list[Record] = []
     project_records = scan_slug_root(
@@ -937,6 +973,7 @@ def run(argv: list[str]) -> int:
         cutoff_ts=cutoff_ts,
         protected_uuids=protected_uuids,
     )
+    records += scan_digest_dir(digests, cutoff_ts)
 
     groups: dict[str, list[Record]] = {}
     for r in records:

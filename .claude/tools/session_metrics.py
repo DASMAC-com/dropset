@@ -13,16 +13,23 @@ the single largest results, a per-sub-agent rollup, and the repeated command
 shapes that are candidates to harden into a tool. Pass ``--json`` for the same
 data as JSON.
 
-**Dollars lead, and the report splits by substrate.** A Bedrock worker session
-is metered per token, so its headline is a dollar figure computed from its own
-transcript at the verified rates, with the prefix growth beside it — together
-they make the quadratic visible, since every turn replays the whole prefix and a
-session's bill is roughly its average prefix times its turn count. A **seat**
-session bills against the Claude subscription, whose internal pricing is not
-transparent, so it reports a token profile and deliberately **no** dollar
-figure. :func:`resolve_substrate` decides which, from the marker a launch
-writes, and fails toward the seat branch — a missing figure is a visible gap,
-while a wrong one silently corrupts the daily reconciliation.
+**Dollars lead, on both substrates.** A Bedrock worker session is metered per
+token, so its headline is a dollar figure computed from its own transcript at
+the verified rates, with the prefix growth beside it — together they make the
+quadratic visible, since every turn replays the whole prefix and a session's
+bill is roughly its average prefix times its turn count. A **seat** session
+bills against the Claude subscription, which is in effect Bedrock-rate usage
+heavily subsidized, so it is priced at the same rates and labelled **at
+Bedrock rates, not billed**: the operator still sees what the session would
+have cost, and the label keeps the figure from being read as a bill line.
+:func:`resolve_substrate` decides which label applies, from the marker a
+launch writes, and fails toward seat — the daily reconciliation sums Bedrock
+sessions only (``fleet_cost.py``), so a misread substrate can only drop a
+figure out of that total, never add a charge the bill never made.
+
+The ``digest`` subcommand (``session_digest.py``) runs this aggregation over
+every session since the last upkeep pass and writes the daily telemetry
+digest; see that module.
 
 Per-session cost comes from the transcript rather than from AWS on purpose: Cost
 Explorer has no session dimension and lags up to a day, so AWS is the
@@ -52,6 +59,7 @@ Stdlib only — no third-party dependencies. This is a Python skill-tool under
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -189,6 +197,10 @@ SUBSTRATE_SEAT = "seat"
 # spelling, still on disk in older markers, so both read as the seat branch.
 SUBSTRATE_ANTHROPIC = "anthropic"
 
+# How every surface labels a seat session's dollar figure (this report, the
+# digest, `fleet_cost.py`): priced at the Bedrock rates, never charged.
+NOT_BILLED = "at Bedrock rates, not billed"
+
 
 # --------------------------------------------------------------------------- #
 # Token-cost aggregation (mirrors the former Rust `model.rs`).
@@ -291,15 +303,12 @@ class UnpricedModel(KeyError):
 class Cost:
     """A dollar breakdown of one token profile, at each model's Bedrock rates.
 
-    **Only ever rendered in the Markdown headline for a Bedrock session** — the
-    figures are always present in ``--json``, for tooling that wants them, and a
-    test pins them there on the seat branch too. It is the rendered report, not
-    the data, that withholds a seat session's cost. A seat session bills against
-    the Claude subscription, whose internal pricing is not transparent, so
-    pricing its tokens at worker rates would invent a number that appears
-    nowhere on any bill. :func:`resolve_substrate` decides which branch applies
-    and fails toward the seat one, because a wrong dollar figure is a worse
-    error than a missing one.
+    Rendered for both substrates: a Bedrock session's figure is its bill, a
+    seat session's is the same tokens **at Bedrock rates, not billed** — the
+    subscription is in effect those rates subsidized, so the figure says what
+    the session would have cost, and the label says it was not charged. Only
+    the reconciliation in ``fleet_cost.py`` keeps seat figures out, because
+    that total is compared against a bill the seat never appears on.
     """
 
     input: float = 0.0
@@ -393,6 +402,41 @@ class SubAgentLine:
         billed = [(m, t) for m, t in self.by_model.items() if t.billable()]
         billed.sort(key=lambda mt: (-weight(mt[1]), mt[0]))
         return [m for m, _ in billed]
+
+
+@dataclass
+class DaySlice:
+    """One UTC day's share of a session, the bucket the digest prints.
+
+    A session resumed across days is one transcript, so its per-day cost is
+    only visible by bucketing each message on its own record timestamp — the
+    UTC day, as ``fleet_cost.py`` buckets the bill. ``rewarm`` is the cache
+    write of the main session's **first request of a day after its first**:
+    the cache did not survive the night, so that turn re-writes the whole
+    prefix, and it is the price of spanning days.
+    """
+
+    main: dict[str, Tokens] = field(default_factory=dict)
+    subagents: dict[str, Tokens] = field(default_factory=dict)
+    turns: int = 0
+    rewarm: dict[str, Tokens] = field(default_factory=dict)
+
+
+def utc_stamp(value) -> str | None:
+    """A record timestamp as ``YYYY-MM-DDTHH:MM:SS`` in UTC, or ``None``.
+
+    Transcripts record ``…Z`` stamps; an offset stamp is converted and a naive
+    one read as UTC, so a window bound compares as a plain string.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(datetime.timezone.utc)
+    return parsed.strftime("%Y-%m-%dT%H:%M:%S")
 
 
 @dataclass
@@ -600,8 +644,14 @@ class SessionAggregator:
     process never holds the whole file), then :meth:`finish` into a report dict.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, since: str | None = None) -> None:
         self.totals = Totals()
+        # Per-UTC-day slices (see `DaySlice`). Only records stamped at or after
+        # `since` (a `utc_stamp` string) are sliced, so consecutive digests never
+        # count one message twice; the totals above stay whole-session.
+        self.since = since
+        self.days: dict[str, DaySlice] = {}
+        self._last_main_day: str | None = None
         self._pending: dict[str, _ToolCall] = {}
         self._by_tool: dict[str, ToolLine] = {}
         self._sinks: list[SinkLine] = []
@@ -679,6 +729,46 @@ class SessionAggregator:
         acc.cache_creation += int(usage.get("cache_creation_input_tokens", 0) or 0)
         acc.cache_read += int(usage.get("cache_read_input_tokens", 0) or 0)
         acc.by_model.setdefault(_model_of(msg), Tokens()).add(usage)
+        day_slice = self._day_slice(rec.get("timestamp"))
+        if day_slice is not None:
+            day_slice.subagents.setdefault(_model_of(msg), Tokens()).add(usage)
+
+    def _day_slice(self, timestamp) -> DaySlice | None:
+        """The slice a record stamped ``timestamp`` falls in, or ``None`` when it
+        is unstamped or before the window."""
+        stamp = utc_stamp(timestamp)
+        if stamp is None or (self.since is not None and stamp < self.since):
+            return None
+        return self.days.setdefault(stamp[:10], DaySlice())
+
+    def _slice_main(self, rec: dict, usage: dict, model: str) -> None:
+        """Slice one billed main-session message by its UTC day, marking the
+        day's first request after the session's first day as the re-warm."""
+        stamp = utc_stamp(rec.get("timestamp"))
+        if stamp is None:
+            return
+        day = stamp[:10]
+        rewarm = self._last_main_day is not None and day != self._last_main_day
+        prefix = sum(
+            int(usage.get(k, 0) or 0)
+            for k in (
+                "input_tokens",
+                "cache_creation_input_tokens",
+                "cache_read_input_tokens",
+            )
+        )
+        # An all-zero usage block is not a request the cache answered, so like
+        # the prefix bounds it neither opens a day nor re-warms one.
+        if prefix:
+            self._last_main_day = day
+        day_slice = self._day_slice(rec.get("timestamp"))
+        if day_slice is None:
+            return
+        day_slice.main.setdefault(model, Tokens()).add(usage)
+        day_slice.turns += 1
+        if rewarm and prefix:
+            written = int(usage.get("cache_creation_input_tokens", 0) or 0)
+            day_slice.rewarm.setdefault(model, Tokens()).cache_creation += written
 
     def _first_usage_sighting(self, msg_id) -> bool:
         """Whether this message's usage has not yet been counted. A message
@@ -711,6 +801,7 @@ class SessionAggregator:
             # record (which repeats the same usage).
             if self._first_usage_sighting(msg.get("id")):
                 self.totals.add(usage, _model_of(msg))
+                self._slice_main(rec, usage, _model_of(msg))
                 self._close_request(usage)
         content = msg.get("content")
         if rec.get("type") == "user" and content is not None:
@@ -989,6 +1080,7 @@ class SessionAggregator:
             "subagents": subagents,
             "hardening_candidates": candidates,
             "resident_prose": resident,
+            "days": dict(sorted(self.days.items())),
             "parse_errors": self.parse_errors,
             "tools_omitted": tools_omitted,
             "sinks_omitted": sinks_omitted,
@@ -1328,8 +1420,8 @@ def _rate_standing(model: str) -> str:
 
 def _resident_headline(resident: ResidentProse, substrate: str) -> str:
     """The resident-prose line, rendered beside prefix growth. Its dollar
-    figure follows the headline's rule: Bedrock only, and never when a model is
-    unpriced.
+    figure follows the headline's rule: never when a model is unpriced, and
+    labelled not billed on a seat session.
     """
     parts = " · ".join(
         f"{kind} {human(tokens)}"
@@ -1338,8 +1430,10 @@ def _resident_headline(resident: ResidentProse, substrate: str) -> str:
     line = "**Resident instruction prose**: ≈{} token-turns, {:.0f}% of all input ({})".format(
         human(resident.token_turns), resident.share * 100.0, parts
     )
-    if substrate == SUBSTRATE_BEDROCK and resident.cost is not None:
+    if resident.cost is not None:
         line += f", about {money(resident.cost)} at the cache-read rate"
+        if substrate != SUBSTRATE_BEDROCK:
+            line += f" ({NOT_BILLED})"
     if resident.samples:
         ratio = "{:.2f} bytes/token, calibrated from {} skill injection(s)".format(
             resident.bytes_per_token, resident.samples
@@ -1367,10 +1461,16 @@ def to_markdown(report: dict, session_label: str) -> str:
     out: list[str] = []
     out.append(f"## Session metrics — {session_label}\n\n")
 
-    # **Dollars first, and only for a Bedrock worker.** The headline is the
-    # number the small-PRs convention is trying to drive down, so it leads; a
-    # seat session says so instead of being priced at worker rates.
-    if report["substrate"] == SUBSTRATE_BEDROCK and report["unpriced_models"]:
+    # **Dollars first, on both substrates.** The headline is the number the
+    # small-PRs convention is trying to drive down, so it leads; a seat session
+    # is priced at the same rates and says it was not billed.
+    seat = report["substrate"] != SUBSTRATE_BEDROCK
+    if seat:
+        out.append(
+            "**Substrate**: seat — billed to the Claude subscription, so any "
+            f"figure below is {NOT_BILLED}.\n"
+        )
+    if report["unpriced_models"]:
         out.append(
             "**Cost withheld**: no Bedrock rate for {} — add a row to "
             "`RATES_BY_MODEL` rather than pricing at another model's rate; "
@@ -1379,11 +1479,12 @@ def to_markdown(report: dict, session_label: str) -> str:
                 report["substrate_reason"],
             )
         )
-    elif report["substrate"] == SUBSTRATE_BEDROCK:
+    else:
         total: Cost = report["total_cost"]
         session: Cost = report["session_cost"]
         sub: Cost = report["subagent_cost"]
-        out.append(f"**This session cost about {money(total.total())}** ")
+        verb = "would have cost" if seat else "cost"
+        out.append(f"**This session {verb} about {money(total.total())}** ")
         if sub.total() > 0.0:
             out.append(
                 "(main {} + sub-agents {}) ".format(
@@ -1398,7 +1499,8 @@ def to_markdown(report: dict, session_label: str) -> str:
         # Each priced model names its rate's standing, because a projected rate
         # rendered as if verified is exactly the drift the reconciliation hunts.
         out.append(
-            "at Bedrock rates — {}; substrate {}.\n".format(
+            "{} — {}; substrate {}.\n".format(
+                NOT_BILLED if seat else "at Bedrock rates",
                 ", ".join(_rate_standing(m) for m in report["priced_models"])
                 or "no billable tokens",
                 report["substrate_reason"],
@@ -1416,12 +1518,6 @@ def to_markdown(report: dict, session_label: str) -> str:
                 money(total.output),
                 money(total.input),
             )
-        )
-    else:
-        out.append(
-            "**Substrate**: seat — billed to the Claude subscription, whose "
-            "internal pricing is not transparent, so this reports a token "
-            "profile and no dollar figure ({}).\n".format(report["substrate_reason"])
         )
 
     out.append(
@@ -1625,6 +1721,13 @@ def to_json(report: dict) -> str:
                 "cost": None if obj.cost is None else round(obj.cost, 6),
                 "lever": obj.is_lever(),
             }
+        if isinstance(obj, DaySlice):
+            return {
+                "main": obj.main,
+                "subagents": obj.subagents,
+                "turns": obj.turns,
+                "rewarm": obj.rewarm,
+            }
         raise TypeError(f"not serializable: {type(obj)!r}")
 
     return json.dumps(report, default=encode, indent=2, ensure_ascii=False)
@@ -1756,10 +1859,10 @@ def resolve_substrate(
     resume verbs already steer by.
 
     **Absent reads as seat**, matching `_ds_substrate_read` in
-    `.claude/shell/init.zsh` and for a sharper reason here: the seat branch
-    prints no dollar figure, so an unknown substrate degrades to reporting a
-    token profile rather than to inventing a number. A missing figure is a
-    visible gap; a wrong one silently corrupts the reconciliation.
+    `.claude/shell/init.zsh` and for a sharper reason here: a seat figure is
+    labelled not billed and kept out of the Bedrock reconciliation, so an
+    unknown substrate degrades to a figure nobody reads as a charge rather than
+    to a charge the bill never made.
     """
     recorded = read_substrate_marker(cwd, session_id)
     if recorded == SUBSTRATE_BEDROCK:
@@ -1841,9 +1944,15 @@ def _read_lines(path: Path):
         yield from handle
 
 
-def aggregate(transcript: Path, session_id: str, substrate: str | None = None) -> dict:
-    """Stream the main transcript and every sub-agent transcript into a report."""
-    agg = SessionAggregator()
+def aggregate(
+    transcript: Path,
+    session_id: str,
+    substrate: str | None = None,
+    since: str | None = None,
+) -> dict:
+    """Stream the main transcript and every sub-agent transcript into a report.
+    ``since`` bounds the day slices only (see `SessionAggregator`)."""
+    agg = SessionAggregator(since)
     for line in _read_lines(transcript):
         agg.ingest_main_line(line)
 
@@ -1868,6 +1977,12 @@ def short_id(session_id: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["digest"]:
+        # Imported here: the digest module imports this one.
+        import session_digest
+
+        return session_digest.main(argv[1:])
     parser = argparse.ArgumentParser(
         prog="session_metrics.py",
         description=(
@@ -1891,7 +2006,7 @@ def main(argv: list[str] | None = None) -> int:
             "override the substrate the launch recorded. The escape hatch for a "
             "session whose marker is gone — pruning a worktree can take its "
             "marker with it, and an absent marker reads as seat, so a historical "
-            "Bedrock session would otherwise report no dollar figure"
+            "Bedrock session would otherwise be labelled not billed"
         ),
     )
     args = parser.parse_args(argv)

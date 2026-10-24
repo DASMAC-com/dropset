@@ -163,6 +163,16 @@ class WalkTest(unittest.TestCase):
         self.assertIn("costliest issues: ENG-1651", out.getvalue())
         self.assertIn("not a complete UTC day", err.getvalue())
 
+    def test_seat_spend_is_priced_and_labelled_not_billed(self) -> None:
+        summary = fc.day_summary(self.meter, DAY)
+        seat = next(ln for ln in fc.render_meter(summary, DAY) if "seat" in ln)
+        self.assertIn("at Bedrock rates, not billed", seat)
+        self.assertIn("$", seat)
+        costs = dict(fc.issue_costs(self.meter, [DAY], fc.SEAT))
+        self.assertAlmostEqual(costs["ENG-1700"], ONE_MESSAGE)
+        # ...and never into the Bedrock total the bill is compared against.
+        self.assertNotIn("ENG-1700", dict(fc.issue_costs(self.meter, [DAY])))
+
     def test_issue_attribution_reads_both_tag_spellings(self) -> None:
         costs = dict(fc.issue_costs(self.meter, [DAY]))
         self.assertAlmostEqual(costs["ENG-1651"], 2 * ONE_MESSAGE)

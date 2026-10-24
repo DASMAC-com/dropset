@@ -685,47 +685,152 @@ class PassTests(unittest.TestCase):
         text = render(run_pass(ctx))
         self.assertIn("eng-12: matches no worktree or branch", text)
 
-    def test_a_due_refresh_mines_reports_and_stamps_without_adding(self):
-        metrics = {
-            "hardening_candidates": [
-                {"signature": "make lint", "count": 4, "cost_kind": "prompt-churn"},
-                {
-                    "signature": "git status",
-                    "count": 9,
-                    "cost_kind": "covered (no churn)",
-                },
+    def _with_digests(self, run, twins):
+        """Run a pass whose refresh mining reads ``twins`` as the digests on
+        disk, newest first."""
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for i, twin in enumerate(twins):
+                path = Path(tmp) / f"digest-{i}.json"
+                path.write_text(json.dumps(twin))
+                paths.append(path)
+            saved = upkeep.recent_digests
+            upkeep.recent_digests = lambda base: paths
+            try:
+                ctx = make_ctx(run)
+                run_pass(ctx)
+            finally:
+                upkeep.recent_digests = saved
+        return ctx
+
+    def test_a_due_refresh_mines_the_digests_and_stamps_without_adding(self):
+        churn = {"signature": "make lint", "count": 4, "cost_kind": "prompt-churn"}
+        covered = {
+            "signature": "git status",
+            "count": 9,
+            "cost_kind": "covered (no churn)",
+        }
+        newest = {
+            "sessions": [
+                {"session_id": "s1", "hardening_candidates": [churn, covered]},
+                {"session_id": "s2", "hardening_candidates": [churn]},
             ]
         }
-        run = FakeRun(refresh_due=True, metrics_out=metrics)
-        saved = upkeep.recent_sessions
-        upkeep.recent_sessions = lambda base: ["s1", "s2"]
-        try:
-            ctx = make_ctx(run)
-            run_pass(ctx)
-        finally:
-            upkeep.recent_sessions = saved
+        # s1 again in an older digest: a multi-day session counts once.
+        older = {"sessions": [{"session_id": "s1", "hardening_candidates": [churn]}]}
+        run = FakeRun(refresh_due=True)
+        ctx = self._with_digests(run, [newest, older])
         step = next(s for s in ctx.steps if s["step"] == "allowlist-refresh")
         self.assertTrue(step["ok"])
         self.assertEqual(step["candidates"], ["make lint (8 calls)"])
         self.assertIn("from 2 session(s); stamped", step["line"])
+        # Nothing is re-aggregated per session.
+        self.assertFalse(
+            any("--session-id" in c for c in tool_calls(run, "session_metrics.py"))
+        )
         allow = tool_calls(run, "allowlist.py")
         self.assertIn([*allow[-1][:2], "refresh-record", "--added", "0"], allow)
         self.assertFalse(any("add" in c[2:3] for c in allow))
 
     def test_a_refresh_that_mined_nothing_is_not_stamped(self):
         run = FakeRun(refresh_due=True)
-        saved = upkeep.recent_sessions
-        upkeep.recent_sessions = lambda base: []
-        try:
-            ctx = make_ctx(run)
-            run_pass(ctx)
-        finally:
-            upkeep.recent_sessions = saved
+        ctx = self._with_digests(run, [])
         step = next(s for s in ctx.steps if s["step"] == "allowlist-refresh")
         self.assertFalse(step["ok"])
         self.assertFalse(
             any("refresh-record" in c for c in tool_calls(run, "allowlist.py"))
         )
+
+    DIGEST_OUT = json.dumps(
+        {
+            "sessions": 3,
+            "dollars": 42.5,
+            "flagged": 1,
+            "path": f"{BASE}/.claude/session-metrics/digest-2026-10-08.md",
+        }
+    )
+
+    def _digest_step(
+        self, cost=(1, None), rates=(0, '{"services": {}}', ""), digest_rc=0
+    ):
+        report = {
+            "tolerance": 0.15,
+            "days": {
+                "2026-10-06": {
+                    "substrates": {},
+                    "provisional": False,
+                    "reconcile": {"metered": 10.0, "drift": 0.01, "flagged": False},
+                },
+                "2026-10-07": {"substrates": {}, "provisional": True, "reconcile": {}},
+            },
+        }
+        base_run = FakeRun()
+        seen: dict = {"rates": []}
+
+        def run(cmd, timeout, cwd=None):
+            name = Path(cmd[1]).name if len(cmd) > 1 else ""
+            if name == "fleet_cost.py" and cmd[2] == "reconcile":
+                return cost[0], cost[1] or json.dumps(report), "AWS expired"
+            if name == "fleet_cost.py" and cmd[2] == "rates":
+                seen["rates"].append(cmd[3])
+                return rates
+            if name == "subscription_usage.py":
+                return 0, "", ""
+            if name == "session_metrics.py" and cmd[2] == "digest":
+                path = Path(cmd[cmd.index("--calibration") + 1])
+                seen["calibration"] = json.loads(path.read_text())
+                seen["calibration_path"] = path
+                seen["cmd"] = cmd
+                return digest_rc, self.DIGEST_OUT, "digest broke"
+            return base_run(cmd, timeout, cwd)
+
+        ctx = make_ctx(run)
+        ctx.data["previous_run"] = "2026-10-07T09:00:00+00:00"
+        run_pass(ctx)
+        return ctx, seen
+
+    def test_the_digest_step_runs_after_cost_with_the_settled_days_calibration(self):
+        ctx, seen = self._digest_step()
+        names = [s["step"] for s in ctx.steps]
+        self.assertLess(names.index("fleet-cost"), names.index("digest"))
+        self.assertLess(names.index("digest"), names.index("purge"))
+        step = next(s for s in ctx.steps if s["step"] == "digest")
+        self.assertTrue(step["ok"])
+        self.assertEqual(
+            step["line"],
+            "3 session(s), $42.50 at Bedrock rates, 1 flagged line(s); "
+            ".claude/session-metrics/digest-2026-10-08.md",
+        )
+        # The settled day, never the provisional one.
+        self.assertEqual(seen["rates"], ["2026-10-06"])
+        cal = seen["calibration"]
+        self.assertEqual(cal["day"], "2026-10-06")
+        self.assertEqual(cal["reconcile"]["drift"], 0.01)
+        self.assertEqual(cal["rates"], {"services": {}})
+        cmd = seen["cmd"]
+        self.assertEqual(cmd[cmd.index("--since") + 1], "2026-10-07T09:00:00+00:00")
+        self.assertEqual(cmd[cmd.index("--base") + 1], BASE)
+        self.assertFalse(seen["calibration_path"].exists())
+
+    def test_a_failed_cost_or_rates_read_still_digests_and_says_why(self):
+        _, seen = self._digest_step(cost=(2, ""))
+        self.assertIn("fleet-cost read failed", seen["calibration"]["error"])
+        self.assertEqual(seen["rates"], [])
+        _, seen = self._digest_step(rates=(2, "", "throttled"))
+        self.assertIn("throttled", seen["calibration"]["rates_error"])
+
+    def test_a_failed_digest_is_a_failed_line(self):
+        ctx, _ = self._digest_step(digest_rc=1)
+        step = next(s for s in ctx.steps if s["step"] == "digest")
+        self.assertFalse(step["ok"])
+        self.assertIn("digest broke", step["line"])
+
+    def test_previous_run_reads_the_stamp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "stamp.json"
+            self.assertIsNone(upkeep.previous_run(path))
+            path.write_text(json.dumps({"last_run": "2026-10-07T09:00:00+00:00"}))
+            self.assertEqual(upkeep.previous_run(path), "2026-10-07T09:00:00+00:00")
 
 
 class WriteReportTests(unittest.TestCase):
