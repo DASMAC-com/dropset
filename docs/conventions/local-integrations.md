@@ -88,14 +88,14 @@ three ways a committed guard stays inert:
   argument is not wiring, so a guard disabled by commenting it into an
   `echo` reports `UNWIRED` rather than reading as protected.
 
-A fourth line, `DENY-MISSING`, is not a guard at all: it names a
-private-key `permissions.deny` rule that is in no settings file (see
-"The private-key guard hook" below), and exits 1 the same way.
-
 All three used to report `wired`. The path *spelling* stays loose on
 purpose (absolute, relative, or through a variable are all valid), so a
 path this check cannot resolve is given the benefit of the doubt — the
 narrowing is only where the answer is knowable.
+
+A further line, `DENY-MISSING`, is about no guard script: it names a
+private-key `permissions.deny` rule that is in no settings file (see
+"The private-key guard hook" below), and exits 1 the same way.
 
 The upkeep pass calls `hook_wiring.py` directly rather than this `make`
 target, since it is a Python tool composing other tools. The `make`
