@@ -26,12 +26,15 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// The running bot children of one kind, keyed by their market symbol (the
-/// ticker the accounts pane resolves for the market, e.g. `EURC`). A symbol
-/// present here has a live — or just-exited-and-not-yet-reaped — child.
+/// The bot children of one kind, keyed by their market symbol (the ticker the
+/// accounts pane resolves for the market, e.g. `EURC`). A symbol in `children`
+/// has a live — or just-exited-and-not-yet-reaped — child; one in `stopping`
+/// has been sent SIGTERM and is pulling its liquidity, with the instant past
+/// which [`BotManager::reap`] kills it.
 #[derive(Default)]
 pub struct BotManager {
     children: HashMap<String, Child>,
+    stopping: HashMap<String, (Child, Instant)>,
 }
 
 impl BotManager {
@@ -51,14 +54,33 @@ impl BotManager {
         self.children.len()
     }
 
+    /// Whether the bot for `symbol` has been stopped but not yet exited —
+    /// the maker is still taking its book down.
+    pub fn is_stopping(&self, symbol: &str) -> bool {
+        self.stopping.contains_key(symbol)
+    }
+
+    /// How many stopped bots have yet to exit — for the status bar.
+    pub fn stopping_count(&self) -> usize {
+        self.stopping.len()
+    }
+
     /// Start `cmd` tracked under `symbol`, streaming its output into `log`
-    /// tagged with the symbol. A no-op if one is already running. The command
-    /// is prebuilt by [`maker_command`] / [`taker_command`], which set its args
-    /// and working directory (`repo_root`, so the checked-in role keys resolve
+    /// tagged with the symbol. A no-op if one is already running, or still
+    /// stopping: a fresh maker quoting while the old one zeroes the profile
+    /// would have its book pulled out from under it. The command is prebuilt
+    /// by [`maker_command`] / [`taker_command`], which set its args and
+    /// working directory (`repo_root`, so the checked-in role keys resolve
     /// the same way `make tui` does).
     pub fn start(&mut self, symbol: &str, mut cmd: Command, log: &Logger) -> Result<()> {
         if self.children.contains_key(symbol) {
             log.log(format!("[{symbol}] bot already running"));
+            return Ok(());
+        }
+        if self.stopping.contains_key(symbol) {
+            log.log(format!(
+                "[{symbol}] bot still stopping — start it once it exits"
+            ));
             return Ok(());
         }
         cmd.stdin(Stdio::null())
@@ -74,28 +96,56 @@ impl BotManager {
         Ok(())
     }
 
-    /// Stop the bot for `symbol` and reap the child — see `terminate` for
-    /// how. Returns whether one was running.
+    /// Signal the bot for `symbol` to stop and return at once — see
+    /// `sigterm` for why a signal. The child moves to the stopping set,
+    /// where [`BotManager::reap`] collects it, killing it once `STOP_GRACE`
+    /// passes. Returns whether one was running.
+    ///
+    /// Non-blocking because this runs on the key-handling path: waiting out
+    /// the take-off here froze the whole panel — about a second on localnet,
+    /// the full grace on a wedged RPC — with nothing on screen to say why.
     pub fn stop(&mut self, symbol: &str) -> bool {
         match self.children.remove(symbol) {
             Some(child) => {
-                terminate(vec![child]);
+                self.begin_stop(symbol.to_string(), child);
                 true
             }
             None => false,
         }
     }
 
-    /// Stop every running bot. Used by "stop all" and, indirectly, by `Drop`.
-    /// Every child is signalled before any is waited on, so their take-offs
-    /// run in parallel rather than one grace period each.
+    /// Signal every running bot to stop, as [`BotManager::stop`] does. All
+    /// are signalled together, so their take-offs run in parallel.
     pub fn stop_all(&mut self) {
-        terminate(self.children.drain().map(|(_, child)| child).collect());
+        let children: Vec<_> = self.children.drain().collect();
+        for (symbol, child) in children {
+            self.begin_stop(symbol, child);
+        }
     }
 
-    /// Reap any child that has exited on its own, logging its status, so the
-    /// per-market status reflects a bot that crashed or lost the validator.
-    /// Returns whether anything was reaped (the caller can then redraw).
+    /// SIGKILL every bot, running or stopping, and reap them — no take-off.
+    /// For the wipe, where the ledger a take-off would write to is about to
+    /// be destroyed, so waiting for it buys nothing.
+    pub fn kill_all(&mut self) {
+        let running = self.children.drain().map(|(_, child)| child);
+        let stopping = self.stopping.drain().map(|(_, (child, _))| child);
+        for mut child in running.chain(stopping) {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    fn begin_stop(&mut self, symbol: String, child: Child) {
+        sigterm(&child);
+        self.stopping
+            .insert(symbol, (child, Instant::now() + STOP_GRACE));
+    }
+
+    /// Reap any child that has exited, logging its status: a running one that
+    /// exited on its own (so the per-market status reflects a bot that
+    /// crashed or lost the validator), and a stopping one that finished its
+    /// take-off — or is killed here, its grace spent. Returns whether
+    /// anything was reaped (the caller can then redraw).
     pub fn reap(&mut self, log: &Logger) -> bool {
         let mut exited = Vec::new();
         for (symbol, child) in self.children.iter_mut() {
@@ -107,7 +157,32 @@ impl BotManager {
         for symbol in &exited {
             self.children.remove(symbol);
         }
-        !exited.is_empty()
+        let now = Instant::now();
+        let mut stopped = Vec::new();
+        for (symbol, (child, deadline)) in self.stopping.iter_mut() {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    log.log(format!("[{symbol}] bot stopped ({status})"));
+                    stopped.push(symbol.clone());
+                }
+                Ok(None) if now < *deadline => {}
+                // An unreadable status, or the grace spent: kill and reap, so
+                // no child outlives its manager.
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    log.log(format!(
+                        "[{symbol}] bot still up {}s after SIGTERM — killed",
+                        STOP_GRACE.as_secs()
+                    ));
+                    stopped.push(symbol.clone());
+                }
+            }
+        }
+        for symbol in &stopped {
+            self.stopping.remove(symbol);
+        }
+        !exited.is_empty() || !stopped.is_empty()
     }
 }
 
@@ -117,23 +192,24 @@ impl BotManager {
 /// confirmations, with room for a slow RPC.
 const STOP_GRACE: Duration = Duration::from_secs(20);
 
-/// Stop `children`: SIGTERM each, wait up to [`STOP_GRACE`] for them to exit,
-/// then SIGKILL whatever is left, and reap every one.
+/// Ask `child` to stop.
 ///
 /// SIGTERM rather than `Child::kill` (which is SIGKILL) because the maker
 /// treats SIGTERM as "pull the liquidity, then exit" — stopping a market's
 /// bot from the demo *is* taking its book down. A SIGKILL skips that and
 /// leaves the book resting until its levels expire on their own TIF. The
 /// taker has no handler, so SIGTERM ends it at once.
-fn terminate(children: Vec<Child>) {
-    for child in &children {
-        // SAFETY: `kill` takes a pid and a signal number and touches no
-        // memory of ours. The pid is a child we have not yet reaped, so it
-        // cannot have been recycled for an unrelated process.
-        unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
-    }
-    let deadline = Instant::now() + STOP_GRACE;
-    for mut child in children {
+fn sigterm(child: &Child) {
+    // SAFETY: `kill` takes a pid and a signal number and touches no memory
+    // of ours. The pid is a child we have not yet reaped, so it cannot have
+    // been recycled for an unrelated process.
+    unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
+}
+
+/// Wait out `children`, each already sent SIGTERM, until its deadline, then
+/// SIGKILL whatever is left, and reap every one.
+fn wait_out(children: Vec<(Child, Instant)>) {
+    for (mut child, deadline) in children {
         loop {
             match child.try_wait() {
                 Ok(Some(_)) => break,
@@ -157,8 +233,12 @@ fn terminate(children: Vec<Child>) {
 
 impl Drop for BotManager {
     fn drop(&mut self) {
-        // Leave no orphaned bots when the TUI quits or panics.
+        // Leave no orphaned bots when the TUI quits or panics. This one path
+        // still blocks: the process is exiting, so there is no later reap to
+        // hand the take-offs to, and a quit mid-take-off must not strand a
+        // book.
         self.stop_all();
+        wait_out(self.stopping.drain().map(|(_, entry)| entry).collect());
     }
 }
 
@@ -271,29 +351,64 @@ fn stream<R: Read + Send + 'static>(pipe: Option<R>, symbol: &str, log: Logger) 
 
 #[cfg(test)]
 mod tests {
-    use super::{terminate, LOCALNET_STORE_URL, STOP_GRACE, STORE_URL_ENV};
+    use super::{BotManager, LOCALNET_STORE_URL, STOP_GRACE, STORE_URL_ENV};
+    use crate::job::{JobEvent, Logger};
     use std::process::Command;
-    use std::time::Instant;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
-    /// A stop signals rather than kills: a child that honours SIGTERM is
-    /// reaped well inside the grace period, not after it.
+    fn sleeping(symbols: &[&str], log: &Logger) -> BotManager {
+        let mut bots = BotManager::new();
+        for symbol in symbols {
+            let mut cmd = Command::new("sleep");
+            cmd.arg("30");
+            bots.start(symbol, cmd, log).expect("spawn sleep");
+        }
+        bots
+    }
+
+    /// A stop signals and returns; the reap collects the exit. A child that
+    /// honours SIGTERM is reaped well inside the grace period, not after it.
     #[test]
-    fn a_stop_sends_sigterm_and_reaps_promptly() {
-        let children = (0..2)
-            .map(|_| {
-                Command::new("sleep")
-                    .arg("30")
-                    .spawn()
-                    .expect("spawn sleep")
-            })
-            .collect();
+    fn a_stop_returns_at_once_and_the_reap_collects_it() {
+        let (tx, rx) = mpsc::channel();
+        let log = Logger::new(tx);
+        let mut bots = sleeping(&["A", "B"], &log);
         let started = Instant::now();
-        terminate(children);
-        assert!(
-            started.elapsed() < STOP_GRACE / 4,
-            "{:?}",
-            started.elapsed()
-        );
+        assert!(bots.stop("A"));
+        bots.stop_all();
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert_eq!(bots.running_count(), 0);
+        assert_eq!(bots.stopping_count(), 2);
+        assert!(bots.is_stopping("A") && !bots.is_running("A"));
+        while bots.stopping_count() > 0 {
+            assert!(
+                started.elapsed() < STOP_GRACE / 4,
+                "{:?}",
+                started.elapsed()
+            );
+            bots.reap(&log);
+            thread::sleep(Duration::from_millis(20));
+        }
+        let stopped = rx
+            .try_iter()
+            .filter(|ev| matches!(ev, JobEvent::Log(s) if s.contains("bot stopped")))
+            .count();
+        assert_eq!(stopped, 2);
+    }
+
+    /// A symbol still taking its book down is not restarted under it.
+    #[test]
+    fn a_stopping_bot_is_not_restarted() {
+        let (tx, _rx) = mpsc::channel();
+        let log = Logger::new(tx);
+        let mut bots = sleeping(&["A"], &log);
+        bots.stop("A");
+        bots.start("A", Command::new("true"), &log).expect("no-op");
+        assert!(!bots.is_running("A"));
+        bots.kill_all();
+        assert_eq!(bots.stopping_count(), 0);
     }
 
     /// The compose file is the third copy of both strings, and the one that
