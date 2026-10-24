@@ -1,5 +1,7 @@
 <!-- cspell:word zshrc -->
 
+<!-- cspell:word CLAUDECODE -->
+
 <!-- cspell:word isabs -->
 
 <!-- cspell:word venv -->
@@ -13,7 +15,8 @@
 This doc covers the **user-local Claude Code configuration** the repo
 *documents but does not commit*: the compound-shell guard hook, the
 git-grep guard hook, the worktree edit-path guard hook, the
-destructive-command guard hook, the AI-attribution guard hook, the iTerm2
+destructive-command guard hook, the AI-attribution guard hook, the
+private-key guard hook and its permission deny rules, the iTerm2
 tab-color integration, and the shell setup they lean on. None of it is
 enforced on a checkout.
 
@@ -84,6 +87,10 @@ three ways a committed guard stays inert:
 - `UNWIRED` — nothing points at it. A script merely *mentioned* in an
   argument is not wiring, so a guard disabled by commenting it into an
   `echo` reports `UNWIRED` rather than reading as protected.
+
+A fourth line, `DENY-MISSING`, is not a guard at all: it names a
+private-key `permissions.deny` rule that is in no settings file (see
+"The private-key guard hook" below), and exits 1 the same way.
 
 All three used to report `wired`. The path *spelling* stays loose on
 purpose (absolute, relative, or through a variable are all valid), so a
@@ -232,7 +239,7 @@ one to the other.
 
 ### Which guards are actually wired
 
-Reach was never the problem — **wiring** is. All **five** guard scripts
+Reach was never the problem — **wiring** is. All **six** guard scripts
 are committed under `.claude/hooks/`, but a script only runs if a
 `PreToolUse` entry points at it, and a committed-but-unwired guard is a
 documented protection that does not exist. That has happened: on
@@ -241,7 +248,7 @@ leaving the **two** other guards that existed then inert — including the
 worktree edit-path guard, which exists specifically for worktree
 sessions. (`no_destructive_bash.py` is newer than that incident, which
 is why the count here is two and not three; the inventory above is
-five as of today.) Wire the ones you want using
+six as of today.) Wire the ones you want using
 the blocks in each guard's section below.
 
 **This doc states no per-guard wiring status, deliberately.** The
@@ -623,6 +630,136 @@ alongside theirs under the same matcher:
 ```
 
 <!-- markdownlint-enable MD013 -->
+
+## The private-key guard hook
+
+The mainnet private keys live in a 1Password vault and sign through the
+1Password SSH agent. **No agent session or sub-agent ever touches them,
+and an agent shell never runs mainnet operations** — a private key
+cannot be rotated once it leaks, because the address it controls *is*
+the identity. Two layers enforce that, because they fail differently:
+
+1. **Permission deny rules** in the user-local settings. A deny rule is
+   evaluated ahead of every allow, is not consulted by the auto-mode
+   classifier, and needs no script to run — so it holds under auto mode.
+   A prefix rule sees only the command's leading words, though.
+1. **The guard hook** (`.claude/hooks/no_private_key_access.py`). It
+   runs before the permission check, so its loud, plain-words message is
+   what the agent reads, and it catches the shapes a prefix rule cannot
+   express. It has **no escape marker**.
+
+The hook denies five groups. Its docstring is the full statement; in
+brief:
+
+1. A Bash command naming the private-keys **vault** (name or id, read
+   from `DS_OP_PRIVATE_KEYS_VAULT` in the session environment, comma
+   separated for both — set it in the runtime init, since the committed
+   script carries no real name), an `op://` reference to a **key item**
+   (`eBook`, `Admin`, `Lead`, `Quote` and their signing duplicates), or
+   the **1Password agent socket**. The bare titles match only inside an
+   `op://` reference: `Admin` and `Quote` are ordinary words here, and a
+   guard that blocks `grep Quote` gets turned off.
+1. **`op` at any command position** — after `env`, `sudo`, `xargs`,
+   `find -exec`, a control operator, inside a `-c` payload, `eval` or a
+   command substitution. An agent never types `op`: the make targets
+   carry the `op run` the collectors and the keyed frontend need.
+1. Any `SSH_AUTH_SOCK`, `OP_SESSION_*` or `OP_SERVICE_ACCOUNT_TOKEN`
+   assignment, `ssh-add`, `ssh-keygen -Y sign`, and `--session`.
+1. The **mainnet cockpit**: `make tui-mainnet`; `make teardown` (or
+   `dropset-teardown`) with a non-localnet `--rpc-url`; `dropset-tui` or
+   `cargo run -p dropset-tui` with `--cluster mainnet` or `--keys-file`.
+   `make mainnet-demo` (watch-only, ephemeral key) is allowed by the
+   hook; the cockpit binary itself refuses a mainnet run when
+   `CLAUDECODE` is set.
+1. Mutation of the four **reference files** — `tui/private-keys.env`,
+   `infra/localnet/secrets.local.env`, `frontend/.env.local` and
+   `~/.config/1Password/ssh/agent.toml` — through `Edit` / `Write` /
+   `MultiEdit`, a Bash redirection, or a mutating command (`rm`, `mv`,
+   `tee`, `sed -i`, …). Paths match by suffix after `~` expansion and
+   resolution against the checkout, the edit-path guard's approach, so
+   the base copy, every worktree's copy and a `../../../` spelling all
+   match. Reading them is allowed: they hold `op://` references, never
+   key material.
+
+**What neither layer can stop**: a script whose contents a prefix rule
+and the hook's tokenizer never see (a make recipe, `python3 x.py`), an
+MCP tool that shells out, and a session or sub-agent without the
+wiring. There the layer that holds is the **1Password SSH agent's own
+per-key prompt**: a signing request from any process names the key and
+the requesting process, and the operator refuses it.
+
+### Wiring the private-key guard
+
+The **script** is committed with a self-test
+(`python3 .claude/hooks/no_private_key_access.py --self-test`), and
+`.claude/tools/tests/test_no_private_key_access.py` pins it under
+`make tools-tests`. Neither layer's **wiring** is committed. Unlike the
+other guards, this one's matcher names the edit tools **and** `Bash`,
+so it takes its own entry rather than joining the shared `Bash` one:
+
+<!-- markdownlint-disable MD013 -->
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_private_key_access.py\"",
+            "statusMessage": "Checking for private-key access",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The deny rules go in the same file, in three groups — every direct
+`op`, the mainnet cockpit target, and edits to the four reference
+files:
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "Bash(op:*)",
+      "Bash(make tui-mainnet:*)",
+      "Edit(//**/tui/private-keys.env)",
+      "Edit(//**/infra/localnet/secrets.local.env)",
+      "Edit(//**/frontend/.env.local)",
+      "Edit(~/.config/1Password/ssh/agent.toml)"
+    ]
+  }
+}
+```
+
+<!-- markdownlint-enable MD013 -->
+
+Two path-rule facts shape the file rules (Claude Code's permissions
+docs, "Read and Edit" and "How path patterns match"). An `Edit(...)`
+rule covers **every** built-in file-editing tool, `Write` and
+`MultiEdit` included, while a `Write(...)` rule parses but never
+matches — so there is no `Write` twin to add. And `**/x` matches only
+under the session's cwd, which from a worktree misses the base
+checkout's copy; the `//` prefix anchors at the filesystem root, so
+`//**/x` matches every checkout's copy.
+
+The prefix rules' reach is narrower than it looks: a `Bash(op:*)` deny
+sees each subcommand after `&&`, `;` or `|`, but not `env op …`, an
+absolute `/…/op`, or a `sh -c 'op …'` payload. Those are the shapes the
+hook covers.
+
+`make hook-wiring` reports a missing deny rule as `DENY-MISSING`, the
+way it reports an unwired guard, so the daily upkeep sees either gap.
+Its rule table (`REQUIRED_DENY_RULES` in `.claude/tools/hook_wiring.py`)
+and the block above are pinned equal by `test_hook_wiring.py`; change
+both together. A rule in any of the three settings scopes counts, and
+the `Bash(x *)` spelling of a prefix rule is accepted for `Bash(x:*)`.
 
 ## iTerm2 tab-color integration
 
@@ -2317,7 +2454,7 @@ drives the real zsh functions.
     **Do not expect a fully unattended run.** The classifier still
     routes to a prompt: explicit `ask` rules apply, `deny` rules
     apply, and the git and Claude config trees are protected paths
-    that always go through it. The five `PreToolUse` guard hooks fire
+    that always go through it. The six `PreToolUse` guard hooks fire
     regardless of permission mode — the policy layers compose rather
     than substitute, so `auto` is not a way around a guard.
 
