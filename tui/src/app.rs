@@ -782,7 +782,15 @@ impl App {
         };
         if self.bots.is_running(symbol) {
             self.bots.stop(symbol);
-            self.log(LogKind::Ok, format!("[{symbol}] bot stopped"));
+            self.log(
+                LogKind::Info,
+                format!("[{symbol}] bot stopping — pulling its liquidity…"),
+            );
+        } else if self.bots.is_stopping(symbol) {
+            self.log(
+                LogKind::Info,
+                format!("[{symbol}] bot still stopping — start it once it exits"),
+            );
         } else if self.postures.of(symbol) == market::Posture::Passive {
             self.log(
                 LogKind::Err,
@@ -816,7 +824,7 @@ impl App {
         };
         if self.takers.is_running(symbol) {
             self.takers.stop(symbol);
-            self.log(LogKind::Ok, format!("[{symbol}] taker stopped"));
+            self.log(LogKind::Info, format!("[{symbol}] taker stopping…"));
         } else {
             // Unreachable in practice: `selected_symbol()` above already
             // resolved from this same selected market, so it exists — the guard
@@ -867,8 +875,8 @@ impl App {
         if posture == market::Posture::Passive && self.bots.is_running(symbol) {
             self.bots.stop(symbol);
             self.log(
-                LogKind::Ok,
-                format!("[{symbol}] bot stopped — post the passive book with p"),
+                LogKind::Info,
+                format!("[{symbol}] bot stopping — post the passive book with p once it exits"),
             );
         }
         self.log(
@@ -889,7 +897,7 @@ impl App {
         if self.bots.running_count() > 0 {
             let n = self.bots.running_count();
             self.bots.stop_all();
-            self.log(LogKind::Ok, format!("Stopped {n} maker bot(s)."));
+            self.log(LogKind::Info, format!("Stopping {n} maker bot(s)…"));
             self.dirty = true;
             return;
         }
@@ -929,7 +937,7 @@ impl App {
         if self.takers.running_count() > 0 {
             let n = self.takers.running_count();
             self.takers.stop_all();
-            self.log(LogKind::Ok, format!("Stopped {n} taker bot(s)."));
+            self.log(LogKind::Info, format!("Stopping {n} taker bot(s)…"));
             self.dirty = true;
             return;
         }
@@ -965,7 +973,7 @@ impl App {
         let n = self.bots.running_count() + self.takers.running_count();
         self.bots.stop_all();
         self.takers.stop_all();
-        self.log(LogKind::Ok, format!("Stopped {n} bot(s)."));
+        self.log(LogKind::Info, format!("Stopping {n} bot(s)…"));
         self.dirty = true;
     }
 
@@ -1469,6 +1477,18 @@ impl App {
                 self.log(LogKind::Err, "A job is already running.".to_string());
                 return;
             }
+            // A stopping maker is still zeroing this market's profile, and a
+            // passive book posted now would race that take-off.
+            if let Some(symbol) = self.selected_symbol().filter(|s| self.bots.is_stopping(s)) {
+                self.log(
+                    LogKind::Err,
+                    format!(
+                        "{} — [{symbol}] maker still stopping; post once it exits",
+                        action.label()
+                    ),
+                );
+                return;
+            }
             let mut form = passive::Form::new(op);
             if let Some(market) = self.chain.selected_market(self.selected_market).cloned() {
                 form.fair = self.read_fair(&market);
@@ -1546,14 +1566,15 @@ impl App {
         }
         self.log(LogKind::Info, "Wiping localnet…".to_string());
         // The bots quote against the ledger being wiped — stop them so none
-        // keeps sending doomed txns at the fresh, empty validator.
-        self.bots.stop_all();
+        // keeps sending doomed txns at the fresh, empty validator. Killed, not
+        // signalled: the take-off would write to the ledger being destroyed.
+        self.bots.kill_all();
         // Confine the validator borrow to this expression, resolving the fresh
         // URL inside it, so the arms below are free to touch `self` again.
         //
         // `map` rather than a `match` with a `None => return` arm: presence was
         // established above, so that arm was unreachable, and it sat *after*
-        // `stop_all()` — so were it ever reachable it would leave the bots
+        // `kill_all()` — so were it ever reachable it would leave the bots
         // stopped with no wipe and no log line. Falling through cannot.
         let respawned = self
             .validator
