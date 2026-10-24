@@ -124,6 +124,21 @@ class RenderTests(unittest.TestCase):
             self._render(lint={"status": "ok"})
         with self.assertRaises(rs.SummaryError):
             self._render(tests={"make test": "skipped"})
+        with self.assertRaises(rs.SummaryError):
+            self._render(tests={"make test": "skipped:  "})
+
+    def test_a_suite_skipped_by_rule_renders_its_reason_and_does_not_block(self):
+        """A by-rule skip is not a gap, so it is not named as unverified."""
+        text, converged = self._render(
+            tests={"make test": "skipped: no Rust reachable", "sdk/ts": "pass"}
+        )
+        self.assertTrue(converged)
+        self.assertIn("make test skipped: no Rust reachable, sdk/ts pass", text)
+        self.assertIn("**Converged**: yes\n", text)
+
+    def test_every_suite_may_be_skipped_by_rule(self):
+        _, converged = self._render(tests={"make test": "skipped: prose-only diff"})
+        self.assertTrue(converged)
 
     def test_a_missing_checklist_item_blocks_convergence(self):
         _, converged = self._render(checklist=[{"item": "Part 2", "status": "missing"}])
@@ -150,6 +165,20 @@ class CliTests(unittest.TestCase):
             facts.write_text("[]")
             with redirect_stderr(io.StringIO()):
                 self.assertEqual(rs.main(["--facts", str(facts)]), 2)
+
+    def test_schema_names_every_facts_key(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(rs.main(["--schema"]), 0)
+        printed = out.getvalue()
+        self.assertTrue(printed.startswith("{"))
+        for key in [*rs.REQUIRED, "tier_proposed", "integrity"]:
+            self.assertIn(f'"{key}"', printed, key)
+
+    def test_facts_is_required_without_schema(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exc:
+            rs.main([])
+        self.assertEqual(exc.exception.code, 2)
 
 
 if __name__ == "__main__":

@@ -979,14 +979,22 @@ class QueueModeCliTests(unittest.TestCase):
             seen.setdefault("dismissed", []).append((pr, repo))
             return {"dismissed": 1, "failed": 0, "error": None}
 
+        real_cause = wfc.dequeue_cause
+
+        def cause(pr, repo):
+            seen.setdefault("caused", []).append((pr, repo))
+            return {"dequeue_reason": "merge_conflict", "error": None}
+
         wfc.wait_queue = stub
         wfc.dismiss_pr_notifications = dismiss
+        wfc.dequeue_cause = cause
         try:
             with redirect_stdout(out):
                 code = wfc.run(["wait_for_checks.py", "--queue", "285", *extra])
         finally:
             wfc.wait_queue = real
             wfc.dismiss_pr_notifications = real_dismiss
+            wfc.dequeue_cause = real_cause
         seen["verdict"] = json.loads(out.getvalue())
         return code, seen
 
@@ -1001,6 +1009,16 @@ class QueueModeCliTests(unittest.TestCase):
                 _, seen = self._queue_mode(conclusion)
                 self.assertNotIn("dismissed", seen)
                 self.assertNotIn("notifications", seen["verdict"])
+
+    def test_only_a_dequeue_reads_its_cause(self):
+        _, seen = self._queue_mode("dequeued")
+        self.assertEqual(seen["caused"], [(285, wfc.DEFAULT_REPO)])
+        self.assertEqual(seen["verdict"]["dequeue"]["dequeue_reason"], "merge_conflict")
+        for conclusion in ("merged", "closed", "not_queued", "timeout"):
+            with self.subTest(conclusion=conclusion):
+                _, seen = self._queue_mode(conclusion)
+                self.assertNotIn("caused", seen)
+                self.assertNotIn("dequeue", seen["verdict"])
 
     def test_queue_mode_uses_its_own_pacing_defaults(self):
         code, seen = self._queue_mode("merged")
@@ -1100,6 +1118,71 @@ class DismissNotificationsTests(unittest.TestCase):
     def test_a_failed_delete_is_counted(self):
         result, _ = self._run((0, json.dumps(self.THREADS), ""), delete_code=1)
         self.assertEqual(result, {"dismissed": 0, "failed": 2, "error": "HTTP 404"})
+
+
+class DequeueCauseTests(unittest.TestCase):
+    HEAD = "a" * 40
+
+    def _gql(self, reason):
+        nodes = [] if reason is None else [{"createdAt": ENQUEUED, "reason": reason}]
+        pr = {
+            "baseRefName": "main",
+            "headRefOid": self.HEAD,
+            "timelineItems": {"nodes": nodes},
+        }
+        return json.dumps({"data": {"repository": {"pullRequest": pr}}})
+
+    def _run(self, reason, compare=None, compare_code=0):
+        calls = []
+
+        def fake(args):
+            calls.append(args)
+            if args[1] == "graphql":
+                return 0, self._gql(reason), ""
+            return compare_code, json.dumps(compare), "HTTP 404" if compare_code else ""
+
+        real = wfc._gh
+        wfc._gh = fake
+        self.addCleanup(setattr, wfc, "_gh", real)
+        return wfc.dequeue_cause(285, REPO), calls
+
+    def test_a_conflict_lists_what_the_base_gained(self):
+        commits = [
+            {"sha": f"{n:040d}", "commit": {"message": f"feat: landed {n}\n\nbody"}}
+            for n in range(wfc.BASE_GAINED_LIMIT + 2)
+        ]
+        result, calls = self._run(
+            "merge_conflict", {"ahead_by": len(commits), "commits": commits}
+        )
+        self.assertEqual(
+            calls[-1], ["api", f"/repos/{REPO}/compare/{self.HEAD}...main"]
+        )
+        self.assertEqual(result["dequeue_reason"], "merge_conflict")
+        self.assertEqual(result["dequeued_at"], ENQUEUED)
+        self.assertEqual(result["base_gained_total"], wfc.BASE_GAINED_LIMIT + 2)
+        gained = result["base_gained"]
+        self.assertEqual(len(gained), wfc.BASE_GAINED_LIMIT)
+        # The newest are kept, oldest first, subject line only.
+        self.assertEqual(gained[-1]["subject"], f"feat: landed {len(commits) - 1}")
+        self.assertEqual(gained[0]["subject"], "feat: landed 2")
+        self.assertEqual(len(gained[0]["sha"]), 12)
+        self.assertIsNone(result["error"])
+
+    def test_another_reason_skips_the_compare(self):
+        result, calls = self._run("checks_failed")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result["dequeue_reason"], "checks_failed")
+        self.assertIsNone(result["base_gained"])
+
+    def test_failures_are_reported_not_raised(self):
+        result, _ = self._run(None)
+        self.assertIn("no RemovedFromMergeQueueEvent", result["error"])
+        result, _ = self._run("merge_conflict", compare_code=1)
+        self.assertEqual(result["dequeue_reason"], "merge_conflict")
+        self.assertIsNone(result["base_gained"])
+        self.assertIn("HTTP 404", result["error"])
+        result, _ = self._run("merge_conflict", compare={"message": "Not Found"})
+        self.assertIn("base compare", result["error"])
 
 
 class ConflictingPrTests(unittest.TestCase):
