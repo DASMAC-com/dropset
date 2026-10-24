@@ -111,10 +111,11 @@ def validate(argv: list[str]) -> list[str]:
         # retired, since `explore <n|name>` now resumes an existing session
         # itself. `_NAME` admits a bare number, which is the issue-keyed form an
         # audit dispatch uses — `explore 1196` lands in the `1196` worktree.
-        # `anthropic` alone, in `task`'s position: Bedrock is already the
-        # default, so the shell takes no `bedrock` word here — and refuses
-        # either word as a name, so `explore bedrock` is no `exp-bedrock`.
-        word = ["anthropic"] if args and args[0] == "anthropic" else []
+        # Either substrate word, in `task`'s position, so a `[Explore/Bedrock]`
+        # title types as `explore bedrock <n>` like every other token; the
+        # shell refuses either word as a name, so `explore bedrock` alone is
+        # no `exp-bedrock`.
+        word = [args[0]] if args and args[0] in _SUBSTRATES else []
         args = args[len(word) :]
         if args and args[0] == "resume":
             raise ValueError(
@@ -123,7 +124,8 @@ def validate(argv: list[str]) -> list[str]:
             )
         if len(args) != 1 or not _NAME.match(args[0]) or args[0] in _SUBSTRATES:
             raise ValueError(
-                "`explore` takes [anthropic] and one lowercase name or issue number"
+                "`explore` takes [anthropic|bedrock] and one lowercase name or "
+                "issue number"
             )
         # `_NAME` admits `0` and `eng-0`; the shell refuses both, since 0 is not a
         # Linear issue number. Mirror that here rather than letting the dispatch
@@ -149,13 +151,21 @@ def validate(argv: list[str]) -> list[str]:
     if verb == "architect":
         # The governing issue's number is the only argument — there is no topic
         # form — so a design thread is named, tabbed and worktree'd like a task.
-        if not 1 <= len(args) <= 2 or not _TAG.match(args[0]):
-            raise ValueError("`architect` takes the governing issue's number")
-        if re.fullmatch(r"(?:eng-)?0+", args[0], re.ASCII):
+        # The substrate word comes BEFORE the number, as on every issue verb.
+        if len(args) == 2 and _TAG.match(args[0]) and args[1] in _SUBSTRATES:
+            raise ValueError(
+                f"`architect <n> {args[1]}` is the retired order — dispatch "
+                f"`architect {args[1]} {args[0]}`"
+            )
+        word = [args[0]] if args and args[0] in _SUBSTRATES else []
+        rest = args[len(word) :]
+        if len(rest) != 1 or not _TAG.match(rest[0]):
+            raise ValueError(
+                "`architect` takes [anthropic|bedrock] and the governing issue's number"
+            )
+        if re.fullmatch(r"(?:eng-)?0+", rest[0], re.ASCII):
             raise ValueError("`architect` needs a real issue number; 0 is not one")
-        if len(args) == 2 and args[1] not in _SUBSTRATES:
-            raise ValueError("`architect <n>` takes only anthropic or bedrock after it")
-        return ["architect", *args]
+        return ["architect", *word, rest[0]]
 
     if verb == "fleet":
         if not args:

@@ -629,6 +629,49 @@ _ds_daily_sid() {
 # Code addresses it by; anything else resumes from the base checkout as before
 # (whether `--resume <id>` from there reaches a copy under some THIRD slug is
 # unverified, but the create branch on an existing id was no better).
+# Internal: THE shared launcher — every managed `claude` start or resume goes
+# through here. $1 the session's model, the rest `claude`'s own arguments.
+#
+# On Bedrock it binds every sub-agent slot to a tier (see "Model tiers"), and
+# `local -x` scopes each to this one command exactly as `ANTHROPIC_MODEL` is:
+# none outlives the session into the tab. A tier that does not resolve refuses
+# the launch, since an unbound slot silently runs Claude Code's own table.
+_ds_claude() {
+  local -x ANTHROPIC_MODEL="$1"
+  shift
+  if [[ -n "$CLAUDE_CODE_USE_BEDROCK" ]]; then
+    local executor helper
+    # The session's own `_ds_tier` call already printed any warning these ids
+    # carry, so the second resolution is quiet; an unset tier still refuses.
+    { read -r executor; } <<< "$(_ds_tier executor bedrock 2>/dev/null)"
+    { read -r helper; } <<< "$(_ds_tier helper bedrock 2>/dev/null)"
+    if [[ -z "$executor" || -z "$helper" ]]; then
+      print -u2 'dropset: a Bedrock launch binds sub-agents to the executor and' \
+        'helper tiers — set DS_MODEL_EXECUTOR and DS_MODEL_HELPER. Refusing.'
+      _ds_substrate_unset
+      return 1
+    fi
+    local -x CLAUDE_CODE_SUBAGENT_MODEL="$executor"
+    local -x ANTHROPIC_DEFAULT_OPUS_MODEL="$executor"
+    local -x ANTHROPIC_DEFAULT_SONNET_MODEL="$helper"
+    # Background only notes an unset value (`_ds_bedrock_env`); unbound, the
+    # slot is Claude Code's own.
+    [[ -n "$DS_MODEL_BACKGROUND" ]] &&
+      local -x ANTHROPIC_DEFAULT_HAIKU_MODEL="$DS_MODEL_BACKGROUND"
+  fi
+  claude "$@"
+}
+
+# Internal: the title guard (`verb_check.py`) for a launch that starts a NEW
+# session — $1 verb, $2 substrate, $3 tag. A reopen keeps the session it has,
+# so it is not re-judged against a title edited since. A name is not checked;
+# an unreachable Linear warns and passes. Non-zero means DO NOT LAUNCH.
+_ds_verb_check() {
+  [[ "$3" == <-> ]] || return 0
+  _ds_secrets
+  python3 "$_DS_REPO/.claude/tools/verb_check.py" "$@"
+}
+
 _ds_session() {
   local sid="$1" name="$2" prompt="$3" model="$4" worktree="$5"
 
@@ -678,11 +721,11 @@ _ds_session() {
         "checkout. Re-creating it restores TRACKED files only; an untracked" \
         "spec file written there is not recoverable, so work from Linear."
     fi
-    ANTHROPIC_MODEL="$model" claude --resume "$sid" --permission-mode auto
+    _ds_claude "$model" --resume "$sid" --permission-mode auto
   else
     [[ -n "$worktree" ]] && _ds_worktree_ensure "$worktree"
     _ds_session_mark "$sid"
-    ANTHROPIC_MODEL="$model" claude --session-id "$sid" -n "$name" \
+    _ds_claude "$model" --session-id "$sid" -n "$name" \
       --permission-mode auto "${worktree_flag[@]}" "${prompt_arg[@]}"
   fi
 }
@@ -793,17 +836,26 @@ _ds_topic_sid() {
 # profile, as it does the primary model's (measured from its request log), so a
 # first-party id is portable; a Bedrock-form id must be the exact profile id.
 #
-# A Bedrock `explore` launch fills two more slots, the same way. The executor
-# id goes to `CLAUDE_CODE_SUBAGENT_MODEL`, the default for every sub-agent that
-# names no model (a per-call model and agent frontmatter still win, per Claude
-# Code's sub-agent docs); the helper id goes to `ANTHROPIC_DEFAULT_SONNET_MODEL`,
-# so a skill's `sonnet` alias resolves to the runtime config's pin rather than
-# Claude Code's built-in table. The `[1m]` suffix rides along unchanged.
+# EVERY SUB-AGENT LANE IS BOUND TO A TIER on every Bedrock launch (`_ds_claude`,
+# scoped to the one `claude` command as `ANTHROPIC_MODEL` is):
 #
-# Every Bedrock launch also points `ANTHROPIC_DEFAULT_OPUS_MODEL` at the
-# executor id, so a spawn that names `model: opus` (the `plan` skill's lever
-# fold) runs on the executor model rather than inheriting the advisor's. Only
-# the alias moves: the session's own model is the explicit `ANTHROPIC_MODEL`.
+#   Agent `model:`  slot                              tier
+#   (none)          CLAUDE_CODE_SUBAGENT_MODEL        executor
+#   opus            ANTHROPIC_DEFAULT_OPUS_MODEL      executor
+#   sonnet          ANTHROPIC_DEFAULT_SONNET_MODEL    helper
+#   haiku           ANTHROPIC_DEFAULT_HAIKU_MODEL     background
+#
+# The slot words are Claude Code's, not ours: its Agent tool accepts `opus`,
+# `sonnet`, `haiku` or a raw model id and has no `helper` or `executor` slot,
+# so a skill wanting a helper lane must spell it `sonnet`, and this binding is
+# what makes that word mean the helper tier. So skill prose names the TIER with
+# the slot word in parentheses — "the helper tier, spelled `sonnet` in the
+# Agent call" — never the family alone. A per-call model and agent frontmatter
+# still beat the no-model default, per Claude Code's sub-agent docs; the `[1m]`
+# suffix rides along unchanged; the session's own model stays the explicit
+# `ANTHROPIC_MODEL`. If Claude Code ever accepts custom alias names, the slot
+# words retire for the tier names. On the subscription no slot is bound: a
+# sub-agent with no model runs the session's own tier.
 #
 # The auto-mode permission classifier is deliberately absent: Claude Code picks
 # its model itself and exposes no configuration for it, so it has no tier.
@@ -1098,7 +1150,7 @@ _ds_substrate_read() {
 #
 # A `<key>.tier` file reading `advisor` or `helper` wins: `architect`,
 # `explore` and `chore` write one beside their substrate marker, so
-# `architect <n> bedrock` resumes on Bedrock AND on the advisor model, and a
+# `architect bedrock <n>` resumes on Bedrock AND on the advisor model, and a
 # chore on the helper model. Otherwise a marker's PRESENCE is the tier record —
 # present means an executor session (`task`, which clears any `.tier` it
 # finds), absent means an issue-keyed `explore` from before it wrote one. The
@@ -1133,8 +1185,8 @@ _ds_resume_tier() {
 # `DS_BEDROCK_PROBE=1` to pay for the pre-flight when diagnosing a launch.
 # `chore` is the exception that probes the model itself (`_ds_model_probe`).
 #
-# The MODEL is not exported here: the launching verb hands it to `claude` for
-# that one command, the same way on both substrates (see `_ds_session`).
+# No MODEL is exported here, nor any sub-agent slot: `_ds_claude` hands them to
+# `claude` for that one command, the same way on both substrates.
 _ds_bedrock_env() {
   # Background is the one tier that only NOTES an unset value: its failures
   # degrade auxiliary niceties only, and with `ANTHROPIC_MODEL` set Claude Code
@@ -1163,18 +1215,6 @@ _ds_bedrock_env() {
 
   export CLAUDE_CODE_USE_BEDROCK=1
   export AWS_REGION="${DS_BEDROCK_REGION:-us-west-2}"
-  if [[ -n "$DS_MODEL_BACKGROUND" ]]; then
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL="$DS_MODEL_BACKGROUND"
-  else
-    unset ANTHROPIC_DEFAULT_HAIKU_MODEL
-  fi
-  # The `opus` alias goes to the executor (see "Model tiers"). Unset, the
-  # alias falls back to Claude Code's own table, as the haiku slot does.
-  if [[ -n "$DS_MODEL_EXECUTOR" ]]; then
-    export ANTHROPIC_DEFAULT_OPUS_MODEL="$DS_MODEL_EXECUTOR"
-  else
-    unset ANTHROPIC_DEFAULT_OPUS_MODEL
-  fi
   export ENABLE_PROMPT_CACHING_1H=1
 
   # Resolved at launch, never held in a long-lived shell — the same lazy shape
@@ -1294,9 +1334,12 @@ _ds_model_probe() {
 #     what we installed, so it is recognized as theirs and kept.
 _ds_substrate_unset() {
   # Owned outright by this launcher: nothing else in the operator's shell sets
-  # them, so they are cleared unconditionally.
+  # them, so they are cleared unconditionally. The alias slots are now scoped
+  # to the `claude` command (`_ds_claude`); clearing them still heals a tab an
+  # older copy of this file exported them into.
   unset CLAUDE_CODE_USE_BEDROCK ANTHROPIC_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
-  unset ANTHROPIC_DEFAULT_OPUS_MODEL ENABLE_PROMPT_CACHING_1H
+  unset ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL
+  unset CLAUDE_CODE_SUBAGENT_MODEL ENABLE_PROMPT_CACHING_1H
 
   # `AWS_REGION` and the bearer token are SHARED with the operator, so this
   # UNDOES a launch rather than clearing them. Absent a recorded launch they
@@ -1436,6 +1479,8 @@ _ds_task_start() {
 
   _ds_base || return 1
   _ds_secrets
+  # A task always starts a new session, so the title guard always runs.
+  _ds_verb_check task "$substrate" "$tag" || return 1
   _ds_substrate_enter "$substrate" 'task' || return 1
 
   # A task always starts a NEW session, so it gets a fresh id to key the
@@ -1458,7 +1503,7 @@ _ds_task_start() {
 
   local dir="$(_ds_launch_dir "$tag")"
   _ds_worktree_ensure "$dir"
-  ANTHROPIC_MODEL="$model" claude -w "$dir" -n "$tag" --session-id "$sid" \
+  _ds_claude "$model" -w "$dir" -n "$tag" --session-id "$sid" \
     --permission-mode auto \
     /init-pr
 }
@@ -1519,9 +1564,8 @@ _ds_task_resume() {
     chore "$tag"
     return
   fi
-  # An explore session goes back through its own verb too: only it pins the
-  # sub-agent tiers, so resuming it here would put every sub-agent of a
-  # Bedrock audit on the advisor model. Only when no architect thread shares
+  # An explore session goes back through its own verb too, which resumes it by
+  # the id it computed, as a chore's does. Only when no architect thread shares
   # the number — with both, which one `--continue` reaches is not this
   # function's to know, and the generic path below stands.
   if [[ "$tag" == <-> && "$(_ds_resume_tier "$key")" == advisor ]] \
@@ -1558,19 +1602,19 @@ _ds_task_resume() {
     continue)
       # The worktree has its own transcript, so per-directory addressing works
       # and this is the original fast path.
-      ANTHROPIC_MODEL="$model" claude --continue --permission-mode auto
+      _ds_claude "$model" --continue --permission-mode auto
       ;;
     resume)
       # The `-w` case: resume by id from the base repo. This is the form that
       # was missing, and the only one that reaches such a session.
-      ANTHROPIC_MODEL="$model" claude --resume "$sid" --permission-mode auto
+      _ds_claude "$model" --resume "$sid" --permission-mode auto
       ;;
     *)
       # Nothing resolved — the worktree was pruned, or the session never
       # started. `--resume <tag>` filters the picker rather than resuming, which
       # is a pick rather than a resume, but it is the last form that can reach
       # anything.
-      ANTHROPIC_MODEL="$model" claude --resume "$tag" --permission-mode auto
+      _ds_claude "$model" --resume "$tag" --permission-mode auto
       ;;
   esac
 }
@@ -1582,6 +1626,8 @@ _ds_task_resume() {
 #                               name `<n>`, the advisor tier on Bedrock
 #   explore <name>              one without: worktree and name `exp-<name>`
 #   explore anthropic <n|name>  either, on the Anthropic subscription
+#   explore bedrock <n|name>    either, the default spelled out — the form a
+#                               `[Explore/Bedrock]` title token types as
 #
 # **It runs in its own worktree, and it is IDEMPOTENT** — both reverse what this
 # verb shipped with, and both are the same operator ruling that moved
@@ -1634,7 +1680,7 @@ _ds_task_resume() {
 # the substrate is Bedrock with no word, deliberately ignoring
 # `DS_MODEL_ADVISOR_SUBSTRATE` (which only `architect` reads), and
 # `explore anthropic` is the web-research escape, in `task`'s position. Its
-# sub-agents default to the executor tier (below).
+# sub-agents default to the executor tier, as on every Bedrock launch.
 #
 # This was once PINNED to anthropic, because a pre-marker explore worktree has
 # no marker and so always resumed on the seat. Now a launch into an existing
@@ -1648,8 +1694,8 @@ _ds_task_resume() {
 # the old hand-rolled resume branch here dropped the pin on every reopen.
 explore() {
   local override='' tag name
-  if [[ "$1" == anthropic ]]; then
-    override=anthropic
+  if [[ "$1" == (anthropic|bedrock) ]]; then
+    override="$1"
     shift
   fi
   local raw="$1"
@@ -1659,10 +1705,10 @@ explore() {
       '`explore <n|name>` now resumes an existing session itself'
     return 1
   fi
-  # A substrate word is never a name: `explore bedrock` would otherwise make
-  # an `exp-bedrock` worktree for an operator reaching for `task`'s grammar.
+  # A substrate word is never a name: `explore bedrock bedrock` would otherwise
+  # make an `exp-bedrock` worktree.
   if [[ -z "$raw" || -n "$2" || "$raw" == (anthropic|bedrock) ]]; then
-    print -u2 'Usage: explore [anthropic] <n|name>   (a name is required: it' \
+    print -u2 'Usage: explore [anthropic|bedrock] <n|name>   (a name is required: it' \
       'names a worktree; a session keeps its substrate, so a switch means a' \
       'fresh worktree)'
     return 1
@@ -1757,21 +1803,12 @@ explore() {
     "$(_ds_tier advisor "${override:-bedrock}")"
   [[ -n "$substrate" ]] || return 1
 
-  # SUB-AGENTS DEFAULT TO THE EXECUTOR TIER on Bedrock, and the one alias a
-  # skill names (`sonnet`, a mechanical lane) resolves to the helper tier, so
-  # no skill carries a model id. `local -x` scopes both to this launch the way
-  # `ANTHROPIC_MODEL` is scoped to the `claude` command: they cannot outlive
-  # the session into the tab. Both tiers are required — without the first,
-  # every sub-agent silently inherits the advisor model.
-  if [[ "$substrate" == bedrock ]]; then
-    local subagent_model='' helper_model=''
-    { read -r subagent_model; } <<< "$(_ds_tier executor bedrock)"
-    { read -r helper_model; } <<< "$(_ds_tier helper bedrock)"
-    [[ -n "$subagent_model" && -n "$helper_model" ]] || return 1
-    local -x CLAUDE_CODE_SUBAGENT_MODEL="$subagent_model"
-    local -x ANTHROPIC_DEFAULT_SONNET_MODEL="$helper_model"
+  # Sub-agents on Bedrock default to the executor tier, as on every Bedrock
+  # launch (`_ds_claude`). `recorded` is empty exactly when no session or
+  # worktree exists, so the title guard judges only a new session.
+  if [[ -z "$recorded" ]]; then
+    _ds_verb_check explore "$substrate" "$raw" || return 1
   fi
-
   _ds_substrate_enter "$substrate" 'explore' || return 1
   # THE MARKER IS WRITTEN ONLY FOR A TREE THIS LAUNCH CREATES. The hazard is
   # real: the marker is keyed on the WORKTREE TAG ALONE, and `_ds_task_start`
@@ -1890,6 +1927,9 @@ chore() {
   fi
   { read -r model; read -r substrate; } <<< "$(_ds_tier helper "$override")"
   [[ -n "$substrate" ]] || return 1
+  if ! _ds_session_exists "$(_ds_topic_sid chore "$tag")"; then
+    _ds_verb_check chore "$substrate" "$tag" || return 1
+  fi
   _ds_substrate_enter "$substrate" 'chore' || return 1
   if [[ "$substrate" == bedrock ]] && ! _ds_model_probe "$model"; then
     _ds_substrate_unset
@@ -2079,8 +2119,9 @@ plan() {
 # strategy, and fidelity beats tokens. It makes no SCHEDULING writes — it files
 # its own tasks and moves its own governing issue to In Review, but places no
 # edges, re-prioritizes nothing, closes nothing and edits no other issue; see
-# the skill. It takes the same optional substrate word after the number
-# (`architect <n> bedrock`), with the same retention line as `plan`.
+# the skill. It takes the same optional substrate word, before the number as
+# on every issue verb (`architect bedrock <n>`), with the same retention line
+# as `plan`.
 #
 # **It runs in its own worktree, named `<n>`, and that worktree is
 # TEMPORARY WORKING STATE** — somewhere to iterate a spec or plan file with the
@@ -2106,10 +2147,20 @@ plan() {
 # verb records lifts the pruner's executor refusal, so an untracked spec file
 # no longer holds the worktree back; only a commit of its own does.
 architect() {
-  local tag model substrate
-  if [[ -z "$1" || -n "$3" || ( -n "$2" && "$2" != (anthropic|bedrock) ) ]]
+  local tag model substrate override=''
+  # The retired order, `architect <n> bedrock`: a clean cut with no alias, but
+  # a one-line hint naming the new order. Remove this block after 2026-10-30.
+  if [[ -z "$3" && "$2" == (anthropic|bedrock) && "$1" != (anthropic|bedrock) ]]
   then
-    print -u2 'Usage: architect <n> [anthropic|bedrock]' \
+    print -u2 "architect: the word goes first now — \`architect $2 $1\`"
+    return 1
+  fi
+  if [[ "$1" == (anthropic|bedrock) ]]; then
+    override="$1"
+    shift
+  fi
+  if [[ -z "$1" || -n "$2" ]]; then
+    print -u2 'Usage: architect [anthropic|bedrock] <n>' \
       '  (n is the governing Linear issue, e.g. architect 1572)'
     return 1
   fi
@@ -2120,9 +2171,9 @@ architect() {
     return 1
   fi
   # A reopen with no substrate word keeps the one this thread recorded, so
-  # `architect <n> bedrock` followed by a bare `architect <n>` does not switch
+  # `architect bedrock <n>` followed by a bare `architect <n>` does not switch
   # provider mid-conversation. An explicit word still wins and is re-recorded.
-  local override="$2" executor_owned=''
+  local executor_owned=''
   if [[ -z "$override" \
     && "$(_ds_resume_tier "$tag")" == advisor && -f "$_DS_SUBSTRATE_DIR/$tag" ]]
   then
@@ -2131,6 +2182,9 @@ architect() {
   [[ "$(_ds_resume_tier "$tag")" == executor ]] && executor_owned=1
   { read -r model; read -r substrate; } <<< "$(_ds_tier advisor "$override")"
   [[ -n "$substrate" ]] || return 1
+  if ! _ds_session_exists "$(_ds_topic_sid architect "$tag")"; then
+    _ds_verb_check architect "$substrate" "$tag" || return 1
+  fi
   _ds_substrate_enter "$substrate" 'architect' || return 1
   # Recorded so `task resume <n>` and `fleet` bring the thread back on its own
   # substrate and the advisor tier. A marker a `task` session wrote on the same

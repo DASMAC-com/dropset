@@ -152,9 +152,9 @@ Optional (ask on a scoped run if not provided):
    that enumerates or cross-references rather than judges —
    the hierarchy dimension's directory child counts,
    doc-named symbols still existing, unreferenced dictionary
-   words — is marked **mechanical** and passes
-   `model: sonnet`, which the launcher maps to the helper
-   tier. That is not the standing rejection of Sonnet-tier
+   words — is marked **mechanical** and runs on the helper
+   tier (spelled `sonnet` in the Agent call; the launcher
+   binds that slot to it). That is not the standing rejection of Sonnet-tier
    task workers (2026-09-11), which covers implementers: a
    read-only lane whose error mode is a false positive the
    skeptic kills downstream is not one (operator-confirmed,
