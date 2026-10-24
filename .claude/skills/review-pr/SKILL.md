@@ -155,11 +155,12 @@ migrations or generation inputs, and whether it spans crates.
      python3 .claude/tools/merge_completeness.py --path <file> --inspect
      ```
 
-     A hunk with an **empty side** is the delete/modify shape — this
-     branch deleted a region the base edited inside — and the tool
-     prints the base's own diff for the file in its place: carry those
-     few lines forward and never read the conflicted block (once 146
-     lines, for a 2-line change). Inspect the other hunks with `Read`
+     A hunk with an **empty side** is the delete/modify shape — one
+     side deleted a region the other edited inside — and the tool
+     prints the surviving side's own diff for the file in its place
+     (the base's, when this branch did the deleting): carry those few
+     lines forward and never read the conflicted block (once 146 lines,
+     for a 2-line change). Inspect the other hunks with `Read`
      `offset` / `limit` (`history.md` → "Conflict inspection").
 
    - **A clean rebase that integrated base commits** can still hide a
@@ -1774,8 +1775,9 @@ migrations or generation inputs, and whether it spans crates.
      `base_gained` lists the base's commits the head lacks — the ones
      the rebase must absorb. Go straight to step 2's rebase and
      re-run from there: no timeline query, mergeability read or
-     `git log` to rediscover what the verdict already says. Only when
-     `dequeue.error` is set does the cause need reading by hand.
+     `git log` to rediscover what the verdict already says. When
+     `dequeue.error` is set, read by hand only what is `null` — the
+     reason, or just `base_gained` after a failed compare.
      Any other reason → diagnose from the **queue branch's** runs, never
      the PR's own checks: the queue builds `main` plus this PR on
      `gh-readonly-queue/<base>/pr-<number>-<sha>`, so a failure there
