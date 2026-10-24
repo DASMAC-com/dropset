@@ -981,7 +981,7 @@ class QueueModeCliTests(unittest.TestCase):
 
         real_cause = wfc.dequeue_cause
 
-        def cause(pr, repo):
+        def cause(pr, repo, enqueued_at=None):
             seen.setdefault("caused", []).append((pr, repo))
             return {"dequeue_reason": "merge_conflict", "error": None}
 
@@ -1132,19 +1132,19 @@ class DequeueCauseTests(unittest.TestCase):
         }
         return json.dumps({"data": {"repository": {"pullRequest": pr}}})
 
-    def _run(self, reason, compare=None, compare_code=0):
+    def _run(self, reason, compare=None, compare_code=0, gql_code=0, enqueued_at=None):
         calls = []
 
         def fake(args):
             calls.append(args)
             if args[1] == "graphql":
-                return 0, self._gql(reason), ""
+                return gql_code, self._gql(reason), "HTTP 502" if gql_code else ""
             return compare_code, json.dumps(compare), "HTTP 404" if compare_code else ""
 
         real = wfc._gh
         wfc._gh = fake
         self.addCleanup(setattr, wfc, "_gh", real)
-        return wfc.dequeue_cause(285, REPO), calls
+        return wfc.dequeue_cause(285, REPO, enqueued_at), calls
 
     def test_a_conflict_lists_what_the_base_gained(self):
         commits = [
@@ -1183,6 +1183,43 @@ class DequeueCauseTests(unittest.TestCase):
         self.assertIn("HTTP 404", result["error"])
         result, _ = self._run("merge_conflict", compare={"message": "Not Found"})
         self.assertIn("base compare", result["error"])
+        result, calls = self._run("merge_conflict", gql_code=1)
+        self.assertEqual(len(calls), 1)
+        self.assertIsNone(result["dequeue_reason"])
+        self.assertIn("HTTP 502", result["error"])
+        commits = [
+            {"sha": "b" * 40, "commit": None},
+            {"sha": "c" * 40, "commit": {"message": 7}},
+        ]
+        result, _ = self._run("merge_conflict", {"ahead_by": 2, "commits": commits})
+        self.assertEqual([c["subject"] for c in result["base_gained"]], ["", ""])
+
+    def test_a_removal_older_than_this_enqueue_is_withheld(self):
+        """An earlier cycle's event must not read as this dequeue's cause."""
+        later = "2026-10-13T12:05:00Z"
+        result, calls = self._run("merge_conflict", enqueued_at=later)
+        self.assertEqual(len(calls), 1)
+        self.assertIsNone(result["dequeue_reason"])
+        self.assertIsNone(result["base_gained"])
+        self.assertIn("predates this enqueue", result["error"])
+        result, _ = self._run("checks_failed", enqueued_at=ENQUEUED)
+        self.assertEqual(result["dequeue_reason"], "checks_failed")
+
+    def test_the_watch_reports_the_enqueue_it_anchored_on(self):
+        snap = {
+            "gql_state": "OPEN",
+            "entry": {"state": "QUEUED", "enqueuedAt": ENQUEUED},
+            "view_state": "OPEN",
+            "queue_runs": [],
+        }
+        verdict = wfc.wait_queue(
+            285,
+            interval=1,
+            timeout=0,
+            probe=lambda pr, repo: snap,
+            sleep=lambda s: None,
+        )
+        self.assertEqual(verdict["enqueued_at"], ENQUEUED)
 
 
 class ConflictingPrTests(unittest.TestCase):

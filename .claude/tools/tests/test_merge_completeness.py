@@ -420,12 +420,11 @@ class InspectTests(unittest.TestCase):
         self._git("commit", "--quiet", "-m", "base")
         self._git("branch", "-M", "main")
         self._git("checkout", "--quiet", "-b", "side")
-        # A branch commit before the deletion, so a fork-point base would leak
-        # it into the "upstream" diff.
-        (self.repo / "other.txt").write_text("x\n", encoding="utf-8")
-        self._git("add", "-A")
-        self._git("commit", "--quiet", "-m", "unrelated")
-        self._write(["head\n", "tail\n"])
+        # A branch commit to the same file before the deletion, so a
+        # fork-point base would leak it into the "upstream" diff.
+        self._write(["head\n", *self.BLOCK, "tail, edited on the branch\n"])
+        self._git("commit", "--quiet", "-am", "earlier branch edit")
+        self._write(["head\n", "tail, edited on the branch\n"])
         self._git("commit", "--quiet", "-am", "delete the block")
         self._git("checkout", "--quiet", "main")
         edited = list(self.BLOCK)
@@ -466,7 +465,7 @@ class InspectTests(unittest.TestCase):
         self.assertIn("-step 20", text)
         # Only the edit and its context, never the 40-line block.
         self.assertNotIn("step 5\n", text)
-        self.assertNotIn("other.txt", text)
+        self.assertNotIn("edited on the branch", text)
 
 
 if __name__ == "__main__":

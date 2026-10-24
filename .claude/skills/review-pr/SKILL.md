@@ -1509,7 +1509,8 @@ migrations or generation inputs, and whether it spans crates.
    **unverified**, never a guessed pass; each `targets` entry likewise,
    or `skipped: <reason>` for a suite step 11 skips **by rule** — a
    by-rule skip is not a gap, so never mark it unverified, and never
-   run a suite the rule skips just to have a value to report; the
+   run a suite the rule skips just to have a value to report (`tests`
+   is never `{}`: a prose-only review lists each skipped suite); the
    freshness and skip-list
    verdicts, or "skipped (surface gate)"; findings found / fixed /
    blocking-open, the fix-cycle count, and each warning or nit with
@@ -1710,6 +1711,9 @@ migrations or generation inputs, and whether it spans crates.
      "last": {"gql_state": "MERGED", "view_state": "MERGED", …},
      "queue_runs": [{"run_id": "…", "name": "…", "conclusion": "…"}],
      "failing_runs": [],
+     "enqueued_at": "…",
+     // on dequeued only:
+     "dequeue": {"dequeue_reason": "merge_conflict", "base_gained": […], …},
      "log_path": "…/wait-for-queue-<number>.log"
    }
    ```
