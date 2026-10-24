@@ -624,6 +624,29 @@ class PassTests(unittest.TestCase):
         self.assertEqual(lines["allowlist"], "1 cruft entry(ies) of 376 rule(s)")
         self.assertEqual(lines["memory"], "memory audit ran: 1 finding(s)")
 
+    def test_missing_deny_rules_get_their_own_line(self):
+        base_run = FakeRun()
+
+        def run(cmd, timeout, cwd=None):
+            if len(cmd) > 1 and Path(cmd[1]).name == "hook_wiring.py":
+                report = {
+                    "unwired": ["no_git_grep.py"],
+                    "mismatched": {},
+                    "misdirected": {},
+                    "deny_missing": ["Bash(op:*)"],
+                }
+                return 1, json.dumps(report), ""
+            return base_run(cmd, timeout, cwd)
+
+        ctx = make_ctx(run)
+        run_pass(ctx)
+        steps = {s["step"]: s for s in ctx.steps}
+        self.assertEqual(steps["hook-wiring"]["inert"], ["no_git_grep.py"])
+        self.assertEqual(
+            steps["deny-rules"]["line"], "1 missing private-key deny rule(s)"
+        )
+        self.assertEqual(steps["deny-rules"]["missing"], ["Bash(op:*)"])
+
     def test_only_an_actual_removal_frees_slugs_in_the_purge(self):
         removed = {
             "removed": [

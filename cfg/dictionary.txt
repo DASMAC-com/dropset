@@ -164,6 +164,7 @@ mispairing
 mispriced
 moneyness
 mpsc
+mstrict
 mtimes
 mtok
 mudhra
@@ -353,6 +354,7 @@ worktree
 worktrees
 worldlibertyfi
 wronly
+ysign
 zarp
 zaru
 zeroable
