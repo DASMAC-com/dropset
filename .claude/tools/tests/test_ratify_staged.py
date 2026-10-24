@@ -127,9 +127,12 @@ class ApprovalTests(unittest.TestCase):
     def test_a_rerun_skips_what_a_partial_write_already_moved(self):
         moved = _issue(1, milestone=None, state_type="unstarted", state="Todo")
         rejected = _issue(3, state_type="canceled", state="Canceled")
-        updates, already = plan_approval([moved, _issue(2)], [rejected], held=[])
+        duplicate = _issue(4, state_type="duplicate", state="Duplicate")
+        updates, already = plan_approval(
+            [moved, _issue(2)], [rejected, duplicate], held=[]
+        )
         self.assertEqual(updates, {"ENG-2": {"milestone": None, "state": "Todo"}})
-        self.assertEqual(already, ["ENG-1", "ENG-3"])
+        self.assertEqual(already, ["ENG-1", "ENG-3", "ENG-4"])
 
     def test_a_held_or_unstaged_task_refuses_the_whole_batch(self):
         with self.assertRaisesRegex(RatifyError, "still held by an open thread: ENG-2"):

@@ -2,7 +2,8 @@
 """ratify_staged.py — stage-two ratification of a seat session's filed tasks.
 
 The machinery behind the ``ratify-staged`` skill. A session on the advisor
-tier (``architect``, ``explore``, an audit) files its tasks ``Backlog`` plus
+tier (``architect``, ``explore``; audit findings once their own ratification
+lands) files its tasks ``Backlog`` plus
 the ``Session pending`` milestone on the operator's filing yes; this tool
 drives the review that follows, so the language and the writes live in one
 place rather than in each consumer skill.
@@ -233,7 +234,7 @@ def already_moved(issue: dict, cancel: bool) -> bool:
     approval sits in Todo with no milestone, a reject is canceled."""
     state = issue.get("state") or {}
     if cancel:
-        return state.get("type") == "canceled"
+        return state.get("type") in ("canceled", "duplicate")
     milestone = issue.get("projectMilestone")
     return not milestone and str(state.get("name", "")).lower() == "todo"
 
@@ -332,7 +333,7 @@ def run(argv: list[str]) -> int:
         _, held = review_lines(key, [i for i in approve if is_staged(i)])
         updates, already = plan_approval(approve, cancel, held)
         for ident in already:
-            print(f"ALREADY {ident} | moved by an earlier run, skipped")
+            print(f"ALREADY {ident} | already in its target state, skipped")
         by_number = {int(i["number"]): i for i in approve + cancel}
         board_batch.apply_fields(key, updates, by_number, dry_run=args.dry_run)
         return 0

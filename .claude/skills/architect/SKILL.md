@@ -162,7 +162,9 @@ is forbidden.
 **What it must not write, and this is the real monopoly:**
 
 - **no blocking edges** beyond those the operator's filing yes
-  ratified, which it places on filing;
+  ratified, which it places on filing — one may name an existing
+  issue, since the yes named it, and that relation is the only
+  touch on that issue;
 - **no re-prioritizing**, no milestone changes beyond its own
   tasks' `Session pending`, no closing beyond its own rejects;
 - **nothing on another issue** — not its state, not its body.
