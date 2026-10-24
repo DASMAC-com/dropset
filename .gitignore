@@ -13,9 +13,10 @@ node_modules/
 # for the npm tarball only; the workspace consumes raw TS (see sdk/ts).
 sdk/ts/dist/
 
-# Python bytecode caches — `make tools-tests` writes them under
-# .claude/hooks/, .claude/tools/ and .claude/tools/tests/, and a machine
-# with no global gitignore would otherwise stage them on `git add -A`.
+# Python bytecode caches — `make tools-tests` writes them beside every
+# module it imports (.claude/hooks/, .claude/tools/, .claude/scripts/,
+# keys/), and a machine with no global gitignore would otherwise stage
+# them on `git add -A`.
 __pycache__/
 *.pyc
 
