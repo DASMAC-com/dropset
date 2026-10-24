@@ -28,14 +28,14 @@ from ratify_staged import (  # noqa: E402
 )
 
 
-def _issue(number, milestone=rs.MILESTONE, state_type="backlog"):
+def _issue(number, milestone=rs.MILESTONE, state_type="backlog", state="Backlog"):
     return {
         "id": f"uuid-{number}",
         "identifier": f"ENG-{number}",
         "number": number,
         "title": f"Task {number}",
         "priority": 0,
-        "state": {"name": "Backlog", "type": state_type},
+        "state": {"name": state, "type": state_type},
         "projectMilestone": {"name": milestone} if milestone else None,
         "team": {"id": "team-1"},
         "relations": {"nodes": []},
@@ -79,6 +79,20 @@ class AskTests(unittest.TestCase):
         calls = build_ask([_issue(n) for n in range(1, 18)])["calls"]
         self.assertEqual([len(c["questions"]) for c in calls], [4, 1])
 
+    def test_every_question_is_valid_for_any_count(self):
+        for n in range(1, 40):
+            labels = []
+            for call in build_ask([_issue(k) for k in range(1, n + 1)])["calls"]:
+                self.assertLessEqual(len(call["questions"]), rs.MAX_QUESTIONS)
+                headers = [q["header"] for q in call["questions"]]
+                self.assertEqual(len(headers), len(set(headers)), n)
+                for q in call["questions"]:
+                    self.assertTrue(2 <= len(q["options"]) <= 4, n)
+                    self.assertLessEqual(len(q["header"]), 12)
+                    labels += [o["label"] for o in q["options"]]
+            tasks = [label for label in labels if label != "Not yet"]
+            self.assertEqual(tasks, [f"ENG-{k}" for k in range(1, n + 1)])
+
 
 class ReviewTests(unittest.TestCase):
     def test_only_unresolved_top_level_comments_hold(self):
@@ -99,7 +113,7 @@ class ReviewTests(unittest.TestCase):
 
 class ApprovalTests(unittest.TestCase):
     def test_the_batch_clears_the_milestone_and_moves_to_todo(self):
-        updates = plan_approval([_issue(1), _issue(2)], [_issue(3)], held=[])
+        updates, already = plan_approval([_issue(1), _issue(2)], [_issue(3)], held=[])
         self.assertEqual(
             updates,
             {
@@ -108,10 +122,20 @@ class ApprovalTests(unittest.TestCase):
                 "ENG-3": {"milestone": None, "state": "Canceled"},
             },
         )
+        self.assertEqual(already, [])
+
+    def test_a_rerun_skips_what_a_partial_write_already_moved(self):
+        moved = _issue(1, milestone=None, state_type="unstarted", state="Todo")
+        rejected = _issue(3, state_type="canceled", state="Canceled")
+        updates, already = plan_approval([moved, _issue(2)], [rejected], held=[])
+        self.assertEqual(updates, {"ENG-2": {"milestone": None, "state": "Todo"}})
+        self.assertEqual(already, ["ENG-1", "ENG-3"])
 
     def test_a_held_or_unstaged_task_refuses_the_whole_batch(self):
-        with self.assertRaisesRegex(RatifyError, "ENG-2"):
+        with self.assertRaisesRegex(RatifyError, "still held by an open thread: ENG-2"):
             plan_approval([_issue(1), _issue(2)], [], held=["ENG-2"])
+        with self.assertRaisesRegex(RatifyError, "not open under"):
+            plan_approval([_issue(1), _issue(5, state_type="duplicate")], [], held=[])
         with self.assertRaisesRegex(RatifyError, "not open under"):
             plan_approval([_issue(1), _issue(4, milestone=None)], [], held=[])
         with self.assertRaisesRegex(RatifyError, "both approved and canceled"):
@@ -121,9 +145,10 @@ class ApprovalTests(unittest.TestCase):
 class FakeLinear:
     """Answers ``board_batch._post`` by operation, recording every write."""
 
-    def __init__(self, issues, comments=None):
+    def __init__(self, issues, comments=None, more_comments=()):
         self.issues = {i["number"]: i for i in issues}
         self.comments = comments or {}
+        self.more_comments = set(more_comments)
         self.writes = []
 
     def __call__(self, api_key, query, variables):
@@ -131,9 +156,10 @@ class FakeLinear:
             self.writes.append((variables["id"], variables["input"]))
             return {"issueUpdate": {"success": True}}
         if "comments(" in query:
-            return {
-                "issue": {"comments": {"nodes": self.comments.get(variables["id"], [])}}
-            }
+            ident = variables["id"]
+            page = {"hasNextPage": ident in self.more_comments}
+            nodes = self.comments.get(ident, [])
+            return {"issue": {"comments": {"pageInfo": page, "nodes": nodes}}}
         if "TeamStates" in query:
             names = ("Backlog", "Todo", "Canceled")
             return {
@@ -162,9 +188,22 @@ class RunTests(unittest.TestCase):
     def test_approve_writes_nothing_while_a_thread_is_open(self):
         thread = {"id": "t1", "parentId": None, "resolvedAt": None, "body": "fix"}
         fake = FakeLinear([_issue(1), _issue(2)], comments={"ENG-2": [thread]})
-        with self.assertRaisesRegex(RatifyError, "ENG-2"):
+        with self.assertRaisesRegex(RatifyError, "still held by an open thread: ENG-2"):
             self._run(fake, ["approve", "--ids", "ENG-1", "ENG-2"])
         self.assertEqual(fake.writes, [])
+
+    def test_a_partial_comment_read_refuses_rather_than_approves(self):
+        fake = FakeLinear([_issue(1)], more_comments={"ENG-1"})
+        with self.assertRaisesRegex(RatifyError, "partial read"):
+            self._run(fake, ["approve", "--ids", "ENG-1"])
+        self.assertEqual(fake.writes, [])
+
+    def test_dry_run_writes_nothing(self):
+        fake = FakeLinear([_issue(1)])
+        code, out = self._run(fake, ["approve", "--ids", "ENG-1", "--dry-run"])
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.writes, [])
+        self.assertIn("WOULD SET ENG-1", out)
 
     def test_approve_moves_the_whole_set_in_one_batch(self):
         fake = FakeLinear([_issue(1), _issue(2), _issue(3)])
@@ -202,8 +241,14 @@ class RunTests(unittest.TestCase):
         code, out = self._run(fake, ["gate", "--ids", "ENG-1", "ENG-2"])
         self.assertEqual(code, 1)
         self.assertIn("ENG-2", out)
-        fake = FakeLinear([_issue(1, milestone=None), _issue(2, state_type="canceled")])
-        code, out = self._run(fake, ["gate", "--ids", "ENG-1", "ENG-2"])
+        fake = FakeLinear(
+            [
+                _issue(1, milestone=None),
+                _issue(2, state_type="canceled"),
+                _issue(3, state_type="duplicate"),
+            ]
+        )
+        code, out = self._run(fake, ["gate", "--ids", "ENG-1", "ENG-2", "ENG-3"])
         self.assertEqual(code, 0)
         self.assertIn("CLEAR", out)
 

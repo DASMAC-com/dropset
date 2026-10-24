@@ -24,7 +24,9 @@ space- or comma-separated) except ``list``:
 * ``approve --ids … [--cancel …] [--dry-run]`` — the one batch write at the
   end: every approved task loses the milestone and moves to Todo, every
   rejected one is canceled. Refuses the whole batch, writing nothing, while
-  any approved task still holds an open thread or is not staged.
+  any approved task still holds an open thread or is not staged. A task an
+  earlier, partly failed run already moved reports ``ALREADY`` and is
+  skipped, so the same command re-runs cleanly.
 * ``gate --ids …`` — the close gate: exits 1, naming them, while any of the
   ids is still open under ``Session pending``.
 
@@ -77,12 +79,19 @@ NOT_YET_OPTION = {
     "description": "Leave it unticked; it stays parked and is asked again.",
 }
 
-RESOLVED_TYPES = ("completed", "canceled")
+# `duplicate` too: a task marked Duplicate is closed, so it must neither block
+# the close gate nor be approvable.
+RESOLVED_TYPES = ("completed", "canceled", "duplicate")
+
+# One page of comments, replies included. A task with more is refused rather
+# than paged: an open thread on a later page would otherwise read as approved.
+COMMENTS_PAGE = 250
 
 _COMMENTS_QUERY = """
-query($id: String!) {
+query($id: String!, $first: Int!) {
   issue(id: $id) {
-    comments(first: 100) {
+    comments(first: $first) {
+      pageInfo { hasNextPage }
       nodes { id body resolvedAt parentId quotedText user { name } }
     }
   }
@@ -140,13 +149,14 @@ def build_ask(issues: list[dict]) -> dict:
         ]
         if len(options) < MIN_OPTIONS:
             options.append(dict(NOT_YET_OPTION))
-        text = ASK_TEXT
+        text, header = ASK_TEXT, ASK_HEADER
         if len(sizes) > 1:
             text = f"{ASK_TEXT} ({index + 1} of {len(sizes)})"
+            header = f"{ASK_HEADER} {index + 1}"
         questions.append(
             {
                 "question": text,
-                "header": ASK_HEADER,
+                "header": header,
                 "multiSelect": True,
                 "options": options,
             }
@@ -173,11 +183,19 @@ def format_thread(comment: dict) -> list[str]:
 
 
 def fetch_comments(api_key: str, ident: str) -> list[dict]:
-    data = board_batch._post(api_key, _COMMENTS_QUERY, {"id": ident})
+    data = board_batch._post(
+        api_key, _COMMENTS_QUERY, {"id": ident, "first": COMMENTS_PAGE}
+    )
     issue = data.get("issue")
     if issue is None:
         raise RatifyError(f"{ident}: no such issue")
-    return (issue.get("comments") or {}).get("nodes") or []
+    comments = issue.get("comments") or {}
+    if (comments.get("pageInfo") or {}).get("hasNextPage"):
+        raise RatifyError(
+            f"{ident}: more than {COMMENTS_PAGE} comments — refusing to judge its "
+            "threads from a partial read; review it in Linear by hand"
+        )
+    return comments.get("nodes") or []
 
 
 def resolve_all(api_key: str, project: str, ids: list[str]) -> list[dict]:
@@ -210,12 +228,28 @@ def review_lines(api_key: str, issues: list[dict]) -> tuple[list[str], list[str]
     return lines, held
 
 
+def already_moved(issue: dict, cancel: bool) -> bool:
+    """A task an earlier, partly failed run of the batch already wrote: an
+    approval sits in Todo with no milestone, a reject is canceled."""
+    state = issue.get("state") or {}
+    if cancel:
+        return state.get("type") == "canceled"
+    milestone = issue.get("projectMilestone")
+    return not milestone and str(state.get("name", "")).lower() == "todo"
+
+
 def plan_approval(
     approve: list[dict], cancel: list[dict], held: list[str]
-) -> dict[str, dict]:
-    """The batch ``board_batch.apply_fields`` takes, or a refusal naming every
-    reason the batch cannot run yet."""
+) -> tuple[dict[str, dict], list[str]]:
+    """``(updates, already)``: the batch ``board_batch.apply_fields`` takes and
+    the ids a previous run already moved — or a refusal naming every reason the
+    batch cannot run yet. Skipping the already-moved ids is what lets a write
+    that failed partway be re-run with the same arguments."""
     overlap = {i["identifier"] for i in approve} & {i["identifier"] for i in cancel}
+    already = [i["identifier"] for i in approve if already_moved(i, cancel=False)]
+    already += [i["identifier"] for i in cancel if already_moved(i, cancel=True)]
+    approve = [i for i in approve if i["identifier"] not in already]
+    cancel = [i for i in cancel if i["identifier"] not in already]
     problems = []
     if overlap:
         problems.append(f"both approved and canceled: {', '.join(sorted(overlap))}")
@@ -232,7 +266,7 @@ def plan_approval(
     updates.update(
         {i["identifier"]: {"milestone": None, "state": "Canceled"} for i in cancel}
     )
-    return updates
+    return updates, already
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -296,7 +330,9 @@ def run(argv: list[str]) -> int:
         approve = resolve_all(key, project, approve_ids) if approve_ids else []
         cancel = resolve_all(key, project, cancel_ids) if cancel_ids else []
         _, held = review_lines(key, [i for i in approve if is_staged(i)])
-        updates = plan_approval(approve, cancel, held)
+        updates, already = plan_approval(approve, cancel, held)
+        for ident in already:
+            print(f"ALREADY {ident} | moved by an earlier run, skipped")
         by_number = {int(i["number"]): i for i in approve + cancel}
         board_batch.apply_fields(key, updates, by_number, dry_run=args.dry_run)
         return 0

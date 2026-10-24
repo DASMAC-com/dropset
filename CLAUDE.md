@@ -68,8 +68,8 @@ session. It runs in the base repo (started and resumed with `plan`,
 never a worktree), bootstraps from the
 "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), and writes its
 decisions back there. The `plan` skill is its method; the document is
-the state. Detail — the env var, and why blocking edges are placed
-only here: `docs/conventions/linear-automation.md`.
+the state. Detail — the env var, and where blocking edges are
+placed: `docs/conventions/linear-automation.md`.
 
 ### The architect session — the CEO hat
 
@@ -99,8 +99,8 @@ included.
 nothing filed before the operator's yes.** The spec loop is
 write → edits **in place** → read back **once**, ending
 in the task list; then `ratify-staged` files them under
-`Session pending`, one checkbox each, and moves the set to Todo
-in one batch on the operator's answer. Say where the design
+`Session pending` and moves the set to Todo in one batch on
+the operator's ticks. Say where the design
 lives in plain text. Open
 items carry greppable **`NEEDS-CONFIRM`** / **`NEEDS-FEEDBACK`**
 markers and an index at the top; **settled text carries no marker**,
@@ -307,7 +307,8 @@ dedup-against-resolved makes that permanent. Detail:
 ### Blocking relations
 
 **No automated writer files a blocking edge — ever**, semantic ones
-included; they are placed by a human, in a **planning session**. The
+included; a human places them, in a **planning session** or by a
+seat session's filing yes. The
 board's available-vs-blocked view is a scheduling
 instrument the human drives, so a spurious edge (which drops an issue
 out of the available set) costs more than a missing one (which costs a

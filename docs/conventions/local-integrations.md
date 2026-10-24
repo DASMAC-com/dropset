@@ -2333,7 +2333,8 @@ drives the real zsh functions.
   (`/architect ENG-<n>`), what it may write — **no scheduling
   writes**: it files its own tasks and moves its own governing issue to
   In Review, but places no edge its filing yes did not ratify,
-  re-prioritizes nothing, closes nothing and edits no other issue — and
+  re-prioritizes nothing, closes nothing beyond its own rejects and
+  edits no other issue — and
   **where it runs**, its own temporary worktree `<n>` rather than the
   base repo (see "Architect and explore sessions: temporary worktree,
   no PR").

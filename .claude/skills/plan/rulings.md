@@ -98,8 +98,8 @@ the document's state sections.
    unticked until none is held. The carve-out: on that final
    answer the session moves the whole set to Todo in one batch —
    never on its own judgment — and its close gate asserts none is
-   still parked. The same machinery serves every advisor-tier
-   session (explore, audit).
+   still parked. The same machinery serves explore sessions, and
+   audit findings once their own ratification lands.
 
 1. **Planning is read-only toward the repo.** A planning session
    writes Linear state only; a fast-forward of the base checkout

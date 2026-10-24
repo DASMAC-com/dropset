@@ -532,7 +532,7 @@ The state and the milestone together say where an issue sits:
 | State                        | Milestone         | Meaning                                                            |
 | ---------------------------- | ----------------- | ------------------------------------------------------------------ |
 | Backlog                      | none              | a spec awaiting the operator's review — the inbox                  |
-| Backlog or Todo              | parking           | **parked**: hidden from the operator's project view                |
+| Backlog or Todo              | other parking     | **parked**: hidden from the operator's project view                |
 | Backlog                      | `Session pending` | a seat session's filed tasks, under its in-tab review; short-lived |
 | Todo                         | none              | reviewed and dispatchable; the body is frozen                      |
 | In Progress, In Review, Done | —                 | the session state machine, unchanged (see above)                   |
@@ -579,8 +579,9 @@ stays parked, changing which rhythm will pick it up, rather than
 becoming available work.
 
 **`Session pending` is never promoted by planning.** It is the unified
-staging lane for every seat session's filed tasks — architect, explore
-and audit alike — so the operator reviews them in one place, in the
+staging lane for every seat session's filed tasks — architect and
+explore now, audit findings once their own ratification lands — so the
+operator reviews them in one place, in the
 filing session's own tab, through the shared `ratify-staged` skill:
 one checkbox per task, and once every task is ticked and uncommented
 the session clears the milestone and moves the whole set to Todo in one
@@ -1560,7 +1561,12 @@ expresses semantic rollout ordering, which is a scheduling decision, so
 it is made where somebody is actually deciding the order — the `plan`
 skill's session in the base repo, human-directed, one edge at a time.
 That is the whole of the exception: not "a skill that is allowed to",
-but "the place a human does it".
+but "the place a human does it". **The one other such place is a seat
+session's filing ask** (`ratify-staged`): the operator's in-tab yes to
+a named chain of proposed edges, each with its reason, ratifies them
+with the tasks, and the session places exactly those — an edge the
+answer strikes is not placed. That is the human-placed form, executed,
+never an automated filer deciding one.
 
 **A planning dispatch hold is an edge too** (operator ruling,
 2026-10-08). The operator's Next view means *dispatchable right now*, so
@@ -1617,8 +1623,9 @@ there is nothing left to reach — each step removed machinery rather than
 adding it, which is the right direction for a mechanism whose whole risk
 is a spurious edge dropping an issue out of the available set.
 
-So this section now has **no** exception to state: the planning session
-is still the only place a human places an edge, and **no automated
+So this section now has **no** exception to state: a human still places
+every edge — in the planning session, or through a seat session's
+filing ask — and **no automated
 writer places one at all**. A filing skill that notices a new meta issue
 neither chains it nor queues it — it parks it. Treat every edge,
 semantic ones included, under the one-at-a-time rule above.
