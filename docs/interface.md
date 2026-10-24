@@ -77,7 +77,7 @@ in wire order:
 | `nonce_after`                            | `market.nonce` after this leg's per-leg bump (price-time priority / dedupe ordering)                                         |
 | `taker_fee_atoms`                        | protocol taker fee charged on this leg, in the output asset — accrued to the market, not to the vault                        |
 | `side`                                   | taker direction: `0` = **Buy**, `1` = **Sell** — not which array filled; `leg_kind` says that                                |
-| `leg_kind`                               | `0` = primary (consumed the ladder's own side), `1` = flipped (consumed the flipped side)                                    |
+| `leg_kind`                               | `0` = primary (consumed `Position::size`), `1` = flipped (consumed `Position::flip_size`)                                    |
 | `_reserved`                              | a 46-byte reserve for later fields, written all-zero                                                                         |
 
 The layout is pinned by compile-time asserts beside the struct in

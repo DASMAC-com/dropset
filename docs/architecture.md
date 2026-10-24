@@ -2641,11 +2641,9 @@ On every taker instruction:
    backing it, and the unquoted remainder the flush left on each leg
    never moves: what one direction can drain is bounded by the flush
    allowance. A fill against a flipped counter emits an ordinary
-   `FillEvent` at `flip_price` on that level; the event format is
-   unchanged. A consumer tells the counter apart by comparing
-   `fill_price` with the level's `price` and `flip_price` (ambiguous
-   only where the two coincide, when either reading prices the fill
-   identically): on a Buy,
+   `FillEvent` at `flip_price` on that level, with `leg_kind` set to
+   flipped, so a consumer reads which side filled from the event alone
+   (see **Events and emission → The `FillEvent` layout**): on a Buy,
    `(sector_idx, level_idx)` names either `asks[level_idx]` or the
    flipped side of `bids[level_idx]`.
 
@@ -2980,7 +2978,9 @@ ceiling is **64 inner instructions per transaction**
 (`MAX_INSTRUCTION_TRACE_LENGTH`), not bytes. With per-leg emit (one
 `emit_cpi!` per matched leg; see **Granularity** below), this count —
 not the per-CPI 10 KiB data cap — is what bounds a take: it can record
-at most `64 − (top-level ix + token CPIs)` legs in one transaction (a
+at most `64 − (top-level ix + token CPIs)` legs in one transaction, one
+fewer when a platform fee is skimmed, since its `PlatformFeeEvent` is
+one more self-CPI (a
 single `FillEvent` is a 256 B body behind a 16 B envelope, nowhere near
 the data cap).
 
