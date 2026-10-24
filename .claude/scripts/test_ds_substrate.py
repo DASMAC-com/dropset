@@ -937,7 +937,8 @@ class ExitEstimate(SubstrateHarness):
 
     _PY = (
         "python3() { case $1 in "
-        '*/resolve_session.py) print -r -- "${RESOLVED_MODE:-continue}"; '
+        '*/resolve_session.py) print -r -- x >> "$_DS_REPO/resolve.log"; '
+        'print -r -- "${RESOLVED_MODE:-continue}"; '
         'print -r -- "${RESOLVED_SID-sid-9}"; print ;; '
         '*/session_metrics.py) shift; print -r -- "METRICS $*"; '
         "return ${METRICS_RC:-0} ;; "
@@ -985,6 +986,20 @@ class ExitEstimate(SubstrateHarness):
         metrics = self._metrics_lines(out)
         self.assertEqual(len(metrics), 1, result.stderr)
         self.assertIn("--brief --session-id sid-9 ", metrics[0])
+        # Once to launch, once after exit.
+        self.assertEqual(self._resolver_calls(), 2)
+
+    def _resolver_calls(self):
+        log = self.repo / "resolve.log"
+        return len(log.read_text().splitlines()) if log.exists() else 0
+
+    def test_a_resume_by_id_prices_the_id_it_launched_without_resolving_again(self):
+        result, out = self._launch(
+            self._PY + "task resume 9", env={"RESOLVED_MODE": "resume"}
+        )
+        self.assertIn("ARGS=--resume sid-9", out, result.stderr)
+        self.assertIn("--brief --session-id sid-9 ", self._metrics_lines(out)[0])
+        self.assertEqual(self._resolver_calls(), 1)
 
     def test_an_unresolved_session_warns_and_prices_nothing(self):
         result, out = self._launch(

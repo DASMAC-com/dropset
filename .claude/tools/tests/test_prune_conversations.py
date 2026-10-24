@@ -713,6 +713,17 @@ class RunWiringTests(unittest.TestCase):
         self.assertIn("estimate sidecars of those sessions: 1 file(s)", dry)
         self.assertIn("and 1 estimate sidecar(s)", applied)
 
+    def test_a_refused_delete_keeps_its_sessions_sidecar(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self._sidecars(tmp)
+            with (
+                mock.patch.object(pc, "ESTIMATE_DIR", state),
+                mock.patch.object(pc, "safe_delete", return_value=0),
+            ):
+                applied = self._run(tmp, argv=("--apply",))
+            self.assertTrue((state / "gone-session.estimate").exists())
+        self.assertIn("and 0 estimate sidecar(s)", applied)
+
 
 class BaseWorktreeTests(unittest.TestCase):
     def test_the_first_entry_is_the_main_worktree(self):

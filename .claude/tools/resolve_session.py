@@ -49,7 +49,9 @@ exists (see :func:`worktree_candidates`):
 ``mode`` is the instruction to the caller:
 
 * ``continue`` — the worktree has its own transcript; `cd` there and
-  ``claude --continue``, the original fast path.
+  ``claude --continue``, the original fast path. ``session_id`` names the
+  newest transcript, the one ``--continue`` reaches; the launcher's exit
+  estimate reads it. Branch on ``mode``, never on whether the id is set.
 * ``resume`` — a base-slug transcript's ``cwd`` stamps point into this
   worktree; run ``claude --resume <session_id>`` from ``run_from``.
 * ``picker`` — nothing resolved deterministically; fall back to

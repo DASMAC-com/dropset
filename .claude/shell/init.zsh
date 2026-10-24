@@ -1666,10 +1666,10 @@ _ds_task_resume() {
       _ds_claude "$model" --resume "$tag" --permission-mode auto
       ;;
   esac
-  # Only the `resume` form knows its id before the launch. The other two
-  # resolve it after exit, when the newest transcript is the one just used.
-  # The no-number picker above prints no estimate: nothing names the session
-  # it picked.
+  # Only the `resume` form knows its id before the launch. `continue` resolves
+  # it after exit, when the newest transcript is the one just used. The tag
+  # picker re-resolves to no id and prints the one warning; the no-number
+  # picker above prints nothing. Neither can name the session it picked.
   local rc=$?
   [[ "$mode" == resume ]] || sid=''
   _ds_exit_estimate "$sid" "$tag"

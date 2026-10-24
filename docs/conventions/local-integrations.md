@@ -2043,17 +2043,19 @@ drives the real zsh functions.
 **Every launch prints its session's cost estimate when `claude`
 returns**, whether by `/exit`, Ctrl+C or Ctrl+D. That covers
 `_ds_session` (`plan`, `architect`, `explore`, `chore`), `task`'s own
-launch and every `task resume` form. The epilogue, `_ds_exit_estimate`,
+launch and every `task resume <n>` form. The epilogue, `_ds_exit_estimate`,
 runs `session_metrics.py --brief --session-id <sid>` and prints the
 one-paragraph figure, priced at Bedrock rates on either substrate (a
 seat session's says not billed). A resumed session prints its
 cumulative figure, since the transcript is the whole session.
 
-The verbs that compute their id pass it. A `task resume` that reached
-its session by `--continue` or by the tag picker resolves the id
-through `resolve_session.py` by tag after exit, when the newest
-transcript is the one just used. The bare picker prints nothing,
-because nothing names the session it picked.
+The verbs that compute their id pass it, and so does a `task resume`
+that resumed by id. One that reached its session by `--continue`
+resolves the id through `resolve_session.py` by tag after exit, when
+the newest transcript is the one just used. The tag picker, used when
+the worktree is gone, gets no id from that and prints the one warning
+line. The bare `task resume` picker prints nothing. In both cases
+nothing names the session that was picked.
 
 **The sidecar.** The same call writes `sessions/<sid>.estimate` beside
 the per-session substrate record. It holds JSON with `session_id`,

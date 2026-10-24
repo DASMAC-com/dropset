@@ -2094,17 +2094,22 @@ def main(argv: list[str] | None = None) -> int:
     transcript = resolve_transcript(session_id)
     report = aggregate(transcript, session_id, args.substrate)
 
-    if args.estimate_out is not None:
-        args.estimate_out.parent.mkdir(parents=True, exist_ok=True)
-        args.estimate_out.write_text(
-            json.dumps(estimate_record(report, session_id)) + "\n", encoding="utf-8"
-        )
     if args.brief:
         sys.stdout.write(to_brief(report, short_id(session_id)))
     elif args.json:
         print(to_json(report))
     else:
         sys.stdout.write(to_markdown(report, short_id(session_id)))
+    # After the print, so a failed write cannot cost the operator the figure,
+    # and through a rename, so the digest never reads half a file.
+    if args.estimate_out is not None:
+        sys.stdout.flush()
+        args.estimate_out.parent.mkdir(parents=True, exist_ok=True)
+        partial = args.estimate_out.with_name(args.estimate_out.name + ".tmp")
+        partial.write_text(
+            json.dumps(estimate_record(report, session_id)) + "\n", encoding="utf-8"
+        )
+        os.replace(partial, args.estimate_out)
     return 0
 
 
