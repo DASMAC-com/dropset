@@ -46,7 +46,7 @@ fix is a per-session rule rather than a whole-slug age rule;
 do not reach for it by dropping the live-worktree
 protection.
 
-## Two mechanisms, three roots
+## Two mechanisms, four roots
 
 1. **Slug-partitioned** — `~/.claude/projects` **and** the
    CLI cache `~/Library/Caches/claude-cli-nodejs` both name
@@ -73,6 +73,15 @@ protection.
    **joined back** to the projects tree first: each session is
    stored there as `<slug>/<uuid>.jsonl`, so a session
    belonging to a slug we are keeping is kept here too.
+
+The base checkout's **session substrate records**
+(`.claude/session-substrate/sessions/<uuid>`, one small file
+per launch) ride the same join: a record is deleted with its
+transcript (and stays if that deletion is refused), kept
+while its transcript is kept, and age-ruled once no
+transcript names it. The manifest counts the records beside
+each transcript they go with, and names an orphan by its
+uuid.
 
 The **current session is always kept** in every root — by
 the current working directory's slug, and (belt-and-braces)
@@ -128,13 +137,14 @@ invariant".
   rejected (it doesn't free space until emptied). Instead:
   print a **dry-run manifest** grouped by category
   (completed / dropset-old / non-dropset / file-history /
-  CLI-cache) with per-group and total MB, **each dropset slug
-  named by its issue tag**, plus the kept count
+  CLI-cache / substrate records) with per-group and total
+  MB, **each dropset slug named by its issue tag**, plus the
+  kept count
   **broken out by reason**, get
   **one** approval via `AskUserQuestion`, then hard-delete
   and **report bytes freed**.
 - **Age threshold default 2 days** (the tool's
-  `--age-days`), applied to all three roots.
+  `--age-days`), applied to all four roots.
 - **No new env var.** The projects root comes from
   `$CLAUDE_CONFIG_DIR` / `$HOME` (the tool reuses
   `claude_home()`); the dropset root is discovered at
@@ -145,8 +155,9 @@ invariant".
 
 ## Safety invariant
 
-The tool only ever deletes a directory that resolves
-**under** one of the three known roots, **never follows a
+The tool only ever deletes a directory, or a substrate-record
+file, that resolves **under** one of the four known roots,
+**never follows a
 symlink**, refuses any entry that escapes its root, and
 never touches the current session. **Dry-run is the
 default**; deletion requires the explicit `--apply` this

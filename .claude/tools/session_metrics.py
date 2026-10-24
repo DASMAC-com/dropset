@@ -1710,6 +1710,19 @@ def read_substrate_marker(cwd: str | None, session_id: str | None = None) -> str
     distinct from a marker that says ``seat``, so the report can say which of
     the two it is, even though both land on the same headline.
     """
+    return _find_substrate_marker(cwd, session_id)[0]
+
+
+# Which record decided, as `resolve_substrate` names it in its reason.
+MARKER_SESSION = "session record"
+MARKER_TAG = "worktree tag marker"
+
+
+def _find_substrate_marker(
+    cwd: str | None, session_id: str | None
+) -> tuple[str | None, str | None]:
+    """``(recorded word, which record held it)``, both ``None`` when neither
+    record exists. The lookup behind :func:`read_substrate_marker`."""
     base = base_repo_from_cwd(cwd)
     if session_id:
         # A base-repo session's cwd IS the base checkout.
@@ -1717,11 +1730,12 @@ def read_substrate_marker(cwd: str | None, session_id: str | None = None) -> str
         if root is not None:
             recorded = _read_marker(root / SUBSTRATE_DIR / "sessions" / session_id)
             if recorded is not None:
-                return recorded
+                return recorded, MARKER_SESSION
     tag = tag_from_cwd(cwd)
     if base is None or not tag:
-        return None
-    return _read_marker(base / SUBSTRATE_DIR / tag)
+        return None, None
+    recorded = _read_marker(base / SUBSTRATE_DIR / tag)
+    return recorded, (MARKER_TAG if recorded is not None else None)
 
 
 def _read_marker(marker: Path) -> str | None:
@@ -1761,11 +1775,11 @@ def resolve_substrate(
     token profile rather than to inventing a number. A missing figure is a
     visible gap; a wrong one silently corrupts the reconciliation.
     """
-    recorded = read_substrate_marker(cwd, session_id)
+    recorded, source = _find_substrate_marker(cwd, session_id)
     if recorded == SUBSTRATE_BEDROCK:
-        return SUBSTRATE_BEDROCK, "recorded by the launch verb"
+        return SUBSTRATE_BEDROCK, f"recorded by the launch verb ({source})"
     if recorded in (SUBSTRATE_SEAT, SUBSTRATE_ANTHROPIC):
-        return SUBSTRATE_SEAT, "recorded by the launch verb"
+        return SUBSTRATE_SEAT, f"recorded by the launch verb ({source})"
     if recorded is None:
         if tag_from_cwd(cwd) is None:
             if base_repo_from_cwd(cwd) is None:
