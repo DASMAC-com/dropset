@@ -100,8 +100,7 @@ too.
 **There is no in-session model check.** `architect` pins the
 advisor tier at launch and refuses to start when it does not
 resolve; `architect bedrock <n>` is the credit-pinch
-override, as for `plan` (`architect <n> bedrock` until the
-launcher reorder lands).
+override, as for `plan`.
 
 For an architect session specifically: doing long-horizon
 design on the executor tier is the cheap-tier slip that
