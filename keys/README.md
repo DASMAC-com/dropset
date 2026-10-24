@@ -124,17 +124,33 @@ agent session, so no secret ever enters a session or a checkout. One
 command per key, taking its vanity prefix:
 
 ```sh
-python3 keys/grind_key.py <Prefix>
+python3 keys/grind_key.py grind <Prefix>
 ```
 
-The prefix match is case-sensitive. Each run writes one file to
+The prefix match is case-sensitive. Each run writes two files to
 `~/Desktop/dropset-vanity/` (override with `--out-dir`), outside every
-checkout: `<pubkey>.txt`, mode 600, whose entire contents are the base58
-encoding of the 64-byte secret keypair, the form Phantom imports and
-exports. The keygen JSON is deleted, and the script prints only the
-public key, the path and the byte count. If iCloud's "Desktop &
-Documents Folders" sync is on, pass a non-synced `--out-dir` instead, or
-the secret is uploaded the moment it is written.
+checkout, both mode 600:
+
+- `<pubkey>.txt`, whose entire contents are the base58 encoding of the
+  64-byte secret keypair, the form Phantom imports and exports;
+- `<pubkey>.key`, the same key as an OpenSSH Ed25519 private key, the
+  form a 1Password SSH Key item imports, so the 1Password SSH agent can
+  sign with it (an Ed25519 SSH signature is a plain Ed25519 signature
+  over the bytes, which is what a Solana transaction signature is).
+
+The keygen JSON is deleted, and the script prints only the public key,
+the SSH public-key line and the paths. If iCloud's "Desktop & Documents
+Folders" sync is on, pass a non-synced `--out-dir` instead, or the
+secret is uploaded the moment it is written.
+
+For a keypair that already exists, `convert` writes only the `.key`
+form, beside its input file (or to `--out-dir`). The input is the
+128-hex form, the JSON byte array, or the base58 form; `-` reads it from
+stdin, so it never lands on a command line:
+
+```sh
+python3 keys/grind_key.py convert <keypair-file>
+```
 
 Verify each file with a Phantom round trip before storing it:
 
@@ -143,7 +159,8 @@ Verify each file with a Phantom round trip before storing it:
 1. Export that account's private key from Phantom, and confirm it equals
    the file's contents byte for byte.
 
-Then put the text file into 1Password and delete it from the Desktop.
+Then put the text file into 1Password and delete both files from the
+Desktop.
 A rotation is the same command. Only the program id's public half is
 committed (`dropset-mainnet.pubkey`, see above); every other mainnet key
 is a runtime input and never enters the repo.

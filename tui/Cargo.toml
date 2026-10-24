@@ -82,8 +82,9 @@ solana-pubkey = "3"
 solana-signer = "3"
 # Parse a log-subscription signature to fetch its transaction, and read the
 # transaction's inner instructions to decode fills — the light client-types
-# crate, matching the maker bot's fills path.
-solana-signature = "3"
+# crate, matching the maker bot's fills path. `verify` checks each signature
+# the SSH agent returns against its address (agent_signer.rs).
+solana-signature = { version = "3", features = ["verify"] }
 solana-transaction = "3"
 solana-transaction-status-client-types = "3"
 # The publish record's binary digest — the sha256 the ceremony log carries.
