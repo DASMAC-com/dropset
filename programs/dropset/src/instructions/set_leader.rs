@@ -10,10 +10,9 @@
 //! time.
 //!
 //! Only the `leader` field moves. `quote_authority` deliberately does not
-//! follow: custody and quoting rotate independently, and a caller that wants
-//! both rotated bundles a `set_quote_authority` in the same transaction,
-//! so the two can still rotate together. Shares,
-//! HWM, fee rate and flags are untouched, and `seq` is unchanged — this is
+//! follow: custody and quoting rotate independently, and can rotate together
+//! when a caller bundles a `set_quote_authority` in the same transaction.
+//! Shares, HWM, fee rate and flags are untouched, and `seq` is unchanged — this is
 //! the same vault under a new key, not a new vault.
 //!
 //! There is deliberately no admin path: an admin rotation would be a

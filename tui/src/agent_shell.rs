@@ -27,8 +27,8 @@ pub fn refuse_agent_shell() -> Result<()> {
     refuse_if_marked(std::env::var_os(AGENT_SHELL_VAR))
 }
 
-/// Refuse on a non-empty value — the same value test the Makefile guard
-/// applies, since make publishes an unset variable as an empty one.
+/// Refuse on a non-empty value — the same test as the Makefile guard's
+/// `[ -n … ]`, which cannot tell an unset variable from an empty one.
 fn refuse_if_marked(value: Option<OsString>) -> Result<()> {
     match value {
         Some(v) if !v.is_empty() => bail!("{REFUSAL}"),
@@ -56,6 +56,29 @@ mod tests {
             err.contains("their own terminal"),
             "says who runs it: {err}"
         );
+    }
+
+    /// The Makefile's `tui-mainnet` guard prints its own copy of the text,
+    /// so the binary need not be built; hold the two copies equal.
+    #[test]
+    fn makefile_guard_prints_the_same_refusal() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../Makefile");
+        let makefile = std::fs::read_to_string(path).unwrap();
+        let start = makefile
+            .find("AGENT_SHELL_REFUSAL := ")
+            .expect("the Makefile defines AGENT_SHELL_REFUSAL");
+        let mut text = String::new();
+        for line in makefile[start + "AGENT_SHELL_REFUSAL := ".len()..].lines() {
+            match line.strip_suffix('\\') {
+                Some(continued) => text.push_str(continued),
+                None => {
+                    text.push_str(line);
+                    break;
+                }
+            }
+        }
+        let collapse = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert_eq!(collapse(&text), collapse(REFUSAL));
     }
 
     #[test]

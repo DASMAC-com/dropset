@@ -2093,9 +2093,8 @@ The new leader must be:
   positions and cost basis → Leader-and-depositor invariant**.
 
 `quote_authority` does **not** follow the leader: custody and quoting
-rotate independently, and a caller that wants both rotated bundles a
-`SetQuoteAuthority` in the same transaction, so the two can still
-rotate together. `leader_shares`, the HWM,
+rotate independently, and can rotate together when a caller bundles a
+`SetQuoteAuthority` in the same transaction. `leader_shares`, the HWM,
 the fee rate, the flags, `seq`, the `name` and its `name_locked` lock are
 unchanged — the same vault under a new key.
 
