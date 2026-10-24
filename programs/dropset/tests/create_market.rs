@@ -7,7 +7,10 @@ mod common;
 
 use anchor_lang::{programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
-use common::fixture::{canonical_init_ixn, registry_pda};
+use common::fixture::{
+    canonical_init_ixn, market_pda, market_pda_and_bump, read_market_header,
+    read_token_account_owner, read_token_balance, registry_pda,
+};
 use common::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
     create_spl_mint, create_token2022_mint, decode_slab, deploy_with_authority, mint_to, send_ixn,
@@ -46,10 +49,6 @@ fn bootstrap() -> (litesvm::LiteSVM, Keypair, Pubkey) {
     (svm, authority, fee_mint)
 }
 
-fn market_pda(base_mint: &Pubkey, quote_mint: &Pubkey) -> (Pubkey, u8) {
-    Pubkey::find_program_address(&[base_mint.as_ref(), quote_mint.as_ref()], &PROGRAM_ID)
-}
-
 /// Assemble a `CreateMarket` instruction with everything pre-derived.
 /// `payer` signs the tx; `signer_fee_source` is the payer's source ATA
 /// — pass any pubkey on the admin path (the handler skips reading it).
@@ -65,7 +64,7 @@ fn create_market_ixn(
     payer_fee_source: Pubkey,
 ) -> Instruction {
     let registry = registry_pda();
-    let (market, _) = market_pda(&base_mint, &quote_mint);
+    let market = market_pda(&base_mint, &quote_mint);
     let base_treasury = associated_token_address(&market, &base_mint, &base_token_program);
     let quote_treasury = associated_token_address(&market, &quote_mint, &quote_token_program);
     let registry_fee_treasury = associated_token_address(&registry, &fee_mint, &fee_token_program);
@@ -92,17 +91,6 @@ fn create_market_ixn(
             AccountMeta::new_readonly(System::id(), false),
             AccountMeta::new_readonly(ATA_PROGRAM_ID, false),
         ],
-    )
-}
-
-/// Decode the market header out of the slab account bytes: skip the
-/// 8-byte anchor discriminator, then bytemuck-cast.
-fn read_market_header(svm: &litesvm::LiteSVM, market: &Pubkey) -> MarketHeader {
-    let account = svm.get_account(market).expect("market account exists");
-    let data = &account.data;
-    assert!(data.len() >= 8 + core::mem::size_of::<MarketHeader>());
-    *anchor_lang::bytemuck::from_bytes::<MarketHeader>(
-        &data[8..8 + core::mem::size_of::<MarketHeader>()],
     )
 }
 
@@ -136,27 +124,6 @@ fn fund_with_fee(
     ata
 }
 
-/// Token balance of an SPL Token account: the SPL layout puts amount at
-/// offset 64..72, little-endian u64.
-fn token_balance(svm: &litesvm::LiteSVM, ata: &Pubkey) -> u64 {
-    let account = svm.get_account(ata).expect("token account exists");
-    let bytes: [u8; 8] = account.data[64..72].try_into().unwrap();
-    u64::from_le_bytes(bytes)
-}
-
-/// Authority of an SPL Token account: the SPL layout puts the owner at
-/// offset 32..64. Note what an assertion on this does and does not
-/// buy: the ATA program writes the authority from the derivation input
-/// at *squat* time, so it already reads `market` before `create_market`
-/// runs. It is a regression guard that adoption leaves the authority
-/// alone — not evidence that the squatter gained nothing. What proves
-/// the latter is `create_market_rejects_an_existing_non_canonical_treasury`.
-fn token_account_authority(svm: &litesvm::LiteSVM, ata: &Pubkey) -> Pubkey {
-    let account = svm.get_account(ata).expect("token account exists");
-    let bytes: [u8; 32] = account.data[32..64].try_into().unwrap();
-    Pubkey::new_from_array(bytes)
-}
-
 // ── Happy paths ─────────────────────────────────────────────────────
 
 #[test]
@@ -182,7 +149,7 @@ fn create_market_succeeds_with_two_spl_mints() {
 
     // Market header is stamped with the values seeded from the registry,
     // and both list heads start empty.
-    let (market, market_bump) = market_pda(&base_mint, &quote_mint);
+    let (market, market_bump) = market_pda_and_bump(&base_mint, &quote_mint);
     let header = read_market_header(&svm, &market);
     assert_eq!(header.base_mint, base_mint.to_bytes().into());
     assert_eq!(header.quote_mint, quote_mint.to_bytes().into());
@@ -227,11 +194,11 @@ fn create_market_succeeds_with_two_spl_mints() {
     );
 
     // The fee actually moved.
-    assert_eq!(token_balance(&svm, &payer_ata), 0);
+    assert_eq!(read_token_balance(&svm, &payer_ata), 0);
     let registry_fee_ata =
         associated_token_address(&registry_pda(), &fee_mint, &SPL_TOKEN_PROGRAM_ID);
     assert_eq!(
-        token_balance(&svm, &registry_fee_ata),
+        read_token_balance(&svm, &registry_fee_ata),
         CREATE_MARKET_FEE_ATOMS
     );
 
@@ -270,7 +237,7 @@ fn create_market_succeeds_with_mixed_token_programs() {
     );
     send_ixn(&mut svm, &payer, ix).expect("mixed-program create_market should succeed");
 
-    let (market, _) = market_pda(&base_mint, &quote_mint);
+    let market = market_pda(&base_mint, &quote_mint);
     let header = read_market_header(&svm, &market);
     // The base treasury is derived under SPL Token, the quote under
     // Token-2022 — distinct addresses for the same wallet/mint pair.
@@ -321,7 +288,7 @@ fn admin_path_waives_fee() {
     // Registry fee ATA exists (init_if_needed ran) but holds zero.
     let registry_fee_ata =
         associated_token_address(&registry_pda(), &fee_mint, &SPL_TOKEN_PROGRAM_ID);
-    assert_eq!(token_balance(&svm, &registry_fee_ata), 0);
+    assert_eq!(read_token_balance(&svm, &registry_fee_ata), 0);
 
     // The admin path still bumps `market_count` — the increment lives
     // after the fee branch, so both paths share it.
@@ -535,7 +502,7 @@ fn create_market_adopts_squatted_treasuries() {
 
     // The squatter is an unrelated wallet with no role in the protocol.
     let squatter = fresh_payer(&mut svm);
-    let (market, _) = market_pda(&base_mint, &quote_mint);
+    let market = market_pda(&base_mint, &quote_mint);
     let squatted_base = create_associated_token_account(
         &mut svm,
         &squatter,
@@ -576,8 +543,8 @@ fn create_market_adopts_squatted_treasuries() {
     // and stamped onto the header as usual. (That the squatter gained
     // nothing rests on the derivation check, which
     // `create_market_rejects_an_existing_non_canonical_treasury` pins.)
-    assert_eq!(token_account_authority(&svm, &squatted_base), market);
-    assert_eq!(token_account_authority(&svm, &squatted_quote), market);
+    assert_eq!(read_token_account_owner(&svm, &squatted_base), market);
+    assert_eq!(read_token_account_owner(&svm, &squatted_quote), market);
     let header = read_market_header(&svm, &market);
     assert_eq!(header.base_treasury, squatted_base.to_bytes().into());
     assert_eq!(header.quote_treasury, squatted_quote.to_bytes().into());
@@ -603,7 +570,7 @@ fn create_market_adopts_a_squatted_base_alongside_a_fresh_quote() {
     // Squat the base leg only. The quote treasury does not exist yet, so
     // the same instruction must create it.
     let squatter = fresh_payer(&mut svm);
-    let (market, _) = market_pda(&base_mint, &quote_mint);
+    let market = market_pda(&base_mint, &quote_mint);
     let squatted_base = create_associated_token_account(
         &mut svm,
         &squatter,
@@ -632,8 +599,8 @@ fn create_market_adopts_a_squatted_base_alongside_a_fresh_quote() {
 
     // Both legs land in the same end state regardless of which branch got
     // them there: owned by the market PDA and stamped on the header.
-    assert_eq!(token_account_authority(&svm, &squatted_base), market);
-    assert_eq!(token_account_authority(&svm, &fresh_quote), market);
+    assert_eq!(read_token_account_owner(&svm, &squatted_base), market);
+    assert_eq!(read_token_account_owner(&svm, &fresh_quote), market);
     let header = read_market_header(&svm, &market);
     assert_eq!(header.base_treasury, squatted_base.to_bytes().into());
     assert_eq!(header.quote_treasury, fresh_quote.to_bytes().into());
@@ -669,7 +636,7 @@ fn create_market_rejects_an_existing_non_canonical_treasury() {
         &base_mint,
         &SPL_TOKEN_PROGRAM_ID,
     );
-    let (market, _) = market_pda(&base_mint, &quote_mint);
+    let market = market_pda(&base_mint, &quote_mint);
     assert_ne!(
         attacker_ata,
         associated_token_address(&market, &base_mint, &SPL_TOKEN_PROGRAM_ID),
@@ -725,7 +692,7 @@ fn create_market_adopts_prefunded_squatted_treasuries() {
     let quote_mint = create_spl_mint(&mut svm, &authority);
 
     let squatter = fresh_payer(&mut svm);
-    let (market, _) = market_pda(&base_mint, &quote_mint);
+    let market = market_pda(&base_mint, &quote_mint);
     let squatted_base = create_associated_token_account(
         &mut svm,
         &squatter,
@@ -770,8 +737,14 @@ fn create_market_adopts_prefunded_squatted_treasuries() {
     send_ixn(&mut svm, &payer, ix).expect("create_market must adopt pre-funded treasury ATAs");
 
     // The atoms survive the adoption — nothing burns or reassigns them.
-    assert_eq!(token_balance(&svm, &squatted_base), SQUATTED_BASE_ATOMS);
-    assert_eq!(token_balance(&svm, &squatted_quote), SQUATTED_QUOTE_ATOMS);
+    assert_eq!(
+        read_token_balance(&svm, &squatted_base),
+        SQUATTED_BASE_ATOMS
+    );
+    assert_eq!(
+        read_token_balance(&svm, &squatted_quote),
+        SQUATTED_QUOTE_ATOMS
+    );
 
     // And they are credited to nobody — which is what makes them
     // residual. The custody invariant is

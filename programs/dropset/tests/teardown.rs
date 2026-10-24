@@ -76,9 +76,7 @@ fn full_buildup_teardown_reclaims_all_rent() {
     f.set_outside_deposits_approved(&admin, 0, true)
         .expect("admin approves");
 
-    let alice = f.funded_depositor(200_000, 200_000);
-    f.deposit(&alice, 0, 50_000, 0, 200_000, 200_000)
-        .expect("outside deposit");
+    let alice = f.outside_deposit();
     assert_eq!(f.market_header().outstanding_vault_depositors.get(), 1);
     assert_eq!(f.registry_market_count(), 1, "one live market");
 
@@ -615,9 +613,7 @@ fn full_lifecycle_teardown_then_bootstrap_again_at_the_same_addresses() {
         .expect("leader seeds");
     f.set_outside_deposits_approved(&admin, 0, true)
         .expect("admin approves outside deposits");
-    let alice = f.funded_depositor(200_000, 200_000);
-    f.deposit(&alice, 0, 50_000, 0, 200_000, 200_000)
-        .expect("outside deposit");
+    let alice = f.outside_deposit();
 
     // ── Fee'd fills: protocol revenue + spread capture ───────────────
     // A **round trip**, not a single fill. One-way flow profits the vault

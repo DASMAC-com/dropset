@@ -6,32 +6,14 @@
 mod common;
 
 use anchor_v2_testing::Signer;
-use common::fixture::Fixture;
-use dropset::Q32_32_ONE;
-use solana_pubkey::Pubkey;
-
-/// `isqrt` mirror of the on-chain seeding share formula.
-fn isqrt(n: u128) -> u128 {
-    if n < 2 {
-        return n;
-    }
-    let mut x = n;
-    let mut y = x.div_ceil(2);
-    while y < x {
-        x = y;
-        y = (x + n / x) / 2;
-    }
-    x
-}
+use common::fixture::{ref_price, Fixture};
+use dropset::{isqrt_u128, Q32_32_ONE};
 
 /// Bootstrap + open an admin vault (sector 0, leader = authority) with
 /// a reference price set. Unseeded.
 fn fixture_with_unseeded_vault() -> Fixture {
-    let mut f = Fixture::bootstrap();
-    f.create_vault(0, f.authority.pubkey(), false, Pubkey::default())
-        .expect("create_vault");
-    let px = dropset::Price::encode(10_850_000, 0).unwrap();
-    f.set_reference_price(&f.authority.insecure_clone(), 0, px.as_u32(), 0)
+    let mut f = Fixture::with_vault();
+    f.set_reference_price(&f.authority.insecure_clone(), 0, ref_price(), 0)
         .expect("set_reference_price");
     f
 }
@@ -44,7 +26,7 @@ fn seeding_sets_shares_to_isqrt_and_hwm_to_one() {
         .expect("leader seeds both legs");
 
     let v = f.vault(0);
-    let expected = isqrt(base as u128 * quote as u128) as u64;
+    let expected = isqrt_u128(base as u128 * quote as u128) as u64;
     assert_eq!(v.total_shares.get(), expected, "total_shares := isqrt(b·q)");
     assert_eq!(
         v.leader_shares.get(),
