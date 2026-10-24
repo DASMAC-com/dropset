@@ -327,9 +327,9 @@ all measured 2026-10-14/15 over the Opus 5.5 fleet days 10-08 to 10-13
   worktree's tag marker. A worktree session with neither is reported as
   `unattributed` and kept out of the total; an older explore worktree
   lands there, since explore once wrote none. A session launched
-  before the record still classifies the old way. An issue-less
-  base-checkout session is keyed by its verb, so each `plan` cycle is a
-  priced line of the per-issue table.
+  before the record still classifies the old way. An issue-less `plan`
+  session in the base checkout is keyed `plan`, so each Bedrock
+  planning cycle is a priced line of the per-issue table.
 - **It runs daily, unprompted.** The `upkeep` pass the `plan` launcher
   runs calls `reconcile` and reads the seat allowance, which has no bill
   line, with `subscription_usage.py --log`. Each pass that gets a reading

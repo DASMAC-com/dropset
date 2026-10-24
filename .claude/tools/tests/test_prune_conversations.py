@@ -702,12 +702,29 @@ class RunWiringTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out, markers = self._run_with_markers(tmp)
             self.assertIn("session substrate records (with their transcripts)", out)
-            self.assertIn("- eng-999 / gone-session", out)
+            # One line per transcript, not per record.
+            self.assertIn("- eng-999: 1 record(s)", out)
             self.assertIn("- aged-orphan", out)
             self.assertIn("no transcript, within age: 1", out)
             # A kept transcript keeps its record; the dry run deletes nothing.
-            self.assertNotIn("- live-session", out.split("kept:")[0])
+            self.assertNotIn("live-session", out)
             self.assertTrue((markers / "gone-session").exists())
+
+    def test_a_record_stays_when_its_transcript_was_refused(self):
+        real = pc.safe_delete
+
+        def refuse_dirs(record, roots):
+            if record.category == "substrate-marker":
+                return real(record, roots)
+            return 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(pc, "safe_delete", side_effect=refuse_dirs):
+                _out, markers = self._run_with_markers(tmp, argv=("--apply",))
+            self.assertEqual(
+                sorted(p.name for p in markers.iterdir()),
+                ["fresh-orphan", "gone-session", "live-session"],
+            )
 
     def test_apply_deletes_the_records_and_keeps_the_rest(self):
         with tempfile.TemporaryDirectory() as tmp:

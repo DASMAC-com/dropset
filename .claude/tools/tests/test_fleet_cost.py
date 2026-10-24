@@ -249,6 +249,12 @@ class WalkTest(unittest.TestCase):
         )
         meter = fc.walk(self.projects, [DAY])
         self.assertAlmostEqual(dict(fc.issue_costs(meter, [DAY]))["plan"], ONE_MESSAGE)
+        # And the rendered per-issue line carries it.
+        out = io.StringIO()
+        with mock.patch.object(fc.sm, "claude_home", return_value=self.home):
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(fc.main(["meter", "--day", DAY]), 0)
+        self.assertRegex(out.getvalue(), r"costliest issues: .*\bplan \$")
         # The seat base-repo session with no command stays `(no issue)`.
         self.assertIn(("(no issue)", 1), fc.issue_session_counts(meter, [DAY], fc.SEAT))
 
