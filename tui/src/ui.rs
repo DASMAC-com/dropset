@@ -422,7 +422,8 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 /// Status-bar span for the maker bots: how many are running out of the
-/// discovered markets, green once any is up.
+/// discovered markets, green once any is up, plus how many are still taking
+/// their books down after a stop.
 fn bots_status(app: &App) -> Span<'static> {
     let running = app.bots.running_count();
     let total = app.chain.markets.len();
@@ -431,7 +432,22 @@ fn bots_status(app: &App) -> Span<'static> {
     } else {
         Color::DarkGray
     };
-    Span::styled(format!("{running}/{total}"), Style::new().fg(color))
+    Span::styled(
+        format!(
+            "{running}/{total}{}",
+            stopping_suffix(app.bots.stopping_count())
+        ),
+        Style::new().fg(color),
+    )
+}
+
+/// ` (n stopping…)` while any stopped bot has yet to exit, else nothing.
+fn stopping_suffix(n: usize) -> String {
+    if n == 0 {
+        String::new()
+    } else {
+        format!(" ({n} stopping…)")
+    }
 }
 
 /// Status-bar span for the taker bots (opt-in flow): how many are running out
@@ -447,7 +463,13 @@ fn takers_status(app: &App) -> Span<'static> {
     } else {
         Color::DarkGray
     };
-    Span::styled(format!("{running}/{total}"), Style::new().fg(color))
+    Span::styled(
+        format!(
+            "{running}/{total}{}",
+            stopping_suffix(app.takers.stopping_count())
+        ),
+        Style::new().fg(color),
+    )
 }
 
 /// Colored status-bar span for the managed explorer container.
@@ -1171,11 +1193,21 @@ fn market_row(app: &App, i: usize, market: &crate::accounts::MarketView) -> Line
             "  \u{25cf} maker",
             Style::new().fg(Color::Green),
         ));
+    } else if app.bots.is_stopping(symbol) {
+        spans.push(Span::styled(
+            "  \u{25cc} maker stopping…",
+            Style::new().fg(Color::Yellow),
+        ));
     }
     if app.takers.is_running(symbol) {
         spans.push(Span::styled(
             "  \u{25cf} taker",
             Style::new().fg(Color::Cyan),
+        ));
+    } else if app.takers.is_stopping(symbol) {
+        spans.push(Span::styled(
+            "  \u{25cc} taker stopping…",
+            Style::new().fg(Color::Yellow),
         ));
     }
     Line::from(spans)
@@ -1519,15 +1551,27 @@ fn draw_log(f: &mut Frame<'_>, app: &App, area: Rect) {
         })
         .collect();
     f.render_widget(
-        Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .title(format!(" log → {} ", app.log_path.display()))
-                    .borders(Borders::ALL),
-            )
-            .wrap(Wrap { trim: false }),
+        tail(lines, area.width.saturating_sub(2), height).block(
+            Block::default()
+                .title(format!(" log → {} ", app.log_path.display()))
+                .borders(Borders::ALL),
+        ),
         area,
     );
+}
+
+/// Wrap `lines` into a `width`-column pane `height` rows tall, scrolled so
+/// the last row shown is the newest line's last row.
+///
+/// The caller hands over only the last `height` lines, but a line wider than
+/// the pane wraps onto several rows, so those lines can need more than
+/// `height` rows — and a paragraph left at scroll zero clips the overflow off the
+/// *bottom*, which is exactly where the newest line sits. Scrolling by the
+/// overflow clips the oldest rows instead.
+fn tail(lines: Vec<Line<'_>>, width: u16, height: usize) -> Paragraph<'_> {
+    let body = Paragraph::new(lines).wrap(Wrap { trim: false });
+    let overflow = body.line_count(width).saturating_sub(height);
+    body.scroll((u16::try_from(overflow).unwrap_or(u16::MAX), 0))
 }
 
 /// Status-bar color for a phase.
@@ -1541,10 +1585,33 @@ fn phase_style(phase: Phase) -> (Color, Modifier) {
 
 #[cfg(test)]
 mod tests {
-    use super::{flag_for, fmt_units, liveness_color, symbol_for};
+    use super::{flag_for, fmt_units, liveness_color, symbol_for, tail};
     use crate::accounts::Liveness;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
     use ratatui::style::Color;
+    use ratatui::text::Line;
+    use ratatui::widgets::Widget;
     use solana_pubkey::Pubkey;
+
+    /// The newest log line stays on screen when older ones wrap — the bug was
+    /// a wrapped line pushing it below the pane until more output scrolled it.
+    #[test]
+    fn the_log_tail_shows_its_newest_line_when_older_ones_wrap() {
+        let (width, height) = (10, 3);
+        let lines = vec![
+            Line::from("0123456789abcdef"),
+            Line::from("older"),
+            Line::from("newest"),
+        ];
+        let area = Rect::new(0, 0, width, height);
+        let mut buf = Buffer::empty(area);
+        tail(lines, width, height as usize).render(area, &mut buf);
+        let row = |y| (0..width).map(|x| buf[(x, y)].symbol()).collect::<String>();
+        assert_eq!(row(height - 1).trim_end(), "newest");
+        // The wrapped line's head is what scrolled off, not its tail.
+        assert_eq!(row(0).trim_end(), "abcdef");
+    }
 
     #[test]
     fn flag_for_maps_known_symbols_and_falls_back() {

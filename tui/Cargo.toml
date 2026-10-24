@@ -58,7 +58,9 @@ dropset-math-core = { path = "../sdk/math-core" }
 # bot does.
 dropset-market-data = { path = "../market-data" }
 open = "5"
-ratatui = "0.29"
+# `unstable-rendered-line-info` for `Paragraph::line_count`: the log pane
+# wraps, so tailing it needs the rendered row count, not the line count.
+ratatui = { version = "0.29", features = ["unstable-rendered-line-info"] }
 # Pinned to the SDK's 3.x line (sdk/rs/Cargo.toml) so there is one
 # `Pubkey` / `Instruction` / `RpcClient` type across the builder, fetch,
 # and transaction paths — NOT the workspace's solana-pubkey 4.x, which the
