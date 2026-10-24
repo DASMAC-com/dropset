@@ -71,8 +71,21 @@ Usage::
     python3 .claude/tools/merge_completeness.py --path cfg/x.yml \\
         --acknowledge 'old_key: value'
 
+    # MID-conflict, before resolving: size each hunk, and print the upstream
+    # diff for a delete/modify hunk instead of making you read the block
+    python3 .claude/tools/merge_completeness.py --path <file> --inspect
+
+**``--inspect`` is for the delete/modify shape.** When one branch deleted a
+long region and the other edited lines inside it, the conflict block's
+non-empty side is the *whole* region — once 146 lines, read in full to find a
+two-line upstream change, twice in one session. For a hunk with an empty side
+``--inspect`` prints the other side's own diff of the file from the three-way
+base (``REBASE_HEAD^`` mid-rebase, the merge base mid-merge), which is only
+what that side changed — the lines to carry forward. Hunks with two non-empty
+sides are only sized; read those by slice.
+
 Exit status is 0 only when every added line from both sides survives or is
-acknowledged. Standard library only; shells out to ``git show`` for the three
+acknowledged (``--inspect``: 0 once it has reported). Standard library only; shells out to ``git show`` for the three
 blobs. A Python skill-tool under ``.claude/tools/`` — deliberately **not** a
 Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling"). Tests live in
 ``tests/test_merge_completeness.py``, run via ``make tools-tests``.
@@ -168,6 +181,89 @@ def merge_base(ours: str, theirs: str, repo: Path) -> str:
     if completed.returncode != 0:
         raise MergeCompletenessError(f"no merge base between {ours} and {theirs}")
     return completed.stdout.strip()
+
+
+def three_way_base(ours: str, theirs: str, repo: Path) -> str:
+    """The base git's three-way merge used for this conflict.
+
+    Mid-rebase that is the replayed commit's parent, not the fork point: the
+    fork point also predates this branch's own earlier commits, whose changes
+    would then read as upstream's.
+    """
+    if theirs == "REBASE_HEAD":
+        return "REBASE_HEAD^"
+    return merge_base(ours, theirs, repo)
+
+
+def conflict_hunks(text: str) -> list[dict]:
+    """Each conflict hunk's start line (1-based) and per-side line counts.
+
+    Handles the ``diff3`` conflict styles too: a ``|||||||`` section is the
+    base and belongs to neither side.
+    """
+    hunks: list[dict] = []
+    section = None
+    for number, line in enumerate(text.splitlines(), start=1):
+        if line.startswith("<<<<<<< "):
+            hunks.append({"line": number, "ours": 0, "theirs": 0})
+            section = "ours"
+        elif section and line.startswith("||||||| "):
+            section = "base"
+        elif section and line.strip() == "=======":
+            section = "theirs"
+        elif section and line.startswith(">>>>>>> "):
+            section = None
+        elif section in ("ours", "theirs"):
+            hunks[-1][section] += 1
+    return hunks
+
+
+def side_diff(base: str, side: str, path: str, repo: Path) -> str:
+    """``side``'s own change to ``path`` since ``base``, one context line."""
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(repo), "diff", "--unified=1", base, side, "--", path],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as e:
+        raise MergeCompletenessError(f"cannot run git: {e}") from e
+    if completed.returncode != 0:
+        raise MergeCompletenessError(
+            f"git diff {base} {side} failed: {completed.stderr.strip()}"
+        )
+    return completed.stdout
+
+
+def inspect(
+    path: str, text: str, base: str, ours: str, theirs: str, repo: Path
+) -> list[str]:
+    """The ``--inspect`` report: every hunk sized, and for a hunk with an empty
+    side, the non-empty side's own diff in place of the conflict block."""
+    hunks = conflict_hunks(text)
+    if not hunks:
+        return [f"{path}: no conflict markers — nothing to inspect"]
+    out = [f"{path}: {len(hunks)} conflict hunk(s), base {base}"]
+    upstream: list[str] = []
+    for hunk in hunks:
+        shape = ""
+        for side, rev, other, gone in (
+            ("ours", ours, "theirs", theirs),
+            ("theirs", theirs, "ours", ours),
+        ):
+            if hunk[side] and not hunk[other]:
+                shape = f" — {gone} deleted it; read {rev}'s diff below"
+                if rev not in upstream:
+                    upstream.append(rev)
+        out.append(
+            f"  line {hunk['line']}: {ours} {hunk['ours']} line(s), "
+            f"{theirs} {hunk['theirs']} line(s){shape}"
+        )
+    for rev in upstream:
+        out += ["", f"--- {rev}'s own change since {base}:"]
+        out += side_diff(base, rev, path, repo).splitlines()
+    return out
 
 
 def audit(
@@ -283,17 +379,29 @@ def run(argv: list[str]) -> int:
         help="a line deliberately superseded rather than lost; repeatable. "
         "Compared whitespace-insensitively, like everything else",
     )
+    parser.add_argument(
+        "--inspect",
+        action="store_true",
+        help="mid-conflict: size each hunk, and print the other side's own "
+        "diff for a hunk with an empty side (delete/modify)",
+    )
     args = parser.parse_args(argv[1:])
 
     repo = Path(args.repo)
     theirs = args.theirs or resolve_theirs(repo)
-    base = args.base or merge_base(args.ours, theirs, repo)
 
     resolution_path = Path(args.resolution) if args.resolution else repo / args.path
     try:
         resolution = resolution_path.read_text(encoding="utf-8")
     except OSError as e:
         raise MergeCompletenessError(f"cannot read {resolution_path}: {e}") from e
+
+    if args.inspect:
+        base = args.base or three_way_base(args.ours, theirs, repo)
+        for line in inspect(args.path, resolution, base, args.ours, theirs, repo):
+            print(line)
+        return 0
+    base = args.base or merge_base(args.ours, theirs, repo)
 
     # An UNRESOLVED file trivially contains every line from both parents, so it
     # would score COMPLETE and exit 0 — the strongest possible green at the
@@ -316,7 +424,7 @@ def run(argv: list[str]) -> int:
         raise MergeCompletenessError(
             f"{resolution_path} still contains conflict markers — resolve it "
             f"first; an unresolved file contains both sides by construction "
-            f"and would report COMPLETE"
+            f"and would report COMPLETE (--inspect sizes the hunks instead)"
         )
 
     base_text = git_show(base, args.path, repo)

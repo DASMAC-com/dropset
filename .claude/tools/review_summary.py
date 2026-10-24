@@ -31,7 +31,8 @@ required, with the type shown — a missing key or a wrong shape is exit 2)::
       "overlap": "none",
       "lint": {"status": "pass", "detail": ""},       // pass | fail | unverified
       "artifacts": {"status": "clean", "detail": ""}, // clean | refreshed | unverified
-      "tests": {"make test": "pass", "sdk/ts": "pass"},  // pass | fail | unverified
+      "tests": {"make test": "pass", "sdk/ts": "skipped: no TS in diff"},
+                                        // pass | fail | unverified | skipped: <reason>
       "title": "pass",                  // pass | fail
       "freshness": "in sync", "skip_list": "skipped (surface gate)",
       "findings": {"found": 3, "fixed": 3, "blocking_open": 0},
@@ -48,8 +49,14 @@ nothing reported ``fail``, at least one suite was reported, CI's hint gate is
 ``green`` and the PR is ``mergeable``. An ``unverified`` local lint, artifact or
 suite does **not** block it — step 17's gate reports a check that could not run
 locally rather than gating on it, and CI is then the authority — but each is
-named on the ``Converged`` line, never rendered as a pass. Exit 0 when
-converged, 1 when not, 2 on bad input.
+named on the ``Converged`` line, never rendered as a pass. A suite step 11
+skips by rule is ``skipped: <reason>`` — rendered with its reason and
+non-blocking, and distinct from ``unverified``, which marks a gap; a bare
+``skipped`` is an error. ``tests`` is never empty: a prose-only review reports
+the skipped suites instead. Exit 0 when converged, 1 when not, 2 on bad input.
+
+``--schema`` prints the ``facts.json`` example above and exits 0, so composing
+the facts needs no read of this file.
 
 The lint, artifact, test and title lines are session facts for now: no tool
 emits a lint or suite verdict file yet. When one does, it replaces the fact.
@@ -68,6 +75,7 @@ CHECKLIST = ("addressed", "partial", "missing")
 GATE = ("pass", "fail", "unverified")
 ARTIFACTS = ("clean", "refreshed", "unverified")
 TITLE = ("pass", "fail")
+SKIPPED = "skipped: "
 
 
 class SummaryError(Exception):
@@ -104,6 +112,25 @@ def _status(value, allowed, where: str) -> str:
     return value
 
 
+def _suite_status(value, where: str) -> str:
+    """A gate status, or ``skipped: <reason>`` with a non-empty reason."""
+    if isinstance(value, str) and value.startswith(SKIPPED):
+        if value[len(SKIPPED) :].strip():
+            return value
+    if value not in GATE:
+        raise SummaryError(
+            f"{where}: {value!r} is not one of {', '.join(GATE)}, or {SKIPPED}<reason>"
+        )
+    return value
+
+
+def schema() -> str:
+    """The ``facts.json`` example block from the module docstring."""
+    doc = __doc__.splitlines()
+    start = doc.index("    {")
+    return "\n".join(line[4:] for line in doc[start : doc.index("    }", start) + 1])
+
+
 def _count(value, where: str) -> int:
     # `bool` is an `int` subclass; `True` is not a count.
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
@@ -133,7 +160,9 @@ def _check_shape(facts: dict) -> None:
         ):
             raise SummaryError(f"lenses_skipped entry {s!r} needs lens and reason")
     if not facts["tests"]:
-        raise SummaryError("tests is empty: report at least one suite")
+        raise SummaryError(
+            f"tests is empty: report at least one suite ({SKIPPED}<reason> for a skip)"
+        )
     for key in ("found", "fixed", "blocking_open"):
         _count(facts["findings"].get(key), f"findings.{key}")
     _count(facts["fix_cycles"], "fix_cycles")
@@ -193,7 +222,7 @@ def render(facts: dict, ci: dict | None, merge: dict | None) -> tuple[str, bool]
     ]
     lint_s = _status(lint.get("status"), GATE, "lint")
     art_s = _status(artifacts.get("status"), ARTIFACTS, "artifacts")
-    test_s = {k: _status(v, GATE, f"tests {k!r}") for k, v in tests.items()}
+    test_s = {k: _suite_status(v, f"tests {k!r}") for k, v in tests.items()}
     title_s = _status(facts.get("title"), TITLE, "title")
     ci_text, ci_green = _ci_line(ci)
     merge_text, mergeable = _merge_line(merge)
@@ -279,12 +308,20 @@ def render(facts: dict, ci: dict | None, merge: dict | None) -> tuple[str, bool]
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="review_summary.py")
-    parser.add_argument("--facts", type=Path, required=True)
+    parser.add_argument("--facts", type=Path, help="facts JSON (see --schema)")
     parser.add_argument("--ci", type=Path, help="wait_for_checks --pr verdict file")
     parser.add_argument(
         "--mergeable", type=Path, help="wait_for_checks --mergeable verdict file"
     )
+    parser.add_argument(
+        "--schema", action="store_true", help="print the facts.json schema and exit"
+    )
     args = parser.parse_args(argv)
+    if args.schema:
+        print(schema())
+        return 0
+    if args.facts is None:
+        parser.error("--facts is required (see --schema for its shape)")
     try:
         facts = _load(args.facts, "facts")
         text, converged = render(

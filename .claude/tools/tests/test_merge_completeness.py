@@ -167,6 +167,21 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(lines[-1], "INCOMPLETE")
 
 
+class ConflictHunkTests(unittest.TestCase):
+    def test_sides_are_counted_and_a_diff3_base_belongs_to_neither(self):
+        text = (
+            "keep\n<<<<<<< HEAD\na\nb\n||||||| base\nold\n=======\n>>>>>>> x\n"
+            "<<<<<<< HEAD\n=======\nc\n>>>>>>> x\n"
+        )
+        self.assertEqual(
+            mc.conflict_hunks(text),
+            [{"line": 2, "ours": 2, "theirs": 0}, {"line": 9, "ours": 0, "theirs": 1}],
+        )
+
+    def test_a_divider_outside_a_hunk_is_content(self):
+        self.assertEqual(mc.conflict_hunks("Title\n=======\n"), [])
+
+
 class GitTests(unittest.TestCase):
     """Against a real throwaway repo, since the git plumbing is half the tool."""
 
@@ -387,6 +402,70 @@ class GitTests(unittest.TestCase):
             sys.argv = real
         self.assertEqual(rc, 2)
         self.assertIn("error:", err.getvalue())
+
+
+class InspectTests(unittest.TestCase):
+    """The measured shape: this branch deleted a long block that the base
+    edited two lines inside, then rebased onto it."""
+
+    BLOCK = [f"step {n}\n" for n in range(1, 41)]
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self._git("init", "--quiet")
+        self._git("config", "user.email", "t@t.t")
+        self._git("config", "user.name", "t")
+        self._write(["head\n", *self.BLOCK, "tail\n"])
+        self._git("add", "-A")
+        self._git("commit", "--quiet", "-m", "base")
+        self._git("branch", "-M", "main")
+        self._git("checkout", "--quiet", "-b", "side")
+        # A branch commit to the same file before the deletion, so a
+        # fork-point base would leak it into the "upstream" diff.
+        self._write(["head\n", *self.BLOCK, "tail, edited on the branch\n"])
+        self._git("commit", "--quiet", "-am", "earlier branch edit")
+        self._write(["head\n", "tail, edited on the branch\n"])
+        self._git("commit", "--quiet", "-am", "delete the block")
+        self._git("checkout", "--quiet", "main")
+        edited = list(self.BLOCK)
+        edited[19] = "step 20, amended upstream\n"
+        self._write(["head\n", *edited, "tail\n"])
+        self._git("commit", "--quiet", "-am", "amend step 20")
+        self._git("checkout", "--quiet", "side")
+        rebase = subprocess.run(
+            ["git", "-C", str(self.repo), "-c", "commit.gpgsign=false"]
+            + ["rebase", "main"],
+            capture_output=True,
+            check=False,
+        )
+        self.assertNotEqual(rebase.returncode, 0, "expected a conflicted rebase")
+
+    def _write(self, lines):
+        (self.repo / "list.txt").write_text("".join(lines), encoding="utf-8")
+
+    def _git(self, *args):
+        subprocess.run(
+            ["git", "-C", str(self.repo), "-c", "commit.gpgsign=false", *args],
+            check=True,
+            capture_output=True,
+        )
+
+    def test_a_deleted_side_prints_only_upstreams_change(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = run(
+                ["merge_completeness.py", "--repo", str(self.repo)]
+                + ["--path", "list.txt", "--inspect"]
+            )
+        self.assertEqual(rc, 0)
+        text = out.getvalue()
+        self.assertIn("base REBASE_HEAD^", text)
+        self.assertIn("REBASE_HEAD deleted it; read HEAD's diff below", text)
+        self.assertIn("+step 20, amended upstream", text)
+        self.assertIn("-step 20", text)
+        # Only the edit and its context, never the 40-line block.
+        self.assertNotIn("step 5\n", text)
+        self.assertNotIn("edited on the branch", text)
 
 
 if __name__ == "__main__":

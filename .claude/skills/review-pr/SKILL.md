@@ -148,8 +148,20 @@ migrations or generation inputs, and whether it spans crates.
      ```
 
      List the conflicted files with
-     `git diff --name-only --diff-filter=U` and inspect each hunk with
-     `Read` `offset` / `limit` (`history.md` → "Conflict inspection").
+     `git diff --name-only --diff-filter=U`, then size each one's hunks
+     before reading any:
+
+     ```sh
+     python3 .claude/tools/merge_completeness.py --path <file> --inspect
+     ```
+
+     A hunk with an **empty side** is the delete/modify shape — one
+     side deleted a region the other edited inside — and the tool
+     prints the surviving side's own diff for the file in its place
+     (the base's, when this branch did the deleting): carry those few
+     lines forward and never read the conflicted block (once 146 lines,
+     for a 2-line change). Inspect the other hunks with `Read`
+     `offset` / `limit` (`history.md` → "Conflict inspection").
 
    - **A clean rebase that integrated base commits** can still hide a
      *semantic* conflict (the base renamed something this branch
@@ -1247,7 +1259,18 @@ migrations or generation inputs, and whether it spans crates.
    **One cargo target at a time per worktree** — a blocked build is
    **waited on, never raced**: two builds on one `target/` produced a
    spurious `E0463 can't find crate for dropset_sdk` doctest failure
-   (`history.md` → "Raced cargo builds").
+   (`history.md` → "Raced cargo builds"). Other worktrees sharing the
+   cargo pool can still race it. **Recover with `cargo test --doc`,
+   never a second `make test`**: on an `E0463` doctest failure with
+   zero test failures in the log, run it once, through the quiet
+   runner, and read the pair as the green `make test`. A full re-run
+   only races again, and cargo stops at the first failing doctest
+   crate, so a second full run still never reaches the later crates'
+   doctests:
+
+   ```sh
+   python3 .claude/tools/run_quiet.py -- cargo test --doc
+   ```
 
    **Background the suites and wait on CI concurrently** — they test
    the same commit, so finishing them before step 18's CI wait
@@ -1468,9 +1491,10 @@ migrations or generation inputs, and whether it spans crates.
    is reported by step 22.
 
    Write the facts only this session holds to
-   `<scratchpad>/summary-facts.json` (schema in the tool's docstring),
-   then render; the CI and merge lines come from the verdict files,
-   never from the facts:
+   `<scratchpad>/summary-facts.json` — `review_summary.py --schema`
+   prints its shape, so never grep the tool for it — then render; the
+   CI and merge lines come from the verdict files, never from the
+   facts:
 
    ```sh
    python3 .claude/tools/review_summary.py \
@@ -1482,9 +1506,13 @@ migrations or generation inputs, and whether it spans crates.
    the tier that ran (and the proposed one, so an override is named),
    the lenses that ran, and each skipped lens with its reason — **a
    yield skip is never silent**; the cross-check; in-flight overlap
-   and what was decided; lint, artifacts and each `targets` entry
-   (run or skipped with its reason) as pass / fail / **unverified**,
-   never a guessed pass; the freshness and skip-list
+   and what was decided; lint and artifacts as pass / fail /
+   **unverified**, never a guessed pass; each `targets` entry likewise,
+   or `skipped: <reason>` for a suite step 11 skips **by rule** — a
+   by-rule skip is not a gap, so never mark it unverified, and never
+   run a suite the rule skips just to have a value to report (`tests`
+   is never `{}`: a prose-only review lists each skipped suite); the
+   freshness and skip-list
    verdicts, or "skipped (surface gate)"; findings found / fixed /
    blocking-open, the fix-cycle count, and each warning or nit with
    `file:line` and rationale. Write the **findings paragraph** — the
@@ -1684,6 +1712,9 @@ migrations or generation inputs, and whether it spans crates.
      "last": {"gql_state": "MERGED", "view_state": "MERGED", …},
      "queue_runs": [{"run_id": "…", "name": "…", "conclusion": "…"}],
      "failing_runs": [],
+     "enqueued_at": "…",
+     // on dequeued only:
+     "dequeue": {"dequeue_reason": "merge_conflict", "base_gained": […], …},
      "log_path": "…/wait-for-queue-<number>.log"
    }
    ```
@@ -1737,7 +1768,17 @@ migrations or generation inputs, and whether it spans crates.
      watch), a dequeue older than the tool's run window reads the same —
      check `gh run list` before re-enqueueing.
 
-   - **`dequeued`** → diagnose from the **queue branch's** runs, never
+   - **`dequeued`** → read the cause off the verdict's `dequeue`
+     first. **`dequeue_reason: merge_conflict`** means a PR that
+     landed first conflicts with this one; the queue never built, so
+     empty `queue_runs` / `failing_runs` are expected, and
+     `base_gained` lists the base's commits the head lacks — the ones
+     the rebase must absorb. Go straight to step 2's rebase and
+     re-run from there: no timeline query, mergeability read or
+     `git log` to rediscover what the verdict already says. When
+     `dequeue.error` is set, read by hand only what is `null` — the
+     reason, or just `base_gained` after a failed compare.
+     Any other reason → diagnose from the **queue branch's** runs, never
      the PR's own checks: the queue builds `main` plus this PR on
      `gh-readonly-queue/<base>/pr-<number>-<sha>`, so a failure there
      dequeues the PR while every PR check stays green. The tool reads
@@ -1766,9 +1807,10 @@ migrations or generation inputs, and whether it spans crates.
        re-enqueue. Catalogue it as blocking, re-draft, and tell the
        user to rebase on `main` and re-run `/review-pr`.
 
-     Report the removal either way, naming the job. An empty
-     `failing_runs` means the entry vanished with every run green for
-     the tool's whole grace window — check the PR's timeline before
+     Report the removal either way, naming the job (or the reason). An
+     empty `failing_runs` with a non-conflict reason means the entry
+     vanished with every run green for the tool's whole grace window —
+     `dequeue_reason` is the timeline's answer; weigh it before
      re-enqueueing.
 
    - **`timeout`** / **`probe_failed`** from the backgrounded watch →

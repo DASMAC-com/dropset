@@ -144,6 +144,7 @@ or, under ``--queue``::
       "elapsed_seconds": 1310,
       "polls": 22,
       "seen_queue_entry": true,
+      "enqueued_at": "2026-10-22T23:40:27Z",  // earliest enqueue seen, or --since
       "last": {"gql_state": "MERGED", "entry_state": null, …},
       "queue_runs": [{"run_id": "…", "name": "…", "conclusion": "…", …}],
       "failing_runs": [],
@@ -155,6 +156,16 @@ or, under ``--queue``::
 notification threads done itself, so no session turn sits between the merge and
 the dismissal. Best-effort — a failure is reported there, never changes the
 conclusion. See :func:`dismiss_pr_notifications`.
+
+``dequeue`` is filled only on ``dequeued``, and is best-effort the same way::
+
+      "dequeue": {"dequeue_reason": "merge_conflict",
+                  "dequeued_at": "2026-10-22T23:40:44Z",
+                  "base_gained": [{"sha": "8f285869abcd", "subject": "feat(…): …"}],
+                  "base_gained_total": 1, "error": null}
+
+``base_gained`` (the base's commits the head lacks) is read only on a conflict
+reason, so the rebase starts from the verdict. See :func:`dequeue_cause`.
 
 Exit code is 0 when ``conclusion`` is ``pass`` (or ``merged``, or
 ``mergeable``), else 1 — so a
@@ -176,8 +187,9 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 DEFAULT_REPO = "DASMAC-com/dropset"
 
@@ -784,6 +796,15 @@ def wait_queue(
         "elapsed_seconds": int(clock() - started),
         "polls": polls,
         "seen_queue_entry": seen_entry,
+        # The earliest enqueue this watch saw (or `since`), so a dequeue cause
+        # older than it can be told apart from this cycle's.
+        "enqueued_at": (
+            None
+            if anchor is None
+            else datetime.fromtimestamp(anchor, tz=timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+        ),
         "last": {
             "gql_state": snap.get("gql_state"),
             "entry_state": (snap.get("entry") or {}).get("state"),
@@ -834,6 +855,117 @@ def dismiss_pr_notifications(pr: int, repo: str) -> dict:
             failed += 1
             error = err.strip() or f"exit {code}"
     return {"dismissed": len(ids) - failed, "failed": failed, "error": error}
+
+
+# The newest queue removal event, and the head to compare the base against.
+DEQUEUE_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      baseRefName
+      headRefOid
+      timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) {
+        nodes { ... on RemovedFromMergeQueueEvent { createdAt reason } }
+      }
+    }
+  }
+}
+"""
+
+# How many of the base's new commits a merge-conflict verdict lists.
+BASE_GAINED_LIMIT = 20
+
+
+def _subject(commit) -> str:
+    """A compare entry's subject line; ``""`` for any unexpected shape."""
+    inner = commit.get("commit") if isinstance(commit, dict) else None
+    message = inner.get("message") if isinstance(inner, dict) else None
+    return message.split("\n")[0] if isinstance(message, str) else ""
+
+
+def dequeue_cause(pr: int, repo: str, enqueued_at: str | None = None) -> dict:
+    """Why ``repo``'s PR ``pr`` left the queue, and what landed meanwhile.
+
+    Called on a ``dequeued`` queue verdict, so the session reads the cause off
+    the verdict instead of spending a timeline query, a mergeability read and a
+    ``git log`` to learn it. ``dequeue_reason`` / ``dequeued_at`` come from the
+    newest ``RemovedFromMergeQueueEvent`` (GitHub's lowercase reason, e.g.
+    ``merge_conflict``); on a conflict reason, ``base_gained``
+    lists the base branch's commits the PR head lacks (the last
+    :data:`BASE_GAINED_LIMIT` of the compare's first page — up to 250, so the
+    newest unless the head is that stale; oldest first; ``base_gained_total``
+    counts all) — the PRs that landed first and that the rebase must absorb.
+    Not "since the enqueue": a conflict dequeue fires seconds after it, so the
+    culprit landed before. ``base_gained`` is ``None`` for any other reason.
+
+    ``enqueued_at`` (the watch's earliest seen enqueue) guards against a stale
+    event: a newest removal older than it belongs to an earlier cycle, so its
+    reason is withheld and ``error`` says why. Never raises: the dequeue
+    already happened, so a failed read is reported in ``error`` and the
+    session falls back to reading by hand.
+    """
+    cause: dict = {
+        "dequeue_reason": None,
+        "dequeued_at": None,
+        "base_gained": None,
+        "base_gained_total": None,
+        "error": None,
+    }
+    owner, _, name = repo.partition("/")
+    try:
+        gql = _gh_json(
+            [
+                "api",
+                "graphql",
+                "-f",
+                f"owner={owner}",
+                "-f",
+                f"name={name}",
+                "-F",
+                f"number={pr}",
+                "-f",
+                f"query={DEQUEUE_QUERY}",
+            ],
+            "dequeue timeline query",
+        )
+        node = gql["data"]["repository"]["pullRequest"]
+        events = node["timelineItems"]["nodes"]
+        base = node["baseRefName"]
+        head = node["headRefOid"]
+    except (WaitForChecksError, KeyError, TypeError) as exc:
+        cause["error"] = f"dequeue timeline query: {exc!r}"
+        return cause
+    last = events[-1] if events and isinstance(events[-1], dict) else None
+    if last is None:
+        cause["error"] = "no RemovedFromMergeQueueEvent on the timeline"
+        return cause
+    removed, since = _parse_time(last.get("createdAt")), _parse_time(enqueued_at)
+    if removed is not None and since is not None and removed < since:
+        cause["error"] = (
+            f"newest RemovedFromMergeQueueEvent ({last.get('createdAt')}) predates "
+            f"this enqueue ({enqueued_at}) — not yet on the timeline"
+        )
+        return cause
+    cause["dequeue_reason"] = last.get("reason")
+    cause["dequeued_at"] = last.get("createdAt")
+    if "conflict" not in str(last.get("reason") or "").lower():
+        return cause
+    try:
+        compare = _gh_json(
+            ["api", f"/repos/{repo}/compare/{quote(head)}...{quote(base)}"],
+            "base compare",
+        )
+        commits = compare["commits"]
+        cause["base_gained_total"] = int(compare["ahead_by"])
+    except (WaitForChecksError, KeyError, TypeError, ValueError) as exc:
+        cause["error"] = f"base compare: {exc!r}"
+        return cause
+    cause["base_gained"] = [
+        {"sha": str(c.get("sha", ""))[:12], "subject": _subject(c)}
+        for c in (commits if isinstance(commits, list) else [])[-BASE_GAINED_LIMIT:]
+        if isinstance(c, dict)
+    ]
+    return cause
 
 
 def read_checks(pr: int, repo: str) -> list[dict]:
@@ -1642,6 +1774,10 @@ def run(argv: list[str]) -> int:
         if verdict["conclusion"] == "merged":
             verdict["notifications"] = dismiss_pr_notifications(
                 args.queue_pr, args.repo
+            )
+        elif verdict["conclusion"] == "dequeued":
+            verdict["dequeue"] = dequeue_cause(
+                args.queue_pr, args.repo, verdict.get("enqueued_at")
             )
     else:
         interval = DEFAULT_INTERVAL if args.interval is None else args.interval
