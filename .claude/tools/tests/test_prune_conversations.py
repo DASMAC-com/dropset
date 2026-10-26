@@ -590,6 +590,8 @@ class RunWiringTests(unittest.TestCase):
             path.mkdir()
         # The live worktree's transcript — this is what joins it to file-history.
         (made["live"] / "live-session.jsonl").write_text("{}\n", encoding="utf-8")
+        # A pruned worktree's transcript, whose estimate sidecar goes with it.
+        (made["gone"] / "gone-session.jsonl").write_text("{}\n", encoding="utf-8")
         (history / "live-session").mkdir()
         (history / "orphan-session").mkdir()
 
@@ -689,6 +691,38 @@ class RunWiringTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out = self._run(tmp)
         self.assertIn("- orphan-session", out)
+
+    def _sidecars(self, tmp):
+        """Estimate sidecars for the deleted and the kept session. An absolute
+        ``ESTIMATE_DIR`` replaces the base-relative one under ``/``."""
+        state = Path(tmp) / "state"
+        state.mkdir()
+        for uuid in ("gone-session", "live-session"):
+            (state / f"{uuid}{pc.ESTIMATE_SUFFIX}").write_text("{}\n", encoding="utf-8")
+        return state
+
+    def test_a_deleted_sessions_estimate_sidecar_is_named_and_pruned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self._sidecars(tmp)
+            with mock.patch.object(pc, "ESTIMATE_DIR", state):
+                dry = self._run(tmp)
+                self.assertTrue((state / "gone-session.estimate").exists())
+                applied = self._run(tmp + "/again", argv=("--apply",))
+            self.assertFalse((state / "gone-session.estimate").exists())
+            self.assertTrue((state / "live-session.estimate").exists())
+        self.assertIn("estimate sidecars of those sessions: 1 file(s)", dry)
+        self.assertIn("and 1 estimate sidecar(s)", applied)
+
+    def test_a_refused_delete_keeps_its_sessions_sidecar(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self._sidecars(tmp)
+            with (
+                mock.patch.object(pc, "ESTIMATE_DIR", state),
+                mock.patch.object(pc, "safe_delete", return_value=0),
+            ):
+                applied = self._run(tmp, argv=("--apply",))
+            self.assertTrue((state / "gone-session.estimate").exists())
+        self.assertIn("and 0 estimate sidecar(s)", applied)
 
 
 class BaseWorktreeTests(unittest.TestCase):

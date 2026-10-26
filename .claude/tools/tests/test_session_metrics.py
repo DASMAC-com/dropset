@@ -1524,6 +1524,106 @@ class ResidentProseLine(unittest.TestCase):
         self.assertNotIn("Resident instruction prose", md)
 
 
+class ExitBrief(unittest.TestCase):
+    """`--brief` and `--estimate-out`, the shell launcher's exit epilogue."""
+
+    _USAGE = '{"input_tokens":10,"output_tokens":5000,"cache_read_input_tokens":900}'
+
+    def _report(self, substrate: str, model: str = MODEL) -> dict:
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(assistant(self._USAGE, "", model))
+        return agg.finish(substrate)
+
+    def test_a_bedrock_brief_is_one_priced_paragraph(self):
+        report = self._report(sm.SUBSTRATE_BEDROCK)
+        brief = sm.to_brief(report, "abcd1234")
+        self.assertEqual(brief.count("\n"), 1)
+        self.assertIn(f"about {sm.money(report['total_cost'].total())}", brief)
+        self.assertIn("at Bedrock rates;", brief)
+        self.assertIn("1 turns", brief)
+
+    def test_a_seat_brief_is_priced_and_says_not_billed(self):
+        brief = sm.to_brief(self._report(sm.SUBSTRATE_SEAT), "abcd1234")
+        self.assertIn("at Bedrock rates, not billed;", brief)
+
+    def test_an_unpriced_model_withholds_the_figure(self):
+        report = self._report(sm.SUBSTRATE_BEDROCK, "claude-x")
+        self.assertIn(
+            "cost withheld, no Bedrock rate for claude-x", sm.to_brief(report, "a")
+        )
+        self.assertIsNone(sm.estimate_record(report, "sid")["cost_usd"])
+
+    def test_main_writes_the_sidecar_and_prints_only_the_brief(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = pathlib.Path(tmp)
+            slug = home / "projects" / "some-slug"
+            slug.mkdir(parents=True)
+            (slug / "sid-1.jsonl").write_text(
+                assistant(self._USAGE, "") + "\n", encoding="utf-8"
+            )
+            out_path = home / "state" / "sessions" / "sid-1.estimate"
+            stdout = io.StringIO()
+            with (
+                mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(home)}),
+                contextlib.redirect_stdout(stdout),
+            ):
+                rc = sm.main(
+                    [
+                        "--brief",
+                        "--session-id",
+                        "sid-1",
+                        "--substrate",
+                        sm.SUBSTRATE_BEDROCK,
+                        "--estimate-out",
+                        str(out_path),
+                    ]
+                )
+            self.assertEqual(rc, 0)
+            self.assertTrue(stdout.getvalue().startswith("Session sid: about $"))
+            self.assertNotIn("## Session metrics", stdout.getvalue())
+            record = json.loads(out_path.read_text(encoding="utf-8"))
+        report = self._report(sm.SUBSTRATE_BEDROCK)
+        self.assertEqual(record["session_id"], "sid-1")
+        self.assertEqual(record["substrate"], sm.SUBSTRATE_BEDROCK)
+        self.assertEqual(record["cost_usd"], round(report["total_cost"].total(), 6))
+        self.assertEqual(record["turns"], 1)
+        self.assertIn("written_at", record)
+
+
+class ExitBriefSidecarFailure(unittest.TestCase):
+    """A sidecar that cannot be written keeps the brief and exits 0, so the
+    launcher does not print "no session estimate" under a printed figure."""
+
+    def test_an_unwritable_sidecar_is_not_a_failed_estimate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = pathlib.Path(tmp)
+            slug = home / "projects" / "some-slug"
+            slug.mkdir(parents=True)
+            (slug / "sid-2.jsonl").write_text(
+                assistant(ExitBrief._USAGE, "") + "\n", encoding="utf-8"
+            )
+            blocker = home / "not-a-dir"
+            blocker.write_text("", encoding="utf-8")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with (
+                mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(home)}),
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                rc = sm.main(
+                    [
+                        "--brief",
+                        "--session-id",
+                        "sid-2",
+                        "--estimate-out",
+                        str(blocker / "sessions" / "sid-2.estimate"),
+                    ]
+                )
+        self.assertEqual(rc, 0)
+        self.assertTrue(stdout.getvalue().startswith("Session sid: "))
+        self.assertIn("estimate sidecar not written", stderr.getvalue())
+
+
 class MoneyFormatting(unittest.TestCase):
     """`money()`'s thresholds are otherwise unpinned, and transposing its format
     specs would render every session's headline wrong with a green suite."""
