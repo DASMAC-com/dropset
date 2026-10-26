@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import hook_wiring as hw  # noqa: E402
 
 
-def _settings(commands, event="PreToolUse", matcher="Bash"):
-    return {
+def _settings(commands, event="PreToolUse", matcher="Bash", deny=None):
+    settings = {
         "hooks": {
             event: [
                 {
@@ -30,6 +30,9 @@ def _settings(commands, event="PreToolUse", matcher="Bash"):
             ]
         }
     }
+    if deny is not None:
+        settings["permissions"] = {"deny": list(deny)}
+    return settings
 
 
 WIRING = 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py"'
@@ -474,7 +477,10 @@ class CliTests(RepoFixture):
     def test_exits_zero_when_everything_is_wired(self):
         self._write(
             "settings.local.json",
-            _settings([WIRING, "python3 .claude/hooks/no_git_grep.py"]),
+            _settings(
+                [WIRING, "python3 .claude/hooks/no_git_grep.py"],
+                deny=hw.REQUIRED_DENY_RULES,
+            ),
         )
         code, out, _ = self._capture(["hook_wiring.py", "--repo", str(self.repo)])
         self.assertEqual(code, 0)
@@ -526,6 +532,173 @@ class CliTests(RepoFixture):
                 sys.argv = original
         self.assertEqual(code, 2)
         self.assertIn("hook-wiring:", err.getvalue())
+
+
+CONVENTION = (
+    Path(__file__).resolve().parents[3] / "docs/conventions/local-integrations.md"
+)
+
+
+class DenyRuleTests(RepoFixture):
+    """The private-key deny rules are reported missing like an unwired guard."""
+
+    def test_no_settings_reports_every_rule_missing(self):
+        result = hw.scan(self.repo, self.no_user)
+        self.assertEqual(result["deny_missing"], list(hw.REQUIRED_DENY_RULES))
+
+    def test_rules_in_any_scope_count(self):
+        rules = list(hw.REQUIRED_DENY_RULES)
+        self._write("settings.json", {"permissions": {"deny": rules[:3]}})
+        self._write("settings.local.json", {"permissions": {"deny": rules[3:]}})
+        self.assertEqual(hw.scan(self.repo, self.no_user)["deny_missing"], [])
+
+    def test_user_settings_count(self):
+        user = self.repo / "user-settings.json"
+        user.write_text(
+            json.dumps({"permissions": {"deny": list(hw.REQUIRED_DENY_RULES)}}),
+            encoding="utf-8",
+        )
+        self.assertEqual(hw.scan(self.repo, user)["deny_missing"], [])
+
+    def test_one_missing_rule_is_named(self):
+        rules = [r for r in hw.REQUIRED_DENY_RULES if r != "Bash(op:*)"]
+        self._write("settings.local.json", {"permissions": {"deny": rules}})
+        self.assertEqual(
+            hw.scan(self.repo, self.no_user)["deny_missing"], ["Bash(op:*)"]
+        )
+
+    def test_the_space_prefix_spelling_counts(self):
+        rules = [
+            "Bash(op *)" if r == "Bash(op:*)" else r for r in hw.REQUIRED_DENY_RULES
+        ]
+        self._write("settings.local.json", {"permissions": {"deny": rules}})
+        self.assertEqual(hw.scan(self.repo, self.no_user)["deny_missing"], [])
+
+    def test_an_allow_rule_is_not_a_deny_rule(self):
+        self._write(
+            "settings.local.json",
+            {"permissions": {"allow": list(hw.REQUIRED_DENY_RULES)}},
+        )
+        result = hw.scan(self.repo, self.no_user)
+        self.assertEqual(len(result["deny_missing"]), len(hw.REQUIRED_DENY_RULES))
+
+    def test_a_malformed_permissions_key_is_tolerated(self):
+        self._write("settings.local.json", {"permissions": {"deny": "Bash(op:*)"}})
+        result = hw.scan(self.repo, self.no_user)
+        self.assertIn("Bash(op:*)", result["deny_missing"])
+
+    def test_a_missing_rule_exits_one_even_with_every_guard_wired(self):
+        self._write(
+            "settings.local.json",
+            _settings([WIRING, "python3 .claude/hooks/no_git_grep.py"]),
+        )
+        out = io.StringIO()
+        # `run` reads the real user settings by default; once the operator
+        # pastes the deny block there, this absence test would go red.
+        with (
+            mock.patch.object(hw, "USER_SETTINGS", self.no_user),
+            redirect_stdout(out),
+        ):
+            code = hw.run(["hook_wiring.py", "--repo", str(self.repo)])
+        self.assertEqual(code, 1)
+        self.assertIn("DENY-MISSING  Bash(op:*)", out.getvalue())
+        self.assertIn("every committed guard hook is wired", out.getvalue())
+
+    def test_the_private_key_guard_is_expected_on_bash_and_the_edit_tools(self):
+        self.assertEqual(
+            hw.EXPECTED_TOOLS["no_private_key_access.py"],
+            frozenset({"Bash", "Edit", "Write", "MultiEdit"}),
+        )
+
+    def test_the_convention_paste_block_lists_exactly_these_rules(self):
+        """The doc's block and this tool's table must not drift apart: an
+        operator pastes the one, and the upkeep checks the other."""
+        text = CONVENTION.read_text(encoding="utf-8")
+        section = text.split("## The private-key guard hook", 1)[1]
+        section = section.split("\n## ", 1)[0]
+        blocks = [
+            json.loads(chunk.split("```", 1)[0])
+            for chunk in section.split("```json\n")[1:]
+        ]
+        denies = [b["permissions"]["deny"] for b in blocks if "permissions" in b]
+        self.assertEqual(len(denies), 1)
+        self.assertEqual(denies[0], list(hw.REQUIRED_DENY_RULES))
+        matchers = [
+            entry["matcher"]
+            for b in blocks
+            for entry in b.get("hooks", {}).get("PreToolUse", [])
+            if any(
+                "no_private_key_access.py" in h.get("command", "")
+                for h in entry["hooks"]
+            )
+        ]
+        self.assertEqual(len(matchers), 1)
+        self.assertTrue(
+            hw.matcher_selects(
+                matchers[0], hw.EXPECTED_TOOLS["no_private_key_access.py"]
+            )
+        )
+        for tool in hw.EXPECTED_TOOLS["no_private_key_access.py"]:
+            self.assertTrue(hw.matcher_selects(matchers[0], [tool]), tool)
+
+
+PK_WIRING = 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/no_private_key_access.py"'
+
+
+class PartialWiringTests(RepoFixture):
+    """The private-key guard needs Bash AND the edit tools selected."""
+
+    def setUp(self):
+        super().setUp()
+        (self.repo / ".claude" / "hooks" / "no_private_key_access.py").write_text(
+            "", encoding="utf-8"
+        )
+
+    def _entries(self, *matchers):
+        return {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": m,
+                        "hooks": [{"type": "command", "command": PK_WIRING}],
+                    }
+                    for m in matchers
+                ]
+            }
+        }
+
+    def test_bash_only_is_mismatched_naming_the_uncovered_tools(self):
+        self._write("settings.local.json", self._entries("Bash"))
+        result = hw.scan(self.repo, self.no_user)
+        self.assertIn("no_private_key_access.py", result["mismatched"])
+        self.assertEqual(
+            result["uncovered"]["no_private_key_access.py"],
+            ["Edit", "MultiEdit", "Write"],
+        )
+        self.assertIn("that half of it cannot fire", hw.render(result))
+
+    def test_edit_only_is_mismatched(self):
+        self._write("settings.local.json", self._entries("Edit|Write|MultiEdit"))
+        result = hw.scan(self.repo, self.no_user)
+        self.assertEqual(result["uncovered"]["no_private_key_access.py"], ["Bash"])
+
+    def test_the_documented_matcher_is_wired(self):
+        self._write("settings.local.json", self._entries("Bash|Edit|Write|MultiEdit"))
+        result = hw.scan(self.repo, self.no_user)
+        self.assertIn("no_private_key_access.py", result["wired"])
+        self.assertEqual(result["uncovered"], {})
+
+    def test_two_entries_that_cover_every_tool_are_wired(self):
+        self._write(
+            "settings.local.json", self._entries("Bash", "Edit|Write|MultiEdit")
+        )
+        self.assertIn(
+            "no_private_key_access.py", hw.scan(self.repo, self.no_user)["wired"]
+        )
+
+    def test_other_guards_still_need_only_one_tool(self):
+        self._write("settings.local.json", _settings([WIRING]))
+        self.assertIn("no_compound_bash.py", hw.scan(self.repo, self.no_user)["wired"])
 
 
 class ItermDriftTests(RepoFixture):
@@ -693,7 +866,10 @@ class ItermDriftTests(RepoFixture):
         self._deploy()
         self._write(
             "settings.local.json",
-            _settings([WIRING, "python3 .claude/hooks/no_git_grep.py"]),
+            _settings(
+                [WIRING, "python3 .claude/hooks/no_git_grep.py"],
+                deny=hw.REQUIRED_DENY_RULES,
+            ),
         )
         out = io.StringIO()
         with redirect_stdout(out):

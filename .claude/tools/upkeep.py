@@ -613,6 +613,14 @@ def step_checks(ctx: Ctx) -> None:
             | set(hooks.get("misdirected", {}))
         )
         ctx.record("hook-wiring", f"{len(inert)} inert guard(s)", inert=inert)
+        # The private-key deny rules are the guard's other layer; a missing one
+        # is the same gap as an unwired guard, so it gets its own line.
+        missing = hooks.get("deny_missing", [])
+        ctx.record(
+            "deny-rules",
+            f"{len(missing)} missing private-key deny rule(s)",
+            missing=missing,
+        )
 
     # Exit 1 is the watch line being crossed, a finding rather than a failure —
     # but only when the tool printed the rows that say so; an exit 1 with no

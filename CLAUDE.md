@@ -486,7 +486,10 @@ revision-scoped search is served by `show_at_ref.py`), destructive-command
 (inspects only message/body *values*, so searching for those strings
 stays legal) guards described above; the **worktree edit-path guard**
 (blocks a file-mutating tool targeting a base-repo absolute path from a
-worktree session — a recurring, expensive slip). Also the iTerm2
+worktree session — a recurring, expensive slip); and the **private-key
+guard** with its `permissions.deny` rules (no agent session or
+sub-agent touches the mainnet keys or runs a mainnet operation; no
+escape marker). Also the iTerm2
 tab-color integration and the shell setup they lean on — including the
 **session secrets**, resolved from 1Password at session launch, never
 written into a config file, the CLI signed out right after the reads.

@@ -419,6 +419,21 @@ class GuardConflictTests(unittest.TestCase):
             with self.subTest(rule=rule):
                 self.assertEqual(self._solo(rule)[0], "guard-conflict")
 
+    def test_a_private_key_grant_is_flagged(self):
+        for rule in (
+            "Bash(op:*)",
+            "Bash(op run:*)",
+            "Bash(ssh-add:*)",
+            "Bash(make tui-mainnet:*)",
+        ):
+            with self.subTest(rule=rule):
+                self.assertIn("no_private_key_access", allowlist.guard_conflict(rule))
+
+    def test_an_ordinary_make_rule_is_not_flagged(self):
+        for rule in ("Bash(make lint:*)", "Bash(make collectors-up:*)"):
+            with self.subTest(rule=rule):
+                self.assertIsNone(allowlist.guard_conflict(rule))
+
     def test_an_ordinary_git_rule_is_not_flagged(self):
         for rule in (
             "Bash(git status:*)",

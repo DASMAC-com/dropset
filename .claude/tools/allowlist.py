@@ -405,8 +405,10 @@ def guard_conflict(rule: str) -> str | None:
     Asks the guard's **own** predicate rather than re-deriving its rule here,
     so the audit and the run-time block cannot drift apart.
 
-    **Exactly one guard is consulted today**, and the boundary is worth stating
-    rather than leaving as an accident of implementation:
+    **Two guards are consulted today** — ``no_git_grep`` and
+    ``no_private_key_access``, the two with no escape marker, so a grant either
+    blocks can never be used — and the boundary is worth stating rather than
+    leaving as an accident of implementation:
 
     * ``no_compound_bash`` is excluded **by policy** — it takes a
       ``#compound-ok`` marker, so a rule granting a compound is not in conflict
@@ -434,6 +436,16 @@ def guard_conflict(rule: str) -> str | None:
             "(no escape hatch, by design) — inert while the guard is wired, "
             "but it reads as sanctioning a practice the conventions forbid"
         )
+    guard = _load_guard("no_private_key_access")
+    evaluate = getattr(guard, "evaluate", None) if guard else None
+    if callable(evaluate):
+        code, _ = evaluate({"tool_name": "Bash", "tool_input": {"command": command}})
+        if code == 2:
+            return (
+                "grants a command the no_private_key_access guard blocks "
+                "outright (no escape hatch, by design) — agent sessions never "
+                "touch the private keys or run mainnet operations"
+            )
     return None
 
 
