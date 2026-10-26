@@ -334,6 +334,28 @@ class FrictionRollupTest(unittest.TestCase):
         self.assertEqual(friction["rebased_sessions"], 1)
         self.assertAlmostEqual(friction["dollars_after"]["bedrock"], ONE_MESSAGE)
 
+    def test_a_child_sorting_before_its_parent_inherits_nothing(self) -> None:
+        bedrock = self.home / "projects" / "bedrock"
+        parent = bedrock / "s1.jsonl"
+        cwd = f"{Path(self.tmp.name)}/repo/.claude/worktrees/1651"
+        own = json.dumps(
+            {
+                "cwd": cwd,
+                "timestamp": "2026-10-14T09:00:00.000Z",
+                "message": {"id": "m9", "model": "claude-opus-5-5", "usage": USAGE},
+            }
+        )
+        # Named to sort first, but written after the parent it resumed.
+        child = bedrock / "s0.jsonl"
+        child.write_text(parent.read_text() + own + "\n")
+        now = datetime.datetime.now().timestamp()
+        os.utime(parent, (now - 100, now - 100))
+        os.utime(child, (now, now))
+        summary = fc.day_summary(
+            fc.walk(self.home / "projects", ["2026-10-14"]), "2026-10-14"
+        )
+        self.assertNotIn("friction", summary)
+
     def test_a_stall_alone_puts_the_line_on_its_day(self) -> None:
         cwd = f"{Path(self.tmp.name)}/repo/.claude/worktrees/1651"
         stalled = [

@@ -450,9 +450,10 @@ _REBASE_CONTINUATIONS = frozenset(
     {"--abort", "--continue", "--skip", "--quit", "--edit-todo", "--show-current-patch"}
 )
 # A rebase with nothing to replay changed nothing, so it costs nothing after:
-# `git rebase` says the first, a no-op `git pull --rebase` the second. Through
+# `git rebase` says the first, a no-op `git pull --rebase` the second, and a
+# rebase refused before replaying (unstaged changes) the third. Through
 # `run_quiet.py` a pass prints neither, so a quiet no-op still counts.
-_REBASE_NOOPS = ("is up to date", "Already up to date")
+_REBASE_NOOPS = ("is up to date", "Already up to date", "cannot rebase")
 
 
 def friction_kind(command: str) -> str | None:

@@ -377,12 +377,30 @@ def _read_head(path: Path) -> tuple[str | None, str | None]:
 HEAD_USER_RECORDS = 3
 
 
+def _oldest_first(paths) -> list[Path]:
+    """``paths`` by last write, then name; one that vanished is dropped."""
+    dated = []
+    for path in paths:
+        try:
+            dated.append((path.stat().st_mtime, path.name, path))
+        except OSError:
+            continue
+    return [path for _, _, path in sorted(dated)]
+
+
 def walk(projects: Path, days: list[str]) -> Meter:
     """Meter every transcript that could hold a record on ``days``.
 
     A transcript last written before the first day cannot hold one, so it is
     skipped unread; a sub-agent transcript always finishes before its parent's
     last write, so the parent's mtime gates both.
+
+    A project's transcripts are walked oldest-written first. Every count is
+    first-seen-wins across the walk, and a resumed session's parent stops
+    being written before its child exists, so the parent's records stay the
+    parent's. A parent last written before the window is skipped, and its
+    child then carries those records as its own: a session resumed across
+    days did span them, and the idle time between is a real stall.
     """
     meter = Meter(days=set(days))
     floor = (
@@ -395,7 +413,7 @@ def walk(projects: Path, days: list[str]) -> Meter:
     for project in sorted(projects.iterdir()):
         if not project.is_dir():
             continue
-        for transcript in sorted(project.glob("*.jsonl")):
+        for transcript in _oldest_first(project.glob("*.jsonl")):
             try:
                 if transcript.stat().st_mtime < floor:
                     continue

@@ -1826,6 +1826,16 @@ class FrictionLines(unittest.TestCase):
                     self._turn("m1", bash("t1", "git pull --rebase")),
                 ),
                 ("2026-10-26T10:00:05Z", tool_result("t1", '"Already up to date."')),
+                (
+                    "2026-10-26T10:01:00Z",
+                    self._turn("m2", bash("t2", "git rebase main")),
+                ),
+                (
+                    "2026-10-26T10:01:05Z",
+                    tool_result(
+                        "t2", '"error: cannot rebase: You have unstaged changes."'
+                    ),
+                ),
             ]
         )
         self.assertEqual(report["rebases"], [])
