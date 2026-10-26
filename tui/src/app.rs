@@ -971,6 +971,10 @@ impl App {
     /// whole demo in one keystroke.
     fn stop_all_bots(&mut self) {
         let n = self.bots.running_count() + self.takers.running_count();
+        if n == 0 {
+            self.log(LogKind::Info, "No bots running.".to_string());
+            return;
+        }
         self.bots.stop_all();
         self.takers.stop_all();
         self.log(LogKind::Info, format!("Stopping {n} bot(s)…"));

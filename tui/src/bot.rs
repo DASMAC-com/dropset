@@ -31,15 +31,25 @@ use std::time::{Duration, Instant};
 /// has a live — or just-exited-and-not-yet-reaped — child; one in `stopping`
 /// has been sent SIGTERM and is pulling its liquidity, with the instant past
 /// which [`BotManager::reap`] kills it.
-#[derive(Default)]
 pub struct BotManager {
     children: HashMap<String, Child>,
     stopping: HashMap<String, (Child, Instant)>,
+    /// `STOP_GRACE` everywhere but the tests, which shorten it to reach the
+    /// kill path without a 20 s wait.
+    grace: Duration,
 }
 
 impl BotManager {
     pub fn new() -> Self {
-        Self::default()
+        Self::with_grace(STOP_GRACE)
+    }
+
+    fn with_grace(grace: Duration) -> Self {
+        Self {
+            children: HashMap::new(),
+            stopping: HashMap::new(),
+            grace,
+        }
     }
 
     /// Whether a bot for `symbol` is currently tracked as running. Reflects
@@ -79,7 +89,7 @@ impl BotManager {
         }
         if self.stopping.contains_key(symbol) {
             log.log(format!(
-                "[{symbol}] bot still stopping — start it once it exits"
+                "[{symbol}] still stopping — start it once it exits"
             ));
             return Ok(());
         }
@@ -138,7 +148,7 @@ impl BotManager {
     fn begin_stop(&mut self, symbol: String, child: Child) {
         sigterm(&child);
         self.stopping
-            .insert(symbol, (child, Instant::now() + STOP_GRACE));
+            .insert(symbol, (child, Instant::now() + self.grace));
     }
 
     /// Reap any child that has exited, logging its status: a running one that
@@ -166,15 +176,18 @@ impl BotManager {
                     stopped.push(symbol.clone());
                 }
                 Ok(None) if now < *deadline => {}
-                // An unreadable status, or the grace spent: kill and reap, so
+                // The grace spent, or an unreadable status: kill and reap, so
                 // no child outlives its manager.
-                _ => {
+                waited => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    log.log(format!(
-                        "[{symbol}] bot still up {}s after SIGTERM — killed",
-                        STOP_GRACE.as_secs()
-                    ));
+                    log.log(match waited {
+                        Err(e) => format!("[{symbol}] bot status unreadable ({e}) — killed"),
+                        _ => format!(
+                            "[{symbol}] bot still up {}s after SIGTERM — killed",
+                            self.grace.as_secs()
+                        ),
+                    });
                     stopped.push(symbol.clone());
                 }
             }
@@ -228,6 +241,12 @@ fn wait_out(children: Vec<(Child, Instant)>) {
                 Ok(None) => thread::sleep(Duration::from_millis(100)),
             }
         }
+    }
+}
+
+impl Default for BotManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -366,6 +385,57 @@ mod tests {
             bots.start(symbol, cmd, log).expect("spawn sleep");
         }
         bots
+    }
+
+    /// A child that ignores SIGTERM — a maker wedged on its take-off. `exec`
+    /// keeps the ignored disposition on `sleep` and the pid the manager holds.
+    fn wedged() -> Command {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "trap '' TERM; exec sleep 30"]);
+        cmd
+    }
+
+    /// A stop never waits on the child, even one that will not exit; the
+    /// reap kills it once the grace is spent, and not before.
+    #[test]
+    fn a_wedged_bot_is_killed_by_the_reap_past_its_grace() {
+        let (tx, rx) = mpsc::channel();
+        let log = Logger::new(tx);
+        let grace = Duration::from_millis(500);
+        let mut bots = BotManager::with_grace(grace);
+        bots.start("A", wedged(), &log).expect("spawn sh");
+        // Let `sh` install the trap before it is signalled.
+        thread::sleep(Duration::from_millis(200));
+        let started = Instant::now();
+        bots.stop("A");
+        assert!(started.elapsed() < Duration::from_millis(100));
+        bots.reap(&log);
+        assert!(bots.is_stopping("A"), "killed inside its grace");
+        while bots.stopping_count() > 0 {
+            assert!(started.elapsed() < grace * 10, "{:?}", started.elapsed());
+            bots.reap(&log);
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(started.elapsed() >= grace);
+        assert!(rx
+            .try_iter()
+            .any(|ev| matches!(ev, JobEvent::Log(s) if s.contains("after SIGTERM — killed"))));
+    }
+
+    /// The wipe's kill reaches a bot already stopping, not only running ones.
+    #[test]
+    fn kill_all_takes_running_and_stopping_bots() {
+        let (tx, _rx) = mpsc::channel();
+        let log = Logger::new(tx);
+        let mut bots = BotManager::new();
+        bots.start("A", wedged(), &log).expect("spawn sh");
+        bots.start("B", wedged(), &log).expect("spawn sh");
+        thread::sleep(Duration::from_millis(200));
+        bots.stop("A");
+        let started = Instant::now();
+        bots.kill_all();
+        assert!(started.elapsed() < STOP_GRACE / 4);
+        assert_eq!(bots.running_count() + bots.stopping_count(), 0);
     }
 
     /// A stop signals and returns; the reap collects the exit. A child that
