@@ -42,7 +42,8 @@ pub struct CreateVaultEvent {
 
 /// Emitted by `close_vault` when a leader moves their vault from the
 /// active DLL to the tombstone DLL. Matching stops; depositor flows
-/// stay open until the vault drains. See the spec's **CloseVault**.
+/// stay open until the vault drains. A never-seeded vault is reclaimed
+/// to the free DLL instead. See the spec's **CloseVault**.
 #[event]
 pub struct CloseVaultEvent {
     pub market: Address,
