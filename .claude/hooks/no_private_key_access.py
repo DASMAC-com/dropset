@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # cspell:word caffeinate
 # cspell:word commenters
+# cspell:word coproc
 # cspell:word execdir
 # cspell:word gsed
 # cspell:word okdir
+# cspell:word pipefail
 # cspell:word procs
+# cspell:word rcfile
 # cspell:word sshlogin
 """PreToolUse guard: keep every agent session away from the private keys.
 
@@ -73,10 +76,14 @@ operator refuses it.
 unquoted newline as a command separator — so a quoted string spanning lines
 (a commit message describing this guard) stays one word, and a
 backslash-newline continuation joins its lines. Runs of glued operators
-(``;(``, ``&&(``, ``;>``) are split into their parts. Only when the whole
-command's quotes do not balance does it fall back to scanning line by line,
-skipping a line that does not parse. The name checks (rule 1) run on the raw
-text first and need no parse.
+(``;(``, ``&&(``, ``;>``) are split into their parts, and ``$'…'`` is read
+with its backslash escapes. Command substitutions are found in the raw text
+with quote context tracked, so a backtick or ``$(`` inside single quotes (a
+PR body quoting a command) is literal while one inside double quotes is
+scanned. Only when the whole command's quotes do not balance does it fall
+back to line by line, and a line that still does not lex is split into
+plain words and scanned, never skipped. The name checks (rule 1) run on the
+raw text first and need no parse.
 
 Reads the PreToolUse payload as JSON on stdin; exits 2 with the reason on
 stderr to block. Fails **open** on an unparseable payload or an internal
@@ -156,6 +163,9 @@ INPUTS = frozenset({"<", "<<", "<&"})
 HERE_STRING = "<<<"
 
 SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "fish"})
+# Shell options that take the following word as their value, so it is not
+# the script operand (`bash -o pipefail -c '…'`).
+SHELL_VALUE_FLAGS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
 
 # Wrappers that run their trailing words as a command, with the flags of each
 # that consume the following token.
@@ -192,6 +202,7 @@ WRAPPERS = {
         }
     ),  # fmt: skip
     "parallel": frozenset({"-j", "--jobs", "-S", "--sshlogin"}),
+    "coproc": frozenset(),
 }
 
 # Commands that mutate every file they name, and those that write to a
@@ -272,16 +283,41 @@ def _split_operators(tok):
     return parts
 
 
+ANSI_C_RE = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
+PLAIN_WORD_RE = re.compile(r"[();<>|&]+|[^();<>|&]+")
+
+
+def _ansi_c_as_double_quoted(match):
+    # `$'it\'s'` escapes its quote with a backslash, which a plain single
+    # quote cannot: re-spell it as a double-quoted word so the lexer agrees
+    # with the shell about where it ends.
+    content = re.sub(r"\\(.)", r"\1", match.group(1))
+    return '"' + content.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _plain_words(line):
+    """A line that does not lex, split on whitespace and operator runs.
+
+    Scanning it word by word, rather than skipping it, keeps an `op` at a
+    command position visible on a line whose quotes are odd.
+    """
+    words = []
+    for word in line.split():
+        words.extend(PLAIN_WORD_RE.findall(word))
+    return words
+
+
 def _tokenize(command):
     """Quote-aware tokens with an unquoted newline as its own `\\n` token.
 
-    Falls back to line-by-line, skipping a line that does not parse, only when
-    the whole command's quotes do not balance.
+    Falls back to line-by-line only when the whole command's quotes do not
+    balance; a line that still does not lex is split into plain words.
     """
     text = command.replace("\x00", "").replace("\\\n", "")
-    # ANSI-C and locale quoting (`$'op'`) quote exactly like plain quotes for
-    # the words this guard reads.
-    text = re.sub(r"\$(?=['\"])", "", text)
+    text = ANSI_C_RE.sub(_ansi_c_as_double_quoted, text)
+    # Locale quoting (`$"op"`) quotes exactly like a plain double quote for the
+    # words this guard reads.
+    text = re.sub(r"\$(?=\")", "", text)
     try:
         raw = _lex(text)
     except ValueError:
@@ -290,7 +326,7 @@ def _tokenize(command):
             try:
                 raw.extend(_lex(line))
             except ValueError:
-                pass
+                raw.extend(_plain_words(line))
             raw.append("\n")
     tokens = []
     for tok in raw:
@@ -299,14 +335,70 @@ def _tokenize(command):
 
 
 def _segments(tokens):
-    """Split tokens into commands at control operators."""
-    segments = [[]]
+    """Split tokens into commands at control operators.
+
+    Returns ``(segment, separator)`` pairs, the separator being the operator
+    that ended the previous command (None for the first), so a shell reading
+    a pipe can find what is piped into it.
+    """
+    segments = [([], None)]
     for tok in tokens:
         if tok in CONTROL:
-            segments.append([])
+            segments.append(([], tok))
         else:
-            segments[-1].append(tok)
-    return [s for s in segments if s]
+            segments[-1][0].append(tok)
+    return [(s, sep) for s, sep in segments if s]
+
+
+def _substitutions(text):
+    """The bodies of the command substitutions the shell would run.
+
+    Read from the raw text, because the lexer drops the quoting that decides
+    it: a backtick or `$(` inside single quotes (a PR body quoting a command)
+    is literal, inside double quotes or bare it runs.
+    """
+    bodies = []
+    quote = None
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if quote in ("'", "$'"):
+            if quote == "$'" and c == "\\":
+                i += 2
+                continue
+            if c == "'":
+                quote = None
+            i += 1
+            continue
+        if c == "\\":
+            i += 2
+            continue
+        if quote is None and text.startswith("$'", i):
+            quote = "$'"
+            i += 2
+            continue
+        if quote is None and c == "'":
+            quote = "'"
+        elif c == '"':
+            quote = None if quote == '"' else '"'
+        elif c == "`":
+            end = text.find("`", i + 1)
+            end = n if end == -1 else end
+            bodies.append(text[i + 1 : end])
+            i = end + 1
+            continue
+        elif text.startswith("$(", i):
+            depth = 1
+            j = i + 2
+            while j < n and depth:
+                depth += {"(": 1, ")": -1}.get(text[j], 0)
+                j += 1
+            bodies.append(text[i + 2 : j - 1 if depth == 0 else j])
+            i = j
+            continue
+        i += 1
+    return bodies
 
 
 def _resolve(path, cwd):
@@ -448,7 +540,8 @@ def _in_place_flag(name, arg):
     if name == "perl" and arg[1] in "MmIx":
         return False
     letters = re.match(r"[A-Za-z]*", arg[1:]).group(0)
-    return "i" in letters
+    # BSD (macOS) sed also spells in-place `-I`.
+    return "i" in letters or (name != "perl" and "I" in letters)
 
 
 def _mutation_candidates(name, args):
@@ -576,13 +669,19 @@ def _unwrap(seg):
     if name in SHELLS:
         payload = None
         operand = False
-        for j, tok in enumerate(argv[1:], start=1):
+        j = 1
+        while j < len(argv):
+            tok = argv[j]
             if tok.startswith("-") and not tok.startswith("--") and "c" in tok[1:]:
                 payload = argv[j + 1] if j + 1 < len(argv) else None
                 break
-            if not tok.startswith("-"):
+            if tok in SHELL_VALUE_FLAGS:
+                j += 2
+                continue
+            if not tok.startswith(("-", "+")):
                 operand = True
                 break
+            j += 1
         if payload is not None:
             nested.append(payload)
         elif not operand:
@@ -657,24 +756,19 @@ def _scan(command, cwd, depth=0):
     for tok in tokens:
         if tok.startswith("ARGS="):
             env_args.extend(_split_args(tok.split("=", 1)[1]))
-    nested = []
-    for tok in tokens:
-        if "$(" in tok:
-            nested.append(tok.split("$(", 1)[1])
-        elif "`" in tok:
-            nested.append(tok.replace("`", " ; "))
-    stdin_shell = False
-    for seg in _segments(tokens):
+    nested = _substitutions(command)
+    previous = []
+    for seg, separator in _segments(tokens):
         argv, inner, assigns, reads_stdin = _unwrap(seg)
         nested.extend(inner)
-        stdin_shell = stdin_shell or reads_stdin
+        if reads_stdin and separator in ("|", "|&"):
+            # A shell reading its commands from a pipe runs the words the
+            # command before it printed (`echo 'op read x' | sh`).
+            nested.extend(t for t in previous if " " in t or "\n" in t)
         reason = _command_reason(argv, assigns, env_args, cwd)
         if reason:
             return reason
-    if stdin_shell:
-        # A shell reading its commands from a pipe runs words this scan saw
-        # only as arguments (`echo 'op read x' | sh`).
-        nested.extend(t for t in tokens if " " in t or "\n" in t)
+        previous = seg
     for payload in nested:
         if payload and payload != command:
             reason = _scan(payload, cwd, depth + 1)
@@ -863,8 +957,20 @@ BASH_CASES = [
     ("sed -n 1p frontend/.env.local", False),
     ("perl -Mstrict -e 1 frontend/.env.local", False),
     ("ls 2>&1", False),
-    # Fails open on an unbalanced quote (the name checks above still ran).
-    ("op read 'unterminated", False),
+    # A line whose quotes do not balance is scanned word by word, not skipped.
+    ("op read 'unterminated", True),
+    ("echo $'it\\'s'; op read x", True),
+    ("echo 'a\nb'; op read x\n\"", True),
+    ("echo 'odd quote", False),
+    # A substitution inside single quotes is literal text, not a command.
+    ("gh pr create --title x --body 'Body\n\n- `make tui-mainnet` is denied'", False),
+    ("git commit -m 'Block `op read x` and $(op read x) here'", False),
+    ('echo "`op read x`"', True),
+    # Shell value flags, coproc, BSD sed, and a pipe scoped to its shell.
+    ("bash -o pipefail -c 'op read x'", True),
+    ("coproc op read x", True),
+    ("sed -I '' s/a/b/ frontend/.env.local", True),
+    ("git commit -m 'op read is blocked'; cat x | sh", False),
 ]
 EDIT_CASES = [
     ("Edit", "tui/private-keys.env", True),

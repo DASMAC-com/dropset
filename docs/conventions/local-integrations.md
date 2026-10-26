@@ -687,7 +687,10 @@ brief:
 The hook tokenizes the whole command once, quote-aware, so a quoted
 string spanning lines — a commit message describing this guard — stays
 one word rather than reading as commands, and glued operators
-(`ls;(op …)`) split into their parts.
+(`ls;(op …)`) split into their parts. A backtick or `$(` inside single
+quotes is literal text; inside double quotes it is scanned, as the
+shell would run it. A line whose quotes do not balance is scanned word
+by word rather than skipped.
 
 **What neither layer can stop**: a script whose contents a prefix rule
 and the hook's tokenizer never see (a make recipe, `python3 x.py`),

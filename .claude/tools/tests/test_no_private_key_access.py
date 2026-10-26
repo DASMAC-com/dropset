@@ -332,9 +332,23 @@ class FailOpenTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 self.assertEqual(guard.evaluate(payload, ENV, CWD), (0, ""))
 
-    def test_an_unbalanced_line_fails_open_but_names_still_block(self):
-        self.assertEqual(_bash("op read 'unterminated")[0], 0)
+    def test_an_unbalanced_line_is_scanned_word_by_word(self):
+        # Skipping it let `echo $'it\'s'; op read x` through whole.
+        self.assertEqual(_bash("op read 'unterminated")[0], 2)
+        self.assertEqual(_bash("echo $'it\\'s'; op read x")[0], 2)
         self.assertEqual(_bash("echo 'Example Keys Vault")[0], 2)
+        self.assertEqual(_bash("echo 'odd quote"), (0, ""))
+
+    def test_single_quoted_substitutions_are_literal(self):
+        self.assertEqual(
+            _bash("gh pr create --body 'never type `op read x` or $(op read x)'"),
+            (0, ""),
+        )
+        self.assertEqual(_bash('echo "$(op read x)"')[0], 2)
+
+    def test_a_pipe_scan_reaches_only_the_piped_command(self):
+        self.assertEqual(_bash("git commit -m 'op read x'; cat y | sh"), (0, ""))
+        self.assertEqual(_bash("echo 'op read x' | sh")[0], 2)
 
     def test_main_reads_stdin_and_exits_two(self):
         script = os.path.join(HOOKS, "no_private_key_access.py")
