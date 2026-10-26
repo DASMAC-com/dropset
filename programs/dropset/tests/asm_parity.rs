@@ -58,7 +58,7 @@ mod common;
 
 use anchor_lang::InstructionData;
 use anchor_v2_testing::{Keypair, Signer};
-use common::fixture::{simple_profile, Fixture, PROFILE_BYTES};
+use common::fixture::{ref_price, simple_profile, Fixture, PROFILE_BYTES};
 use core::mem::{offset_of, size_of};
 use dropset::asm_offsets::equ;
 use dropset::{MarketHeader, Price, ReferencePrice, Vault};
@@ -163,10 +163,6 @@ fn asm_offsets_match_wire_format() {
 /// the assembly and the kernel must agree on.
 type Stamp = (u64, u32, u32, u32, u64);
 
-fn valid_price() -> u32 {
-    Price::encode(10_850_000, 0).unwrap().as_u32()
-}
-
 /// Set by any run that requires the reference oracle to be present —
 /// `make test-parity` and the `Tests (asm parity)` CI job both export it.
 ///
@@ -234,8 +230,8 @@ fn happy_path_parity() {
     // Identical bootstrap + op sequence on each build, so the pre-stamp
     // nonce matches; the resulting stamp is then byte-identical only if the
     // assembly (default build) writes the same bytes the kernel does.
-    let reference = stamp_and_read(Fixture::bootstrap_ref(), valid_price(), 7, 1_700_000_000);
-    let asm = stamp_and_read(Fixture::bootstrap(), valid_price(), 7, 1_700_000_000);
+    let reference = stamp_and_read(Fixture::bootstrap_ref(), ref_price(), 7, 1_700_000_000);
+    let asm = stamp_and_read(Fixture::bootstrap(), ref_price(), 7, 1_700_000_000);
     assert_eq!(
         reference, asm,
         "asm stamp must byte-match the reference build"
@@ -247,7 +243,7 @@ fn happy_path_parity() {
         dropset::FLUSH_BIT,
         "stamp = pre_nonce(0) | FLUSH_BIT"
     );
-    assert_eq!(asm.1, valid_price());
+    assert_eq!(asm.1, ref_price());
     assert_eq!(asm.2, 7);
     assert_eq!(asm.3, 1_700_000_000, "quote_unix stored raw");
     assert_eq!(asm.4, 1, "nonce bumped");
@@ -296,7 +292,7 @@ fn unauthorized_err(mut f: Fixture) -> String {
     f.create_vault(0, auth, false, Pubkey::default())
         .expect("create_vault");
     let stranger = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
-    f.set_reference_price(&stranger, 0, valid_price(), 0)
+    f.set_reference_price(&stranger, 0, ref_price(), 0)
         .expect_err("non quote-authority must reject")
 }
 
@@ -318,7 +314,7 @@ fn oob_err(mut f: Fixture) -> String {
     f.create_vault(0, auth, false, Pubkey::default())
         .expect("create_vault");
     let signer = f.authority.insecure_clone();
-    f.set_reference_price(&signer, 99, valid_price(), 0)
+    f.set_reference_price(&signer, 99, ref_price(), 0)
         .expect_err("vault_idx past the slab length must reject")
 }
 
@@ -342,7 +338,7 @@ const STAMP_TARGET: (u32, u32) = (7, 1_700_000_000);
 /// See [`STAMP_TARGET`]. Distinct slot, distinct datum, distinct price.
 const STAMP_NEIGHBOR: (u32, u32) = (3, 1_600_000_000);
 
-/// A valid price distinct from [`valid_price`], for the neighboring sector.
+/// A valid price distinct from [`ref_price`], for the neighboring sector.
 ///
 /// Without this the two sectors shared a price word, and a mis-targeted
 /// store that wrote only `price` one sector low would write the value
@@ -388,7 +384,7 @@ fn stamp_write_footprint(mut f: Fixture) -> (Vec<(usize, u8)>, u64) {
     f.poke_base_atoms(1, SEEDED_BASE_ATOMS);
 
     let before = f.market_data();
-    f.set_reference_price_at(&signer, 1, valid_price(), STAMP_TARGET.0, STAMP_TARGET.1)
+    f.set_reference_price_at(&signer, 1, ref_price(), STAMP_TARGET.0, STAMP_TARGET.1)
         .expect("set_reference_price");
     let after = f.market_data();
 
@@ -505,7 +501,7 @@ fn write_profile_and_read(mut f: Fixture, profile: [u8; PROFILE_BYTES]) -> Profi
     f.create_vault(0, auth, false, Pubkey::default())
         .expect("create_vault");
     let signer = f.authority.insecure_clone();
-    f.set_reference_price_at(&signer, 0, valid_price(), 11, PROFILE_QUOTE_UNIX)
+    f.set_reference_price_at(&signer, 0, ref_price(), 11, PROFILE_QUOTE_UNIX)
         .expect("set_reference_price");
     f.set_liquidity_profile(&signer, 0, profile)
         .expect("set_liquidity_profile");
@@ -541,7 +537,7 @@ fn profile_happy_path_parity() {
         1 | dropset::FLUSH_BIT,
         "stamp = pre_nonce(1) | FLUSH"
     );
-    assert_eq!(asm.2, valid_price(), "reference price untouched");
+    assert_eq!(asm.2, ref_price(), "reference price untouched");
     assert_eq!(asm.3, 11, "quote_slot untouched");
     assert_eq!(asm.4, PROFILE_QUOTE_UNIX, "quote_unix untouched");
     assert_eq!(asm.5, 2, "nonce bumped by the profile write");
@@ -640,7 +636,7 @@ fn profile_write_footprint(
     // matters most — it is the wall half of the dual-domain expiry gate,
     // and zeroing it is precisely the corruption a diff cannot otherwise
     // see.
-    f.set_reference_price_at(&signer, 1, valid_price(), 11, PROFILE_QUOTE_UNIX)
+    f.set_reference_price_at(&signer, 1, ref_price(), 11, PROFILE_QUOTE_UNIX)
         .expect("stamp the target sector's reference price");
 
     let before = f.market_data();
@@ -722,7 +718,7 @@ fn stamp_cu(mut f: Fixture) -> u64 {
         .expect("create_vault");
     let signer = f.authority.insecure_clone();
     let now = f.now_unix().get();
-    f.set_reference_price_meta(&signer, 0, valid_price(), 0, now)
+    f.set_reference_price_meta(&signer, 0, ref_price(), 0, now)
         .expect("set_reference_price")
         .compute_units_consumed
 }

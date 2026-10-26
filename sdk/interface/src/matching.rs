@@ -682,6 +682,23 @@ mod tests {
     /// [`market_data`] with `edit` applied to its one vault before
     /// serializing.
     fn market_data_with(edit: impl FnOnce(&mut Vault)) -> Vec<u8> {
+        one_vault_market(Price::encode(10_850_000, 0).unwrap(), |v| {
+            v.base_atoms = 10_000_000u64.into();
+            v.quote_atoms = 10_000_000u64.into();
+            v.remaining.asks[0] = position(10_904_000, 1_000_000);
+            v.remaining.asks[1] = position(11_393_000, 800_000);
+            v.remaining.bids[0] = position(10_796_000, 2_000_000);
+            v.remaining.bids[1] = position(10_416_000, 1_500_000);
+            edit(v);
+        })
+    }
+
+    /// A serialized market account holding one live vault (sector 0)
+    /// anchored at `reference` with stamp 1 and the fixture quote datums,
+    /// every list pointer otherwise `NULL_SECTOR`. `edit` runs last, before
+    /// serializing: it supplies the vault's inventory and levels and may
+    /// override any field set here (the flush builder re-stamps).
+    fn one_vault_market(reference: Price, edit: impl FnOnce(&mut Vault)) -> Vec<u8> {
         let mut header = MarketHeader::zeroed();
         header.head = 0u32.into();
         header.tombstone_head = NULL_SECTOR.into();
@@ -696,7 +713,7 @@ mod tests {
         v.leader = [1u8; 32];
         v.reference_price = ReferencePrice {
             stamp: 1u64.into(),
-            price: Price::encode(10_850_000, 0).unwrap().as_u32().into(),
+            price: reference.as_u32().into(),
             // Deliberately DISTINCT and nonzero, mirroring the on-chain
             // `materialize_remaining` test: with both at zero a
             // datum transposition in `deadlines` would pass every
@@ -704,12 +721,6 @@ mod tests {
             quote_slot: FIX_QUOTE_SLOT.into(),
             quote_unix: FIX_QUOTE_UNIX.into(),
         };
-        v.base_atoms = 10_000_000u64.into();
-        v.quote_atoms = 10_000_000u64.into();
-        v.remaining.asks[0] = position(10_904_000, 1_000_000);
-        v.remaining.asks[1] = position(11_393_000, 800_000);
-        v.remaining.bids[0] = position(10_796_000, 2_000_000);
-        v.remaining.bids[1] = position(10_416_000, 1_500_000);
         edit(&mut v);
 
         let vaults = [v];
@@ -922,45 +933,14 @@ mod tests {
     /// arm's zero-input guard: above 1, a dust Buy floors its *output*
     /// leg instead and the pre-existing output guard catches it first.
     fn sub_one_market_data() -> Vec<u8> {
-        let mut header = MarketHeader::zeroed();
-        header.head = 0u32.into();
-        header.tombstone_head = NULL_SECTOR.into();
-        header.free_head = NULL_SECTOR.into();
-        header.active_count = 1u32.into();
-        header.base_mint = [2u8; 32];
-        header.quote_mint = [3u8; 32];
-
-        let mut v = Vault::zeroed();
-        v.next = NULL_SECTOR.into();
-        v.prev = NULL_SECTOR.into();
-        v.leader = [1u8; 32];
-        v.reference_price = ReferencePrice {
-            stamp: 1u64.into(),
-            price: Price::encode(60_000_000, -5).unwrap().as_u32().into(),
-            // Deliberately DISTINCT and nonzero, mirroring the on-chain
-            // `materialize_remaining` test: with both at zero a
-            // datum transposition in `deadlines` would pass every
-            // assertion in this module.
-            quote_slot: FIX_QUOTE_SLOT.into(),
-            quote_unix: FIX_QUOTE_UNIX.into(),
-        };
-        // Deep enough that the level cap never binds before the price
-        // truncation does.
-        v.base_atoms = 1_000_000_000u64.into();
-        v.quote_atoms = 60_000u64.into();
-        v.remaining.asks[0] = position_at(60_300_000, -5, 1_000_000_000);
-        v.remaining.bids[0] = position_at(59_700_000, -5, 60_000);
-
-        let vaults = [v];
-        let mut buf = Vec::new();
-        buf.extend_from_slice(&[0u8; ACCOUNT_DISCRIMINATOR_LEN]);
-        buf.extend_from_slice(bytes_of(&header));
-        buf.extend_from_slice(&(vaults.len() as u32).to_le_bytes());
-        while !buf.len().is_multiple_of(VAULT_ALIGN) {
-            buf.push(0);
-        }
-        buf.extend_from_slice(cast_slice(&vaults));
-        buf
+        one_vault_market(Price::encode(60_000_000, -5).unwrap(), |v| {
+            // Deep enough that the level cap never binds before the price
+            // truncation does.
+            v.base_atoms = 1_000_000_000u64.into();
+            v.quote_atoms = 60_000u64.into();
+            v.remaining.asks[0] = position_at(60_300_000, -5, 1_000_000_000);
+            v.remaining.bids[0] = position_at(59_700_000, -5, 60_000);
+        })
     }
 
     /// The Buy-arm half of the guard, which only a below-1 book reaches.
@@ -1107,43 +1087,13 @@ mod tests {
     /// the `u32::MAX` offsets of the plain builder both domains saturate,
     /// which hides exactly the datum mix-up this fixture exists to catch.
     fn market_data_flush_at(ask_bps: u16, bid_bps: u16, secs: u32, slots: u32) -> Vec<u8> {
-        let mut header = MarketHeader::zeroed();
-        header.head = 0u32.into();
-        header.tombstone_head = NULL_SECTOR.into();
-        header.free_head = NULL_SECTOR.into();
-        header.active_count = 1u32.into();
-        header.base_mint = [2u8; 32];
-        header.quote_mint = [3u8; 32];
-
-        let mut v = Vault::zeroed();
-        v.next = NULL_SECTOR.into();
-        v.prev = NULL_SECTOR.into();
-        v.leader = [1u8; 32];
-        v.reference_price = ReferencePrice {
-            stamp: (FLUSH_BIT | 1).into(),
-            price: Price::encode(10_850_000, 0).unwrap().as_u32().into(),
-            // Deliberately DISTINCT and nonzero, mirroring the on-chain
-            // `materialize_remaining` test: with both at zero a
-            // datum transposition in `deadlines` would pass every
-            // assertion in this module.
-            quote_slot: FIX_QUOTE_SLOT.into(),
-            quote_unix: FIX_QUOTE_UNIX.into(),
-        };
-        v.base_atoms = 1_000_000u64.into();
-        v.quote_atoms = 1_000_000u64.into();
-        v.profile.asks[0] = level_bounded(5_000, ask_bps, secs, slots);
-        v.profile.bids[0] = level_bounded(5_000, bid_bps, secs, slots);
-
-        let vaults = [v];
-        let mut buf = Vec::new();
-        buf.extend_from_slice(&[0u8; ACCOUNT_DISCRIMINATOR_LEN]);
-        buf.extend_from_slice(bytes_of(&header));
-        buf.extend_from_slice(&(vaults.len() as u32).to_le_bytes());
-        while !buf.len().is_multiple_of(VAULT_ALIGN) {
-            buf.push(0);
-        }
-        buf.extend_from_slice(cast_slice(&vaults));
-        buf
+        one_vault_market(Price::encode(10_850_000, 0).unwrap(), |v| {
+            v.reference_price.stamp = (FLUSH_BIT | 1).into();
+            v.base_atoms = 1_000_000u64.into();
+            v.quote_atoms = 1_000_000u64.into();
+            v.profile.asks[0] = level_bounded(5_000, ask_bps, secs, slots);
+            v.profile.bids[0] = level_bounded(5_000, bid_bps, secs, slots);
+        })
     }
 
     /// Each expiry conjunct kills a level **on its own**, and each is
@@ -1537,39 +1487,14 @@ mod tests {
     /// gets its own fixture.
     #[test]
     fn exact_in_residue_scales_with_a_two_decimal_output_token() {
-        let mut header = MarketHeader::zeroed();
-        header.head = 0u32.into();
-        header.tombstone_head = NULL_SECTOR.into();
-        header.free_head = NULL_SECTOR.into();
-        header.active_count = 1u32.into();
-        header.base_mint = [2u8; 32];
-        header.quote_mint = [3u8; 32];
-
-        let mut v = Vault::zeroed();
-        v.next = NULL_SECTOR.into();
-        v.prev = NULL_SECTOR.into();
-        v.leader = [1u8; 32];
-        v.reference_price = ReferencePrice {
-            stamp: 1u64.into(),
-            price: Price::encode(11_291_080, 4).unwrap().as_u32().into(),
-            quote_slot: FIX_QUOTE_SLOT.into(),
-            quote_unix: FIX_QUOTE_UNIX.into(),
-        };
-        v.base_atoms = 10_000_000u64.into();
-        v.quote_atoms = 10_000_000u64.into();
-        // 11291.08 quote atoms per base atom, 1_000 base atoms deep — far
-        // more depth than the take below needs, so the taker is the cap.
-        v.remaining.asks[0] = position_at(11_291_080, 4, 1_000);
-
-        let vaults = [v];
-        let mut data = Vec::new();
-        data.extend_from_slice(&[0u8; ACCOUNT_DISCRIMINATOR_LEN]);
-        data.extend_from_slice(bytes_of(&header));
-        data.extend_from_slice(&(vaults.len() as u32).to_le_bytes());
-        while !data.len().is_multiple_of(VAULT_ALIGN) {
-            data.push(0);
-        }
-        data.extend_from_slice(cast_slice(&vaults));
+        let data = one_vault_market(Price::encode(11_291_080, 4).unwrap(), |v| {
+            v.base_atoms = 10_000_000u64.into();
+            v.quote_atoms = 10_000_000u64.into();
+            // 11291.08 quote atoms per base atom, 1_000 base atoms deep —
+            // far more depth than the take below needs, so the taker is
+            // the cap.
+            v.remaining.asks[0] = position_at(11_291_080, 4, 1_000);
+        });
         let view = MarketView::load(&data).unwrap();
 
         // 0.1 quote units buys 8 base atoms (0.08 of a 2-dec token), which
@@ -1603,38 +1528,11 @@ mod tests {
     /// decimals with no fees. Lets a test place a deliberately far-out
     /// level behind an honest one.
     fn market_with_asks(asks: &[Position]) -> Vec<u8> {
-        let mut header = MarketHeader::zeroed();
-        header.head = 0u32.into();
-        header.tombstone_head = NULL_SECTOR.into();
-        header.free_head = NULL_SECTOR.into();
-        header.active_count = 1u32.into();
-        header.base_mint = [2u8; 32];
-        header.quote_mint = [3u8; 32];
-
-        let mut v = Vault::zeroed();
-        v.next = NULL_SECTOR.into();
-        v.prev = NULL_SECTOR.into();
-        v.leader = [1u8; 32];
-        v.reference_price = ReferencePrice {
-            stamp: 1u64.into(),
-            price: Price::encode(10_850_000, 0).unwrap().as_u32().into(),
-            quote_slot: FIX_QUOTE_SLOT.into(),
-            quote_unix: FIX_QUOTE_UNIX.into(),
-        };
-        v.base_atoms = 10_000_000u64.into();
-        v.quote_atoms = 10_000_000u64.into();
-        v.remaining.asks[..asks.len()].copy_from_slice(asks);
-
-        let vaults = [v];
-        let mut data = Vec::new();
-        data.extend_from_slice(&[0u8; ACCOUNT_DISCRIMINATOR_LEN]);
-        data.extend_from_slice(bytes_of(&header));
-        data.extend_from_slice(&(vaults.len() as u32).to_le_bytes());
-        while !data.len().is_multiple_of(VAULT_ALIGN) {
-            data.push(0);
-        }
-        data.extend_from_slice(cast_slice(&vaults));
-        data
+        one_vault_market(Price::encode(10_850_000, 0).unwrap(), |v| {
+            v.base_atoms = 10_000_000u64.into();
+            v.quote_atoms = 10_000_000u64.into();
+            v.remaining.asks[..asks.len()].copy_from_slice(asks);
+        })
     }
 
     /// A level the taker cannot afford one output atom at ends the walk
