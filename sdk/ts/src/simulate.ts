@@ -37,7 +37,11 @@ export interface SimulatedQuote {
    * and so what `minOut` should be sized against.
    */
   outAmount: bigint;
-  /** Taker fee atoms retained in the matched vaults. */
+  /**
+   * Taker fee charged on this take (output-leg atoms). Accrued to the market
+   * as protocol revenue — **not** retained by the matched vaults, whose
+   * inventory is debited the gross output.
+   */
   feeAmount: bigint;
   /**
    * Platform-fee atoms paid through to the integrator, charged on the output

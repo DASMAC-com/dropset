@@ -27,6 +27,8 @@ import {
 import {
   DROPSET_PROGRAM_ADDRESS,
   getFillEventEncoder,
+  getSetTakerFeeEventDecoder,
+  getSetTakerFeeEventEncoder,
   type FillEventArgs,
 } from './generated';
 
@@ -253,6 +255,21 @@ test('a truncated fill body decodes to null', () => {
   assert.equal(decodeFillEventPayload(payload), null);
 });
 
+test('a borsh event body missing its last field is rejected, not defaulted', () => {
+  // Mirrors `a_body_missing_its_last_field_is_rejected` in
+  // `sdk/rs/src/events.rs`, so the two SDKs are asserted to agree: a changed
+  // borsh body renames the event, so no decoder defaults a missing tail. The
+  // TS SDK has no payload decoder for this event, so the generated codec is
+  // what a consumer would reach for.
+  const body = getSetTakerFeeEventEncoder().encode({
+    market: SOME_ADDRESS,
+    takerFee: 7,
+  });
+  const decoder = getSetTakerFeeEventDecoder();
+  assert.equal(decoder.decode(body).takerFee, 7);
+  assert.throws(() => decoder.decode(body.slice(0, body.length - 2)));
+});
+
 test('undecodable base58 inner data is skipped', () => {
   const tx: EventTransaction = {
     meta: {
@@ -355,9 +372,10 @@ test('events are collected across sets and around unrelated instructions', () =>
   );
 });
 
-test('trailing bytes past the fixed-size body are tolerated', () => {
-  // The decoder documents this tolerance (borsh's `deserialize` does the same
-  // on the Rust side), so pin it rather than leaving the branch unexercised.
+test('trailing bytes past the fixed-size fill body are tolerated', () => {
+  // The decoder documents this bytemuck-`FillEvent`-only allowance, so pin it
+  // rather than leaving the branch unexercised. The Rust decoder is strict
+  // here and returns `TrailingBytes`; see `interface.md` § Decode strictness.
   const exact = envelope(sampleEvent());
   const padded = new Uint8Array(exact.length + 16);
   padded.set(exact, 0);

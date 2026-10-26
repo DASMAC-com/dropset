@@ -3073,15 +3073,23 @@ costs every leg. As with accounts, the test decoder asserts it is
 all-zero on every emit. **Carve options:** the five slots and six
 flags the reserve was sized for are not yet itemized.
 
-**Cold-path events are append-only after the first mainnet publish.**
+**Cold-path events are frozen after the first mainnet publish.**
 A default-mode event is decoded field by field, and its discriminator
-hashes the event *name*, not its fields. So a post-launch change leaves
-two body generations under one discriminator, and a reserve could not
-help, because a body carrying a `String` has no fixed offsets. The
-rule: after the first mainnet publish of the program and its SDKs, a
-Borsh event body only grows at its end, and every decoder
-treats a missing tail as its fields' defaults. A change that cannot be
-append-only **renames the event**, which gives it a fresh discriminator.
+hashes the event *name*, not its fields. So a post-launch change would
+leave two body generations under one discriminator, and a reserve could
+not help, because a body carrying a `String` has no fixed offsets. The
+rule: after the first mainnet publish of the program and its SDKs, any
+change to a Borsh event body, an appended field included, **renames
+the event**, which gives it a fresh discriminator. No decoder defaults
+a missing tail. The Rust decoder is strict in both directions — a short
+body fails to decode and a wider one is rejected as trailing bytes (see
+[`interface.md`](interface.md) §2, "Decode strictness") — so a body
+changed in place surfaces as a decode failure rather than as a
+plausible old-shape event. The TypeScript fill decoder's slice to the
+fixed size is the one allowance, and it is **bytemuck-`FillEvent`
+only**: that body grows by carving its zeroed reserve, never past its
+fixed size, so the slice is consistent with the reserve-carve rule
+above and admits no Borsh event.
 
 **Schema source of truth.** This section specifies the emit *mechanism*;
 the event *schema* (the field-by-field layouts) is owned by the
