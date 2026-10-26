@@ -18,9 +18,8 @@
  *
  * Scope: fills only. The Rust decoder dispatches every `#[event]` in the IDL
  * because the indexer and the teardown path consume them; the frontend's
- * recent-fills tape
- * needs just {@link FillEvent}, so adding a variant here is a deliberate step,
- * not an oversight.
+ * recent-fills tape needs just {@link FillEvent}, so adding a variant here is
+ * a deliberate step, not an oversight.
  */
 
 import { getBase58Encoder, type ReadonlyUint8Array } from '@solana/kit';
@@ -118,7 +117,7 @@ export function stripEventTag(
  *
  * Trailing bytes past the fixed-size body are tolerated here, so only the
  * leading `fixedSize` bytes are handed to the codec; the Rust decoder is
- * strict, see `interface.md` § Decode strictness. The allowance is
+ * strict, see `interface.md` §2, "Decode strictness". The allowance is
  * bytemuck-`FillEvent`-only — that body grows by carving its reserve, never
  * past its fixed size — and a short body still decodes to `null` rather than
  * defaulting its missing tail.

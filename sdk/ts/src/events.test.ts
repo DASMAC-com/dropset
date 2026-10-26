@@ -255,19 +255,36 @@ test('a truncated fill body decodes to null', () => {
   assert.equal(decodeFillEventPayload(payload), null);
 });
 
-test('a borsh event body missing its last field is rejected, not defaulted', () => {
+test('a Borsh event body missing its last field is rejected, not defaulted', () => {
   // Mirrors `a_body_missing_its_last_field_is_rejected` in
-  // `sdk/rs/src/events.rs`, so the two SDKs are asserted to agree: a changed
-  // borsh body renames the event, so no decoder defaults a missing tail. The
-  // TS SDK has no payload decoder for this event, so the generated codec is
-  // what a consumer would reach for.
+  // `sdk/rs/src/events.rs`: on the short direction the two SDKs agree, since a
+  // changed Borsh body renames the event and no decoder defaults a missing
+  // tail. The TS SDK has no payload decoder for this event, so the generated
+  // codec is what a consumer would reach for.
   const body = getSetTakerFeeEventEncoder().encode({
     market: SOME_ADDRESS,
     takerFee: 7,
   });
   const decoder = getSetTakerFeeEventDecoder();
   assert.equal(decoder.decode(body).takerFee, 7);
+  // Drop the u16 `takerFee`.
   assert.throws(() => decoder.decode(body.slice(0, body.length - 2)));
+});
+
+test('a generated Borsh codec ignores a wider body, unlike the Rust decoder', () => {
+  // The wide direction is where the SDKs differ, so pin the difference rather
+  // than leave it implied: the Rust
+  // `a_wider_body_than_this_build_reads_is_rejected` returns `TrailingBytes`
+  // for this body, while the fixed-size generated codec reads its prefix. See
+  // `interface.md` §2, "Decode strictness".
+  const body = getSetTakerFeeEventEncoder().encode({
+    market: SOME_ADDRESS,
+    takerFee: 7,
+  });
+  const wider = new Uint8Array(body.length + 8);
+  wider.set(body, 0);
+  wider.fill(0xff, body.length);
+  assert.equal(getSetTakerFeeEventDecoder().decode(wider).takerFee, 7);
 });
 
 test('undecodable base58 inner data is skipped', () => {
@@ -375,7 +392,8 @@ test('events are collected across sets and around unrelated instructions', () =>
 test('trailing bytes past the fixed-size fill body are tolerated', () => {
   // The decoder documents this bytemuck-`FillEvent`-only allowance, so pin it
   // rather than leaving the branch unexercised. The Rust decoder is strict
-  // here and returns `TrailingBytes`; see `interface.md` § Decode strictness.
+  // here and returns `TrailingBytes`; see `interface.md` §2, "Decode
+  // strictness".
   const exact = envelope(sampleEvent());
   const padded = new Uint8Array(exact.length + 16);
   padded.set(exact, 0);

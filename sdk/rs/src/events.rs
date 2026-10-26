@@ -601,8 +601,9 @@ mod tests {
     /// field is rejected, never decoded with that field defaulted. A
     /// changed Borsh body renames the event (`architecture.md`, "Cold-path
     /// events are frozen after the first mainnet publish"), so no decoder
-    /// carries a tolerant-tail path. The TS mirror is the truncated-body
-    /// test in `sdk/ts/src/events.test.ts`.
+    /// carries a tolerant-tail path. The TS mirror is "a Borsh event body
+    /// missing its last field is rejected, not defaulted" in
+    /// `sdk/ts/src/events.test.ts`.
     #[test]
     fn a_body_missing_its_last_field_is_rejected() {
         let event = SetTakerFeeEvent {

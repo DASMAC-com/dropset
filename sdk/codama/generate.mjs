@@ -67,7 +67,8 @@ const LEVEL_BYTES = 4 + 4 + 2 + 4 + 4;
 const PROFILE_BYTES = 2 * N_LEVELS * LEVEL_BYTES;
 
 // The renderers emit codecs for `definedTypes` but not for `program.events`,
-// so every `#[event]` in the IDL would otherwise go without a codec. interface.md §1/§2 puts event decoding in the SDK's
+// so every `#[event]` in the IDL would otherwise go without a codec.
+// interface.md §1/§2 puts event decoding in the SDK's
 // remit (the indexer strips the `[tag][discriminator]` envelope, then the
 // Codama struct codec decodes the borsh body). Inject each event's struct
 // as a defined type — dropping the discriminator prefix, since the codec
