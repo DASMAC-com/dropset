@@ -418,6 +418,35 @@ class DecideHistoryTests(unittest.TestCase):
         self.assertTrue(d.delete)
 
 
+class DecideMarkerTests(unittest.TestCase):
+    def _decide(self, name, mtime, **sets):
+        return pc.decide_marker(
+            name,
+            mtime,
+            current_uuid=sets.get("current"),
+            cutoff_ts=CUTOFF,
+            purged_uuids=sets.get("purged", set()),
+            kept_uuids=sets.get("kept", set()),
+        )
+
+    def test_a_fresh_record_follows_its_purged_transcript(self):
+        d = self._decide("u1", FRESH, purged={"u1"})
+        self.assertTrue(d.delete)
+        self.assertEqual(d.reason, "transcript purged")
+
+    def test_a_kept_transcript_keeps_an_aged_record(self):
+        self.assertFalse(self._decide("u1", OLD, kept={"u1"}).delete)
+
+    def test_keep_beats_purge_and_the_current_session_beats_both(self):
+        # A set-arithmetic slip costs a few bytes, never a live session's record.
+        self.assertFalse(self._decide("u1", OLD, kept={"u1"}, purged={"u1"}).delete)
+        self.assertFalse(self._decide("u1", OLD, current="u1", purged={"u1"}).delete)
+
+    def test_an_orphan_is_age_ruled(self):
+        self.assertTrue(self._decide("u1", OLD).delete)
+        self.assertFalse(self._decide("u1", FRESH).delete)
+
+
 class IsWithinTests(unittest.TestCase):
     def test_under_root_true_escape_false(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -529,7 +558,7 @@ class DigestDirTests(unittest.TestCase):
             Path("/r/digest-a.md"), "digests", True, "older than threshold", 0
         )
         out = render_manifest({"digests": [record]}, 0)
-        self.assertIn("session digests (aged): 1 dir(s)", out)
+        self.assertIn("session digests (aged): 1 file(s)", out)
         self.assertIn("- digest-a.md", out)
 
 
@@ -723,6 +752,88 @@ class RunWiringTests(unittest.TestCase):
                 applied = self._run(tmp, argv=("--apply",))
             self.assertTrue((state / "gone-session.estimate").exists())
         self.assertIn("and 0 estimate sidecar(s)", applied)
+
+    def _run_with_markers(self, tmp, argv=()):
+        """The same tree plus a session substrate record per case: one whose
+        transcript this run purges, one whose transcript is kept, an aged
+        orphan, and a fresh orphan whose transcript is not written yet — and
+        an aged estimate sidecar sharing the directory, which is not a
+        record."""
+        markers = Path(tmp) / "markers"
+        markers.mkdir()
+        for name in ("gone-session", "live-session", "aged-orphan", "fresh-orphan"):
+            (markers / name).write_text("bedrock\n", encoding="utf-8")
+        (markers / f"aged-orphan{pc.ESTIMATE_SUFFIX}").write_text(
+            "{}\n", encoding="utf-8"
+        )
+        for name in (
+            "gone-session",
+            "live-session",
+            "aged-orphan",
+            f"aged-orphan{pc.ESTIMATE_SUFFIX}",
+        ):
+            os.utime(markers / name, (self.AGED, self.AGED))
+        real_tree = self._tree
+
+        def tree(tmp_):
+            home, cache = real_tree(tmp_)
+            gone = (
+                home
+                / "projects"
+                / f"{pc.former_worktree_prefix(Path(self.BASE))}eng-999"
+            )
+            (gone / "gone-session.jsonl").write_text("{}\n", encoding="utf-8")
+            os.utime(gone, (self.AGED, self.AGED))
+            return home, cache
+
+        with (
+            mock.patch.object(self, "_tree", side_effect=tree),
+            mock.patch.object(pc, "substrate_sessions_root", return_value=markers),
+        ):
+            out = self._run(tmp, argv)
+        return out, markers
+
+    def test_a_substrate_record_is_listed_beside_its_purged_transcript(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out, markers = self._run_with_markers(tmp)
+            self.assertIn("session substrate records (with their transcripts)", out)
+            # One line per transcript, not per record.
+            self.assertIn("- eng-999: 1 record(s)", out)
+            self.assertIn("- aged-orphan", out)
+            self.assertIn("no transcript, within age: 1", out)
+            # A kept transcript keeps its record; the dry run deletes nothing.
+            self.assertNotIn("live-session", out)
+            self.assertTrue((markers / "gone-session").exists())
+
+    def test_a_record_stays_when_its_transcript_was_refused(self):
+        real = pc.safe_delete
+
+        def refuse_dirs(record, roots):
+            if record.category == "substrate-marker":
+                return real(record, roots)
+            return 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(pc, "safe_delete", side_effect=refuse_dirs):
+                _out, markers = self._run_with_markers(tmp, argv=("--apply",))
+            self.assertEqual(
+                sorted(p.name for p in markers.iterdir()),
+                [
+                    "aged-orphan.estimate",
+                    "fresh-orphan",
+                    "gone-session",
+                    "live-session",
+                ],
+            )
+
+    def test_apply_deletes_the_records_and_keeps_the_rest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _out, markers = self._run_with_markers(tmp, argv=("--apply",))
+            # The sidecar is not a record, so the record rule never takes it.
+            self.assertEqual(
+                sorted(p.name for p in markers.iterdir()),
+                ["aged-orphan.estimate", "fresh-orphan", "live-session"],
+            )
 
 
 class BaseWorktreeTests(unittest.TestCase):
