@@ -774,14 +774,14 @@ class ViewTests(unittest.TestCase):
         return rc, printed, calls
 
     def test_view_lists_the_named_view_without_dropping_milestoned_rows(self):
-        nodes = [_issue(1, "Live"), _issue(2, "Parked", milestone="Claude meta")]
+        nodes = [_issue(1, "Live"), _issue(2, "Parked", milestone="Follow-ups")]
         rc, printed, calls = self._run_view([{"id": "v1", "name": "Next"}], nodes)
         self.assertEqual(rc, 0)
         self.assertIn("Live", printed)
         # The view's own filter is the authority; no client-side drop, and a
         # parked row is marked so the drift is visible.
         self.assertIn("Parked", printed)
-        self.assertIn("[Claude meta]", printed)
+        self.assertIn("[Follow-ups]", printed)
         self.assertEqual(calls[0][1], {"name": "Next"})
         self.assertEqual(calls[1][1]["id"], "v1")
 

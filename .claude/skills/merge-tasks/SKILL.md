@@ -17,20 +17,18 @@ committed Python tool `.claude/tools/merge_tasks.py` (per
 MCP reads and writes around it.
 
 **The main caller is the planning bootstrap's meta-batch
-assembly.** Once a day it sweeps the `Claude meta` parking
+assembly.** Once a day it sweeps the `Follow-ups` parking
 milestone and folds the parked strays into **small themed
 batches** through this skill — so the `Claude:`-prefix decision
 and the size bound below are on the hot path rather than being
 edge cases. Two things that assembly expects of each survivor,
 and that a caller should pass rather than fix up afterwards:
 
-- It is filed **parked** — Backlog plus `Claude meta`, like the
-  strays it was folded from — and only a batch the planning
-  session **promotes** has its milestone cleared and goes
-  **Urgent**, entering the review inbox. Assembling and
-  promoting are different acts now that a bootstrap produces
-  several batches; promoting every survivor would flood the
-  operator's inbox with Urgent meta work.
+- It stays **parked** — Backlog plus `Follow-ups`, like the
+  strays it was folded from — until assembly finishes; then the
+  planning session promotes **every** batch, clearing the
+  milestone and setting it **Urgent**, into the review inbox.
+  Assembly comes first; promotion is whole.
 - It carries **no blocking edge** — nothing serializes the
   batches at all now, neither a relation nor the retired
   assembly precondition.

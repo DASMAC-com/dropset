@@ -317,7 +317,6 @@ class FakeRun:
 
 PARKED = {
     "Trim levers": 22,
-    "Claude meta": 5,
     "Follow-ups": 3,
     "Audit findings": 0,
     "Session pending": 2,
@@ -424,12 +423,12 @@ class PassTests(unittest.TestCase):
 
     def test_parked_counts_carry_their_direction_since_the_previous_stamp(self):
         step, result = self._parked_step(
-            previous={"Trim levers": 22, "Claude meta": 3, "Follow-ups": 4}
+            previous={"Trim levers": 22, "Follow-ups": 1, "Audit findings": 2}
         )
         self.assertEqual(
             step["line"],
-            "Trim levers 22 (unchanged), Claude meta 5 (up 2), "
-            "Follow-ups 3 (down 1), Audit findings 0 (no previous count), "
+            "Trim levers 22 (unchanged), Follow-ups 3 (up 2), "
+            "Audit findings 0 (down 2), "
             "Session pending 2 (no previous count)",
         )
         self.assertEqual(result["parked"], PARKED)

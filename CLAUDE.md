@@ -176,23 +176,21 @@ consistent by construction; a human filters the Linear board by it. It
 is a **Linear-title signal only — never a PR title** (PR titles keep
 `type(ENG-###): Subject`).
 
-**A `Claude:` filing lands PARKED** — state `Backlog` plus the
-**`Claude meta`** milestone, in the creating call, keeping strays out
-of the operator's review inbox. A **promoted**
-batch issue is the one meta issue not parked; an assembled batch not
-promoted stays parked.
+**An executor's `Claude:` filing lands PARKED** — state `Backlog` plus
+the **`Follow-ups`** milestone, in the creating call, keeping strays
+out of the operator's review inbox. A parking milestone means "not
+yet reviewed or assembled", **never "not now"**.
 
 **The planning bootstrap is the single assimilation point** — once a
 day it sweeps the milestone **plus any inbox stray** (an open,
 unblocked `Claude:` Backlog issue with no milestone; an assembled
-batch is never re-folded), folds them into **small themed batches of
-roughly 4–5 parts**, and promotes a **file-disjoint** subset, parking
-or killing the rest. It does **not** gate on a meta issue being in flight: file
-contention is paid as an occasional **rebase**, and the inbox is
-bounded by the disjoint-set test (judged on collision clusters, as for
-product work), never a state check or a bare count. Assembly consumes
-the pool *as of bootstrap*; a later stray waits for the next one.
-One writer, one rhythm. Detail: `docs/conventions/linear-automation.md`.
+batch is never re-folded), kills on doubt, folds the rest into **small themed
+batches of roughly 4–5 parts** (meta apart from product by the
+prefix), and **promotes every batch** — assembly first, promotion
+whole. The file-disjoint test binds at **dispatch**, overlap paid as a
+**rebase**; the inbox is bounded by the kill gate and batch size
+alone. Assembly consumes the pool *as of bootstrap*; a later stray
+waits for the next one. Detail: `docs/conventions/linear-automation.md`.
 
 ### The verb/substrate title token
 
@@ -246,23 +244,17 @@ frozen. The operator's Backlog → Todo move **is** the approval —
 planning never makes it — and a fold into a Todo body drops it back.
 The dispatch gate is **state Todo plus unblocked**; the Next view is
 the unblocked Todo. An issue carrying a **parking milestone** —
-`Audit findings`, `Trim levers`, `Claude meta`, `Session pending`
+`Follow-ups`, `Trim levers`, `Session pending` (and the legacy
+`Audit findings`, drained and retired once empty)
 — is *parked* in either state, so a filing skill sets **`Backlog`
 plus the milestone,
 in the creating call**, and promotion is **one write, the milestone
 clear**. Every full bootstrap says each parked count **out loud**;
 a genuinely urgent stray (a broken guard) is promoted on the spot.
-
-`Claude meta` differs in where promotion leads: a parked meta
-**stray** is consumed by the next **batch assembly**, not
-pulled on its own, and a meta-flavored *audit* finding is
-promoted by swapping its milestone from `Audit findings` to
-`Claude meta`. A **promoted
-batch** is the carve-out, pulled once approved (see "Claude:
-meta-work prefix" above). Detail:
-`docs/conventions/linear-automation.md`, including "An
-already-assembled parked batch is a promotion candidate, not a
-fold input".
+A parked `Follow-ups` filing is consumed by the next **batch
+assembly**, never pulled on its own (see "Claude: meta-work
+prefix" above). Detail:
+`docs/conventions/linear-automation.md`.
 
 ### An audit is a board issue, not a directive
 

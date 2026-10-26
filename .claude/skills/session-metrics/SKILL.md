@@ -29,8 +29,8 @@ one lever, one issue, filed in Backlog with the `Trim levers`
 milestone in the creating call (parked: out of the review inbox)
 and keyed by a `**Fingerprint**:` — which `trim-context` later
 folds into **small themed** propose-only skill-improvement
-tasks (roughly 4–5 levers each), parked
-under the `Claude meta` milestone, on its
+tasks (roughly 4–5 levers each), filed
+into the review inbox, on its
 own or as `plan`'s bootstrap fold. This is the
 feedback loop that systematizes, every session, the by-hand
 analysis that motivated this work.

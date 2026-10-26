@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a planning session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), polls the Backlog review inbox, runs the audit heartbeat (file an audit issue or decline with a recorded reason), and folds the parked `Claude meta` pool into small themed edge-free batches, promoting a file-disjoint subset. Then keeps the board coherent: Todo dispatched as standing authorization, blocking edges curated by a human, file collisions reconciled by reading, parked findings promoted to keep the inbox stocked, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
+description: Run a planning session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), polls the Backlog review inbox, runs the audit heartbeat (file an audit issue or decline with a recorded reason), and folds the parked `Follow-ups` pool into small themed edge-free batches, promoting every one. Then keeps the board coherent: Todo dispatched as standing authorization, blocking edges curated by a human, file collisions reconciled by reading, parked findings promoted to keep the inbox stocked, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
 user-invocable: true
 model: fable
 ---
@@ -42,8 +42,7 @@ exactly these headings, in this order, and nothing else:
    operator fills before a session (Enter in Linear adds the
    next).
 1. **Current direction and checkpoints** — the phase, the live
-   tracks, the operator-named exceptions to any freeze, and the
-   next bootstrap's first moves.
+   tracks, and the next bootstrap's first moves.
 1. **Operator actions outstanding** — numbered, kept current.
 1. **Fleet state and chains** — in flight, in review, queued,
    held with reasons, and the parked counts.
@@ -61,8 +60,7 @@ Above them, a header of one line plus the `Bootstrap stamp`.
 
 **A new ruling is a reviewed change**, never a document edit:
 file a `Claude:` issue carrying its text, which a worker lands as
-a PR to `rulings.md` — under a meta freeze, only once the
-operator names it — and carry it under `In-session notes` until
+a PR to `rulings.md`, and carry it under `In-session notes` until
 it lands.
 
 ## Where it runs
@@ -175,10 +173,11 @@ python3 .claude/tools/lens_preamble.py --out <scratchpad>/fold.md \
 
 then: this is a fold, not a review — read-only toward the repo,
 but its Linear writes are the task; run `/trim-context`; fold and
-kill with reasons, unasked (ruling 23);
-at most 40 turns; the final message is the report, at most thirty
-lines. Add one paragraph only for what the operator said that the
-document does not hold. The fold's reads stay in its context.
+kill with reasons, unasked (ruling 23); its batches land in the
+inbox (Backlog, no milestone), never parked; at most 40 turns;
+the final message is the report, at most thirty lines. Add one
+paragraph only for what the operator said that the document does
+not hold. The fold's reads stay in its context.
 
 **The bootstrap runs unattended until its one ask.** After the
 spawn, do every duty that asks nothing — the outstanding list,
@@ -186,11 +185,11 @@ spawn, do every duty that asks nothing — the outstanding list,
 Queue's honesty — then end the turn (with no spawn, go straight
 on). The completion notification resumes it: say the report,
 record it under `In-session notes`, finish the board (the meta
-fold included, since the fold files into `Claude meta`), and stop
-at step 8's consolidated ask. A
+review included, since the fold's batches enter the inbox), and
+stop at step 8's consolidated ask. A
 Discuss item or duty needing the operator's word joins that ask.
-While the fold runs, make **no** `Trim levers` or `Claude meta`
-write, and never fold levers by hand while a sub-agent can.
+While the fold runs, make **no** `Trim levers` write, and never
+fold levers by hand while a sub-agent can.
 
 Then read the board. **Which tier an issue sits in is the whole
 scoping signal:**
@@ -287,15 +286,18 @@ sessions: temporary worktree, no PR". An
 audit sits **In Progress** until its findings are ratified and
 folded, so an old In Progress audit is live, not stalled.
 
-**Fold the `Claude meta` pool into SMALL THEMED batches — by
-default, unprompted.** Every `Claude:` filing lands parked
-(Backlog plus `Claude meta`). The pool is that milestone **plus
-every open, unblocked `Claude:` inbox issue** (never Todo) —
-without that clause an unpulled batch is
-duplicated rather than absorbed. Group by the surface each issue
-changes and fold each group into its lowest-numbered survivor via
+**Fold the `Follow-ups` pool into SMALL THEMED batches, then
+promote them all — by default, unprompted.** An executor
+session's follow-ups and `Claude:` strays land parked (Backlog
+plus `Follow-ups`); this bootstrap is their one reviewer. The
+pool is that milestone **plus every open, unblocked `Claude:`
+inbox stray** (never Todo), so a meta issue filed outside the
+parking rule is still absorbed; never a product spec awaiting
+review, an `[Operator]` item, or a `trim-context` output task,
+which is already a batch. Group by the surface each issue
+changes, meta apart from product by the `Claude:` prefix, and
+fold each group into its lowest-numbered survivor via
 `/merge-tasks`. Routine bookkeeping; no per-fold proposal.
-Promotion stays subject to any freeze in `rulings.md`.
 
 - **Roughly 4–5 parts per batch** (operator rule, 2026-09-11):
   five or fewer parts is one batch, fifteen is three. Session
@@ -312,21 +314,18 @@ Promotion stays subject to any freeze in `rulings.md`.
   parked or promoted, is never a fold input —
   `/merge-tasks` cannot split, so a re-fold only grows it.
 
-- **Survivors file parked**; only the ones you promote enter the
-  inbox, Urgent. Assembling and promoting are two acts.
+- **Promotion is whole; assembly comes first.** Every assembled
+  batch enters the inbox, Urgent — never a parked remainder.
 
-- **Nothing serializes batches** — no edge, no in-flight gate.
-  Several may be open at once; their file contention is paid as
-  a rebase. What bounds Next is promoting only a
-  **file-disjoint** set (step 8's selection procedure, on the
-  collision clusters), never a state check or a count.
+- **Nothing serializes batches** — no edge, no in-flight gate,
+  no disjoint slate. The file-disjoint test binds at dispatch
+  (step 5).
 
 - **Assembly consumes the pool as of this bootstrap.** A later
   stray waits for the next one.
 
-- **Never fold an In Progress issue** — a session is
-  implementing it. **Never fold across the meta /
-  product boundary.**
+- **Never fold an In Progress issue**, nor across the meta /
+  product boundary.
 
 - **Append to a batch with the zero-echo writer**, never
   `save_issue`: the MCP echoes the whole accumulated body on
@@ -339,8 +338,9 @@ Promotion stays subject to any freeze in `rulings.md`.
 
   Anchored edits stay on `patch`.
 
-**Review every meta issue at every full bootstrap — parked, Next
-and Blocked — whether or not the document names a lane.** It is
+**Review every pooled issue and every meta issue at every full
+bootstrap — parked, Next and Blocked — whether or not the
+document names a lane.** It is
 a **necessity gate**: each ends doable, blocked, or killed. From
 the two listings:
 
@@ -348,23 +348,17 @@ the two listings:
 1. **Before assembly, kill on doubt**, per issue: one that cannot
    name a concrete recurring cost larger than its
    landing-plus-ratification cost goes on a kill list (titles
-   first; read only a kill candidate's body).
-1. After assembly, group the batches by the surface each rewrites
-   (`review-pr`, `init-pr`, the shell init file, guard hooks,
-   tools, conventions, AWS) from **titles alone**. A
-   `[blocked by …]` row stays blocked behind its human-placed
-   edge and is never promoted.
-1. Mark each group **free**, or **in flight** when an In Progress
-   / In Review meta issue (`list --state`) already rewrites that
-   surface.
-1. Promote a file-disjoint set from the free groups in one
+   first; read only a kill candidate's body). Kill candidates
+   stay out of assembly until step 8's answer; a declined kill
+   is assembled and promoted right after it.
+1. After assembly, promote every batch in one
    `board_batch.py fields` write (milestone `null`, Urgent); the
-   operator reviews each in the inbox.
+   operator reviews each in the inbox. A `[blocked by …]` row
+   stays behind its human-placed edge.
 1. Offer the kill list in step 8's `AskUserQuestion`; on a yes,
    close each kill `Canceled` with its reason, as `trim-context`
    step 6 does.
-1. Record promoted, killed, blocked, each held group with why,
-   and the parked count under the `In-session notes` heading.
+1. Record promoted, killed and blocked under `In-session notes`.
 
 **Bound the Planning document.** It grows between close-out
 rewrites: other sessions append, and an abrupt close skips the
@@ -540,8 +534,11 @@ pending hold: step 2). An open
 thread on a Todo issue is no refusal — only the operator makes
 that move (2026-10-21); the probe's count feeds a later fold.
 Dispatch unblocked Todo as slots open under the fleet ceiling, in
-file-disjoint sets, with no per-dispatch ask. Moving an issue
-back to Backlog is the operator's "not now".
+file-disjoint sets judged here on the collision clusters, overlap
+paid as a rebase, with no per-dispatch ask. Moving an issue back
+to Backlog is the operator's "not now". The inbox is bounded by
+the kill gate and batch size alone: one the operator cannot keep
+up with means kill harder, never re-park.
 
 ```sh
 python3 .claude/tools/session_dispatch.py task 1234
@@ -659,36 +656,19 @@ immediately closed with its reason** (or left closed if one is
 already parked), so the fingerprint probe stops the next fold
 re-deriving it.
 
-**8. Promote the parked findings, and ask once.** `audit-scope`
-files confirmed findings under the **Audit findings** milestone:
-parked, searchable, costing a bootstrap nothing. This step is how
-planning absorbs them, and the **`Follow-ups` milestone** too, so
-`review-pr`'s deferred items never sit indefinitely.
+**8. Drain the legacy findings, and ask once.** **At bootstrap,
+say each count, never a listing.** **The consolidated ask**
+carries only what needs the operator's word — the kill list, the
+holds' edges, Discuss items and the upkeep's destructive items.
 
-**At bootstrap, say each count, never a listing.** Promotion is
-planning's own write, made when the inbox needs stocking; the
-operator reviews each promoted issue there. **The consolidated
-ask** carries only what needs the operator's word — the meta kill
-list, the holds' edges, Discuss items and the upkeep's destructive
-items. To promote:
-
-- List the milestone **field-selected** (title, priority).
-- **Select a parallelizable batch, using the collision
-  clusters.** Promoted issues are worked simultaneously, so
-  promote a set whose members share **no common cluster**. Where
-  two collide, promote one and park the other, or fold them under
-  the fewest-coherent-PRs rule. This is the selection procedure,
-  not advice.
-- **Sequence against the live tracks**: a finding touching a
-  mid-flight track's files rides with it or waits.
-- Fetch a body **only** for a finding being promoted.
-- **Promote by clearing the milestone** in one
-  `board_batch.py fields` write. Never close it and file a fresh
-  copy.
-
-**Do not re-adjudicate a finding.** `audit-scope` cross-checks
-adversarially before filing; the only question left is whether it
-belongs in this phase.
+**`Audit findings` is a legacy pool, drained one finding at a
+time**: each bootstrap promotes or kills what it holds, by step
+1's kill gate, and the milestone leaves the parking set once
+empty. List
+it **field-selected** (title, priority); promote by **clearing
+the milestone** in one `board_batch.py fields` write, never by
+closing and refiling. **Do not re-adjudicate a finding** —
+`audit-scope` cross-checked it before filing.
 
 **`Session pending` is never promoted here**: a count is a seat
 session that died mid-review — offer to resume it.
