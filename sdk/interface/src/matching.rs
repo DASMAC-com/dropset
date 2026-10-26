@@ -695,8 +695,9 @@ mod tests {
 
     /// A serialized market account holding one live vault (sector 0)
     /// anchored at `reference` with stamp 1 and the fixture quote datums,
-    /// every list pointer otherwise `NULL_SECTOR`. `edit` supplies the
-    /// vault's inventory and levels before serializing.
+    /// every list pointer otherwise `NULL_SECTOR`. `edit` runs last, before
+    /// serializing: it supplies the vault's inventory and levels and may
+    /// override any field set here (the flush builder re-stamps).
     fn one_vault_market(reference: Price, edit: impl FnOnce(&mut Vault)) -> Vec<u8> {
         let mut header = MarketHeader::zeroed();
         header.head = 0u32.into();
