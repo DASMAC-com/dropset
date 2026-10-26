@@ -150,7 +150,8 @@ and prints, as compact Markdown (or `--json`):
 
 - **Rebases** and **day span** — the rebase count (a started
   `git rebase` or `git pull --rebase` that replayed something,
-  and every re-enqueue), each with the main-session spend after
+  and every `--auto` re-enqueue after one that took), each with
+  the main-session spend after
   it; and the first and last stamps, the longest idle gap
   (`STALLED` past three hours) and the share spent after it.
   Both are process costs, the operator's merge-quickly rule made

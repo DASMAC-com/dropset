@@ -449,15 +449,19 @@ STALL_GAP_HOURS = 3
 _REBASE_CONTINUATIONS = frozenset(
     {"--abort", "--continue", "--skip", "--quit", "--edit-todo", "--show-current-patch"}
 )
-# A rebase with nothing to replay changed nothing, so it costs nothing after.
-_REBASE_NOOP = "is up to date"
+# A rebase with nothing to replay changed nothing, so it costs nothing after:
+# `git rebase` says the first, a no-op `git pull --rebase` the second. Through
+# `run_quiet.py` a pass prints neither, so a quiet no-op still counts.
+_REBASE_NOOPS = ("is up to date", "Already up to date")
 
 
 def friction_kind(command: str) -> str | None:
     """``"rebase"`` for a command that starts one (``git rebase``, ``git pull
-    --rebase``), ``"enqueue"`` for a merge-queue enqueue (``gh pr merge``),
-    else ``None``. A ``run_quiet.py --`` wrapper and leading env assignments
-    are looked through, as in :func:`bash_signature`."""
+    --rebase``); ``"enqueue"`` for a merge-queue enqueue (``gh pr merge
+    --auto``) and ``"enqueue-fallback"`` for the plain ``gh pr merge`` that
+    ``review-pr`` runs when ``--auto`` did not take; else ``None``. A
+    ``run_quiet.py --`` wrapper and leading env assignments are looked
+    through, as in :func:`bash_signature`."""
     try:
         tokens = shlex.split(command, comments=True)
     except ValueError:
@@ -466,7 +470,7 @@ def friction_kind(command: str) -> str | None:
         tokens.pop(0)
     tokens = _unwrap_run_quiet(tokens)
     if tokens[:3] == ["gh", "pr", "merge"]:
-        return "enqueue"
+        return "enqueue" if "--auto" in tokens else "enqueue-fallback"
     if not tokens or tokens[0] != "git":
         return None
     rest = tokens[1:]
@@ -519,9 +523,9 @@ def price_or_none(by_model: dict[str, Tokens]) -> float | None:
 
 @dataclass
 class FrictionEvent:
-    """One rebase, or one re-enqueue (an enqueue after the session's first,
-    which only a dequeue makes necessary), and the main-session spend after
-    it: the replayed prefix a contended branch paid for."""
+    """One rebase, or one re-enqueue (an ``--auto`` enqueue after one that
+    took, which only a dequeue makes necessary), and the main-session spend
+    after it: the replayed prefix a contended branch paid for."""
 
     kind: str
     at: str | None
@@ -560,13 +564,19 @@ class Friction:
     """The process costs of one main transcript: its rebases, re-enqueues and
     day span, each priced by what the main session spent after it.
 
-    Fed parsed records in order and deduplicating usage per message id on its
-    own, so ``session_metrics`` and the ``fleet_cost`` walk share one
-    definition of an event. Every billed message lands on a timeline; an event
-    is a timeline index, and its after-cost is the sum from there on.
+    Fed parsed records in order, so ``session_metrics`` and the ``fleet_cost``
+    walk share one definition of an event. Every billed message lands on a
+    timeline; an event is a timeline index, and its after-cost is the sum
+    from there on. The span and the gaps are read off the billed messages'
+    own stamps.
+
+    ``seen`` holds the message and tool-use ids already counted. The fleet
+    walk passes one set to every transcript's tracker, because a resumed
+    session carries its parent's records forward into a new transcript, and
+    those are the parent's messages, rebases and days, not the child's.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, seen: set[str] | None = None) -> None:
         self.timeline: list[tuple[str | None, str, Tokens]] = []
         self.events: list[FrictionEvent] = []
         self.days: set[str] = set()
@@ -576,25 +586,23 @@ class Friction:
         self.gap_start: str | None = None
         self.gap_end: str | None = None
         self.gap_index = 0
-        self._counted: set[str] = set()
-        self._calls: set[str] = set()
+        # The first gap past the stall bound, which need not be the longest.
+        self.stall_index: int | None = None
+        self.stall_day: str | None = None
+        self._seen = set() if seen is None else seen
         self._pending: dict[str, str] = {}
-        self._enqueues = 0
+        self._enqueued = False
 
     def observe(self, rec: dict) -> None:
         stamp = utc_stamp(rec.get("timestamp"))
-        if stamp is not None:
-            self._observe_stamp(stamp)
         msg = rec.get("message")
         if not isinstance(msg, dict):
             return
         usage = msg.get("usage")
         msg_id = msg.get("id")
-        if isinstance(usage, dict) and not (
-            isinstance(msg_id, str) and msg_id in self._counted
-        ):
-            if isinstance(msg_id, str) and msg_id:
-                self._counted.add(msg_id)
+        if isinstance(usage, dict) and self._fresh(msg_id):
+            if stamp is not None:
+                self._observe_stamp(stamp)
             tokens = Tokens()
             tokens.add(usage)
             self.timeline.append((stamp, _model_of(msg), tokens))
@@ -602,6 +610,16 @@ class Friction:
         for item in content if isinstance(content, list) else []:
             if isinstance(item, dict):
                 self._observe_item(item, stamp)
+
+    def _fresh(self, key) -> bool:
+        """Whether ``key`` is uncounted, counting it. A message without an id
+        cannot be deduplicated, so it always counts."""
+        if not isinstance(key, str) or not key:
+            return True
+        if key in self._seen:
+            return False
+        self._seen.add(key)
+        return True
 
     def _observe_stamp(self, stamp: str) -> None:
         self.days.add(stamp[:10])
@@ -613,6 +631,9 @@ class Friction:
                 self.gap_seconds = gap
                 self.gap_start, self.gap_end = self.last, stamp
                 self.gap_index = len(self.timeline)
+            if gap >= STALL_GAP_HOURS * 3600 and self.stall_index is None:
+                self.stall_index = len(self.timeline)
+                self.stall_day = stamp[:10]
         if self.last is None or stamp > self.last:
             self.last = stamp
 
@@ -621,22 +642,29 @@ class Friction:
         if kind == "tool_use" and item.get("name") == "Bash":
             tid = item.get("id")
             command = (item.get("input") or {}).get("command")
-            if not isinstance(tid, str) or tid in self._calls:
+            if not isinstance(tid, str) or not self._fresh(tid):
                 return
-            self._calls.add(tid)
             found = friction_kind(command) if isinstance(command, str) else None
-            if found == "enqueue":
-                self._enqueues += 1
-                if self._enqueues > 1:
-                    self._pending[tid] = "re-enqueue"
-            elif found == "rebase":
-                self._pending[tid] = "rebase"
+            if found is not None:
+                self._pending[tid] = found
         elif kind == "tool_result":
             found = self._pending.pop(str(item.get("tool_use_id")), None)
             if found is None:
                 return
-            if found == "rebase" and _REBASE_NOOP in _result_text(item.get("content")):
+            text = _result_text(item.get("content"))
+            if found == "rebase":
+                if any(marker in text for marker in _REBASE_NOOPS):
+                    return
+            elif item.get("is_error"):
+                # An enqueue that errored never took, so the next is not a re-.
                 return
+            elif found == "enqueue-fallback" or not self._enqueued:
+                # The first enqueue, or the plain fallback for one whose
+                # `--auto` did not take: neither follows a dequeue.
+                self._enqueued = True
+                return
+            else:
+                found = "re-enqueue"
             self.events.append(
                 FrictionEvent(kind=found, at=stamp, index=len(self.timeline))
             )
@@ -649,17 +677,14 @@ class Friction:
         re-enqueue, its first message on a later UTC day, or the end of a
         stall gap, whichever is earliest — or ``None`` with none of them."""
         points = [e.index for e in self.events]
-        if self.stalled():
-            points.append(self.gap_index)
+        if self.stall_index is not None:
+            points.append(self.stall_index)
         if self.first is not None:
             for i, (stamp, _, _) in enumerate(self.timeline):
                 if stamp is not None and stamp[:10] != self.first[:10]:
                     points.append(i)
                     break
         return min(points) if points else None
-
-    def stalled(self) -> bool:
-        return self.gap_seconds >= STALL_GAP_HOURS * 3600
 
     def finish(self) -> tuple[list[FrictionEvent], DaySpan]:
         for event in self.events:
@@ -1734,7 +1759,11 @@ def _rebase_line(events: list[FrictionEvent]) -> str:
         )
         for e in events
     ]
-    return f"**Rebases**: {len(events)} — " + "; ".join(parts) + "\n"
+    rebases = sum(1 for e in events if e.kind == "rebase")
+    return (
+        f"**Rebases**: {rebases} rebase(s), {len(events) - rebases} re-enqueue(s)"
+        " — " + "; ".join(parts) + "\n"
+    )
 
 
 def _day_span_line(span: DaySpan) -> str:

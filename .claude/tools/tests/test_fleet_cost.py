@@ -319,8 +319,43 @@ class FrictionRollupTest(unittest.TestCase):
         text = out.getvalue()
         friction = [ln for ln in text.splitlines() if "friction" in ln]
         self.assertEqual(len(friction), 1)
-        self.assertIn("1 session(s) spanned a day, 1 rebased", friction[0])
+        self.assertIn(
+            "1 session(s) spanned a day, 1 rebased or re-enqueued, 0 stalled",
+            friction[0],
+        )
         self.assertLess(text.index("friction"), text.index("2026-10-14 (UTC)"))
+
+    def test_a_resumed_child_repeating_the_rebase_is_not_counted_twice(self) -> None:
+        parent = self.home / "projects" / "bedrock" / "s1.jsonl"
+        child = self.home / "projects" / "bedrock" / "s3.jsonl"
+        child.write_text(parent.read_text())
+        meter = fc.walk(self.home / "projects", ["2026-10-12"])
+        friction = fc.day_summary(meter, "2026-10-12")["friction"]
+        self.assertEqual(friction["rebased_sessions"], 1)
+        self.assertAlmostEqual(friction["dollars_after"]["bedrock"], ONE_MESSAGE)
+
+    def test_a_stall_alone_puts_the_line_on_its_day(self) -> None:
+        cwd = f"{Path(self.tmp.name)}/repo/.claude/worktrees/1651"
+        stalled = [
+            json.dumps(
+                {
+                    "cwd": cwd,
+                    "timestamp": f"2026-10-14T{hour}:00:00.000Z",
+                    "message": {
+                        "id": msg_id,
+                        "model": "claude-opus-5-5",
+                        "usage": USAGE,
+                    },
+                }
+            )
+            for msg_id, hour in (("m5", "13"), ("m6", "18"))
+        ]
+        WalkTest.write(self.home / "projects" / "bedrock" / "s4.jsonl", stalled)
+        meter = fc.walk(self.home / "projects", ["2026-10-14"])
+        friction = fc.day_summary(meter, "2026-10-14")["friction"]
+        self.assertEqual(friction["stalled_sessions"], 1)
+        self.assertEqual(friction["spanned_sessions"], 0)
+        self.assertAlmostEqual(friction["dollars_after"]["bedrock"], ONE_MESSAGE)
 
 
 class UnitTest(unittest.TestCase):

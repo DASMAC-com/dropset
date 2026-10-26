@@ -24,9 +24,10 @@ in UTC, so every day boundary here is a UTC one, on both sides:
 ``reconcile``
     ``meter`` beside Cost Explorer's billed gross for the same days, per
     Marketplace service, with the drift and a flag past ``--tolerance``. Both
-    print a **friction** line on a day where some session spanned a UTC day or
-    rebased: those session counts, and the main-session dollars spent after
-    the friction began, so a day's process cost sits beside its bill.
+    print a **friction** line on a day where some session spanned a UTC day,
+    rebased or re-enqueued, or stalled: those session counts, and the
+    main-session dollars spent after the friction began, so a day's process
+    cost sits beside its bill.
 
 ``spend-cap``
     The daily spend cap's CloudWatch metric-math **estimate** beside the same
@@ -253,12 +254,17 @@ class Meter:
     # Transcripts that vanished or became unreadable mid-walk (a purge running
     # beside a live fleet), skipped rather than allowed to abort the run.
     unreadable: int = 0
-    # Per day: sessions that spanned a UTC day, sessions that rebased, and the
-    # main-session tokens spent after each session's friction began.
+    # Per day: sessions that spanned a UTC day, that rebased or re-enqueued,
+    # and that stalled, and the main-session tokens spent after each
+    # session's friction began.
     spanned: dict[str, set[str]] = field(default_factory=dict)
     rebased: dict[str, set[str]] = field(default_factory=dict)
+    stalled: dict[str, set[str]] = field(default_factory=dict)
     # (day, substrate, model)
     friction_after: dict[tuple[str, str, str], sm.Tokens] = field(default_factory=dict)
+    # Message and tool-use ids every transcript's `Friction` has counted, one
+    # set across the walk for the reason `seen` is.
+    friction_seen: set[str] = field(default_factory=set)
 
     def ingest(
         self, line: str, substrate: str, issue: str | None, session: str
@@ -283,8 +289,10 @@ class Meter:
             if spans:
                 self.spanned.setdefault(day, set()).add(session)
         for event in friction.events:
-            if event.kind == "rebase" and event.at and event.at[:10] in self.days:
+            if event.at and event.at[:10] in self.days:
                 self.rebased.setdefault(event.at[:10], set()).add(session)
+        if friction.stall_day in self.days:
+            self.stalled.setdefault(friction.stall_day, set()).add(session)
         start = friction.start_index()
         if start is None:
             return
@@ -404,7 +412,7 @@ def walk(projects: Path, days: list[str]) -> Meter:
                 transcript,
                 *sorted((project / session / "subagents").glob("*.jsonl")),
             ]
-            friction = sm.Friction()
+            friction = sm.Friction(meter.friction_seen)
             for path in files:
                 try:
                     for line in sm._read_lines(path):
@@ -472,13 +480,15 @@ def day_summary(meter: Meter, day: str) -> dict:
 
 def friction_summary(meter: Meter, day: str) -> dict | None:
     """The day's friction rollup, or ``None`` on a day without any: sessions
-    that spanned a UTC day, sessions that rebased, and the main-session dollars
-    each substrate spent that day after its sessions' friction began (a
-    rebase, a re-enqueue, a later day, or a stall gap — see
+    that spanned a UTC day, that rebased or re-enqueued, and that stalled, and
+    the main-session dollars each substrate spent that day after its
+    sessions' friction began (the earliest of those events — see
     ``session_metrics.Friction.start_index``)."""
     spanned = meter.spanned.get(day, set())
     rebased = meter.rebased.get(day, set())
-    if not spanned and not rebased:
+    stalled = meter.stalled.get(day, set())
+    after_today = any(d == day for d, _, _ in meter.friction_after)
+    if not (spanned or rebased or stalled or after_today):
         return None
     after: dict[str, float] = {}
     for (d, substrate, model), tokens in sorted(meter.friction_after.items()):
@@ -487,6 +497,7 @@ def friction_summary(meter: Meter, day: str) -> dict | None:
     return {
         "spanned_sessions": len(spanned),
         "rebased_sessions": len(rebased),
+        "stalled_sessions": len(stalled),
         "dollars_after": after,
     }
 
@@ -498,8 +509,14 @@ def render_friction(friction: dict) -> str:
         parts.append(f"{money(after[SEAT])} seat {sm.NOT_BILLED}")
     if after.get(UNATTRIBUTED):
         parts.append(f"{money(after[UNATTRIBUTED])} unattributed")
-    return "  friction      {} session(s) spanned a day, {} rebased; {} after".format(
-        friction["spanned_sessions"], friction["rebased_sessions"], ", ".join(parts)
+    return (
+        "{} session(s) spanned a day, {} rebased or re-enqueued, "
+        "{} stalled; {} after".format(
+            friction["spanned_sessions"],
+            friction["rebased_sessions"],
+            friction["stalled_sessions"],
+            ", ".join(parts),
+        )
     )
 
 
@@ -1036,7 +1053,9 @@ def main(argv: list[str] | None = None) -> int:
                         )
                     )
                 if "friction" in summary:
-                    lines.append(render_friction(summary["friction"]))
+                    lines.append(
+                        f"  friction      {render_friction(summary['friction'])}"
+                    )
                 summary["provisional"] = day == provisional
                 report["days"][day] = summary
             issues = issue_costs(meter, days)

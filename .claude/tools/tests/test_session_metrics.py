@@ -1745,9 +1745,16 @@ class FrictionLines(unittest.TestCase):
         self.assertAlmostEqual(events[1].cost, self.ONE)
         self.assertEqual(events[1].after[MODEL].input, 1_000_000)
         md = sm.to_markdown(report, "x")
-        self.assertIn("**Rebases**: 2 — rebase at 10:00 UTC", md)
+        self.assertIn(
+            "**Rebases**: 2 rebase(s), 0 re-enqueue(s) — rebase at 10:00 UTC", md
+        )
         parsed = json.loads(sm.to_json(report))
         self.assertEqual(len(parsed["rebases"]), 2)
+        self.assertEqual(
+            set(parsed["rebases"][1]), {"kind", "at", "after", "after_tokens", "cost"}
+        )
+        self.assertEqual(parsed["rebases"][1]["after_tokens"], 1_000_000)
+        self.assertEqual(parsed["rebases"][1]["after"][MODEL]["input"], 1_000_000)
 
     def test_a_noop_or_continued_rebase_is_not_an_event(self):
         report = self._finish(
@@ -1789,6 +1796,70 @@ class FrictionLines(unittest.TestCase):
         self.assertEqual([e.kind for e in report["rebases"]], ["re-enqueue"])
         self.assertAlmostEqual(report["rebases"][0].cost, self.ONE)
 
+    def test_a_plain_fallback_or_an_errored_enqueue_is_not_a_re_enqueue(self):
+        failed = json.loads(tool_result("t1", '"GraphQL: error"'))
+        failed["message"]["content"][0]["is_error"] = True
+        report = self._finish(
+            [
+                (
+                    "2026-10-26T10:00:00Z",
+                    self._turn("m1", bash("t1", "gh pr merge 5 --auto")),
+                ),
+                ("2026-10-26T10:00:05Z", json.dumps(failed)),
+                (
+                    "2026-10-26T10:01:00Z",
+                    self._turn("m2", bash("t2", "gh pr merge 5 --auto")),
+                ),
+                ("2026-10-26T10:01:05Z", tool_result("t2", '""')),
+                # `--auto` did not take, so review-pr's fallback enqueues.
+                ("2026-10-26T10:20:00Z", self._turn("m3", bash("t3", "gh pr merge 5"))),
+                ("2026-10-26T10:20:05Z", tool_result("t3", '""')),
+            ]
+        )
+        self.assertEqual(report["rebases"], [])
+
+    def test_a_noop_pull_rebase_is_not_an_event(self):
+        report = self._finish(
+            [
+                (
+                    "2026-10-26T10:00:00Z",
+                    self._turn("m1", bash("t1", "git pull --rebase")),
+                ),
+                ("2026-10-26T10:00:05Z", tool_result("t1", '"Already up to date."')),
+            ]
+        )
+        self.assertEqual(report["rebases"], [])
+
+    def test_friction_starts_at_the_first_stall_not_the_longest(self):
+        friction = sm.Friction()
+        for msg_id, stamp in (
+            ("m1", "2026-10-26T01:00:00Z"),
+            ("m2", "2026-10-26T05:00:00Z"),  # a 4h stall
+            ("m3", "2026-10-26T06:00:00Z"),
+            ("m4", "2026-10-26T12:00:00Z"),  # a 6h stall, the longest
+        ):
+            friction.observe(json.loads(stamped(self._turn(msg_id), stamp)))
+        self.assertEqual(friction.gap_index, 3)
+        self.assertEqual(friction.start_index(), 1)
+        self.assertEqual(friction.stall_day, "2026-10-26")
+
+    def test_a_shared_seen_set_drops_a_resumed_transcripts_parent_records(self):
+        seen: set[str] = set()
+        parent, child = sm.Friction(seen), sm.Friction(seen)
+        rebase = [
+            ("2026-10-25T23:00:00Z", self._turn("m1", bash("t1", "git rebase main"))),
+            ("2026-10-25T23:00:05Z", tool_result("t1", '"Successfully rebased"')),
+        ]
+        for stamp, line in rebase:
+            parent.observe(json.loads(stamped(line, stamp)))
+        # The child carries the parent's records forward, then works a day on.
+        for stamp, line in [*rebase, ("2026-10-26T09:00:00Z", self._turn("m2"))]:
+            child.observe(json.loads(stamped(line, stamp)))
+        self.assertEqual(len(parent.events), 1)
+        self.assertEqual(child.events, [])
+        self.assertEqual(child.days, {"2026-10-26"})
+        self.assertEqual(len(child.timeline), 1)
+
     def test_a_session_spanning_midnight_reports_the_span_and_the_gap(self):
         report = self._finish(
             [
@@ -1810,7 +1881,11 @@ class FrictionLines(unittest.TestCase):
         md = sm.to_markdown(report, "x")
         self.assertIn("(spans UTC days)", md)
         self.assertIn("4.0h from 2026-10-25T22:30 — STALLED", md)
-        self.assertTrue(json.loads(sm.to_json(report))["day_span"]["stalled"])
+        parsed = json.loads(sm.to_json(report))["day_span"]
+        self.assertTrue(parsed["stalled"])
+        self.assertTrue(parsed["spans_days"])
+        self.assertEqual(parsed["gap_end"], "2026-10-26T02:30:00")
+        self.assertAlmostEqual(parsed["share_cost"], 0.5)
 
     def test_a_short_gap_within_a_day_is_not_a_stall(self):
         span = self._finish(
@@ -1833,6 +1908,7 @@ class FrictionLines(unittest.TestCase):
             "git pull --ff-only": None,
             "python3 .claude/tools/run_quiet.py -- git rebase main": "rebase",
             "gh pr merge 635 --auto #destructive-ok": "enqueue",
+            "gh pr merge 635": "enqueue-fallback",
             "gh pr view 635": None,
             "git log --grep rebase": None,
         }

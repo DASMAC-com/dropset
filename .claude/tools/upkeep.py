@@ -685,7 +685,7 @@ def cost_day_line(day: str, summary: dict) -> str:
     )
     friction = summary.get("friction")
     if friction:
-        line += "; " + fleet_cost.render_friction(friction).strip()
+        line += "; friction: " + fleet_cost.render_friction(friction)
     return line
 
 

@@ -1015,5 +1015,33 @@ class CliTests(unittest.TestCase):
             self.assertEqual(ran, [1])
 
 
+class CostDayLineTests(unittest.TestCase):
+    """The cost line carries the friction rollup only on a day that has one."""
+
+    SUMMARY = {"substrates": {}, "reconcile": {"metered": 10.0}}
+
+    def test_friction_rides_the_day_line(self) -> None:
+        friction = {
+            "spanned_sessions": 2,
+            "rebased_sessions": 1,
+            "stalled_sessions": 0,
+            "dollars_after": {"bedrock": 3.5},
+        }
+        line = upkeep.cost_day_line(
+            "2026-10-12", {**self.SUMMARY, "friction": friction}
+        )
+        self.assertTrue(
+            line.endswith(
+                "no bill line; friction: 2 session(s) spanned a day, "
+                "1 rebased or re-enqueued, 0 stalled; $3.50 Bedrock after"
+            ),
+            line,
+        )
+
+    def test_a_day_without_friction_has_no_suffix(self) -> None:
+        line = upkeep.cost_day_line("2026-10-12", self.SUMMARY)
+        self.assertTrue(line.endswith("no bill line"), line)
+
+
 if __name__ == "__main__":
     unittest.main()
