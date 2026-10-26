@@ -540,7 +540,9 @@ fn create_market_adopts_squatted_treasuries() {
     send_ixn(&mut svm, &payer, ix).expect("create_market must adopt pre-existing treasury ATAs");
 
     // Adoption left both accounts alone: still owned by the market PDA,
-    // and stamped onto the header as usual. (That the squatter gained
+    // and stamped onto the header as usual. The owner assertion is only a
+    // regression guard: the ATA program wrote `market` as the owner at
+    // squat time, before `create_market` ran. (That the squatter gained
     // nothing rests on the derivation check, which
     // `create_market_rejects_an_existing_non_canonical_treasury` pins.)
     assert_eq!(read_token_account_owner(&svm, &squatted_base), market);
