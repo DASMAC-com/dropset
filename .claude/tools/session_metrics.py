@@ -8,7 +8,8 @@ itself, reads it (and its sub-agent transcripts) in its **own** process — so t
 multi-megabyte file never enters the model's context — and prints a compact,
 ranked summary: what the session cost, session-wide token totals, how far its
 replayed prefix grew, how much of that prefix was resident instruction prose (see
-:class:`ResidentLine`), a cache-hit rate, the tools whose results cost the most,
+:class:`ResidentLine`), a cache-hit rate, its rebases and day span with the spend
+after each (see :class:`Friction`), the tools whose results cost the most,
 the single largest results, a per-sub-agent rollup, and the repeated command
 shapes that are candidates to harden into a tool. Pass ``--json`` for the same
 data as JSON.
@@ -63,6 +64,7 @@ import datetime
 import json
 import os
 import re
+import shlex
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -439,6 +441,280 @@ def utc_stamp(value) -> str | None:
     return parsed.strftime("%Y-%m-%dT%H:%M:%S")
 
 
+# An idle gap between two consecutive main-transcript records at least this
+# long marks the session as stalled: far past the prompt-cache TTL, so the next
+# turn re-writes the whole prefix, and longer than any CI or queue wait.
+STALL_GAP_HOURS = 3
+# `git rebase` flags that drive a rebase already counted rather than start one.
+_REBASE_CONTINUATIONS = frozenset(
+    {"--abort", "--continue", "--skip", "--quit", "--edit-todo", "--show-current-patch"}
+)
+# A rebase with nothing to replay changed nothing, so it costs nothing after:
+# `git rebase` says the first, a no-op `git pull --rebase` the second, and a
+# rebase refused before replaying (unstaged changes) the third. Through
+# `run_quiet.py` a pass prints neither, so a quiet no-op still counts.
+_REBASE_NOOPS = ("is up to date", "Already up to date", "cannot rebase")
+
+
+def friction_kind(command: str) -> str | None:
+    """``"rebase"`` for a command that starts one (``git rebase``, ``git pull
+    --rebase``); ``"enqueue"`` for a merge-queue enqueue (``gh pr merge
+    --auto``) and ``"enqueue-fallback"`` for the plain ``gh pr merge`` that
+    ``review-pr`` runs when ``--auto`` did not take; else ``None``. A
+    ``run_quiet.py --`` wrapper and leading env assignments are looked
+    through, as in :func:`bash_signature`."""
+    try:
+        tokens = shlex.split(command, comments=True)
+    except ValueError:
+        tokens = command.split()
+    while tokens and _ENV_ASSIGN.match(tokens[0]):
+        tokens.pop(0)
+    tokens = _unwrap_run_quiet(tokens)
+    if tokens[:3] == ["gh", "pr", "merge"]:
+        return "enqueue" if "--auto" in tokens else "enqueue-fallback"
+    if not tokens or tokens[0] != "git":
+        return None
+    rest = tokens[1:]
+    while rest and rest[0].startswith("-"):
+        if rest.pop(0) in ("-C", "-c") and rest:
+            rest.pop(0)
+    if not rest:
+        return None
+    verb, args = rest[0], rest[1:]
+    if verb == "rebase" and not _REBASE_CONTINUATIONS.intersection(args):
+        return "rebase"
+    if verb == "pull" and any(
+        a in ("-r", "--rebase") or (a.startswith("--rebase=") and a != "--rebase=false")
+        for a in args
+    ):
+        return "rebase"
+    return None
+
+
+def _result_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(str(i.get("text", "")) for i in content if isinstance(i, dict))
+    return ""
+
+
+def _tier_sum(tokens: Tokens) -> int:
+    return tokens.input + tokens.output + tokens.cache_creation + tokens.cache_read
+
+
+def _sum_by_model(rows) -> dict[str, Tokens]:
+    out: dict[str, Tokens] = {}
+    for _, model, tokens in rows:
+        acc = out.setdefault(model, Tokens())
+        acc.input += tokens.input
+        acc.output += tokens.output
+        acc.cache_creation += tokens.cache_creation
+        acc.cache_read += tokens.cache_read
+    return out
+
+
+def price_or_none(by_model: dict[str, Tokens]) -> float | None:
+    """Dollars at Bedrock rates, or ``None`` when a billable model has no row."""
+    try:
+        return Cost.price_by_model(by_model).total()
+    except UnpricedModel:
+        return None
+
+
+@dataclass
+class FrictionEvent:
+    """One rebase, or one re-enqueue (an ``--auto`` enqueue after one that
+    took, which only a dequeue makes necessary), and the main-session spend
+    after it: the replayed prefix a contended branch paid for."""
+
+    kind: str
+    at: str | None
+    index: int
+    after: dict[str, Tokens] = field(default_factory=dict)
+    cost: float | None = None
+
+
+@dataclass
+class DaySpan:
+    """The session's first and last record stamps and its longest idle gap,
+    with the main-session spend after that gap."""
+
+    first: str | None = None
+    last: str | None = None
+    gap_seconds: int = 0
+    gap_start: str | None = None
+    gap_end: str | None = None
+    after_tokens: int = 0
+    share_tokens: float = 0.0
+    after_cost: float | None = None
+    share_cost: float | None = None
+
+    def spans_days(self) -> bool:
+        return bool(self.first and self.last and self.first[:10] != self.last[:10])
+
+    def stalled(self) -> bool:
+        return self.gap_seconds >= STALL_GAP_HOURS * 3600
+
+
+def _parse_stamp(stamp: str) -> datetime.datetime:
+    return datetime.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S")
+
+
+class Friction:
+    """The process costs of one main transcript: its rebases, re-enqueues and
+    day span, each priced by what the main session spent after it.
+
+    Fed parsed records in order, so ``session_metrics`` and the ``fleet_cost``
+    walk share one definition of an event. Every billed message lands on a
+    timeline; an event is a timeline index, and its after-cost is the sum
+    from there on. The span and the gaps are read off the billed messages'
+    own stamps.
+
+    ``seen`` holds the message and tool-use ids already counted. The fleet
+    walk passes one set to every transcript's tracker, because a resumed
+    session carries its parent's records forward into a new transcript, and
+    those are the parent's messages, rebases and days, not the child's.
+    """
+
+    def __init__(self, seen: set[str] | None = None) -> None:
+        self.timeline: list[tuple[str | None, str, Tokens]] = []
+        self.events: list[FrictionEvent] = []
+        self.days: set[str] = set()
+        self.first: str | None = None
+        self.last: str | None = None
+        self.gap_seconds = 0
+        self.gap_start: str | None = None
+        self.gap_end: str | None = None
+        self.gap_index = 0
+        # The first gap past the stall bound, which need not be the longest.
+        self.stall_index: int | None = None
+        self.stall_day: str | None = None
+        self._seen = set() if seen is None else seen
+        self._pending: dict[str, str] = {}
+        self._enqueued = False
+
+    def observe(self, rec: dict) -> None:
+        stamp = utc_stamp(rec.get("timestamp"))
+        msg = rec.get("message")
+        if not isinstance(msg, dict):
+            return
+        usage = msg.get("usage")
+        msg_id = msg.get("id")
+        if isinstance(usage, dict) and self._fresh(msg_id):
+            if stamp is not None:
+                self._observe_stamp(stamp)
+            tokens = Tokens()
+            tokens.add(usage)
+            self.timeline.append((stamp, _model_of(msg), tokens))
+        content = msg.get("content")
+        for item in content if isinstance(content, list) else []:
+            if isinstance(item, dict):
+                self._observe_item(item, stamp)
+
+    def _fresh(self, key) -> bool:
+        """Whether ``key`` is uncounted, counting it. A message without an id
+        cannot be deduplicated, so it always counts."""
+        if not isinstance(key, str) or not key:
+            return True
+        if key in self._seen:
+            return False
+        self._seen.add(key)
+        return True
+
+    def _observe_stamp(self, stamp: str) -> None:
+        self.days.add(stamp[:10])
+        if self.first is None:
+            self.first = stamp
+        if self.last is not None and stamp > self.last:
+            gap = int((_parse_stamp(stamp) - _parse_stamp(self.last)).total_seconds())
+            if gap > self.gap_seconds:
+                self.gap_seconds = gap
+                self.gap_start, self.gap_end = self.last, stamp
+                self.gap_index = len(self.timeline)
+            if gap >= STALL_GAP_HOURS * 3600 and self.stall_index is None:
+                self.stall_index = len(self.timeline)
+                self.stall_day = stamp[:10]
+        if self.last is None or stamp > self.last:
+            self.last = stamp
+
+    def _observe_item(self, item: dict, stamp: str | None) -> None:
+        kind = item.get("type")
+        if kind == "tool_use" and item.get("name") == "Bash":
+            tid = item.get("id")
+            command = (item.get("input") or {}).get("command")
+            if not isinstance(tid, str) or not self._fresh(tid):
+                return
+            found = friction_kind(command) if isinstance(command, str) else None
+            if found is not None:
+                self._pending[tid] = found
+        elif kind == "tool_result":
+            found = self._pending.pop(str(item.get("tool_use_id")), None)
+            if found is None:
+                return
+            text = _result_text(item.get("content"))
+            if found == "rebase":
+                if any(marker in text for marker in _REBASE_NOOPS):
+                    return
+            elif item.get("is_error"):
+                # An enqueue that errored never took, so the next is not a re-.
+                return
+            elif found == "enqueue-fallback" or not self._enqueued:
+                # The first enqueue, or the plain fallback for one whose
+                # `--auto` did not take: neither follows a dequeue.
+                self._enqueued = True
+                return
+            else:
+                found = "re-enqueue"
+            self.events.append(
+                FrictionEvent(kind=found, at=stamp, index=len(self.timeline))
+            )
+
+    def after(self, index: int) -> dict[str, Tokens]:
+        return _sum_by_model(self.timeline[index:])
+
+    def start_index(self) -> int | None:
+        """Where the session's friction begins — its first rebase or
+        re-enqueue, its first message on a later UTC day, or the end of a
+        stall gap, whichever is earliest — or ``None`` with none of them."""
+        points = [e.index for e in self.events]
+        if self.stall_index is not None:
+            points.append(self.stall_index)
+        if self.first is not None:
+            for i, (stamp, _, _) in enumerate(self.timeline):
+                if stamp is not None and stamp[:10] != self.first[:10]:
+                    points.append(i)
+                    break
+        return min(points) if points else None
+
+    def finish(self) -> tuple[list[FrictionEvent], DaySpan]:
+        for event in self.events:
+            event.after = self.after(event.index)
+            event.cost = price_or_none(event.after)
+        whole = self.after(0)
+        after_gap = self.after(self.gap_index) if self.gap_seconds else {}
+        total_tokens = sum(_tier_sum(t) for t in whole.values())
+        after_tokens = sum(_tier_sum(t) for t in after_gap.values())
+        total_cost = price_or_none(whole)
+        after_cost = price_or_none(after_gap) if after_gap else 0.0
+        span = DaySpan(
+            first=self.first,
+            last=self.last,
+            gap_seconds=self.gap_seconds,
+            gap_start=self.gap_start,
+            gap_end=self.gap_end,
+            after_tokens=after_tokens,
+            share_tokens=after_tokens / total_tokens if total_tokens else 0.0,
+            after_cost=after_cost,
+            share_cost=(
+                after_cost / total_cost
+                if total_cost and after_cost is not None
+                else None
+            ),
+        )
+        return self.events, span
+
+
 @dataclass
 class ResidentLine:
     """One piece of instruction prose resident in the replayed prefix: an
@@ -679,6 +955,8 @@ class SessionAggregator:
         # lets a session be mined correctly from somewhere else entirely.
         self.cwd: str | None = None
         self.parse_errors = 0
+        # Rebases and the day span, whole-session like the totals.
+        self.friction = Friction()
         self._resident: list[ResidentLine] = []
         # Calibration state for the bytes-per-token proxy. Each new request's
         # prefix minus the previous request's prefix and output is what the
@@ -795,6 +1073,7 @@ class SessionAggregator:
             cwd = rec.get("cwd")
             if isinstance(cwd, str) and cwd.strip():
                 self.cwd = cwd.strip()
+        self.friction.observe(rec)
         attachment = rec.get("attachment")
         if isinstance(attachment, dict):
             self._ingest_attachment(rec, attachment)
@@ -1069,6 +1348,7 @@ class SessionAggregator:
             total_cost = session_cost.plus(subagent_cost)
 
         resident = self._resident_prose(total_input, unpriced_models)
+        rebases, day_span = self.friction.finish()
 
         return {
             "totals": self.totals,
@@ -1086,6 +1366,8 @@ class SessionAggregator:
             "subagents": subagents,
             "hardening_candidates": candidates,
             "resident_prose": resident,
+            "rebases": rebases,
+            "day_span": day_span,
             "days": dict(sorted(self.days.items())),
             "parse_errors": self.parse_errors,
             "tools_omitted": tools_omitted,
@@ -1461,6 +1743,51 @@ def _resident_headline(resident: ResidentProse, substrate: str) -> str:
     return line
 
 
+def _after(tokens: int, cost: float | None) -> str:
+    priced = "" if cost is None else f"{money(cost)}, "
+    return f"{priced}{human(tokens)} tokens"
+
+
+def _rebase_line(events: list[FrictionEvent]) -> str:
+    """The rebase count, each event with the main-session spend after it."""
+    if not events:
+        return "**Rebases**: none\n"
+    parts = [
+        "{} at {} — {} after".format(
+            e.kind,
+            f"{e.at[11:16]} UTC" if e.at else "?",
+            _after(sum(_tier_sum(t) for t in e.after.values()), e.cost),
+        )
+        for e in events
+    ]
+    rebases = sum(1 for e in events if e.kind == "rebase")
+    return (
+        f"**Rebases**: {rebases} rebase(s), {len(events) - rebases} re-enqueue(s)"
+        " — " + "; ".join(parts) + "\n"
+    )
+
+
+def _day_span_line(span: DaySpan) -> str:
+    """The first and last stamps, the longest idle gap and the share after it."""
+    line = "**Day span**: {} → {} UTC{}".format(
+        span.first[:16],
+        (span.last or span.first)[:16],
+        " (spans UTC days)" if span.spans_days() else "",
+    )
+    if span.gap_seconds:
+        share = f"{span.share_tokens:.0%} of tokens"
+        if span.share_cost is not None:
+            share += f", {span.share_cost:.0%} of dollars"
+        line += "; longest idle gap {:.1f}h from {}{} — {} after it ({})".format(
+            span.gap_seconds / 3600,
+            (span.gap_start or "")[:16],
+            f" — STALLED (≥ {STALL_GAP_HOURS}h)" if span.stalled() else "",
+            _after(span.after_tokens, span.after_cost),
+            share,
+        )
+    return line + "\n"
+
+
 def to_markdown(report: dict, session_label: str) -> str:
     """Render the compact Markdown summary printed by default."""
     totals: Totals = report["totals"]
@@ -1556,6 +1883,9 @@ def to_markdown(report: dict, session_label: str) -> str:
             report["cache_hit_rate"] * 100.0
         )
     )
+    out.append(_rebase_line(report["rebases"]))
+    if report["day_span"].first is not None:
+        out.append(_day_span_line(report["day_span"]))
     if report["parse_errors"] > 0:
         out.append(
             "**Note**: {} transcript line(s) failed to parse and were skipped.\n".format(
@@ -1726,6 +2056,32 @@ def to_json(report: dict) -> str:
                 "share": round(obj.share, 4),
                 "cost": None if obj.cost is None else round(obj.cost, 6),
                 "lever": obj.is_lever(),
+            }
+        if isinstance(obj, FrictionEvent):
+            return {
+                "kind": obj.kind,
+                "at": obj.at,
+                "after": obj.after,
+                "after_tokens": sum(_tier_sum(t) for t in obj.after.values()),
+                "cost": None if obj.cost is None else round(obj.cost, 6),
+            }
+        if isinstance(obj, DaySpan):
+            return {
+                "first": obj.first,
+                "last": obj.last,
+                "spans_days": obj.spans_days(),
+                "gap_seconds": obj.gap_seconds,
+                "gap_start": obj.gap_start,
+                "gap_end": obj.gap_end,
+                "stalled": obj.stalled(),
+                "after_tokens": obj.after_tokens,
+                "share_tokens": round(obj.share_tokens, 4),
+                "after_cost": None
+                if obj.after_cost is None
+                else round(obj.after_cost, 6),
+                "share_cost": None
+                if obj.share_cost is None
+                else round(obj.share_cost, 4),
             }
         if isinstance(obj, DaySlice):
             return {

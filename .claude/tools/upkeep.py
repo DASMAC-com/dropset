@@ -686,7 +686,7 @@ def cost_day_line(day: str, summary: dict) -> str:
         if rec.get("flagged")
         else ""
     )
-    return (
+    line = (
         f"{day}: Bedrock {fleet_cost.money(rec.get('metered', 0.0))} metered "
         f"({fleet_cost.money(rec.get('expected', 0.0))} with the classifier) vs "
         f"{fleet_cost.money(rec.get('billed_matched', 0.0))} billed, drift "
@@ -694,6 +694,10 @@ def cost_day_line(day: str, summary: dict) -> str:
         f"{fleet_cost.money(seat.get('dollars', 0.0))} at Bedrock rates over "
         f"{seat.get('sessions', 0)} session(s), no bill line"
     )
+    friction = summary.get("friction")
+    if friction:
+        line += "; friction: " + fleet_cost.render_friction(friction)
+    return line
 
 
 def step_cost(ctx: Ctx) -> None:
