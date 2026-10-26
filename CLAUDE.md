@@ -499,7 +499,8 @@ tab-color integration and the shell setup they lean on — including the
 **session secrets**, resolved from 1Password at session launch, never
 written into a config file, the CLI signed out right after the reads.
 A 1Password SSH prompt for a private key from anything but the cockpit
-is refused. Both settings files are git-ignored, so all
+(the deploy ceremony's key commands) is refused, commit signing
+excepted. Both settings files are git-ignored, so all
 of it is opt-in. `settings.local.json` is **one shared file resolved
 through worktrees to the main checkout**, so wiring it once makes it
 live everywhere. A committed guard is **inert until wired**:

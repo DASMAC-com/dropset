@@ -164,6 +164,37 @@ class OpSignoutTest(unittest.TestCase):
         self.assertEqual(calls[-1], "claude")
         self.assertIn("op signout failed", got.stderr)
 
+    def test_a_second_launch_in_the_shell_signs_out_only_after_a_new_read(
+        self,
+    ) -> None:
+        got, calls = self.launch(
+            "_ds_secrets; _ds_claude m; _ds_secrets; _ds_claude m; "
+            "unset LINEAR_API_KEY; _ds_secrets; _ds_claude m"
+        )
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(
+            calls,
+            [
+                "op read op://vault/linear/credential",
+                "op read op://vault/github/credential",
+                "op signout acct.example.com",
+                "claude",
+                "claude",
+                "op read op://vault/linear/credential",
+                "op signout acct.example.com",
+                "claude",
+            ],
+        )
+
+    def test_a_key_set_without_export_is_still_exported(self) -> None:
+        got, calls = self.launch(
+            "LINEAR_API_KEY=x; GITHUB_MCP_PAT=y; _ds_secrets; "
+            'print -r -- "type=${(t)LINEAR_API_KEY} ${(t)GITHUB_MCP_PAT}"'
+        )
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertIn("type=scalar-export scalar-export", got.stdout)
+        self.assertEqual(calls, [])
+
 
 @unittest.skipUnless(shutil.which("zsh"), "needs zsh")
 class LaunchLineGrammarTest(unittest.TestCase):

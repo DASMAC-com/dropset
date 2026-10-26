@@ -413,17 +413,21 @@ _ds_base() {
 # A read that actually runs sets `_DS_OP_READ`, so `_ds_op_signout` can end
 # the authorization it opened before any agent command starts.
 _ds_secrets() {
-  if [[ -z "$LINEAR_API_KEY" && -n "$DS_OP_ACCOUNT" \
-    && -n "$DS_OP_LINEAR_REF" ]]; then
-    export LINEAR_API_KEY="$(op read --account "$DS_OP_ACCOUNT" \
-      "$DS_OP_LINEAR_REF")"
-    _DS_OP_READ=1
+  # Exported whether read or already set, so a value set without `export`
+  # still reaches the session.
+  if [[ -n "$DS_OP_ACCOUNT" && -n "$DS_OP_LINEAR_REF" ]]; then
+    if [[ -z "$LINEAR_API_KEY" ]]; then
+      LINEAR_API_KEY="$(op read --account "$DS_OP_ACCOUNT" "$DS_OP_LINEAR_REF")"
+      _DS_OP_READ=1
+    fi
+    export LINEAR_API_KEY
   fi
-  if [[ -z "$GITHUB_MCP_PAT" && -n "$DS_OP_ACCOUNT" \
-    && -n "$DS_OP_GITHUB_REF" ]]; then
-    export GITHUB_MCP_PAT="$(op read --account "$DS_OP_ACCOUNT" \
-      "$DS_OP_GITHUB_REF")"
-    _DS_OP_READ=1
+  if [[ -n "$DS_OP_ACCOUNT" && -n "$DS_OP_GITHUB_REF" ]]; then
+    if [[ -z "$GITHUB_MCP_PAT" ]]; then
+      GITHUB_MCP_PAT="$(op read --account "$DS_OP_ACCOUNT" "$DS_OP_GITHUB_REF")"
+      _DS_OP_READ=1
+    fi
+    export GITHUB_MCP_PAT
   fi
 
   [[ -z "$LINEAR_API_KEY" ]] &&
@@ -1297,11 +1301,13 @@ _ds_bedrock_env() {
   # Resolved at launch, never held in a long-lived shell — the same lazy shape
   # and the same empty-value override as `_ds_secrets`, for the same reasons,
   # read before `_ds_claude` signs the CLI out.
-  if [[ -z "$AWS_BEARER_TOKEN_BEDROCK" && -n "$DS_OP_ACCOUNT" \
-    && -n "$DS_OP_BEDROCK_REF" ]]; then
-    export AWS_BEARER_TOKEN_BEDROCK="$(op read --account "$DS_OP_ACCOUNT" \
-      "$DS_OP_BEDROCK_REF")"
-    _DS_OP_READ=1
+  if [[ -n "$DS_OP_ACCOUNT" && -n "$DS_OP_BEDROCK_REF" ]]; then
+    if [[ -z "$AWS_BEARER_TOKEN_BEDROCK" ]]; then
+      AWS_BEARER_TOKEN_BEDROCK="$(op read --account "$DS_OP_ACCOUNT" \
+        "$DS_OP_BEDROCK_REF")"
+      _DS_OP_READ=1
+    fi
+    export AWS_BEARER_TOKEN_BEDROCK
   fi
 
   # What this launch actually installed. The restore compares against these, so
@@ -1397,7 +1403,7 @@ _ds_model_probe() {
 # `AWS_REGION` and `AWS_BEARER_TOKEN_BEDROCK` are **shared** with the operator's
 # own environment. Clearing those outright destroys values the launcher never
 # owned — an `AWS_REGION` from the shell profile, or a bearer token exported by
-# hand (which `_ds_bedrock_env`'s `${VAR:-…}` form exists to honor, so running
+# hand (which `_ds_bedrock_env`'s empty-value guard exists to honor, so running
 # with no 1Password coordinates at all is supported). Destroying the token in
 # particular makes the NEXT `task` in the tab fail, pointing at config the
 # operator deliberately did not set.
