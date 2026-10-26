@@ -413,8 +413,8 @@ _ds_base() {
 # A read that actually runs sets `_DS_OP_READ`, so `_ds_op_signout` can end
 # the authorization it opened before any agent command starts.
 _ds_secrets() {
-  # Exported whether read or already set, so a value set without `export`
-  # still reaches the session.
+  # With coordinates set, exported whether read or already set, so a value
+  # set without `export` still reaches the session.
   if [[ -n "$DS_OP_ACCOUNT" && -n "$DS_OP_LINEAR_REF" ]]; then
     if [[ -z "$LINEAR_API_KEY" ]]; then
       LINEAR_API_KEY="$(op read --account "$DS_OP_ACCOUNT" "$DS_OP_LINEAR_REF")"
