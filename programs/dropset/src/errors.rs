@@ -144,4 +144,6 @@ pub enum DropsetError {
     QuoteWriteSignerHasData,
     #[msg("quote write market account is not writable")]
     QuoteWriteMarketNotWritable,
+    #[msg("treasury did not receive exactly the deposited amount (transfer-fee mint?)")]
+    TransferShortfall,
 }

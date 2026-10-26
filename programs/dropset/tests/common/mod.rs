@@ -361,6 +361,81 @@ pub fn create_token2022_mint(svm: &mut LiteSVM, authority: &Keypair) -> Pubkey {
     mint_kp.pubkey()
 }
 
+/// Create a Token-2022 mint with 6 decimals and mint authority `authority`
+/// carrying `extensions`, with `freeze_authority` set when given. The
+/// account is sized for the extension set, and `init_extensions(mint,
+/// authority)` returns the extensions' initialize instructions, which run
+/// ahead of `InitializeMint2` as Token-2022 requires.
+#[allow(dead_code)]
+pub fn create_token2022_mint_with(
+    svm: &mut LiteSVM,
+    authority: &Keypair,
+    extensions: &[spl_token_2022_interface::extension::ExtensionType],
+    freeze_authority: Option<&Pubkey>,
+    init_extensions: impl FnOnce(&Pubkey, &Pubkey) -> Vec<Instruction>,
+) -> Pubkey {
+    use spl_token_2022_interface::{extension::ExtensionType, instruction, state::Mint};
+
+    let mint_kp = Keypair::new();
+    let mint = mint_kp.pubkey();
+    let len = ExtensionType::try_calculate_account_len::<Mint>(extensions).unwrap();
+    let lamports = svm.minimum_balance_for_rent_exemption(len);
+
+    let mut create_data = Vec::with_capacity(4 + 8 + 8 + 32);
+    create_data.extend_from_slice(&0u32.to_le_bytes());
+    create_data.extend_from_slice(&lamports.to_le_bytes());
+    create_data.extend_from_slice(&(len as u64).to_le_bytes());
+    create_data.extend_from_slice(&TOKEN_2022_PROGRAM_ID.to_bytes());
+    let create = Instruction::new_with_bytes(
+        SYSTEM_PROGRAM_ID,
+        &create_data,
+        vec![
+            AccountMeta::new(authority.pubkey(), true),
+            AccountMeta::new(mint, true),
+        ],
+    );
+
+    let mut ixs = vec![create];
+    ixs.extend(init_extensions(&mint, &authority.pubkey()));
+    ixs.push(
+        instruction::initialize_mint2(
+            &TOKEN_2022_PROGRAM_ID,
+            &mint,
+            &authority.pubkey(),
+            freeze_authority,
+            6,
+        )
+        .unwrap(),
+    );
+    send_signed(svm, &[authority, &mint_kp], &ixs);
+    mint
+}
+
+/// Freeze (`freeze == true`) or thaw a token account under its mint's
+/// freeze authority — the issuer lever over a pooled treasury.
+#[allow(dead_code)]
+pub fn set_token_account_frozen(
+    svm: &mut LiteSVM,
+    freeze_authority: &Keypair,
+    token_program: &Pubkey,
+    account: &Pubkey,
+    mint: &Pubkey,
+    freeze: bool,
+) {
+    use spl_token_2022_interface::instruction::{freeze_account, thaw_account};
+
+    let build = if freeze { freeze_account } else { thaw_account };
+    let ix = build(
+        token_program,
+        account,
+        mint,
+        &freeze_authority.pubkey(),
+        &[],
+    )
+    .unwrap();
+    send_signed(svm, &[freeze_authority], &[ix]);
+}
+
 /// Create a Token-2022 token account (165 bytes) for the given mint.
 /// Returns the token account address — useful for testing that the
 /// program correctly rejects a token account passed as a mint.

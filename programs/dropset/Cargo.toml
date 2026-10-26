@@ -45,6 +45,12 @@ dropset-sdk = { path = "../../sdk/rs" }
 # Reads the shared sdk/conformance/price_vectors.json in
 # tests/price_conformance.rs (the program-side codec pin).
 serde_json = "1"
+# Builds extended Token-2022 mints (transfer fee, hook, permanent delegate,
+# ...) in tests/token_2022_extensions.rs. Already in the lock as an
+# `anchor-spl` dependency (not re-exported); it carries the extension
+# instruction encoders and the TLV account-length arithmetic, which the
+# hand-rolled byte builders in tests/common would otherwise have to copy.
+spl-token-2022-interface = "2.1"
 anchor-v2-testing.workspace = true
 litesvm.workspace = true
 solana-clock.workspace = true

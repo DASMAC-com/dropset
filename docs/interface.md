@@ -271,6 +271,48 @@ Dropset is an **order-book venue**, not a constant-product pool:
   the one-time `vault_open_fee` and the leader `perf_fee` are protocol-revenue /
   leader-economics, **not** per-trade fees.
 
+### Mint qualification — the listing checklist
+
+`create_market` is permissionless and admits **any** mint the token program
+accepts, classic SPL Token or Token-2022 with **any** extension set. The
+program gates nothing; **the lister qualifies the mint** — the frontend
+roster, or any third party surfacing a market. A mint whose extensions make a
+dead market costs its creator the create fee and nothing else.
+
+The one program-side defense: every inbound leg — `deposit`, `deposit_leader`
+and `swap`'s input — requires the treasury to receive **exactly** the amount
+it books, failing `TransferShortfall` otherwise. The ledger therefore never
+credits atoms the treasury does not hold, whatever the mint does.
+
+| Extension                                                                                                                                 | What it does to a market                                                                                                                                                                                                                                                                                                |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TransferFeeConfig`                                                                                                                       | While the fee is non-zero, every inbound transfer on that leg fails `TransferShortfall`: no deposits, and no swaps paying that leg in. Outbound payouts still settle, net of the fee at the recipient. A zero fee works until the fee authority raises it (effective two epochs later), which closes that leg's inflow. |
+| `TransferHook`                                                                                                                            | Leg transfers pass no hook accounts, so once a hook program is set every transfer on that leg fails: a dead market. A hook program set after listing traps the funds already in custody.                                                                                                                                |
+| `PermanentDelegate`                                                                                                                       | The delegate can move treasury atoms without the market's signature. The ledger does not see it; the shortfall falls on whoever withdraws last, and `sweep_residual` reads zero. An issuer lever — see **Issuer authority over the treasury** below.                                                                    |
+| `NonTransferable`                                                                                                                         | The first deposit fails: a dead market.                                                                                                                                                                                                                                                                                 |
+| `DefaultAccountState` = Frozen                                                                                                            | The treasury ATAs are created frozen, so every transfer on that leg fails until the freeze authority thaws them.                                                                                                                                                                                                        |
+| `Pausable`                                                                                                                                | A pause halts every transfer on the leg — deposits, swaps, withdraws and teardown — until unpaused.                                                                                                                                                                                                                     |
+| `ConfidentialTransferMint`, `InterestBearingConfig`, `ScaledUiAmount`, `MetadataPointer`, `TokenMetadata`, `Group*`, `MintCloseAuthority` | Inert for the market's transfers. `InterestBearingConfig` and `ScaledUiAmount` change only the *UI* amount: the program, prices and events are all in raw atoms, so a display must apply the mint's scaling itself.                                                                                                     |
+
+**Issuer authority over the treasury.** Each treasury is an ordinary ATA,
+pooled across every vault on the market, so the issuer levers act on all
+depositors at once, and the program can neither prevent them nor detect them:
+
+- a **freeze authority** on either leg (classic SPL Token or Token-2022) can
+  freeze a treasury, halting `withdraw`, `withdraw_leader`, `force_withdraw`
+  and `close_market_treasury` for every depositor, teardown included, until
+  thawed;
+- a Token-2022 **`Pausable`** mint halts every transfer while paused;
+- a Token-2022 **permanent delegate** can move treasury atoms without the
+  market's signature.
+
+The program emits nothing on a freeze or pause; it surfaces only as the token
+program's error on the next transfer. Refusing such mints is not viable — a
+regulated stablecoin typically carries a freeze authority, as USDC does — so
+these are disclosed rather than defended against. The
+incentive runs the right way: an issuer that froze or drained a pooled
+treasury would forfeit the trust its token runs on.
+
 ______________________________________________________________________
 
 ## 4. Integrators / consumers
