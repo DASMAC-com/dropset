@@ -572,7 +572,9 @@ path (`SetReferencePrice`) never touches list pointers.
   `next_vault_seq`; prepend at `head`.
 - **Tombstone (`CloseVault`)** → unlink from active DLL, prepend
   at `tombstone_head`. The vault keeps its data; only the list
-  membership changes.
+  membership changes. A vault closed with `total_shares == 0` (never
+  seeded) skips the tombstone and is reclaimed at once: no withdraw
+  could ever drain it, and deposits refuse a tombstone.
 - **Reclaim (`Withdraw` that drives `total_shares` to 0 on any
   non-free vault)** → unlink from whichever DLL the vault is on
   (active for a drained frozen vault, tombstone for a closed
@@ -1144,6 +1146,15 @@ Properties:
   absolute sizes; the percentages bind to whatever inventory exists
   at flush. After heavy buying drains base, the next flush
   automatically rescales the ladder to the new (smaller) base leg.
+- **Deposits and withdrawals carry the snapshot.** They never arm a
+  flush (which would zero every `flip_size`, letting any depositor
+  wipe the leader's flipped proceeds). Instead each resting counter is
+  scaled by `new_leg / old_leg` of its own leg, floored, so a level
+  keeps its fraction of inventory: a withdrawal scales `size` and
+  `flip_size`, a deposit scales `size` only, since inflating
+  `flip_size` would mint flipped allowance no fill backs. Without
+  this, a deposit-flush-withdraw cycle leaves a 20% level sized at the
+  whole remaining leg.
 - **Per-level expiry stratifies the ladder.** A leader can give
   top-of-book short offsets and deep levels much longer ones, so flush
   cadence is graded by depth instead of forced to the top-of-book rate.
@@ -2133,8 +2144,10 @@ that approval lands.
 Leader-only. Moves the vault from the active DLL to the tombstone
 DLL: matching stops, depositor flows stay open until the vault
 drains. This is the intended leader-initiated lifecycle exit ("done
-quoting this market"). See **Vault → Frozen and tombstoned vaults**
-for full state semantics and the comparison with `FreezeVault`.
+quoting this market"). A never-seeded vault (`total_shares == 0`)
+is reclaimed to the free DLL instead, since nothing could ever drain
+its tombstone. See **Vault → Frozen and tombstoned vaults** for full
+state semantics and the comparison with `FreezeVault`.
 
 The close also blanks `Vault.name` and clears `name_locked`, releasing
 the name for the market. Emits `CloseVaultEvent` (`market`,

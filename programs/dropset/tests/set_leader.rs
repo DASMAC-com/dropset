@@ -103,7 +103,9 @@ fn rejects_rotation_on_a_frozen_vault() {
 
 #[test]
 fn leader_may_rotate_on_a_tombstoned_vault() {
-    let mut f = Fixture::with_vault();
+    // Seeded: closing a never-seeded vault reclaims it rather than
+    // tombstoning it.
+    let mut f = Fixture::seeded(SEED_BASE, SEED_QUOTE);
     let leader = f.authority.insecure_clone();
     f.close_vault(&leader, 0).expect("leader closes vault");
     assert!(f.vault(0).tombstoned.get());
