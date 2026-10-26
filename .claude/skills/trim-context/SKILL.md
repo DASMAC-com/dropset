@@ -330,8 +330,9 @@ skill or convention doc, so each task is meta-work — prepend the
 **`Claude:`** prefix to its title, per `CLAUDE.md` → "Claude: meta-work
 prefix".
 
-**They land in the inbox:** state **Backlog, no milestone**. The fold
-is their assembly, so they are never parked for a second one.
+**They land in the inbox:** state **Backlog, no milestone, Urgent**,
+like every assembled batch. The fold is their assembly, so they are
+never parked for a second one, nor folded again.
 
 **Compose the bodies with the tool, not by hand — one call for the whole
 fold, however many tasks it splits into:**
@@ -440,7 +441,7 @@ path from the compose summary:
 python3 .claude/tools/linear_issue.py create \
   --title 'Claude: <this task's theme>' \
   --body-file <scratchpad>/tasks/01-<slug>.md \
-  --state Backlog --priority 3
+  --state Backlog --priority 1
 ```
 
 The `--title` is the **whole** Linear title, prefix included — the same

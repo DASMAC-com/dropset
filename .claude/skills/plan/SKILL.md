@@ -290,9 +290,11 @@ folded, so an old In Progress audit is live, not stalled.
 promote them all — by default, unprompted.** An executor
 session's follow-ups and `Claude:` strays land parked (Backlog
 plus `Follow-ups`); this bootstrap is their one reviewer. The
-pool is that milestone **plus every open, unblocked inbox stray**
-(never Todo) — without that clause an unpulled batch is
-duplicated rather than absorbed. Group by the surface each issue
+pool is that milestone **plus every open, unblocked `Claude:`
+inbox stray** (never Todo), so a meta issue filed outside the
+parking rule is still absorbed; never a product spec awaiting
+review, an `[Operator]` item, or a `trim-context` output task,
+which is already a batch. Group by the surface each issue
 changes, meta apart from product by the `Claude:` prefix, and
 fold each group into its lowest-numbered survivor via
 `/merge-tasks`. Routine bookkeeping; no per-fold proposal.
@@ -336,8 +338,9 @@ fold each group into its lowest-numbered survivor via
 
   Anchored edits stay on `patch`.
 
-**Review every meta issue at every full bootstrap — parked, Next
-and Blocked — whether or not the document names a lane.** It is
+**Review every pooled issue and every meta issue at every full
+bootstrap — parked, Next and Blocked — whether or not the
+document names a lane.** It is
 a **necessity gate**: each ends doable, blocked, or killed. From
 the two listings:
 
@@ -345,7 +348,9 @@ the two listings:
 1. **Before assembly, kill on doubt**, per issue: one that cannot
    name a concrete recurring cost larger than its
    landing-plus-ratification cost goes on a kill list (titles
-   first; read only a kill candidate's body).
+   first; read only a kill candidate's body). Kill candidates
+   stay out of assembly until step 8's answer; a declined kill
+   joins the next bootstrap's pool.
 1. After assembly, promote every batch in one
    `board_batch.py fields` write (milestone `null`, Urgent); the
    operator reviews each in the inbox. A `[blocked by …]` row
@@ -656,9 +661,10 @@ say each count, never a listing.** **The consolidated ask**
 carries only what needs the operator's word — the kill list, the
 holds' edges, Discuss items and the upkeep's destructive items.
 
-**`Audit findings` is a legacy pool, drained like `Follow-ups`**:
-each bootstrap promotes or kills what it holds, by step 1's kill
-gate, and the milestone leaves the parking set once empty. List
+**`Audit findings` is a legacy pool, drained one finding at a
+time**: each bootstrap promotes or kills what it holds, by step
+1's kill gate, and the milestone leaves the parking set once
+empty. List
 it **field-selected** (title, priority); promote by **clearing
 the milestone** in one `board_batch.py fields` write, never by
 closing and refiling. **Do not re-adjudicate a finding** —

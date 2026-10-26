@@ -571,9 +571,10 @@ the operator's **inbox** until it has been reviewed and assembled.
 never "not now"** (operator ruling, 2026-10-23: nothing sits in a giant
 backlog). Who resolves a filing splits by the filer's tier:
 
-- **An advisor-tier session** (architect, explore, audit) resolves its
-  own proposals before it closes: they stage under `Session pending` and
-  are ratified in that session's tab, its close gate leaving none behind.
+- **An advisor-tier session** (architect, explore, and audit once its
+  staging lands) resolves its own proposals before it closes: they
+  stage under `Session pending` and are ratified in that session's tab,
+  its close gate leaving none behind.
 - **An executor session** (`task`, `chore`) never holds a review: its
   follow-ups and meta strays park under `Follow-ups`, its levers under
   `Trim levers`, and the planning bootstrap is their one reviewer — it
@@ -583,8 +584,9 @@ backlog). Who resolves a filing splits by the filer's tier:
   is the giant backlog by another route, and the fold is what keeps the
   inbox reviewable.
 
-`Audit findings` drains the same way: each bootstrap promotes or kills
-what it holds, and it leaves the parking set once empty.
+`Audit findings` drains by the same kill gate, one finding at a time:
+each bootstrap promotes or kills what it holds, and it leaves the
+parking set once empty.
 
 **`Session pending` is never promoted by planning.** It is the unified
 staging lane for every seat session's filed tasks — architect and
@@ -619,8 +621,8 @@ riding in the bootstrap's consolidated `AskUserQuestion`; every
 surviving batch is promoted. Its outcome is recorded in the document's
 in-session notes. The procedure is the `plan` skill's, step 1.
 
-**A blocked meta issue is never a fold input.** The assembly pool takes
-only **unblocked** `Claude:` issues, because `/merge-tasks` does
+**A blocked issue is never a fold input.** The assembly pool takes
+only **unblocked** issues, because `/merge-tasks` does
 not carry an inherited blocking edge silently — it re-proposes it, and
 drops it unapproved — so folding an edge-held issue would rewrite or lose
 a human-placed edge. It is reviewed for a kill, never promoted:
@@ -775,9 +777,12 @@ approved one (Todo) would drop back to Backlog, undoing the operator's
 move.
 
 **The pool is the milestone PLUS any inbox stray** — every open,
-unblocked Backlog issue with **no milestone** that is not itself an
-assembled batch, so an issue filed outside the parking rule is still
-absorbed rather than reviewed one at a time.
+unblocked `Claude:`-prefixed Backlog issue with **no milestone** that
+is not itself an assembled batch, so a meta issue filed outside the
+parking rule is still absorbed rather than reviewed one at a time. A
+`trim-context` output task is an assembled batch (below), and a
+product spec awaiting review is never a stray. An `[Operator]` item
+parked under `Follow-ups` is neither folded nor promoted.
 
 **Assembly is NOT gated on a meta issue being in flight** — operator
 rule, 2026-09-11, retiring the earlier precondition together with the
@@ -809,8 +814,9 @@ being worked, which makes "never fold an issue that is In Progress"
 load-bearing on its own rather than belt-and-braces.
 
 **`trim-context`'s output tasks land in the inbox** (Backlog, no
-milestone): the fold is their assembly, so they are never parked for a
-second one. The trim levers keep their own milestone, writer and fold.
+milestone, Urgent): the fold is their assembly, so each is an
+assembled batch — never parked for a second assembly, never a fold
+input. The trim levers keep their own milestone, writer and fold.
 
 ## The verb/substrate title token
 

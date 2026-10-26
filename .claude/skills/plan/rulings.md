@@ -142,8 +142,9 @@ the document's state sections.
 
 1. **Parked hygiene is a rhythm.** Every full bootstrap says each
    parked milestone's count with its direction, machine-written by
-   upkeep; the lever pool folds there (ruling 23), and Follow-ups,
-   Audit findings and Session pending get count-and-offer lines
+   upkeep; the lever pool folds there (ruling 23), Follow-ups
+   folds and promotes whole (`SKILL.md` step 1), and Audit
+   findings and Session pending get count-and-offer lines
    (`SKILL.md` step 8).
 
 1. **Alpenglow proof is explicit.** The v3 port closes only with
@@ -182,8 +183,9 @@ the document's state sections.
 
 1. **Operator-executed items are not tasks.** An item executed in
    a vendor dashboard, credentials or deploy env is never
-   dispatched; it parks under Follow-ups and goes on the
-   document's operator-actions list by hand.
+   dispatched; it parks under Follow-ups, is never folded or
+   promoted, and goes on the document's operator-actions list by
+   hand.
 
 1. **Cost telemetry is reconciled against the bill.**
    Session-reported costs are projections;

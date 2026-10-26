@@ -183,8 +183,8 @@ yet reviewed or assembled", **never "not now"**.
 
 **The planning bootstrap is the single assimilation point** — once a
 day it sweeps the milestone **plus any inbox stray** (an open,
-unblocked Backlog issue with no milestone; an assembled batch is
-never re-folded), kills on doubt, folds the rest into **small themed
+unblocked `Claude:` Backlog issue with no milestone; an assembled
+batch is never re-folded), kills on doubt, folds the rest into **small themed
 batches of roughly 4–5 parts** (meta apart from product by the
 prefix), and **promotes every batch** — assembly first, promotion
 whole. The file-disjoint test binds at **dispatch**, overlap paid as a
@@ -251,8 +251,9 @@ plus the milestone,
 in the creating call**, and promotion is **one write, the milestone
 clear**. Every full bootstrap says each parked count **out loud**;
 a genuinely urgent stray (a broken guard) is promoted on the spot.
-A parked stray is consumed by the next **batch assembly**, never
-pulled on its own (see "Claude: meta-work prefix" above). Detail:
+A parked `Follow-ups` filing is consumed by the next **batch
+assembly**, never pulled on its own (see "Claude: meta-work
+prefix" above). Detail:
 `docs/conventions/linear-automation.md`.
 
 ### An audit is a board issue, not a directive
