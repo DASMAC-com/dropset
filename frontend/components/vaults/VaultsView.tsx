@@ -4,8 +4,7 @@ import NumberFlow from "@number-flow/react";
 import { useWalletConnection } from "@solana/react-hooks";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { Crosshair, ExternalLink, RefreshCw, X } from "@/components/icons";
-import { CopyButton } from "@/components/ui/CopyButton";
+import { Crosshair, RefreshCw, X } from "@/components/icons";
 import { FlagPair } from "@/components/ui/Flag";
 import { SearchBox } from "@/components/ui/SearchBox";
 import {
@@ -39,7 +38,6 @@ import {
 } from "@/lib/data/vaults";
 import { SHOW_MOCK_VAULTS } from "@/lib/env";
 import { emit, useAppEvent } from "@/lib/events";
-import { EXPLORER_NAME, explorerAddressUrl } from "@/lib/explorer";
 import { FORMATS } from "@/lib/format/formats";
 import { useChainVaults } from "@/lib/hooks/useChainVaults";
 import { groupedRowClassName } from "@/lib/ui/groupedRows";
@@ -69,8 +67,12 @@ const cmpMetric = compareSortValues;
 // its chip; a shorter value is a hand-typed prefix and shown verbatim.
 const LEADER_SLUG_MAX = 12;
 
+// The table's handle for a vault: its name, else the leader's short address.
+const vaultLabel = (vault: Vault): string =>
+  vault.name ?? shortenMint(vault.leader);
+
 // Substring match across the pair's FX label / nickname / currency names and
-// the vault's tokens + leader address.
+// the vault's tokens, name and leader address.
 const matchesQuery = (
   q: string,
   group: FxPairGroup,
@@ -87,6 +89,7 @@ const matchesQuery = (
     entry.market.base,
     entry.market.quote,
     entry.market.label,
+    entry.vault.name ?? "",
     entry.vault.leader,
   ].some((s) => s.toLowerCase().includes(q));
 };
@@ -287,23 +290,15 @@ function VaultRow({
       </td>
       <td className="w-px whitespace-nowrap border-border border-r px-3 py-2 align-middle last:border-r-0">
         <div className="flex items-center gap-1">
+          {/* The name is the stable handle (leadership rotates); an unset
+              one falls back to the leader's short address. The leader's
+              copy and explorer links live in the dialog. */}
           <span
-            className="font-mono text-foreground text-xs"
-            title={vault.leader}
+            className={`max-w-48 truncate text-foreground ${vault.name ? "font-medium text-sm" : "font-mono text-xs"}`}
+            title={vault.name ?? vault.leader}
           >
-            {shortenMint(vault.leader)}
+            {vaultLabel(vault)}
           </span>
-          <CopyButton value={vault.leader} label="leader address" />
-          <a
-            href={explorerAddressUrl(vault.leader)}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={`View leader on ${EXPLORER_NAME}`}
-            aria-label={`View leader on ${EXPLORER_NAME}`}
-            className="inline-flex shrink-0 items-center rounded p-1 text-muted-fg hover:bg-muted hover:text-accent"
-          >
-            <ExternalLink size={12} />
-          </a>
           {/* Pin the view to this exact vault — writes base/quote/leader into
               the URL (a shareable deep link); click again to clear. */}
           <button
@@ -573,7 +568,7 @@ function VaultsInner() {
   const vaultSortValue = useCallback(
     (gv: GroupedVault, key: MetricKey): number | string | null => {
       if (key === "position") return positionValue(gv.vault);
-      if (key === "leader") return gv.vault.leader;
+      if (key === "name") return vaultLabel(gv.vault);
       if (key === "pair") return gv.market.label;
       return vaultMetric(gv, key);
     },
@@ -583,12 +578,12 @@ function VaultsInner() {
     (g: FxPairGroup, key: MetricKey): number | string | null => {
       if (key === "position")
         return g.vaults.reduce((sum, gv) => sum + positionValue(gv.vault), 0);
-      // A pair groups many leaders, so rank it by its alphabetically first.
-      // Case-insensitive to match the row-level leader comparator (cmpMetric).
-      if (key === "leader")
+      // A pair groups many vaults, so rank it by its alphabetically first.
+      // Case-insensitive to match the row-level name comparator (cmpMetric).
+      if (key === "name")
         return (
           g.vaults
-            .map((gv) => gv.vault.leader)
+            .map((gv) => vaultLabel(gv.vault))
             .sort((a, b) =>
               a.toLowerCase().localeCompare(b.toLowerCase()),
             )[0] ?? null
@@ -665,7 +660,7 @@ function VaultsInner() {
     if (only) setDialog({ market: only.market, vault: only.vault });
   });
 
-  // Columns: Pair, Leader, Your Position, Manage, TVL.
+  // Columns: Pair, Name, Your Position, Manage, TVL.
   const colSpan = 5;
 
   // One section's rows: FX headings over their vaults when grouped, else the
@@ -795,8 +790,8 @@ function VaultsInner() {
                   align="left"
                 />
                 <VaultSortHeader
-                  sortKey="leader"
-                  label="Leader"
+                  sortKey="name"
+                  label="Name"
                   sort={sort}
                   onToggle={toggleSort}
                   align="left"

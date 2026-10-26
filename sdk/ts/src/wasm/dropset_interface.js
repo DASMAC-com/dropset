@@ -142,6 +142,8 @@ if (Symbol.dispose) RestingBook.prototype[Symbol.dispose] = RestingBook.prototyp
  * the `vault_idx` the `deposit` / `withdraw` instructions take — and every
  * other array is aligned with it. `leaders` is the 32-byte leader keys
  * concatenated, so vault `i`'s key is `leaders[32 * i .. 32 * i + 32]`.
+ * `names` is the one array of strings: each vault's display name, empty
+ * where the name is unset.
  */
 export class VaultSlab {
     static __wrap(ptr) {
@@ -238,6 +240,17 @@ export class VaultSlab {
     get min_leader_shares() {
         const ret = wasm.vaultslab_min_leader_shares(this.__wbg_ptr);
         var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * Display names, the zero padding stripped; empty where unset (a vault
+     * never named, or blanked by freeze or close).
+     * @returns {string[]}
+     */
+    get names() {
+        const ret = wasm.vaultslab_names(this.__wbg_ptr);
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v1;
     }
@@ -456,6 +469,11 @@ function __wbg_get_imports() {
         __wbg___wbindgen_throw_6b64449b9b9ed33c: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
+        __wbindgen_cast_0000000000000001: function(arg0, arg1) {
+            // Cast intrinsic for `Ref(String) -> Externref`.
+            const ret = getStringFromWasm0(arg0, arg1);
+            return ret;
+        },
         __wbindgen_init_externref_table: function() {
             const table = wasm.__wbindgen_externrefs;
             const offset = table.grow(4);
@@ -482,6 +500,17 @@ const VaultSlabFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_vaultslab_free(ptr >>> 0, 1));
 
+function getArrayJsValueFromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    const mem = getDataViewMemory0();
+    const result = [];
+    for (let i = ptr; i < ptr + 4 * len; i += 4) {
+        result.push(wasm.__wbindgen_externrefs.get(mem.getUint32(i, true)));
+    }
+    wasm.__externref_drop_slice(ptr, len);
+    return result;
+}
+
 function getArrayU32FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
@@ -503,6 +532,14 @@ function getBigUint64ArrayMemory0() {
         cachedBigUint64ArrayMemory0 = new BigUint64Array(wasm.memory.buffer);
     }
     return cachedBigUint64ArrayMemory0;
+}
+
+let cachedDataViewMemory0 = null;
+function getDataViewMemory0() {
+    if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)) {
+        cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
+    }
+    return cachedDataViewMemory0;
 }
 
 function getStringFromWasm0(ptr, len) {
@@ -560,6 +597,7 @@ function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
     cachedBigUint64ArrayMemory0 = null;
+    cachedDataViewMemory0 = null;
     cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();

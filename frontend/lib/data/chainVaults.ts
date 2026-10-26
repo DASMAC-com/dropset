@@ -106,7 +106,7 @@ export function chainVault(
     frozen: summary.frozen,
     allowOutsideDepositors: summary.allowOutsideDepositors,
     outsideDepositsApproved: summary.outsideDepositsApproved,
-    name: null,
+    name: summary.name,
   };
 }
 

@@ -286,10 +286,10 @@ export const SHORTCUTS_BY_CONTEXT: Record<ShortcutContext, ShortcutSpec[]> = {
       run: () => emit("vaultsSort", "pair"),
     },
     {
-      key: "l",
-      description: "Sort by leader",
+      key: "n",
+      description: "Sort by name",
       group: "Sort & display",
-      run: () => emit("vaultsSort", "leader"),
+      run: () => emit("vaultsSort", "name"),
     },
     {
       key: "y",

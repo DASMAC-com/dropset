@@ -161,6 +161,11 @@ export function decodeDropsetMarketView(
 export type VaultSummary = {
   index: number;
   seq: bigint;
+  /**
+   * The vault's display name, or `null` when unset — never named, or
+   * blanked by freeze or close.
+   */
+  name: string | null;
   leader: Address;
   /**
    * The vault's reference price — quote atoms per base atom. Not
@@ -208,6 +213,7 @@ export function decodeDropsetVaults(data: ReadonlyUint8Array): VaultSummary[] {
   try {
     const indices = slab.indices;
     const seqNumbers = slab.seq_numbers;
+    const names = slab.names;
     const leaders = slab.leaders;
     const referencePrices = slab.reference_prices;
     const baseAtoms = slab.base_atoms;
@@ -226,6 +232,7 @@ export function decodeDropsetVaults(data: ReadonlyUint8Array): VaultSummary[] {
       out[i] = {
         index: indices[i]!,
         seq: seqNumbers[i]!,
+        name: names[i] || null,
         leader: addressDecoder.decode(leaders.subarray(32 * i, 32 * i + 32)),
         referencePrice: referencePrices[i]!,
         baseAtoms: baseAtoms[i]!,
