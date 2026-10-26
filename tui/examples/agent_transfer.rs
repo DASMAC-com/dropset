@@ -9,7 +9,7 @@
 //! With `--list` it only prints every identity each candidate socket serves
 //! (whether a given 1Password item is served at all). Otherwise it finds the
 //! agent serving `<address>`, funds the address from the localnet faucet,
-//! and sends 1,000 lamports to a fresh throwaway address, signed through
+//! and sends 0.001 SOL to a fresh throwaway address, signed through
 //! the agent — one approval prompt — then verifies the signature and
 //! confirms the transaction. Localnet only: the default RPC is
 //! `http://127.0.0.1:8899`, and the faucet refuses anywhere else.
@@ -27,7 +27,9 @@ use solana_signer::Signer;
 use solana_transaction::Transaction;
 
 const FUND_LAMPORTS: u64 = 1_000_000_000;
-const TRANSFER_LAMPORTS: u64 = 1_000;
+/// Over the rent-exempt minimum for a 0-byte account (890,880), which a
+/// fresh recipient must reach or the transfer is refused.
+const TRANSFER_LAMPORTS: u64 = 1_000_000;
 
 fn main() -> Result<()> {
     let mut address = None;
