@@ -629,7 +629,7 @@ a human-placed edge. It is reviewed for a kill, never promoted:
 promoting it would clear no edge.
 
 **The review is a necessity gate, and it closes on doubt.** On the
-operator's yes, any meta issue that cannot name a concrete recurring cost
+operator's yes, any pooled issue that cannot name a concrete recurring cost
 larger than its landing-plus-ratification cost is closed `Canceled` with
 its reason. The kill pass runs **per issue, before assembly**, since a
 folded issue can no longer be killed on its own; titles decide the

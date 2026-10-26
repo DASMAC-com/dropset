@@ -89,7 +89,8 @@ what to file.
      inbox by construction. The planning bootstrap is its
      one reviewer: once a day it folds that milestone into
      small themed batch issues, meta apart from product by
-     the prefix, and promotes them into the inbox whole.
+     the prefix, and promotes them into the inbox whole
+     (an `[Operator]` item parks too, but is never folded).
 
      **Ask the verb and substrate** with the
      `AskUserQuestion` selector, the default — Task on
@@ -220,6 +221,7 @@ what to file.
      project: "<$LINEAR_PROJECT_ID>",
      assignee: "<$LINEAR_ASSIGNEE_ID>",
      state: "Backlog",
+     milestone: "Follow-ups",  // every filing parks (step 1)
      title: "<title>",
      description: "<markdown body>",
      priority: 3,  // 2 if the user calls it urgent

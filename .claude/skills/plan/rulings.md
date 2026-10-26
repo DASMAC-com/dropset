@@ -44,7 +44,7 @@ the document's state sections.
    place one. (`SKILL.md` step 2.)
 
 1. **Meta discretion — the necessity kill gate.** Every full
-   bootstrap kills before it assembles: a meta issue that cannot
+   bootstrap kills before it assembles: a pooled issue that cannot
    name a concrete recurring cost larger than its
    landing-plus-ratification cost is closed, and doubt still
    kills. Doubt means doubt the issue is worth doing, never "not
@@ -143,9 +143,9 @@ the document's state sections.
 1. **Parked hygiene is a rhythm.** Every full bootstrap says each
    parked milestone's count with its direction, machine-written by
    upkeep; the lever pool folds there (ruling 23), Follow-ups
-   folds and promotes whole (`SKILL.md` step 1), and Audit
-   findings and Session pending get count-and-offer lines
-   (`SKILL.md` step 8).
+   folds and promotes whole (`SKILL.md` step 1), Audit findings
+   drains by promotion or kill, and Session pending gets a
+   count-and-offer line (`SKILL.md` step 8).
 
 1. **Alpenglow proof is explicit.** The v3 port closes only with
    a recorded end-to-end deploy on an Alpenglow-enabled 4.3

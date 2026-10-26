@@ -350,7 +350,7 @@ the two listings:
    landing-plus-ratification cost goes on a kill list (titles
    first; read only a kill candidate's body). Kill candidates
    stay out of assembly until step 8's answer; a declined kill
-   joins the next bootstrap's pool.
+   is assembled and promoted right after it.
 1. After assembly, promote every batch in one
    `board_batch.py fields` write (milestone `null`, Urgent); the
    operator reviews each in the inbox. A `[blocked by …]` row
