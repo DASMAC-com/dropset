@@ -842,6 +842,8 @@ class PassTests(unittest.TestCase):
         cmd = seen["cmd"]
         self.assertEqual(cmd[cmd.index("--since") + 1], "2026-10-07T09:00:00+00:00")
         self.assertEqual(cmd[cmd.index("--base") + 1], BASE)
+        # Without it the digest writes no CI section.
+        self.assertIn("--ci", cmd)
         self.assertFalse(seen["calibration_path"].exists())
 
     def test_a_failed_cost_or_rates_read_still_digests_and_says_why(self):

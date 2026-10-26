@@ -48,7 +48,8 @@ refuses the whole pass, since every later step assumes it.
     sample its per-day figure is derived from;
 11. the session digest (``session_metrics digest``) over every transcript since
     the last digest's window closed, its rate-calibration line fed by step 10's
-    reconcile figure and the settled day's ``fleet_cost rates`` read;
+    reconcile figure and the settled day's ``fleet_cost rates`` read, and its
+    CI section (``--ci``) read from the merge queue over the same window;
 12. the memory scan gate, then the memory audit when due;
 13. the transcript-purge dry-run manifest.
 
@@ -122,6 +123,9 @@ TIMEOUT_GH = 60
 TIMEOUT_TOOL = 120
 # The transcript walk alone takes about a minute, before the Cost Explorer read.
 TIMEOUT_COST = 300
+# The digest's transcript walk plus its CI read: a cold job cache is one
+# `gh api` read per merge-queue run of the past week, a few hundred.
+TIMEOUT_DIGEST = 600
 
 # How many recent digests the refresh gate mines — an upper bound: the purge
 # ages digests out on the transcripts' two-day rule, so once it is applied
@@ -795,7 +799,7 @@ def step_digest(ctx: Ctx) -> None:
         "w", suffix=".json", prefix="upkeep-calibration-", delete=False
     ) as handle:
         json.dump(calibration, handle)
-    args = ["digest", "--base", str(ctx.base), "--calibration", handle.name]
+    args = ["digest", "--base", str(ctx.base), "--calibration", handle.name, "--ci"]
     if ctx.data.get("previous_run"):
         args += ["--since", ctx.data["previous_run"]]
     try:
@@ -805,7 +809,7 @@ def step_digest(ctx: Ctx) -> None:
             "session_metrics.py",
             *args,
             ok_rcs=(0,),
-            timeout=TIMEOUT_COST,
+            timeout=TIMEOUT_DIGEST,
         )
     finally:
         os.unlink(handle.name)
