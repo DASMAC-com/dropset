@@ -365,10 +365,19 @@ def _raw_pass(text):
     bodies = []
     quote = None
     uncertain = False
+    # Whether the next character begins a word, the only place a `#` starts
+    # a comment. Tracked explicitly: the previous raw character cannot say,
+    # since `$(true)#`, `\;#` and `a\ #` are all mid-word to the shell.
+    word_start = True
     i = 0
     n = len(text)
     while i < n:
         c = text[i]
+        if c == "#" and quote is None and word_start:
+            end = text.find("\n", i)
+            i = n if end == -1 else end
+            continue
+        word_start = False
         if quote == "'":
             if c == "'":
                 quote = None
@@ -377,6 +386,12 @@ def _raw_pass(text):
             continue
         if c == "\\":
             out.append(text[i : i + 2])
+            i += 2
+            continue
+        if text.startswith("$$", i):
+            # The PID parameter: the second `$` is spent, so a `'` after it
+            # is a plain quote, not ANSI-C (`$$'\'` is not `$'\''`).
+            out.append("$$")
             i += 2
             continue
         if quote is None:
@@ -393,10 +408,6 @@ def _raw_pass(text):
                 quote = "'"
                 out.append(c)
                 i += 1
-                continue
-            if c == "#" and (i == 0 or text[i - 1] in COMMENT_START_AFTER):
-                end = text.find("\n", i)
-                i = n if end == -1 else end
                 continue
             if text.startswith("<<", i) and not text.startswith("<<<", i):
                 uncertain = True
@@ -425,6 +436,9 @@ def _raw_pass(text):
             continue
         out.append(c)
         i += 1
+        # Only an unescaped, unquoted blank or operator character starts a
+        # word; every other path through the loop leaves this False.
+        word_start = quote is None and c in COMMENT_START_AFTER
     if quote is not None:
         uncertain = True
     return "".join(out), bodies, uncertain
@@ -1076,6 +1090,14 @@ BASH_CASES = [
     ("$'\\157p' read x", True),
     ("echo 'op read x' | tee /dev/null | sh", True),
     ("cat <<EOF\ndon't\n$(op read x)\nEOF", True),
+    ("echo $(true)#; op read x", True),
+    ("echo $((1))#; op read x", True),
+    ("echo a\\ #; op read x", True),
+    ("echo \\;#; op read x", True),
+    ("echo $$'\\'; op read x #'", True),
+    ("echo $$'\\' \"$(op read x)\" '", True),
+    ("(ls)# op read x", False),
+    ("git commit -m 'Fix #12' -m \"don't\" # op read", False),
     ("ls # op read x", False),
     ('echo "\\$(op read x)"', False),
     # Shell value flags, coproc, BSD sed, and a pipe scoped to its shell.

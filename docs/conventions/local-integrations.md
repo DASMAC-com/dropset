@@ -696,7 +696,10 @@ by word rather than skipped.
 and the hook's tokenizer never see (a make recipe, `python3 x.py`),
 variable indirection (`P=op; $P read`), a symlinked spelling of a
 reference file, a recursive delete of a parent directory, an MCP tool
-that shells out, and a session or sub-agent without the wiring. There
+that shells out, and a session or sub-agent without the wiring. The
+hook's shell parse is also a best-effort model of bash, not bash itself:
+three adversarial review rounds each found a quoting shape it misread,
+so treat it as the loud first layer, never the last one. There
 the layer that holds is the **1Password SSH agent's own per-key
 prompt**: a signing request from any process names the key and the
 requesting process, and the operator refuses it.

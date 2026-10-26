@@ -444,6 +444,18 @@ class RawPassTests(Base):
     def test_ansi_c_escapes_are_decoded(self):
         self.assertBlocked("$'\\x6fp' read x", "$'\\157p' read x")
 
+    def test_a_mid_word_hash_is_not_a_comment(self):
+        self.assertBlocked(
+            "echo $(true)#; op read x",
+            "echo $((1))#; op read x",
+            "echo a\\ #; op read x",
+            "echo \\;#; op read x",
+        )
+        self.assertAllowed("(ls)# op read x", "git commit -m 'Fix #12' # op read")
+
+    def test_the_pid_parameter_is_not_ansi_c(self):
+        self.assertBlocked("echo $$'\\'; op read x #'")
+
     def test_every_stage_of_a_pipeline_reaches_the_shell(self):
         self.assertBlocked("echo 'op read x' | tee /dev/null | sh")
 
