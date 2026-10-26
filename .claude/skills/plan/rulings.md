@@ -43,12 +43,14 @@ the document's state sections.
    Planning places and removes edges; automated filers never
    place one. (`SKILL.md` step 2.)
 
-1. **Meta discretion — the necessity kill gate.** The promotion
-   review is a two-list act: a file-disjoint slate and a kill
-   list; close on doubt. The one-time cull of the whole
-   blocked-plus-parked meta stock ran on 2026-10-15 (34 closed,
-   12 folds, survivors parked); what stands is the two-list
-   review at every full bootstrap.
+1. **Meta discretion — the necessity kill gate.** Every full
+   bootstrap kills before it assembles: a meta issue that cannot
+   name a concrete recurring cost larger than its
+   landing-plus-ratification cost is closed, and doubt still
+   kills. Doubt means doubt the issue is worth doing, never "not
+   this week": what survives is assembled and promoted whole
+   (2026-10-23). The one-time cull of the whole meta stock ran on
+   2026-10-15 (34 closed, 12 folds).
 
 1. **Headroom ratchet.** A shrinking PR commits its ceiling at
    size times 1.10; bytes-per-token measured at 2.76 to 2.78.
@@ -134,9 +136,9 @@ the document's state sections.
 1. **No hardcoded 200ms.** Expiry defaults derive from the
    observed slot pace.
 
-1. **Meta freeze until C2.** No new meta promotions beyond what
-   the operator names; the named exceptions are state, listed in
-   the document's direction section.
+1. ~~**Meta freeze until C2.**~~ Retired 2026-10-23: a parking
+   milestone means "not yet reviewed or assembled", never "not
+   now", so nothing sits in a giant backlog (ruling 3).
 
 1. **Parked hygiene is a rhythm.** Every full bootstrap says each
    parked milestone's count with its direction, machine-written by

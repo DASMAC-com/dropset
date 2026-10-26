@@ -81,13 +81,14 @@ what to file.
      prefix.
 
      **A `Claude:` filing is PARKED** — set state
-     **Backlog plus the `Claude meta` milestone, in the
+     **Backlog plus the `Follow-ups` milestone, in the
      creating call**. Without the milestone a meta stray
      lands in the operator's review inbox one at a time,
      unbatched; the milestone keeps it out of the inbox by
      construction. The planning
      bootstrap folds that milestone into small themed
-     batch issues once a day. A non-meta filing is
+     batch issues once a day, meta apart from product by
+     the prefix. A non-meta filing is
      unaffected and still goes to Backlog, correctly: it is
      a spec awaiting review.
 

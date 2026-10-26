@@ -143,7 +143,6 @@ RESOLVED_TYPES = ("completed", "canceled")
 # count there is a seat session that died mid-review.
 PARKED_MILESTONES = (
     "Trim levers",
-    "Claude meta",
     "Follow-ups",
     "Audit findings",
     "Session pending",

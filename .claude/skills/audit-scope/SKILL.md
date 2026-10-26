@@ -476,15 +476,11 @@ Optional (ask on a scoped run if not provided):
      / on-chain / SDK / frontend code gets no prefix.
 
      **A meta finding stays parked under `Audit findings`,
-     not `Claude meta`.** Audit output parks under its own
+     not `Follow-ups`.** Audit output parks under its own
      milestone whatever surface it names, so file it the
      same way as every other finding here — state Backlog
-     plus `Audit findings`. Promoting a meta-flavored
-     finding is then a **milestone swap** to `Claude meta`
-     (a planning-session act), after which the next batch
-     assembly consumes it. Filing it directly under
-     `Claude meta` would skip the sequencing decision that
-     promotion exists to make.
+     plus `Audit findings`. The planning bootstrap promotes
+     or kills it like every other finding.
 
      **Dependencies — file none.** A blocking edge is
      **human-curated** (`CLAUDE.md` → "Blocking

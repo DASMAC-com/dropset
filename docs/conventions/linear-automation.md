@@ -59,9 +59,8 @@ becomes an accumulating fact on one issue. `trim-context` is the
 sized to a short session, so a small pool is still one task while a large
 one splits by surface, with one section per lever, each keeping its own
 `**Fingerprint**:` line — and closes the parked originals. Those output
-tasks **park too**, under `Claude meta`, so the next planning bootstrap's
-batch assembly consumes them rather than their sitting unblocked in the
-operator's Next view. The coherence floor still governs audit findings
+tasks land in the review inbox (Backlog, no milestone), since the fold
+is their assembly. The coherence floor still governs audit findings
 and product filings; the meta-work fold's **no-size-bound exemption is
 retired** (operator rule, 2026-09-11, superseding the 2026-08-25
 always-one ruling), because session cost is roughly quadratic in session
@@ -555,28 +554,37 @@ addressed-and-how, never approval. The operator's **Next** view is the
 unblocked Todo; it is Linear's server-side blocker filter, which is why a
 planning hold is expressed as an edge (see "Blocking relations").
 
-An issue stamped with a parking milestone — `Audit findings` for audit
-output, `Trim levers` for session trim levers, `Claude meta` for
-agent-infra strays, `Session pending` for a seat session's tasks under
-review — is **parked**: filed so it is not lost, deliberately
-*not* in the inbox or the queue. A filing skill sets **state `Backlog`
-plus the milestone, in the creating call** (per "Relations and state
-belong in the CREATING call"). **Promotion is one write, the milestone
-clear**, which lands the issue in the inbox for the operator's review.
-Nothing about parking places or implies a blocking edge — see "Blocking
-relations", where the meta batch's one remaining edge has since been
-retired outright. A Backlog filing is already out of the queue by state;
-the milestone is what keeps a filer's own output out of the operator's
-**inbox**, so the review sees only what planning chose to promote.
+An issue stamped with a parking milestone — `Follow-ups` for an
+executor session's follow-ups and `Claude:` strays, `Trim levers` for
+session trim levers, `Session pending` for a seat session's tasks under
+review, and the legacy `Audit findings` — is **parked**: filed so it is
+not lost, deliberately *not* in the inbox or the queue. A filing skill
+sets **state `Backlog` plus the milestone, in the creating call** (per
+"Relations and state belong in the CREATING call"). **Promotion is one
+write, the milestone clear**, which lands the issue in the inbox for the
+operator's review. Nothing about parking places or implies a blocking
+edge — see "Blocking relations". A Backlog filing is already out of the
+queue by state; the milestone is what keeps a filer's own output out of
+the operator's **inbox** until it has been reviewed and assembled.
 
-**Where promotion leads differs by milestone.** `Audit findings` and
-`Trim levers` promote into the inbox. `Claude meta` does
-not: a parked meta **stray** is consumed by the next **batch assembly**
-rather than pulled on its own, so "promotion" there means being folded
-into a batch. And a meta-flavored *audit* finding is promoted by
-**swapping** its milestone from `Audit findings` to `Claude meta` — it
-stays parked, changing which rhythm will pick it up, rather than
-becoming available work.
+**A parking milestone means "not yet reviewed or not yet assembled",
+never "not now"** (operator ruling, 2026-10-23: nothing sits in a giant
+backlog). Who resolves a filing splits by the filer's tier:
+
+- **An advisor-tier session** (architect, explore, audit) resolves its
+  own proposals before it closes: they stage under `Session pending` and
+  are ratified in that session's tab, its close gate leaving none behind.
+- **An executor session** (`task`, `chore`) never holds a review: its
+  follow-ups and meta strays park under `Follow-ups`, its levers under
+  `Trim levers`, and the planning bootstrap is their one reviewer — it
+  kills on doubt, combines the rest into small themed batches, and only
+  then promotes them into the inbox, **whole**. An executor filing never
+  lands in the inbox directly: an unfolded stream of one-line follow-ups
+  is the giant backlog by another route, and the fold is what keeps the
+  inbox reviewable.
+
+`Audit findings` drains the same way: each bootstrap promotes or kills
+what it holds, and it leaves the parking set once empty.
 
 **`Session pending` is never promoted by planning.** It is the unified
 staging lane for every seat session's filed tasks — architect and
@@ -590,24 +598,10 @@ bootstrap is a session that died mid-review, and the count-and-offer
 line is the backstop — offer to resume that session, never promote its
 tasks around it.
 
-**A batch's own promotion is the same milestone clear**, and which batch is
-pulled follows from that: a **promoted** batch is pulled on its own
-once the operator approves it,
-while an assembled batch the bootstrap does not promote stays parked
-like any other meta issue. The fold-input question is settled below,
-under "An already-assembled parked batch is a promotion candidate, not
-a fold input" — read it there rather than restating it, because the
-distinction turns on **parked vs. not parked** and a shortened version
-loses exactly that.
-
-Worth recording *why* this needed saying at all, since neither statement
-carries the reason: retiring the one-giant-batch form broke an identity
-the old shape had made invisible. When assembly produced exactly one
-batch and promoted it in the same act, *assembling* and *promoting* were
-the same event, so no rule had to say which milestone state a batch
-rests in. Now that a bootstrap assembles several and promotes only a
-file-disjoint subset, the two come apart, and the remainder needs a
-defined home.
+**A batch's own promotion is the same milestone clear**, made on
+**every** batch the bootstrap assembles: assembly is mandatory first,
+and promotion is whole. A promoted batch is pulled once the operator
+approves it, like any inbox spec.
 
 **Every bootstrap says each parked count out loud.** Parked must be
 invisible to the queue without being invisible to the operator, and a
@@ -620,20 +614,17 @@ for the daily rhythm.
 same-day relaunch after a cycle skips it) — parked, in the inbox, in the
 operator's **Next** view (unblocked Todo) and in the **Blocked** view
 — and each ends doable, blocked, or killed. It runs whether or not the
-Planning document names a lane: without it, "promote a file-disjoint
-subset" collapses into the named lane and most batches are never
-considered. Its offer — a recommended file-disjoint slate of assembled
-batches, drawn from the surfaces no in-flight meta issue rewrites, and a
-**kill list** — rides in the same `AskUserQuestion` as the audit-findings
-offer. Its outcome is recorded in the document's in-session notes. The
-procedure is the `plan` skill's, step 1.
+Planning document names a lane. Its one offer is the **kill list**,
+riding in the bootstrap's consolidated `AskUserQuestion`; every
+surviving batch is promoted. Its outcome is recorded in the document's
+in-session notes. The procedure is the `plan` skill's, step 1.
 
 **A blocked meta issue is never a fold input.** The assembly pool takes
 only **unblocked** `Claude:` issues, because `/merge-tasks` does
 not carry an inherited blocking edge silently — it re-proposes it, and
 drops it unapproved — so folding an edge-held issue would rewrite or lose
-a human-placed edge. It is reviewed for a kill, never slated: promoting
-it would clear no edge.
+a human-placed edge. It is reviewed for a kill, never promoted:
+promoting it would clear no edge.
 
 **The review is a necessity gate, and it closes on doubt.** On the
 operator's yes, any meta issue that cannot name a concrete recurring cost
@@ -646,15 +637,17 @@ closed issue's cost resurfaces when it recurs and is measured again — a
 trim lever as a refused refile that names the closed issue — while a
 wrongly kept one spends a session and an operator ratification on noise.
 Meta and trim filings otherwise compound, because nothing ever declines
-one.
+one. **Doubt means doubt the issue is worth doing, never "not this
+week"**: deferral is not a kill reason, and an inbox the operator cannot
+keep up with is the signal to kill harder, never to re-park.
 
 ### Which milestones park, and which do not
 
 The project's milestones split into two kinds, and only one kind parks.
-**Parking** milestones — `Audit findings`, `Trim levers`,
-`Claude meta`, `Session pending` — mean "filed, deliberately not
-queued", and an issue carrying one is read as parked by every rule
-above. The rest —
+**Parking** milestones — `Follow-ups`, `Trim levers`,
+`Session pending`, and the legacy `Audit findings` — mean "filed, not
+yet reviewed or assembled", and an issue carrying one is read as parked
+by every rule above. The rest —
 `Integrations`, `UX features`, `Hardening`, `Mechanisms` — are ordinary
 **delivery** milestones grouping pullable work; an issue under one of
 those is queued like any other and is *not* parked.
@@ -662,10 +655,12 @@ those is queued like any other and is *not* parked.
 Say which kind you mean when you write a rule against "a milestone",
 because the two behave oppositely. The distinction is by **name**, not
 by any field Linear exposes, so it lives here rather than being
-derivable — and the four parking names are the closed set.
+derivable — and the parking names are the closed set.
 `Audit findings` takes no new filings once audit findings stage under
 `Session pending` like any other seat session's output, and it retires
-when its legacy contents drain.
+when its legacy contents drain. `Claude meta` merged into `Follow-ups`
+(operator, 2026-10-23): a meta stray is a follow-up to the agent
+material, and the `Claude:` prefix already says which kind it is.
 
 One place the two kinds *do* behave alike, which is easy to
 misattribute: `board_batch.py list` drops **every** milestoned issue by
@@ -744,11 +739,9 @@ product code on the board.
 
 ### A meta filing is parked, and assimilated once a day
 
-Every `Claude:` filing lands **state `Backlog` plus the `Claude meta`
-milestone, in the creating call** — parked, never in the inbox. A **promoted**
-batch issue is the sole exception, since it is the thing meant for the
-operator's review; an assembled batch that is not promoted stays parked like any
-other meta issue.
+An executor's `Claude:` filing lands **state `Backlog` plus the
+`Follow-ups` milestone, in the creating call** — parked, never in the
+inbox until a bootstrap has assembled it into a batch.
 
 **The motivating failure is structural, not cosmetic.** An automated
 filer may never place a blocking edge (see "Blocking relations"), so
@@ -761,55 +754,30 @@ the milestone keeps it out of the inbox, still touching none of the
 human-curated edge machinery.
 
 **The planning bootstrap is the single assimilation point.** Once a day
-it sweeps the milestone and folds the parked strays into **small themed
-batches** via `merge-tasks` — lowest number surviving in each, every
-finding's `**Fingerprint**:` line preserved, and each batch carrying
-**roughly 4–5 parts** rather than the whole pool (see "The `Claude:`
-meta class is size-bound too" above). One writer, one rhythm:
-nothing else proposes meta merges.
+it sweeps the milestone, kills on doubt, and folds the surviving strays
+into **small themed batches** via `merge-tasks` — lowest number
+surviving in each, every finding's `**Fingerprint**:` line preserved,
+each batch carrying **roughly 4–5 parts** rather than the whole pool
+(see "The `Claude:` meta class is size-bound too" above), and meta
+grouped apart from product work by the `Claude:` prefix. One writer,
+one rhythm: nothing else proposes meta merges.
 
-**Assembling a batch and promoting it are now two different acts, and
-only the promoted one leaves the milestone.** Under the retired
-one-giant-batch form there was exactly one survivor, so "file it Backlog,
-Urgent" and "promote it" were the same step and the prose did not have to
-distinguish them. With several batches per bootstrap it does:
+**Every assembled batch is promoted** — its milestone **cleared**, set
+**Urgent**, landing in the inbox for the operator's review (see "Backlog
+reviews, Todo pulls"). Assembly is mandatory first; no batch is left
+parked as a remainder.
 
-- A batch the bootstrap **promotes** has its `Claude meta` milestone
-  **cleared** and goes **Urgent**, landing in the inbox for the
-  operator's review (see "Backlog reviews, Todo pulls").
-- Every **other** batch stays **parked** — `Backlog` plus `Claude meta`,
-  exactly like the strays it was folded from — and is promoted at a
-  later bootstrap by that same milestone clear.
-
-**An already-assembled parked batch is a promotion candidate, not a fold
-input.** The fold pool is **strays** only; a batch that is **parked** is not
-re-folded, only re-considered for promotion. The reason is mechanical:
-`merge-tasks` only merges and there is no split operation, so
-re-folding a parked batch could only *grow* it — past the 4–5-part
-bound, and back toward the one-giant-batch form this rule exists to
-retire. Under the retired form that growth *was* the rule, which is
-exactly why the distinction did not need stating before.
-
-Getting this wrong is not cosmetic: clearing every survivor's milestone
-would flood the operator's inbox with the strays the parking milestone
-exists to hold back, and would make the disjoint-set
-bound below unreachable — there would never be a remainder to leave
-parked.
+**An already-assembled batch is never a fold input.** `merge-tasks`
+only merges and there is no split operation, so re-folding a batch
+could only *grow* it past the 4–5-part bound. A promoted batch awaits
+the operator's review, which a fold would disturb mid-review, and an
+approved one (Todo) would drop back to Backlog, undoing the operator's
+move.
 
 **The pool is the milestone PLUS any inbox stray** — every open,
-unblocked `Claude:`-prefixed issue in Backlog with **no milestone** that
-is not itself an assembled batch. **An already-assembled batch, parked
-or promoted, is never a fold input**: a parked one is only re-considered
-for promotion (above); a promoted one awaits the operator's review,
-which a fold would re-park mid-review; and an approved one (Todo) would
-drop back to Backlog, undoing the operator's move.
-
-This retires the clause that swallowed yesterday's unpulled batch into
-today's assembly to keep a batch from being **duplicated** across
-bootstraps. An unpulled batch now awaits the operator rather than the
-next assembly, and its parts are already closed into it, so nothing is
-left to duplicate. Nor does the pool maintain "exactly one meta issue
-unblocked in Next", which is deliberately retired (below).
+unblocked Backlog issue with **no milestone** that is not itself an
+assembled batch, so an issue filed outside the parking rule is still
+absorbed rather than reviewed one at a time.
 
 **Assembly is NOT gated on a meta issue being in flight** — operator
 rule, 2026-09-11, retiring the earlier precondition together with the
@@ -821,34 +789,15 @@ costs cents where the serialization it replaced costs the quadratic
 cost lever").
 
 This does not reintroduce an edge — it removes the last thing standing
-in for one. The precondition existed to make the retired "wait for the
-one in flight" edge true by construction, and with serialization itself
-abandoned there is nothing left for either of them to encode. What
-bounds the operator's inbox instead is that the planning session
-promotes only a **file-disjoint** set — judged on the same collision
-clusters product work is judged on, so meta **loses** its special case
-rather than gaining a new one — with the remainder left parked under the
-milestone. That normally works out to one or two batches, but being
-disjoint is the bound and the count is only its consequence: a bare
-count would license promoting two batches that rewrite the same skill,
-which is the one failure the retired invariant actually prevented.
-
-State one consequence plainly, since it used to be an invariant:
-**"exactly one meta issue unblocked in Next" no longer holds**, and that
-is intended rather than a regression. Every unblocked meta issue is
-still Urgent, so promoting many at once would crowd product work off the
-top of the queue — which is exactly why promotion stays bounded by the
-disjoint-set test above.
-
-**Why that test is not vacuous, given batches are themed by surface.**
-Theming by surface sounds as though it makes batches disjoint by
-construction, which would leave the test admitting everything. In
-practice it bites hard, because **`CLAUDE.md` and the convention docs are
-shared by most meta themes** — this repo's index must stay in sync with
-whatever a batch changes, so two batches that both touch it are **not**
-disjoint, and that is the common case rather than the exception. That is
-why the count normally lands at one or two without a count ever being the
-rule.
+in for one. **The file-disjoint test binds at dispatch**, where it did
+for product work: the planning session dispatches Todo in sets judged on
+the collision clusters, overlap paid as a rebase, so meta **loses** its
+special case rather than gaining a new one. The inbox is bounded by the
+kill gate and batch size alone. A disjoint-at-promotion slate is
+retired (2026-10-23): it bounded the inbox by parking the remainder,
+which is the giant backlog the operator ruled out, and since
+`CLAUDE.md` and the convention docs are shared by most meta themes it
+left nearly everything parked.
 
 **Assembly consumes the pool as of bootstrap.** A stray filed after an
 assembly waits for the next one rather than joining a batch already
@@ -859,10 +808,9 @@ than it did: a bootstrap may now assemble **while** other meta issues are
 being worked, which makes "never fold an issue that is In Progress"
 load-bearing on its own rather than belt-and-braces.
 
-**`trim-context`'s output task parks too**, under `Claude meta` rather
-than going straight to Backlog, and the next assembly consumes it as a
-part. The trim levers keep their own milestone, writer and fold — that
-pipeline is unchanged; only where its *output* lands moved.
+**`trim-context`'s output tasks land in the inbox** (Backlog, no
+milestone): the fold is their assembly, so they are never parked for a
+second one. The trim levers keep their own milestone, writer and fold.
 
 ## The verb/substrate title token
 
@@ -1603,7 +1551,7 @@ What matters for *this* section is that neither the edge nor its
 stand-in survives. A planning session places **no relation** on a batch,
 and no longer gates assembly on another meta issue being In Progress or
 In Review either. Strays still accumulate **parked** under the
-`Claude meta` milestone between bootstraps, which is what keeps them out
+`Follow-ups` milestone between bootstraps, which is what keeps them out
 of the pull queue without an edge.
 
 **Where both states still matter is the POOL, not a gate.** An In Review
