@@ -383,7 +383,7 @@ def pr(number, created, merged, *events):
 
 
 # A day-mode payload shaped on the recorded 10-24 queue. The baseline is three
-# green 8m entries on 10-20 (Lint 6m). In the window:
+# green 8m entries on 10-20 (Lint 6m, 8m, 8m: median 8m). In the window:
 #   pr-620: Lint failed, dequeued, re-entered on the SAME ref 18m later (two
 #           builds, one ref) and merged after a 12m Lint.
 #   pr-630: a 15m Lint, so a slow entry and a Lint that grew.
