@@ -421,10 +421,11 @@ class CiSectionTests(DigestFixture):
             sd.ci_metrics, "fetch_day", return_value=CI_PAYLOAD
         ) as fetch:
             summary = self.run_digest("--ci")
-        since, until, cache = fetch.call_args.args
+        since, until, cache, budget = fetch.call_args.args
         self.assertEqual(since.isoformat(), "2026-10-23T12:00:00+00:00")
         self.assertEqual(until.isoformat(), "2026-10-24T11:55:00+00:00")
         self.assertEqual(cache, self.base / sd.DIGEST_DIR / sd.CI_CACHE_NAME)
+        self.assertEqual(budget, sd.CI_BUDGET_SECONDS)
         self.assertEqual(summary["flagged"], 1)
         text = self.digest_text()
         self.assertIn("  - CI pr-700 entry not all-green ['Lint=failure']", text)
@@ -437,12 +438,25 @@ class CiSectionTests(DigestFixture):
         )
         with mock.patch.object(sd.ci_metrics, "fetch_day", side_effect=err):
             summary = self.run_digest("--ci")
-        self.assertEqual(summary["flagged"], 0)
-        self.assertIn(
-            "CI data unavailable: gh exited 1: HTTP 403: API rate limit exceeded",
-            self.digest_text(),
-        )
+        # Flagged, so a CI read that stays broken never reads as healthy.
+        self.assertEqual(summary["flagged"], 1)
+        line = "CI data unavailable: gh exited 1: HTTP 403: API rate limit exceeded"
+        self.assertIn(f"  - {line}", self.digest_text())
         self.assertIn("error", self.twin()["ci"])
+
+    def test_any_other_failure_still_writes_the_digest(self):
+        cases = [
+            (subprocess.TimeoutExpired(["gh"], 60), "a gh read timed out after 60s"),
+            (FileNotFoundError("gh"), "FileNotFoundError: gh"),
+            (TimeoutError("job reads passed"), "TimeoutError: job reads passed"),
+            # `repository: null` in a GraphQL reply.
+            (AttributeError("'NoneType' object"), "AttributeError: 'NoneType'"),
+        ]
+        for exc, expected in cases:
+            with self.subTest(exc=type(exc).__name__):
+                with mock.patch.object(sd.ci_metrics, "fetch_day", side_effect=exc):
+                    self.run_digest("--ci")
+                self.assertIn(f"CI data unavailable: {expected}", self.digest_text())
 
 
 class CalibrationTests(unittest.TestCase):

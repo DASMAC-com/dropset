@@ -76,6 +76,10 @@ DIGEST_GLOB = "digest-*.json"
 # The CI section's per-run job cache (`ci_metrics.py --cache-dir`), so each
 # morning's baseline re-reads only the runs since the last digest.
 CI_CACHE_NAME = "ci-cache"
+# How long the CI job reads may run, inside upkeep's TIMEOUT_DIGEST (600s)
+# with the transcript walk's minute to spare. A cold cache past it is one
+# "unavailable" morning; the reads it made stay cached for the next.
+CI_BUDGET_SECONDS = 300
 # Where the launcher epilogue leaves a session's exit-time estimate
 # (`session_metrics.py --estimate-out`): one `<session-id>.estimate` beside the
 # session's substrate record, a JSON object whose `cost_usd` is the figure, or
@@ -745,15 +749,18 @@ def ci_report(
 ) -> dict:
     """The CI section's data over the digest's own window, or ``{"error":
     …}`` when GitHub cannot be read (no ``gh`` login, a rate limit, a hung
-    read) — the digest still writes, saying so."""
+    read, a cold cache past :data:`CI_BUDGET_SECONDS`, a reply of an
+    unexpected shape) — the digest still writes, saying so. The catch is
+    deliberately whole: the section is optional and the digest is not."""
     try:
-        return ci_metrics.day_report(ci_metrics.fetch_day(since, until, cache_dir))
+        payload = ci_metrics.fetch_day(since, until, cache_dir, CI_BUDGET_SECONDS)
+        return ci_metrics.day_report(payload)
     except subprocess.CalledProcessError as exc:
         reason = (exc.stderr or "").strip().splitlines()
         return {"error": f"gh exited {exc.returncode}: {reason[0] if reason else ''}"}
     except subprocess.TimeoutExpired:
         return {"error": f"a gh read timed out after {ci_metrics.GH_TIMEOUT}s"}
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except Exception as exc:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 

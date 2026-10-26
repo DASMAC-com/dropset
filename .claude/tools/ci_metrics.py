@@ -186,10 +186,13 @@ def stamp(dt: datetime) -> str:
 def run_jobs(run: dict, cache_dir: Path | None) -> list:
     """One run's jobs, read from ``cache_dir`` when a finished run left them.
 
-    Keyed by attempt as well as id: a re-run replaces the latest jobs."""
+    Keyed by attempt as well as id: a re-run replaces the latest jobs. Both
+    are cast to ``int``, so the name stays inside ``cache_dir`` by
+    construction rather than by the API's typing."""
     path = None
     if cache_dir is not None:
-        path = cache_dir / f"jobs-{run['id']}-{run.get('run_attempt', 1)}.json"
+        rid, attempt = int(run["id"]), int(run.get("run_attempt") or 1)
+        path = cache_dir / f"jobs-{rid}-{attempt}.json"
         try:
             return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -233,26 +236,48 @@ def fetch_prs(since: str, until: str, numbers: set[str]) -> dict[str, dict]:
     return found
 
 
-def fetch_day(since: datetime, until: datetime, cache_dir: Path | None = None) -> dict:
+def fetch_day(
+    since: datetime,
+    until: datetime,
+    cache_dir: Path | None = None,
+    budget: float | None = None,
+) -> dict:
     """The day mode's payload: every ``merge_group`` run created from
     :data:`BASELINE_DAYS` before ``since`` to ``until`` (the baseline and the
     window in one listing), their jobs, and the queue timelines of the PRs the
-    window touched."""
+    window touched.
+
+    With ``budget`` (seconds), the job reads stop with :class:`TimeoutError`
+    once it is spent. A cold cache is a few hundred reads; each finished run
+    is cached as it is read, so the next call resumes where this one stopped
+    rather than the caller's own timeout killing it with nothing written.
+    """
     if cache_dir is not None:
         cache_dir.mkdir(parents=True, exist_ok=True)
         prune_cache(cache_dir, time.time())
+    deadline = None if budget is None else time.monotonic() + budget
     start = stamp(since - timedelta(days=BASELINE_DAYS))
     runs = gh_api(
         f"repos/{REPO}/actions/runs?event=merge_group&per_page=100"
         f"&created={start}..{stamp(until)}",
         paginate_key="workflow_runs",
     )
-    jobs = {str(run["id"]): run_jobs(run, cache_dir) for run in runs}
+    jobs = {}
+    for n, run in enumerate(runs):
+        if deadline is not None and time.monotonic() > deadline:
+            raise TimeoutError(
+                f"job reads passed the {budget:g}s budget after {n} of "
+                f"{len(runs)} runs; the cache keeps them for the next read"
+            )
+        jobs[str(run["id"])] = run_jobs(run, cache_dir)
+    # Digits only: the numbers are spliced into a GraphQL query.
     numbers = {
-        run["head_branch"][len(QUEUE_PREFIX) :].split("-")[0]
+        number
         for run in runs
-        if run["head_branch"].startswith(QUEUE_PREFIX)
-        and parse_ts(run["created_at"]) >= since
+        if (run.get("head_branch") or "").startswith(QUEUE_PREFIX)
+        and since <= parse_ts(run["created_at"]) < until
+        for number in [run["head_branch"][len(QUEUE_PREFIX) :].split("-")[0]]
+        if number.isdigit()
     }
     return {
         "since": stamp(since),
@@ -282,7 +307,7 @@ def analyse(payload: dict, steps_for: str | None = None) -> dict:
     jobs = payload["jobs"]
     by_ref: dict[str, list[dict]] = {}
     for run in payload["runs"]:
-        ref = run["head_branch"]
+        ref = run.get("head_branch") or ""
         if ref.startswith(QUEUE_PREFIX):
             by_ref.setdefault(ref, []).append(run)
     # A PR re-entering on an unchanged base is rebuilt on the same ref, so one
@@ -403,10 +428,14 @@ def _queue_events(pr: dict) -> list[tuple[datetime, str, str | None]]:
 
 
 def pr_queue(pr: dict, until: datetime) -> dict:
-    """One PR's queue history: time in the queue (each add to the next
-    removal, or ``until`` while still queued), re-entries, and the reasons of
-    the removals that were not the merge."""
-    events = _queue_events(pr)
+    """One PR's queue history as of ``until``: time in the queue (each add to
+    the next removal, or ``until`` while still queued), re-entries, and the
+    reasons of the removals that were not the merge. Events at or after
+    ``until`` are the next window's, and a merge after it is not yet one."""
+    events = [e for e in _queue_events(pr) if e[0] < until]
+    merged_at = pr.get("mergedAt")
+    if merged_at and parse_ts(merged_at) >= until:
+        merged_at = None
     queued = timedelta()
     opened = None
     adds = 0
@@ -423,19 +452,19 @@ def pr_queue(pr: dict, until: datetime) -> dict:
                 queued += at - opened
                 opened = None
     if opened is not None:
-        end = parse_ts(pr["mergedAt"]) if pr.get("mergedAt") else until
+        end = parse_ts(merged_at) if merged_at else until
         queued += max(end - opened, timedelta())
     row = {
         "pr": str(pr["number"]),
-        "merged": pr.get("mergedAt"),
+        "merged": merged_at,
         "queue_min": round(minutes(queued), 1),
         "re_entries": max(adds - 1, 0),
         "dequeues": dequeues,
         "open_to_merge_min": None,
         "queue_share": None,
     }
-    if pr.get("mergedAt") and pr.get("createdAt"):
-        span = minutes(parse_ts(pr["mergedAt"]) - parse_ts(pr["createdAt"]))
+    if merged_at and pr.get("createdAt"):
+        span = minutes(parse_ts(merged_at) - parse_ts(pr["createdAt"]))
         row["open_to_merge_min"] = round(span, 1)
         row["queue_share"] = round(minutes(queued) / span, 3) if span > 0 else None
     return row
@@ -445,12 +474,15 @@ def day_report(payload: dict) -> dict:
     """Reduce a :func:`fetch_day` payload to the digest's CI section data.
 
     Pure, like :func:`analyse`: the fixture tests drive it directly. The
-    window is the entries whose runs were created at or after ``since``; the
+    window is the entries whose runs were created in ``[since, until)`` (the
+    listing's ``a..b`` range is inclusive, so the close is filtered here); the
     earlier runs are the baseline.
     """
     since = parse_ts(payload["since"])
     until = parse_ts(payload["until"])
-    window_runs = [r for r in payload["runs"] if parse_ts(r["created_at"]) >= since]
+    window_runs = [
+        r for r in payload["runs"] if since <= parse_ts(r["created_at"]) < until
+    ]
     base_runs = [r for r in payload["runs"] if parse_ts(r["created_at"]) < since]
     a = analyse({"runs": window_runs, "jobs": payload["jobs"]})
     b = analyse({"runs": base_runs, "jobs": payload["jobs"]})
@@ -564,7 +596,10 @@ def day_lines(report: dict) -> tuple[list[str], list[str]]:
     """The digest's CI section as Markdown lines, and its flagged lines."""
     flags: list[str] = []
     if report.get("error"):
-        return [f"CI data unavailable: {report['error']}"], flags
+        # Flagged too: a CI read that stays broken must not leave the header
+        # reading healthy.
+        line = f"CI data unavailable: {report['error']}"
+        return [line], [line]
     base = report["baseline"]
     entries = report["entries"]
     out = [

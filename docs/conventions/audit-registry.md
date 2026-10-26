@@ -63,15 +63,18 @@ db-schema (rust-lib, med): db-schema/**
 ```
 
 **`ci-infra` is served daily by the session digest.** Its CI section
-(`ci_metrics.py --since`, run by upkeep's digest step) measures the
-merge queue every morning: critical paths against the prior week's
-median, per-job growth, entries not all-green, and queue waiting apart
-from running. The audit heartbeat therefore declines `ci-infra` **on
-that ground**, not on capacity, citing the latest digest twin's `ci`
-object (an `error` key there means the day went unmeasured, which is
-no ground to decline). An ad-hoc `ci-infra` audit stays available for
-what the digest does not measure — workflow config, the
-`cfg/**` and `infra/**` roots.
+(`ci_metrics.py`'s day mode, computed in-process by
+`session_metrics.py digest --ci`, which upkeep's digest step runs over
+the digest's own window) measures the merge queue every morning:
+critical paths against the prior week's median, per-job growth,
+entries not all-green, and queue waiting apart from running. The
+audit heartbeat therefore declines `ci-infra` **on that ground**, not
+on capacity, citing the latest digest twin's `ci` object; an `error`
+key there, or a null `ci`, means the day went unmeasured, which is no
+ground to decline. The digest measures only queue timing, so an
+ad-hoc `ci-infra` audit stays available for the **content** of every
+`ci-infra` root — workflow config, `keys/**`, `cfg/**`, `infra/**`,
+the Makefile and the toolchain pins.
 
 **Inter-subsystem interfaces** — the seams where contract drift
 hides; `A <-> B: the contract that crosses the boundary`.

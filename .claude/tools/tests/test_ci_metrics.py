@@ -500,10 +500,25 @@ class DayReportTests(unittest.TestCase):
         self.assertTrue(any("pr-620 entry not all-green" in f for f in flags))
         self.assertTrue(any("job Lint" in f for f in flags))
 
-    def test_unavailable_is_one_line_and_no_flag(self):
+    def test_unavailable_is_one_line_and_one_flag(self):
         lines, flags = cm.day_lines({"error": "gh exited 1: rate limited"})
         self.assertEqual(lines, ["CI data unavailable: gh exited 1: rate limited"])
-        self.assertEqual(flags, [])
+        self.assertEqual(flags, lines)
+
+    def test_a_pr_is_read_as_of_the_windows_close(self):
+        # pr-620 at 00:20: re-entered and still queued, not yet merged.
+        p = cm.pr_queue(DAY["prs"]["620"], cm.parse_ts(f"{D}00:20:00Z"))
+        self.assertIsNone(p["merged"])
+        self.assertEqual(p["re_entries"], 1)
+        self.assertEqual(p["dequeues"], ["failed_checks"])
+        # 00:00:40-00:09:30 plus 00:18:40 to the close.
+        self.assertEqual(p["queue_min"], 10.2)
+        self.assertIsNone(p["queue_share"])
+
+    def test_a_run_created_at_the_close_is_the_next_windows(self):
+        r = cm.day_report(dict(DAY, until=f"{D}01:20:00Z"))
+        self.assertNotIn("640", [e["pr"] for e in r["entries"]])
+        self.assertNotIn("640", [p["pr"] for p in r["prs"]])
 
 
 class DayFetchTests(unittest.TestCase):
@@ -521,6 +536,52 @@ class DayFetchTests(unittest.TestCase):
                 cm.run_jobs(running, cache)
                 cm.run_jobs(running, cache)
             self.assertEqual(gh.call_count, 2)
+
+    def test_prune_drops_only_files_past_the_keep_window(self):
+        with tempfile.TemporaryDirectory() as d:
+            cache = cm.Path(d)
+            old, fresh = cache / "jobs-1-1.json", cache / "jobs-2-1.json"
+            for path in (old, fresh):
+                path.write_text("[]")
+            now = old.stat().st_mtime + 86400
+            past = now - (cm.CACHE_KEEP_DAYS + 1) * 86400
+            os.utime(old, (past, past))
+            cm.prune_cache(cache, now)
+            self.assertFalse(old.exists())
+            self.assertTrue(fresh.exists())
+
+    def test_unmerged_window_prs_are_read_by_alias(self):
+        search = {"search": {"nodes": [DAY["prs"]["620"], None, {}]}}
+        aliased = {"repository": {"p640": DAY["prs"]["640"], "p650": None}}
+        with mock.patch.object(cm, "gh_graphql", side_effect=[search, aliased]) as gql:
+            found = cm.fetch_prs("A", "B", {"620", "640", "650"})
+        self.assertEqual(sorted(found), ["620", "640"])
+        query = gql.call_args_list[1].args[0]
+        self.assertIn("p640: pullRequest(number: 640)", query)
+        self.assertIn("p650: pullRequest(number: 650)", query)
+        self.assertNotIn("p620", query)
+
+    def test_fetch_day_spends_no_more_than_its_budget(self):
+        runs = [day_run(1, 620, f"{D}00:00:45Z")]
+        with mock.patch.object(cm, "gh_api", return_value=runs):
+            with mock.patch.object(cm, "run_jobs") as jobs:
+                with self.assertRaises(TimeoutError):
+                    cm.fetch_day(
+                        cm.parse_ts(DAY["since"]), cm.parse_ts(DAY["until"]), budget=-1
+                    )
+        jobs.assert_not_called()
+
+    def test_only_digit_pr_numbers_reach_the_query(self):
+        runs = [
+            day_run(1, 620, f"{D}00:00:45Z"),
+            dict(day_run(2, 0, f"{D}00:01:00Z"), head_branch=f'{Q}1"}}x-abc'),
+            dict(day_run(3, 0, f"{D}00:02:00Z"), head_branch=None),
+        ]
+        with mock.patch.object(cm, "gh_api", return_value=runs):
+            with mock.patch.object(cm, "run_jobs", return_value=[]):
+                with mock.patch.object(cm, "fetch_prs", return_value={}) as prs:
+                    cm.fetch_day(cm.parse_ts(DAY["since"]), cm.parse_ts(DAY["until"]))
+        self.assertEqual(prs.call_args.args[2], {"620"})
 
     def test_main_since_prints_json(self):
         buf = io.StringIO()
