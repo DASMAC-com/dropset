@@ -150,7 +150,7 @@ python3 .claude/tools/run_quiet.py -- \
 ```
 
 Report: the tool's path, the candidate it discharges (with its
-fingerprint if it came from a parked lever), the test count,
+fingerprint if it came from a filed lever), the test count,
 and what the real-state run returned.
 
 **If the candidate came from a parked trim lever, say so** —

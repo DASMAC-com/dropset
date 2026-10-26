@@ -2,20 +2,12 @@
 # cspell:word noseparator
 """Unit tests for trim_levers.py.
 
-Every network call goes through ``_post``, so the tests patch that one seam and
-assert on the GraphQL operations the tool would have sent. Nothing here touches
-Linear.
-
-The property most worth pinning is the **zero-echo** one: no stored body may
-appear in anything the tool prints. That is not a performance detail — it is the
-entire reason this tool exists instead of the MCP write path, whose per-call body
-echo compounds on an accumulator (five touches on one issue measured ~53k, rising
-monotonically).
+Every network call goes through ``_post``, so the probe tests patch that one
+seam. ``compose`` touches no API and is tested on embedded parts files.
 """
 
 from __future__ import annotations
 
-import gc
 import io
 import json
 import os
@@ -23,44 +15,25 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import trim_levers as tl  # noqa: E402
-from trim_levers import (  # noqa: E402
-    TrimLeversError,
-    compose_body,
-    run,
-    split_touches,
-    validate_fingerprint,
-)
+from trim_levers import TrimLeversError, run, validate_fingerprint  # noqa: E402
 
-ENV = {
-    "LINEAR_API_KEY": "key",
-    "LINEAR_PROJECT_ID": "proj",
-    "LINEAR_TEAM_ID": "team",
-    "LINEAR_ASSIGNEE_ID": "me",
-}
+ENV = {"LINEAR_API_KEY": "key", "LINEAR_PROJECT_ID": "proj"}
 
 
 def _node(
     identifier="ENG-1",
-    title="A lever",
+    title="A batch",
     state="Backlog",
-    milestone="Trim levers",
+    milestone=None,
     fingerprint="a:b",
     state_type="backlog",
     description=None,
 ):
-    """A probe/listing result node.
-
-    Carries a `description` with an anchored `**Fingerprint**:` field by default,
-    because the probe verifies the key line-anchored in-process — the server-side
-    `contains` filter is only a pre-filter. A node without that field is correctly
-    treated as a non-match.
-    """
     if description is None:
         description = f"Prose.\n\n**Fingerprint**: {fingerprint}\n"
     return {
@@ -82,6 +55,17 @@ def _page(nodes, has_next=False, cursor=None):
     }
 
 
+def _run(argv):
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        try:
+            code = run(["trim_levers.py", *argv])
+        except TrimLeversError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            code = 2
+    return code, out.getvalue(), err.getvalue()
+
+
 class FingerprintTests(unittest.TestCase):
     """The dedup key. If it is wrong, refiling protection is gone."""
 
@@ -92,65 +76,25 @@ class FingerprintTests(unittest.TestCase):
         )
 
     def test_a_dotted_domain_token_is_refused(self):
-        # Linear linkifies a hostname-valid basename, silently rewriting the
-        # stored key — roughly 40 keys were corrupted this way.
         with self.assertRaises(TrimLeversError) as caught:
             validate_fingerprint("http.rs:timeout")
-        message = str(caught.exception)
-        self.assertIn("linkifies", message)
-        self.assertIn("feeds-http", message)
+        self.assertIn("linkifies", str(caught.exception))
+        self.assertIn("feeds-http", str(caught.exception))
 
     def test_a_dot_in_the_slug_half_is_allowed(self):
-        # Only the first token is hostname-dangerous; the slug may name a file.
         self.assertEqual(
             validate_fingerprint("claude-tools:review_diff.py-drift"),
             "claude-tools:review_diff.py-drift",
         )
 
-    def test_a_missing_colon_is_refused(self):
-        with self.assertRaises(TrimLeversError):
-            validate_fingerprint("noseparator")
-
-    def test_an_empty_key_is_refused(self):
-        with self.assertRaises(TrimLeversError):
-            validate_fingerprint("   ")
-
-    def test_uppercase_is_refused_rather_than_silently_lowered(self):
-        # Silently normalizing would make two spellings dedup differently
-        # depending on which was filed first.
-        with self.assertRaises(TrimLeversError):
-            validate_fingerprint("Session-Metrics:Foo")
-
-
-class ComposeBodyTests(unittest.TestCase):
-    def test_the_two_machine_fields_are_appended(self):
-        got = compose_body("Some prose.", "a:b", ["docs/**", "cfg/**"])
-        self.assertIn("**Fingerprint**: a:b", got)
-        self.assertIn("**Touches**: docs/**, cfg/**", got)
-
-    def test_an_existing_fingerprint_line_is_not_duplicated(self):
-        body = "Prose.\n\n**Fingerprint**: a:b"
-        self.assertEqual(compose_body(body, "a:b", []).count("**Fingerprint**"), 1)
-
-    def test_fields_are_separated_by_a_blank_line(self):
-        # A field abutting a paragraph is how Linear's round trip has re-parsed
-        # prose as a setext heading before.
-        got = compose_body("Prose.", "a:b", ["x/"])
-        self.assertIn("Prose.\n\n**Fingerprint**", got)
-        self.assertNotIn("Prose.\n**Fingerprint**", got)
-
-    def test_no_touches_means_no_touches_line(self):
-        self.assertNotIn("**Touches**", compose_body("Prose.", "a:b", []))
-
-    def test_touches_are_deduplicated_in_order(self):
-        self.assertEqual(split_touches("b/, a/, b/ ,"), ["b/", "a/"])
-
-    def test_no_touches_argument_is_an_empty_list(self):
-        self.assertEqual(split_touches(None), [])
+    def test_malformed_keys_are_refused(self):
+        for key in ("noseparator", "   ", "Session-Metrics:Foo"):
+            with self.subTest(key=key), self.assertRaises(TrimLeversError):
+                validate_fingerprint(key)
 
 
 class ProbeTests(unittest.TestCase):
-    def test_the_filter_searches_the_body_for_the_fingerprint(self):
+    def test_the_filter_searches_the_project_bodies_for_the_fingerprint(self):
         seen = []
 
         def fake(api_key, query, variables):
@@ -162,19 +106,9 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(seen[0]["filter"]["description"], {"contains": "a:b"})
         self.assertEqual(seen[0]["filter"]["project"], {"id": {"eq": "proj"}})
 
-    def test_the_listing_query_selects_no_description_field(self):
-        # The zero-echo property, asserted on the query text. The PROBE does
-        # select `description` (it must, to match line-anchored) — but it reads it
-        # in-process and never prints it; see ExactFingerprintMatchTests.
-        self.assertNotIn("description", tl._SEARCH_QUERY)
-        self.assertNotIn("description", tl._PARKED_QUERY)
-
-    def test_the_fold_listing_does_not_include_archived_levers(self):
-        # The probe needs archived rows so a rejection stays permanent; the fold
-        # must not offer an archived lever as parked work, and the selection
-        # carries no `archivedAt` for anything downstream to filter on.
+    def test_resolved_and_archived_issues_are_searched_too(self):
+        # A rejection is a canceled issue, and it must stay permanent.
         self.assertIn("includeArchived: true", tl._PROBE_QUERY)
-        self.assertNotIn("includeArchived", tl._PARKED_QUERY)
 
     def test_the_probe_follows_the_cursor(self):
         pages = [_page([_node("ENG-1")], True, "c1"), _page([_node("ENG-2")])]
@@ -189,1842 +123,272 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual([n["identifier"] for n in got], ["ENG-1", "ENG-2"])
         self.assertEqual(calls, [None, "c1"])
 
-    def test_resolved_and_archived_issues_are_searched_too(self):
-        """A rejected lever is closed with its reason, and that rejection has to
-        stay permanent — otherwise the next pass re-proposes it on intuition,
-        which nine of thirteen mined entries explicitly warned against."""
-        self.assertIn("includeArchived: true", tl._SEARCH_QUERY)
-
-
-class FileLeverTests(unittest.TestCase):
-    def _fake(self, existing=(), created="ENG-7"):
-        def fake(api_key, query, variables):
-            if "issues(" in query:
-                return _page(list(existing))
-            if "Milestones" in query:
-                return {
-                    "project": {
-                        "projectMilestones": {
-                            "nodes": [{"id": "ms-1", "name": tl.MILESTONE_NAME}]
-                        }
-                    }
-                }
-            if "States" in query:
-                # Both pre-session states, so the pick is proven, not assumed.
-                return {
-                    "team": {
-                        "states": {
-                            "nodes": [
-                                {"id": "st-todo", "name": "Todo"},
-                                {"id": "st-1", "name": "Backlog"},
-                            ]
-                        }
-                    }
-                }
-            self.created = variables["input"]
-            return {
-                "issueCreate": {"success": True, "issue": _node(created)},
-            }
-
-        return fake
-
-    def test_a_new_lever_is_created_parked_in_one_call(self):
-        with mock.patch.object(tl, "_post", side_effect=self._fake()):
-            line = tl.file_lever(
-                "k",
-                project_id="proj",
-                team_id="team",
-                assignee_id="me",
-                title="A lever",
-                body="Prose.",
-                fingerprint="a:b",
-                touches=["docs/**"],
-                dry_run=False,
-            )
-        self.assertTrue(line.startswith("FILED ENG-7 "))
-        # Milestone, state and assignee all in the creating call — filing then
-        # amending would cost a second full body echo and buy nothing. Parked
-        # means Backlog plus the milestone: Todo is the operator's approval.
-        self.assertEqual(self.created["projectMilestoneId"], "ms-1")
-        self.assertEqual(self.created["stateId"], "st-1")
-        self.assertEqual(tl.PARKED_STATE, "Backlog")
-        self.assertEqual(self.created["assigneeId"], "me")
-
-    def test_the_confirmation_carries_no_body_text(self):
-        with mock.patch.object(tl, "_post", side_effect=self._fake()):
-            line = tl.file_lever(
-                "k",
-                project_id="proj",
-                team_id="team",
-                assignee_id=None,
-                title="A lever",
-                body="SECRET-PROSE-MARKER",
-                fingerprint="a:b",
-                touches=[],
-                dry_run=False,
-            )
-        self.assertNotIn("SECRET-PROSE-MARKER", line)
-
-    def test_an_existing_fingerprint_is_refused_with_the_append_hint(self):
-        with mock.patch.object(tl, "_post", side_effect=self._fake([_node("ENG-3")])):
-            with self.assertRaises(TrimLeversError) as caught:
-                tl.file_lever(
-                    "k",
-                    project_id="proj",
-                    team_id="team",
-                    assignee_id=None,
-                    title="A lever",
-                    body="Prose.",
-                    fingerprint="a:b",
-                    touches=[],
-                    dry_run=False,
-                )
-        message = str(caught.exception)
-        self.assertIn("ENG-3", message)
-        self.assertIn("append-evidence", message)
-
-    def test_a_dry_run_writes_nothing(self):
-        calls = []
-
-        def fake(api_key, query, variables):
-            calls.append(query)
-            return _page([])
-
-        with mock.patch.object(tl, "_post", side_effect=fake):
-            line = tl.file_lever(
-                "k",
-                project_id="proj",
-                team_id="team",
-                assignee_id=None,
-                title="A lever",
-                body="Prose.",
-                fingerprint="a:b",
-                touches=[],
-                dry_run=True,
-            )
-        self.assertTrue(line.startswith("WOULD FILE"))
-        self.assertTrue(all("mutation" not in q for q in calls))
-
-    def test_a_missing_milestone_names_the_available_ones(self):
-        def fake(api_key, query, variables):
-            if "issues(" in query:
-                return _page([])
-            if "Milestones" in query:
-                return {
-                    "project": {
-                        "projectMilestones": {
-                            "nodes": [{"id": "x", "name": "Audit findings"}]
-                        }
-                    }
-                }
-            raise AssertionError("should not have reached the mutation")
-
-        with mock.patch.object(tl, "_post", side_effect=fake):
-            with self.assertRaises(TrimLeversError) as caught:
-                tl.file_lever(
-                    "k",
-                    project_id="proj",
-                    team_id="team",
-                    assignee_id=None,
-                    title="t",
-                    body="b",
-                    fingerprint="a:b",
-                    touches=[],
-                    dry_run=False,
-                )
-        self.assertIn("Audit findings", str(caught.exception))
-
-
-class AppendEvidenceTests(unittest.TestCase):
-    """The accumulator path — where the MCP echo compounds worst."""
-
-    def _fake(self, stored, matches=None):
-        self.sent = {}
-
-        def fake(api_key, query, variables):
-            if "issues(" in query:
-                return _page(matches if matches is not None else [_node("ENG-5")])
-            if "LeverBody" in query:
-                return {
-                    "issue": {
-                        "id": "uuid-5",
-                        "identifier": "ENG-5",
-                        "url": "https://linear.app/dasmac/issue/ENG-5",
-                        "description": stored,
-                    }
-                }
-            self.sent = variables
-            return {"issueUpdate": {"success": True, "issue": _node("ENG-5")}}
-
-        return fake
-
-    def test_the_evidence_is_appended_after_a_blank_line(self):
-        with mock.patch.object(tl, "_post", side_effect=self._fake("Existing body.")):
-            tl.append_evidence(
-                "k",
-                project_id="proj",
-                fingerprint="a:b",
-                evidence="New evidence.",
-                dry_run=False,
-            )
-        self.assertEqual(self.sent["description"], "Existing body.\n\nNew evidence.\n")
-
-    def test_a_stored_body_ending_in_newlines_does_not_gain_a_gap(self):
-        with mock.patch.object(tl, "_post", side_effect=self._fake("Body.\n\n\n")):
-            tl.append_evidence(
-                "k",
-                project_id="proj",
-                fingerprint="a:b",
-                evidence="More.",
-                dry_run=False,
-            )
-        self.assertEqual(self.sent["description"], "Body.\n\nMore.\n")
-
-    def test_the_grown_body_never_reaches_the_printed_line(self):
-        stored = "STORED-MARKER body text"
-        with mock.patch.object(tl, "_post", side_effect=self._fake(stored)):
-            line = tl.append_evidence(
-                "k",
-                project_id="proj",
-                fingerprint="a:b",
-                evidence="EVIDENCE-MARKER",
-                dry_run=False,
-            )
-        self.assertNotIn("STORED-MARKER", line)
-        self.assertNotIn("EVIDENCE-MARKER", line)
-        # Only sizes — enough to confirm the write landed, nothing to replay.
-        self.assertIn("chars", line)
-
-    def test_an_unknown_fingerprint_is_refused(self):
-        with mock.patch.object(tl, "_post", side_effect=self._fake("", matches=[])):
-            with self.assertRaises(TrimLeversError) as caught:
-                tl.append_evidence(
-                    "k",
-                    project_id="proj",
-                    fingerprint="a:b",
-                    evidence="e",
-                    dry_run=False,
-                )
-        self.assertIn("file it first", str(caught.exception))
-
-    def test_an_ambiguous_fingerprint_refuses_to_guess(self):
-        two = [_node("ENG-5"), _node("ENG-6")]
-        with mock.patch.object(tl, "_post", side_effect=self._fake("", matches=two)):
-            with self.assertRaises(TrimLeversError) as caught:
-                tl.append_evidence(
-                    "k",
-                    project_id="proj",
-                    fingerprint="a:b",
-                    evidence="e",
-                    dry_run=False,
-                )
-        message = str(caught.exception)
-        self.assertIn("ENG-5", message)
-        self.assertIn("ENG-6", message)
-
-    def test_a_dry_run_reads_no_body_and_writes_nothing(self):
-        queries = []
-
-        def fake(api_key, query, variables):
-            queries.append(query)
-            return _page([_node("ENG-5")])
-
-        with mock.patch.object(tl, "_post", side_effect=fake):
-            line = tl.append_evidence(
-                "k",
-                project_id="proj",
-                fingerprint="a:b",
-                evidence="e",
-                dry_run=True,
-            )
-        self.assertTrue(line.startswith("WOULD APPEND"))
-        self.assertTrue(all("LeverBody" not in q for q in queries))
-
-
-class CliTests(unittest.TestCase):
-    def setUp(self):
-        self.env = mock.patch.dict(os.environ, ENV)
-        self.env.start()
-        self.addCleanup(self.env.stop)
-
-    def _write(self, text):
-        d = tempfile.mkdtemp()
-        path = Path(d) / "payload.md"
-        path.write_text(text, encoding="utf-8")
-        return str(path)
-
-    def _invoke(self, *argv):
-        out, err = io.StringIO(), io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
-            code = run(["trim_levers.py", *argv])
-        return code, out.getvalue(), err.getvalue()
-
-    def test_probe_with_no_match_exits_one_so_a_caller_can_branch(self):
-        with mock.patch.object(tl, "_post", return_value=_page([])):
-            code, out, _ = self._invoke("probe", "--fingerprint", "a:b")
-        self.assertEqual(code, 1)
-        self.assertIn("NONE a:b", out)
-
-    def test_probe_with_a_match_exits_zero(self):
-        with mock.patch.object(tl, "_post", return_value=_page([_node("ENG-9")])):
-            code, out, _ = self._invoke("probe", "--fingerprint", "a:b")
-        self.assertEqual(code, 0)
-        self.assertIn("MATCH ENG-9", out)
-
-    def test_list_reports_the_parked_pool_and_its_count(self):
-        with mock.patch.object(tl, "_post", return_value=_page([_node("ENG-9")])):
-            code, out, err = self._invoke("list")
-        self.assertEqual(code, 0)
-        self.assertIn("ENG-9", out)
-        self.assertIn("1 parked lever(s)", err)
-
-    def test_list_filters_on_the_parking_milestone(self):
-        seen = []
-
-        def fake(api_key, query, variables):
-            seen.append(variables["filter"])
-            return _page([])
-
-        with mock.patch.object(tl, "_post", side_effect=fake):
-            self._invoke("list")
-        self.assertEqual(
-            seen[0]["projectMilestone"], {"name": {"eq": tl.MILESTONE_NAME}}
-        )
-
-    def test_list_filters_out_closed_states_server_side(self):
-        # The milestone alone is not enough: a rejection keeps it, so the pool
-        # would never look empty. `nin` is verified against the live schema —
-        # WorkflowStateFilter.type is a StringComparator, which accepts it.
-        seen = []
-
-        def fake(api_key, query, variables):
-            seen.append(variables["filter"])
-            return _page([])
-
-        with mock.patch.object(tl, "_post", side_effect=fake):
-            self._invoke("list")
-        self.assertEqual(seen[0]["state"], {"type": {"nin": ["completed", "canceled"]}})
-
-    def test_list_omits_a_canceled_lever_that_still_carries_the_milestone(self):
-        # The client-side half of the same guarantee: `list` must match
-        # `open_parked`'s definition even if a row slips past the query. The
-        # first real run returned 12 rows of which 9 were canceled rejections.
-        rejected = _node("ENG-8", state="Canceled", state_type="canceled")
-        todo = _node("ENG-9", state="Todo", state_type="unstarted")
-        with mock.patch.object(tl, "_post", return_value=_page([rejected, todo])):
-            code, out, err = self._invoke("list")
-        self.assertEqual(code, 0)
-        self.assertIn("ENG-9", out)
-        self.assertNotIn("ENG-8", out)
-        self.assertIn("1 parked lever(s)", err)
-
-    def test_list_can_reach_the_nothing_parked_stop_condition(self):
-        # `trim-context` step 1 stops when the pool is empty. Before the state
-        # filter that was unreachable once any rejection existed.
-        only_rejections = [
-            _node("ENG-7", state="Canceled", state_type="canceled"),
-            _node("ENG-8", state="Done", state_type="completed"),
-        ]
-        with mock.patch.object(tl, "_post", return_value=_page(only_rejections)):
-            code, out, err = self._invoke("list")
-        self.assertEqual(code, 0)
-        self.assertEqual(out.strip(), "")
-        self.assertIn("0 parked lever(s)", err)
-
-    def test_an_empty_body_file_is_refused(self):
-        with self.assertRaises(TrimLeversError) as caught:
-            self._invoke(
-                "file",
-                "--title",
-                "t",
-                "--fingerprint",
-                "a:b",
-                "--body-file",
-                self._write("   \n"),
-            )
-        self.assertIn("is empty", str(caught.exception))
-
-    def test_a_missing_body_file_is_a_clean_error(self):
-        with self.assertRaises(TrimLeversError) as caught:
-            self._invoke(
-                "file",
-                "--title",
-                "t",
-                "--fingerprint",
-                "a:b",
-                "--body-file",
-                "/nonexistent/none.md",
-            )
-        self.assertIn("cannot read", str(caught.exception))
-
-    def test_a_bad_fingerprint_fails_before_any_network_call(self):
-        with mock.patch.object(tl, "_post") as posted:
-            with self.assertRaises(TrimLeversError):
-                self._invoke("probe", "--fingerprint", "http.rs:x")
-        posted.assert_not_called()
-
-    def test_a_missing_env_var_is_a_clean_error(self):
-        with mock.patch.dict(os.environ, {"LINEAR_PROJECT_ID": ""}):
-            with self.assertRaises(TrimLeversError) as caught:
-                self._invoke("probe", "--fingerprint", "a:b")
-        self.assertIn("LINEAR_PROJECT_ID", str(caught.exception))
-
-    def test_a_non_printable_api_key_is_refused_without_echoing_it(self):
-        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "lin_api_\nsecret"}):
-            with self.assertRaises(TrimLeversError) as caught:
-                self._invoke("probe", "--fingerprint", "a:b")
-        message = str(caught.exception)
-        self.assertIn("not printable ASCII", message)
-        self.assertNotIn("secret", message)
-
-    def test_main_maps_an_error_to_exit_two(self):
-        argv = ["trim_levers.py", "probe", "--fingerprint", "http.rs:x"]
-        with mock.patch.object(sys, "argv", argv):
-            with redirect_stderr(io.StringIO()) as err:
-                code = tl.main()
-        self.assertEqual(code, 2)
-        self.assertIn("error:", err.getvalue())
-
-
-class DryRunPositionTests(unittest.TestCase):
-    """`--dry-run` must bind in BOTH positions.
-
-    It shipped bound in only one: declared on the parent parser AND on each
-    subparser with a plain `False` default, so the subparser's default
-    overwrote the parent's `True` and `--dry-run file …` performed a REAL Linear
-    write while the operator believed they had asked for a rehearsal. Two review
-    lenses found it independently. `board_batch.py` carries the same helper for
-    the same reason; these tests are the guard that keeps them in step.
-    """
-
-    def _dry_run(self, *argv):
-        return tl._parse_args(["trim_levers.py", *argv]).dry_run
-
-    def test_before_the_subcommand(self):
-        self.assertTrue(self._dry_run("--dry-run", "probe", "--fingerprint", "a:b"))
-
-    def test_after_the_subcommand(self):
-        self.assertTrue(self._dry_run("probe", "--fingerprint", "a:b", "--dry-run"))
-
-    def test_absent_means_live(self):
-        self.assertFalse(self._dry_run("probe", "--fingerprint", "a:b"))
-
-    def test_it_binds_in_both_positions_for_every_subcommand(self):
-        cases = {
-            "probe": ["--fingerprint", "a:b"],
-            "list": [],
-            "append-evidence": ["--fingerprint", "a:b", "--evidence-file", "e"],
-            "file": [
-                "--title",
-                "t",
-                "--fingerprint",
-                "a:b",
-                "--body-file",
-                "b",
-            ],
-        }
-        for cmd, rest in cases.items():
-            with self.subTest(cmd=cmd, position="before"):
-                self.assertTrue(self._dry_run("--dry-run", cmd, *rest))
-            with self.subTest(cmd=cmd, position="after"):
-                self.assertTrue(self._dry_run(cmd, *rest, "--dry-run"))
-
-
-class ExactFingerprintMatchTests(unittest.TestCase):
-    """The server `contains` filter is a pre-filter; the probe matches exactly.
-
-    Slugs nest — `a:search-scope` is a substring of `a:search-scope-axis` — so a
-    substring-only probe returns one confident WRONG match, which would grow the
-    wrong lever and refuse a genuinely new one. This is the single guard the
-    whole dedup pipeline rests on.
-    """
-
     def test_a_nested_slug_is_not_a_match(self):
         longer = _node("ENG-9", fingerprint="a:search-scope-axis")
         with mock.patch.object(tl, "_post", return_value=_page([longer])):
-            got = tl.probe("k", "proj", "a:search-scope")
-        self.assertEqual(got, [])
-
-    def test_the_exact_slug_still_matches(self):
-        node = _node("ENG-9", fingerprint="a:search-scope-axis")
-        with mock.patch.object(tl, "_post", return_value=_page([node])):
-            got = tl.probe("k", "proj", "a:search-scope-axis")
-        self.assertEqual([n["identifier"] for n in got], ["ENG-9"])
+            self.assertEqual(tl.probe("k", "proj", "a:search-scope"), [])
 
     def test_a_fingerprint_only_mentioned_in_prose_is_not_a_match(self):
-        # Not line-anchored, so not a field — it must not satisfy dedup.
         prose = _node("ENG-9", description="See **Fingerprint**: a:b inline.\n")
         with mock.patch.object(tl, "_post", return_value=_page([prose])):
             self.assertEqual(tl.probe("k", "proj", "a:b"), [])
 
-    def test_the_probe_query_selects_description_but_the_listing_does_not(self):
-        # The zero-echo property is about what PRINTS, not what is fetched — but
-        # the listing has no reason to carry bodies, so it still must not.
-        self.assertIn("description", tl._PROBE_QUERY)
-        self.assertNotIn("description", tl._SEARCH_QUERY)
-
-
-class LeverLifecycleTests(unittest.TestCase):
-    """Only a still-parked lever accumulates evidence.
-
-    The fold copies each `**Fingerprint**:` line into the aggregated task, so
-    after the first fold a raw probe legitimately matches TWO issues — the closed
-    original and the open aggregate. Treating that as ambiguous would break the
-    recurrence-accumulation this pipeline exists for, which is exactly what the
-    completeness lens caught.
-    """
-
-    def _fake(self, matches):
-        def fake(api_key, query, variables):
-            if "issues(" in query:
-                return _page(matches)
-            raise AssertionError("should not have reached a write")
-
-        return fake
-
-    def test_the_parked_lever_is_selected_over_a_folded_one(self):
-        folded = _node("ENG-5", state="Done", state_type="completed", milestone=None)
-        parked = _node("ENG-8", state="Todo")
-        with mock.patch.object(tl, "_post", side_effect=self._fake([folded, parked])):
-            line = tl.append_evidence(
-                "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
-            )
-        self.assertIn("ENG-8", line)
-        self.assertNotIn("ENG-5", line)
-
-    def test_only_discharged_matches_reports_the_disposition(self):
-        # Reported, not raised — see `PostFoldCycleTests` for why raising here
-        # crashed an unattended run on a routine case.
-        folded = _node("ENG-5", state="Done", state_type="completed", milestone=None)
-        turned_down = _node("ENG-6", state="Canceled", state_type="canceled")
-        with mock.patch.object(
-            tl, "_post", side_effect=self._fake([folded, turned_down])
-        ):
-            line = tl.append_evidence(
-                "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
-            )
-        self.assertTrue(line.startswith("NOTED"))
-        self.assertIn("ENG-5", line)
-        self.assertIn("Canceled", line)
-
-    def test_a_promoted_lever_is_also_not_a_parked_candidate(self):
-        # Milestone cleared, still open: promoted to the Backlog and being worked.
-        promoted = _node("ENG-7", state="Backlog", state_type="backlog", milestone=None)
-        with mock.patch.object(tl, "_post", side_effect=self._fake([promoted])):
-            line = tl.append_evidence(
-                "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
-            )
-        self.assertIn("no longer parked", line)
-
-    def test_an_in_progress_parked_lever_still_accepts_evidence(self):
-        # Open by exclusion, not by an allow-list of types: a lever someone has
-        # started is still parked and must not become a hard refusal.
-        started = _node("ENG-8", state="In Progress", state_type="started")
-        with mock.patch.object(tl, "_post", side_effect=self._fake([started])):
-            line = tl.append_evidence(
-                "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
-            )
-        self.assertIn("ENG-8", line)
-
-    def test_two_parked_levers_are_still_ambiguous(self):
-        both = [_node("ENG-5"), _node("ENG-6")]
-        with mock.patch.object(tl, "_post", side_effect=self._fake(both)):
-            with self.assertRaises(TrimLeversError) as caught:
-                tl.append_evidence(
-                    "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=True
-                )
-        self.assertIn("2 parked levers", str(caught.exception))
-
-    def test_open_parked_ignores_an_open_issue_without_the_milestone(self):
-        # An aggregated task is open but carries no parking milestone.
-        aggregate = _node("ENG-9", milestone=None)
-        self.assertEqual(tl.open_parked([aggregate]), [])
-
-
-class AppendEvidenceGuardTests(unittest.TestCase):
-    """The read half of the read-modify-write must not fail open.
-
-    Unguarded, a null `issue` raised a bare KeyError (the traceback this module
-    exists to avoid), and an empty `description` REPLACED the accumulated lever
-    with the evidence alone — silent data loss on the accumulator.
-    """
-
-    def _fake(self, body_result):
-        def fake(api_key, query, variables):
-            if "issues(" in query:
-                return _page([_node("ENG-5")])
-            if "LeverBody" in query:
-                return body_result
-            raise AssertionError("should not have reached the update mutation")
-
-        return fake
-
-    def test_an_unresolvable_issue_is_a_clean_error_not_a_keyerror(self):
-        with mock.patch.object(tl, "_post", side_effect=self._fake({"issue": None})):
-            with self.assertRaises(TrimLeversError) as caught:
-                tl.append_evidence(
-                    "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=False
-                )
-        self.assertIn("did not resolve", str(caught.exception))
-
-    def test_an_empty_stored_body_refuses_rather_than_overwriting(self):
-        body = {
-            "issue": {"id": "u", "identifier": "ENG-5", "url": "u", "description": ""}
-        }
-        with mock.patch.object(tl, "_post", side_effect=self._fake(body)):
-            with self.assertRaises(TrimLeversError) as caught:
-                tl.append_evidence(
-                    "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=False
-                )
-        self.assertIn("refusing to overwrite", str(caught.exception))
-
-
-class PostFoldCycleTests(unittest.TestCase):
-    """A lever that recurs AFTER its fold must have an available operation.
-
-    The dead end this pins: a fold closes the original and clears its milestone,
-    while the aggregated task keeps the fingerprint line. So `open_parked` is
-    empty and the probe is non-empty — and with `file` refusing on any match and
-    `append-evidence` raising, neither subcommand could proceed and an unattended
-    run exited 2. Folding means the fix is *queued*, not that the lever is
-    settled; only a rejection is permanent.
-    """
-
-    FOLDED = [
-        _node("ENG-5", state="Done", state_type="completed", milestone=None),
-        _node("ENG-9", state="Backlog", state_type="backlog", milestone=None),
-    ]
-
-    def _fake(self, matches, created="ENG-20"):
-        def fake(api_key, query, variables):
-            if "issues(" in query:
-                return _page(list(matches))
-            if "Milestones" in query:
-                return {
-                    "project": {
-                        "projectMilestones": {
-                            "nodes": [{"id": "ms-1", "name": tl.MILESTONE_NAME}]
-                        }
-                    }
-                }
-            if "States" in query:
-                return {
-                    "team": {
-                        "states": {"nodes": [{"id": "st-1", "name": tl.PARKED_STATE}]}
-                    }
-                }
-            return {"issueCreate": {"success": True, "issue": _node(created)}}
-
-        return fake
-
-    def _file(self, matches):
-        return tl.file_lever(
-            "k",
-            project_id="p",
-            team_id="t",
-            assignee_id=None,
-            title="A lever",
-            body="Prose.",
-            fingerprint="a:b",
-            touches=[],
-            dry_run=False,
-        )
-
-    def test_a_folded_lever_can_be_refiled_and_names_its_lineage(self):
-        with mock.patch.object(tl, "_post", side_effect=self._fake(self.FOLDED)):
-            line = self._file(self.FOLDED)
-        self.assertTrue(line.startswith("FILED ENG-20"))
-        self.assertIn("supersedes", line)
-        self.assertIn("ENG-5", line)
-
-    def test_append_evidence_on_a_folded_lever_reports_and_succeeds(self):
-        with mock.patch.object(tl, "_post", side_effect=self._fake(self.FOLDED)):
-            line = tl.append_evidence(
-                "k", project_id="p", fingerprint="a:b", evidence="e", dry_run=False
-            )
-        # Reported, NOT raised: raising crashed an unattended session-metrics run
-        # for an entirely routine case.
-        self.assertTrue(line.startswith("NOTED"))
-        self.assertIn("no longer parked", line)
-
-    def test_a_rejected_lever_still_cannot_be_refiled(self):
-        turned_down = [_node("ENG-6", state="Canceled", state_type="canceled")]
-        with mock.patch.object(tl, "_post", side_effect=self._fake(turned_down)):
-            with self.assertRaises(TrimLeversError) as caught:
-                self._file(turned_down)
-        message = str(caught.exception)
-        self.assertIn("REJECTED", message)
-        self.assertIn("permanent", message)
-
-    def test_a_still_parked_lever_refuses_a_duplicate_filing(self):
-        parked = [_node("ENG-8")]
-        with mock.patch.object(tl, "_post", side_effect=self._fake(parked)):
-            with self.assertRaises(TrimLeversError) as caught:
-                self._file(parked)
-        self.assertIn("already parked", str(caught.exception))
-
-    def test_a_rejection_wins_over_a_fold_when_both_exist(self):
-        both = self.FOLDED + [_node("ENG-6", state="Canceled", state_type="canceled")]
-        with mock.patch.object(tl, "_post", side_effect=self._fake(both)):
-            with self.assertRaises(TrimLeversError):
-                self._file(both)
-
-
-class FencedFieldTests(unittest.TestCase):
-    """A `**Field**:` line inside a code fence is an illustration, not a field.
-
-    Levers *about filing conventions* quote example filing blocks, so this is a
-    likely body — and without the guard `compose_body`'s foreign-key refusal
-    rejects it outright. The sibling parser in `read_result.py` grew the same
-    guard in the same commit; these must not disagree.
-    """
-
-    QUOTED = "\n".join(
-        [
-            "The filing block looks like this:",
-            "",
-            "```md",
-            "**Fingerprint**: other-domain:other-slug",
-            "**Touches**: docs/**",
-            "```",
-            "",
-            "That is the shape.",
-        ]
-    )
-
-    def test_a_quoted_field_is_not_read_as_a_foreign_key(self):
-        self.assertEqual(tl.field_values(self.QUOTED, "Fingerprint"), [])
-
-    def test_a_body_quoting_an_example_can_still_be_filed(self):
-        got = compose_body(self.QUOTED, "a:b", ["cfg/**"])
-        self.assertIn("**Fingerprint**: a:b", got)
-        # The quoted example survives untouched in the prose.
-        self.assertIn("other-domain:other-slug", got)
-
-    def test_a_real_field_outside_the_fence_is_still_seen(self):
-        body = self.QUOTED + "\n\n**Fingerprint**: real:key\n"
-        self.assertEqual(tl.field_values(body, "Fingerprint"), ["real:key"])
-
-
-class ForeignFingerprintTests(unittest.TestCase):
-    def test_a_body_carrying_another_key_is_refused(self):
-        with self.assertRaises(TrimLeversError) as caught:
-            compose_body("P\n\n**Fingerprint**: a:foo\n", "a:foo-bar", [])
-        message = str(caught.exception)
-        self.assertIn("already carries a different", message)
-        self.assertIn("a:foo", message)
-
-    def test_the_same_key_is_not_duplicated(self):
-        got = compose_body("P\n\n**Fingerprint**: a:b\n", "a:b", [])
-        self.assertEqual(len(tl.field_values(got, "Fingerprint")), 1)
-
-    def test_an_existing_touches_line_is_not_duplicated(self):
-        got = compose_body("P\n\n**Touches**: docs/**\n", "a:b", ["docs/**"])
-        self.assertEqual(len(tl.field_values(got, "Touches")), 1)
-
-
-class TruncationGuardTests(unittest.TestCase):
     def test_a_full_page_with_no_pageinfo_is_refused(self):
-        # Trusting `hasNextPage` alone means a full-but-unmarked page reads as a
-        # complete result. Refuse rather than report a truncated set as whole.
         nodes = [_node(f"ENG-{k}") for k in range(tl.PAGE_SIZE)]
         with mock.patch.object(tl, "_post", return_value={"issues": {"nodes": nodes}}):
             with self.assertRaises(TrimLeversError) as caught:
-                tl.parked("k", "proj")
+                tl.probe("k", "proj", "a:b")
         self.assertIn("no pageInfo", str(caught.exception))
 
-    def test_a_short_page_with_no_pageinfo_is_still_fine(self):
-        with mock.patch.object(
-            tl, "_post", return_value={"issues": {"nodes": [_node("ENG-1")]}}
-        ):
-            self.assertEqual(len(tl.parked("k", "proj")), 1)
 
-
-class NoRelationsTests(unittest.TestCase):
-    """The tool must not be able to file a blocking edge, even by accident.
-
-    Blocking edges are human-curated in a planning session, a parked lever sits
-    outside the meta batch until it is folded, and that batch carries no edge
-    any more anyway. The cheapest guarantee is that no relation mutation exists
-    in the module at all.
-    """
-
-    def test_no_relation_mutation_is_present(self):
-        source = Path(tl.__file__).read_text(encoding="utf-8")
-        self.assertNotIn("issueRelationCreate", source)
-        self.assertNotIn("blockedBy", source)
-
-    def test_the_create_payload_carries_no_relation_keys(self):
-        got = json.dumps(
-            {
-                "teamId": "t",
-                "projectId": "p",
-                "projectMilestoneId": "m",
-                "stateId": "s",
-                "title": "t",
-                "description": "d",
-            }
-        )
-        for key in ("blockedBy", "blocks", "relatedTo", "parentId"):
-            self.assertNotIn(key, got)
-
-
-class BodiesBearingReadTests(unittest.TestCase):
-    """One call for the whole pool, instead of one fetch per lever.
-
-    The fold's *reads* had become its larger cost: the plain listing prints
-    titles only, so a fold ran a `get_issue` per lever — 21 on one pass — and
-    the nearest body-bearing sweep cost 10.6k for 65 issues with every
-    description truncated anyway.
-    """
-
-    NODES = [
-        {
-            "identifier": "ENG-2",
-            "url": "u2",
-            "title": "Second",
-            "description": "**Fingerprint**: beta:two\n\nBODY-TWO",
-            "state": {"name": "Todo", "type": "unstarted"},
-            "projectMilestone": {"name": tl.MILESTONE_NAME},
-        },
-        {
-            "identifier": "ENG-1",
-            "url": "u1",
-            "title": "First",
-            "description": "**Fingerprint**: alpha:one\n\nBODY-ONE",
-            "state": {"name": "Todo", "type": "unstarted"},
-            "projectMilestone": {"name": tl.MILESTONE_NAME},
-        },
-    ]
-
-    def _page(self):
-        return {
-            "issues": {
-                "pageInfo": {"hasNextPage": False, "endCursor": None},
-                "nodes": self.NODES,
-            }
-        }
-
-    def _run(self, argv):
-        out, err = io.StringIO(), io.StringIO()
+class ProbeCliTests(unittest.TestCase):
+    def test_none_exits_one(self):
         with (
-            mock.patch.dict(
-                os.environ, {"LINEAR_API_KEY": "k", "LINEAR_PROJECT_ID": "p"}
-            ),
-            mock.patch.object(tl, "_post", return_value=self._page()),
+            mock.patch.dict(os.environ, ENV),
+            mock.patch.object(tl, "_post", return_value=_page([])),
         ):
-            with redirect_stdout(out), redirect_stderr(err):
-                code = tl.run(["trim_levers.py"] + argv)
-        return code, out.getvalue(), err.getvalue()
+            code, out, _ = _run(["probe", "--fingerprint", "a:b"])
+        self.assertEqual((code, out.strip()), (1, "NONE a:b"))
 
-    def test_the_plain_listing_does_not_ask_for_bodies(self):
-        # The cheap listing must stay cheap; bodies are opted into.
-        seen = {}
-
-        def fake_post(api_key, query, variables):
-            seen["query"] = query
-            return self._page()
-
+    def test_a_rejection_prints_its_state_and_never_the_body(self):
+        node = _node(
+            "ENG-7",
+            state="Canceled",
+            state_type="canceled",
+            description="SECRET BODY\n\n**Fingerprint**: a:b\n",
+        )
         with (
-            mock.patch.dict(
-                os.environ, {"LINEAR_API_KEY": "k", "LINEAR_PROJECT_ID": "p"}
-            ),
-            mock.patch.object(tl, "_post", side_effect=fake_post),
+            mock.patch.dict(os.environ, ENV),
+            mock.patch.object(tl, "_post", return_value=_page([node])),
         ):
-            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                tl.run(["trim_levers.py", "list"])
-        self.assertNotIn("description", seen["query"])
-
-    def test_fingerprints_mode_prints_the_dedup_key_per_lever(self):
-        code, out, _ = self._run(["list", "--fingerprints"])
+            code, out, _ = _run(["probe", "--fingerprint", "a:b"])
         self.assertEqual(code, 0)
-        self.assertIn("alpha:one", out)
-        self.assertIn("beta:two", out)
+        self.assertIn("MATCH ENG-7 [Canceled] [-]", out)
+        self.assertNotIn("SECRET BODY", out)
 
-    def test_fingerprints_mode_does_not_print_the_bodies(self):
-        _, out, err = self._run(["list", "--fingerprints"])
-        self.assertNotIn("BODY-ONE", out + err)
-        self.assertNotIn("BODY-TWO", out + err)
+    def test_a_dotted_domain_is_refused_before_any_request(self):
+        with mock.patch.dict(os.environ, ENV), mock.patch.object(tl, "_post") as post:
+            code, _, err = _run(["probe", "--fingerprint", "http.rs:x"])
+        self.assertEqual(code, 2)
+        self.assertIn("linkifies", err)
+        post.assert_not_called()
 
-    def test_a_lever_without_a_fingerprint_is_named_not_skipped(self):
-        with mock.patch.object(
-            self,
-            "NODES",
-            [
-                {
-                    "identifier": "ENG-3",
-                    "url": "u3",
-                    "title": "Keyless",
-                    "description": "no key here",
-                    "state": {"name": "Todo", "type": "unstarted"},
-                    "projectMilestone": {"name": tl.MILESTONE_NAME},
-                }
-            ],
-        ):
-            _, out, _ = self._run(["list", "--fingerprints"])
-        self.assertIn("(no fingerprint)", out)
-
-    def test_bodies_out_writes_a_sliceable_document_and_prints_only_sizes(self):
-        with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "bodies.md")
-            code, out, err = self._run(["list", "--bodies-out", path])
-            self.assertEqual(code, 0)
-            written = Path(path).read_text(encoding="utf-8")
-        self.assertIn("BODY-ONE", written)
-        self.assertIn("BODY-TWO", written)
-        # Zero echo: the payload is in the file, never in the output.
-        self.assertNotIn("BODY-ONE", out + err)
-        self.assertIn("chars to", err)
-
-    def test_bodies_out_suppresses_the_row_listing(self):
-        """`--bodies-out`'s output IS the file. Printing the rows too meant a
-        fold following step 2 as written bought the same 41-row listing three
-        times — ~4.3k for one listing's worth of information, ranks 4, 5 and 7
-        of that session's largest results."""
-        with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "bodies.md")
-            _, out, err = self._run(["list", "--bodies-out", path])
-            self.assertNotIn("ENG-1", out)
-            self.assertNotIn("ENG-2", out)
-            # The size line still reports what happened.
-            self.assertIn("body(ies)", err)
-
-    def test_fingerprints_alongside_bodies_out_is_accepted_but_inert(self):
-        """What passing both actually does — which is not "compose".
-
-        `--fingerprints` adds a column to the ROW LISTING, and `--bodies-out`
-        suppresses that listing, so the pair is a no-op rather than a
-        combination: stdout is the size line either way. The keys are not lost,
-        because they never depended on the flag — each rides the spilled file
-        inside its own lever's body, which is where `compose` reads them.
-
-        Named for what it verifies. As "composes … in one call" it read as
-        evidence that the flag contributed something to the combined call, and
-        the skill prescribed it on that basis.
-        """
-        with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "bodies.md")
-            _, with_flag, _ = self._run(
-                ["list", "--fingerprints", "--bodies-out", path]
-            )
-            written = Path(path).read_text(encoding="utf-8")
-            _, without_flag, _ = self._run(["list", "--bodies-out", path])
-
-        self.assertNotIn("ENG-1", with_flag)
-        self.assertEqual(with_flag, without_flag)
-        # The keys ride the file regardless, inside each lever's own body.
-        self.assertIn("BODY-ONE", written)
-        self.assertIn("alpha:one", written)
-
-    def test_targets_alongside_a_spill_is_REFUSED_not_silently_dropped(self):
-        """`--targets` has no counterpart in either written file, so it is refused.
-
-        This is the asymmetry with `--fingerprints` above, and the reason the two
-        are treated differently: a fingerprint rides the spilled file either way,
-        so passing the flag is merely redundant. The extracted target list is
-        emitted by neither renderer, so a silently-dropped `--targets` reads as
-        "this pool touches nothing" — a wrong answer rather than a wasted flag.
-        """
-        with tempfile.TemporaryDirectory() as d:
-            for spill in ("--bodies-out", "--levers-out"):
-                path = os.path.join(d, "out.md")
-                with self.assertRaises(tl.TrimLeversError) as caught:
-                    self._run(["list", "--targets", spill, path])
-                message = str(caught.exception)
-                self.assertIn("--targets", message)
-                self.assertIn(spill, message)
-                # And it refuses BEFORE writing, so there is no half-done spill.
-                self.assertFalse(os.path.exists(path), spill)
-
-    def test_targets_alone_still_works(self):
-        """The refusal must not disarm the flag's own use."""
-        code, out, _err = self._run(["list", "--targets"])
-        self.assertEqual(code, 0)
-        self.assertIn("targets:", out)
-
-    def test_the_bare_listing_still_prints_rows(self):
-        """The is-anything-parked check is the one job the rows are for."""
-        _, out, _err = self._run(["list"])
-        self.assertIn("ENG-1", out)
-        self.assertIn("ENG-2", out)
-
-    def test_the_written_document_carries_one_heading_per_lever(self):
-        # `read_result.py --headings` / `--section` is the intended next call.
-        rendered = tl.render_bodies(self.NODES)
-        self.assertIn("## ENG-1 | First", rendered)
-        self.assertIn("## ENG-2 | Second", rendered)
-
-    def test_the_document_is_ordered_by_identifier(self):
-        rendered = tl.render_bodies(self.NODES)
-        self.assertLess(rendered.index("## ENG-1"), rendered.index("## ENG-2"))
-
-    def test_body_headings_sit_below_the_identifier_heading(self):
-        """The property that makes a sliced section stop at the next lever.
-
-        A body heading shallower than the `## <identifier>` above it makes its
-        section run *through* that identifier and swallow the following lever,
-        which is what the fold's --sections call was silently returning.
-        """
-        rendered = tl.render_bodies(
-            [
-                {
-                    "identifier": "ENG-1",
-                    "title": "First",
-                    "url": "u1",
-                    "description": "# Lever\n\nstatement\n\n# Proposed edit\n\nedit\n",
-                },
-                {
-                    "identifier": "ENG-2",
-                    "title": "Second",
-                    "url": "u2",
-                    "description": "### The lever\n\nstatement two\n",
-                },
-            ]
-        )
-        for line in rendered.splitlines():
-            match = tl.ATX_HEADING_RE.match(line)
-            if match and " | " not in match.group(2):
-                self.assertGreaterEqual(
-                    len(match.group(1)),
-                    tl.DUMP_BODY_MIN_DEPTH,
-                    f"body heading shallower than the identifier: {line!r}",
-                )
-
-    def test_the_bodies_file_is_owner_only(self):
-        with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "bodies.md")
-            self._run(["list", "--bodies-out", path])
-            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+    def test_the_retired_subcommands_are_gone(self):
+        for cmd in ("file", "append-evidence", "list"):
+            with self.subTest(cmd=cmd), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    tl._parse_args(["trim_levers.py", cmd])
 
 
-class NormalizeBodyHeadingsTests(unittest.TestCase):
-    def test_shallowest_heading_is_moved_to_the_minimum_depth(self):
-        out = tl.normalize_body_headings("# Lever\n\ntext\n\n# Evidence\n")
-        self.assertIn("### Lever", out)
-        self.assertIn("### Evidence", out)
+PARTS = (
+    "## a:first | First part\n"
+    "\n"
+    "# Lever\n"
+    "\n"
+    "Do the thing.\n"
+    "\n"
+    "```md\n"
+    "# not a heading\n"
+    "**Fingerprint**: x:quoted-example\n"
+    "```\n"
+    "\n"
+    "## a:second | Second part\n"
+    "\n"
+    "Do the other thing.\n"
+    "\n"
+    "**Fingerprint**: a:second\n"
+    "\n"
+    "## b:third | Third part\n"
+    "\n"
+    "Do a third thing.\n"
+)
 
-    def test_relative_structure_is_preserved(self):
-        out = tl.normalize_body_headings("# Lever\n\n## Detail\n")
-        self.assertIn("### Lever", out)
-        self.assertIn("#### Detail", out)
-
-    def test_a_body_already_deep_enough_is_untouched(self):
-        body = "### The lever\n\ntext\n\n### The edit this implies\n"
-        self.assertEqual(tl.normalize_body_headings(body), body)
-
-    def test_a_body_with_no_headings_is_untouched(self):
-        body = "just prose\n\nand more prose\n"
-        self.assertEqual(tl.normalize_body_headings(body), body)
-
-    def test_fenced_hashes_are_left_alone(self):
-        # A lever about filing conventions legitimately quotes fenced markdown;
-        # shifting a `#` inside it would corrupt the quoted material.
-        out = tl.normalize_body_headings(
-            "# Lever\n\n```md\n# Quoted sample\n```\n\n# Proposed edit\n"
-        )
-        self.assertIn("### Lever", out)
-        self.assertIn("\n# Quoted sample\n", out)
-
-    def test_an_unbalanced_fence_leaves_the_remainder_alone(self):
-        # Pins the documented agreement with read_result.py's iter_headings:
-        # both toggle on the same fence syntax, so a heading this function
-        # declines to shift is also one the slicer declines to see. They cannot
-        # disagree about what a heading is, which is why "does nothing" is the
-        # right behavior here rather than a silent half-normalization.
-        out = tl.normalize_body_headings("# Lever\n\n```md\nnever closed\n\n# Later\n")
-        self.assertIn("### Lever", out)
-        self.assertIn("\n# Later", out)
-        self.assertNotIn("### Later", out)
-
-    def test_depth_is_clamped_at_h6(self):
-        # `iter_headings` only recognizes `#{1,6}`; pushing past it would stop
-        # the line being a heading at all — silently un-sliceable.
-        out = tl.normalize_body_headings("# A\n\n###### Deep\n")
-        self.assertIn("### A\n", out)
-        self.assertIn("###### Deep", out)
-        self.assertNotIn("#######", out)
+GROUPS = [
+    {"title": "Claude: context economy", "parts": ["a:first", "a:second"]},
+    {"title": "Claude: filing conventions", "parts": ["b:third"]},
+]
 
 
-class ComposeFoldTests(unittest.TestCase):
-    """`list --bodies-out` solved the fold's fetch; this is its composition.
-    Two of the rules here are silently damaging when missed by hand, which is
-    why they are the tool's job rather than the folder's."""
+class SplitPartsTests(unittest.TestCase):
+    def test_the_section_key_is_the_fingerprint(self):
+        parts = tl.split_parts(PARTS)
+        self.assertEqual([k for k, _, _ in parts], ["a:first", "a:second", "b:third"])
+        self.assertEqual(parts[0][1], "First part")
 
-    DUMP = (
-        "## ENG-1 | First lever\n"
-        "\n"
-        "https://linear.app/dasmac/issue/ENG-1\n"
-        "\n"
-        "# Lever\n"
-        "\n"
-        "Do the thing.\n"
-        "\n"
-        "## Evidence\n"
-        "\n"
-        "Measured once.\n"
-        "\n"
-        "**Fingerprint**: a:first\n"
-        "\n"
-        "## ENG-2 | Second lever\n"
-        "\n"
-        "https://linear.app/dasmac/issue/ENG-2\n"
-        "\n"
-        "# Lever\n"
-        "\n"
-        "Do the other thing.\n"
-        "\n"
-        "**Fingerprint**: a:second\n"
-    )
+    def test_a_fenced_example_key_is_not_foreign(self):
+        # The quoted `**Fingerprint**:` in part 1 sits inside a fence.
+        tl.split_parts(PARTS)
 
-    def test_a_url_inside_a_fenced_example_survives_the_fold(self):
-        """The leading-URL strip is anchored to the position `render_bodies`
-        writes, not matched anywhere. Matching globally deleted a URL on its
-        own line inside a fenced example — and a lever about an HTTP surface is
-        exactly the kind that carries one, so the global form corrupted the
-        bodies it was most likely to be folding.
-        """
-        dump = (
-            "## ENG-9 | Redirect lever\n"
-            "\n"
-            "https://linear.app/dasmac/issue/ENG-9\n"
-            "\n"
-            "Probe the endpoint:\n"
-            "\n"
-            "```\n"
-            "https://api.example.com/v1/quotes\n"
-            "```\n"
-            "\n"
-            "**Fingerprint**: feeds-http:redirect\n"
-        )
-        body, report = tl.compose_fold(dump)
-        self.assertIn("https://api.example.com/v1/quotes", body)
-        # ...while the dump's own heading URL is still removed.
-        self.assertNotIn("linear.app/dasmac/issue/ENG-9", body)
-        self.assertEqual(report["folded"], ["ENG-9"])
+    def test_a_body_key_that_disagrees_with_the_section_is_refused(self):
+        text = "## a:one | One\n\nProse.\n\n**Fingerprint**: a:other\n"
+        with self.assertRaises(TrimLeversError) as caught:
+            tl.split_parts(text)
+        self.assertIn("a:one", str(caught.exception))
 
-    def test_a_repeated_identifier_is_refused(self):
-        """Two dumps concatenated, or one appended to twice. Folding it emits
-        the lever as two numbered parts while the single underlying issue is
-        closed once, so the duplicate part survives with nothing behind it —
-        and `--exclude` on that identifier would drop both.
-        """
-        with self.assertRaises(tl.TrimLeversError) as ctx:
-            tl.compose_fold(self.DUMP + self.DUMP)
-        self.assertIn("more than once", str(ctx.exception))
-        self.assertIn("ENG-1", str(ctx.exception))
+    def test_a_repeated_key_is_refused(self):
+        with self.assertRaises(TrimLeversError) as caught:
+            tl.split_parts("## a:one | One\n\nx\n\n## a:one | Again\n\ny\n")
+        self.assertIn("more than one part", str(caught.exception))
 
-    def test_each_lever_becomes_a_numbered_part_titled_from_the_dump(self):
-        body, summary = tl.compose_fold(self.DUMP)
-        self.assertIn("# Part 1 — First lever", body)
-        self.assertIn("# Part 2 — Second lever", body)
-        self.assertEqual(summary["folded"], ["ENG-1", "ENG-2"])
-        self.assertEqual(summary["next_part"], 3)
+    def test_a_dotted_section_key_is_refused(self):
+        with self.assertRaises(TrimLeversError):
+            tl.split_parts("## http.rs:x | One\n\nx\n")
 
-    def test_body_headings_are_demoted_so_they_nest_under_the_part(self):
-        """Pasted unmodified, a lever's own `# Lever` collides with `# Part N`
-        at the same level and the aggregated task loses its structure — all the
-        text present, reading as one flat document."""
-        body, _ = tl.compose_fold(self.DUMP)
-        self.assertIn("## Lever", body)
-        self.assertIn("### Evidence", body)
-        self.assertNotIn("\n# Lever", body)
+    def test_no_sections_is_refused(self):
+        with self.assertRaises(TrimLeversError):
+            tl.split_parts("just prose\n")
 
-    def test_a_heading_inside_a_fence_is_left_alone(self):
-        """Levers ABOUT filing conventions quote fenced markdown examples, so
-        this is a likely body rather than a contrived one."""
-        dump = (
-            "## ENG-3 | Fenced\n\n"
-            "# Lever\n\n"
-            "```md\n"
-            "# not a heading, quoted material\n"
-            "```\n\n"
-            "**Fingerprint**: a:fenced\n"
-        )
-        body, _ = tl.compose_fold(dump)
-        self.assertIn("## Lever", body)
-        self.assertIn("# not a heading, quoted material", body)
-        self.assertNotIn("## not a heading", body)
 
-    def test_the_bare_issue_url_is_stripped(self):
-        body, _ = tl.compose_fold(self.DUMP)
-        self.assertNotIn("linear.app", body)
+class ComposeOneTests(unittest.TestCase):
+    def test_every_part_carries_its_fingerprint_exactly_once(self):
+        body, summary = tl.compose_one(PARTS)
+        for key in ("a:first", "a:second", "b:third"):
+            self.assertEqual(body.count(f"**Fingerprint**: {key}\n"), 1, key)
+        self.assertEqual(summary["folded"], ["a:first", "a:second", "b:third"])
 
-    def test_fingerprints_are_carried_into_every_part(self):
-        """Per-lever dedup rests on this; losing one is invisible until a later
-        pass refiles a lever that was already folded."""
-        body, _ = tl.compose_fold(self.DUMP)
-        self.assertIn("**Fingerprint**: a:first", body)
-        self.assertIn("**Fingerprint**: a:second", body)
+    def test_headings_demote_but_fenced_lines_do_not(self):
+        body, _ = tl.compose_one(PARTS)
+        self.assertIn("\n## Lever\n", body)
+        self.assertIn("\n# not a heading\n", body)
 
-    def test_a_part_with_no_fingerprint_fails_loudly(self):
-        dump = "## ENG-9 | No key\n\nSome prose and no field line.\n"
-        with self.assertRaises(tl.TrimLeversError) as ctx:
-            tl.compose_fold(dump)
-        self.assertIn("ENG-9", str(ctx.exception))
-        self.assertIn("dedup", str(ctx.exception))
+    def test_start_continues_an_existing_batch(self):
+        body, summary = tl.compose_one(PARTS, start=4)
+        self.assertIn("# Part 4 — First part", body)
+        self.assertIn("# Part 6 — Third part", body)
+        self.assertEqual(summary["next_part"], 7)
 
-    def test_excluded_levers_are_dropped_and_numbering_closes_up(self):
-        body, summary = tl.compose_fold(self.DUMP, exclude=("ENG-1",))
-        self.assertNotIn("First lever", body)
-        self.assertIn("# Part 1 — Second lever", body)
-        self.assertEqual(summary["skipped"], ["ENG-1"])
-        self.assertEqual(summary["folded"], ["ENG-2"])
-
-    def test_the_start_number_carries_a_batch_composed_in_halves(self):
-        body, summary = tl.compose_fold(self.DUMP, start=11)
-        self.assertIn("# Part 11 — First lever", body)
-        self.assertIn("# Part 12 — Second lever", body)
-        self.assertEqual(summary["next_part"], 13)
-
-    def test_an_exclusion_matching_nothing_is_reported(self):
-        """A silent no-op would fold a lever the caller meant to drop."""
-        _, summary = tl.compose_fold(self.DUMP, exclude=("ENG-404",))
-        self.assertEqual(summary["unknown_exclusions"], ["ENG-404"])
-
-    def test_a_dump_with_no_sections_is_an_error(self):
-        with self.assertRaises(tl.TrimLeversError):
-            tl.compose_fold("just some prose\n")
-
-    def test_excluding_everything_is_an_error_not_an_empty_body(self):
-        with self.assertRaises(tl.TrimLeversError):
-            tl.compose_fold(self.DUMP, exclude=("ENG-1", "ENG-2"))
-
-    def test_compose_needs_no_linear_credentials(self):
-        """It is pure local text work, so it must run in a shell with no
-        secrets resolved — and that is also what makes it testable without
-        mocking the transport."""
-        with tempfile.TemporaryDirectory() as d:
-            src = os.path.join(d, "bodies.md")
-            dst = os.path.join(d, "folded.md")
-            Path(src).write_text(self.DUMP, encoding="utf-8")
-            out, err = io.StringIO(), io.StringIO()
-            with mock.patch.dict(os.environ, {}, clear=True):
-                with redirect_stdout(out), redirect_stderr(err):
-                    code = tl.run(
-                        [
-                            "trim_levers.py",
-                            "compose",
-                            "--bodies-file",
-                            src,
-                            "--out",
-                            dst,
-                        ]
-                    )
-            self.assertEqual(code, 0)
-            written = Path(dst).read_text(encoding="utf-8")
-            self.assertIn("# Part 1 — First lever", written)
-            # Zero echo: the composed body never reaches the transcript.
-            self.assertNotIn("Do the thing", out.getvalue() + err.getvalue())
-            self.assertIn("composed 2 part(s)", out.getvalue())
-
-    def test_the_composed_file_is_owner_only(self):
-        with tempfile.TemporaryDirectory() as d:
-            src = os.path.join(d, "bodies.md")
-            dst = os.path.join(d, "folded.md")
-            Path(src).write_text(self.DUMP, encoding="utf-8")
-            with redirect_stdout(io.StringIO()):
-                tl.run(
-                    ["trim_levers.py", "compose", "--bodies-file", src, "--out", dst]
-                )
-            self.assertEqual(os.stat(dst).st_mode & 0o777, 0o600)
+    def test_start_below_one_is_refused(self):
+        with self.assertRaises(TrimLeversError):
+            tl.compose_one(PARTS, start=0)
 
 
 class ComposeGroupsTests(unittest.TestCase):
-    """The fold files SEVERAL small themed tasks now (operator rule,
-    2026-09-11), and `compose_fold` emits exactly one body per call — so N tasks
-    meant N invocations, each re-declaring every already-folded lever in
-    `--exclude` and carrying the previous call's `next_part`. That is
-    bookkeeping the caller cannot verify and the tool can."""
+    def _compose(self, groups):
+        return tl.compose_groups(PARTS, tl.parse_groups_spec(json.dumps(groups)))
 
-    DUMP = (
-        "## ENG-1 | First lever\n"
-        "\n"
-        "https://linear.app/dasmac/issue/ENG-1\n"
-        "\n"
-        "# Lever\n"
-        "\n"
-        "Do the thing.\n"
-        "\n"
-        "**Fingerprint**: a:first\n"
-        "\n"
-        "## ENG-2 | Second lever\n"
-        "\n"
-        "https://linear.app/dasmac/issue/ENG-2\n"
-        "\n"
-        "# Lever\n"
-        "\n"
-        "Do the other thing.\n"
-        "\n"
-        "**Fingerprint**: a:second\n"
-        "\n"
-        "## ENG-3 | Third lever\n"
-        "\n"
-        "https://linear.app/dasmac/issue/ENG-3\n"
-        "\n"
-        "# Lever\n"
-        "\n"
-        "Do a third thing.\n"
-        "\n"
-        "**Fingerprint**: b:third\n"
-    )
-
-    GROUPS = [
-        {"title": "Claude: context economy", "levers": ["ENG-1", "ENG-2"]},
-        {"title": "Claude: filing conventions", "levers": ["ENG-3"]},
-    ]
-
-    def test_one_pass_emits_one_conforming_body_per_group(self):
-        tasks, summary = tl.compose_groups(
-            self.DUMP, tl.parse_groups_spec(json.dumps(self.GROUPS))
-        )
+    def test_one_pass_emits_one_body_per_group_numbered_from_one(self):
+        tasks, summary = self._compose(GROUPS)
         self.assertEqual(summary["tasks"], 2)
-        self.assertEqual([t["title"] for t in tasks], [g["title"] for g in self.GROUPS])
-        self.assertEqual(tasks[0]["folded"], ["ENG-1", "ENG-2"])
-        self.assertEqual(tasks[1]["folded"], ["ENG-3"])
+        self.assertEqual(tasks[0]["folded"], ["a:first", "a:second"])
+        self.assertIn("# Part 2 — Second part", tasks[0]["body"])
+        self.assertIn("# Part 1 — Third part", tasks[1]["body"])
+        self.assertIn("**Fingerprint**: b:third", tasks[1]["body"])
 
-    def test_each_task_numbers_its_parts_from_one(self):
-        """Not continuously across tasks. `--start` exists for a different
-        shape — under the retired whole-pool ruling one task was sometimes
-        composed in halves and its numbering had to continue. A task is now a
-        whole issue, so its parts are Part 1..N of that issue."""
-        tasks, _ = tl.compose_groups(
-            self.DUMP, tl.parse_groups_spec(json.dumps(self.GROUPS))
-        )
-        self.assertIn("# Part 1 — First lever", tasks[0]["body"])
-        self.assertIn("# Part 2 — Second lever", tasks[0]["body"])
-        # The second task restarts, rather than continuing at Part 3.
-        self.assertIn("# Part 1 — Third lever", tasks[1]["body"])
-        self.assertNotIn("# Part 3", tasks[1]["body"])
+    def test_a_part_in_no_group_is_refused(self):
+        with self.assertRaises(TrimLeversError) as caught:
+            self._compose([{"title": "Some", "parts": ["a:first"]}])
+        self.assertIn("in no group", str(caught.exception))
+        self.assertIn("b:third", str(caught.exception))
 
-    def test_a_lever_in_no_group_is_refused(self):
-        """The silent-loss case this mode exists to close: under the N-call
-        workaround a lever omitted from every `--exclude` list was simply never
-        folded, and nothing said so. Its parked issue would then be closed by
-        the sweep with no part behind it."""
-        groups = [{"title": "Only some", "levers": ["ENG-1"]}]
-        with self.assertRaises(tl.TrimLeversError) as ctx:
-            tl.compose_groups(self.DUMP, tl.parse_groups_spec(json.dumps(groups)))
-        self.assertIn("in no group", str(ctx.exception))
-        self.assertIn("ENG-2", str(ctx.exception))
-        self.assertIn("ENG-3", str(ctx.exception))
-
-    def test_a_lever_in_two_groups_is_refused(self):
-        """It would land as a part twice while the issue behind it closes
-        once."""
+    def test_a_part_in_two_groups_is_refused(self):
         groups = [
-            {"title": "One", "levers": ["ENG-1", "ENG-2"]},
-            {"title": "Two", "levers": ["ENG-2", "ENG-3"]},
+            {"title": "One", "parts": ["a:first", "a:second"]},
+            {"title": "Two", "parts": ["a:second", "b:third"]},
         ]
-        with self.assertRaises(tl.TrimLeversError) as ctx:
-            tl.compose_groups(self.DUMP, tl.parse_groups_spec(json.dumps(groups)))
-        self.assertIn("more than one group", str(ctx.exception))
-        self.assertIn("ENG-2", str(ctx.exception))
+        with self.assertRaises(TrimLeversError) as caught:
+            self._compose(groups)
+        self.assertIn("more than one group", str(caught.exception))
 
-    def test_a_grouped_lever_absent_from_the_dump_is_an_error(self):
-        """Unlike `--exclude`, which reports an unknown name as a warning
-        because one exclusion list may legitimately span two dumps, a group
-        assignment is authoritative for this dump."""
+    def test_a_part_twice_in_one_group_is_named_as_such(self):
         groups = [
-            {"title": "One", "levers": ["ENG-1", "ENG-2", "ENG-3", "ENG-99"]},
+            {"title": "One", "parts": ["a:first", "a:first", "a:second", "b:third"]}
         ]
-        with self.assertRaises(tl.TrimLeversError) as ctx:
-            tl.compose_groups(self.DUMP, tl.parse_groups_spec(json.dumps(groups)))
-        self.assertIn("not in the dump", str(ctx.exception))
-        self.assertIn("ENG-99", str(ctx.exception))
+        with self.assertRaises(TrimLeversError) as caught:
+            self._compose(groups)
+        self.assertIn("twice in group 1", str(caught.exception))
 
-    def test_a_missing_fingerprint_still_fails_loudly(self):
-        """The guard `compose_fold` carries must not be lost by taking the new
-        path — per-lever dedup rests on every part keeping its own key."""
-        dump = self.DUMP + "## ENG-4 | No key\n\n# Lever\n\nNothing.\n"
-        groups = [
-            {"title": "All", "levers": ["ENG-1", "ENG-2", "ENG-3", "ENG-4"]},
-        ]
-        with self.assertRaises(tl.TrimLeversError) as ctx:
-            tl.compose_groups(dump, tl.parse_groups_spec(json.dumps(groups)))
-        self.assertIn("**Fingerprint**", str(ctx.exception))
-        self.assertIn("ENG-4", str(ctx.exception))
+    def test_an_unknown_grouped_part_is_refused(self):
+        groups = [{"title": "All", "parts": ["a:first", "a:second", "b:third", "z:x"]}]
+        with self.assertRaises(TrimLeversError) as caught:
+            self._compose(groups)
+        self.assertIn("z:x", str(caught.exception))
 
-    def test_headings_are_demoted_on_the_grouped_path_too(self):
-        """Both assertions are newline-anchored deliberately. A bare
-        `assertIn("## Lever", ...)` is satisfied by a triple-demotion mutation,
-        since `"### Lever"` contains `"## Lever"` as a substring — so the
-        unanchored pair catches an absent demotion and not an excessive one."""
-        tasks, _ = tl.compose_groups(
-            self.DUMP, tl.parse_groups_spec(json.dumps(self.GROUPS))
-        )
-        self.assertIn("\n## Lever", tasks[0]["body"])
-        self.assertNotIn("\n# Lever", tasks[0]["body"])
-        self.assertNotIn("\n### Lever", tasks[0]["body"])
+    def test_an_oversized_group_is_advisory(self):
+        text = "".join(f"## a:p{i} | P{i}\n\nx\n\n" for i in range(6))
+        groups = [{"title": "Big", "parts": [f"a:p{i}" for i in range(6)]}]
+        _, summary = tl.compose_groups(text, tl.parse_groups_spec(json.dumps(groups)))
+        self.assertEqual(summary["oversized"], [("Big", 6)])
 
-    def test_identifier_normalization_is_load_bearing(self):
-        """Every other test writes identifiers already upper-case and unpadded,
-        so `.strip().upper()` in `parse_groups_spec` is a free mutation — delete
-        it and the suite stays green while a lower-case grouping against a real
-        dump starts failing as "not in the dump"."""
-        groups = [
-            {"title": "Lower and padded", "levers": ["  eng-1 ", "Eng-2"]},
-            {"title": "Third", "levers": ["eng-3"]},
-        ]
-        tasks, summary = tl.compose_groups(
-            self.DUMP, tl.parse_groups_spec(json.dumps(groups))
-        )
-        # Matched despite case and padding...
-        self.assertEqual(tasks[0]["folded"], ["ENG-1", "ENG-2"])
-        # ...and the summary reports the DUMP's spelling, not the match key.
-        self.assertEqual(summary["folded"], ["ENG-1", "ENG-2", "ENG-3"])
+    def test_a_title_that_forges_a_summary_line_is_refused(self):
+        for title in ("a | b", "a\nb"):
+            with self.subTest(title=title), self.assertRaises(TrimLeversError):
+                tl.parse_groups_spec(json.dumps([{"title": title, "parts": ["a:x"]}]))
 
-    def test_a_lever_listed_twice_in_one_group_is_refused_by_name(self):
-        """Same defect as the cross-group case — the lever lands as a part twice
-        while the issue behind it closes once — but a message naming "groups 1
-        and 1" reads as a tool bug and sends the caller hunting elsewhere."""
-        groups = [{"title": "One", "levers": ["ENG-1", "ENG-1", "ENG-2", "ENG-3"]}]
-        with self.assertRaises(tl.TrimLeversError) as ctx:
-            tl.compose_groups(self.DUMP, tl.parse_groups_spec(json.dumps(groups)))
-        self.assertIn("listed twice in group 1", str(ctx.exception))
-        self.assertNotIn("more than one group", str(ctx.exception))
+    def test_the_retired_levers_key_is_refused(self):
+        with self.assertRaises(TrimLeversError):
+            tl.parse_groups_spec(json.dumps([{"title": "T", "levers": ["a:x"]}]))
 
-    def test_parts_follow_the_group_order_not_the_dump_order(self):
-        """The caller controls part order, since part numbers are what an
-        implementer reads. `GROUPS` happens to list levers in dump order, so
-        nothing else distinguishes the two."""
-        groups = [{"title": "Reversed", "levers": ["ENG-3", "ENG-2", "ENG-1"]}]
-        tasks, _ = tl.compose_groups(
-            self.DUMP, tl.parse_groups_spec(json.dumps(groups))
-        )
-        self.assertIn("# Part 1 — Third lever", tasks[0]["body"])
-        self.assertIn("# Part 3 — First lever", tasks[0]["body"])
 
-    def test_every_missing_fingerprint_is_named_not_just_the_first(self):
-        """The single-offender fixture cannot tell collect-all from
-        raise-on-first, and naming them all is what makes one run enough."""
-        dump = (
-            self.DUMP
-            + "## ENG-4 | No key\n\n# Lever\n\nNothing.\n"
-            + "\n## ENG-5 | Also no key\n\n# Lever\n\nNothing either.\n"
-        )
-        groups = [
-            {"title": "A", "levers": ["ENG-1", "ENG-4"]},
-            {"title": "B", "levers": ["ENG-2", "ENG-3", "ENG-5"]},
-        ]
-        with self.assertRaises(tl.TrimLeversError) as ctx:
-            tl.compose_groups(dump, tl.parse_groups_spec(json.dumps(groups)))
-        # Both offenders, and from different groups.
-        self.assertIn("ENG-4", str(ctx.exception))
-        self.assertIn("ENG-5", str(ctx.exception))
-
-    def test_a_title_that_would_forge_a_summary_line_is_refused(self):
-        """`_slug` sanitizes the filename; nothing sanitizes the title echoed
-        into the pipe-delimited summary a caller parses."""
-        for bad in ("Two\nlines", "Has | a pipe", "Bell\x07here"):
-            with self.subTest(title=bad):
-                groups = [{"title": bad, "levers": ["ENG-1", "ENG-2", "ENG-3"]}]
-                with self.assertRaises(tl.TrimLeversError) as ctx:
-                    tl.compose_groups(
-                        self.DUMP, tl.parse_groups_spec(json.dumps(groups))
-                    )
-                self.assertIn("forge a line", str(ctx.exception))
-
-    def test_the_group_size_bound_fires_at_six_and_not_at_five(self):
-        """Pins `_MAX_GROUP_PARTS`'s value, which an oversized-only test does
-        not: with no in-bounds case, the constant could be 2 and every test
-        still passes."""
-        dump = "".join(
-            f"## ENG-{n} | Lever {n}\n\n# Lever\n\nText.\n\n**Fingerprint**: a:l{n}\n\n"
-            for n in range(1, 7)
-        )
-        five = [f"ENG-{n}" for n in range(1, 6)]
-        _, summary = tl.compose_groups(
-            dump,
-            tl.parse_groups_spec(
-                json.dumps(
-                    [
-                        {"title": "At the bound", "levers": five},
-                        {"title": "Spare", "levers": ["ENG-6"]},
-                    ]
-                )
-            ),
-        )
-        self.assertEqual(summary["oversized"], [])
-
-        _, summary = tl.compose_groups(
-            dump,
-            tl.parse_groups_spec(
-                json.dumps([{"title": "Over", "levers": five + ["ENG-6"]}])
-            ),
-        )
-        self.assertEqual(summary["oversized"], [("Over", 6)])
-
-    def test_an_oversized_group_is_advisory_not_refused(self):
-        """The size rule is explicitly approximate ("roughly 4–5"), so a hard
-        limit would turn it into a refusal and push a caller into splitting a
-        coherent theme to satisfy a tool."""
-        dump = "".join(
-            f"## ENG-{n} | Lever {n}\n\n# Lever\n\nText.\n\n**Fingerprint**: a:l{n}\n\n"
-            for n in range(1, 8)
-        )
-        groups = [{"title": "Too big", "levers": [f"ENG-{n}" for n in range(1, 8)]}]
-        tasks, summary = tl.compose_groups(
-            dump, tl.parse_groups_spec(json.dumps(groups))
-        )
-        self.assertEqual(len(tasks), 1)
-        self.assertEqual(summary["oversized"], [("Too big", 7)])
-
-    def test_the_cli_writes_one_owner_only_file_per_task_and_echoes_no_body(self):
-        with tempfile.TemporaryDirectory() as d:
-            src = os.path.join(d, "bodies.md")
-            spec = os.path.join(d, "groups.json")
-            out_dir = os.path.join(d, "tasks")
-            Path(src).write_text(self.DUMP, encoding="utf-8")
-            Path(spec).write_text(json.dumps(self.GROUPS), encoding="utf-8")
-            out, err = io.StringIO(), io.StringIO()
-            # Collect earlier tests' garbage first: on Python 3.12+ an unclosed
-            # HTTPError another suite left behind warns when it is finalized,
-            # and a collection landing inside the redirect would count those
-            # warnings as this command's output.
-            gc.collect()
-            with mock.patch.dict(os.environ, {}, clear=True):
-                with redirect_stdout(out), redirect_stderr(err):
-                    code = tl.run(
-                        [
-                            "trim_levers.py",
-                            "compose",
-                            "--bodies-file",
-                            src,
-                            "--groups-file",
-                            spec,
-                            "--out-dir",
-                            out_dir,
-                        ]
-                    )
-            self.assertEqual(code, 0)
-            written = sorted(os.listdir(out_dir))
-            self.assertEqual(
-                written,
-                ["01-claude-context-economy.md", "02-claude-filing-conventions.md"],
-            )
-            for name in written:
-                path = os.path.join(out_dir, name)
-                self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
-            # BOTH files' content, not just the first. Reading only written[0]
-            # lets a writer bug that sends tasks[0]["body"] to every path pass
-            # the entire suite: each filename still comes from its own task's
-            # title, and the function-level body assertions never go through the
-            # writer at all.
-            first = Path(os.path.join(out_dir, written[0])).read_text(encoding="utf-8")
-            second = Path(os.path.join(out_dir, written[1])).read_text(encoding="utf-8")
-            self.assertIn("# Part 1 — First lever", first)
-            self.assertIn("# Part 2 — Second lever", first)
-            self.assertIn("# Part 1 — Third lever", second)
-            self.assertNotIn("First lever", second)
-
-            # Zero echo, bounded as a WHITELIST rather than a list of forbidden
-            # strings: `assertNotIn("Do the thing")` alone misses an echo of any
-            # body but the first, a tail slice, or a per-part fingerprint
-            # roll-up — and the fingerprints and Linear URLs are precisely the
-            # payload whose replay cost is why this writer exists.
-            printed = out.getvalue() + err.getvalue()
-            self.assertIn("composed 2 task(s) from 3 lever(s)", printed)
-            self.assertLessEqual(len(printed.strip().splitlines()), 3)
-            for leaked in (
-                "Do the thing",
-                "Do the other thing",
-                "Do a third thing",
-                "a:first",
-                "a:second",
-                "b:third",
-                "linear.app",
-            ):
-                self.assertNotIn(leaked, printed)
-
-    def test_a_stale_body_from_an_earlier_run_is_reported_not_deleted(self):
-        """A reused --out-dir is the one way a lever can still be duplicated: a
-        re-run with FEWER groups leaves the old higher-numbered body behind, and
-        a caller who files every body in the directory files a phantom task whose
-        parts duplicate real ones. Reported rather than removed — a composer that
-        deletes files the caller may have put there is worse than the residue."""
-        with tempfile.TemporaryDirectory() as d:
-            src = os.path.join(d, "bodies.md")
-            spec = os.path.join(d, "groups.json")
-            out_dir = os.path.join(d, "tasks")
-            Path(src).write_text(self.DUMP, encoding="utf-8")
-            Path(spec).write_text(json.dumps(self.GROUPS), encoding="utf-8")
+class ComposeCliTests(unittest.TestCase):
+    def test_batch_mode_writes_private_files_and_names_them(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parts = os.path.join(tmp, "parts.md")
+            groups = os.path.join(tmp, "groups.json")
+            out_dir = os.path.join(tmp, "tasks")
+            with open(parts, "w", encoding="utf-8") as fh:
+                fh.write(PARTS)
+            with open(groups, "w", encoding="utf-8") as fh:
+                json.dump(GROUPS, fh)
             os.makedirs(out_dir)
-            stale = os.path.join(out_dir, "03-left-behind.md")
-            Path(stale).write_text("# Part 1 — from an older fold\n", encoding="utf-8")
-
-            out = io.StringIO()
-            with redirect_stdout(out), redirect_stderr(io.StringIO()):
-                code = tl.run(
+            with open(os.path.join(out_dir, "09-stale.md"), "w") as fh:
+                fh.write("old")
+            # compose needs no credentials at all.
+            with mock.patch.dict(os.environ, {}, clear=True):
+                code, out, _ = _run(
                     [
-                        "trim_levers.py",
                         "compose",
-                        "--bodies-file",
-                        src,
+                        "--parts-file",
+                        parts,
                         "--groups-file",
-                        spec,
+                        groups,
                         "--out-dir",
                         out_dir,
                     ]
                 )
             self.assertEqual(code, 0)
-            printed = out.getvalue()
-            self.assertIn("ADVISORY", printed)
-            self.assertIn("03-left-behind.md", printed)
-            # Reported, and still there — the tool does not remove it.
-            self.assertTrue(os.path.exists(stale))
+            first = os.path.join(out_dir, "01-claude-context-economy.md")
+            self.assertIn(f"{first} | 2 part(s) | a:first, a:second |", out)
+            self.assertEqual(os.stat(first).st_mode & 0o777, 0o600)
+            self.assertIn("ADVISORY", out)
+            self.assertIn("09-stale.md", out)
+            # The body is the payload; it stays on disk.
+            self.assertNotIn("Do the thing", out)
 
-    def test_a_groups_file_that_is_not_utf8_is_a_clean_error(self):
-        """`--groups-file` is hand-authored, so another encoding is a realistic
-        mistake — and UnicodeDecodeError is a ValueError, so without handling it
-        escapes as a traceback rather than the one-line error every other
-        failure gets."""
-        with tempfile.TemporaryDirectory() as d:
-            src = os.path.join(d, "bodies.md")
-            spec = os.path.join(d, "groups.json")
-            Path(src).write_text(self.DUMP, encoding="utf-8")
-            Path(spec).write_bytes(b'[{"title": "\xff\xfe bad", "levers": ["ENG-1"]}]')
-            with self.assertRaises(tl.TrimLeversError) as ctx:
-                tl.run(
-                    [
-                        "trim_levers.py",
-                        "compose",
-                        "--bodies-file",
-                        src,
-                        "--groups-file",
-                        spec,
-                        "--out-dir",
-                        os.path.join(d, "tasks"),
-                    ]
-                )
-            self.assertIn("not valid UTF-8", str(ctx.exception))
+    def test_single_mode_prints_the_part_range(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parts = os.path.join(tmp, "parts.md")
+            dest = os.path.join(tmp, "fold.md")
+            with open(parts, "w", encoding="utf-8") as fh:
+                fh.write(PARTS)
+            code, out, _ = _run(
+                ["compose", "--parts-file", parts, "--out", dest, "--start", "3"]
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("parts 3..5", out)
+            with open(dest, encoding="utf-8") as fh:
+                self.assertIn("# Part 3 — First part", fh.read())
 
-    def test_the_two_modes_cannot_be_mixed(self):
-        """Mixing them silently would be worse than refusing: `--out` describes
-        one body with a caller-managed part number, `--groups-file` describes N
-        bodies each numbered from 1."""
-        for extra in (
-            [],  # neither --out nor --groups-file
-            ["--out", "a.md", "--groups-file", "g.json", "--out-dir", "d"],
-            ["--groups-file", "g.json"],  # no --out-dir
-            ["--out", "a.md", "--out-dir", "d"],
-            ["--groups-file", "g.json", "--out-dir", "d", "--start", "4"],
-            ["--groups-file", "g.json", "--out-dir", "d", "--exclude", "ENG-1"],
-        ):
-            with self.subTest(extra=extra):
-                with redirect_stderr(io.StringIO()):
-                    with self.assertRaises(SystemExit) as ctx:
-                        tl.run(
-                            ["trim_levers.py", "compose", "--bodies-file", "b.md"]
-                            + extra
-                        )
-                self.assertEqual(ctx.exception.code, 2)
-
-
-#: A lever body using HEADINGS. Six of one real 18-lever pool looked like this.
-HEADING_BODY = """**Fingerprint**: alpha:one
-
-## The lever
-
-State the rule per act, not per tool.
-
-## Evidence
-
-Some long evidence prose nobody folds.
-
-## The edit this implies
-
-Edit context-economy.md and init-pr.
-"""
-
-#: A lever body using BOLD SPANS and no headings at all. The other twelve looked
-#: like this, which is why a heading-only `--sections` read failed outright.
-SPAN_BODY = """**Fingerprint**: beta:two
-
-Some evidence paragraph first, with figures.
-
-**The lever — fix it at the producer, not with a wider regex.** A regex
-covering bold spans would rot the same way.
-
-**The concrete edit.** Add a `--levers-out` mode.
-
-**Cost label:** `context`
-"""
-
-
-class FindLabelledBlockTests(unittest.TestCase):
-    def test_a_heading_block_is_found_and_stops_at_the_next_heading(self):
-        got = tl.find_labelled_block(HEADING_BODY, tl.STATEMENT_LABELS)
-        self.assertIn("State the rule per act", got)
-        # The evidence section must not be dragged in — that is the payload the
-        # whole pipeline exists to keep out of a transcript.
-        self.assertNotIn("evidence prose", got)
-
-    def test_a_heading_edit_block_is_found(self):
-        got = tl.find_labelled_block(HEADING_BODY, tl.EDIT_LABELS)
-        self.assertIn("Edit context-economy.md", got)
-
-    def test_a_bold_span_statement_is_found(self):
-        got = tl.find_labelled_block(SPAN_BODY, tl.STATEMENT_LABELS)
-        self.assertIn("fix it at the producer", got)
-        self.assertNotIn("evidence paragraph", got)
-
-    def test_a_bold_span_edit_is_found(self):
-        got = tl.find_labelled_block(SPAN_BODY, tl.EDIT_LABELS)
-        self.assertIn("--levers-out", got)
-        # It stops at the next bold span rather than swallowing the cost label.
-        self.assertNotIn("Cost label", got)
-
-    def test_an_absent_label_is_none_not_an_empty_string(self):
-        self.assertIsNone(
-            tl.find_labelled_block("just prose, no lever anywhere\n", tl.EDIT_LABELS)
-        )
-
-    def test_a_FENCED_hash_does_not_end_the_block_early(self):
-        """The under-capture that passed as complete.
-
-        Lever bodies quote shell constantly, so a fenced `# comment` is ordinary
-        content — but a fence-blind boundary regex read it as the next heading and
-        returned a fragment. `render_levers` reports a section it cannot find at
-        all; a section it found and cut short looks complete, which makes this the
-        dangerous direction.
-        """
-        body = (
-            "## The lever\n"
-            "\n"
-            "Wrap the runner so the log never lands in context.\n"
-            "\n"
-            "```sh\n"
-            "# this comment is NOT a heading\n"
-            "make lint\n"
-            "```\n"
-            "\n"
-            "And this trailing line is still part of the statement.\n"
-            "\n"
-            "## Evidence\n"
-            "\n"
-            "evidence prose\n"
-        )
-        got = tl.find_labelled_block(body, tl.STATEMENT_LABELS)
-        self.assertIn("Wrap the runner", got)
-        self.assertIn("# this comment is NOT a heading", got)
-        self.assertIn("still part of the statement", got)
-        # The real heading is still the boundary.
-        self.assertNotIn("evidence prose", got)
-
-    def test_a_label_inside_a_fence_is_not_treated_as_the_section(self):
-        """A lever *about* filing conventions quotes the heading it describes."""
-        body = (
-            "```md\n"
-            "## The lever\n"
-            "a quoted illustration, not this body's own statement\n"
-            "```\n"
-            "\n"
-            "## The lever\n"
-            "\n"
-            "the real statement\n"
-        )
-        got = tl.find_labelled_block(body, tl.STATEMENT_LABELS)
-        self.assertIn("the real statement", got)
-        self.assertNotIn("quoted illustration", got)
-
-    def test_matching_is_case_insensitive(self):
-        self.assertIsNotNone(
-            tl.find_labelled_block("## THE LEVER\n\nbody\n", tl.STATEMENT_LABELS)
-        )
-
-
-class LeverTargetsTests(unittest.TestCase):
-    def test_tool_and_doc_paths_are_collected_in_order(self):
-        body = (
-            "Edit `docs/conventions/context-economy.md` and the mirrored block in "
-            "`.claude/skills/init-pr/SKILL.md`, driven by `review_diff.py`.\n"
-        )
-        self.assertEqual(
-            tl.lever_targets(body),
+    def test_mixed_modes_are_refused(self):
+        for argv in (
+            ["compose", "--parts-file", "p"],
+            ["compose", "--parts-file", "p", "--out", "o", "--groups-file", "g"],
+            ["compose", "--parts-file", "p", "--groups-file", "g"],
+            ["compose", "--parts-file", "p", "--out", "o", "--out-dir", "d"],
             [
-                "docs/conventions/context-economy.md",
-                ".claude/skills/init-pr/SKILL.md",
-                "review_diff.py",
+                "compose",
+                "--parts-file",
+                "p",
+                "--groups-file",
+                "g",
+                "--out-dir",
+                "d",
+                "--start",
+                "2",
             ],
-        )
-
-    def test_duplicates_collapse(self):
-        body = "`allowlist.py` then `allowlist.py` again\n"
-        self.assertEqual(tl.lever_targets(body), ["allowlist.py"])
-
-    def test_a_span_wrapping_prose_keeps_the_path(self):
-        self.assertEqual(
-            tl.lever_targets("the committed `.claude/tools/x.py`\n"),
-            [".claude/tools/x.py"],
-        )
-
-    def test_a_body_naming_nothing_yields_nothing(self):
-        self.assertEqual(tl.lever_targets("prose with `--flag` and `cargo`\n"), [])
-
-    def test_trailing_punctuation_is_trimmed(self):
-        self.assertEqual(
-            tl.lever_targets("see `read_result.py.`\n"), ["read_result.py"]
-        )
-
-
-class RenderLeversTests(unittest.TestCase):
-    def _levers(self):
-        return [
-            {
-                "identifier": "ENG-1",
-                "title": "Heading-shaped lever",
-                "url": "https://linear.app/x/ENG-1",
-                "description": HEADING_BODY,
-            },
-            {
-                "identifier": "ENG-2",
-                "title": "Span-shaped lever",
-                "url": "https://linear.app/x/ENG-2",
-                "description": SPAN_BODY,
-            },
-        ]
-
-    def test_both_shapes_render_under_one_uniform_structure(self):
-        # The point of the mode: one `--sections '^(Statement|Edit)$'` read works
-        # across the pool however each lever was written.
-        text, report = tl.render_levers(self._levers())
-        self.assertEqual(text.count("### Statement"), 2)
-        self.assertEqual(text.count("### Edit"), 2)
-        self.assertEqual(report["missing_statement"], [])
-        self.assertEqual(report["missing_edit"], [])
-
-    def test_the_fingerprint_travels_with_each_lever(self):
-        text, _ = tl.render_levers(self._levers())
-        self.assertIn("**Fingerprint**: alpha:one", text)
-        self.assertIn("**Fingerprint**: beta:two", text)
-
-    def test_evidence_prose_is_left_behind(self):
-        # This is the saving. The evidence is cited by reference, never inlined.
-        text, _ = tl.render_levers(self._levers())
-        self.assertNotIn("evidence prose nobody folds", text)
-        self.assertNotIn("evidence paragraph first", text)
-
-    def test_a_lever_missing_a_section_is_named_not_dropped(self):
-        levers = self._levers()
-        levers.append(
-            {
-                "identifier": "ENG-3",
-                "title": "Unparseable",
-                "url": "https://linear.app/x/ENG-3",
-                "description": "**Fingerprint**: gamma:three\n\nprose only\n",
-            }
-        )
-        text, report = tl.render_levers(levers)
-        # Present in the output, so the fold still sees it exists...
-        self.assertIn("ENG-3 | Unparseable", text)
-        self.assertIn("(not found)", text)
-        # ...and named in the report, so it gets sliced from the bodies dump.
-        self.assertEqual(report["missing_statement"], ["ENG-3"])
-        self.assertEqual(report["missing_edit"], ["ENG-3"])
-
-    def test_levers_are_ordered_by_identifier(self):
-        text, _ = tl.render_levers(list(reversed(self._levers())))
-        self.assertLess(text.index("ENG-1"), text.index("ENG-2"))
+        ):
+            with self.subTest(argv=argv), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    tl._parse_args(["trim_levers.py", *argv])
 
 
 if __name__ == "__main__":

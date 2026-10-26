@@ -1720,9 +1720,8 @@ that repeated, an avoidable fan-out — keep a running note of it. At
 session end `/session-metrics` pairs those observations with the
 tool's ranked token sinks to emit *grounded* trim recommendations
 (the lever, and the concrete skill / convention-doc edit it implies),
-filing each as its own **parked lever issue** under the `Trim levers`
-milestone through the zero-echo writer; `trim-context` later folds
-them. (The old "Session Metrics" inbox document is **retired** — it
-outgrew the tool-result cap between mining passes.) The tool says
+written into the session's `Session account` block and filed nowhere;
+the daily digest lifts the block and `trim-context`, the fold analyst,
+files across every session. The tool says
 *where* the tokens went; your running notes say *why* and *what to
 change*.

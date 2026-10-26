@@ -219,8 +219,8 @@ def headings(lines: list[str], max_depth: int | None = None) -> list[str]:
     ``--section`` read narrow instead of speculative.
 
     ``max_depth`` keeps only headings at that hash count or shallower. The map
-    itself is the thing that grows without bound here: on a
-    ``trim_levers.py list --bodies-out`` dump every lever contributes its own
+    itself is the thing that grows without bound here: on a parked-pool body
+    dump (the retired trim-lever listing was one) every item contributes its own
     internal headings (``The lever``, ``Evidence …``, ``Cost label``), so a pool
     survey that wants only the ``## ENG-#### | <title>`` identifier lines pays
     for roughly 3.6x the lines it reads — measured at 116 headings where 32 were
@@ -495,10 +495,9 @@ def run(argv: list[str]) -> int:
         default=None,
         metavar="N",
         help="with --headings, keep only headings N hashes deep or shallower. "
-        "`--headings --max-depth 2` over a `trim_levers.py list --bodies-out` "
-        "dump returns exactly the `## ENG-#### | <title>` identifier lines, "
-        "since --bodies-out normalizes each lever's own headings to sit below "
-        "its identifier",
+        "`--headings --max-depth 2` over a dump with one `## <id> | <title>` "
+        "section per item, whose own headings sit below it, returns exactly "
+        "the identifier lines",
     )
     mode.add_argument(
         "--slice", default=None, metavar="A:B", help="inclusive line range"

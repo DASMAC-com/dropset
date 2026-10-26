@@ -30,8 +30,8 @@ export LINEAR_PLANNING_DOC_ID=…
 # See local-integrations.md, "Session secrets".
 #
 # RETIRED: LINEAR_SESSION_METRICS_DOC_ID. The "Session Metrics"
-# inbox document is gone — trim levers are parked issues under the
-# `Trim levers` milestone now. See the trim-lever pipeline below.
+# inbox document is gone — the fold analyst reads the daily
+# session digest now. See the trim-lever pipeline below.
 ```
 
 Skills read these at run time with a bare `printenv`, **one variable
@@ -47,39 +47,52 @@ them re-prompt. A new Linear-filing skill must follow the same
 pattern: reference the variable **names**, and keep the resolved
 UUIDs out of every committed file.
 
-**The trim-lever pipeline runs on a milestone, not a document.**
-`session-metrics` is the **producer**: at session end it files each
-trim lever as its own small **parked issue** — state `Backlog` plus the
-`Trim levers` project milestone, keyed by a `**Fingerprint**:` — and on
-a fingerprint hit it **appends that session's evidence** to the lever
-that already exists rather than filing a duplicate, so recurrence
-becomes an accumulating fact on one issue. `trim-context` is the
-**consumer**: it sweeps the milestone, folds the parked levers into
-**small themed** propose-only `Claude:` tasks — roughly 4–5 levers each,
-sized to a short session, so a small pool is still one task while a large
-one splits by surface, with one section per lever, each keeping its own
-`**Fingerprint**:` line — and closes the parked originals. Those output
-tasks land in the review inbox (Backlog, no milestone), since the fold
-is their assembly. The coherence floor still governs audit findings
-and product filings; the meta-work fold's **no-size-bound exemption is
-retired** (operator rule, 2026-09-11, superseding the 2026-08-25
-always-one ruling), because session cost is roughly quadratic in session
-length — see `docs/conventions/context-economy.md` → "Session length is
-itself a cost lever".
-A lever judged not
-worth acting on is **closed with its reason**, which suppresses
-refiling permanently. Every full `plan` bootstrap spawns
-`trim-context` as a background sub-agent — the way `review-pr` spawns
-its reviewers — gated only on a non-empty pool in upkeep's `parked`
-line; its capped report is the completion notification, and its reads
-never enter the planning prefix. It also runs standalone; the
-`housekeeping` verb that used to delegate to it is retired.
+**The trim-lever pipeline runs on the daily digest.** Sessions
+**report**; the analyst **judges**. A session ends by writing its
+levers into its own `Session account` block (`session-metrics` step 4)
+and the daily upkeep pass's digest lifts each block verbatim beside
+that session's numbers (`docs/conventions/context-economy.md` → "The
+daily digest"). `trim-context` is the **fold analyst**: it reads the
+whole day's digest at once — every session's sinks, hardening
+candidates and account, plus any flagged CI lines — and judges which
+levers clear the reservoir bar (turn-eliminating, prose-subtracting or
+hardening, roughly 3k per occurrence; a planning-derived lever must be
+quality-preserving). Each candidate is deduped twice: by fingerprint
+(`trim_levers.py probe` — a canceled match is a recorded rejection),
+and against the open Backlog **by title** (`linear_issue.py find`),
+since a near-duplicate under a different fingerprint is the likelier
+miss. A near-match is **folded into the existing issue as a new part**
+through the zero-echo append, never filed as a sibling, so the Backlog
+does not accumulate similar trim tasks. The rest file as **small
+themed** propose-only `Claude:` batches — roughly 4–5 parts each, one
+`**Fingerprint**:` per part, composed by `trim_levers.py compose` —
+**straight into Backlog with no milestone**: the analyst is the
+planning session's own sub-agent and its output is already folded, so
+the park-then-promote hop executor filings take does not apply. The
+planning session names the new batches in its review ask. A candidate
+rejected on judgment is filed `Canceled` with its reason, which
+suppresses it permanently. The coherence floor still governs audit
+findings and product filings; the meta-work fold's **no-size-bound
+exemption is retired** (operator rule, 2026-09-11), because session
+cost is roughly quadratic in session length — see
+`docs/conventions/context-economy.md` → "Session length is itself a
+cost lever".
 
-Every write in that pipeline goes through
-`.claude/tools/trim_levers.py` rather than the MCP — see the carve-out
-under "Partial edits" for why, and note the `Trim levers` milestone
-must exist before the first `file` call (the tool refuses by name
-rather than filing into the wrong place).
+**Trims are the analyst's, not a session's.** A session files
+`Follow-ups` for deferred *implementation* work and files nothing that
+is only a trim — those are what the digest surfaces. This is what keeps
+a session from spending context on levers other sessions already
+reported. Executor filings of every other kind keep parking (below).
+
+Every full `plan` bootstrap spawns `trim-context` as a background
+sub-agent — the way `review-pr` spawns its reviewers — gated on
+upkeep's `digest` line having written a digest, its brief a pointer to
+that file; its capped report is the completion notification, and its
+reads never enter the planning prefix. It also runs standalone.
+
+The `Trim levers` milestone and its writer (`file`, `append-evidence`,
+`list`) are **retired**; `trim_levers.py` keeps only `probe` and
+`compose`, and filing goes through `linear_issue.py`.
 
 The `session-metrics` skill drives its measurement tool via
 `make session-metrics`, which reduces to a
@@ -282,9 +295,9 @@ a habit to drift into one filing at a time.
 
 **Existing lines stay, and the fold tools still carry them.** Bodies
 filed under the old convention keep their `**Touches**:` line as inert
-history, exactly like the relations. `merge_tasks.py` and
-`trim_levers.py` both emit a line only when given globs and tolerate
-their absence by construction, so folding an old issue preserves
+history, exactly like the relations. `merge_tasks.py` emits a line only
+when given globs and tolerates its absence by construction, so folding
+an old issue preserves
 whatever it declared without requiring a new one to declare anything.
 
 **Be honest about what the whole retirement costs.** Automated collision
@@ -555,11 +568,11 @@ unblocked Todo; it is Linear's server-side blocker filter, which is why a
 planning hold is expressed as an edge (see "Blocking relations").
 
 An issue stamped with a parking milestone — `Follow-ups` for an
-executor session's follow-ups and `Claude:` strays, `Trim levers` for
-session trim levers, `Session pending` for a seat session's tasks under
-review, and the legacy `Audit findings` — is **parked**: filed so it is
-not lost, deliberately *not* in the inbox or the queue. A filing skill
-sets **state `Backlog` plus the milestone, in the creating call** (per
+executor session's follow-ups and `Claude:` strays, `Session pending`
+for a seat session's tasks under review, and the legacy
+`Audit findings` — is **parked**: filed so it is not lost,
+deliberately *not* in the inbox or the queue. A filing skill sets
+**state `Backlog` plus the milestone, in the creating call** (per
 "Relations and state belong in the CREATING call"). **Promotion is one
 write, the milestone clear**, which lands the issue in the inbox for the
 operator's review. Nothing about parking places or implies a blocking
@@ -576,8 +589,9 @@ backlog). Who resolves a filing splits by the filer's tier:
   stage under `Session pending` and are ratified in that session's tab,
   its close gate leaving none behind.
 - **An executor session** (`task`, `chore`) never holds a review: its
-  follow-ups and meta strays park under `Follow-ups`, its levers under
-  `Trim levers`, and the planning bootstrap is their one reviewer — it
+  follow-ups and meta strays park under `Follow-ups` (its trims it
+  files not at all — see the trim-lever pipeline), and the planning
+  bootstrap is their one reviewer — it
   kills on doubt, combines the rest into small themed batches, and only
   then promotes them into the inbox, **whole**. An executor filing never
   lands in the inbox directly: an unfolded stream of one-line follow-ups
@@ -635,19 +649,19 @@ its reason. The kill pass runs **per issue, before assembly**, since a
 folded issue can no longer be killed on its own; titles decide the
 grouping, but a kill candidate's body is read, because the cost a kill
 turns on lives there. The asymmetry is what decides doubt: a wrongly
-closed issue's cost resurfaces when it recurs and is measured again — a
-trim lever as a refused refile that names the closed issue — while a
-wrongly kept one spends a session and an operator ratification on noise.
-Meta and trim filings otherwise compound, because nothing ever declines
-one. **Doubt means doubt the issue is worth doing, never "not this
-week"**: deferral is not a kill reason, and an inbox the operator cannot
-keep up with is the signal to kill harder, never to re-park.
+closed issue's cost resurfaces when it recurs and is measured again —
+in the next day's digest — while a wrongly kept one spends a session
+and an operator ratification on noise. Meta filings otherwise compound,
+because nothing ever declines one. **Doubt means doubt the issue is
+worth doing, never "not this week"**: deferral is not a kill reason,
+and an inbox the operator cannot keep up with is the signal to kill
+harder, never to re-park.
 
 ### Which milestones park, and which do not
 
 The project's milestones split into two kinds, and only one kind parks.
-**Parking** milestones — `Follow-ups`, `Trim levers`,
-`Session pending`, and the legacy `Audit findings` — mean "filed, not
+**Parking** milestones — `Follow-ups`, `Session pending`, and the
+legacy `Audit findings` — mean "filed, not
 yet reviewed or assembled", and an issue carrying one is read as parked
 by every rule above. The rest —
 `Integrations`, `UX features`, `Hardening`, `Mechanisms` — are ordinary
@@ -663,6 +677,8 @@ derivable — and the parking names are the closed set.
 when its legacy contents drain. `Claude meta` merged into `Follow-ups`
 (operator, 2026-10-23): a meta stray is a follow-up to the agent
 material, and the `Claude:` prefix already says which kind it is.
+`Trim levers` retired with the per-session lever filing; planning
+closes it once its last open lever is disposed of.
 
 One place the two kinds *do* behave alike, which is easy to
 misattribute: `board_batch.py list` drops **every** milestoned issue by
@@ -814,9 +830,9 @@ being worked, which makes "never fold an issue that is In Progress"
 load-bearing on its own rather than belt-and-braces.
 
 **`trim-context`'s output tasks land in the inbox** (Backlog, no
-milestone, Urgent): the fold is their assembly, so each is an
+milestone, Urgent): the analyst's fold is their assembly, so each is an
 assembled batch — never parked for a second assembly, never a fold
-input. The trim levers keep their own milestone, writer and fold.
+input.
 
 ## The verb/substrate title token
 
@@ -1031,14 +1047,13 @@ the rule left the trim-lever pipeline in contradiction with it.
 
 For a pipeline that writes many small bodies unattended, the echo is pure
 waste, and the lever is a raw-GraphQL tool that prints one line per
-write. `.claude/tools/trim_levers.py` is that path for the session
-trim-lever pipeline: `probe` / `file` / `append-evidence`, authenticating
-with `LINEAR_API_KEY` exactly as the other Python board tools do, and
-selecting only identity fields so no body is ever returned.
-`append-evidence` does its read-modify-write **inside the tool process**,
-so a growing accumulator body never enters a transcript at all — which is
+write. The trim-lever pipeline was the first such path: a per-lever
+`append-evidence` that did its read-modify-write **inside the tool
+process**, so a growing accumulator body never entered a transcript —
 the compounding cost the section above measures at ≈53k over five
-touches.
+touches. That lane is retired (the analyst reads the digest); its
+fingerprint `probe` survives in `.claude/tools/trim_levers.py`, and the
+analyst files through `linear_issue.py create` / `append`.
 
 Two conditions on using this carve-out: the write must be **automated and
 repeated** (a one-off interactive edit stays on the MCP path, where the
@@ -1151,8 +1166,8 @@ something that had just arrived from another session, so deferring one
 risked losing it to a restart.
 
 Reach for the tool once a session's appends to one issue exceed two.
-`trim_levers.py` already solved this for one issue family by doing the
-read-modify-write inside its own process; `linear_issue.py` is that
+The retired trim-lever writer first solved this for one issue family by
+doing the read-modify-write inside its own process; `linear_issue.py` is that
 mechanism over an arbitrary issue, and its `find` subcommand is the
 title-only projection the MCP does not offer — a compliant dedup probe
 with `limit: 5` still returns five whole issue objects (~1.9k) to answer

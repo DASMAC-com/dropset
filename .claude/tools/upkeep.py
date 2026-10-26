@@ -142,11 +142,9 @@ OPEN_PR_LIMIT = 100
 NOTIFICATIONS_PATH = "/notifications?all=true&per_page=50"
 
 RESOLVED_TYPES = ("completed", "canceled")
-# The parking milestones, in report order. Trim levers leads: its count is the
-# fold sub-agent's spawn gate. Session pending is short-lived by design: a
-# count there is a seat session that died mid-review.
+# The parking milestones, in report order. Session pending is short-lived by
+# design: a count there is a seat session that died mid-review.
 PARKED_MILESTONES = (
-    "Trim levers",
     "Follow-ups",
     "Audit findings",
     "Session pending",
