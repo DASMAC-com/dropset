@@ -58,49 +58,42 @@ use crate::{
     Price, SlotTime, WallTime, N_LEVELS,
 };
 
-/// Side of a taker fill — `Buy` consumes asks (taker pays quote, gets
-/// base); `Sell` consumes bids (taker pays base, gets quote). Lives
-/// here rather than in [`crate::events`] because it is a swap
-/// instruction argument, not an event field.
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum SwapSide {
-    Buy = 0,
-    Sell = 1,
+/// Side of a taker fill, shared with the off-chain simulator so the wire
+/// encoding is declared once. Its `consumes_asks` predicate drives level
+/// selection, the inventory and fee legs, and — together with an entry's
+/// `flipped` flag — which `remaining[*]` array a fill touches.
+pub use dropset_math_core::matching_math::SwapSide;
+
+// ── Side-keyed matching helpers ──────────────────────────────────────
+//
+// The `swap` matching loop and settlement branch on `Buy`/`Sell` in ~a
+// dozen places — level selection, sort key, limit-cross test, fill math,
+// fee leg, snapshot, inventory mutation, taker accounting. These
+// `#[inline]` helpers fold every such decision back to a single `match`
+// so the Buy and Sell paths can't drift out of lockstep: change a
+// matching rule once here and both sides move together. They're inlined
+// and branch on the same runtime `side` the caller already holds, so they
+// add no per-leg dispatch cost over the original inline matches — the CU
+// profile is unchanged. They sit on an extension trait because
+// `SwapSide` is declared in math-core and an inherent impl must live in
+// the type's own crate.
+trait SideMatching {
+    fn limit_price_ok(self, limit: Price) -> bool;
+    fn price_sort_key(self, price: Price) -> u32;
+    fn crosses_limit(self, price: Price, limit: Price) -> bool;
+    fn output_atoms(self, fill_base: u64, fill_quote: u64) -> u64;
+    fn input_atoms(self, fill_base: u64, fill_quote: u64) -> u64;
+    fn compute_fill(
+        self,
+        price: Price,
+        taker_unfilled_in: u128,
+        level_size: u64,
+        base_atoms: u64,
+        quote_atoms: u64,
+    ) -> Result<LegFill>;
 }
 
-impl SwapSide {
-    /// Convert from the wire `u8` argument.
-    pub fn from_u8(v: u8) -> Option<Self> {
-        match v {
-            0 => Some(Self::Buy),
-            1 => Some(Self::Sell),
-            _ => None,
-        }
-    }
-
-    // ── Side-keyed matching helpers ──────────────────────────────────
-    //
-    // The `swap` matching loop and settlement branch on `Buy`/`Sell` in
-    // ~a dozen places — level selection, sort key, limit-cross test,
-    // fill math, fee leg, snapshot, inventory mutation, taker
-    // accounting. These `#[inline]` helpers fold every such decision
-    // back to a single `match` so the Buy and Sell paths can't drift out
-    // of lockstep: change a matching rule once here and both sides move
-    // together. They're inlined and branch on the same runtime `side`
-    // the caller already holds, so they add no per-leg dispatch cost
-    // over the original inline matches — the CU profile is unchanged.
-
-    /// A `Buy` taker consumes the resting **ask** side (pays quote, gets
-    /// base); a `Sell` taker consumes the **bid** side (pays base, gets
-    /// quote). This single predicate drives level selection, the
-    /// inventory and fee legs, and — together with an entry's `flipped`
-    /// flag — which `remaining[*]` array a fill touches.
-    #[inline]
-    fn consumes_asks(self) -> bool {
-        matches!(self, SwapSide::Buy)
-    }
-
+impl SideMatching for SwapSide {
     /// Up-front limit-price sentinel check. `Buy` rejects `ZERO` (it
     /// would reject every ask — a likely caller mistake); `Sell` rejects
     /// `INFINITY` symmetrically. Each accepts the open-ended sentinel for

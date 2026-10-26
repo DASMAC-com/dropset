@@ -27,6 +27,11 @@
 //! vectors in `sdk/conformance`, verified in both Rust and TS — the TS
 //! `price.ts` and `share.ts` are intentional hand ports, held to this
 //! crate only by those vectors.
+//!
+//! **Layout sentinels.** [`N_LEVELS`], [`NULL_SECTOR`], [`FLUSH_BIT`] and
+//! [`Q32_32_ONE`] are not arithmetic, but they live here too: this is the
+//! only crate both the program and `dropset-interface` depend on, so it is
+//! the one place a constant both sides must agree on can be declared once.
 
 pub mod clock;
 pub mod matching_math;
@@ -46,9 +51,32 @@ pub const BPS: u64 = 10_000;
 
 /// Fractional-bit width of the Q32.32 fixed point that value-per-share and
 /// the high-water mark are stored in: `x << Q32_SHIFT` lifts an atom-scale
-/// value into Q32.32, and `>> Q32_SHIFT` brings it back. Distinct from the
-/// program's `Q32_32_ONE`, which is `1.0` in this encoding.
+/// value into Q32.32, and `>> Q32_SHIFT` brings it back. Distinct from
+/// [`Q32_32_ONE`], which is `1.0` in this encoding.
 pub const Q32_SHIFT: u32 = 32;
+
+/// Q32.32 fixed-point representation of `1.0` — the seed value for a
+/// vault's `hwm` at first-deposit time. The HWM is value-per-share
+/// (`L / total_shares`); the first depositor's basket implies
+/// `L = total_shares` (since `total_shares := isqrt(b·q) == L`), so the
+/// initial VPS is exactly 1.0.
+pub const Q32_32_ONE: u64 = 1u64 << Q32_SHIFT;
+
+/// Number of bid / ask levels in a `LiquidityProfile`. Chosen small for
+/// the initial bring-up; widen once CU budgets are measured.
+pub const N_LEVELS: usize = 8;
+
+/// "Null" sentinel for sector-index pointers (`MarketHeader::head`,
+/// `Vault::next`, `Vault::prev`). Sector indices are at most
+/// `registry.max_vaults_per_market` (`u8`), so [`u32::MAX`] is unreachable
+/// as a real index and works as a null marker.
+pub const NULL_SECTOR: u32 = u32::MAX;
+
+/// Flush flag OR'd onto `ReferencePrice::stamp` by `SetReferencePrice`
+/// and `SetLiquidityProfile`. The next taker materializes
+/// `Vault::remaining` from the `LiquidityProfile` and clears the flag —
+/// see the spec's **LiquidityProfile → Flush**.
+pub const FLUSH_BIT: u64 = 1u64 << 63;
 
 #[cfg(feature = "wasm")]
 pub mod wasm;

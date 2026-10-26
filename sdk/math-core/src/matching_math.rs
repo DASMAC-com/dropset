@@ -16,6 +16,38 @@ use crate::clock::{SlotTime, WallTime};
 use crate::price::Price;
 use crate::{BPS, PPM};
 
+/// Side of a taker fill — `Buy` consumes asks (taker pays quote, gets
+/// base); `Sell` consumes bids (taker pays base, gets quote). The
+/// discriminants are the `swap` instruction's wire `side` argument, so
+/// the engine, the off-chain simulator and the WASM binding all decode
+/// it through [`SwapSide::from_u8`].
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SwapSide {
+    Buy = 0,
+    Sell = 1,
+}
+
+impl SwapSide {
+    /// Convert from the wire `u8` argument.
+    #[inline]
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Buy),
+            1 => Some(Self::Sell),
+            _ => None,
+        }
+    }
+
+    /// A `Buy` taker consumes the resting **ask** side; a `Sell` taker
+    /// consumes the **bid** side. This is the `is_ask` argument every
+    /// side-keyed kernel in this module takes.
+    #[inline]
+    pub fn consumes_asks(self) -> bool {
+        matches!(self, SwapSide::Buy)
+    }
+}
+
 /// Materialize an absolute-price `Price` from a reference price and a ppm
 /// offset. For asks: `ref × (PPM + offset) / PPM`. For bids:
 /// `ref × max(PPM − offset, 0) / PPM` (saturating; a bid with offset ≥
