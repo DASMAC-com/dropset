@@ -419,6 +419,35 @@ class ParsingTests(Base):
         )
 
 
+class RawPassTests(Base):
+    """Round-2 shapes: each was blocked, then let through by a quote model
+    that failed open, so pin them against the fail-closed fallback."""
+
+    def test_a_dollar_ending_a_single_quoted_word_is_not_ansi_c(self):
+        self.assertBlocked("grep 'x$' f && op read 'y'", "sed 's/x$//' f; op read 'y'")
+
+    def test_comments_and_heredocs(self):
+        self.assertBlocked(
+            '# don\'t\necho "$(op read x)"', "cat <<EOF\ndon't\n$(op read x)\nEOF"
+        )
+        self.assertAllowed("ls # op read x")
+
+    def test_substitution_bodies_with_quoted_or_escaped_parens(self):
+        self.assertBlocked(
+            "echo \"$(echo ')'; op read x)\"",
+            'echo "$(echo \\); op read x)"',
+            'echo "$(case a in a) op read x;; esac)"',
+            'echo "$\\\n(op read x)"',
+        )
+        self.assertAllowed('echo "\\$(op read x)"')
+
+    def test_ansi_c_escapes_are_decoded(self):
+        self.assertBlocked("$'\\x6fp' read x", "$'\\157p' read x")
+
+    def test_every_stage_of_a_pipeline_reaches_the_shell(self):
+        self.assertBlocked("echo 'op read x' | tee /dev/null | sh")
+
+
 class CockpitSpellingTests(Base):
     def test_userinfo_is_never_localnet(self):
         self.assertBlocked(

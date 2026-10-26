@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word backslashreplace
 # cspell:word caffeinate
 # cspell:word commenters
 # cspell:word coproc
@@ -76,14 +77,18 @@ operator refuses it.
 unquoted newline as a command separator — so a quoted string spanning lines
 (a commit message describing this guard) stays one word, and a
 backslash-newline continuation joins its lines. Runs of glued operators
-(``;(``, ``&&(``, ``;>``) are split into their parts, and ``$'…'`` is read
-with its backslash escapes. Command substitutions are found in the raw text
-with quote context tracked, so a backtick or ``$(`` inside single quotes (a
-PR body quoting a command) is literal while one inside double quotes is
-scanned. Only when the whole command's quotes do not balance does it fall
-back to line by line, and a line that still does not lex is split into
-plain words and scanned, never skipped. The name checks (rule 1) run on the
-raw text first and need no parse.
+(``;(``, ``&&(``, ``;>``) are split into their parts. Before lexing, one
+quote-aware pass over the raw text (``_raw_pass``) decodes each ``$'…'``
+outside quotes, drops comments, and collects the command substitutions the
+shell would run, so a backtick or ``$(`` inside single quotes (a PR body
+quoting a command) is literal while one inside double quotes is scanned.
+Where that pass meets something it does not model — an unclosed quote, a
+heredoc, a ``case`` inside ``$(`` — it says so, and every token carrying a
+substitution is scanned as well: uncertainty fails closed. Only when the
+whole command's quotes do not balance does lexing fall back to line by line,
+and a line that still does not lex is split into plain words and scanned,
+never skipped. The name checks (rule 1) run on the raw text first and need
+no parse.
 
 Reads the PreToolUse payload as JSON on stdin; exits 2 with the reason on
 stderr to block. Fails **open** on an unparseable payload or an internal
@@ -283,16 +288,146 @@ def _split_operators(tok):
     return parts
 
 
-ANSI_C_RE = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
 PLAIN_WORD_RE = re.compile(r"[();<>|&]+|[^();<>|&]+")
+# Characters after which a `#` starts a comment rather than sitting mid-word.
+COMMENT_START_AFTER = " \t\n;&|()"
 
 
-def _ansi_c_as_double_quoted(match):
-    # `$'it\'s'` escapes its quote with a backslash, which a plain single
-    # quote cannot: re-spell it as a double-quoted word so the lexer agrees
-    # with the shell about where it ends.
-    content = re.sub(r"\\(.)", r"\1", match.group(1))
-    return '"' + content.replace("\\", "\\\\").replace('"', '\\"') + '"'
+def _ansi_c_word(content):
+    """A `$'…'` body, decoded, re-spelled as a double-quoted word.
+
+    `$'it\\'s'` escapes its quote with a backslash, which a plain single quote
+    cannot, and `$'\\x6fp'` spells `op` in hex: decode the escapes so the lexer
+    and the checks see the word the shell would.
+    """
+    try:
+        word = content.encode("latin-1", "backslashreplace").decode("unicode_escape")
+    except (UnicodeError, ValueError):
+        word = re.sub(r"\\(.)", r"\1", content)
+    return '"' + word.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _ansi_c_end(text, i):
+    """Index of the quote closing a `$'…'` body that starts at ``i``, or -1."""
+    n = len(text)
+    while i < n:
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == "'":
+            return i
+        i += 1
+    return -1
+
+
+def _paren_end(text, i):
+    """Index of the `)` closing a `$(` whose body starts at ``i``.
+
+    Quote-aware, so a `)` inside a quoted string or after a backslash does
+    not end the body early. Returns ``len(text)`` when nothing closes it.
+    """
+    depth = 1
+    quote = None
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+        elif c == "\\":
+            i += 1
+        elif c == '"':
+            quote = None if quote == '"' else '"'
+        elif quote is None and c == "'":
+            quote = "'"
+        elif quote is None and c == "(":
+            depth += 1
+        elif quote is None and c == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return n
+
+
+def _raw_pass(text):
+    """One quote-aware pass over the raw command text.
+
+    Returns ``(rewritten, bodies, uncertain)``. ``rewritten`` has each
+    `$'…'` outside quotes re-spelled for the lexer and each comment dropped;
+    ``bodies`` are the command substitutions the shell would run (a backtick
+    or `$(` inside single quotes is literal, inside double quotes or bare it
+    runs); ``uncertain`` is True when the text holds something this pass does
+    not model — an unclosed quote or substitution, a heredoc, a `case` inside
+    `$(` — and the caller must fall back to the cruder fail-closed scan.
+    """
+    out = []
+    bodies = []
+    quote = None
+    uncertain = False
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+            out.append(c)
+            i += 1
+            continue
+        if c == "\\":
+            out.append(text[i : i + 2])
+            i += 2
+            continue
+        if quote is None:
+            if text.startswith("$'", i):
+                end = _ansi_c_end(text, i + 2)
+                if end == -1:
+                    uncertain = True
+                    out.append(text[i:])
+                    break
+                out.append(_ansi_c_word(text[i + 2 : end]))
+                i = end + 1
+                continue
+            if c == "'":
+                quote = "'"
+                out.append(c)
+                i += 1
+                continue
+            if c == "#" and (i == 0 or text[i - 1] in COMMENT_START_AFTER):
+                end = text.find("\n", i)
+                i = n if end == -1 else end
+                continue
+            if text.startswith("<<", i) and not text.startswith("<<<", i):
+                uncertain = True
+        if c == '"':
+            quote = None if quote == '"' else '"'
+        elif c == "`":
+            end = text.find("`", i + 1)
+            if end == -1:
+                uncertain = True
+                end = n
+            bodies.append(text[i + 1 : end])
+            out.append(text[i : end + 1])
+            i = end + 1
+            continue
+        elif text.startswith("$(", i):
+            end = _paren_end(text, i + 2)
+            body = text[i + 2 : end]
+            if end >= n or re.search(r"\bcase\b", body):
+                # A `case` pattern's bare `)` defeats the depth count; take
+                # everything after the `$(` rather than a body cut short.
+                uncertain = True
+                body = text[i + 2 :]
+            bodies.append(body)
+            out.append(text[i : end + 1])
+            i = end + 1
+            continue
+        out.append(c)
+        i += 1
+    if quote is not None:
+        uncertain = True
+    return "".join(out), bodies, uncertain
 
 
 def _plain_words(line):
@@ -307,14 +442,13 @@ def _plain_words(line):
     return words
 
 
-def _tokenize(command):
+def _tokenize(text):
     """Quote-aware tokens with an unquoted newline as its own `\\n` token.
 
-    Falls back to line-by-line only when the whole command's quotes do not
-    balance; a line that still does not lex is split into plain words.
+    ``text`` is `_raw_pass`'s rewrite. Falls back to line-by-line only when
+    the whole command's quotes do not balance; a line that still does not lex
+    is split into plain words.
     """
-    text = command.replace("\x00", "").replace("\\\n", "")
-    text = ANSI_C_RE.sub(_ansi_c_as_double_quoted, text)
     # Locale quoting (`$"op"`) quotes exactly like a plain double quote for the
     # words this guard reads.
     text = re.sub(r"\$(?=\")", "", text)
@@ -348,57 +482,6 @@ def _segments(tokens):
         else:
             segments[-1][0].append(tok)
     return [(s, sep) for s, sep in segments if s]
-
-
-def _substitutions(text):
-    """The bodies of the command substitutions the shell would run.
-
-    Read from the raw text, because the lexer drops the quoting that decides
-    it: a backtick or `$(` inside single quotes (a PR body quoting a command)
-    is literal, inside double quotes or bare it runs.
-    """
-    bodies = []
-    quote = None
-    i = 0
-    n = len(text)
-    while i < n:
-        c = text[i]
-        if quote in ("'", "$'"):
-            if quote == "$'" and c == "\\":
-                i += 2
-                continue
-            if c == "'":
-                quote = None
-            i += 1
-            continue
-        if c == "\\":
-            i += 2
-            continue
-        if quote is None and text.startswith("$'", i):
-            quote = "$'"
-            i += 2
-            continue
-        if quote is None and c == "'":
-            quote = "'"
-        elif c == '"':
-            quote = None if quote == '"' else '"'
-        elif c == "`":
-            end = text.find("`", i + 1)
-            end = n if end == -1 else end
-            bodies.append(text[i + 1 : end])
-            i = end + 1
-            continue
-        elif text.startswith("$(", i):
-            depth = 1
-            j = i + 2
-            while j < n and depth:
-                depth += {"(": 1, ")": -1}.get(text[j], 0)
-                j += 1
-            bodies.append(text[i + 2 : j - 1 if depth == 0 else j])
-            i = j
-            continue
-        i += 1
-    return bodies
 
 
 def _resolve(path, cwd):
@@ -748,7 +831,9 @@ def _token_reason(tokens, cwd):
 def _scan(command, cwd, depth=0):
     if depth > MAX_DEPTH:
         return None
-    tokens = _tokenize(command)
+    joined = command.replace("\x00", "").replace("\\\n", "")
+    rewritten, bodies, uncertain = _raw_pass(joined)
+    tokens = _tokenize(rewritten)
     reason = _token_reason(tokens, cwd)
     if reason:
         return reason
@@ -756,19 +841,30 @@ def _scan(command, cwd, depth=0):
     for tok in tokens:
         if tok.startswith("ARGS="):
             env_args.extend(_split_args(tok.split("=", 1)[1]))
-    nested = _substitutions(command)
-    previous = []
+    nested = list(bodies)
+    if uncertain:
+        # The raw pass met something it does not model, so its quote context
+        # cannot be trusted to call a substitution literal: scan every token
+        # that carries one, as the cruder per-token pass did.
+        for tok in tokens:
+            if "$(" in tok:
+                nested.append(tok.split("$(", 1)[1])
+            elif "`" in tok:
+                nested.append(tok.replace("`", " ; "))
+    pipeline = []
     for seg, separator in _segments(tokens):
+        if separator not in ("|", "|&"):
+            pipeline = []
         argv, inner, assigns, reads_stdin = _unwrap(seg)
         nested.extend(inner)
-        if reads_stdin and separator in ("|", "|&"):
-            # A shell reading its commands from a pipe runs the words the
-            # command before it printed (`echo 'op read x' | sh`).
-            nested.extend(t for t in previous if " " in t or "\n" in t)
+        if reads_stdin and pipeline:
+            # A shell reading its commands from a pipe runs whatever the
+            # pipeline before it printed (`echo 'op read x' | tee f | sh`).
+            nested.extend(t for s in pipeline for t in s if " " in t or "\n" in t)
         reason = _command_reason(argv, assigns, env_args, cwd)
         if reason:
             return reason
-        previous = seg
+        pipeline.append(seg)
     for payload in nested:
         if payload and payload != command:
             reason = _scan(payload, cwd, depth + 1)
@@ -966,6 +1062,22 @@ BASH_CASES = [
     ("gh pr create --title x --body 'Body\n\n- `make tui-mainnet` is denied'", False),
     ("git commit -m 'Block `op read x` and $(op read x) here'", False),
     ('echo "`op read x`"', True),
+    # The raw pass: a `$` ending a single-quoted word, comments, `$(` bodies
+    # with quoted or escaped parens and `case`, continuations, decoded
+    # `$'…'`, and multi-stage pipelines.
+    ("grep 'x$' f && op read 'y'", True),
+    ("sed 's/x$//' f; op read 'y'", True),
+    ('# don\'t\necho "$(op read x)"', True),
+    ("echo \"$(echo ')'; op read x)\"", True),
+    ('echo "$(echo \\); op read x)"', True),
+    ('echo "$(case a in a) op read x;; esac)"', True),
+    ('echo "$\\\n(op read x)"', True),
+    ("$'\\x6fp' read x", True),
+    ("$'\\157p' read x", True),
+    ("echo 'op read x' | tee /dev/null | sh", True),
+    ("cat <<EOF\ndon't\n$(op read x)\nEOF", True),
+    ("ls # op read x", False),
+    ('echo "\\$(op read x)"', False),
     # Shell value flags, coproc, BSD sed, and a pipe scoped to its shell.
     ("bash -o pipefail -c 'op read x'", True),
     ("coproc op read x", True),
