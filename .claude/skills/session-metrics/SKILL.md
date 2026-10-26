@@ -148,6 +148,17 @@ and prints, as compact Markdown (or `--json`):
   (step 5), naming the top resident line — usually an entry file
   to split.
 
+- **Rebases** and **day span** — the rebase count (a started
+  `git rebase` or `git pull --rebase` that replayed something,
+  and every re-enqueue), each with the main-session spend after
+  it; and the first and last stamps, the longest idle gap
+  (`STALLED` past three hours) and the share spent after it.
+  Both are process costs, the operator's merge-quickly rule made
+  a number; `fleet_cost.py reconcile` rolls them up per day.
+  Either line is a lever only under the same bar as any other:
+  turn-eliminating, prose-subtracting or hardening, at about 3k
+  per occurrence (`plan`'s rulings → "The lever reservoir").
+
 - **Cache-hit rate** — cache-read ÷ all input.
 
 - **Costliest tools** — by total result size, with an

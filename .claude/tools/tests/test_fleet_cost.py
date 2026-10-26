@@ -254,6 +254,75 @@ class WalkTest(unittest.TestCase):
         )
 
 
+class FrictionRollupTest(unittest.TestCase):
+    """A session that rebased and ran past midnight puts a friction line on
+    its day; a clean day prints none."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.home = root / "home"
+        base = root / "repo"
+        (base / sm.SUBSTRATE_DIR).mkdir(parents=True)
+        (base / sm.SUBSTRATE_DIR / "1651").write_text("bedrock\n")
+        cwd = f"{base}/.claude/worktrees/1651"
+
+        def line(stamp: str, **fields) -> str:
+            return json.dumps({"cwd": cwd, "timestamp": stamp, **fields})
+
+        def turn(msg_id: str, stamp: str, content: list | None = None) -> str:
+            message = {"id": msg_id, "model": "claude-opus-5-5", "usage": USAGE}
+            return line(stamp, message={**message, "content": content or []})
+
+        rebase = {
+            "type": "tool_use",
+            "id": "t1",
+            "name": "Bash",
+            "input": {"command": "git rebase origin/main"},
+        }
+        result = {"type": "tool_result", "tool_use_id": "t1", "content": "rebased"}
+        WalkTest.write(
+            self.home / "projects" / "bedrock" / "s1.jsonl",
+            [
+                turn("m1", "2026-10-12T23:00:00.000Z", [rebase]),
+                line("2026-10-12T23:00:05.000Z", message={"content": [result]}),
+                turn("m2", "2026-10-12T23:01:00.000Z"),
+                turn("m3", "2026-10-13T01:00:00.000Z"),
+            ],
+        )
+        WalkTest.write(
+            self.home / "projects" / "bedrock" / "s2.jsonl",
+            [turn("m4", "2026-10-14T12:00:00.000Z")],
+        )
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_summary_counts_the_sessions_and_prices_after_the_rebase(self) -> None:
+        meter = fc.walk(self.home / "projects", ["2026-10-12", "2026-10-14"])
+        friction = fc.day_summary(meter, "2026-10-12")["friction"]
+        self.assertEqual(friction["spanned_sessions"], 1)
+        self.assertEqual(friction["rebased_sessions"], 1)
+        # m2 alone: m1 carried the rebase, m3 landed on another day.
+        self.assertAlmostEqual(friction["dollars_after"]["bedrock"], ONE_MESSAGE)
+        self.assertNotIn("friction", fc.day_summary(meter, "2026-10-14"))
+
+    def test_reconcile_prints_the_rollup_only_on_the_friction_day(self) -> None:
+        out = io.StringIO()
+        billed = {"2026-10-12": {}, "2026-10-14": {}}
+        with (
+            mock.patch.object(fc.sm, "claude_home", return_value=self.home),
+            mock.patch.object(fc, "fetch_billed", return_value=billed),
+            contextlib.redirect_stdout(out),
+        ):
+            fc.main(["reconcile", "--day", "2026-10-12", "--day", "2026-10-14"])
+        text = out.getvalue()
+        friction = [ln for ln in text.splitlines() if "friction" in ln]
+        self.assertEqual(len(friction), 1)
+        self.assertIn("1 session(s) spanned a day, 1 rebased", friction[0])
+        self.assertLess(text.index("friction"), text.index("2026-10-14 (UTC)"))
+
+
 class UnitTest(unittest.TestCase):
     def test_service_for_model(self) -> None:
         cases = {
