@@ -1,7 +1,5 @@
 <!-- cspell:word zshrc -->
 
-<!-- cspell:word CLAUDECODE -->
-
 <!-- cspell:word isabs -->
 
 <!-- cspell:word venv -->
