@@ -62,6 +62,17 @@ market-data (rust-tool, low): market-data/**
 db-schema (rust-lib, med): db-schema/**
 ```
 
+**`ci-infra` is served daily by the session digest.** Its CI section
+(`ci_metrics.py --since`, run by upkeep's digest step) measures the
+merge queue every morning: critical paths against the prior week's
+median, per-job growth, entries not all-green, and queue waiting apart
+from running. The audit heartbeat therefore declines `ci-infra` **on
+that ground**, not on capacity, citing the latest digest twin's `ci`
+object (an `error` key there means the day went unmeasured, which is
+no ground to decline). An ad-hoc `ci-infra` audit stays available for
+what the digest does not measure — workflow config, the
+`cfg/**` and `infra/**` roots.
+
 **Inter-subsystem interfaces** — the seams where contract drift
 hides; `A <-> B: the contract that crosses the boundary`.
 

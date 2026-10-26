@@ -11,9 +11,11 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import session_digest as sd
 import session_metrics as sm
@@ -376,6 +378,71 @@ class EndToEndTests(DigestFixture):
         (lock / "locked").write_text("")
         self.run_digest()
         self.assertIn("`11111111` · live", self.digest_text())
+
+
+def queue_run(rid: int, pr: int, created: str, conclusion: str) -> dict:
+    return {
+        "id": rid,
+        "head_branch": f"{sd.ci_metrics.QUEUE_PREFIX}{pr}-abc",
+        "created_at": created,
+        "conclusion": conclusion,
+        "status": "completed",
+        "run_attempt": 1,
+    }
+
+
+# One failed queue entry in the window, no baseline.
+CI_PAYLOAD = {
+    "since": "2026-10-23T12:00:00Z",
+    "until": "2026-10-24T11:55:00Z",
+    "runs": [queue_run(1, 700, "2026-10-24T01:00:00Z", "failure")],
+    "jobs": {
+        "1": [
+            {
+                "name": "Lint",
+                "started_at": "2026-10-24T01:00:10Z",
+                "completed_at": "2026-10-24T01:08:10Z",
+                "conclusion": "failure",
+            }
+        ]
+    },
+    "prs": {},
+}
+
+
+class CiSectionTests(DigestFixture):
+    def test_without_ci_the_section_says_not_requested(self):
+        self.run_digest()
+        self.assertIn("## CI\n\nCI section not requested", self.digest_text())
+        self.assertIsNone(self.twin()["ci"])
+
+    def test_a_failed_entry_is_a_flagged_header_line_and_in_the_twin(self):
+        with mock.patch.object(
+            sd.ci_metrics, "fetch_day", return_value=CI_PAYLOAD
+        ) as fetch:
+            summary = self.run_digest("--ci")
+        since, until, cache = fetch.call_args.args
+        self.assertEqual(since.isoformat(), "2026-10-23T12:00:00+00:00")
+        self.assertEqual(until.isoformat(), "2026-10-24T11:55:00+00:00")
+        self.assertEqual(cache, self.base / sd.DIGEST_DIR / sd.CI_CACHE_NAME)
+        self.assertEqual(summary["flagged"], 1)
+        text = self.digest_text()
+        self.assertIn("  - CI pr-700 entry not all-green ['Lint=failure']", text)
+        self.assertIn("NOT GREEN", text.split("## CI")[1])
+        self.assertEqual(self.twin()["ci"]["entries"][0]["pr"], "700")
+
+    def test_unreadable_github_still_writes_the_digest(self):
+        err = subprocess.CalledProcessError(
+            1, ["gh"], stderr="HTTP 403: API rate limit exceeded\nmore"
+        )
+        with mock.patch.object(sd.ci_metrics, "fetch_day", side_effect=err):
+            summary = self.run_digest("--ci")
+        self.assertEqual(summary["flagged"], 0)
+        self.assertIn(
+            "CI data unavailable: gh exited 1: HTTP 403: API rate limit exceeded",
+            self.digest_text(),
+        )
+        self.assertIn("error", self.twin()["ci"])
 
 
 class CalibrationTests(unittest.TestCase):

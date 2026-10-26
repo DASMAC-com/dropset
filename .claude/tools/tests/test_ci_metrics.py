@@ -2,7 +2,8 @@
 
 The ``gh`` reads are not exercised; these cover the pure reductions over an
 embedded fixture — the per-entry critical path, the slowest-job count, the
-failed-job listing, the page merge — and the two log readers, including the
+failed-job listing, the page merge, the day mode's baseline, growth flags,
+queue waits and re-entries, the job cache — and the two log readers, including the
 colored result word, a skipped hook's postfix, and the seven-digit Actions
 timestamp. Run via the repo's ``make tools-tests``.
 """
@@ -338,6 +339,200 @@ class MainTests(unittest.TestCase):
                     cm.main(["--cache", path])
             with open(path) as fh:
                 self.assertEqual(json.load(fh), PAYLOAD)
+
+
+def day_run(rid, pr, created, conclusion="success"):
+    return {
+        "id": rid,
+        "head_branch": f"{Q}{pr}-sha{pr}",
+        "created_at": created,
+        "conclusion": conclusion,
+        "status": "completed",
+        "run_attempt": 1,
+    }
+
+
+def day_job(name, start, end, conclusion="success"):
+    return {
+        "name": name,
+        "started_at": start,
+        "completed_at": end,
+        "conclusion": conclusion,
+    }
+
+
+def add(at):
+    return {"__typename": "AddedToMergeQueueEvent", "createdAt": at}
+
+
+def remove(at, reason):
+    return {
+        "__typename": "RemovedFromMergeQueueEvent",
+        "createdAt": at,
+        "reason": reason,
+    }
+
+
+def pr(number, created, merged, *events):
+    return {
+        "number": number,
+        "createdAt": created,
+        "mergedAt": merged,
+        "timelineItems": {"nodes": list(events)},
+    }
+
+
+# A day-mode payload shaped on the recorded 10-24 queue. The baseline is three
+# green 8m entries on 10-20 (Lint 6m). In the window:
+#   pr-620: Lint failed, dequeued, re-entered on the SAME ref 18m later (two
+#           builds, one ref) and merged after a 12m Lint.
+#   pr-630: a 15m Lint, so a slow entry and a Lint that grew.
+#   pr-640: enqueued 01:02 but built 01:20, behind pr-630.
+D = "2026-10-24T"
+DAY = {
+    "since": f"{D}00:00:00Z",
+    "until": f"{D}06:00:00Z",
+    "runs": [
+        day_run(1, 1, "2026-10-20T10:00:00Z"),
+        day_run(2, 2, "2026-10-20T11:00:00Z"),
+        day_run(3, 3, "2026-10-20T12:00:00Z"),
+        day_run(41, 620, f"{D}00:00:45Z", "failure"),
+        day_run(42, 620, f"{D}00:00:46Z"),
+        day_run(43, 620, f"{D}00:18:44Z"),
+        day_run(5, 630, f"{D}01:00:00Z"),
+        day_run(6, 640, f"{D}01:20:00Z"),
+    ],
+    "jobs": {
+        "1": [
+            day_job("Lint", "2026-10-20T10:01:00Z", "2026-10-20T10:07:00Z"),
+            day_job("SDK", "2026-10-20T10:01:00Z", "2026-10-20T10:09:00Z"),
+        ],
+        "2": [day_job("Lint", "2026-10-20T11:01:00Z", "2026-10-20T11:09:00Z")],
+        "3": [day_job("Lint", "2026-10-20T12:01:00Z", "2026-10-20T12:09:00Z")],
+        "41": [day_job("Lint", f"{D}00:01:00Z", f"{D}00:09:00Z", "failure")],
+        "42": [day_job("SDK", f"{D}00:01:00Z", f"{D}00:04:00Z")],
+        "43": [day_job("Lint", f"{D}00:19:00Z", f"{D}00:31:00Z")],
+        "5": [day_job("Lint", f"{D}01:00:30Z", f"{D}01:15:30Z")],
+        "6": [day_job("Lint", f"{D}01:20:12Z", f"{D}01:26:12Z")],
+    },
+    "prs": {
+        "620": pr(
+            620,
+            "2026-10-23T23:00:00Z",
+            f"{D}00:31:30Z",
+            add(f"{D}00:00:40Z"),
+            remove(f"{D}00:09:30Z", "failed_checks"),
+            add(f"{D}00:18:40Z"),
+            remove(f"{D}00:31:30Z", "merged"),
+        ),
+        "630": pr(630, f"{D}00:30:00Z", f"{D}01:16:00Z", add(f"{D}00:59:50Z")),
+        "640": pr(
+            640,
+            f"{D}00:57:00Z",
+            f"{D}01:27:00Z",
+            add(f"{D}01:02:00Z"),
+            remove(f"{D}01:27:00Z", "merged"),
+        ),
+        # Merged before the window opened: no row.
+        "3": pr(3, "2026-10-20T09:00:00Z", "2026-10-20T12:10:00Z"),
+    },
+}
+
+
+class DayReportTests(unittest.TestCase):
+    def setUp(self):
+        self.r = cm.day_report(DAY)
+        self.entries = self.r["entries"]
+        self.prs = {p["pr"]: p for p in self.r["prs"]}
+
+    def test_a_re_entry_on_the_same_ref_is_its_own_build(self):
+        builds = [e for e in self.entries if e["pr"] == "620"]
+        self.assertEqual([e["green"] for e in builds], [False, True])
+        self.assertEqual(builds[0]["failed_jobs"], ["Lint=failure"])
+        self.assertEqual([e["wall_min"] for e in builds], [8.0, 12.0])
+
+    def test_critical_path_against_the_baseline_median(self):
+        self.assertEqual(self.r["baseline"]["median_wall_min"], 8.0)
+        self.assertEqual(self.r["baseline"]["entries"], 3)
+        slow = [e["pr"] for e in self.entries if e["slow"]]
+        self.assertEqual(slow, ["630"])
+
+    def test_a_job_that_grew_is_flagged_and_a_steady_one_is_not(self):
+        jobs = {j["name"]: j for j in self.r["jobs"]}
+        self.assertTrue(jobs["Lint"]["grew"])
+        self.assertEqual(jobs["Lint"]["baseline_median_min"], 8.0)
+        # SDK fell from 8m to 3m; its baseline has one point, so no median.
+        self.assertFalse(jobs["SDK"]["grew"])
+        self.assertIsNone(jobs["SDK"]["baseline_median_min"])
+
+    def test_a_long_wait_names_the_entries_ahead(self):
+        e = next(e for e in self.entries if e["pr"] == "640")
+        self.assertEqual(e["queue_wait_min"], 18.0)
+        self.assertEqual(e["pickup_min"], 0.2)
+        self.assertEqual(e["behind"], ["pr-630"])
+        short = next(e for e in self.entries if e["pr"] == "630")
+        self.assertEqual(short["behind"], [])
+
+    def test_pr_queue_share_re_entries_and_dequeues(self):
+        p = self.prs["620"]
+        self.assertEqual(p["re_entries"], 1)
+        self.assertEqual(p["dequeues"], ["failed_checks"])
+        # 00:00:40-00:09:30 plus 00:18:40-00:31:30.
+        self.assertEqual(p["queue_min"], 21.7)
+        self.assertEqual(p["open_to_merge_min"], 91.5)
+        self.assertEqual(p["queue_share"], 0.237)
+        # No removal event: the merge closes the interval.
+        self.assertEqual(self.prs["630"]["queue_min"], 16.2)
+        self.assertNotIn("3", self.prs)
+
+    def test_critical_path_job_is_counted(self):
+        # The failed build's critical path is its slowest successful job.
+        self.assertEqual(self.r["critical_path"], [("Lint", 3), ("SDK", 1)])
+
+    def test_lines_flag_the_slow_the_failed_and_the_grown(self):
+        lines, flags = cm.day_lines(self.r)
+        text = "\n".join(lines)
+        self.assertIn("**Critical-path job**: Lint on 3 of 4, SDK on 1 of 4", text)
+        self.assertIn("behind pr-630", text)
+        self.assertIn("re-entered 1x; dequeued failed_checks", text)
+        self.assertEqual(len(flags), 3)
+        self.assertTrue(any("pr-630 critical path" in f for f in flags))
+        self.assertTrue(any("pr-620 entry not all-green" in f for f in flags))
+        self.assertTrue(any("job Lint" in f for f in flags))
+
+    def test_unavailable_is_one_line_and_no_flag(self):
+        lines, flags = cm.day_lines({"error": "gh exited 1: rate limited"})
+        self.assertEqual(lines, ["CI data unavailable: gh exited 1: rate limited"])
+        self.assertEqual(flags, [])
+
+
+class DayFetchTests(unittest.TestCase):
+    def test_finished_runs_jobs_are_cached_and_re_read(self):
+        jobs = [day_job("Lint", f"{D}00:01:00Z", f"{D}00:02:00Z")]
+        with tempfile.TemporaryDirectory() as d:
+            cache = cm.Path(d)
+            done = day_run(7, 7, f"{D}00:00:00Z")
+            with mock.patch.object(cm, "gh_api", return_value={"jobs": jobs}) as gh:
+                self.assertEqual(cm.run_jobs(done, cache), jobs)
+                self.assertEqual(cm.run_jobs(done, cache), jobs)
+            self.assertEqual(gh.call_count, 1)
+            running = dict(day_run(8, 8, f"{D}00:00:00Z"), status="in_progress")
+            with mock.patch.object(cm, "gh_api", return_value={"jobs": jobs}) as gh:
+                cm.run_jobs(running, cache)
+                cm.run_jobs(running, cache)
+            self.assertEqual(gh.call_count, 2)
+
+    def test_main_since_prints_json(self):
+        buf = io.StringIO()
+        with mock.patch.object(cm, "fetch_day", return_value=DAY) as fetch:
+            with redirect_stdout(buf):
+                self.assertEqual(
+                    cm.main(["--since", "2026-10-24T00:00:00", "--json"]), 0
+                )
+        self.assertEqual(
+            fetch.call_args.args[0].isoformat(), "2026-10-24T00:00:00+00:00"
+        )
+        self.assertEqual(json.loads(buf.getvalue())["baseline"]["entries"], 3)
 
 
 if __name__ == "__main__":

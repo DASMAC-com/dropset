@@ -39,6 +39,12 @@ re-writes the whole cached prefix, and that cache-write cost is its own line.
 billed" (``session_metrics.NOT_BILLED``); the subscription is those rates
 subsidized, so the figure says what the work would have cost.
 
+**The CI section** (``--ci``, which upkeep passes) is the merge queue over
+the same window, from ``ci_metrics.py``'s day mode: critical paths against the
+prior week's median, per-job growth, the entries not all-green, and waiting
+apart from running. When GitHub cannot be read the section says so and the
+digest still writes; a flagged CI line joins the header's flagged list.
+
 Stdout is one JSON line — sessions, dollars, flagged lines, digest path — the
 line upkeep's ``digest`` step reports. Stdlib only; a Python skill-tool under
 ``.claude/tools/``, deliberately not a Cargo workspace member. Tests live in
@@ -52,10 +58,12 @@ import datetime
 import json
 import re
 import statistics
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import ci_metrics
 import fleet_cost
 import session_metrics as sm
 
@@ -65,6 +73,9 @@ import session_metrics as sm
 DIGEST_DIR = Path(".claude") / "session-metrics"
 HISTORY_NAME = "history.jsonl"
 DIGEST_GLOB = "digest-*.json"
+# The CI section's per-run job cache (`ci_metrics.py --cache-dir`), so each
+# morning's baseline re-reads only the runs since the last digest.
+CI_CACHE_NAME = "ci-cache"
 # Where the launcher epilogue leaves a session's exit-time estimate
 # (`session_metrics.py --estimate-out`): one `<session-id>.estimate` beside the
 # session's substrate record, a JSON object whose `cost_usd` is the figure, or
@@ -648,8 +659,10 @@ def render(
     figures: dict,
     history: list[dict],
     calibration: dict | None,
+    ci: dict | None = None,
 ) -> tuple[str, list[str]]:
-    """The digest's Markdown and its flagged lines."""
+    """The digest's Markdown and its flagged lines; ``ci`` is the
+    :func:`ci_report` (``None`` when not requested)."""
     flags: list[str] = []
     out = [f"# Session digest — {date}", ""]
     out += calibration_lines(calibration, flags)
@@ -708,8 +721,17 @@ def render(
         names = ", ".join(f"`{m}`" for m in unpriced)
         out.append(f"- **Unpriced**: {names} — their tokens are in no figure above")
         flags.append(f"unpriced model(s) {', '.join(unpriced)}")
+    if ci is None:
+        ci_lines = ["CI section not requested (`--ci` not passed)."]
+    else:
+        ci_lines, ci_flags = ci_metrics.day_lines(ci)
+        flags += ci_flags
     out.append(f"- **Flagged**: {len(flags)}")
     out += [f"  - {f}" for f in flags]
+    out.append("")
+    out.append("## CI")
+    out.append("")
+    out += ci_lines
     out.append("")
     out.append("## Sessions")
     out.append("")
@@ -718,16 +740,41 @@ def render(
     return "\n".join(out).rstrip("\n") + "\n", flags
 
 
+def ci_report(
+    since: datetime.datetime, until: datetime.datetime, cache_dir: Path
+) -> dict:
+    """The CI section's data over the digest's own window, or ``{"error":
+    …}`` when GitHub cannot be read (no ``gh`` login, a rate limit, a hung
+    read) — the digest still writes, saying so."""
+    try:
+        return ci_metrics.day_report(ci_metrics.fetch_day(since, until, cache_dir))
+    except subprocess.CalledProcessError as exc:
+        reason = (exc.stderr or "").strip().splitlines()
+        return {"error": f"gh exited {exc.returncode}: {reason[0] if reason else ''}"}
+    except subprocess.TimeoutExpired:
+        return {"error": f"a gh read timed out after {ci_metrics.GH_TIMEOUT}s"}
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def to_twin(
-    date: str, since: str, sessions: list[SessionDigest], figures: dict, flags: list
+    date: str,
+    since: str,
+    sessions: list[SessionDigest],
+    figures: dict,
+    flags: list,
+    ci: dict | None = None,
 ) -> dict:
     """The JSON twin: what the allowlist-refresh mining and any later
-    consumer read instead of re-aggregating transcripts."""
+    consumer read instead of re-aggregating transcripts. ``ci`` is the CI
+    section's :func:`ci_metrics.day_report` (or its ``error``), which the
+    audit heartbeat's ci-infra row reads."""
     return {
         "date": date,
         "since": since,
         "figures": figures,
         "flags": flags,
+        "ci": ci,
         "sessions": [
             {
                 "session_id": s.session_id,
@@ -777,6 +824,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--calibration", help="JSON file of the settled day's reconcile and rates"
+    )
+    parser.add_argument(
+        "--ci",
+        action="store_true",
+        help="add the CI section (reads GitHub through `gh`)",
     )
     parser.add_argument("--now", help="override the current instant (testing)")
     parser.add_argument(
@@ -829,10 +881,17 @@ def main(argv: list[str] | None = None) -> int:
 
     figures = header_figures(sessions)
     history = read_history(directory, date)
-    text, flags = render(date, since_text, sessions, figures, history, calibration)
+    ci = None
+    if args.ci:
+        ci = ci_report(
+            since.replace(microsecond=0),
+            (now - UNTIL_MARGIN).replace(microsecond=0),
+            directory / CI_CACHE_NAME,
+        )
+    text, flags = render(date, since_text, sessions, figures, history, calibration, ci)
     md_path = directory / f"digest-{date}.md"
     md_path.write_text(text, encoding="utf-8")
-    twin = to_twin(date, since_text, sessions, figures, flags)
+    twin = to_twin(date, since_text, sessions, figures, flags, ci)
     (directory / f"digest-{date}.json").write_text(
         json.dumps(twin, indent=2), encoding="utf-8"
     )
