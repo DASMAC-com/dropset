@@ -181,6 +181,7 @@ newtypes
 nextest
 nohup
 nonblocking
+nosniff
 notif
 numstat
 oanda

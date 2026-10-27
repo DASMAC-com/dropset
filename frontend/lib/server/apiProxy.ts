@@ -9,6 +9,13 @@
 // directly (see `proxyFlags`), so a deploy with no key behaves as it did
 // before the proxy existed.
 
+import {
+  DFLOW_ORDER_URLS,
+  DFLOW_QUOTE_URLS,
+  JUPITER_SEARCH_URLS,
+  type UpstreamUrls,
+} from "../upstreams";
+
 // An unresolved 1Password reference. Locally the key's variable holds one in
 // the git-ignored .env.local, and `make frontend` resolves it through `op run`;
 // a bare `pnpm dev` hands the reference through literally, which is a
@@ -23,27 +30,37 @@ export type KeyedUpstream = {
   keylessUrl: string;
 };
 
-// DFlow's production Trade API takes the key; the developer endpoint is the
-// keyless one the browser called directly before (https://pond.dflow.net,
-// "Endpoints").
-export const DFLOW_QUOTE_UPSTREAM: KeyedUpstream = {
-  keyVar: "DFLOW_API_KEY",
-  keyedUrl: "https://quote-api.dflow.net/quote",
-  keylessUrl: "https://dev-quote-api.dflow.net/quote",
-};
-export const DFLOW_ORDER_UPSTREAM: KeyedUpstream = {
-  keyVar: "DFLOW_API_KEY",
-  keyedUrl: "https://quote-api.dflow.net/order",
-  keylessUrl: "https://dev-quote-api.dflow.net/order",
-};
-// Jupiter's keyed host serves the same Tokens API path as lite-api.
-export const JUPITER_SEARCH_UPSTREAM: KeyedUpstream = {
-  keyVar: "JUPITER_API_KEY",
-  keyedUrl: "https://api.jup.ag/tokens/v2/search",
-  keylessUrl: "https://lite-api.jup.ag/tokens/v2/search",
-};
+// The URLs live in lib/upstreams.ts, shared with the browser's keyless
+// defaults in lib/env.ts.
+const keyed = (keyVar: string, urls: UpstreamUrls): KeyedUpstream => ({
+  keyVar,
+  keyedUrl: urls.keyed,
+  keylessUrl: urls.keyless,
+});
+export const DFLOW_QUOTE_UPSTREAM = keyed("DFLOW_API_KEY", DFLOW_QUOTE_URLS);
+export const DFLOW_ORDER_UPSTREAM = keyed("DFLOW_API_KEY", DFLOW_ORDER_URLS);
+export const JUPITER_SEARCH_UPSTREAM = keyed(
+  "JUPITER_API_KEY",
+  JUPITER_SEARCH_URLS,
+);
 
-type Env = Record<string, string | undefined>;
+export type Env = Record<string, string | undefined>;
+
+// A route's query check: the query string to send upstream, rebuilt from the
+// parameters the route allows, or the reason to refuse the request.
+export type QueryCheck =
+  | { ok: true; search: string }
+  | { ok: false; msg: string };
+export type QueryValidator = (
+  params: URLSearchParams,
+  env: Env,
+) => Promise<QueryCheck>;
+
+// One route handler: the upstream it forwards to, and the check every query
+// passes before the key is attached. The validators live in
+// lib/server/proxyQuery.ts, apart from this module, which next.config.ts
+// imports.
+export type ProxyRoute = { upstream: KeyedUpstream; validate: QueryValidator };
 
 // The key, or null when unset. Throws on an unresolved reference, naming the
 // variable and never its value.
@@ -61,35 +78,63 @@ export function serverKey(name: string, env: Env = process.env): string | null {
 // Response headers passed back to the browser. The rate-limit pair feeds
 // lib/dflow/rateLimitBudget.ts, which reads them when it can see them; a
 // same-origin route makes them visible, where the cross-origin call hid them.
+// The content type is not among them: every response is JSON (see `forward`).
 const FORWARDED_HEADERS = [
-  "content-type",
   "retry-after",
   "x-ratelimit-limit",
   "x-ratelimit-remaining",
   "x-ratelimit-reset",
 ];
 
-// Forward a GET to the upstream, query string unchanged, with the key when one
-// is set. The upstream's status and body pass through as they are, so a 429
-// or an API error reaches the caller exactly as a direct call would. A failure
-// of the proxy's own is a `{ msg }` body, the shape DFlow's errors take.
+const JSON_TYPE = /^application\/json\b/i;
+
+// A failure of the proxy's own: a `{ msg }` body, the shape DFlow's errors
+// take.
+const fail = (status: number, msg: string): Response =>
+  Response.json(
+    { msg },
+    { status, headers: { "x-content-type-options": "nosniff" } },
+  );
+
+// Forward a GET to the upstream with the key when one is set, after the
+// route's query check: the query sent upstream is the one the check rebuilt,
+// never the caller's raw string, and a refused query is a 400 that never
+// reaches the upstream. The upstream's status and JSON body pass through as
+// they are, so a 429 or an API error reaches the caller exactly as a direct
+// call would.
+//
+// Served on the app's own origin, so the response is always JSON with
+// nosniff: a non-JSON upstream body (an edge or error page) is replaced by a
+// `{ msg }` under the same status rather than served as whatever type it
+// claims. A browser request from another site (`Sec-Fetch-Site` other than
+// same-origin) is refused, so no other page can spend the key through its
+// visitors' browsers; a non-browser client omits the header and is not
+// stopped by this. HEAD, which Next answers through the GET handler, is
+// refused too, since it would spend quota for nothing.
 export async function forward(
-  upstream: KeyedUpstream,
+  route: ProxyRoute,
   req: Request,
   env: Env = process.env,
 ): Promise<Response> {
+  if (req.method !== "GET") return fail(405, "Only GET is proxied");
+  const site = req.headers.get("sec-fetch-site");
+  if (site !== null && site !== "same-origin") {
+    return fail(403, "Cross-site requests are not proxied");
+  }
+
+  const { upstream } = route;
+  const check = await route.validate(new URL(req.url).searchParams, env);
+  if (!check.ok) return fail(400, check.msg);
+
   let key: string | null;
   try {
     key = serverKey(upstream.keyVar, env);
   } catch (e) {
-    return Response.json(
-      { msg: e instanceof Error ? e.message : String(e) },
-      { status: 500 },
-    );
+    return fail(500, e instanceof Error ? e.message : String(e));
   }
 
   const url = new URL(key ? upstream.keyedUrl : upstream.keylessUrl);
-  url.search = new URL(req.url).search;
+  url.search = check.search;
   const headers: Record<string, string> = { accept: "application/json" };
   if (key) headers["x-api-key"] = key;
 
@@ -100,16 +145,28 @@ export async function forward(
   try {
     res = await fetch(url, { headers, redirect: "error", signal: req.signal });
   } catch {
-    return Response.json(
-      { msg: `Network error or refused redirect reaching ${url.hostname}` },
-      { status: 502 },
+    return fail(
+      502,
+      `Network error or refused redirect reaching ${url.hostname}`,
     );
   }
 
-  const out = new Headers();
+  const out = new Headers({
+    "content-type": "application/json",
+    "x-content-type-options": "nosniff",
+  });
   for (const name of FORWARDED_HEADERS) {
     const value = res.headers.get(name);
     if (value !== null) out.set(name, value);
+  }
+  if (!JSON_TYPE.test(res.headers.get("content-type") ?? "")) {
+    await res.body?.cancel();
+    return new Response(
+      JSON.stringify({
+        msg: `${url.hostname} answered ${res.status} with a non-JSON body`,
+      }),
+      { status: res.status, headers: out },
+    );
   }
   return new Response(res.body, { status: res.status, headers: out });
 }

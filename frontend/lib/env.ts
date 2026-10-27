@@ -1,5 +1,10 @@
 import { type Address, address } from "@solana/kit";
 import { mainnet } from "@solana/rpc-types";
+import {
+  DFLOW_ORDER_URLS,
+  DFLOW_QUOTE_URLS,
+  JUPITER_SEARCH_URLS,
+} from "./upstreams";
 
 function required(name: string, value: string | undefined): string {
   if (!value) {
@@ -70,15 +75,13 @@ const DFLOW_PROXY = process.env.NEXT_PUBLIC_DFLOW_PROXY === "1";
 const JUPITER_PROXY = process.env.NEXT_PUBLIC_JUPITER_PROXY === "1";
 export const DFLOW_QUOTE_URL =
   process.env.NEXT_PUBLIC_DFLOW_QUOTE_URL?.trim() ||
-  (DFLOW_PROXY ? "/api/dflow/quote" : "https://dev-quote-api.dflow.net/quote");
+  (DFLOW_PROXY ? "/api/dflow/quote" : DFLOW_QUOTE_URLS.keyless);
 export const DFLOW_ORDER_URL =
   process.env.NEXT_PUBLIC_DFLOW_ORDER_URL?.trim() ||
-  (DFLOW_PROXY ? "/api/dflow/order" : "https://dev-quote-api.dflow.net/order");
+  (DFLOW_PROXY ? "/api/dflow/order" : DFLOW_ORDER_URLS.keyless);
 export const JUPITER_SEARCH_URL =
   process.env.NEXT_PUBLIC_JUPITER_SEARCH_URL?.trim() ||
-  (JUPITER_PROXY
-    ? "/api/jupiter/search"
-    : "https://lite-api.jup.ag/tokens/v2/search");
+  (JUPITER_PROXY ? "/api/jupiter/search" : JUPITER_SEARCH_URLS.keyless);
 
 // Browser-only: an endpoint above as an absolute URL, against the page's own
 // origin when it is a route.
