@@ -165,7 +165,7 @@ class HeadingsTests(unittest.TestCase):
 
 
 #: A pool-survey shape: two levers, each with its own internal headings below its
-#: identifier. This is what `trim_levers.py list --bodies-out` emits, and the case
+#: identifier. This is what the retired trim-lever listing emitted, and the case
 #: `--max-depth` exists for — the identifier lines are the answer, the per-lever
 #: internals are consumed later and selectively through `--sections`.
 POOL_DUMP = """# Trim levers

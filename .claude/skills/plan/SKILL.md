@@ -156,9 +156,9 @@ are operator-only and ride step 8's `AskUserQuestion`:
 - **the transcript-purge apply** — `/purge-conversations`, this
   yes being its approval.
 
-**Spawn the lever fold — every full bootstrap, unasked**, right
-after saying the parked counts, unless the report's line reads
-`Trim levers 0`. Invoking `plan` is the authorization (ruling 11).
+**Spawn the fold analyst — every full bootstrap, unasked**, right
+after saying the parked counts, unless the report's `digest` line
+wrote no digest. Invoking `plan` is the authorization (ruling 11).
 One fresh background `general-purpose` `Agent` — never a fork,
 on the executor tier (spelled `opus` in the Agent call; on
 `plan anthropic`, Claude Code's own Opus): a fold is carried-out
@@ -172,8 +172,8 @@ python3 .claude/tools/lens_preamble.py --out <scratchpad>/fold.md \
 ```
 
 then: this is a fold, not a review — read-only toward the repo,
-but its Linear writes are the task; run `/trim-context`; fold and
-kill with reasons, unasked (ruling 23); its batches land in the
+but its Linear writes are the task; run `/trim-context` on the
+digest at `<path from the digest line>`; its batches land in the
 inbox (Backlog, no milestone), never parked; at most 40 turns;
 the final message is the report, at most thirty lines. Add one
 paragraph only for what the operator said that the document does
@@ -188,8 +188,7 @@ record it under `In-session notes`, finish the board (the meta
 review included, since the fold's batches enter the inbox), and
 stop at step 8's consolidated ask. A
 Discuss item or duty needing the operator's word joins that ask.
-While the fold runs, make **no** `Trim levers` write, and never
-fold levers by hand while a sub-agent can.
+Never fold levers by hand while a sub-agent can.
 
 Then read the board. **Which tier an issue sits in is the whole
 scoping signal:**
@@ -643,18 +642,15 @@ make session-metrics SESSION=<uuid>
 ```
 
 It reads the cycle counter itself; pass `--date YYYYMMDD` (and
-`--cycle N`) for an earlier session. Levers file through
-`.claude/tools/trim_levers.py` (probe, then `file` or
-`append-evidence`); `/session-metrics` does this for you.
+`--cycle N`) for an earlier session. Levers go in the final
+message's `Session account` block, never filed;
+`/session-metrics` step 5 writes it.
 
 **A planning-derived lever must be quality-preserving.** Fidelity
 is the point and is never traded for tokens: a cheaper fetch, a
 narrower echo, a hoisted survey or a removed re-read qualifies; a
 model downgrade, a skipped bootstrap read, or anything that thins
-the decision context does not. Such a lever is **filed and
-immediately closed with its reason** (or left closed if one is
-already parked), so the fingerprint probe stops the next fold
-re-deriving it.
+the decision context does not — the analyst rejects those.
 
 **8. Drain the legacy findings, and ask once.** **At bootstrap,
 say each count, never a listing.** **The consolidated ask**

@@ -142,7 +142,7 @@ the document's state sections.
 
 1. **Parked hygiene is a rhythm.** Every full bootstrap says each
    parked milestone's count with its direction, machine-written by
-   upkeep; the lever pool folds there (ruling 23), Follow-ups
+   upkeep; the digest's levers fold there (ruling 23), Follow-ups
    folds and promotes whole (`SKILL.md` step 1), Audit findings
    drains by promotion or kill, and Session pending gets a
    count-and-offer line (`SKILL.md` step 8).
@@ -154,16 +154,14 @@ the document's state sections.
 
 1. **The tGBP basis is observed, not pinned.**
 
-1. **Trim levers must not accumulate.** Nearly every PR files
-   levers, acceptable only while the daily startup consumes them:
-   the bootstrap's fold sub-agent folds the milestone every
-   morning, the meta review kills on doubt, and every full
-   bootstrap says the lever count with its direction since the
-   previous stamp, as upkeep writes it. A pool that grows
-   two bootstraps running is a filer defect (raise the reservoir
-   bar), not a backlog. A couple hundred dollars a day is
-   acceptable spend; unbounded growth is the only failure
-   watched.
+1. **Trim tasks must not accumulate.** Sessions report levers in
+   their account and file none; the bootstrap's fold analyst
+   files from the digest every morning, folding a near-duplicate
+   into the open Backlog issue rather than filing a sibling, and
+   the meta review kills on doubt. A Backlog of similar trim
+   tasks is an analyst defect (raise the reservoir bar), not a
+   backlog. A couple hundred dollars a day is acceptable spend;
+   unbounded growth is the only failure watched.
 
 1. **Chores are separate issues from tasks.** A chore worktree is
    the bare issue number; minor non-repo work (key grinding, local
@@ -260,8 +258,8 @@ line here is struck.
 - **Board and process**: edges human-curated and planning-placed;
   Linear tags never in PR bodies; AI attribution never in commits
   or PRs; follow-ups to the Follow-ups milestone; no committed
-  model ids; the trim-levers writer and the issue appender are the
-  zero-echo paths; the board tool's lookup lags on a just-created
+  model ids; the issue filer and appender are the zero-echo
+  paths; the board tool's lookup lags on a just-created
   issue.
 - **AWS** (`docs/conventions/aws-infra.md`): identity
   `dropset-bedrock-agent`; CLI-first under SSO, logging in with

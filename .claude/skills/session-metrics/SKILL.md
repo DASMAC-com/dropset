@@ -1,6 +1,6 @@
 ---
 name: session-metrics
-description: Use at the end of a session (`review-pr` runs it unprompted before its close), or standalone for any session id, to see where its tokens went and recommend concrete trims. Drives the committed `session_metrics.py` tool (`make session-metrics SESSION=<uuid>`), which ranks the costliest tools, largest results, sub-agent rollup, and repeated command shapes worth hardening without loading the transcript into context. Files each trim lever as its own parked Linear issue under the `Trim levers` milestone through the zero-echo `trim_levers.py` writer, appending evidence to a lever that already exists; `trim-context` folds them later.
+description: Use at the end of a session (`review-pr` runs it unprompted before its close), or standalone for any session id, to see where its tokens went and recommend concrete trims. Drives the committed `session_metrics.py` tool (`make session-metrics SESSION=<uuid>`), which ranks the costliest tools, largest results, sub-agent rollup, and repeated command shapes worth hardening without loading the transcript into context. Writes each trim lever into the session's `Session account` block and files nothing; the daily digest lifts the block and `trim-context`, the fold analyst, judges and files across every session.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -24,25 +24,14 @@ complementary halves:
   sub-agent fan-out to scope down, a workflow to harden
   into a Python tool).
 
-Each recommendation lands as **its own parked Linear issue** —
-one lever, one issue, filed in Backlog with the `Trim levers`
-milestone in the creating call (parked: out of the review inbox)
-and keyed by a `**Fingerprint**:` — which `trim-context` later
-folds into **small themed** propose-only skill-improvement
-tasks (roughly 4–5 levers each), filed
-into the review inbox, on its
-own or as `plan`'s bootstrap fold. This is the
-feedback loop that systematizes, every session, the by-hand
-analysis that motivated this work.
-
-There used to be a single Linear inbox **document** collecting
-one entry per session. It is retired: with roughly ten parallel
-sessions a day it outgrew the harness's tool-result cap between
-mining passes (67.0k characters at the last one), so the
-consumer had to spill it to disk and mine it with a throwaway
-script. Per-lever issues remove the growth entirely, and make a
-lever's **recurrence** an accumulating fact on one issue instead
-of a pattern a later pass has to re-detect in prose.
+Each recommendation lands as **one line of the session's
+`Session account` block** (step 4). The daily digest lifts that
+block beside the session's numbers, and `trim-context` — the fold
+analyst, `plan`'s bootstrap sub-agent — judges across the whole
+day's sessions and files **small themed** propose-only batches
+(roughly 4–5 parts each) into the review inbox. A session files
+nothing that is only a trim, so no session spends context
+checking what others filed.
 
 ## The mechanism (why a tool)
 
@@ -144,8 +133,8 @@ and prints, as compact Markdown (or `--json`):
   one dominated its turn, and the report flags a ratio outside
   the 3.5–4.5 band the skill-size gate's byte caps assume —
   that is the signal to revisit the cap. When the share clears
-  the bar the report names, file it as a lever like any other
-  (step 5), naming the top resident line — usually an entry file
+  the bar the report names, record it as a lever like any other
+  (step 4), naming the top resident line — usually an entry file
   to split.
 
 - **Rebases** and **day span** — the rebase count (a started
@@ -273,22 +262,7 @@ A second session on the issue appends a second line rather
 than editing the first. Format and band table:
 `docs/conventions/context-economy.md` → "Cost bands".
 
-**3. There is no inbox document to resolve.** Levers are filed
-as **parked issues**, and the writer
-(`.claude/tools/trim_levers.py`) reads `LINEAR_API_KEY`,
-`LINEAR_PROJECT_ID`, `LINEAR_TEAM_ID` and
-`LINEAR_ASSIGNEE_ID` from the environment itself, erroring
-clearly by name if one is unset — so there is nothing to
-`printenv` here and no doc-id no-op path.
-
-The one prerequisite that is **not** self-healing: the
-`Trim levers` project milestone must exist. The writer
-refuses with a message naming the milestones that do exist
-rather than filing into the wrong place, so if that error
-appears, print the tool's summary anyway (the run is not
-wasted) and report the missing milestone as the blocker.
-
-**4. Compose the recommendations.** This is the skill's
+**3. Compose the recommendations.** This is the skill's
 judgment work — a tool can't do it. Ground every
 recommendation in **three** sources:
 
@@ -323,7 +297,7 @@ recommendation in **three** sources:
   over rather than restating it.
 
   It **refuses** a shape with no measured recurrence, which is
-  the right default — a single occurrence is a lever to file,
+  the right default — a single occurrence is a lever to record,
   not a tool to write. The one exception is a shape
   expressible only in **forbidden** forms (an inline
   interpreter one-liner, a stopgap grant, a compound): every
@@ -364,133 +338,38 @@ lever's saving can only be stated in tokens, price it at the
 rates the tool reports and say which tier it lands in. A
 **seat** session ranks the same way, on its not-billed figure.
 
-**5. File each lever as its own parked issue.** One lever, one
-issue, keyed by a `**Fingerprint**:` — never one entry
-bundling a whole session. Every write goes through the
-committed writer, which prints **one line** per write
-(identifier and url) instead of echoing a body back:
+**4. Write the levers into a `Session account` block — file
+nothing.** A session files nothing that is only a trim: the
+daily digest lifts this block verbatim from the session's
+message text (it matches a `## Session account` heading,
+through the next heading, at most 40 lines), and the fold
+analyst (`trim-context`) judges and files across every
+session at once. So end your report message with:
 
-```sh
-python3 .claude/tools/trim_levers.py probe --fingerprint <domain>:<slug>
+```text
+## Session account
+
+- <target skill/tool/rule> — <measured payload or turns> — <lever>
 ```
 
-A resident-prose lever is keyed by the line it names, so every
-session naming that line appends to one issue:
-`claude-skills:resident-<slug>`, where the slug is the skill name
-for an entry file, `skill-listing` for the listing, and an
-instructions file's name lowercased with `.` as `-`
-(`claude-md`, `memory-md`) — never a bare `name.ext`, which
-Linear linkifies.
+One line per lever, ranked as step 3 says. Each line carries
+all three fields, because the block is the only record of the
+lever: the **target** the edit lands in, the **measured**
+figure (tokens, dollars or turns, with the session's own
+numbers), and the **lever** as an imperative. Summarize a sink
+by tool and target, never a raw command or URL. This step is
+interim: the later shared session close-out task retires it.
 
-- **`NONE`** (exit 1) — this lever is new. Write its body to a
-  scratchpad file and file it:
-
-  ```sh
-  python3 .claude/tools/trim_levers.py file \
-      --title '<the lever, as an imperative>' \
-      --fingerprint <domain>:<slug> \
-      --body-file <scratchpad>/lever.md
-  ```
-
-  **No `--touches`.** The declared-scope glob field is
-  retired (`CLAUDE.md` → "Structured filing fields") — name
-  the skill or tool the lever would edit in the body prose,
-  which is what `trim-context` reads when it folds.
-
-- **`MATCH ENG-###`** — this lever has been seen before.
-  **Append this session's evidence** to the issue that already
-  exists rather than filing a duplicate:
-
-  ```sh
-  python3 .claude/tools/trim_levers.py append-evidence \
-      --fingerprint <domain>:<slug> \
-      --evidence-file <scratchpad>/evidence.md
-  ```
-
-  A `MATCH` is not one situation. The writer distinguishes
-  three dispositions and each takes a **different** action, so
-  read the state in the probe's output:
-
-  - **parked** (open, milestone set) — accumulates. Run
-    `append-evidence`; it grows that lever.
-  - **folded** (closed, its content copied into an aggregated
-    task) — the fix is queued but the lever record is
-    discharged. `append-evidence` here prints
-    `NOTED … no longer parked` and **exits 0** — it does not
-    fail, and it records nothing. So if this session saw the
-    lever again, **run `file`**: it proceeds on a folded match
-    and names what it supersedes. Folding is not permanent;
-    only rejection is.
-  - **rejected** (closed as `Canceled` with a reason) — settled.
-    `file` hard-refuses here, which is the intent. Read the
-    closing reason and **do not refile**. If this session's
-    evidence genuinely defeats it, say so in the report and
-    leave it to a human — reopening someone's reasoned
-    rejection is not an unattended act.
-
-  The middle case is the one that is easy to get wrong, and it
-  is routine rather than exotic: the `plan` bootstrap folds
-  every morning, so any lever spends the window between its fold and its
-  PR landing in exactly that state. Treating the `NOTED` line
-  as a refusal would silently drop every recurrence in that
-  window — which is the failure the per-lever design exists to
-  prevent.
-
-  Why a fold produces this at all: it copies each
-  `**Fingerprint**:` line into the aggregated task, so from then
-  on the probe legitimately matches two issues (the closed
-  original and the open aggregate) and neither is parked.
-
-The fingerprint is `<domain-token>:<slug>`, and its first token
-must be **dotless** — Linear linkifies a hostname-valid
-basename and corrupts the stored key, which would break the
-probe above. The writer refuses a dotted domain outright, so a
-rejection there means rename the token (`feeds-http`, never
-`http.rs`), per `docs/conventions/linear-automation.md` →
-"Structured filing fields".
-
-**Why a tool and not `save_issue`.** The MCP write echoes the
-entire stored body back on every call, even one that sends no
-body — a fixed cost `patch` does not reduce, which *compounds*
-on an accumulator: five touches on one issue measured ≈53k with
-per-touch cost rising monotonically. `append-evidence` does its
-read-modify-write **inside the tool process**, so a growing
-lever body never enters a transcript at all. The convention doc
-states this carve-out explicitly (same section → "Carve-out: a
-high-volume automated pipeline may bypass the MCP").
-
-**Keep each lever body compact.** It is a proposal, not a
-report: the lever, the sessions and figures that motivate it,
-and the concrete skill or convention-doc edit it implies.
-Compactness is a discipline from day one here — the document
-this replaced grew past the tool-result cap precisely because
-nothing bounded per-entry length.
-
-**No relations, no blocking edges.** A parked lever is outside
-the meta batch until `trim-context` folds it, and the batch
-itself now carries no edge at all — its assembly precondition
-replaced it (`CLAUDE.md` → "Blocking relations"). Either way
-the writer has no relation mutation at all.
-
-**A re-run is safe.** The probe makes this idempotent: a second
-run for the same session finds each lever already filed and
-appends evidence rather than duplicating. There is no
-duplicate-header hazard of the kind the old document-append had,
-and no size gate anywhere — metrics feed the improvement loop,
-so the producer records unconditionally.
-
-**6. Report** in one line — the session, the top sink, how many
-levers were filed new versus appended-as-evidence, and any lever
-skipped because it matched a closed (rejected) one.
+**5. Report** in one line — the session, the top sink, and how
+many levers the account names.
 
 ## Notes
 
-- **No source edits.** This skill writes only to Linear (the
-  parked lever issues) and never authors a code or skill diff,
-  never commits, never pushes. The skill-improvement edits
-  its recommendations imply are folded — propose-only — by
-  `trim-context` (run on its own or by `plan`'s bootstrap) and
-  applied later by a human.
+- **No source edits, no filing.** This skill writes only the
+  cost line to the session's own issue and never authors a
+  code or skill diff, never commits, never pushes. The edits
+  its levers imply are filed — propose-only — by
+  `trim-context` and applied later by a human.
 - **Runs standalone or at handoff.** `review-pr` runs it
   unprompted, once, immediately before its close question after a
   merge — no approval asked — but it runs just as well invoked by
@@ -501,10 +380,10 @@ skipped because it matched a closed (rejected) one.
   relative, not billing-exact (sinks are sized in tokens, not
   priced).
 - **Sink labels can carry input fragments — scrub before
-  writing to Linear.** The "Largest single results" labels
+  writing the account.** The "Largest single results" labels
   are short heads of the call's input (a Bash command, a
   URL, a query). If a command or URL embedded a secret, that
-  fragment could ride into a filed lever body. When you cite a
+  fragment could ride through the digest into a filed batch. When you cite a
   sink in a lever, summarize it by its **tool and target**
   (file, package, MCP method) rather than pasting a raw
   command/URL verbatim, and drop anything that looks like a
@@ -512,5 +391,4 @@ skipped because it matched a closed (rejected) one.
   never reach a label in the first place.
 - Shell discipline (per `CLAUDE.md`): every command is a
   single bare call that reduces to an allow-glob — no `&&`,
-  pipes, `$(…)`, or redirects. The writer takes its ids from
-  the environment itself, so there is nothing to `printenv`.
+  pipes, `$(…)`, or redirects.

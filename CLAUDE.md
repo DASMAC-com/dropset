@@ -244,7 +244,7 @@ frozen. The operator's Backlog → Todo move **is** the approval —
 planning never makes it — and a fold into a Todo body drops it back.
 The dispatch gate is **state Todo plus unblocked**; the Next view is
 the unblocked Todo. An issue carrying a **parking milestone** —
-`Follow-ups`, `Trim levers`, `Session pending` (and the legacy
+`Follow-ups`, `Session pending` (and the legacy
 `Audit findings`, drained and retired once empty)
 — is *parked* in either state, so a filing skill sets **`Backlog`
 plus the milestone,
@@ -279,21 +279,16 @@ authorization: never substitute an inline pass, never silently
 skip it; if the tooling is absent, stop and ask. Detail: the
 `audit-scope` and `plan` skills.
 
-### Trim levers are parked issues, not a document
+### Trims are the analyst's, not a session's
 
-`session-metrics` files each trim lever as its own parked issue
-under the `Trim levers` milestone, keyed by a
-`**Fingerprint**:`, through the committed zero-echo writer
-`.claude/tools/trim_levers.py` (`probe` / `file` /
-`append-evidence`) — a deliberate carve-out from the MCP `patch`
-path, whose full-body echo compounds on an accumulator.
-`trim-context` is the **fold**, a sub-agent of every full `plan`
-bootstrap: sweep the milestone, fold into **small themed
-`Claude:` tasks of ~4–5 levers each** (a large pool
-splits by surface) and close the originals (the coherence floor
-still governs audit findings and product filings). A rejected
-lever is **closed with its reason**, and
-dedup-against-resolved makes that permanent. Detail:
+A session files **nothing that is only a trim**: its levers go in
+its `Session account` block, which the daily digest lifts.
+`trim-context`, the **fold analyst** (a sub-agent of every full
+`plan` bootstrap), judges the whole day at once, dedups by
+`**Fingerprint**:` and by Backlog title — folding a near-match
+into the existing issue — and files **small themed `Claude:`
+batches of ~4–5 parts** into Backlog, no milestone. A rejection
+filed Canceled with its reason is permanent. Detail:
 `docs/conventions/linear-automation.md` and the two skills.
 
 ### Blocking relations

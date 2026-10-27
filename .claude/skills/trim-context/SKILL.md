@@ -1,64 +1,36 @@
 ---
 name: trim-context
-description: Use to fold the parked trim levers `session-metrics` files into propose-only skill-improvement tasks — standalone, or as `plan`'s bootstrap fold sub-agent. Sweeps the `Trim levers` milestone and files small themed `Claude:` tasks of roughly 4–5 levers each, one `# Part N` section per lever keeping its `**Fingerprint**:`, landing in the review inbox (Backlog, no milestone). Then closes the originals; a rejected lever is closed with its reason, which suppresses refiling. Never edits a skill or convention doc — filing a task is the proposal.
+description: The fold analyst — `plan`'s bootstrap fold sub-agent, or run by hand. Reads the day's session digest (every session's numbers beside its own Session account, plus flagged CI lines), judges across all of them at once which trim levers clear the bar, dedups each candidate by fingerprint and by Backlog title, folds a near-match into the existing issue as a new part, and files the rest as small themed `Claude:` batches of about 4–5 parts, one `**Fingerprint**:` per part, straight into Backlog with no milestone. Never edits a skill or convention doc — filing a batch is the proposal.
 disable-model-invocation: false
 user-invocable: true
 ---
 
-<!-- cspell:word IGNORECASE -->
-
 # `trim-context`
 
-The **consumer** half of the context-economy feedback loop.
-`session-metrics` is the producer: at the end of a session it files each
-trim lever as its own small **parked issue**, stamped with the
-`Trim levers` project milestone and keyed by a `**Fingerprint**:`.
-`trim-context` is the periodic **fold**: it sweeps that milestone, folds
-the parked levers into small themed propose-only tasks of roughly 4–5
-levers each, filed straight into the review inbox (Backlog, no
-milestone) since the fold is their assembly, and closes the originals.
+The **analyst** half of the context-economy loop. Sessions report;
+the analyst judges. Every session's numbers and its own account of
+where it could have gone better land in one deterministic **digest**
+the daily upkeep pass writes
+(`docs/conventions/context-economy.md` → "The daily digest"); this
+skill reads that digest, decides what is worth filing, and files it.
+A session files nothing that is only a trim, so no session spends
+context checking what other sessions filed — the analyst sees the
+whole day at once, which is where a shared sink is visible.
 
 It runs identically by hand or as the `plan` bootstrap's background
-sub-agent, and **asks nothing** — which is what lets it run headless.
-Filing a task *is* the proposal: it never edits a skill or convention
-doc, so there is no propose-only vs. apply split.
+sub-agent, and **asks nothing**. Filing a batch *is* the proposal: it
+never edits a skill, a convention doc or `CLAUDE.md`.
 
-## This skill reads no document
+## Input
 
-It used to mine a Linear "Session Metrics" inbox **document**, and that
-document is retired. The reason is structural rather than tidiness: with
-roughly ten parallel sessions a day and a few thousand characters per
-entry, the body crossed the harness's tool-result cap between any two
-drains — 67.0k characters at the last one — so each pass spilled it to
-disk and picked it apart with a hand-written scratchpad script, twice.
-The producer appended with a cheap `patch` and paid only its entry's
-length, while **mining** re-read the whole body every pass; the cost sat
-entirely on this side.
+The brief names the digest path — the upkeep report's `digest` line,
+`<base>/.claude/session-metrics/digest-<YYYY-MM-DD>.md`. By hand, take
+the newest `digest-*.md` there. No digest, or one with no session
+blocks: report that and stop.
 
-Per-lever parked issues fix that at the root, and buy two things the
-document never could:
-
-- **Recurrence becomes a fact, not a pattern to re-detect.** A lever seen
-  again gets this session's evidence appended to the issue that already
-  exists, so "this recurred in four sessions" is recorded rather than
-  something a miner has to notice in prose.
-- **A rejection sticks.** A lever judged not worth acting on is **closed
-  with its reason**, and dedup-against-resolved then suppresses refiling
-  permanently. Nine of thirteen entries in the final document-era pass
-  carried an explicit "do not mine this as waste" note, several written
-  only because an earlier pass had re-proposed the very thing on
-  intuition. That whole class of re-litigation disappears.
-
-No drain bookkeeping survives: the milestone lifecycle **is** the state
-machine, on the pattern the `Audit findings` milestone already proved.
-
-## Linear destination
-
-This skill sweeps a milestone and **files** inbox tasks, so it needs
-the env-resolved filing destination `linear-task` uses. Resolve each
-variable with its **own** bare `printenv` (one `Bash(printenv:*)`
-allow-rule covers them all) — never a combined `printenv A B C`,
-which on macOS / BSD prints only the first value:
+Resolve the filing destination, each with its **own** bare `printenv`
+(a combined one prints only the first value on macOS / BSD); if any is
+empty, say so and stop:
 
 ```sh
 printenv LINEAR_TEAM_ID
@@ -66,547 +38,154 @@ printenv LINEAR_PROJECT_ID
 printenv LINEAR_ASSIGNEE_ID
 ```
 
-If any is empty, say so and stop before filing. There is no longer a
-document id to resolve, so there is no inbox-not-set-up no-op path.
-
 ## Steps
 
-**1. Sweep the parked levers.** One call, no bodies — titles, urls and
-the paths each lever names, which step 2a checks against HEAD:
+**1. Read the digest once, whole.** It is the fold's entire input and
+is bounded by construction (three rows per ranked list per session),
+so this is the planned multi-region read the context-economy
+convention licenses. Read the day header (its flagged list), the
+`## CI` section (the merge queue's runs and jobs; a flagged CI line
+also joins the header's list), then every block under `## Sessions`:
+its top sinks, largest results,
+resident-prose share, hardening candidates with their cost kind, and
+its **Session account** — the session's own statement of what it
+would change, which says *why* where the numbers say *where*. A block
+reading "no account" still has its numbers.
+
+**2. Judge across the whole day.** A candidate is a lever: a concrete
+edit to a named skill, tool or convention rule. The bar is unchanged —
+a lever is **turn-eliminating**, **prose-subtracting** or
+**hardening**, worth roughly **3k per occurrence**; a lever derived
+from a planning session must be **quality-preserving** (a narrower
+echo or a removed re-read qualifies; a model downgrade or a thinned
+bootstrap read does not). Weigh in this order:
+
+- **Recurrence across sessions.** The same sink in three blocks is one
+  lever with three occurrences, not three levers — this is what the
+  per-session filing never saw.
+- **Turns before payload.** A lever that collapses a judgment-free
+  multi-turn flow into one tool run outranks one that shrinks a result
+  (same doc → "Session length is itself a cost lever"). Rank by
+  estimated dollars, not tokens.
+- **A hardening candidate** with measured recurrence names `/harden`
+  as its edit; state its cost kind, since a `wall-clock` or
+  `prompt-churn` candidate is not a context saving.
+- **A flagged CI line** is a candidate like any other: name the
+  workflow or job it would change.
+
+An account's suggestion is evidence, not a verdict — reject one that
+the numbers do not support. Drop below-bar noise silently.
+
+**3. Verify each candidate against HEAD.** The digest is yesterday's;
+a sibling PR may have landed the fix. Ask whether the **capability**
+exists, never whether a path does — a rename is the usual reason a
+landed fix reads as missing. A few cheap probes (a `--help`, an `ls`,
+one scoped search); a landed candidate is dropped.
+
+**4. Dedup every candidate twice.** Give each a fingerprint
+`<domain-token>:<slug>` (dotless domain; a resident-prose lever keys on
+the line it names, `claude-skills:resident-<slug>`). Then:
 
 ```sh
-python3 .claude/tools/trim_levers.py list --targets
+python3 .claude/tools/trim_levers.py probe --fingerprint <domain>:<slug>
 ```
 
-If nothing is parked, report that and stop; there is no fold to do.
+- `NONE` (exit 1) — new; go on to the title check.
+- A **`canceled`-type** match (the `[Name:type]` field reads
+  `:canceled`, e.g. Canceled or Duplicate) — a recorded rejection. Drop
+  the candidate
+  unless today's evidence plainly defeats the recorded reason; then
+  say so in the report and leave it to a human.
+- An **open** match — the lever is already a part of a live batch;
+  add nothing.
+- A **Done** match — the earlier fix shipped and the sink recurred;
+  treat it as new, naming the shipped issue in the part.
 
-`--targets` is a strict **superset** of the bare `list` — the same rows,
-plus a `targets:` column — so a fold that intends to proceed takes it
-**as** its is-anything-parked check and never also takes the bare form.
-Taking both bought one 62-row pool twice for **≈4.9k**, the pass's two
-largest results. The bare `list` survives only for a pass that wants the
-pool size and nothing else. When the dedup keys are wanted on screen
-too, add `--fingerprints` to this same call: the two columns compose on
-one row.
-
-That stop condition is **reachable**, which it once was not. `list`
-filters to **open** levers, not merely milestoned ones, so a lever closed
-as a recorded rejection drops out of the pool. Before that filter the
-pool always looked non-empty once any rejection existed — one real run
-returned 12 rows of which **9 were canceled rejections**, and only 3 were
-foldable — so this step could never fire and step 2 was invited to fold
-settled work.
-
-**2. Read the bodies you are going to fold — in ONE call.** The listing
-gives you each lever's identifier, title and state. Decide from the
-titles which levers this pass folds, then fetch those bodies through the
-tool rather than one MCP `get_issue` per lever:
-
-**One call is the fold's whole read of the pool:**
+Then check the **open Backlog by title**, since a near-duplicate under
+a different fingerprint is the likelier miss:
 
 ```sh
-python3 .claude/tools/trim_levers.py list \
-  --bodies-out <scratchpad>/levers.md
+python3 .claude/tools/linear_issue.py find \
+  --query '<two or three key words>' --state Backlog
 ```
 
-`--bodies-out` prints **only** the size line — its output is the file.
-
-**Don't add `--fingerprints` to this call.** It is accepted there and it
-does nothing: the flag adds a column to the *row listing*, and
-`--bodies-out` suppresses that listing entirely. Each lever's dedup key
-already travels in the spilled body on its own `**Fingerprint**:` line,
-which is where the fold needs it and where `compose` reads it from.
-Pass `--fingerprints` to step 1's printed listing when you want the keys
-on screen — for a dedup-against-resolved check, say.
-
-This used to be prescribed as two commands on
-consecutive lines, on top of the bare `list` in step 1, and read
-literally that is three full listings: a pass following it bought the
-same 41 rows three times for **~4.3k**, ranks 4, 5 and 7 of that
-session's largest results, together beating every read the fold actually
-consumed. The worst of the three re-printed the listing it had just been
-asked to spill.
-
-`--fingerprints` adds each lever's dedup key to the listing — the thing a
-sibling lookup actually needs, and the one field the plain listing omits.
-`--bodies-out` fetches **every** parked body in a single query and writes
-them to a file with one `## <identifier>` heading each, printing only
-sizes; slice it with
-`python3 .claude/tools/read_result.py --section '<identifier>' <file>`.
-
-**To see WHICH levers are in the pool, take a depth-2 heading map.** That
-is a different question from reading their content, and it has its own
-narrow form:
-
-```sh
-python3 .claude/tools/read_result.py --headings --max-depth 2 \
-  <scratchpad>/levers.md
-```
-
-`--max-depth 2` returns exactly the `## ENG-#### | <title>` identifier
-lines — which is what a fold reads to write its umbrella title — because
-`--bodies-out` normalizes each lever's own headings to sit below its
-identifier. A bare `--headings` returns every heading at every depth
-instead: measured on a 32-lever dump, **116 headings where 32 were
-wanted**, ≈1.3k and that pass's single largest result, larger than any
-Linear write or the fold's own `compose`. The ratio scales with a pool
-nothing bounds, and the fold runs every morning. The deeper headings
-are not waste in general — they are consumed later and selectively, by
-the `--sections` call below.
-
-**For the fold itself, take `--levers-out` — it extracts the two
-sections in the tool's own process:**
-
-```sh
-python3 .claude/tools/trim_levers.py list \
-  --levers-out <scratchpad>/statements.md
-```
-
-A fold consumes two things from each lever, its statement and its
-concrete edit, and cites the evidence prose by reference rather than
-inlining it. This writes **only those**, under a uniform
-`## <identifier>` / `### Statement` / `### Edit` shape, so one
-`--sections '^(Statement|Edit)$'` read covers the whole pool.
-
-**Why a mode rather than a cleverer regex.** Parked bodies are *not*
-written to a house structure — the producer never enforced one, and
-`session-metrics` tells a filer to keep a body compact without naming any
-headings, so a flat body is fully compliant. Measured on a real 18-lever
-pool: only **6** carried sub-headings at all; the other **12** stated the
-lever as a bold inline span (`**Lever:**`, `**The lever.**`) with no
-heading anywhere. A heading-anchored `--sections` read against that pool
-**failed outright** — exit 2, `no heading matches` — and the fold fell
-back to per-region `--slice` calls that became the pass's dominant cost
-(≈4.7k across four of its eight largest results, in a session whose
-entire Bash spend was 12.8k, against ≈40 tokens for the one-call fetch).
-
-A regex covering bold spans as well as headings would work today and rot
-the same way, which is why the matching moved into the tool: it keys off
-headings **or** bold spans and costs the caller nothing either way. It
-**names any lever it could not extract** — slice those few from the
-`--bodies-out` dump, because a silently dropped statement drops a whole
-lever from the fold, which is worse than any wide read.
-
-The heading-anchored form still works on a pool that happens to be
-uniform, and remains the way to pull any *other* section:
-
-```sh
-python3 .claude/tools/read_result.py --sections \
-  '^(The lever|Lever|Concrete edit|Proposed edit|The edit this implies)$' \
-  <scratchpad>/levers.md
-```
-
-**Match the heading TEXT, anchored end-to-end — never write `^#+` here.**
-`--sections` matches against heading text with the hash markers **already
-stripped**, case-insensitively and unanchored (`re.IGNORECASE` +
-`rx.search`). Two consequences, both of which this exact command got
-wrong for as long as it existed:
-
-- a `^#+` prefix is **dead syntax** — it tries to match hashes that are
-  not in the string, so the call fails with `no heading matches` every
-  time, on any pool, however well-structured;
-- a bare word branch matches **inside a title**, and emits that whole
-  block. `Lever` matches the lowercase `lever` in a dump heading like
-  `## ENG-1218 | Make the parked-lever body sliceable`. "Lever" is the
-  most common word in a lever dump by construction, so the relaxation is
-  worse than the bug: measured on a fixture, the unanchored pattern
-  returned **42 of 53 lines**, pulling in evidence prose the file exists
-  to keep out of the transcript, where the committed pattern against a
-  normalized dump returns **23**.
-
-Read that pair as the before/after of the whole fix, not of the anchor
-alone — the two measured runs also differ by an added branch and by the
-heading normalization described below.
-
-**Both anchors are load-bearing**: `$` stops a branch matching a title
-that merely *contains* the word, and `^` stops one matching a title that
-*ends* in it. Keep the group wrapped in both.
-
-`--sections` (plural) exists for this. `--section` refuses an ambiguous
-pattern — right for a single read, and it stops applying at exactly the
-scale where slicing matters, because the same heading in every lever is
-N matches by construction. That refusal is what made the whole-file read
-the compliant-looking move.
-
-**The dump's own heading depths are what make this slice terminate**, and
-`--bodies-out` now guarantees them: each lever body's headings are
-normalized to sit **below** its `## <identifier>` line. They used to be
-pasted verbatim at `#`, one level *shallower* than the identifier above
-them — and a markdown section runs to the next heading of the same or
-shallower depth, so a `# Proposed edit` section ran straight through the
-next lever's `##` identifier and swallowed it whole. That is why fixing
-the pattern alone was not enough: no pattern can bound a section's
-*extent*, only which headings are selected.
-
-Measured: the pool-wide *fetch* is no longer the problem — one
-`--bodies-out` wrote 41 bodies (103,250 chars) for ≈858 tokens. The
-**per-lever body** is: reading only the 12 intended levers still cost
-~8.5k across 7 `--slice` calls, because each lever carries its full
-session evidence and the fold needs two sections of it. An earlier pass
-paid ≈14.2k reading the dump whole — that session's largest single
-result.
-
-**The fold's reads had become its larger cost**, which is why this exists:
-the plain listing prints titles only, so a fold ran **one fetch per
-lever** — 21 of them on one pass — and the nearest sweep that did carry
-bodies (a project-wide Todo read) cost **10.6k for 65 issues with every
-description truncated anyway**, so five per-issue follow-ups ran
-regardless. That read cost is what sized one fold down to five levers.
-
-A parked pool that has grown past what one coherent PR should carry is
-still a reason to fold a subset now and leave the rest parked — the
-cheaper read changes what a fold costs, not what a fold should contain.
-
-**2a. Verify each lever against HEAD before folding it.** A parked lever
-is a snapshot of the session that filed it, and a later pass may have
-landed the thing it asks for. The checklist is step 1's `targets:`
-column, already in hand — never re-list for it. It names the repo paths
-and tool names each lever's prose names. Probe
-those — an `ls`, a `--help`, one scoped search — and route an
-already-landed lever to **step 6's rejection path** with *already landed*
-as the recorded reason. Dedup-against-resolved then makes the rejection
-permanent, so no later pass re-proposes it.
-
-**The check is capability-shaped, not path-shaped, and that distinction is
-the whole difficulty.** A rename is the expected case: one measured lever
-asked for a committed `query_store.py`, and the capability had shipped as
-`.claude/tools/localnet_psql.py` with the whole proposed feature set under
-a different name. Grepping the proposed name finds nothing and the lever
-reads unlanded. So ask "does the described capability exist", never "does
-this path exist".
-
-Measured: **2 of 18 levers — 11% of the pool — had already landed** and
-were rejected rather than folded. Had the pass not checked, both would
-have landed inside the fold as parts asking for work already done.
-
-**Why this is its own step.** Step 6 already says to reject on evidence,
-but every example it gives is a *judgment* rejection — not worth the
-tokens, a standing decision. Already-landed is a different disposition and
-naming it there was not enough, because a pass following the steps
-literally never looks. And be honest about the cost: this is **not** a
-context saving (the verification itself runs ~10 cheap probes). The payoff
-is fold *correctness* — a stale part costs an implementer a whole
-diagnosis beat, and a fold task is pulled once and read closely.
-
-**3. Fold into SMALL THEMED tasks — roughly 4–5 levers each.** Operator
-rule, 2026-09-11, superseding the 2026-08-25 fold-into-one ruling: a
-trim-lever fold produces tasks **sized to a short session**, grouped by
-the skill or convention surface they change. A pool of five or fewer
-levers is still one task; a pool of fifteen is three, not one.
-
-**A size bound now applies, and it is the point of the step.** Session
-cost is roughly **quadratic in session length**, so an unbounded fold
-task buys that quadratic — the counterexample being a 19-hour, \$409 run
-for the ENG-1194 batch — in exchange for avoiding a **rebase** between two short
-sessions, which costs cents. See
-`docs/conventions/context-economy.md` → "Session length is itself a cost
-lever".
-
-The old reasoning is worth recording because it inverted rather than
-merely expired. It ran: these levers all edit `.claude/**`,
-`docs/conventions/**` or `CLAUDE.md`, so they land as one PR by
-construction, and splitting them only produces issues that serialize
-behind one another for no gain. The premise is right and the conclusion
-no longer follows — **nothing serializes them any more.** The `plan`
-skill's assembly places no blocking edge and no longer gates on another
-meta issue being in flight, so several small fold tasks can be worked
-concurrently, paying an occasional rebase on the shared skill files.
-
-The coherence floor still stands where it always did — on **audit
-findings and product filings**, which must not cross an app or language
-boundary. What it never licensed was letting a single unit grow without
-bound; a coherent set larger than a short session splits into
-*sequential* PRs.
-
-The **per-lever fingerprint requirement is unchanged** — see step 4. That
-is what keeps later dedup matching each lever individually, and it is now
-also what lets a pool be split across tasks without losing a lever's
-identity.
-
-**4. File the aggregated task(s), propose-only.** The fold's output is
-**one `Claude:` task per theme** — one task for a small pool,
-several for a large one, per step 3. A trim lever always edits a
-skill or convention doc, so each task is meta-work — prepend the
-**`Claude:`** prefix to its title, per `CLAUDE.md` → "Claude: meta-work
-prefix".
-
-**They land in the inbox:** state **Backlog, no milestone, Urgent**,
-like every assembled batch. The fold is their assembly, so they are
-never parked for a second one, nor folded again.
-
-**Compose the bodies with the tool, not by hand — one call for the whole
-fold, however many tasks it splits into:**
+A batch or part that is plainly the same work as an open issue is
+**folded into it as a new part**, never filed as a sibling: compose
+that one part continuing the issue's numbering, then append it
+zero-echo —
 
 ```sh
 python3 .claude/tools/trim_levers.py compose \
-  --bodies-file <scratchpad>/levers.md \
+  --parts-file <scratchpad>/fold-<n>.md \
+  --out <scratchpad>/fold-<n>-body.md --start <next part number>
+```
+
+```sh
+python3 .claude/tools/linear_issue.py append --id <ENG-###> \
+  --file <scratchpad>/fold-<n>-body.md
+```
+
+**5. Compose the batches — one call.** Write every remaining part to
+one parts file, a `## <fingerprint> | <imperative title>` section each:
+the lever in a sentence, the evidence (sessions, figures, the account
+lines it rests on — summarize a sink by tool and target, never a raw
+command or URL, which can carry a secret), and the concrete edit. Group
+them into themes of **about 4–5 parts** by the surface they change, in
+a groups file:
+
+```json
+[{"title": "Claude: <theme>", "parts": ["<domain>:<slug>", "..."]}]
+```
+
+```sh
+python3 .claude/tools/trim_levers.py compose \
+  --parts-file <scratchpad>/parts.md \
   --groups-file <scratchpad>/groups.json --out-dir <scratchpad>/tasks
 ```
 
-**Order parts, and tasks, turns-eliminated first.** A lever that
-collapses a judgment-free multi-turn flow into one tool run leads its
-task, and a task of such levers leads the fold, ahead of levers that
-only shrink a payload (`docs/conventions/context-economy.md` →
-"Session length is itself a cost lever").
+It numbers each batch's parts from 1, demotes their headings, writes
+each part's `**Fingerprint**:` exactly once, and refuses a part in no
+batch or in two. A batch over five parts is an advisory, not a
+refusal. Order parts, and batches, turns-eliminated first.
 
-`groups.json` carries the themes you chose in step 3 — a JSON array of
-`{"title": …, "levers": […]}` objects, one per task. That grouping is
-the one part of the fold the tool cannot decide for you; everything
-after it is mechanical. It emits one conforming body per group in a
-single pass and prints only a summary naming each file, so the bodies
-stay on disk — the same zero-echo trade as the fetch half.
-
-**Each task numbers its parts from 1.** A task is a whole issue, so its
-parts are Part 1..N *of that issue*, not a slice of one continuous
-sequence.
-
-**It refuses the two ways an N-task fold loses a lever**, which is the
-reason this is one call rather than one per task: a lever assigned to
-**no** group, and a lever assigned to **two**. The first is the
-dangerous one — an unassigned lever would be folded nowhere while looking
-like a complete run, so the loss has nothing pointing at it. It also
-errors on a grouped identifier absent from the dump (unlike `--exclude`,
-a group assignment is authoritative for the dump it is run against), on a
-title carrying a newline or a `|` (which would forge a line in the
-summary a caller parses), and on any part with no `**Fingerprint**:`
-line — naming **every** offender rather than the first.
-
-To leave a lever out deliberately, **close it with its reason** (step 6)
-and re-dump; `list` has no per-identifier filter, so there is no way to
-omit one from the dump directly.
-
-A group over five parts is an **advisory**, not a refusal: the size rule
-is explicitly "roughly 4–5", and a hard limit would push you into
-splitting a coherent theme to satisfy a tool.
-
-**The single-task mode is unchanged** for a one-off — `--out <file>`
-composes one body, with `--exclude ENG-1,ENG-2` to drop levers already
-folded and `--start N` to continue the numbering when a single task is
-composed in halves. The two modes cannot be mixed; flags from both are
-refused rather than silently resolved.
-
-**Why this is a tool.** Under the **now-retired** whole-pool ruling a
-fold carried the entire parked pool — one pass folded **41 levers,
-101,798 chars** — so re-authoring by hand stopped being sensible and
-that pass wrote a throwaway script instead. The size bound in step 3
-shrinks each individual task but not the case for the tool: the same
-pool is still folded, now across several tasks. Two of the rules it
-encodes are easy to get
-wrong by hand and silently damaging when missed, which is exactly the
-kind of thing that belongs in committed code rather than in prose:
-
-- **Heading demotion.** Lever bodies carry their own `#`-level headings
-  (`# Lever`, `# Evidence`, `# Proposed edit`). Pasted unmodified under a
-  `# Part N` heading they collide at the same level and the task loses
-  its structure — every word present, reading as one flat document. The
-  tool demotes them, leaving fenced examples alone.
-- **Fingerprint preservation.** The tool **fails loudly** if any emitted
-  part carries no `**Fingerprint**:` line, rather than emitting a body
-  that looks right. A hand fold that summarizes instead of carrying the
-  body drops them, and the loss is invisible until a later pass refiles
-  a lever that was already folded.
-- **Complete, disjoint assignment across the tasks.** Once a fold emits
-  several tasks, "every lever landed in exactly one of them" stops being
-  checkable by eye — and the failure is silent in both directions, since
-  step 5 closes the parked originals whether or not a part was written
-  for them. The tool holds the whole pool and the whole grouping in one
-  call, so it is the only place the check can be made at all.
-
-Read each composed file before filing — the tool guarantees structure,
-fingerprints, and that every lever landed in exactly one task, not that
-the title you gave a group actually describes the levers in it.
-
-Its body is **one `# Part N — <title>` section per lever**, and
-carries:
-
-- one **`**Fingerprint**: <domain>:<lever-slug>`** line **per lever**,
-  copied from the parked original so later dedup still matches
-  individually.
-
-That is the whole field set. There is **no `**Touches**:` line** — the
-declared-scope glob field is retired (per
-`docs/conventions/linear-automation.md` → "Retired: `**Touches**:`"), so
-there is no union to compose. Each part's prose names the skill or
-convention doc it edits, which is what an implementer reads anyway.
-
-Set `state`, `priority` and any relations in the **creating** call — a
-follow-up write buys a second full body echo for nothing (same convention
-doc → "Relations and state belong in the CREATING call").
-
-**File them through the zero-echo writer, not `save_issue`** — one call
-per composed file, taking the title from the group you gave it and the
-path from the compose summary:
+**6. File each batch** — exactly the paths the compose summary named,
+never a glob of the directory (it flags a stale file left there):
 
 ```sh
-python3 .claude/tools/linear_issue.py create \
-  --title 'Claude: <this task's theme>' \
-  --body-file <scratchpad>/tasks/01-<slug>.md \
-  --state Backlog --priority 1
+python3 .claude/tools/linear_issue.py create --title 'Claude: <theme>' \
+  --body-file <scratchpad>/tasks/01-<slug>.md --state Backlog --priority 1
 ```
 
-The `--title` is the **whole** Linear title, prefix included — the same
-string you put in the group's `title` field, which is what the compose
-summary echoes back. Don't prepend `Claude:` a second time here.
+**Backlog with no milestone**: the analyst is the planning session's
+own sub-agent and its output is already folded, so the park-then-
+promote hop executor filings take does not apply. The `--title` is the
+whole title, prefix included. No relations, ever.
 
-Composition is one call for the whole fold; **filing is one call per
-task**, since each is its own issue. **File exactly the paths the compose
-summary named — never a glob of the output directory.** A reused
-directory can hold a body from an earlier compose that this run did not
-write, and filing it creates a phantom task whose parts duplicate real
-ones. The tool prints an `ADVISORY` naming any such file, so the summary
-is the manifest and the directory is not.
-
-Team, project and assignee resolve from the `LINEAR_*` environment.
-
-**This is the worst instance of the MCP echo in the whole pipeline, not
-an average one.** A fold task's body is *by construction* among the
-largest the pipeline produces — one `# Part N` per lever — and the
-fold files them every morning, so the cost scales with the parked
-pool on a fixed cadence. Measured: creating a 12-lever fold task cost
-**~6.0k in one `save_issue`**, the session's largest single result of any
-kind, ~19% of that pass's tool results, and larger than every read the
-fold performed to compose it.
-
-**The 4–5-lever size bound (step 3) does not retire this argument**,
-though it changes the shape: each individual body is smaller, but the
-same pool now files as *several* tasks rather than one, so the total
-echoed across a pass is comparable. Every call still echoes its own whole
-body, so the zero-echo writer stays the path.
-
-The existing zero-echo writers missed it because both are
-**producer-side** — they write *levers*. This is the consumer side, and
-`linear_issue.py create` is the general filer for it: state, milestone
-and priority are parameters, so the same writer serves this fold,
-and `audit-scope`'s parked findings.
-
-**Autonomy bound:** filing a task *proposes* a fix — this skill **never**
-edits a skill, a convention doc, or `CLAUDE.md`; that lands later through
-a normal PR.
-
-**5. Close the parked originals — this is load-bearing, not tidiness.**
-A folded lever's content now lives in the aggregated task, so the parked
-issue is discharged.
-
-**Close per FILED TASK, not per composed pool.** The premise above —
-that the lever's content now lives in a task — holds only for a task you
-actually filed, and a fold now emits several. So close the levers named
-in **that task's** `folded` list, which the compose summary already
-prints per task, once you hold its issue identifier and **before filing
-the next task** — so an interrupted run leaves at most one task filed
-with its originals open. A composed task you did not file leaves its
-levers **parked**, where the next fold picks them up.
-
-This is what makes the guarantee mechanical rather than a matter of
-remembering: the alternative is closing the whole pool on the assumption
-that every task got filed, which silently discards a lever's only copy
-if one did not. Closing it is what keeps the **producer** working:
-the fold copies each `**Fingerprint**:` line into the aggregated task, so
-from this moment a fingerprint probe legitimately matches **two** issues.
-`session-metrics` resolves that by appending only to a lever that is
-still *open and milestoned*, so leaving the original parked would give it
-two live candidates and it would refuse rather than accumulate — breaking
-the recurrence-accumulation this pipeline exists for.
-
-Close it and clear its milestone in **one** field-only write per issue,
-through the board tool rather than the MCP (per
-`docs/conventions/linear-automation.md` → "Field-only writes go through
-`board_batch.py`, not the MCP") — an MCP `save_issue` would echo each
-body back for a one-field change:
+**7. Record a rejection that should stick.** A candidate that clears
+the bar on its face but is rejected on judgment — a standing decision,
+a quality cost — is filed **Canceled**, its body the reason followed by
+a `**Fingerprint**: <domain>:<slug>` line on its own (outside any
+fence, which is what `probe` matches), so the next probe drops it
+instead of re-litigating:
 
 ```sh
-python3 .claude/tools/board_batch.py fields --updates <scratchpad>/close.json
+python3 .claude/tools/linear_issue.py create --title 'Claude: <lever>' \
+  --body-file <scratchpad>/reject-<slug>.md --state Canceled
 ```
 
-with an updates file naming each folded lever:
+Below-bar noise gets no record; it is simply not filed.
 
-```json
-{
-  "912": { "state": "Done", "milestone": null },
-  "913": { "state": "Done", "milestone": null }
-}
-```
-
-Reference the aggregated task from each closed lever only if you are
-already making a body write for another reason; the fold's own body cites
-the levers, which is the durable record.
-
-**6. Close a rejected lever with its reason instead.** A lever you judge
-not worth acting on is **not** folded and **not** left parked — it is
-closed as `Canceled` with a one-paragraph reason appended to its body,
-naming the evidence. That is what makes the rejection permanent: the
-fingerprint probe searches resolved and archived issues too, so no later
-pass re-proposes it, and `trim_levers.py file` hard-refuses a canceled
-match.
-
-**The reason has to reach the body, and that takes two writes in this
-order.** `board_batch.py fields` is field-only by construction, so it
-cannot carry prose. While the lever is **still parked**, append the
-reason with the zero-echo writer, then close it:
-
-```sh
-python3 .claude/tools/trim_levers.py append-evidence \
-    --fingerprint <domain>:<slug> --evidence-file <scratchpad>/reason.md
-```
-
-```sh
-python3 .claude/tools/board_batch.py fields --updates <scratchpad>/reject.json
-```
-
-Order matters: once the state is `Canceled` the lever is no longer
-parked, and `append-evidence` will report `NOTED … no longer parked`
-rather than writing. The reason is the whole point of the rejection —
-without it a later pass has a closed issue and no argument. This is the
-mechanism that replaces the old "not-a-trim register" idea — the register
-falls out of the lifecycle rather than being a separate artifact anyone
-has to maintain.
-
-**Clear the milestone here too, exactly as step 5 does** — so the
-`reject.json` above carries `{"state": "Canceled", "milestone": null}`,
-not the state alone. The milestone means **"awaiting a fold"**, and a
-rejected lever is not awaiting one; leaving it stamped made the two
-steps disagree about what the milestone was for. Permanence does not
-depend on it either way: the fingerprint probe searches resolved and
-archived issues, so the rejection sticks whether or not the milestone
-is still attached. (`trim_levers.py list` now also filters to open
-levers, so a still-stamped rejection no longer pollutes the pool — but
-that is the backstop, not the reason. Both halves should agree.)
-
-**Two dispositions reach this step, and they are not the same.** A
-*judgment* rejection says the lever is not worth acting on. An
-**already-landed** rejection says the work exists at HEAD — that is what
-step 2a routes here, with *already landed* as the reason and the shipped
-path named, since a rename is the usual reason nobody noticed. Both close
-as `Canceled` with a reason, and both become permanent the same way; only
-the recorded argument differs.
-
-Reject on evidence, not on taste. Recorded rejections worth knowing
-about, each measured: narrowing a planning board read (2–3k against 87.6k
-of writes — worthwhile for judgment, not tokens); abridging a bootstrap
-document read (it is the entire handoff from the previous session, and
-the only carrier of *why*); a cheaper model for planning sessions
-(standing decision); the cross-check's higher turn cap (it ran multiples
-of the cheapest lens and earned it twice over, once catching a spec that
-would have let a later rewrite restore a fund-confiscation bug);
-correctly-amortized whole-file Reads; checkpoint-per-logical-change
-commit counts (14 calls at ≈700 total is the convention working);
-post-rebase re-verify churn driven by `main` moving mid-review.
-
-**7. Report as your final message** — a sub-agent's last message is its
-whole return — in at most thirty lines: the task(s) filed with their
-ENG-###s and how many levers each folded, how many parked levers were
-closed, how many were rejected and why, and how many remain parked.
+**8. Report as your final message** (a sub-agent's last message is its
+whole return), at most thirty lines: the batches filed with their
+ENG-###s and part counts, the parts folded into existing issues, the
+rejections recorded and why, and the sessions and dollars the digest
+covered. The planning session names the new batches in its review ask.
 
 ## Notes
 
-- **No source edits.** This skill writes only to Linear — the filed
-  tasks and the parked levers' closures — and never authors a code
-  or skill diff, never commits, never pushes. The improvements it
-  proposes are applied later by a human through a normal PR.
-- **No relations, ever.** Folding places no blocking edge; the
-  aggregated task carries **no edge at all**. Blocking edges are
-  human-curated in a planning session (`CLAUDE.md` →
-  "Blocking relations").
-- **Shell discipline** (per `docs/conventions/shell-commands.md`): every
-  command is a single bare call that reduces to an allow-glob — no `&&`,
-  pipes, `$(…)`, or redirects; resolve each id with a bare `printenv`,
-  one variable per call.
+- **No source edits.** This skill writes only to Linear and never
+  commits or pushes; the edits it proposes land later through a
+  normal PR.
+- **No blocking edges** (`CLAUDE.md` → "Blocking relations").
+- **Shell discipline** (`docs/conventions/shell-commands.md`): every
+  command is one bare call — no `&&`, pipes, `$(…)` or redirects.

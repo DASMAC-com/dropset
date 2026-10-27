@@ -56,8 +56,8 @@ migrations or generation inputs, and whether it spans crates.
   zero-agent inline is a stop condition (step 5), not a tier.
 - Tier scoping changes how many lenses run on a trivially small diff.
   It never trims the cross-check's depth or turn cap on an ordinary one
-  — a proposal to trim that cap was rejected (closed record under the
-  `Trim levers` milestone).
+  — a proposal to trim that cap was rejected (a canceled record the
+  fingerprint probe finds).
 
 ## Steps
 
@@ -1680,11 +1680,10 @@ migrations or generation inputs, and whether it spans crates.
 
    Invoke `/session-metrics`. It derives the session id from the
    scratchpad path, ranks the run's sinks and hardening candidates in
-   its own process (the transcript never enters context), and files
-   each trim lever as a **parked issue** under `Trim levers` through
-   the zero-echo `trim_levers.py` writer, appending evidence to a lever
-   that already exists. It authors no source edit. If the milestone is
-   missing, the writer says so — note it in the report. **Ground it in
+   its own process (the transcript never enters context), and writes
+   each trim lever into the final message's `Session account` block,
+   filing nothing — the digest lifts it for the fold analyst. It
+   authors no source edit. **Ground it in
    this run:** carry the wasteful payloads you noticed (a whole-file
    Read, a verbose log, a repeated PR read) into it, per
    `docs/conventions/context-economy.md` → "Track consumption ideas as

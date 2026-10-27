@@ -316,7 +316,6 @@ class FakeRun:
 
 
 PARKED = {
-    "Trim levers": 22,
     "Follow-ups": 3,
     "Audit findings": 0,
     "Session pending": 2,
@@ -423,19 +422,22 @@ class PassTests(unittest.TestCase):
 
     def test_parked_counts_carry_their_direction_since_the_previous_stamp(self):
         step, result = self._parked_step(
-            previous={"Trim levers": 22, "Follow-ups": 1, "Audit findings": 2}
+            previous={"Follow-ups": 1, "Audit findings": 2, "Session pending": 2}
         )
         self.assertEqual(
             step["line"],
-            "Trim levers 22 (unchanged), Follow-ups 3 (up 2), "
-            "Audit findings 0 (down 2), "
-            "Session pending 2 (no previous count)",
+            "Follow-ups 3 (up 2), Audit findings 0 (down 2), "
+            "Session pending 2 (unchanged)",
         )
         self.assertEqual(result["parked"], PARKED)
 
     def test_the_first_pass_has_no_previous_count(self):
         step, _ = self._parked_step()
-        self.assertIn("Trim levers 22 (no previous count)", step["line"])
+        self.assertIn("Follow-ups 3 (no previous count)", step["line"])
+
+    def test_the_retired_trim_levers_lane_is_not_counted(self):
+        step, _ = self._parked_step()
+        self.assertNotIn("Trim levers", step["line"])
 
     def test_an_unreachable_parked_read_is_a_failed_line_not_a_count(self):
         def down():
