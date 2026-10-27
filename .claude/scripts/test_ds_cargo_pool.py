@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # cspell:word getaffinity
-"""`_ds_cargo_pool` — the shared build directory and job bound the init exports.
+"""`_ds_cargo_pool` — the build-directory lane and job bound the init exports.
 
 Each case sources the real init in a fresh zsh, changes directory the way a
 shell does, and reads the two variables back, so what is under test is what an
@@ -38,6 +38,7 @@ _SUITE_OWNED_ENV = (
     "CARGO_HOME",
     "CARGO_TARGET_DIR",
     "CLIPPY_CONF_DIR",
+    "DS_CARGO_LANES",
     "DS_CARGO_POOL",
     "RUSTC_WORKSPACE_WRAPPER",
     "_DS_REPO",
@@ -261,6 +262,142 @@ class EachCheckoutGetsItsOwnKeys(CargoPoolHarness):
             check=True,
         ).stdout
         self.assertEqual(out, "a b|c|")
+
+
+class EachWorktreeGetsItsLane(CargoPoolHarness):
+    """The lanes, against a fake base repo: a worktree builds in lane <its
+    issue number> modulo `DS_CARGO_LANES` (default 2), the base repo and a
+    worded tag in lane 0, which is the original `dropset` directory."""
+
+    POOL = "/opt/cargo/target/dropset"
+
+    def setUp(self):
+        super().setUp()
+        self.base = Path(self.outside).resolve() / "repo"
+        self.init = self.base / ".claude" / "shell" / "init.zsh"
+        self.init.parent.mkdir(parents=True)
+        shutil.copy(INIT, self.init)
+        for checkout in (self.base, *map(self._wt, ("2260", "2261", "eng-2263"))):
+            wrapper = checkout / WRAPPER
+            wrapper.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(REPO / WRAPPER, wrapper)
+        self._wt("scratch").mkdir()
+        self._wt("fix3").mkdir()
+
+    def _wt(self, tag):
+        return self.base / ".claude" / "worktrees" / tag
+
+    def _lane(self, n):
+        return f"{self.POOL}-{n}" if n else self.POOL
+
+    def _target(self, *dirs, lanes=None, **kwargs):
+        env = {"CARGO_HOME": "/opt/cargo", **kwargs.pop("env", {})}
+        if lanes is not None:
+            env["DS_CARGO_LANES"] = lanes
+        (target,) = self._pool(
+            *dirs, init=self.init, names=("CARGO_TARGET_DIR",), env=env, **kwargs
+        )
+        return target
+
+    def test_the_base_repo_is_lane_zero(self):
+        self.assertEqual(self._target(self.base), self._lane(0))
+
+    def test_a_worktree_takes_its_number_modulo_two_by_default(self):
+        self.assertEqual(self._target(self._wt("2260")), self._lane(0))
+        self.assertEqual(self._target(self._wt("2261")), self._lane(1))
+
+    def test_one_lane_is_the_single_pool(self):
+        self.assertEqual(self._target(self._wt("2261"), lanes="1"), self._lane(0))
+
+    def test_a_malformed_lane_count_is_the_single_pool(self):
+        for bad in ("0", "two", "-3"):
+            with self.subTest(bad=bad):
+                self.assertEqual(
+                    self._target(self._wt("2261"), lanes=bad), self._lane(0)
+                )
+
+    def test_a_prefixed_tag_keys_on_its_number_a_worded_one_on_lane_zero(self):
+        self.assertEqual(self._target(self._wt("eng-2263"), lanes="3"), self._lane(1))
+        self.assertEqual(self._target(self._wt("scratch"), lanes="3"), self._lane(0))
+        self.assertEqual(self._target(self._wt("fix3"), lanes="3"), self._lane(0))
+
+    def test_the_switch_off_unsets_an_inherited_lane_inside_a_worktree(self):
+        env = {"CARGO_TARGET_DIR": self._lane(1), "DS_CARGO_POOL": "0"}
+        self.assertEqual(self._target(self._wt("2261"), env=env), _UNSET)
+
+    def test_a_near_miss_under_the_pool_root_is_a_hand_pin(self):
+        for pin in (f"{self.POOL}-foo", f"{self.POOL}x"):
+            with self.subTest(pin=pin):
+                env = {"CARGO_TARGET_DIR": pin}
+                self.assertEqual(self._target(self._wt("2261"), env=env), pin)
+
+    def test_the_lane_follows_a_cd_between_checkouts(self):
+        self.assertEqual(self._target(self._wt("2261"), self.base), self._lane(0))
+
+    def test_an_inherited_lane_is_recomputed(self):
+        env = {"CARGO_TARGET_DIR": self._lane(0)}
+        self.assertEqual(self._target(self._wt("2261"), env=env), self._lane(1))
+
+    def test_an_inherited_lane_is_unset_on_leaving(self):
+        env = {"CARGO_TARGET_DIR": self._lane(1)}
+        self.assertEqual(self._target(self.outside, env=env), _UNSET)
+
+    def test_a_named_directory_is_evaluated_instead_of_the_cwd(self):
+        """The launcher's form: from the base checkout, for the worktree it
+        is about to start."""
+        wt = self._wt("2261")
+        pin = '_ds_cargo_pool "%s"; ' % wt
+        self.assertEqual(
+            self._pool(
+                self.base,
+                init=self.init,
+                pin=pin,
+                env={"CARGO_HOME": "/opt/cargo"},
+                names=("CARGO_TARGET_DIR", "RUSTC_WORKSPACE_WRAPPER"),
+            ),
+            (self._lane(1), str(wt / WRAPPER)),
+        )
+
+    def test_a_new_session_inherits_its_worktree_s_pool_and_the_tab_reverts(self):
+        """`_ds_session` launches from the base checkout; a stub `claude`
+        prints the pool it inherited and fails, then the session's status and
+        the tab's own pool are read back."""
+        probe = (
+            'print -r -- "$CARGO_TARGET_DIR"; print -r -- "$RUSTC_WORKSPACE_WRAPPER"'
+        )
+        stubs = "".join(
+            "%s() { :; }; " % fn
+            for fn in (
+                "_ds_secrets",
+                "_ds_session_mark",
+                "_ds_worktree_ensure",
+                "_ds_exit_estimate",
+                "_ds_op_signout",
+            )
+        )
+        pin = (
+            stubs
+            + '_ds_base() { cd "$_DS_REPO"; }; '
+            + "claude() { %s; return 5; }; " % probe
+            + "_ds_session sid name '' model 2261; print -r -- $?; "
+        )
+        wt = self._wt("2261")
+        self.assertEqual(
+            self._pool(
+                self.base,
+                init=self.init,
+                pin=pin,
+                env={"CARGO_HOME": "/opt/cargo", "HOME": self.outside},
+                names=("CARGO_TARGET_DIR", "RUSTC_WORKSPACE_WRAPPER"),
+            ),
+            (
+                self._lane(1),
+                str(wt / WRAPPER),
+                "5",
+                self._lane(0),
+                str(self.base / WRAPPER),
+            ),
+        )
 
 
 if __name__ == "__main__":
