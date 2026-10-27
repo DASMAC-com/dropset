@@ -254,6 +254,39 @@ class CheckTests(unittest.TestCase):
         text = "# Spec\n\n```\n```rust\nNEEDS-CONFIRM example\n```\n"
         self.assertEqual(sm.check(text), (0, []))
 
+    def test_one_entry_cannot_cover_two_inline_markers(self):
+        text = (
+            "# Spec\n\n## Open items\n\n- NEEDS-CONFIRM §2 Pricing\n\n"
+            "## 2. Pricing\n\nNEEDS-CONFIRM: the fee level?\n\n"
+            "NEEDS-CONFIRM: a wholly separate new item.\n"
+        )
+        _, failures = sm.check(text)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("has no index entry of its own", failures[0])
+
+    def test_trailing_level_one_heading_keeps_the_title(self):
+        text = (
+            "# Spec\n\n- NEEDS-CONFIRM §1 Pricing\n\n## 1. Pricing\n\n"
+            "NEEDS-CONFIRM: x.\n\n# Appendix\n\nSettled.\n"
+        )
+        self.assertEqual(sm.check(text), (1, []))
+
+    def test_trailing_level_one_open_items_keeps_its_groups(self):
+        text = (
+            "# 1. Pricing\n\nNEEDS-CONFIRM: x.\n\n# Open items\n\n## Confirm\n\n"
+            "- NEEDS-CONFIRM §1 Pricing\n"
+        )
+        self.assertEqual(sm.check(text), (1, []))
+
+    def test_stale_section_reference_is_not_hidden_by_text(self):
+        text = (
+            "# Spec\n\n## Open items\n\n- NEEDS-CONFIRM §3 fair equals FX times basis\n\n"
+            "## 2. Pricing\n\nNEEDS-CONFIRM fair equals FX times basis\n\n"
+            "## 3. Rollout\n\nSettled.\n"
+        )
+        _, failures = sm.check(text)
+        self.assertEqual(len(failures), 2)
+
     def test_title_below_front_matter_is_not_a_section(self):
         text = (
             "Status: draft\n\n# Spec\n\n- NEEDS-CONFIRM §1 Pricing\n\n"

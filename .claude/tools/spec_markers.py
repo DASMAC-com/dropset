@@ -14,8 +14,10 @@ wanted. The rule was prose until then; this makes it mechanical::
 Exits 1, naming each failure, when:
 
 - an index entry carries a marker with no matching inline occurrence of its
-  own (pairing is one-to-one: two entries cannot share one inline marker);
-- an inline marker has no matching index entry;
+  own;
+- an inline marker has no matching index entry of its own (pairing is one
+  to one both ways: two entries cannot share a marker, nor two markers an
+  entry);
 - the file carries markers but no index;
 - the index says "None" while an inline marker remains;
 - a code fence left open hides a marker.
@@ -119,10 +121,11 @@ def scan(lines: list[str]) -> tuple[list[Heading], list[int], int | None]:
 
 
 def title_of(headings: list[Heading]) -> Heading | None:
-    """The document's title: the first heading, when it is the only level-1
-    heading. A spec sectioned by level-1 headings has no title."""
+    """The document's title: the first heading, when it is level 1 and the
+    heading after it is deeper. A spec sectioned by level-1 headings has no
+    title; a trailing ``# Appendix`` does not take it away."""
     if headings and headings[0].level == 1:
-        if sum(h.level == 1 for h in headings) == 1:
+        if len(headings) == 1 or headings[1].level > 1:
             return headings[0]
     return None
 
@@ -137,9 +140,11 @@ def find_index(
         if INDEX_TITLE.match(SECTION_NUMBER.sub("", heading.title)):
             later = headings[i + 1 :]
             level = heading.level
-            if level == 1 and later and all(h.level > 1 for h in later):
-                # An `# Open items` beside `## 1.` sections would otherwise
-                # swallow the whole document: end it at the section level.
+            near_top = all(h is title for h in headings[:i])
+            if level == 1 and near_top and later and all(h.level > 1 for h in later):
+                # An `# Open items` atop `## 1.` sections would otherwise
+                # swallow the whole document: end it at the section level. A
+                # trailing one among `#` sections keeps its `##` groups.
                 level = min(h.level for h in later)
             end = next((h.line for h in later if h.level <= level), len(lines) + 1)
             return range(heading.line + 1, end)
@@ -225,6 +230,13 @@ def matches(entry: Occurrence, inline: Occurrence, known: set[str]) -> int:
     """``DIRECT`` when the entry names the marker's own section or shares its
     text, ``ANCESTOR`` when it names only an enclosing section, else 0."""
     if entry.kind != inline.kind:
+        return 0
+    if explicit(entry.text) & known:
+        # A real section reference binds: matching text elsewhere must not
+        # hide a stale `§3`.
+        for depth, section in enumerate(inline.sections):
+            if references(entry.text, section, known):
+                return ANCESTOR if depth else DIRECT
         return 0
     ours, theirs = strip_marker(entry.text), strip_marker(inline.text)
     short = min(len(ours), len(theirs))
@@ -323,10 +335,14 @@ def check(text: str) -> tuple[int, list[str]]:
                 f"line {entry.line}: index entry {entry.kind} has no inline "
                 f"occurrence of its own: {entry.text.strip()}"
             )
+    paired = set(claimed.values())
     for j, other in enumerate(inline):
-        if not any(j in c for c in candidates):
+        # One entry per marker: a second open item added to an indexed
+        # section needs its own entry, or the index hides it.
+        if j not in paired:
             failures.append(
-                f"line {other.line}: inline {other.kind} has no index entry: "
+                f"line {other.line}: inline {other.kind} has no index entry "
+                f"of its own: "
                 f"{other.text.strip()}"
             )
     return len(entries), failures
