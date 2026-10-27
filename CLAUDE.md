@@ -174,23 +174,8 @@ Filing skills (`linear-task`, `audit-scope`, `plan`)
 emit it at filing time, so the prefix and the touched paths stay
 consistent by construction; a human filters the Linear board by it. It
 is a **Linear-title signal only — never a PR title** (PR titles keep
-`type(ENG-###): Subject`).
-
-**An executor's `Claude:` filing lands PARKED** — state `Backlog` plus
-the **`Follow-ups`** milestone, in the creating call, keeping strays
-out of the operator's review inbox. A parking milestone means "not
-yet reviewed or assembled", **never "not now"**.
-
-**The planning bootstrap is the single assimilation point** — once a
-day it sweeps the milestone **plus any inbox stray** (an open,
-unblocked `Claude:` Backlog issue with no milestone; an assembled
-batch is never re-folded), kills on doubt, folds the rest into **small themed
-batches of roughly 4–5 parts** (meta apart from product by the
-prefix), and **promotes every batch** — assembly first, promotion
-whole. The file-disjoint test binds at **dispatch**, overlap paid as a
-**rebase**; the inbox is bounded by the kill gate and batch size
-alone. Assembly consumes the pool *as of bootstrap*; a later stray
-waits for the next one. Detail: `docs/conventions/linear-automation.md`.
+`type(ENG-###): Subject`). Detail:
+`docs/conventions/linear-automation.md`.
 
 ### The verb/substrate title token
 
@@ -241,20 +226,25 @@ match the **stored** text exactly once, and Linear rewrites an
 **Backlog** with no milestone is a spec awaiting the operator's
 review; **Todo** with no milestone is reviewed and dispatchable, body
 frozen. The operator's Backlog → Todo move **is** the approval —
-planning never makes it — and a fold into a Todo body drops it back.
-The dispatch gate is **state Todo plus unblocked**; the Next view is
-the unblocked Todo. An issue carrying a **parking milestone** —
-`Follow-ups`, `Session pending` (and the legacy
-`Audit findings`, drained and retired once empty)
-— is *parked* in either state, so a filing skill sets **`Backlog`
-plus the milestone,
-in the creating call**, and promotion is **one write, the milestone
-clear**. Every full bootstrap says each parked count **out loud**;
-a genuinely urgent stray (a broken guard) is promoted on the spot.
-A parked `Follow-ups` filing is consumed by the next **batch
-assembly**, never pulled on its own (see "Claude: meta-work
-prefix" above). Detail:
-`docs/conventions/linear-automation.md`.
+the scheduler never makes it — and a fold into a Todo body drops it
+back. The dispatch gate is **state Todo plus unblocked**; the Next
+view is the unblocked Todo. An issue carrying a **parking milestone**
+— `Session pending` (and the legacy `Audit findings`, drained and
+retired once empty) — is *parked* in either state, so a filing skill
+sets **`Backlog` plus the milestone, in the creating call**, and
+promotion is **one write, the milestone clear**. `Follow-ups` is
+struck from the set; filers park there until they switch to Backlog
+plus a message to the curator, then it is deleted. Every
+full bootstrap says each parked count **out loud**; a genuinely urgent
+stray (a broken guard) is promoted on the spot.
+
+**The curator owns review** — the `curate` verb, a daily
+advisor-tier base-repo session the scheduler launches each morning.
+Its pool is the un-parked Backlog, `[Operator]` items included; it
+walks the operator through it four at a time and moves each ticked,
+uncommented task to Todo one at a time, the tick being the operator's
+move. Detail: `docs/conventions/linear-automation.md` → "The curator
+owns review".
 
 ### An audit is a board issue, not a directive
 
@@ -294,8 +284,10 @@ filed Canceled with its reason is permanent. Detail:
 ### Blocking relations
 
 **No automated writer files a blocking edge — ever**, semantic ones
-included; a human places them, in a **planning session** or by a
-seat session's filing yes. The
+included; a human places them, in the **scheduler**, by a ticked
+curator proposal, or by a seat session's filing yes. The scheduler and
+the curator message each other any change to the other's edge or
+priority. The
 board's available-vs-blocked view is a scheduling
 instrument the human drives, so a spurious edge (which drops an issue
 out of the available set) costs more than a missing one (which costs a
@@ -304,12 +296,11 @@ via `AskUserQuestion` with the concrete evidence and writes it only on
 an explicit yes; the default in any autonomous run is **no edge**, with
 the suspicion recorded as prose. Human-placed edges are authoritative
 and never rewritten. **There is no exception**, meta-work included: the
-bootstrap's `Claude:` batch issues carry **no edge at all** and are
-deliberately **not serialized** (contention is paid as a rebase; parking
-keeps strays out of the queue meanwhile). File overlap is **not** a
-dependency, and nothing records collision links any more, at filing
-time or on a sweep; reconciling overlap is planning-session work, judged
-on content. Detail: `docs/conventions/linear-automation.md`.
+`Claude:` batch issues carry **no edge at all** and are deliberately
+**not serialized** (contention is paid as a rebase). File overlap is
+**not** a dependency, and nothing records collision links any more, at
+filing time or on a sweep; reconciling overlap is the scheduler's work,
+judged on content. Detail: `docs/conventions/linear-automation.md`.
 
 ## GitHub via MCP
 

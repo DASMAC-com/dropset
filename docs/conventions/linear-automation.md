@@ -553,10 +553,12 @@ The state and the milestone together say where an issue sits:
 | Todo                         | none              | reviewed and dispatchable; the body is frozen                      |
 | In Progress, In Review, Done | —                 | the session state machine, unchanged (see above)                   |
 
-**The operator's move from Backlog to Todo is the approval.** Planning
-never makes that move, nor does a seat session on its own judgment (its
-`ratify-staged` batch executes the operator's final answer in its tab), and that
-single-writer rule is why "state is Todo" proves
+**The operator's move from Backlog to Todo is the approval.** The
+scheduler never makes that move, nor does any session on its own
+judgment: the curator's one-at-a-time move executes the operator's
+tick in its tab (see "The curator owns review" below), and a seat
+session's `ratify-staged` batch executes the operator's final answer in
+its own. That single-writer rule is why "state is Todo" proves
 approval with no reaction read. **Withdrawal** is the reverse move. A
 **fold into a Todo body drops it back to Backlog**, because the body the
 operator approved is no longer the body on the issue.
@@ -569,12 +571,11 @@ protocol**: fold the comment into the body, reply on the thread saying
 how it was addressed, and resolve it — so a resolved thread means
 addressed-and-how, never approval. The operator's **Next** view is the
 unblocked Todo; it is Linear's server-side blocker filter, which is why a
-planning hold is expressed as an edge (see "Blocking relations").
+scheduler hold is expressed as an edge (see "Blocking relations").
 
-An issue stamped with a parking milestone — `Follow-ups` for an
-executor session's follow-ups and `Claude:` strays, `Session pending`
-for a seat session's tasks under review, and the legacy
-`Audit findings` — is **parked**: filed so it is not lost,
+An issue stamped with a parking milestone — `Session pending` for a
+seat session's tasks under review, and the legacy `Audit findings` —
+is **parked**: filed so it is not lost,
 deliberately *not* in the inbox or the queue. A filing skill sets
 **state `Backlog` plus the milestone, in the creating call** (per
 "Relations and state belong in the CREATING call"). **Promotion is one
@@ -582,31 +583,29 @@ write, the milestone clear**, which lands the issue in the inbox for the
 operator's review. Nothing about parking places or implies a blocking
 edge — see "Blocking relations". A Backlog filing is already out of the
 queue by state; the milestone is what keeps a filer's own output out of
-the operator's **inbox** until it has been reviewed and assembled.
+the operator's **inbox** until it has been reviewed.
 
-**A parking milestone means "not yet reviewed or not yet assembled",
-never "not now"** (operator ruling, 2026-10-23: nothing sits in a giant
-backlog). Who resolves a filing splits by the filer's tier:
+**A parking milestone means "not yet reviewed", never "not now"**
+(operator ruling, 2026-10-23: nothing sits in a giant backlog). Who
+resolves a filing splits by the filer's tier:
 
 - **An advisor-tier session** (architect, explore, and audit once its
   staging lands) resolves its own proposals before it closes: they
   stage under `Session pending` and are ratified in that session's tab,
   its close gate leaving none behind.
 - **An executor session** (`task`, `chore`) never holds a review: its
-  follow-ups and meta strays park under `Follow-ups` (its trims it
-  files not at all — see the trim-lever pipeline), and the planning
-  bootstrap is their one reviewer — it
-  kills on doubt, combines the rest into small themed batches, and only
-  then promotes them into the inbox, **whole**. An executor filing never
-  lands in the inbox directly: an unfolded stream of one-line follow-ups
-  is the giant backlog by another route, and the fold is what keeps the
-  inbox reviewable.
+  follow-ups and meta filings land in the inbox (its trims it files
+  not at all — see the trim-lever pipeline), where the curator reviews
+  them with the rest of the pool — once the filers switch over; until
+  then they still park under `Follow-ups` (see "Which milestones
+  park").
 
-`Audit findings` drains by the same kill gate, one finding at a time:
-each bootstrap promotes or kills what it holds, and it leaves the
+`Audit findings` drains by the scheduler's kill gate, one finding at a
+time: each bootstrap promotes or kills what it holds, and it leaves the
 parking set once empty.
 
-**`Session pending` is never promoted by planning.** It is the unified
+**`Session pending` is never promoted by the scheduler or the
+curator.** It is the unified
 staging lane for every seat session's filed tasks — architect and
 explore now, audit findings once their own ratification lands — so the
 operator reviews them in one place, in the
@@ -617,11 +616,6 @@ batch on that answer. It is **short-lived by design**: a count at
 bootstrap is a session that died mid-review, and the count-and-offer
 line is the backstop — offer to resume that session, never promote its
 tasks around it.
-
-**A batch's own promotion is the same milestone clear**, made on
-**every** batch the bootstrap assembles: assembly is mandatory first,
-and promotion is whole. A promoted batch is pulled once the operator
-approves it, like any inbox spec.
 
 **Every bootstrap says each parked count out loud.** Parked must be
 invisible to the queue without being invisible to the operator, and a
@@ -637,7 +631,10 @@ operator's **Next** view (unblocked Todo) and in the **Blocked** view
 Planning document names a lane. Its one offer is the **kill list**,
 riding in the bootstrap's consolidated `AskUserQuestion`; every
 surviving batch is promoted. Its outcome is recorded in the document's
-in-session notes. The procedure is the `plan` skill's, step 1.
+in-session notes. The procedure is the `plan` skill's, step 1. This
+review, its kill gate and the `Follow-ups` assembly below are the
+scheduler's **while filers still park there**; reviewing the inbox
+itself is the curator's (see "The curator owns review").
 
 **A blocked issue is never a fold input.** The assembly pool takes
 only **unblocked** issues, because `/merge-tasks` does
@@ -661,13 +658,52 @@ worth doing, never "not this week"**: deferral is not a kill reason,
 and an inbox the operator cannot keep up with is the signal to kill
 harder, never to re-park.
 
+### The curator owns review
+
+Everything between Backlog and Todo belongs to the **curator**, a daily
+advisor-tier session in the base repo (the `curate` skill, launched by
+the scheduler on the plan morning or by hand with `curate`). The
+**scheduler** — the `plan` session — owns what happens after Todo.
+
+**The pool is the un-parked Backlog**: state Backlog, no milestone,
+`[Operator]` items included. Todo means "should this be done", so an
+operator item is reviewed and ticked like any other; dispatch refuses it
+downstream, and the scheduler draws its operator-actions list from the
+`[Operator]` items in Todo. `Session pending` (another session's review),
+`Audit findings` (the scheduler promotes them while the lane drains) and
+`Post-validation` (the operator's deferral) are out of the pool.
+
+**The in-tab tick is the operator's move.** The curator walks the pool
+four tasks at a time, one checkbox per task with the `ratify-staged`
+ask text, and moves each ticked task with no open thread to Todo **one
+at a time**, as the tick lands. That is the curator's carve-out beside
+ruling 12's batch: a seat session reviews a fixed set it filed and
+moves it whole at the end, while the curator's pool is open-ended, so
+waiting for the whole pool would hold every approval behind the
+slowest comment. Either way the move executes the operator's answer,
+never the session's judgment. A ticked task with a thread is folded by
+the fold protocol and carried to the next batch; a comment asking to
+drop it cancels it, and a deferral goes to `Post-validation` only when
+the comment names that milestone.
+
+The curator writes nothing else on its own: no edge or priority the
+operator did not tick (see "Blocking relations"), no other milestone,
+no other issue's state or body beyond the fold. It messages the
+scheduler every Todo move and every edge or priority it places.
+
 ### Which milestones park, and which do not
 
 The project's milestones split into two kinds, and only one kind parks.
-**Parking** milestones — `Follow-ups`, `Session pending`, and the
-legacy `Audit findings` — mean "filed, not
-yet reviewed or assembled", and an issue carrying one is read as parked
-by every rule above. The rest —
+**Parking** milestones — `Session pending`, and the legacy
+`Audit findings` — mean "filed, not yet reviewed", and an issue
+carrying one is read as parked by every rule above. ~~`Follow-ups`~~
+(into which `Claude meta` already merged) is struck: executor filings
+go to the curator's pool instead. Until the filers switch to filing
+Backlog plus a message to the curator, they still park under it and
+the scheduler still promotes from it; the milestone is cleared and
+deleted after that switch.
+The
+rest —
 `Integrations`, `UX features`, `Hardening`, `Mechanisms` — are ordinary
 **delivery** milestones grouping pullable work; an issue under one of
 those is queued like any other and is *not* parked.
@@ -678,12 +714,10 @@ by any field Linear exposes, so it lives here rather than being
 derivable — and the parking names are the closed set.
 `Audit findings` takes no new filings once audit findings stage under
 `Session pending` like any other seat session's output, and it retires
-when its legacy contents drain. `Claude meta` merged into `Follow-ups`
-(operator, 2026-10-23): a meta stray is a follow-up to the agent
-material, and the `Claude:` prefix already says which kind it is.
+when its legacy contents drain.
 `Trim levers` retired with the per-session lever filing and is in
 neither kind: upkeep no longer counts it, so its residue of open
-levers is disposed of by hand in a planning session (folded into one
+levers is disposed of by hand in a scheduler session (folded into one
 inbox batch or closed with reasons), which then closes the milestone.
 
 One place the two kinds *do* behave alike, which is easy to
@@ -739,8 +773,8 @@ product code on the board.
   and `plan` prepend `Claude:` to a title when **every
   path the fix will edit** is on the meta surface above. `/merge-tasks`
   applies it when every issue it consolidates is meta. (`plan` matters
-  here in particular: a planning session is where most meta-work issues
-  are actually filed.)
+  here in particular: the scheduler is where most meta-work issues are
+  actually filed.)
 - **The judgement is the filer's, not a field's.** This used to be
   derived mechanically from the issue's `**Touches**:` globs; that field
   is retired (see "Structured filing fields" above), so the filer
@@ -760,85 +794,6 @@ product code on the board.
   (see "Keep Linear tags out of PR bodies and comments" below for the
   title-scope rule); the `Claude:` token is **not** added to a PR
   title, where the conventional type and `ENG-###` scope already apply.
-
-### A meta filing is parked, and assimilated once a day
-
-An executor's `Claude:` filing lands **state `Backlog` plus the
-`Follow-ups` milestone, in the creating call** — parked, never in the
-inbox until a bootstrap has assembled it into a batch.
-
-**The motivating failure is structural, not cosmetic.** An automated
-filer may never place a blocking edge (see "Blocking relations"), so
-before this rule every meta stray filed between folds landed
-*unblocked* in Backlog and sat in the operator's "Next" view until the
-next planning bootstrap swept it — one bootstrap found seven. Parking
-was the filer-safe equivalent of the edge the filer is not allowed to
-place; under the review inbox the state keeps a filing out of Next and
-the milestone keeps it out of the inbox, still touching none of the
-human-curated edge machinery.
-
-**The planning bootstrap is the single assimilation point.** Once a day
-it sweeps the milestone, kills on doubt, and folds the surviving strays
-into **small themed batches** via `merge-tasks` — lowest number
-surviving in each, every finding's `**Fingerprint**:` line preserved,
-each batch carrying **roughly 4–5 parts** rather than the whole pool
-(see "The `Claude:` meta class is size-bound too" above), and meta
-grouped apart from product work by the `Claude:` prefix. One writer,
-one rhythm: nothing else proposes meta merges.
-
-**Every assembled batch is promoted** — its milestone **cleared**, set
-**Urgent**, landing in the inbox for the operator's review (see "Backlog
-reviews, Todo pulls"). Assembly is mandatory first; no batch is left
-parked as a remainder.
-
-**An already-assembled batch is never a fold input.** `merge-tasks`
-only merges and there is no split operation, so re-folding a batch
-could only *grow* it past the 4–5-part bound. A promoted batch awaits
-the operator's review, which a fold would disturb mid-review, and an
-approved one (Todo) would drop back to Backlog, undoing the operator's
-move.
-
-**The pool is the milestone PLUS any inbox stray** — every open,
-unblocked `Claude:`-prefixed Backlog issue with **no milestone** that
-is not itself an assembled batch, so a meta issue filed outside the
-parking rule is still absorbed rather than reviewed one at a time. A
-`trim-context` output task is an assembled batch (below), and a
-product spec awaiting review is never a stray. An `[Operator]` item
-parked under `Follow-ups` is neither folded nor promoted.
-
-**Assembly is NOT gated on a meta issue being in flight** — operator
-rule, 2026-09-11, retiring the earlier precondition together with the
-one-giant-batch form it supported. Several small meta batches may be
-open and worked at once. They do contend on the same skill files, and
-that contention is settled by a **rebase**, which inside a short session
-costs cents where the serialization it replaced costs the quadratic
-(`docs/conventions/context-economy.md` → "Session length is itself a
-cost lever").
-
-This does not reintroduce an edge — it removes the last thing standing
-in for one. **The file-disjoint test binds at dispatch**, where it did
-for product work: the planning session dispatches Todo in sets judged on
-the collision clusters, overlap paid as a rebase, so meta **loses** its
-special case rather than gaining a new one. The inbox is bounded by the
-kill gate and batch size alone. A disjoint-at-promotion slate is
-retired (2026-10-23): it bounded the inbox by parking the remainder,
-which is the giant backlog the operator ruled out, and since
-`CLAUDE.md` and the convention docs are shared by most meta themes it
-left nearly everything parked.
-
-**Assembly consumes the pool as of bootstrap.** A stray filed after an
-assembly waits for the next one rather than joining a batch already
-born. Without that boundary an assembly has no defined membership, and
-an issue could be folded into a batch whose session had already read its
-own scope. With the in-flight gate gone this boundary carries more weight
-than it did: a bootstrap may now assemble **while** other meta issues are
-being worked, which makes "never fold an issue that is In Progress"
-load-bearing on its own rather than belt-and-braces.
-
-**`trim-context`'s output tasks land in the inbox** (Backlog, no
-milestone, Urgent): the analyst's fold is their assembly, so each is an
-assembled batch — never parked for a second assembly, never a fold
-input.
 
 ## The verb/substrate title token
 
@@ -1531,27 +1486,44 @@ skill (`linear-task`, `audit-scope`, `trim-context`,
 not an autonomous audit rotation. This holds for edges an agent believes are
 genuinely semantic, not just for file-overlap ones.
 
-**Where they *are* placed: a planning session.** A blocking edge
+**Where they *are* placed: the scheduler.** A blocking edge
 expresses semantic rollout ordering, which is a scheduling decision, so
 it is made where somebody is actually deciding the order — the `plan`
 skill's session in the base repo, human-directed, one edge at a time.
 That is the whole of the exception: not "a skill that is allowed to",
-but "the place a human does it". **The one other such place is a seat
-session's filing ask** (`ratify-staged`): the operator's in-tab yes to
-a named chain of proposed edges, each with its reason, ratifies them
-with the tasks, and the session places exactly those — an edge the
-answer strikes is not placed. That is the human-placed form, executed,
-never an automated filer deciding one.
+but "the place a human does it". **Two other such places** carry the
+same human-placed form:
 
-**A planning dispatch hold is an edge too** (operator ruling,
+- **A seat session's filing ask** (`ratify-staged`): the operator's
+  in-tab yes to a named chain of proposed edges, each with its reason,
+  ratifies them with the tasks, and the session places exactly those —
+  an edge the answer strikes is not placed.
+- **The curator's in-tab tick** (`curate`): each proposed edge or
+  priority is one checkbox with its reason, and the curator places
+  exactly the ticked ones. An unticked proposal is not placed, and not
+  re-asked unless its evidence changes.
+
+Each is the human-placed form executed, never an automated filer
+deciding one.
+
+**Two writers, one coordination rule.** The scheduler and the curator
+both write edges and priorities, anywhere on the board, because each
+sees what the other lacks — the scheduler the fleet and the dispatch
+order, the curator the specs it has just read. A write that places,
+changes or removes an edge or priority **the other session placed** is
+messaged to it in the same turn, with the reason; neither deletes the
+other's edge without that message; and the Planning document records the result
+at the scheduler's next write-back.
+
+**A scheduler dispatch hold is an edge too** (operator ruling,
 2026-10-08). The operator's Next view means *dispatchable right now*, so
-an unblocked Todo issue the planning session is holding behind an
+an unblocked Todo issue the scheduler is holding behind an
 in-flight surface or a sequencing reason is a lie in it: the operator
 sees it, expects to launch it, and cannot see a hold recorded only in
-the Planning document. So the planning session expresses its own holds
+the Planning document. So the scheduler expresses its own holds
 as blocking edges on the in-flight blocker, and the held issue shows as
-Blocked instead. This amends only *what a planning-placed edge may
-mean* — semantic ordering **or** a planning hold. An automated filer
+Blocked instead. This amends only *what a scheduler-placed edge may
+mean* — semantic ordering **or** a scheduler hold. An automated filer
 still never places an edge, and file overlap a filer notices is still
 never one. A hold placed on the operator's yes, in the dispatch ask,
 stays human-directed, and so does removing one: a completed blocker
@@ -1575,11 +1547,13 @@ files — and a rebase inside a short session costs cents. The contention
 is real; it is simply the cheaper of the two costs.
 
 What matters for *this* section is that neither the edge nor its
-stand-in survives. A planning session places **no relation** on a batch,
+stand-in survives. The scheduler places **no relation** on a batch,
 and no longer gates assembly on another meta issue being In Progress or
-In Review either. Strays still accumulate **parked** under the
-`Follow-ups` milestone between bootstraps, which is what keeps them out
-of the pull queue without an edge.
+In Review either. Until the filers switch over, strays still
+accumulate **parked** under `Follow-ups` between bootstraps; after
+that they wait in the
+curator's pool, and Backlog alone keeps them out of the pull queue
+without an edge.
 
 **Where both states still matter is the POOL, not a gate.** An In Review
 meta issue is a session that has merged its code but still owes
@@ -1599,14 +1573,14 @@ adding it, which is the right direction for a mechanism whose whole risk
 is a spurious edge dropping an issue out of the available set.
 
 So this section now has **no** exception to state: a human still places
-every edge — in the planning session, or through a seat session's
-filing ask — and **no automated
+every edge — in the scheduler, through the curator's tick, or through
+a seat session's filing ask — and **no automated
 writer places one at all**. A filing skill that notices a new meta issue
-neither chains it nor queues it — it parks it. Treat every edge,
+neither chains it nor queues it. Treat every edge,
 semantic ones included, under the one-at-a-time rule above.
 
 **The mechanism is `board_batch.py edges`**, and it changes none of the
-above. There is no MCP path for relations at all, so a planning session
+above. There is no MCP path for relations at all, so the scheduler
 needs *some* tool to execute the operator's decision:
 
 ```sh
@@ -1615,7 +1589,7 @@ python3 .claude/tools/board_batch.py edges --pairs <file>
 
 Add `--remove` to delete the named edges instead — retiring an edge is
 the same human decision in reverse, and it is the other half of what a
-planning session does to the blocking graph. Rehearse either direction
+the scheduler does to the blocking graph. Rehearse either direction
 with `--dry-run` first (accepted in either position): a blocking edge
 drops an issue out of the operator's available set, so a wrong one
 costs more than the rehearsal.
@@ -1656,7 +1630,7 @@ was a false positive: the legitimate hand-placed blocking edges collide
 on files too, and no mechanical rule distinguishes them from artifacts,
 so a second run would have deleted the intended blocking graph in one
 command. Blocking-edge changes happen only where they always should
-have: in a planning session, human-directed, one at a time.
+have: in the scheduler or the curator, human-directed, one at a time.
 
 The mechanics, for when a human does ask for an edge: `save_issue`
 takes `blockedBy` (the `ENG-###`s that must land first) and `blocks`
@@ -1669,10 +1643,10 @@ reference it.
 Two things that are **not** blocking edges:
 
 - **File overlap.** Two issues that will edit the same code are
-  reconciled in a planning session and recorded as a cluster (see
+  reconciled by the scheduler and recorded as a cluster (see
   "Overlap is a cluster, never an ordering"); the automated
   related-linking is retired. Overlap becomes an edge only when the
-  planning session decides to *hold* one issue behind the other, as
+  scheduler decides to *hold* one issue behind the other, as
   above — the decision is the edge, not the overlap.
 - **Coupling that belongs in one PR.** That is handled by combining
   into a single issue (see "Fold coupled findings into one issue"),
