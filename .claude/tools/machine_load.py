@@ -16,8 +16,10 @@ on, memory, load, swap. One bare call reads all of it::
 
 The reading is three commands and one targeted read, no sampling loop:
 ``vm_stat``; ``sysctl -n vm.loadavg hw.ncpu hw.memsize vm.swapusage
-kern.memorystatus_vm_pressure_level``; ``ps -axo pid=,ppid=,rss=,etime=,comm=``;
-and one ``ps -o args=`` over the cargo pids only. Never a pattern over every
+kern.memorystatus_vm_pressure_level``;
+``ps -axc -o pid=,ppid=,rss=,etime=,stat=,comm=`` (``-c``: comm is the
+executable's own name); and one ``ps -ww -o pid=,args= -p <roots>`` over the
+cargo roots only. Never a pattern over every
 process — ``pgrep -f claude`` matches every shell whose command line names a
 ``.claude`` path.
 
@@ -26,20 +28,25 @@ process — ``pgrep -f claude`` matches every shell whose command line names a
 same invocation). It is *building* when anything that is not cargo runs under
 it — ``rustc`` / ``rustdoc``, a test binary, the linker — and *waiting* when it
 holds no such descendant: a cargo blocked on the pool lock has spent under a
-second of CPU, so its age is its wait. Each is named by its step from its
-args (``clippy``, ``doc``, ``test``, ``nextest``, ``build``, ``check``,
-``run``).
+second of CPU, so its age is its wait. A stopped cargo (ps state ``T``) is
+neither, and ``cargo-watch`` is a watcher, not an invocation: the cargo it
+spawns is the root. Each is named by its step from its args (``clippy``,
+``doc``, ``test``, ``nextest``, ``build``, ``check``, ``run``). One snapshot:
+a build caught in the instant between two children reads as waiting, an
+error toward refusing that the next probe heals.
 
 **Memory in use** is anonymous + wired + compressor-occupied pages times the
-page size — Activity Monitor's "Memory Used", so the operator can check the
-tool against what they already look at. File cache and free pages are
-headroom.
+page size — Activity Monitor's "Memory Used" (a shade over: it keeps the
+pages the system may discard on demand), so the operator can check the tool against what they already
+look at. File cache and free pages are headroom.
 
 **Sessions by class** come from the launch records in the session-substrate
-directory: a ``<key>.class`` file beside a substrate marker holds ``building``
-or ``free``. Until any record exists every live ``claude`` counts as building;
-the free count is capped at the live count, so a stale record can never
-manufacture a session.
+directory: a ``<key>.class`` file beside a substrate marker holds the class
+and the session's ``claude`` pid, ``free 12345``. A record counts only while
+its pid is a live ``claude``, so a record a dead session left behind can
+neither hide a building session nor invent a free one; every live ``claude``
+without a ``free`` record counts as building, which is all of them until the
+launcher writes records.
 
 **Knobs** come from the environment (the operator's untracked runtime config);
 the repo carries no machine literal: ``DS_FLEET_BUILD_WAIT_S`` (120),
@@ -47,8 +54,9 @@ the repo carries no machine literal: ``DS_FLEET_BUILD_WAIT_S`` (120),
 ``DS_FLEET_LOAD_PER_CORE`` (1.5).
 
 Exit 0 green (every asked session fits), 1 amber (fewer fit), 2 red (none),
-3 no reading (not Darwin, a command or parse failure). A caller never halts
-on 3: it falls back to the cap and says so.
+3 no reading (not Darwin, a command or parse failure, a bad argument, any
+unexpected error — never 1 or 2, which a caller would read as a verdict). A
+caller never halts on 3: it falls back to the cap and says so.
 
 Standard library only. A Python skill-tool under ``.claude/tools/`` —
 deliberately **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill
@@ -59,6 +67,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
 import re
@@ -80,6 +89,8 @@ SAMPLE_LOG = "fleet-load.log"
 
 STEPS = ("clippy", "doc", "test", "nextest", "build", "check", "run")
 COMPILERS = ("rustc", "rustdoc", "clippy-driver")
+#: Cargo-family names that are not a build invocation of their own.
+NOT_ROOTS = ("cargo-watch",)
 DOCKER_VM = "com.apple.Virtualization.VirtualMachine"
 PRESSURE = {1: "normal", 2: "warn", 4: "critical"}
 
@@ -92,7 +103,7 @@ SYSCTL = [
     "vm.swapusage",
     "kern.memorystatus_vm_pressure_level",
 ]
-PS_TABLE = ["ps", "-axc", "-o", "pid=,ppid=,rss=,etime=,comm="]
+PS_TABLE = ["ps", "-axc", "-o", "pid=,ppid=,rss=,etime=,stat=,comm="]
 
 GREEN, AMBER, RED, NO_READING = 0, 1, 2, 3
 COLOUR = {GREEN: "GREEN", AMBER: "AMBER", RED: "RED"}
@@ -160,9 +171,12 @@ def parse_sysctl(text: str) -> Sysctl:
         swap = re.search(r"used = ([\d.]+)([KMG])", lines[3])
         if not swap:
             raise ValueError(lines[3])
+        cores = int(lines[1])
+        if cores < 1:
+            raise ValueError(f"hw.ncpu {cores}")
         return Sysctl(
             load1=load1,
-            cores=int(lines[1]),
+            cores=cores,
             physical=int(lines[2]),
             swap_used=int(float(swap.group(1)) * _UNIT[swap.group(2)]),
             pressure=int(lines[4]),
@@ -177,6 +191,7 @@ class Proc:
     ppid: int
     rss_kib: int
     elapsed_s: int
+    stat: str
     comm: str
 
 
@@ -193,8 +208,8 @@ def parse_etime(text: str) -> int:
 def parse_ps(text: str) -> list[Proc]:
     table = []
     for line in text.splitlines():
-        fields = line.split(None, 4)
-        if len(fields) < 5:
+        fields = line.split(None, 5)
+        if len(fields) < 6:
             continue
         try:
             table.append(
@@ -203,7 +218,8 @@ def parse_ps(text: str) -> list[Proc]:
                     ppid=int(fields[1]),
                     rss_kib=int(fields[2]),
                     elapsed_s=parse_etime(fields[3]),
-                    comm=os.path.basename(fields[4].strip()),
+                    stat=fields[4],
+                    comm=os.path.basename(fields[5].strip()),
                 )
             )
         except ValueError:
@@ -230,7 +246,7 @@ def step_of(comm: str, args: str) -> str:
 
 
 def is_cargo(comm: str) -> bool:
-    return comm == "cargo" or comm.startswith("cargo-")
+    return (comm == "cargo" or comm.startswith("cargo-")) and comm not in NOT_ROOTS
 
 
 @dataclass
@@ -256,7 +272,9 @@ def cargo_roots(table: list[Proc]) -> list[Proc]:
     return [
         p
         for p in table
-        if is_cargo(p.comm) and not (p.ppid in by_pid and is_cargo(by_pid[p.ppid].comm))
+        if is_cargo(p.comm)
+        and not p.stat.startswith("T")
+        and not (p.ppid in by_pid and is_cargo(by_pid[p.ppid].comm))
     ]
 
 
@@ -303,16 +321,21 @@ class Sessions:
 
 
 def read_sessions(table: list[Proc], state_dir: Path | None) -> Sessions:
-    live = sum(1 for p in table if p.comm == "claude")
-    classes = []
+    live = {p.pid for p in table if p.comm == "claude"}
+    classes: dict[int, str] = {}
     if state_dir and state_dir.is_dir():
         for path in sorted(state_dir.rglob("*.class")):
             try:
-                classes.append(path.read_text().strip())
-            except OSError:
+                cls, pid = path.read_text().split()
+                if int(pid) in live:
+                    classes[int(pid)] = cls
+            except (OSError, ValueError):
+                # Unreadable, undecodable or malformed: not a live record.
                 continue
-    free = min(classes.count("free"), live)
-    return Sessions(live=live, building=live - free, free=free, records=len(classes))
+    free = sum(1 for cls in classes.values() if cls == "free")
+    return Sessions(
+        live=len(live), building=len(live) - free, free=free, records=len(classes)
+    )
 
 
 # --- the reading ---------------------------------------------------------
@@ -350,8 +373,9 @@ def read_machine(runner: Runner = run, state_dir: Path | None = None) -> Reading
         try:
             args = parse_args_ps(runner(["ps", "-ww", "-o", "pid=,args=", "-p", pids]))
         except NoReading:
-            # A root that exited between the two reads makes ps exit 1; its
-            # step reads `other` rather than losing the whole reading.
+            # A root that exited between the two reads makes ps exit 1, and
+            # every step then reads `other` (bar a `cargo-<step>` comm)
+            # rather than losing the whole reading.
             args = {}
     size = pages["page_size"]
     memory = Memory(
@@ -391,7 +415,8 @@ def read_knobs(env: dict[str, str], physical: int) -> Knobs:
             return default
         try:
             value = cast(raw)
-            if value < 0:
+            # NaN would slip past `< 0` and silently disable its check.
+            if not math.isfinite(value) or value < 0:
                 raise ValueError
             return value
         except ValueError:
@@ -496,7 +521,7 @@ def slots_text(slots: int | None) -> str:
 
 def render(r: Reading, k: Knobs, cls: str, asked: int, asked_given: bool) -> str:
     slots, reasons = verdict(r, k, cls)
-    head = f"{slots_text(slots)} slots for {cls}"
+    head = f"{slots_text(slots)} slot{'' if slots == 1 else 's'} for {cls}"
     if asked_given:
         head += f" ({asked} asked)"
     q, m, s = r.queue, r.memory, r.sysctl
@@ -619,8 +644,27 @@ def default_state_dir() -> Path:
     return Path(head if sep else checkout) / STATE_DIR
 
 
+class _Parser(argparse.ArgumentParser):
+    """argparse exits 2 on a usage error, which a caller would read as RED."""
+
+    def error(self, message: str):
+        self.print_usage(sys.stderr)
+        self.exit(NO_READING, f"machine-load: NO READING - {message}\n")
+
+
+def no_reading(reason: str, as_json: bool) -> int:
+    if as_json:
+        print(json.dumps({"status": "no-reading", "exit": NO_READING, "error": reason}))
+    else:
+        print(
+            f"machine-load: NO READING - {reason}; fall back to the cap",
+            file=sys.stderr,
+        )
+    return NO_READING
+
+
 def main(argv: list[str] | None = None, runner: Runner = run, env=None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = _Parser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="print the fields as JSON")
     parser.add_argument("--sessions", type=int, default=None, metavar="N")
     parser.add_argument(
@@ -640,29 +684,22 @@ def main(argv: list[str] | None = None, runner: Runner = run, env=None) -> int:
         if platform.system() != "Darwin" and runner is run:
             raise NoReading(f"not Darwin ({platform.system()})")
         reading = read_machine(runner, state_dir)
+        knobs = read_knobs(os.environ if env is None else env, reading.memory.physical)
+        slots, _ = verdict(reading, knobs, opts.cls)
+        out = (
+            json.dumps(as_json(reading, knobs, opts.cls, asked), indent=2)
+            if opts.json
+            else render(reading, knobs, opts.cls, asked, asked_given)
+        )
+        if opts.sample:
+            state_dir.mkdir(parents=True, exist_ok=True)
+            with open(state_dir / SAMPLE_LOG, "a") as log:
+                log.write(sample_line(reading, datetime.now(timezone.utc)) + "\n")
     except NoReading as exc:
-        if opts.json:
-            print(
-                json.dumps(
-                    {"status": "no-reading", "exit": NO_READING, "error": str(exc)}
-                )
-            )
-        else:
-            print(
-                f"machine-load: NO READING - {exc}; fall back to the cap",
-                file=sys.stderr,
-            )
-        return NO_READING
-    knobs = read_knobs(os.environ if env is None else env, reading.memory.physical)
-    if opts.sample:
-        state_dir.mkdir(parents=True, exist_ok=True)
-        with open(state_dir / SAMPLE_LOG, "a") as log:
-            log.write(sample_line(reading, datetime.now(timezone.utc)) + "\n")
-    if opts.json:
-        print(json.dumps(as_json(reading, knobs, opts.cls, asked), indent=2))
-    else:
-        print(render(reading, knobs, opts.cls, asked, asked_given))
-    slots, _ = verdict(reading, knobs, opts.cls)
+        return no_reading(str(exc), opts.json)
+    except Exception as exc:  # noqa: BLE001 — a crash must not exit 1 (AMBER)
+        return no_reading(f"{type(exc).__name__}: {exc}", opts.json)
+    print(out)
     return status(slots, asked)
 
 

@@ -43,21 +43,24 @@ def sysctl(load="10.80", swap="0.00M", pressure=1):
 # A doc build with its rustdoc children; a cargo-clippy wrapper whose child
 # cargo holds the lock queue (one invocation, not two); a bare test waiting
 # 7m45s; a test running its own binary (building, not waiting); a cargo in
-# its first seconds; two claude processes and the Docker VM.
+# its first seconds; a cargo stopped with ^Z and an idle cargo-watch (neither
+# is waiting); two claude processes and the Docker VM.
 PS = """\
-    1     0  17360 07:33:36 launchd
-  753     1 776384 07:33:11 com.apple.Virtualization.VirtualMachine
-10069 80750  71312    10:24 cargo
-24399 10069 256352    00:26 rustdoc
-24425 10069 181296    00:26 rustdoc
-16048  6868  20288    03:25 cargo-clippy
-16112 16048  83120    03:25 cargo
-74477 98402  24560    07:45 cargo
-30000 98403  24560    01:00 cargo
-30001 30000  99999    00:40 dropset-abc123
-61255 38025  27184    00:03 cargo
- 3326  9309 403328 01:28:35 claude
-94579 81885 315040 1-01:26:41 claude
+    1     0  17360 07:33:36 Ss   launchd
+  753     1 776384 07:33:11 S    com.apple.Virtualization.VirtualMachine
+10069 80750  71312    10:24 S+   cargo
+24399 10069 256352    00:26 R+   rustdoc
+24425 10069 181296    00:26 R+   rustdoc
+16048  6868  20288    03:25 S+   cargo-clippy
+16112 16048  83120    03:25 S+   cargo
+74477 98402  24560    07:45 S+   cargo
+30000 98403  24560    01:00 S+   cargo
+30001 30000  99999    00:40 R+   dropset-abc123
+61255 38025  27184    00:03 S+   cargo
+40000 98404  24560 02:00:00 T    cargo
+40100 98405  24560 03:00:00 S+   cargo-watch
+ 3326  9309 403328 01:28:35 S+   claude
+94579 81885 315040 1-01:26:41 S+   claude
 """
 
 ARGS = """\
@@ -155,6 +158,11 @@ class BuildQueue(unittest.TestCase):
         # `cargo-clippy` names its step from its comm, args or none.
         self.assertEqual({b.step for b in q.waiting}, {"clippy", "other"})
 
+    def test_a_stopped_cargo_and_a_watcher_are_not_waiting(self):
+        pids = {b.pid for b in self.q.waiting + self.q.building}
+        self.assertNotIn(40000, pids)
+        self.assertNotIn(40100, pids)
+
 
 class Verdict(unittest.TestCase):
     def test_a_long_wait_refuses_building_but_not_free(self):
@@ -184,6 +192,8 @@ class Verdict(unittest.TestCase):
             r, knobs(r, DS_FLEET_CAP=2, DS_FLEET_BUILD_WAIT_S=600), "building"
         )
         self.assertEqual((slots, reasons), (0, ["cap"]))
+        # The cap is a building bound only.
+        self.assertEqual(ml.verdict(r, knobs(r, DS_FLEET_CAP=2), "free"), (None, []))
 
     def test_each_machine_check_refuses_both_classes(self):
         cases = {
@@ -215,6 +225,12 @@ class Verdict(unittest.TestCase):
         self.assertEqual(k.cap, 20)
         self.assertIn("DS_FLEET_CAP", k.notes[0])
 
+    def test_a_non_finite_knob_falls_back(self):
+        r = reading()
+        k = knobs(r, DS_FLEET_RESERVE_GB="inf", DS_FLEET_LOAD_PER_CORE="nan")
+        self.assertEqual((k.reserve, k.load_per_core), (6 * GIB, 1.5))
+        self.assertEqual(len(k.notes), 2)
+
     def test_status(self):
         self.assertEqual(ml.status(None, 5), ml.GREEN)
         self.assertEqual(ml.status(3, 3), ml.GREEN)
@@ -223,17 +239,18 @@ class Verdict(unittest.TestCase):
 
 
 class Sessions(unittest.TestCase):
-    def test_class_records_split_the_live_count(self):
+    def test_only_records_of_live_claude_pids_count(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
-            (state / "eng-1.class").write_text("free\n")
+            (state / "eng-1.class").write_text("free 3326\n")
             (state / "sessions").mkdir()
-            (state / "sessions" / "abc.class").write_text("free\n")
-            (state / "eng-2.class").write_text("building\n")
+            (state / "sessions" / "abc.class").write_text("building 94579\n")
+            # A dead session's record, one with no pid and an undecodable one.
+            (state / "eng-2.class").write_text("free 55555\n")
+            (state / "eng-3.class").write_text("free\n")
+            (state / "eng-4.class").write_bytes(b"\xff\xfe")
             s = ml.read_machine(runner(), state).sessions
-        # Two free records against two live claude processes; a third would
-        # be stale.
-        self.assertEqual((s.live, s.building, s.free, s.records), (2, 0, 2, 3))
+        self.assertEqual((s.live, s.building, s.free, s.records), (2, 1, 1, 2))
 
 
 class Main(unittest.TestCase):
@@ -267,7 +284,28 @@ class Main(unittest.TestCase):
             "--sessions", "3", env={"DS_FLEET_BUILD_WAIT_S": "600"}
         )
         self.assertEqual(code, ml.AMBER)
-        self.assertIn("1 slots for building (3 asked)", out)
+        self.assertIn("AMBER - 1 slot for building (3 asked)", out)
+
+    def test_a_machine_refusal_renders_for_both_classes(self):
+        code, out, _, _ = self.call(
+            "--class", "free", env={"DS_FLEET_RESERVE_GB": "14"}
+        )
+        self.assertEqual(code, ml.RED)
+        self.assertIn("would free a slot: memory headroom; the longest wait", out)
+        self.assertIn("free: refused on memory (headroom 0.0 GiB)", out)
+
+    def test_a_crash_is_no_reading_not_amber(self):
+        def boom(cmd):
+            raise RuntimeError("unexpected")
+
+        code, _, err, _ = self.call(fake=boom)
+        self.assertEqual(code, ml.NO_READING)
+        self.assertIn("RuntimeError: unexpected", err)
+
+    def test_a_bad_argument_is_no_reading_not_red(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.call("--sessions", "0")
+        self.assertEqual(caught.exception.code, ml.NO_READING)
 
     def test_free_class_green(self):
         code, _, _, _ = self.call("--class", "free", "--sessions", "4")
