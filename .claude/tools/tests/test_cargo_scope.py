@@ -346,6 +346,7 @@ GRAPH_TREE = {
     "sdk/src/lib.rs": "",
     "leaf/Cargo.toml": '[package]\nname = "leaf"\n',
     "leaf/src/lib.rs": "",
+    "leaf/src/config.rs": "",
     "leaf/README.md": "",
     "programs/dropset/Cargo.toml": '[package]\nname = "dropset"\n',
     "programs/dropset/src/lib.rs": "",
@@ -358,8 +359,16 @@ GRAPH_TREE = {
 
 GRAPH_TRACKED = {p for p in GRAPH_TREE if p.endswith(".rs")}
 
-# A feeds test reads the frontend roster at runtime.
-GRAPH_FIXTURES = {"frontend/roster.json": ["feeds/tests/roster.rs"]}
+# A feeds test reads the frontend roster at runtime, and another `include_str!`s
+# leaf's source, though feeds does not depend on leaf (market-data reads the
+# maker-bot's `config.rs` this way). An sdk test reads a vectors directory; a
+# non-member's test reads a data file.
+GRAPH_FIXTURES = {
+    "frontend/roster.json": ["feeds/tests/roster.rs"],
+    "leaf/src/config.rs": ["feeds/tests/config_agreement.rs"],
+    "vectors": ["sdk/tests/replay.rs"],
+    "scratch.json": ["scratch/tests/read.rs"],
+}
 
 
 class GraphFixture(Fixture):
@@ -422,25 +431,29 @@ class TestSeeds(GraphFixture):
     def test_every_tracked_file_is_the_workspace(self):
         self.assertIs(self.seeds(*GRAPH_TRACKED), cs.WORKSPACE)
 
-    def test_affected_widens_the_seeds(self):
-        self.assertEqual(
-            cs.affected(
-                ["sdk/src/lib.rs"],
-                self.root,
-                GRAPH_METADATA,
-                tracked=GRAPH_TRACKED,
-                fixtures=GRAPH_FIXTURES,
-            ),
-            ["dropset", "leaf", "sdk"],
-        )
+    def test_rust_source_read_as_a_fixture_seeds_the_reader(self):
+        self.assertEqual(self.seeds("leaf/src/config.rs"), ["feeds", "leaf"])
 
-    def test_affected_without_metadata_is_the_workspace(self):
-        self.assertIs(
-            cs.affected(
-                ["leaf/src/lib.rs"], self.root, None, GRAPH_TRACKED, GRAPH_FIXTURES
-            ),
-            cs.WORKSPACE,
-        )
+    def test_rust_fixture_found_without_a_non_rust_path(self):
+        # The scan once ran only on reaching a non-`.rs` path, so a branch
+        # changing only Rust missed the cross-crate reader.
+        with mock.patch.object(
+            cs.review_diff, "rust_test_fixtures", return_value=GRAPH_FIXTURES
+        ) as scan:
+            seeds = cs.test_seeds(
+                ["leaf/src/config.rs"], self.root, tracked=GRAPH_TRACKED
+            )
+        self.assertEqual(seeds, ["feeds", "leaf"])
+        scan.assert_called_once()
+
+    def test_fixture_directory_key_matches_files_under_it(self):
+        self.assertEqual(self.seeds("vectors/swap/01.json"), ["sdk"])
+
+    def test_non_member_fixture_reader_is_the_workspace(self):
+        self.assertIs(self.seeds("scratch.json"), cs.WORKSPACE)
+
+    def test_non_member_build_input_is_the_workspace(self):
+        self.assertIs(self.seeds("scratch/src/main.rs"), cs.WORKSPACE)
 
 
 class TestCommands(unittest.TestCase):
@@ -488,6 +501,27 @@ class TestMain(GraphFixture):
     def test_affected_prints_the_flags(self):
         self.assertEqual(self.run_main("affected", "leaf/src/lib.rs"), (0, "-p leaf"))
 
+    def test_affected_widens_the_seeds(self):
+        self.assertEqual(
+            self.run_main("affected", "sdk/src/lib.rs"),
+            (0, "-p dropset -p leaf -p sdk"),
+        )
+
+    def test_affected_without_metadata_is_the_workspace(self):
+        self.assertEqual(
+            self.run_main("affected", "leaf/src/lib.rs", metadata=None),
+            (0, "--workspace"),
+        )
+
+    def test_affected_with_nothing_to_test_prints_nothing(self):
+        self.assertEqual(self.run_main("affected", "docs/ci.md"), (0, ""))
+        self.meta.assert_not_called()
+
+    def test_changed_adds_the_branch_files(self):
+        with mock.patch.object(cs, "changed_paths", return_value=["sdk/src/lib.rs"]):
+            shown = self.run_main("affected", "--changed", "feeds/src/lib.rs")
+        self.assertEqual(shown, (0, "-p dropset -p feeds -p leaf -p sdk"))
+
     def test_docs_only_change_never_asks_cargo(self):
         with mock.patch.object(cs.subprocess, "run") as run:
             code, shown = self.run_main("test", "docs/ci.md")
@@ -507,6 +541,31 @@ class TestMain(GraphFixture):
             code, _ = self.run_main("test", "programs/dropset/src/lib.rs")
         self.assertEqual(code, 2)
         self.assertEqual(run.call_args.args[0], ["make", "program"])
+
+
+class ChangedPaths(unittest.TestCase):
+    def test_keeps_deletions_and_untracked_without_renames(self):
+        outputs = [
+            mock.Mock(stdout="util/src/gone.rs\0sdk/src/lib.rs\0"),
+            mock.Mock(stdout="leaf/src/new.rs\0"),
+        ]
+        with (
+            mock.patch.object(cs.lint_paths, "merge_base", return_value="abc"),
+            mock.patch.object(cs.subprocess, "run", side_effect=outputs) as run,
+        ):
+            paths = cs.changed_paths("/nonexistent")
+        self.assertEqual(
+            sorted(paths), ["leaf/src/new.rs", "sdk/src/lib.rs", "util/src/gone.rs"]
+        )
+        self.assertIn("--no-renames", run.call_args_list[0].args[0])
+
+    def test_empty_diff_is_only_the_untracked(self):
+        outputs = [mock.Mock(stdout=""), mock.Mock(stdout="leaf/src/new.rs\0")]
+        with (
+            mock.patch.object(cs.lint_paths, "merge_base", return_value="abc"),
+            mock.patch.object(cs.subprocess, "run", side_effect=outputs),
+        ):
+            self.assertEqual(cs.changed_paths("/nonexistent"), ["leaf/src/new.rs"])
 
 
 if __name__ == "__main__":

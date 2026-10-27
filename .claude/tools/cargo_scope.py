@@ -70,10 +70,12 @@ silently drops its feature-gated tests.
 What seeds the set is wider than Rust source, because a suite's result also
 moves with the data it reads: a path ``review_diff.rust_is_reachable`` accepts
 seeds its owning crate (an asm file, a migration, a manifest), and a fixture a
-Rust file reads (``review_diff.rust_test_fixtures``) seeds the reader's crate.
-A reachable path no member owns (``Cargo.lock``, ``rust-toolchain.toml``)
-seeds the whole workspace. Anything else seeds nothing, so a docs-only or
-frontend-only branch runs no cargo test and never waits on the pool's lock.
+Rust file reads (``review_diff.rust_test_fixtures``) seeds the reader's crate,
+whatever its type — ``.rs`` included, since one crate's tests read another's
+source. A reachable path no member owns (``Cargo.lock``,
+``rust-toolchain.toml``) seeds the whole workspace. Anything else seeds
+nothing, so a branch touching neither (docs only, say) runs no cargo test and
+never waits on the pool's lock.
 
 Two refinements the graph cannot see live in ``ARTIFACT_CONSUMERS``: the
 program crate in the set rebuilds the program first (``make program``) and
@@ -351,13 +353,14 @@ def test_seeds(
         owner = owning_package(path, root)
         return owner.name if owner and owner.dir in members else None
 
+    # Scanned for every path, `.rs` included: market-data's roster tests
+    # `include_str!` the maker-bot's `config.rs`, a crate they do not depend
+    # on, so the graph alone would miss them.
+    if fixtures is None and paths:
+        if tracked is None:
+            tracked = tracked_rust_files(root)
+        fixtures = review_diff.rust_test_fixtures(sorted(tracked), Path(root))
     for path in paths:
-        # Scanned once, and only for a non-Rust path: the fixtures in this
-        # tree are data files, never another crate's source.
-        if fixtures is None and not path.endswith(".rs"):
-            fixtures = review_diff.rust_test_fixtures(
-                sorted(tracked_rust_files(root)), Path(root)
-            )
         if review_diff.rust_is_reachable([path]):
             own = owner_name(path)
             if own is None:
@@ -372,24 +375,6 @@ def test_seeds(
                     return WORKSPACE
                 names.add(name)
     return sorted(names)
-
-
-def affected(
-    files: list[str],
-    root: str,
-    metadata: dict | None,
-    tracked: set[str] | None = None,
-    fixtures: dict[str, list[str]] | None = None,
-) -> list[str] | None:
-    """The affected set for ``files``: ``test_seeds`` widened by
-    ``affected_closure``. ``WORKSPACE`` when ``metadata`` is ``None``, since
-    no graph means no safe narrowing."""
-    seeds = test_seeds(files, root, tracked, fixtures)
-    if not seeds:
-        return seeds
-    if metadata is None:
-        return WORKSPACE
-    return affected_closure(seeds, metadata)
 
 
 def artifact_builds(packages: list[str] | None) -> list[list[str]]:
@@ -410,10 +395,14 @@ def scope_flags(packages: list[str] | None) -> str:
 
 def changed_paths(root: str) -> list[str]:
     """``lint_paths.changed_files`` with deleted paths kept: the merge-base
-    diff with ``origin/main`` plus untracked-not-ignored paths."""
+    diff with ``origin/main`` plus untracked-not-ignored paths.
+
+    ``--no-renames`` keeps a move's source side too: rename detection would
+    list only the destination, and the crate a file left would go untested.
+    """
     base = lint_paths.merge_base(root, lint_paths.DEFAULT_BASE)
     tracked = subprocess.run(
-        ["git", "diff", "--name-only", "-z", base, "--"],
+        ["git", "diff", "--name-only", "--no-renames", "-z", base, "--"],
         capture_output=True,
         text=True,
         check=True,

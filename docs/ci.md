@@ -299,15 +299,17 @@ cover the crates that use a change, not just the crate that holds it.
 `cargo_scope.py test` takes the crates that own the changed files and adds
 every workspace crate that depends on them, transitively, over normal, dev
 and build edges, read from the `cargo metadata` resolve graph. A changed
-data file seeds the crate of any Rust test that reads it, using the fixture
-scan `review_diff.py` already runs. A Rust-reachable path that no member
+file that a Rust test reads seeds that test's crate, using the fixture scan
+`review_diff.py` already runs. This holds for a data file and for another
+crate's `.rs` source alike: `market-data`'s roster tests read the maker-bot
+config this way. A Rust-reachable path that no member
 owns, such as `Cargo.lock` or `rust-toolchain.toml`, gives the whole
 workspace. Two refinements sit in the tool's `ARTIFACT_CONSUMERS` table,
 since the graph cannot see them: the program crate in the set runs
 `make program` first and brings in every crate whose tests load the `.so`.
-No Rust-reachable change means no cargo call at all, so a docs-only or
-frontend-only branch never waits on the cargo pool's lock. Each scoped call
-carries the workspace's resolved features, as the lint does, so
+A branch with no Rust-reachable change and no fixture hit makes no cargo
+call at all, so a docs-only branch never waits on the cargo pool's lock.
+Each scoped call carries the workspace's resolved features, as the lint does, so
 feature-gated tests still run. A set that covers every member runs
 `make program` and `cargo test`, the full suite exactly.
 
