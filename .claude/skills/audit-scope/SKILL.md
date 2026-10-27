@@ -96,13 +96,18 @@ explore sessions: temporary worktree, no PR". Don't restate
 them here. A non-audit explore session's filed tasks stage under
 `Session pending` through `ratify-staged`, as an architect's do.
 
-Three duties this skill owns directly:
+Four duties this skill owns directly:
 
 - **A findings or spec file is never the only copy** —
   durable state is the filed issue. Writer body files
   (`<scratchpad>/finding-N.md`, a rotation's
   `part-N.md`) are transient input, not
   findings state.
+- **A findings file passes
+  `python3 .claude/tools/spec_markers.py <file>` before any
+  draft of it is announced**, ratification included —
+  its open items listed at the top and marked inline, both,
+  per the `architect` skill's marker rule.
 - **The audit issue stays In Progress while the findings
   loop is open**, and reaches Done only at ratification
   plus fold. Marking it Done at the handoff is the measured
