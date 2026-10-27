@@ -43,8 +43,10 @@ printenv LINEAR_ASSIGNEE_ID
 **1. Read the digest once, whole.** It is the fold's entire input and
 is bounded by construction (three rows per ranked list per session),
 so this is the planned multi-region read the context-economy
-convention licenses. Read the day header (flagged figures, flagged CI
-lines), then every session block: its top sinks, largest results,
+convention licenses. Read the day header (its flagged list), the
+`## CI` section (the merge queue's runs and jobs; a flagged CI line
+also joins the header's list), then every block under `## Sessions`:
+its top sinks, largest results,
 resident-prose share, hardening candidates with their cost kind, and
 its **Session account** — the session's own statement of what it
 would change, which says *why* where the numbers say *where*. A block
