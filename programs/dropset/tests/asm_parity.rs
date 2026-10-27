@@ -40,7 +40,7 @@
 //! Those structural guards are asm-only (they keep the market at a static
 //! input offset) and are intentionally not part of the parity contract —
 //! see the architecture spec's **SetReferencePrice**. Their codes are real
-//! `DropsetError` variants (`QuoteWrite*`, 6058-6061, pinned in
+//! `DropsetError` variants (`QuoteWrite*`, pinned to the enum in
 //! `quote_write.rs`), while the reference build surfaces anchor's
 //! constraint codes (2xxx) for the same inputs: parity there is a mapping,
 //! never an equality.

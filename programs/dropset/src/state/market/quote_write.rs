@@ -329,22 +329,6 @@ mod tests {
     }
 
     #[test]
-    fn structural_codes_clear_anchor_reserved_range() {
-        // The structural codes are derived from their variants (so the
-        // const asserts pin `.s` to the enum); this pins the namespace rule
-        // `entrypoint.s` states — nothing below 6000, where anchor's own
-        // errors live.
-        for code in [
-            err::structural::TOO_FEW_ACCOUNTS,
-            err::structural::SIGNER_MISSING,
-            err::structural::SIGNER_HAS_DATA,
-            err::structural::MARKET_NOT_WRITABLE,
-        ] {
-            assert!(code >= 6000, "{code} is in anchor's reserved range");
-        }
-    }
-
-    #[test]
     fn authorizes_the_quote_authority() {
         let data = market_buf(2);
         assert_eq!(

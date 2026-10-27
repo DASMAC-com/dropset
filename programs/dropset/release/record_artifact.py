@@ -12,7 +12,8 @@ Run by ``make program-mainnet`` on the artifact it has just built:
    ``sha256sum -c`` (or ``shasum -a 256 -c``) re-checks it.
 3. Writes ``<artifact>.provenance.json``: the hash, the ``e_flags``
    value, the byte size, and the git commit the build ran at, with a
-   ``dirty`` flag when the tree had uncommitted changes.
+   ``dirty`` flag when the tree had uncommitted changes or untracked,
+   non-ignored files.
 
 It never carries an *expected* hash: it records what was built, so an
 upgrade changes nothing here. Tying the on-chain bytes to the recorded
