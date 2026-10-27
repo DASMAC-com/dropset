@@ -360,7 +360,8 @@ class EachWorktreeGetsItsLane(CargoPoolHarness):
 
     def test_a_new_session_inherits_its_worktree_s_pool_and_the_tab_reverts(self):
         """`_ds_session` launches from the base checkout; a stub `claude`
-        prints the pool it inherited, then the tab's own pool is read back."""
+        prints the pool it inherited and fails, then the session's status and
+        the tab's own pool are read back."""
         probe = (
             'print -r -- "$CARGO_TARGET_DIR"; print -r -- "$RUSTC_WORKSPACE_WRAPPER"'
         )
@@ -377,8 +378,8 @@ class EachWorktreeGetsItsLane(CargoPoolHarness):
         pin = (
             stubs
             + '_ds_base() { cd "$_DS_REPO"; }; '
-            + "claude() { %s; }; " % probe
-            + "_ds_session sid name '' model 2261; "
+            + "claude() { %s; return 5; }; " % probe
+            + "_ds_session sid name '' model 2261; print -r -- $?; "
         )
         wt = self._wt("2261")
         self.assertEqual(
@@ -392,6 +393,7 @@ class EachWorktreeGetsItsLane(CargoPoolHarness):
             (
                 self._lane(1),
                 str(wt / WRAPPER),
+                "5",
                 self._lane(0),
                 str(self.base / WRAPPER),
             ),

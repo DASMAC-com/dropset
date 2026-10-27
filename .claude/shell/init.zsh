@@ -66,10 +66,11 @@ fi
 
 # THE CARGO POOL: every cargo in a dropset checkout — the base repo or any
 # worktree under it — shares one of a few build directories (the lanes, below)
-# and asks for at most the cores minus two. A `chpwd` hook, not a lazy call like `_ds_secrets`, because the
-# point is that every shell in a checkout has it — a plain tab, a session, and
-# every Bash command a session's agent runs (the verbs `cd` into the repo before
-# launching, so the client inherits it) — with no Makefile in the loop.
+# and asks for at most the cores minus two. A `chpwd` hook, not a lazy call
+# like `_ds_secrets`, because the point is that every shell in a checkout has
+# it — a plain tab, a session, and every Bash command a session's agent runs
+# (the launcher evaluates it for the session's worktree, so the client inherits
+# it) — with no Makefile in the loop.
 # Unbounded, each worktree's cargo planned for the whole machine and kept its
 # own 20–30 GB target/ tree; shared, dependencies compile once, cargo's lock on
 # the directory makes concurrent builds take turns, and the job bound caps
@@ -789,7 +790,7 @@ _ds_session() {
     # `-w` enters the worktree inside the CLI, where no `chpwd` fires, so the
     # cargo pool is evaluated for it here; otherwise the session inherits the
     # base checkout's lane and per-checkout keys. A worded tag's worktree does
-    # not exist yet (the CLI creates it), so its session still does. The
+    # not exist yet (the CLI creates it), so its session keeps the base keys. The
     # `always` hands the tab back its own values however the launch ends.
     wt_dir="$_DS_REPO/.claude/worktrees/$worktree"
     [[ -n "$worktree" && -d "$wt_dir" ]] && _ds_cargo_pool "$wt_dir"
