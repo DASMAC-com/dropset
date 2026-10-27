@@ -1,4 +1,5 @@
 // cspell:word AGENTC
+// cspell:word EINVAL
 //! A [`Signer`] backed by an SSH agent — the 1Password SSH agent in
 //! practice — so a Solana private key can sign without ever leaving the
 //! agent's process.
@@ -13,21 +14,25 @@
 //! its public half) fails loudly instead of producing a transaction the
 //! cluster rejects.
 //!
-//! The client speaks the three messages it needs of the agent protocol
-//! (draft-miller-ssh-agent: request-identities, sign-request, and their
-//! answers) over the Unix socket, one connection per request. Discovery
-//! follows the order SSH itself would use, then 1Password's own paths
-//! (see [`candidate_sockets`]); an explicit socket overrides all of them.
+//! The client speaks only the two requests it needs of the agent protocol
+//! (draft-miller-ssh-agent: request-identities and sign-request), their
+//! answers and the failure reply, over the Unix socket, one connection per
+//! request. Discovery follows the order SSH itself would use, then
+//! 1Password's own paths (see [`candidate_sockets`]); an explicit socket
+//! overrides all of them. A socket listing a key is not proof it holds it:
+//! one that lies wins discovery and then fails every signature, which
+//! verification turns into an error, never a bad signature.
 //!
 //! Not yet wired into the cockpit.
 
 use std::ffi::OsString;
-use std::io::{Read, Write};
+use std::fmt;
+use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use solana_pubkey::Pubkey;
 use solana_signature::Signature;
 use solana_signer::{Signer, SignerError};
@@ -46,11 +51,13 @@ const AGENT_SIGN_RESPONSE: u8 = 14;
 const MAX_MESSAGE: usize = 256 * 1024;
 const ED25519: &[u8] = b"ssh-ed25519";
 
-/// How long an identity listing may take. It never prompts.
+/// How long an identity listing's reply may take, in total. It never prompts.
 const LIST_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long a sign request may take — long enough for the operator to read
-/// the approval prompt and answer it.
+/// How long a sign request's reply may take, in total — long enough for the
+/// operator to read the approval prompt and answer it.
 const SIGN_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long writing any request may take; the agent reads before it prompts.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// 1Password's team id, which prefixes its macOS group-container path.
 const OP_GROUP_CONTAINER: &str = "2BUA8C4S2C.com.1password";
@@ -84,8 +91,8 @@ impl Identity {
 }
 
 /// The wire-format public-key blob for an Ed25519 address.
-pub fn ed25519_blob(pubkey: &Pubkey) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(51);
+fn ed25519_blob(pubkey: &Pubkey) -> Vec<u8> {
+    let mut blob = Vec::with_capacity(4 + ED25519.len() + 4 + 32);
     put_string(&mut blob, ED25519);
     put_string(&mut blob, pubkey.as_ref());
     blob
@@ -94,7 +101,8 @@ pub fn ed25519_blob(pubkey: &Pubkey) -> Vec<u8> {
 /// The agent sockets to try, in order: `$SSH_AUTH_SOCK` (what SSH uses),
 /// then `~/.1password/agent.sock` (the symlink 1Password's docs set up),
 /// then the socket 1Password itself creates in its macOS group container.
-/// Missing entries are skipped; duplicates are kept out.
+/// Unset or empty entries are skipped and duplicates kept out; whether a
+/// socket exists is left to the connect.
 pub fn candidate_sockets(ssh_auth_sock: Option<OsString>, home: Option<PathBuf>) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut push = |p: PathBuf| {
@@ -183,7 +191,7 @@ impl AgentSigner {
             }
         }
         if tried.is_empty() {
-            bail!("no SSH agent socket to try (SSH_AUTH_SOCK and HOME unset)");
+            bail!("no SSH agent socket to try");
         }
         bail!("no SSH agent serves {pubkey}:\n  {}", tried.join("\n  "))
     }
@@ -198,8 +206,15 @@ impl AgentSigner {
         put_string(&mut req, &ed25519_blob(&self.pubkey));
         put_string(&mut req, message);
         req.extend_from_slice(&0u32.to_be_bytes()); // flags: none apply to Ed25519
-        let reply = request(&self.socket, &req, SIGN_TIMEOUT)
-            .map_err(|e| SignerError::Connection(format!("{e:#}")))?;
+        let reply = request(&self.socket, &req, SIGN_TIMEOUT).map_err(|e| match e {
+            RequestError::Connect(m) => SignerError::Connection(m),
+            // How 1Password answers a declined prompt (a failure reply or a
+            // closed socket) is unmeasured, so both read as a cancel.
+            RequestError::NoAnswer(m) => {
+                SignerError::UserCancel(format!("{m} (prompt declined or not answered?)"))
+            }
+            RequestError::Frame(m) => SignerError::Protocol(m),
+        })?;
         let protocol = |e: anyhow::Error| SignerError::Protocol(format!("{e:#}"));
         let mut r = Reader::new(&reply);
         match r.byte().map_err(protocol)? {
@@ -253,25 +268,92 @@ impl Signer for AgentSigner {
     }
 }
 
-/// Send one framed request and read one framed reply.
-fn request(socket: &Path, payload: &[u8], timeout: Duration) -> Result<Vec<u8>> {
-    let mut stream =
-        UnixStream::connect(socket).with_context(|| format!("connect {}", socket.display()))?;
-    stream.set_read_timeout(Some(timeout))?;
-    stream.set_write_timeout(Some(LIST_TIMEOUT))?;
-    let mut framed = Vec::with_capacity(4 + payload.len());
-    put_string(&mut framed, payload);
-    stream.write_all(&framed).context("write agent request")?;
-    read_frame(&mut stream).context("read agent reply")
+/// Why one agent round trip failed, kept apart so a signer can tell a dead
+/// socket from an unanswered request from a malformed reply.
+#[derive(Debug)]
+enum RequestError {
+    /// Connecting or writing failed: no agent there, or it went away.
+    Connect(String),
+    /// The agent hung up, or ran out the deadline, before replying.
+    NoAnswer(String),
+    /// The reply was not a well-formed frame.
+    Frame(String),
 }
 
-/// One length-prefixed agent message.
-fn read_frame(stream: &mut impl Read) -> Result<Vec<u8>> {
+impl fmt::Display for RequestError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Connect(m) | Self::NoAnswer(m) | Self::Frame(m) => f.write_str(m),
+        }
+    }
+}
+
+impl std::error::Error for RequestError {}
+
+/// Send one framed request and read one framed reply within `timeout`.
+fn request(socket: &Path, payload: &[u8], timeout: Duration) -> Result<Vec<u8>, RequestError> {
+    let at = socket.display();
+    let connect = |what: &str, e: io::Error| RequestError::Connect(format!("{what} {at}: {e}"));
+    let mut stream = UnixStream::connect(socket).map_err(|e| connect("connect", e))?;
+    stream
+        .set_write_timeout(Some(WRITE_TIMEOUT))
+        .map_err(|e| connect("configure", e))?;
+    let mut framed = Vec::with_capacity(4 + payload.len());
+    put_string(&mut framed, payload);
+    stream
+        .write_all(&framed)
+        .map_err(|e| connect("write to", e))?;
+    let mut reader = Deadline {
+        stream: &mut stream,
+        until: Instant::now() + timeout,
+    };
+    read_frame(&mut reader).map_err(|e| match e.kind() {
+        io::ErrorKind::InvalidData => RequestError::Frame(format!("reply from {at}: {e}")),
+        io::ErrorKind::UnexpectedEof | io::ErrorKind::ConnectionReset => {
+            RequestError::NoAnswer(format!("{at} hung up without replying"))
+        }
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock => {
+            RequestError::NoAnswer(format!("{at} did not reply within {}s", timeout.as_secs()))
+        }
+        _ => connect("read from", e),
+    })
+}
+
+/// Reads that share one deadline. A read timeout alone bounds each `read`
+/// call, so an agent trickling a byte at a time could stretch a reply
+/// without end; this re-arms the timeout with only the time left.
+struct Deadline<'a> {
+    stream: &'a mut UnixStream,
+    until: Instant,
+}
+
+impl Read for Deadline<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let left = self.until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        match self.stream.set_read_timeout(Some(left)) {
+            // macOS refuses the option once the peer has closed (EINVAL); a
+            // closed peer cannot stall the read, which returns what is
+            // buffered or EOF at once.
+            Err(e) if e.raw_os_error() == Some(libc::EINVAL) => {}
+            r => r?,
+        }
+        self.stream.read(buf)
+    }
+}
+
+/// One length-prefixed agent message; a length out of range is `InvalidData`.
+fn read_frame(stream: &mut impl Read) -> io::Result<Vec<u8>> {
     let mut len = [0u8; 4];
     stream.read_exact(&mut len)?;
     let len = u32::from_be_bytes(len) as usize;
     if len == 0 || len > MAX_MESSAGE {
-        bail!("agent message length {len} out of range");
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("agent message length {len} out of range"),
+        ));
     }
     let mut buf = vec![0u8; len];
     stream.read_exact(&mut buf)?;
@@ -328,7 +410,7 @@ mod tests {
     use std::os::unix::net::UnixListener;
     use std::thread::JoinHandle;
 
-    /// How a fake agent answers a sign request.
+    /// How a fake agent answers.
     #[derive(Clone, Copy)]
     enum Answer {
         Sign,
@@ -336,6 +418,10 @@ mod tests {
         /// Sign the message with one byte flipped — a signature that does not
         /// verify over what was asked.
         Corrupt,
+        /// Close the connection without replying to anything.
+        HangUp,
+        /// Refuse identity listings (answer `SSH_AGENT_FAILURE`).
+        RefuseList,
     }
 
     /// A fake agent serving `keys` (plus an RSA-typed identity it never signs
@@ -355,6 +441,9 @@ mod tests {
                 for _ in 0..connections {
                     let (mut s, _) = listener.accept().unwrap();
                     let req = read_frame(&mut s).unwrap();
+                    if matches!(answer, Answer::HangUp) {
+                        continue;
+                    }
                     let reply = respond(&keys, answer, &req);
                     let mut framed = Vec::new();
                     put_string(&mut framed, &reply);
@@ -393,6 +482,9 @@ mod tests {
     fn respond(keys: &[Keypair], answer: Answer, req: &[u8]) -> Vec<u8> {
         let mut r = Reader::new(req);
         match r.byte().unwrap() {
+            AGENTC_REQUEST_IDENTITIES if matches!(answer, Answer::RefuseList) => {
+                vec![AGENT_FAILURE]
+            }
             AGENTC_REQUEST_IDENTITIES => {
                 let mut ids = vec![rsa_identity()];
                 ids.extend(keys.iter().map(|k| Identity {
@@ -418,7 +510,7 @@ mod tests {
                 match answer {
                     Answer::Refuse => return vec![AGENT_FAILURE],
                     Answer::Corrupt => data[0] ^= 1,
-                    Answer::Sign => {}
+                    Answer::Sign | Answer::HangUp | Answer::RefuseList => {}
                 }
                 let mut sig = Vec::new();
                 put_string(&mut sig, ED25519);
@@ -553,5 +645,46 @@ mod tests {
             signer.try_sign_message(b"msg"),
             Err(SignerError::Connection(_))
         ));
+    }
+
+    #[test]
+    fn a_hang_up_is_a_user_cancel_not_a_connection_error() {
+        let key = Keypair::new();
+        let agent = FakeAgent::spawn(vec![key.insecure_clone()], Answer::HangUp, 1);
+        let signer = AgentSigner {
+            socket: agent.path.clone(),
+            pubkey: key.pubkey(),
+        };
+        match signer.try_sign_message(b"msg") {
+            Err(SignerError::UserCancel(m)) => assert!(m.contains("hung up"), "{m}"),
+            other => panic!("expected a user cancel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_refused_listing_is_recorded_and_skipped() {
+        let key = Keypair::new();
+        let refusing = FakeAgent::spawn(vec![key.insecure_clone()], Answer::RefuseList, 1);
+        let serving = FakeAgent::spawn(vec![key.insecure_clone()], Answer::Sign, 1);
+        let signer = AgentSigner::connect_among(
+            key.pubkey(),
+            &[refusing.path.clone(), serving.path.clone()],
+        )
+        .unwrap();
+        assert_eq!(signer.socket(), serving.path);
+        let lonely = FakeAgent::spawn(vec![key.insecure_clone()], Answer::RefuseList, 1);
+        let err = AgentSigner::connect_among(key.pubkey(), std::slice::from_ref(&lonely.path))
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("refused to list"), "{err:#}");
+    }
+
+    #[test]
+    fn a_frame_length_out_of_range_is_invalid_data() {
+        for len in [0u32, MAX_MESSAGE as u32 + 1] {
+            let mut bytes = len.to_be_bytes().to_vec();
+            bytes.extend_from_slice(&[0; 8]);
+            let err = read_frame(&mut bytes.as_slice()).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData, "len {len}");
+        }
     }
 }

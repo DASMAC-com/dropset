@@ -11,8 +11,9 @@
 //! agent serving `<address>`, funds the address from the localnet faucet,
 //! and sends 0.001 SOL to a fresh throwaway address, signed through
 //! the agent — one approval prompt — then verifies the signature and
-//! confirms the transaction. Localnet only: the default RPC is
-//! `http://127.0.0.1:8899`, and the faucet refuses anywhere else.
+//! confirms the transaction. Meant for localnet, the default RPC
+//! (`http://127.0.0.1:8899`). Mainnet has no faucet, so the funding step fails
+//! there, but a devnet or testnet `--rpc-url` does fund and send for real.
 
 use std::path::PathBuf;
 
@@ -59,7 +60,8 @@ fn main() -> Result<()> {
                     let key = id
                         .ed25519_pubkey()
                         .map_or_else(|| "(not Ed25519)".to_string(), |p| p.to_string());
-                    println!("  {} {key} {:?}", id.key_type(), id.comment);
+                    // Debug-escaped: both strings are the agent's bytes.
+                    println!("  {:?} {key} {:?}", id.key_type(), id.comment);
                 }
             }
             Err(e) => println!("  unavailable: {e:#}"),
@@ -69,7 +71,8 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let address = address.context("usage: agent_transfer <address> [--socket p] [--list]")?;
+    let address = address
+        .context("usage: agent_transfer <address> [--socket <path>] [--rpc-url <url>] [--list]")?;
     let signer = AgentSigner::connect_among(address, &candidates)?;
     println!("signer {address} via {}", signer.socket().display());
 

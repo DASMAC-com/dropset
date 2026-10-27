@@ -20,9 +20,11 @@ checkout), then converts the keygen JSON array to two files, each mode
 The keygen JSON is deleted, so no other key-file form is left behind.
 
 ``convert <file>`` writes the ``.key`` form for a keypair that already
-exists: the file (or ``-`` for stdin) holds the 128-hex form, the JSON
-byte array, or the base58 form. A hex keypair cannot be pasted into an
-SSH Key item as it is; this is why the converter exists.
+exists, into the same output directory as ``grind`` (never beside its
+input, which may sit in a checkout): the file (or ``-`` for stdin) holds
+the 128-hex form, the JSON byte array, or the base58 form. A hex keypair
+cannot be pasted into an SSH Key item as it is; this is why the
+converter exists.
 
 Both print only the public key, the SSH public-key line and the output
 paths; the secret is never printed or logged. Neither checks that the
@@ -78,7 +80,10 @@ def parse_keypair(text: str) -> bytes:
     """Decode a 64-byte keypair from its JSON, hex or base58 form."""
     text = text.strip()
     if text.startswith("["):
-        keypair = bytes(json.loads(text))
+        try:
+            keypair = bytes(json.loads(text))
+        except (TypeError, ValueError):
+            raise ValueError("keypair JSON is not a byte array") from None
     elif len(text) == 2 * KEYPAIR_LEN and all(
         c in "0123456789abcdefABCDEF" for c in text
     ):
@@ -237,15 +242,13 @@ def cmd_grind(args: argparse.Namespace) -> list[Path]:
 
 
 def cmd_convert(args: argparse.Namespace) -> list[Path]:
-    if args.keypair == "-":
-        text = sys.stdin.read()
-        out_dir = args.out_dir or DEFAULT_OUT_DIR
-    else:
-        text = Path(args.keypair).read_text()
-        out_dir = args.out_dir or Path(args.keypair).resolve().parent
+    # The output defaults to DEFAULT_OUT_DIR, never beside the input: that
+    # can be inside a checkout, and prepare_out_dir changes the directory's
+    # mode.
+    text = sys.stdin.read() if args.keypair == "-" else Path(args.keypair).read_text()
     keypair = parse_keypair(text)
-    prepare_out_dir(out_dir)
-    return [write_ssh_key_file(out_dir, keypair)]
+    prepare_out_dir(args.out_dir)
+    return [write_ssh_key_file(args.out_dir, keypair)]
 
 
 def main() -> int:
@@ -271,8 +274,8 @@ def main() -> int:
     p_convert.add_argument(
         "--out-dir",
         type=Path,
-        help="output directory (default: beside the input file; "
-        f"{DEFAULT_OUT_DIR} for stdin)",
+        default=DEFAULT_OUT_DIR,
+        help=f"output directory (default: {DEFAULT_OUT_DIR})",
     )
     p_convert.set_defaults(run=cmd_convert)
 

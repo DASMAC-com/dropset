@@ -134,7 +134,14 @@ class ParseKeypairTest(unittest.TestCase):
             self.assertEqual(grind_key.parse_keypair(text), self.keypair)
 
     def test_rejects_wrong_length_and_junk(self):
-        for text in (self.keypair[:32].hex(), "[1, 2, 3]", "not-a-key!"):
+        for text in (
+            self.keypair[:32].hex(),
+            "[1, 2, 3]",
+            "not-a-key!",
+            '["a"]',
+            "[1.5]",
+            "[[1]]",
+        ):
             with self.assertRaises(ValueError):
                 grind_key.parse_keypair(text)
 
@@ -238,14 +245,37 @@ class GrindTest(unittest.TestCase):
 
 
 class ConvertTest(unittest.TestCase):
-    def test_writes_the_key_beside_the_input(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            src = Path(tmp) / "in.hex"
+    def test_writes_the_key_to_the_out_dir_not_beside_the_input(self):
+        with (
+            tempfile.TemporaryDirectory() as src_dir,
+            tempfile.TemporaryDirectory() as out,
+        ):
+            src = Path(src_dir) / "in.hex"
             src.write_text(bytes(json.loads(FIXTURE.read_text())).hex())
-            args = mock.Mock(keypair=str(src), out_dir=None)
+            src_mode = stat.S_IMODE(Path(src_dir).stat().st_mode)
+            args = mock.Mock(keypair=str(src), out_dir=Path(out))
             [path] = grind_key.cmd_convert(args)
-            self.assertEqual(path, src.resolve().parent / f"{FIXTURE_PUBKEY}.key")
+            self.assertEqual(path, Path(out) / f"{FIXTURE_PUBKEY}.key")
             self.assertTrue(path.exists())
+            self.assertEqual([p.name for p in Path(src_dir).iterdir()], ["in.hex"])
+            self.assertEqual(stat.S_IMODE(Path(src_dir).stat().st_mode), src_mode)
+
+    def test_the_default_out_dir_is_grinds(self):
+        seen = []
+
+        def fake_convert(args):
+            seen.append(args.out_dir)
+            return [Path(f"{FIXTURE_PUBKEY}.key")]
+
+        argv = ["grind_key.py", "convert", "-"]
+        with (
+            mock.patch.object(grind_key.sys, "argv", argv),
+            mock.patch.object(grind_key, "cmd_convert", fake_convert),
+            mock.patch.object(grind_key.Path, "stat"),
+            mock.patch("builtins.print"),
+        ):
+            grind_key.main()
+        self.assertEqual(seen, [grind_key.DEFAULT_OUT_DIR])
 
 
 if __name__ == "__main__":
