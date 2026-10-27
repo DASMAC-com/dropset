@@ -13,6 +13,16 @@ on, memory, load, swap. One bare call reads all of it::
     python3 .claude/tools/machine_load.py --sessions 3 --class building
     python3 .claude/tools/machine_load.py --json
     python3 .claude/tools/machine_load.py --sample
+    python3 .claude/tools/machine_load.py --json --sample --record <path>
+
+``--record`` appends one compact JSON line to a session's launch record,
+``sessions/<id>.load`` (the launcher's, on every create and every resume, so
+resumes accumulate): the time, the class, the build queue, memory in use and
+compressed, ``load1``, the building and free session counts, the lane count
+(``DS_CARGO_LANES``, the pool's default 2 when unset; null when not a
+number) and the verdict for the class. A launch
+with no reading still appends a ``no-reading`` line. The digest's wait
+section reads them (``wait_ledger.py``).
 
 The reading is three commands and one targeted read, no sampling loop:
 ``vm_stat``; ``sysctl -n vm.loadavg hw.ncpu hw.memsize vm.swapusage
@@ -86,6 +96,9 @@ GIB = 1024**3
 STATE_DIR = Path(".claude") / "session-substrate"
 WORKTREE_SEGMENT = "/.claude/worktrees/"
 SAMPLE_LOG = "fleet-load.log"
+# The cargo pool's lane count when `DS_CARGO_LANES` is unset — the default
+# `_ds_cargo_pool` in `.claude/shell/init.zsh` applies.
+DEFAULT_LANES = 2
 
 STEPS = ("clippy", "doc", "test", "nextest", "build", "check", "run")
 COMPILERS = ("rustc", "rustdoc", "clippy-driver")
@@ -637,6 +650,47 @@ def sample_line(r: Reading, now: datetime) -> str:
     )
 
 
+def record_line(
+    r: Reading | None, k: Knobs | None, cls: str, now: datetime, env, error: str = ""
+) -> str:
+    """One launch record: the reading a session started or resumed under, as
+    one compact JSON line for its ``sessions/<id>.load``. A no-reading launch
+    still leaves a line, so a gap in the record is never silent."""
+    lanes = env.get("DS_CARGO_LANES") or str(DEFAULT_LANES)
+    rec: dict = {
+        "at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "class": cls,
+        "lanes": int(lanes) if lanes.isdecimal() else None,
+    }
+    if r is None or k is None:
+        return json.dumps(
+            {**rec, "status": "no-reading", "error": error}, separators=(",", ":")
+        )
+    slots, reasons = verdict(r, k, cls)
+    longest = r.queue.longest
+    rec.update(
+        {
+            "status": COLOUR[status(slots, 1)].lower(),
+            "queue_building": len(r.queue.building),
+            "queue_waiting": len(r.queue.waiting),
+            "longest_wait_s": longest.elapsed_s if longest else 0,
+            "in_use": r.memory.in_use,
+            "compressed": r.memory.compressed,
+            "load1": r.sysctl.load1,
+            "building": r.sessions.building,
+            "free": r.sessions.free,
+            "verdict": {"slots": slots, "reasons": reasons},
+        }
+    )
+    return json.dumps(rec, separators=(",", ":"))
+
+
+def append_record(path: Path, line: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as out:
+        out.write(line + "\n")
+
+
 def default_state_dir() -> Path:
     """The base checkout's substrate directory, from this file's checkout."""
     checkout = str(Path(__file__).resolve().parents[2])
@@ -663,6 +717,16 @@ def no_reading(reason: str, as_json: bool) -> int:
     return NO_READING
 
 
+def _record_no_reading(opts, now: datetime, env, reason: str) -> None:
+    if opts.record:
+        try:
+            append_record(
+                opts.record, record_line(None, None, opts.cls, now, env, reason)
+            )
+        except OSError:
+            pass
+
+
 def main(argv: list[str] | None = None, runner: Runner = run, env=None) -> int:
     parser = _Parser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="print the fields as JSON")
@@ -674,31 +738,50 @@ def main(argv: list[str] | None = None, runner: Runner = run, env=None) -> int:
         "--sample", action="store_true", help="append one line to the fleet log"
     )
     parser.add_argument("--state-dir", type=Path, default=None)
+    parser.add_argument(
+        "--record",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="append the launch record line to PATH (a session's .load)",
+    )
     opts = parser.parse_args(argv)
     asked_given = opts.sessions is not None
     asked = opts.sessions if asked_given else 1
     if asked < 1:
         parser.error("--sessions must be at least 1")
     state_dir = opts.state_dir or default_state_dir()
+    env = os.environ if env is None else env
+    now = datetime.now(timezone.utc)
     try:
         if platform.system() != "Darwin" and runner is run:
             raise NoReading(f"not Darwin ({platform.system()})")
         reading = read_machine(runner, state_dir)
-        knobs = read_knobs(os.environ if env is None else env, reading.memory.physical)
+        knobs = read_knobs(env, reading.memory.physical)
         slots, _ = verdict(reading, knobs, opts.cls)
         out = (
             json.dumps(as_json(reading, knobs, opts.cls, asked), indent=2)
             if opts.json
             else render(reading, knobs, opts.cls, asked, asked_given)
         )
-        if opts.sample:
-            state_dir.mkdir(parents=True, exist_ok=True)
-            with open(state_dir / SAMPLE_LOG, "a") as log:
-                log.write(sample_line(reading, datetime.now(timezone.utc)) + "\n")
     except NoReading as exc:
+        _record_no_reading(opts, now, env, str(exc))
         return no_reading(str(exc), opts.json)
     except Exception as exc:  # noqa: BLE001 — a crash must not exit 1 (AMBER)
+        _record_no_reading(opts, now, env, f"{type(exc).__name__}: {exc}")
         return no_reading(f"{type(exc).__name__}: {exc}", opts.json)
+    # After the reading, not inside it: a log that cannot be written is a
+    # warning, never a no-reading verdict on a reading that succeeded.
+    writes = []
+    if opts.sample:
+        writes.append((state_dir / SAMPLE_LOG, sample_line(reading, now)))
+    if opts.record:
+        writes.append((opts.record, record_line(reading, knobs, opts.cls, now, env)))
+    for path, line in writes:
+        try:
+            append_record(path, line)
+        except OSError as exc:
+            print(f"machine-load: could not append to {path}: {exc}", file=sys.stderr)
     print(out)
     return status(slots, asked)
 

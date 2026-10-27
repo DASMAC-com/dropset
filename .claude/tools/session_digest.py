@@ -45,6 +45,12 @@ prior week's median, per-job growth, the entries not all-green, and waiting
 apart from running. When GitHub cannot be read the section says so and the
 digest still writes; a flagged CI line joins the header's flagged list.
 
+**The wait section** follows it (``wait_ledger.py``): the day's ranked wait
+dimensions in hours, fleet build wait by target, CI wait, the fleet log's
+queue profile by hour, and the launch records' figures (``sessions/<id>.load``)
+— then the ranked causes written for the fold analyst, each with its hours,
+its median per session and a ``wait:<dimension>:<cause>`` fingerprint.
+
 Stdout is one JSON line — sessions, dollars, flagged lines, digest path — the
 line upkeep's ``digest`` step reports. Stdlib only; a Python skill-tool under
 ``.claude/tools/``, deliberately not a Cargo workspace member. Tests live in
@@ -65,7 +71,9 @@ from pathlib import Path
 
 import ci_metrics
 import fleet_cost
+import machine_load
 import session_metrics as sm
+import wait_ledger
 
 # Relative to the base checkout, git-ignored with the rest of `.claude/`
 # machine state. The purge prunes `digest-*` files here on the transcripts' age
@@ -664,9 +672,11 @@ def render(
     history: list[dict],
     calibration: dict | None,
     ci: dict | None = None,
+    wait: list[str] | None = None,
 ) -> tuple[str, list[str]]:
     """The digest's Markdown and its flagged lines; ``ci`` is the
-    :func:`ci_report` (``None`` when not requested)."""
+    :func:`ci_report` (``None`` when not requested) and ``wait`` the
+    :func:`wait_ledger.digest_section` lines."""
     flags: list[str] = []
     out = [f"# Session digest — {date}", ""]
     out += calibration_lines(calibration, flags)
@@ -737,6 +747,8 @@ def render(
     out.append("")
     out += ci_lines
     out.append("")
+    if wait is not None:
+        out += ["## Wait", "", *wait, ""]
     out.append("## Sessions")
     out.append("")
     for s in sorted(sessions, key=lambda s: -(s.window_dollars or 0.0)):
@@ -764,6 +776,29 @@ def ci_report(
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
+def wait_section(
+    base: Path,
+    sessions: list[SessionDigest],
+    since: str,
+    until: str,
+    ci: dict | None = None,
+) -> tuple[list[str], dict]:
+    """The wait section over the window: every session's ledger (already
+    windowed by the aggregation), the launch records beside the estimates,
+    and the fleet log's queue profile. A missing log is no samples."""
+    log = base / sm.SUBSTRATE_DIR / machine_load.SAMPLE_LOG
+    try:
+        log_text = log.read_text("utf-8")
+    except OSError:
+        log_text = ""
+    return wait_ledger.digest_section(
+        [s.report.get("wait", []) for s in sessions],
+        wait_ledger.read_load_records(base / ESTIMATE_DIR, since, until),
+        wait_ledger.queue_profile(log_text, since, until),
+        ci,
+    )
+
+
 def to_twin(
     date: str,
     since: str,
@@ -771,17 +806,19 @@ def to_twin(
     figures: dict,
     flags: list,
     ci: dict | None = None,
+    wait: dict | None = None,
 ) -> dict:
     """The JSON twin: what the allowlist-refresh mining and any later
     consumer read instead of re-aggregating transcripts. ``ci`` is the CI
     section's :func:`ci_metrics.day_report` (or its ``error``), which the
-    audit heartbeat's ci-infra row reads."""
+    audit heartbeat's ci-infra row reads; ``wait`` the wait section's."""
     return {
         "date": date,
         "since": since,
         "figures": figures,
         "flags": flags,
         "ci": ci,
+        "wait": wait,
         "sessions": [
             {
                 "session_id": s.session_id,
@@ -895,10 +932,13 @@ def main(argv: list[str] | None = None) -> int:
             (now - UNTIL_MARGIN).replace(microsecond=0),
             directory / CI_CACHE_NAME,
         )
-    text, flags = render(date, since_text, sessions, figures, history, calibration, ci)
+    wait_lines, wait_twin = wait_section(base, sessions, since_text, until_text, ci)
+    text, flags = render(
+        date, since_text, sessions, figures, history, calibration, ci, wait_lines
+    )
     md_path = directory / f"digest-{date}.md"
     md_path.write_text(text, encoding="utf-8")
-    twin = to_twin(date, since_text, sessions, figures, flags, ci)
+    twin = to_twin(date, since_text, sessions, figures, flags, ci, wait_twin)
     (directory / f"digest-{date}.json").write_text(
         json.dumps(twin, indent=2), encoding="utf-8"
     )

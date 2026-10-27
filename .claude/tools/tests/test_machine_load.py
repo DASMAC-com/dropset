@@ -347,5 +347,76 @@ class Main(unittest.TestCase):
         self.assertEqual(json.loads(out)["status"], "no-reading")
 
 
+class LaunchRecord(unittest.TestCase):
+    def record(self, *argv, fake=None, env=None):
+        with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()):
+            path = Path(tmp, "sessions", "abc.load")
+            for _ in range(2):
+                code = ml.main(
+                    [*argv, "--state-dir", tmp, "--record", str(path)],
+                    runner=fake or runner(),
+                    env=env or {},
+                )
+            lines = path.read_text().splitlines()
+        return code, [json.loads(line) for line in lines]
+
+    def test_each_launch_appends_the_reading(self):
+        _, lines = self.record("--json", "--class", "free", env={"DS_CARGO_LANES": "2"})
+        self.assertEqual(len(lines), 2)
+        rec = lines[0]
+        self.assertRegex(rec["at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        self.assertEqual(
+            {k: rec[k] for k in ("class", "status", "lanes", "building", "free")},
+            {"class": "free", "status": "green", "lanes": 2, "building": 2, "free": 0},
+        )
+        self.assertEqual(
+            (rec["queue_building"], rec["queue_waiting"], rec["longest_wait_s"]),
+            (2, 3, 465),
+        )
+        self.assertEqual((rec["in_use"], rec["compressed"]), (35 * GIB, 10 * GIB))
+        self.assertEqual(rec["load1"], 10.8)
+        self.assertEqual(rec["verdict"], {"slots": None, "reasons": []})
+
+    def test_the_verdict_is_the_launching_class(self):
+        _, lines = self.record()
+        self.assertEqual(lines[0]["verdict"], {"slots": 0, "reasons": ["wait"]})
+        self.assertEqual(lines[0]["lanes"], ml.DEFAULT_LANES)
+
+    def test_the_launch_call_samples_and_records_together(self):
+        with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()):
+            path = Path(tmp, "abc.load")
+            code = ml.main(
+                ["--json", "--sample", "--state-dir", tmp, "--record", str(path)],
+                runner=runner(),
+                env={},
+            )
+            self.assertEqual(len(Path(tmp, ml.SAMPLE_LOG).read_text().splitlines()), 1)
+            self.assertEqual(len(path.read_text().splitlines()), 1)
+        self.assertEqual(code, ml.RED)
+
+    def test_an_unwritable_record_is_a_warning_not_no_reading(self):
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            redirect_stdout(io.StringIO()) as out,
+            redirect_stderr(io.StringIO()) as err,
+        ):
+            blocker = Path(tmp, "file")
+            blocker.write_text("")
+            code = ml.main(
+                ["--json", "--state-dir", tmp, "--record", str(blocker / "x.load")],
+                runner=runner(),
+                env={},
+            )
+        self.assertEqual(code, ml.RED)
+        self.assertEqual(json.loads(out.getvalue())["status"], "red")
+        self.assertIn("could not append", err.getvalue())
+
+    def test_no_reading_still_leaves_a_line(self):
+        code, lines = self.record(fake=runner(vm="garbage"))
+        self.assertEqual(code, ml.NO_READING)
+        self.assertEqual(lines[0]["status"], "no-reading")
+        self.assertIn("error", lines[0])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -230,6 +230,18 @@ the document's state sections.
    the issue, the message is the amendment; when the owning
    session is gone, the amendment goes on the body. A peer message
    is never the operator's approval.
+1. **A budget, not a ceiling.** The fleet's size is the machine's
+   answer, never a board literal: the machine-load probe
+   (`machine_load.py`) says how many more of a class fit. A `task`
+   is a building session. Builders are capped at `DS_FLEET_CAP`
+   and refused while a pool-lock wait is at or past
+   `DS_FLEET_BUILD_WAIT_S`. A free session
+   (`plan`, `architect`, `explore`, a chore with no build in its
+   body) is refused only on
+   memory, swap, pressure or load. Builds share the pool's
+   `DS_CARGO_LANES` lanes. On no reading (exit 3) fall back to the
+   cap and say so. The digest's `## Wait` section measures whether
+   the budget is right.
 1. **Cost**: the spend cap is the standing fleet guard, and
    `fleet_cost.py` reconciles telemetry against the bill.
 1. **Weekly skills audit**: considered weekly through the audit

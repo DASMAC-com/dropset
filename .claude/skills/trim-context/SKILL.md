@@ -45,7 +45,9 @@ is bounded by construction (three rows per ranked list per session),
 so this is the planned multi-region read the context-economy
 convention licenses. Read the day header (its flagged list), the
 `## CI` section (the merge queue's runs and jobs; a flagged CI line
-also joins the header's list), then every block under `## Sessions`:
+also joins the header's list), the `## Wait` section (the day's
+ranked wait and its causes "for the analyst"), then every block under
+`## Sessions`:
 its top sinks, largest results,
 resident-prose share, hardening candidates with their cost kind, and
 its **Session account** — the session's own statement of what it
@@ -72,6 +74,17 @@ bootstrap read does not). Weigh in this order:
   `prompt-churn` candidate is not a context saving.
 - **A flagged CI line** is a candidate like any other: name the
   workflow or job it would change.
+- **A ranked section is read one way, whichever currency it ranks.**
+  The token blocks rank sinks, and the `## Wait` section ranks
+  causes of waiting in hours. A **wait lever** is a change that
+  subtracts a top-ranked wait cause: the lock's make target or step,
+  the CI job on the critical path, or the skill point of an operator
+  ask. It is the same currency once translated, since wall clock per
+  PR is session length and an operator wait is attention. File it
+  under the cause's `wait:<dimension>:<cause>` fingerprint, verbatim,
+  and only for a cause that recurs (several sessions, or the prior
+  digest's section too), never a one-day spike. A line marked "no
+  nameable cause" is reported in the close-out, never filed.
 
 An account's suggestion is evidence, not a verdict — reject one that
 the numbers do not support. Drop below-bar noise silently.
