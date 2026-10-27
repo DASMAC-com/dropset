@@ -225,9 +225,10 @@ In Progress spec; a fold into an approved (Todo) body moves it
 back to Backlog, priority and edges unchanged.
 
 **The curator reviews the inbox; the scheduler dispatches it.**
-Once the state of play is written, and the pool (the un-parked
-Backlog) is non-empty, dispatch `curate` through step 5's tool,
-the substrate word riding step 8's ask (Bedrock by default). Its
+After step 8's answer and the bootstrap's write-back of the state
+of play, when the pool (the un-parked Backlog) is non-empty,
+dispatch `curate` through step 5's tool on the substrate that ask
+named (Bedrock by default). Its
 kick-off is this fixed text, never a paraphrase: "The state of
 play is written. Rank the pool against it and walk the operator
 through it in fours; message me each Todo move and each edge or
@@ -578,13 +579,14 @@ the decision context does not — the analyst rejects those.
 **8. Drain the legacy findings, and ask once.** **At bootstrap,
 say each count, never a listing.** **The consolidated ask**
 carries only what needs the operator's word — the curator's
-substrate, the holds' edges, Discuss items and the upkeep's
-destructive items.
+substrate, the `Audit findings` kill list, the holds' edges,
+Discuss items and the upkeep's destructive items.
 
 **`Audit findings` is a legacy pool, drained one finding at a
-time**: each bootstrap promotes or kills what it holds, doubt
-killing (ruling 3), and the milestone leaves the parking set once
-empty. List
+time**: each bootstrap promotes what it holds, or lists it for a
+kill by ruling 3's necessity test, closing each `Canceled` with
+its reason on the operator's yes; the milestone leaves the parking
+set once empty. List
 it **field-selected** (title, priority); promote by **clearing
 the milestone** in one `board_batch.py fields` write, never by
 closing and refiling. **Do not re-adjudicate a finding** —
