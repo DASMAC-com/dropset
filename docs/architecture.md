@@ -309,15 +309,13 @@ The load-bearing invariants and rationale:
   `max_platform_fee_bps` bounds the caller-declared platform fee (bps,
   `Bps16`, range-checked `<= BPS` on every write since the type is no
   bound) and is admin-mutable via `SetMaxPlatformFee` — see **Order
-  matching → Platform fee**. Note the two fee knobs use different
-  denominators: the taker fee is ppm, the platform-fee ceiling is bps.
-  `default_min_leader_share` is stamped into each `Vault.min_leader_share`
-  at `CreateVault`; mutating it affects only vaults opened afterward (see
-  **Vault → Skin-in-the-game floor**).
+  matching → Platform fee**. `default_min_leader_share` is stamped into
+  each `Vault.min_leader_share` at `CreateVault`; mutating it affects only
+  vaults opened afterward (see **Vault → Skin-in-the-game floor**).
 
 - **Accrued protocol revenue.** `accrued_base_fee_atoms` /
   `accrued_quote_fee_atoms` are the running totals of taker fee charged on
-  each leg — the summed `FillEvent.taker_fee_atoms`, hence the unit
+  each leg — the summed `FillEvent.taker_fee_atoms`, hence the `_atoms`
   suffix (`taker_fee_ppm`, by contrast, is a **rate**). They are
   **authoritative**, not derived: nothing infers revenue from the gap
   between the treasury and the vault sum, which is what keeps that gap a
