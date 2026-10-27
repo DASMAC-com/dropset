@@ -7,7 +7,9 @@ POSIXLY
 QCAD
 QCADUSD
 USDTZUSD
+WEXITED
 WNOHANG
+WNOWAIT
 addrs
 affordance
 affordances
@@ -358,6 +360,7 @@ vchf
 vertible
 vgbp
 vwap
+waitid
 wakeup
 webfetch
 webpki

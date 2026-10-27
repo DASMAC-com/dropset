@@ -414,17 +414,36 @@ class StageKillTest(unittest.TestCase):
             self.fail("grandchild survived the group kill")
 
     def exited_stage(self) -> vh.Stage:
+        """A stage whose only member, the leader, is a zombie not yet reaped."""
         log = Path(tempfile.mkdtemp()) / "s.log"
         stage = vh.Stage("lint", [sys.executable, "-c", "pass"], log)
-        stage.proc.wait(timeout=10)
+        flags = os.WEXITED | os.WNOHANG | os.WNOWAIT
+        deadline = time.monotonic() + 10
+        while os.waitid(os.P_PID, stage.proc.pid, flags) is None:
+            self.assertLess(time.monotonic(), deadline, "leader never exited")
+            time.sleep(0.02)
         return stage
 
-    def test_kill_after_the_leader_exited(self):
+    @unittest.skipUnless(hasattr(os, "waitid"), "needs waitid")
+    def test_kill_on_a_zombie_leader(self):
+        # The issue's case, unmocked: macOS answers EPERM for this group.
         stage = self.exited_stage()
         stage.kill()
         stage.force()
         self.assertEqual(stage.poll(), 0)
 
+    @unittest.skipUnless(hasattr(os, "waitid"), "needs waitid")
+    def test_grace_leaves_the_leader_a_zombie(self):
+        # Reaping inside the grace would free the pgid before the SIGKILL.
+        stage = self.exited_stage()
+        stage._await_exit(5)
+        self.assertIsNone(stage.proc.returncode)
+        self.assertIsNotNone(
+            os.waitid(os.P_PID, stage.proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        )
+        stage.force()
+
+    @unittest.skipUnless(hasattr(os, "waitid"), "needs waitid")
     def test_eperm_on_a_gone_group_is_tolerated(self):
         # macOS answers EPERM, not ESRCH, for a zombie-only or recycled group.
         stage = self.exited_stage()
@@ -448,12 +467,17 @@ class StageKillTest(unittest.TestCase):
         reads = iter([ci(), ci(lint=GREEN_LINT), ci(test=GREEN_TEST)])
         real_killpg = os.killpg
 
+        stages = []
+
         def start(name):
-            return vh.Stage(
-                name,
-                [sys.executable, "-c", "import time;time.sleep(30)"],
-                tmp / f"{name}.log",
+            stages.append(
+                vh.Stage(
+                    name,
+                    [sys.executable, "-c", "import time;time.sleep(30)"],
+                    tmp / f"{name}.log",
+                )
             )
+            return stages[-1]
 
         def killpg(pgid, sig):
             real_killpg(pgid, sig)
@@ -479,6 +503,7 @@ class StageKillTest(unittest.TestCase):
             os.killpg = real_killpg
         self.assertEqual(r.outcome, "GREEN")
         self.assertEqual(r.killed, ["lint", "test"])
+        self.assertTrue(all(s.poll() is not None for s in stages))
         self.assertIn("verify-head: GREEN", vh.render(r, 1))
 
 

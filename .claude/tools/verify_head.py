@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-# cspell:word waitid
-# cspell:word WEXITED
-# cspell:word WNOWAIT
 """Race the abridged local checks against CI for one HEAD, in one call.
 
 A verification point used to be turns: run ``make lint-abridged``, read it,
@@ -206,8 +203,10 @@ def _signal_group(pgid: int, sig: int) -> bool:
     """``killpg``; ``False`` when the group is gone rather than signalled.
 
     A group already gone is ESRCH on Linux but EPERM on macOS when only
-    zombies remain or the pgid was recycled to a group not ours to signal.
-    Either way there is nothing left of the stage to stop.
+    zombies remain, and EPERM too when the pgid was recycled to another
+    user's group. Either way there is nothing left of the stage to stop.
+    (A pgid recycled to a group of this user's would still be signalled;
+    keeping the leader a zombie through :meth:`Stage.kill` is the guard.)
     """
     try:
         os.killpg(pgid, sig)
