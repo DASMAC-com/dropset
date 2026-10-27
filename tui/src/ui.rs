@@ -36,12 +36,13 @@ const RUNTIME_ACTIONS_ROWS: u16 = 7;
 const LEADER_PANE_ROWS: u16 = 6;
 
 /// The most vault rows the accounts pane lists under a market; the rest are
-/// counted on one line (the name override still reaches them by name).
+/// counted on one line (the name override still reaches a named one by its
+/// name).
 const ACCOUNT_VAULT_ROWS: usize = 4;
 
-/// The accounts pane's `#<seq>` column width — `#` and five digits, then a
-/// space.
-const VAULT_SEQ_WIDTH: usize = 7;
+/// The accounts pane's `#<seq>` column width — `#` and five digits; a space
+/// always follows it.
+const VAULT_SEQ_WIDTH: usize = 6;
 /// Inner rows of the swapper pane: address, wallet.
 const SWAPPER_PANE_ROWS: u16 = 2;
 
@@ -1009,7 +1010,7 @@ fn vault_row(seat: &VaultSeat) -> Line<'static> {
     Line::from(vec![
         Span::raw("    "),
         Span::styled(
-            format!("{:<VAULT_SEQ_WIDTH$}", format!("#{}", seat.seq)),
+            format!("{:<VAULT_SEQ_WIDTH$} ", format!("#{}", seat.seq)),
             Style::new().fg(Color::DarkGray),
         ),
         Span::styled(
@@ -1017,7 +1018,11 @@ fn vault_row(seat: &VaultSeat) -> Line<'static> {
             Style::new().fg(Color::White),
         ),
         Span::styled(
-            if seat.name_locked { "locked " } else { "       " },
+            if seat.name_locked {
+                "locked "
+            } else {
+                "       "
+            },
             Style::new().fg(Color::Yellow),
         ),
         Span::styled(
@@ -1230,10 +1235,8 @@ fn name_line(seat: &VaultSeat) -> Line<'static> {
     };
     let mut line = field("name", Span::styled(text, style));
     if seat.name_locked {
-        line.spans.push(Span::styled(
-            " (locked)",
-            Style::new().fg(Color::Yellow),
-        ));
+        line.spans
+            .push(Span::styled(" (locked)", Style::new().fg(Color::Yellow)));
     }
     line
 }

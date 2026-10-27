@@ -64,7 +64,8 @@ funds; it is signed by the admin wallet, never the quote key.
 1. Select the market (`[` / `]`). The accounts pane lists its first four
    vaults, each as `#number`, name and leader.
 1. In the form, type the vault's `#number` or its current name (a vault
-   past the listed four is reached by name), then the replacement name.
+   past the listed four is reached by its name), then the replacement
+   name.
    Leave the replacement empty to blank the name; the vault then shows as
    `#` plus its per-market sequence number, never its sector index. The
    lock starts on, which stops the leader renaming it back; clear it

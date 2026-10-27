@@ -352,27 +352,41 @@ fn target(seats: &[VaultSeat], signer: &Pubkey, form: &Form) -> Result<VaultSeat
     }
 }
 
-/// The vault `typed` names among `seats`: by number when it is one
-/// (a leading `#` allowed), else by its current name under the uniqueness
-/// rule — at most one vault can hold it.
+/// The vault `typed` names among `seats`: by number (a leading `#`
+/// allowed), or by its current name under the uniqueness rule — at most one
+/// vault can hold it. A name may itself read as a number, so when the two
+/// readings pick different vaults this refuses rather than guess.
 fn find_vault(seats: &[VaultSeat], typed: &str) -> Result<VaultSeat> {
-    let typed = typed.trim();
-    if typed.is_empty() {
+    if typed.trim().is_empty() {
         bail!("enter the vault's #number or its current name");
     }
-    let digits = typed.strip_prefix('#').unwrap_or(typed);
-    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
-        if let Ok(seq) = digits.parse::<u64>() {
-            if let Some(seat) = seats.iter().find(|s| s.seq == seq) {
-                return Ok(*seat);
-            }
-        }
+    let digits = typed.trim();
+    let digits = digits.strip_prefix('#').unwrap_or(digits);
+    let by_number = digits
+        .parse::<u64>()
+        .ok()
+        .filter(|_| digits.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|seq| seats.iter().find(|s| s.seq == seq).copied());
+    // Exact first — a stored name may begin or end with a space — then
+    // trimmed, for stray spaces typed around a plain name.
+    let named = |text: &str| {
+        seats
+            .iter()
+            .find(|s| s.name().eq_ignore_ascii_case(text))
+            .copied()
+    };
+    let by_name = named(typed).or_else(|| named(typed.trim()));
+    match (by_number, by_name) {
+        (Some(n), Some(m)) if n.idx != m.idx => bail!(
+            "\"{typed}\" is vault #{} by number and vault #{}'s name — type #{} to mean \
+             the second",
+            n.seq,
+            m.seq,
+            m.seq
+        ),
+        (Some(seat), _) | (None, Some(seat)) => Ok(seat),
+        (None, None) => bail!("no live vault numbered or named \"{typed}\" on this market"),
     }
-    seats
-        .iter()
-        .find(|s| s.name().eq_ignore_ascii_case(typed))
-        .copied()
-        .with_context(|| format!("no live vault numbered or named \"{typed}\" on this market"))
 }
 
 fn ticket_for(
@@ -607,7 +621,10 @@ mod tests {
         f.type_char('Z');
         f.move_cursor(1);
         f.type_char(' ');
-        assert_eq!((f.vault.as_str(), f.name.as_str(), f.lock), ("1a", "Z", false));
+        assert_eq!(
+            (f.vault.as_str(), f.name.as_str(), f.lock),
+            ("1a", "Z", false)
+        );
         f.toggle();
         assert!(f.lock);
         assert_eq!(f.lines().len(), 3);
@@ -655,6 +672,14 @@ mod tests {
         }
         form.vault = "#11".into();
         assert_eq!(target(&seats, &admin, &form).unwrap().idx, 1);
+        // A name that reads as another vault's number is refused, not
+        // guessed; its own number still reaches it.
+        let shadow = [seat(0, admin, "Desk"), seat(1, admin, "10")];
+        form.vault = "10".into();
+        let err = target(&shadow, &admin, &form).unwrap_err().to_string();
+        assert!(err.contains("#11"), "{err}");
+        form.vault = "#11".into();
+        assert_eq!(target(&shadow, &admin, &form).unwrap().idx, 1);
         for typed in ["12", "Older", "99999999999999999999999"] {
             form.vault = typed.into();
             assert!(target(&seats, &admin, &form).is_err(), "{typed:?}");
