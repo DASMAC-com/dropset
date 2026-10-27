@@ -9,6 +9,7 @@ touches Linear.
 from __future__ import annotations
 
 import io
+import json
 import os
 import sys
 import unittest
@@ -254,6 +255,178 @@ class RunTests(unittest.TestCase):
         code, out = self._run(fake, ["gate", "--ids", "ENG-1", "ENG-2", "ENG-3"])
         self.assertEqual(code, 0)
         self.assertIn("CLEAR", out)
+
+
+def _inbox(number, title=None, priority=0, **kwargs):
+    issue = _issue(number, milestone=None, **kwargs)
+    issue["priority"] = priority
+    if title:
+        issue["title"] = title
+    return issue
+
+
+class InboxPoolTests(unittest.TestCase):
+    def test_membership_differs_by_pool(self):
+        staged, inbox = _issue(1), _inbox(2)
+        todo = _inbox(3, state_type="unstarted", state="Todo")
+        parked = _issue(4, milestone="Follow-ups")
+        closed = _inbox(5, state_type="canceled", state="Canceled")
+        self.assertTrue(rs.in_pool(staged, "staged"))
+        self.assertFalse(rs.in_pool(staged, "inbox"))
+        self.assertTrue(rs.in_pool(inbox, "inbox"))
+        self.assertFalse(rs.in_pool(inbox, "staged"))
+        for outside in (todo, parked, closed):
+            self.assertFalse(rs.in_pool(outside, "inbox"), outside["identifier"])
+
+    def test_notes_become_the_checkbox_descriptions(self):
+        payload = build_ask(
+            [_inbox(1), _inbox(2)], notes={"ENG-1": "Carried from 10-26"}
+        )
+        (question,) = payload["calls"][0]["questions"]
+        self.assertEqual(question["question"], rs.ASK_TEXT)
+        self.assertEqual(question["header"], rs.ASK_HEADER)
+        self.assertEqual(
+            [o["description"] for o in question["options"]],
+            ["Carried from 10-26", "Task 2"],
+        )
+
+    def test_a_note_for_an_id_outside_the_ask_is_refused(self):
+        with self.assertRaisesRegex(RatifyError, "ENG-9"):
+            rs.parse_notes({"eng-9": "typo"}, ["ENG-1"])
+        self.assertEqual(rs.parse_notes({"eng-1": " ok "}, ["ENG-1"]), {"ENG-1": "ok"})
+
+    def test_proposals_render_as_a_further_question(self):
+        proposals = rs.parse_proposals(
+            [
+                {"edge": {"blocker": "eng-1", "blocked": "ENG-2"}, "reason": "API"},
+                {"priority": {"id": "ENG-3", "to": "High"}, "reason": "Demo"},
+            ]
+        )
+        (call,) = build_ask([_inbox(1), _inbox(2)], proposals=proposals)["calls"]
+        review, extra = call["questions"]
+        self.assertEqual(review["header"], rs.ASK_HEADER)
+        self.assertEqual(extra["header"], rs.PROPOSALS_HEADER)
+        self.assertTrue(extra["multiSelect"])
+        self.assertEqual(
+            extra["options"],
+            [
+                {"label": "ENG-1 blocks ENG-2", "description": "API"},
+                {"label": "ENG-3 to high", "description": "Demo"},
+            ],
+        )
+
+    def test_a_lone_proposal_is_padded_and_a_bad_one_refused(self):
+        (option,) = rs.parse_proposals(
+            [{"priority": {"id": "ENG-3", "to": 1}, "reason": "Live bug"}]
+        )
+        (call,) = build_ask([_inbox(1), _inbox(2)], proposals=[option])["calls"]
+        labels = [o["label"] for o in call["questions"][1]["options"]]
+        self.assertEqual(labels, ["ENG-3 to urgent", "None"])
+        with self.assertRaisesRegex(RatifyError, "reason"):
+            rs.parse_proposals([{"edge": {"blocker": "ENG-1", "blocked": "ENG-2"}}])
+        with self.assertRaisesRegex(RatifyError, "neither an edge"):
+            rs.parse_proposals([{"relates": "ENG-1", "reason": "x"}])
+
+    def test_the_inbox_approves_one_task_at_a_time(self):
+        with self.assertRaisesRegex(RatifyError, "one task at a time, got 2"):
+            plan_approval([_inbox(1), _inbox(2)], [], held=[], pool="inbox")
+        updates, already = plan_approval(
+            [_inbox(1)], [_inbox(2), _inbox(3)], held=[], pool="inbox"
+        )
+        self.assertEqual(
+            updates,
+            {
+                "ENG-1": {"state": "Todo"},
+                "ENG-2": {"state": "Canceled"},
+                "ENG-3": {"state": "Canceled"},
+            },
+        )
+        self.assertEqual(already, [])
+        with self.assertRaisesRegex(RatifyError, "not open in Backlog"):
+            plan_approval([_issue(4)], [], held=[], pool="inbox")
+
+
+class InboxRunTests(unittest.TestCase):
+    # Borrowed, not inherited, so RunTests' own tests do not run twice.
+    setUp = RunTests.setUp
+    _run = RunTests._run
+
+    def test_list_ranks_by_priority_and_marks_operator_items(self):
+        fake = FakeLinear(
+            [
+                _inbox(1, priority=0),
+                _inbox(2, priority=3),
+                _inbox(3, title="[Operator] Rotate the key", priority=1),
+                _inbox(4, state_type="unstarted", state="Todo", priority=1),
+            ]
+        )
+        code, out = self._run(fake, ["list", "--pool", "inbox"])
+        self.assertEqual(code, 0)
+        lines = out.splitlines()
+        self.assertEqual(
+            [line.split(" | ")[0] for line in lines], ["ENG-3", "ENG-2", "ENG-1"]
+        )
+        self.assertTrue(lines[0].endswith("[operator]"))
+        self.assertFalse(lines[1].endswith("[operator]"))
+
+    def test_ask_skips_and_names_out_of_pool_ids(self):
+        fake = FakeLinear([_inbox(1), _inbox(2), _issue(3), _inbox(4, state="Todo")])
+        code, out = self._run(
+            fake,
+            ["ask", "--pool", "inbox", "--ids", "ENG-1,ENG-2,ENG-3,ENG-4"]
+            + ["--notes", '{"ENG-2": "Operator item, hand-run"}'],
+        )
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual(payload["skipped"], ["ENG-3", "ENG-4"])
+        options = payload["calls"][0]["questions"][0]["options"]
+        self.assertEqual(
+            [(o["label"], o["description"]) for o in options],
+            [("ENG-1", "Task 1"), ("ENG-2", "Operator item, hand-run")],
+        )
+
+    def test_approve_refuses_a_second_id_and_writes_nothing(self):
+        fake = FakeLinear([_inbox(1), _inbox(2)])
+        with self.assertRaisesRegex(RatifyError, "one task at a time"):
+            self._run(fake, ["approve", "--pool", "inbox", "--ids", "ENG-1,ENG-2"])
+        self.assertEqual(fake.writes, [])
+
+    def test_approve_refuses_a_held_or_out_of_pool_id(self):
+        thread = {"id": "t1", "parentId": None, "resolvedAt": None, "body": "no"}
+        fake = FakeLinear([_inbox(1), _issue(2)], comments={"ENG-1": [thread]})
+        with self.assertRaisesRegex(RatifyError, "still held by an open thread: ENG-1"):
+            self._run(fake, ["approve", "--pool", "inbox", "--ids", "ENG-1"])
+        with self.assertRaisesRegex(RatifyError, "not open in Backlog.*ENG-2"):
+            self._run(fake, ["approve", "--pool", "inbox", "--ids", "ENG-2"])
+        self.assertEqual(fake.writes, [])
+
+    def test_approve_moves_one_to_todo_and_cancels_the_rejects(self):
+        moved = _inbox(3, state_type="unstarted", state="Todo")
+        fake = FakeLinear([_inbox(1), _inbox(2), moved])
+        code, out = self._run(
+            fake, ["approve", "--pool", "inbox", "--ids", "ENG-1", "--cancel", "ENG-2"]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            fake.writes,
+            [("uuid-1", {"stateId": "s-Todo"}), ("uuid-2", {"stateId": "s-Canceled"})],
+        )
+        code, out = self._run(fake, ["approve", "--pool", "inbox", "--ids", "ENG-3"])
+        self.assertEqual(code, 0)
+        self.assertIn("ALREADY ENG-3", out)
+
+    def test_review_reads_inbox_members(self):
+        fake = FakeLinear([_inbox(1), _issue(2)])
+        _, out = self._run(fake, ["review", "--pool", "inbox", "--ids", "ENG-1,ENG-2"])
+        self.assertIn("APPROVED ENG-1", out)
+        self.assertIn("NOT IN INBOX ENG-2", out)
+
+    def test_the_gate_is_refused_for_the_inbox(self):
+        fake = FakeLinear([_inbox(1)])
+        with self.assertRaisesRegex(RatifyError, "nothing is staged in the inbox"):
+            self._run(fake, ["gate", "--pool", "inbox", "--ids", "ENG-1"])
+        with self.assertRaisesRegex(RatifyError, "nothing is staged"):
+            self._run(fake, ["gate", "--pool", "inbox"])
 
 
 if __name__ == "__main__":
