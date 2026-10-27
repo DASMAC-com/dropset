@@ -33,6 +33,7 @@ import {
   MOCK_VAULT_FX_GROUPS,
   type Vault,
   type VaultMarket,
+  vaultLabel,
   vaultMetric,
   vaultRefPrice,
 } from "@/lib/data/vaults";
@@ -66,10 +67,6 @@ const cmpMetric = compareSortValues;
 // A `leader` pin longer than this is treated as a full pubkey and shortened in
 // its chip; a shorter value is a hand-typed prefix and shown verbatim.
 const LEADER_SLUG_MAX = 12;
-
-// The table's handle for a vault: its name, else the leader's short address.
-const vaultLabel = (vault: Vault): string =>
-  vault.name ?? shortenMint(vault.leader);
 
 // Substring match across the pair's FX label / nickname / currency names and
 // the vault's tokens, name and leader address.
@@ -290,12 +287,13 @@ function VaultRow({
       </td>
       <td className="w-px whitespace-nowrap border-border border-r px-3 py-2 align-middle last:border-r-0">
         <div className="flex items-center gap-1">
-          {/* The name is the stable handle (leadership rotates); an unset
-              one falls back to the leader's short address. The leader's
-              copy and explorer links live in the dialog. */}
+          {/* The name is the readable label (leadership rotates); an unset
+              one falls back to `#<seq>` (vaultLabel). The hover keeps the
+              full leader either way; its copy and explorer links live in
+              the dialog. */}
           <span
             className={`max-w-48 truncate text-foreground ${vault.name ? "font-medium text-sm" : "font-mono text-xs"}`}
-            title={vault.name ?? vault.leader}
+            title={vault.name ? `${vault.name} — ${vault.leader}` : vault.leader}
           >
             {vaultLabel(vault)}
           </span>
@@ -578,15 +576,13 @@ function VaultsInner() {
     (g: FxPairGroup, key: MetricKey): number | string | null => {
       if (key === "position")
         return g.vaults.reduce((sum, gv) => sum + positionValue(gv.vault), 0);
-      // A pair groups many vaults, so rank it by its alphabetically first.
-      // Case-insensitive to match the row-level name comparator (cmpMetric).
+      // A pair groups many vaults, so rank it by its first label in the
+      // row-level name order (cmpMetric ascending).
       if (key === "name")
         return (
           g.vaults
             .map((gv) => vaultLabel(gv.vault))
-            .sort((a, b) =>
-              a.toLowerCase().localeCompare(b.toLowerCase()),
-            )[0] ?? null
+            .sort((a, b) => cmpMetric(a, b, "asc"))[0] ?? null
         );
       if (key === "pair") return g.label;
       return groupMetric(g, key);
