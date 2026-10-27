@@ -1577,7 +1577,16 @@ impl App {
                         buf: String::new(),
                     })
                 }
-                Err(e) => self.log(LogKind::Err, format!("{} — {e:#}", action.label())),
+                Err(e) => {
+                    self.log(LogKind::Err, format!("{} — {e:#}", action.label()));
+                    // A refused create plan (a taken name, say) re-opens the
+                    // name form with the name kept, as a refused ticket does.
+                    if let Some(name) = vault_name {
+                        let mut form = naming::Form::new(naming::NameOp::Create);
+                        form.name = name;
+                        self.name_prompt = Some(NamePrompt::Form(form));
+                    }
+                }
             }
             return;
         }

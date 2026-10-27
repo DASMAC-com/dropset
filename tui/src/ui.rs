@@ -36,8 +36,12 @@ const RUNTIME_ACTIONS_ROWS: u16 = 7;
 const LEADER_PANE_ROWS: u16 = 6;
 
 /// The most vault rows the accounts pane lists under a market; the rest are
-/// counted on one line.
+/// counted on one line (the name override still reaches them by name).
 const ACCOUNT_VAULT_ROWS: usize = 4;
+
+/// The accounts pane's `#<seq>` column width — `#` and five digits, then a
+/// space.
+const VAULT_SEQ_WIDTH: usize = 7;
 /// Inner rows of the swapper pane: address, wallet.
 const SWAPPER_PANE_ROWS: u16 = 2;
 
@@ -149,10 +153,12 @@ fn draw_name_prompt(f: &mut Frame<'_>, app: &App, area: Rect) {
                 .into_iter()
                 .map(|l| Line::from(Span::styled(l, input)))
                 .collect();
-            lines.push(Line::from(Span::styled(
-                "printable ASCII · empty means unset (shows as the vault's #number)",
-                hint,
-            )));
+            let rule = if form.op == NameOp::Create && app.ctx.cluster.is_mainnet() {
+                "printable ASCII · required on mainnet"
+            } else {
+                "printable ASCII · empty means unset (shows as the vault's #number)"
+            };
+            lines.push(Line::from(Span::styled(rule, hint)));
             let keys = match form.op {
                 NameOp::Override => {
                     "\u{2191}\u{2193} field · \u{2190}\u{2192}/space lock · Enter preview · Esc cancel"
@@ -655,7 +661,8 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
     // The leader's stake: live once every vault is seeded (the commands'
     // own gate); the rename once its vault exists, greyed with the reason
     // when an admin has locked the name; the reserved rotation always
-    // greyed.
+    // greyed. Terse, and rotation last: the pane does not wrap and the left
+    // column is narrow, so what clips first should be what does nothing.
     let rename = match leader_seat(app) {
         Some((_, seat)) if seat.name_locked => Span::styled(" · N rename (locked)", off),
         _ if Action::RenameVault.enabled(app.chain.phase(), app.ctx.cluster) => {
@@ -665,7 +672,7 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
     };
     let vault_line = Line::from(vec![
         tag("vault"),
-        Span::styled("+ deposit · - withdraw", if ready { live } else { off }),
+        Span::styled("+/- stake", if ready { live } else { off }),
         rename,
         Span::styled(" · rotate (reserved)", off),
     ]);
@@ -992,16 +999,27 @@ fn build_account_rows(
     rows
 }
 
-/// One vault under the market in the accounts pane: its name column, padded
-/// to [`naming::NAME_COLUMN_WIDTH`] so the leaders align, then its leader —
-/// the row's click target.
+/// One vault under the market in the accounts pane, in fixed columns so the
+/// leaders align: its `#<seq>` — always, since the name override targets a
+/// vault by it — then its name, clamped to [`naming::NAME_COLUMN_WIDTH`]
+/// (blank when unset: the number already shows it), then a lock marker,
+/// then its leader, the row's click target.
 fn vault_row(seat: &VaultSeat) -> Line<'static> {
-    let name = name_span(seat);
-    let pad = (naming::NAME_COLUMN_WIDTH + 1).saturating_sub(name.content.chars().count());
+    let name = naming::clamp(&seat.name(), naming::NAME_COLUMN_WIDTH);
     Line::from(vec![
         Span::raw("    "),
-        name,
-        Span::raw(" ".repeat(pad)),
+        Span::styled(
+            format!("{:<VAULT_SEQ_WIDTH$}", format!("#{}", seat.seq)),
+            Style::new().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            format!("{name:<width$} ", width = naming::NAME_COLUMN_WIDTH),
+            Style::new().fg(Color::White),
+        ),
+        Span::styled(
+            if seat.name_locked { "locked " } else { "       " },
+            Style::new().fg(Color::Yellow),
+        ),
         Span::styled(
             short_pubkey(&seat.leader),
             Style::new()
@@ -1180,7 +1198,7 @@ fn draw_leader_pane(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     ];
     match leader_seat(app) {
         Some((_, seat)) => {
-            lines.push(field("name", name_span(&seat)));
+            lines.push(name_line(&seat));
             lines.extend(
                 leader::holding_lines(seat.seq, &seat.stake, b, q, mkt.reference_price)
                     .into_iter()
@@ -1200,20 +1218,24 @@ fn draw_leader_pane(f: &mut Frame<'_>, app: &mut App, area: Rect) {
     draw_pane(f, "leader", lines, area);
 }
 
-/// A vault's name for a name column: clamped to [`naming::NAME_COLUMN_WIDTH`],
-/// the `#<seq>` fallback dimmed so it does not read as a chosen name, and a
-/// lock marked.
-fn name_span(seat: &VaultSeat) -> Span<'static> {
-    let mut text = naming::clamp(&seat.label(), naming::NAME_COLUMN_WIDTH);
-    if seat.name_locked {
-        text.push_str(" (locked)");
-    }
+/// The leader pane's `name` row: the vault's label clamped to
+/// [`naming::NAME_COLUMN_WIDTH`], the `#<seq>` fallback dimmed so it does not
+/// read as a chosen name, then the lock when an admin set one.
+fn name_line(seat: &VaultSeat) -> Line<'static> {
+    let text = naming::clamp(&seat.label(), naming::NAME_COLUMN_WIDTH);
     let style = if seat.name().is_empty() {
         Style::new().fg(Color::DarkGray)
     } else {
         Style::new().fg(Color::White)
     };
-    Span::styled(text, style)
+    let mut line = field("name", Span::styled(text, style));
+    if seat.name_locked {
+        line.spans.push(Span::styled(
+            " (locked)",
+            Style::new().fg(Color::Yellow),
+        ));
+    }
+    line
 }
 
 /// The swapper (the taker role key) on the selected market: its address (the
@@ -1728,14 +1750,64 @@ fn phase_style(phase: Phase) -> (Color, Modifier) {
 
 #[cfg(test)]
 mod tests {
-    use super::{flag_for, fmt_units, liveness_color, symbol_for, tail};
-    use crate::accounts::Liveness;
+    use super::{flag_for, fmt_units, liveness_color, name_line, symbol_for, tail, vault_row};
+    use crate::accounts::{Liveness, VaultSeat, VaultStake};
+    use crate::naming::VAULT_NAME_LEN;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use ratatui::style::Color;
     use ratatui::text::Line;
     use ratatui::widgets::Widget;
     use solana_pubkey::Pubkey;
+
+    fn seat(seq: u64, name: &str, locked: bool) -> VaultSeat {
+        let mut packed = [0; VAULT_NAME_LEN];
+        packed[..name.len()].copy_from_slice(name.as_bytes());
+        VaultSeat {
+            idx: 0,
+            seq,
+            leader: Pubkey::new_from_array([7; 32]),
+            name: packed,
+            name_locked: locked,
+            seeded: true,
+            stake: VaultStake::default(),
+        }
+    }
+
+    fn text(line: &Line) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    /// Every vault row shows its number — what the override targets — and
+    /// the leader starts at the same column whatever the name or lock.
+    #[test]
+    fn vault_rows_show_the_number_and_align_the_leader() {
+        let rows = [
+            seat(5, "AUDD Desk", false),
+            seat(6, "", false),
+            seat(7, &"x".repeat(VAULT_NAME_LEN), true),
+        ]
+        .map(|s| text(&vault_row(&s)));
+        let leader = super::short_pubkey(&Pubkey::new_from_array([7; 32]));
+        // Columns, not bytes: the clamp's ellipsis is one column, three bytes.
+        let at: Vec<_> = rows
+            .iter()
+            .map(|r| r[..r.find(&leader).unwrap()].chars().count())
+            .collect();
+        assert!(at.iter().all(|&c| c == at[0]), "{rows:#?}");
+        assert!(rows[0].contains("#5") && rows[0].contains("AUDD Desk"));
+        assert!(rows[1].contains("#6"));
+        assert!(rows[2].contains("#7") && rows[2].contains("locked"));
+        assert!(rows[2].contains('\u{2026}'), "a full name is clamped");
+    }
+
+    /// The leader pane falls back to `#<seq>` and marks a lock.
+    #[test]
+    fn the_name_line_falls_back_to_the_number_and_marks_a_lock() {
+        assert!(text(&name_line(&seat(4, "", false))).ends_with("#4"));
+        let locked = text(&name_line(&seat(4, "Desk", true)));
+        assert!(locked.contains("Desk") && locked.ends_with("(locked)"));
+    }
 
     /// The newest log line stays on screen when older ones wrap — the bug was
     /// a wrapped line pushing it below the pane until more output scrolled it.

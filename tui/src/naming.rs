@@ -31,9 +31,6 @@ pub const VAULT_NAME_LEN: usize = 32;
 /// How wide a name column is drawn; a longer name is clamped with `…`.
 pub const NAME_COLUMN_WIDTH: usize = 16;
 
-/// The longest sequence number the override form takes — a `u64`'s digits.
-const MAX_SEQ_DIGITS: usize = 20;
-
 /// Refuse `name` unless the program would store it: at most
 /// [`VAULT_NAME_LEN`] bytes, every one printable ASCII (`0x20..=0x7E`).
 /// Empty is valid — the unset name.
@@ -119,20 +116,24 @@ impl NameOp {
 /// A [`Form`] line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {
-    Seq,
+    Vault,
     Name,
     Lock,
 }
 
 /// The name prompt's editable stage. Only the override has more than the
-/// name: the target vault's number and the lock.
+/// name: the target vault and the lock.
 #[derive(Clone, Debug)]
 pub struct Form {
     pub op: NameOp,
     pub name: String,
-    /// The target vault's `seq`, as typed (override only).
-    pub seq: String,
-    /// The lock to set (override only).
+    /// The target vault, as typed (override only): its number, or its
+    /// current name — what the operator saw on the vault they mean, even one
+    /// past the accounts pane's listed rows.
+    pub vault: String,
+    /// The lock to set (override only). On by default: the override answers
+    /// an abusive name, and an unlocked one the leader can simply rename
+    /// back — so unlocking is the deliberate choice, not the default.
     pub lock: bool,
     pub field: Field,
 }
@@ -142,10 +143,10 @@ impl Form {
         Self {
             op,
             name: String::new(),
-            seq: String::new(),
-            lock: false,
+            vault: String::new(),
+            lock: op == NameOp::Override,
             field: if op == NameOp::Override {
-                Field::Seq
+                Field::Vault
             } else {
                 Field::Name
             },
@@ -154,7 +155,7 @@ impl Form {
 
     fn fields(&self) -> &'static [Field] {
         match self.op {
-            NameOp::Override => &[Field::Seq, Field::Name, Field::Lock],
+            NameOp::Override => &[Field::Vault, Field::Name, Field::Lock],
             NameOp::Create | NameOp::Rename => &[Field::Name],
         }
     }
@@ -167,17 +168,14 @@ impl Form {
         self.field = fields[next];
     }
 
-    /// Type `c` into the current line. The name takes only bytes the program
-    /// stores, up to its width, so an invalid name cannot be typed at all;
-    /// the number takes digits; space flips the lock.
+    /// Type `c` into the current line. The name and the vault take only
+    /// bytes the program stores, up to its width, so an invalid name cannot
+    /// be typed at all; space flips the lock.
     pub fn type_char(&mut self, c: char) {
+        let storable = c.is_ascii() && is_name_byte(c as u8);
         match self.field {
-            Field::Name if c.is_ascii() && is_name_byte(c as u8) => {
-                if self.name.len() < VAULT_NAME_LEN {
-                    self.name.push(c);
-                }
-            }
-            Field::Seq if c.is_ascii_digit() && self.seq.len() < MAX_SEQ_DIGITS => self.seq.push(c),
+            Field::Name if storable && self.name.len() < VAULT_NAME_LEN => self.name.push(c),
+            Field::Vault if storable && self.vault.len() < VAULT_NAME_LEN => self.vault.push(c),
             Field::Lock if c == ' ' => self.lock = !self.lock,
             _ => {}
         }
@@ -188,8 +186,8 @@ impl Form {
             Field::Name => {
                 self.name.pop();
             }
-            Field::Seq => {
-                self.seq.pop();
+            Field::Vault => {
+                self.vault.pop();
             }
             Field::Lock => {}
         }
@@ -209,10 +207,10 @@ impl Form {
         let mut lines = Vec::new();
         if self.op == NameOp::Override {
             lines.push(format!(
-                "{} vault #  {}{}",
-                mark(Field::Seq),
-                self.seq,
-                cursor(Field::Seq)
+                "{} vault    {}{}   (its #number, or its current name)",
+                mark(Field::Vault),
+                self.vault,
+                cursor(Field::Vault)
             ));
         }
         lines.push(format!(
@@ -333,30 +331,48 @@ fn target(seats: &[VaultSeat], signer: &Pubkey, form: &Form) -> Result<VaultSeat
         NameOp::Rename => {
             let seat = accounts::sole_seat_led_by(seats, signer)
                 .with_context(|| format!("{signer} does not lead exactly one vault here"))?;
-            if seat.name_locked {
-                bail!(
-                    "vault #{}'s name is locked by an admin — only an override changes it",
-                    seat.seq
-                );
-            }
+            // Frozen first: freeze also sets the lock, and "frozen" is the
+            // truer reason of the two.
             if seat.stake.winding_down {
                 bail!(
                     "vault #{} is frozen or closed — its name is final",
                     seat.seq
                 );
             }
+            if seat.name_locked {
+                bail!(
+                    "vault #{}'s name is locked by an admin — only an override changes it",
+                    seat.seq
+                );
+            }
             Ok(seat)
         }
-        NameOp::Override => {
-            let seq: u64 = form.seq.parse().context("enter the vault's number")?;
-            seats
-                .iter()
-                .find(|s| s.seq == seq)
-                .copied()
-                .with_context(|| format!("no live vault #{seq} on this market"))
-        }
+        NameOp::Override => find_vault(seats, &form.vault),
         NameOp::Create => bail!("the create name is sent by the create-vault step"),
     }
+}
+
+/// The vault `typed` names among `seats`: by number when it is one
+/// (a leading `#` allowed), else by its current name under the uniqueness
+/// rule — at most one vault can hold it.
+fn find_vault(seats: &[VaultSeat], typed: &str) -> Result<VaultSeat> {
+    let typed = typed.trim();
+    if typed.is_empty() {
+        bail!("enter the vault's #number or its current name");
+    }
+    let digits = typed.strip_prefix('#').unwrap_or(typed);
+    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+        if let Ok(seq) = digits.parse::<u64>() {
+            if let Some(seat) = seats.iter().find(|s| s.seq == seq) {
+                return Ok(*seat);
+            }
+        }
+    }
+    seats
+        .iter()
+        .find(|s| s.name().eq_ignore_ascii_case(typed))
+        .copied()
+        .with_context(|| format!("no live vault numbered or named \"{typed}\" on this market"))
 }
 
 fn ticket_for(
@@ -412,7 +428,7 @@ pub fn execute(
 ) -> Result<String> {
     if signer.pubkey() != ticket.signer {
         bail!(
-            "the session key {} is not the ticket's signer {}",
+            "the session key {} is not the ticket's signer {} — nothing was sent",
             signer.pubkey(),
             ticket.signer
         );
@@ -426,7 +442,7 @@ pub fn execute(
     };
     if read()?.is_none() {
         bail!(
-            "vault #{} is no longer at sector {} — nothing sent",
+            "vault #{} is no longer at sector {} — nothing was sent; re-open the prompt",
             ticket.vault_seq,
             ticket.vault_idx
         );
@@ -583,17 +599,20 @@ mod tests {
     #[test]
     fn the_override_form_walks_number_name_and_lock() {
         let mut f = Form::new(NameOp::Override);
-        assert_eq!(f.field, Field::Seq);
+        // The abuse lever locks unless told otherwise.
+        assert_eq!((f.field, f.lock), (Field::Vault, true));
         f.type_char('1');
         f.type_char('a');
         f.move_cursor(1);
         f.type_char('Z');
         f.move_cursor(1);
         f.type_char(' ');
-        assert_eq!((f.seq.as_str(), f.name.as_str(), f.lock), ("1", "Z", true));
+        assert_eq!((f.vault.as_str(), f.name.as_str(), f.lock), ("1a", "Z", false));
         f.toggle();
-        assert!(!f.lock);
+        assert!(f.lock);
         assert_eq!(f.lines().len(), 3);
+        // A rename never carries a lock.
+        assert!(!Form::new(NameOp::Rename).lock);
     }
 
     #[test]
@@ -616,22 +635,30 @@ mod tests {
         locked[1].name_locked = true;
         let err = target(&locked, &me, &form).unwrap_err().to_string();
         assert!(err.contains("locked"), "{err}");
-        let mut closed = seats;
-        closed[1].stake.winding_down = true;
-        assert!(target(&closed, &me, &form).is_err());
+        // Freeze sets the lock too; the refusal names the freeze.
+        let mut frozen = locked;
+        frozen[1].stake.winding_down = true;
+        let err = target(&frozen, &me, &form).unwrap_err().to_string();
+        assert!(err.contains("frozen"), "{err}");
     }
 
     #[test]
-    fn an_override_targets_by_number_even_when_locked() {
+    fn an_override_targets_by_number_or_name_even_when_locked() {
         let admin = Pubkey::new_unique();
         let mut form = Form::new(NameOp::Override);
-        let mut seats = [seat(0, Pubkey::new_unique(), "Old")];
+        let mut seats = [seat(0, Pubkey::new_unique(), "Old"), seat(1, admin, "")];
         seats[0].name_locked = true;
         assert!(target(&seats, &admin, &form).is_err());
-        form.seq = "10".into();
-        assert_eq!(target(&seats, &admin, &form).unwrap().idx, 0);
-        form.seq = "11".into();
-        assert!(target(&seats, &admin, &form).is_err());
+        for typed in ["10", "#10", "old", " Old "] {
+            form.vault = typed.into();
+            assert_eq!(target(&seats, &admin, &form).unwrap().idx, 0, "{typed:?}");
+        }
+        form.vault = "#11".into();
+        assert_eq!(target(&seats, &admin, &form).unwrap().idx, 1);
+        for typed in ["12", "Older", "99999999999999999999999"] {
+            form.vault = typed.into();
+            assert!(target(&seats, &admin, &form).is_err(), "{typed:?}");
+        }
     }
 
     #[test]
@@ -639,12 +666,18 @@ mod tests {
         let k = Pubkey::new_unique();
         let seats = [seat(0, k, "Alpha"), seat(1, k, "Old")];
         let mut form = Form::new(NameOp::Override);
-        form.seq = "11".into();
+        form.lock = false;
+        form.vault = "11".into();
         form.name = "ALPHA".into();
         let t = |f: &Form| ticket_for(&seats, seats[1], &market(), "TGBP", &k, f);
         assert!(t(&form).unwrap_err().to_string().contains("#10"));
         form.name = "Old".into();
         assert!(t(&form).is_err(), "same name, same lock");
+        // A rename to the current name is a no-op whatever the form's lock.
+        let mut rename = Form::new(NameOp::Rename);
+        rename.name = "Old".into();
+        rename.lock = true;
+        assert!(t(&rename).is_err(), "rename to the same name");
         // The same name with the lock flipped is a real write.
         form.lock = true;
         let ticket = t(&form).unwrap();

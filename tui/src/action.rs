@@ -2043,10 +2043,6 @@ pub(crate) fn do_create_vault(
     log.log(format!("vault leader: {}", leader.pubkey()));
     log.log(format!("quote authority: {quote}"));
     log.log(format!("vault name: \"{name}\""));
-    log.record(
-        "create-vault-name",
-        &[("market", &market_address.to_string()), ("name", name)],
-    );
     let ix = chain::build_create_vault_ix(
         cluster,
         &wallet.pubkey(),
@@ -2067,6 +2063,11 @@ pub(crate) fn do_create_vault(
     );
     chain::send_logged(client, wallet, &[wallet], &[ix, topup], "create_vault", log)
         .context("send create_vault")?;
+    // After the send, so the record holds only a name a vault was created with.
+    log.record(
+        "create-vault-name",
+        &[("market", &market_address.to_string()), ("name", name)],
+    );
     log.accounts_changed();
     Ok(Outcome::Done(format!(
         "{} vault created — empty until seeded",
@@ -2364,10 +2365,11 @@ mod tests {
         // reachable writes are the confirm-gated ceremony steps (the kill
         // switch among them), the leader's own stake, which sends only after a
         // typed `yes` over the exact amounts (the reserved rotation is shown
-        // in the vault group but never enabled), and the leader's passive
-        // ladder, which sends only after one over its preview. A later change
-        // that exposes anything else — a mock-minting bootstrap, a
-        // committed-key demo control — fails here.
+        // in the vault group but never enabled), the leader's rename and
+        // passive ladder, each sent only after one over its preview, and the
+        // admin's name override, likewise. A later change that exposes
+        // anything else — a mock-minting bootstrap, a committed-key demo
+        // control — fails here.
         let ceremony = [
             Action::Publish,
             Action::CloseBuffers,
@@ -2379,7 +2381,7 @@ mod tests {
             Action::CloseVaults,
             Action::DrainLeader,
         ];
-        let leader_stake = [
+        let leader_vault = [
             Action::LeaderDeposit,
             Action::LeaderWithdraw,
             Action::RenameVault,
@@ -2393,7 +2395,7 @@ mod tests {
             let expected = a == Action::OpenExplorer
                 || a == name_override
                 || ceremony.contains(&a)
-                || leader_stake.contains(&a)
+                || leader_vault.contains(&a)
                 || passive.contains(&a);
             assert_eq!(
                 a.available_on(M),
