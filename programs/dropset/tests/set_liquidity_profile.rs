@@ -51,7 +51,7 @@ fn happy_path_writes_profile_arms_flush_keeps_price() {
 
     let v = f.vault(0);
     assert_eq!(v.profile.asks[0].size_bps.get(), 10_000, "profile written");
-    assert_eq!(v.profile.asks[0].price_offset.get(), 5_000);
+    assert_eq!(v.profile.asks[0].price_offset_ppm.get(), 5_000);
     assert!(
         v.reference_price.stamp.get() & FLUSH_BIT != 0,
         "FLUSH_BIT re-armed"

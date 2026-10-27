@@ -75,7 +75,7 @@ pub struct RegistryHeader {
     /// Default taker fee (ppm, `Ppm16`) stamped into markets.
     pub default_taker_fee: PodU16,
     /// Default platform-fee ceiling (bps, `Bps16`) stamped into
-    /// `MarketHeader.max_platform_fee` at creation. Bounds the
+    /// `MarketHeader.max_platform_fee_bps` at creation. Bounds the
     /// caller-declared `platform_fee_bps` a `swap` may skim off the taker's
     /// output; retunable per market afterwards via `SetMaxPlatformFee`.
     pub default_max_platform_fee: PodU16,

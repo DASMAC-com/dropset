@@ -186,7 +186,7 @@ fn materialize_level(
     is_ask: bool,
     side_ok: bool,
 ) {
-    let price = flush_level_price(ref_price, src.price_offset.get(), is_ask);
+    let price = flush_level_price(ref_price, src.price_offset_ppm.get(), is_ask);
     dst.price = price;
     dst.flip_price = flip_level_price(price, src.flip_spread_ppm.get(), is_ask);
     dst.flip_size = 0.into();
@@ -334,11 +334,11 @@ mod tests {
         v.quote_atoms = 2_000_000u64.into();
         v.base_atoms = 1_000_000u64.into();
         // Top-of-book bid (50% of quote) and ask (25% of base).
-        v.profile.bids[0].price_offset = 500u32.into();
+        v.profile.bids[0].price_offset_ppm = 500u32.into();
         v.profile.bids[0].size_bps = 5_000u16.into();
         v.profile.bids[0].expiry_offset_secs = 50u32.into();
         v.profile.bids[0].expiry_offset_slots = 5u32.into();
-        v.profile.asks[0].price_offset = 500u32.into();
+        v.profile.asks[0].price_offset_ppm = 500u32.into();
         v.profile.asks[0].size_bps = 2_500u16.into();
         v.profile.asks[0].expiry_offset_secs = 60u32.into();
         v.profile.asks[0].expiry_offset_slots = 6u32.into();
@@ -385,9 +385,9 @@ mod tests {
         let mut v = Vault::zeroed();
         v.reference_price.price = reference;
         v.reference_price.stamp = FLUSH_BIT.into();
-        v.profile.bids[0].price_offset = 500u32.into();
+        v.profile.bids[0].price_offset_ppm = 500u32.into();
         v.profile.bids[0].flip_spread_ppm = 1_000u32.into();
-        v.profile.asks[0].price_offset = 500u32.into();
+        v.profile.asks[0].price_offset_ppm = 500u32.into();
         v.profile.asks[0].flip_spread_ppm = 2_000u32.into();
         // Flipped state left over from before the flush, on every level.
         for i in 0..N_LEVELS {

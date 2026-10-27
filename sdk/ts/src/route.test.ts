@@ -367,7 +367,7 @@ test('a clamp warns once per market, naming both rates', () => {
   });
   assert.equal(first.length, 1);
   assert.match(first[0] ?? '', /50 bps is\s+configured/);
-  assert.match(first[0] ?? '', /max_platform_fee is 10 bps/);
+  assert.match(first[0] ?? '', /max_platform_fee_bps is 10 bps/);
   assert.ok(first[0]?.includes(MARKET_B));
 
   // Repeats stay silent. The quote loop re-clamps every few seconds for as

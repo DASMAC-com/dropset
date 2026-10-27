@@ -198,11 +198,11 @@ mod tests {
     fn builds_symmetric_profile_from_default_ladder() {
         let p = build_profile(&DEFAULT_LADDER);
         for (i, lvl) in DEFAULT_LADDER.iter().enumerate() {
-            assert_eq!(p.bids[i].price_offset.get(), lvl.offset_ppm);
+            assert_eq!(p.bids[i].price_offset_ppm.get(), lvl.offset_ppm);
             assert_eq!(p.bids[i].size_bps.get(), lvl.size_bps);
             assert_eq!(p.bids[i].wall_span(), lvl.expiry_offset_secs);
             assert_eq!(p.bids[i].slot_span(), lvl.expiry_offset_slots);
-            assert_eq!(p.asks[i].price_offset.get(), lvl.offset_ppm);
+            assert_eq!(p.asks[i].price_offset_ppm.get(), lvl.offset_ppm);
             assert_eq!(p.asks[i].size_bps.get(), lvl.size_bps);
         }
         // Unused rungs stay zeroed.
@@ -254,7 +254,7 @@ mod tests {
     }
 
     /// The serialized ladder is exactly the width the instruction arg
-    /// declares — 2 sides × 8 levels × an 18-byte `Level` (`price_offset`
+    /// declares — 2 sides × 8 levels × an 18-byte `Level` (`price_offset_ppm`
     /// u32, `flip_spread_ppm` u32, `size_bps` u16, and one u32 expiry
     /// offset per domain).
     #[test]

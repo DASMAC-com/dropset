@@ -241,7 +241,7 @@ export function SwapPanel() {
   //
   // Taken from the *quote* rather than from `PLATFORM_FEE.bps`, because the
   // two can differ: the eCLOB route clamps the configured rate to the market's
-  // on-chain `max_platform_fee`, so a market with a lower — or zero — ceiling
+  // on-chain `max_platform_fee_bps`, so a market with a lower — or zero — ceiling
   // is quoted and charged less than the env asks for. Reading the config here
   // would advertise a fee the user isn't paying, and on a fees-off market
   // would invent one outright. `quote.platformFeeBps` is by construction the

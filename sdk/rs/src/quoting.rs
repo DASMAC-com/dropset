@@ -125,7 +125,7 @@ fn level_to_relative(
         return Err(QuotingError::SizeExceedsInventory);
     }
     Ok(Level {
-        price_offset: (offset as u32).into(),
+        price_offset_ppm: (offset as u32).into(),
         flip_spread_ppm: lvl.flip_spread_ppm.into(),
         size_bps: (size_bps as u16).into(),
         expiry_offset_secs: lvl.expiry_offset_secs.get().into(),
@@ -273,11 +273,11 @@ mod tests {
             }],
         };
         let p = book.to_profile(reference, 1_000_000, 1_000_000).unwrap();
-        assert_eq!(p.asks[0].price_offset.get(), 10_000);
+        assert_eq!(p.asks[0].price_offset_ppm.get(), 10_000);
         assert_eq!(p.asks[0].size_bps.get(), 1_000);
         assert_eq!(p.asks[0].wall_span(), WallSpan::new(150));
         assert_eq!(p.asks[0].slot_span(), SlotSpan::UNBOUNDED);
-        assert_eq!(p.bids[0].price_offset.get(), 10_000);
+        assert_eq!(p.bids[0].price_offset_ppm.get(), 10_000);
         assert_eq!(p.bids[0].size_bps.get(), 2_000);
         // Unused level slots stay zeroed.
         assert_eq!(p.asks[1].size_bps.get(), 0);

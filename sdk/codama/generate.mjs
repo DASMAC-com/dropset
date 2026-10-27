@@ -57,7 +57,7 @@ function inlineTypeAliases(idl) {
 /** Levels per side of a `LiquidityProfile` — the program's `N_LEVELS`. */
 const N_LEVELS = 8;
 /**
- * On-wire width of one `Level`: `price_offset` u32, `flip_spread_ppm` u32,
+ * On-wire width of one `Level`: `price_offset_ppm` u32, `flip_spread_ppm` u32,
  * `size_bps` u16, and a per-domain expiry offset each
  * (`expiry_offset_secs` / `_slots`, u32). Every field is alignment-1, so
  * the struct is byte-packed.

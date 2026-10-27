@@ -814,13 +814,13 @@ pub fn ladder_profile_bytes_asym(
 ) -> [u8; PROFILE_BYTES] {
     let mut profile = LiquidityProfile::zeroed();
     for (i, &(offset_ppm, size_bps)) in bids.iter().take(profile.bids.len()).enumerate() {
-        profile.bids[i].price_offset = offset_ppm.into();
+        profile.bids[i].price_offset_ppm = offset_ppm.into();
         profile.bids[i].size_bps = size_bps.into();
         profile.bids[i].expiry_offset_secs = expiry_secs.get().into();
         profile.bids[i].expiry_offset_slots = SlotSpan::UNBOUNDED.get().into();
     }
     for (i, &(offset_ppm, size_bps)) in asks.iter().take(profile.asks.len()).enumerate() {
-        profile.asks[i].price_offset = offset_ppm.into();
+        profile.asks[i].price_offset_ppm = offset_ppm.into();
         profile.asks[i].size_bps = size_bps.into();
         profile.asks[i].expiry_offset_secs = expiry_secs.get().into();
         profile.asks[i].expiry_offset_slots = SlotSpan::UNBOUNDED.get().into();
@@ -1155,8 +1155,8 @@ mod tests {
             (SEED_LADDER[0].1 as f64 * 0.3).round() as u16
         );
         // Offsets are untouched on both sides.
-        assert_eq!(profile.bids[0].price_offset.get(), SEED_LADDER[0].0);
-        assert_eq!(profile.asks[0].price_offset.get(), SEED_LADDER[0].0);
+        assert_eq!(profile.bids[0].price_offset_ppm.get(), SEED_LADDER[0].0);
+        assert_eq!(profile.asks[0].price_offset_ppm.get(), SEED_LADDER[0].0);
     }
 
     /// The spread→ladder mapping: the default 50 bps halves the seed's 100-bps
@@ -1194,9 +1194,9 @@ mod tests {
         assert_eq!(bytes.len(), PROFILE_BYTES);
         let profile: &LiquidityProfile = bytemuck::from_bytes(&bytes);
         for (i, &(offset_ppm, size_bps)) in SEED_LADDER.iter().enumerate() {
-            assert_eq!(profile.bids[i].price_offset.get(), offset_ppm);
+            assert_eq!(profile.bids[i].price_offset_ppm.get(), offset_ppm);
             assert_eq!(profile.bids[i].size_bps.get(), size_bps);
-            assert_eq!(profile.asks[i].price_offset.get(), offset_ppm);
+            assert_eq!(profile.asks[i].price_offset_ppm.get(), offset_ppm);
             assert_eq!(profile.asks[i].size_bps.get(), size_bps);
         }
         // The rung past the ladder's length stays zeroed.

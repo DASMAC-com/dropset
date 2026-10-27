@@ -157,7 +157,7 @@ pub struct BookLevel {
 /// - `limit_price` the wrong side's sentinel — [`Price::ZERO`] on a Buy,
 ///   [`Price::INFINITY`] on a Sell (`InvalidLimitPrice`);
 /// - `amount_in == 0` (`InvalidAmountIn`);
-/// - a rate above the market's `max_platform_fee` (`PlatformFeeTooHigh`).
+/// - a rate above the market's `max_platform_fee_bps` (`PlatformFeeTooHigh`).
 ///
 /// The engine's remaining up-front checks have nothing to mirror here: the
 /// side discriminant is a typed [`SwapSide`], and the platform-fee accounts
@@ -176,8 +176,8 @@ pub fn simulate_swap(
     if !limit_price.is_valid() || !limit_price_ok(limit_price, is_buy) || amount_in == 0 {
         return Quote::default();
     }
-    let taker_fee_ppm = market.header.taker_fee.get() as u128;
-    if platform_fee_bps > market.header.max_platform_fee.get() {
+    let taker_fee_ppm = market.header.taker_fee_ppm.get() as u128;
+    if platform_fee_bps > market.header.max_platform_fee_bps.get() {
         return Quote::default();
     }
 
@@ -581,7 +581,7 @@ fn level_state(
     if flush {
         if is_buy {
             let a = v.profile.asks[i];
-            let price = flush_level_price(reference, a.price_offset.get(), true);
+            let price = flush_level_price(reference, a.price_offset_ppm.get(), true);
             // A side that sums past BPS is skipped whole by the
             // [`flush_side_sum_exceeds_bps`] gate in `collect_side_levels`
             // before this runs, so on a collected side every level is
@@ -592,7 +592,7 @@ fn level_state(
             (price, size, wall, slot)
         } else {
             let b = v.profile.bids[i];
-            let price = flush_level_price(reference, b.price_offset.get(), false);
+            let price = flush_level_price(reference, b.price_offset_ppm.get(), false);
             let size = level_fill_atoms(b.size_bps.get(), quote_atoms).unwrap_or(0);
             let (wall, slot) = b.deadlines(&v.reference_price);
             (price, size, wall, slot)
@@ -1041,7 +1041,7 @@ mod tests {
 
     fn level_bounded(offset_ppm: u32, size_bps: u16, secs: u32, slots: u32) -> Level {
         Level {
-            price_offset: offset_ppm.into(),
+            price_offset_ppm: offset_ppm.into(),
             flip_spread_ppm: 0.into(),
             size_bps: size_bps.into(),
             expiry_offset_secs: secs.into(),
@@ -1238,7 +1238,7 @@ mod tests {
         );
     }
 
-    /// A market whose `max_platform_fee` is zero (every fixture here, since
+    /// A market whose `max_platform_fee_bps` is zero (every fixture here, since
     /// they build the header from `zeroed()`) refuses any non-zero declared
     /// rate outright rather than clamping it — the engine hard-errors
     /// `PlatformFeeTooHigh` on that swap, so a clamped quote would promise a
@@ -1340,8 +1340,8 @@ mod tests {
         // Seat a 100 bps ceiling and a 1000 ppm (0.1%) taker fee so both
         // fees are live and distinguishable.
         let mut header = *MarketView::load(&data).unwrap().header;
-        header.taker_fee = 1_000u16.into();
-        header.max_platform_fee = 100u16.into();
+        header.taker_fee_ppm = 1_000u16.into();
+        header.max_platform_fee_bps = 100u16.into();
         data[ACCOUNT_DISCRIMINATOR_LEN
             ..ACCOUNT_DISCRIMINATOR_LEN + core::mem::size_of::<MarketHeader>()]
             .copy_from_slice(bytes_of(&header));

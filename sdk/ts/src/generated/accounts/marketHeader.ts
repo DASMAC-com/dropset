@@ -32,18 +32,17 @@ quoteTreasury: Address;
  */
 feeConfig: FeeConfig; 
 /** Taker fee rate, capped at ~6.55% (`Ppm16` max). */
-takerFee: number; 
+takerFeePpm: number; 
 /**
- * Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —
- * note the different denominator from `taker_fee` above. Seeded from
- * `Registry.default_max_platform_fee` at creation, then admin-retunable
- * via `SetMaxPlatformFee`.
+ * Ceiling on the caller-declared platform fee, in bps (`Bps16`). Seeded
+ * from `Registry.default_max_platform_fee` at creation, then
+ * admin-retunable via `SetMaxPlatformFee`.
  *
- * A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the
- * bound: every write path range-checks `<= BPS` so a market can never
- * hold a ceiling above 100% of the taker's output.
+ * A `u16` reaches past `BPS`, so unlike `taker_fee_ppm` the type is not
+ * the bound: every write path range-checks `<= BPS` so a market can
+ * never hold a ceiling above 100% of the taker's output.
  */
-maxPlatformFee: number; 
+maxPlatformFeeBps: number; 
 /**
  * Default min-leader-share for vaults opened on this market.
  * Stamped from `Registry.default_min_leader_share` at creation.
@@ -131,18 +130,17 @@ quoteTreasury: Address;
  */
 feeConfig: FeeConfigArgs; 
 /** Taker fee rate, capped at ~6.55% (`Ppm16` max). */
-takerFee: number; 
+takerFeePpm: number; 
 /**
- * Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —
- * note the different denominator from `taker_fee` above. Seeded from
- * `Registry.default_max_platform_fee` at creation, then admin-retunable
- * via `SetMaxPlatformFee`.
+ * Ceiling on the caller-declared platform fee, in bps (`Bps16`). Seeded
+ * from `Registry.default_max_platform_fee` at creation, then
+ * admin-retunable via `SetMaxPlatformFee`.
  *
- * A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the
- * bound: every write path range-checks `<= BPS` so a market can never
- * hold a ceiling above 100% of the taker's output.
+ * A `u16` reaches past `BPS`, so unlike `taker_fee_ppm` the type is not
+ * the bound: every write path range-checks `<= BPS` so a market can
+ * never hold a ceiling above 100% of the taker's output.
  */
-maxPlatformFee: number; 
+maxPlatformFeeBps: number; 
 /**
  * Default min-leader-share for vaults opened on this market.
  * Stamped from `Registry.default_min_leader_share` at creation.
@@ -213,12 +211,12 @@ reserved: ReadonlyUint8Array;  };
 
 /** Gets the encoder for {@link MarketHeaderArgs} account data. */
 export function getMarketHeaderEncoder(): FixedSizeEncoder<MarketHeaderArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['baseMint', getAddressEncoder()], ['quoteMint', getAddressEncoder()], ['baseTreasury', getAddressEncoder()], ['quoteTreasury', getAddressEncoder()], ['feeConfig', getFeeConfigEncoder()], ['takerFee', getU16Encoder()], ['maxPlatformFee', getU16Encoder()], ['defaultMinLeaderShare', getU32Encoder()], ['accruedBaseFeeAtoms', getU64Encoder()], ['accruedQuoteFeeAtoms', getU64Encoder()], ['nonce', getU64Encoder()], ['nextVaultSeq', getU64Encoder()], ['head', getU32Encoder()], ['tombstoneHead', getU32Encoder()], ['freeHead', getU32Encoder()], ['activeCount', getU32Encoder()], ['outstandingVaultDepositors', getU32Encoder()], ['bump', getU8Encoder()], ['reserved', fixEncoderSize(getBytesEncoder(), 135)]]), (value) => ({ ...value, discriminator: MARKET_HEADER_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)], ['baseMint', getAddressEncoder()], ['quoteMint', getAddressEncoder()], ['baseTreasury', getAddressEncoder()], ['quoteTreasury', getAddressEncoder()], ['feeConfig', getFeeConfigEncoder()], ['takerFeePpm', getU16Encoder()], ['maxPlatformFeeBps', getU16Encoder()], ['defaultMinLeaderShare', getU32Encoder()], ['accruedBaseFeeAtoms', getU64Encoder()], ['accruedQuoteFeeAtoms', getU64Encoder()], ['nonce', getU64Encoder()], ['nextVaultSeq', getU64Encoder()], ['head', getU32Encoder()], ['tombstoneHead', getU32Encoder()], ['freeHead', getU32Encoder()], ['activeCount', getU32Encoder()], ['outstandingVaultDepositors', getU32Encoder()], ['bump', getU8Encoder()], ['reserved', fixEncoderSize(getBytesEncoder(), 135)]]), (value) => ({ ...value, discriminator: MARKET_HEADER_DISCRIMINATOR }));
 }
 
 /** Gets the decoder for {@link MarketHeader} account data. */
 export function getMarketHeaderDecoder(): FixedSizeDecoder<MarketHeader> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['baseMint', getAddressDecoder()], ['quoteMint', getAddressDecoder()], ['baseTreasury', getAddressDecoder()], ['quoteTreasury', getAddressDecoder()], ['feeConfig', getFeeConfigDecoder()], ['takerFee', getU16Decoder()], ['maxPlatformFee', getU16Decoder()], ['defaultMinLeaderShare', getU32Decoder()], ['accruedBaseFeeAtoms', getU64Decoder()], ['accruedQuoteFeeAtoms', getU64Decoder()], ['nonce', getU64Decoder()], ['nextVaultSeq', getU64Decoder()], ['head', getU32Decoder()], ['tombstoneHead', getU32Decoder()], ['freeHead', getU32Decoder()], ['activeCount', getU32Decoder()], ['outstandingVaultDepositors', getU32Decoder()], ['bump', getU8Decoder()], ['reserved', fixDecoderSize(getBytesDecoder(), 135)]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)], ['baseMint', getAddressDecoder()], ['quoteMint', getAddressDecoder()], ['baseTreasury', getAddressDecoder()], ['quoteTreasury', getAddressDecoder()], ['feeConfig', getFeeConfigDecoder()], ['takerFeePpm', getU16Decoder()], ['maxPlatformFeeBps', getU16Decoder()], ['defaultMinLeaderShare', getU32Decoder()], ['accruedBaseFeeAtoms', getU64Decoder()], ['accruedQuoteFeeAtoms', getU64Decoder()], ['nonce', getU64Decoder()], ['nextVaultSeq', getU64Decoder()], ['head', getU32Decoder()], ['tombstoneHead', getU32Decoder()], ['freeHead', getU32Decoder()], ['activeCount', getU32Decoder()], ['outstandingVaultDepositors', getU32Decoder()], ['bump', getU8Decoder()], ['reserved', fixDecoderSize(getBytesDecoder(), 135)]]);
 }
 
 /** Gets the codec for {@link MarketHeader} account data. */

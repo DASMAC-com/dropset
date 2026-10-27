@@ -24,7 +24,7 @@
 //! Two fees come off the output leg, in this order: the market's
 //! **taker fee** (protocol revenue, ppm, admin-set) and then the
 //! caller-declared **platform fee** (integrator revenue, bps, bounded by
-//! the market's `max_platform_fee`). The platform fee is permissionless —
+//! the market's `max_platform_fee_bps`). The platform fee is permissionless —
 //! any caller may route flow and name any beneficiary — and paid out
 //! immediately to the integrator's token account, holding zero new
 //! protocol state. A swap with no integrator declares `0` and passes no
@@ -443,7 +443,7 @@ pub struct Swap {
     /// route flow here and name any authority. There is deliberately no admin
     /// onboarding and so nothing to constrain this against.
     ///
-    /// `max_platform_fee` bounds the fee itself, but note what it does *not*
+    /// `max_platform_fee_bps` bounds the fee itself, but note what it does *not*
     /// bound: because this authority is caller-chosen and never signs, a
     /// caller can name a fresh one on every swap, and each new
     /// `(authority, mint)` pair costs the taker another rent-exempt balance
@@ -588,7 +588,7 @@ impl Swap {
         // would hand the integrator a quote they never agreed to and give
         // the taker no signal at all.
         require!(
-            platform_fee_bps <= self.market.max_platform_fee.get(),
+            platform_fee_bps <= self.market.max_platform_fee_bps.get(),
             DropsetError::PlatformFeeTooHigh
         );
         // A zero rate is the no-integrator path and needs no accounts. A
@@ -605,7 +605,7 @@ impl Swap {
         // Snapshot market-wide constants the loop needs.
         let market_addr = *self.market.address();
         let (mint_seeds, bump_arr) = self.market.signer_seed_parts();
-        let taker_fee_ppm = self.market.taker_fee.get() as u64;
+        let taker_fee_ppm = self.market.taker_fee_ppm.get() as u64;
         // Level expiry is dual-domain: each level carries a slot deadline
         // and a wall deadline, both anchored on the quote's own datums,
         // and matches only while it is inside both (see `layout.rs`).
@@ -1252,7 +1252,7 @@ impl Swap {
         // Defense-in-depth, in the same spirit as `compute_fill`'s overflow
         // guards: unreachable today, kept so a weakened bound is a hard abort
         // rather than a silent over-draw. `platform_fee <= net_after_taker_fee`
-        // holds because every write path range-checks `max_platform_fee <= BPS`
+        // holds because every write path range-checks `max_platform_fee_bps <= BPS`
         // (`set_max_platform_fee`, `set_registry_defaults`, and the registry
         // default `create_market` copies). Were a header ever to carry a
         // ceiling above `BPS`, the fee would exceed what the matching loop

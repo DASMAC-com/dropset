@@ -106,7 +106,7 @@ function nativeLevel(c: NativeLevelCase): NativeLevel {
 function readLevel(view: DataView, index: number) {
   const o = index * LEVEL_BYTES;
   return {
-    priceOffset: view.getUint32(o, true),
+    priceOffsetPpm: view.getUint32(o, true),
     flipSpreadPpm: view.getUint32(o + 4, true),
     sizeBps: view.getUint16(o + 8, true),
     expiryOffsetSecs: view.getUint32(o + 10, true),
@@ -131,7 +131,7 @@ test('quoting vectors match', () => {
     // Layout: bids[0..N_LEVELS] then asks[0..N_LEVELS].
     c.bids.forEach((exp, i) => {
       const got = readLevel(view, i);
-      assert.equal(got.priceOffset, exp.price_offset, `bid[${i}] offset`);
+      assert.equal(got.priceOffsetPpm, exp.price_offset, `bid[${i}] offset`);
       assert.equal(got.flipSpreadPpm, exp.flip_spread_ppm, `bid[${i}] flip spread`);
       assert.equal(got.sizeBps, exp.size_bps, `bid[${i}] size_bps`);
       assert.equal(got.expiryOffsetSecs, exp.expiry_offset, `bid[${i}] expiry`);
@@ -139,7 +139,7 @@ test('quoting vectors match', () => {
     });
     c.asks.forEach((exp, i) => {
       const got = readLevel(view, N_LEVELS + i);
-      assert.equal(got.priceOffset, exp.price_offset, `ask[${i}] offset`);
+      assert.equal(got.priceOffsetPpm, exp.price_offset, `ask[${i}] offset`);
       assert.equal(got.flipSpreadPpm, exp.flip_spread_ppm, `ask[${i}] flip spread`);
       assert.equal(got.sizeBps, exp.size_bps, `ask[${i}] size_bps`);
       assert.equal(got.expiryOffsetSecs, exp.expiry_offset, `ask[${i}] expiry`);

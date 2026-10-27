@@ -98,12 +98,12 @@ function writeFlip(dv: DataView, offset: number, flipPrice: number, flipSize: bi
 function writeProfileLevel(
   dv: DataView,
   offset: number,
-  priceOffset: number,
+  priceOffsetPpm: number,
   sizeBps: number,
   expiryOffsetSecs: number,
   expiryOffsetSlots = NULL_SECTOR,
 ): void {
-  dv.setUint32(offset, priceOffset, true);
+  dv.setUint32(offset, priceOffsetPpm, true);
   // offset + 4: `flip_spread_ppm`, left zero (the level does not flip).
   dv.setUint16(offset + 8, sizeBps, true);
   dv.setUint32(offset + 10, expiryOffsetSecs, true);

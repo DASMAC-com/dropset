@@ -1194,7 +1194,7 @@ fn nonce_overflow_on_second_leg_hard_reverts_the_committed_first_leg() {
 // ── Caller-declared platform fee ─────────────────────────────────────
 //
 // The integrator fee: permissionless, bounded by the market's
-// `max_platform_fee`, skimmed off the output leg *after* the taker fee and
+// `max_platform_fee_bps`, skimmed off the output leg *after* the taker fee and
 // paid straight through to the integrator's token account.
 //
 // The invariant these tests are really guarding is that the fee splits the

@@ -192,7 +192,7 @@ pub struct SetTakerFee {
     /// Singleton registry, read for the admin-membership check.
     #[account(seeds = [b"registry"], bump = registry.bump)]
     pub registry: Registry,
-    /// Market whose `taker_fee` is being retuned. `mut` for the write.
+    /// Market whose `taker_fee_ppm` is being retuned. `mut` for the write.
     #[account(mut)]
     pub market: Market,
 }
@@ -207,7 +207,7 @@ impl SetTakerFee {
         // No range check: `taker_fee` is a `u16` (`Ppm16`), so the spec's
         // ~6.55% ceiling is the type's own max — unreachable to exceed.
         let market_addr = *self.market.address();
-        self.market.taker_fee = taker_fee.into();
+        self.market.taker_fee_ppm = taker_fee.into();
 
         Ok(SetTakerFeeEvent {
             market: market_addr,
@@ -224,7 +224,7 @@ pub struct SetMaxPlatformFee {
     /// Singleton registry, read for the admin-membership check.
     #[account(seeds = [b"registry"], bump = registry.bump)]
     pub registry: Registry,
-    /// Market whose `max_platform_fee` is being retuned. `mut` for the
+    /// Market whose `max_platform_fee_bps` is being retuned. `mut` for the
     /// write.
     #[account(mut)]
     pub market: Market,
@@ -255,7 +255,7 @@ impl SetMaxPlatformFee {
             DropsetError::InvalidMaxPlatformFee
         );
         let market_addr = *self.market.address();
-        self.market.max_platform_fee = max_platform_fee.into();
+        self.market.max_platform_fee_bps = max_platform_fee.into();
 
         Ok(SetMaxPlatformFeeEvent {
             market: market_addr,

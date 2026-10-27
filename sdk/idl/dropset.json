@@ -2067,7 +2067,7 @@
         {
           "name": "market",
           "docs": [
-            "Market whose `max_platform_fee` is being retuned. `mut` for the",
+            "Market whose `max_platform_fee_bps` is being retuned. `mut` for the",
             "write."
           ],
           "writable": true
@@ -2452,7 +2452,7 @@
         {
           "name": "market",
           "docs": [
-            "Market whose `taker_fee` is being retuned. `mut` for the write."
+            "Market whose `taker_fee_ppm` is being retuned. `mut` for the write."
           ],
           "writable": true
         },
@@ -2639,7 +2639,7 @@
             "route flow here and name any authority. There is deliberately no admin",
             "onboarding and so nothing to constrain this against.",
             "",
-            "`max_platform_fee` bounds the fee itself, but note what it does *not*",
+            "`max_platform_fee_bps` bounds the fee itself, but note what it does *not*",
             "bound: because this authority is caller-chosen and never signs, a",
             "caller can name a fresh one on every swap, and each new",
             "`(authority, mint)` pair costs the taker another rent-exempt balance",
@@ -3710,7 +3710,7 @@
     {
       "code": 6046,
       "name": "PlatformFeeTooHigh",
-      "msg": "declared platform_fee_bps exceeds the market's max_platform_fee"
+      "msg": "declared platform_fee_bps exceeds the market's max_platform_fee_bps"
     },
     {
       "code": 6047,
@@ -4433,7 +4433,7 @@
             }
           },
           {
-            "name": "taker_fee",
+            "name": "taker_fee_ppm",
             "docs": [
               "Taker fee rate, capped at ~6.55% (`Ppm16` max)."
             ],
@@ -4444,16 +4444,15 @@
             }
           },
           {
-            "name": "max_platform_fee",
+            "name": "max_platform_fee_bps",
             "docs": [
-              "Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —",
-              "note the different denominator from `taker_fee` above. Seeded from",
-              "`Registry.default_max_platform_fee` at creation, then admin-retunable",
-              "via `SetMaxPlatformFee`.",
+              "Ceiling on the caller-declared platform fee, in bps (`Bps16`). Seeded",
+              "from `Registry.default_max_platform_fee` at creation, then",
+              "admin-retunable via `SetMaxPlatformFee`.",
               "",
-              "A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the",
-              "bound: every write path range-checks `<= BPS` so a market can never",
-              "hold a ceiling above 100% of the taker's output."
+              "A `u16` reaches past `BPS`, so unlike `taker_fee_ppm` the type is not",
+              "the bound: every write path range-checks `<= BPS` so a market can",
+              "never hold a ceiling above 100% of the taker's output."
             ],
             "type": {
               "defined": {
@@ -4901,7 +4900,7 @@
             "name": "default_max_platform_fee",
             "docs": [
               "Default platform-fee ceiling (bps, `Bps16`) stamped into",
-              "`MarketHeader.max_platform_fee` at creation. Bounds the",
+              "`MarketHeader.max_platform_fee_bps` at creation. Bounds the",
               "caller-declared `platform_fee_bps` a `swap` may skim off the taker's",
               "output; retunable per market afterwards via `SetMaxPlatformFee`."
             ],

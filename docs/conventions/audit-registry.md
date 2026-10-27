@@ -102,7 +102,7 @@ sdk-math <-> frontend: the frontend's eCLOB route (frontend/lib/eclob/,
   not re-derive routing decisions the router already owns. The declared
   platform fee is part of this seam: the quote (router quoteEclob) and the
   executor (frontend/lib/eclob/eclobSwap.ts) must clamp the configured rate to
-  the market's max_platform_fee identically, or the displayed output stops
+  the market's max_platform_fee_bps identically, or the displayed output stops
   equalling the fill. A separate drift to watch: the display-only float PnL
   re-implementation (frontend/lib/data/pnl.ts) that no conformance vector
   pins.

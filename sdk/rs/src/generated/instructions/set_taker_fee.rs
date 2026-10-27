@@ -17,7 +17,7 @@ pub struct SetTakerFee {
     pub admin: solana_pubkey::Pubkey,
     /// Singleton registry, read for the admin-membership check.
     pub registry: solana_pubkey::Pubkey,
-    /// Market whose `taker_fee` is being retuned. `mut` for the write.
+    /// Market whose `taker_fee_ppm` is being retuned. `mut` for the write.
     pub market: solana_pubkey::Pubkey,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: solana_pubkey::Pubkey,
@@ -143,7 +143,7 @@ impl SetTakerFeeBuilder {
         self.registry = Some(registry);
         self
     }
-    /// Market whose `taker_fee` is being retuned. `mut` for the write.
+    /// Market whose `taker_fee_ppm` is being retuned. `mut` for the write.
     #[inline(always)]
     pub fn market(&mut self, market: solana_pubkey::Pubkey) -> &mut Self {
         self.market = Some(market);
@@ -204,7 +204,7 @@ pub struct SetTakerFeeCpiAccounts<'a, 'b> {
     pub admin: &'b solana_account_info::AccountInfo<'a>,
     /// Singleton registry, read for the admin-membership check.
     pub registry: &'b solana_account_info::AccountInfo<'a>,
-    /// Market whose `taker_fee` is being retuned. `mut` for the write.
+    /// Market whose `taker_fee_ppm` is being retuned. `mut` for the write.
     pub market: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
@@ -220,7 +220,7 @@ pub struct SetTakerFeeCpi<'a, 'b> {
     pub admin: &'b solana_account_info::AccountInfo<'a>,
     /// Singleton registry, read for the admin-membership check.
     pub registry: &'b solana_account_info::AccountInfo<'a>,
-    /// Market whose `taker_fee` is being retuned. `mut` for the write.
+    /// Market whose `taker_fee_ppm` is being retuned. `mut` for the write.
     pub market: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
@@ -365,7 +365,7 @@ impl<'a, 'b> SetTakerFeeCpiBuilder<'a, 'b> {
         self.instruction.registry = Some(registry);
         self
     }
-    /// Market whose `taker_fee` is being retuned. `mut` for the write.
+    /// Market whose `taker_fee_ppm` is being retuned. `mut` for the write.
     #[inline(always)]
     pub fn market(&mut self, market: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.market = Some(market);

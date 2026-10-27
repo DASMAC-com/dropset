@@ -206,13 +206,13 @@ fn market_fee_config_rejects_mint_program_mismatch() {
 fn taker_fee_admin_retunes_fee() {
     let mut f = Fixture::bootstrap();
     // Seeded from the registry default (0) at market creation.
-    assert_eq!(f.market_header().taker_fee.get(), 0);
+    assert_eq!(f.market_header().taker_fee_ppm.get(), 0);
 
     let admin = f.authority.insecure_clone();
     let meta = f
         .set_taker_fee_meta(&admin, 10_000) // 1%
         .expect("admin may retune the taker fee");
-    assert_eq!(f.market_header().taker_fee.get(), 10_000);
+    assert_eq!(f.market_header().taker_fee_ppm.get(), 10_000);
 
     let ev = common::events::set_taker_fee(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
@@ -221,14 +221,14 @@ fn taker_fee_admin_retunes_fee() {
 
 #[test]
 fn taker_fee_allows_ppm16_max() {
-    // `taker_fee` is a `u16`, so the spec's ~6.55% ceiling is the type's
+    // `taker_fee_ppm` is a `u16`, so the spec's ~6.55% ceiling is the type's
     // own maximum — `u16::MAX` is the largest representable rate and must
     // be accepted, pinning that the cap is the type bound, not a check.
     let mut f = Fixture::bootstrap();
     let admin = f.authority.insecure_clone();
     f.set_taker_fee(&admin, u16::MAX)
         .expect("the max Ppm16 rate is allowed");
-    assert_eq!(f.market_header().taker_fee.get(), u16::MAX);
+    assert_eq!(f.market_header().taker_fee_ppm.get(), u16::MAX);
 }
 
 #[test]
@@ -240,7 +240,7 @@ fn taker_fee_rejects_non_admin() {
         .expect_err("non-admin must not retune the taker fee");
     common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
     // The store is left untouched.
-    assert_eq!(f.market_header().taker_fee.get(), 0);
+    assert_eq!(f.market_header().taker_fee_ppm.get(), 0);
 }
 
 // ── set_registry_defaults (admin-only) ───────────────────────────────
@@ -308,8 +308,8 @@ fn registry_defaults_is_non_retroactive() {
     // Changing a registry default must not touch markets already created
     // — it only seeds *future* markets, mirroring `SetMarketFeeConfig`.
     let mut f = Fixture::bootstrap();
-    assert_eq!(f.market_header().taker_fee.get(), 0);
-    assert_eq!(f.market_header().max_platform_fee.get(), 100);
+    assert_eq!(f.market_header().taker_fee_ppm.get(), 0);
+    assert_eq!(f.market_header().max_platform_fee_bps.get(), 100);
 
     let admin = f.authority.insecure_clone();
     f.set_registry_defaults(&admin, Some(5_000), Some(9_000), Some(123_456))
@@ -319,12 +319,12 @@ fn registry_defaults_is_non_retroactive() {
     assert_eq!(f.registry_header().default_taker_fee.get(), 5_000);
     assert_eq!(f.registry_header().default_max_platform_fee.get(), 9_000);
     assert_eq!(
-        f.market_header().taker_fee.get(),
+        f.market_header().taker_fee_ppm.get(),
         0,
         "the existing market keeps its create-time taker fee"
     );
     assert_eq!(
-        f.market_header().max_platform_fee.get(),
+        f.market_header().max_platform_fee_bps.get(),
         100,
         "the existing market keeps its create-time platform-fee ceiling"
     );
@@ -457,13 +457,13 @@ fn registry_defaults_all_none_is_noop() {
 fn max_platform_fee_admin_retunes_the_market_ceiling() {
     let mut f = Fixture::bootstrap();
     // Seeded from the registry default at `create_market`.
-    assert_eq!(f.market_header().max_platform_fee.get(), 100);
+    assert_eq!(f.market_header().max_platform_fee_bps.get(), 100);
 
     let admin = f.authority.insecure_clone();
     let meta = f
         .set_max_platform_fee_meta(&admin, 25)
         .expect("admin may retune the market's platform-fee ceiling");
-    assert_eq!(f.market_header().max_platform_fee.get(), 25);
+    assert_eq!(f.market_header().max_platform_fee_bps.get(), 25);
 
     let ev = common::events::set_max_platform_fee(&meta);
     assert_eq!(ev.market, f.market.to_bytes());
@@ -479,10 +479,10 @@ fn max_platform_fee_allows_zero_and_full_bps() {
     let admin = f.authority.insecure_clone();
     f.set_max_platform_fee(&admin, 0)
         .expect("a zero ceiling is allowed — it turns platform fees off");
-    assert_eq!(f.market_header().max_platform_fee.get(), 0);
+    assert_eq!(f.market_header().max_platform_fee_bps.get(), 0);
     f.set_max_platform_fee(&admin, 10_000)
         .expect("a 100% ceiling is allowed");
-    assert_eq!(f.market_header().max_platform_fee.get(), 10_000);
+    assert_eq!(f.market_header().max_platform_fee_bps.get(), 10_000);
 }
 
 #[test]
@@ -494,7 +494,7 @@ fn max_platform_fee_rejects_above_bps() {
         .expect_err("a ceiling above 100% of the output leg is rejected");
     common::assert_program_error(&err, dropset::DropsetError::InvalidMaxPlatformFee);
     assert_eq!(
-        f.market_header().max_platform_fee.get(),
+        f.market_header().max_platform_fee_bps.get(),
         100,
         "the rejected write leaves the seeded ceiling intact"
     );
@@ -508,7 +508,7 @@ fn max_platform_fee_rejects_non_admin() {
         .set_max_platform_fee(&stranger, 50)
         .expect_err("non-admin must not retune the platform-fee ceiling");
     common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
-    assert_eq!(f.market_header().max_platform_fee.get(), 100);
+    assert_eq!(f.market_header().max_platform_fee_bps.get(), 100);
 }
 
 // ── set_default_fee_config (admin-only) ──────────────────────────────

@@ -242,7 +242,7 @@ carries the market-wide `nonce`, the three DLL heads + `active_count`
 that thread the vault sectors (see **Storage layout**), the
 `outstanding_vault_depositors` counter, the `next_vault_seq` vault-number
 counter (see **Vault**), the per-market knobs
-(`taker_fee`, `max_platform_fee`, `default_min_leader_share`,
+(`taker_fee_ppm`, `max_platform_fee_bps`, `default_min_leader_share`,
 `fee_config`) seeded from the
 registry at creation and tunable downstream by admins, the base/quote
 mints, the two treasury accounts the market PDA signs for, and that
@@ -304,9 +304,9 @@ The load-bearing invariants and rationale:
   `SetMarketFeeConfig` create the fresh registry ATA fees route to —
   admins sweep both.
 
-- **Fee cap / floor seeding.** `taker_fee` is capped at ~6.55%
+- **Fee cap / floor seeding.** `taker_fee_ppm` is capped at ~6.55%
   (`Ppm16` max) and admin-mutable per market via `SetTakerFee`.
-  `max_platform_fee` bounds the caller-declared platform fee (bps,
+  `max_platform_fee_bps` bounds the caller-declared platform fee (bps,
   `Bps16`, range-checked `<= BPS` on every write since the type is no
   bound) and is admin-mutable via `SetMaxPlatformFee` — see **Order
   matching → Platform fee**. Note the two fee knobs use different
@@ -318,7 +318,7 @@ The load-bearing invariants and rationale:
 - **Accrued protocol revenue.** `accrued_base_fee_atoms` /
   `accrued_quote_fee_atoms` are the running totals of taker fee charged on
   each leg — the summed `FillEvent.taker_fee_atoms`, hence the unit
-  suffix (`taker_fee`, by contrast, is a **rate**). They are
+  suffix (`taker_fee_ppm`, by contrast, is a **rate**). They are
   **authoritative**, not derived: nothing infers revenue from the gap
   between the treasury and the vault sum, which is what keeps that gap a
   checkable invariant instead of a tautology (see **Fee model**).
@@ -349,12 +349,12 @@ Two distinct fees exist in the model, and they are not
 interchangeable:
 
 - **Taker fee** — **protocol revenue**. Per market, admin-set
-  (`MarketHeader.taker_fee`, `SetTakerFee`), charged on every fill,
+  (`MarketHeader.taker_fee_ppm`, `SetTakerFee`), charged on every fill,
   accrued in the treasury, harvested later.
 - **Platform fee** — **integrator revenue**. Caller-declared per swap and
   program-capped, paid out immediately to the integrator that routed the
   order: `swap` takes `platform_fee_bps`, capped by
-  `MarketHeader.max_platform_fee`, and a zero rate skims nothing. See
+  `MarketHeader.max_platform_fee_bps`, and a zero rate skims nothing. See
   **Order matching → Platform fee (caller-declared)**. It touches none
   of the accounting below.
 
@@ -995,7 +995,7 @@ restored.
 
 ## LiquidityProfile
 
-Each level carries a `price_offset` in **ppm** (1_000_000 = 100%)
+Each level carries a `price_offset_ppm` in **ppm** (1_000_000 = 100%)
 from `reference_price.price`, a `flip_spread_ppm` (also ppm, off the
 level's *own* absolute price), a `size_bps` as fraction of vault
 inventory in **basis points** (10000 = 100%), and one expiry offset
@@ -1019,7 +1019,7 @@ The byte-exact layout is owned by
 (`LiquidityProfile`, `Level`) — the IDL carries only the profile blob's
 width, since the slab is opaque to it: per-side arrays of `N_LEVELS`
 `Level`s, top of book first, each carrying
-`price_offset`, `flip_spread_ppm`, `size_bps`, `expiry_offset_secs` and
+`price_offset_ppm`, `flip_spread_ppm`, `size_bps`, `expiry_offset_secs` and
 `expiry_offset_slots` in that order. The load-bearing invariants:
 
 - **Per-side size cap.** `Σ size_bps ≤ 10000` per side. The sum at
@@ -1033,7 +1033,7 @@ width, since the slab is opaque to it: per-side arrays of `N_LEVELS`
   materialized **bid** size is denominated in quote atoms (the leader
   allocates their quote pool across bid prices), an **ask** size in
   base atoms.
-- **Implicit direction.** `price_offset` is a ppm spread from
+- **Implicit direction.** `price_offset_ppm` is a ppm spread from
   `reference_price.price` whose sign is implicit: bids subtract, asks
   add. The two expiry offsets are measured from their own datums, and
   `flip_spread_ppm` from the level's own price. All four materialize to
@@ -1060,7 +1060,7 @@ one-time materialization across all levels into `Vault.remaining`:
 // deadline(datum, off) = 0 if off == 0 else datum +sat off
 
 asks_remaining[i].size       = base_atoms × a.size_bps / 10000  // base
-asks_remaining[i].price      = ref.price × (PPM + a.price_offset) / PPM
+asks_remaining[i].price      = ref.price × (PPM + a.price_offset_ppm) / PPM
 asks_remaining[i].expires_at_unix = deadline(ref.quote_unix,
                                              a.expiry_offset_secs)
 asks_remaining[i].expires_at_slot = deadline(ref.quote_slot,
@@ -1071,7 +1071,7 @@ asks_remaining[i].flip_price = ZERO if a.flip_spread_ppm == 0
 asks_remaining[i].flip_size  = 0
 
 bids_remaining[i].size       = quote_atoms × b.size_bps / 10000  // quote
-bids_remaining[i].price      = ref.price × (PPM −sat b.price_offset) / PPM
+bids_remaining[i].price      = ref.price × (PPM −sat b.price_offset_ppm) / PPM
 bids_remaining[i].expires_at_unix = deadline(ref.quote_unix,
                                              b.expiry_offset_secs)
 bids_remaining[i].expires_at_slot = deadline(ref.quote_slot,
@@ -1127,7 +1127,7 @@ size for display compute `size / price`.
 A u128 intermediate is used during multiplication to avoid u64
 overflow (relevant for both the price and size computations); the
 result is truncated back to the native field width. The `−sat`
-operator on bids is saturating subtraction — bid `price_offset`
+operator on bids is saturating subtraction — bid `price_offset_ppm`
 values ≥ 1_000_000 ppm produce a 0 bid price, which is range-checked
 out at match time. The per-side `Σ size_bps ≤ 10000` invariant is
 applied here at flush: a side whose sum exceeds `10000` has its
@@ -1833,7 +1833,7 @@ That argument covers an **invalid** price. A **valid but far-out** one is a
 distinct case, and it is *not* parked out of the book: it materializes,
 sorts, and matches like any other. Nothing bounds it — not `price_bits`
 (any encodable `Price`, spanning ~1e-16 to ~1e16), not
-`LiquidityProfile`'s per-level `price_offset` (any `u32` of ppm), and there
+`LiquidityProfile`'s per-level `price_offset_ppm` (any `u32` of ppm), and there
 is no band, collar, or tolerance field anywhere in `MarketHeader`. That is
 deliberate rather than an omission. A write-time band on the offset would
 bound the ladder's *shape*, not its distance from the market, because the
@@ -2273,7 +2273,7 @@ time).
 
 ### SetTakerFee
 
-Admin-only. Writes `MarketHeader.taker_fee = value` (ppm, `Ppm16`),
+Admin-only. Writes `MarketHeader.taker_fee_ppm = value` (ppm, `Ppm16`),
 overriding the rate stamped from `Registry.default_taker_fee` at
 `create_market`. The taker fee is read on the swap hot path, so this is
 the lever that retunes a live market's taker schedule after launch. It
@@ -2284,7 +2284,7 @@ effect on the next swap; in-flight quotes are unaffected.
 
 ### SetMaxPlatformFee
 
-Admin-only. Writes `MarketHeader.max_platform_fee = value` (bps,
+Admin-only. Writes `MarketHeader.max_platform_fee_bps = value` (bps,
 `Bps16`), overriding the ceiling stamped from
 `Registry.default_max_platform_fee` at `create_market`. This is the
 ceiling on the caller-declared `platform_fee_bps` (see **Order matching
@@ -2640,7 +2640,7 @@ On every taker instruction:
    fee is not left in the vault. (An entry with `vault_leg == 0` yields
    a zero fill; the loop moves on.) Decrement the taker's unfilled
    amount, decrement the consumed counter by the gross output fill, and
-   add the taker fee (from `market.taker_fee`) to the
+   add the taker fee (from `market.taker_fee_ppm`) to the
    output leg's `accrued_<leg>_fee_atoms` on the header — see **MarketHeader →
    Fee model**.
 
@@ -2825,10 +2825,10 @@ Two distinct fees come off the output leg, in a fixed order:
 `fill → taker fee → platform fee`.
 
 - **Taker fee** — protocol revenue. Per market, admin-set
-  (`MarketHeader.taker_fee`, ppm), read on the hot path.
+  (`MarketHeader.taker_fee_ppm`, ppm), read on the hot path.
 - **Platform fee** — integrator revenue. Declared per swap by the
   caller as `platform_fee_bps` (bps, not ppm), bounded by
-  `MarketHeader.max_platform_fee`, and paid out immediately.
+  `MarketHeader.max_platform_fee_bps`, and paid out immediately.
 
 The platform fee exists so a frontend or router earns a kickback for
 routing flow to Dropset. Without it the eCLOB route is the one path
@@ -3155,7 +3155,7 @@ cost:
 
 1. **Reshape via `SetLiquidityProfile` with asymmetric ladders.** `bids`
    and `asks` are independent arrays — tighten one side's
-   `price_offset` or grow one side's `size_bps` to skew flow more
+   `price_offset_ppm` or grow one side's `size_bps` to skew flow more
    aggressively than the auto-rebalance alone provides. Costs a
    full `LiquidityProfile` rewrite + materialization on the next take.
 

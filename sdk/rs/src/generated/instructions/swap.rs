@@ -40,7 +40,7 @@ pub struct Swap {
     /// route flow here and name any authority. There is deliberately no admin
     /// onboarding and so nothing to constrain this against.
     ///
-    /// `max_platform_fee` bounds the fee itself, but note what it does *not*
+    /// `max_platform_fee_bps` bounds the fee itself, but note what it does *not*
     /// bound: because this authority is caller-chosen and never signs, a
     /// caller can name a fresh one on every swap, and each new
     /// `(authority, mint)` pair costs the taker another rent-exempt balance
@@ -377,7 +377,7 @@ impl SwapBuilder {
     /// route flow here and name any authority. There is deliberately no admin
     /// onboarding and so nothing to constrain this against.
     ///
-    /// `max_platform_fee` bounds the fee itself, but note what it does *not*
+    /// `max_platform_fee_bps` bounds the fee itself, but note what it does *not*
     /// bound: because this authority is caller-chosen and never signs, a
     /// caller can name a fresh one on every swap, and each new
     /// `(authority, mint)` pair costs the taker another rent-exempt balance
@@ -605,7 +605,7 @@ pub struct SwapCpiAccounts<'a, 'b> {
     /// route flow here and name any authority. There is deliberately no admin
     /// onboarding and so nothing to constrain this against.
     ///
-    /// `max_platform_fee` bounds the fee itself, but note what it does *not*
+    /// `max_platform_fee_bps` bounds the fee itself, but note what it does *not*
     /// bound: because this authority is caller-chosen and never signs, a
     /// caller can name a fresh one on every swap, and each new
     /// `(authority, mint)` pair costs the taker another rent-exempt balance
@@ -708,7 +708,7 @@ pub struct SwapCpi<'a, 'b> {
     /// route flow here and name any authority. There is deliberately no admin
     /// onboarding and so nothing to constrain this against.
     ///
-    /// `max_platform_fee` bounds the fee itself, but note what it does *not*
+    /// `max_platform_fee_bps` bounds the fee itself, but note what it does *not*
     /// bound: because this authority is caller-chosen and never signs, a
     /// caller can name a fresh one on every swap, and each new
     /// `(authority, mint)` pair costs the taker another rent-exempt balance
@@ -1104,7 +1104,7 @@ impl<'a, 'b> SwapCpiBuilder<'a, 'b> {
     /// route flow here and name any authority. There is deliberately no admin
     /// onboarding and so nothing to constrain this against.
     ///
-    /// `max_platform_fee` bounds the fee itself, but note what it does *not*
+    /// `max_platform_fee_bps` bounds the fee itself, but note what it does *not*
     /// bound: because this authority is caller-chosen and never signs, a
     /// caller can name a fresh one on every swap, and each new
     /// `(authority, mint)` pair costs the taker another rent-exempt balance

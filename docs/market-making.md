@@ -599,11 +599,11 @@ Relevant protocol facts (see **architecture.md → LiquidityProfile** and
 - Each `Level` is:
 
   ```text
-  { price_offset: Ppm32, flip_spread_ppm: u32, size_bps: u16,
+  { price_offset_ppm: Ppm32, flip_spread_ppm: u32, size_bps: u16,
     expiry_offset_secs: u32, expiry_offset_slots: u32 }
   ```
 
-- `price_offset` is ppm from `reference_price.price` — bids subtract,
+- `price_offset_ppm` is ppm from `reference_price.price` — bids subtract,
   asks add.
 
 - `flip_spread_ppm` is ppm off the level's own price: once filled, the
@@ -623,13 +623,13 @@ Relevant protocol facts (see **architecture.md → LiquidityProfile** and
 
 Per side, symmetric at launch (~\$100 per leg, full leg committed):
 
-| Level | `price_offset` | bps from mid | `size_bps` | depth at launch | cumulative |
-| ----- | -------------- | ------------ | ---------- | --------------- | ---------- |
-| 1     | 5_000 ppm      | 50 bps       | 4000 (40%) | ~\$40           | \$40       |
-| 2     | 10_000 ppm     | 100 bps      | 3000 (30%) | ~\$30           | \$70       |
-| 3     | 20_000 ppm     | 200 bps      | 2000 (20%) | ~\$20           | \$90       |
-| 4     | 50_000 ppm     | 500 bps      | 1000 (10%) | ~\$10           | \$100      |
-| 5-8   | 0 / unused     | —            | 0          | —               | —          |
+| Level | `price_offset_ppm` | bps from mid | `size_bps` | depth at launch | cumulative |
+| ----- | ------------------ | ------------ | ---------- | --------------- | ---------- |
+| 1     | 5_000 ppm          | 50 bps       | 4000 (40%) | ~\$40           | \$40       |
+| 2     | 10_000 ppm         | 100 bps      | 3000 (30%) | ~\$30           | \$70       |
+| 3     | 20_000 ppm         | 200 bps      | 2000 (20%) | ~\$20           | \$90       |
+| 4     | 50_000 ppm         | 500 bps      | 1000 (10%) | ~\$10           | \$100      |
+| 5-8   | 0 / unused         | —            | 0          | —               | —          |
 
 (Unit conversion: `1_000_000 ppm = 100% = 10_000 bps`, so **1 bp = 100 ppm**.)
 
@@ -673,16 +673,16 @@ eight-rung ladder cannot do both, and at the old 5 bps spacing it went
 one-sided most mornings under a once-a-day re-center. At its one-day
 horizon:
 
-| Level | `price_offset` | `size_bps` | `flip_spread_ppm` |
-| ----- | -------------- | ---------- | ----------------- |
-| 1     | 300 ppm        | 200 (tip)  | 300 (3 bps)       |
-| 2     | 600 ppm        | 2300       | 300               |
-| 3     | 1_000 ppm      | 2000       | 400               |
-| 4     | 1_600 ppm      | 1700       | 600               |
-| 5     | 2_500 ppm      | 1400       | 900               |
-| 6     | 4_000 ppm      | 1100       | 1_500             |
-| 7     | 6_500 ppm      | 800        | 2_500             |
-| 8     | 10_000 ppm     | 500        | 3_500             |
+| Level | `price_offset_ppm` | `size_bps` | `flip_spread_ppm` |
+| ----- | ------------------ | ---------- | ----------------- |
+| 1     | 300 ppm            | 200 (tip)  | 300 (3 bps)       |
+| 2     | 600 ppm            | 2300       | 300               |
+| 3     | 1_000 ppm          | 2000       | 400               |
+| 4     | 1_600 ppm          | 1700       | 600               |
+| 5     | 2_500 ppm          | 1400       | 900               |
+| 6     | 4_000 ppm          | 1100       | 1_500             |
+| 7     | 6_500 ppm          | 800        | 2_500             |
+| 8     | 10_000 ppm         | 500        | 3_500             |
 
 Three knobs, all on the TUI's passive form: the **visit horizon** `T`
 in days scales every offset by `sqrt(T)` (`T = 3` runs about 5 to
