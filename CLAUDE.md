@@ -233,8 +233,7 @@ view is the unblocked Todo. An issue carrying a **parking milestone**
 retired once empty) — is *parked* in either state, so a filing skill
 sets **`Backlog` plus the milestone, in the creating call**, and
 promotion is **one write, the milestone clear**. `Follow-ups` is
-struck from the set; filers park there until they switch to Backlog
-plus a message to the curator, then it is deleted. Every
+struck: filers land in Backlog and message the curator. Every
 full bootstrap says each parked count **out loud**; a genuinely urgent
 stray (a broken guard) is promoted on the spot.
 

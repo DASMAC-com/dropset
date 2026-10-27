@@ -82,11 +82,11 @@ cost is roughly quadratic in session length — see
 `docs/conventions/context-economy.md` → "Session length is itself a
 cost lever".
 
-**Trims are the analyst's, not a session's.** A session files
-`Follow-ups` for deferred *implementation* work and files nothing that
+**Trims are the analyst's, not a session's.** A session files deferred
+*implementation* work into the curator's pool and files nothing that
 is only a trim — those are what the digest surfaces. This is what keeps
 a session from spending context on levers other sessions already
-reported. Executor filings of every other kind keep parking (below).
+reported.
 
 Every full `plan` bootstrap spawns `trim-context` as a background
 sub-agent — the way `review-pr` spawns its reviewers — gated on
@@ -596,13 +596,11 @@ resolves a filing splits by the filer's tier:
 - **An executor session** (`task`, `chore`) never holds a review: its
   follow-ups and meta filings land in the inbox (its trims it files
   not at all — see the trim-lever pipeline), where the curator reviews
-  them with the rest of the pool — once the filers switch over; until
-  then they still park under `Follow-ups` (see "Which milestones
-  park").
+  them with the rest of the pool.
 
-`Audit findings` drains by the scheduler's kill gate, one finding at a
-time: each bootstrap promotes or kills what it holds, and it leaves the
-parking set once empty.
+`Audit findings` drains one finding at a time: each scheduler bootstrap
+promotes or kills what it holds, and it leaves the parking set once
+empty.
 
 **`Session pending` is never promoted by the scheduler or the
 curator.** It is the unified
@@ -624,31 +622,16 @@ nobody can promote. A genuinely urgent stray — a broken guard, a verb
 that is actively hurting — is promoted on the spot rather than waiting
 for the daily rhythm.
 
-**Every meta issue gets a review at every full bootstrap** (a warm
-same-day relaunch after a cycle skips it) — parked, in the inbox, in the
-operator's **Next** view (unblocked Todo) and in the **Blocked** view
-— and each ends doable, blocked, or killed. It runs whether or not the
-Planning document names a lane. Its one offer is the **kill list**,
-riding in the bootstrap's consolidated `AskUserQuestion`; every
-surviving batch is promoted. Its outcome is recorded in the document's
-in-session notes. The procedure is the `plan` skill's, step 1. This
-review, its kill gate and the `Follow-ups` assembly below are the
-scheduler's **while filers still park there**; reviewing the inbox
-itself is the curator's (see "The curator owns review").
-
-**A blocked issue is never a fold input.** The assembly pool takes
-only **unblocked** issues, because `/merge-tasks` does
+**A blocked issue is never a fold input**, because `/merge-tasks` does
 not carry an inherited blocking edge silently — it re-proposes it, and
 drops it unapproved — so folding an edge-held issue would rewrite or lose
-a human-placed edge. It is reviewed for a kill, never promoted:
-promoting it would clear no edge.
+a human-placed edge.
 
-**The review is a necessity gate, and it closes on doubt.** On the
-operator's yes, any pooled issue that cannot name a concrete recurring cost
-larger than its landing-plus-ratification cost is closed `Canceled` with
-its reason. The kill pass runs **per issue, before assembly**, since a
-folded issue can no longer be killed on its own; titles decide the
-grouping, but a kill candidate's body is read, because the cost a kill
+**The review is a necessity gate, and it closes on doubt.** A pool
+member that cannot name a concrete recurring cost larger than its
+landing-plus-ratification cost gets the curator's cancel
+recommendation, with the reason; the operator's drop comment closes it
+`Canceled`. A kill candidate's body is read, because the cost a kill
 turns on lives there. The asymmetry is what decides doubt: a wrongly
 closed issue's cost resurfaces when it recurs and is measured again —
 in the next day's digest — while a wrongly kept one spends a session
@@ -697,13 +680,9 @@ The project's milestones split into two kinds, and only one kind parks.
 **Parking** milestones — `Session pending`, and the legacy
 `Audit findings` — mean "filed, not yet reviewed", and an issue
 carrying one is read as parked by every rule above. ~~`Follow-ups`~~
-(into which `Claude meta` already merged) is struck: executor filings
-go to the curator's pool instead. Until the filers switch to filing
-Backlog plus a message to the curator, they still park under it and
-the scheduler still promotes from it; the milestone is cleared and
-deleted after that switch.
-The
-rest —
+(into which `Claude meta` already merged) is struck: filers land in
+Backlog and message the curator, and the milestone is deleted once what
+it still holds is cleared. The rest —
 `Integrations`, `UX features`, `Hardening`, `Mechanisms` — are ordinary
 **delivery** milestones grouping pullable work; an issue under one of
 those is queued like any other and is *not* parked.
@@ -1547,20 +1526,16 @@ files — and a rebase inside a short session costs cents. The contention
 is real; it is simply the cheaper of the two costs.
 
 What matters for *this* section is that neither the edge nor its
-stand-in survives. The scheduler places **no relation** on a batch,
-and no longer gates assembly on another meta issue being In Progress or
-In Review either. Until the filers switch over, strays still
-accumulate **parked** under `Follow-ups` between bootstraps; after
-that they wait in the
-curator's pool, and Backlog alone keeps them out of the pull queue
-without an edge.
+stand-in survives. **No relation** is placed on a batch, and nothing
+gates one on another meta issue being In Progress or In Review. Meta
+filings wait in the curator's pool, and Backlog alone keeps them out of
+the pull queue without an edge.
 
-**Where both states still matter is the POOL, not a gate.** An In Review
-meta issue is a session that has merged its code but still owes
+**Where both states still matter is the fold, not a gate.** An In
+Review meta issue is a session that has merged its code but still owes
 follow-up, and the fleet-resume launcher treats it as live (it resumes on
-state type `started`, which covers both). So an assembly still declines
-to swallow an issue in either state — that is the "never fold a live
-spec" rule — even though neither state suppresses assembly any more.
+state type `started`, which covers both). So a fold still declines to
+swallow an issue in either state — the "never fold a live spec" rule.
 
 *Superseded three times, and the direction is worth noting.* The serial
 chain (2026-08-18) kept every open meta issue blocking the next, an edge
