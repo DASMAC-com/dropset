@@ -282,3 +282,42 @@ API that breaks a **dependent** crate's build or doc links, nor a change
 that touches only `Cargo.toml` or deletes a `.rs` file (neither hook is
 selected). The merge queue's full run catches all of these, and that is the
 trade the `--changed` mode was built to make.
+
+## 6. Local tests versus CI
+
+Tests have the same two forms, and CI again runs only the first:
+
+- **`make test`** is the full suite: `make program`, then a workspace
+  `cargo test`, the command `test.yml` runs. It is the source of truth
+  together with CI.
+- **`make test-abridged`** is the iteration form: `cargo test` over the
+  **affected set** of this branch's files (the same `--changed` resolution
+  as `make lint-abridged`, with deleted files kept).
+
+The affected set is wider than the lint scope, because a test run has to
+cover the crates that use a change, not just the crate that holds it.
+`cargo_scope.py test` takes the crates that own the changed files and adds
+every workspace crate that depends on them, transitively, over normal, dev
+and build edges, read from the `cargo metadata` resolve graph. A changed
+file that a Rust test reads seeds that test's crate, using the fixture scan
+`review_diff.py` already runs. This holds for a data file and for another
+crate's `.rs` source alike: `market-data`'s roster tests read the maker-bot
+config this way. A Rust-reachable path that no member
+owns, such as `Cargo.lock` or `rust-toolchain.toml`, gives the whole
+workspace. Two refinements sit in the tool's `ARTIFACT_CONSUMERS` table,
+since the graph cannot see them: the program crate in the set runs
+`make program` first and brings in every crate whose tests load the `.so`,
+and a change to that build's own inputs (the `Makefile` recipe,
+`Anchor.toml`) puts the program crate in the set.
+A branch with no Rust-reachable change and no fixture hit makes no cargo
+call at all, so a docs-only branch never waits on the cargo pool's lock.
+Each scoped call carries the workspace's resolved features, as the lint does, so
+feature-gated tests still run. A set that covers every member runs
+`make program` and `cargo test`, the full suite exactly.
+
+The trade: the abridged form misses a test whose result moves through a
+path neither the graph nor the fixture scan can see. A test reading a file
+by a path built at runtime is one example; a crate that starts loading the
+`.so` without joining the table is another. The full run catches both.
+`review-pr` iterates on the abridged form, and its pre-push run stays
+`make test`.

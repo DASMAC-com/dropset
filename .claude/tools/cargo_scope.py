@@ -55,6 +55,39 @@ The reusable half is ``packages_for`` (path list in, crate names out, or
 ``WORKSPACE``) with ``resolved_features`` and ``build_cmd``; ``--print`` shows
 the command without running it.
 
+``test`` and ``affected`` — ``make test-abridged``
+--------------------------------------------------
+
+``test`` runs ``cargo test`` over the **affected set**: the crates owning the
+changed files plus every workspace crate depending on them, transitively, over
+every dependency kind (``affected`` prints that set as ``-p`` flags, or
+``--workspace``). Linting a crate needs only that crate; testing it does not,
+since a dependent's tests exercise the changed API. The graph comes from the
+same ``cargo metadata`` call as the features, so nothing is guessed, and the
+feature rule above holds here too: a bare ``cargo test -p dropset-feeds``
+silently drops its feature-gated tests.
+
+What seeds the set is wider than Rust source, because a suite's result also
+moves with the data it reads: a path ``review_diff.rust_is_reachable`` accepts
+seeds its owning crate (an asm file, a migration, a manifest), and a fixture a
+Rust file reads (``review_diff.rust_test_fixtures``) seeds the reader's crate,
+whatever its type — ``.rs`` included, since one crate's tests read another's
+source. A reachable path no member owns (``Cargo.lock``,
+``rust-toolchain.toml``) seeds the whole workspace. A branch with no
+reachable change and no fixture hit seeds nothing, so it runs no cargo test
+and never waits on the pool's lock.
+
+Refinements the graph cannot see live in the ``ARTIFACT_*`` tables: the
+program crate in the set rebuilds the program first (``make program``) and
+pulls in every crate whose tests load the ``.so``, and a change to that
+build's own inputs (the ``Makefile``, ``Anchor.toml``) seeds the program
+crate. The whole workspace runs
+``make program`` and then ``cargo test``, byte-identical to ``make test``.
+
+``--changed`` takes the branch's files the way ``lint_paths.py --changed``
+does (the merge-base diff with ``origin/main``, plus untracked), deletions
+kept: removing a file changes its crate.
+
 Stdlib only. This is a Python skill-tool under ``.claude/tools/`` — deliberately
 **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
 """
@@ -69,7 +102,11 @@ import shlex
 import subprocess
 import sys
 import tomllib
+from pathlib import Path
 from typing import NamedTuple
+
+import lint_paths
+import review_diff
 
 # `packages_for`'s answer when the scope is the whole workspace. Named so a
 # caller cannot fold it into the empty list, which means the opposite.
@@ -83,11 +120,26 @@ CLIPPY_LINTS = ["--", "-D", "warnings"]
 WORKSPACE_CMDS = {
     "clippy": ["cargo", "clippy", "--all-targets", *CLIPPY_LINTS],
     "doc": ["cargo", "doc", "--no-deps", "--workspace"],
+    # `make test`'s recipe, after its `program` prerequisite.
+    "test": ["cargo", "test"],
 }
 
 # Set in the environment rather than the argv. Kept as the old entry spelled
 # it, without a space, so the full sweep's effective flags are unchanged.
 DOC_ENV = {"RUSTDOCFLAGS": "-Dwarnings"}
+
+# Crate → the crates whose tests load the artifact its build produces, a
+# runtime file read the dependency graph cannot see. A producer in the
+# affected set is built first (`ARTIFACT_BUILDS`) and pulls its consumers in.
+# Only the program crate's own `tests/` read `target/deploy/dropset.so` today
+# (the litesvm suites and the SDK conformance replay); a crate that starts
+# reading it joins the tuple.
+PROGRAM_CRATE = "dropset"
+ARTIFACT_CONSUMERS = {PROGRAM_CRATE: ("dropset",)}
+ARTIFACT_BUILDS = {PROGRAM_CRATE: ["make", "program"]}
+# Paths outside the crate that its artifact build reads, so a change there
+# seeds the producer: `make program`'s recipe and Anchor's build settings.
+ARTIFACT_INPUTS = {PROGRAM_CRATE: ("Makefile", "Anchor.toml")}
 
 
 class Package(NamedTuple):
@@ -218,9 +270,9 @@ def parse_resolved_features(metadata: dict) -> dict[str, list[str]]:
     }
 
 
-def resolved_features(root: str) -> dict[str, list[str]] | None:
-    """``parse_resolved_features`` over a live ``cargo metadata``, or ``None``
-    when cargo cannot answer — the caller then falls back to the workspace."""
+def cargo_metadata(root: str) -> dict | None:
+    """A live ``cargo metadata --format-version 1``, or ``None`` when cargo
+    cannot answer — the caller then falls back to the workspace."""
     proc = subprocess.run(
         ["cargo", "metadata", "--format-version", "1"],
         capture_output=True,
@@ -229,7 +281,151 @@ def resolved_features(root: str) -> dict[str, list[str]] | None:
     )
     if proc.returncode != 0:
         return None
-    return parse_resolved_features(json.loads(proc.stdout))
+    return json.loads(proc.stdout)
+
+
+def resolved_features(root: str) -> dict[str, list[str]] | None:
+    """``parse_resolved_features`` over a live ``cargo metadata``, or ``None``
+    when cargo cannot answer."""
+    metadata = cargo_metadata(root)
+    return None if metadata is None else parse_resolved_features(metadata)
+
+
+def reverse_dependents(metadata: dict) -> dict[str, set[str]]:
+    """Map each workspace member's name to the members depending on it
+    directly, over every dependency kind (normal, dev, build).
+
+    Reads ``resolve.nodes[].deps``; an edge to a non-member is dropped, since
+    only a member's tests are ever run.
+    """
+    members = set(metadata["workspace_members"])
+    names = {p["id"]: p["name"] for p in metadata["packages"] if p["id"] in members}
+    dependents: dict[str, set[str]] = {name: set() for name in names.values()}
+    for node in metadata["resolve"]["nodes"]:
+        if node["id"] not in names:
+            continue
+        for dep in node.get("deps", []):
+            if dep["pkg"] in names:
+                dependents[names[dep["pkg"]]].add(names[node["id"]])
+    return dependents
+
+
+def affected_closure(seeds: list[str], metadata: dict) -> list[str] | None:
+    """``seeds`` plus every member depending on one of them, transitively,
+    with each artifact producer's consumers pulled in — sorted, or
+    ``WORKSPACE`` when that is every member."""
+    dependents = reverse_dependents(metadata)
+    found: set[str] = set()
+    queue = list(seeds)
+    while queue:
+        name = queue.pop()
+        if name in found:
+            continue
+        found.add(name)
+        queue.extend(dependents.get(name, ()))
+        queue.extend(ARTIFACT_CONSUMERS.get(name, ()))
+    if found >= set(dependents):
+        return WORKSPACE
+    return sorted(found)
+
+
+def test_seeds(
+    files: list[str],
+    root: str,
+    tracked: set[str] | None = None,
+    fixtures: dict[str, list[str]] | None = None,
+) -> list[str] | None:
+    """The crates ``files`` change for a test run: sorted names, ``[]`` for
+    nothing to test, or ``WORKSPACE``.
+
+    A path ``review_diff.rust_is_reachable`` accepts seeds its owning member,
+    and the whole workspace when no member owns it; a fixture some Rust file
+    reads seeds the reader's crate. Rust files covering every tracked one are
+    the workspace, as in ``packages_for``. ``tracked`` and ``fixtures``
+    override the tree reads, for tests.
+    """
+    paths = sorted({os.path.normpath(f) for f in files})
+    rust = {p for p in paths if p.endswith(".rs")}
+    if rust:
+        if tracked is None:
+            tracked = tracked_rust_files(root)
+        if tracked <= rust:
+            return WORKSPACE
+    members = workspace_members(root)
+    names: set[str] = set()
+
+    def owner_name(path: str) -> str | None:
+        owner = owning_package(path, root)
+        return owner.name if owner and owner.dir in members else None
+
+    # Scanned for every path, `.rs` included: market-data's roster tests
+    # `include_str!` the maker-bot's `config.rs`, a crate they do not depend
+    # on, so the graph alone would miss them.
+    if fixtures is None and paths:
+        if tracked is None:
+            tracked = tracked_rust_files(root)
+        fixtures = review_diff.rust_test_fixtures(sorted(tracked), Path(root))
+    for path in paths:
+        names.update(
+            crate
+            for crate, inputs in ARTIFACT_INPUTS.items()
+            if review_diff.matches_any(path, inputs)
+        )
+        if review_diff.rust_is_reachable([path]):
+            own = owner_name(path)
+            if own is None:
+                return WORKSPACE
+            names.add(own)
+        for key, readers in (fixtures or {}).items():
+            if path != key and not path.startswith(key + "/"):
+                continue
+            for reader in readers:
+                name = owner_name(reader)
+                if name is None:
+                    return WORKSPACE
+                names.add(name)
+    return sorted(names)
+
+
+def artifact_builds(packages: list[str] | None) -> list[list[str]]:
+    """The artifact builds a test run over ``packages`` needs first."""
+    return [
+        cmd
+        for crate, cmd in ARTIFACT_BUILDS.items()
+        if packages is WORKSPACE or crate in packages
+    ]
+
+
+def scope_flags(packages: list[str] | None) -> str:
+    """``affected``'s output: the ``-p`` list, ``--workspace``, or empty."""
+    if packages is WORKSPACE:
+        return "--workspace"
+    return shlex.join(arg for name in packages for arg in ("-p", name))
+
+
+def changed_paths(root: str) -> list[str]:
+    """``lint_paths.changed_files`` with deleted paths kept: the merge-base
+    diff with ``origin/main`` plus untracked-not-ignored paths.
+
+    ``--no-renames`` keeps a move's source side too: rename detection would
+    list only the destination, and the crate a file left would go untested.
+    """
+    base = lint_paths.merge_base(root, lint_paths.DEFAULT_BASE)
+    tracked = subprocess.run(
+        ["git", "diff", "--name-only", "--no-renames", "-z", base, "--"],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=root,
+    ).stdout
+    untracked = subprocess.run(
+        lint_paths._LS_OTHERS,
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=root,
+    ).stdout
+    return lint_paths.parse_ls_files(tracked + "\0" + untracked)
 
 
 def build_cmd(
@@ -253,6 +449,8 @@ def build_cmd(
         selected += ["--features", ",".join(enabled)]
     if hook == "clippy":
         return ["cargo", "clippy", *selected, "--all-targets", *CLIPPY_LINTS]
+    if hook == "test":
+        return ["cargo", "test", *selected]
     return ["cargo", "doc", "--no-deps", *selected]
 
 
@@ -261,13 +459,51 @@ def build_env(hook: str) -> dict[str, str]:
     return dict(DOC_ENV) if hook == "doc" else {}
 
 
+def run_tests(hook: str, files: list[str], root: str, show: bool) -> int:
+    """``affected`` prints the set; ``test`` builds what it needs and runs
+    ``cargo test`` over it (``show`` prints the commands instead)."""
+    seeds = test_seeds(files, root)
+    if seeds == []:
+        if hook == "test":
+            print(
+                "cargo_scope: no Rust-reachable change, nothing to test",
+                file=sys.stderr,
+            )
+        return 0
+    # Asked only once there is something to test, so a docs-only branch never
+    # waits on cargo at all.
+    metadata = None if seeds is WORKSPACE else cargo_metadata(root)
+    packages = WORKSPACE if metadata is None else affected_closure(seeds, metadata)
+    if hook == "affected":
+        print(scope_flags(packages))
+        return 0
+    features = None if packages is WORKSPACE else parse_resolved_features(metadata)
+    for cmd in [*artifact_builds(packages), build_cmd("test", packages, features)]:
+        shown = shlex.join(cmd)
+        if show:
+            print(shown)
+            continue
+        print(f"cargo_scope: {shown}", file=sys.stderr)
+        code = subprocess.run(cmd, cwd=root).returncode
+        if code != 0:
+            return code
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Run clippy or rustdoc over only the crates owning FILES "
-        "(the whole workspace when FILES is every tracked Rust file).",
+        "(the whole workspace when FILES is every tracked Rust file); or run "
+        "`cargo test` over, or print, the crates FILES affect.",
     )
-    parser.add_argument("hook", choices=sorted(WORKSPACE_CMDS))
+    parser.add_argument("hook", choices=sorted([*WORKSPACE_CMDS, "affected"]))
     parser.add_argument("files", nargs="*")
+    parser.add_argument(
+        "--changed",
+        action="store_true",
+        help="add this branch's files: the merge-base diff with origin/main, "
+        "plus untracked",
+    )
     parser.add_argument(
         "--print",
         action="store_true",
@@ -283,6 +519,10 @@ def main(argv: list[str] | None = None) -> int:
     # path is brought into that form (one outside the root then maps to
     # nothing, so the whole workspace).
     files = [os.path.relpath(f, root) if os.path.isabs(f) else f for f in args.files]
+    if args.changed:
+        files += changed_paths(root)
+    if args.hook in ("test", "affected"):
+        return run_tests(args.hook, files, root, args.print)
 
     packages = packages_for(files, root)
     if packages == []:
