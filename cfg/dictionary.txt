@@ -90,6 +90,7 @@ equi
 erapi
 esac
 etherfuse
+etime
 eurau
 eurc
 eurcv
