@@ -52,7 +52,6 @@ use dropset_sdk::price::Price;
 use dropset_sdk::quoting::{profile_bytes, set_liquidity_profile_ix, set_reference_price_ix};
 use dropset_util::decimals::human_to_atoms_ratio;
 use solana_client::rpc_client::RpcClient;
-use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::path::Path;
@@ -1110,8 +1109,8 @@ fn ladder_state(
 /// longer the one confirmed.
 pub fn execute(
     client: &RpcClient,
-    wallet: &Keypair,
-    quote_authority: &Keypair,
+    wallet: &dyn Signer,
+    quote_authority: &dyn Signer,
     cluster: Cluster,
     ticket: &Ticket,
     log: &Logger,
@@ -1175,6 +1174,7 @@ pub fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solana_keypair::Keypair;
     use bytemuck::Zeroable;
 
     #[test]

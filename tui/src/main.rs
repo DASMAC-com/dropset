@@ -25,24 +25,25 @@
 //! rather than passed as a flag: the **vault name**, required on mainnet,
 //! validated as the program validates it, shown in the step's plan and
 //! recorded in the ceremony log (see [`dropset_tui::naming`]). Every key —
-//! admin `--wallet`, `--leader`, `--quote`, `--program-key`
-//! — is a 1Password reference resolved in memory, normally read from the
-//! TUI's keys file ([`dropset_tui::keys`]), and every write is appended to the
-//! ceremony log. The vault's quote authority is its own key: the ladder and
-//! re-centre sign with it, and the leader — the custody key — resolves only
-//! when a custody step first needs it.
+//! admin `--wallet`, `--leader`, `--quote`, `--program-key` — is a Solana
+//! address, normally read from the TUI's keys file ([`dropset_tui::keys`]),
+//! signed for by the SSH agent serving it, which prompts once per signature;
+//! a launch refuses an address no agent serves. Every write is appended to
+//! the ceremony log. The vault's quote authority is its own key: it pays for
+//! and signs the ladder and re-centre alone.
 //!
 //! ```text
 //! dropset-tui [--cluster <localnet|mainnet>] [--keys-file <path>] [--wallet <key>]
 //!             [--leader <key>] [--quote <key>] [--program-key <key>]
-//!             [--ceremony-log <path>] [--bootstrap]
+//!             [--agent-sock <path>] [--ceremony-log <path>] [--bootstrap]
 //! ```
 
 use anyhow::{anyhow, bail, Result};
 use dropset_tui::ceremony::{self, CeremonyLog};
 use dropset_tui::cluster::{self, Cluster};
-use dropset_tui::keys::{self, KeyRefs, LazyKey};
+use dropset_tui::keys::{self, KeyAddresses, RoleKey};
 use dropset_tui::{action, agent_shell, app, chain, explorer, fair, wallet};
+use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU8;
@@ -67,51 +68,33 @@ fn main() -> Result<()> {
     // Mainnet keys come from the TUI's keys file, each line overridden by its
     // flag. Localnet signs with the committed roster, so a keys file there
     // would be silently ignored — refused instead, like `--leader`.
-    let refs = match &args.keys_file {
-        None => KeyRefs::default(),
+    let addresses = match &args.keys_file {
+        None => KeyAddresses::default(),
         Some(_) if !args.cluster.is_mainnet() => {
             bail!("--keys-file is mainnet-only — localnet signs with the committed keys/ roster")
         }
-        Some(path) => KeyRefs::load(Path::new(path))?,
+        Some(path) => KeyAddresses::load(Path::new(path))?,
     };
-    let wallet_ref = args.wallet.clone().or(refs.wallet);
-    let leader_ref = args.leader.clone().or(refs.leader);
-    let quote_ref = args.quote.clone().or(refs.quote);
+    let wallet_arg = args.wallet.clone().or(addresses.wallet);
+    let leader_arg = args.leader.clone().or(addresses.leader);
+    let quote_arg = args.quote.clone().or(addresses.quote);
+    let program_arg = args.program_key.clone().or(addresses.program_key);
 
-    // The operator's vault leader — the custody key. Mainnet-only, refused on
-    // localnet like `--quote`. It resolves only when a custody step first
-    // needs it (below), but its shape is checked now, before any `op read`
-    // prompt, so a key file is refused at launch rather than mid-session.
-    match &leader_ref {
-        Some(_) if !args.cluster.is_mainnet() => bail!(
-            "--leader is mainnet-only — the localnet roster leads with its committed role key"
-        ),
-        Some(arg) if !arg.starts_with(wallet::OP_REFERENCE_PREFIX) => bail!(
-            "--leader on mainnet must be a 1Password reference ({}vault/item/field) — key \
-             files are refused on a real cluster",
-            wallet::OP_REFERENCE_PREFIX
-        ),
-        _ => {}
+    // The leader and program key are mainnet-only, like `--quote`: localnet
+    // leads with the committed role keys and deploys the committed program
+    // keypair through `make program`.
+    if !args.cluster.is_mainnet() {
+        if leader_arg.is_some() {
+            bail!("--leader is mainnet-only — the localnet roster leads with its committed role key");
+        }
+        if program_arg.is_some() {
+            bail!("--program-key is mainnet-only — localnet deploys the committed program keypair");
+        }
+        if args.agent_sock.is_some() {
+            bail!("--agent-sock is mainnet-only — localnet signs with the committed keys/ roster");
+        }
     }
-
-    // Localnet reads the committed key files; mainnet resolves 1Password
-    // references in memory and has no default admin (the default is the
-    // committed localnet one).
-    let (wallet, wallet_path) = if args.cluster.is_mainnet() {
-        let arg = wallet_ref.as_deref().ok_or_else(|| {
-            anyhow!(
-                "mainnet needs the wallet key: {} in the keys file or --wallet — a 1Password \
-                 reference (op://…), or `{}` for a watch-only session",
-                keys::WALLET_VAR,
-                wallet::EPHEMERAL_WALLET
-            )
-        })?;
-        let kp = wallet::resolve_key(arg, "--wallet", args.cluster)?;
-        (kp, arg.to_string())
-    } else {
-        wallet::load(wallet_ref.as_deref(), &repo_root)?
-    };
-    let watch_only = wallet_ref.as_deref() == Some(wallet::EPHEMERAL_WALLET);
+    let agent_sock = args.agent_sock.as_deref().map(Path::new);
 
     // Refuse rather than ignore. Silently dropping the flag would leave the
     // operator believing the turnkey path ran, and "nothing happened" is
@@ -123,69 +106,62 @@ fn main() -> Result<()> {
         );
     }
 
-    // Localnet's URL is this process's own spawned validator; mainnet's must be
-    // named explicitly, and is then held to the genesis hash before the
-    // operator is asked to confirm anything — so the banner describes a chain
-    // that has already been identified, not one that is merely configured.
-    let quote = match quote_reference(args.cluster, quote_ref, watch_only)? {
-        None => None,
-        Some(arg) => {
-            let kp = wallet::resolve_key(&arg, "--quote", args.cluster)?;
-            if kp.pubkey() == wallet.pubkey() {
-                bail!("--quote must differ from --wallet");
-            }
-            Some(kp)
+    // Localnet reads the committed key files. Mainnet names each role by
+    // address and finds the SSH agent serving it now, so a key the agent does
+    // not serve refuses the launch before the banner rather than a step
+    // mid-session. Mainnet has no default admin (the default is the committed
+    // localnet one).
+    let mut sockets: Vec<PathBuf> = Vec::new();
+    let mut resolve = |arg: &str, role: &str| -> Result<RoleKey> {
+        let (key, socket) = wallet::resolve_key(arg, role, agent_sock)?;
+        if let Some(socket) = socket.filter(|s| !sockets.contains(s)) {
+            sockets.push(socket);
         }
+        Ok(key)
     };
-
-    // The program key signs only a first publish. Mainnet-only: localnet
-    // deploys with the committed program keypair through `make program`.
-    let program_key = match &args.program_key {
-        None => None,
-        Some(_) if !args.cluster.is_mainnet() => {
-            bail!("--program-key is mainnet-only — localnet deploys the committed program keypair")
-        }
-        Some(arg) => {
-            let kp = wallet::resolve_key(arg, "--program-key", args.cluster)?;
-            // Refused now rather than at deploy, where creating the program
-            // account would fail only after every buffer write was paid for.
-            // The leader is checked against it when the leader resolves.
-            let other = quote.as_ref().map(Signer::pubkey);
-            if kp.pubkey() == wallet.pubkey() || Some(kp.pubkey()) == other {
-                bail!("--program-key must differ from --wallet and --quote");
-            }
-            Some(kp)
-        }
+    let (wallet, wallet_path): (RoleKey, String) = if args.cluster.is_mainnet() {
+        let arg = wallet_arg.as_deref().ok_or_else(|| {
+            anyhow!(
+                "mainnet needs the wallet key: {} in the keys file or --wallet — a Solana \
+                 address the SSH agent serves, or `{}` for a watch-only session",
+                keys::WALLET_VAR,
+                wallet::EPHEMERAL_WALLET
+            )
+        })?;
+        (resolve(arg, "--wallet")?, arg.to_string())
+    } else {
+        let (kp, path) = wallet::load(wallet_arg.as_deref(), &repo_root)?;
+        (Arc::new(kp), path)
     };
+    let watch_only = wallet_arg.as_deref() == Some(wallet::EPHEMERAL_WALLET);
+    let quote = quote_reference(args.cluster, quote_arg, watch_only)?
+        .map(|arg| resolve(&arg, "--quote"))
+        .transpose()?;
+    let leader = leader_arg
+        .map(|arg| resolve(&arg, "--leader"))
+        .transpose()?;
+    let program_key = program_arg
+        .map(|arg| resolve(&arg, "--program-key"))
+        .transpose()?;
 
-    // A committed keypair's secret is public, so on mainnet no role may be one.
-    let committed = wallet::committed_pubkeys(&repo_root);
     if args.cluster.is_mainnet() {
-        wallet::refuse_committed(&wallet.pubkey(), "--wallet", &committed)?;
-        if let Some(quote) = &quote {
-            wallet::refuse_committed(&quote.pubkey(), "--quote", &committed)?;
-        }
-        if let Some(program) = &program_key {
-            wallet::refuse_committed(&program.pubkey(), "--program-key", &committed)?;
+        let roles = [
+            ("--wallet", Some(wallet.pubkey())),
+            ("--leader", leader.as_ref().map(|k| k.pubkey())),
+            ("--quote", quote.as_ref().map(|k| k.pubkey())),
+            ("--program-key", program_key.as_ref().map(|k| k.pubkey())),
+        ];
+        // The program rejects one key as both admin and leader, and a shared
+        // program key would fail the deploy only after every buffer write.
+        refuse_shared_roles(&roles)?;
+        // A committed keypair's secret is public, so on mainnet no role may be one.
+        let committed = wallet::committed_pubkeys(&repo_root);
+        for (role, key) in roles {
+            if let Some(key) = key {
+                wallet::refuse_committed(&key, role, &committed)?;
+            }
         }
     }
-
-    // Only the leader's reference is taken here: it resolves when a custody
-    // step first needs it, running the checks the other roles ran above, so a
-    // session that only re-centres never loads it.
-    let leader = leader_ref.map(|arg| {
-        // The program rejects one key as both admin and leader.
-        let mut distinct_from = vec![(wallet.pubkey(), "--wallet")];
-        distinct_from.extend(quote.as_ref().map(|k| (k.pubkey(), "--quote")));
-        distinct_from.extend(program_key.as_ref().map(|k| (k.pubkey(), "--program-key")));
-        Arc::new(LazyKey::new(
-            arg,
-            "--leader",
-            args.cluster,
-            distinct_from,
-            committed,
-        ))
-    });
 
     // The ceremony record: always kept on mainnet, opt-in on localnet. Opened
     // before the banner so a log that cannot be written refuses the session
@@ -209,13 +185,16 @@ fn main() -> Result<()> {
     let rpc_url = args.cluster.rpc_url()?;
     if args.cluster.is_mainnet() {
         args.cluster.verify_genesis(&chain::rpc(&rpc_url))?;
-        // The reference, not a pubkey: the leader is not resolved yet, and the
-        // reference is what names the custody item to check before `yes`.
-        let leader_label = leader
-            .as_ref()
-            .map(|k| format!("{} (resolved on the first custody step)", k.reference()));
+        let leader_label = leader.as_ref().map(|k| k.pubkey().to_string());
         let quote_label = quote.as_ref().map(|k| k.pubkey().to_string());
         let program_label = program_key.as_ref().map(|k| k.pubkey().to_string());
+        let agent_label = (!sockets.is_empty()).then(|| {
+            sockets
+                .iter()
+                .map(|s| s.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        });
         let log_label = ceremony_log
             .as_ref()
             .map(|l| l.path().display().to_string())
@@ -226,6 +205,7 @@ fn main() -> Result<()> {
             leader_label.as_deref(),
             quote_label.as_deref(),
             program_label.as_deref(),
+            agent_label.as_deref(),
             &log_label,
         )?;
     }
@@ -256,24 +236,28 @@ fn print_help() {
          USAGE:\n    \
          dropset-tui [--cluster <localnet|mainnet>] [--keys-file <path>] [--wallet <key>]\n                \
          [--leader <key>] [--quote <key>] [--program-key <key>]\n                \
-         [--ceremony-log <path>] [--bootstrap]\n\n\
+         [--agent-sock <path>] [--ceremony-log <path>] [--bootstrap]\n\n\
          OPTIONS:\n        \
          --cluster <name>        localnet (default) or mainnet\n        \
-         --keys-file <path>      mainnet only: the key-references file (tui/private-keys.env)\n    \
-         -w, --wallet <key>          admin keypair (default on localnet: keys/BBBB.json)\n        \
-         --leader <key>          mainnet only: vault leader (custody), resolved on first use\n        \
+         --keys-file <path>      mainnet only: the key-addresses file (tui/private-keys.env)\n    \
+         -w, --wallet <key>          admin key (default on localnet: keys/BBBB.json)\n        \
+         --leader <key>          mainnet only: vault leader (custody)\n        \
          --quote <key>           mainnet only: vault quote authority (ladder, re-centre)\n        \
-         --program-key <key>     mainnet only: program keypair, for a first publish\n        \
+         --program-key <key>     mainnet only: program key, for a first publish\n        \
+         --agent-sock <path>     mainnet only: the SSH agent socket, skipping discovery\n        \
          --ceremony-log <path>   append-only record of every write (mainnet default:\n                                \
          ${} or ~/.dropset/ceremony-mainnet-beta.log)\n        \
          --bootstrap             localnet only: run \"Bootstrap all\" once at launch\n    \
          -h, --help                  show this help\n\n\
          KEYS:\n    \
-         Localnet keys are keypair files. Mainnet keys are 1Password references\n    \
-         (op://vault/item/field, read with `op read`; set {} to pick the\n    \
-         account) — files are refused. `--wallet {}` is a fresh unfunded key.\n    \
-         The keys file holds one reference per line ({}, {}, {});\n    \
-         a flag overrides its line. The quote key is required unless watch-only.\n\n\
+         Localnet keys are keypair files. Mainnet keys are Solana addresses, each\n    \
+         signed for by the SSH agent that serves it: SSH_AUTH_SOCK, then\n    \
+         ~/.1password/agent.sock, then 1Password's own socket, or --agent-sock.\n    \
+         Launch refuses an address no agent serves, and the agent prompts once\n    \
+         per signature. `--wallet {}` is a fresh unfunded key. The keys file\n    \
+         holds one address per line ({}, {}, {}, {}); a flag\n    \
+         overrides its line. The quote key is required unless watch-only, and\n    \
+         pays for the ladder and re-centre.\n\n\
          MAINNET:\n    \
          Set {} to the JSON-RPC endpoint — there is deliberately no default.\n    \
          Entry verifies the genesis hash and requires a typed confirmation, and\n    \
@@ -286,11 +270,11 @@ fn print_help() {
          A remote host needs sslmode=verify-full (sslrootcert=<CA file> for a\n    \
          private CA).",
         ceremony::CEREMONY_LOG_ENV,
-        wallet::OP_ACCOUNT_ENV,
         wallet::EPHEMERAL_WALLET,
         keys::WALLET_VAR,
         keys::LEADER_VAR,
         keys::QUOTE_VAR,
+        keys::PROGRAM_KEY_VAR,
         cluster::MAINNET_RPC_ENV,
         fair::DATABASE_URL_ENV,
         fair::READER_ROLE
@@ -322,6 +306,18 @@ fn quote_reference(
     }
 }
 
+/// Refuse a launch in which two `roles` name the same key.
+fn refuse_shared_roles(roles: &[(&str, Option<Pubkey>)]) -> Result<()> {
+    for (i, (role, key)) in roles.iter().enumerate() {
+        for (other, other_key) in &roles[i + 1..] {
+            if key.is_some() && key == other_key {
+                bail!("{role} must differ from {other}");
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Consume the value following an option, rejecting a missing value or a
 /// flag-looking token (so `--cluster --bootstrap` errors instead of silently
 /// taking `--bootstrap` as the cluster name).
@@ -348,6 +344,7 @@ struct Args {
     quote: Option<String>,
     keys_file: Option<String>,
     program_key: Option<String>,
+    agent_sock: Option<String>,
     ceremony_log: Option<String>,
     bootstrap: bool,
     help: bool,
@@ -362,6 +359,7 @@ impl Args {
             quote: None,
             keys_file: None,
             program_key: None,
+            agent_sock: None,
             ceremony_log: None,
             bootstrap: false,
             help: false,
@@ -374,6 +372,7 @@ impl Args {
                 "--quote" => a.quote = Some(value(&mut it, "--quote")?),
                 "--keys-file" => a.keys_file = Some(value(&mut it, "--keys-file")?),
                 "--program-key" => a.program_key = Some(value(&mut it, "--program-key")?),
+                "--agent-sock" => a.agent_sock = Some(value(&mut it, "--agent-sock")?),
                 "--ceremony-log" => a.ceremony_log = Some(value(&mut it, "--ceremony-log")?),
                 "--bootstrap" => a.bootstrap = true,
                 "--help" | "-h" => a.help = true,
@@ -469,7 +468,22 @@ mod tests {
         assert_eq!(a.program_key.as_deref(), Some("op://v/program/key"));
         assert_eq!(a.ceremony_log.as_deref(), Some("/tmp/c.log"));
         assert!(parse(&["--program-key"]).is_err());
+        let b = parse(&["--cluster", "mainnet", "--agent-sock", "/tmp/a.sock"]).unwrap();
+        assert_eq!(b.agent_sock.as_deref(), Some("/tmp/a.sock"));
+        assert!(parse(&["--agent-sock", "--bootstrap"]).is_err());
         assert!(parse(&["--ceremony-log", "--bootstrap"]).is_err());
+    }
+
+    #[test]
+    fn two_roles_sharing_a_key_are_refused_by_name() {
+        let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let err = refuse_shared_roles(&[("--wallet", Some(a)), ("--leader", None), ("--quote", Some(a))])
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, "--wallet must differ from --quote");
+        // Absent roles never collide with each other.
+        refuse_shared_roles(&[("--wallet", Some(a)), ("--leader", None), ("--quote", Some(b)), ("--program-key", None)])
+            .unwrap();
     }
 
     #[test]

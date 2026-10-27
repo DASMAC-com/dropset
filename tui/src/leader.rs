@@ -28,7 +28,6 @@ use dropset_math_core::share::{
 };
 use solana_client::rpc_client::RpcClient;
 use solana_instruction::Instruction;
-use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::path::Path;
@@ -555,8 +554,8 @@ pub fn prepare(
 /// never minted, so an underfunded leader is refused before the send.
 pub fn execute(
     client: &RpcClient,
-    wallet: &Keypair,
-    leader: &Keypair,
+    wallet: &dyn Signer,
+    leader: &dyn Signer,
     repo_root: &Path,
     cluster: Cluster,
     ticket: &Ticket,
@@ -678,8 +677,8 @@ pub(crate) fn leader_ata_creates(
 #[allow(clippy::too_many_arguments)]
 fn fund_leader(
     client: &RpcClient,
-    wallet: &Keypair,
-    leader: &Keypair,
+    wallet: &dyn Signer,
+    leader: &dyn Signer,
     repo_root: &Path,
     cluster: Cluster,
     ticket: &Ticket,

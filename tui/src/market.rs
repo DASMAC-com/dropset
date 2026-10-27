@@ -35,7 +35,7 @@ use crate::accounts::MarketView;
 use crate::chain;
 use crate::cluster::Cluster;
 use crate::job::Logger;
-use crate::keys::LazyKey;
+use crate::keys::RoleKey;
 use anyhow::{Context, Result};
 use bytemuck::Zeroable;
 use dropset_sdk::clock::{SlotSpan, WallSpan};
@@ -47,6 +47,7 @@ use solana_keypair::Keypair;
 use solana_pubkey::{pubkey, Pubkey};
 use solana_signer::Signer;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Where a mint's address comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -409,25 +410,18 @@ const TAKER_KEYPAIR_FILE: &str = "keys/FFFF.json";
 /// Load the leader keypair `config` names.
 ///
 /// An [`LeaderKey::Operator`] pair names no file, so this needs the key the
-/// operator named at launch as `operator`, resolving it now if this is its
-/// first use; without one, it errors rather than falling back to a committed
-/// role key that leads nothing real.
-pub fn leader(
-    repo_root: &Path,
-    config: &PairConfig,
-    operator: Option<&LazyKey>,
-) -> Result<Keypair> {
+/// operator named at launch as `operator`; without one, it errors rather than
+/// falling back to a committed role key that leads nothing real.
+pub fn leader(repo_root: &Path, config: &PairConfig, operator: Option<&RoleKey>) -> Result<RoleKey> {
     match config.leader {
-        LeaderKey::Keypair(file) => load_key(repo_root, file),
-        LeaderKey::Operator => operator
-            .with_context(|| {
-                format!(
-                    "the {} leader is operator-supplied on this cluster — relaunch with \
-                     its reference in the keys file or --leader op://…",
-                    config.base.symbol
-                )
-            })?
-            .resolve(),
+        LeaderKey::Keypair(file) => Ok(Arc::new(load_key(repo_root, file)?)),
+        LeaderKey::Operator => operator.cloned().with_context(|| {
+            format!(
+                "the {} leader is operator-supplied on this cluster — relaunch with \
+                 its address in the keys file or --leader",
+                config.base.symbol
+            )
+        }),
     }
 }
 
@@ -441,14 +435,14 @@ pub fn leader(
 pub fn quote_authority(
     repo_root: &Path,
     config: &PairConfig,
-    operator: Option<&Keypair>,
-) -> Result<Keypair> {
+    operator: Option<&RoleKey>,
+) -> Result<RoleKey> {
     match config.leader {
-        LeaderKey::Keypair(file) => load_key(repo_root, file),
-        LeaderKey::Operator => operator.map(Keypair::insecure_clone).with_context(|| {
+        LeaderKey::Keypair(file) => Ok(Arc::new(load_key(repo_root, file)?)),
+        LeaderKey::Operator => operator.cloned().with_context(|| {
             format!(
                 "the {} quote authority is operator-supplied on this cluster — relaunch \
-                 with its reference in the keys file or --quote op://…",
+                 with its address in the keys file or --quote",
                 config.base.symbol
             )
         }),
@@ -474,7 +468,7 @@ pub fn config_for(
 /// `base_mint` — the signer `set_reference_price` / `set_liquidity_profile`
 /// require. Localnet only: the eCLOB controls that call it are unavailable on
 /// mainnet.
-pub fn quote_authority_for(repo_root: &Path, base_mint: &Pubkey) -> Result<Keypair> {
+pub fn quote_authority_for(repo_root: &Path, base_mint: &Pubkey) -> Result<RoleKey> {
     let config = config_for(repo_root, Cluster::Localnet, base_mint)
         .context("market not in the bootstrap roster")?;
     quote_authority(repo_root, config, None)
@@ -503,7 +497,7 @@ pub fn taker(repo_root: &Path) -> Result<Keypair> {
 /// issuer's and anything this crate minted there would be counterfeit.
 pub fn ensure_pair_mints(
     client: &RpcClient,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     repo_root: &Path,
     config: &PairConfig,
     log: &Logger,
@@ -516,7 +510,7 @@ pub fn ensure_pair_mints(
 /// [`ensure_pair_mints`]' per-mint half.
 fn ensure_mint(
     client: &RpcClient,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     repo_root: &Path,
     spec: &MintSpec,
     log: &Logger,
@@ -553,7 +547,7 @@ fn ensure_mint(
 /// than USDC.
 pub fn ensure_quote_mints(
     client: &RpcClient,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     repo_root: &Path,
     log: &Logger,
 ) -> Result<()> {
@@ -585,7 +579,7 @@ pub fn ensure_quote_mints(
 /// correct if a future pair uses a different leader or quote.
 pub fn prefund_leader_quotes(
     client: &RpcClient,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     repo_root: &Path,
     log: &Logger,
 ) -> Result<()> {
@@ -664,9 +658,9 @@ pub enum Funding {
 pub fn seed_vault(
     client: &RpcClient,
     cluster: Cluster,
-    wallet: &Keypair,
-    leader: &Keypair,
-    quote: &Keypair,
+    wallet: &dyn Signer,
+    leader: &dyn Signer,
+    quote: &dyn Signer,
     config: &PairConfig,
     market: &MarketView,
     vault_idx: u32,
@@ -1022,28 +1016,15 @@ mod tests {
     }
 
     /// A pair whose leader is operator-supplied refuses to load without one,
-    /// instead of quietly falling back to a committed role key — and resolves
-    /// the supplied one only when asked.
+    /// instead of quietly falling back to a committed role key.
     #[test]
     fn operator_leader_is_required_on_mainnet() {
         let root = Path::new("/nonexistent");
-        let err = leader(root, &MAINNET_TGBP, None).unwrap_err();
+        let err = leader(root, &MAINNET_TGBP, None).err().unwrap();
         assert!(format!("{err:#}").contains("--leader"), "{err:#}");
-        let supplied = Keypair::new();
-        let path = std::env::temp_dir().join(format!("op-leader-{}.json", std::process::id()));
-        solana_keypair::write_keypair_file(&supplied, &path).unwrap();
-        let lazy = LazyKey::new(
-            path.to_string_lossy().into_owned(),
-            "--leader",
-            Cluster::Localnet,
-            vec![],
-            vec![],
-        );
-        assert_eq!(lazy.resolved_pubkey(), None);
-        let got = leader(root, &MAINNET_TGBP, Some(&lazy)).unwrap();
-        std::fs::remove_file(&path).unwrap();
+        let supplied: RoleKey = Arc::new(Keypair::new());
+        let got = leader(root, &MAINNET_TGBP, Some(&supplied)).unwrap();
         assert_eq!(got.pubkey(), supplied.pubkey());
-        assert_eq!(lazy.resolved_pubkey(), Some(supplied.pubkey()));
     }
 
     /// A localnet vault is opened with its committed leader as quote
@@ -1063,9 +1044,9 @@ mod tests {
     #[test]
     fn operator_quote_authority_is_required_on_mainnet() {
         let root = Path::new("/nonexistent");
-        let err = quote_authority(root, &MAINNET_TGBP, None).unwrap_err();
+        let err = quote_authority(root, &MAINNET_TGBP, None).err().unwrap();
         assert!(format!("{err:#}").contains("--quote"), "{err:#}");
-        let supplied = Keypair::new();
+        let supplied: RoleKey = Arc::new(Keypair::new());
         let got = quote_authority(root, &MAINNET_TGBP, Some(&supplied)).unwrap();
         assert_eq!(got.pubkey(), supplied.pubkey());
     }

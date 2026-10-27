@@ -335,14 +335,16 @@ pub fn confirm() -> Result<()> {
 /// the `--wallet` keypair — the registry's genesis admin, the program's upgrade
 /// authority and the payer of every ceremony transaction — `leader` is the
 /// operator-supplied vault leader that signs the vault steps, and `program` is
-/// the key a first publish creates the program at. All are confirmed along
-/// with everything else; a `None` says plainly which steps will refuse.
+/// the key a first publish creates the program at. `agent` names the SSH
+/// agent socket that serves them. All are confirmed along with everything
+/// else; a `None` says plainly which steps will refuse.
 pub fn confirm_mainnet_entry(
     rpc_url: &str,
     admin: &str,
     leader: Option<&str>,
     quote: Option<&str>,
     program: Option<&str>,
+    agent: Option<&str>,
     ceremony_log: &str,
 ) -> Result<()> {
     let host = host_of(rpc_url).unwrap_or_else(|| "<unparsed>".to_string());
@@ -360,13 +362,17 @@ pub fn confirm_mainnet_entry(
     }
     match quote {
         Some(quote) => {
-            eprintln!("   quote:    {quote}  (signs the ladder, re-centre and kill)")
+            eprintln!("   quote:    {quote}  (pays for and signs the ladder, re-centre and kill)")
         }
         None => eprintln!("   quote:    (none — watch-only)"),
     }
     match program {
         Some(program) => eprintln!("   program:  {program}  (--program-key; first publish)"),
         None => eprintln!("   program:  (none — a first publish will refuse; upgrades need none)"),
+    }
+    match agent {
+        Some(agent) => eprintln!("   agent:    {agent}  (signs every transaction, one prompt each)"),
+        None => eprintln!("   agent:    (none — watch-only)"),
     }
     eprintln!("   record:   {ceremony_log}");
     eprintln!(

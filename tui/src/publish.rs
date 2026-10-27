@@ -45,6 +45,7 @@ use solana_message::Message;
 use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::{pubkey, Pubkey};
 use solana_signer::Signer;
+use crate::keys::RoleKey;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -395,8 +396,8 @@ pub fn publish(
     rpc_url: &str,
     artifact: &Artifact,
     cluster: Cluster,
-    admin: &Keypair,
-    program_key: Option<&Keypair>,
+    admin: &dyn Signer,
+    program_key: Option<&RoleKey>,
     log: &Logger,
 ) -> Result<String> {
     let client = Arc::new(client(rpc_url));
@@ -632,7 +633,7 @@ fn buffer_filters(authority: &Pubkey) -> Vec<RpcFilterType> {
 
 /// Close every buffer [`stranded_buffers`] finds for `admin`, returning the
 /// rent to it.
-pub fn close_buffers(client: &RpcClient, admin: &Keypair, log: &Logger) -> Result<String> {
+pub fn close_buffers(client: &RpcClient, admin: &dyn Signer, log: &Logger) -> Result<String> {
     let buffers = stranded_buffers(client, &admin.pubkey())?;
     if buffers.is_empty() {
         bail!(

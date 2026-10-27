@@ -744,7 +744,7 @@ pub fn build_close_registry_ix(
 /// Create a 6-decimal SPL Token mint at a fresh random address owned by
 /// `authority`. The registry fee mint uses this — its address is incidental
 /// (read back from the registry), unlike the traded pair's fixed mints.
-pub fn create_spl_mint(client: &RpcClient, authority: &Keypair) -> Result<Pubkey> {
+pub fn create_spl_mint(client: &RpcClient, authority: &dyn Signer) -> Result<Pubkey> {
     create_mint(client, authority, &Keypair::new(), 6)
 }
 
@@ -756,7 +756,7 @@ pub fn create_spl_mint(client: &RpcClient, authority: &Keypair) -> Result<Pubkey
 /// `PairConfig`'s `MintSpec`) at their deterministic addresses.
 pub fn create_mint(
     client: &RpcClient,
-    authority: &Keypair,
+    authority: &dyn Signer,
     mint: &Keypair,
     decimals: u8,
 ) -> Result<Pubkey> {
@@ -938,7 +938,7 @@ fn token_amount(account: &FreshAccount) -> Result<u64> {
 /// before the bootstrap's seed `deposit_leader`.
 pub fn mint_to(
     client: &RpcClient,
-    authority: &Keypair,
+    authority: &dyn Signer,
     mint: &Pubkey,
     ata: &Pubkey,
     amount: u64,
@@ -953,7 +953,7 @@ pub fn mint_to(
 /// doesn't fail on an ATA that already exists.
 pub fn create_ata_idempotent(
     client: &RpcClient,
-    payer: &Keypair,
+    payer: &dyn Signer,
     wallet: &Pubkey,
     mint: &Pubkey,
 ) -> Result<Pubkey> {

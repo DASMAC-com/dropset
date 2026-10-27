@@ -39,7 +39,7 @@ use solana_signer::Signer;
 /// program. Use the TUI's `Wipe` for a true clean slate.
 ///
 /// Every account it closes is `cluster`'s program's.
-pub fn run(client: &RpcClient, cluster: Cluster, wallet: &Keypair, log: &Logger) -> Result<String> {
+pub fn run(client: &RpcClient, cluster: Cluster, wallet: &dyn Signer, log: &Logger) -> Result<String> {
     let admin = wallet.pubkey();
     // No symbol map: this closes every market it finds, so their order is
     // immaterial — and this runs headless (`dropset-teardown`), with no
@@ -121,7 +121,7 @@ pub fn run(client: &RpcClient, cluster: Cluster, wallet: &Keypair, log: &Logger)
 fn teardown_market(
     client: &RpcClient,
     cluster: Cluster,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     market: &MarketView,
     rent_recipient: &Pubkey,
     log: &Logger,

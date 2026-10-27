@@ -36,7 +36,7 @@ use crate::accounts::VaultStake;
 use crate::chain;
 use crate::cluster::Cluster;
 use crate::job::Logger;
-use crate::keys::LazyKey;
+use crate::keys::RoleKey;
 use crate::leader::{self, Plan};
 use crate::market::{self, PairConfig};
 use anyhow::{anyhow, bail, Context, Result};
@@ -44,7 +44,6 @@ use dropset_sdk::layout::{MarketView as SlabView, Vault};
 use dropset_sdk::quoting::{set_liquidity_profile_ix, PROFILE_BYTES};
 use solana_client::rpc_client::RpcClient;
 use solana_instruction::Instruction;
-use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::collections::{BTreeMap, BTreeSet};
@@ -83,9 +82,9 @@ impl Op {
         self,
         repo_root: &Path,
         config: &PairConfig,
-        operator_leader: Option<&LazyKey>,
-        operator_quote: Option<&Keypair>,
-    ) -> Result<Keypair> {
+        operator_leader: Option<&RoleKey>,
+        operator_quote: Option<&RoleKey>,
+    ) -> Result<RoleKey> {
         match self {
             Op::Kill => market::quote_authority(repo_root, config, operator_quote),
             Op::Close | Op::Drain => market::leader(repo_root, config, operator_leader),
@@ -95,24 +94,24 @@ impl Op {
     /// The vaults on `market` the op acts on for `signer`: those it is quote
     /// authority of for a kill, those it leads otherwise.
     ///
-    /// A kill also lists the vaults the session's leader leads, when that key
-    /// is already resolved — never resolving it — so a led vault with another
-    /// quote authority shows as refused rather than going unseen while its
-    /// ladder rests.
+    /// A kill also lists the vaults the session's leader leads — by address
+    /// alone, never signing with it — so a led vault with another quote
+    /// authority shows as refused rather than going unseen while its ladder
+    /// rests.
     fn seats(
         self,
         client: &RpcClient,
         cluster: Cluster,
         market: &Pubkey,
         signer: &Pubkey,
-        operator_leader: Option<&LazyKey>,
+        operator_leader: Option<&RoleKey>,
     ) -> Result<Option<MarketSeats>> {
         match self {
             Op::Kill => {
                 let Some(mut found) = quote_seats(client, cluster, market, signer)? else {
                     return Ok(None);
                 };
-                let leader = operator_leader.and_then(LazyKey::resolved_pubkey);
+                let leader = operator_leader.map(|k| k.pubkey());
                 if let Some(led) = leader.filter(|l| l != signer) {
                     let led = leader_seats(client, cluster, market, &led)?
                         .map(|m| m.seats)
@@ -328,7 +327,7 @@ struct Market {
     address: Pubkey,
     base: Pubkey,
     quote: Pubkey,
-    signer: Keypair,
+    signer: RoleKey,
 }
 
 /// Every roster market resolved for `op`, each on its own: one market's
@@ -337,8 +336,8 @@ fn resolve(
     op: Op,
     repo_root: &Path,
     cluster: Cluster,
-    operator_leader: Option<&LazyKey>,
-    operator_quote: Option<&Keypair>,
+    operator_leader: Option<&RoleKey>,
+    operator_quote: Option<&RoleKey>,
 ) -> Vec<(&'static PairConfig, Result<Market>)> {
     market::roster(cluster)
         .iter()
@@ -366,8 +365,8 @@ trait Rpc {
     fn seats(&self, op: Op, market: &Pubkey, signer: &Pubkey) -> Result<Option<MarketSeats>>;
     fn send(
         &self,
-        wallet: &Keypair,
-        signer: &Keypair,
+        wallet: &dyn Signer,
+        signer: &dyn Signer,
         ixs: &[Instruction],
         label: &str,
         log: &Logger,
@@ -378,7 +377,7 @@ trait Rpc {
 struct Live<'a> {
     client: &'a RpcClient,
     cluster: Cluster,
-    operator_leader: Option<&'a LazyKey>,
+    operator_leader: Option<&'a RoleKey>,
 }
 
 impl Rpc for Live<'_> {
@@ -394,8 +393,8 @@ impl Rpc for Live<'_> {
 
     fn send(
         &self,
-        wallet: &Keypair,
-        signer: &Keypair,
+        wallet: &dyn Signer,
+        signer: &dyn Signer,
         ixs: &[Instruction],
         label: &str,
         log: &Logger,
@@ -414,8 +413,8 @@ pub fn plan(
     repo_root: &Path,
     cluster: Cluster,
     admin: &Pubkey,
-    operator_leader: Option<&LazyKey>,
-    operator_quote: Option<&Keypair>,
+    operator_leader: Option<&RoleKey>,
+    operator_quote: Option<&RoleKey>,
 ) -> Result<(Vec<String>, Planned)> {
     let rpc = Live {
         client,
@@ -543,11 +542,11 @@ fn plan_line(symbol: &str, config: &PairConfig, seat: &SectorSeat, step: Step) -
 pub fn execute(
     op: Op,
     client: &RpcClient,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     repo_root: &Path,
     cluster: Cluster,
-    operator_leader: Option<&LazyKey>,
-    operator_quote: Option<&Keypair>,
+    operator_leader: Option<&RoleKey>,
+    operator_quote: Option<&RoleKey>,
     planned: Option<&Planned>,
     log: &Logger,
 ) -> Result<String> {
@@ -565,7 +564,7 @@ fn execute_over(
     op: Op,
     rpc: &impl Rpc,
     cluster: Cluster,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     markets: &[(&'static PairConfig, Result<Market>)],
     planned: Option<&Planned>,
     log: &Logger,
@@ -686,7 +685,7 @@ fn execute_over(
 fn instructions(
     step: Step,
     cluster: Cluster,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     signer: &Pubkey,
     market: &Pubkey,
     base_mint: &Pubkey,
@@ -738,6 +737,8 @@ fn instructions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solana_keypair::Keypair;
+    use std::sync::Arc;
 
     fn seat(leader: Pubkey) -> SectorSeat {
         SectorSeat {
@@ -793,29 +794,21 @@ mod tests {
     }
 
     #[test]
-    fn a_kill_signs_with_the_quote_key_and_never_resolves_the_leader() {
+    fn a_kill_signs_with_the_quote_key_and_never_the_leader() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let config = market::roster(Cluster::Mainnet)[0];
-        // Unresolvable on purpose: resolving it at all would fail the test.
-        let leader = LazyKey::new(
-            "op://nowhere/lead/key".to_string(),
-            "--leader",
-            Cluster::Mainnet,
-            vec![],
-            vec![],
-        );
-        let quote = Keypair::new();
+        let leader: RoleKey = Arc::new(Keypair::new());
+        let quote: RoleKey = Arc::new(Keypair::new());
         let signer = Op::Kill
             .signer(root, config, Some(&leader), Some(&quote))
             .unwrap();
         assert_eq!(signer.pubkey(), quote.pubkey());
-        assert_eq!(leader.resolved_pubkey(), None);
         // With no quote key the kill refuses; it never falls back to the leader.
         let err = Op::Kill
             .signer(root, config, Some(&leader), None)
-            .unwrap_err();
+            .err()
+            .unwrap();
         assert!(format!("{err:#}").contains("--quote"), "{err:#}");
-        assert_eq!(leader.resolved_pubkey(), None);
     }
 
     #[test]
@@ -1016,8 +1009,8 @@ mod tests {
 
         fn send(
             &self,
-            _: &Keypair,
-            _: &Keypair,
+            _: &dyn Signer,
+            _: &dyn Signer,
             ixs: &[Instruction],
             _: &str,
             _: &Logger,
@@ -1038,7 +1031,7 @@ mod tests {
             address: Pubkey::new_unique(),
             base: Pubkey::new_unique(),
             quote: Pubkey::new_unique(),
-            signer: Keypair::new(),
+            signer: Arc::new(Keypair::new()),
         }
     }
 

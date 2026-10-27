@@ -333,12 +333,9 @@ impl App {
         // Resolve the known mint tickers once — used to label the accounts pane.
         let mint_symbols = market::mint_symbols(&ctx.repo_root, ctx.cluster);
         let roster_markets = market::roster_markets(&ctx.repo_root, ctx.cluster);
-        // Never resolves the operator's leader: on mainnet that waits for a
-        // custody step, so a session that only re-centres never loads it.
         let roster = market::roster(ctx.cluster).first();
         let roster_leader = roster
-            .filter(|_| !ctx.cluster.is_mainnet())
-            .and_then(|c| market::leader(&ctx.repo_root, c, None).ok())
+            .and_then(|c| market::leader(&ctx.repo_root, c, ctx.leader.as_ref()).ok())
             .map(|k| k.pubkey());
         let roster_quote = roster
             .and_then(|c| market::quote_authority(&ctx.repo_root, c, ctx.quote.as_ref()).ok())
@@ -1229,9 +1226,8 @@ impl App {
         }
     }
 
-    /// The session's leader pubkey, resolving the operator's leader now if no
-    /// custody step has yet — the custody prompts are what call this, so the
-    /// key is loaded only once one is opened.
+    /// The session's leader pubkey — an error naming the missing key when the
+    /// session has none.
     fn session_leader(&mut self) -> anyhow::Result<Pubkey> {
         if let Some(leader) = self.roster_leader {
             return Ok(leader);
@@ -1240,7 +1236,7 @@ impl App {
             .first()
             .ok_or_else(|| anyhow::anyhow!("this cluster has no roster"))?;
         let leader =
-            market::leader(&self.ctx.repo_root, config, self.ctx.leader.as_deref())?.pubkey();
+            market::leader(&self.ctx.repo_root, config, self.ctx.leader.as_ref())?.pubkey();
         self.roster_leader = Some(leader);
         Ok(leader)
     }
@@ -1896,10 +1892,6 @@ impl App {
                 &self.mint_symbols,
             );
             self.chain.roster_markets = self.roster_markets.clone();
-            // A custody job may have resolved the leader since the last poll.
-            if self.roster_leader.is_none() {
-                self.roster_leader = self.ctx.leader.as_ref().and_then(|k| k.resolved_pubkey());
-            }
             self.chain.roster_leader = self.roster_leader;
             self.check_identity();
             let log = Logger::new(self.tx.clone());

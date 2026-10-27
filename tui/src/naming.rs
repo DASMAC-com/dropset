@@ -21,7 +21,6 @@ use crate::cluster::Cluster;
 use crate::job::Logger;
 use anyhow::{bail, Context, Result};
 use solana_client::rpc_client::RpcClient;
-use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 
@@ -434,8 +433,8 @@ fn ticket_for(
 /// first and refuses when the sector no longer holds the ticket's vault.
 pub fn execute(
     client: &RpcClient,
-    payer: &Keypair,
-    signer: &Keypair,
+    payer: &dyn Signer,
+    signer: &dyn Signer,
     cluster: Cluster,
     ticket: &Ticket,
     log: &Logger,
@@ -485,7 +484,7 @@ pub fn execute(
         ),
         NameOp::Create => bail!("the create name is sent by the create-vault step"),
     };
-    let signers: Vec<&Keypair> = if signer.pubkey() == payer.pubkey() {
+    let signers: Vec<&dyn Signer> = if signer.pubkey() == payer.pubkey() {
         vec![payer]
     } else {
         vec![payer, signer]

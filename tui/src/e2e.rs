@@ -15,6 +15,7 @@ use crate::ceremony::CeremonyLog;
 use crate::chain;
 use crate::cluster::Cluster;
 use crate::job::Logger;
+use crate::keys::RoleKey;
 use crate::market;
 use crate::publish::{self, Artifact, Mode};
 use crate::validator::Validator;
@@ -54,7 +55,8 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
     wait_for(&client);
 
     let (admin, _) = wallet::load(None, &root).unwrap();
-    let program = wallet::load_leader(&root.join("keys/AAAA.json").to_string_lossy()).unwrap();
+    let program: RoleKey =
+        Arc::new(wallet::load_leader(&root.join("keys/AAAA.json").to_string_lossy()).unwrap());
     chain::airdrop(&client, &admin.pubkey(), 100 * LAMPORTS_PER_SOL).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let record_path = dir.path().join("ceremony.log");
