@@ -123,8 +123,9 @@ fn main() {
     // The saturating regime the clamped cases above cannot reach: the
     // smallest exponent over the largest quote scales the numerator past
     // `u128::MAX`, where Rust's `saturating_mul` clamps per decade. Stored
-    // unclamped, so the clamp is what this pins, and as decimal strings,
-    // since neither amount survives a JSON number into TS.
+    // without the `u64` clamp, so the `u128` saturation is what this pins,
+    // and as decimal strings, since neither amount survives a JSON number
+    // into TS.
     let tiny = Price::encode(10_000_000, -16).unwrap(); // biased exponent 0
     let base_for_quote_saturating = json!([{
         "bits": tiny.as_u32(),

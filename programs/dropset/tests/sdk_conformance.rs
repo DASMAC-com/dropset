@@ -38,8 +38,7 @@ fn market_bytes(f: &Fixture) -> Vec<u8> {
 /// Predict a swap with the SDK against the pre-swap snapshot (exactly as a
 /// router would), execute the real on-chain swap, and assert the SDK's
 /// prediction equals the realized taker deltas, taker fee and leg count.
-/// Returns the SDK [`Quote`]
-/// for scenario-specific assertions.
+/// Returns the SDK [`Quote`] for scenario-specific assertions.
 ///
 /// `taker` must already hold enough input-leg atoms (quote for a Buy, base
 /// for a Sell). Most seeded ladders never expire, so the clocks only have to
@@ -495,7 +494,9 @@ fn sdk_simulate_swap_matches_onchain_across_two_vaults() {
 /// taker. That is the exact-in safety property: a leader who posts a far-out
 /// tail level cannot confiscate the change of any taker whose walk reaches
 /// it. Each implementation pins it on its own; this pins them together, so
-/// a simulator that walked on, or absorbed the change, disagrees on `in`.
+/// a simulator that absorbed the change disagrees on `in` and `legs`.
+/// (Walking on past the level instead of stopping is not observable here:
+/// it is the last ask, and every later ask would be dearer still.)
 #[test]
 fn sdk_far_out_level_ends_the_walk_on_both_sides() {
     let anchor = Price::encode(10_850_000, 0).unwrap().as_u32();
@@ -518,6 +519,14 @@ fn sdk_far_out_level_ends_the_walk_on_both_sides() {
     let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, amount_in, Price::INFINITY);
     assert_eq!(q.legs, 1, "only sector 0's honest level fills");
     assert!(q.in_amount < amount_in, "the change stays with the taker");
+    // The honest level is sector 0's whole 1_000_000-base ask, so the leg
+    // must have drained it: a fill short of the level would be priced
+    // against a different quantity than the one the cost check below means.
+    assert_eq!(
+        f.vault(0).base_atoms.get(),
+        0,
+        "sector 0's level filled whole"
+    );
     // The level-capped leg charges no residue, so the taker's spend is the
     // honest level's quote cost — exactly what sector 0 received.
     assert_eq!(
@@ -546,14 +555,13 @@ fn sdk_frozen_vault_is_skipped_on_both_sides() {
     f.freeze_vault(&admin, 1)
         .expect("admin freezes the cheaper vault");
 
-    // Large enough to clear sector 0's level (~1.10M) and cross into
-    // sector 1's, were it matchable.
+    // Large enough to clear both levels (~1.09M + ~1.10M), were sector 1
+    // matchable, so ignoring the freeze would fill two legs.
     let amount_in: u64 = 3_000_000;
     let taker = f.funded_depositor(0, amount_in);
 
     let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, amount_in, Price::INFINITY);
     assert_eq!(q.legs, 1, "only the unfrozen vault's level fills");
-    assert!(q.in_amount < amount_in, "the frozen depth is not reachable");
     assert_eq!(
         f.vault(1).base_atoms.get(),
         1_000_000,

@@ -123,7 +123,7 @@ test('base_for_quote vectors match', () => {
 
 // Unclamped, so the u128 saturation itself is pinned; the amounts ride as
 // decimal strings because neither survives a JSON number.
-test('base_for_quote saturates where Rust does', () => {
+test('base_for_quote_saturating vectors match', () => {
   assert.ok(vectors.base_for_quote_saturating.length > 0, 'saturating vectors present');
   for (const c of vectors.base_for_quote_saturating) {
     const got = baseForQuote(c.bits, BigInt(c.quote));
