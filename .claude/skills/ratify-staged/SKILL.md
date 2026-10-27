@@ -9,9 +9,10 @@ user-invocable: true
 Stage 2 of a seat session's output, written once for every consumer
 (`architect`, `explore` and `audit-scope`'s findings). Stage 1 — the
 spec and its read-back loop — belongs to the consumer and ends with
-the task list the spec will file. **An audit enters at step 2**: its
+the task list the spec will file. **An audit enters at step 3**: its
 findings are the adversarial cross-check's survivors and carry no
-edges, so it files them and goes straight to the review rounds.
+edges, so it has already filed them, makes step 2's announcement and
+goes straight to the review rounds.
 **Nothing is filed before the operator's yes to the filing ask**, and
 nothing moves to Todo until every filed task is ticked and
 uncommented.

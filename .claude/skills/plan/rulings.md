@@ -106,8 +106,8 @@ the document's state sections.
    unticked until none is held. The carve-out: on that final
    answer the session moves the whole set to Todo in one batch —
    never on its own judgment — and its close gate asserts none is
-   still parked. The same machinery serves explore sessions, and
-   audit findings once their own ratification lands. **The
+   still parked. The same machinery serves explore sessions and
+   audit findings. **The
    curator's carve-out** (2026-10-26): it moves a ticked,
    uncommented pool member to Todo one at a time, the tick in its
    tab being the operator's move, and places an edge or priority

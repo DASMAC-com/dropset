@@ -1,6 +1,6 @@
 ---
 name: audit-scope
-description: Use to audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — and when pulling a planning-filed audit issue, which names its target and runs as an `explore` task in its own worktree with the issue held In Progress until ratification-plus-fold. Audits across the dimensions the scope's platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness) with an adversarial sub-agent cross-check this invocation authorizes. Files confirmed findings as the fewest coherent Linear issues, each sized to a short session, STAGED (Backlog plus the `Session pending` milestone) with no relations or edges, then ratified in this session's tab through `ratify-staged` before it closes. With `--rotation N`, runs N bounded RANDOM seven-unit rotations instead (four random files plus a subsystem, an interface and a repo-layout pass) — an ad-hoc breadth sweep, never a default.
+description: Use to audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — and when pulling a planning-filed audit issue, which names its target and runs as an `explore` task in its own worktree with the issue held In Progress until its findings are ratified in the tab. Audits across the dimensions the scope's platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness) with an adversarial sub-agent cross-check this invocation authorizes. Files confirmed findings as the fewest coherent Linear issues, each sized to a short session, STAGED (Backlog plus the `Session pending` milestone) with no relations or edges, then ratified in this session's tab through `ratify-staged` before it closes. With `--rotation N`, runs N bounded RANDOM seven-unit rotations instead (four random files plus a subsystem, an interface and a repo-layout pass) — an ad-hoc breadth sweep, never a default.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -116,7 +116,7 @@ Four duties this skill owns directly:
   per the `architect` skill's marker rule.
 - **The audit issue stays In Progress while the findings
   loop is open** — In Review only after step 8's close gate
-  — and reaches Done only at ratification plus fold. Marking
+  — and reaches Done only on the operator's sign-off. Marking
   it Done at the handoff is the measured mistake that
   produced the rule — under the no-PR shape the
   issue state is the only signal that the work is live, so
@@ -493,10 +493,11 @@ Optional (ask on a scoped run if not provided):
 
      **Dependencies — file none.** A blocking edge is
      **human-curated** (`CLAUDE.md` → "Blocking
-     relations"), and this skill is an **autonomous
-     filer**: there is nobody to answer an
-     `AskUserQuestion` mid-rotation, and the default with
-     no answer is **no edge**. So pass no `blockedBy` /
+     relations"), and filing here is **autonomous**:
+     there is nobody to answer an `AskUserQuestion`
+     mid-rotation, and step 8's review asks about
+     findings, never edges, so the default is **no
+     edge**. So pass no `blockedBy` /
      `blocks` at all. When a finding really does look
      ordered behind another issue, write that into the
      body as prose instead: a `**Suspected dependency**:`
@@ -601,23 +602,27 @@ Optional (ask on a scoped run if not provided):
    A run that ends early still writes it: "ten lanes, none
    complete" is a record, and silence is not.
 
-1. **Ratify in the tab: run `ratify-staged` from its step 2.**
+1. **Ratify in the tab: run `ratify-staged` from its step 3.**
    The findings are already filed, with no edges, so there is
-   no filing ask: say "filed these N findings; let me know what
-   you think", then run its review rounds, its one batch write
-   and its close gate unchanged — the shared skill is the one
-   source for that wording. A rotation runs it once, after its
-   last `DONE` line. Before presenting a finding the session
-   may message a live planning session to check it against
-   open or in-flight work; that answer is feedback, and
+   no filing ask and no second filing: say "filed these N
+   findings; let me know what you think" (its step 2's
+   announcement), then run its review rounds, its one batch
+   write and its close gate unchanged — the shared skill is the
+   one source for that wording. A rotation runs it once, after
+   its last `DONE` line. Before presenting a finding the
+   session may message a live planning session to check it
+   against open or in-flight work; that answer is feedback, and
    planning never promotes a finding itself.
 
-   **The close gate precedes In Review.** A pulled audit
-   issue moves to In Review only once `ratify_staged.py gate`
-   passes over every filed id; one still under
+   **The close gate precedes In Review.** Once
+   `ratify_staged.py gate` passes over every filed id, move a
+   pulled audit issue to In Review; one still under
    `Session pending` means the review is unfinished, so ask
-   once more.
-   The heartbeat row updates on the ratification, as before.
+   once more. If that ask also goes unanswered (an unattended
+   run), stop there: the findings stay staged, the audit issue
+   stays In Progress, and `plan`'s count-and-offer line is the
+   backstop. The heartbeat row updates when the audit issue
+   completes, as before.
 
 ## Notes
 

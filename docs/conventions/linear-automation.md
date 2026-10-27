@@ -322,7 +322,7 @@ the conclusion it records is a **cluster** — the issues that collide on
 one shared area — never an ordering. A cluster is the candidate set for
 "these would land as one PR", which is what the merge-group proposal
 step consumes (it also picks the parallelizable batch when promoting
-parked audit findings).
+the legacy `Audit findings` pool).
 
 Group **per shared area, not by connected component.** Coupling chains
 through shared files, so the transitive reading is worthless: when the
@@ -598,7 +598,7 @@ resolves a filing splits by the filer's tier:
   not at all — see the trim-lever pipeline), where the curator reviews
   them with the rest of the pool.
 
-**Audit findings are ratified in the audit session's tab**, never
+**New audit findings are ratified in the audit session's tab**, never
 promoted by the scheduler: `audit-scope` stages them under
 `Session pending` and runs `ratify-staged` before the audit issue goes
 In Review, and a scheduler session it messages about a finding answers
