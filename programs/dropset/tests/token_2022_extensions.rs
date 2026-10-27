@@ -1,15 +1,19 @@
 //! Token-2022 extension policy, against the deployed `.so` (interface.md
-//! § Listing checklist).
+//! § 3, **Mint qualification — the listing checklist**).
 //!
 //! * `create_market` admits **any** extension set — the frontend curates
 //!   which currencies are listed, so the program gates nothing. One
-//!   positive test per extension the checklist names.
+//!   positive test per extension the checklist names that a mint can carry
+//!   on its own (`TokenMetadata` and the group/member records are
+//!   represented by their pointer extensions).
 //! * Every inbound leg transfer (`deposit`, `deposit_leader`, `swap`'s
-//!   input leg) fails `TransferShortfall` unless the treasury receives the
-//!   full amount, so a transfer-fee mint can never leave
-//!   `treasury.amount` below the vault legs it backs.
+//!   input leg), on either leg, fails `TransferShortfall` unless the
+//!   treasury receives the full amount, so a transfer-fee mint can never
+//!   leave `treasury.amount()` below the vault legs it backs.
+//! * The checklist's dead-market rows hold: a hooked or non-transferable
+//!   leg cannot be seeded.
 //! * The issuer levers are characterized, not defended against: a frozen
-//!   treasury halts withdraws until the issuer thaws it.
+//!   treasury, or a paused mint, halts withdraws until the issuer relents.
 
 mod common;
 
@@ -67,8 +71,8 @@ fn assert_admitted(
     );
 }
 
-/// A transfer-fee mint whose fee starts at zero, so the vault can be
-/// seeded before [`activate_fee`] makes it bite.
+/// A transfer-fee config at `bps`, uncapped. Pass `0` to seed the vault
+/// before [`activate_fee`] makes it bite.
 fn transfer_fee_ix(mint: &Pubkey, auth: &Pubkey, bps: u16) -> Instruction {
     transfer_fee::instruction::initialize_transfer_fee_config(
         &TOKEN_2022_PROGRAM_ID,
@@ -81,13 +85,13 @@ fn transfer_fee_ix(mint: &Pubkey, auth: &Pubkey, bps: u16) -> Instruction {
     .unwrap()
 }
 
-/// Raise the quote mint's transfer fee to [`FEE_BPS`] and advance two
-/// epochs — Token-2022 schedules a new fee for the epoch after next.
-fn activate_fee(f: &mut Fixture) {
+/// Raise `mint`'s transfer fee to [`FEE_BPS`] and advance two epochs —
+/// Token-2022 schedules a new fee for the epoch after next.
+fn activate_fee(f: &mut Fixture, mint: Pubkey) {
     let auth = f.authority.insecure_clone();
     let ix = transfer_fee::instruction::set_transfer_fee(
         &TOKEN_2022_PROGRAM_ID,
-        &f.quote_mint,
+        &mint,
         &auth.pubkey(),
         &[],
         FEE_BPS,
@@ -119,8 +123,9 @@ fn admits_transfer_fee() {
 
 #[test]
 fn admits_transfer_hook() {
-    // A hook program that does not exist: every leg transfer would fail
-    // for want of the hook accounts, but listing is not refused.
+    // A hook program set on the mint (here one that does not exist): leg
+    // transfers cannot invoke it, so every one fails — see
+    // `a_hooked_leg_cannot_be_seeded` — but listing is not refused.
     let hook = Pubkey::new_unique();
     assert_admitted(&[ExtensionType::TransferHook], false, |m, a| {
         vec![transfer_hook::instruction::initialize(
@@ -272,7 +277,8 @@ fn deposit_and_swap_in_on_a_transfer_fee_leg_fail_typed() {
     });
     let (_leader, alice) = f.with_outside_depositor();
     f.assert_treasury_invariant();
-    activate_fee(&mut f);
+    let mint = f.quote_mint;
+    activate_fee(&mut f, mint);
 
     let err = f
         .deposit(&alice, 0, 0, 10_000, 200_000, 200_000)
@@ -295,7 +301,93 @@ fn deposit_and_swap_in_on_a_transfer_fee_leg_fail_typed() {
     f.treasury_residual();
 }
 
+#[test]
+fn every_inbound_site_on_a_transfer_fee_base_leg_fails_typed() {
+    // The base-leg mirror, so each call site of `transfer_in_leg` — not
+    // only the quote-leg ones — is held to the check.
+    let fee_base = |bps: u16| {
+        Fixture::bootstrap_with_base(TOKEN_2022_PROGRAM_ID, move |svm, auth| {
+            create_token2022_mint_with(
+                svm,
+                auth,
+                &[ExtensionType::TransferFeeConfig],
+                None,
+                |m, a| vec![transfer_fee_ix(m, a, bps)],
+            )
+        })
+    };
+
+    // `deposit_leader`'s base leg.
+    let mut f = fee_base(FEE_BPS);
+    let err = seed(&mut f).unwrap_err();
+    assert_program_error(&err, DropsetError::TransferShortfall);
+
+    // `deposit`'s base leg and a Sell (base in), once the fee bites.
+    let mut f = fee_base(0);
+    let (_leader, alice) = f.with_outside_depositor();
+    let mint = f.base_mint;
+    activate_fee(&mut f, mint);
+    let err = f
+        .deposit(&alice, 0, 10_000, 0, 200_000, 200_000)
+        .unwrap_err();
+    assert_program_error(&err, DropsetError::TransferShortfall);
+    let taker = f.funded_depositor(100_000, 100_000);
+    let err = f
+        .swap(&taker, 1, 10_000, Price::ZERO.as_u32(), 1)
+        .unwrap_err();
+    assert_program_error(&err, DropsetError::TransferShortfall);
+}
+
+// ── dead-market rows of the checklist ────────────────────────────────
+
+#[test]
+fn a_hooked_leg_cannot_be_seeded() {
+    let hook = Pubkey::new_unique();
+    let mut f = t22_quote_fixture(&[ExtensionType::TransferHook], false, |m, a| {
+        vec![transfer_hook::instruction::initialize(
+            &TOKEN_2022_PROGRAM_ID,
+            m,
+            Some(*a),
+            Some(hook),
+        )
+        .unwrap()]
+    });
+    // Token-2022 fails the leg transfer itself, before the received-amount
+    // check runs: the hook program cannot be invoked from the market's CPI.
+    seed(&mut f).unwrap_err();
+    assert_eq!(f.vault(0).quote_atoms.get(), 0);
+    assert_eq!(f.token_balance(&f.quote_treasury), 0);
+}
+
+#[test]
+fn a_non_transferable_leg_cannot_be_seeded() {
+    let mut f = t22_quote_fixture(&[ExtensionType::NonTransferable], false, |m, _| {
+        vec![instruction::initialize_non_transferable_mint(&TOKEN_2022_PROGRAM_ID, m).unwrap()]
+    });
+    let err = seed(&mut f).unwrap_err();
+    let code = format!("Custom({})", TokenError::NonTransferable as u32);
+    assert!(err.contains(&code), "expected {code}, got: {err}");
+}
+
 // ── issuer levers: characterized, not defended against ───────────────
+
+#[test]
+fn withdraw_fails_while_the_mint_is_paused() {
+    let mut f = t22_quote_fixture(&[ExtensionType::Pausable], false, |m, a| {
+        vec![pausable::instruction::initialize(&TOKEN_2022_PROGRAM_ID, m, a).unwrap()]
+    });
+    seed(&mut f).expect("seed");
+    let shares = f.vault(0).leader_shares.get();
+    let auth = f.authority.insecure_clone();
+    let pause =
+        pausable::instruction::pause(&TOKEN_2022_PROGRAM_ID, &f.quote_mint, &auth.pubkey(), &[])
+            .unwrap();
+    send_signed(&mut f.svm, &[&auth], &[pause]);
+
+    let err = f.withdraw_leader(0, shares / 2, 0, 0).unwrap_err();
+    let code = format!("Custom({})", TokenError::MintPaused as u32);
+    assert!(err.contains(&code), "expected {code}, got: {err}");
+}
 
 #[test]
 fn withdraw_fails_while_treasury_frozen() {

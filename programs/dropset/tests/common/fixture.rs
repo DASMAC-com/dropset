@@ -323,8 +323,9 @@ pub struct Fixture {
     pub dummy: Keypair,
     pub base_mint: Pubkey,
     pub quote_mint: Pubkey,
-    /// Token program owning each leg's mint — SPL Token unless the
-    /// fixture came from [`Fixture::bootstrap_with_quote`]. Every leg ATA,
+    /// Token program owning each leg's mint — SPL Token unless the fixture
+    /// came from [`Fixture::bootstrap_with_quote`] or
+    /// [`Fixture::bootstrap_with_base`]. Every leg ATA,
     /// treasury and instruction meta the fixture builds derives from it.
     pub base_token_program: Pubkey,
     pub quote_token_program: Pubkey,
@@ -369,6 +370,25 @@ impl Fixture {
             authority,
             (base_mint, SPL_TOKEN_PROGRAM_ID),
             (quote_mint, quote_token_program),
+        )
+    }
+
+    /// The base-leg mirror of [`Self::bootstrap_with_quote`]: `make_base`
+    /// builds the base mint under `base_token_program`; the quote leg stays
+    /// a plain SPL mint.
+    pub fn bootstrap_with_base(
+        base_token_program: Pubkey,
+        make_base: impl FnOnce(&mut LiteSVM, &Keypair) -> Pubkey,
+    ) -> Self {
+        let authority = Keypair::new();
+        let mut svm = deploy_with_authority(&authority);
+        let base_mint = make_base(&mut svm, &authority);
+        let quote_mint = create_spl_mint(&mut svm, &authority);
+        Self::bootstrap_with_legs(
+            svm,
+            authority,
+            (base_mint, base_token_program),
+            (quote_mint, SPL_TOKEN_PROGRAM_ID),
         )
     }
 

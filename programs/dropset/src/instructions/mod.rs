@@ -82,16 +82,17 @@ pub fn require_registry_admin(registry: &Registry, admin: &Signer) -> Result<()>
 /// the signer); the outbound treasury→user pair uses
 /// `new_with_signer` with the market PDA seeds.
 ///
-/// The ledger books `amount`, so the treasury must receive exactly
+/// Every caller books `amount`, so the treasury must receive exactly
 /// `amount`: its balance is snapshotted before the CPI and compared
 /// after, failing [`DropsetError::TransferShortfall`] otherwise.
 /// `transfer_checked` validates the transfer's shape, not the quantity
 /// delivered — a Token-2022 transfer-fee mint withholds part of it in
-/// the destination, which would leave `treasury.amount` below the
-/// vault legs it backs. Rejecting rather than crediting the delta keeps
-/// `single_leg_basket`'s VPS-preserving basket exact. No `reload` is
-/// needed: `InterfaceAccount` reads through to the live account data,
-/// so `amount()` after the CPI is the post-transfer balance.
+/// the destination, which would leave `treasury.amount()` below the
+/// vault legs it backs. On the deposit paths, rejecting rather than
+/// crediting the delta also keeps `single_leg_basket`'s VPS-preserving
+/// basket exact. No `reload` is needed: `InterfaceAccount` reads through
+/// to the live account data, so `treasury.amount()` after the CPI is the
+/// post-transfer balance.
 #[allow(clippy::too_many_arguments)]
 pub fn transfer_in_leg<'a>(
     token_program: &'a Address,

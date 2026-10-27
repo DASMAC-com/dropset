@@ -40,8 +40,8 @@ drained: bigint;
  * birth.
  *
  * **Saturate that subtraction.** `accrued_fee` can exceed `drained`
- * on a transfer-fee mint, where atoms were booked to the counter but
- * withheld in transit — the same pre-existing shortfall
+ * when an issuer lever (a Token-2022 permanent delegate) has moved
+ * treasury atoms the counter still claims — the same shortfall
  * `sweep_residual` saturates against. Both terms are reported raw so
  * the shortfall stays visible; it is the consumer that must not
  * underflow.
@@ -80,8 +80,8 @@ drained: number | bigint;
  * birth.
  *
  * **Saturate that subtraction.** `accrued_fee` can exceed `drained`
- * on a transfer-fee mint, where atoms were booked to the counter but
- * withheld in transit — the same pre-existing shortfall
+ * when an issuer lever (a Token-2022 permanent delegate) has moved
+ * treasury atoms the counter still claims — the same shortfall
  * `sweep_residual` saturates against. Both terms are reported raw so
  * the shortfall stays visible; it is the consumer that must not
  * underflow.

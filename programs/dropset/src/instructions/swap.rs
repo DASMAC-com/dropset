@@ -1186,17 +1186,18 @@ impl Swap {
 
         // Input leg: taker → treasury, through the same `transfer_in_leg`
         // the deposit paths use, so the treasury must receive exactly
-        // `taker_in_atoms` — the amount the matching loop already credited
-        // to vault inventory. A transfer-fee mint would otherwise leave
-        // every swap's input short of what the vaults were booked. The
-        // check reads the treasury's live balance, so it costs no reload.
+        // `taker_in_atoms` — the priced input the matching loop credited
+        // to vault inventory plus the exact-in residue it left as
+        // unattributed residual. A transfer-fee mint would otherwise leave
+        // the treasury short of the vault credits. The check reads the
+        // treasury's live balance, so it costs no reload.
+        //
         // The two settlement legs (this and the output leg below) are
         // kept as explicit `match side` arms: each selects a distinct set
         // of token accounts (quote vs base ATA, mint, treasury, program),
-        // so the duplication is account wiring, not matching logic, and is
-        // clearest read inline. The Buy and Sell arms here MUST stay
-        // mirror images — Buy pays quote in / base out, Sell pays base in
-        // / quote out.
+        // so the duplication is account wiring, not matching logic. The
+        // Buy and Sell arms here MUST stay mirror images — Buy pays quote
+        // in / base out, Sell pays base in / quote out.
         match side {
             SwapSide::Buy => transfer_in_leg(
                 self.quote_token_program.address(),
