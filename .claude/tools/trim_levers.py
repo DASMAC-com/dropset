@@ -296,6 +296,11 @@ def split_parts(text: str) -> list[tuple[str, str, str]]:
                 continue
             malformed.append(line.strip())
         (sections[-1][1] if sections else preamble).append(line)
+    if in_fence:
+        raise TrimLeversError(
+            "the parts file ends inside an unclosed fence — every section "
+            "after its opening line would be swallowed into one part"
+        )
     if malformed:
         raise TrimLeversError(
             "these '## ' lines are not '## <fingerprint> | <title>' section "
@@ -674,10 +679,13 @@ def run(argv: list[str]) -> int:
         print(f"NONE {fingerprint}")
         return 1
     for m in matches:
-        state = (m.get("state") or {}).get("name")
+        # The type beside the name: a rejection is any `canceled`-type state
+        # (Canceled, Duplicate), which the name alone does not say.
+        state = m.get("state") or {}
         milestone = (m.get("projectMilestone") or {}).get("name") or "-"
         print(
-            f"MATCH {m.get('identifier')} [{state}] [{milestone}] "
+            f"MATCH {m.get('identifier')} [{state.get('name')}:{state.get('type')}] "
+            f"[{milestone}] "
             f"{m.get('url')} | {m.get('title')}"
         )
     return 0

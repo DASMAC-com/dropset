@@ -163,7 +163,7 @@ class ProbeCliTests(unittest.TestCase):
         ):
             code, out, _ = _run(["probe", "--fingerprint", "a:b"])
         self.assertEqual(code, 0)
-        self.assertIn("MATCH ENG-7 [Canceled] [-]", out)
+        self.assertIn("MATCH ENG-7 [Canceled:canceled] [-]", out)
         self.assertNotIn("SECRET BODY", out)
 
     def test_a_dotted_domain_is_refused_before_any_request(self):
@@ -252,6 +252,12 @@ class SplitPartsTests(unittest.TestCase):
     def test_text_before_the_first_section_is_refused(self):
         with self.assertRaises(TrimLeversError):
             tl.split_parts("stray\n\n## a:one | One\n\nx\n")
+
+    def test_an_unclosed_fence_is_refused(self):
+        text = "## a:one | One\n\n```\nunclosed\n\n## a:two | Two\n\ny\n"
+        with self.assertRaises(TrimLeversError) as caught:
+            tl.split_parts(text)
+        self.assertIn("unclosed fence", str(caught.exception))
 
     def test_an_empty_part_body_is_refused(self):
         with self.assertRaises(TrimLeversError):

@@ -91,7 +91,9 @@ python3 .claude/tools/trim_levers.py probe --fingerprint <domain>:<slug>
 ```
 
 - `NONE` (exit 1) — new; go on to the title check.
-- A **Canceled** match — a recorded rejection. Drop the candidate
+- A **`canceled`-type** match (the `[Name:type]` field reads
+  `:canceled`, e.g. Canceled or Duplicate) — a recorded rejection. Drop
+  the candidate
   unless today's evidence plainly defeats the recorded reason; then
   say so in the report and leave it to a human.
 - An **open** match — the lever is already a part of a live batch;
