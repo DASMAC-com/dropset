@@ -1328,7 +1328,8 @@ placeholders and the Vercel set-and-delete step live in
 the shell is inside a dropset checkout, so every cargo there pools its
 compile load with no Makefile or CI in the loop. Cargo reads them from the
 environment, and every session verb `cd`s into the repo before launching,
-so the session — and every Bash command its agent runs — inherits the pool.
+so the session — and every Bash command its agent runs — inherits the pool
+(the launcher re-points it at the session's worktree first; see below).
 
 - **`CARGO_TARGET_DIR`** is the checkout's **lane** (see "Lanes" below):
   `$CARGO_HOME/target/dropset` for lane 0 and `…/dropset-<lane>` for the
@@ -1385,9 +1386,10 @@ inside the CLI, where no `chpwd` fires, so on its own the hook would hand
 every session lane 0 and the base checkout's keys — the shared slot the
 keys exist to prevent. The launcher (`_ds_session`) therefore evaluates
 the pool for the worktree it is about to start (`_ds_cargo_pool <dir>`)
-and re-evaluates for the tab's own directory once the session exits. A
-worded tag's worktree is created by the CLI itself, after that point, so
-its session keeps the base keys (and lane 0 either way).
+and re-evaluates for the tab's own directory once the session exits,
+however it exits. A worded tag's new worktree is created by the CLI itself,
+after that point, so its session keeps the base keys (and lane 0, which
+is its lane anyway).
 
 #### Lanes
 
@@ -1398,10 +1400,11 @@ machine sat about half idle at load 12–17 on 18 cores with 9–11 cargo
 invocations waiting. Before the pool, six per-worktree target
 directories ran six builds at once (load 160). Lanes are the middle:
 **`DS_CARGO_LANES`** directories (default **2**), a worktree on lane
-*its issue number modulo the count*, the base repo and a worded tag on
+*its issue number modulo the count* (a directory named `<n>`, or a
+pre-rename `eng-<n>` / `ceo-<n>`), the base repo and any other name on
 lane 0. Lane 0 is the original `dropset` directory, so
-`DS_CARGO_LANES=1` is the single pool exactly, and switching between
-them strands no build. `CARGO_BUILD_JOBS` stays the cores minus two per
+`DS_CARGO_LANES=1` is the single pool exactly, and adopting lanes strands
+no existing build. `CARGO_BUILD_JOBS` stays the cores minus two per
 process: the lane locks already bound how many builds run at once, so
 two lanes mean at most two builds' jobs (32 runnable threads on 18
 cores, mild oversubscription), with the load probe's 1.5-per-core check
@@ -1431,8 +1434,9 @@ Its costs:
 **Calibrating it.** The digest's pool-lock wait line (measured per
 waiting cargo, so it sees an imbalanced lane) says when to add a lane,
 and the probe's memory-refusal count says when to drop one. A memory
-refusal every day means one lane fewer: one config line, and the next
-`cd` (or launch) picks it up.
+refusal every day means one lane fewer: one config line, read by shells
+opened after the edit (an open tab keeps its old count until it re-sources
+the config).
 
 **The off switch** is `DS_CARGO_POOL=0` in the runtime config, set
 **before** the line that sources the init (set later, it takes effect at
@@ -1444,18 +1448,19 @@ init, so its builds are unchanged.
 
 **Two carve-outs: the Anchor build and the TUI's bots.** Anchor reads the
 program keypair from `<target dir>/deploy/` and no flag overrides that path, and
-by default it also writes the `.so` and IDL there. The pool's `deploy/` has
+by default it also writes the `.so` and IDL there. A lane's `deploy/` has
 no per-branch fingerprint. So `make program-keypair` (and the TUI's deploy
-action) stages `keys/AAAA.json` in the pool's `deploy/` as well as the
-worktree's. That key is the same localnet file for every worktree, so
-sharing it is harmless. Every `anchor build` the Makefile or the TUI runs
-also writes its outputs back into the worktree's own `target/` (the `.so`
-via `cargo build-sbf`'s `SBF_OUT_PATH`, the IDL via `--idl` / `--idl-ts`),
-where the litesvm tests and the TUI read them. `make tui-prebuild` likewise
-copies the maker and taker bots from the pool's `debug/`, which every
-worktree's build overwrites, into the worktree's `target/debug/`, where the
-TUI execs them. One narrow window remains in both: cargo releases the lock
-when the build exits, just before the copy, so a second worktree relinking
+action) stages `keys/AAAA.json` in the current lane's `deploy/` as well as
+the worktree's. That key is the same localnet file for every worktree, so
+sharing it is harmless, and each lane gets it on its first stage. Every
+`anchor build` the Makefile or the TUI runs also writes its outputs back
+into the worktree's own `target/` (the `.so` via `cargo build-sbf`'s
+`SBF_OUT_PATH`, the IDL via `--idl` / `--idl-ts`), where the litesvm tests
+and the TUI read them. `make tui-prebuild` likewise copies the maker and
+taker bots from the lane's `debug/`, which every build in that lane
+overwrites, into the worktree's `target/debug/`, where the TUI execs them.
+One narrow window remains in both: cargo releases the lock when the build
+exits, just before the copy, so a second worktree in the lane relinking
 the same artifact in that instant can hand this one its build. It is rare,
 since the other build must finish its own compile first; a rebuild clears
 it. **A hand-typed `anchor build` gets none of this.** Go through
@@ -1465,7 +1470,7 @@ it. **A hand-typed `anchor build` gets none of this.** Go through
 `node_modules` and `.next`), never the pool. Under the pool that `target/`
 holds the Anchor outputs, the copied bots and, until the editor joins,
 rust-analyzer's checks. Never run a bare `cargo clean` in a checkout: it
-wipes the whole pool, every worktree's build with it, while
+wipes the current lane, the build of every worktree on it, while
 `cargo clean -p <crate>` touches only that crate. The worktree pruner no
 longer frees build artifacts, so the pool is the place disk accumulates.
 When it grows too large, delete it while no build is running:
@@ -1476,7 +1481,7 @@ delete those the same way.
 
 **Adopting it, once.** A session launched before the init change does not
 see the variables (see the shell-snapshot note under "Session secrets"), so
-the pool fills as sessions relaunch. The first build into the empty pool is
+the pool fills as sessions relaunch. The first build into an empty lane is
 a full cold build. Each existing worktree's own `target/` is dead weight
 once its session runs pooled; delete it with `make clean` in that worktree.
 
@@ -1484,7 +1489,7 @@ once its session runs pooled; delete it with `make clean` in that worktree.
 error from check, clippy or test) in a session without the per-checkout
 keys — launched before them, or on a branch that predates the wrapper — is
 the shared slot. Answer it with `cargo clean -p <crate>` for that one
-crate, then re-run (never a bare `cargo clean`, which wipes the pool).
+crate, then re-run (never a bare `cargo clean`, which wipes the lane).
 You are in that case when `CARGO_TARGET_DIR` is set and
 `RUSTC_WORKSPACE_WRAPPER` is not.
 

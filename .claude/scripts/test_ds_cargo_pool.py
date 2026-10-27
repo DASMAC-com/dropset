@@ -282,6 +282,7 @@ class EachWorktreeGetsItsLane(CargoPoolHarness):
             wrapper.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(REPO / WRAPPER, wrapper)
         self._wt("scratch").mkdir()
+        self._wt("fix3").mkdir()
 
     def _wt(self, tag):
         return self.base / ".claude" / "worktrees" / tag
@@ -318,6 +319,17 @@ class EachWorktreeGetsItsLane(CargoPoolHarness):
     def test_a_prefixed_tag_keys_on_its_number_a_worded_one_on_lane_zero(self):
         self.assertEqual(self._target(self._wt("eng-2263"), lanes="3"), self._lane(1))
         self.assertEqual(self._target(self._wt("scratch"), lanes="3"), self._lane(0))
+        self.assertEqual(self._target(self._wt("fix3"), lanes="3"), self._lane(0))
+
+    def test_the_switch_off_unsets_an_inherited_lane_inside_a_worktree(self):
+        env = {"CARGO_TARGET_DIR": self._lane(1), "DS_CARGO_POOL": "0"}
+        self.assertEqual(self._target(self._wt("2261"), env=env), _UNSET)
+
+    def test_a_near_miss_under_the_pool_root_is_a_hand_pin(self):
+        for pin in (f"{self.POOL}-foo", f"{self.POOL}x"):
+            with self.subTest(pin=pin):
+                env = {"CARGO_TARGET_DIR": pin}
+                self.assertEqual(self._target(self._wt("2261"), env=env), pin)
 
     def test_the_lane_follows_a_cd_between_checkouts(self):
         self.assertEqual(self._target(self._wt("2261"), self.base), self._lane(0))

@@ -139,15 +139,16 @@ _ds_cargo_pool() {
   # runs one build at a time — and one build cannot fill the machine (a serial
   # tail: the last large crate, the link, rustdoc's one thread per crate). The
   # pool is therefore `DS_CARGO_LANES` directories (default 2), a worktree on
-  # lane <its issue number> modulo the count, the base repo and a worded tag
-  # on lane 0. Lane 0 is the original `dropset` directory, so `1` is the
-  # single pool exactly. The job bound below stays per process: the lane locks
-  # already bound concurrency to the lane count.
+  # lane <its issue number> modulo the count (the name `<n>`, or a pre-rename
+  # `eng-<n>` / `ceo-<n>`), the base repo and any other name on lane 0. Lane 0
+  # is the original `dropset` directory, so `1` is the single pool exactly. The
+  # job bound below stays per process: the lane locks already bound concurrency
+  # to the lane count.
   lanes="${DS_CARGO_LANES:-2}"
   [[ "$lanes" == <-> ]] && (( lanes >= 1 )) || lanes=1
   rest="${checkout:t}"
-  rest="${(M)rest%%<->}"
-  [[ "$checkout" != "$_DS_REPO" && -n "$rest" ]] && lane=$(( rest % lanes ))
+  [[ "$checkout" != "$_DS_REPO" && "$rest" == (|*-)<-> ]] &&
+    lane=$(( ${rest##*-} % lanes ))
   target="${CARGO_HOME:-$HOME/.cargo}/target/dropset"
   (( lane )) && target+="-$lane"
   # PER-CHECKOUT KEYS. Every worktree builds each workspace crate into the same
@@ -786,15 +787,20 @@ _ds_session() {
     [[ -n "$worktree" ]] && _ds_worktree_ensure "$worktree"
     _ds_session_mark "$sid"
     # `-w` enters the worktree inside the CLI, where no `chpwd` fires, so the
-    # cargo pool is evaluated for it here or every session would inherit the
-    # base checkout's lane and per-checkout keys.
+    # cargo pool is evaluated for it here; otherwise the session inherits the
+    # base checkout's lane and per-checkout keys. A worded tag's worktree does
+    # not exist yet (the CLI creates it), so its session still does. The
+    # `always` hands the tab back its own values however the launch ends.
     wt_dir="$_DS_REPO/.claude/worktrees/$worktree"
     [[ -n "$worktree" && -d "$wt_dir" ]] && _ds_cargo_pool "$wt_dir"
-    _ds_claude "$model" --session-id "$sid" -n "$name" \
-      --permission-mode auto "${worktree_flag[@]}" "${prompt_arg[@]}"
+    {
+      _ds_claude "$model" --session-id "$sid" -n "$name" \
+        --permission-mode auto "${worktree_flag[@]}" "${prompt_arg[@]}"
+    } always {
+      _ds_cargo_pool
+    }
   fi
   local rc=$?
-  _ds_cargo_pool
   _ds_exit_estimate "$sid"
   return $rc
 }
