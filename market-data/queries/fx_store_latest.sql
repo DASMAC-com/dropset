@@ -32,10 +32,9 @@
 -- Only closed buckets are ever written, so no `bucket_start < now()` guard is
 -- needed here — see the collectors' `closed_boundary`.
 --
--- `DISTINCT ON` over the primary key's leading columns, so this walks per
--- series and stops at the first row: one row per series. Granularity is
--- deliberately not constrained — a venue whose bucket width is reconfigured
--- should still yield its newest print rather than nothing at all.
+-- One row per series. Granularity is deliberately not constrained — a venue
+-- whose bucket width is reconfigured should still yield its newest print rather
+-- than nothing at all.
 --
 -- **Order by the projected close, not by `bucket_start`.** Those differ
 -- exactly when one source holds two granularities, which the schema permits
@@ -47,12 +46,66 @@
 -- floor resets on every poll. Ordering by the value actually projected keeps
 -- the winner the row whose close is genuinely newest, whatever bucket widths
 -- coexist.
+--
+-- **Why the statement is shaped as a walk of the primary key.** The obvious
+-- form — `DISTINCT ON` straight over `cex_prices`, ordered by the projected
+-- close — cannot use the PK, because the PK orders by `bucket_start` and an
+-- expression over two columns is not an index order. The planner then reads
+-- every row of every series asked for and sorts them all to keep one each:
+-- measured at 1.5s over 1.2M rows on the demo stack, an external merge to
+-- disk, re-run on every estimator poll and growing with every bucket the
+-- collectors write (the sqlx slow-statement warning a fresh `make demo`
+-- raised). Postgres has no skip scan for `DISTINCT ON`, so the walk is spelled
+-- out instead: `widths` steps through each series' granularities one PK probe
+-- at a time, and `newest` takes the top `bucket_start` within each — where,
+-- the width being fixed, the newest open IS the newest close. The final
+-- `DISTINCT ON` then ranks only those few candidates by the projected close,
+-- exactly as above, so the two-granularity hazard is answered the same way.
+WITH RECURSIVE widths AS (
+    SELECT
+        s.source,
+        p.product_id,
+        (SELECT min(c.granularity_secs)
+           FROM cex_prices c
+          WHERE c.source = s.source
+            AND c.product_id = p.product_id) AS granularity_secs
+    FROM unnest($1::text[]) AS s (source)
+    CROSS JOIN unnest($2::text[]) AS p (product_id)
+    UNION ALL
+    SELECT
+        w.source,
+        w.product_id,
+        (SELECT min(c.granularity_secs)
+           FROM cex_prices c
+          WHERE c.source = w.source
+            AND c.product_id = w.product_id
+            AND c.granularity_secs > w.granularity_secs)
+    FROM widths w
+    WHERE w.granularity_secs IS NOT NULL
+),
+newest AS (
+    SELECT
+        w.source,
+        w.product_id,
+        top.published_at,
+        top.close
+    FROM widths w
+    CROSS JOIN LATERAL (
+        SELECT
+            c.bucket_start + c.granularity_secs AS published_at,
+            c.close
+        FROM cex_prices c
+        WHERE c.source = w.source
+          AND c.product_id = w.product_id
+          AND c.granularity_secs = w.granularity_secs
+        ORDER BY c.bucket_start DESC
+        LIMIT 1
+    ) AS top
+)
 SELECT DISTINCT ON (source, product_id)
     source,
     product_id,
-    bucket_start + granularity_secs AS published_at,
+    published_at,
     close
-FROM cex_prices
-WHERE source = ANY($1)
-  AND product_id = ANY($2)
-ORDER BY source, product_id, bucket_start + granularity_secs DESC
+FROM newest
+ORDER BY source, product_id, published_at DESC
