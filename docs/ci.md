@@ -264,7 +264,11 @@ CI runs only the first:
 The scoping is `.claude/tools/cargo_scope.py`, which both hooks run
 through. It maps each file to its owning package (the nearest `Cargo.toml`
 with a `[package]`) and runs `cargo clippy -p <crate>…` or
-`cargo doc -p <crate>…`. When the files cover every tracked `.rs` file it
+`cargo doc -p <crate>…`, passing each crate the features the whole
+workspace enables on it. Cargo unifies features only across the selected
+packages, so without that a bare `-p dropset-feeds` would build with no
+features and skip its feature-gated modules. When the files cover every
+tracked `.rs` file it
 runs the workspace commands unchanged, which is how the full sweep and CI
 stay identical. A Rust file outside any member package maps to the whole
 workspace, so a gap in the mapping costs a full sweep and never skips a

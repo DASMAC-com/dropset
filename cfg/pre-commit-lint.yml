@@ -337,7 +337,8 @@ repos:
 # a decision:
 #
 # It and `clippy` take the file list through `.claude/tools/cargo_scope.py`,
-# which runs each over only the crates owning the files. Given every tracked
+# which runs each over only the crates owning the files, with the features
+# the whole workspace enables on them. Given every tracked
 # Rust file — this config under `--all-files` in CI, or the whole-tree
 # `make lint` — it runs the workspace commands byte-for-byte, so the full
 # sweep is unchanged; `make lint-abridged` gets the scoped form. That local
@@ -348,8 +349,7 @@ repos:
 #
 # `RUSTDOCFLAGS` is set by that tool rather than the CI job's `env:`, so a
 # local `make lint` gates identically to the workflow. Its value is written
-# unspaced as `-Dwarnings` (clippy's is `-D warnings`) because the old entry
-# was shlex-split with no shell; the tool keeps that spelling.
+# unspaced as `-Dwarnings` (clippy's is `-D warnings`), one token either way.
 #
 # `-D warnings` rather than a per-lint list, because the rustdoc link lints
 # are three separate ones — `broken_intra_doc_links`,

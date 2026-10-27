@@ -132,8 +132,83 @@ class PackagesFor(Fixture):
     def test_dot_slash_paths_normalize(self):
         self.assertEqual(self.scope("./util/src/lib.rs"), ["util"])
 
+    def test_path_outside_root_falls_back_without_walking(self):
+        # An absolute path once walked up to `/` forever.
+        self.assertIsNone(self.scope("/elsewhere/src/lib.rs"))
+        self.assertIsNone(self.scope("../elsewhere/src/lib.rs"))
+
+
+class TrackedRustFiles(Fixture):
+    def test_drops_tracked_files_deleted_from_disk(self):
+        os.remove(os.path.join(self.root, "util/src/deep/mod.rs"))
+        listed = "\0".join(sorted(TRACKED)) + "\0"
+        with mock.patch.object(
+            cs.subprocess, "run", return_value=mock.Mock(stdout=listed)
+        ):
+            tracked = cs.tracked_rust_files(self.root)
+        self.assertEqual(tracked, TRACKED - {"util/src/deep/mod.rs"})
+
+
+METADATA = {
+    "workspace_members": ["feeds-id", "util-id"],
+    "packages": [
+        {"id": "feeds-id", "name": "dropset-feeds"},
+        {"id": "util-id", "name": "util"},
+        {"id": "serde-id", "name": "serde"},
+    ],
+    "resolve": {
+        "nodes": [
+            {"id": "feeds-id", "features": ["store", "http", "default"]},
+            {"id": "util-id", "features": []},
+            {"id": "serde-id", "features": ["derive", "std"]},
+        ]
+    },
+}
+
+
+class ResolvedFeatures(unittest.TestCase):
+    def test_members_only_sorted_default_dropped(self):
+        self.assertEqual(
+            cs.parse_resolved_features(METADATA),
+            {"dropset-feeds": ["http", "store"], "util": []},
+        )
+
+    def test_failed_metadata_is_none(self):
+        with mock.patch.object(
+            cs.subprocess, "run", return_value=mock.Mock(returncode=101)
+        ):
+            self.assertIsNone(cs.resolved_features("."))
+
 
 class BuildCmd(unittest.TestCase):
+    def test_features_ride_each_selected_crate(self):
+        self.assertEqual(
+            cs.build_cmd(
+                "clippy",
+                ["dropset-feeds", "util"],
+                {"dropset-feeds": ["http", "store"], "util": [], "other": ["x"]},
+            ),
+            [
+                "cargo",
+                "clippy",
+                "-p",
+                "dropset-feeds",
+                "-p",
+                "util",
+                "--features",
+                "dropset-feeds/http,dropset-feeds/store",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ],
+        )
+
+    def test_empty_package_list_is_refused(self):
+        # `[]` means nothing to run; it must never become the workspace.
+        with self.assertRaises(ValueError):
+            cs.build_cmd("clippy", [])
+
     def test_clippy_scoped(self):
         self.assertEqual(
             cs.build_cmd("clippy", ["a", "b"]),
@@ -173,11 +248,16 @@ class BuildCmd(unittest.TestCase):
 
 
 class Main(Fixture):
-    def run_main(self, *argv: str) -> tuple[int, str]:
+    def run_main(self, *argv: str, features=None) -> tuple[int, str]:
         out = io.StringIO()
-        with mock.patch.object(cs, "tracked_rust_files", return_value=TRACKED):
-            with redirect_stdout(out):
-                code = cs.main(["--root", self.root, *argv])
+        with (
+            mock.patch.object(cs, "tracked_rust_files", return_value=TRACKED),
+            mock.patch.object(
+                cs, "resolved_features", return_value=features or {"util": []}
+            ),
+            redirect_stdout(out),
+        ):
+            code = cs.main(["--root", self.root, *argv])
         return code, out.getvalue().strip()
 
     def test_print_doc_scoped(self):
@@ -185,6 +265,31 @@ class Main(Fixture):
             self.run_main("doc", "--print", "util/src/lib.rs"),
             (0, "RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps -p util"),
         )
+
+    def test_print_passes_the_workspace_features(self):
+        code, shown = self.run_main(
+            "clippy", "--print", "util/src/lib.rs", features={"util": ["std"]}
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("-p util --features util/std --all-targets", shown)
+
+    def test_metadata_failure_falls_back_to_the_workspace(self):
+        out = io.StringIO()
+        with (
+            mock.patch.object(cs, "tracked_rust_files", return_value=TRACKED),
+            mock.patch.object(cs, "resolved_features", return_value=None),
+            redirect_stdout(out),
+        ):
+            cs.main(["--root", self.root, "clippy", "--print", "util/src/lib.rs"])
+        self.assertEqual(
+            out.getvalue().strip(), "cargo clippy --all-targets -- -D warnings"
+        )
+
+    def test_absolute_path_inside_root_is_made_relative(self):
+        path = os.path.join(self.root, "util/src/lib.rs")
+        code, shown = self.run_main("doc", "--print", path)
+        self.assertEqual(code, 0)
+        self.assertTrue(shown.endswith("cargo doc --no-deps -p util"))
 
     def test_empty_set_runs_nothing(self):
         with mock.patch.object(cs.subprocess, "run") as run:
