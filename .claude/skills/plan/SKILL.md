@@ -553,8 +553,8 @@ python3 .claude/tools/session_dispatch.py task 1234 + plan
 
 It prints one `verb -> tty` line each, a `held` line per verb the
 machine refused, then a roll-call of open sessions — the
-roll-call is the confirmation to relay; re-dispatch a held verb
-when a slot opens.
+roll-call and the `held` lines are the confirmation to relay; a
+held verb rides the next dispatch, when a session hands off.
 
 **Type the line the title token says** (`linear-automation.md` →
 "The verb/substrate title token"): `[Chore/Bedrock]` on 1234 is

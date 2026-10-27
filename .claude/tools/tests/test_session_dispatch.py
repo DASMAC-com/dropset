@@ -707,6 +707,25 @@ class VerbClass(unittest.TestCase):
         with unittest.mock.patch.dict("os.environ", {"LINEAR_API_KEY": ""}):
             self.assertIsNone(session_dispatch.fetch_body("1"))
 
+    def test_a_failed_fetch_reads_as_unreadable(self):
+        with (
+            unittest.mock.patch.dict("os.environ", {"LINEAR_API_KEY": "k"}),
+            unittest.mock.patch.object(
+                session_dispatch.linear_issue,
+                "fetch_issue_body",
+                side_effect=session_dispatch.linear_issue.LinearIssueError("no issue"),
+            ),
+        ):
+            self.assertIsNone(session_dispatch.fetch_body("1"))
+
+    def test_compose_and_tilde_fences_build(self):
+        self.assertEqual(
+            seat(["chore", "5"], b5="`docker-compose up`").label,
+            "(builds: docker-compose up)",
+        )
+        tilde = seat(["chore", "6"], b6="~~~\nanchor build\n~~~\n")
+        self.assertEqual(tilde.label, "(builds: anchor build)")
+
 
 class Records(unittest.TestCase):
     def setUp(self):
@@ -719,6 +738,16 @@ class Records(unittest.TestCase):
         session_dispatch.write_records(seats, self.dir)
         self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["5.class"])
         self.assertEqual(session_dispatch.recorded_class(self.dir, "5"), "free")
+
+    def test_a_live_stamped_record_of_the_same_class_keeps_its_pid(self):
+        (self.dir / "5.class").write_text("free 4242\n")
+        (self.dir / "6.class").write_text("free 4343\n")
+        session_dispatch.write_records(
+            [seat(["chore", "5"], b5="prose"), seat(["chore", "6"], b6="`make demo`")],
+            self.dir,
+        )
+        self.assertEqual((self.dir / "5.class").read_text(), "free 4242\n")
+        self.assertEqual((self.dir / "6.class").read_text(), "building\n")
 
     def test_the_launcher_s_stamped_form_and_the_old_key_read_back(self):
         (self.dir / "eng-8.class").write_text("free 12345\n")
@@ -804,6 +833,33 @@ class Seating(unittest.TestCase):
         self.assertEqual(len(result.seated), 5)
         self.assertEqual(result.held, [])
 
+    def test_a_re_probe_with_no_reading_keeps_the_first(self):
+        # A missing probe never halts the fleet, the second call included:
+        # the first reading's holds stand, rendered from that reading.
+        refused = reading(slots=0, reasons=["wait"], longest=465, waiting=1)
+        result, probe = gate(batch(), refused, NO_READING)
+        self.assertEqual(probe.calls, 2)
+        self.assertEqual(names(result.seated), ["architect 2230", "chore 2240"])
+        self.assertIn("longest build wait 7m45s", result.held[0][1])
+
+    def test_memory_and_pressure_refusals_name_their_numbers(self):
+        red = reading(
+            slots=0,
+            reasons=["memory", "pressure"],
+            free_slots=0,
+            free_reasons=["memory", "pressure"],
+        )
+        result, _ = gate([seat(["plan"])], red)
+        self.assertEqual(
+            session_dispatch.held_lines(result),
+            [
+                "held  plan (free): memory headroom 3.0 GiB (reserve 8.0); "
+                "kernel pressure warn",
+                "would free a slot: memory headroom over the reserve; "
+                "kernel pressure back to normal",
+            ],
+        )
+
     def test_a_refusal_with_no_wait_is_not_re_probed(self):
         result, probe = gate(batch(), reading(slots=0, reasons=["cap"], building=20))
         self.assertEqual(probe.calls, 1)
@@ -881,6 +937,32 @@ class Probe(unittest.TestCase):
                 got = self._probe(stdout)
                 self.assertNotIn("verdict", got)
                 self.assertEqual(got["exit"], 3)
+
+    def test_a_probe_that_cannot_run_or_hangs_is_no_reading(self):
+        for exc in (
+            OSError("no python"),
+            session_dispatch.subprocess.TimeoutExpired("probe", 60),
+        ):
+            with self.subTest(exc=type(exc).__name__):
+                with unittest.mock.patch.object(
+                    session_dispatch.subprocess, "run", side_effect=exc
+                ):
+                    got = session_dispatch.probe([seat(["task", "1"])], Path("/x"))
+                self.assertEqual(got["exit"], 3)
+                self.assertIn(type(exc).__name__, got["error"])
+
+    def test_the_probe_is_asked_for_the_batch_s_builders_in_its_directory(self):
+        with unittest.mock.patch.object(
+            session_dispatch.subprocess,
+            "run",
+            return_value=unittest.mock.Mock(stdout=""),
+        ) as run:
+            session_dispatch.probe(
+                [seat(["task", "1"]), seat(["plan"]), seat(["task", "2"])], Path("/s")
+            )
+        argv = run.call_args.args[0]
+        self.assertTrue(argv[1].endswith("machine_load.py"))
+        self.assertEqual(argv[2:], ["--json", "--sessions", "2", "--state-dir", "/s"])
 
 
 class GatedRun(unittest.TestCase):

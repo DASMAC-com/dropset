@@ -241,6 +241,35 @@ class LaunchLineGrammarTest(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("zsh"), "needs zsh")
+class FleetVerbTest(unittest.TestCase):
+    """`fleet` hands each accepted form to the resume tool, and only those."""
+
+    STUBS = (
+        "_ds_base() { :; }; _ds_secrets() { :; }; _ds_op_signout() { :; }; "
+        'python3() { print -r -- "tool ${@:2}"; }; '
+    )
+
+    def test_each_form_reaches_the_tool_with_its_flags(self) -> None:
+        for words, flags in (
+            ("", ""),
+            ("go", "--apply"),
+            ("go --over-budget", "--apply --over-budget"),
+        ):
+            with self.subTest(words=words):
+                got = run(self.STUBS + f"fleet {words}")
+                self.assertEqual(got.returncode, 0, got.stderr)
+                self.assertIn(f"tool {flags}\n", got.stdout)
+
+    def test_a_stray_word_is_refused(self) -> None:
+        for words in ("go --over", "go --over-budget now", "stop"):
+            with self.subTest(words=words):
+                got = run(self.STUBS + f"fleet {words}")
+                self.assertEqual(got.returncode, 1)
+                self.assertNotIn("tool", got.stdout)
+                self.assertIn("Usage: fleet [go [--over-budget]]", got.stderr)
+
+
+@unittest.skipUnless(shutil.which("zsh"), "needs zsh")
 class ClassStampTest(unittest.TestCase):
     """The launcher's class record names the pid that runs `claude`."""
 

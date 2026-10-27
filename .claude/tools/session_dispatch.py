@@ -264,11 +264,13 @@ VERB_CLASS = {
 #: Where a chore body names a build or deploy command. Searched only inside
 #: code spans and fenced blocks, where a body writes a command: in prose "make
 #: sure" and "anchor on" are English, and matching them would class every chore
-#: as building. The guards either side keep `anchor-v2` and `make_x.py` out. `localnet`
-#: has no prose sense, so it counts anywhere.
-_CODE = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
+#: as building. The guards either side keep `anchor-v2` and `make_x.py` out
+#: (`docker-compose` is named so the guard does not drop it). `localnet` has no
+#: prose sense, so it counts anywhere.
+_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]+`", re.DOTALL)
 _BUILD_COMMAND = re.compile(
-    r"(?<![\w./-])(make|cargo|anchor|docker)(?:[ \t]+([\w:./-]+))?(?![\w-])",
+    r"(?<![\w./-])(make|cargo|anchor|docker-compose|docker)"
+    r"(?:[ \t]+([\w:./-]+))?(?![\w-])",
     re.ASCII,
 )
 _LOCALNET = re.compile(r"\blocalnet\b", re.IGNORECASE)
@@ -354,15 +356,23 @@ def write_records(seats: list[Seat], directory: Path) -> None:
 
     The class alone, no pid: the launcher stamps `<class> <pid>` when its
     `claude` starts, reading the class from here, and a resume reads it back
-    instead of re-inspecting. Best effort — a lost record costs a chore
-    counted as building, never a dispatch.
+    instead of re-inspecting. A record already holding this class is left
+    alone, so re-dispatching a live chore keeps the pid its launcher stamped
+    rather than dropping it from the probe's count. Best effort — a lost
+    record costs a chore counted as building, never a dispatch.
     """
     for seat in seats:
         if seat.record is None:
             continue
+        path = directory / f"{seat.record}.class"
+        try:
+            if path.read_text().split()[:1] == [seat.cls]:
+                continue
+        except OSError:
+            pass
         try:
             directory.mkdir(parents=True, exist_ok=True)
-            (directory / f"{seat.record}.class").write_text(f"{seat.cls}\n")
+            path.write_text(f"{seat.cls}\n")
         except OSError:
             continue
 
@@ -540,8 +550,11 @@ def gate(
         )
     seated, held = _admit(seats, reading, cap, over_budget)
     if has_reading and not over_budget and any("wait" in why for _, why in held):
-        reading = reader(seats, directory)
-        if "verdict" in reading:
+        # The first reading stands unless the second is one: its holds are
+        # rendered from whichever reading produced them.
+        second = reader(seats, directory)
+        if "verdict" in second:
+            reading = second
             seated, held = _admit(seats, reading, cap, over_budget)
     overridden: list[tuple[Seat, str]] = []
     if over_budget and has_reading:
@@ -631,7 +644,13 @@ def run(argv: list[str]) -> int:
     if stray := [word for word in args.verb if word.split("=")[0] in flags]:
         print(
             f"session-dispatch: {stray[0]} must come BEFORE the verb "
-            "(argparse REMAINDER swallows anything after it)",
+            "(argparse REMAINDER swallows anything after it)"
+            + (
+                "; `fleet go --over-budget` is the operator's to type in their "
+                "own tab, and is not dispatched"
+                if args.verb[:2] == ["fleet", "go"]
+                else ""
+            ),
             file=sys.stderr,
         )
         return 2

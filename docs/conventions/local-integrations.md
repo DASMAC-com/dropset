@@ -2751,8 +2751,9 @@ a terminal closed outright, is covered by the next morning's digest.
   in one call**, separated by a bare `+`, for one driver round trip
   instead of one per tab — and it validates every verb before opening
   anything, so a batch with one typo dispatches nothing rather than half
-  of itself. And it still **never types into the current session**: on a
-  blocked dispatch it prints the verbs for the operator to run by hand.
+  of itself (a *held* verb is different — see the machine gate below).
+  And it still **never types into the current session**: when iTerm
+  cannot be driven it prints the verbs for the operator to run by hand.
   That hazard — a launch verb typed into a session already running
   something — is what the failure path guards, and it was never what the
   window-per-session rule bought.
