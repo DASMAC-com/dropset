@@ -85,9 +85,6 @@ SNOOZE_USD = SNOOZE_TOKENS * ADVISOR_CACHE_READ / PER_MTOK
 #: falls back to the whole file.
 TAIL_BYTES = 1 << 20
 
-#: The marker the launcher's loop checks on exit, beside the substrate markers,
-#: and the snooze file — the scheduler's; each daily kind has its own pair
-#: (`marker_name` / `snooze_name`), so the two seats never trip each other.
 #: The env var the launcher sets to the daily kind it launched, so a bare
 #: `plan_cycle.py check` from inside a curator session serves `curate`.
 KIND_ENV = "DS_DAILY_KIND"
@@ -101,6 +98,9 @@ def snooze_name(kind: str) -> str:
     return f"{kind}-cycle-snooze"
 
 
+#: The marker the launcher's loop checks on exit, beside the substrate markers,
+#: and the snooze file — the scheduler's; each daily kind has its own pair
+#: (`marker_name` / `snooze_name`), so the two seats never trip each other.
 MARKER = marker_name("plan")
 SNOOZE = snooze_name("plan")
 
