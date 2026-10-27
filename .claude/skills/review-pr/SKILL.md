@@ -189,7 +189,7 @@ migrations or generation inputs, and whether it spans crates.
    a narrower *next* PR (`history.md` → "Hot-surface tails").
 
    **Key a skip to content, not a SHA** (an amend or no-overlap rebase
-   moves the SHA, not the bytes): record after a green `make lint`, check before
+   moves the SHA, not the bytes): record after a green lint, check before
    any re-run:
 
    ```sh
@@ -258,28 +258,23 @@ migrations or generation inputs, and whether it spans crates.
      session the remainder, and record the split as a PR-body deferral,
      which makes it addressed (`docs/conventions/commits-and-prs.md`).
 
-1. **Run lint**, always through the quiet runner — the cspell hook alone
-   dumps a ~450-line cascade on failure:
+1. **Run lint — every lint point is one call** that races the abridged
+   lint and tests against CI for HEAD (`docs/ci.md` → "Racing local
+   against CI"):
 
    ```sh
-   python3 .claude/tools/run_quiet.py -- make lint
+   python3 .claude/tools/verify_head.py
    ```
 
-   **The full sweep runs twice: at the start and at the end.** Every
-   check in between is the abridged form, through one bare command:
-
-   ```sh
-   python3 .claude/tools/run_quiet.py -- make lint-abridged
-   ```
-
-   That runs every hook over this branch's files (the merge-base diff
-   plus untracked paths), with `clippy` and `rustdoc` scoped to the
-   crates those files belong to (`docs/ci.md` → "Local lint versus
-   CI"). To narrow it, call its tool directly:
-   `lint_paths.py --changed -- <hook-id>`, or `--files <paths> --` for
-   paths narrower than the branch. A full
-   sweep in between is a mistake unless a hook is repo-global
-   (`history.md` → "Full-sweep loops").
+   Run it with `run_in_background: true` (it can outlast a foreground
+   call). Its one line gives each check's settling side and log or job;
+   act on it only when its `sha` is HEAD's. A local `make lint` / `make test`
+   (through the quiet runner) runs only when `ci=` says
+   `not-consulted(unreachable)` — `dirty` / `unpushed` heal by committing and
+   pushing. To narrow one hook, call
+   `lint_paths.py --changed -- <hook-id>`, or `--files <paths> --`; a
+   local full sweep in between is a mistake unless a hook is
+   repo-global (`history.md` → "Full-sweep loops").
 
    **The tool absorbs the two by-design failures**: when a hook
    rewrites files (`mdformat`, `ruff format`, `biome`, the dictionary
@@ -1034,19 +1029,9 @@ migrations or generation inputs, and whether it spans crates.
      `Edit` (`history.md` → "Inline-interpreter churn").
 
 1. **Re-lint after fixes.** If the previous step committed fixes,
-   re-run the lint **scoped to the changed files**:
-
-   ```sh
-   python3 .claude/tools/run_quiet.py -- make lint-abridged
-   ```
-
-   Apply step 4's fix-and-retry logic, scoped per-hook re-run
-   included. The **full** `make lint` belongs to the two checkpoints
-   (before committing, at the end), never to this loop. A fix touching
-   anything a Rust build or a Rust test's fixture read reaches
-   re-tests through `make test-abridged` (the crates the branch
-   affects; `docs/ci.md` → "Local tests versus CI"), and the full
-   `make test` stays step 11's pre-push run. Run a fast
+   push and re-run step 4's `verify_head.py` call — it re-tests the
+   affected crates too — with step 4's fix-and-retry logic, scoped
+   per-hook re-run included. Run a fast
    suite **whole, through the wrapper, at checkpoints rather than
    after every edit** — the lever is frequency, not scope
    (`history.md` → "Fast-suite frequency").
@@ -1090,8 +1075,8 @@ migrations or generation inputs, and whether it spans crates.
    python3 .claude/tools/vector_diff.py --ref <commit>~1
    ```
 
-   When `lint_rerun` is `true`, re-run `make lint-abridged` through the
-   quiet runner with step 4's fix-and-retry logic — a regenerated file
+   When `lint_rerun` is `true`, re-run `verify_head.py` with step 4's
+   fix-and-retry logic — a regenerated file
    can still trip the whitespace / EOF hooks.
 
    **A re-run forced by a rebase asks a narrower question.** The
@@ -1188,8 +1173,10 @@ migrations or generation inputs, and whether it spans crates.
    (`history.md` → "Suites before the rebase"). Switch to a full
    `--split --out` run only when the slices need regenerating.
    Otherwise `targets` lists every suite in run order as
-   `{target, run, reason}`. Run each `run: true` entry through the
-   quiet runner (`python3 .claude/tools/run_quiet.py -- <target>`),
+   `{target, run, reason}`. A `make test` entry is step 4's
+   `verify_head.py` call after step 12's push (plain `make test` only
+   on `not-consulted(unreachable)`); run each other `run: true` entry
+   through the quiet runner (`python3 .claude/tools/run_quiet.py -- <target>`),
    and record every skip with its `reason` in the summary — never
    re-derive the list. It resolves CI's `code` filter
    (`CODE_FILTER_EXCLUDES`, kept in parity with `test.yml`), whether
@@ -1277,15 +1264,11 @@ migrations or generation inputs, and whether it spans crates.
    python3 .claude/tools/run_quiet.py -- cargo test --doc
    ```
 
-   **Background the suites and wait on CI concurrently** — they test
-   the same commit, so finishing them before step 18's CI wait
-   serializes two ~20–40 minute waits. Launch with
-   `run_in_background: true`, push, and collect both as they land.
-   **But only once the fix commits have landed**: the build compiles
-   the tree as it finds it, so hold the suites while the fan-out is
+   **Run the suites only once the fix commits have landed**: the build
+   compiles the tree as it finds it, so hold them while the fan-out is
    still reporting or fixes are still going in (`history.md` →
-   "Half-applied build"). Read CI state right after the push —
-   `init-pr`'s draft PR may already have settled it.
+   "Half-applied build"). Background any other suite alongside the
+   `verify_head.py` call (`run_in_background: true`).
 
    - Both depend on the Solana/Anchor toolchain via
      `check-toolchain`. If the toolchain is absent
@@ -1382,8 +1365,10 @@ migrations or generation inputs, and whether it spans crates.
 
 1. **Gate.** Mark the PR ready only when **every** local CI-mirroring
    check is green: **zero blocking issues** (every Linear checklist
-   item addressed); `make lint` passes, with any hook `lint_paths.py`
-   printed `UNVERIFIABLE` noted, not gated; the generated artifacts
+   item addressed); the last `verify_head.py` verdict is `GREEN` for
+   HEAD's `sha` (with a local `make lint` / `make test` passing where it
+   said `not-consulted(unreachable)`), any hook `lint_paths.py` printed
+   `UNVERIFIABLE` noted, not gated; the generated artifacts
    are fresh and committed (every `regen_artifacts.py` family fresh,
    committed or skipped, or an `unverifiable` one honestly reported);
    every `run: true` entry of step 11's `targets` passes or is

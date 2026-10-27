@@ -306,9 +306,14 @@ def log_path_for(pr: int) -> Path:
     verdict is unaffected either way, since it comes from the separate JSON read,
     not from this log.
     """
+    return log_dir() / f"wait-for-checks-{pr}.log"
+
+
+def log_dir() -> Path:
+    """The directory every watch log goes in (``verify_head.py``'s too)."""
     base = Path(tempfile.gettempdir()) / "claude-wait-checks"
     base.mkdir(mode=0o700, parents=True, exist_ok=True)
-    return base / f"wait-for-checks-{pr}.log"
+    return base
 
 
 def run_log_path_for(run_id: str) -> Path:
@@ -317,9 +322,7 @@ def run_log_path_for(run_id: str) -> Path:
     Keyed on the run id for the same reason :func:`log_path_for` keys on the PR
     number: a stable, guessable path beats a pid nobody can reconstruct.
     """
-    base = Path(tempfile.gettempdir()) / "claude-wait-checks"
-    base.mkdir(mode=0o700, parents=True, exist_ok=True)
-    return base / f"wait-for-run-{run_id}.log"
+    return log_dir() / f"wait-for-run-{run_id}.log"
 
 
 def _gh(args: list[str]) -> tuple[int, str, str]:
@@ -474,9 +477,7 @@ def wait_run(
 
 def queue_log_path_for(pr: int) -> Path:
     """Where a ``--queue`` watch's one-line-per-poll log goes."""
-    base = Path(tempfile.gettempdir()) / "claude-wait-checks"
-    base.mkdir(mode=0o700, parents=True, exist_ok=True)
-    return base / f"wait-for-queue-{pr}.log"
+    return log_dir() / f"wait-for-queue-{pr}.log"
 
 
 # One GraphQL read answers "landed?", "still queued?" and "dequeued?" at once.

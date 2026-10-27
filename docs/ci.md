@@ -319,5 +319,31 @@ The trade: the abridged form misses a test whose result moves through a
 path neither the graph nor the fixture scan can see. A test reading a file
 by a path built at runtime is one example; a crate that starts loading the
 `.so` without joining the table is another. The full run catches both.
-`review-pr` iterates on the abridged form, and its pre-push run stays
-`make test`.
+`review-pr` iterates on the abridged form through the race below.
+
+## 7. Racing local against CI
+
+A verification point is one call, `.claude/tools/verify_head.py`. It
+records HEAD, runs `make lint-abridged` and then `make test-abridged`,
+each as a process group it owns, and, when HEAD is pushed and the tree is clean,
+polls CI for the same SHA. Each check settles on whichever side finishes
+first. A green CI `Lint` kills the local lint. The `Tests*` checks all
+green kill or skip the local test; the `code` filter reports an excluded
+PR's Tests jobs as passing, while a `skipping` one (its `Detect changes`
+failed) verified nothing and never settles the check. A red on
+either side ends the race. The result is one verdict line naming the
+settling side of each check and the SHA, and the call also appends a
+`machine_load.py --sample` line to the fleet log.
+
+A local pass is enough to take the next step, never to merge: CI's full
+sweep still runs behind it, and the merge queue runs it again. CI is
+skipped when it cannot speak for the tree: when HEAD is unpushed, when
+the tree is dirty, or after three failed reads in a row. The verdict
+then says `not-consulted`. An unpushed or dirty tree heals by committing
+and pushing; only an unreachable CI makes a local `make lint` and
+`make test` stand in for the full sweep. A new commit mid-race ends it
+`HEAD-MOVED` and `--timeout` ends it `TIMEOUT`; either way the caller
+acts on a verdict only when its `sha` is HEAD's. The kill signals the
+whole process group, SIGTERM and then SIGKILL, so no orphaned `rustc`
+holds the cargo pool lock. That lock is a file lock, released when its
+process dies.
