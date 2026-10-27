@@ -34,15 +34,10 @@ use crate::matching_math::{
 };
 use crate::price::Price;
 
-/// Taker side. `Buy` consumes asks (pays quote, receives base); `Sell`
-/// consumes bids (pays base, receives quote). Wire value matches the
-/// `swap` instruction's `side` arg.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum SwapSide {
-    Buy = 0,
-    Sell = 1,
-}
+/// Taker side, re-exported from [`crate::matching_math`] so the engine and
+/// the simulator share one declaration of the `swap` instruction's `side`
+/// encoding.
+pub use crate::matching_math::SwapSide;
 
 /// Result of simulating a take against the current book.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -177,7 +172,7 @@ pub fn simulate_swap(
     now_unix: WallTime,
     platform_fee_bps: u16,
 ) -> Quote {
-    let is_buy = side == SwapSide::Buy;
+    let is_buy = side.consumes_asks();
     if !limit_price.is_valid() || !limit_price_ok(limit_price, is_buy) || amount_in == 0 {
         return Quote::default();
     }
@@ -408,7 +403,7 @@ pub fn resting_levels(
     now_slot: SlotTime,
     now_unix: WallTime,
 ) -> Vec<BookLevel> {
-    let is_buy = side == SwapSide::Buy;
+    let is_buy = side.consumes_asks();
     let Some(levels) = collect_side_levels(market, is_buy, now_slot, now_unix) else {
         return Vec::new();
     };

@@ -87,11 +87,8 @@ pub fn simulate_swap(
 ) -> Result<Quote, JsError> {
     let view = MarketView::load(market_data)
         .map_err(|e| JsError::new(&alloc_fmt(format_args!("{e:?}"))))?;
-    let side = match side {
-        0 => SwapSide::Buy,
-        1 => SwapSide::Sell,
-        _ => return Err(JsError::new("invalid side (expected 0=buy, 1=sell)")),
-    };
+    let side = SwapSide::from_u8(side)
+        .ok_or_else(|| JsError::new("invalid side (expected 0=buy, 1=sell)"))?;
     let q = core_simulate_swap(
         &view,
         side,

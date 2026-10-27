@@ -26,11 +26,8 @@ use dropset_math_core::share::{
     compute_pro_rata_slice, crystallize_pnl, isqrt_u128, merge_entry_basis, realize_perf_fee,
     single_leg_basket, BasketError, CrystallizeError,
 };
-use dropset_math_core::{PPM, Q32_SHIFT};
+use dropset_math_core::{PPM, Q32_32_ONE};
 use serde_json::{json, Map, Value};
-
-/// Q32.32 representation of `1.0` — the seeded value-per-share / HWM.
-const Q32_32_ONE: u64 = 1u64 << Q32_SHIFT;
 
 /// Serialize any integer as a JSON string (the precision-safe wire form).
 fn s<T: std::fmt::Display>(x: T) -> Value {

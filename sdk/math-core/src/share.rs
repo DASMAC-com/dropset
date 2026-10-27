@@ -524,9 +524,7 @@ pub fn merge_entry_basis(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Q32.32 representation of `1.0` — the seeded value-per-share.
-    const Q32_32_ONE: u64 = 1u64 << Q32_SHIFT;
+    use crate::Q32_32_ONE;
 
     // ── compute_pro_rata_slice ──────────────────────────────────────
 

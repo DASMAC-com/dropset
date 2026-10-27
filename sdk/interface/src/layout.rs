@@ -21,14 +21,11 @@ use bytemuck::{Pod, Zeroable};
 use crate::clock::{SlotSpan, SlotTime, WallSpan, WallTime};
 use crate::price::Price;
 
-pub const N_LEVELS: usize = 8;
-/// Sentinel for sector-index pointers (`head`, `next`, `prev`).
-pub const NULL_SECTOR: u32 = u32::MAX;
-/// Flush flag OR'd onto `ReferencePrice::stamp`.
-pub const FLUSH_BIT: u64 = 1u64 << 63;
-/// Re-exported, not redeclared: the bounds checked against these and the
-/// divisions `matching_math` performs with them must be one constant.
-pub use dropset_math_core::{BPS, PPM};
+/// Re-exported, not redeclared: the program reads the same layout
+/// sentinels from math-core, and the bounds checked against the
+/// denominators and the divisions `matching_math` performs with them must
+/// be one constant.
+pub use dropset_math_core::{BPS, FLUSH_BIT, NULL_SECTOR, N_LEVELS, PPM};
 /// Anchor account discriminator length.
 pub const ACCOUNT_DISCRIMINATOR_LEN: usize = 8;
 /// On-chain `align_of::<Vault>()`. The program's `Vault` embeds `Price`

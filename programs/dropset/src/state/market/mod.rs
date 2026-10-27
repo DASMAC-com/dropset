@@ -64,44 +64,17 @@ pub use reference_price::*;
 // `VaultDepositorHeader`.
 pub use dropset_math_core::share::{compute_pro_rata_slice, isqrt_u128, min_leader_share_ok};
 
-/// Number of bid / ask levels in a [`LiquidityProfile`]. Chosen small for
-/// the initial bring-up; widen once the matching engine lands and CU
-/// budgets are measured.
-pub const N_LEVELS: usize = 8;
-
 /// Byte width of [`Vault::name`]: at most this many printable-ASCII
 /// bytes, zero-padded.
 pub const VAULT_NAME_LEN: usize = 32;
 
-/// "Null" sentinel for sector-index pointers ([`MarketHeader::head`],
-/// [`Vault::next`], etc.). Sector indices are at most
-/// `registry.max_vaults_per_market` (`u8`), so [`u32::MAX`] is unreachable
-/// as a real index and works as a null marker.
-pub const NULL_SECTOR: u32 = u32::MAX;
-
-/// Flush flag OR'd onto [`ReferencePrice::stamp`] by `SetReferencePrice`
-/// and `SetLiquidityProfile`. The next taker materializes
-/// [`Vault::remaining`] from the [`LiquidityProfile`] and clears the
-/// flag — see the spec's **LiquidityProfile → Flush**.
-pub const FLUSH_BIT: u64 = 1u64 << 63;
-
-/// Q32.32 fixed-point representation of `1.0` — the seed value for
-/// [`Vault::hwm`] at first-deposit time. The HWM is value-per-share
-/// (`L / total_shares`); the first depositor's basket implies
-/// `L = total_shares` (since `total_shares := isqrt(b·q) == L`), so the
-/// initial VPS is exactly 1.0.
-pub const Q32_32_ONE: u64 = 1u64 << Q32_SHIFT;
-
-// The Q32.32 shift width itself, re-exported for the same single-source
-// reason as `BPS` / `PPM` below.
-pub use dropset_math_core::Q32_SHIFT;
-
-// The parts-per-million and basis-points denominators are re-exported
-// from math-core rather than redeclared, for the same reason as the
-// kernels above: the bounds this crate checks against them and the
-// divisions math-core performs with them must be the same constant, not
-// two literals that happen to agree.
-pub use dropset_math_core::{BPS, PPM};
+// The layout sentinels (level count, null sector, flush flag, Q32.32 one),
+// the Q32.32 shift width and the parts-per-million and basis-points
+// denominators are re-exported from math-core rather than redeclared, for
+// the same reason as the kernels above: the off-chain layout mirror, the
+// bounds this crate checks and the divisions math-core performs must all
+// read the same constant, not two literals that happen to agree.
+pub use dropset_math_core::{BPS, FLUSH_BIT, NULL_SECTOR, N_LEVELS, PPM, Q32_32_ONE, Q32_SHIFT};
 
 /// Market account: [`MarketHeader`] followed by a slab tail of [`Vault`]
 /// sectors. Sectors are managed via the [`VaultDll`] operations rather
