@@ -1,6 +1,6 @@
 ---
 name: ratify-staged
-description: The shared filing-and-review machinery an advisor-tier session (architect, explore, audit findings) runs once its spec is agreed. One filing ask names the N tasks and the blocking edges it proposes; on a yes they are filed Backlog plus the `Session pending` milestone. Then a one-checkbox-per-task review ask, repeated over held and unticked tasks until none is held, with commented tasks folded and their threads resolved. Ends in one batch write moving the whole set to Todo and a close gate asserting none is still parked. Drives `.claude/tools/ratify_staged.py`.
+description: The shared filing-and-review machinery an advisor-tier session (architect, explore, audit findings) runs once its spec is agreed (an audit, having filed its findings already, enters at the review rounds). One filing ask names the N tasks and the blocking edges it proposes; on a yes they are filed Backlog plus the `Session pending` milestone. Then a one-checkbox-per-task review ask, repeated over held and unticked tasks until none is held, with commented tasks folded and their threads resolved. Ends in one batch write moving the whole set to Todo and a close gate asserting none is still parked. Drives `.claude/tools/ratify_staged.py`.
 user-invocable: true
 ---
 
@@ -12,10 +12,9 @@ spec and its read-back loop — belongs to the consumer and ends with
 the task list the spec will file. **An audit enters at step 3**: its
 findings are the adversarial cross-check's survivors and carry no
 edges, so it has already filed them, makes step 2's announcement and
-goes straight to the review rounds.
-**Nothing is filed before the operator's yes to the filing ask**, and
-nothing moves to Todo until every filed task is ticked and
-uncommented.
+goes straight to the review rounds. **Outside an audit, nothing is
+filed before the operator's yes to the filing ask**, and nothing moves
+to Todo until every filed task is ticked and uncommented.
 
 The tool reads `LINEAR_API_KEY` and `LINEAR_PROJECT_ID` and writes
 nothing but the final batch; `--help` on it lists the subcommands.
@@ -125,7 +124,8 @@ python3 .claude/tools/ratify_staged.py gate --ids <every filed id>
 
 Exit 1 names a task still under `Session pending`: the review is
 unfinished, so ask once more rather than closing. **There is no
-operator-absent filing path.** A session that dies mid-review leaves
+operator-absent approval path** (an audit files without an ask, but
+approves nothing that way). A session that dies mid-review leaves
 its tasks parked, where upkeep's `Session pending` count and `plan`'s
 count-and-offer line catch them (`ratify_staged.py list` shows the
 pool).
