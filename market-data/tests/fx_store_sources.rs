@@ -93,6 +93,45 @@ async fn the_fx_constructor_asks_only_for_the_fx_roster() {
     );
 }
 
+/// A series holding two bucket widths is ranked by the projected close, not by
+/// `bucket_start`. The statement walks each width separately to stay on the
+/// primary key, so this pins that the walk still compares across widths: the
+/// daily bucket opened long before the newest minute bucket, but closed after
+/// it, and is the newer print.
+#[tokio::test]
+#[ignore = "requires a Docker daemon (Postgres container)"]
+async fn the_newest_close_wins_across_bucket_widths() {
+    let (_pg, pool) = start_pg().await;
+    const CLOSE: i64 = 1_700_086_400;
+
+    insert_bucket(&pool, FX_VENUE, "EUR-USD", CLOSE - 1_200, 1.10).await;
+    insert_bucket(&pool, FX_VENUE, "EUR-USD", CLOSE - 600, 1.11).await;
+    sqlx::query(
+        "INSERT INTO cex_prices
+             (source, product_id, granularity_secs, bucket_start,
+              low, high, open, close, volume)
+         VALUES ($1, 'EUR-USD', 86400, $2, 1.12, 1.12, 1.12, 1.12, 0)",
+    )
+    .bind(FX_VENUE)
+    .bind(CLOSE - 86_400)
+    .execute(&pool)
+    .await
+    .expect("insert the daily bucket");
+
+    let rows = FxStoreSource::fx("store:fx", pool.clone(), vec!["EUR-USD".to_string()])
+        .latest()
+        .await
+        .expect("read the FX leg");
+
+    assert_eq!(
+        rows.len(),
+        1,
+        "one row per series, whatever widths it holds"
+    );
+    assert_eq!(rows[0].close, 1.12, "the daily bucket closed last");
+    assert_eq!(rows[0].published_at, CLOSE);
+}
+
 #[tokio::test]
 #[ignore = "requires a Docker daemon (Postgres container)"]
 async fn an_empty_result_is_not_an_error() {
