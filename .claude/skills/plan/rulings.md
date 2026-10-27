@@ -236,7 +236,8 @@ the document's state sections.
    is a building session. Builders are capped at `DS_FLEET_CAP`
    and refused while a pool-lock wait is at or past
    `DS_FLEET_BUILD_WAIT_S`. A free session
-   (`plan`, `architect`, `explore`, `chore`) is refused only on
+   (`plan`, `architect`, `explore`, a chore with no build in its
+   body) is refused only on
    memory, swap, pressure or load. Builds share the pool's
    `DS_CARGO_LANES` lanes. On no reading (exit 3) fall back to the
    cap and say so. The digest's `## Wait` section measures whether

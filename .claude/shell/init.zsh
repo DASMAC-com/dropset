@@ -743,15 +743,26 @@ _ds_claude() {
 # counts only while that pid is a live `claude`, so it needs no cleanup.
 # Best-effort, like `_ds_substrate_write`: a lost record counts as building.
 _ds_class_stamp() {
-  local file="$_DS_SUBSTRATE_DIR/$1.class" cls="$2" recorded
-  if [[ -z "$cls" ]]; then
-    [[ -r "$file" ]] && read -r recorded _ < "$file" 2>/dev/null
-    [[ "$recorded" == (building|free) ]] && cls="$recorded" || cls=building
-  fi
+  local file="$_DS_SUBSTRATE_DIR/$1.class" cls
+  cls="$(_ds_class_resolve "$1" "$2")"
   zmodload -F zsh/system p:sysparams 2>/dev/null || return 0
   mkdir -p "${file:h}" 2>/dev/null || return 0
   print -r -- "$cls $sysparams[pid]" >| "$file" 2>/dev/null
   return 0
+}
+
+# Internal: the class a launch runs as — $2 when given, else the one recorded
+# in `<$1>.class`, else `building` (an unrecorded session counts as building).
+# Shared by the class record and the launch record, so the two never disagree.
+_ds_class_resolve() {
+  local file="$_DS_SUBSTRATE_DIR/$1.class" recorded
+  if [[ -n "$2" ]]; then
+    print -r -- "$2"
+    return 0
+  fi
+  [[ -n "$1" && -r "$file" ]] && read -r recorded _ < "$file" 2>/dev/null
+  [[ "$recorded" == (building|free) ]] && print -r -- "$recorded" ||
+    print -r -- building
 }
 
 # Internal: the title guard (`verb_check.py`) for a launch that starts a NEW
@@ -813,14 +824,14 @@ _ds_session() {
         "checkout. Re-creating it restores TRACKED files only; an untracked" \
         "spec file written there is not recoverable, so work from Linear."
     fi
-    # Every verb launched through here (plan, architect, explore, chore) is
-    # read-only toward the repo, so its class is `free`.
-    _ds_load_record "$sid" free
+    # The caller's class (`_ds_class_key` / `_ds_class`, in scope here), the
+    # same one its class record stamps.
+    _ds_load_record "$sid" "$(_ds_class_resolve "$_ds_class_key" "$_ds_class")"
     _ds_claude "$model" --resume "$sid" --permission-mode auto
   else
     [[ -n "$worktree" ]] && _ds_worktree_ensure "$worktree"
     _ds_session_mark "$sid"
-    _ds_load_record "$sid" free
+    _ds_load_record "$sid" "$(_ds_class_resolve "$_ds_class_key" "$_ds_class")"
     # `-w` enters the worktree inside the CLI, where no `chpwd` fires, so the
     # cargo pool is evaluated for it here; otherwise the session inherits the
     # base checkout's lane and per-checkout keys. A worded tag's worktree does
@@ -1265,8 +1276,9 @@ _ds_session_mark() {
 # Internal: THE LAUNCH RECORD — run the machine-load probe and append its
 # reading to `sessions/<id>.load` beside the session's substrate record, with
 # the probe's `--sample` line to the fleet log at the same moment. $1 the
-# session id, $2 its class: `building` for a task, `free` for every verb that
-# is read-only toward the repo. Unlike `_ds_session_mark` it runs on EVERY
+# session id, $2 its class, resolved by `_ds_class_resolve` exactly as the
+# class record is, so a chore the dispatcher classed as building records as
+# building. Unlike `_ds_session_mark` it runs on EVERY
 # launch, create and resume alike, and appends, so a resumed session's record
 # accumulates one line per reopen — the digest's wait section reads them.
 # Best-effort and silent: a failed probe still appends a `no-reading` line,
@@ -1781,11 +1793,8 @@ _ds_task_resume() {
   # The class the session launched with, read back rather than re-inspected.
   local _ds_class_key="$key" _ds_class=''
 
-  # The tag picker resolves no id, so it leaves no record. An executor-tier
-  # session builds; an advisor thread resumed here is read-only.
-  local cls=free
-  [[ "$(_ds_resume_tier "$key")" == executor ]] && cls=building
-  _ds_load_record "$sid" "$cls"
+  # The tag picker resolves no id, so it leaves no record.
+  _ds_load_record "$sid" "$(_ds_class_resolve "$_ds_class_key" "$_ds_class")"
 
   case "$mode" in
     continue)

@@ -1205,9 +1205,10 @@ credential coordinates, those because they name one machine's setup.
 **The fleet's size is a budget the machine sets, not a session count.**
 `.claude/tools/machine_load.py` reads the pool lock's build queue,
 memory, swap, pressure and load, and answers how many more sessions of
-a class fit: `building` (a `task`) or `free` (every verb that is
-read-only toward the repo). Every launch, and every resume that knows its
-session id (all but the bare tag picker), appends its reading
+a class fit: `building` or `free`, classed per verb as the dispatcher
+does ("Session helpers" → `session_dispatch.py`). Every launch, and every
+resume that knows its session id (all but the bare tag picker), appends
+its reading, under the class its `<key>.class` record carries,
 to `sessions/<id>.load` and its sample line to `fleet-load.log`, both
 beside the substrate markers, and the daily digest's `## Wait` section
 reads them back. The probe's knobs sit in the same file, each with a
