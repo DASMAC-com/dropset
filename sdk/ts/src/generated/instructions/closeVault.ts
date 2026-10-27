@@ -38,7 +38,7 @@ export type CloseVaultAsyncInput<TAccountSigner extends string = string, TAccoun
 signer: TransactionSigner<TAccountSigner>;
 /**
  * Market holding the target vault. `mut` because the active /
- * tombstone list heads and `active_count` change.
+ * tombstone (or free) list heads and `active_count` change.
  */
 market: Address<TAccountMarket>;
 /** CHECK: Only the event authority can invoke self-CPI */
@@ -75,7 +75,7 @@ export type CloseVaultInput<TAccountSigner extends string = string, TAccountMark
 signer: TransactionSigner<TAccountSigner>;
 /**
  * Market holding the target vault. `mut` because the active /
- * tombstone list heads and `active_count` change.
+ * tombstone (or free) list heads and `active_count` change.
  */
 market: Address<TAccountMarket>;
 /** CHECK: Only the event authority can invoke self-CPI */
@@ -110,7 +110,7 @@ accounts: {
 signer: TAccountMetas[0];
 /**
  * Market holding the target vault. `mut` because the active /
- * tombstone list heads and `active_count` change.
+ * tombstone (or free) list heads and `active_count` change.
  */
 market: TAccountMetas[1];
 /** CHECK: Only the event authority can invoke self-CPI */

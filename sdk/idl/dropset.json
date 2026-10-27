@@ -391,7 +391,7 @@
           "name": "market",
           "docs": [
             "Market holding the target vault. `mut` because the active /",
-            "tombstone list heads and `active_count` change."
+            "tombstone (or free) list heads and `active_count` change."
           ],
           "writable": true
         },
