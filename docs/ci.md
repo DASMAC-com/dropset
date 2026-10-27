@@ -101,8 +101,9 @@ Bumping the compiler is a deliberate PR, never a surprise:
 1. Edit `channel` in `rust-toolchain.toml`.
 1. Run the full-workspace gate locally **before** pushing:
    `cargo clippy --all-targets -- -D warnings`. This is the same command
-   the pre-commit clippy hook runs, so a clean local run means the gate is
-   clean.
+   the pre-commit clippy hook runs in the full sweep (`make lint` and CI),
+   so a clean local run means the gate is clean. `make lint-abridged`
+   scopes it to the changed crates (§5), so it is not this check.
 1. Fix any new-lint churn in the same PR. New lints are the expected cost
    of a bump and belong with it, not spread across unrelated PRs.
 1. Expect the first CI runs after the bump to be slow. The rust-cache key
@@ -245,3 +246,39 @@ jobs still count toward the per-job durations.
 a dequeue from its log's failure-shaped lines, and `--hook-timing JOB_ID`
 ranks the pre-commit hooks inside one Lint job. The first fetch of a week
 takes minutes of `gh api` reads, so pass `--cache FILE` and re-run from it.
+
+## 5. Local lint versus CI
+
+There are two local forms of one hook set (`cfg/pre-commit-lint.yml`), and
+CI runs only the first:
+
+- **`make lint`** is the full sweep: every tracked and untracked file, with
+  `clippy` and `rustdoc` over the whole workspace. Its commands are the
+  ones `lint.yml` runs under `pre-commit run --all-files`, which covers the
+  merge queue. Together the two are the source of truth.
+- **`make lint-abridged`** is the iteration form: only this branch's files
+  (the merge-base diff with `origin/main`, plus untracked), with `clippy`
+  and `rustdoc` scoped to the crates those files belong to. A session
+  iterates on it, and a pass on it is enough to take the next step.
+
+The scoping is `.claude/tools/cargo_scope.py`, which both hooks run
+through. It maps each file to its owning package (the nearest `Cargo.toml`
+with a `[package]`) and runs `cargo clippy -p <crate>…` or
+`cargo doc -p <crate>…`, passing each crate the features the whole
+workspace enables on it. Cargo unifies features only across the selected
+packages, so without that a bare `-p dropset-feeds` would build with no
+features and skip its feature-gated modules. The set comes from
+`cargo metadata`, which counts dev-dependencies: it matches clippy's
+`--all-targets` build exactly and is a superset for `cargo doc`, so the
+abridged rustdoc can fail on a dev-only feature the full sweep never
+documents. When the files cover every tracked `.rs` file it
+runs the workspace commands unchanged, which is how the full sweep and CI
+stay identical. A Rust file outside any member package maps to the whole
+workspace, so a gap in the mapping costs a full sweep and never skips a
+check.
+
+The trade: the abridged form does not see a change to one crate's public
+API that breaks a **dependent** crate's build or doc links, nor a change
+that touches only `Cargo.toml` or deletes a `.rs` file (neither hook is
+selected). The merge queue's full run catches all of these, and that is the
+trade the `--changed` mode was built to make.

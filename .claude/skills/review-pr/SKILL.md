@@ -266,16 +266,18 @@ migrations or generation inputs, and whether it spans crates.
    ```
 
    **The full sweep runs twice: at the start and at the end.** Every
-   check in between is scoped, through one bare command:
+   check in between is the abridged form, through one bare command:
 
    ```sh
-   python3 .claude/tools/run_quiet.py -- \
-     python3 .claude/tools/lint_paths.py --changed
+   python3 .claude/tools/run_quiet.py -- make lint-abridged
    ```
 
    That runs every hook over this branch's files (the merge-base diff
-   plus untracked paths); append `-- <hook-id>` to narrow it, or pass
-   `--files <paths> --` for paths narrower than the branch. A full
+   plus untracked paths), with `clippy` and `rustdoc` scoped to the
+   crates those files belong to (`docs/ci.md` → "Local lint versus
+   CI"). To narrow it, call its tool directly:
+   `lint_paths.py --changed -- <hook-id>`, or `--files <paths> --` for
+   paths narrower than the branch. A full
    sweep in between is a mistake unless a hook is repo-global
    (`history.md` → "Full-sweep loops").
 
@@ -1035,8 +1037,7 @@ migrations or generation inputs, and whether it spans crates.
    re-run the lint **scoped to the changed files**:
 
    ```sh
-   python3 .claude/tools/run_quiet.py -- \
-     python3 .claude/tools/lint_paths.py --changed
+   python3 .claude/tools/run_quiet.py -- make lint-abridged
    ```
 
    Apply step 4's fix-and-retry logic, scoped per-hook re-run
@@ -1085,9 +1086,9 @@ migrations or generation inputs, and whether it spans crates.
    python3 .claude/tools/vector_diff.py --ref <commit>~1
    ```
 
-   When `lint_rerun` is `true`, re-run `make lint` through the quiet
-   runner with step 4's fix-and-retry logic — a regenerated file can
-   still trip the whitespace / EOF hooks.
+   When `lint_rerun` is `true`, re-run `make lint-abridged` through the
+   quiet runner with step 4's fix-and-retry logic — a regenerated file
+   can still trip the whitespace / EOF hooks.
 
    **A re-run forced by a rebase asks a narrower question.** The
    first run over the author's own diff stands as above; when this

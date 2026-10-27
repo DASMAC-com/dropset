@@ -1228,6 +1228,16 @@ taker-down: check-docker
 lint:
 	python3 .claude/tools/lint_paths.py
 
+# The iteration form: the same hooks over this branch's changed files only (the
+# merge-base diff with origin/main, plus untracked), with clippy and rustdoc
+# scoped to the crates those files belong to (`.claude/tools/cargo_scope.py`).
+# `make lint` above and CI stay the full sweep and the source of truth: a public
+# API change that breaks a dependent crate is not seen here, and the merge
+# queue's full run catches it (`docs/ci.md` -> "Local lint versus CI").
+.PHONY: lint-abridged
+lint-abridged:
+	python3 .claude/tools/lint_paths.py --changed
+
 # Check the root .dockerignore still bounds the Docker build context. Every
 # Rust service in infra/localnet/docker-compose.yml builds with `context:
 # '../..'` and `COPY . .`, so without that file each build ships the whole
