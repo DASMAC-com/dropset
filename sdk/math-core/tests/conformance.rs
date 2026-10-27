@@ -104,7 +104,10 @@ fn base_for_quote_vectors() {
 
 #[test]
 fn base_for_quote_saturating_vectors() {
-    let cases = vectors()["base_for_quote_saturating"].as_array().unwrap().clone();
+    let cases = vectors()["base_for_quote_saturating"]
+        .as_array()
+        .unwrap()
+        .clone();
     assert!(!cases.is_empty(), "saturating vectors present");
     for c in &cases {
         let p = Price::from_bits(u32_of(c, "bits"));
