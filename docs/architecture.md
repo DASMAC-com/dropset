@@ -1148,13 +1148,14 @@ Properties:
   automatically rescales the ladder to the new (smaller) base leg.
 - **Deposits and withdrawals carry the snapshot.** They never arm a
   flush (which would zero every `flip_size`, letting any depositor
-  wipe the leader's flipped proceeds). Instead each resting counter is
-  scaled by `new_leg / old_leg` of its own leg, floored, so a level
-  keeps its fraction of inventory: a withdrawal scales `size` and
-  `flip_size`, a deposit scales `size` only, since inflating
-  `flip_size` would mint flipped allowance no fill backs. Without
-  this, a deposit-flush-withdraw cycle leaves a 20% level sized at the
-  whole remaining leg.
+  wipe the leader's flipped proceeds). Instead both counters, `size`
+  and `flip_size`, are scaled by `new_leg / old_leg` of their own leg,
+  floored, so a level keeps its fraction of inventory through any
+  move. Scaling both directions alike is what makes a deposit then
+  full exit neutral; scaling `flip_size` on withdraw only would let a
+  depositor's round trip cut the leader's flipped allowance by its
+  share each time. Without the rescale, a deposit-flush-withdraw cycle
+  leaves a 20% level sized at the whole remaining leg.
 - **Per-level expiry stratifies the ladder.** A leader can give
   top-of-book short offsets and deep levels much longer ones, so flush
   cadence is graded by depth instead of forced to the top-of-book rate.

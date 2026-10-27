@@ -196,8 +196,9 @@ impl ForceWithdrawDepositor {
             vd.crystallize_realized_pnl(shares_in, slice_base_u64, slice_quote_u64, ref_now_price)?
         };
 
-        // Vault inventory + total share burn. `leader_shares` unchanged
-        // (this is the depositor path).
+        // Vault inventory + total share burn, resting sizes rescaled onto
+        // what remains. `leader_shares` unchanged (this is the depositor
+        // path).
         let market_addr = *self.market.address();
         let (new_total, new_base_atoms, new_quote_atoms) = apply_withdraw_inventory(
             self.market.mutate_vault(vault_idx)?,

@@ -1,11 +1,12 @@
 //! `close_vault` — leader-initiated lifecycle exit.
 //!
-//! Moves the vault from the active DLL to the tombstone DLL (or, when it
-//! was never seeded, straight to the free DLL): the
+//! Moves the vault from the active DLL to the tombstone DLL: the
 //! matching engine stops visiting it (tombstones are not iterated), but
 //! depositor `withdraw` flows stay open until the vault drains. The
 //! sector keeps all its data; only the list membership and
-//! `active_count` change. Per the architecture spec's **CloseVault**
+//! `active_count` change. A vault that was never seeded has nothing to
+//! drain, so it is reclaimed straight to the free DLL instead and its
+//! sector released for reuse. Per the architecture spec's **CloseVault**
 //! and **Vault → Frozen and tombstoned vaults**, this is the leader's
 //! intended "done quoting this market" path — distinct from admin
 //! `freeze_vault`, which leaves the vault on the active DLL so existing
@@ -32,7 +33,7 @@ pub struct CloseVault {
     /// Must equal `vault.leader` — verified in-handler.
     pub signer: Signer,
     /// Market holding the target vault. `mut` because the active /
-    /// tombstone list heads and `active_count` change.
+    /// tombstone (or free) list heads and `active_count` change.
     #[account(mut)]
     pub market: Market,
 }

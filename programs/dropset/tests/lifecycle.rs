@@ -119,8 +119,14 @@ fn close_vault_on_an_unseeded_vault_reclaims_the_sector() {
     let seq_before = f.vault(0).seq.get();
     assert_eq!(f.vault(0).total_shares.get(), 0, "never seeded");
 
-    f.close_vault(&leader, 0)
+    let meta = f
+        .close_vault_meta(&leader, 0)
         .expect("leader closes the unseeded vault");
+    let ev = common::events::close_vault(&meta);
+    assert_eq!(ev.sector_idx, 0);
+    assert_eq!(ev.vault_seq, seq_before);
+    assert_eq!(ev.leader, leader.pubkey().to_bytes());
+    assert_eq!(ev.active_count_after, 0, "counted after the reclaim");
 
     // No shares to drain, so no withdraw could ever reclaim a tombstone:
     // the close returns the sector to the free list itself.

@@ -8,11 +8,11 @@ use crate::errors::DropsetError;
 
 use super::{Vault, N_LEVELS};
 
-/// Rescale the vault's materialized resting sizes onto new inventory, leg
-/// by leg: each counter is multiplied by `new_leg / old_leg` of the leg it
-/// is denominated in (floored), so every level keeps the fraction of its
-/// leg it held before the move. Call it before writing the new legs; it
-/// reads the old ones off the vault.
+/// Rescale the vault's materialized resting sizes and flipped allowances
+/// onto new inventory, leg by leg: each counter is multiplied by
+/// `new_leg / old_leg` of the leg it is denominated in (floored), so every
+/// level keeps the fraction of its leg it held before the move. Call it
+/// before writing the new legs; it reads the old ones off the vault.
 ///
 /// Sizes are materialized once, at flush, as `size_bps × leg_atoms`, and
 /// the swap caps a fill only at live inventory. Without this, a withdrawal
@@ -22,25 +22,23 @@ use super::{Vault, N_LEVELS};
 ///
 /// Re-arming `FLUSH_BIT` instead would be wrong: every flush zeroes
 /// `flip_size`, so any outside depositor could wipe the leader's flipped
-/// proceeds with a small deposit and withdraw. `scale_flips` is `true` on
-/// withdraw, which removes the inventory backing flipped allowance too, and
-/// `false` on deposit, where inflating `flip_size` would mint flipped
-/// allowance no fill backs and break the equal-atoms flip ledger.
-pub fn rescale_remaining(vault: &mut Vault, new_base: u64, new_quote: u64, scale_flips: bool) {
+/// proceeds with a small deposit and withdraw. Deposit and withdraw scale
+/// the same counters for the same reason: were a deposit to leave
+/// `flip_size` alone while the matching withdraw shrank it, a deposit then
+/// full exit would cut the leader's flipped allowance by the depositor's
+/// share on every round trip. Scaled both ways, a round trip is neutral up
+/// to floor dust.
+pub fn rescale_remaining(vault: &mut Vault, new_base: u64, new_quote: u64) {
     let old_base = vault.base_atoms.get();
     let old_quote = vault.quote_atoms.get();
     // Asks rest base and flip into quote; bids rest quote and flip into base.
     for i in 0..N_LEVELS {
         let ask = &mut vault.remaining.asks[i];
         ask.size = scale_atoms(ask.size.get(), old_base, new_base).into();
-        if scale_flips {
-            ask.flip_size = scale_atoms(ask.flip_size.get(), old_quote, new_quote).into();
-        }
+        ask.flip_size = scale_atoms(ask.flip_size.get(), old_quote, new_quote).into();
         let bid = &mut vault.remaining.bids[i];
         bid.size = scale_atoms(bid.size.get(), old_quote, new_quote).into();
-        if scale_flips {
-            bid.flip_size = scale_atoms(bid.flip_size.get(), old_base, new_base).into();
-        }
+        bid.flip_size = scale_atoms(bid.flip_size.get(), old_base, new_base).into();
     }
 }
 
@@ -74,8 +72,8 @@ fn scale_atoms(atoms: u64, old_leg: u64, new_leg: u64) -> u64 {
 /// outside path leaves `leader_shares` untouched — so it is deliberately
 /// not part of this shared mutation.
 ///
-/// Resting sizes are scaled up onto the new legs (`flip_size` is left
-/// alone; see [`rescale_remaining`]).
+/// Resting sizes and flipped allowances are scaled up onto the new legs
+/// ([`rescale_remaining`]).
 pub fn apply_deposit_inventory(
     vault: &mut Vault,
     base_in_final: u64,
@@ -97,7 +95,7 @@ pub fn apply_deposit_inventory(
         .get()
         .checked_add(shares_out)
         .ok_or(DropsetError::MathOverflow)?;
-    rescale_remaining(vault, new_base, new_quote, false);
+    rescale_remaining(vault, new_base, new_quote);
     vault.base_atoms = new_base.into();
     vault.quote_atoms = new_quote.into();
     vault.total_shares = new_total.into();
@@ -125,7 +123,7 @@ pub fn apply_withdraw_inventory(
     let new_total = vault.total_shares.get() - shares_in;
     let new_base = vault.base_atoms.get() - slice_base;
     let new_quote = vault.quote_atoms.get() - slice_quote;
-    rescale_remaining(vault, new_base, new_quote, true);
+    rescale_remaining(vault, new_base, new_quote);
     vault.total_shares = new_total.into();
     vault.base_atoms = new_base.into();
     vault.quote_atoms = new_quote.into();
@@ -208,13 +206,39 @@ mod tests {
     }
 
     #[test]
-    fn apply_deposit_inventory_scales_sizes_but_not_flips() {
+    fn apply_deposit_inventory_scales_sizes_and_flips_per_leg() {
         let mut v = flushed_vault();
         apply_deposit_inventory(&mut v, 1_000, 4_000, 100).unwrap();
         assert_eq!(v.remaining.asks[0].size.get(), 400);
         assert_eq!(v.remaining.bids[0].size.get(), 1_600);
-        assert_eq!(v.remaining.asks[0].flip_size.get(), 40);
-        assert_eq!(v.remaining.bids[0].flip_size.get(), 10);
+        assert_eq!(v.remaining.asks[0].flip_size.get(), 80);
+        assert_eq!(v.remaining.bids[0].flip_size.get(), 20);
+    }
+
+    #[test]
+    fn deposit_then_full_exit_leaves_every_counter_unchanged() {
+        // The round trip an outside depositor can repeat: it must not erode
+        // the leader's resting size or flipped allowance.
+        let before = flushed_vault();
+        let mut v = before;
+        apply_deposit_inventory(&mut v, 3_000, 12_000, 300).unwrap();
+        apply_withdraw_inventory(&mut v, 3_000, 12_000, 300);
+        assert_eq!(v.base_atoms.get(), before.base_atoms.get());
+        assert_eq!(v.quote_atoms.get(), before.quote_atoms.get());
+        for (a, b) in [
+            (v.remaining.asks[0].size, before.remaining.asks[0].size),
+            (
+                v.remaining.asks[0].flip_size,
+                before.remaining.asks[0].flip_size,
+            ),
+            (v.remaining.bids[0].size, before.remaining.bids[0].size),
+            (
+                v.remaining.bids[0].flip_size,
+                before.remaining.bids[0].flip_size,
+            ),
+        ] {
+            assert_eq!(a.get(), b.get());
+        }
     }
 
     #[test]
@@ -222,7 +246,7 @@ mod tests {
         // A seeding deposit onto an empty vault has nothing to scale from.
         let mut v = Vault::zeroed();
         v.remaining.asks[0].size = 7u64.into();
-        rescale_remaining(&mut v, 10, 10, false);
+        rescale_remaining(&mut v, 10, 10);
         assert_eq!(v.remaining.asks[0].size.get(), 7);
     }
 }
