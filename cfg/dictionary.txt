@@ -83,6 +83,7 @@ dotless
 drainable
 dropset
 dtolnay
+dwarnings
 eclob
 econia
 elif
@@ -256,6 +257,7 @@ rposition
 rsplit
 rustc
 rustdoc
+rustdocflags
 rustflags
 rustls
 rustup

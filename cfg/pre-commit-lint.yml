@@ -1,9 +1,7 @@
 # cspell:word checkmake
-# cspell:word Dwarnings
 # cspell:word hadolint
 # cspell:word mdformat
 # cspell:word pygrep
-# cspell:word RUSTDOCFLAGS
 # cspell:word unspaced
 ---
 repos:
@@ -338,14 +336,20 @@ repos:
 # docs lean heavily on those links. Notes on its shape, since each part was
 # a decision:
 #
-# `RUSTDOCFLAGS` rides an `env` prefix because pre-commit `language: system`
-# entries are shlex-split and exec'd directly, with no shell — so a bare
-# `RUSTDOCFLAGS=… cargo` prefix would be read as a program name. The same
-# splitting is why the flag is written unspaced as `-Dwarnings` rather than
-# clippy's `-D warnings` two entries down, which is in turn why `Dwarnings`
-# needs a `cspell:word` escape at the top of this file. The variable rides
-# the entry rather than the CI job's `env:` so a local `make lint` gates
-# identically to the workflow.
+# It and `clippy` take the file list through `.claude/tools/cargo_scope.py`,
+# which runs each over only the crates owning the files. Given every tracked
+# Rust file — this config under `--all-files` in CI, or the whole-tree
+# `make lint` — it runs the workspace commands byte-for-byte, so the full
+# sweep is unchanged; `make lint-abridged` gets the scoped form. That local
+# form does not see a dependent crate broken by a public API change, and the
+# merge queue's full run does (`docs/ci.md` -> "Local lint versus CI").
+# `require_serial` stops pre-commit splitting the list into parallel cargo
+# builds on one lock.
+#
+# `RUSTDOCFLAGS` is set by that tool rather than the CI job's `env:`, so a
+# local `make lint` gates identically to the workflow. Its value is written
+# unspaced as `-Dwarnings` (clippy's is `-D warnings`) because the old entry
+# was shlex-split with no shell; the tool keeps that spelling.
 #
 # `-D warnings` rather than a per-lint list, because the rustdoc link lints
 # are three separate ones — `broken_intra_doc_links`,
@@ -407,18 +411,18 @@ repos:
     name: 'rustfmt'
     types:
     - 'rust'
-  - entry: 'cargo clippy --all-targets -- -D warnings'
+  - entry: 'python3 .claude/tools/cargo_scope.py clippy'
     id: 'clippy'
     language: 'system'
     name: 'clippy'
-    pass_filenames: false
+    require_serial: true
     types:
     - 'rust'
-  - entry: 'env RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --workspace'
+  - entry: 'python3 .claude/tools/cargo_scope.py doc'
     id: 'rustdoc'
     language: 'system'
     name: 'rustdoc'
-    pass_filenames: false
+    require_serial: true
     types:
     - 'rust'
   - entry: 'pnpm -C frontend exec biome check --write'
