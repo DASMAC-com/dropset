@@ -153,7 +153,8 @@ lands on a command line:
 python3 keys/grind_key.py convert <keypair-file>
 ```
 
-Verify the `.txt` with a Phantom round trip before storing it:
+After a `grind`, verify the `.txt` with a Phantom round trip before
+storing it:
 
 1. Import the file's contents into Phantom as a private key, and confirm
    the address Phantom shows equals the file name's public key.
@@ -171,7 +172,7 @@ Then store both forms in 1Password, by hand in the app:
 1. Confirm the SSH Key item shows an `SHA256:` fingerprint, and that the
    agent serves it under the file name's public key
    (`cargo run -p dropset-tui --example agent_transfer -- --list`). An
-   item outside the default Private vault is served only once
+   item outside the default Personal or Private vault is served only once
    `~/.config/1Password/ssh/agent.toml` lists it, and creating that file
    narrows the agent to the keys it lists, so list every key still
    needed.
