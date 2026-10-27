@@ -306,7 +306,9 @@ config this way. A Rust-reachable path that no member
 owns, such as `Cargo.lock` or `rust-toolchain.toml`, gives the whole
 workspace. Two refinements sit in the tool's `ARTIFACT_CONSUMERS` table,
 since the graph cannot see them: the program crate in the set runs
-`make program` first and brings in every crate whose tests load the `.so`.
+`make program` first and brings in every crate whose tests load the `.so`,
+and a change to that build's own inputs (the `Makefile` recipe,
+`Anchor.toml`) puts the program crate in the set.
 A branch with no Rust-reachable change and no fixture hit makes no cargo
 call at all, so a docs-only branch never waits on the cargo pool's lock.
 Each scoped call carries the workspace's resolved features, as the lint does, so

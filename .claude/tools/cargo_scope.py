@@ -73,13 +73,15 @@ seeds its owning crate (an asm file, a migration, a manifest), and a fixture a
 Rust file reads (``review_diff.rust_test_fixtures``) seeds the reader's crate,
 whatever its type — ``.rs`` included, since one crate's tests read another's
 source. A reachable path no member owns (``Cargo.lock``,
-``rust-toolchain.toml``) seeds the whole workspace. Anything else seeds
-nothing, so a branch touching neither (docs only, say) runs no cargo test and
-never waits on the pool's lock.
+``rust-toolchain.toml``) seeds the whole workspace. A branch with no
+reachable change and no fixture hit seeds nothing, so it runs no cargo test
+and never waits on the pool's lock.
 
-Two refinements the graph cannot see live in ``ARTIFACT_CONSUMERS``: the
+Refinements the graph cannot see live in the ``ARTIFACT_*`` tables: the
 program crate in the set rebuilds the program first (``make program``) and
-pulls in every crate whose tests load the ``.so``. The whole workspace runs
+pulls in every crate whose tests load the ``.so``, and a change to that
+build's own inputs (the ``Makefile``, ``Anchor.toml``) seeds the program
+crate. The whole workspace runs
 ``make program`` and then ``cargo test``, byte-identical to ``make test``.
 
 ``--changed`` takes the branch's files the way ``lint_paths.py --changed``
@@ -135,6 +137,9 @@ DOC_ENV = {"RUSTDOCFLAGS": "-Dwarnings"}
 PROGRAM_CRATE = "dropset"
 ARTIFACT_CONSUMERS = {PROGRAM_CRATE: ("dropset",)}
 ARTIFACT_BUILDS = {PROGRAM_CRATE: ["make", "program"]}
+# Paths outside the crate that its artifact build reads, so a change there
+# seeds the producer: `make program`'s recipe and Anchor's build settings.
+ARTIFACT_INPUTS = {PROGRAM_CRATE: ("Makefile", "Anchor.toml")}
 
 
 class Package(NamedTuple):
@@ -361,6 +366,11 @@ def test_seeds(
             tracked = tracked_rust_files(root)
         fixtures = review_diff.rust_test_fixtures(sorted(tracked), Path(root))
     for path in paths:
+        names.update(
+            crate
+            for crate, inputs in ARTIFACT_INPUTS.items()
+            if review_diff.matches_any(path, inputs)
+        )
         if review_diff.rust_is_reachable([path]):
             own = owner_name(path)
             if own is None:

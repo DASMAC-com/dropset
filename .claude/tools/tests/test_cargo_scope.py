@@ -446,6 +446,9 @@ class TestSeeds(GraphFixture):
         self.assertEqual(seeds, ["feeds", "leaf"])
         scan.assert_called_once()
 
+    def test_program_build_input_seeds_the_program(self):
+        self.assertEqual(self.seeds("Anchor.toml"), ["dropset"])
+
     def test_fixture_directory_key_matches_files_under_it(self):
         self.assertEqual(self.seeds("vectors/swap/01.json"), ["sdk"])
 
