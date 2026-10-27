@@ -307,8 +307,10 @@ class VerbLaunch(SubstrateHarness):
         self.assertIn("no substrate record", result.stderr)
 
     # The file count rides along, so two records holding one word cannot pass.
+    # A launch's `<id>.class` sidecar (the machine-load class record) sits
+    # beside the substrate record and is not one.
     _SESSIONS = (
-        "files=($_DS_SUBSTRATE_DIR/sessions/*(N)); "
+        "files=($_DS_SUBSTRATE_DIR/sessions/*(N)); files=(${files:#*.class}); "
         'print -r -- "SESSIONS=${#files} $(cat $files)"'
     )
 
