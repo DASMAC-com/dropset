@@ -268,8 +268,9 @@ fn override_reaches_a_frozen_vault() {
 #[test]
 fn leader_cannot_rename_a_tombstone_to_shed_a_lock() {
     // Close blanks the name and clears the lock; refusing the tombstone
-    // rename is what keeps that release final.
-    let mut f = fixture_named("Alpha");
+    // rename is what keeps that release final. Seeded, since closing a
+    // never-seeded vault reclaims it rather than tombstoning it.
+    let mut f = Fixture::seeded(1_000_000, 1_000_000);
     let leader = f.authority.insecure_clone();
     f.override_vault_name_meta(&leader, 0, "Alpha", true)
         .expect("admin locks the name");

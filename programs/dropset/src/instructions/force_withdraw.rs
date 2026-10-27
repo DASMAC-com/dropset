@@ -43,7 +43,10 @@ use super::{close_depositor_and_decrement, transfer_out_leg};
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
-    state::{compute_pro_rata_slice, realize_in_place, Market, VaultAccess, VaultDll},
+    state::{
+        apply_withdraw_inventory, compute_pro_rata_slice, realize_in_place, Market, VaultAccess,
+        VaultDll,
+    },
     Registry, VaultDepositorHeader,
 };
 
@@ -193,19 +196,16 @@ impl ForceWithdrawDepositor {
             vd.crystallize_realized_pnl(shares_in, slice_base_u64, slice_quote_u64, ref_now_price)?
         };
 
-        // Vault inventory + total share burn. `leader_shares` unchanged
-        // (this is the depositor path).
+        // Vault inventory + total share burn, resting sizes rescaled onto
+        // what remains. `leader_shares` unchanged (this is the depositor
+        // path).
         let market_addr = *self.market.address();
-        let (new_total, new_base_atoms, new_quote_atoms) = {
-            let v = self.market.mutate_vault(vault_idx)?;
-            let new_total = total_shares - shares_in;
-            let new_base = base_atoms - slice_base_u64;
-            let new_quote = quote_atoms - slice_quote_u64;
-            v.total_shares = new_total.into();
-            v.base_atoms = new_base.into();
-            v.quote_atoms = new_quote.into();
-            (new_total, new_base, new_quote)
-        };
+        let (new_total, new_base_atoms, new_quote_atoms) = apply_withdraw_inventory(
+            self.market.mutate_vault(vault_idx)?,
+            slice_base_u64,
+            slice_quote_u64,
+            shares_in,
+        );
 
         // Market PDA signer seeds for the treasury → owner transfers.
         let (mint_seeds, bump_arr) = self.market.signer_seed_parts();
@@ -422,14 +422,10 @@ impl ForceWithdrawLeader {
         let market_addr = *self.market.address();
         let (new_total, new_leader, new_base_atoms, new_quote_atoms) = {
             let v = self.market.mutate_vault(vault_idx)?;
-            let new_total = total_shares - shares_in;
             let new_leader = leader_shares - shares_in;
-            let new_base = base_atoms - slice_base_u64;
-            let new_quote = quote_atoms - slice_quote_u64;
-            v.total_shares = new_total.into();
             v.leader_shares = new_leader.into();
-            v.base_atoms = new_base.into();
-            v.quote_atoms = new_quote.into();
+            let (new_total, new_base, new_quote) =
+                apply_withdraw_inventory(v, slice_base_u64, slice_quote_u64, shares_in);
             (new_total, new_leader, new_base, new_quote)
         };
 

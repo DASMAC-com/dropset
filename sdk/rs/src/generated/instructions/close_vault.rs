@@ -16,7 +16,7 @@ pub struct CloseVault {
     /// Must equal `vault.leader` — verified in-handler.
     pub signer: solana_pubkey::Pubkey,
     /// Market holding the target vault. `mut` because the active /
-    /// tombstone list heads and `active_count` change.
+    /// tombstone (or free) list heads and `active_count` change.
     pub market: solana_pubkey::Pubkey,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: solana_pubkey::Pubkey,
@@ -132,7 +132,7 @@ impl CloseVaultBuilder {
         self
     }
     /// Market holding the target vault. `mut` because the active /
-    /// tombstone list heads and `active_count` change.
+    /// tombstone (or free) list heads and `active_count` change.
     #[inline(always)]
     pub fn market(&mut self, market: solana_pubkey::Pubkey) -> &mut Self {
         self.market = Some(market);
@@ -191,7 +191,7 @@ pub struct CloseVaultCpiAccounts<'a, 'b> {
     /// Must equal `vault.leader` — verified in-handler.
     pub signer: &'b solana_account_info::AccountInfo<'a>,
     /// Market holding the target vault. `mut` because the active /
-    /// tombstone list heads and `active_count` change.
+    /// tombstone (or free) list heads and `active_count` change.
     pub market: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
@@ -206,7 +206,7 @@ pub struct CloseVaultCpi<'a, 'b> {
     /// Must equal `vault.leader` — verified in-handler.
     pub signer: &'b solana_account_info::AccountInfo<'a>,
     /// Market holding the target vault. `mut` because the active /
-    /// tombstone list heads and `active_count` change.
+    /// tombstone (or free) list heads and `active_count` change.
     pub market: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Only the event authority can invoke self-CPI
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
@@ -338,7 +338,7 @@ impl<'a, 'b> CloseVaultCpiBuilder<'a, 'b> {
         self
     }
     /// Market holding the target vault. `mut` because the active /
-    /// tombstone list heads and `active_count` change.
+    /// tombstone (or free) list heads and `active_count` change.
     #[inline(always)]
     pub fn market(&mut self, market: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.market = Some(market);

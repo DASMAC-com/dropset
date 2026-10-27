@@ -13,7 +13,7 @@
 mod common;
 
 use anchor_v2_testing::{Keypair, Signer};
-use common::fixture::{simple_profile, Fixture};
+use common::fixture::{flip_profile, simple_profile, Fixture};
 use common::{events, SIGNER_FUNDING_LAMPORTS};
 use dropset::{Price, RealizeEvent};
 use dropset_math_core::share::{compute_pro_rata_slice, realize_perf_fee};
@@ -406,4 +406,136 @@ fn withdraw_without_accrual_pays_the_stored_count_slice() {
     // The outside deposit's floored share count can leave value per share
     // a few quanta above the HWM; that gain is sub-quantum, so no fee.
     assert_eq!(minted, 0, "no trade, no fee");
+}
+
+#[test]
+fn resting_sizes_track_inventory_across_deposit_and_withdraw() {
+    // One 20% level per side. The flush happens at the first swap; after
+    // that no deposit or withdraw re-arms it, so the inventory moves must
+    // carry the sizes themselves.
+    const SIZE_BPS: u64 = 2_000;
+    let scale = |atoms: u64, old: u64, new: u64| (atoms as u128 * new as u128 / old as u128) as u64;
+    let level = (5_000, SIZE_BPS as u16, u32::MAX);
+    let profile = flip_profile(&[level], &[level], 2_000);
+    let mut f = Fixture::seeded_with(SEED_BASE, SEED_QUOTE, profile);
+    let admin = f.authority.insecure_clone();
+    let leader = f.authority.insecure_clone();
+    f.set_outside_deposits_approved(&admin, 0, true).unwrap();
+    f.set_allow_outside_depositors(&leader, 0, true).unwrap();
+
+    // A hostile depositor goes large, lets the flush size the ladder
+    // against its inventory...
+    let alice = f.funded_depositor(400_000, 400_000);
+    f.deposit(&alice, 0, 100_000, 0, 400_000, 400_000)
+        .expect("outside deposit");
+    let taker = f.funded_depositor(1_000_000, 1_000_000);
+    f.swap(&taker, 0, 1_000, Price::INFINITY.as_u32(), 1)
+        .expect("flush swap");
+    let flushed = f.vault(0);
+    let ask0 = flushed.remaining.asks[0];
+    assert!(
+        ask0.flip_size.get() > 0,
+        "the flush swap flipped into quote"
+    );
+
+    // ...then exits whole. The level must shrink to its fraction of what
+    // remains, not stay sized against the inflated leg.
+    let shares = f.vault_depositor(0, &alice.pubkey()).unwrap().shares.get();
+    f.withdraw(&alice, 0, shares, 0, 0).expect("full exit");
+    let after = f.vault(0);
+    let ask_after = after.remaining.asks[0];
+    assert_eq!(
+        ask_after.size.get(),
+        scale(
+            ask0.size.get(),
+            flushed.base_atoms.get(),
+            after.base_atoms.get()
+        )
+    );
+    assert!(
+        ask_after.size.get() <= SIZE_BPS * after.base_atoms.get() / 10_000,
+        "level 0 rests at most its 20% of the remaining base leg"
+    );
+    assert_eq!(
+        ask_after.flip_size.get(),
+        scale(
+            ask0.flip_size.get(),
+            flushed.quote_atoms.get(),
+            after.quote_atoms.get()
+        ),
+        "the flipped quote allowance shrinks with the quote leg"
+    );
+    let bid_after = after.remaining.bids[0].size.get();
+    assert!(bid_after <= SIZE_BPS * after.quote_atoms.get() / 10_000);
+
+    // A leader top-up scales both counters back up with their legs.
+    f.deposit_leader(0, 100_000, 0, 100_000, 200_000)
+        .expect("leader top-up");
+    let topped = f.vault(0);
+    let ask_topped = topped.remaining.asks[0];
+    assert_eq!(
+        ask_topped.size.get(),
+        scale(
+            ask_after.size.get(),
+            after.base_atoms.get(),
+            topped.base_atoms.get()
+        )
+    );
+    assert_eq!(
+        ask_topped.flip_size.get(),
+        scale(
+            ask_after.flip_size.get(),
+            after.quote_atoms.get(),
+            topped.quote_atoms.get()
+        )
+    );
+
+    // A taker sweeping the asks fills exactly that rescaled size (the
+    // bound itself is pinned by the assertions above).
+    f.svm.expire_blockhash();
+    let meta = f
+        .swap_meta(&taker, 0, 900_000, Price::INFINITY.as_u32(), 1)
+        .expect("sweep");
+    let fills = events::fills(&meta);
+    assert_eq!(fills.len(), 1, "one ask level on the book");
+    assert_eq!(fills[0].fill_base.get(), ask_topped.size.get());
+}
+
+#[test]
+fn a_deposit_round_trip_leaves_the_flipped_allowance_intact() {
+    // An outside depositor who enters after the flush and exits whole must
+    // not erode the leader's flipped proceeds: deposit and withdraw scale
+    // `flip_size` the same way, so the round trip is neutral to floor dust.
+    let level = (5_000, 2_000, u32::MAX);
+    let mut f = Fixture::seeded_with(
+        SEED_BASE,
+        SEED_QUOTE,
+        flip_profile(&[level], &[level], 2_000),
+    );
+    let admin = f.authority.insecure_clone();
+    let leader = f.authority.insecure_clone();
+    f.set_outside_deposits_approved(&admin, 0, true).unwrap();
+    f.set_allow_outside_depositors(&leader, 0, true).unwrap();
+    let taker = f.funded_depositor(1_000_000, 1_000_000);
+    f.swap(&taker, 0, 10_000, Price::INFINITY.as_u32(), 1)
+        .expect("flush swap flips the ask into quote");
+    let before = f.vault(0).remaining.asks[0];
+    assert!(before.flip_size.get() > 0);
+
+    let alice = f.funded_depositor(400_000, 400_000);
+    f.deposit(&alice, 0, 100_000, 0, 400_000, 400_000)
+        .expect("outside deposit");
+    let shares = f.vault_depositor(0, &alice.pubkey()).unwrap().shares.get();
+    f.withdraw(&alice, 0, shares, 0, 0).expect("full exit");
+
+    let after = f.vault(0).remaining.asks[0];
+    for (name, was, now) in [
+        ("size", before.size.get(), after.size.get()),
+        ("flip_size", before.flip_size.get(), after.flip_size.get()),
+    ] {
+        assert!(
+            was.abs_diff(now) <= 2,
+            "{name} moved {was} -> {now} across a deposit round trip"
+        );
+    }
 }

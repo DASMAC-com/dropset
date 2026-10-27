@@ -28,7 +28,10 @@ use super::{close_depositor_and_decrement, transfer_out_leg};
 use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
-    state::{compute_pro_rata_slice, realize_in_place, Market, VaultAccess, VaultDll},
+    state::{
+        apply_withdraw_inventory, compute_pro_rata_slice, realize_in_place, Market, VaultAccess,
+        VaultDll,
+    },
     VaultDepositorHeader,
 };
 
@@ -203,20 +206,15 @@ impl Withdraw {
         // branch lives in `withdraw_leader.rs`.
         let new_leader_shares = leader_shares;
 
-        // Vault inventory + total share burn.
+        // Vault inventory + total share burn, resting sizes rescaled onto
+        // what remains. Outside path: leader_shares is unchanged.
         let market_addr = *self.market.address();
-        let (new_total, new_base_atoms, new_quote_atoms) = {
-            let v = self.market.mutate_vault(vault_idx)?;
-            let new_total = total_shares - shares_in;
-            let new_base = base_atoms - slice_base_u64;
-            let new_quote = quote_atoms - slice_quote_u64;
-            v.total_shares = new_total.into();
-            v.base_atoms = new_base.into();
-            v.quote_atoms = new_quote.into();
-            // Outside path: leader_shares is unchanged. The
-            // leader-only branch lives in `withdraw_leader.rs`.
-            (new_total, new_base, new_quote)
-        };
+        let (new_total, new_base_atoms, new_quote_atoms) = apply_withdraw_inventory(
+            self.market.mutate_vault(vault_idx)?,
+            slice_base_u64,
+            slice_quote_u64,
+            shares_in,
+        );
 
         // Build the market PDA signer seeds — used by both CPI transfers.
         let (mint_seeds, bump_arr) = self.market.signer_seed_parts();

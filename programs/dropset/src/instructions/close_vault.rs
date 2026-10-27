@@ -4,7 +4,9 @@
 //! matching engine stops visiting it (tombstones are not iterated), but
 //! depositor `withdraw` flows stay open until the vault drains. The
 //! sector keeps all its data; only the list membership and
-//! `active_count` change. Per the architecture spec's **CloseVault**
+//! `active_count` change. A vault that was never seeded has nothing to
+//! drain, so it is reclaimed straight to the free DLL instead and its
+//! sector released for reuse. Per the architecture spec's **CloseVault**
 //! and **Vault → Frozen and tombstoned vaults**, this is the leader's
 //! intended "done quoting this market" path — distinct from admin
 //! `freeze_vault`, which leaves the vault on the active DLL so existing
@@ -31,7 +33,7 @@ pub struct CloseVault {
     /// Must equal `vault.leader` — verified in-handler.
     pub signer: Signer,
     /// Market holding the target vault. `mut` because the active /
-    /// tombstone list heads and `active_count` change.
+    /// tombstone (or free) list heads and `active_count` change.
     #[account(mut)]
     pub market: Market,
 }
@@ -43,12 +45,12 @@ impl CloseVault {
     #[inline(always)]
     pub fn close_vault(&mut self, vault_idx: u32) -> Result<CloseVaultEvent> {
         let signer_addr = *self.signer.address();
-        let (leader, vault_seq) = {
+        let (leader, vault_seq, total_shares) = {
             let v = self.market.read_vault(vault_idx)?;
             // Free-list sectors carry the default leader — reject before
             // the leader check so the error is specific.
             require!(v.is_occupied(), DropsetError::VaultEmpty);
-            (v.leader, v.seq.get())
+            (v.leader, v.seq.get(), v.total_shares.get())
         };
         require!(
             address_eq(&leader, &signer_addr),
@@ -71,8 +73,20 @@ impl CloseVault {
         // counter moves atomically with the list membership. Mirrors how
         // `freeze_vault` sets `vault.frozen`; cleared implicitly on
         // reclaim+reuse, since `allocate_sector` re-zeroes the struct.
-        let active_count_after = self.market.tombstone_sector(vault_idx)?;
+        //
+        // A never-seeded vault (`total_shares == 0`) is reclaimed straight
+        // to the free list instead. A tombstone is reclaimed only by a
+        // draining withdraw, which needs shares to burn, and both deposit
+        // paths refuse a tombstone — so an empty one would strand its
+        // sector for good on a build without admin teardown. Mirrors
+        // `withdraw_leader`'s full-drain reclaim.
         let name = self.market.mutate_vault(vault_idx)?.blank_name(false);
+        let active_count_after = if total_shares == 0 {
+            self.market.reclaim_sector(vault_idx)?;
+            self.market.active_count.get()
+        } else {
+            self.market.tombstone_sector(vault_idx)?
+        };
 
         Ok(CloseVaultEvent {
             market: *self.market.address(),

@@ -13,8 +13,10 @@
 //!   perf-fee realization ([`realize_in_place`]), single-leg
 //!   subsequent-deposit sizing ([`single_leg_basket`]), and the quote
 //!   flush ([`Vault::materialize_remaining`]).
-//! - `inventory` — the deposit's checked inventory + share mutation
-//!   ([`apply_deposit_inventory`]), which wraps no kernel.
+//! - `inventory` — the deposit's and withdraw's inventory + share
+//!   mutations ([`apply_deposit_inventory`], [`apply_withdraw_inventory`])
+//!   and the resting-size rescale they share ([`rescale_remaining`]),
+//!   which wrap no kernel.
 //! - `name` — [`Vault::name`] validation and packing
 //!   ([`encode_vault_name`]), shared by every name writer.
 //! - `quote_write` / `reference_price` / `liquidity_profile` — the two

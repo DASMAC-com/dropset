@@ -126,8 +126,20 @@ impl VaultDepositorHeader {
                 ref_now,
             );
             self.shares = new_shares.into();
-            self.net_deposits = (self.net_deposits.get() + lot_quote_value).into();
-            self.gross_deposited = (self.gross_deposited.get() + lot_quote_value).into();
+            // Saturating, like the handler's lot-value clamp: a
+            // leader-set reference price can saturate `lot_quote_value` to
+            // `u64::MAX`, and the basis is reporting-only, so a top-off
+            // after one must not abort the depositor's instruction.
+            self.net_deposits = self
+                .net_deposits
+                .get()
+                .saturating_add(lot_quote_value)
+                .into();
+            self.gross_deposited = self
+                .gross_deposited
+                .get()
+                .saturating_add(lot_quote_value)
+                .into();
             self.entry_vps = entry_vps_new.into();
             self.entry_ref_price = entry_ref_new;
             false
@@ -297,5 +309,26 @@ mod tests {
         // `DropsetError` — exercised here through the `&mut self` path.
         let mut v = vd(10, 100, price_one());
         assert!(v.crystallize_realized_pnl(20, 0, 0, price_one()).is_err());
+    }
+
+    #[test]
+    fn top_off_after_a_saturated_lot_value_saturates_the_basis() {
+        // A first deposit priced at saturation stores a basis near
+        // `u64::MAX`; the next top-off must clamp, not abort.
+        let mut v = vd(10, u64::MAX - 1, price_one());
+        let first = v.record_deposit(
+            Address::default(),
+            0,
+            Address::default(),
+            5,
+            10,
+            0,
+            price_one(),
+            0,
+        );
+        assert!(!first);
+        assert_eq!(v.shares.get(), 15);
+        assert_eq!(v.net_deposits.get(), u64::MAX);
+        assert_eq!(v.gross_deposited.get(), u64::MAX);
     }
 }

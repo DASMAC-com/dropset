@@ -21,8 +21,8 @@ use crate::{
     errors::DropsetError,
     events::{RealizeEvent, WithdrawEvent},
     state::{
-        compute_pro_rata_slice, min_leader_share_ok, realize_in_place, Market, VaultAccess,
-        VaultDll,
+        apply_withdraw_inventory, compute_pro_rata_slice, min_leader_share_ok, realize_in_place,
+        Market, VaultAccess, VaultDll,
     },
 };
 
@@ -148,14 +148,8 @@ impl WithdrawLeader {
         let market_addr = *self.market.address();
         let (new_total, new_base_atoms, new_quote_atoms) = {
             let v = self.market.mutate_vault(vault_idx)?;
-            let new_total = total_shares - shares_in;
-            let new_base = base_atoms - slice_base_u64;
-            let new_quote = quote_atoms - slice_quote_u64;
-            v.total_shares = new_total.into();
-            v.base_atoms = new_base.into();
-            v.quote_atoms = new_quote.into();
             v.leader_shares = new_leader.into();
-            (new_total, new_base, new_quote)
+            apply_withdraw_inventory(v, slice_base_u64, slice_quote_u64, shares_in)
         };
 
         // CPI signer seeds for treasury → caller transfers.

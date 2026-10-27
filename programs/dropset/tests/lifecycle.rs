@@ -14,6 +14,7 @@ mod common;
 
 use anchor_v2_testing::Signer;
 use common::fixture::Fixture;
+use solana_pubkey::Pubkey;
 
 #[test]
 fn close_vault_moves_active_to_tombstone() {
@@ -107,4 +108,59 @@ fn close_vault_rejects_already_tombstoned() {
         .close_vault(&leader, 0)
         .expect_err("a tombstoned vault cannot be closed again");
     common::assert_program_error(&err, dropset::DropsetError::VaultAlreadyTombstoned);
+}
+
+#[test]
+fn close_vault_on_an_unseeded_vault_reclaims_the_sector() {
+    let mut f = Fixture::bootstrap();
+    let leader = f.authority.insecure_clone();
+    f.create_vault(0, leader.pubkey(), false, Pubkey::default())
+        .expect("create_vault");
+    let seq_before = f.vault(0).seq.get();
+    assert_eq!(f.vault(0).total_shares.get(), 0, "never seeded");
+
+    let meta = f
+        .close_vault_meta(&leader, 0)
+        .expect("leader closes the unseeded vault");
+    let ev = common::events::close_vault(&meta);
+    assert_eq!(ev.sector_idx, 0);
+    assert_eq!(ev.vault_seq, seq_before);
+    assert_eq!(ev.leader, leader.pubkey().to_bytes());
+    assert_eq!(ev.active_count_after, 0, "counted after the reclaim");
+
+    // No shares to drain, so no withdraw could ever reclaim a tombstone:
+    // the close returns the sector to the free list itself.
+    let h = f.market_header();
+    assert_eq!(h.active_count.get(), 0, "active count decremented");
+    assert_eq!(h.head.get(), dropset::NULL_SECTOR, "active list now empty");
+    assert_eq!(
+        h.tombstone_head.get(),
+        dropset::NULL_SECTOR,
+        "nothing stranded on the tombstone list"
+    );
+    assert_eq!(h.free_head.get(), 0, "sector 0 heads the free list");
+    assert!(!f.vault(0).is_occupied(), "reclaimed sector reads empty");
+
+    // The next create reuses the sector under a fresh sequence number.
+    f.svm.expire_blockhash();
+    f.create_vault(0, leader.pubkey(), false, Pubkey::default())
+        .expect("create_vault reuses the freed sector");
+    let h = f.market_header();
+    assert_eq!(h.head.get(), 0, "sector 0 is active again");
+    assert_eq!(h.active_count.get(), 1);
+    assert_ne!(f.vault(0).seq.get(), seq_before, "fresh seq on reuse");
+}
+
+#[test]
+fn deposit_leader_into_a_closed_seeded_vault_is_still_rejected() {
+    // The seeded close keeps the tombstone path, and deposits into it stay
+    // refused.
+    let mut f = Fixture::seeded(1_000_000, 1_085_000);
+    let leader = f.authority.insecure_clone();
+    f.close_vault(&leader, 0).expect("close");
+    assert_eq!(f.market_header().tombstone_head.get(), 0);
+    let err = f
+        .deposit_leader(0, 1_000, 1_085, 1_000, 1_085)
+        .expect_err("a tombstoned vault takes no deposit");
+    common::assert_program_error(&err, dropset::DropsetError::VaultTombstoned);
 }
