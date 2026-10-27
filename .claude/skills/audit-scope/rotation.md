@@ -229,9 +229,10 @@ counts and titles only, never bodies:
 FILED ENG-### [<dimension>/<severity>] <subject> — <title>
 ```
 
-Close the announcement saying plainly that the findings are **parked
-under the Audit findings milestone and await sequencing** — a rotation
-must not read as having queued work.
+Close the announcement saying plainly that the findings are **staged
+under the Session pending milestone and await this tab's review**
+(`SKILL.md` step 8, after the last rotation) — a rotation must not read
+as having queued work.
 
 If at least one **high-severity** issue was filed, send exactly **one**
 `PushNotification` naming the top one (where the harness offers it;

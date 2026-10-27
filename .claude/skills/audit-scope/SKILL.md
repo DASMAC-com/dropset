@@ -1,6 +1,6 @@
 ---
 name: audit-scope
-description: Use to audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — and when pulling a planning-filed audit issue, which names its target and runs as an `explore` task in its own worktree with the issue held In Progress until ratification-plus-fold. Audits across the dimensions the scope's platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness) with an adversarial sub-agent cross-check this invocation authorizes. Files confirmed findings as the fewest coherent Linear issues, each sized to a short session, PARKED (Backlog plus the `Audit findings` milestone) with no relations or edges. With `--rotation N`, runs N bounded RANDOM seven-unit rotations instead (four random files plus a subsystem, an interface and a repo-layout pass) — an ad-hoc breadth sweep, never a default.
+description: Use to audit a defined scope — one file, a PR's files, a subsystem, or the whole codebase — and when pulling a planning-filed audit issue, which names its target and runs as an `explore` task in its own worktree with the issue held In Progress until ratification-plus-fold. Audits across the dimensions the scope's platform kind calls for (security, comment accuracy, DRY, modularity, naming, doc-freshness) with an adversarial sub-agent cross-check this invocation authorizes. Files confirmed findings as the fewest coherent Linear issues, each sized to a short session, STAGED (Backlog plus the `Session pending` milestone) with no relations or edges, then ratified in this session's tab through `ratify-staged` before it closes. With `--rotation N`, runs N bounded RANDOM seven-unit rotations instead (four random files plus a subsystem, an interface and a repo-layout pass) — an ad-hoc breadth sweep, never a default.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -12,8 +12,8 @@ user-invocable: true
 # `audit-scope`
 
 Audit a defined scope of the codebase and file the
-confirmed findings as Linear issues **parked under the
-`Audit findings` project milestone** — folded
+confirmed findings as Linear issues **staged under the
+`Session pending` project milestone** — folded
 into the fewest coherent PRs (coupled findings that share a
 PR become one issue, up to the size of a short session; see
 Notes), in the same destination and
@@ -26,15 +26,20 @@ This replaces the old `audit-codebase`, which wrote a
 gitignored checklist. Findings now live as real Linear
 issues — so they dedup and search like any other — but
 **parked**, so filing them does not put work in the pull
-queue. A planning session decides which to promote
-(`plan` step 8).
+queue. **The operator ratifies every finding with this
+session, in its tab** (operator ruling, 2026-10-23), through
+the shared `ratify-staged` skill (step 8); planning is
+consulted for feedback, never for ratification.
 
-**Parked means state Backlog plus the milestone**, both set in
-the creating call. The milestone is what keeps a finding out of
-the review inbox, and promotion is one write: clearing it. Never
-Todo — that state is the operator's approval, and only they set
-it. See `docs/conventions/linear-automation.md` → "Backlog
-reviews, Todo pulls".
+**Staged means state Backlog plus `Session pending`**, both set
+in the creating call — the staging lane every seat session's
+filings share. The milestone keeps a finding out of the review
+inbox until the operator has ticked it here; only the
+operator's final answer moves it to Todo, in `ratify-staged`'s
+one batch write. `Audit findings` takes no new filings: it is a
+legacy pool planning drains. See
+`docs/conventions/linear-automation.md` → "Backlog reviews, Todo
+pulls".
 
 **The adversarial sub-agent cross-check is authorized by the
 invocation.** Invoking this skill (scoped or `--rotation`,
@@ -64,7 +69,7 @@ rotation is `--rotation N`, an ad-hoc invocation.
 
 - **Scoped (the default).** Plan-gated: you give a scope,
   confirm the plan, and the skill files the surviving
-  findings as parked issues itself.
+  findings as staged issues itself.
 - **Rotation (`--rotation N`).** No scope and no plan
   gate: each of `N` rotations runs seven units — four
   random files through steps 2–5 below, plus one random
@@ -93,8 +98,9 @@ that needs web research. The mechanism, its reasoning, and what the worktree's
 protection does and does not cover are owned by
 `docs/conventions/local-integrations.md` → "Architect and
 explore sessions: temporary worktree, no PR". Don't restate
-them here. A non-audit explore session's filed tasks stage under
-`Session pending` through `ratify-staged`, as an architect's do.
+them here. Every explore session's filed tasks, audit findings
+included, stage under `Session pending` and run `ratify-staged`,
+as an architect's do.
 
 Four duties this skill owns directly:
 
@@ -109,9 +115,10 @@ Four duties this skill owns directly:
   its open items listed at the top and marked inline, both,
   per the `architect` skill's marker rule.
 - **The audit issue stays In Progress while the findings
-  loop is open**, and reaches Done only at ratification
-  plus fold. Marking it Done at the handoff is the measured
-  mistake that produced the rule — under the no-PR shape the
+  loop is open** — In Review only after step 8's close gate
+  — and reaches Done only at ratification plus fold. Marking
+  it Done at the handoff is the measured mistake that
+  produced the rule — under the no-PR shape the
   issue state is the only signal that the work is live, so
   an honest state is the whole of this skill's obligation.
 - **Read-only toward source.** No source edit, no commit, no
@@ -405,7 +412,7 @@ Optional (ask on a scoped run if not provided):
      reopen settled noise.
 
    - **File** the surviving findings as Linear
-     issues **parked under the `Audit findings` project
+     issues **staged under the `Session pending` project
      milestone**, otherwise exactly as `linear-task` does —
      **folding coupled findings into the fewest coherent
      PRs** (see the folding rule in Notes), one issue per
@@ -414,13 +421,11 @@ Optional (ask on a scoped run if not provided):
      issues rather than letting one grow without bound.
 
      Parked means *not in the pull queue*: a first-class
-     open issue for dedup and search,
-     but out of scope for a planning bootstrap until
-     somebody promotes it. That promotion is the `plan`
-     skill's call (its step 8), never this one's, and it is
-     done by **clearing the milestone** — not by closing the
-     finding and filing a fresh copy. The milestone already
-     exists; never create a second.
+     open issue for dedup and search, held out of the
+     inbox until this session's review (step 8) clears the
+     milestone — never by closing the finding and filing a
+     fresh copy. Planning never promotes one. The
+     milestone already exists; never create a second.
 
      Resolve the destination IDs from the
      environment (never hard-code them) with a bare
@@ -444,7 +449,7 @@ Optional (ask on a scoped run if not provided):
      python3 .claude/tools/linear_issue.py create \
        --title '<file>: <imperative fix, no trailing period>' \
        --body-file <scratchpad>/finding-N.md \
-       --state Backlog --milestone 'Audit findings' --priority 3
+       --state Backlog --milestone 'Session pending' --priority 3
      ```
 
      `--priority 2` for a high-severity security finding.
@@ -467,7 +472,7 @@ Optional (ask on a scoped run if not provided):
 
      State, milestone and priority are writer *parameters*,
      which is what lets one filer serve this skill's
-     Backlog + `Audit findings` parking and a planning
+     Backlog + `Session pending` staging and a planning
      session's plain Backlog follow-up filings
      (27 calls / ≈30.1k in one measured pass) without a
      second implementation.
@@ -480,12 +485,11 @@ Optional (ask on a scoped run if not provided):
      "Claude: meta-work prefix". A finding touching product
      / on-chain / SDK / frontend code gets no prefix.
 
-     **A meta finding stays parked under `Audit findings`,
-     not `Follow-ups`.** Audit output parks under its own
-     milestone whatever surface it names, so file it the
-     same way as every other finding here — state Backlog
-     plus `Audit findings`. The planning bootstrap promotes
-     or kills it like every other finding.
+     **A meta finding stages under `Session pending`, not
+     `Follow-ups`.** Audit output stages the same way
+     whatever surface it names — state Backlog plus
+     `Session pending` — and is ratified or rejected in
+     step 8 like every other finding.
 
      **Dependencies — file none.** A blocking edge is
      **human-curated** (`CLAUDE.md` → "Blocking
@@ -596,6 +600,24 @@ Optional (ask on a scoped run if not provided):
 
    A run that ends early still writes it: "ten lanes, none
    complete" is a record, and silence is not.
+
+1. **Ratify in the tab: run `ratify-staged` from its step 2.**
+   The findings are already filed, with no edges, so there is
+   no filing ask: say "filed these N findings; let me know what
+   you think", then run its review rounds, its one batch write
+   and its close gate unchanged — the shared skill is the one
+   source for that wording. A rotation runs it once, after its
+   last `DONE` line. Before presenting a finding the session
+   may message a live planning session to check it against
+   open or in-flight work; that answer is feedback, and
+   planning never promotes a finding itself.
+
+   **The close gate precedes In Review.** A pulled audit
+   issue moves to In Review only once `ratify_staged.py gate`
+   passes over every filed id; one still under
+   `Session pending` means the review is unfinished, so ask
+   once more.
+   The heartbeat row updates on the ratification, as before.
 
 ## Notes
 

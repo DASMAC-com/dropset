@@ -251,9 +251,9 @@ owns review".
 **audit issue** — a
 Backlog task naming **one** audit-registry target, with scope,
 rationale, and sequencing — and the session that pulls it runs
-exactly that as one scoped `audit-scope` run. Findings still land **parked**
-(`Backlog` plus the `Audit findings` milestone), and promotion is
-still the planning session's milestone clear.
+exactly that as one scoped `audit-scope` run. Findings land **staged**
+(`Backlog` plus `Session pending`) and are ratified in the audit
+session's own tab through `ratify-staged`, never promoted by planning.
 
 Cadence is kept by the **audit heartbeat**: every full planning
 bootstrap reads the Planning document's bounded **audit-state
