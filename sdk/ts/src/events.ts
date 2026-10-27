@@ -16,10 +16,10 @@
  * `repr(C)` bytes) — this module supplies the extraction: walk the
  * inner instructions, verify the emitting program, strip the envelope, decode.
  *
- * Scope: fills only. The Rust decoder dispatches all twelve events because the
- * indexer and the teardown path consume them; the frontend's recent-fills tape
- * needs just {@link FillEvent}, so adding a variant here is a deliberate step,
- * not an oversight.
+ * Scope: fills only. The Rust decoder dispatches every `#[event]` in the IDL
+ * because the indexer and the teardown path consume them; the frontend's
+ * recent-fills tape needs just {@link FillEvent}, so adding a variant here is
+ * a deliberate step, not an oversight.
  */
 
 import { getBase58Encoder, type ReadonlyUint8Array } from '@solana/kit';
@@ -115,9 +115,12 @@ export function stripEventTag(
  * {@link FillEvent}, or `null` if the discriminator names a different event or
  * the body is too short.
  *
- * Trailing bytes past the fixed-size body are tolerated (borsh's `deserialize`
- * does the same on the Rust side), so only the leading `fixedSize` bytes are
- * handed to the codec.
+ * Trailing bytes past the fixed-size body are tolerated here, so only the
+ * leading `fixedSize` bytes are handed to the codec; the Rust decoder is
+ * strict, see `interface.md` §2, "Decode strictness". The allowance is
+ * bytemuck-`FillEvent`-only — that body grows by carving its reserve, never
+ * past its fixed size — and a short body still decodes to `null` rather than
+ * defaulting its missing tail.
  */
 export function decodeFillEventPayload(
   payload: ReadonlyUint8Array,

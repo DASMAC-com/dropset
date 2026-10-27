@@ -316,8 +316,12 @@ pub fn try_decode_event_payload(payload: &[u8]) -> Result<DropsetEvent, DecodeEr
 /// the body to be fully consumed, so a trailing field appended on chain
 /// makes an event stop decoding here instead of silently decoding as its
 /// old, narrower shape. That is the intended direction — a truncated fill
-/// is worse than no fill — but it is a behavior change, and `.ok()`
-/// discards the [`DecodeError::TrailingBytes`] that would explain it.
+/// is worse than no fill — and `.ok()` discards the
+/// [`DecodeError::TrailingBytes`] that would explain it. The short
+/// direction is strict too: a body missing a tail fails as
+/// [`DecodeError::BodyDecode`] rather than defaulting it, since a changed
+/// Borsh body renames the event (`architecture.md`, "Cold-path events are
+/// frozen after the first mainnet publish").
 pub fn decode_event_payload(payload: &[u8]) -> Option<DropsetEvent> {
     try_decode_event_payload(payload).ok()
 }
@@ -584,12 +588,34 @@ mod tests {
         // Exact body still decodes.
         assert!(try_decode_event_payload(&payload).is_ok());
 
-        // The same event with two extra bytes appended, as a program that
-        // grew the struct would emit it.
-        payload.extend_from_slice(&[0xab, 0xcd]);
+        // The same event with a `u64` appended, as a program that grew the
+        // struct in place would emit it.
+        payload.extend_from_slice(&u64::MAX.to_le_bytes());
         assert_eq!(
             try_decode_event_payload(&payload),
-            Err(DecodeError::TrailingBytes { unread: 2 })
+            Err(DecodeError::TrailingBytes { unread: 8 })
+        );
+    }
+
+    /// The other direction of the same contract: a body missing its last
+    /// field is rejected, never decoded with that field defaulted. A
+    /// changed Borsh body renames the event (`architecture.md`, "Cold-path
+    /// events are frozen after the first mainnet publish"), so no decoder
+    /// carries a tolerant-tail path. The TS mirror is "a Borsh event body
+    /// missing its last field is rejected, not defaulted" in
+    /// `sdk/ts/src/events.test.ts`.
+    #[test]
+    fn a_body_missing_its_last_field_is_rejected() {
+        let event = SetTakerFeeEvent {
+            market: Pubkey::new_unique(),
+            taker_fee: 7,
+        };
+        let mut payload = SET_TAKER_FEE_EVENT_DISCRIMINATOR.to_vec();
+        borsh::to_writer(&mut payload, &event).unwrap();
+        payload.truncate(payload.len() - std::mem::size_of_val(&event.taker_fee));
+        assert_eq!(
+            try_decode_event_payload(&payload),
+            Err(DecodeError::BodyDecode)
         );
     }
 

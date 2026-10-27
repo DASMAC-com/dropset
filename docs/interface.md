@@ -218,12 +218,22 @@ which behavior it is relying on. The Rust `try_decode_event_payload` requires
 the body to be **fully consumed** and returns `DecodeError::TrailingBytes`
 otherwise, so a field appended on chain makes an event stop decoding rather
 than silently decoding as its old, narrower shape; `decode_event_payload` runs
-the same check and discards the reason via `.ok()`. The TypeScript
-`decodeFillEventPayload` does **not** enforce this: it slices the body to the
-decoder's fixed size and tolerates trailing bytes, yielding `null` only on a
-short payload, a discriminator mismatch, or a decode throw. An indexer that
-wants wire-format drift to surface loudly rather than pass silently wants the
-Rust `try_` form.
+the same check and discards the reason via `.ok()`. A body shorter than its
+struct fails as `DecodeError::BodyDecode`: no decoder defaults a missing tail,
+because after the first mainnet publish a changed Borsh event body renames the
+event rather than growing in place (`architecture.md`, "Cold-path events are
+frozen after the first mainnet publish"). The TypeScript
+`decodeFillEventPayload` agrees on the short direction and differs on the wide
+one: it slices the body to the decoder's fixed size and tolerates trailing
+bytes, yielding `null` only on a short payload, a discriminator mismatch, or a
+decode throw. That tolerance is a **bytemuck-`FillEvent`-only allowance** —
+the fill body grows by carving its reserve, not past its fixed size — and the
+TS SDK ships no payload decoder for any Borsh event. Its generated Borsh struct
+codecs (`getSetTakerFeeEventDecoder` and the rest) read their fields from the
+front of the body and ignore any remainder, so a consumer calling one directly
+gets the tolerant
+behavior, not the Rust strictness. An indexer that wants wire-format drift to
+surface loudly rather than pass silently wants the Rust `try_` form.
 
 **Why inner-instruction, not logs.** Full fidelity. Inner-instruction data is
 not subject to the runtime's ~10 KB cumulative log-bytes-per-tx limit, so a
