@@ -144,7 +144,8 @@ NOTIFICATIONS_PATH = "/notifications?all=true&per_page=50"
 RESOLVED_TYPES = ("completed", "canceled")
 # The parking milestones, in report order. Session pending is short-lived by
 # design: a count there is a seat session that died mid-review. Follow-ups is
-# no parking set: filers land un-parked in the curator's pool.
+# retired as a parking set: filers now land un-parked in the curator's pool,
+# and issues still carrying it go uncounted until the milestone is deleted.
 PARKED_MILESTONES = (
     "Audit findings",
     "Session pending",

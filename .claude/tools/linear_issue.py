@@ -456,9 +456,10 @@ def _resolve_named(nodes: list, wanted: str, kind: str) -> str:
     raise LinearIssueError(f"no {kind} named {wanted!r} — have: {names}")
 
 
-# An un-parked Backlog filing enters the curator's review pool, and the
-# curator learns of it by message, never by polling the board. The tool only
-# reminds; messaging is the filing session's act.
+# A filing naming state Backlog and no milestone enters the curator's review
+# pool, and the curator learns of it by message, never by polling the board.
+# Every filing skill passes --state, so an omitted one is not guessed at. The
+# tool only reminds; messaging is the filing session's act.
 CURATOR_REMINDER = (
     "REMINDER: message the curator (curate-<day>, via ListAgents) this "
     "filing; with none live, message the scheduler (plan-<day>)"

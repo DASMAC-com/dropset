@@ -601,4 +601,4 @@ session that died mid-review — offer to resume it.
   days.
 - **The board is shared with the curator alone**, under ruling
   2's coordination rule: each messages the other any write
-  touching what the other placed (`history.md`).
+  touching what the other placed.

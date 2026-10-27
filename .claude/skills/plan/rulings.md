@@ -49,7 +49,7 @@ the document's state sections.
    without a message; the Planning document records the result at the
    scheduler's next write-back.
 
-1. **Meta discretion — the necessity kill gate.** A pool member
+1. **The necessity kill gate.** A pool member
    that cannot name a concrete recurring cost larger than its
    landing-plus-ratification cost is closed, and doubt still
    kills. Doubt means doubt the issue is worth doing, never "not
@@ -77,8 +77,8 @@ the document's state sections.
    planning the remainder as pullable units, and ends its
    session; planning files them and **re-points the blocking
    edges to the chain's tail**, so ratifying the first issue does
-   not release work that depends on the whole. (`SKILL.md`
-   step 5.)
+   not release work that depends on the whole, and messages the
+   curator the filing (2026-10-26). (`SKILL.md` step 5.)
 
 1. **Meta stack deliberateness.** Meta work is dispatched
    deliberately, not as a constant stream.
