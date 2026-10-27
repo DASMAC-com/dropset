@@ -1,6 +1,6 @@
 ---
 name: harden
-description: Turn a proven ad-hoc command shape into a committed, tested Python tool — the consumer for the hardening candidates session-metrics already ranks. Takes a candidate (a repeated command shape, or a named workflow), demands provenance that it actually recurred, writes the tool under .claude/tools/ with unittest coverage and a real assertion over an embedded fixture, wires the skill reference that will drive it, and verifies it runs before committing. Refuses to harden a shape with no measured recurrence.
+description: Turn a proven ad-hoc command shape into a committed, tested Python tool — the consumer for the hardening candidates the daily digest already ranks. Takes a candidate (a repeated command shape, or a named workflow), demands provenance that it actually recurred, writes the tool under .claude/tools/ with unittest coverage and a real assertion over an embedded fixture, wires the skill reference that will drive it, and verifies it runs before committing. Refuses to harden a shape with no measured recurrence.
 user-invocable: true
 ---
 
@@ -12,7 +12,7 @@ artifact.**
 The repo already has both halves of this loop except the
 middle. The tooling convention says a workflow that is
 established and repeated should become a Python tool. And
-`session-metrics` already **produces the signal** — it ranks
+The daily digest already **carries the signal** — it ranks
 repeated command shapes worth hardening, each labelled by cost
 class (context / context (failures) / wall-clock /
 prompt-churn).

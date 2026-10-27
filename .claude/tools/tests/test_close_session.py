@@ -395,10 +395,17 @@ class CostLineTests(unittest.TestCase):
             priced.append(sid)
             return self.LINE
 
-        rc, result, order = self._close(ns(session_id="sid-1"), coster)
+        writes: list[str] = []
+        rc, result, order = self._close(
+            ns(session_id="sid-1"),
+            coster,
+            writer=lambda *_: writes.append(f"write after {len(priced)} pricing"),
+        )
         self.assertEqual(rc, 0, result)
         self.assertEqual(priced, ["sid-1"])
-        self.assertEqual(order, ["write", "append", "remove"])
+        # Priced before the write: the substrate marker lives in the worktree.
+        self.assertEqual(writes, ["write after 1 pricing"])
+        self.assertEqual(order, ["append", "remove"])
         self.assertEqual(result["cost_line"], self.LINE)
 
     def test_no_session_id_appends_nothing(self):

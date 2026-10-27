@@ -400,7 +400,7 @@ Some text is paid for before any tool runs. Three residency classes:
 - **B — invocation to session end:** a skill's entry file,
   `.claude/skills/<name>/SKILL.md`.
 - **C — read at a trigger:** sibling files, convention docs, tool
-  results. `session-metrics` already ranks these.
+  results. `session_metrics.py` already ranks these.
 
 `.claude/tools/skill_size.py` caps the committed members of A, and B, in
 bytes as `wc -c` reports

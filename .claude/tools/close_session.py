@@ -53,7 +53,10 @@ when the tree needs removing by hand.
 state write is confirmed and before the removal. It is priced before the write,
 because the substrate marker it reads lives in the worktree. A session id that
 resolves to no transcript skips the line and says so in ``notes``; a failed
-append is a note too, never a refusal, since the state has landed.
+append is a note too, never a refusal, since the state has landed. In the
+result, ``cost_line`` is the line appended — or, on a dry run, the line that
+would be. A re-run after an exit 2 appends a second line; remove the tree by
+hand instead.
 
 Prints one JSON object ``{issue, state, worktree, branch, pr, dry_run,
 keep_worktree, refused, state_written, removed, cost_line, notes}``. Exit 0 on a complete

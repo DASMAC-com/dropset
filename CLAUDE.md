@@ -121,7 +121,7 @@ sessions: temporary worktree, no PR".
 deterministic checklist ending in an explicit verdict, for the ragged
 endings `review-pr` does not cover. **`/harden`** turns a proven
 ad-hoc command shape into a committed, tested tool, consuming the
-candidates `session-metrics` already ranks; it refuses a shape with no
+candidates the daily digest already ranks; it refuses a shape with no
 measured recurrence. **`/root-cause`** is systematic debugging under
 two hard rules: no fix before the cause is investigated, and after
 three failed hypotheses the architecture is what gets questioned.
@@ -270,8 +270,9 @@ skip it; if the tooling is absent, stop and ask. Detail: the
 
 ### Trims are the analyst's, not a session's
 
-A session files **nothing that is only a trim**: its levers go in
-its `Session account` block, which the daily digest lifts.
+A session files **nothing that is only a trim**: what it kept
+running into goes in its `Session account` block, which the daily
+digest lifts.
 `trim-context`, the **fold analyst** (a sub-agent of every full
 `plan` bootstrap), judges the whole day at once, dedups by
 `**Fingerprint**:` and by Backlog title — folding a near-match

@@ -155,8 +155,9 @@ everything below it is recoverable and that one is not.
    immediately before the close question.
 
    Invoke `/session-metrics`; do not duplicate its logic here.
-   If `review-pr` already ran it, say so and move on. The close
-   passes `--session-id` so the tool appends the cost line.
+   If `review-pr` already ran it, say so and move on. A worktree
+   close passes `--session-id` so the tool appends the cost line; a
+   chore's line went in at its own handoff.
 
 1. **Worktree verdict.** Confirm nothing in this worktree is
    **load-bearing for an open PR** — an unmerged sibling

@@ -60,9 +60,10 @@ That is the whole skill.
 - **A close through the tool** passes the same id, and the line lands
   after the state write, zero-echo:
   `python3 .claude/tools/close_session.py --state <state> --session-id <uuid>`.
-- **A chore** has no close tool: write
-  `session_metrics.py --cost-line --session-id <uuid>` to a scratchpad
-  file and append it with `linear_issue.py append`.
+- **A chore** has no close tool: print
+  `session_metrics.py --cost-line --session-id <uuid>`, `Write` the
+  line into the handoff note, and append that with
+  `linear_issue.py append`.
 - **A planning session** has no issue: its close-out rewrite carries
   the line under `Session-metrics state`.
 

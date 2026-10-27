@@ -1670,6 +1670,20 @@ class ExitBrief(unittest.TestCase):
         self.assertIn("written_at", record)
 
 
+class UnresolvableSession(unittest.TestCase):
+    def test_a_missing_transcript_is_one_line_not_a_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (pathlib.Path(tmp) / "projects").mkdir()
+            stderr = io.StringIO()
+            with (
+                mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": tmp}),
+                contextlib.redirect_stderr(stderr),
+            ):
+                rc = sm.main(["--cost-line", "--session-id", "sid-gone"])
+        self.assertEqual(rc, 1)
+        self.assertTrue(stderr.getvalue().startswith("session-metrics: no estimate"))
+
+
 class ExitBriefSidecarFailure(unittest.TestCase):
     """A sidecar that cannot be written keeps the brief and exits 0, so the
     launcher does not print "no session estimate" under a printed figure."""

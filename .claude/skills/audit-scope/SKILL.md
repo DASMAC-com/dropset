@@ -115,8 +115,9 @@ Four duties this skill owns directly:
   issue state is the only signal that the work is live, so
   an honest state is the whole of this skill's obligation.
   Run `/session-metrics`, the shared tail, immediately before
-  the final state write; the close tool's `--session-id`
-  appends the cost line.
+  the final state write, and close with
+  `close_session.py --state Done --issue ENG-### --session-id <uuid>`,
+  which appends the cost line.
 - **Read-only toward source.** No source edit, no commit, no
   push, no local state — Linear is the record, so a wiped
   worktree loses nothing. A rotation's ff-only sync to

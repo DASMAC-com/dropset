@@ -2556,7 +2556,13 @@ def main(argv: list[str] | None = None) -> int:
     if not session_id or "/" in session_id or "\\" in session_id or ".." in session_id:
         parser.error("--session-id must be a bare session id (a UUID), not a path")
 
-    transcript = resolve_transcript(session_id)
+    try:
+        transcript = resolve_transcript(session_id)
+    except FileNotFoundError as e:
+        # One line, never a traceback: the tail and the cost line both say
+        # the estimate was skipped and why.
+        print(f"session-metrics: no estimate, {e}", file=sys.stderr)
+        return 1
     report = aggregate(transcript, session_id, args.substrate)
 
     if args.brief:
