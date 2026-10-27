@@ -87,6 +87,7 @@ const FORWARDED_HEADERS = [
 ];
 
 const JSON_TYPE = /^application\/json\b/i;
+const NULL_BODY_STATUSES = new Set([204, 205, 304]);
 
 // A failure of the proxy's own: a `{ msg }` body, the shape DFlow's errors
 // take.
@@ -159,8 +160,14 @@ export async function forward(
     const value = res.headers.get(name);
     if (value !== null) out.set(name, value);
   }
+  // A status that cannot carry a body (204, 304, …) passes through bodiless.
+  if (NULL_BODY_STATUSES.has(res.status)) {
+    await res.body?.cancel().catch(() => {});
+    return new Response(null, { status: res.status, headers: out });
+  }
   if (!JSON_TYPE.test(res.headers.get("content-type") ?? "")) {
-    await res.body?.cancel();
+    // Best-effort: a stream that already errored rejects the cancel.
+    await res.body?.cancel().catch(() => {});
     return new Response(
       JSON.stringify({
         msg: `${url.hostname} answered ${res.status} with a non-JSON body`,

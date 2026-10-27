@@ -1,8 +1,8 @@
 // The public endpoint URLs of the external APIs, in one place. Client-safe:
 // only URL strings live here, no key material. lib/server/apiProxy.ts builds
 // its keyed upstreams from these, and lib/env.ts uses the keyless ones as the
-// browser's direct endpoints, so the browser and the server's keyless
-// fallback can never name different hosts.
+// browser's default direct endpoints, so unless a NEXT_PUBLIC_*_URL override
+// is set, the browser and the server's keyless fallback name the same hosts.
 
 export type UpstreamUrls = {
   // Where a request goes with the server's key, and where it goes without one.

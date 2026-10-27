@@ -61,8 +61,11 @@ const pubkey: Rule = { check: (v) => isAddress(v) };
 const atomicAmount: Rule = {
   check: (v) => /^[1-9]\d{0,19}$/.test(v) && BigInt(v) <= U64_MAX,
 };
+// Shape only: a custom percent is bounded below but not above in the UI
+// (lib/format/input.ts parseSlippagePercent), and what a large value means is
+// DFlow's to decide, as it was before the proxy checked anything.
 const slippage: Rule = {
-  check: (v) => v === "auto" || (/^\d{1,5}$/.test(v) && Number(v) <= 10_000),
+  check: (v) => v === "auto" || /^\d{1,7}$/.test(v),
 };
 const fixed = (value: string): Rule => ({ check: (v) => v === value });
 // The fee params' values are checked against the server's fee by `feeCheck`.
@@ -96,9 +99,10 @@ function rebuild(
   return { ok: true, search: out.toString() };
 }
 
-// The deployment's platform fee, parsed as lib/env.ts parses it (that module
-// is the browser's and throws without the RPC variables, so it is not
-// imported here); null when none is configured.
+// The deployment's platform fee, by lib/env.ts's bps and wallet rules (that
+// module is the browser's and throws without the RPC variables, so it is not
+// imported here); null when none is configured. An invalid wallet reads as
+// none here, where env.ts throws, so a declared fee is refused.
 function serverFee(env: Env): { bps: number; wallet: string } | null {
   const bps = Number.parseInt(env.NEXT_PUBLIC_PLATFORM_FEE_BPS ?? "", 10);
   const wallet = env.NEXT_PUBLIC_PLATFORM_FEE_WALLET?.trim();

@@ -108,16 +108,38 @@ describe("dflowQuoteQuery", () => {
       `inputMint=${USDC}&outputMint=${USDT}&amount=18446744073709551616&slippageBps=50`,
     ],
     [
-      "slippage over 100%",
-      `inputMint=${USDC}&outputMint=${USDT}&amount=5&slippageBps=10001`,
+      "fractional slippage",
+      `inputMint=${USDC}&outputMint=${USDT}&amount=5&slippageBps=0.5`,
     ],
     ["a bad mint", `inputMint=bonk&outputMint=${USDT}&amount=5&slippageBps=50`],
     [
       "an order-only parameter",
       `inputMint=${USDC}&outputMint=${USDT}&amount=5&slippageBps=50&userPublicKey=${USER}`,
     ],
+    [
+      "a prototype key",
+      `inputMint=${USDC}&outputMint=${USDT}&amount=5&slippageBps=50&__proto__=x`,
+    ],
+    [
+      "a constructor key",
+      `inputMint=${USDC}&outputMint=${USDT}&amount=5&slippageBps=50&constructor=x`,
+    ],
+    [
+      "an empty name",
+      `inputMint=${USDC}&outputMint=${USDT}&amount=5&slippageBps=50&=x`,
+    ],
+    [
+      "a repeated amount",
+      `inputMint=${USDC}&outputMint=${USDT}&amount=5&amount=6&slippageBps=50`,
+    ],
   ])("refuses %s", async (_, query) => {
     expect((await dflowQuoteQuery(params(query), {})).ok).toBe(false);
+  });
+
+  // The UI bounds a custom percent below only; a large value is DFlow's call.
+  it("passes a custom slippage over 100% through", async () => {
+    const query = `inputMint=${USDC}&outputMint=${USDT}&amount=5&slippageBps=15000`;
+    expect((await dflowQuoteQuery(params(query), {})).ok).toBe(true);
   });
 });
 
@@ -169,6 +191,11 @@ describe("dflowOrderQuery", () => {
       "&platformFeeBps=25&feeAccount=ATA&platformFeeMode=inputMint",
     ],
     ["bps without an account", "&platformFeeBps=25&platformFeeMode=outputMint"],
+    // feeCheck reads the first value; the repeat refusal stops a second one.
+    [
+      "a second fee account",
+      `&platformFeeBps=25&feeAccount=ATA&platformFeeMode=outputMint&feeAccount=${USER}`,
+    ],
   ])("refuses %s", async (_, template) => {
     const fee = template.replace("ATA", await feeAta(USDT));
     expect((await dflowOrderQuery(params(orderQuery(fee)), FEE_ENV)).ok).toBe(

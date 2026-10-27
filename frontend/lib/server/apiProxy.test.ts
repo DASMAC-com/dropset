@@ -142,7 +142,7 @@ describe("forward", () => {
     expect(await res.json()).toEqual({ msg: "rate limited" });
   });
 
-  it("serves JSON with nosniff whatever the upstream claims", async () => {
+  it("adds nosniff to a JSON upstream response", async () => {
     stubUpstream(ok);
     const res = await forward(
       passThrough(JUPITER_SEARCH_UPSTREAM),
@@ -152,6 +152,31 @@ describe("forward", () => {
 
     expect(res.headers.get("content-type")).toBe("application/json");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("passes a bodiless status through without a body", async () => {
+    stubUpstream(() => new Response(null, { status: 204 }));
+    const res = await forward(
+      passThrough(JUPITER_SEARCH_UPSTREAM),
+      request("query=M"),
+      {},
+    );
+
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+  });
+
+  it("checks the query before reading the key", async () => {
+    stubUpstream(ok);
+    const route: ProxyRoute = {
+      upstream: JUPITER_SEARCH_UPSTREAM,
+      validate: async () => ({ ok: false, msg: "bad query" }),
+    };
+    const res = await forward(route, request("query=M"), {
+      JUPITER_API_KEY: "op://vault/item/credential",
+    });
+
+    expect(res.status).toBe(400);
   });
 
   it("replaces a non-JSON upstream body under the same status", async () => {
