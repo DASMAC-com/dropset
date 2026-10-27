@@ -1895,7 +1895,7 @@ plus the `NEEDS-CONFIRM` /
 `NEEDS-FEEDBACK` markers and the top-of-file index of open items,
 is specified in
 the `architect` skill and applies to explore-style spec tasks
-unchanged — `.claude/tools/spec_markers.py` included, run on the
+unchanged — `python3 .claude/tools/spec_markers.py` included, run on the
 spec or findings file before any draft is announced. Naming the
 path out loud is a **hard requirement**:
 the operator works the file through an editor, and cannot edit a

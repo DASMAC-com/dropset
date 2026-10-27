@@ -13,7 +13,8 @@ wanted. The rule was prose until then; this makes it mechanical::
 
 Exits 1, naming each failure, when:
 
-- an index entry carries a marker with no matching inline occurrence;
+- an index entry carries a marker with no matching inline occurrence of its
+  own (pairing is one-to-one: two entries cannot share one inline marker);
 - an inline marker has no matching index entry;
 - the file carries markers but no index;
 - the index says "None" while an inline marker remains;
@@ -49,6 +50,7 @@ MARKER = re.compile(r"NEEDS-(CONFIRM|FEEDBACK)")
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
+CLOSE_FENCE = re.compile(r"^\s*(`{3,}|~{3,})\s*$")
 INDEX_TITLE = re.compile(r"^open items\b", re.IGNORECASE)
 SECTION_NUMBER = re.compile(r"^§?(\d+(?:\.\d+)*)\.?\s+")
 SECTION_REF = re.compile(r"(?:§|\bsection\s+)(\d+(?:\.\d+)*)", re.IGNORECASE)
@@ -102,9 +104,11 @@ def scan(lines: list[str]) -> tuple[list[Heading], list[int], int | None]:
             fence = (n, match.group(1))
             continue
         if fence is not None:
-            # Only a run of the opening character at least as long closes it.
-            if match and match.group(1)[0] == fence[1][0]:
-                if len(match.group(1)) >= len(fence[1]):
+            # Only a bare run of the opening character, at least as long,
+            # closes it; a line with an info string does not.
+            close = CLOSE_FENCE.match(line)
+            if close and close.group(1)[0] == fence[1][0]:
+                if len(close.group(1)) >= len(fence[1]):
                     fence = None
             continue
         live.append(n)
@@ -114,23 +118,33 @@ def scan(lines: list[str]) -> tuple[list[Heading], list[int], int | None]:
     return headings, live, fence[0] if fence else None
 
 
+def title_of(headings: list[Heading]) -> Heading | None:
+    """The document's title: the first heading, when it is the only level-1
+    heading. A spec sectioned by level-1 headings has no title."""
+    if headings and headings[0].level == 1:
+        if sum(h.level == 1 for h in headings) == 1:
+            return headings[0]
+    return None
+
+
 def find_index(
     lines: list[str], headings: list[Heading], live: list[int]
 ) -> range | None:
     """The 1-based line range of the open-items index, or None."""
+    title = title_of(headings)
+    sections = [h for h in headings if h is not title]
     for i, heading in enumerate(headings):
         if INDEX_TITLE.match(SECTION_NUMBER.sub("", heading.title)):
-            end = len(lines) + 1
-            for later in headings[i + 1 :]:
-                if later.level <= heading.level:
-                    end = later.line
-                    break
+            later = headings[i + 1 :]
+            level = heading.level
+            if level == 1 and later and all(h.level > 1 for h in later):
+                # An `# Open items` beside `## 1.` sections would otherwise
+                # swallow the whole document: end it at the section level.
+                level = min(h.level for h in later)
+            end = next((h.line for h in later if h.level <= level), len(lines) + 1)
             return range(heading.line + 1, end)
 
-    # No heading: the first marked list before the first section heading. The
-    # first level-1 heading is the document's title, not a section.
-    title = next((h for h in headings if h.level == 1), None)
-    sections = [h for h in headings if h is not title]
+    # No heading: the first marked list before the first section heading.
     limit = sections[0].line if sections else len(lines) + 1
     start = None
     blank = False
@@ -172,33 +186,81 @@ def sections_of(line: int, headings: list[Heading]) -> list[Heading]:
     return chain[::-1]
 
 
-def references(entry: str, section: Heading) -> bool:
+def keys(section: Heading) -> set[str]:
+    """The explicit references that name a section: its number, its slugs."""
+    title = SECTION_NUMBER.sub("", section.title)
+    found = {f"#{slug(title)}", f"#{slug(section.title)}"}
+    number = SECTION_NUMBER.match(section.title)
+    if number:
+        found.add(number.group(1))
+    return found
+
+
+def explicit(entry: str) -> set[str]:
+    return set(SECTION_REF.findall(entry)) | {
+        f"#{a}" for a in ANCHOR_REF.findall(entry)
+    }
+
+
+def references(entry: str, section: Heading, known: set[str]) -> bool:
     """Whether an index entry's text points at this section.
 
-    An entry carrying an explicit ``§N`` or ``(#anchor)`` reference matches by
-    that alone: matching its words against every heading title would let one
-    inline marker satisfy an entry meant for another section.
+    An entry whose explicit ``§N`` or ``(#anchor)`` reference names a real
+    section (one in ``known``) matches by that alone: matching its words
+    against every heading title would let it claim a marker meant for another
+    section. A reference naming no section (``§1`` against unnumbered
+    headings) falls back to the title words.
     """
-    numbers = SECTION_REF.findall(entry)
-    anchors = ANCHOR_REF.findall(entry)
-    title = SECTION_NUMBER.sub("", section.title)
-    if numbers or anchors:
-        number = SECTION_NUMBER.match(section.title)
-        return bool(number and number.group(1) in numbers) or bool(
-            {slug(title), slug(section.title)} & set(anchors)
-        )
-    wanted = strip_marker(title)
+    cited = explicit(entry) & known
+    if cited:
+        return bool(cited & keys(section))
+    wanted = strip_marker(SECTION_NUMBER.sub("", section.title))
     return bool(wanted) and f" {wanted} " in f" {strip_marker(entry)} "
 
 
-def matches(entry: Occurrence, inline: Occurrence) -> bool:
+DIRECT, ANCESTOR = 2, 1
+
+
+def matches(entry: Occurrence, inline: Occurrence, known: set[str]) -> int:
+    """``DIRECT`` when the entry names the marker's own section or shares its
+    text, ``ANCESTOR`` when it names only an enclosing section, else 0."""
     if entry.kind != inline.kind:
-        return False
-    if any(references(entry.text, section) for section in inline.sections):
-        return True
+        return 0
     ours, theirs = strip_marker(entry.text), strip_marker(inline.text)
     short = min(len(ours), len(theirs))
-    return short >= MIN_TEXT_MATCH and (ours in theirs or theirs in ours)
+    if short >= MIN_TEXT_MATCH and (ours in theirs or theirs in ours):
+        return DIRECT
+    for depth, section in enumerate(inline.sections):
+        if references(entry.text, section, known):
+            return ANCESTOR if depth else DIRECT
+    return 0
+
+
+def pair(direct: list[list[int]], full: list[list[int]]) -> dict[int, int]:
+    """A maximum one-to-one pairing of entries to inline markers, as
+    ``{entry: marker}`` — so two entries citing one section cannot both be
+    satisfied by the single marker one of them owns. Direct matches pair
+    first, so when a marker is short it is the entry citing only an enclosing
+    section that goes unpaired. Augmenting paths; specs hold a handful of
+    items, so the quadratic cost is nothing."""
+    owner: dict[int, int] = {}
+
+    def claim(i: int, edges: list[list[int]], seen: set[int]) -> bool:
+        for j in edges[i]:
+            if j in seen:
+                continue
+            seen.add(j)
+            if j not in owner or claim(owner[j], edges, seen):
+                owner[j] = i
+                return True
+        return False
+
+    for edges in (direct, full):
+        paired = set(owner.values())
+        for i in range(len(edges)):
+            if i not in paired:
+                claim(i, edges, set())
+    return {i: j for j, i in owner.items()}
 
 
 def check(text: str) -> tuple[int, list[str]]:
@@ -209,8 +271,9 @@ def check(text: str) -> tuple[int, list[str]]:
     in_index = set(index or ())
     # The title is every section's ancestor; matching an entry against it
     # would pair the entry with every marker in the file.
-    title = next((h for h in headings if h.level == 1), None)
+    title = title_of(headings)
     sectioned = [h for h in headings if h is not title]
+    known = set().union(*(keys(h) for h in sectioned))
 
     entries: list[Occurrence] = []
     inline: list[Occurrence] = []
@@ -250,14 +313,18 @@ def check(text: str) -> tuple[int, list[str]]:
             f"line {says_none}: the index says None while "
             f"{len(inline)} inline marker(s) remain"
         )
-    for entry in entries:
-        if not any(matches(entry, other) for other in inline):
+    ranks = [[matches(entry, other, known) for other in inline] for entry in entries]
+    direct = [[j for j, r in enumerate(row) if r == DIRECT] for row in ranks]
+    candidates = [[j for j, r in enumerate(row) if r] for row in ranks]
+    claimed = pair(direct, candidates)
+    for i, entry in enumerate(entries):
+        if i not in claimed:
             failures.append(
                 f"line {entry.line}: index entry {entry.kind} has no inline "
-                f"occurrence: {entry.text.strip()}"
+                f"occurrence of its own: {entry.text.strip()}"
             )
-    for other in inline:
-        if not any(matches(entry, other) for entry in entries):
+    for j, other in enumerate(inline):
+        if not any(j in c for c in candidates):
             failures.append(
                 f"line {other.line}: inline {other.kind} has no index entry: "
                 f"{other.text.strip()}"

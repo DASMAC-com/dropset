@@ -217,6 +217,43 @@ class CheckTests(unittest.TestCase):
         text = "# Spec\n\n````\n```\nNEEDS-CONFIRM example\n```\n````\n"
         self.assertEqual(sm.check(text), (0, []))
 
+    def test_two_entries_cannot_share_one_inline_marker(self):
+        # §2 covers a marker under §2.1, but that marker is §2.1's own entry's;
+        # the §2 entry still needs one of its own.
+        text = (
+            "# Spec\n\n## Open items\n\n- NEEDS-CONFIRM §2 Pricing model\n"
+            "- NEEDS-CONFIRM §2.1 Fee level\n\n## 2. Pricing\n\nFX × basis.\n\n"
+            "### 2.1 Fees\n\nNEEDS-CONFIRM: a 2 bps fee.\n"
+        )
+        _, failures = sm.check(text)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("§2 Pricing model", failures[0])
+
+    def test_reference_to_no_section_falls_back_to_title(self):
+        text = (
+            "# Spec\n\n## Open items\n\n- NEEDS-CONFIRM §1 Pricing\n\n"
+            "## Pricing\n\nNEEDS-CONFIRM: fair = FX × basis.\n"
+        )
+        self.assertEqual(sm.check(text), (1, []))
+
+    def test_level_one_sections_without_a_title(self):
+        text = (
+            "- NEEDS-CONFIRM §1 Pricing\n\n# 1. Pricing\n\nNEEDS-CONFIRM: x.\n\n"
+            "# 2. Rollout\n\nSettled.\n"
+        )
+        self.assertEqual(sm.check(text), (1, []))
+
+    def test_level_one_open_items_ends_at_the_section_level(self):
+        text = (
+            "# Open items\n\n- NEEDS-CONFIRM §1 Pricing\n\n## 1. Pricing\n\n"
+            "NEEDS-CONFIRM: x.\n"
+        )
+        self.assertEqual(sm.check(text), (1, []))
+
+    def test_info_string_line_does_not_close_a_fence(self):
+        text = "# Spec\n\n```\n```rust\nNEEDS-CONFIRM example\n```\n"
+        self.assertEqual(sm.check(text), (0, []))
+
     def test_title_below_front_matter_is_not_a_section(self):
         text = (
             "Status: draft\n\n# Spec\n\n- NEEDS-CONFIRM §1 Pricing\n\n"
