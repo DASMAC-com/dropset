@@ -208,11 +208,10 @@ Five reminders neither states:
   excepted, via `linear_issue.py tick`.
 
 - **A false compile error on code you just wrote is the cargo pool
-  first.** With `CARGO_TARGET_DIR` set but `RUSTC_WORKSPACE_WRAPPER`
-  unset (a session launched before the per-checkout keys, or a branch
-  that predates the wrapper), run `cargo clean -p <crate>` and re-run
-  before debugging (`docs/conventions/local-integrations.md` → "The
-  cargo pool").
+  first.** When `RUSTC_WORKSPACE_WRAPPER` does not name this
+  worktree's own wrapper, rebuild under the right key, never a clean:
+  `cargo clean -p` wipes that crate for every checkout on the lane
+  (`docs/conventions/local-integrations.md` → "The cargo pool").
 
 - **`replace_all` is safe only when search and replacement are
   disjoint.** A replacement that contains the search string rewrites

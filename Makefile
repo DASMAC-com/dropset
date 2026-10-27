@@ -16,7 +16,10 @@ all: lint test
 # sdk/ts, sdk/conformance) alone. Run at PR merge time (by review-pr) so a
 # worktree that lingers before it is pruned doesn't keep its build tree.
 # `rm -rf target`, not `cargo clean`: under the shared cargo pool, `cargo
-# clean` would wipe the POOL (every worktree's build), not this one's outputs.
+# clean` would wipe the POOL (every worktree's build), not this one's outputs,
+# and `cargo clean -p <crate>` removes that crate for every checkout on the
+# lane. Never clean the pool from a worktree; see docs/conventions/
+# local-integrations.md → "The cargo pool".
 .PHONY: clean
 clean:
 	rm -rf target

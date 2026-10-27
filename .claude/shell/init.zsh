@@ -155,9 +155,20 @@ _ds_cargo_pool() {
   # artifact slot, judged fresh by source mtime against whichever worktree built
   # it last, so an edit older than a sibling's build is silently skipped. A
   # workspace wrapper at this checkout's own path re-keys the workspace crates
-  # (and only them) for check, build and test; clippy replaces that wrapper with
+  # (and only them): cargo mixes its path into their artifact hashes, so each
+  # checkout gets its own slots while dependencies stay shared. Measured on two
+  # checkouts sharing one target dir, a sibling's newer build skipped under no
+  # wrapper or a shared one, and each of check, build, test, doc and build-sbf
+  # compiled the checkout's own source under its own; `make program` is
+  # build-sbf, `make wasm` runs the wrapper under wasm-pack (measured), and
+  # `make idl` is anchor's host `cargo test`. Rustdoc is not wrapped but
+  # re-documents every run, so
+  # it never reuses a sibling's output. Clippy replaces that wrapper with
   # its driver, but tracks CLIPPY_CONF_DIR, so a per-checkout value makes it
-  # rebuild rather than reuse. Like the lane, these follow a `cd` into another
+  # rebuild rather than reuse. A private target dir per checkout would also
+  # isolate, at the 20–30 GB per worktree the pool exists to save, so the lanes
+  # stay shared and the key is what must be right: a launch keys it through
+  # `_ds_claude_pooled`. Like the lane, these follow a `cd` into another
   # checkout. A branch that predates the wrapper gets neither, which is the old
   # behavior, never another checkout's path. CLIPPY_CONF_DIR also moves
   # clippy's config lookup to the checkout root: harmless while no clippy.toml
@@ -735,6 +746,27 @@ _ds_claude() {
   fi
 }
 
+# Internal: `_ds_claude` ($2…) with the cargo pool keyed for worktree $1 (a
+# directory name under .claude/worktrees, or "" for none). EVERY LAUNCH INTO A
+# WORKTREE GOES THROUGH HERE: the launcher runs in the base checkout and `-w`
+# enters the worktree inside the CLI, where no `chpwd` fires, so a launch that
+# skipped it handed its session the BASE checkout's lane and per-checkout keys
+# — one artifact slot shared by every such session, the leak in which one
+# sibling's in-flight rename failed builds in four others. A worded tag's
+# worktree does not exist yet (the CLI creates it), so its session keeps the
+# base keys. The `always` hands the tab back its own values however the launch
+# ends.
+_ds_claude_pooled() {
+  local wt_dir="$_DS_REPO/.claude/worktrees/$1"
+  shift
+  [[ "$wt_dir" != */ && -d "$wt_dir" ]] && _ds_cargo_pool "$wt_dir"
+  {
+    _ds_claude "$@"
+  } always {
+    _ds_cargo_pool
+  }
+}
+
 # Internal: write the class record the machine-load probe counts sessions by —
 # `<key>.class` beside the substrate marker, holding `<class> <pid>`. $1 the
 # marker key, $2 the class, or "" to keep the recorded one (the dispatcher
@@ -827,24 +859,16 @@ _ds_session() {
     # The caller's class (`_ds_class_key` / `_ds_class`, in scope here), the
     # same one its class record stamps.
     _ds_load_record "$sid" "$(_ds_class_resolve "$_ds_class_key" "$_ds_class")"
-    _ds_claude "$model" --resume "$sid" --permission-mode auto
+    # Keyed even without the `cd`: a transcript filed under the base slug
+    # resumes from here, and its session still builds in the worktree.
+    _ds_claude_pooled "$worktree" "$model" --resume "$sid" \
+      --permission-mode auto
   else
     [[ -n "$worktree" ]] && _ds_worktree_ensure "$worktree"
     _ds_session_mark "$sid"
     _ds_load_record "$sid" "$(_ds_class_resolve "$_ds_class_key" "$_ds_class")"
-    # `-w` enters the worktree inside the CLI, where no `chpwd` fires, so the
-    # cargo pool is evaluated for it here; otherwise the session inherits the
-    # base checkout's lane and per-checkout keys. A worded tag's worktree does
-    # not exist yet (the CLI creates it), so its session keeps the base keys. The
-    # `always` hands the tab back its own values however the launch ends.
-    wt_dir="$_DS_REPO/.claude/worktrees/$worktree"
-    [[ -n "$worktree" && -d "$wt_dir" ]] && _ds_cargo_pool "$wt_dir"
-    {
-      _ds_claude "$model" --session-id "$sid" -n "$name" \
-        --permission-mode auto "${worktree_flag[@]}" "${prompt_arg[@]}"
-    } always {
-      _ds_cargo_pool
-    }
+    _ds_claude_pooled "$worktree" "$model" --session-id "$sid" -n "$name" \
+      --permission-mode auto "${worktree_flag[@]}" "${prompt_arg[@]}"
   fi
   local rc=$?
   _ds_exit_estimate "$sid"
@@ -1692,7 +1716,7 @@ _ds_task_start() {
   local dir="$(_ds_launch_dir "$tag")"
   local _ds_class_key="$tag" _ds_class=building
   _ds_worktree_ensure "$dir"
-  _ds_claude "$model" -w "$dir" -n "$tag" --session-id "$sid" \
+  _ds_claude_pooled "$dir" "$model" -w "$dir" -n "$tag" --session-id "$sid" \
     --permission-mode auto \
     /init-pr
   local rc=$?
@@ -1796,23 +1820,27 @@ _ds_task_resume() {
   # The tag picker resolves no id, so it leaves no record.
   _ds_load_record "$sid" "$(_ds_class_resolve "$_ds_class_key" "$_ds_class")"
 
+  # Keyed for the worktree whichever form runs: the `resume` form launches
+  # from the base repo, where the `cd` above keyed the base's slots.
+  local wt
+  wt="$(_ds_worktree_of "$tag")"
   case "$mode" in
     continue)
       # The worktree has its own transcript, so per-directory addressing works
       # and this is the original fast path.
-      _ds_claude "$model" --continue --permission-mode auto
+      _ds_claude_pooled "$wt" "$model" --continue --permission-mode auto
       ;;
     resume)
       # The `-w` case: resume by id from the base repo. This is the form that
       # was missing, and the only one that reaches such a session.
-      _ds_claude "$model" --resume "$sid" --permission-mode auto
+      _ds_claude_pooled "$wt" "$model" --resume "$sid" --permission-mode auto
       ;;
     *)
       # Nothing resolved — the worktree was pruned, or the session never
       # started. `--resume <tag>` filters the picker rather than resuming, which
       # is a pick rather than a resume, but it is the last form that can reach
       # anything.
-      _ds_claude "$model" --resume "$tag" --permission-mode auto
+      _ds_claude_pooled "$wt" "$model" --resume "$tag" --permission-mode auto
       ;;
   esac
   # Only the `resume` form knows its id before the launch. `continue` resolves

@@ -1489,9 +1489,11 @@ it. **A hand-typed `anchor build` gets none of this.** Go through
 **Cleaning.** `make clean` removes the worktree's own `target/` (plus its
 `node_modules` and `.next`), never the pool. Under the pool that `target/`
 holds the Anchor outputs, the copied bots and, until the editor joins,
-rust-analyzer's checks. Never run a bare `cargo clean` in a checkout: it
-wipes the current lane, the build of every worktree on it, while
-`cargo clean -p <crate>` touches only that crate. The worktree pruner no
+rust-analyzer's checks. **Never clean the pool from a worktree.** A bare
+`cargo clean` wipes the current lane, the build of every worktree on it,
+and `cargo clean -p <crate>` is no narrower than it looks: it removes that
+crate's slots for **every** checkout on the lane, under their running
+builds (the "test binaries vanished" failure). The worktree pruner no
 longer frees build artifacts, so the pool is the place disk accumulates.
 When it grows too large, delete it while no build is running:
 `rm -rf "$CARGO_TARGET_DIR"` clears the current checkout's lane only, and
@@ -1505,13 +1507,21 @@ the pool fills as sessions relaunch. The first build into an empty lane is
 a full cold build. Each existing worktree's own `target/` is dead weight
 once its session runs pooled; delete it with `make clean` in that worktree.
 
-**A false error on code you just wrote** (a `no method named …` or type
-error from check, clippy or test) in a session without the per-checkout
-keys — launched before them, or on a branch that predates the wrapper — is
-the shared slot. Answer it with `cargo clean -p <crate>` for that one
-crate, then re-run (never a bare `cargo clean`, which wipes the lane).
-You are in that case when `CARGO_TARGET_DIR` is set and
-`RUSTC_WORKSPACE_WRAPPER` is not.
+**A false error on code you just wrote** (a `no method named …`, an
+E0432 / E0609 on a field or item another branch renames, or test binaries
+vanishing mid-run) is a session whose keys are not its own. A launch keys
+its session through `_ds_claude_pooled`; before that existed, a fresh
+`task` handed its session the **base** checkout's keys, so every such
+session shared one slot set and a sibling's in-flight rename failed
+builds in all of them. Check with `printenv RUSTC_WORKSPACE_WRAPPER`: it
+must name this worktree's `.claude/shell/rustc-workspace-wrapper`. When it
+names the base checkout, or is unset (a branch that predates the wrapper),
+the remedy is a **rebuild under the right key**, never a clean: prefix the
+session's cargo and make commands with `RUSTC_WORKSPACE_WRAPPER=<w>` and
+`CLIPPY_CONF_DIR=<worktree>`, `<w>` being the worktree's wrapper path
+above, which compiles into this checkout's own slots. Failing that, give the
+session a private `CARGO_TARGET_DIR` (or `env -u CARGO_TARGET_DIR`, the
+worktree's own `target/`): one cold build, no sibling can reach it.
 
 **The editor is not in the pool yet.** VS Code launched from the Dock does
 not inherit shell exports, so its rust-analyzer still checks into each
