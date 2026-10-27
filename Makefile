@@ -524,12 +524,13 @@ endef
 # when the binary is not built. The text mirrors the binary's own refusal
 # (`dropset_tui::agent_shell::REFUSAL`); keep the two in step.
 #
-# Keys are 1Password references, never files, read by the TUI itself from its
-# git-ignored keys file — one reference per key (wallet, leader, quote); copy
-# tui/private-keys.env.example to start one. The target is deliberately not
-# run under `op run`, so no resolved key reaches the environment.
-# TUI_MAINNET_ARGS carries `--program-key` for a first publish, or a one-off
-# override of a keys-file line; see `cargo run -p dropset-tui -- --help`.
+# Keys are Solana addresses, read by the TUI itself from its git-ignored keys
+# file — one address per role (wallet, leader, quote, program key); copy
+# tui/private-keys.env.example to start one. The SSH agent serving each
+# address signs for it, prompting once per signature, and the TUI refuses to
+# start when an address is not served. TUI_MAINNET_ARGS carries `--agent-sock`
+# to name the agent's socket, or a one-off override of a keys-file line; see
+# `cargo run -p dropset-tui -- --help`.
 #
 # `make demo` and `make tui` are otherwise untouched; the fair-price reader
 # default is shared (see `tui`).

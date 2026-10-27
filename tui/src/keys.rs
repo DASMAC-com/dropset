@@ -10,6 +10,7 @@
 //! session starts.
 
 // cspell:word QOUTE
+// cspell:word Vjcm
 
 use crate::agent_signer::AgentSigner;
 use anyhow::{bail, Context, Result};

@@ -6,6 +6,9 @@
 //! every re-run checked to refuse. Mainnet differs only in the cluster switch
 //! and the key source, both covered by unit tests elsewhere.
 //!
+//! Every role signs through a [`Counting`] signer, and each step asserts how
+//! many signatures it took from each — on mainnet, one operator prompt apiece.
+//!
 //! Ignored by default: it needs `solana-test-validator` on `PATH`, the default
 //! artifact built (`make program`), and port 8899 free. `make tui-ceremony-e2e`
 //! builds and runs it.
@@ -23,8 +26,12 @@ use crate::wallet;
 use solana_keypair::Keypair;
 use solana_loader_v3_interface::{instruction as loader, state::UpgradeableLoaderState};
 use solana_native_token::LAMPORTS_PER_SOL;
+use solana_pubkey::Pubkey;
+use solana_signature::Signature;
 use solana_signer::Signer;
+use solana_signer::SignerError;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -35,6 +42,46 @@ fn repo_root() -> PathBuf {
         .parent()
         .unwrap()
         .to_path_buf()
+}
+
+/// A signer that counts its signatures: what an agent-held key would prompt.
+struct Counting {
+    inner: RoleKey,
+    signed: AtomicUsize,
+}
+
+impl Counting {
+    fn new(inner: RoleKey) -> Arc<Self> {
+        Arc::new(Self {
+            inner,
+            signed: AtomicUsize::new(0),
+        })
+    }
+
+    /// The signatures since the last call.
+    fn take(&self) -> usize {
+        self.signed.swap(0, Ordering::SeqCst)
+    }
+}
+
+impl Signer for Counting {
+    fn try_pubkey(&self) -> Result<Pubkey, SignerError> {
+        self.inner.try_pubkey()
+    }
+
+    fn try_sign_message(&self, message: &[u8]) -> Result<Signature, SignerError> {
+        self.signed.fetch_add(1, Ordering::SeqCst);
+        self.inner.try_sign_message(message)
+    }
+
+    fn is_interactive(&self) -> bool {
+        false
+    }
+}
+
+/// The signatures each of `keys` took since the last read, in order.
+fn taken(keys: &[&Counting]) -> Vec<usize> {
+    keys.iter().map(|k| k.take()).collect()
 }
 
 fn wait_for(client: &solana_client::rpc_client::RpcClient) {
@@ -55,8 +102,11 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
     wait_for(&client);
 
     let (admin, _) = wallet::load(None, &root).unwrap();
-    let program: RoleKey =
-        Arc::new(wallet::load_leader(&root.join("keys/AAAA.json").to_string_lossy()).unwrap());
+    let admin = Counting::new(Arc::new(admin));
+    let program = Counting::new(Arc::new(
+        wallet::load_leader(&root.join("keys/AAAA.json").to_string_lossy()).unwrap(),
+    ));
+    let program_key: RoleKey = program.clone();
     chain::airdrop(&client, &admin.pubkey(), 100 * LAMPORTS_PER_SOL).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let record_path = dir.path().join("ceremony.log");
@@ -69,10 +119,16 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
     // The localnet deployment is the committed key's: what every PDA below
     // is derived from.
     assert_eq!(program.pubkey(), L.program_id());
-    let published = publish::publish(&url, &artifact, L, &admin, Some(&program), &log).unwrap();
+    let published =
+        publish::publish(&url, &artifact, L, &*admin, Some(&program_key), &log).unwrap();
     assert!(published.contains(&artifact.sha256), "{published}");
-    let again = publish::publish(&url, &artifact, L, &admin, Some(&program), &log).unwrap_err();
+    // The admin funds the writer and signs the deploy; the program key signs
+    // the deploy alone. Every chunk write is the writer's.
+    assert_eq!(taken(&[&admin, &program]), [2, 1], "first publish");
+    let again =
+        publish::publish(&url, &artifact, L, &*admin, Some(&program_key), &log).unwrap_err();
     assert!(format!("{again:#}").contains("refused"), "{again:#}");
+    assert_eq!(taken(&[&admin, &program]), [0, 0], "refused publish");
 
     // A changed binary against the live program plans as an upgrade, signed
     // by the admin alone — no program key.
@@ -95,39 +151,55 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
         .unwrap();
     let ixs = loader::create_buffer(&admin.pubkey(), &buffer.pubkey(), &admin.pubkey(), rent, 16)
         .unwrap();
-    chain::send(&client, &admin, &[&admin, &buffer], &ixs).unwrap();
+    chain::send(&client, &*admin, &[&*admin, &buffer], &ixs).unwrap();
+    admin.take();
     assert_eq!(
         publish::stranded_buffers(&client, &admin.pubkey())
             .unwrap()
             .len(),
         1
     );
-    publish::close_buffers(&client, &admin, &log).unwrap();
+    publish::close_buffers(&client, &*admin, &log).unwrap();
+    assert_eq!(taken(&[&admin]), [1], "close one stranded buffer");
     assert!(publish::stranded_buffers(&client, &admin.pubkey())
         .unwrap()
         .is_empty());
 
     // The account steps for one roster pair, each refusing a second run.
-    action::do_init(&client, &admin, L, &log).unwrap();
+    action::do_init(&client, &*admin, L, &log).unwrap();
+    // Localnet mints a mock fee mint first; mainnet's is the roster's.
+    assert_eq!(taken(&[&admin]), [2], "init");
     assert!(matches!(
-        action::do_init(&client, &admin, L, &log).unwrap(),
+        action::do_init(&client, &*admin, L, &log).unwrap(),
         Outcome::AlreadyThere(_)
     ));
+    assert_eq!(taken(&[&admin]), [0], "refused init");
     let config = market::roster(L)[0];
-    let leader = market::leader(&root, config, None).unwrap();
+    let leader = Counting::new(market::leader(&root, config, None).unwrap());
     // A quote authority of its own, as on mainnet: the seed ladder must be
     // signed by it, not the leader, or the deposit step fails on chain.
-    let quote_authority = Keypair::new();
+    let quote_authority = Counting::new(Arc::new(Keypair::new()));
+    chain::airdrop(&client, &quote_authority.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    let keys = [&*admin, &*leader, &*quote_authority];
+    // Signatures per step from the admin, the leader and the quote authority.
+    // The admin's localnet extras are the mock minting mainnet never does:
+    // the pair's two mints before create-market, and the leader's ATAs and
+    // mint-tos before the seed deposit, which is one transaction for all three.
+    let expected: [(&str, [usize; 3]); 3] = [
+        ("create_market", [1 + 2, 0, 0]),
+        ("create_vault", [1, 0, 0]),
+        ("deposit", [1 + 5, 1, 1]),
+    ];
     let steps: [&dyn Fn() -> anyhow::Result<Outcome>; 3] = [
-        &|| action::do_create_market(&client, &admin, &root, L, config, &log),
+        &|| action::do_create_market(&client, &*admin, &root, L, config, &log),
         &|| {
             action::do_create_vault(
                 &client,
-                &admin,
+                &*admin,
                 &root,
                 L,
                 config,
-                &leader,
+                &*leader,
                 &quote_authority.pubkey(),
                 chain::BOOTSTRAP_VAULT_NAME,
                 &log,
@@ -136,22 +208,30 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
         &|| {
             action::do_deposit(
                 &client,
-                &admin,
+                &*admin,
                 &root,
                 L,
                 config,
-                &leader,
-                &quote_authority,
+                &*leader,
+                &*quote_authority,
                 market::Funding::MintBoth,
                 market::Posture::Active,
                 &log,
             )
         },
     ];
-    for step in steps {
-        assert!(matches!(step().unwrap(), Outcome::Done(_)));
-        assert!(matches!(step().unwrap(), Outcome::AlreadyThere(_)));
+    let mut signed = Vec::new();
+    for (step, (label, _)) in steps.into_iter().zip(expected) {
+        assert!(matches!(step().unwrap(), Outcome::Done(_)), "{label}");
+        signed.push((label, taken(&keys)));
+        assert!(
+            matches!(step().unwrap(), Outcome::AlreadyThere(_)),
+            "{label}"
+        );
+        assert_eq!(taken(&keys), [0, 0, 0], "refused {label}");
     }
+    let expected: Vec<_> = expected.iter().map(|(l, n)| (*l, n.to_vec())).collect();
+    assert_eq!(signed, expected);
 
     // Everything landed at the localnet deployment's addresses, owned by its
     // program: the registry, and the market with its seeded vault.
@@ -169,6 +249,27 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
     assert!(seats
         .iter()
         .any(|s| s.leader == leader.pubkey() && s.seeded));
+
+    // The daily re-centre: paid for and signed by the quote authority alone.
+    let seat = crate::passive::passive_seat(&client, L, &market_address, &quote_authority.pubkey())
+        .unwrap();
+    let price = crate::accounts::read_reference_price(&client, &market_address, seat.idx).unwrap();
+    let ticket = crate::passive::Ticket {
+        op: crate::passive::PassiveOp::Recenter,
+        market: market_address,
+        base_mint: base,
+        base_symbol: config.base.symbol,
+        quote_symbol: config.quote.symbol,
+        seat,
+        quote_authority: quote_authority.pubkey(),
+        levels: Vec::new(),
+        center: 1.0,
+        center_source: "e2e",
+        price,
+        warnings: Vec::new(),
+    };
+    crate::passive::execute(&client, &*quote_authority, L, &ticket, &log).unwrap();
+    assert_eq!(taken(&keys), [0, 0, 1], "re-centre");
 
     // The record carries the publish, the recovery and every signature.
     let body = std::fs::read_to_string(&record_path).unwrap();

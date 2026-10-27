@@ -657,7 +657,7 @@ pub fn ladder_lines(levels: &[LadderLevel], center: f64) -> Vec<String> {
 /// The one live vault on `market` whose quote authority is `quote_authority`,
 /// read fresh, that a passive write can sign for — refusing none, several, or
 /// a frozen one.
-fn passive_seat(
+pub(crate) fn passive_seat(
     client: &RpcClient,
     cluster: Cluster,
     market: &Pubkey,
@@ -1102,14 +1102,14 @@ fn ladder_state(
     lines
 }
 
-/// Send the confirmed `ticket`, signed by the vault's `quote_authority` and
-/// paid by `wallet`: the ladder and the reference in one transaction on a
-/// deploy, so the book never rests on the new shape at the old center; the
-/// reference alone on a re-center. Refuses, nothing sent, when the vault is no
-/// longer the one confirmed.
+/// Send the confirmed `ticket`, paid for and signed by the vault's
+/// `quote_authority` alone — one signature, so one prompt for an agent-held
+/// key: the ladder and the reference in one transaction on a deploy, so the
+/// book never rests on the new shape at the old center; the reference alone on
+/// a re-center. Refuses, nothing sent, when the vault is no longer the one
+/// confirmed.
 pub fn execute(
     client: &RpcClient,
-    wallet: &dyn Signer,
     quote_authority: &dyn Signer,
     cluster: Cluster,
     ticket: &Ticket,
@@ -1151,8 +1151,15 @@ pub fn execute(
         dropset_sdk::time::now_unix(),
     ));
     let label = ticket.op.label();
-    chain::send_logged(client, wallet, &[wallet, quote_authority], &ixs, label, log)
-        .context(label)?;
+    chain::send_logged(
+        client,
+        quote_authority,
+        &[quote_authority],
+        &ixs,
+        label,
+        log,
+    )
+    .context(label)?;
     log.accounts_changed();
     Ok(match ticket.op {
         PassiveOp::Deploy => format!(
@@ -1174,8 +1181,8 @@ pub fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solana_keypair::Keypair;
     use bytemuck::Zeroable;
+    use solana_keypair::Keypair;
 
     #[test]
     fn the_deploy_form_starts_on_the_shared_tight_ladder() {
@@ -1389,12 +1396,11 @@ mod tests {
             .summary()
             .iter()
             .any(|l| l.contains(&quote.pubkey().to_string()) && l.contains("quote authority")));
-        // A wrong signing key is refused before any read or send — even with
-        // the confirmed key as payer, so the check is on the signer argument.
+        // A wrong signing key is refused before any read or send.
         let stranger = Keypair::new();
         let client = RpcClient::new("http://127.0.0.1:1".to_string());
         let log = Logger::new(std::sync::mpsc::channel().0);
-        let err = execute(&client, &quote, &stranger, Cluster::Localnet, &ticket, &log)
+        let err = execute(&client, &stranger, Cluster::Localnet, &ticket, &log)
             .unwrap_err()
             .to_string();
         assert!(

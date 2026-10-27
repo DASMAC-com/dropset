@@ -412,7 +412,11 @@ const TAKER_KEYPAIR_FILE: &str = "keys/FFFF.json";
 /// An [`LeaderKey::Operator`] pair names no file, so this needs the key the
 /// operator named at launch as `operator`; without one, it errors rather than
 /// falling back to a committed role key that leads nothing real.
-pub fn leader(repo_root: &Path, config: &PairConfig, operator: Option<&RoleKey>) -> Result<RoleKey> {
+pub fn leader(
+    repo_root: &Path,
+    config: &PairConfig,
+    operator: Option<&RoleKey>,
+) -> Result<RoleKey> {
     match config.leader {
         LeaderKey::Keypair(file) => Ok(Arc::new(load_key(repo_root, file)?)),
         LeaderKey::Operator => operator.cloned().with_context(|| {

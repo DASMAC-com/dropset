@@ -1313,13 +1313,14 @@ pub fn dispatch_name(ctx: &JobContext, ticket: crate::naming::Ticket, tx: Sender
     });
 }
 
-/// Spawn the job that sends a confirmed passive-ladder `ticket`, signed by the
-/// pair's quote authority ([`market::quote_authority`]) — never the leader,
-/// which this path does not resolve.
+/// Spawn the job that sends a confirmed passive-ladder `ticket`, paid for and
+/// signed by the pair's quote authority ([`market::quote_authority`]) — never
+/// the leader or the admin. The quote key's balance is checked like any
+/// payer's, and a mainnet balance nearing the floor is called out after the
+/// send.
 pub fn dispatch_passive(ctx: &JobContext, ticket: crate::passive::Ticket, tx: Sender<JobEvent>) {
     let rpc_url = ctx.rpc_url.clone();
     let repo_root = ctx.repo_root.clone();
-    let wallet = ctx.wallet();
     let cluster = ctx.cluster;
     let operator_quote = ctx.quote.clone();
     let record = ctx.ceremony_log.clone();
@@ -1329,7 +1330,12 @@ pub fn dispatch_passive(ctx: &JobContext, ticket: crate::passive::Ticket, tx: Se
         let config = market::config_for(&repo_root, cluster, &base_mint)
             .context("the selected market is not in this cluster's roster")?;
         let quote = market::quote_authority(&repo_root, config, operator_quote.as_ref())?;
-        crate::passive::execute(&client, &wallet, &quote, cluster, &ticket, log)
+        ensure_funded(&client, &quote.pubkey(), cluster, log)?;
+        let done = crate::passive::execute(&client, &quote, cluster, &ticket, log)?;
+        if cluster.is_mainnet() {
+            warn_low_quote(&client, &quote.pubkey(), log);
+        }
+        Ok(done)
     });
 }
 
@@ -1486,8 +1492,7 @@ pub fn ceremony_plan(
         Action::CreateVault | Action::Deposit => {
             for config in roster {
                 let symbol = config.base.symbol;
-                let leader =
-                    market::leader(&ctx.repo_root, config, ctx.leader.as_ref())?.pubkey();
+                let leader = market::leader(&ctx.repo_root, config, ctx.leader.as_ref())?.pubkey();
                 let (base, quote) = market::pair_mints(&ctx.repo_root, config)?;
                 let address = chain::market_pda(ctx.cluster, &base, &quote);
                 // A missing market or vault is refused here because the step
@@ -1777,6 +1782,26 @@ fn open_targets(
 /// floor that catches an empty or wrong wallet before the first send, not a
 /// cost estimate: a step that needs more still fails cleanly at the send.
 const MAINNET_MIN_PAYER_LAMPORTS: u64 = LAMPORTS_PER_SOL / 10;
+
+/// A mainnet quote-key balance below this is called out after each daily send,
+/// ahead of the [`MAINNET_MIN_PAYER_LAMPORTS`] floor that refuses one.
+const QUOTE_LOW_LAMPORTS: u64 = 5 * MAINNET_MIN_PAYER_LAMPORTS;
+
+/// Log a top-up reminder when the quote key, which pays for the ladder and
+/// re-centre, holds less than [`QUOTE_LOW_LAMPORTS`]. Best-effort: an unread
+/// balance says nothing, since the next send's floor check refuses anyway.
+fn warn_low_quote(client: &solana_client::rpc_client::RpcClient, quote: &Pubkey, log: &Logger) {
+    if let Ok(balance) = client.get_balance(quote) {
+        if balance < QUOTE_LOW_LAMPORTS {
+            log.log(format!(
+                "quote key {quote} holds {} SOL — top it up: it pays for every ladder and \
+                 re-centre, and sends refuse below {} SOL",
+                balance as f64 / LAMPORTS_PER_SOL as f64,
+                MAINNET_MIN_PAYER_LAMPORTS as f64 / LAMPORTS_PER_SOL as f64
+            ));
+        }
+    }
+}
 
 /// Make sure `wallet` can pay for what follows — admin paths waive the
 /// program's fees, but rent and transaction fees still cost lamports.

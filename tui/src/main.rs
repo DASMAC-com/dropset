@@ -85,7 +85,9 @@ fn main() -> Result<()> {
     // keypair through `make program`.
     if !args.cluster.is_mainnet() {
         if leader_arg.is_some() {
-            bail!("--leader is mainnet-only — the localnet roster leads with its committed role key");
+            bail!(
+                "--leader is mainnet-only — the localnet roster leads with its committed role key"
+            );
         }
         if program_arg.is_some() {
             bail!("--program-key is mainnet-only — localnet deploys the committed program keypair");
@@ -298,7 +300,7 @@ fn quote_reference(
             "--quote is mainnet-only — the localnet roster's committed leader is its quote authority"
         ),
         None if cluster.is_mainnet() && !watch_only => bail!(
-            "mainnet needs the quote key: {} in the keys file or --quote op://… — it signs \
+            "mainnet needs the quote key: {} in the keys file or --quote <address> — it signs \
              the ladder and re-centre, and create-vault sets it as each vault's quote authority",
             keys::QUOTE_VAR
         ),
@@ -477,13 +479,22 @@ mod tests {
     #[test]
     fn two_roles_sharing_a_key_are_refused_by_name() {
         let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
-        let err = refuse_shared_roles(&[("--wallet", Some(a)), ("--leader", None), ("--quote", Some(a))])
-            .unwrap_err()
-            .to_string();
+        let err = refuse_shared_roles(&[
+            ("--wallet", Some(a)),
+            ("--leader", None),
+            ("--quote", Some(a)),
+        ])
+        .unwrap_err()
+        .to_string();
         assert_eq!(err, "--wallet must differ from --quote");
         // Absent roles never collide with each other.
-        refuse_shared_roles(&[("--wallet", Some(a)), ("--leader", None), ("--quote", Some(b)), ("--program-key", None)])
-            .unwrap();
+        refuse_shared_roles(&[
+            ("--wallet", Some(a)),
+            ("--leader", None),
+            ("--quote", Some(b)),
+            ("--program-key", None),
+        ])
+        .unwrap();
     }
 
     #[test]

@@ -371,7 +371,9 @@ pub fn confirm_mainnet_entry(
         None => eprintln!("   program:  (none — a first publish will refuse; upgrades need none)"),
     }
     match agent {
-        Some(agent) => eprintln!("   agent:    {agent}  (signs every transaction, one prompt each)"),
+        Some(agent) => {
+            eprintln!("   agent:    {agent}  (signs every transaction, one prompt each)")
+        }
         None => eprintln!("   agent:    (none — watch-only)"),
     }
     eprintln!("   record:   {ceremony_log}");

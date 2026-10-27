@@ -22,8 +22,6 @@
 //! overrides all of them. A socket listing a key is not proof it holds it:
 //! one that lies wins discovery and then fails every signature, which
 //! verification turns into an error, never a bad signature.
-//!
-//! Not yet wired into the cockpit.
 
 use std::ffi::OsString;
 use std::fmt;
