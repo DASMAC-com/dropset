@@ -410,6 +410,39 @@ CI_PAYLOAD = {
 }
 
 
+class WaitSectionTests(DigestFixture):
+    def test_the_wait_section_sits_between_ci_and_sessions(self):
+        state = self.base / sd.sm.SUBSTRATE_DIR
+        (state / "sessions").mkdir(parents=True, exist_ok=True)
+        (state / sd.machine_load.SAMPLE_LOG).write_text(
+            "2026-10-24T03:10:00Z builders=4 builds=1 waiting=test:2"
+            " longest_s=300 in_use_gib=33.0\n"
+        )
+        (state / "sessions" / "11111111.load").write_text(
+            json.dumps(
+                {
+                    "at": "2026-10-24T03:09:00Z",
+                    "class": "building",
+                    "longest_wait_s": 240,
+                    "building": 4,
+                    "free": 2,
+                    "in_use": 30 * 1024**3,
+                    "verdict": {"slots": 0, "reasons": ["memory"]},
+                }
+            )
+            + "\n"
+        )
+        self.run_digest()
+        text = self.digest_text()
+        self.assertLess(text.index("## CI"), text.index("## Wait"))
+        self.assertLess(text.index("## Wait"), text.index("## Sessions"))
+        wait = text.split("## Wait")[1].split("## Sessions")[0]
+        self.assertIn("Queue profile by hour (depth / longest wait): 03h 2/300s", wait)
+        self.assertIn("memory refusals 1; peak in_use 33.0 GiB", wait)
+        self.assertIn("**For the analyst**", wait)
+        self.assertEqual(self.twin()["wait"]["launches"], 1)
+
+
 class CiSectionTests(DigestFixture):
     def test_without_ci_the_section_says_not_requested(self):
         self.run_digest()

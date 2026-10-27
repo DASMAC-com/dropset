@@ -9,7 +9,9 @@ multi-megabyte file never enters the model's context — and prints a compact,
 ranked summary: what the session cost, session-wide token totals, how far its
 replayed prefix grew, how much of that prefix was resident instruction prose (see
 :class:`ResidentLine`), a cache-hit rate, its rebases and day span with the spend
-after each (see :class:`Friction`), the tools whose results cost the most,
+after each (see :class:`Friction`), its wait ledger (``wait_ledger.py``: the
+pool lock, CI, the verify race, the operator, idle and sub-agent wall clock,
+largest first), the tools whose results cost the most,
 the single largest results, a per-sub-agent rollup, and the repeated command
 shapes that are candidates to harden into a tool. Pass ``--json`` for the same
 data as JSON.
@@ -68,6 +70,8 @@ import shlex
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import wait_ledger
 
 # Rough bytes-per-token divisor for approximating a result's token cost from its
 # serialized length. Labelled approximate wherever it surfaces.
@@ -957,6 +961,8 @@ class SessionAggregator:
         self.parse_errors = 0
         # Rebases and the day span, whole-session like the totals.
         self.friction = Friction()
+        # The wall clock spent waiting, windowed like the day slices.
+        self.wait = wait_ledger.WaitLedger(since, until)
         self._resident: list[ResidentLine] = []
         # Calibration state for the bytes-per-token proxy. Each new request's
         # prefix minus the previous request's prefix and output is what the
@@ -1074,6 +1080,7 @@ class SessionAggregator:
             if isinstance(cwd, str) and cwd.strip():
                 self.cwd = cwd.strip()
         self.friction.observe(rec)
+        self.wait.observe(rec, utc_stamp(rec.get("timestamp")))
         attachment = rec.get("attachment")
         if isinstance(attachment, dict):
             self._ingest_attachment(rec, attachment)
@@ -1368,6 +1375,7 @@ class SessionAggregator:
             "resident_prose": resident,
             "rebases": rebases,
             "day_span": day_span,
+            "wait": self.wait.finish(),
             "days": dict(sorted(self.days.items())),
             "parse_errors": self.parse_errors,
             "tools_omitted": tools_omitted,
@@ -1886,6 +1894,7 @@ def to_markdown(report: dict, session_label: str) -> str:
     out.append(_rebase_line(report["rebases"]))
     if report["day_span"].first is not None:
         out.append(_day_span_line(report["day_span"]))
+    out.append("\n" + "\n".join(wait_ledger.ledger_lines(report["wait"])))
     if report["parse_errors"] > 0:
         out.append(
             "**Note**: {} transcript line(s) failed to parse and were skipped.\n".format(
@@ -2083,6 +2092,8 @@ def to_json(report: dict) -> str:
                 if obj.share_cost is None
                 else round(obj.share_cost, 4),
             }
+        if isinstance(obj, wait_ledger.DimensionLine):
+            return wait_ledger.to_dict(obj)
         if isinstance(obj, DaySlice):
             return {
                 "main": obj.main,

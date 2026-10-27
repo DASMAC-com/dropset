@@ -813,10 +813,14 @@ _ds_session() {
         "checkout. Re-creating it restores TRACKED files only; an untracked" \
         "spec file written there is not recoverable, so work from Linear."
     fi
+    # Every verb launched through here (plan, architect, explore, chore) is
+    # read-only toward the repo, so its class is `free`.
+    _ds_load_record "$sid" free
     _ds_claude "$model" --resume "$sid" --permission-mode auto
   else
     [[ -n "$worktree" ]] && _ds_worktree_ensure "$worktree"
     _ds_session_mark "$sid"
+    _ds_load_record "$sid" free
     # `-w` enters the worktree inside the CLI, where no `chpwd` fires, so the
     # cargo pool is evaluated for it here; otherwise the session inherits the
     # base checkout's lane and per-checkout keys. A worded tag's worktree does
@@ -1258,6 +1262,24 @@ _ds_session_mark() {
   return 0
 }
 
+# Internal: THE LAUNCH RECORD — run the machine-load probe and append its
+# reading to `sessions/<id>.load` beside the session's substrate record, with
+# the probe's `--sample` line to the fleet log at the same moment. $1 the
+# session id, $2 its class: `building` for a task, `free` for every verb that
+# is read-only toward the repo. Unlike `_ds_session_mark` it runs on EVERY
+# launch, create and resume alike, and appends, so a resumed session's record
+# accumulates one line per reopen — the digest's wait section reads them.
+# Best-effort and silent: a failed probe still appends a `no-reading` line,
+# and nothing here can refuse a launch.
+_ds_load_record() {
+  [[ -n "$1" ]] || return 0
+  mkdir -p "$_DS_SUBSTRATE_DIR/sessions" 2>/dev/null || return 0
+  python3 "$_DS_REPO/.claude/tools/machine_load.py" --json --sample \
+    --class "$2" --record "$_DS_SUBSTRATE_DIR/sessions/$1.load" \
+    >/dev/null 2>&1
+  return 0
+}
+
 # Internal: a fresh random session id, lowercased the way Claude Code writes
 # one, for a launch with no computed id to key its `_ds_session_mark` on.
 _ds_new_sid() {
@@ -1651,6 +1673,7 @@ _ds_task_start() {
   # happened to quit — and never at all if the terminal were closed instead.
   _ds_substrate_write "$tag" "$substrate"
   _ds_session_mark "$sid"
+  _ds_load_record "$sid" building
 
   local dir="$(_ds_launch_dir "$tag")"
   local _ds_class_key="$tag" _ds_class=building
@@ -1755,6 +1778,12 @@ _ds_task_resume() {
   _ds_secrets
   # The class the session launched with, read back rather than re-inspected.
   local _ds_class_key="$key" _ds_class=''
+
+  # The tag picker resolves no id, so it leaves no record. An executor-tier
+  # session builds; an advisor thread resumed here is read-only.
+  local cls=free
+  [[ "$(_ds_resume_tier "$key")" == executor ]] && cls=building
+  _ds_load_record "$sid" "$cls"
 
   case "$mode" in
     continue)
