@@ -23,7 +23,7 @@ end of every session and reading the answer out of the
 transcript; this makes it a checklist with a verdict.
 
 **`review-pr` covers the happy path** — it watches its
-queued PR to merged, then files session metrics unprompted and
+queued PR to merged, then runs the session-metrics tail and
 asks the one close question. So this verb
 exists for the **ragged endings**:
 
@@ -150,13 +150,13 @@ everything below it is recoverable and that one is not.
    Abandoning is a legitimate outcome; leaving it hanging is
    not, because the other session may be waiting on it.
 
-1. **Session metrics captured.** The metrics pass ran and its
-   levers were filed through the zero-echo writer — or it runs
-   **now**, as part of the wrap.
+1. **Session metrics captured.** The tail ran — its brief printed
+   and its `Session account` written — or it runs **now**,
+   immediately before the close question.
 
    Invoke `/session-metrics`; do not duplicate its logic here.
-   If `review-pr` already ran it during the queue wait, say so
-   and move on.
+   If `review-pr` already ran it, say so and move on. The close
+   passes `--session-id` so the tool appends the cost line.
 
 1. **Worktree verdict.** Confirm nothing in this worktree is
    **load-bearing for an open PR** — an unmerged sibling
@@ -198,7 +198,7 @@ then **"Mark Done, keep the worktree"**, then **"Not yet"**.
 Either yes runs one tool as the session's **last** tool call:
 
 ```sh
-python3 .claude/tools/close_session.py --state Done
+python3 .claude/tools/close_session.py --state Done --session-id <uuid>
 ```
 
 with `--keep-worktree` for the second option, and

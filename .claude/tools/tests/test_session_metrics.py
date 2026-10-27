@@ -1573,12 +1573,58 @@ class ExitBrief(unittest.TestCase):
         brief = sm.to_brief(report, "abcd1234")
         self.assertEqual(brief.count("\n"), 1)
         self.assertIn(f"about {sm.money(report['total_cost'].total())}", brief)
-        self.assertIn("at Bedrock rates;", brief)
-        self.assertIn("1 turns", brief)
+        verified = sm.RATES_BY_MODEL[MODEL].verified
+        self.assertIn(f"at Bedrock rates (rates verified {verified});", brief)
+        self.assertIn(
+            f"main loop {sm.money(report['session_cost'].total())} on {MODEL}", brief
+        )
+        self.assertIn("turns 1, peak prefix", brief)
+        self.assertNotIn("sub-agents", brief)
+        self.assertTrue(brief.rstrip().endswith(sm.BRIEF_CODA))
 
     def test_a_seat_brief_is_priced_and_says_not_billed(self):
         brief = sm.to_brief(self._report(sm.SUBSTRATE_SEAT), "abcd1234")
-        self.assertIn("at Bedrock rates, not billed;", brief)
+        self.assertIn("at Bedrock rates, not billed (rates verified", brief)
+
+    def test_sub_agents_break_down_by_model(self):
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(assistant(self._USAGE, "", MODEL))
+        agg.ingest_subagent_line("lens a", assistant(self._USAGE, "", MODEL))
+        agg.ingest_subagent_line("lens b", assistant(self._USAGE, "", MODEL))
+        agg.ingest_subagent_line(
+            "survey", assistant(self._USAGE, "", "claude-haiku-5-5")
+        )
+        report = agg.finish(sm.SUBSTRATE_BEDROCK)
+        one = sm.Cost.price_by_model(report["subagents"][0].by_model).total()
+        haiku = next(s for s in report["subagents"] if s.agent == "survey")
+        brief = sm.to_brief(report, "x")
+        self.assertIn(
+            "sub-agents {}, of which 2 on {} {} and 1 on claude-haiku-5-5 {}".format(
+                sm.money(report["subagent_cost"].total()),
+                MODEL,
+                sm.money(2 * one),
+                sm.money(sm.Cost.price_by_model(haiku.by_model).total()),
+            ),
+            brief,
+        )
+        # Haiku's rate is unverified, so the dates are named per model.
+        self.assertIn("claude-haiku-5-5 projected, unverified", brief)
+
+    def test_the_cost_line_is_dollars_on_bedrock_and_tokens_on_the_seat(self):
+        bedrock = self._report(sm.SUBSTRATE_BEDROCK)
+        line = sm.cost_line(bedrock, "2026-10-27")
+        self.assertEqual(
+            line,
+            "**Cost actual**: {} estimate, 1 turns, peak prefix {}, 2026-10-27\n".format(
+                sm.money(bedrock["total_cost"].total()),
+                sm.human(bedrock["totals"].prefix_max),
+            ),
+        )
+        seat = sm.cost_line(self._report(sm.SUBSTRATE_SEAT), "2026-10-27")
+        self.assertTrue(seat.startswith("**Token profile**: "))
+        self.assertNotIn("$", seat)
+        withheld = sm.cost_line(self._report(sm.SUBSTRATE_BEDROCK, "claude-x"), "d")
+        self.assertIn("withheld, no Bedrock rate for claude-x", withheld)
 
     def test_an_unpriced_model_withholds_the_figure(self):
         report = self._report(sm.SUBSTRATE_BEDROCK, "claude-x")
@@ -1613,7 +1659,7 @@ class ExitBrief(unittest.TestCase):
                     ]
                 )
             self.assertEqual(rc, 0)
-            self.assertTrue(stdout.getvalue().startswith("Session sid: about $"))
+            self.assertTrue(stdout.getvalue().startswith("Session sid: total about $"))
             self.assertNotIn("## Session metrics", stdout.getvalue())
             record = json.loads(out_path.read_text(encoding="utf-8"))
         report = self._report(sm.SUBSTRATE_BEDROCK)

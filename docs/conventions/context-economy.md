@@ -77,8 +77,8 @@ would have paid, where a narrower result only lowers one term of the
 sum. Deterministic over conversational is the default wherever a flow
 holds no judgment — the one-run `init-pr` bootstrap and the queue watch
 that dismisses a merged PR's notifications itself are the worked
-instances. Every `session-metrics` run asks the question explicitly:
-**which of this session's turns could have been eliminated entirely?**
+instances. The fold analyst asks the question of every digested
+session: **which of its turns could have been eliminated entirely?**
 
 **The line band: target 300–800 changed lines per PR.** Measured across
 the fleet on 2026-09-11 — per-session cost at verified Bedrock rates,
@@ -251,12 +251,15 @@ states its seat and token profile instead, because the subscription's
 internal pricing is opaque and a seat dollar figure would be invented.
 A default `plan` runs on Bedrock and is priced like a worker.
 
-**At close** `session-metrics` appends one line through the zero-echo
-issue writer (`.claude/tools/linear_issue.py append`) — for a Bedrock
-session:
+**At close** the close tool (`close_session.py --session-id <uuid>`)
+appends one line, marked estimate, in the same zero-echo pass as the
+state write; a chore appends `session_metrics.py --cost-line` output
+itself, and a planning session, with no issue, carries it under the
+Planning document's `Session-metrics state` heading. An unresolvable
+session id skips the line and says so. For a Bedrock session:
 
 ```text
-**Cost actual**: $72, 140 turns, peak prefix 310k, 2026-10-15
+**Cost actual**: $72 estimate, 140 turns, peak prefix 310k, 2026-10-15
 ```
 
 and for a seat session:
@@ -1725,12 +1728,9 @@ repetition is a fresh prompt or a fresh refusal.
 
 **Track consumption ideas as you go.** When something reads as
 wasteful mid-session — a payload you only needed a slice of, a call
-that repeated, an avoidable fan-out — keep a running note of it. At
-session end `/session-metrics` pairs those observations with the
-tool's ranked token sinks to emit *grounded* trim recommendations
-(the lever, and the concrete skill / convention-doc edit it implies),
-written into the session's `Session account` block and filed nowhere;
-the daily digest lifts the block and `trim-context`, the fold analyst,
-files across every session. The tool says
-*where* the tokens went; your running notes say *why* and *what to
-change*.
+that repeated, an avoidable fan-out — keep a running note of it.
+What you track as you go is what your `Session account` says at the
+tail (`/session-metrics`): three to six lines naming the thing, not
+the fix, filed nowhere. The daily digest lifts the block beside the
+tool's ranked sinks, and `trim-context`, the fold analyst, judges
+and files across every session.

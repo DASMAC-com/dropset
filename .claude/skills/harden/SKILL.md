@@ -25,12 +25,12 @@ step in the meta loop stayed manual. This verb closes the gap.
 
 A candidate, in any of these forms:
 
-- a **command shape** from a `session-metrics` hardening list
+- a **command shape** from a digest's `Hardening` line
   ("14 invocations of `psql -v … -f …`");
 - a **named workflow** the operator describes ("verifying a
   provisioned Grafana instance");
-- nothing — in which case run `/session-metrics` for this
-  session first and take its top candidate.
+- nothing — in which case take the top candidate from the latest
+  digest (`<base>/.claude/session-metrics/digest-<YYYY-MM-DD>.md`).
 
 **Prefer a candidate that eliminates turns.** A multi-turn flow
 with no judgment in it, collapsed into one tool run, beats a

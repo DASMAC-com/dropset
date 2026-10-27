@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """``session-metrics`` (`.claude/tools/session_metrics.py`) — account for where
-a Claude Code session spent its tokens, so the ``session-metrics`` skill can
-recommend concrete trims.
+a Claude Code session spent its tokens. The ``session-metrics`` skill, every
+session's closing tail, prints only ``--brief``; the full report is for mining
+a session by hand, and the daily digest carries it to the fold analyst.
 
 Given a ``--session-id``, the tool resolves the session's on-disk transcript
 itself, reads it (and its sub-agent transcripts) in its **own** process — so the
@@ -14,7 +15,14 @@ pool lock, CI, the verify race, the operator, idle and sub-agent wall clock,
 largest first), the tools whose results cost the most,
 the single largest results, a per-sub-agent rollup, and the repeated command
 shapes that are candidates to harden into a tool. Pass ``--json`` for the same
-data as JSON.
+data as JSON. The sub-agent rollup sums per-turn input, which runs roughly an
+order of magnitude above the Agent tool's ``subagent_tokens`` for the same
+agent, since its context is re-sent every turn; never compare the two.
+
+``--brief`` prints the one-paragraph estimate (:func:`to_brief`): the total, the
+rates' verified date, the main loop and each sub-agent model's share, turns and
+peak prefix. ``--cost-line`` prints the one line a close appends to the issue
+(:func:`cost_line`), which ``close_session.py --session-id`` writes itself.
 
 **Dollars lead, on both substrates.** A Bedrock worker session is metered per
 token, so its headline is a dollar figure computed from its own transcript at
@@ -1746,7 +1754,7 @@ def _resident_headline(resident: ResidentProse, substrate: str) -> str:
     if resident.is_lever():
         line += (
             f"**Lever**: resident prose clears the {RESIDENT_LEVER_SHARE:.0%} "
-            "share bar — file it like any other trim lever.\n"
+            "share bar — the fold analyst weighs it from the digest.\n"
         )
     return line
 
@@ -2365,8 +2373,43 @@ def short_id(session_id: str) -> str:
     return session_id.split("-", 1)[0] or session_id
 
 
+BRIEF_CODA = (
+    "Tomorrow's digest is the accurate figure and captures the turns after this one."
+)
+
+
+def _heaviest_models(by_model: dict[str, Tokens]) -> list[str]:
+    """The billable models in a split, heaviest first."""
+    return SubAgentLine(agent="", by_model=by_model).models()
+
+
+def _rates_note(models: list[str]) -> str:
+    """One verified date when every rate shares it, else each model's standing."""
+    dates = {RATES_BY_MODEL[m].verified for m in models}
+    if len(dates) == 1 and None not in dates:
+        return f"rates verified {dates.pop()}"
+    return "rates " + ", ".join(_rate_standing(m).replace("`", "") for m in models)
+
+
+def _subagent_clause(subagents: list[SubAgentLine], sub: Cost) -> str:
+    """``sub-agents $B, of which 3 on <model> $C and 1 on <model> $D``, each
+    agent counted under its heaviest model and priced on its own split."""
+    groups: dict[str, list[float]] = {}
+    for line in subagents:
+        models = line.models()
+        if models:
+            cost = Cost.price_by_model(line.by_model).total()
+            groups.setdefault(models[0], []).append(cost)
+    parts = [
+        f"{len(costs)} on {model} {money(sum(costs))}"
+        for model, costs in sorted(groups.items(), key=lambda mc: -sum(mc[1]))
+    ]
+    return f"sub-agents {money(sub.total())}, of which " + " and ".join(parts)
+
+
 def to_brief(report: dict, session_label: str) -> str:
-    """The one-paragraph estimate the launcher prints when a session exits.
+    """The one-paragraph estimate a session prints at its close and the
+    launcher prints when it exits.
 
     Every substrate is priced at Bedrock rates. A seat session's figure says it
     was not billed, so it reads as what the work would have cost and not as a
@@ -2374,29 +2417,59 @@ def to_brief(report: dict, session_label: str) -> str:
     """
     totals: Totals = report["totals"]
     total: Cost | None = report["total_cost"]
-    profile = "{} turns, input {} · output {} · cache-read {}".format(
-        totals.turns,
-        human(totals.total_input()),
-        human(totals.output),
-        human(totals.cache_read),
-    )
+    profile = f"turns {totals.turns}, peak prefix {human(totals.prefix_max)}"
     if total is None:
-        figure = "cost withheld, no Bedrock rate for {}".format(
-            ", ".join(report["unpriced_models"])
-        )
-    else:
-        sub: Cost = report["subagent_cost"]
-        figure = f"about {money(total.total())}"
-        if sub.total() > 0.0:
-            figure += " (main {} + sub-agents {})".format(
-                money(report["session_cost"].total()), money(sub.total())
+        clauses = [
+            "cost withheld, no Bedrock rate for {}".format(
+                ", ".join(report["unpriced_models"])
             )
-        figure += (
-            " at Bedrock rates"
+        ]
+    else:
+        label = (
+            "at Bedrock rates"
             if report["substrate"] == SUBSTRATE_BEDROCK
-            else f" {NOT_BILLED}"
+            else NOT_BILLED
         )
-    return f"Session {session_label}: {figure}; {profile}.\n"
+        rates = _rates_note(report["priced_models"]) if report["priced_models"] else ""
+        clauses = [
+            f"total about {money(total.total())} {label}"
+            + (f" ({rates})" if rates else "")
+        ]
+        main_models = _heaviest_models(totals.by_model)
+        main = f"main loop {money(report['session_cost'].total())}"
+        clauses.append(
+            main + (f" on {' and '.join(main_models)}" if main_models else "")
+        )
+        sub: Cost = report["subagent_cost"]
+        if sub.total() > 0.0:
+            clauses.append(_subagent_clause(report["subagents"], sub))
+    clauses.append(profile)
+    return f"Session {session_label}: {'; '.join(clauses)}. {BRIEF_CODA}\n"
+
+
+def cost_line(report: dict, day: str) -> str:
+    """The one line a close appends to the session's issue, marked estimate:
+    the dollar form on Bedrock, the token profile on the seat, whose dollar
+    figure would be invented (`docs/conventions/context-economy.md` →
+    "Cost bands")."""
+    totals: Totals = report["totals"]
+    tail = f"{totals.turns} turns, peak prefix {human(totals.prefix_max)}, {day}"
+    if report["substrate"] != SUBSTRATE_BEDROCK:
+        return f"**Token profile**: {human(totals.cache_read)} cache-read, {tail}\n"
+    total: Cost | None = report["total_cost"]
+    figure = (
+        f"{money(total.total())} estimate"
+        if total is not None
+        else "withheld, no Bedrock rate for " + ", ".join(report["unpriced_models"])
+    )
+    return f"**Cost actual**: {figure}, {tail}\n"
+
+
+def session_cost_line(session_id: str, substrate: str | None = None) -> str:
+    """`cost_line` for a session id, dated today. Raises ``FileNotFoundError``
+    when the id resolves to no transcript; the caller skips the line."""
+    report = aggregate(resolve_transcript(session_id), session_id, substrate)
+    return cost_line(report, datetime.date.today().isoformat())
 
 
 def estimate_record(report: dict, session_id: str) -> dict:
@@ -2453,8 +2526,16 @@ def main(argv: list[str] | None = None) -> int:
         "--brief",
         action="store_true",
         help=(
-            "print only the one-paragraph estimate, which the shell launcher "
-            "prints when a session exits"
+            "print only the one-paragraph estimate, which a session prints at "
+            "its close and the shell launcher when it exits"
+        ),
+    )
+    parser.add_argument(
+        "--cost-line",
+        action="store_true",
+        help=(
+            "print only the one-line issue cost line (Cost actual on Bedrock, "
+            "Token profile on the seat), dated today"
         ),
     )
     parser.add_argument(
@@ -2480,6 +2561,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.brief:
         sys.stdout.write(to_brief(report, short_id(session_id)))
+    elif args.cost_line:
+        sys.stdout.write(cost_line(report, datetime.date.today().isoformat()))
     elif args.json:
         print(to_json(report))
     else:
