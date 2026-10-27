@@ -7,12 +7,13 @@
 use crate::accounts::{self, ChainState, Liveness, MarketView, ParticipantView, Phase, VaultSeat};
 use crate::action::{self, Action};
 use crate::app::{
-    parse_positive_amount, swap_side_label, App, LeaderPrompt, LogKind, PassivePrompt,
+    parse_positive_amount, swap_side_label, App, LeaderPrompt, LogKind, NamePrompt, PassivePrompt,
 };
 use crate::book;
 use crate::cluster::Cluster;
 use crate::explorer;
 use crate::leader::{self, LeaderOp, Leg};
+use crate::naming::{self, NameOp};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -30,8 +31,13 @@ use std::sync::atomic::Ordering;
 /// leave one blank) — its box height is this plus the top/bottom borders.
 const RUNTIME_ACTIONS_ROWS: u16 = 7;
 
-/// Inner rows of the leader pane: address, status, wallet, vault, stake.
-const LEADER_PANE_ROWS: u16 = 5;
+/// Inner rows of the leader pane: address, status, wallet, name, vault,
+/// stake.
+const LEADER_PANE_ROWS: u16 = 6;
+
+/// The most vault rows the accounts pane lists under a market; the rest are
+/// counted on one line.
+const ACCOUNT_VAULT_ROWS: usize = 4;
 /// Inner rows of the swapper pane: address, wallet.
 const SWAPPER_PANE_ROWS: u16 = 2;
 
@@ -69,7 +75,7 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     // The left column stacks the phase-action menu (its entries + borders) over
     // the grouped "other actions" pane (a fixed number of control rows +
     // borders), with alerts taking the rest of the column below them.
-    let menu_height = (app.menu_entries().len() as u16 + 2).clamp(3, 14);
+    let menu_height = (app.menu_entries().len() as u16 + 2).clamp(3, 15);
     let [menu_area, other_area, alerts_area] = Layout::new(
         Direction::Vertical,
         [
@@ -123,7 +129,82 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     // Last, so it paints over the dashboard rather than under it.
     draw_leader_prompt(f, app, area);
     draw_passive_prompt(f, app, area);
+    draw_name_prompt(f, app, area);
     draw_ceremony_prompt(f, app, area);
+}
+
+/// The name prompt, centered over the dashboard while it is open: the form,
+/// then — for a rename or an override — the sized ticket under the
+/// typed-`yes` line, in the real-funds border on mainnet.
+fn draw_name_prompt(f: &mut Frame<'_>, app: &App, area: Rect) {
+    let Some(prompt) = &app.name_prompt else {
+        return;
+    };
+    let input = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
+    let hint = Style::new().fg(Color::DarkGray);
+    let (op, mut lines) = match prompt {
+        NamePrompt::Form(form) => {
+            let mut lines: Vec<Line> = form
+                .lines()
+                .into_iter()
+                .map(|l| Line::from(Span::styled(l, input)))
+                .collect();
+            lines.push(Line::from(Span::styled(
+                "printable ASCII · empty means unset (shows as the vault's #number)",
+                hint,
+            )));
+            let keys = match form.op {
+                NameOp::Override => {
+                    "\u{2191}\u{2193} field · \u{2190}\u{2192}/space lock · Enter preview · Esc cancel"
+                }
+                NameOp::Create if app.ctx.cluster.is_mainnet() => "Enter plan · Esc cancel",
+                NameOp::Create => "Enter create · Esc cancel",
+                NameOp::Rename => "Enter preview · Esc cancel",
+            };
+            lines.push(Line::from(Span::styled(keys, hint)));
+            (form.op, lines)
+        }
+        NamePrompt::Confirm { ticket, buf } => {
+            let mut lines: Vec<Line> = ticket.summary().into_iter().map(Line::from).collect();
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("Type 'yes' to sign and send: {buf}\u{2588}"),
+                input,
+            )));
+            lines.push(Line::from(Span::styled("Enter ok · Esc cancel", hint)));
+            (ticket.op, lines)
+        }
+    };
+    let (title, border) = if app.ctx.cluster.is_mainnet() {
+        (
+            format!(" {} — MAINNET · REAL FUNDS ", op.label()),
+            Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        (
+            format!(" {} — localnet ", op.label()),
+            Style::new().fg(Color::Yellow),
+        )
+    };
+    lines.truncate(usize::from(area.height.saturating_sub(2)));
+    let width = area.width.min(80);
+    let height = (lines.len() as u16 + 2).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(border),
+        ),
+        rect,
+    );
 }
 
 /// The passive-ladder prompt, centered over the dashboard while it is open:
@@ -572,10 +653,20 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
     let off = Style::new().fg(Color::DarkGray);
     let ready = app.chain.phase() == Phase::Ready;
     // The leader's stake: live once every vault is seeded (the commands'
-    // own gate), and the reserved rotation always greyed.
+    // own gate); the rename once its vault exists, greyed with the reason
+    // when an admin has locked the name; the reserved rotation always
+    // greyed.
+    let rename = match leader_seat(app) {
+        Some((_, seat)) if seat.name_locked => Span::styled(" · N rename (locked)", off),
+        _ if Action::RenameVault.enabled(app.chain.phase(), app.ctx.cluster) => {
+            Span::styled(" · N rename", live)
+        }
+        _ => Span::styled(" · N rename", off),
+    };
     let vault_line = Line::from(vec![
         tag("vault"),
         Span::styled("+ deposit · - withdraw", if ready { live } else { off }),
+        rename,
         Span::styled(" · rotate (reserved)", off),
     ]);
     if app.ctx.cluster.is_mainnet() {
@@ -596,11 +687,11 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
             ]),
             vault_line,
             // The kill switch, in the real-funds red the prompts use. Close
-            // and drain follow it from the menu.
+            // and drain follow it from the menu, beside the name override.
             Line::from(vec![
                 tag("kill"),
                 Span::styled(
-                    "K kill ladders · then menu: close, drain",
+                    "K kill ladders · menu: close, drain, name",
                     Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ),
             ]),
@@ -877,6 +968,20 @@ fn build_account_rows(
                 count_line(format!("  active vaults: {}", mkt.active_count)),
                 None,
             ));
+            // One row per vault — its name column, then its leader — capped,
+            // since a mainnet market may hold many.
+            for seat in mkt.vaults.iter().take(ACCOUNT_VAULT_ROWS) {
+                rows.push((vault_row(seat), Some(seat.leader)));
+            }
+            if mkt.vaults.len() > ACCOUNT_VAULT_ROWS {
+                rows.push((
+                    count_line(format!(
+                        "    +{} more",
+                        mkt.vaults.len() - ACCOUNT_VAULT_ROWS
+                    )),
+                    None,
+                ));
+            }
         }
         None => rows.push((
             account_line("market", false, &Pubkey::default(), None),
@@ -885,6 +990,25 @@ fn build_account_rows(
     }
 
     rows
+}
+
+/// One vault under the market in the accounts pane: its name column, padded
+/// to [`naming::NAME_COLUMN_WIDTH`] so the leaders align, then its leader —
+/// the row's click target.
+fn vault_row(seat: &VaultSeat) -> Line<'static> {
+    let name = name_span(seat);
+    let pad = (naming::NAME_COLUMN_WIDTH + 1).saturating_sub(name.content.chars().count());
+    Line::from(vec![
+        Span::raw("    "),
+        name,
+        Span::raw(" ".repeat(pad)),
+        Span::styled(
+            short_pubkey(&seat.leader),
+            Style::new()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::UNDERLINED),
+        ),
+    ])
 }
 
 /// A dimmed, non-address summary row (e.g. `markets: 1`).
@@ -1055,11 +1179,14 @@ fn draw_leader_pane(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         wallet_field(p, b, q),
     ];
     match leader_seat(app) {
-        Some((_, seat)) => lines.extend(
-            leader::holding_lines(seat.seq, &seat.stake, b, q, mkt.reference_price)
-                .into_iter()
-                .map(|(label, value)| field(label, Span::raw(value))),
-        ),
+        Some((_, seat)) => {
+            lines.push(field("name", name_span(&seat)));
+            lines.extend(
+                leader::holding_lines(seat.seq, &seat.stake, b, q, mkt.reference_price)
+                    .into_iter()
+                    .map(|(label, value)| field(label, Span::raw(value))),
+            )
+        }
         None => lines.push(field(
             "vault",
             // `leader_seat` is `None` for no led vault, several, or no
@@ -1071,6 +1198,22 @@ fn draw_leader_pane(f: &mut Frame<'_>, app: &mut App, area: Rect) {
         )),
     }
     draw_pane(f, "leader", lines, area);
+}
+
+/// A vault's name for a name column: clamped to [`naming::NAME_COLUMN_WIDTH`],
+/// the `#<seq>` fallback dimmed so it does not read as a chosen name, and a
+/// lock marked.
+fn name_span(seat: &VaultSeat) -> Span<'static> {
+    let mut text = naming::clamp(&seat.label(), naming::NAME_COLUMN_WIDTH);
+    if seat.name_locked {
+        text.push_str(" (locked)");
+    }
+    let style = if seat.name().is_empty() {
+        Style::new().fg(Color::DarkGray)
+    } else {
+        Style::new().fg(Color::White)
+    };
+    Span::styled(text, style)
 }
 
 /// The swapper (the taker role key) on the selected market: its address (the

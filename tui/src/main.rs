@@ -21,7 +21,11 @@
 //! else (see [`action::Action::available_on`]). Each step shows its plan
 //! under its own typed `yes`, re-checks the chain and refuses when its work
 //! is already done, and references the real roster mints rather than minting
-//! any. Every key — admin `--wallet`, `--leader`, `--quote`, `--program-key`
+//! any. The create-vault step takes one more argument, typed at its prompt
+//! rather than passed as a flag: the **vault name**, required on mainnet,
+//! validated as the program validates it, shown in the step's plan and
+//! recorded in the ceremony log (see [`dropset_tui::naming`]). Every key —
+//! admin `--wallet`, `--leader`, `--quote`, `--program-key`
 //! — is a 1Password reference resolved in memory, normally read from the
 //! TUI's keys file ([`dropset_tui::keys`]), and every write is appended to the
 //! ceremony log. The vault's quote authority is its own key: the ladder and

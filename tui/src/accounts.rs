@@ -14,6 +14,7 @@
 
 use crate::chain;
 use crate::cluster::Cluster;
+use crate::naming::{self, VAULT_NAME_LEN};
 use anyhow::{anyhow, bail, Context, Result};
 use dropset_math_core::share::realize_perf_fee;
 use dropset_sdk::accounts::{
@@ -465,11 +466,42 @@ pub struct VaultSeat {
     /// since a reused sector gets a new one.
     pub seq: u64,
     pub leader: Pubkey,
+    /// Its display name, zero-padded as stored; all zero when unset. Read
+    /// it through [`VaultSeat::name`].
+    pub name: [u8; VAULT_NAME_LEN],
+    /// Whether an admin locked the name, refusing the leader's rename.
+    pub name_locked: bool,
     /// Whether it holds a deposit (any shares or inventory).
     pub seeded: bool,
     /// The share ledger and inventory, as of this read — what the leader
     /// deposit / withdraw commands size their basket and slippage bounds on.
     pub stake: VaultStake,
+}
+
+impl VaultSeat {
+    /// The seat of the live vault `v` at sector `idx`.
+    pub fn of(idx: u32, v: &Vault) -> Self {
+        Self {
+            idx,
+            seq: v.seq.get(),
+            leader: Pubkey::new_from_array(v.leader),
+            name: v.name,
+            name_locked: v.name_locked != 0,
+            seeded: is_seeded(v),
+            stake: VaultStake::of(v),
+        }
+    }
+
+    /// The display name, padding stripped; empty when unset.
+    pub fn name(&self) -> String {
+        naming::decode(&self.name)
+    }
+
+    /// What a person is shown for this vault: its name, or its number when
+    /// it has none (see [`naming::label`]).
+    pub fn label(&self) -> String {
+        naming::label(&self.name(), self.seq)
+    }
 }
 
 /// A vault's share ledger and inventory at one read. Pre-realize: the
@@ -577,13 +609,7 @@ pub fn vault_seats_fresh(
         .map_err(|_| anyhow!("{market} does not decode as a market slab"))?;
     Ok(Some(
         view.active_vaults()
-            .map(|(idx, v)| VaultSeat {
-                idx,
-                seq: v.seq.get(),
-                leader: Pubkey::new_from_array(v.leader),
-                seeded: is_seeded(v),
-                stake: VaultStake::of(v),
-            })
+            .map(|(idx, v)| VaultSeat::of(idx, v))
             .collect(),
     ))
 }
@@ -715,13 +741,7 @@ fn read_markets(
                 }
             }
             live_vaults.push((idx, Pubkey::new_from_array(v.leader)));
-            vaults.push(VaultSeat {
-                idx,
-                seq: v.seq.get(),
-                leader: Pubkey::new_from_array(v.leader),
-                seeded: is_seeded(v),
-                stake: VaultStake::of(v),
-            });
+            vaults.push(VaultSeat::of(idx, v));
             if !is_seeded(v) {
                 unseeded_leaders.push(Pubkey::new_from_array(v.leader));
             }
@@ -805,12 +825,12 @@ fn book_sides(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A minimal market carrying just the `active_count` and an identifying
     /// base mint the phase / selection logic reads.
-    fn market(active_count: u32, base: u8) -> MarketView {
+    pub(crate) fn market(active_count: u32, base: u8) -> MarketView {
         MarketView {
             address: Pubkey::new_from_array([base; 32]),
             lamports: 0,
@@ -1019,6 +1039,8 @@ mod tests {
                 idx: 0,
                 seq: 1,
                 leader: other,
+                name: [0; VAULT_NAME_LEN],
+                name_locked: false,
                 seeded: true,
                 stake: VaultStake::default(),
             },
@@ -1026,6 +1048,8 @@ mod tests {
                 idx: 3,
                 seq: 2,
                 leader: me,
+                name: [0; VAULT_NAME_LEN],
+                name_locked: false,
                 seeded: false,
                 stake: VaultStake::default(),
             },
@@ -1210,6 +1234,22 @@ mod tests {
     }
 
     #[test]
+    fn vault_seat_reads_the_name_and_its_lock() {
+        use bytemuck::Zeroable;
+        let mut v = Vault::zeroed();
+        v.seq = 5u64.into();
+        assert_eq!(VaultSeat::of(2, &v).label(), "#5");
+        v.name[..9].copy_from_slice(b"AUDD Desk");
+        v.name_locked = 1;
+        let seat = VaultSeat::of(2, &v);
+        assert_eq!(
+            (seat.name(), seat.label()),
+            ("AUDD Desk".into(), "AUDD Desk".into())
+        );
+        assert!(seat.name_locked);
+    }
+
+    #[test]
     fn vault_stake_maps_every_field_and_either_wind_down_flag() {
         use bytemuck::Zeroable;
         // Distinct values per field, so a transposed mapping fails.
@@ -1249,6 +1289,8 @@ mod tests {
             idx,
             seq: u64::from(idx),
             leader,
+            name: [0; VAULT_NAME_LEN],
+            name_locked: false,
             seeded: true,
             stake: VaultStake::default(),
         };

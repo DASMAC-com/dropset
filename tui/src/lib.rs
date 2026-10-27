@@ -28,6 +28,7 @@ pub mod job;
 pub mod keys;
 pub mod leader;
 pub mod market;
+pub mod naming;
 pub mod passive;
 pub mod publish;
 pub mod teardown;

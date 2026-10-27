@@ -62,6 +62,11 @@ tGBP. The regime is named so you can say why, not to fail the run.
   what flipped since the stamp), and `c` re-centers it.
 - **Recent fills:** taker fills land here. A filled passive rung flips to
   rest on the other side.
+- **Vault names:** the accounts pane lists each vault by name, and the
+  leader pane shows the leader's. The bootstrap names each vault
+  `Vault <leader prefix>`; `N` renames the leader's vault, and the menu's
+  name override replaces or blanks any vault's name and can lock it. A
+  blank name shows as the vault's `#number`.
 
 ## 4. Try it in the browser
 
