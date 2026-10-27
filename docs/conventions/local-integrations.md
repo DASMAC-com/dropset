@@ -1196,7 +1196,8 @@ to keep out.
 
 That same file carries the non-secret launch knobs too — the
 `DS_MODEL_*` tier table (the substrate section), `DS_AWS_PROFILE`
-(the AWS login gate) and `DS_CARGO_POOL` (the cargo pool) — each
+(the AWS login gate) and `DS_CARGO_POOL` / `DS_CARGO_LANES` (the cargo
+pool) — each
 documented where its consumer is rather than listed twice here. They are
 untracked for different reasons: these `DS_OP_*` refs because they are
 credential coordinates, those because they name one machine's setup.
@@ -1329,15 +1330,17 @@ compile load with no Makefile or CI in the loop. Cargo reads them from the
 environment, and every session verb `cd`s into the repo before launching,
 so the session — and every Bash command its agent runs — inherits the pool.
 
-- **`CARGO_TARGET_DIR`** is `$CARGO_HOME/target/dropset` (Cargo home
-  defaults to `~/.cargo`): one build directory for every worktree, beside
-  the registry. Dependencies compile once instead of per worktree (20–30
-  GB each). Dependency artifacts from different branches coexist, because
+- **`CARGO_TARGET_DIR`** is the checkout's **lane** (see "Lanes" below):
+  `$CARGO_HOME/target/dropset` for lane 0 and `…/dropset-<lane>` for the
+  others (Cargo home defaults to `~/.cargo`), beside the registry. A few
+  build directories for every worktree, so dependencies compile once per
+  lane instead of per worktree (20–30 GB each). Dependency artifacts from
+  different branches coexist, because
   cargo keys each by its exact version and features; the final binaries it
   copies to the top of `debug/` or `release/` are last-build-wins (see the
   carve-outs below). Cargo locks the directory for
-  a build's length, so two worktrees building at once take turns at full
-  width. The only visible change is cargo's one-line
+  a build's length, so two worktrees building at once in one lane take
+  turns at full width. The only visible change is cargo's one-line
   `Blocking waiting for file lock on …` message.
 - **`CARGO_BUILD_JOBS`** is the core count minus two (left unset on a
   machine with two cores or fewer), so no single cargo asks for the whole
@@ -1358,10 +1361,11 @@ so the session — and every Bash command its agent runs — inherits the pool.
   rebuild instead. Clippy thus still has one slot per crate, and two
   worktrees alternating `cargo clippy` re-lint each other's crates. No
   `clippy.toml` exists, so the second key changes no lint configuration (a
-  future one belongs at the root). These two follow a
+  future one belongs at the root). These two and the lane follow a
   `cd` into another checkout. A child shell inherits them without the
   hook's record of what it exported, so the hook treats any value shaped
-  like one of its own keys as its own; a hand pin is any other value. A
+  like one of its own (a lane directory, a checkout's key) as its own; a
+  hand pin is any other value. A
   branch that predates the wrapper gets neither, and so keeps the old
   sharing until it rebases. Cargo's own content-hash freshness
   (`-Zchecksum-freshness`) would retire both keys, but it is nightly-only.
@@ -1375,13 +1379,68 @@ would be actively harmful: Anchor reads the program keypair from the
 target directory's `deploy/` and creates a random one when it is missing,
 so `anchor keys sync` would re-key that repo.
 
+**A launched session gets its worktree's values, not the base's.** Every
+verb launches from the base checkout and `claude -w` enters the worktree
+inside the CLI, where no `chpwd` fires, so on its own the hook would hand
+every session lane 0 and the base checkout's keys — the shared slot the
+keys exist to prevent. The launcher (`_ds_session`) therefore evaluates
+the pool for the worktree it is about to start (`_ds_cargo_pool <dir>`)
+and re-evaluates for the tab's own directory once the session exits. A
+worded tag's worktree is created by the CLI itself, after that point, so
+its session keeps the base keys (and lane 0 either way).
+
+#### Lanes
+
+One pool serializes every build through cargo's lock, and one build
+cannot fill the machine: its tail is serial (the last large crate, the
+link step; rustdoc runs one thread per crate). Measured with one lane, the
+machine sat about half idle at load 12–17 on 18 cores with 9–11 cargo
+invocations waiting. Before the pool, six per-worktree target
+directories ran six builds at once (load 160). Lanes are the middle:
+**`DS_CARGO_LANES`** directories (default **2**), a worktree on lane
+*its issue number modulo the count*, the base repo and a worded tag on
+lane 0. Lane 0 is the original `dropset` directory, so
+`DS_CARGO_LANES=1` is the single pool exactly, and switching between
+them strands no build. `CARGO_BUILD_JOBS` stays the cores minus two per
+process: the lane locks already bound how many builds run at once, so
+two lanes mean at most two builds' jobs (32 runnable threads on 18
+cores, mild oversubscription), with the load probe's 1.5-per-core check
+as the backstop.
+
+What a lane changes for a session: a worktree waits only on builds in
+its own lane, so a full-tree lint or test in an odd-numbered worktree
+no longer queues an even-numbered worktree's build behind it. Within a
+lane, waiting is unchanged.
+
+The knob lives in the untracked runtime config, beside `DS_CARGO_POOL`.
+Its costs:
+
+- **Disk**: one dependency set per lane — the single pool measured 46 GB,
+  so two lanes are about 92 GB.
+- **Cold builds**: each lane builds the dependency set once, the first
+  time a session lands in it.
+- **Memory**: each concurrent build carries its own spike (4–8 GiB) on a
+  machine that already runs at 39–43 GiB of 48. The load probe's memory
+  check is the red that stops the next dispatch.
+- **Dedup**: the per-checkout keys already rebuild workspace crates per
+  worktree, so lanes lose only shared dependency artifacts.
+- **Imbalance**: issue numbers modulo the count can put the busy sessions
+  on one lane. Assignment stays this simple until the wait line shows the
+  imbalance costs more than it saves.
+
+**Calibrating it.** The digest's pool-lock wait line (measured per
+waiting cargo, so it sees an imbalanced lane) says when to add a lane,
+and the probe's memory-refusal count says when to drop one. A memory
+refusal every day means one lane fewer: one config line, and the next
+`cd` (or launch) picks it up.
+
 **The off switch** is `DS_CARGO_POOL=0` in the runtime config, set
 **before** the line that sources the init (set later, it takes effect at
 the next `cd`). All four then stay unset
 and everything behaves as before. A value of any of them that is
-already exported wins over the default (for the two keys, a value not
-shaped like a key; see above). CI never sources the init, so its
-builds are unchanged.
+already exported wins over the default (for the lane and the two keys, a
+value not shaped like the hook's own; see above). CI never sources the
+init, so its builds are unchanged.
 
 **Two carve-outs: the Anchor build and the TUI's bots.** Anchor reads the
 program keypair from `<target dir>/deploy/` and no flag overrides that path, and
@@ -1410,7 +1469,10 @@ wipes the whole pool, every worktree's build with it, while
 `cargo clean -p <crate>` touches only that crate. The worktree pruner no
 longer frees build artifacts, so the pool is the place disk accumulates.
 When it grows too large, delete it while no build is running:
-`rm -rf "$CARGO_TARGET_DIR"`. The next build in each worktree is then cold.
+`rm -rf "$CARGO_TARGET_DIR"` clears the current checkout's lane only, and
+the next build in each worktree on that lane is then cold. Lowering
+`DS_CARGO_LANES` strands the higher lanes' `dropset-<n>` directories;
+delete those the same way.
 
 **Adopting it, once.** A session launched before the init change does not
 see the variables (see the shell-snapshot note under "Session secrets"), so

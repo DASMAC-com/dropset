@@ -65,8 +65,8 @@ if [[ "$_DS_REPO" == */.claude/worktrees/* ]]; then
 fi
 
 # THE CARGO POOL: every cargo in a dropset checkout — the base repo or any
-# worktree under it — shares one build directory and asks for at most the cores
-# minus two. A `chpwd` hook, not a lazy call like `_ds_secrets`, because the
+# worktree under it — shares one of a few build directories (the lanes, below)
+# and asks for at most the cores minus two. A `chpwd` hook, not a lazy call like `_ds_secrets`, because the
 # point is that every shell in a checkout has it — a plain tab, a session, and
 # every Bash command a session's agent runs (the verbs `cd` into the repo before
 # launching, so the client inherits it) — with no Makefile in the loop.
@@ -83,7 +83,8 @@ fi
 #
 # `DS_CARGO_POOL=0` in the runtime config turns it off, and must be set BEFORE
 # the line that sources this file. An already-exported value of any variable it
-# sets wins (for the per-checkout keys, one not shaped like a key), the same
+# sets wins (for the lane and the per-checkout keys, one not shaped like the
+# hook's own), the same
 # override shape as `_ds_secrets`. The directory sits under Cargo
 # home, beside the registry, so it is cleaned with the rest of Cargo's state.
 # See docs/conventions/local-integrations.md → "The cargo pool".
@@ -93,12 +94,18 @@ fi
 # `_ds_reload_init` re-sources this file after a pull, and emptying the map
 # then would orphan the exports it owns.
 typeset -gA _DS_CARGO_POOL_OWNED
-# Whether value $2 of per-checkout key $1 has a shape the hook itself exports:
-# the base repo or one worktree, plus the wrapper's path for the wrapper key. A
-# child shell inherits the keys but not the map (zsh cannot export one), so the
-# shape is how it tells an inherited key from a hand pin.
+# Whether value $2 of per-checkout variable $1 has a shape the hook itself
+# exports: a lane directory for the target dir; otherwise the base repo or one
+# worktree, plus the wrapper's path for the wrapper key. A child shell inherits
+# the variables but not the map (zsh cannot export one), so the shape is how it
+# tells an inherited value from a hand pin.
 _ds_cargo_pool_keyed() {
   local root="$2" rest
+  if [[ "$1" == CARGO_TARGET_DIR ]]; then
+    rest="${root#"${CARGO_HOME:-$HOME/.cargo}/target/dropset"}"
+    [[ "$rest" != "$root" ]] && [[ -z "$rest" || "$rest" == -<-> ]]
+    return
+  fi
   if [[ "$1" == RUSTC_WORKSPACE_WRAPPER ]]; then
     [[ "$root" == */.claude/shell/rustc-workspace-wrapper ]] || return 1
     root="${root%/.claude/shell/rustc-workspace-wrapper}"
@@ -107,42 +114,57 @@ _ds_cargo_pool_keyed() {
   rest="${root#"$_DS_REPO/.claude/worktrees/"}"
   [[ "$rest" != "$root" && -n "$rest" && "$rest" != */* ]]
 }
+# $1, when given, is the directory to evaluate for instead of $PWD: the session
+# launcher passes the worktree it is about to start in, since it launches from
+# the base checkout and the session's shells inherit what it exported.
 _ds_cargo_pool() {
-  local cores var
-  if [[ "${DS_CARGO_POOL:-1}" == 0 || "${PWD:A}/" != "$_DS_REPO/"* ]]; then
+  local cores var here="${1:-${PWD:A}}"
+  if [[ "${DS_CARGO_POOL:-1}" == 0 || "$here/" != "$_DS_REPO/"* ]]; then
     for var in "${(k)_DS_CARGO_POOL_OWNED[@]}"; do
       [[ "${(P)var-}" == "${_DS_CARGO_POOL_OWNED[$var]}" ]] && unset "$var"
     done
     _DS_CARGO_POOL_OWNED=()
-    for var in RUSTC_WORKSPACE_WRAPPER CLIPPY_CONF_DIR; do
+    for var in CARGO_TARGET_DIR RUSTC_WORKSPACE_WRAPPER CLIPPY_CONF_DIR; do
       [[ -n "${(P)var-}" ]] && _ds_cargo_pool_keyed "$var" "${(P)var}" &&
         unset "$var"
     done
     return 0
   fi
-  if [[ -z "${CARGO_TARGET_DIR-}" ]]; then
-    export CARGO_TARGET_DIR="${CARGO_HOME:-$HOME/.cargo}/target/dropset"
-    _DS_CARGO_POOL_OWNED[CARGO_TARGET_DIR]="$CARGO_TARGET_DIR"
+  local checkout="$_DS_REPO" rest="$here/" wrapper value target lanes lane=0
+  if [[ "$rest" == "$_DS_REPO/.claude/worktrees/"?* ]]; then
+    rest="${rest#"$_DS_REPO/.claude/worktrees/"}"
+    checkout="$_DS_REPO/.claude/worktrees/${rest%%/*}"
   fi
+  # LANES. Cargo locks a target directory for a build's length, so one pool
+  # runs one build at a time — and one build cannot fill the machine (a serial
+  # tail: the last large crate, the link, rustdoc's one thread per crate). The
+  # pool is therefore `DS_CARGO_LANES` directories (default 2), a worktree on
+  # lane <its issue number> modulo the count, the base repo and a worded tag
+  # on lane 0. Lane 0 is the original `dropset` directory, so `1` is the
+  # single pool exactly. The job bound below stays per process: the lane locks
+  # already bound concurrency to the lane count.
+  lanes="${DS_CARGO_LANES:-2}"
+  [[ "$lanes" == <-> ]] && (( lanes >= 1 )) || lanes=1
+  rest="${checkout:t}"
+  rest="${(M)rest%%<->}"
+  [[ "$checkout" != "$_DS_REPO" && -n "$rest" ]] && lane=$(( rest % lanes ))
+  target="${CARGO_HOME:-$HOME/.cargo}/target/dropset"
+  (( lane )) && target+="-$lane"
   # PER-CHECKOUT KEYS. Every worktree builds each workspace crate into the same
   # artifact slot, judged fresh by source mtime against whichever worktree built
   # it last, so an edit older than a sibling's build is silently skipped. A
   # workspace wrapper at this checkout's own path re-keys the workspace crates
   # (and only them) for check, build and test; clippy replaces that wrapper with
   # its driver, but tracks CLIPPY_CONF_DIR, so a per-checkout value makes it
-  # rebuild rather than reuse. Unlike the two above, these follow a `cd` into
-  # another checkout. A branch that predates the wrapper gets neither, which is
-  # the old behavior, never another checkout's path. CLIPPY_CONF_DIR also moves
+  # rebuild rather than reuse. Like the lane, these follow a `cd` into another
+  # checkout. A branch that predates the wrapper gets neither, which is the old
+  # behavior, never another checkout's path. CLIPPY_CONF_DIR also moves
   # clippy's config lookup to the checkout root: harmless while no clippy.toml
   # exists, but a crate-local one would be ignored, so put any at the root.
-  local checkout="$_DS_REPO" rest="${PWD:A}/" wrapper value
-  if [[ "$rest" == "$_DS_REPO/.claude/worktrees/"?* ]]; then
-    rest="${rest#"$_DS_REPO/.claude/worktrees/"}"
-    checkout="$_DS_REPO/.claude/worktrees/${rest%%/*}"
-  fi
   wrapper="$checkout/.claude/shell/rustc-workspace-wrapper"
   [[ -x "$wrapper" ]] || checkout="" wrapper=""
-  for var value in RUSTC_WORKSPACE_WRAPPER "$wrapper" CLIPPY_CONF_DIR "$checkout"
+  for var value in CARGO_TARGET_DIR "$target" \
+    RUSTC_WORKSPACE_WRAPPER "$wrapper" CLIPPY_CONF_DIR "$checkout"
   do
     [[ -n "${(P)var-}" && "${(P)var}" != "${_DS_CARGO_POOL_OWNED[$var]-}" ]] &&
       ! _ds_cargo_pool_keyed "$var" "${(P)var}" && continue
@@ -763,10 +785,16 @@ _ds_session() {
   else
     [[ -n "$worktree" ]] && _ds_worktree_ensure "$worktree"
     _ds_session_mark "$sid"
+    # `-w` enters the worktree inside the CLI, where no `chpwd` fires, so the
+    # cargo pool is evaluated for it here or every session would inherit the
+    # base checkout's lane and per-checkout keys.
+    wt_dir="$_DS_REPO/.claude/worktrees/$worktree"
+    [[ -n "$worktree" && -d "$wt_dir" ]] && _ds_cargo_pool "$wt_dir"
     _ds_claude "$model" --session-id "$sid" -n "$name" \
       --permission-mode auto "${worktree_flag[@]}" "${prompt_arg[@]}"
   fi
   local rc=$?
+  _ds_cargo_pool
   _ds_exit_estimate "$sid"
   return $rc
 }
