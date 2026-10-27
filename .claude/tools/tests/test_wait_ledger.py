@@ -102,6 +102,22 @@ class Ledger(unittest.TestCase):
         self.assertEqual((lock.seconds, lock.calls), (15 * 60, 2))
         self.assertEqual(lock.causes, {"make-lint": 720, "cargo-clippy": 180})
 
+    def test_a_quiet_wrapped_build_still_reads_as_locked(self):
+        # The house form: `run_quiet.py` leaves one summary line, not cargo's.
+        command = "python3 .claude/tools/run_quiet.py -- make test"
+        summary = "✓ make test (exit 0, 900 lines; log: /t/x.log) — waited on a cargo file lock"
+        lines = ledger(
+            [
+                assistant(stamp(0), use("a", "Bash", command=command)),
+                result(stamp(6), "a", summary),
+            ]
+        )
+        self.assertEqual(lines[wl.LOCK].causes, {"make-test": 360})
+
+    def test_the_quiet_runner_marker_is_run_quiets_own_text(self):
+        source = (pathlib.Path(wl.__file__).parent / "run_quiet.py").read_text("utf-8")
+        self.assertIn(wl.LOCK_MARKERS[1], source)
+
     def test_ci_checks_queue_and_a_backgrounded_watch(self):
         lines = ledger(
             [

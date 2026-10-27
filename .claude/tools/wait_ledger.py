@@ -9,7 +9,8 @@ ranked largest first, so the next bottleneck is always the top line:
 
 =================  ==========================================================
 pool lock          a Bash call whose result carries cargo's ``Blocking
-                   waiting for file lock``, by step (the ``make`` target,
+                   waiting for file lock`` or ``run_quiet.py``'s ``waited on
+                   a cargo file lock``, by step (the ``make`` target,
                    ``lint_paths.py``'s changed-set lint, or the cargo verb)
 CI: checks         ``wait_for_checks.py`` without ``--queue``, and a bare
                    ``gh pr checks --watch`` / ``gh run watch``
@@ -30,7 +31,8 @@ the operator, an attention one; by idle, a session that should have closed.
 **Known limits.** A permission ask the operator *granted* leaves no record,
 so only a refused one is measured. A lock wait is the whole call's duration,
 the build after the lock included: the transcript holds no stamp for the
-moment the lock was granted.
+moment the lock was granted. A build run with ``run_in_background`` returns
+before it builds, so its lock wait is not seen at all.
 
 The digest half (:func:`digest_section`) sums the ledgers over a day and adds
 the launch records (``sessions/<id>.load``, one JSON line per launch from
@@ -82,6 +84,9 @@ DIAGNOSIS = {
 }
 
 LOCK_MARKER = "Blocking waiting for file lock"
+# How `run_quiet.py` says the same on its one summary line, which is all a
+# quiet-wrapped build — the house form — leaves in the transcript.
+LOCK_MARKERS = (LOCK_MARKER, "waited on a cargo file lock")
 # Claude Code's reply to a tool call refused at its permission prompt.
 REFUSAL_MARKERS = (
     "The user doesn't want to proceed with this tool use",
@@ -229,7 +234,6 @@ class _Open:
     cause: str
     at: str
     command: str = ""
-    background: bool = False
 
 
 class WaitLedger:
@@ -282,6 +286,9 @@ class WaitLedger:
         attachment = rec.get("attachment")
         if isinstance(attachment, dict) and attachment.get("type") == "queued_command":
             prompt = attachment.get("prompt")
+            found = _COMMAND_NAME.search(prompt) if isinstance(prompt, str) else None
+            if found:
+                self._skill = found.group(1)
             if isinstance(prompt, str) and NOTIFICATION_MARKER in prompt:
                 self._close_background(prompt, stamp)
             return
@@ -349,9 +356,7 @@ class WaitLedger:
         elif name in AGENT_TOOLS:
             dimension = SUBAGENTS
             cause = slug(str(args.get("subagent_type") or "general-purpose"))
-        self._open[tid] = _Open(
-            dimension, cause, stamp, command, bool(args.get("run_in_background"))
-        )
+        self._open[tid] = _Open(dimension, cause, stamp, command)
 
     def _close_call(self, item: dict, stamp: str) -> None:
         opened = self._open.pop(str(item.get("tool_use_id")), None)
@@ -367,9 +372,16 @@ class WaitLedger:
                 _Open(OPERATOR, slug(f"{self._skill}-permission"), opened.at), stamp
             )
             return
-        if opened.dimension is None and opened.command and LOCK_MARKER in text:
+        if (
+            opened.dimension is None
+            and opened.command
+            and any(m in text for m in LOCK_MARKERS)
+        ):
             opened.dimension, opened.cause = LOCK, lock_step(opened.command)
-        background = any(m in text for m in BACKGROUND_MARKERS)
+        # The harness's background reply leads the result; a marker deep in a
+        # synchronous report or a watcher's output is not one.
+        head = text.lstrip()[:200]
+        background = any(m in head for m in BACKGROUND_MARKERS)
         ids = _BACKGROUND_ID.findall(text) if background else []
         if ids and opened.dimension is not None:
             self._background[ids[0]] = opened
