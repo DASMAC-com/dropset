@@ -191,10 +191,18 @@ program-parity: check-toolchain program-keypair
 # secret is read here: the mainnet keypair lives only in 1Password and is
 # used by the publish step, never by the build (anchor's id check still
 # compares the first, localnet declare_id! against keys/AAAA.json).
+# The last step fails unless the ELF's e_flags is 0x3 (sBPF v3), then
+# records its sha256 beside it (dropset_mainnet.so.sha256, sha256sum
+# format) with a provenance record naming the commit it was built at
+# (dropset_mainnet.so.provenance.json) — the hash the deploy ceremony
+# compares the on-chain bytes against. Nothing here holds an expected
+# hash, so an upgrade changes nothing in this target.
 .PHONY: program-mainnet
 program-mainnet: check-toolchain program-keypair
 	anchor build --no-idl -- --features mainnet
 	mv target/deploy/dropset.so target/deploy/dropset_mainnet.so
+	python3 programs/dropset/release/record_artifact.py \
+		target/deploy/dropset_mainnet.so
 
 .PHONY: debugger
 debugger: program
@@ -1390,6 +1398,7 @@ tools-tests:
 		-s .claude/tools/tests -t .claude/tools -p 'test_*.py'
 	python3 -m unittest discover -s .claude/scripts -p 'test_*.py'
 	python3 -m unittest discover -s keys -p 'test_*.py'
+	python3 -m unittest discover -s programs/dropset/release -p 'test_*.py'
 
 # The stable crates.io anchor-cli, at the exact ANCHOR_CLI_VERSION. How it
 # relates to the program crate's anchor-lang pin: interface.md § SDK, CI

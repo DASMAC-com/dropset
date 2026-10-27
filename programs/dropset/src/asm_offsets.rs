@@ -33,7 +33,9 @@
 //!
 //! * **Error codes** (`E_UNAUTHORIZED`, `E_INVALID_SECTOR`) — the parity
 //!   tests push a failing call through both builds and assert each surfaces
-//!   the same `Custom(…)` code.
+//!   the same `Custom(…)` code. The structural codes (`E_FEW_ACCOUNTS` and
+//!   kin) have no reference-build counterpart; `quote_write.rs` pins them to
+//!   their `DropsetError` variants instead.
 //! * **Instruction-data offsets** (`IX_*`) and the **discriminators** — the
 //!   parity suite encodes a payload through the generated client and
 //!   locates it in the wire bytes, which validates them against the real

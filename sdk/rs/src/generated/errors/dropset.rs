@@ -186,6 +186,18 @@ pub enum DropsetError {
     /// 6057 - new quote authority is the vault's current quote authority
     #[error("new quote authority is the vault's current quote authority")]
     SameQuoteAuthority = 0x17A9,
+    /// 6058 - quote write needs at least two accounts: [signer, market]
+    #[error("quote write needs at least two accounts: [signer, market]")]
+    QuoteWriteTooFewAccounts = 0x17AA,
+    /// 6059 - quote write account 0 is not a signer
+    #[error("quote write account 0 is not a signer")]
+    QuoteWriteSignerMissing = 0x17AB,
+    /// 6060 - quote write signer must carry no account data
+    #[error("quote write signer must carry no account data")]
+    QuoteWriteSignerHasData = 0x17AC,
+    /// 6061 - quote write market account is not writable
+    #[error("quote write market account is not writable")]
+    QuoteWriteMarketNotWritable = 0x17AD,
 }
 
 impl From<DropsetError> for solana_program_error::ProgramError {

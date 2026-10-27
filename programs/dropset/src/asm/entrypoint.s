@@ -117,16 +117,21 @@
 .equ SYS_MEMCPY_, 0x717cc4a3
 
 # --- error codes ---
-# Domain codes equal the anchor #[error_code] Custom values (variant + 6000)
-# so the fast path and the reference build surface the same code.
+# Namespace rule: every code here is a DropsetError variant's anchor
+# #[error_code] Custom value (variant + 6000), never a bare literal below
+# 6000 — anchor reserves 100-5999 for its own errors (100-103 are the
+# Instruction* family), so an asm-only code there is decoded by every
+# Anchor-aware client as the wrong failure. quote_write.rs const-asserts
+# each against its variant.
+# Domain codes: the fast path and the reference build surface the same code.
 .equ E_UNAUTHORIZED, 6005         # DropsetError::Unauthorized
 .equ E_INVALID_SECTOR, 6010       # DropsetError::InvalidSectorIndex
-# Structural codes are asm-specific (the reference build surfaces anchor's
+# Structural codes: raised only here (the reference build surfaces anchor's
 # built-in account errors instead — parity maps them, doesn't equate them).
-.equ E_FEW_ACCOUNTS, 101
-.equ E_NOT_SIGNER, 102
-.equ E_SIGNER_HAS_DATA, 103
-.equ E_MARKET_NOT_WRITABLE, 104
+.equ E_FEW_ACCOUNTS, 6058         # DropsetError::QuoteWriteTooFewAccounts
+.equ E_NOT_SIGNER, 6059           # DropsetError::QuoteWriteSignerMissing
+.equ E_SIGNER_HAS_DATA, 6060      # DropsetError::QuoteWriteSignerHasData
+.equ E_MARKET_NOT_WRITABLE, 6061  # DropsetError::QuoteWriteMarketNotWritable
 #
 # One further asm-only asymmetry, deliberately UNGUARDED: neither branch
 # bounds the instruction-data length before reading its payload. This is a

@@ -1,7 +1,5 @@
 <!-- cspell:word objdump -->
 
-<!-- cspell:word readelf -->
-
 <!-- cspell:word sbpfv -->
 
 # Program build: toolchain facts
@@ -47,6 +45,28 @@ recipe that produced them, so nobody has to re-measure them.
 - **Encodings:** `llvm-objdump -d`. Opcode `0x85` is `call`. Source field 0
   (`85 00 …`) with a murmur3 hash immediate is a static syscall. Source field
   1 (`85 10 …`) is an internal call with a pc-relative immediate.
+
+## The mainnet artifact
+
+`make program-mainnet` builds `target/deploy/dropset_mainnet.so`, then runs
+`programs/dropset/release/record_artifact.py` on it, which:
+
+- **fails the target** unless the ELF's `e_flags` is `0x3`. It reads the
+  field from the header bytes (the `Flags` line above), so no platform-tools
+  binary needs to be on `PATH`.
+- **writes `dropset_mainnet.so.sha256`** beside the artifact in `sha256sum`
+  format, so `shasum -a 256 -c` run from `target/deploy/` re-checks it.
+- **writes `dropset_mainnet.so.provenance.json`**, holding the hash,
+  `e_flags`, byte size and the commit the build ran at. Its `dirty` flag is
+  set (with a warning) when tracked files had uncommitted changes, since
+  such a hash does not reproduce from the commit alone.
+
+The target records the hash of what it built and never carries an expected
+one, so a program upgrade changes nothing in it. The deploy ceremony copies
+the recorded hash into its release record and compares the on-chain bytes
+against it. The hash reproduces from the commit only under the same
+platform-tools release, which is pinned transitively by anchor-cli 1.2.1
+(see "The toolchain" above), not by a container image.
 
 ## The entrypoint's syscall spelling
 

@@ -36,6 +36,25 @@ pub mod err {
     /// `vault_idx` is past the live sector count
     /// (`DropsetError::InvalidSectorIndex`).
     pub const INVALID_SECTOR_INDEX: u32 = 6010;
+
+    /// The assembly's structural (account-layout) codes. The kernels never
+    /// return these — the guards run in `entrypoint.s` before a kernel is
+    /// reached — and the reference build rejects the same inputs with
+    /// anchor's constraint errors instead, so they are pinned to their
+    /// variants here only to keep the fast path out of anchor's reserved
+    /// 100-5999 range.
+    pub mod structural {
+        /// Fewer than `[signer, market]`
+        /// (`DropsetError::QuoteWriteTooFewAccounts`).
+        pub const TOO_FEW_ACCOUNTS: u32 = 6058;
+        /// Account 0 is not a signer (`DropsetError::QuoteWriteSignerMissing`).
+        pub const SIGNER_MISSING: u32 = 6059;
+        /// Account 0 carries data (`DropsetError::QuoteWriteSignerHasData`).
+        pub const SIGNER_HAS_DATA: u32 = 6060;
+        /// Account 1 is not writable
+        /// (`DropsetError::QuoteWriteMarketNotWritable`).
+        pub const MARKET_NOT_WRITABLE: u32 = 6061;
+    }
 }
 
 // ── Byte offsets within the market account DATA region ───────────────
@@ -114,6 +133,10 @@ const _: () = assert!((VAULT_REFERENCE_PRICE_OFF + RP_STAMP_OFF) as u64 == equ::
 // edit has exactly one home, the `.s`.
 const _: () = assert!(equ::E_UNAUTHORIZED == err::UNAUTHORIZED as u64);
 const _: () = assert!(equ::E_INVALID_SECTOR == err::INVALID_SECTOR_INDEX as u64);
+const _: () = assert!(equ::E_FEW_ACCOUNTS == err::structural::TOO_FEW_ACCOUNTS as u64);
+const _: () = assert!(equ::E_NOT_SIGNER == err::structural::SIGNER_MISSING as u64);
+const _: () = assert!(equ::E_SIGNER_HAS_DATA == err::structural::SIGNER_HAS_DATA as u64);
+const _: () = assert!(equ::E_MARKET_NOT_WRITABLE == err::structural::MARKET_NOT_WRITABLE as u64);
 
 /// Bounds-check `vault_idx` and authorize the write, returning the target
 /// sector's byte offset within `data` on success.
@@ -296,6 +319,35 @@ mod tests {
             err::INVALID_SECTOR_INDEX,
             DropsetError::InvalidSectorIndex as u32 + OFFSET
         );
+    }
+
+    #[test]
+    fn structural_codes_are_dropset_variants() {
+        // Each structural code is its variant's custom value, which also
+        // proves it clears anchor's reserved 100-5999 range.
+        const OFFSET: u32 = 6000;
+        let pins = [
+            (
+                err::structural::TOO_FEW_ACCOUNTS,
+                DropsetError::QuoteWriteTooFewAccounts,
+            ),
+            (
+                err::structural::SIGNER_MISSING,
+                DropsetError::QuoteWriteSignerMissing,
+            ),
+            (
+                err::structural::SIGNER_HAS_DATA,
+                DropsetError::QuoteWriteSignerHasData,
+            ),
+            (
+                err::structural::MARKET_NOT_WRITABLE,
+                DropsetError::QuoteWriteMarketNotWritable,
+            ),
+        ];
+        for (code, variant) in pins {
+            assert!(code >= OFFSET, "{code} is in anchor's reserved range");
+            assert_eq!(code, variant as u32 + OFFSET);
+        }
     }
 
     #[test]
