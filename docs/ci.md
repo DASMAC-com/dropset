@@ -327,8 +327,10 @@ A verification point is one call, `.claude/tools/verify_head.py`. It
 records HEAD, runs `make lint-abridged` and then `make test-abridged`,
 each as a process group it owns, and, when HEAD is pushed and the tree is clean,
 polls CI for the same SHA. Each check settles on whichever side finishes
-first. A green CI `Lint` kills the local lint. The `Tests*` checks green,
-or skipped by the `code` filter, kill or skip the local test. A red on
+first. A green CI `Lint` kills the local lint. The `Tests*` checks all
+green kill or skip the local test; the `code` filter reports an excluded
+PR's Tests jobs as passing, while a `skipping` one (its `Detect changes`
+failed) verified nothing and never settles the check. A red on
 either side ends the race. The result is one verdict line naming the
 settling side of each check and the SHA, and the call also appends a
 `machine_load.py --sample` line to the fleet log.

@@ -12,6 +12,7 @@ via ``make tools-tests``.
 from __future__ import annotations
 
 import os
+import re
 import signal
 import sys
 import tempfile
@@ -60,7 +61,18 @@ class FakeStage:
 
 
 class Harness:
-    def __init__(self, stages, ci_script=(), heads=None, local_only="", timeout=600):
+    def __init__(
+        self,
+        stages,
+        ci_script=(),
+        heads=None,
+        local_only="",
+        timeout=600,
+        dirty=lambda: False,
+        interval=30,
+    ):
+        self.dirty = dirty
+        self.interval = interval
         self.tmp = Path(tempfile.mkdtemp())
         self.specs = stages  # name -> (ticks, code, log text)
         self.started: dict[str, FakeStage] = {}
@@ -92,9 +104,10 @@ class Harness:
             start=self.start,
             ci=self.ci,
             head=lambda: self.heads(self.clock.now),
+            dirty=self.dirty,
             clock=self.clock,
             sleep=self.clock.sleep,
-            interval=30,
+            interval=self.interval,
             timeout=self.timeout,
         )
 
@@ -135,15 +148,16 @@ class SettlementOrderTest(unittest.TestCase):
         self.assertEqual(r.settled["test"].side, "ci")
         self.assertEqual(r.killed, ["test"])
 
-    def test_ci_tests_skipped_before_local_test_starts(self):
-        # Paths-filter skip settles the test check while lint is still local;
-        # the local test stage is then never started.
+    def test_ci_filtered_tests_pass_before_local_test_starts(self):
+        # The code filter reports the Tests jobs as passing within seconds, so
+        # CI settles the test check while lint is still local; the local test
+        # stage is then never started.
         h = Harness(
             {"lint": (2, 0, ""), "test": (None, 0, "")},
             [
                 ci(
                     test=vh.bucket_state(
-                        [{"name": n, "bucket": "skipping"} for n in vh.TEST_JOBS],
+                        [{"name": n, "bucket": "pass"} for n in vh.TEST_JOBS],
                         vh.CI_TEST,
                         vh.TEST_JOBS,
                     )
@@ -154,6 +168,30 @@ class SettlementOrderTest(unittest.TestCase):
         self.assertEqual(r.outcome, "GREEN")
         self.assertNotIn("test", h.started)
         self.assertEqual(r.killed, [])
+
+    def test_ci_skipped_tests_leave_the_local_test_to_settle(self):
+        # `skipping` means Detect changes failed: nothing was verified.
+        skipped = [{"name": n, "bucket": "skipping"} for n in vh.TEST_JOBS]
+        state = vh.bucket_state(skipped, vh.CI_TEST, vh.TEST_JOBS)
+        self.assertEqual(state, PEND)
+        h = Harness({"lint": (1, 0, ""), "test": (2, 0, "")}, [ci(test=state)] * 5)
+        r = h.run()
+        self.assertEqual(r.settled["test"].side, "local")
+
+    def test_tree_dirtied_mid_race_stops_believing_ci(self):
+        h = Harness(
+            # Lint exits on the third tick's poll; the green read would be the
+            # fourth, after the rewrite left the tree dirty.
+            {"lint": (1, 0, ""), "test": (None, 0, "")},
+            [ci(), ci(), ci(), ci(test=GREEN_TEST)],
+            dirty=lambda: True,
+            interval=1,
+            timeout=20,
+        )
+        r = h.run()
+        self.assertEqual(r.ci_note, vh.DIRTY)
+        self.assertEqual(r.outcome, "TIMEOUT")
+        self.assertNotIn("test", r.settled)
 
     def test_ci_failure_kills_local_and_names_job(self):
         h = Harness(
@@ -252,6 +290,16 @@ class BucketStateTest(unittest.TestCase):
         self.assertEqual(vh.bucket_state(checks, vh.CI_TEST, vh.TEST_JOBS), PEND)
         checks = [{"name": n, "bucket": "pass"} for n in sorted(vh.TEST_JOBS)]
         self.assertEqual(vh.bucket_state(checks, vh.CI_TEST, vh.TEST_JOBS)[0], "green")
+
+    def test_expected_jobs_match_the_workflows(self):
+        # A renamed job would leave a check pending forever (CI never settles
+        # it), so pin the sets to the workflows' own job names.
+        root = Path(__file__).resolve().parents[3] / ".github" / "workflows"
+        named = re.compile(r"^    name: '([^']+)'$", re.MULTILINE)
+        tests = {n for n in named.findall((root / "test.yml").read_text())}
+        lint = set(named.findall((root / "lint.yml").read_text()))
+        self.assertEqual({n for n in tests if vh.CI_TEST.search(n)}, set(vh.TEST_JOBS))
+        self.assertLessEqual(set(vh.LINT_JOBS), lint)
 
 
 class LocalOnlyReasonTest(unittest.TestCase):

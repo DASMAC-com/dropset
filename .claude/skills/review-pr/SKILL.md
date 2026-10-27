@@ -270,7 +270,7 @@ migrations or generation inputs, and whether it spans crates.
    call). Its one line gives each check's settling side and log or job;
    act on it only when its `sha` is HEAD's. A local `make lint` / `make test`
    (through the quiet runner) runs only when `ci=` says
-   `not-consulted` — `dirty` / `unpushed` heal by committing and
+   `not-consulted(unreachable)` — `dirty` / `unpushed` heal by committing and
    pushing. To narrow one hook, call
    `lint_paths.py --changed -- <hook-id>`, or `--files <paths> --`; a
    local full sweep in between is a mistake unless a hook is
@@ -1175,8 +1175,8 @@ migrations or generation inputs, and whether it spans crates.
    Otherwise `targets` lists every suite in run order as
    `{target, run, reason}`. A `make test` entry is step 4's
    `verify_head.py` call after step 12's push (plain `make test` only
-   on `not-consulted`); run each other `run: true` entry through the
-   quiet runner (`python3 .claude/tools/run_quiet.py -- <target>`),
+   on `not-consulted(unreachable)`); run each other `run: true` entry
+   through the quiet runner (`python3 .claude/tools/run_quiet.py -- <target>`),
    and record every skip with its `reason` in the summary — never
    re-derive the list. It resolves CI's `code` filter
    (`CODE_FILTER_EXCLUDES`, kept in parity with `test.yml`), whether
@@ -1367,7 +1367,7 @@ migrations or generation inputs, and whether it spans crates.
    check is green: **zero blocking issues** (every Linear checklist
    item addressed); the last `verify_head.py` verdict is `GREEN` for
    HEAD's `sha` (with a local `make lint` / `make test` passing where it
-   said `not-consulted`), any hook `lint_paths.py` printed
+   said `not-consulted(unreachable)`), any hook `lint_paths.py` printed
    `UNVERIFIABLE` noted, not gated; the generated artifacts
    are fresh and committed (every `regen_artifacts.py` family fresh,
    committed or skipped, or an `unverifiable` one honestly reported);

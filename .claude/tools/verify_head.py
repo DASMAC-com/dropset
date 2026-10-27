@@ -20,8 +20,10 @@ the whole fall-through inside one Bash call::
    ``gh pr checks --json`` read, believed only while the PR's head is this
    SHA. Otherwise the run is local only and the verdict says why.
 3. **Each check settles on whichever side finishes first.** CI's ``Lint``
-   green kills the local lint; every ``Tests*`` check green — or skipping,
-   which is what CI's paths-filter does — kills or skips the local test. A
+   green kills the local lint; every ``Tests*`` check green — which is how
+   CI's ``code`` filter reports a PR no test can see — kills or skips the
+   local test. A ``skipping`` job verified nothing (its ``Detect changes``
+   failed), so it never settles a check. A
    local pass is a pass: CI's full sweep still completes behind it, and the
    merge queue runs it again, so nothing reaches main on an abridged run.
 4. **A red on either side ends the race.** A CI failure kills the local run
@@ -173,6 +175,10 @@ class Stage:
             self.proc.wait(timeout=KILL_GRACE)
         except subprocess.TimeoutExpired:
             pass
+        self.force()
+
+    def force(self) -> None:
+        """SIGKILL the group and reap the leader; a no-op on an empty group."""
         try:
             os.killpg(self.proc.pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -208,17 +214,19 @@ def bucket_state(
 ) -> tuple[str, str]:
     """``green`` / ``red`` / ``pending`` for the checks ``pattern`` names.
 
-    ``skipping`` counts as green: it is how CI's paths-filter reports a PR
-    no test can see. Green also needs every ``expected`` job registered, so
-    until then a passing subset reads as pending. ``cancel`` reads as red, the
-    conservative side: a run cancelled on this SHA verified nothing.
+    Only ``pass`` is green. CI's ``code`` filter reports an excluded PR's
+    Tests jobs as passing; a ``skipping`` one means its ``Detect changes``
+    failed, so it verified nothing and stays pending for the local side to
+    settle. Green also needs every ``expected`` job registered, so a passing
+    subset reads as pending. ``cancel`` reads as red, the conservative side:
+    a run cancelled on this SHA verified nothing.
     """
     mine = [c for c in checks if pattern.search(c.get("name") or "")]
     red = [c for c in mine if c.get("bucket") in ("fail", "cancel")]
     if red:
         return "red", ",".join(c["name"] for c in red)
     names = {c.get("name") for c in mine}
-    if expected <= names and all(c.get("bucket") in ("pass", "skipping") for c in mine):
+    if expected <= names and all(c.get("bucket") == "pass" for c in mine):
         return "green", ",".join(c["name"] for c in mine)
     return "pending", ""
 
@@ -253,6 +261,7 @@ def race(
     start: Callable[[str], object],
     ci: Callable[[], dict[str, tuple[str, str]] | None],
     head: Callable[[], str],
+    dirty: Callable[[], bool],
     clock: Callable[[], float],
     sleep: Callable[[float], None],
     interval: float,
@@ -261,7 +270,9 @@ def race(
     """The race itself, with every side effect injected (see the tests).
 
     ``local_only`` is :func:`local_only_reason`'s answer: non-empty, CI is
-    never read and the reason is the verdict's ``ci=`` field.
+    never read and the reason is the verdict's ``ci=`` field. ``dirty`` is
+    re-asked after each local stage: a hook that rewrote files leaves a tree
+    CI's commit no longer matches, and CI stops being believed from then on.
     """
     r = Race(sha=sha, ci_note=local_only or "consulted")
     polling = not local_only
@@ -318,6 +329,9 @@ def race(
                 current = None
                 if code == 0:
                     r.settled[name] = Settled("local", True, str(stage.log))
+                    if polling and dirty():
+                        polling = False
+                        r.ci_note = DIRTY
                 else:
                     r.settled[name] = Settled("local", False, failure_line(stage.log))
                     r.outcome = "RED"
@@ -402,6 +416,7 @@ def main(argv: list[str] | None = None) -> int:
             start=start,
             ci=lambda: read_ci(sha, opts.pr, opts.repo),
             head=read_head,
+            dirty=lambda: bool(_git(["status", "--porcelain"])),
             clock=time.monotonic,
             sleep=time.sleep,
             interval=opts.interval,
@@ -409,9 +424,13 @@ def main(argv: list[str] | None = None) -> int:
         )
     except BaseException:
         # An interrupt or a crash must not leave a stage holding the pool lock.
+        # No second signal may cut this short, and a dead leader does not mean
+        # an empty group (the first signal may have landed inside a kill), so
+        # every started group gets SIGKILL.
+        for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            signal.signal(sig, signal.SIG_IGN)
         for stage in started:
-            if stage.poll() is None:
-                stage.kill()
+            stage.force()
         raise
     print(render(result, time.monotonic() - began), flush=True)
     sample_fleet()
