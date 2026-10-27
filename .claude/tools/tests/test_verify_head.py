@@ -143,7 +143,9 @@ class SettlementOrderTest(unittest.TestCase):
             [
                 ci(
                     test=vh.bucket_state(
-                        [{"name": "Tests", "bucket": "skipping"}], vh.CI_TEST
+                        [{"name": n, "bucket": "skipping"} for n in vh.TEST_JOBS],
+                        vh.CI_TEST,
+                        vh.TEST_JOBS,
                     )
                 )
             ],
@@ -173,6 +175,13 @@ class SettlementOrderTest(unittest.TestCase):
         self.assertTrue(r.settled["lint"].detail.endswith(":2: cspell..........Failed"))
         self.assertNotIn("test", h.started)
         self.assertEqual(r.killed, [])
+
+    def test_local_test_failure(self):
+        text = "running 3 tests\ntest result: FAILED. 2 passed; 1 failed\n"
+        h = Harness({"lint": (1, 0, ""), "test": (2, 101, text)}, [ci()] * 3)
+        r = h.run()
+        self.assertEqual(r.outcome, "RED")
+        self.assertTrue(r.settled["test"].detail.endswith(":2: " + text.split("\n")[1]))
 
     def test_head_moved_kills_local(self):
         h = Harness(
@@ -230,13 +239,66 @@ class BucketStateTest(unittest.TestCase):
             {"name": "Tests (Postgres)", "bucket": "pending"},
             {"name": "Detect changes", "bucket": "pass"},
         ]
-        self.assertEqual(vh.bucket_state(checks, vh.CI_LINT), ("green", "Lint"))
-        self.assertEqual(vh.bucket_state(checks, vh.CI_TEST), PEND)
+        lint = (vh.CI_LINT, vh.LINT_JOBS)
+        test = (vh.CI_TEST, vh.TEST_JOBS)
+        self.assertEqual(vh.bucket_state(checks, *lint), ("green", "Lint"))
+        self.assertEqual(vh.bucket_state(checks, *test), PEND)
         checks[2]["bucket"] = "cancel"
+        self.assertEqual(vh.bucket_state(checks, *test), ("red", "Tests (Postgres)"))
+        self.assertEqual(vh.bucket_state([], *lint), PEND)
+
+    def test_registered_subset_passing_is_pending(self):
+        checks = [{"name": "Tests", "bucket": "pass"}]
+        self.assertEqual(vh.bucket_state(checks, vh.CI_TEST, vh.TEST_JOBS), PEND)
+        checks = [{"name": n, "bucket": "pass"} for n in sorted(vh.TEST_JOBS)]
         self.assertEqual(
-            vh.bucket_state(checks, vh.CI_TEST), ("red", "Tests (Postgres)")
+            vh.bucket_state(checks, vh.CI_TEST, vh.TEST_JOBS)[0], "green"
         )
-        self.assertEqual(vh.bucket_state([], vh.CI_LINT), PEND)
+
+
+class LocalOnlyReasonTest(unittest.TestCase):
+    def check(self, upstream, status):
+        answers = {"rev-parse": upstream, "status": status}
+        real = vh._git
+        vh._git = lambda args: answers[args[0]]
+        try:
+            return vh.local_only_reason(SHA)
+        finally:
+            vh._git = real
+
+    def test_reasons(self):
+        self.assertEqual(self.check("", ""), vh.NOT_PUSHED)
+        self.assertEqual(self.check("f" * 40, ""), vh.NOT_PUSHED)
+        self.assertEqual(self.check(SHA, " M docs/ci.md"), vh.DIRTY)
+        self.assertEqual(self.check(SHA, ""), "")
+
+
+class ReadCiTest(unittest.TestCase):
+    def setUp(self):
+        self.calls = []
+        self._gh, self._read = wfc._gh, wfc.read_checks
+        self.addCleanup(setattr, wfc, "_gh", self._gh)
+        self.addCleanup(setattr, wfc, "read_checks", self._read)
+
+    def stub(self, code, out, checks=()):
+        wfc._gh = lambda args: (self.calls.append(args) or (code, out, "boom"))
+        wfc.read_checks = lambda pr, repo: list(checks)
+
+    def test_other_head_is_none(self):
+        self.stub(0, '{"number": 7, "headRefOid": "other"}')
+        self.assertIsNone(vh.read_ci(SHA, "7", "o/r"))
+        self.assertEqual(self.calls[0][:3], ["pr", "view", "7"])
+
+    def test_this_head_reads_checks(self):
+        self.stub(0, '{"number": 7, "headRefOid": "%s"}' % SHA,
+                  [{"name": "Lint", "bucket": "fail"}])
+        self.assertEqual(vh.read_ci(SHA, "7", "o/r")["lint"], ("red", "Lint"))
+
+    def test_failures_raise_the_watcher_error(self):
+        for code, out in ((1, ""), (0, "[]")):
+            self.stub(code, out)
+            with self.assertRaises(wfc.WaitForChecksError):
+                vh.read_ci(SHA, "7", "o/r")
 
 
 class VerdictLineTest(unittest.TestCase):

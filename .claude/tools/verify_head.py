@@ -79,6 +79,13 @@ STAGES = (("lint", ["make", "lint-abridged"]), ("test", ["make", "test-abridged"
 CI_LINT = re.compile(r"^Lint$")
 CI_TEST = re.compile(r"^Tests\b")
 
+#: The jobs that must all have registered before a check reads green, so a
+#: subset that registered (and passed) first cannot settle it early.
+LINT_JOBS = frozenset({"Lint"})
+TEST_JOBS = frozenset(
+    {"Tests", "Tests (no teardown)", "Tests (asm parity)", "Tests (Postgres)"}
+)
+
 DEFAULT_INTERVAL = 30
 DEFAULT_TIMEOUT = 3600
 
@@ -153,16 +160,24 @@ class Stage:
         return self.proc.poll()
 
     def kill(self) -> None:
-        for sig, grace in ((signal.SIGTERM, KILL_GRACE), (signal.SIGKILL, None)):
-            try:
-                os.killpg(self.proc.pid, sig)
-            except ProcessLookupError:
-                return
-            try:
-                self.proc.wait(timeout=grace)
-                return
-            except subprocess.TimeoutExpired:
-                continue
+        """SIGTERM the group, then SIGKILL it whatever the leader did.
+
+        The leader exiting inside the grace does not empty the group: a
+        child ignoring SIGTERM would outlive it holding the pool lock.
+        """
+        try:
+            os.killpg(self.proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            self.proc.wait(timeout=KILL_GRACE)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(self.proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        self.proc.wait()
 
 
 def _git(args: list[str]) -> str:
@@ -188,17 +203,24 @@ def local_only_reason(sha: str) -> str:
     return ""
 
 
-def bucket_state(checks: list[dict], pattern: re.Pattern) -> tuple[str, str]:
+def bucket_state(
+    checks: list[dict], pattern: re.Pattern, expected: frozenset[str]
+) -> tuple[str, str]:
     """``green`` / ``red`` / ``pending`` for the checks ``pattern`` names.
 
     ``skipping`` counts as green: it is how CI's paths-filter reports a PR
-    no test can see. No matching check registered yet reads as pending.
+    no test can see. Green also needs every ``expected`` job registered, so
+    until then a passing subset reads as pending. ``cancel`` reads as red, the
+    conservative side: a run cancelled on this SHA verified nothing.
     """
     mine = [c for c in checks if pattern.search(c.get("name") or "")]
     red = [c for c in mine if c.get("bucket") in ("fail", "cancel")]
     if red:
         return "red", ",".join(c["name"] for c in red)
-    if mine and all(c.get("bucket") in ("pass", "skipping") for c in mine):
+    names = {c.get("name") for c in mine}
+    if expected <= names and all(
+        c.get("bucket") in ("pass", "skipping") for c in mine
+    ):
         return "green", ",".join(c["name"] for c in mine)
     return "pending", ""
 
@@ -215,12 +237,14 @@ def read_ci(sha: str, pr: str, repo: str) -> dict[str, tuple[str, str]] | None:
     if code != 0:
         raise wfc.WaitForChecksError(f"gh pr view failed: {err.strip()}")
     head = json.loads(out)
+    if not isinstance(head, dict):
+        raise wfc.WaitForChecksError("gh pr view --json did not return an object")
     if head.get("headRefOid") != sha:
         return None
     checks = wfc.read_checks(int(head["number"]), repo)
     return {
-        "lint": bucket_state(checks, CI_LINT),
-        "test": bucket_state(checks, CI_TEST),
+        "lint": bucket_state(checks, CI_LINT, LINT_JOBS),
+        "test": bucket_state(checks, CI_TEST, TEST_JOBS),
     }
 
 
@@ -363,6 +387,14 @@ def main(argv: list[str] | None = None) -> int:
     def start(name: str) -> Stage:
         started.append(Stage(name, commands[name], log_path_for(sha, name)))
         return started[-1]
+
+    def leave(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    # The stages run in their own sessions, so a signal aimed at this call's
+    # group never reaches them: turn it into the exception the cleanup sees.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, leave)
 
     began = time.monotonic()
     try:

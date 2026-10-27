@@ -337,7 +337,11 @@ A local pass is enough to take the next step, never to merge: CI's full
 sweep still runs behind it, and the merge queue runs it again. CI is
 skipped when it cannot speak for the tree: when HEAD is unpushed, when
 the tree is dirty, or after three failed reads in a row. The verdict
-then says `not-consulted`, and a local `make lint` and `make test`
-stand in for the full sweep. The kill signals the whole process group,
-so no orphaned `rustc` holds the cargo pool lock. That lock is a file
-lock, released when its process dies.
+then says `not-consulted`. An unpushed or dirty tree heals by committing
+and pushing; only an unreachable CI makes a local `make lint` and
+`make test` stand in for the full sweep. A new commit mid-race ends it
+`HEAD-MOVED` and `--timeout` ends it `TIMEOUT`; either way the caller
+acts on a verdict only when its `sha` is HEAD's. The kill signals the
+whole process group, SIGTERM and then SIGKILL, so no orphaned `rustc`
+holds the cargo pool lock. That lock is a file lock, released when its
+process dies.

@@ -266,8 +266,9 @@ migrations or generation inputs, and whether it spans crates.
    python3 .claude/tools/verify_head.py
    ```
 
-   Its one line gives each check's settling side and log or job; act on
-   it only when its `sha` is HEAD's. A local `make lint` / `make test`
+   Run it with `run_in_background: true` (it can outlast a foreground
+   call). Its one line gives each check's settling side and log or job;
+   act on it only when its `sha` is HEAD's. A local `make lint` / `make test`
    (through the quiet runner) runs only when `ci=` says
    `not-consulted` — `dirty` / `unpushed` heal by committing and
    pushing. To narrow one hook, call
