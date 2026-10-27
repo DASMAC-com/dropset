@@ -214,6 +214,48 @@ class CreateIssue(_Stubbed):
         self.assertNotIn("FINDINGS", line)
         self.assertIn("ENG-500", line)
 
+    def test_a_plain_backlog_filing_reminds_to_message_the_curator(self):
+        states = {"team": {"states": {"nodes": [{"id": "s-b", "name": "Backlog"}]}}}
+        self.install([states, self.CREATED])
+        line = li.create_issue(
+            "k", team_id="t", project_id="p", title="t", body="b", state="backlog"
+        )
+        first, reminder = line.split("\n")
+        self.assertIn("ENG-500", first)
+        self.assertEqual(reminder, li.CURATOR_REMINDER)
+
+    def test_a_parked_or_todo_filing_carries_no_reminder(self):
+        states = {
+            "team": {
+                "states": {
+                    "nodes": [
+                        {"id": "s-b", "name": "Backlog"},
+                        {"id": "s-t", "name": "Todo"},
+                    ]
+                }
+            }
+        }
+        milestones = {
+            "project": {
+                "projectMilestones": {"nodes": [{"id": "m", "name": "Audit findings"}]}
+            }
+        }
+        self.install([states, milestones, self.CREATED, states, self.CREATED])
+        parked = li.create_issue(
+            "k",
+            team_id="t",
+            project_id="p",
+            title="t",
+            body="b",
+            state="Backlog",
+            milestone="Audit findings",
+        )
+        todo = li.create_issue(
+            "k", team_id="t", project_id="p", title="t", body="b", state="Todo"
+        )
+        self.assertNotIn("REMINDER", parked)
+        self.assertNotIn("REMINDER", todo)
+
     def test_state_and_milestone_are_resolved_from_names(self):
         """`board_batch.py fields` deliberately refuses a milestone NAME, which
         is right for a field write; a filer that could not name its own

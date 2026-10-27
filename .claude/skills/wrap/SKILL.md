@@ -135,8 +135,8 @@ everything below it is recoverable and that one is not.
 
 1. **Follow-ups discharged.** Anything this session surfaced
    but did not do is either **filed** to convention
-   (`linear-task`) or **handed to the planning session** with
-   a message. Named, not remembered.
+   (`linear-task`, which messages the curator) or **handed to
+   the planning session** with a message. Named, not remembered.
 
    The failure this catches is specific: a finding raised
    mid-session, acknowledged, and then carried only in the
