@@ -3,9 +3,9 @@
 //!
 //! Exposes [`simulate_swap`] (quote a take), [`resting_book`] (read the
 //! depth the take would fill against) and [`vaults`] (read the active
-//! vaults' reserves, shares and deposit flags) over a market account's raw
-//! bytes, so the TS client runs the engine's own slab decode and book
-//! reconstruction instead of a hand-mirror. All three share
+//! vaults' names, reserves, shares and deposit flags) over a market
+//! account's raw bytes, so the TS client runs the engine's own slab decode
+//! and book reconstruction instead of a hand-mirror. All three share
 //! `MarketView::load`, and the two book entry points share `matching` too,
 //! which is the point: the byte offsets in `layout.rs` and the
 //! materialization rules in `matching.rs` exist in exactly one place, and
@@ -224,10 +224,13 @@ pub fn resting_book(
 /// the `vault_idx` the `deposit` / `withdraw` instructions take — and every
 /// other array is aligned with it. `leaders` is the 32-byte leader keys
 /// concatenated, so vault `i`'s key is `leaders[32 * i .. 32 * i + 32]`.
+/// `names` is the one array of strings: each vault's display name, empty
+/// where the name is unset.
 #[wasm_bindgen]
 pub struct VaultSlab {
     indices: Vec<u32>,
     seq_numbers: Vec<u64>,
+    names: Vec<String>,
     leaders: Vec<u8>,
     reference_prices: Vec<u32>,
     base_atoms: Vec<u64>,
@@ -253,6 +256,12 @@ impl VaultSlab {
     #[wasm_bindgen(getter)]
     pub fn seq_numbers(&self) -> Vec<u64> {
         self.seq_numbers.clone()
+    }
+    /// Display names, the zero padding stripped; empty where unset (a vault
+    /// never named, or blanked by freeze or close).
+    #[wasm_bindgen(getter)]
+    pub fn names(&self) -> Vec<String> {
+        self.names.clone()
     }
     /// Leader keys, 32 bytes per vault, concatenated.
     #[wasm_bindgen(getter)]
@@ -334,6 +343,7 @@ pub fn vaults(market_data: &[u8]) -> Result<VaultSlab, JsError> {
     let mut slab = VaultSlab {
         indices: Vec::with_capacity(n),
         seq_numbers: Vec::with_capacity(n),
+        names: Vec::with_capacity(n),
         leaders: Vec::with_capacity(32 * n),
         reference_prices: Vec::with_capacity(n),
         base_atoms: Vec::with_capacity(n),
@@ -350,6 +360,7 @@ pub fn vaults(market_data: &[u8]) -> Result<VaultSlab, JsError> {
     for (idx, v) in view.active_vaults() {
         slab.indices.push(idx);
         slab.seq_numbers.push(v.seq.get());
+        slab.names.push(vault_name(&v.name));
         slab.leaders.extend_from_slice(&v.leader);
         slab.reference_prices.push(v.reference_price.price.get());
         slab.base_atoms.push(v.base_atoms.get());
@@ -366,6 +377,14 @@ pub fn vaults(market_data: &[u8]) -> Result<VaultSlab, JsError> {
             .push(v.outside_deposits_approved);
     }
     Ok(slab)
+}
+
+// The program stores printable ASCII, zero-padded, so the name is the
+// prefix before the first zero byte. A byte outside that set can only come
+// from a corrupt sector; it decodes as U+FFFD rather than failing the read.
+fn vault_name(bytes: &[u8; 32]) -> String {
+    let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..len]).into_owned()
 }
 
 fn alloc_fmt(args: core::fmt::Arguments<'_>) -> String {

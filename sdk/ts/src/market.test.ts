@@ -392,6 +392,7 @@ test('oversized flush side is skipped, the healthy side still materializes', () 
 // the 32-byte name at 8, leader at 40, `seq` at 104 — each pinned there by
 // a const assert — then the reserves, shares, hwm, perf fee, leader floor
 // and the flag bytes).
+const V_NAME = 8;
 const V_LEADER = 40;
 const V_SEQ = 104;
 const V_TOTAL_SHARES = 148;
@@ -405,6 +406,7 @@ const V_OUTSIDE_APPROVED = 182;
 
 test('the vaults reader returns each active vault with its shares and deposit flags', () => {
   const data = buildMarket((dv, b) => {
+    new Uint8Array(dv.buffer).set(new TextEncoder().encode('AUD Basis 1'), b + V_NAME);
     for (let i = 0; i < 32; i++) dv.setUint8(b + V_LEADER + i, 7);
     dv.setBigUint64(b + V_SEQ, 3n, true);
     dv.setUint32(b + V_REF_PRICE, enc(12_500_000), true);
@@ -422,6 +424,7 @@ test('the vaults reader returns each active vault with its shares and deposit fl
   assert.deepEqual(vault, {
     index: 0,
     seq: 3n,
+    name: 'AUD Basis 1',
     leader: getAddressDecoder().decode(new Uint8Array(32).fill(7)),
     referencePrice: enc(12_500_000),
     baseAtoms: 1_000_000n,
@@ -470,14 +473,17 @@ test('the vaults reader follows the active list and keeps each vault aligned', (
   dv.setBigUint64(sector(2) + V_TOTAL_SHARES, 20n, true);
   dv.setBigUint64(sector(0) + V_TOTAL_SHARES, 10n, true);
   dv.setUint8(sector(0) + V_ALLOW_OUTSIDE, 1);
+  // Sector 2 fills all 32 name bytes (no terminating zero); sector 0 is
+  // unnamed, so its all-zero name reads as unset.
+  buf.set(new TextEncoder().encode('x'.repeat(32)), sector(2) + V_NAME);
 
   const vaults = decodeDropsetVaults(buf);
   const decode = getAddressDecoder();
   assert.deepEqual(
-    vaults.map((v) => [v.index, v.seq, v.leader, v.totalShares, v.allowOutsideDepositors]),
+    vaults.map((v) => [v.index, v.seq, v.name, v.leader, v.totalShares, v.allowOutsideDepositors]),
     [
-      [2, 7n, decode.decode(leader(1)), 20n, false],
-      [0, 3n, decode.decode(leader(100)), 10n, true],
+      [2, 7n, 'x'.repeat(32), decode.decode(leader(1)), 20n, false],
+      [0, 3n, null, decode.decode(leader(100)), 10n, true],
     ],
   );
 });

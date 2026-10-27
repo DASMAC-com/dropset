@@ -59,6 +59,8 @@ export class RestingBook {
  * the `vault_idx` the `deposit` / `withdraw` instructions take — and every
  * other array is aligned with it. `leaders` is the 32-byte leader keys
  * concatenated, so vault `i`'s key is `leaders[32 * i .. 32 * i + 32]`.
+ * `names` is the one array of strings: each vault's display name, empty
+ * where the name is unset.
  */
 export class VaultSlab {
     private constructor();
@@ -96,6 +98,11 @@ export class VaultSlab {
      * Floor on the leader's share of the vault, in ppm.
      */
     readonly min_leader_shares: Uint32Array;
+    /**
+     * Display names, the zero padding stripped; empty where unset (a vault
+     * never named, or blanked by freeze or close).
+     */
+    readonly names: string[];
     /**
      * `1` when the admin has approved outside deposits.
      */
@@ -227,6 +234,7 @@ export interface InitOutput {
     readonly vaultslab_leader_shares: (a: number) => [number, number];
     readonly vaultslab_leaders: (a: number) => [number, number];
     readonly vaultslab_min_leader_shares: (a: number) => [number, number];
+    readonly vaultslab_names: (a: number) => [number, number];
     readonly vaultslab_outside_deposits_approved: (a: number) => [number, number];
     readonly vaultslab_perf_fee_rates: (a: number) => [number, number];
     readonly vaultslab_quote_atoms: (a: number) => [number, number];
@@ -242,6 +250,7 @@ export interface InitOutput {
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __externref_drop_slice: (a: number, b: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

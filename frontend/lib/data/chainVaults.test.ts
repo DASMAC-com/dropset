@@ -13,6 +13,7 @@ import {
   chainVaultId,
   marketOrientation,
 } from "./chainVaults";
+import { shortenMint } from "./currencies";
 import { positionPnl } from "./pnl";
 import {
   contributeClosedReason,
@@ -20,6 +21,7 @@ import {
   findVaultBySeq,
   resolveVaultMarket,
   tokenUsdPrice,
+  vaultLabel,
   vaultRefPrice,
 } from "./vaults";
 
@@ -31,6 +33,7 @@ const LEADER = address("So11111111111111111111111111111111111111112");
 const summary = (over: Partial<VaultSummary> = {}): VaultSummary => ({
   index: 2,
   seq: 5n,
+  name: null,
   leader: LEADER,
   // 1.25 USDC per TGBP, as a quote-atoms-per-base-atom ratio.
   referencePrice: encodePrice(1.25e-3),
@@ -67,6 +70,27 @@ describe("chainVault", () => {
     expect(v.vaultPubkey).toBe(chainVaultId(MARKET, 5n));
     // The program's index: isqrt(base_atoms · quote_atoms) / total_shares.
     expect(v.vps).toBeCloseTo(Math.sqrt(1e12 * 1.27e9) / 2_000_000, 6);
+  });
+
+  it("carries the on-chain name, unset staying null", () => {
+    expect(chainVault(summary(), MARKET, "TGBP", "USDC").name).toBeNull();
+    expect(
+      chainVault(summary({ name: "GBP Basis" }), MARKET, "TGBP", "USDC").name,
+    ).toBe("GBP Basis");
+  });
+
+  it("labels a vault by its name, else #seq, else (mock) the leader", () => {
+    const named = chainVault(
+      summary({ name: "GBP Basis" }),
+      MARKET,
+      "TGBP",
+      "USDC",
+    );
+    expect(vaultLabel(named)).toBe("GBP Basis");
+    // The per-market seq (5), not the sector index (2).
+    const unnamed = chainVault(summary(), MARKET, "TGBP", "USDC");
+    expect(vaultLabel(unnamed)).toBe("#5");
+    expect(vaultLabel({ ...unnamed, chain: null })).toBe(shortenMint(LEADER));
   });
 
   it("values TVL at the vault's own reference price", () => {

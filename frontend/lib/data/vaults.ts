@@ -4,6 +4,7 @@ import {
   currencyForStablecoin,
   currencyName,
   type IsoCurrencyCode,
+  shortenMint,
 } from "./currencies";
 import vaultsData from "./vaults.json";
 
@@ -88,8 +89,9 @@ export type Vault = Omit<VaultRaw, "volume24h" | "fees24h"> & {
   // The leader's opt-in to outside depositors. Outside deposits need it, the
   // admin's `outsideDepositsApproved`, and an unfrozen vault — see depositsOpen.
   allowOutsideDepositors: boolean;
-  // The vault's display name. Always null until the program stores one; the
-  // dialog already renders it when present.
+  // The vault's display name, read from the vault account; null when unset
+  // (never named, or blanked by freeze or close). The table falls back to
+  // `#<seq>` (see vaultLabel).
   name: string | null;
 };
 
@@ -450,7 +452,14 @@ export const MOCK_VAULT_FX_GROUPS: FxPairGroup[] =
 // Sortable metrics. "position" is the connected user's position value — it
 // depends on wallet state, so vaultMetric/groupMetric return null for it and
 // the view supplies the value.
-export type MetricKey = "tvl" | "position" | "leader" | "pair";
+export type MetricKey = "tvl" | "position" | "name" | "pair";
+
+// The table's handle for a vault, and its "name" sort value: its name, else
+// `#<seq>` (the per-market number, as the TUI shows an unnamed vault). A
+// mock row has no seq, so it falls back to the leader's short address.
+export const vaultLabel = (vault: Vault): string =>
+  vault.name ??
+  (vault.chain ? `#${vault.chain.seq}` : shortenMint(vault.leader));
 
 export const vaultMetric = (gv: GroupedVault, key: MetricKey): number | null =>
   key === "tvl" ? gv.vault.tvl : null;

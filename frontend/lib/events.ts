@@ -63,7 +63,7 @@ export type CurrenciesSortKey =
   | "liquidity"
   | "holderCount";
 
-export type VaultsSortKey = "tvl" | "position" | "leader" | "pair";
+export type VaultsSortKey = "tvl" | "position" | "name" | "pair";
 
 // Mirror of AppEvents keys as an importable constant. Use this at call
 // sites when you want refactor-friendly references (rename one entry and

@@ -850,9 +850,8 @@ export function VaultActionDialog({
           </div>
 
           <div className="flex flex-col gap-4 p-5">
-            {/* The vault's name, once the program stores one: one line, as
-                text (React escapes it), never a link. Renders nothing while
-                `name` is null, which it is until the field exists. */}
+            {/* The vault's name: one line, as text (React escapes it), never
+                a link. Renders nothing while `name` is null (unset). */}
             {vault.name && (
               <p className="truncate font-medium text-foreground text-sm">
                 {vault.name}
