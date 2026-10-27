@@ -19,7 +19,8 @@ on, memory, load, swap. One bare call reads all of it::
 ``sessions/<id>.load`` (the launcher's, on every create and every resume, so
 resumes accumulate): the time, the class, the build queue, memory in use and
 compressed, ``load1``, the building and free session counts, the lane count
-(``DS_CARGO_LANES``, null when unset) and the verdict for the class. A launch
+(``DS_CARGO_LANES``, the pool's default 2 when unset; null when not a
+number) and the verdict for the class. A launch
 with no reading still appends a ``no-reading`` line. The digest's wait
 section reads them (``wait_ledger.py``).
 
@@ -95,6 +96,9 @@ GIB = 1024**3
 STATE_DIR = Path(".claude") / "session-substrate"
 WORKTREE_SEGMENT = "/.claude/worktrees/"
 SAMPLE_LOG = "fleet-load.log"
+# The cargo pool's lane count when `DS_CARGO_LANES` is unset — the default
+# `_ds_cargo_pool` in `.claude/shell/init.zsh` applies.
+DEFAULT_LANES = 2
 
 STEPS = ("clippy", "doc", "test", "nextest", "build", "check", "run")
 COMPILERS = ("rustc", "rustdoc", "clippy-driver")
@@ -652,11 +656,11 @@ def record_line(
     """One launch record: the reading a session started or resumed under, as
     one compact JSON line for its ``sessions/<id>.load``. A no-reading launch
     still leaves a line, so a gap in the record is never silent."""
-    lanes = env.get("DS_CARGO_LANES")
+    lanes = env.get("DS_CARGO_LANES") or str(DEFAULT_LANES)
     rec: dict = {
         "at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "class": cls,
-        "lanes": int(lanes) if lanes and lanes.isdigit() else None,
+        "lanes": int(lanes) if lanes.isdigit() else None,
     }
     if r is None or k is None:
         return json.dumps({**rec, "status": "no-reading", "error": error})

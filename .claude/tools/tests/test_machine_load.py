@@ -380,7 +380,7 @@ class LaunchRecord(unittest.TestCase):
     def test_the_verdict_is_the_launching_class(self):
         _, lines = self.record()
         self.assertEqual(lines[0]["verdict"], {"slots": 0, "reasons": ["wait"]})
-        self.assertIsNone(lines[0]["lanes"])
+        self.assertEqual(lines[0]["lanes"], ml.DEFAULT_LANES)
 
     def test_no_reading_still_leaves_a_line(self):
         code, lines = self.record(fake=runner(vm="garbage"))
