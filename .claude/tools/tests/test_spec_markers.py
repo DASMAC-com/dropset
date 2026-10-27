@@ -158,10 +158,71 @@ class CheckTests(unittest.TestCase):
     def test_kind_must_agree(self):
         _, failures = sm.check(KIND_MISMATCH)
         self.assertEqual(len(failures), 2)
+        self.assertIn("index entry NEEDS-FEEDBACK has no inline", failures[0])
+        self.assertIn("inline NEEDS-CONFIRM has no index entry", failures[1])
 
     def test_fenced_marker_is_ignored(self):
         text = "# Spec\n\n```\nNEEDS-CONFIRM example\n```\n"
         self.assertEqual(sm.check(text), (0, []))
+
+    def test_title_alone_matches(self):
+        text = (
+            "# Spec\n\n## Open items\n\n- NEEDS-CONFIRM the Pricing model\n\n"
+            "## Pricing\n\nNEEDS-CONFIRM: fair = FX × basis.\n"
+        )
+        self.assertEqual(sm.check(text), (1, []))
+
+    def test_explicit_reference_does_not_fall_back_to_title_words(self):
+        # One inline marker in §2 must not satisfy an entry citing §3 merely
+        # because the §3 entry's text mentions pricing.
+        text = (
+            "# Spec\n\n## Open items\n\n- NEEDS-CONFIRM §2 Pricing basis\n"
+            "- NEEDS-CONFIRM §3 Rollout of the new pricing order\n\n"
+            "## 2. Pricing\n\nNEEDS-CONFIRM: fair = FX × basis.\n\n"
+            "## 3. Rollout\n\nAUD first.\n"
+        )
+        _, failures = sm.check(text)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("§3 Rollout", failures[0])
+
+    def test_entry_covers_a_subsection_marker(self):
+        text = (
+            "# Spec\n\n## Open items\n\n- NEEDS-CONFIRM §2 Pricing\n\n"
+            "## 2. Pricing\n\n### 2.1 Fees\n\nNEEDS-CONFIRM: a 2 bps fee.\n"
+        )
+        self.assertEqual(sm.check(text), (1, []))
+
+    def test_lazy_continuation_stays_in_preamble_list(self):
+        text = (
+            "# Spec\n\n- NEEDS-CONFIRM §1 Pricing which wraps\nlazily here\n"
+            "- NEEDS-FEEDBACK §2 Rollout\n\n## 1. Pricing\n\nNEEDS-CONFIRM: x.\n\n"
+            "## 2. Rollout\n\nNEEDS-FEEDBACK: y.\n"
+        )
+        self.assertEqual(sm.check(text), (2, []))
+
+    def test_none_under_one_group_is_not_the_index_saying_none(self):
+        text = (
+            "# Spec\n\n## Open items\n\n### Confirm\n\n- NEEDS-CONFIRM §1 Pricing\n\n"
+            "### Feedback\n\n- None.\n\n## 1. Pricing\n\nNEEDS-CONFIRM: x.\n"
+        )
+        self.assertEqual(sm.check(text), (1, []))
+
+    def test_unclosed_fence_hiding_a_marker_fails(self):
+        text = "# Spec\n\n```\n## Open items\n\n- NEEDS-CONFIRM §1 Pricing\n"
+        _, failures = sm.check(text)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("line 3: code fence never closed", failures[0])
+
+    def test_longer_fence_closes_only_on_its_own_length(self):
+        text = "# Spec\n\n````\n```\nNEEDS-CONFIRM example\n```\n````\n"
+        self.assertEqual(sm.check(text), (0, []))
+
+    def test_title_below_front_matter_is_not_a_section(self):
+        text = (
+            "Status: draft\n\n# Spec\n\n- NEEDS-CONFIRM §1 Pricing\n\n"
+            "## 1. Pricing\n\nNEEDS-CONFIRM: x.\n"
+        )
+        self.assertEqual(sm.check(text), (1, []))
 
 
 class RunTests(unittest.TestCase):

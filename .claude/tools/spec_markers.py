@@ -16,15 +16,19 @@ Exits 1, naming each failure, when:
 - an index entry carries a marker with no matching inline occurrence;
 - an inline marker has no matching index entry;
 - the file carries markers but no index;
-- the index says "None" while an inline marker remains.
+- the index says "None" while an inline marker remains;
+- a code fence left open hides a marker.
 
 **The index** is the body of a heading named ``Open items``, or failing that
 the first list carrying a marker before the first section heading (a leading
 title heading does not count as a section). **An entry matches** an inline
-marker of the same kind when it references the marker's section — the
-heading's title, its ``#anchor`` slug, or its ``§N`` number — or when one's
-text contains the other's. Fenced code blocks are skipped. A file with no
-markers at all is clear.
+marker of the same kind when it references the marker's section or an
+ancestor of it — by ``§N`` number or ``#anchor`` slug when the entry carries
+one, else by the heading's title — or when one's text contains the other's.
+Fenced code blocks are skipped, and a fence left open over a marker is a
+failure. A marker in an inline code span still counts, since index entries are
+often written that way: to mention the marker literally, write the bare
+``NEEDS-`` prefix or use a fence. A file with no markers at all is clear.
 
 Exit 0 prints one line, the open-item count; ``--quiet`` suppresses it. Exit 2
 is an unreadable file.
@@ -39,12 +43,12 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 MARKER = re.compile(r"NEEDS-(CONFIRM|FEEDBACK)")
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
-FENCE = re.compile(r"^\s*(```|~~~)")
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 INDEX_TITLE = re.compile(r"^open items\b", re.IGNORECASE)
 SECTION_NUMBER = re.compile(r"^§?(\d+(?:\.\d+)*)\.?\s+")
 SECTION_REF = re.compile(r"(?:§|\bsection\s+)(\d+(?:\.\d+)*)", re.IGNORECASE)
@@ -69,7 +73,7 @@ class Occurrence:
     line: int
     kind: str
     text: str
-    section: Heading | None = None
+    sections: list[Heading] = field(default_factory=list)
 
 
 def normalize(text: str) -> str:
@@ -85,22 +89,29 @@ def strip_marker(text: str) -> str:
     return normalize(MARKER.sub(" ", LIST_ITEM.sub("", text)))
 
 
-def scan(lines: list[str]) -> tuple[list[Heading], list[int]]:
-    """Headings, and the line numbers (1-based) outside fenced code."""
+def scan(lines: list[str]) -> tuple[list[Heading], list[int], int | None]:
+    """Headings, the line numbers (1-based) outside fenced code, and the line
+    of a fence left unclosed at end of file (which would hide every marker
+    after it)."""
     headings: list[Heading] = []
     live: list[int] = []
-    fenced = False
+    fence: tuple[int, str] | None = None
     for n, line in enumerate(lines, 1):
-        if FENCE.match(line):
-            fenced = not fenced
+        match = FENCE.match(line)
+        if fence is None and match:
+            fence = (n, match.group(1))
             continue
-        if fenced:
+        if fence is not None:
+            # Only a run of the opening character at least as long closes it.
+            if match and match.group(1)[0] == fence[1][0]:
+                if len(match.group(1)) >= len(fence[1]):
+                    fence = None
             continue
         live.append(n)
         match = HEADING.match(line)
         if match:
             headings.append(Heading(n, len(match.group(1)), match.group(2)))
-    return headings, live
+    return headings, live, fence[0] if fence else None
 
 
 def find_index(
@@ -116,13 +127,13 @@ def find_index(
                     break
             return range(heading.line + 1, end)
 
-    # No heading: the first marked list before the first section heading. A
-    # heading on the first non-blank line is the document's title, not a
-    # section.
-    first = next((n for n in live if lines[n - 1].strip()), None)
-    sections = [h for h in headings if h.line != first]
+    # No heading: the first marked list before the first section heading. The
+    # first level-1 heading is the document's title, not a section.
+    title = next((h for h in headings if h.level == 1), None)
+    sections = [h for h in headings if h is not title]
     limit = sections[0].line if sections else len(lines) + 1
     start = None
+    blank = False
     for n in live:
         if n >= limit:
             break
@@ -130,11 +141,19 @@ def find_index(
         if LIST_ITEM.match(line):
             if start is None:
                 start = n
-        elif start is not None and line.strip() and not line[:1].isspace():
+        elif (
+            start is not None
+            and line.strip()
+            and (line.startswith("#") or (blank and not line[:1].isspace()))
+        ):
+            # A lazy (unindented) continuation stays in the list, as does an
+            # indented one after a blank line; an unindented paragraph after a
+            # blank line, or the title heading, ends it.
             block = range(start, n)
             if any(MARKER.search(lines[m - 1]) for m in block):
                 return block
             start = None
+        blank = not line.strip()
     if start is not None:
         block = range(start, limit)
         if any(MARKER.search(lines[m - 1]) for m in block):
@@ -142,25 +161,32 @@ def find_index(
     return None
 
 
-def section_of(line: int, headings: list[Heading]) -> Heading | None:
-    owner = None
+def sections_of(line: int, headings: list[Heading]) -> list[Heading]:
+    """The heading owning ``line`` and each ancestor, nearest first — so an
+    entry citing ``§2`` covers a marker under ``### 2.1``."""
+    chain: list[Heading] = []
     for heading in headings:
         if heading.line > line:
             break
-        owner = heading
-    return owner
+        chain = [h for h in chain if h.level < heading.level] + [heading]
+    return chain[::-1]
 
 
 def references(entry: str, section: Heading) -> bool:
-    """Whether an index entry's text points at this section."""
-    number = SECTION_NUMBER.match(section.title)
-    if number and number.group(1) in SECTION_REF.findall(entry):
-        return True
+    """Whether an index entry's text points at this section.
+
+    An entry carrying an explicit ``§N`` or ``(#anchor)`` reference matches by
+    that alone: matching its words against every heading title would let one
+    inline marker satisfy an entry meant for another section.
+    """
+    numbers = SECTION_REF.findall(entry)
+    anchors = ANCHOR_REF.findall(entry)
     title = SECTION_NUMBER.sub("", section.title)
-    if slug(title) in ANCHOR_REF.findall(entry) or slug(
-        section.title
-    ) in ANCHOR_REF.findall(entry):
-        return True
+    if numbers or anchors:
+        number = SECTION_NUMBER.match(section.title)
+        return bool(number and number.group(1) in numbers) or bool(
+            {slug(title), slug(section.title)} & set(anchors)
+        )
     wanted = strip_marker(title)
     return bool(wanted) and f" {wanted} " in f" {strip_marker(entry)} "
 
@@ -168,7 +194,7 @@ def references(entry: str, section: Heading) -> bool:
 def matches(entry: Occurrence, inline: Occurrence) -> bool:
     if entry.kind != inline.kind:
         return False
-    if inline.section is not None and references(entry.text, inline.section):
+    if any(references(entry.text, section) for section in inline.sections):
         return True
     ours, theirs = strip_marker(entry.text), strip_marker(inline.text)
     short = min(len(ours), len(theirs))
@@ -178,9 +204,13 @@ def matches(entry: Occurrence, inline: Occurrence) -> bool:
 def check(text: str) -> tuple[int, list[str]]:
     """``(open_item_count, failures)`` for a spec's text."""
     lines = text.splitlines()
-    headings, live = scan(lines)
+    headings, live, unclosed = scan(lines)
     index = find_index(lines, headings, live)
     in_index = set(index or ())
+    # The title is every section's ancestor; matching an entry against it
+    # would pair the entry with every marker in the file.
+    title = next((h for h in headings if h.level == 1), None)
+    sectioned = [h for h in headings if h is not title]
 
     entries: list[Occurrence] = []
     inline: list[Occurrence] = []
@@ -194,9 +224,17 @@ def check(text: str) -> tuple[int, list[str]]:
                 entries.append(Occurrence(n, match.group(0), line))
             continue
         for match in MARKER.finditer(line):
-            inline.append(Occurrence(n, match.group(0), line, section_of(n, headings)))
+            inline.append(
+                Occurrence(n, match.group(0), line, sections_of(n, sectioned))
+            )
 
     failures: list[str] = []
+    if unclosed is not None and any(MARKER.search(x) for x in lines[unclosed:]):
+        # Everything after it was skipped, markers included.
+        failures.append(
+            f"line {unclosed}: code fence never closed — every marker after "
+            "it is unchecked"
+        )
     if not entries and not inline:
         return 0, failures
     if index is None:
@@ -205,7 +243,9 @@ def check(text: str) -> tuple[int, list[str]]:
             "'Open items' heading, or a marked list before the first section"
         )
         return len(inline), failures
-    if says_none is not None and inline:
+    # A "None" under one group of a grouped index is not the whole index
+    # saying None.
+    if says_none is not None and inline and not entries:
         failures.append(
             f"line {says_none}: the index says None while "
             f"{len(inline)} inline marker(s) remain"
