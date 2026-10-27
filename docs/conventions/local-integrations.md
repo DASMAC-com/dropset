@@ -1706,8 +1706,9 @@ sections point here.
 | `chore 1843`           | none (base)        | none             | helper   | nothing to prune                                       |
 
 The session name is the worktree column (`1843` for a chore).
-The named exceptions: `plan-<day>` keeps its day-keyed name (it
-has no issue), and a free-form explore
+The named exceptions: the daily seats `schedule-<day>` (`plan`) and
+`curate-<day>` keep their day-keyed names (they have no issue), and a
+free-form explore
 keeps `exp-<name>`. **Git branches keep the `eng-` prefix**, because
 Linear's GitHub integration links branches and PRs on that form;
 `claude -w` cannot choose a branch name (it would say
@@ -2908,7 +2909,7 @@ published here and never worked. Verified against `claude --help`:
 So the only deterministic handle is an id the helper computes itself: a
 **per-day session UUID** seeded from kind + full date, with the on-disk
 transcript as the existence check. The seed carries the **full** date so
-`plan-18` in August and `plan-18` in September cannot collide — the
+`schedule-18` in August and `schedule-18` in September cannot collide — the
 display name stays day-only by operator choice, and the id is what
 disambiguates. The transcript-path slug replaces every `/` and `.` with
 `-`, the same rule `.claude/tools/resolve_session.py`'s `slugify`
