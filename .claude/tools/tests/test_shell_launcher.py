@@ -240,5 +240,65 @@ class LaunchLineGrammarTest(unittest.TestCase):
                 self.assertIn("Usage: explore [anthropic|bedrock]", got.stderr)
 
 
+@unittest.skipUnless(shutil.which("zsh"), "needs zsh")
+class ClassStampTest(unittest.TestCase):
+    """The launcher's class record names the pid that runs `claude`."""
+
+    def _launch(
+        self, key: str, cls: str, recorded: str | None = None
+    ) -> tuple[str, str]:
+        with tempfile.TemporaryDirectory() as state:
+            if recorded is not None:
+                Path(state, f"{key}.class").write_text(recorded)
+            got = run(
+                f'_DS_SUBSTRATE_DIR={state}; _ds_class_key={key}; _ds_class="{cls}"; '
+                'claude() { zmodload zsh/system; print -r -- "pid=$sysparams[pid]"; }; '
+                "_ds_claude m"
+            )
+            self.assertEqual(got.returncode, 0, got.stderr)
+            pid = got.stdout.split("pid=")[1].split()[0]
+            return Path(state, f"{key}.class").read_text().strip(), pid
+
+    def test_a_fixed_class_is_stamped_with_claude_s_pid(self) -> None:
+        record, pid = self._launch("2258", "building", recorded="free\n")
+        self.assertEqual(record, f"building {pid}")
+
+    def test_an_empty_class_keeps_the_recorded_one(self) -> None:
+        record, pid = self._launch("2240", "", recorded="free\n")
+        self.assertEqual(record, f"free {pid}")
+
+    def test_an_empty_class_with_no_record_is_building(self) -> None:
+        record, pid = self._launch("sessions/abc", "")
+        self.assertEqual(record, f"building {pid}")
+
+    def test_an_executable_claude_keeps_the_stamped_pid(self) -> None:
+        # The real path: the subshell `exec`s, so the pid it stamped is the
+        # one the probe will find running `claude`.
+        with (
+            tempfile.TemporaryDirectory() as state,
+            tempfile.TemporaryDirectory() as bin_dir,
+        ):
+            stub = Path(bin_dir, "claude")
+            stub.write_text('#!/bin/sh\necho "pid=$$"\n')
+            stub.chmod(0o755)
+            got = subprocess.run(
+                [
+                    "zsh",
+                    "-fc",
+                    f'source "$1" || exit 9; _DS_SUBSTRATE_DIR={state}; '
+                    "_ds_class_key=7; _ds_class=free; _ds_claude m",
+                    "zsh",
+                    str(INIT),
+                ],
+                capture_output=True,
+                text=True,
+                env={"PATH": f"{bin_dir}:/usr/bin:/bin"},
+                check=False,
+            )
+            self.assertEqual(got.returncode, 0, got.stderr)
+            pid = got.stdout.split("pid=")[1].split()[0]
+            self.assertEqual(Path(state, "7.class").read_text().strip(), f"free {pid}")
+
+
 if __name__ == "__main__":
     unittest.main()

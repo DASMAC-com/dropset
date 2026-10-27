@@ -3,8 +3,8 @@
 
 The planning session's dispatch arm: it names a task that is ready to start,
 offers to start it, and on the operator's yes runs this. The ask-then-yes IS
-the authorization, the same class as `fleet go` — this tool adds no gate of its
-own.
+the authorization, the same class as `fleet go` — the one gate this tool adds is
+the machine's (below), never a second ask.
 
     python3 .claude/tools/session_dispatch.py task 1234
     python3 .claude/tools/session_dispatch.py task anthropic 1234
@@ -39,16 +39,35 @@ the operator can paste it by hand and lose nothing but the convenience.
 The iTerm driving itself lives in `iterm_api`, shared with `fleet_resume.py`;
 see there for the interpreter dance that keeps this repo's own Python
 stdlib-only while still reaching a library that is not.
+
+**THE MACHINE GATE.** Before any tab opens, every verb is classed — `free`
+(no cargo, no Docker, no PR) or `building` — and the machine-load probe
+(`machine_load.py`) is read once for the batch. What fits is seated; the rest
+is printed as `held` with the number that refused it, and a planning session
+re-dispatches it when a slot opens. That reading replaces the session count
+that used to live only in doctrine; the count survives as `DS_FLEET_CAP`, which
+the probe applies and nothing here overrides. `--over-budget` seats past every
+other check, as the operator's word in their own tab. A probe with no reading
+(exit 3) never halts the fleet: the batch is seated under the cap alone, and
+the dispatch says why. `fleet_resume.py` runs the same gate over its resume
+list, which is why the gate is public here rather than inlined in `run`.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import re
 import shlex
+import subprocess
 import sys
+from dataclasses import dataclass
+from pathlib import Path
 
 import iterm_api
+import linear_issue
+import machine_load
 
 #: The verbs this can dispatch, each mapped to a validator for its arguments.
 #:
@@ -226,6 +245,349 @@ def command_line(words: list[str]) -> str:
     return " ".join(shlex.quote(word) for word in words)
 
 
+FREE, BUILDING = "free", "building"
+
+#: Each verb's class. `architect`, `plan` and `explore` run no cargo and no
+#: Docker and open no PR, so only the machine checks can refuse them; `fleet`
+#: is free because each session it resumes meets this same gate inside
+#: `fleet_resume.py`. `chore` is absent on purpose — it is inspected
+#: (`chore_class`) — and a verb added later is building until this says
+#: otherwise, the direction that errs toward refusing.
+VERB_CLASS = {
+    "architect": FREE,
+    "explore": FREE,
+    "fleet": FREE,
+    "plan": FREE,
+    "task": BUILDING,
+}
+
+#: Where a chore body names a build or deploy command. Searched only inside
+#: code spans and fenced blocks, where a body writes a command: in prose "make
+#: sure" and "anchor on" are English, and matching them would class every chore
+#: as building. The guards either side keep `anchor-v2` and `make_x.py` out. `localnet`
+#: has no prose sense, so it counts anywhere.
+_CODE = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
+_BUILD_COMMAND = re.compile(
+    r"(?<![\w./-])(make|cargo|anchor|docker)(?:[ \t]+([\w:./-]+))?(?![\w-])",
+    re.ASCII,
+)
+_LOCALNET = re.compile(r"\blocalnet\b", re.IGNORECASE)
+
+
+def build_command(body: str) -> str | None:
+    """The first build or deploy command a chore body names, or ``None``."""
+    for span in _CODE.findall(body):
+        if match := _BUILD_COMMAND.search(span):
+            return " ".join(word for word in match.groups() if word)
+    match = _LOCALNET.search(body)
+    return match.group(0).lower() if match else None
+
+
+def issue_number(tag: str) -> str:
+    """``eng-0123`` → ``123``, the key the launcher's records use."""
+    return str(int(tag.rsplit("-", 1)[-1]))
+
+
+def fetch_body(number: str) -> str | None:
+    """An issue's body through the issue tool's fetch, or ``None`` if unreadable.
+
+    Planning's shell holds `LINEAR_API_KEY`; a shell without it, Linear being
+    down, or any reply the tool rejects all read as unreadable, which the
+    caller classes as building.
+    """
+    api_key = os.environ.get("LINEAR_API_KEY", "").strip()
+    if not api_key:
+        return None
+    try:
+        issue = linear_issue.fetch_issue_body(api_key, f"ENG-{number}")
+    except Exception:  # noqa: BLE001 — every failure is "unreadable", by design
+        return None
+    return issue.get("description") or ""
+
+
+@dataclass
+class Seat:
+    """One verb as the gate sees it."""
+
+    command: str
+    cls: str
+    #: Shown after the command — `(free)`, `(builds: make demo)` — or empty
+    #: for a verb whose class is its name (`task`).
+    label: str = ""
+    #: The issue number of a chore, whose class is written for the launcher.
+    record: str | None = None
+
+    @property
+    def shown(self) -> str:
+        return f"{self.command} {self.label}" if self.label else self.command
+
+
+def classify(words: list[str], override: str | None = None, fetch=None) -> Seat:
+    """Class one validated verb. ``override`` is `--class`, which binds chores."""
+    fetch = fetch or fetch_body
+    command = command_line(words)
+    if words[0] != "chore":
+        cls = VERB_CLASS.get(words[0], BUILDING)
+        return Seat(command, cls, "(free)" if cls == FREE else "")
+    number = issue_number(words[-1])
+    if override:
+        reason = "--class"
+    else:
+        body = fetch(number)
+        reason = "body unreadable" if body is None else build_command(body)
+        override = BUILDING if reason else FREE
+    label = (
+        f"(builds: {reason})"
+        if override == BUILDING
+        else ("(free, --class)" if reason == "--class" else "(free)")
+    )
+    return Seat(command, override, label, record=number)
+
+
+def state_dir() -> Path:
+    """The base checkout's session-substrate directory, the probe's own."""
+    return machine_load.default_state_dir()
+
+
+def write_records(seats: list[Seat], directory: Path) -> None:
+    """Record each seated chore's class beside its substrate marker.
+
+    The class alone, no pid: the launcher stamps `<class> <pid>` when its
+    `claude` starts, reading the class from here, and a resume reads it back
+    instead of re-inspecting. Best effort — a lost record costs a chore
+    counted as building, never a dispatch.
+    """
+    for seat in seats:
+        if seat.record is None:
+            continue
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / f"{seat.record}.class").write_text(f"{seat.cls}\n")
+        except OSError:
+            continue
+
+
+def recorded_class(directory: Path, number: str) -> str:
+    """The class a session's record holds; building when there is none."""
+    for key in (number, f"eng-{number}"):
+        try:
+            cls = (directory / f"{key}.class").read_text().split()[0]
+        except (OSError, IndexError):
+            continue
+        if cls in (FREE, BUILDING):
+            return cls
+    return BUILDING
+
+
+def probe(seats: list[Seat], directory: Path) -> dict:
+    """One machine-load reading as the probe's JSON.
+
+    Anything that is not a reading — exit 3, a crash, a timeout, output that is
+    not the JSON shape — comes back as the probe's own no-reading shape, so the
+    caller has one test (`"verdict" in reading`) rather than three.
+    """
+    building = sum(seat.cls == BUILDING for seat in seats)
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("machine_load.py")),
+                "--json",
+                "--sessions",
+                str(max(1, building)),
+                "--state-dir",
+                str(directory),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        reading = json.loads(proc.stdout)
+        if isinstance(reading, dict) and ("verdict" in reading or "error" in reading):
+            return reading
+        error = "the probe printed no reading"
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    return {"status": "no-reading", "exit": machine_load.NO_READING, "error": error}
+
+
+def _reason(key: str, reading: dict, cap: int) -> str:
+    """The binding number behind one refusal key."""
+    knobs = reading.get("knobs") or {}
+    sessions = reading.get("sessions") or {}
+    duration = machine_load.duration
+    gib = machine_load.GIB
+    if key == "wait":
+        return (
+            f"longest build wait {duration(reading['builds']['longest_wait_s'])} "
+            f"on the pool lock (limit {duration(knobs['build_wait_s'])})"
+        )
+    if key == "cap":
+        return (
+            f"{sessions['building']} building of the cap {cap}"
+            if sessions
+            else f"the cap {cap} (no reading counted the live sessions)"
+        )
+    if key == "slots":
+        waiting = (reading.get("builds") or {}).get("waiting")
+        return (
+            f"the reading admits {reading['verdict']['building']['slots']} more "
+            "building session(s)"
+            + (" (builds are waiting on the pool lock)" if waiting else "")
+        )
+    if key == "memory":
+        memory = reading["memory"]
+        return (
+            f"memory headroom {memory['headroom'] / gib:.1f} GiB "
+            f"(reserve {memory['reserve'] / gib:.1f})"
+        )
+    if key == "swap":
+        return f"swap {machine_load.size(reading['swap_used'])} in use"
+    if key == "pressure":
+        return f"kernel pressure {reading['pressure']}"
+    if key == "load":
+        return (
+            f"load {reading['load']['per_core']:.2f} per core "
+            f"(limit {knobs['load_per_core']:.2f})"
+        )
+    return key
+
+
+def _remedy(key: str, reading: dict) -> str:
+    knobs = reading.get("knobs") or {}
+    return {
+        "wait": "the longest wait falling under "
+        + machine_load.duration(knobs.get("build_wait_s", 0)),
+        "memory": "memory headroom over the reserve",
+        "swap": "swap draining to 0",
+        "pressure": "kernel pressure back to normal",
+        "load": f"load falling under {knobs.get('load_per_core', 0):.2f} per core",
+    }.get(key, "")
+
+
+@dataclass
+class Gate:
+    """What the reading admits: the seats to open, and the held with why."""
+
+    seated: list[Seat]
+    held: list[tuple[Seat, str]]
+    remedies: list[str]
+    notes: list[str]
+    #: Under `--over-budget`, what the reading alone would have held.
+    overridden: list[tuple[Seat, str]]
+
+
+def _admit(
+    seats: list[Seat], reading: dict, cap: int, over_budget: bool
+) -> tuple[list[Seat], list[tuple[Seat, list[str]]]]:
+    """Seat in order: free verbs on the machine checks alone, building ones up to
+    the reading's slots. Under `over_budget` only the cap binds, and only
+    building verbs."""
+    verdict = reading.get("verdict")
+    if verdict is None or over_budget:
+        building = (reading.get("sessions") or {}).get("building", 0)
+        b_slots, b_reasons, spent = max(0, cap - building), [], "cap"
+        f_slots, f_reasons = None, []
+    else:
+        b_slots, b_reasons = (
+            verdict["building"]["slots"],
+            verdict["building"]["reasons"],
+        )
+        f_slots, f_reasons = verdict["free"]["slots"], verdict["free"]["reasons"]
+        spent = "slots"
+    seated, held, taken = [], [], 0
+    for seat in seats:
+        if seat.cls == FREE:
+            if f_slots is None:
+                seated.append(seat)
+            else:
+                held.append((seat, f_reasons))
+        elif taken < b_slots:
+            taken += 1
+            seated.append(seat)
+        else:
+            held.append((seat, b_reasons or [spent]))
+    return seated, held
+
+
+def gate(
+    seats: list[Seat],
+    directory: Path,
+    *,
+    over_budget: bool = False,
+    env: dict[str, str] | None = None,
+    reader=None,
+) -> Gate:
+    """Read the probe once and seat what fits.
+
+    A hold on the pool-lock wait is re-probed once before it stands: the probe
+    takes one snapshot, and a build caught between two children reads as a
+    waiter. That error leans toward refusing, and a second reading heals it.
+    """
+    reader = reader or probe
+    env = os.environ if env is None else env
+    reading = reader(seats, directory)
+    has_reading = "verdict" in reading
+    # The probe's own knob parse, so the cap means the same number in both
+    # places; `physical` feeds only the memory reserve, which is unused here.
+    knobs = machine_load.read_knobs(env, 0)
+    cap = int((reading.get("knobs") or {}).get("cap", knobs.cap))
+    notes = list(knobs.notes) if not has_reading else []
+    if not has_reading:
+        notes.append(
+            f"no machine reading ({reading.get('error', 'unknown')}); "
+            f"seating under the cap {cap} alone"
+        )
+    seated, held = _admit(seats, reading, cap, over_budget)
+    if has_reading and not over_budget and any("wait" in why for _, why in held):
+        reading = reader(seats, directory)
+        if "verdict" in reading:
+            seated, held = _admit(seats, reading, cap, over_budget)
+    overridden: list[tuple[Seat, str]] = []
+    if over_budget and has_reading:
+        _, would = _admit(seats, reading, cap, False)
+        kept = {id(seat) for seat, _ in held}
+        overridden = [
+            (seat, "; ".join(_reason(k, reading, cap) for k in why))
+            for seat, why in would
+            if id(seat) not in kept
+        ]
+    remedies: list[str] = []
+    for _, why in held:
+        for key in why:
+            text = _remedy(key, reading)
+            if text and text not in remedies:
+                remedies.append(text)
+    if any(seat.cls == BUILDING for seat, _ in held):
+        remedies.append("any builder closing")
+    return Gate(
+        seated=seated,
+        held=[
+            (seat, "; ".join(_reason(k, reading, cap) for k in why))
+            for seat, why in held
+        ],
+        remedies=remedies,
+        notes=notes,
+        overridden=overridden,
+    )
+
+
+def held_lines(result: Gate) -> list[str]:
+    """The `held` lines, a repeated reason shortened to `same`, then what would
+    free a slot."""
+    lines, previous = [], None
+    for seat, why in result.held:
+        lines.append(f"held  {seat.shown}: {'same' if why == previous else why}")
+        previous = why
+    if result.held and result.remedies:
+        lines.append(f"would free a slot: {'; '.join(result.remedies)}")
+    lines += [
+        f"over budget, seated anyway: {seat.shown}: {why}"
+        for seat, why in result.overridden
+    ]
+    return lines
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="session_dispatch.py",
@@ -240,6 +602,19 @@ def run(argv: list[str]) -> int:
         help="print the lines that would be typed, and do nothing else",
     )
     parser.add_argument(
+        "--class",
+        dest="cls",
+        choices=(BUILDING, FREE),
+        default=None,
+        help="class every chore in the batch, instead of inspecting its body",
+    )
+    parser.add_argument(
+        "--over-budget",
+        action="store_true",
+        help="seat the whole batch past the machine checks (the cap still binds)",
+    )
+    parser.add_argument("--state-dir", type=Path, default=None, help=argparse.SUPPRESS)
+    parser.add_argument(
         "verb",
         nargs=argparse.REMAINDER,
         help=f"the session verb(s), separated by `{VERB_SEPARATOR}`",
@@ -252,9 +627,10 @@ def run(argv: list[str]) -> int:
     # stray word so nothing is typed, but that is luck rather than design, and
     # dry-run is the look-before-you-type affordance on a boundary that types
     # into a live shell. Catch it explicitly and say where the flag goes.
-    if any(word in ("--dry-run", "-n") for word in args.verb):
+    flags = ("--dry-run", "-n", "--class", "--over-budget", "--state-dir")
+    if stray := [word for word in args.verb if word.split("=")[0] in flags]:
         print(
-            "session-dispatch: --dry-run must come BEFORE the verb "
+            f"session-dispatch: {stray[0]} must come BEFORE the verb "
             "(argparse REMAINDER swallows anything after it)",
             file=sys.stderr,
         )
@@ -265,15 +641,31 @@ def run(argv: list[str]) -> int:
     # bad outcome here: the caller cannot tell which tabs it got without reading
     # them, and re-running to fix the typo would double the ones that worked.
     try:
-        commands = [command_line(validate(group)) for group in split_verbs(args.verb)]
+        groups = [validate(group) for group in split_verbs(args.verb)]
     except ValueError as exc:
         print(f"session-dispatch: {exc}", file=sys.stderr)
         return 2
 
     if args.dry_run:
-        for command in commands:
-            print(command)
+        for words in groups:
+            print(command_line(words))
         return 0
+
+    # The machine gate, still before any tab. Unlike a malformed verb, a held
+    # one is valid, so a partial batch is correct HERE: the held lines say
+    # which, and re-dispatching them later cannot double a seated one.
+    directory = args.state_dir or state_dir()
+    seats = [classify(words, args.cls) for words in groups]
+    admitted = gate(seats, directory, over_budget=args.over_budget)
+    for note in admitted.notes:
+        print(f"session-dispatch: {note}", file=sys.stderr)
+    held = held_lines(admitted)
+    if not admitted.seated:
+        print("\n".join(held))
+        return 0
+    write_records(admitted.seated, directory)
+    commands = [seat.command for seat in admitted.seated]
+    shown = {seat.command: seat.shown for seat in admitted.seated}
 
     try:
         ttys = iterm_api.open_tabs(commands)
@@ -311,6 +703,8 @@ def run(argv: list[str]) -> int:
                 f"by hand instead:\n\n{listing}\n",
                 file=sys.stderr,
             )
+        for line in held:
+            print(line, file=sys.stderr)
         return 1
 
     # The confirmation the operator reads. One line per verb pairs it with the
@@ -318,7 +712,9 @@ def run(argv: list[str]) -> int:
     # merely finished; `open_tabs` keeps that list positional, so a `None` marks
     # the one tab whose tty could not be read instead of shifting the rest.
     for command, tty in zip(commands, ttys):
-        print(f"{command} -> {tty or 'tty unknown'}")
+        print(f"{shown[command]} -> {tty or 'tty unknown'}")
+    for line in held:
+        print(line)
 
     # Every new tab gets the operator's own Attend mark, green until visited,
     # so a dispatched or resumed session is attended to rather than found by

@@ -1,5 +1,4 @@
 #!/usr/bin/env zsh
-# cspell:word subshell
 # cspell:word localoptions
 # cspell:word localtraps
 # cspell:word ncpu
@@ -721,7 +720,38 @@ _ds_claude() {
     [[ -n "$DS_MODEL_BACKGROUND" ]] &&
       local -x ANTHROPIC_DEFAULT_HAIKU_MODEL="$DS_MODEL_BACKGROUND"
   fi
-  claude "$@"
+  # A caller that names a class record (`_ds_class_key`, see `_ds_class_stamp`)
+  # launches from a subshell that stamps its own pid and then `exec`s, so the
+  # record names the `claude` process itself. A function `claude` (the test
+  # stub) cannot be exec'd, so it is called instead.
+  if [[ -n "$_ds_class_key" ]]; then
+    (
+      _ds_class_stamp "$_ds_class_key" "$_ds_class"
+      (( $+functions[claude] )) && { claude "$@"; exit; }
+      exec claude "$@"
+    )
+  else
+    claude "$@"
+  fi
+}
+
+# Internal: write the class record the machine-load probe counts sessions by —
+# `<key>.class` beside the substrate marker, holding `<class> <pid>`. $1 the
+# marker key, $2 the class, or "" to keep the recorded one (the dispatcher
+# writes a chore's from its issue body), else `building`. Called from the
+# launch subshell just before `exec`, so the pid is `claude`'s; a record
+# counts only while that pid is a live `claude`, so it needs no cleanup.
+# Best-effort, like `_ds_substrate_write`: a lost record counts as building.
+_ds_class_stamp() {
+  local file="$_DS_SUBSTRATE_DIR/$1.class" cls="$2" recorded
+  if [[ -z "$cls" ]]; then
+    [[ -r "$file" ]] && read -r recorded _ < "$file" 2>/dev/null
+    [[ "$recorded" == (building|free) ]] && cls="$recorded" || cls=building
+  fi
+  zmodload -F zsh/system p:sysparams 2>/dev/null || return 0
+  mkdir -p "${file:h}" 2>/dev/null || return 0
+  print -r -- "$cls $sysparams[pid]" >| "$file" 2>/dev/null
+  return 0
 }
 
 # Internal: the title guard (`verb_check.py`) for a launch that starts a NEW
@@ -1623,6 +1653,7 @@ _ds_task_start() {
   _ds_session_mark "$sid"
 
   local dir="$(_ds_launch_dir "$tag")"
+  local _ds_class_key="$tag" _ds_class=building
   _ds_worktree_ensure "$dir"
   _ds_claude "$model" -w "$dir" -n "$tag" --session-id "$sid" \
     --permission-mode auto \
@@ -1722,6 +1753,8 @@ _ds_task_resume() {
   cd "${run_from:-$_DS_REPO}" || cd "$_DS_REPO" || return 1
   _ds_pull
   _ds_secrets
+  # The class the session launched with, read back rather than re-inspected.
+  local _ds_class_key="$key" _ds_class=''
 
   case "$mode" in
     continue)
@@ -1962,6 +1995,7 @@ explore() {
   if [[ -z "$recorded" ]]; then
     _ds_substrate_write "$tag" "$substrate" advisor
   fi
+  local _ds_class_key="$tag" _ds_class=free
   _ds_session "$sid" "$name" "$prompt" "$model" "$(_ds_launch_dir "$tag")"
 }
 
@@ -2074,6 +2108,8 @@ chore() {
   else
     _ds_substrate_write "$tag" "$substrate" helper
   fi
+  # A chore's class is the one the dispatcher recorded from its body.
+  local _ds_class_key="$tag" _ds_class=''
   _ds_session "$(_ds_topic_sid chore "$tag")" "$tag" "/chore $tag" "$model" ''
 }
 
@@ -2215,8 +2251,9 @@ plan() {
     rm -f "$marker"
     # DS_PLAN_DATE tells the session its LAUNCH day, so plan_cycle.py and
     # resolve_session.py still name this session after midnight.
-    DS_PLAN_DATE="$day" _ds_session "$(_ds_daily_sid plan "$cycle" "$day")" \
-      "$name" /plan "$model"
+    sid="$(_ds_daily_sid plan "$cycle" "$day")"
+    local _ds_class_key="sessions/$sid" _ds_class=free
+    DS_PLAN_DATE="$day" _ds_session "$sid" "$name" /plan "$model"
     rc=$?
     [[ -f "$marker" ]] || return $rc
     mkdir -p "$_DS_SUBSTRATE_DIR"
@@ -2332,6 +2369,7 @@ architect() {
     print -u2 "architect: worktree $tag was made by another launch with no" \
       'marker — leaving it unmarked, so the pruner keeps its executor gate.'
   fi
+  local _ds_class_key="$tag" _ds_class=free
   _ds_session "$(_ds_topic_sid architect "$tag")" \
     "$tag" "/architect ENG-$tag" "$model" "$(_ds_launch_dir "$tag")"
 }
@@ -2359,12 +2397,15 @@ fleet() {
   # The tool needs only the exported key, and each tab it opens is a launch
   # that signs out on its own.
   _ds_op_signout
-  if [[ "$1" == "go" ]]; then
+  if [[ "$1" == "go" && -z "$2" ]]; then
     python3 "$_DS_REPO/.claude/tools/fleet_resume.py" --apply
+  elif [[ "$1" == "go" && "$2" == "--over-budget" && -z "$3" ]]; then
+    python3 "$_DS_REPO/.claude/tools/fleet_resume.py" --apply --over-budget
   elif [[ -z "$1" ]]; then
     python3 "$_DS_REPO/.claude/tools/fleet_resume.py"
   else
-    print -u2 'Usage: fleet [go]   (no argument = show the plan; `go` = open the tabs)'
+    print -u2 'Usage: fleet [go [--over-budget]]   (no argument = show the plan;' \
+      '`go` = open the tabs; `--over-budget` = past the machine gate)'
     return 1
   fi
 }

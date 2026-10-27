@@ -29,6 +29,7 @@ from pathlib import Path
 from unittest import mock
 
 import fleet_resume as fr
+from tests.test_session_dispatch import NO_READING, Readings, reading
 
 
 def _issue(identifier="ENG-889", state="In Progress", title="A task"):
@@ -405,6 +406,16 @@ class Cli(unittest.TestCase):
         )
         self._env.start()
         self.addCleanup(self._env.stop)
+        # A green machine unless a case says otherwise, and a scratch
+        # substrate directory for the class records.
+        self.probe = Readings(reading())
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.state = Path(scratch.name)
+        for name, value in (("probe", self.probe), ("state_dir", lambda: self.state)):
+            patcher = mock.patch.object(fr.session_dispatch, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def _run(self, *argv):
         out, err = io.StringIO(), io.StringIO()
@@ -595,6 +606,60 @@ class Cli(unittest.TestCase):
         hand_run = message.split("run these by hand:")[1]
         self.assertIn("889", hand_run)
         self.assertIn("890", hand_run)
+
+    def _two_in_flight(self, *argv, readings):
+        self.probe.readings = list(readings)
+        (self.state / "889.class").write_text("free 4242\n")
+        with (
+            mock.patch.object(
+                fr, "_post", return_value=_page([_issue("ENG-889"), _issue("ENG-890")])
+            ),
+            mock.patch.object(fr, "live_tags", return_value=set()),
+            mock.patch.object(
+                fr.iterm_api, "open_tabs", side_effect=lambda c: ["/dev/a"] * len(c)
+            ) as opened,
+            mock.patch.object(fr, "mark_attention", return_value=True),
+        ):
+            code, out, err = self._run(*argv)
+        return code, json.loads(out), err, opened
+
+    def test_the_gate_reads_each_class_back_and_holds_what_does_not_fit(self):
+        refused = reading(slots=0, reasons=["cap"], building=20)
+        code, parsed, err, opened = self._two_in_flight("--apply", readings=(refused,))
+        self.assertEqual(code, 0)
+        # 889's record says free, so the cap cannot refuse it; 890 has none,
+        # which reads as building.
+        opened.assert_called_once_with(["task resume 889"])
+        self.assertEqual([e["tag"] for e in parsed["resume"]], ["889"])
+        self.assertEqual(parsed["resume"][0]["class"], "free")
+        self.assertEqual(
+            [(e["tag"], e["class"], e["reason"]) for e in parsed["held"]],
+            [("890", "building", "20 building of the cap 20")],
+        )
+        self.assertIn("held  task resume 890: 20 building of the cap 20", err)
+        self.assertIn("1 held by the machine gate", err)
+
+    def test_the_read_only_plan_shows_the_holds_too(self):
+        refused = reading(slots=0, reasons=["cap"], building=20)
+        code, parsed, err, opened = self._two_in_flight(readings=(refused,))
+        opened.assert_not_called()
+        self.assertEqual([e["tag"] for e in parsed["held"]], ["890"])
+
+    def test_over_budget_resumes_past_the_machine(self):
+        refused = reading(slots=0, reasons=["wait"], longest=465, waiting=1)
+        code, parsed, err, opened = self._two_in_flight(
+            "--apply", "--over-budget", readings=(refused,)
+        )
+        opened.assert_called_once_with(["task resume 889", "task resume 890"])
+        self.assertEqual(parsed["held"], [])
+        self.assertIn("over budget, seated anyway: task resume 890", err)
+
+    def test_no_reading_resumes_under_the_cap(self):
+        code, parsed, err, opened = self._two_in_flight(
+            "--apply", readings=(NO_READING,)
+        )
+        self.assertEqual(parsed["opened"], 2)
+        self.assertIn("no machine reading", err)
 
     def test_a_missing_env_var_raises_a_user_facing_error(self):
         with mock.patch.dict(os.environ, {"LINEAR_API_KEY": ""}):

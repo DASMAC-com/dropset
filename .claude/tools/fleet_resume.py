@@ -39,6 +39,14 @@ starts double-resuming.
 than one per tab, so it pays interpreter startup once and cannot interleave with
 the tabs it is creating.
 
+**The machine gate is the dispatcher's** (`session_dispatch.gate`), read once
+over the resume list with each session's class read back from its launch
+record, never re-inspected. Resume runs before any new dispatch, so in-flight
+work takes the budget first; what the reading cannot seat is listed as held
+with the number that refused it, and ``--over-budget`` (``fleet go
+--over-budget``) seats it anyway, the cap excepted. A resumed building session
+counts like a new one, since it builds again within minutes.
+
 **No AppleScript.** iTerm is driven through its Python API, via the shared
 ``iterm_api`` module — the one owner of iTerm automation in this repo. This tool
 and ``session_dispatch.py`` were the only two AppleScript callers, and
@@ -57,9 +65,11 @@ import os
 import re
 import shlex
 import sys
+from pathlib import Path
 
 import iterm_api
 import linear_api
+import session_dispatch
 
 ENDPOINT = linear_api.ENDPOINT
 
@@ -276,6 +286,26 @@ def plan(api_key: str, project_id: str) -> dict:
     }
 
 
+def admit(result: dict, directory: Path, over_budget: bool) -> list[str]:
+    """Gate ``result["resume"]`` on the machine, moving what does not fit to
+    ``result["held"]``. Returns the held and note lines to print."""
+    entries = result["resume"]
+    seats = []
+    for entry in entries:
+        cls = session_dispatch.recorded_class(directory, entry["tag"])
+        entry["class"] = cls
+        label = "(free)" if cls == session_dispatch.FREE else ""
+        seats.append(session_dispatch.Seat(resume_command(entry["tag"]), cls, label))
+    admitted = session_dispatch.gate(seats, directory, over_budget=over_budget)
+    seated = {id(seat) for seat in admitted.seated}
+    why = {id(seat): reason for seat, reason in admitted.held}
+    result["resume"] = [e for e, s in zip(entries, seats) if id(s) in seated]
+    result["held"] = [
+        {**e, "reason": why[id(s)]} for e, s in zip(entries, seats) if id(s) in why
+    ]
+    return admitted.notes + session_dispatch.held_lines(admitted)
+
+
 def summarize(result: dict) -> str:
     """One human line."""
     parts = [
@@ -283,6 +313,8 @@ def summarize(result: dict) -> str:
         f"{len(result['resume'])} to resume",
         f"{len(result['skipped_already_live'])} already live",
     ]
+    if result.get("held"):
+        parts.append(f"{len(result['held'])} held by the machine gate")
     if result["unrecognized_identifier"]:
         parts.append(f"{len(result['unrecognized_identifier'])} unrecognized")
     if result.get("opened") is not None:
@@ -332,12 +364,26 @@ def run(argv: list[str]) -> int:
         action="store_true",
         help="actually open the tabs (without this, prints the plan and exits)",
     )
+    parser.add_argument(
+        "--over-budget",
+        action="store_true",
+        help="resume past the machine checks (the cap still binds)",
+    )
+    parser.add_argument("--state-dir", type=Path, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args(argv[1:])
 
     api_key = _env("LINEAR_API_KEY")
     project_id = _env("LINEAR_PROJECT_ID")
 
     result = plan(api_key, project_id)
+    # Gated in the read-only plan too: the probe only reads, and the plan is
+    # where the operator sees what `fleet go` would hold.
+    gated = []
+    if result["resume"]:
+        directory = args.state_dir or session_dispatch.state_dir()
+        gated = admit(result, directory, args.over_budget)
+    else:
+        result["held"] = []
     if args.apply and result["resume"]:
         tags = [entry["tag"] for entry in result["resume"]]
         try:
@@ -394,6 +440,8 @@ def run(argv: list[str]) -> int:
 
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
+    for line in gated:
+        print(f"fleet-resume: {line}", file=sys.stderr)
     if not args.apply:
         print("(read-only: pass --apply to open the tabs)", file=sys.stderr)
     print(summarize(result), file=sys.stderr)
