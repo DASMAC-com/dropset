@@ -1491,12 +1491,13 @@ it. **A hand-typed `anchor build` gets none of this.** Go through
 **Cleaning.** `make clean` removes the worktree's own `target/` (plus its
 `node_modules` and `.next`), never the pool. Under the pool that `target/`
 holds the Anchor outputs, the copied bots and, until the editor joins,
-rust-analyzer's checks. **Never `cargo clean` the pool from a worktree.** A bare
-`cargo clean` wipes the current lane, the build of every worktree on it,
-and `cargo clean -p <crate>` is no narrower than it looks: it removes that
-crate's slots for **every** checkout on the lane, under their running
-builds (the "test binaries vanished" failure). The worktree pruner no
-longer frees build artifacts, so the pool is the place disk accumulates.
+rust-analyzer's checks. **Never `cargo clean` the pool from a
+worktree.** A bare `cargo clean` wipes the current lane, the build of
+every worktree on it, and `cargo clean -p <crate>` is no narrower than it
+looks: it removes that crate's slots for **every** checkout on the lane,
+under their running builds (a likely cause of the "test binaries
+vanished" failure). The worktree pruner no longer frees build artifacts,
+so the pool is the place disk accumulates.
 When it grows too large, delete it while no build is running:
 `rm -rf "$CARGO_TARGET_DIR"` clears the current checkout's lane only, and
 the next build in each worktree on that lane is then cold. Lowering

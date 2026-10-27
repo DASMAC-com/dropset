@@ -38,7 +38,7 @@ for fn in _ds_base _ds_secrets _ds_verb_check _ds_substrate_enter \\
 done
 _ds_tier() {{ print model; print bedrock; }}
 _ds_new_sid() {{ print sid-1; }}
-claude() {{ print -- '--in--'; {_PROBE}; }}
+claude() {{ print -- '--in--'; {_PROBE}; print -r -- "ARGV=$*"; }}
 cd "$2" || exit 8
 {{ eval "$3" }}
 print -- '--after--'; {_PROBE}
@@ -86,7 +86,9 @@ class LaunchKeysTest(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        return sections(result.stdout)
+        out = sections(result.stdout)
+        self.argv = out.get("in", {}).pop("ARGV", "")
+        return out
 
     def keys_of(self, root: Path, lane: str) -> dict[str, str]:
         return {
@@ -111,6 +113,8 @@ class LaunchKeysTest(unittest.TestCase):
         slug.mkdir(parents=True)
         (slug / "sid-2.jsonl").write_text("{}\n")
         out = self.launch("_ds_session sid-2 2281 '' model 2281")
+        # The resume branch ran, not the fresh one (same keys, other flags).
+        self.assertIn("--resume sid-2", self.argv)
         self.assertEqual(out["in"], self.keys_of(self.worktree, "-1"))
         self.assertEqual(out["after"], self.keys_of(self.repo, ""))
 
@@ -135,8 +139,11 @@ class LaunchKeysTest(unittest.TestCase):
             head = re.match(r"^(\w+)\(\) \{", line)
             if head:
                 fn = head.group(1)
-            code = line.split("#", 1)[0]
-            if re.search(r"(^|[\s;(])_ds_claude(\s|$)", code):
+            elif line.startswith("}"):
+                fn = None
+            if line.lstrip().startswith("#"):
+                continue
+            if re.search(r"(^|[\s;(&|])_ds_claude(\s|$)", line):
                 callers.append(fn)
         self.assertEqual(callers, ["_ds_claude_pooled"])
 

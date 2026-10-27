@@ -158,10 +158,11 @@ _ds_cargo_pool() {
   # (and only them): cargo mixes its path into their artifact hashes, so each
   # checkout gets its own slots while dependencies stay shared. Measured on two
   # checkouts sharing one target dir, a sibling's newer build skipped under no
-  # wrapper or a shared one, and each of check, build, test, doc and build-sbf
+  # wrapper or a shared one, and each of check, build, test and build-sbf
   # compiled the checkout's own source under its own; `make program` is
-  # build-sbf, `make wasm` runs the wrapper under wasm-pack (measured), and
-  # `make idl` is anchor's host `cargo test`. Rustdoc is not wrapped but
+  # build-sbf and `make wasm` runs the wrapper under wasm-pack (both
+  # measured), while `make idl`, anchor's host `cargo test`, is inferred and
+  # not measured. Rustdoc is not wrapped but
   # re-documents every run, so
   # it never reuses a sibling's output. Clippy replaces that wrapper with
   # its driver, but tracks CLIPPY_CONF_DIR, so a per-checkout value makes it

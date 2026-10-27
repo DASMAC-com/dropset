@@ -18,8 +18,8 @@ all: lint test
 # `rm -rf target`, not `cargo clean`: under the shared cargo pool, `cargo
 # clean` would wipe the POOL (every worktree's build), not this one's outputs,
 # and `cargo clean -p <crate>` removes that crate for every checkout on the
-# lane. Never clean the pool from a worktree; see docs/conventions/
-# local-integrations.md → "The cargo pool".
+# lane. Never clean the pool from a worktree; see
+# docs/conventions/local-integrations.md → "The cargo pool".
 .PHONY: clean
 clean:
 	rm -rf target
