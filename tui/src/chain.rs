@@ -1049,8 +1049,8 @@ pub fn airdrop(client: &RpcClient, to: &Pubkey, lamports: u64) -> Result<()> {
 /// error and logs.
 pub fn send(
     client: &RpcClient,
-    payer: &Keypair,
-    signers: &[&Keypair],
+    payer: &dyn Signer,
+    signers: &[&dyn Signer],
     ixs: &[Instruction],
 ) -> Result<String> {
     let blockhash = client
@@ -1099,8 +1099,8 @@ pub fn describe_rpc_error(err: &solana_client::client_error::ClientError) -> Str
 /// signature, so a transient simulate failure never blocks the operation.
 pub fn send_measured(
     client: &RpcClient,
-    payer: &Keypair,
-    signers: &[&Keypair],
+    payer: &dyn Signer,
+    signers: &[&dyn Signer],
     ixs: &[Instruction],
 ) -> Result<(String, Option<u64>)> {
     let cu = measure_cu(client, payer, signers, ixs);
@@ -1113,8 +1113,8 @@ pub fn send_measured(
 /// one-stop send for operations whose per-instruction cost the TUI surfaces.
 pub fn send_logged(
     client: &RpcClient,
-    payer: &Keypair,
-    signers: &[&Keypair],
+    payer: &dyn Signer,
+    signers: &[&dyn Signer],
     ixs: &[Instruction],
     label: &str,
     log: &Logger,
@@ -1132,8 +1132,8 @@ pub fn send_logged(
 /// compute units consumed. Best-effort — any RPC hiccup yields `None`.
 fn measure_cu(
     client: &RpcClient,
-    payer: &Keypair,
-    signers: &[&Keypair],
+    payer: &dyn Signer,
+    signers: &[&dyn Signer],
     ixs: &[Instruction],
 ) -> Option<u64> {
     let blockhash = client.get_latest_blockhash().ok()?;
