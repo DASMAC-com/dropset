@@ -103,6 +103,10 @@ Three duties this skill owns directly:
   (`<scratchpad>/finding-N.md`, a rotation's
   `part-N.md`) are transient input, not
   findings state.
+- **A findings file presented for ratification passes
+  `python3 .claude/tools/spec_markers.py <file>` first** —
+  its open items listed at the top and marked inline, both,
+  per the `architect` skill's marker rule.
 - **The audit issue stays In Progress while the findings
   loop is open**, and reaches Done only at ratification
   plus fold. Marking it Done at the handoff is the measured

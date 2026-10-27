@@ -319,10 +319,21 @@ carries no marker at all**:
 | `NEEDS-CONFIRM`  | a decision to ratify or overrule   |
 | `NEEDS-FEEDBACK` | input wanted, no decision proposed |
 
-Put an **index of the open items at the top of the file**,
-pointing at the marked sections, so the operator sees the whole
-ask before reading anything. Searching for `NEEDS-` then walks
-every one of them in order.
+Each open item is **listed and inline, both**: an **index of
+the open items at the top of the file**, pointing at the marked
+sections, so the operator sees the whole ask before reading
+anything, **and** the marker itself where the input is wanted.
+Searching for `NEEDS-` then walks every one of them in order.
+On 2026-10-26 a second draft put its markers in the index only,
+and the operator, jumping marker to marker in an editor, could
+not find where input was wanted.
+
+So **before announcing any draft** — in this tab or by message
+— run the check, and fix what it names first:
+
+```sh
+python3 .claude/tools/spec_markers.py <spec-file>
+```
 
 **The no-marker-on-settled-text rule is the substantive half.**
 The failure this fixes was measured on the first read-back,
