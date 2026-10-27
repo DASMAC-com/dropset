@@ -179,7 +179,25 @@ describe("forward", () => {
     expect(res.status).toBe(400);
   });
 
-  it("replaces a non-JSON upstream body under the same status", async () => {
+  it("answers a non-JSON 2xx with a 502", async () => {
+    stubUpstream(
+      () =>
+        new Response("<html></html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        }),
+    );
+    const res = await forward(
+      passThrough(JUPITER_SEARCH_UPSTREAM),
+      request("query=M"),
+      {},
+    );
+
+    expect(res.status).toBe(502);
+    expect((await res.json()).msg).toContain("non-JSON");
+  });
+
+  it("replaces a non-JSON upstream error body under the same status", async () => {
     const page = "<script>alert(1)</script>";
     stubUpstream(
       () =>
@@ -233,6 +251,8 @@ describe("forward", () => {
     ["HEAD", {}, 405],
     ["GET", { "sec-fetch-site": "cross-site" }, 403],
     ["GET", { "sec-fetch-site": "same-site" }, 403],
+    // The route opened from the address bar: the app only fetches it.
+    ["GET", { "sec-fetch-site": "none" }, 403],
   ])("refuses %s with %o without calling upstream", async (method, headers, status) => {
     const seen = stubUpstream(ok);
     const res = await forward(

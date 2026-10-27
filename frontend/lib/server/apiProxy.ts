@@ -166,13 +166,15 @@ export async function forward(
     return new Response(null, { status: res.status, headers: out });
   }
   if (!JSON_TYPE.test(res.headers.get("content-type") ?? "")) {
-    // Best-effort: a stream that already errored rejects the cancel.
+    // Best-effort: a stream that already errored rejects the cancel. A 2xx
+    // becomes a 502, so a caller checking `res.ok` never parses the `{ msg }`
+    // as a result; an error status is kept, so a 429 still reads as one.
     await res.body?.cancel().catch(() => {});
     return new Response(
       JSON.stringify({
         msg: `${url.hostname} answered ${res.status} with a non-JSON body`,
       }),
-      { status: res.status, headers: out },
+      { status: res.ok ? 502 : res.status, headers: out },
     );
   }
   return new Response(res.body, { status: res.status, headers: out });

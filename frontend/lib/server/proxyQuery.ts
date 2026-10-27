@@ -62,8 +62,9 @@ const atomicAmount: Rule = {
   check: (v) => /^[1-9]\d{0,19}$/.test(v) && BigInt(v) <= U64_MAX,
 };
 // Shape only: a custom percent is bounded below but not above in the UI
-// (lib/format/input.ts parseSlippagePercent), and what a large value means is
-// DFlow's to decide, as it was before the proxy checked anything.
+// (lib/format/input.ts parseSlippagePercent), so any sane value is left to
+// DFlow, as before the proxy checked anything; the 7-digit cap only bounds the
+// string's length.
 const slippage: Rule = {
   check: (v) => v === "auto" || /^\d{1,7}$/.test(v),
 };
