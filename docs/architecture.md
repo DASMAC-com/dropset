@@ -887,8 +887,9 @@ Applies the formula above: mints `m` new shares into
 ([`state/market/accrual.rs`](../programs/dropset/src/state/market/accrual.rs))
 runs implicitly at the start of every `Deposit` and `Withdraw`
 (including the leader paths and the feature-gated admin
-force-withdraw paths) and of `SetPerfFeeRate`, so outside flows always cross at a post-fee
-VPS and never transfer leader-owed fee value to or from the caller.
+force-withdraw paths) and of `SetPerfFeeRate`, so outside flows
+always cross at a post-fee VPS and never transfer leader-owed fee
+value to or from the caller.
 **Never runs on the taker hot path.** Touches no SPL accounts — perf
 fee accrual is purely on-vault bookkeeping.
 
