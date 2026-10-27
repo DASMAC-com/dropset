@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# cspell:word waitid
+# cspell:word WEXITED
+# cspell:word WNOWAIT
 """Race the abridged local checks against CI for one HEAD, in one call.
 
 A verification point used to be turns: run ``make lint-abridged``, read it,
@@ -165,25 +168,52 @@ class Stage:
         """SIGTERM the group, then SIGKILL it whatever the leader did.
 
         The leader exiting inside the grace does not empty the group: a
-        child ignoring SIGTERM would outlive it holding the pool lock.
+        child ignoring SIGTERM would outlive it holding the pool lock. The
+        grace waits without reaping, so the zombie leader keeps the pgid
+        from being recycled before the SIGKILL lands.
         """
-        try:
-            os.killpg(self.proc.pid, signal.SIGTERM)
-        except ProcessLookupError:
+        if not _signal_group(self.proc.pid, signal.SIGTERM):
+            self.proc.wait()
             return
-        try:
-            self.proc.wait(timeout=KILL_GRACE)
-        except subprocess.TimeoutExpired:
-            pass
+        self._await_exit(KILL_GRACE)
         self.force()
 
     def force(self) -> None:
         """SIGKILL the group and reap the leader; a no-op on an empty group."""
-        try:
-            os.killpg(self.proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        _signal_group(self.proc.pid, signal.SIGKILL)
         self.proc.wait()
+
+    def _await_exit(self, grace: float) -> None:
+        """Wait up to ``grace`` for the leader to exit, leaving it a zombie."""
+        if self.proc.returncode is not None or not hasattr(os, "waitid"):
+            try:
+                self.proc.wait(timeout=grace)
+            except subprocess.TimeoutExpired:
+                pass
+            return
+        deadline = time.monotonic() + grace
+        flags = os.WEXITED | os.WNOHANG | os.WNOWAIT
+        while time.monotonic() < deadline:
+            try:
+                if os.waitid(os.P_PID, self.proc.pid, flags) is not None:
+                    return
+            except ChildProcessError:
+                return
+            time.sleep(0.05)
+
+
+def _signal_group(pgid: int, sig: int) -> bool:
+    """``killpg``; ``False`` when the group is gone rather than signalled.
+
+    A group already gone is ESRCH on Linux but EPERM on macOS when only
+    zombies remain or the pgid was recycled to a group not ours to signal.
+    Either way there is nothing left of the stage to stop.
+    """
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
 
 
 def _git(args: list[str]) -> str:
@@ -395,17 +425,31 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     commands = dict(STAGES)
     started: list[Stage] = []
+    deferred: list[int] = []
+    spawning = False
 
     def start(name: str) -> Stage:
-        started.append(Stage(name, commands[name], log_path_for(sha, name)))
+        # A signal between the spawn and the append would leave the child
+        # unrecorded and so never killed: hold it until the stage is on the list.
+        nonlocal spawning
+        spawning = True
+        try:
+            started.append(Stage(name, commands[name], log_path_for(sha, name)))
+        finally:
+            spawning = False
+        if deferred:
+            raise SystemExit(128 + deferred[0])
         return started[-1]
 
     def leave(number, _frame):
+        if spawning:
+            deferred.append(number)
+            return
         raise SystemExit(128 + number)
 
     # The stages run in their own sessions, so a signal aimed at this call's
     # group never reaches them: turn it into the exception the cleanup sees.
-    for sig in (signal.SIGTERM, signal.SIGHUP):
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, leave)
 
     began = time.monotonic()

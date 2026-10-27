@@ -1,5 +1,4 @@
 # cspell:word waitpid
-# cspell:word WNOHANG
 """Stdlib ``unittest`` tests for the HEAD verification race.
 
 The race runs against fake stages, a scripted CI read, a scripted HEAD and a
@@ -413,6 +412,142 @@ class StageKillTest(unittest.TestCase):
         else:
             os.kill(grandchild, signal.SIGKILL)
             self.fail("grandchild survived the group kill")
+
+    def exited_stage(self) -> vh.Stage:
+        log = Path(tempfile.mkdtemp()) / "s.log"
+        stage = vh.Stage("lint", [sys.executable, "-c", "pass"], log)
+        stage.proc.wait(timeout=10)
+        return stage
+
+    def test_kill_after_the_leader_exited(self):
+        stage = self.exited_stage()
+        stage.kill()
+        stage.force()
+        self.assertEqual(stage.poll(), 0)
+
+    def test_eperm_on_a_gone_group_is_tolerated(self):
+        # macOS answers EPERM, not ESRCH, for a zombie-only or recycled group.
+        stage = self.exited_stage()
+        calls = []
+
+        def eperm(pgid, sig):
+            calls.append(sig)
+            raise PermissionError(1, "Operation not permitted")
+
+        real, os.killpg = os.killpg, eperm
+        try:
+            stage.kill()
+            stage.force()
+        finally:
+            os.killpg = real
+        self.assertEqual(calls, [signal.SIGTERM, signal.SIGKILL])
+
+    def test_race_ci_first_with_eperm_prints_a_verdict(self):
+        # CI settles lint while the real local lint runs; the kill hits EPERM.
+        tmp = Path(tempfile.mkdtemp())
+        reads = iter([ci(), ci(lint=GREEN_LINT), ci(test=GREEN_TEST)])
+        real_killpg = os.killpg
+
+        def start(name):
+            return vh.Stage(
+                name,
+                [sys.executable, "-c", "import time;time.sleep(30)"],
+                tmp / f"{name}.log",
+            )
+
+        def killpg(pgid, sig):
+            real_killpg(pgid, sig)
+            if sig == signal.SIGKILL:
+                raise PermissionError(1, "Operation not permitted")
+
+        clock = Clock()
+        os.killpg = killpg
+        try:
+            r = vh.race(
+                SHA,
+                "",
+                start=start,
+                ci=lambda: next(reads, None),
+                head=lambda: SHA,
+                dirty=lambda: False,
+                clock=clock,
+                sleep=clock.sleep,
+                interval=1,
+                timeout=60,
+            )
+        finally:
+            os.killpg = real_killpg
+        self.assertEqual(r.outcome, "GREEN")
+        self.assertEqual(r.killed, ["lint", "test"])
+        self.assertIn("verify-head: GREEN", vh.render(r, 1))
+
+
+class MainSignalTest(unittest.TestCase):
+    """The handler path: an interrupt mid-race cleans up every started group."""
+
+    def setUp(self):
+        names = ("race", "read_head", "local_only_reason", "Stage", "STAGES")
+        self.saved = {n: getattr(vh, n) for n in names}
+        self.handlers = {
+            s: signal.getsignal(s)
+            for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+        }
+        vh.read_head = lambda: SHA
+        vh.local_only_reason = lambda sha: vh.NOT_PUSHED
+
+    def stages(self, code: str) -> None:
+        vh.STAGES = (("lint", [sys.executable, "-c", code]),)
+
+    def tearDown(self):
+        for name, value in self.saved.items():
+            setattr(vh, name, value)
+        for sig, handler in self.handlers.items():
+            signal.signal(sig, handler)
+
+    def test_interrupt_after_a_stage_exited_raises_only_the_exit(self):
+        started = []
+
+        def race(sha, local_only, *, start, **_):
+            started.append(start("lint"))
+            started[-1].proc.wait(timeout=10)
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(5)
+            raise AssertionError("SIGTERM was not delivered")
+
+        def eperm(pgid, sig):
+            raise PermissionError(1, "Operation not permitted")
+
+        self.stages("pass")
+        vh.race = race
+        real_killpg, os.killpg = os.killpg, eperm
+        try:
+            with self.assertRaises(SystemExit) as caught:
+                vh.main([])
+        finally:
+            os.killpg = real_killpg
+        self.assertEqual(caught.exception.code, 128 + signal.SIGTERM)
+        self.assertEqual(started[0].poll(), 0)
+
+    def test_signal_during_spawn_is_held_until_recorded(self):
+        recorded = []
+
+        class SignalledStage(self.saved["Stage"]):
+            def __init__(self, *a):
+                super().__init__(*a)
+                os.kill(os.getpid(), signal.SIGTERM)  # inside the window
+                recorded.append(self)
+
+        def race(sha, local_only, *, start, **_):
+            start("lint")
+            raise AssertionError("the held signal was not raised")
+
+        self.stages("import time;time.sleep(30)")
+        vh.Stage = SignalledStage
+        vh.race = race
+        with self.assertRaises(SystemExit) as caught:
+            vh.main([])
+        self.assertEqual(caught.exception.code, 128 + signal.SIGTERM)
+        self.assertIsNotNone(recorded[0].poll())  # recorded, then killed
 
 
 if __name__ == "__main__":

@@ -1,11 +1,13 @@
 AUDUSD
 CFLAGS
+ESRCH
 EURCUSD
 PGUSER
 POSIXLY
 QCAD
 QCADUSD
 USDTZUSD
+WNOHANG
 addrs
 affordance
 affordances
@@ -208,6 +210,7 @@ permissionless
 permissionlessly
 permpending
 permwait
+pgid
 pgrep
 pids
 pkill
