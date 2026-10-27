@@ -88,20 +88,21 @@ TAIL_BYTES = 1 << 20
 #: The marker the launcher's loop checks on exit, beside the substrate markers,
 #: and the snooze file — the scheduler's; each daily kind has its own pair
 #: (`marker_name` / `snooze_name`), so the two seats never trip each other.
-MARKER = "plan-cycle-pending"
-SNOOZE = "plan-cycle-snooze"
-
 #: The env var the launcher sets to the daily kind it launched, so a bare
 #: `plan_cycle.py check` from inside a curator session serves `curate`.
 KIND_ENV = "DS_DAILY_KIND"
 
 
-def marker_name(kind: str = "plan") -> str:
+def marker_name(kind: str) -> str:
     return f"{kind}-cycle-pending"
 
 
-def snooze_name(kind: str = "plan") -> str:
+def snooze_name(kind: str) -> str:
     return f"{kind}-cycle-snooze"
+
+
+MARKER = marker_name("plan")
+SNOOZE = snooze_name("plan")
 
 
 class PlanCycleError(Exception):
@@ -354,6 +355,10 @@ def run(argv: list[str]) -> int:
 
     repo = Path(os.path.abspath(args.repo)) if args.repo else default_repo()
     date = args.date or rs.launch_date()
+    if args.command == "live-name":
+        # Name-keyed only: a stray kind must not block the launcher's guard.
+        holders = [s for s in live_sessions() if s.get("name") == args.name]
+        return 0 if holders else 1
     kind = args.kind or os.environ.get(KIND_ENV) or "plan"
     if kind not in rs.DAILY_KINDS:
         raise PlanCycleError(
@@ -364,11 +369,8 @@ def run(argv: list[str]) -> int:
         print(json.dumps(check(repo, date, kind)))
     elif args.command == "snooze":
         print(json.dumps(snooze(repo, date, kind)))
-    elif args.command == "cycle":
-        print(f"cycling: ended client pid {cycle(repo, date, kind)}")
     else:
-        holders = [s for s in live_sessions() if s.get("name") == args.name]
-        return 0 if holders else 1
+        print(f"cycling: ended client pid {cycle(repo, date, kind)}")
     return 0
 
 

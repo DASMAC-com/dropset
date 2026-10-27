@@ -1005,19 +1005,21 @@ Beyond coloring, `iterm-reorder.py` keeps each window's tabs sorted into
 attention groups so you can park at position 1 and sweep right:
 
 ```txt
-[ yellow (permission) … ] [ green (reply wanted) … ] [ the rest … ] [ plan ]
+[ yellow (permission) … ] [ green (reply wanted) … ] [ the rest … ] [ curate ] [ plan ]
 ```
 
 **The planning tab is always locatable, by position alone** (no color of
 its own). While it is resting it sorts last, so `Cmd-9` — which selects
-the last tab even with fewer than nine — always lands on it. While it
-needs attention it queues in its yellow or green group like any other
-tab, so a planning ask still surfaces at position 1 in FIFO order, and
-it returns to the rightmost slot once cleared. The reorderer finds it by
-the iTerm user variable `user.ds_role=plan`, which the `plan` launcher
-sets around its cycle loop and clears on exit — never by title. Set
-`DS_PLAN_TAB_RIGHTMOST=0` in the runtime config to skip the marker; the
-planning tab then sorts like any other.
+the last tab even with fewer than nine — always lands on it; a resting
+curator tab sits just left of it, so the two seat tabs sit together at
+the far right. While either needs attention it queues in its yellow or
+green group like any other tab, so a seat ask still surfaces at
+position 1 in FIFO order, and it returns to its resting slot once
+cleared. The reorderer finds them by the iTerm user variable
+`user.ds_role` — `plan` or `curate`, which the `plan` and `curate`
+launchers set around their cycle loops and clear on exit — never by
+title. Set `DS_PLAN_TAB_RIGHTMOST=0` in the runtime config to skip the
+marker for both; the seat tabs then sort like any other.
 
 Within each attention group the order is **FIFO**: the tab that has
 waited longest stays leftmost, and a tab that newly needs attention goes
@@ -1614,7 +1616,7 @@ names alive was the outcome to avoid.
 | `explore [s] <n\|name>` | research / audit, read-only, temp worktree | Bedrock, or `[s]`      | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
 | `chore [s] <n>`         | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    | executor if Bedrock | `[Chore/<Substrate>]`     |
 | `plan [a]`              | upkeep pass, then the scheduler's day      | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
-| `curate [a]`            | the curator: Backlog→Todo review, no PR    | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
+| `curate [a]`            | the curator: Backlog→Todo review, base, no PR | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
 | `architect [b] <n>`     | design thread, read-only, temp worktree    | advisor's, or override | advisor   | executor if Bedrock | `[Architect/<Substrate>]` |
 | `fleet [go]`            | batch resume                               | per-window             | re-pinned | per-window          | —                         |
 | `models [check]`        | print the tier table; `check` it for free  | —                      | —         | —                   | —                         |
@@ -2855,12 +2857,13 @@ a terminal closed outright, is covered by the next morning's digest.
   set and double them. Since both callers go through `open_tabs`, so
   would any future one.
 
-  **New tabs land just left of a rightmost planning tab**, by creation
-  index (`async_create_tab(index=…)`) rather than a later reorder, so
-  the planning tab stays where `Cmd-9` reaches it. iTerm has no tab pin
-  or fixed-index facility to use instead. While the reorderer runs, a
-  planning tab that is not rightmost is in an attention group, and the
-  default append is then already the resting order.
+  **New tabs land just left of the seat tabs resting at the right
+  edge** (the scheduler's outermost, the curator's beside it), by
+  creation index (`async_create_tab(index=…)`) rather than a later
+  reorder, so the planning tab stays where `Cmd-9` reaches it. iTerm
+  has no tab pin or fixed-index facility to use instead. While the
+  reorderer runs, a seat tab that is not at the edge is in an attention
+  group, and the default append is then already the resting order.
 
   **Every tab either launcher opens gets the green Attend mark**
   (`iterm_api.mark_attention`, the same `iterm-attend.sh --mark` the

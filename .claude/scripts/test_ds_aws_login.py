@@ -436,7 +436,13 @@ class GatedVerbSurface(unittest.TestCase):
         # The curator reads no cost data: the gate sits behind the scheduler's
         # kind in the shared body, and nowhere else.
         self.assertNotIn("_ds_aws_login 'curate'", self.source)
-        self.assertIn('if [[ "$kind" == plan ]]; then', self.source)
+        # The only gate call sits INSIDE the scheduler-only guard, before its fi.
+        guard = self.source.index('if [[ "$kind" == plan ]]; then')
+        gate = self.source.index("_ds_aws_login 'plan'")
+        close = self.source.index("\n  fi\n", guard)
+        self.assertEqual(self.source.count("_ds_aws_login 'plan'"), 1)
+        self.assertLess(guard, gate)
+        self.assertLess(gate, close)
 
 
 if __name__ == "__main__":
