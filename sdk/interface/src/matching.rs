@@ -35,8 +35,8 @@ use crate::matching_math::{
 use crate::price::Price;
 
 /// Taker side, re-exported from [`crate::matching_math`] so the engine and
-/// the simulator decode the `swap` instruction's `side` arg through one
-/// declaration.
+/// the simulator share one declaration of the `swap` instruction's `side`
+/// encoding.
 pub use crate::matching_math::SwapSide;
 
 /// Result of simulating a take against the current book.

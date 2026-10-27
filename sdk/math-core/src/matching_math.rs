@@ -18,9 +18,9 @@ use crate::{BPS, PPM};
 
 /// Side of a taker fill — `Buy` consumes asks (taker pays quote, gets
 /// base); `Sell` consumes bids (taker pays base, gets quote). The
-/// discriminants are the `swap` instruction's wire `side` argument, so
-/// the engine, the off-chain simulator and the WASM binding all decode
-/// it through [`SwapSide::from_u8`].
+/// discriminants are the `swap` instruction's wire `side` argument: the
+/// engine and the WASM binding decode it through [`SwapSide::from_u8`],
+/// and the off-chain simulator takes the typed value.
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SwapSide {
@@ -40,8 +40,9 @@ impl SwapSide {
     }
 
     /// A `Buy` taker consumes the resting **ask** side; a `Sell` taker
-    /// consumes the **bid** side. This is the `is_ask` argument every
-    /// side-keyed kernel in this module takes.
+    /// consumes the **bid** side. This is the `is_ask` argument the
+    /// taker-side kernels ([`sort_key`], [`limit_price_ok`],
+    /// [`crosses_limit`]) take.
     #[inline]
     pub fn consumes_asks(self) -> bool {
         matches!(self, SwapSide::Buy)
