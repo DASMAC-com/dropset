@@ -234,9 +234,9 @@ pub struct RealizeResult {
 /// (`f == 100%` against an HWM that rounds to zero at atom scale,
 /// `hwm × s < 2^32`), or an `m` that floors to zero.
 ///
-/// `perf_fee_rate` is in PPM and must be `≤ PPM`; the program's one writer
-/// enforces that, and the kernel clamps a larger rate to `PPM` so `1 − f`
-/// cannot underflow.
+/// `perf_fee_rate` is in PPM and must be `≤ PPM`; the program's two writers
+/// (`CreateVault` and `SetPerfFeeRate`) enforce that, and the kernel clamps
+/// a larger rate to `PPM` so `1 − f` cannot underflow.
 ///
 /// `L`, `HWM`, and the intermediate share math run in `u128`. The
 /// numerator `f · s · (L − hwm·s)` can exceed `u128` once `L` passes
