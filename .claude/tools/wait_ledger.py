@@ -99,8 +99,15 @@ NOT_OPERATOR_MARKERS = (
     "<cross-session-message",
     "<local-command-stdout>",
     "<local-command-caveat>",
+    "<agent-message",
+    "[Request interrupted by user",
 )
+# A call's result says it went to the background; only then does it stay open
+# until its notification. A synchronous Agent result carries an `agentId:`
+# trailer too, so the id alone is no sign of a background call.
+BACKGROUND_MARKERS = ("running in background", "Async agent launched")
 _BACKGROUND_ID = re.compile(r"\b(?:ID|id|agentId|task_id)[:=]\s*([\w-]{3,})")
+_TASK_ID = re.compile(r"<task-id>([\w-]+)</task-id>")
 _RACE_SIDE = re.compile(r"\b(ci|local)\b\W{1,3}(green|red)\b")
 _COMMAND_NAME = re.compile(r"<command-name>/([\w:-]+)</command-name>")
 _SLUG = re.compile(r"[^a-z0-9]+")
@@ -112,10 +119,15 @@ def slug(text: str) -> str:
 
 
 def _seconds(start: str, end: str) -> int:
+    """Whole seconds from ``start`` to ``end``; 0 for a stamp of another
+    shape, so one malformed record cannot abort a report."""
     fmt = "%Y-%m-%dT%H:%M:%S"
-    delta = datetime.datetime.strptime(end, fmt) - datetime.datetime.strptime(
-        start, fmt
-    )
+    try:
+        delta = datetime.datetime.strptime(end, fmt) - datetime.datetime.strptime(
+            start, fmt
+        )
+    except ValueError:
+        return 0
     return max(0, int(delta.total_seconds()))
 
 
@@ -262,8 +274,19 @@ class WaitLedger:
         )
 
     def observe(self, rec: dict, stamp: str | None) -> None:
+        if stamp is None:
+            return
+        # A notification that lands while the session is busy is recorded as
+        # a queued command, not a user turn — the commonest way a backgrounded
+        # call completes, so missing it parks every such wait for good.
+        attachment = rec.get("attachment")
+        if isinstance(attachment, dict) and attachment.get("type") == "queued_command":
+            prompt = attachment.get("prompt")
+            if isinstance(prompt, str) and NOTIFICATION_MARKER in prompt:
+                self._close_background(prompt, stamp)
+            return
         msg = rec.get("message")
-        if not isinstance(msg, dict) or stamp is None:
+        if not isinstance(msg, dict):
             return
         role = msg.get("role") or rec.get("type")
         content = msg.get("content")
@@ -334,6 +357,10 @@ class WaitLedger:
         opened = self._open.pop(str(item.get("tool_use_id")), None)
         if opened is None:
             return
+        # The session is answering again from here: a later idle gap opens at
+        # the result, never back over the wait just booked.
+        if self._last_output is not None:
+            self._last_output = stamp
         text = _text(item.get("content"))
         if any(m in text for m in REFUSAL_MARKERS):
             self._close(
@@ -342,7 +369,7 @@ class WaitLedger:
             return
         if opened.dimension is None and opened.command and LOCK_MARKER in text:
             opened.dimension, opened.cause = LOCK, lock_step(opened.command)
-        background = opened.background or opened.dimension == SUBAGENTS
+        background = any(m in text for m in BACKGROUND_MARKERS)
         ids = _BACKGROUND_ID.findall(text) if background else []
         if ids and opened.dimension is not None:
             self._background[ids[0]] = opened
@@ -350,8 +377,10 @@ class WaitLedger:
         self._close(opened, stamp, text)
 
     def _close_background(self, text: str, stamp: str) -> None:
-        for key in [k for k in self._background if k in text]:
-            self._close(self._background.pop(key), stamp, text)
+        for key in _TASK_ID.findall(text):
+            opened = self._background.pop(key, None)
+            if opened is not None:
+                self._close(opened, stamp, text)
 
     def finish(self) -> list[DimensionLine]:
         """Every dimension, the counted ones ranked largest first, the
@@ -441,8 +470,10 @@ def read_load_records(directory: Path, since: str, until: str) -> list[dict]:
                 rec = json.loads(raw)
             except ValueError:
                 continue
+            if not isinstance(rec, dict):
+                continue
             at = str(rec.get("at", ""))[:19]
-            if isinstance(rec, dict) and since <= at < until:
+            if since <= at < until:
                 out.append(rec)
     return out
 

@@ -1206,7 +1206,8 @@ credential coordinates, those because they name one machine's setup.
 `.claude/tools/machine_load.py` reads the pool lock's build queue,
 memory, swap, pressure and load, and answers how many more sessions of
 a class fit: `building` (a `task`) or `free` (every verb that is
-read-only toward the repo). Every launch and resume appends its reading
+read-only toward the repo). Every launch, and every resume that knows its
+session id (all but the bare tag picker), appends its reading
 to `sessions/<id>.load` and its sample line to `fleet-load.log`, both
 beside the substrate markers, and the daily digest's `## Wait` section
 reads them back. The probe's knobs sit in the same file, each with a

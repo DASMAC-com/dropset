@@ -382,6 +382,35 @@ class LaunchRecord(unittest.TestCase):
         self.assertEqual(lines[0]["verdict"], {"slots": 0, "reasons": ["wait"]})
         self.assertEqual(lines[0]["lanes"], ml.DEFAULT_LANES)
 
+    def test_the_launch_call_samples_and_records_together(self):
+        with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()):
+            path = Path(tmp, "abc.load")
+            code = ml.main(
+                ["--json", "--sample", "--state-dir", tmp, "--record", str(path)],
+                runner=runner(),
+                env={},
+            )
+            self.assertEqual(len(Path(tmp, ml.SAMPLE_LOG).read_text().splitlines()), 1)
+            self.assertEqual(len(path.read_text().splitlines()), 1)
+        self.assertEqual(code, ml.RED)
+
+    def test_an_unwritable_record_is_a_warning_not_no_reading(self):
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            redirect_stdout(io.StringIO()) as out,
+            redirect_stderr(io.StringIO()) as err,
+        ):
+            blocker = Path(tmp, "file")
+            blocker.write_text("")
+            code = ml.main(
+                ["--json", "--state-dir", tmp, "--record", str(blocker / "x.load")],
+                runner=runner(),
+                env={},
+            )
+        self.assertEqual(code, ml.RED)
+        self.assertEqual(json.loads(out.getvalue())["status"], "red")
+        self.assertIn("could not append", err.getvalue())
+
     def test_no_reading_still_leaves_a_line(self):
         code, lines = self.record(fake=runner(vm="garbage"))
         self.assertEqual(code, ml.NO_READING)

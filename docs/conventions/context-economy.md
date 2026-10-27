@@ -360,9 +360,10 @@ dollars, flagged lines, and the path.
   flagged.
 - **A `## Wait` section follows the CI section.** It ranks the day's
   waiting in hours from every session's wait ledger: the pool lock by
-  make target, CI checks and the merge queue, the verify race, the
-  operator, and idle. Beside that it shows the fleet log's build-queue
-  profile by hour and the launch records' figures. Then come the ranked
+  step (the make target or cargo verb), CI checks and the merge queue,
+  the verify race, the operator, and idle. Beside that it shows the
+  fleet log's build-queue profile by hour and the launch records'
+  figures. Then come the ranked
   causes for the analyst, each with a `wait:<dimension>:<cause>`
   fingerprint. Wall clock is the same currency as tokens once
   translated: time per PR is session length.

@@ -660,10 +660,12 @@ def record_line(
     rec: dict = {
         "at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "class": cls,
-        "lanes": int(lanes) if lanes.isdigit() else None,
+        "lanes": int(lanes) if lanes.isdecimal() else None,
     }
     if r is None or k is None:
-        return json.dumps({**rec, "status": "no-reading", "error": error})
+        return json.dumps(
+            {**rec, "status": "no-reading", "error": error}, separators=(",", ":")
+        )
     slots, reasons = verdict(r, k, cls)
     longest = r.queue.longest
     rec.update(
@@ -762,16 +764,24 @@ def main(argv: list[str] | None = None, runner: Runner = run, env=None) -> int:
             if opts.json
             else render(reading, knobs, opts.cls, asked, asked_given)
         )
-        if opts.sample:
-            append_record(state_dir / SAMPLE_LOG, sample_line(reading, now))
-        if opts.record:
-            append_record(opts.record, record_line(reading, knobs, opts.cls, now, env))
     except NoReading as exc:
         _record_no_reading(opts, now, env, str(exc))
         return no_reading(str(exc), opts.json)
     except Exception as exc:  # noqa: BLE001 — a crash must not exit 1 (AMBER)
         _record_no_reading(opts, now, env, f"{type(exc).__name__}: {exc}")
         return no_reading(f"{type(exc).__name__}: {exc}", opts.json)
+    # After the reading, not inside it: a log that cannot be written is a
+    # warning, never a no-reading verdict on a reading that succeeded.
+    writes = []
+    if opts.sample:
+        writes.append((state_dir / SAMPLE_LOG, sample_line(reading, now)))
+    if opts.record:
+        writes.append((opts.record, record_line(reading, knobs, opts.cls, now, env)))
+    for path, line in writes:
+        try:
+            append_record(path, line)
+        except OSError as exc:
+            print(f"machine-load: could not append to {path}: {exc}", file=sys.stderr)
     print(out)
     return status(slots, asked)
 

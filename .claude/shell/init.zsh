@@ -1270,13 +1270,15 @@ _ds_session_mark() {
 # launch, create and resume alike, and appends, so a resumed session's record
 # accumulates one line per reopen — the digest's wait section reads them.
 # Best-effort and silent: a failed probe still appends a `no-reading` line,
-# and nothing here can refuse a launch.
+# and nothing here can refuse a launch. Disowned in the background (`&!`), so
+# a wedged system command (each probe read has a 10-second timeout) never
+# delays the launch; the reading is taken the instant the launch starts.
 _ds_load_record() {
   [[ -n "$1" ]] || return 0
   mkdir -p "$_DS_SUBSTRATE_DIR/sessions" 2>/dev/null || return 0
   python3 "$_DS_REPO/.claude/tools/machine_load.py" --json --sample \
     --class "$2" --record "$_DS_SUBSTRATE_DIR/sessions/$1.load" \
-    >/dev/null 2>&1
+    >/dev/null 2>&1 &!
   return 0
 }
 

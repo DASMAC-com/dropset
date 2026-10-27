@@ -194,7 +194,10 @@ class Ledger(unittest.TestCase):
                 assistant(stamp(47)),
                 # The operator speaks while the watch is still running: not idle.
                 typed(stamp(55), "status?"),
-                typed(stamp(58), "<task-notification>zz9 done</task-notification>"),
+                typed(
+                    stamp(58),
+                    "<task-notification><task-id>zz9</task-id> done</task-notification>",
+                ),
             ]
         )
         self.assertEqual((lines[wl.IDLE].seconds, lines[wl.IDLE].calls), (45 * 60, 1))
@@ -220,6 +223,79 @@ class Ledger(unittest.TestCase):
         )
         self.assertIn("verify race: none", text)
         self.assertIn("Dominated by idle: a session that should have closed.", text)
+
+    def test_a_synchronous_agent_is_not_parked(self):
+        # Its result carries an `agentId:` trailer, but no notification ever
+        # follows: parked, it would never count and would block idle for good.
+        lines = ledger(
+            [
+                assistant(stamp(0), use("a", "Agent", subagent_type="Explore")),
+                result(stamp(20), "a", "report\nagentId: abc123 (for resuming)"),
+                assistant(stamp(21)),
+                typed(stamp(51), "thanks"),
+            ]
+        )
+        self.assertEqual(lines[wl.SUBAGENTS].seconds, 20 * 60)
+        self.assertEqual(lines[wl.IDLE].seconds, 30 * 60)
+
+    def test_an_async_agent_closes_on_its_task_id_only(self):
+        lines = ledger(
+            [
+                assistant(stamp(0), use("a", "Agent", subagent_type="Explore")),
+                result(
+                    stamp(0), "a", "Async agent launched successfully.\nagentId: abc123"
+                ),
+                # Naming the id in passing is not its completion.
+                typed(
+                    stamp(5),
+                    "<task-notification><task-id>zzz</task-id> abc123</task-notification>",
+                ),
+                typed(
+                    stamp(9),
+                    "<task-notification><task-id>abc123</task-id></task-notification>",
+                ),
+            ]
+        )
+        self.assertEqual(lines[wl.SUBAGENTS].seconds, 9 * 60)
+
+    def test_a_notification_queued_while_busy_closes_the_wait(self):
+        queued = {
+            "type": "attachment",
+            "timestamp": stamp(30),
+            "attachment": {
+                "type": "queued_command",
+                "prompt": "<task-notification>\n<task-id>abc123</task-id>",
+            },
+        }
+        lines = ledger(
+            [
+                assistant(stamp(0), use("a", "Agent", subagent_type="Explore")),
+                result(
+                    stamp(0), "a", "Async agent launched successfully.\nagentId: abc123"
+                ),
+                queued,
+                assistant(stamp(31)),
+                typed(stamp(41), "ok"),
+            ]
+        )
+        self.assertEqual(lines[wl.SUBAGENTS].seconds, 30 * 60)
+        self.assertEqual(lines[wl.IDLE].seconds, 10 * 60)
+
+    def test_a_refusal_and_an_interrupt_are_not_idle_too(self):
+        lines = ledger(
+            [
+                assistant(stamp(0), use("a", "Bash", command="git push --force")),
+                result(
+                    stamp(10),
+                    "a",
+                    "The user doesn't want to proceed with this tool use.",
+                ),
+                typed(stamp(12), "[Request interrupted by user for tool use]"),
+                typed(stamp(14), "use a lease"),
+            ]
+        )
+        self.assertEqual(lines[wl.OPERATOR].seconds, 10 * 60)
+        self.assertEqual(lines[wl.IDLE].seconds, 4 * 60)
 
     def test_window_keeps_waits_that_start_inside(self):
         records = [

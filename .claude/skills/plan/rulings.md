@@ -234,7 +234,7 @@ the document's state sections.
    answer, never a board literal: the machine-load probe
    (`machine_load.py`) says how many more of a class fit. A `task`
    is a building session. Builders are capped at `DS_FLEET_CAP`
-   and refused while a pool-lock wait passes
+   and refused while a pool-lock wait is at or past
    `DS_FLEET_BUILD_WAIT_S`. A free session
    (`plan`, `architect`, `explore`, `chore`) is refused only on
    memory, swap, pressure or load. Builds share the pool's
