@@ -1683,6 +1683,10 @@ class UnresolvableSession(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertTrue(stderr.getvalue().startswith("session-metrics: no estimate"))
 
+    def test_brief_and_cost_line_are_exclusive(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            sm.main(["--brief", "--cost-line", "--session-id", "sid"])
+
 
 class ExitBriefSidecarFailure(unittest.TestCase):
     """A sidecar that cannot be written keeps the brief and exits 0, so the

@@ -395,16 +395,17 @@ class CostLineTests(unittest.TestCase):
             priced.append(sid)
             return self.LINE
 
-        writes: list[str] = []
+        events: list[str] = []
         rc, result, order = self._close(
             ns(session_id="sid-1"),
             coster,
-            writer=lambda *_: writes.append(f"write after {len(priced)} pricing"),
+            writer=lambda *_: events.append(f"write after {len(priced)} pricing"),
+            appender=lambda *_: events.append("append"),
         )
         self.assertEqual(rc, 0, result)
         self.assertEqual(priced, ["sid-1"])
-        # Priced before the write: the substrate marker lives in the worktree.
-        self.assertEqual(writes, ["write after 1 pricing"])
+        # Priced before the write, appended only after it, removed last.
+        self.assertEqual(events, ["write after 1 pricing", "append"])
         self.assertEqual(order, ["append", "remove"])
         self.assertEqual(result["cost_line"], self.LINE)
 

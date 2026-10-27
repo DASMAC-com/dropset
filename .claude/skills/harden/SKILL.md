@@ -12,7 +12,7 @@ artifact.**
 The repo already has both halves of this loop except the
 middle. The tooling convention says a workflow that is
 established and repeated should become a Python tool. And
-The daily digest already **carries the signal** — it ranks
+the daily digest already **carries the signal** — it ranks
 repeated command shapes worth hardening, each labelled by cost
 class (context / context (failures) / wall-clock /
 prompt-churn).

@@ -2549,6 +2549,8 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+    if args.brief and args.cost_line:
+        parser.error("--brief and --cost-line each print one form; pass one")
 
     session_id = args.session_id
     # The id is interpolated into a filename, so reject anything that could

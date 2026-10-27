@@ -51,7 +51,7 @@ when the tree needs removing by hand.
 ``--session-id <uuid>`` adds the session's one-line cost estimate
 (``session_metrics.cost_line``) to the issue body, appended zero-echo once the
 state write is confirmed and before the removal. It is priced before the write,
-because the substrate marker it reads lives in the worktree. A session id that
+so a session that cannot be priced is known before anything changes. A session id that
 resolves to no transcript skips the line and says so in ``notes``; a failed
 append is a note too, never a refusal, since the state has landed. In the
 result, ``cost_line`` is the line appended — or, on a dry run, the line that
@@ -359,8 +359,8 @@ def append_line(issue: str, line: str) -> None:
 
 def price_session(session_id: str | None, notes: list[str]) -> str | None:
     """The session's cost line, or ``None`` with a note saying why it is
-    skipped. Priced before any write: the substrate marker lives in the
-    worktree the close may remove."""
+    skipped. Priced before any write, so the close never waits on a
+    transcript read between the state landing and the removal."""
     if not session_id:
         return None
     try:
