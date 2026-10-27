@@ -212,7 +212,9 @@ export function quoteForBase(bits: PriceBits, base: bigint): bigint {
 
 /**
  * `quote / price`, rounded toward zero (mirrors Rust `Price::base_for_quote`).
- * `ZERO -> U128_MAX`, `INFINITY -> 0n`.
+ * `ZERO -> U128_MAX`, `INFINITY -> 0n`. Each decade step saturates at
+ * `U128_MAX` as Rust's `saturating_mul` does, so a tiny price over a huge
+ * quote clamps exactly where the engine's does.
  */
 export function baseForQuote(bits: PriceBits, quote: bigint): bigint {
   const u = bits >>> 0;
@@ -222,8 +224,8 @@ export function baseForQuote(bits: PriceBits, quote: bigint): bigint {
   const unb = priceUnbiasedExponent(u) - 7;
   let num = quote;
   let den = sig;
-  if (unb >= 0) for (let i = 0; i < unb; i++) den *= 10n;
-  else for (let i = 0; i < -unb; i++) num *= 10n;
+  if (unb >= 0) for (let i = 0; i < unb; i++) den = satU128(den * 10n);
+  else for (let i = 0; i < -unb; i++) num = satU128(num * 10n);
   return den === 0n ? 0n : num / den;
 }
 

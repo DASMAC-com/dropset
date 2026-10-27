@@ -37,7 +37,8 @@ fn market_bytes(f: &Fixture) -> Vec<u8> {
 
 /// Predict a swap with the SDK against the pre-swap snapshot (exactly as a
 /// router would), execute the real on-chain swap, and assert the SDK's
-/// prediction equals the realized taker deltas. Returns the SDK [`Quote`]
+/// prediction equals the realized taker deltas, taker fee and leg count.
+/// Returns the SDK [`Quote`]
 /// for scenario-specific assertions.
 ///
 /// `taker` must already hold enough input-leg atoms (quote for a Buy, base
@@ -109,7 +110,7 @@ fn predict_and_execute_with_fee(
         fee_authority,
         platform_fee_bps,
     );
-    f.send_ix(taker, ix).expect("on-chain swap");
+    let meta = common::send_ixn_meta(&mut f.svm, taker, ix).expect("on-chain swap");
 
     // Buy spends quote for base; Sell spends base for quote.
     let (realized_out, realized_in) = match side {
@@ -128,6 +129,23 @@ fn predict_and_execute_with_fee(
         "SDK out != on-chain out"
     );
     assert_eq!(predicted.in_amount, realized_in, "SDK in != on-chain in");
+
+    // The taker's deltas witness only the net amounts, so a simulator that
+    // mis-sized a leg's gross output and its fee by offsetting atoms would
+    // pass the two checks above while the frontend's fee row and leg count
+    // were wrong. The engine emits one `FillEvent` per filled leg carrying
+    // that leg's taker fee, which pins both against the chain.
+    let fills = common::events::fills(&meta);
+    let realized_fee: u64 = fills.iter().map(|e| e.taker_fee_atoms.get()).sum();
+    assert_eq!(
+        predicted.fee_amount, realized_fee,
+        "SDK fee != on-chain fee"
+    );
+    assert_eq!(
+        predicted.legs as usize,
+        fills.len(),
+        "SDK legs != on-chain FillEvents"
+    );
     predicted
 }
 
@@ -466,6 +484,80 @@ fn sdk_simulate_swap_matches_onchain_across_two_vaults() {
         q.out_amount, 1_378_474,
         "the cheaper vault's level must fill first; 1_372_719 is what \
          walking sector 0 first would yield"
+    );
+}
+
+/// The far-out walk end, pinned differentially.
+///
+/// A level the remaining budget cannot buy one output atom of ends the walk
+/// on both sides — the engine's `LegFill::Exhausted`, the simulator's
+/// `cap_by_taker_quote == 0` break — and leaves the unspent budget with the
+/// taker. That is the exact-in safety property: a leader who posts a far-out
+/// tail level cannot confiscate the change of any taker whose walk reaches
+/// it. Each implementation pins it on its own; this pins them together, so
+/// a simulator that walked on, or absorbed the change, disagrees on `in`.
+#[test]
+fn sdk_far_out_level_ends_the_walk_on_both_sides() {
+    let anchor = Price::encode(10_850_000, 0).unwrap().as_u32();
+    let mut f = Fixture::seeded_two_vaults(anchor, anchor);
+    let auth = f.authority.insecure_clone();
+    // Re-stamp sector 1 astronomically out of reach (1e9 quote per base
+    // atom). Its level stays non-empty and funded, so only the price makes
+    // it the `Exhausted` arm rather than a `Skip`, and asks are visited
+    // cheapest-first, so the walk reaches it after sector 0's honest level.
+    let far_out = Price::encode(10_000_000, 9).unwrap();
+    f.set_reference_price(&auth, 1, far_out.as_u32(), 0)
+        .expect("sector 1 re-quotes far out of reach");
+
+    // ~1.09M quote clears sector 0's whole level; the rest cannot buy one
+    // atom at 1e9.
+    let amount_in: u64 = 2_000_000;
+    let taker = f.funded_depositor(0, amount_in);
+    let quote_before = f.vault(0).quote_atoms.get();
+
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, amount_in, Price::INFINITY);
+    assert_eq!(q.legs, 1, "only sector 0's honest level fills");
+    assert!(q.in_amount < amount_in, "the change stays with the taker");
+    // The level-capped leg charges no residue, so the taker's spend is the
+    // honest level's quote cost — exactly what sector 0 received.
+    assert_eq!(
+        q.in_amount,
+        f.vault(0).quote_atoms.get() - quote_before,
+        "the taker paid the honest level's cost and nothing more"
+    );
+}
+
+/// The frozen-vault skip, pinned differentially.
+///
+/// A frozen vault stays on the active DLL but drops out of the matching set
+/// on both sides. Only the engine's half had a test, so deleting the
+/// simulator's `frozen` clause would leave the suite green while the
+/// frontend quoted, and sized `min_out` against, depth the engine refuses —
+/// a soft-revert the taker pays the network fee for.
+///
+/// The frozen vault is the *cheaper* one, so a simulator that ignored the
+/// freeze would start its walk there and disagree on every amount.
+#[test]
+fn sdk_frozen_vault_is_skipped_on_both_sides() {
+    let high = Price::encode(10_900_000, 0).unwrap().as_u32();
+    let low = Price::encode(10_800_000, 0).unwrap().as_u32();
+    let mut f = Fixture::seeded_two_vaults(high, low);
+    let admin = f.authority.insecure_clone();
+    f.freeze_vault(&admin, 1)
+        .expect("admin freezes the cheaper vault");
+
+    // Large enough to clear sector 0's level (~1.10M) and cross into
+    // sector 1's, were it matchable.
+    let amount_in: u64 = 3_000_000;
+    let taker = f.funded_depositor(0, amount_in);
+
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, amount_in, Price::INFINITY);
+    assert_eq!(q.legs, 1, "only the unfrozen vault's level fills");
+    assert!(q.in_amount < amount_in, "the frozen depth is not reachable");
+    assert_eq!(
+        f.vault(1).base_atoms.get(),
+        1_000_000,
+        "frozen vault inventory untouched"
     );
 }
 

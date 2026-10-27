@@ -26,6 +26,7 @@ type DecodeCase = { bits: number; valid: boolean; value: number | null };
 type EncodeCase = { value: number; bits: number | null };
 type RejectCase = { value: number | string; bits: null };
 type RatioCase = { bits: number; base?: number; quote?: number; expected: number };
+type SaturatingCase = { bits: number; quote: string; expected: string };
 
 const U64_MAX = (1n << 64n) - 1n;
 
@@ -37,6 +38,7 @@ const vectors = JSON.parse(
   encode_reject: RejectCase[];
   quote_for_base: RatioCase[];
   base_for_quote: RatioCase[];
+  base_for_quote_saturating: SaturatingCase[];
 };
 
 test('decode vectors match', () => {
@@ -115,6 +117,16 @@ test('quote_for_base vectors match', () => {
 test('base_for_quote vectors match', () => {
   for (const c of vectors.base_for_quote) {
     const got = sat(baseForQuote(c.bits, BigInt(c.quote ?? 0)));
+    assert.equal(got, BigInt(c.expected), `base_for_quote(${c.bits}, ${c.quote})`);
+  }
+});
+
+// Unclamped, so the u128 saturation itself is pinned; the amounts ride as
+// decimal strings because neither survives a JSON number.
+test('base_for_quote saturates where Rust does', () => {
+  assert.ok(vectors.base_for_quote_saturating.length > 0, 'saturating vectors present');
+  for (const c of vectors.base_for_quote_saturating) {
+    const got = baseForQuote(c.bits, BigInt(c.quote));
     assert.equal(got, BigInt(c.expected), `base_for_quote(${c.bits}, ${c.quote})`);
   }
 });
