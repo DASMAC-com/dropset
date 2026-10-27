@@ -3089,7 +3089,9 @@ plausible old-shape event. The TypeScript fill decoder's slice to the
 fixed size is the one allowance, and it is **bytemuck-`FillEvent`
 only**: that body grows by carving its zeroed reserve, never past its
 fixed size, so the slice is consistent with the reserve-carve rule
-above and admits no Borsh event.
+above and admits no Borsh event. (The TS SDK's generated Borsh struct
+codecs are not payload decoders and ignore a remainder too;
+`interface.md` §2 says so.)
 
 **Schema source of truth.** This section specifies the emit *mechanism*;
 the event *schema* (the field-by-field layouts) is owned by the

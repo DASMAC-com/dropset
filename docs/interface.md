@@ -229,8 +229,9 @@ bytes, yielding `null` only on a short payload, a discriminator mismatch, or a
 decode throw. That tolerance is a **bytemuck-`FillEvent`-only allowance** —
 the fill body grows by carving its reserve, not past its fixed size — and the
 TS SDK ships no payload decoder for any Borsh event. Its generated Borsh struct
-codecs (`getSetTakerFeeEventDecoder` and the rest) read a fixed-size prefix and
-ignore any remainder, so a consumer calling one directly gets the tolerant
+codecs (`getSetTakerFeeEventDecoder` and the rest) read their fields from the
+front of the body and ignore any remainder, so a consumer calling one directly
+gets the tolerant
 behavior, not the Rust strictness. An indexer that wants wire-format drift to
 surface loudly rather than pass silently wants the Rust `try_` form.
 
