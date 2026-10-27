@@ -267,8 +267,11 @@ with a `[package]`) and runs `cargo clippy -p <crate>…` or
 `cargo doc -p <crate>…`, passing each crate the features the whole
 workspace enables on it. Cargo unifies features only across the selected
 packages, so without that a bare `-p dropset-feeds` would build with no
-features and skip its feature-gated modules. When the files cover every
-tracked `.rs` file it
+features and skip its feature-gated modules. The set comes from
+`cargo metadata`, which counts dev-dependencies: it matches clippy's
+`--all-targets` build exactly and is a superset for `cargo doc`, so the
+abridged rustdoc can fail on a dev-only feature the full sweep never
+documents. When the files cover every tracked `.rs` file it
 runs the workspace commands unchanged, which is how the full sweep and CI
 stay identical. A Rust file outside any member package maps to the whole
 workspace, so a gap in the mapping costs a full sweep and never skips a

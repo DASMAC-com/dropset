@@ -29,7 +29,10 @@ build does:
   builds with ``default = []`` and never compiles its ``http`` / ``store`` /
   ``rpc`` / ``stream`` modules — the code an edit there most likely touched.
   Each selected crate gets the features the workspace resolution enables on it
-  (``cargo metadata``'s ``resolve`` graph), passed as ``--features``.
+  (``cargo metadata``'s ``resolve`` graph), passed as ``--features``. That
+  graph unifies across every target and dev-dependency — exactly clippy's
+  ``--all-targets`` set, and a superset of the workspace doc build's (a
+  dev-only ``test-support`` feature, say), so rustdoc errs toward checking more.
 * **A gap degrades to the full sweep.** A Rust file with no owning
   ``[package]`` (a workspace-level file), one outside a workspace member, or a
   ``cargo metadata`` that fails, maps to the whole workspace.
