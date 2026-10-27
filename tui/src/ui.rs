@@ -649,8 +649,8 @@ fn menu_item(
 /// the eCLOB controls sign with committed localnet role keys, the swap with
 /// the committed taker — so the pane says so instead of advertising keys that
 /// only produce an error line, and advertises the passive ladder and the kill
-/// switch instead. The `vault` row is live on both: the leader's stake
-/// commands are confirm-gated writes mainnet keeps. Same row count, so the
+/// switch instead. The `vault` row is live on both: the leader's stake and
+/// fee commands are confirm-gated writes mainnet keeps. Same row count, so the
 /// layout does not shift.
 fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
     let tag = |s: &'static str| Span::styled(format!("{s:<6}"), Style::new().fg(Color::DarkGray));
@@ -658,8 +658,8 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
     let off = Style::new().fg(Color::DarkGray);
     let ready = app.chain.phase() == Phase::Ready;
     // The leader's stake and fee: live once every vault is seeded (the
-    // commands' own gate); the rename once its vault exists, greyed with the reason
-    // when an admin has locked the name; the reserved rotation always
+    // commands' own gate); the rename once its vault exists, greyed with the
+    // reason when an admin has locked the name; the reserved rotation always
     // greyed. Terse, and rotation last: the pane does not wrap and the left
     // column is narrow, so what clips first should be what does nothing.
     let rename = match leader_seat(app) {

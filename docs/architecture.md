@@ -639,8 +639,9 @@ and rationale:
   as Q32.32 and **never decreases** — the performance fee accrues only
   when VPS exceeds the mark (see **High-water mark and performance
   fee**). `perf_fee_rate` is set at `CreateVault` and leader-retunable
-  via `SetPerfFeeRate`, which realizes at the old rate first; the mark
-  is independent of the rate, so a change never moves it.
+  via `SetPerfFeeRate`, which realizes at the old rate first; the rate
+  never enters the mark, so a change can only lift it, through that
+  realize, and never lowers it.
 - **Skin-in-the-game floor.** `min_leader_share` is the value enforced
   at `Deposit` / leader `Withdraw`; stamped from
   `MarketHeader.default_min_leader_share` at `CreateVault`, admin-

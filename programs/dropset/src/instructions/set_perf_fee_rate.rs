@@ -75,8 +75,9 @@ impl SetPerfFeeRate {
             (vault.seq.get(), vault.perf_fee_rate.get())
         };
 
-        // Realize at the old rate, then store the new one, under the one
-        // mutable borrow so nothing can run between the two.
+        // Realize at the old rate, then store the new one: the realize reads
+        // `perf_fee_rate` before the store, so it always mints at the old
+        // rate.
         let (outcome, leader_shares_after, total_shares_after) = {
             let vault = self.market.mutate_vault(vault_idx)?;
             let outcome = realize_in_place(vault);

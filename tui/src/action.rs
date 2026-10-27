@@ -336,7 +336,8 @@ impl Action {
                     | Phase::Ready
             ),
             Action::Wipe => true,
-            // Moving a stake needs one to exist: a seeded vault. `Ready` is
+            // Moving a stake needs one to exist, and the fee retune a vault
+            // to retune: a seeded vault. `Ready` is
             // every roster market at once; the prompt then re-reads the
             // selected market's vault fresh and refuses on its own terms.
             Action::LeaderDeposit | Action::LeaderWithdraw | Action::SetPerfFee => {

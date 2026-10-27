@@ -1,8 +1,8 @@
 //! `set_perf_fee_rate` integration tests — the leader's performance-fee
 //! retune. Covers realize-first (an excess accrued under the old rate mints
 //! at the old rate, never the new), the monotone high-water mark across a
-//! change in either direction, the 100% bound, the frozen no-op realize, the
-//! event, and the authority / same-rate / sector gates.
+//! change in either direction, the 100% bound, the frozen and tombstoned
+//! no-op realize, the event, and the authority / same-rate / sector gates.
 
 mod common;
 
@@ -151,6 +151,37 @@ fn a_frozen_vault_realizes_nothing_but_takes_the_new_rate() {
     assert_eq!(f.vault(0).total_shares.get(), shares);
     assert_eq!(f.vault(0).hwm.get(), hwm, "the mark stays pinned");
     assert_eq!(f.vault(0).perf_fee_rate.get(), TWENTY_PCT);
+}
+
+#[test]
+fn a_tombstoned_vault_realizes_nothing_but_takes_the_new_rate() {
+    let (mut f, leader) = seeded_at(TEN_PCT);
+    f.poke_hwm(0, Q32_32_ONE / 2);
+    f.close_vault(&leader, 0).expect("leader closes vault");
+    let (shares, hwm) = (f.vault(0).total_shares.get(), f.vault(0).hwm.get());
+
+    let meta = f
+        .set_perf_fee_rate_meta(&leader, 0, TWENTY_PCT)
+        .expect("the retune is allowed on a tombstoned vault");
+
+    assert_eq!(events::count::<RealizeEvent>(&meta), 0, "no fee accrues");
+    assert_eq!(f.vault(0).total_shares.get(), shares);
+    assert_eq!(f.vault(0).hwm.get(), hwm, "the mark stays pinned");
+    assert_eq!(f.vault(0).perf_fee_rate.get(), TWENTY_PCT);
+}
+
+#[test]
+fn rejects_the_quote_authority_delegate() {
+    // The fee is a custody-side term: delegating quoting does not delegate it.
+    let (mut f, leader) = seeded_at(TEN_PCT);
+    let delegate = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    f.set_quote_authority(&leader, 0, delegate.pubkey())
+        .expect("delegate quoting");
+    let err = f
+        .set_perf_fee_rate(&delegate, 0, TWENTY_PCT)
+        .expect_err("the quoting delegate must not retune the fee");
+    common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
+    assert_eq!(f.vault(0).perf_fee_rate.get(), TEN_PCT);
 }
 
 #[test]

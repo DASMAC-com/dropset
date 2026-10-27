@@ -1134,8 +1134,9 @@ impl Fixture {
         send_ixn(&mut self.svm, admin, ix)
     }
 
-    /// `set_quote_authority` — leader rotates a vault's quoting delegate.
-    /// Leader-only (signer + market + the event-CPI pair, no registry).
+    /// `set_perf_fee_rate` — leader retunes a vault's performance fee,
+    /// realizing at the old rate first. Leader-only (signer + market + the
+    /// event-CPI pair, no registry).
     pub fn set_perf_fee_rate(
         &mut self,
         signer: &Keypair,
@@ -1171,6 +1172,8 @@ impl Fixture {
         send_ixn_meta(&mut self.svm, signer, ix)
     }
 
+    /// `set_quote_authority` — leader rotates a vault's quoting delegate.
+    /// Leader-only (signer + market + the event-CPI pair, no registry).
     pub fn set_quote_authority(
         &mut self,
         signer: &Keypair,
