@@ -206,6 +206,16 @@ debugger: program
 test: program
 	cargo test
 
+# The iteration form of `make test`: `cargo test` over the crates this branch's
+# files touch plus every workspace crate depending on them, with the workspace's
+# features (`.claude/tools/cargo_scope.py test`). It builds the program only
+# when the program crate is in that set, and runs nothing for a branch no Rust
+# build can reach. `make test` above and CI stay the full suite and the source
+# of truth (`docs/ci.md` -> "Local tests versus CI").
+.PHONY: test-abridged
+test-abridged:
+	python3 .claude/tools/cargo_scope.py test --changed
+
 # Feature-off coverage: build the program WITHOUT `admin-teardown` and
 # assert every teardown instruction returns `TeardownDisabled` — only the
 # feature-off-gated test target is run.

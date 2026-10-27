@@ -1042,7 +1042,10 @@ migrations or generation inputs, and whether it spans crates.
 
    Apply step 4's fix-and-retry logic, scoped per-hook re-run
    included. The **full** `make lint` belongs to the two checkpoints
-   (before committing, at the end), never to this loop. Run a fast
+   (before committing, at the end), never to this loop. A fix that
+   reached a Rust build re-tests through `make test-abridged` (the
+   crates it affects; `docs/ci.md` → "Local tests versus CI"), and the
+   full `make test` stays step 11's pre-push run. Run a fast
    suite **whole, through the wrapper, at checkpoints rather than
    after every edit** — the lever is frequency, not scope
    (`history.md` → "Fast-suite frequency").

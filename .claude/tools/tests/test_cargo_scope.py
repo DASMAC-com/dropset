@@ -308,5 +308,206 @@ class Main(Fixture):
         self.assertEqual(run.call_args.kwargs["env"]["RUSTDOCFLAGS"], "-Dwarnings")
 
 
+def _node(pkg_id: str, *deps: str, features=()) -> dict:
+    return {
+        "id": pkg_id,
+        "features": list(features),
+        "deps": [{"pkg": dep} for dep in deps],
+    }
+
+
+# util ← sdk ← leaf, util ← dropset (the program, dev-depending on sdk too),
+# and feeds standing alone; serde is a non-member every crate uses.
+GRAPH_METADATA = {
+    "workspace_members": ["util", "sdk", "leaf", "dropset", "feeds"],
+    "packages": [
+        {"id": pkg_id, "name": pkg_id}
+        for pkg_id in ("util", "sdk", "leaf", "dropset", "feeds", "serde")
+    ],
+    "resolve": {
+        "nodes": [
+            _node("util", "serde"),
+            _node("sdk", "util", "serde"),
+            _node("leaf", "sdk"),
+            _node("dropset", "util", "sdk", features=["default", "asm"]),
+            _node("feeds", "serde", features=["http"]),
+            _node("serde"),
+        ]
+    },
+}
+
+GRAPH_TREE = {
+    "Cargo.toml": '[workspace]\nmembers = ["util", "sdk", "leaf", '
+    '"programs/dropset", "feeds"]\n',
+    "Cargo.lock": "",
+    "util/Cargo.toml": '[package]\nname = "util"\n',
+    "util/src/lib.rs": "",
+    "sdk/Cargo.toml": '[package]\nname = "sdk"\n',
+    "sdk/src/lib.rs": "",
+    "leaf/Cargo.toml": '[package]\nname = "leaf"\n',
+    "leaf/src/lib.rs": "",
+    "leaf/README.md": "",
+    "programs/dropset/Cargo.toml": '[package]\nname = "dropset"\n',
+    "programs/dropset/src/lib.rs": "",
+    "programs/dropset/src/asm/entry.s": "",
+    "feeds/Cargo.toml": '[package]\nname = "feeds"\n',
+    "feeds/src/lib.rs": "",
+    "docs/ci.md": "",
+    "frontend/roster.json": "",
+}
+
+GRAPH_TRACKED = {p for p in GRAPH_TREE if p.endswith(".rs")}
+
+# A feeds test reads the frontend roster at runtime.
+GRAPH_FIXTURES = {"frontend/roster.json": ["feeds/tests/roster.rs"]}
+
+
+class GraphFixture(Fixture):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        for rel, body in GRAPH_TREE.items():
+            path = os.path.join(self.root, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as handle:
+                handle.write(body)
+
+    def seeds(self, *files: str):
+        return cs.test_seeds(
+            list(files), self.root, tracked=GRAPH_TRACKED, fixtures=GRAPH_FIXTURES
+        )
+
+
+class AffectedClosure(unittest.TestCase):
+    def test_reverse_edges_are_members_only(self):
+        dependents = cs.reverse_dependents(GRAPH_METADATA)
+        self.assertEqual(dependents["util"], {"sdk", "dropset"})
+        self.assertEqual(dependents["sdk"], {"leaf", "dropset"})
+        self.assertNotIn("serde", dependents)
+
+    def test_leaf_is_only_itself(self):
+        self.assertEqual(cs.affected_closure(["leaf"], GRAPH_METADATA), ["leaf"])
+
+    def test_shared_dependency_takes_every_dependent_transitively(self):
+        self.assertEqual(
+            cs.affected_closure(["util"], GRAPH_METADATA),
+            ["dropset", "leaf", "sdk", "util"],
+        )
+
+    def test_program_pulls_in_its_artifact_consumers(self):
+        with mock.patch.dict(cs.ARTIFACT_CONSUMERS, {"dropset": ("dropset", "feeds")}):
+            self.assertEqual(
+                cs.affected_closure(["dropset"], GRAPH_METADATA), ["dropset", "feeds"]
+            )
+
+    def test_every_member_is_the_workspace(self):
+        self.assertIs(
+            cs.affected_closure(["util", "feeds"], GRAPH_METADATA), cs.WORKSPACE
+        )
+
+
+class TestSeeds(GraphFixture):
+    def test_no_rust_reachable_change_tests_nothing(self):
+        self.assertEqual(self.seeds("docs/ci.md", "leaf/README.md"), [])
+
+    def test_non_rust_build_input_seeds_its_crate(self):
+        self.assertEqual(self.seeds("programs/dropset/src/asm/entry.s"), ["dropset"])
+
+    def test_fixture_seeds_the_reading_crate(self):
+        self.assertEqual(self.seeds("frontend/roster.json"), ["feeds"])
+
+    def test_unowned_build_input_is_the_workspace(self):
+        self.assertIs(self.seeds("Cargo.lock"), cs.WORKSPACE)
+
+    def test_every_tracked_file_is_the_workspace(self):
+        self.assertIs(self.seeds(*GRAPH_TRACKED), cs.WORKSPACE)
+
+    def test_affected_widens_the_seeds(self):
+        self.assertEqual(
+            cs.affected(
+                ["sdk/src/lib.rs"],
+                self.root,
+                GRAPH_METADATA,
+                tracked=GRAPH_TRACKED,
+                fixtures=GRAPH_FIXTURES,
+            ),
+            ["dropset", "leaf", "sdk"],
+        )
+
+    def test_affected_without_metadata_is_the_workspace(self):
+        self.assertIs(
+            cs.affected(
+                ["leaf/src/lib.rs"], self.root, None, GRAPH_TRACKED, GRAPH_FIXTURES
+            ),
+            cs.WORKSPACE,
+        )
+
+
+class TestCommands(unittest.TestCase):
+    def test_program_in_the_set_builds_it_first(self):
+        self.assertEqual(cs.artifact_builds(["dropset", "sdk"]), [["make", "program"]])
+        self.assertEqual(cs.artifact_builds(cs.WORKSPACE), [["make", "program"]])
+        self.assertEqual(cs.artifact_builds(["leaf"]), [])
+
+    def test_scoped_test_carries_the_workspace_features(self):
+        self.assertEqual(
+            cs.build_cmd("test", ["feeds"], {"feeds": ["http"]}),
+            ["cargo", "test", "-p", "feeds", "--features", "feeds/http"],
+        )
+
+    def test_workspace_test_matches_make_test(self):
+        self.assertEqual(cs.build_cmd("test", cs.WORKSPACE), ["cargo", "test"])
+
+    def test_scope_flags(self):
+        self.assertEqual(cs.scope_flags(["a", "b"]), "-p a -p b")
+        self.assertEqual(cs.scope_flags(cs.WORKSPACE), "--workspace")
+
+
+class TestMain(GraphFixture):
+    def run_main(self, *argv: str, metadata=GRAPH_METADATA) -> tuple[int, str]:
+        out = io.StringIO()
+        with (
+            mock.patch.object(cs, "tracked_rust_files", return_value=GRAPH_TRACKED),
+            mock.patch.object(
+                cs.review_diff, "rust_test_fixtures", return_value=GRAPH_FIXTURES
+            ),
+            mock.patch.object(cs, "cargo_metadata", return_value=metadata) as meta,
+            mock.patch("sys.stderr", new=io.StringIO()),
+            redirect_stdout(out),
+        ):
+            code = cs.main(["--root", self.root, *argv])
+        self.meta = meta
+        return code, out.getvalue().strip()
+
+    def test_print_program_change(self):
+        self.assertEqual(
+            self.run_main("test", "--print", "programs/dropset/src/lib.rs"),
+            (0, "make program\ncargo test -p dropset --features dropset/asm"),
+        )
+
+    def test_affected_prints_the_flags(self):
+        self.assertEqual(self.run_main("affected", "leaf/src/lib.rs"), (0, "-p leaf"))
+
+    def test_docs_only_change_never_asks_cargo(self):
+        with mock.patch.object(cs.subprocess, "run") as run:
+            code, shown = self.run_main("test", "docs/ci.md")
+        self.assertEqual((code, shown), (0, ""))
+        run.assert_not_called()
+        self.meta.assert_not_called()
+
+    def test_metadata_failure_runs_the_full_suite(self):
+        self.assertEqual(
+            self.run_main("test", "--print", "leaf/src/lib.rs", metadata=None),
+            (0, "make program\ncargo test"),
+        )
+
+    def test_stops_at_the_first_failing_command(self):
+        result = mock.Mock(returncode=2)
+        with mock.patch.object(cs.subprocess, "run", return_value=result) as run:
+            code, _ = self.run_main("test", "programs/dropset/src/lib.rs")
+        self.assertEqual(code, 2)
+        self.assertEqual(run.call_args.args[0], ["make", "program"])
+
+
 if __name__ == "__main__":
     unittest.main()
