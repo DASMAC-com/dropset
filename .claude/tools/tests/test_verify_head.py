@@ -251,9 +251,7 @@ class BucketStateTest(unittest.TestCase):
         checks = [{"name": "Tests", "bucket": "pass"}]
         self.assertEqual(vh.bucket_state(checks, vh.CI_TEST, vh.TEST_JOBS), PEND)
         checks = [{"name": n, "bucket": "pass"} for n in sorted(vh.TEST_JOBS)]
-        self.assertEqual(
-            vh.bucket_state(checks, vh.CI_TEST, vh.TEST_JOBS)[0], "green"
-        )
+        self.assertEqual(vh.bucket_state(checks, vh.CI_TEST, vh.TEST_JOBS)[0], "green")
 
 
 class LocalOnlyReasonTest(unittest.TestCase):
@@ -281,7 +279,7 @@ class ReadCiTest(unittest.TestCase):
         self.addCleanup(setattr, wfc, "read_checks", self._read)
 
     def stub(self, code, out, checks=()):
-        wfc._gh = lambda args: (self.calls.append(args) or (code, out, "boom"))
+        wfc._gh = lambda args: self.calls.append(args) or (code, out, "boom")
         wfc.read_checks = lambda pr, repo: list(checks)
 
     def test_other_head_is_none(self):
@@ -290,8 +288,11 @@ class ReadCiTest(unittest.TestCase):
         self.assertEqual(self.calls[0][:3], ["pr", "view", "7"])
 
     def test_this_head_reads_checks(self):
-        self.stub(0, '{"number": 7, "headRefOid": "%s"}' % SHA,
-                  [{"name": "Lint", "bucket": "fail"}])
+        self.stub(
+            0,
+            '{"number": 7, "headRefOid": "%s"}' % SHA,
+            [{"name": "Lint", "bucket": "fail"}],
+        )
         self.assertEqual(vh.read_ci(SHA, "7", "o/r")["lint"], ("red", "Lint"))
 
     def test_failures_raise_the_watcher_error(self):

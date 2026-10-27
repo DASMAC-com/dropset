@@ -218,9 +218,7 @@ def bucket_state(
     if red:
         return "red", ",".join(c["name"] for c in red)
     names = {c.get("name") for c in mine}
-    if expected <= names and all(
-        c.get("bucket") in ("pass", "skipping") for c in mine
-    ):
+    if expected <= names and all(c.get("bucket") in ("pass", "skipping") for c in mine):
         return "green", ",".join(c["name"] for c in mine)
     return "pending", ""
 
@@ -388,8 +386,8 @@ def main(argv: list[str] | None = None) -> int:
         started.append(Stage(name, commands[name], log_path_for(sha, name)))
         return started[-1]
 
-    def leave(signum, _frame):
-        raise SystemExit(128 + signum)
+    def leave(number, _frame):
+        raise SystemExit(128 + number)
 
     # The stages run in their own sessions, so a signal aimed at this call's
     # group never reaches them: turn it into the exception the cleanup sees.
