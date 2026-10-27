@@ -64,7 +64,8 @@ funds; it is signed by the admin wallet, never the quote key.
 1. Select the market (`[` / `]`) and read the vault's number off the
    accounts pane, where each vault is listed with its name.
 1. In the form, type that number, then the replacement name; leave it
-   empty to blank the name, which then shows as the vault's `#number`.
+   empty to blank the name; the vault then shows as `#` plus its
+   per-market sequence number, never its sector index.
    Set the lock (`←` / `→` or space) to stop the leader renaming it back.
 1. Enter previews the change, read fresh: the vault, the old and new name,
    the lock. Type `yes` in the red **REAL FUNDS** box to send.

@@ -66,7 +66,8 @@ tGBP. The regime is named so you can say why, not to fail the run.
   leader pane shows the leader's. The bootstrap names each vault
   `Vault <leader prefix>`; `N` renames the leader's vault, and the menu's
   name override replaces or blanks any vault's name and can lock it. A
-  blank name shows as the vault's `#number`.
+  vault with no name shows as `#` plus its per-market sequence number
+  (`#5`), never its sector index — the same on every surface.
 
 ## 4. Try it in the browser
 
