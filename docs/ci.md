@@ -101,8 +101,9 @@ Bumping the compiler is a deliberate PR, never a surprise:
 1. Edit `channel` in `rust-toolchain.toml`.
 1. Run the full-workspace gate locally **before** pushing:
    `cargo clippy --all-targets -- -D warnings`. This is the same command
-   the pre-commit clippy hook runs, so a clean local run means the gate is
-   clean.
+   the pre-commit clippy hook runs in the full sweep (`make lint` and CI),
+   so a clean local run means the gate is clean. `make lint-abridged`
+   scopes it to the changed crates (§5), so it is not this check.
 1. Fix any new-lint churn in the same PR. New lints are the expected cost
    of a bump and belong with it, not spread across unrelated PRs.
 1. Expect the first CI runs after the bump to be slow. The rust-cache key
