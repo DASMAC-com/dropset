@@ -146,4 +146,6 @@ pub enum DropsetError {
     QuoteWriteMarketNotWritable,
     #[msg("treasury did not receive exactly the transferred amount (transfer-fee mint?)")]
     TransferShortfall,
+    #[msg("new perf_fee_rate is the vault's current perf_fee_rate")]
+    SamePerfFeeRate,
 }

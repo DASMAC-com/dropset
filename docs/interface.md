@@ -147,6 +147,9 @@ also why the treasury's custody invariant is
   rotations, carrying the old and new key and the unchanged other half of the
   authority pair. An end-of-slot account diff can coalesce a rotation away, so
   these records are how a maker learns its delegation moved.
+- **`SetPerfFeeRate`** — a leader's performance-fee retune, carrying the old
+  and new rate. The program realizes at the old rate first, so any `Realize` in
+  the same instruction precedes it and was minted at the old rate.
 - **`SetVaultName`** / **`OverrideVaultName`** — a leader's rename and an
   admin's rewrite, carrying the old and new name; the admin variant also carries
   the `lock` it set or cleared.

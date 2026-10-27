@@ -638,7 +638,9 @@ and rationale:
 - **HWM monotonicity.** `hwm` is value-per-share (`L / total_shares`)
   as Q32.32 and **never decreases** — the performance fee accrues only
   when VPS exceeds the mark (see **High-water mark and performance
-  fee**). `perf_fee_rate` is set at `CreateVault` and immutable.
+  fee**). `perf_fee_rate` is set at `CreateVault` and leader-retunable
+  via `SetPerfFeeRate`, which realizes at the old rate first; the mark
+  is independent of the rate, so a change never moves it.
 - **Skin-in-the-game floor.** `min_leader_share` is the value enforced
   at `Deposit` / leader `Withdraw`; stamped from
   `MarketHeader.default_min_leader_share` at `CreateVault`, admin-
@@ -885,7 +887,7 @@ Applies the formula above: mints `m` new shares into
 ([`state/market/accrual.rs`](../programs/dropset/src/state/market/accrual.rs))
 runs implicitly at the start of every `Deposit` and `Withdraw`
 (including the leader paths and the feature-gated admin
-force-withdraw paths), so outside flows always cross at a post-fee
+force-withdraw paths) and of `SetPerfFeeRate`, so outside flows always cross at a post-fee
 VPS and never transfer leader-owed fee value to or from the caller.
 **Never runs on the taker hot path.** Touches no SPL accounts — perf
 fee accrual is purely on-vault bookkeeping.
@@ -1455,7 +1457,7 @@ caller; the third is the per-ix authority gate.
      quotes already stamped.
 
    - **Leader-only** (`SetQuoteAuthority`, `SetLeader`,
-     `SetAllowOutsideDepositors`, `CloseVault`):
+     `SetAllowOutsideDepositors`, `SetPerfFeeRate`, `CloseVault`):
      `vault.leader == signer`. `SetLeader` also requires the incoming
      leader's signature.
 
@@ -1583,6 +1585,8 @@ authoritative.
 | Vault name taken on the market (case-insensitive)           | `VaultNameTaken`               |
 | `SetVaultName` on an admin-locked name                      | `VaultNameLocked`              |
 | `SetQuoteAuthority` names the current quote authority       | `SameQuoteAuthority`           |
+| `CreateVault` / `SetPerfFeeRate` rate above 1,000,000 ppm   | `InvalidPerfFeeRate`           |
+| `SetPerfFeeRate` names the current rate                     | `SamePerfFeeRate`              |
 | Reference price unset where a basis read needs it           | `ReferencePriceNotSet`         |
 | Swap `limit_price` bits not a well-formed `Price`           | `InvalidPrice`                 |
 | Swap `amount_in == 0`                                       | `InvalidAmountIn`              |
@@ -1628,7 +1632,8 @@ transfer-fee extension, the amount landing in the fee ATA is less than
 
 Caller arguments stamped onto the vault:
 
-- `perf_fee_rate: Ppm32` — immutable thereafter.
+- `perf_fee_rate: Ppm32` — at most 1,000,000 (100%,
+  `InvalidPerfFeeRate`); retunable post-open via `SetPerfFeeRate`.
 - `quote_authority: Address` — **must not be `Address::default()`**;
   the zero address is rejected with `Unauthorized`. Having no private
   key, it would quote-brick the vault, since `SetReferencePrice` /
@@ -2084,6 +2089,34 @@ The new authority must be:
 - different from the current quote authority (`SameQuoteAuthority`),
   so no event claims a rotation that never happened — the same rule
   `SetLeader`'s `SameLeader` gate applies.
+
+### SetPerfFeeRate
+
+Leader-only. Writes `Vault.perf_fee_rate = rate_ppm`, after first
+running `Realize` at the **old** rate. The high-water mark is
+value-per-share and independent of the rate; the rate enters only the
+mint `m`. Without realize-first, an excess accrued under the old rate
+would be minted at the new one. With it, the mark sits at
+`max(hwm, VPS)` when the new rate lands, so the new rate applies only to
+gains above that point, in either direction of change. The leader can
+already pin the mark at any moment with a dust leader `Deposit`, so the
+realizing setter grants no new power.
+
+The rate must be:
+
+- at most 1,000,000 ppm (`InvalidPerfFeeRate`), the `CreateVault`
+  bound;
+- different from the current rate (`SamePerfFeeRate`), so no event
+  claims a change that never happened.
+
+Allowed on frozen and tombstoned vaults, where the realize is a no-op
+(the mark is pinned there anyway) and only the rate is written. Emits a
+`RealizeEvent` first when the realize mints, then
+`SetPerfFeeRateEvent` (`market`, `sector_idx`, `vault_seq`, `leader`,
+`old_rate`, `new_rate`).
+
+There is no time lock and no maximum step: the cost of a raise is
+reputational, and depositors may `Withdraw` at any time at no cost.
 
 ### SetLeader
 
@@ -2958,7 +2991,9 @@ from a maker that its own quoting delegation moved — the two name
 writers `SetVaultName` and `OverrideVaultName`, for the same coalescing
 reason (each carries both the old and the new name; `CreateVault`,
 `FreezeVault` and `CloseVault` each carry the name they wrote or
-blanked), the admin retuning levers (`SetMinLeaderShare`, `SetMarketFeeConfig`,
+blanked), the leader's fee retune `SetPerfFeeRate` (paired with a
+`Realize` when its realize-first mints, and carrying the old and new
+rate), the admin retuning levers (`SetMinLeaderShare`, `SetMarketFeeConfig`,
 `SetTakerFee`, `SetRegistryDefaults`), and `SweepResidual` — which emits
 on **every** call, including the zero-sweep case, because the three terms
 it reports are a diagnosis an account diff cannot supply (see

@@ -19,9 +19,9 @@ use dropset_sdk::instructions::{
     CloseVaultInstructionArgs, CreateMarket, CreateVault, CreateVaultInstructionArgs,
     DepositLeader, DepositLeaderInstructionArgs, ForceWithdrawDepositor,
     ForceWithdrawDepositorInstructionArgs, ForceWithdrawLeader, ForceWithdrawLeaderInstructionArgs,
-    Init, InitInstructionArgs, OverrideVaultName, OverrideVaultNameInstructionArgs, SetVaultName,
-    SetVaultNameInstructionArgs, Swap, SwapInstructionArgs, WithdrawLeader,
-    WithdrawLeaderInstructionArgs,
+    Init, InitInstructionArgs, OverrideVaultName, OverrideVaultNameInstructionArgs,
+    SetPerfFeeRate, SetPerfFeeRateInstructionArgs, SetVaultName, SetVaultNameInstructionArgs, Swap,
+    SwapInstructionArgs, WithdrawLeader, WithdrawLeaderInstructionArgs,
 };
 use dropset_sdk::SWAP_COMPUTE_UNIT_LIMIT;
 use dropset_util::localnet::{create_ata_idempotent_ix, mint_to_ix};
@@ -439,6 +439,31 @@ pub fn build_close_vault_ix(
     .instruction(
         cluster.deployment(),
         CloseVaultInstructionArgs { vault_idx },
+    )
+}
+
+/// `set_perf_fee_rate` — the vault's `leader` (signer) retunes its
+/// performance fee to `rate_ppm`. The program realizes at the old rate first,
+/// so fees accrued so far mint at the rate they accrued under.
+pub fn build_set_perf_fee_rate_ix(
+    cluster: Cluster,
+    leader: &Pubkey,
+    market: &Pubkey,
+    vault_idx: u32,
+    rate_ppm: u32,
+) -> Instruction {
+    SetPerfFeeRate {
+        signer: *leader,
+        market: *market,
+        event_authority: event_authority(cluster),
+        program: cluster.program_id(),
+    }
+    .instruction(
+        cluster.deployment(),
+        SetPerfFeeRateInstructionArgs {
+            vault_idx,
+            rate_ppm,
+        },
     )
 }
 

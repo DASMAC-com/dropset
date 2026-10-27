@@ -42,10 +42,11 @@ use dropset::{
         SetLiquidityProfile as SetLiquidityProfileIx, SetMarketFeeConfig as SetMarketFeeConfigIx,
         SetMaxPlatformFee as SetMaxPlatformFeeIx, SetMinLeaderShare as SetMinLeaderShareIx,
         SetOutsideDepositsApproved as SetOutsideDepositsApprovedIx,
-        SetQuoteAuthority as SetQuoteAuthorityIx, SetReferencePrice as SetReferencePriceIx,
-        SetRegistryDefaults as SetRegistryDefaultsIx, SetTakerFee as SetTakerFeeIx,
-        SetVaultName as SetVaultNameIx, Swap as SwapIx, SweepResidual as SweepResidualIx,
-        Withdraw as WithdrawIx, WithdrawLeader as WithdrawLeaderIx,
+        SetPerfFeeRate as SetPerfFeeRateIx, SetQuoteAuthority as SetQuoteAuthorityIx,
+        SetReferencePrice as SetReferencePriceIx, SetRegistryDefaults as SetRegistryDefaultsIx,
+        SetTakerFee as SetTakerFeeIx, SetVaultName as SetVaultNameIx, Swap as SwapIx,
+        SweepResidual as SweepResidualIx, Withdraw as WithdrawIx,
+        WithdrawLeader as WithdrawLeaderIx,
     },
     Level, LiquidityProfile, MarketHeader, Price, RegistryHeader, Vault, VaultDepositorHeader,
 };
@@ -1135,6 +1136,41 @@ impl Fixture {
 
     /// `set_quote_authority` — leader rotates a vault's quoting delegate.
     /// Leader-only (signer + market + the event-CPI pair, no registry).
+    pub fn set_perf_fee_rate(
+        &mut self,
+        signer: &Keypair,
+        vault_idx: u32,
+        rate_ppm: u32,
+    ) -> Result<(), String> {
+        self.set_perf_fee_rate_meta(signer, vault_idx, rate_ppm)
+            .map(|_| ())
+    }
+
+    /// Like [`Self::set_perf_fee_rate`] but yields the transaction metadata
+    /// so a test can decode the emitted `RealizeEvent` / `SetPerfFeeRateEvent`.
+    pub fn set_perf_fee_rate_meta(
+        &mut self,
+        signer: &Keypair,
+        vault_idx: u32,
+        rate_ppm: u32,
+    ) -> Result<TransactionMetadata, String> {
+        let ix = Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &SetPerfFeeRateIx {
+                vault_idx,
+                rate_ppm,
+            }
+            .data(),
+            vec![
+                AccountMeta::new_readonly(signer.pubkey(), true),
+                AccountMeta::new(self.market, false),
+                AccountMeta::new_readonly(event_authority(), false),
+                AccountMeta::new_readonly(PROGRAM_ID, false),
+            ],
+        );
+        send_ixn_meta(&mut self.svm, signer, ix)
+    }
+
     pub fn set_quote_authority(
         &mut self,
         signer: &Keypair,

@@ -52,6 +52,7 @@ pub fn event_market(e: &DropsetEvent) -> Option<String> {
         DropsetEvent::FreezeVault(x) => Some(pk(&x.market)),
         DropsetEvent::SetLeader(x) => Some(pk(&x.market)),
         DropsetEvent::SetQuoteAuthority(x) => Some(pk(&x.market)),
+        DropsetEvent::SetPerfFeeRate(x) => Some(pk(&x.market)),
         DropsetEvent::SetVaultName(x) => Some(pk(&x.market)),
         DropsetEvent::OverrideVaultName(x) => Some(pk(&x.market)),
         DropsetEvent::Realize(x) => Some(pk(&x.market)),
@@ -145,6 +146,10 @@ pub fn event_to_json(e: &DropsetEvent) -> Value {
             "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq),
             "leader": pk(&x.leader), "old_authority": pk(&x.old_authority),
             "new_authority": pk(&x.new_authority),
+        }),
+        DropsetEvent::SetPerfFeeRate(x) => json!({
+            "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq),
+            "leader": pk(&x.leader), "old_rate": x.old_rate, "new_rate": x.new_rate,
         }),
         DropsetEvent::SetVaultName(x) => json!({
             "market": pk(&x.market), "sector_idx": x.sector_idx, "vault_seq": wide(x.vault_seq),

@@ -547,6 +547,25 @@ pub mod dropset {
         emit_cpi!(event);
         Ok(())
     }
+
+    // Leader-only performance-fee retune, a post-create leader lever like
+    // `set_quote_authority` (27) by subject, appended at the tail so
+    // discriminants 0–32 keep their numbers. Realizes at the old rate
+    // before the write, so its `RealizeEvent` (if any) goes out first.
+    // See the architecture spec, § SetPerfFeeRate.
+    #[discrim = 33]
+    pub fn set_perf_fee_rate(
+        ctx: &mut Context<SetPerfFeeRate>,
+        vault_idx: u32,
+        rate_ppm: u32,
+    ) -> Result<()> {
+        let (realize_event, event) = ctx.accounts.set_perf_fee_rate(vault_idx, rate_ppm)?;
+        if let Some(re) = realize_event {
+            emit_cpi!(re);
+        }
+        emit_cpi!(event);
+        Ok(())
+    }
 }
 
 // Under `asm-entrypoint` the crate's `no-entrypoint` feature stops the

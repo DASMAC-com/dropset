@@ -303,7 +303,7 @@ pub fn step(op: Op, seat: &SectorSeat, signer: &Pubkey) -> Step {
                 min_base_out,
                 min_quote_out,
             },
-            Ok(Plan::Deposit { .. }) | Err(_) => {
+            Ok(Plan::Deposit { .. } | Plan::SetPerfFee { .. }) | Err(_) => {
                 Step::Refuse("the stake does not size a withdrawal")
             }
         },
