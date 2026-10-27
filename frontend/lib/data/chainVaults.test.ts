@@ -80,7 +80,12 @@ describe("chainVault", () => {
   });
 
   it("labels a vault by its name, else #seq, else (mock) the leader", () => {
-    const named = chainVault(summary({ name: "GBP Basis" }), MARKET, "TGBP", "USDC");
+    const named = chainVault(
+      summary({ name: "GBP Basis" }),
+      MARKET,
+      "TGBP",
+      "USDC",
+    );
     expect(vaultLabel(named)).toBe("GBP Basis");
     // The per-market seq (5), not the sector index (2).
     const unnamed = chainVault(summary(), MARKET, "TGBP", "USDC");

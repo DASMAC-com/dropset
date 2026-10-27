@@ -69,7 +69,7 @@ const cmpMetric = compareSortValues;
 const LEADER_SLUG_MAX = 12;
 
 // Substring match across the pair's FX label / nickname / currency names and
-// the vault's tokens, name and leader address.
+// the vault's tokens, label (name or `#<seq>`) and leader address.
 const matchesQuery = (
   q: string,
   group: FxPairGroup,
@@ -86,7 +86,7 @@ const matchesQuery = (
     entry.market.base,
     entry.market.quote,
     entry.market.label,
-    entry.vault.name ?? "",
+    vaultLabel(entry.vault),
     entry.vault.leader,
   ].some((s) => s.toLowerCase().includes(q));
 };
@@ -293,7 +293,9 @@ function VaultRow({
               the dialog. */}
           <span
             className={`max-w-48 truncate text-foreground ${vault.name ? "font-medium text-sm" : "font-mono text-xs"}`}
-            title={vault.name ? `${vault.name} — ${vault.leader}` : vault.leader}
+            title={
+              vault.name ? `${vault.name} — ${vault.leader}` : vault.leader
+            }
           >
             {vaultLabel(vault)}
           </span>
