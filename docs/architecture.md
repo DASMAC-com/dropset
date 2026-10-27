@@ -1155,7 +1155,7 @@ Properties:
   full exit neutral; scaling `flip_size` on withdraw only would let a
   depositor's round trip cut the leader's flipped allowance by its
   share each time. Without the rescale, a deposit-flush-withdraw cycle
-  leaves a 20% level sized at the whole remaining leg.
+  can leave a 20% level sized at the whole remaining leg.
 - **Per-level expiry stratifies the ladder.** A leader can give
   top-of-book short offsets and deep levels much longer ones, so flush
   cadence is graded by depth instead of forced to the top-of-book rate.
