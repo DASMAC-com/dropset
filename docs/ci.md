@@ -324,8 +324,8 @@ by a path built at runtime is one example; a crate that starts loading the
 ## 7. Racing local against CI
 
 A verification point is one call, `.claude/tools/verify_head.py`. It
-records HEAD, runs `make lint-abridged` and then `make test-abridged` as
-killable process groups, and, when HEAD is pushed and the tree is clean,
+records HEAD, runs `make lint-abridged` and then `make test-abridged`,
+each as a process group it owns, and, when HEAD is pushed and the tree is clean,
 polls CI for the same SHA. Each check settles on whichever side finishes
 first. A green CI `Lint` kills the local lint. The `Tests*` checks green,
 or skipped by the `code` filter, kill or skip the local test. A red on
