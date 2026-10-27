@@ -1005,7 +1005,7 @@ Beyond coloring, `iterm-reorder.py` keeps each window's tabs sorted into
 attention groups so you can park at position 1 and sweep right:
 
 ```txt
-[ yellow (permission) … ] [ green (reply wanted) … ] [ the rest … ] [ curate ] [ plan ]
+[ yellow (permission) … ] [ green (reply) … ] [ the rest … ] [ curate ] [ plan ]
 ```
 
 **The planning tab is always locatable, by position alone** (no color of
@@ -1616,7 +1616,7 @@ names alive was the outcome to avoid.
 | `explore [s] <n\|name>` | research / audit, read-only, temp worktree | Bedrock, or `[s]`      | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
 | `chore [s] <n>`         | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    | executor if Bedrock | `[Chore/<Substrate>]`     |
 | `plan [a]`              | upkeep pass, then the scheduler's day      | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
-| `curate [a]`            | the curator: Backlog→Todo review, base, no PR | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
+| `curate [a]`            | the curator: Backlog→Todo review, no PR    | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
 | `architect [b] <n>`     | design thread, read-only, temp worktree    | advisor's, or override | advisor   | executor if Bedrock | `[Architect/<Substrate>]` |
 | `fleet [go]`            | batch resume                               | per-window             | re-pinned | per-window          | —                         |
 | `models [check]`        | print the tier table; `check` it for free  | —                      | —         | —                   | —                         |
