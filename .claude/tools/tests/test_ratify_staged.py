@@ -425,8 +425,38 @@ class InboxRunTests(unittest.TestCase):
         fake = FakeLinear([_inbox(1)])
         with self.assertRaisesRegex(RatifyError, "nothing is staged in the inbox"):
             self._run(fake, ["gate", "--pool", "inbox", "--ids", "ENG-1"])
-        with self.assertRaisesRegex(RatifyError, "nothing is staged"):
-            self._run(fake, ["gate", "--pool", "inbox"])
+
+    def test_inbox_rejects_are_pool_checked_and_safe_to_repeat(self):
+        todo = _inbox(2, state_type="unstarted", state="Todo")
+        canceled = _inbox(3, state_type="canceled", state="Canceled")
+        fake = FakeLinear([_inbox(1), todo, canceled])
+        with self.assertRaisesRegex(RatifyError, "not open in Backlog.*ENG-2"):
+            self._run(fake, ["approve", "--pool", "inbox", "--cancel", "ENG-2"])
+        self.assertEqual(fake.writes, [])
+        code, out = self._run(
+            fake, ["approve", "--pool", "inbox", "--cancel", "ENG-1", "ENG-3"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("ALREADY ENG-3", out)
+        self.assertEqual(fake.writes, [("uuid-1", {"stateId": "s-Canceled"})])
+
+    def test_a_note_for_a_skipped_id_does_not_refuse_the_ask(self):
+        fake = FakeLinear([_inbox(1), _issue(2)])
+        code, out = self._run(
+            fake,
+            ["ask", "--pool", "inbox", "--ids", "ENG-1,ENG-2"]
+            + ["--notes", '{"ENG-1": "Keep", "ENG-2": "Moved since"}'],
+        )
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual(payload["skipped"], ["ENG-2"])
+        options = payload["calls"][0]["questions"][0]["options"]
+        self.assertEqual(options[0]["description"], "Keep")
+
+    def test_repeated_proposals_are_refused(self):
+        edge = {"edge": {"blocker": "ENG-1", "blocked": "ENG-2"}, "reason": "a"}
+        with self.assertRaisesRegex(RatifyError, "repeats: ENG-1 blocks ENG-2"):
+            rs.parse_proposals([edge, {**edge, "reason": "b"}])
 
 
 if __name__ == "__main__":

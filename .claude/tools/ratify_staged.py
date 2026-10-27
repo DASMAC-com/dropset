@@ -253,7 +253,13 @@ def parse_proposals(raw: object) -> list[dict]:
         return []
     if not isinstance(raw, list):
         raise RatifyError("--proposals expects a list of edges and priority changes")
-    return [proposal_option(p) for p in raw]
+    options = [proposal_option(p) for p in raw]
+    labels = [o["label"] for o in options]
+    repeated = sorted({label for label in labels if labels.count(label) > 1})
+    if repeated:
+        # Two checkboxes with one label make the operator's ticks ambiguous.
+        raise RatifyError(f"--proposals repeats: {', '.join(repeated)}")
+    return options
 
 
 def group_sizes(n: int) -> list[int]:
@@ -448,7 +454,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     approve.add_argument("--cancel", nargs="+", default=[])
     approve.add_argument("--dry-run", action="store_true")
     gate = sub.add_parser("gate", help="fail while any id is still staged")
-    gate.add_argument("--ids", nargs="+", default=[])
+    gate.add_argument("--ids", nargs="+", required=True)
     for command in (listing, ask, review, approve, gate):
         command.add_argument("--pool", choices=POOLS, default="staged")
     return parser.parse_args(argv)
@@ -478,14 +484,15 @@ def run(argv: list[str]) -> int:
         return 0
 
     if args.cmd == "ask":
-        issues = resolve_all(key, project, parse_ids(args.ids))
+        ids = parse_ids(args.ids)
+        issues = resolve_all(key, project, ids)
         staged = [i for i in issues if in_pool(i, pool)]
         skipped = [i["identifier"] for i in issues if not in_pool(i, pool)]
         if not staged:
             raise RatifyError(f"none of these is {POOL_WHERE[pool]}")
-        notes = parse_notes(
-            load_json_arg(args.notes), [i["identifier"] for i in staged]
-        )
+        # Checked against the requested ids, so a note for an id that has
+        # since left the pool is skipped with it rather than refusing the ask.
+        notes = parse_notes(load_json_arg(args.notes), ids)
         proposals = parse_proposals(load_json_arg(args.proposals))
         payload = build_ask(staged, notes, proposals)
         if skipped:
