@@ -358,6 +358,14 @@ dollars, flagged lines, and the path.
   dollars per substrate and per model, the sub-agent share, and the cost
   of re-warming caches across days. A figure over twice its median is
   flagged.
+- **A `## Wait` section follows the CI section.** It ranks the day's
+  waiting in hours from every session's wait ledger: the pool lock by
+  make target, CI checks and the merge queue, the verify race, the
+  operator, and idle. Beside that it shows the fleet log's build-queue
+  profile by hour and the launch records' figures. Then come the ranked
+  causes for the analyst, each with a `wait:<dimension>:<cause>`
+  fingerprint. Wall clock is the same currency as tokens once
+  translated: time per PR is session length.
 - **One block per session.** Each block gives the session's per-UTC-day
   slices and its cumulative cost, the exit-time estimate when the session
   left one, its sinks and hardening candidates, and its own

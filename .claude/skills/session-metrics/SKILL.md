@@ -149,6 +149,15 @@ and prints, as compact Markdown (or `--json`):
   turn-eliminating, prose-subtracting or hardening, at about 3k
   per occurrence (`plan`'s rulings → "The lever reservoir").
 
+- **Wait ledger** — the wall clock spent waiting, one line per
+  dimension, largest first (`wait_ledger.py`): the pool lock by
+  step, CI checks, the merge queue, the verify race (with the
+  side that settled each check), the operator by skill point,
+  idle, and sub-agents (listed, never counted). The top line
+  names where the fix lives: the lock is a machine problem, CI a
+  GitHub one, the operator an attention one, and idle a session
+  that should have closed.
+
 - **Cache-hit rate** — cache-read ÷ all input.
 
 - **Costliest tools** — by total result size, with an
@@ -337,6 +346,15 @@ projected). Where a
 lever's saving can only be stated in tokens, price it at the
 rates the tool reports and say which tier it lands in. A
 **seat** session ranks the same way, on its not-billed figure.
+
+**Wait levers are levers too.** A change that subtracts waiting is
+in the same currency once translated: wall clock per PR is
+session length, length is turns, and cost is quadratic in turns;
+operator wait is the operator's attention. Name one only for a
+ledger line with a nameable cause (the lock's step, the CI job,
+the skill point of an ask), with its measured minutes, and target
+the cause, never the waiting. The bar for time is the bar for
+tokens: a recurring cause, never a one-day spike.
 
 **4. Write the levers into a `Session account` block — file
 nothing.** A session files nothing that is only a trim: the

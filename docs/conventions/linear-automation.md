@@ -54,10 +54,13 @@ and the daily upkeep pass's digest lifts each block verbatim beside
 that session's numbers (`docs/conventions/context-economy.md` → "The
 daily digest"). `trim-context` is the **fold analyst**: it reads the
 whole day's digest at once — every session's sinks, hardening
-candidates and account, plus any flagged CI lines — and judges which
-levers clear the reservoir bar (turn-eliminating, prose-subtracting or
-hardening, roughly 3k per occurrence; a planning-derived lever must be
-quality-preserving). Each candidate is deduped twice: by fingerprint
+candidates and account, plus any flagged CI lines and the ranked
+`## Wait` causes — and judges which levers clear the reservoir bar
+(turn-eliminating, prose-subtracting or hardening, roughly 3k per
+occurrence; a planning-derived lever must be quality-preserving). A
+**wait lever** subtracts a recurring, named wait cause and files under
+its `wait:` fingerprint; a cause-less wait is reported, never filed.
+Each candidate is deduped twice: by fingerprint
 (`trim_levers.py probe` — a canceled match is a recorded rejection),
 and against the open Backlog **by title** (`linear_issue.py find`),
 since a near-duplicate under a different fingerprint is the likelier

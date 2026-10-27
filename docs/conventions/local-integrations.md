@@ -1202,6 +1202,24 @@ documented where its consumer is rather than listed twice here. They are
 untracked for different reasons: these `DS_OP_*` refs because they are
 credential coordinates, those because they name one machine's setup.
 
+**The fleet's size is a budget the machine sets, not a session count.**
+`.claude/tools/machine_load.py` reads the pool lock's build queue,
+memory, swap, pressure and load, and answers how many more sessions of
+a class fit: `building` (a `task`) or `free` (every verb that is
+read-only toward the repo). Every launch and resume appends its reading
+to `sessions/<id>.load` and its sample line to `fleet-load.log`, both
+beside the substrate markers, and the daily digest's `## Wait` section
+reads them back. The probe's knobs sit in the same file, each with a
+default so that none is required:
+
+| Knob                     | Default         | Bounds                                                       |
+| ------------------------ | --------------- | ------------------------------------------------------------ |
+| `DS_FLEET_BUILD_WAIT_S`  | 120             | a pool-lock wait at or past this refuses another builder     |
+| `DS_FLEET_CAP`           | 20              | builders at once, whatever the machine says                  |
+| `DS_FLEET_RESERVE_GB`    | physical ÷ 8    | memory headroom kept free; below it every class is refused   |
+| `DS_FLEET_LOAD_PER_CORE` | 1.5             | `load1` per core past which every class is refused           |
+| `DS_CARGO_LANES`         | unset (no lane) | build lanes sharing the pool, recorded in each launch record |
+
 The committed function reads whatever `DS_OP_*` variables are
 shell-visible, so plain assignments in the profile satisfy it directly.
 
