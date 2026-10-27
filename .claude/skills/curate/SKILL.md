@@ -93,8 +93,9 @@ python3 .claude/tools/ratify_staged.py ask --pool inbox \
   --notes <scratchpad>/notes.json --out <scratchpad>/ask.json
 ```
 
-`--notes` carries your one line of commentary per task (its shape:
-`ratify_staged.py ask --help`). Pass each `calls[]` entry's
+`--notes` carries your one line of commentary per task, keyed by
+the batch's ids in your ranked order, so the notes are what choose
+the four (its shape: `ratify_staged.py ask --help`). Pass each `calls[]` entry's
 `questions` to `AskUserQuestion` unchanged. The ask text is the
 operator's, verbatim:
 
@@ -146,9 +147,10 @@ follow. Then, per ticked task:
     --ids <one>
   ```
 
-- **A thread** (`HELD`): fold by the fold protocol — the fold lands
-  in the task's **body**; the reply on the thread names the part
-  of the body where it landed; then resolve it
+- **A thread** (`HELD`), unless it is one of the three cases
+  below: fold by the fold protocol — the fold lands in the task's
+  **body**; the reply on the thread names the part of the body
+  where it landed; then resolve it
   (`linear_gate.py resolve <comment-id>`). It carries to the next
   batch.
 
@@ -156,9 +158,10 @@ follow. Then, per ticked task:
   reply (`approve --pool inbox --cancel <id>`).
 
 - **A comment asking to defer it**: move it to `Post-validation`
-  **only if the comment names that milestone**. Otherwise it stays
-  in the pool, the thread resolved and the deferral noted in the
-  reply.
+  **only if the comment names that milestone**, with
+  `board_batch.py fields --updates <file>` (rehearsed with
+  `--dry-run`). Otherwise it stays in the pool, the thread resolved
+  and the deferral noted in the reply.
 
 - **A comment saying the design is open**: the architecture
   spin-off, below.
@@ -167,12 +170,16 @@ An unticked task approves nothing, and stays in the ranking.
 
 **Then place the ticked proposals** from question 2 — edges with
 `board_batch.py edges --pairs <file>`, priorities with
-`board_batch.py priorities`, each rehearsed with `--dry-run` first.
+`board_batch.py priorities --updates <file>`, each rehearsed with
+`--dry-run` first.
 
 **Then one message to the scheduler for the batch** (`ListAgents`,
-then `SendMessage`): every Todo move, every cancel, every edge or
-priority placed. No live scheduler: the moves are on the board, and
-the close note carries the rest.
+then `SendMessage`), sent in the turn the writes land: every Todo
+move, every cancel, every edge or priority placed. No live
+scheduler: the moves are on the board, and the close note carries
+the rest — except a change to an edge or priority **the scheduler
+placed**, which waits until a scheduler is live to receive the
+message.
 
 ## The coordination rule: two writers
 
@@ -193,10 +200,16 @@ anywhere on the board — each sees what the other lacks. So:
 - any other issue's state or body beyond the fold and the
   ticked task's Todo move or cancel.
 
+The one filing it makes is the architect task below, drafted with
+the operator in the tab; its Urgent priority and Backlog state are
+fixed by this method, never chosen per case.
+
 ## The architecture spin-off
 
 When a spec cannot be ratified because the design under it is
-open, it needs an architect, not another fold.
+open — the operator's comment says so, or the operator agrees in
+the tab when you raise it — it needs an architect, not another
+fold.
 
 1. **Draft the architect task's brief with the operator, in the
    tab**: the question; what is known; the open items, each with
@@ -223,6 +236,9 @@ open, it needs an architect, not another fold.
 
 1. **The displaced spec stays in the pool** with a thread naming the
    design task, listed as "awaiting design" in later batches.
+
+The architect task itself sits in the pool like any spec (Urgent,
+so it leads the next ranking); a tick moves it to Todo.
 
 ## Lifecycle
 

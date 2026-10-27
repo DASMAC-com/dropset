@@ -596,7 +596,9 @@ resolves a filing splits by the filer's tier:
 - **An executor session** (`task`, `chore`) never holds a review: its
   follow-ups and meta filings land in the inbox (its trims it files
   not at all — see the trim-lever pipeline), where the curator reviews
-  them with the rest of the pool.
+  them with the rest of the pool — once the filers switch over; until
+  then they still park under `Follow-ups` (see "Which milestones
+  park").
 
 `Audit findings` drains by the scheduler's kill gate, one finding at a
 time: each bootstrap promotes or kills what it holds, and it leaves the
@@ -629,7 +631,10 @@ operator's **Next** view (unblocked Todo) and in the **Blocked** view
 Planning document names a lane. Its one offer is the **kill list**,
 riding in the bootstrap's consolidated `AskUserQuestion`; every
 surviving batch is promoted. Its outcome is recorded in the document's
-in-session notes. The procedure is the `plan` skill's, step 1.
+in-session notes. The procedure is the `plan` skill's, step 1. This
+review, its kill gate and the `Follow-ups` assembly below are the
+scheduler's **while filers still park there**; reviewing the inbox
+itself is the curator's (see "The curator owns review").
 
 **A blocked issue is never a fold input.** The assembly pool takes
 only **unblocked** issues, because `/merge-tasks` does
@@ -692,9 +697,12 @@ The project's milestones split into two kinds, and only one kind parks.
 **Parking** milestones — `Session pending`, and the legacy
 `Audit findings` — mean "filed, not yet reviewed", and an issue
 carrying one is read as parked by every rule above. ~~`Follow-ups`~~
-and ~~`Claude meta`~~ are struck: executor filings go to the curator's
-pool instead. Until those milestones retire, the filers still park
-under `Follow-ups` and the scheduler still promotes from it. The
+(into which `Claude meta` already merged) is struck: executor filings
+go to the curator's pool instead. Until the filers switch to filing
+Backlog plus a message to the curator, they still park under it and
+the scheduler still promotes from it; the milestone is cleared and
+deleted after that switch.
+The
 rest —
 `Integrations`, `UX features`, `Hardening`, `Mechanisms` — are ordinary
 **delivery** milestones grouping pullable work; an issue under one of
@@ -1541,9 +1549,11 @@ is real; it is simply the cheaper of the two costs.
 What matters for *this* section is that neither the edge nor its
 stand-in survives. The scheduler places **no relation** on a batch,
 and no longer gates assembly on another meta issue being In Progress or
-In Review either. Strays still accumulate **parked** under the
-`Follow-ups` milestone between bootstraps, which is what keeps them out
-of the pull queue without an edge.
+In Review either. Until the filers switch over, strays still
+accumulate **parked** under `Follow-ups` between bootstraps; after
+that they wait in the
+curator's pool, and Backlog alone keeps them out of the pull queue
+without an edge.
 
 **Where both states still matter is the POOL, not a gate.** An In Review
 meta issue is a session that has merged its code but still owes
@@ -1566,7 +1576,7 @@ So this section now has **no** exception to state: a human still places
 every edge — in the scheduler, through the curator's tick, or through
 a seat session's filing ask — and **no automated
 writer places one at all**. A filing skill that notices a new meta issue
-neither chains it nor queues it — it parks it. Treat every edge,
+neither chains it nor queues it. Treat every edge,
 semantic ones included, under the one-at-a-time rule above.
 
 **The mechanism is `board_batch.py edges`**, and it changes none of the
