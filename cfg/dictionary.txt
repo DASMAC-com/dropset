@@ -293,8 +293,10 @@ straitsx
 strat
 stxdw
 stxw
+subshell
 swatinem
 syscall
+sysparams
 sysvar
 taiki
 taplo
@@ -362,3 +364,4 @@ ysign
 zarp
 zaru
 zeroable
+zmodload

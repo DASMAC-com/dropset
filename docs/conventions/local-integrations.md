@@ -2698,7 +2698,10 @@ a terminal closed outright, is covered by the next morning's digest.
 
   A bare `fleet` prints the plan and opens nothing; `fleet go` applies it.
   Read-only by default deliberately: one verb can open many tabs and
-  resume many sessions, so seeing the list first is worth a word.
+  resume many sessions, so seeing the list first is worth a word. Both
+  pass the dispatcher's machine gate (below) with each session's class
+  read back from its record; what it holds, `fleet go --over-budget`
+  seats.
 
   Three things it gets right, and each is a reason it is a tool rather
   than a shell one-liner:
@@ -2748,11 +2751,30 @@ a terminal closed outright, is covered by the next morning's digest.
   in one call**, separated by a bare `+`, for one driver round trip
   instead of one per tab — and it validates every verb before opening
   anything, so a batch with one typo dispatches nothing rather than half
-  of itself. And it still **never types into the current session**: on a
-  blocked dispatch it prints the verbs for the operator to run by hand.
+  of itself (a *held* verb is different — see the machine gate below).
+  And it still **never types into the current session**: when iTerm
+  cannot be driven it prints the verbs for the operator to run by hand.
   That hazard — a launch verb typed into a session already running
   something — is what the failure path guards, and it was never what the
   window-per-session rule bought.
+
+  **The machine gate replaces the session count.** Before any tab opens
+  the dispatcher classes each verb — `architect`, `plan`, `explore` and
+  `fleet` **free**, `task` **building**, a `chore` building only when its
+  issue body names a build or deploy command in code (`make`, `cargo`,
+  `anchor`, `docker`, or a localnet), unreadable reading as building,
+  `--class` overriding — and reads `machine_load.py` once for the batch.
+  It seats what fits and prints each other verb as `held` with the
+  number that refused it, plus what would free a slot; unlike a typo, a
+  held verb is valid, so a partial batch is correct here. A refusal on
+  the pool-lock wait is re-probed once first (the probe is one
+  snapshot). `--over-budget` seats past the machine checks; the cap,
+  `DS_FLEET_CAP`, has no override but the config, and a probe with no
+  reading (exit 3) leaves the cap alone binding, said aloud. The class
+  is recorded as `<key>.class` beside the substrate marker: the
+  dispatcher writes a chore's, and the launcher stamps
+  `<class> <claude pid>` from a subshell that then `exec`s `claude`, so
+  the probe counts sessions by class and a resume reads the class back.
 
   **Neither caller moves the operator's view.** iTerm selects every tab
   it creates, so a dispatch or a fleet resume used to pull the operator

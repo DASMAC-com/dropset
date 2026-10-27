@@ -532,7 +532,7 @@ Progress or In Review is a resume) and unblocked (Next, no
 pending hold: step 2). An open
 thread on a Todo issue is no refusal — only the operator makes
 that move (2026-10-21); the probe's count feeds a later fold.
-Dispatch unblocked Todo as slots open under the fleet ceiling, in
+Dispatch unblocked Todo as the dispatcher's reading admits, in
 file-disjoint sets judged here on the collision clusters, overlap
 paid as a rebase, with no per-dispatch ask. Moving an issue back
 to Backlog is the operator's "not now". The inbox is bounded by
@@ -551,8 +551,10 @@ separated by a bare `+`:
 python3 .claude/tools/session_dispatch.py task 1234 + plan
 ```
 
-It prints one `verb -> tty` line each, then a roll-call of open
-sessions — the roll-call is the confirmation to relay.
+It prints one `verb -> tty` line each, a `held` line per verb the
+machine refused, then a roll-call of open sessions — the
+roll-call and the `held` lines are the confirmation to relay; a
+held verb rides the next dispatch, when a session hands off.
 
 **Type the line the title token says** (`linear-automation.md` →
 "The verb/substrate title token"): `[Chore/Bedrock]` on 1234 is
