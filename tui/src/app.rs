@@ -23,6 +23,7 @@ use crate::fills;
 use crate::job::{JobEvent, Logger};
 use crate::leader::{self, LeaderOp, Ticket};
 use crate::market;
+use crate::naming;
 use crate::passive;
 use crate::ui;
 use crate::validator::Validator;
@@ -125,6 +126,20 @@ pub enum PassivePrompt {
     },
 }
 
+/// The open name prompt (see [`crate::naming`]) — the same two stages as
+/// [`LeaderPrompt`], with the name form in place of the amount. The create
+/// name has no confirm stage of its own: on mainnet the ceremony plan,
+/// which names the vault, is its confirmation; on localnet the step runs.
+pub enum NamePrompt {
+    /// Editing the name (and, for the override, the vault and the lock).
+    Form(naming::Form),
+    /// The sized rename or override on screen; typing the confirmation word.
+    Confirm {
+        ticket: Box<naming::Ticket>,
+        buf: String,
+    },
+}
+
 /// The open ceremony prompt: a mainnet ceremony step's plan — its dry run,
 /// read fresh from the chain — under the typed-`yes` line. One per step, so a
 /// publish, an init and each roster pass are each confirmed on their own.
@@ -134,6 +149,8 @@ pub struct CeremonyPrompt {
     /// An emergency action's vaults, as `plan` lists them — all its job may
     /// touch, once confirmed, on every market the plan read.
     pub planned: Option<crate::emergency::Planned>,
+    /// The create-vault step's typed name, which its job is sent with.
+    pub vault_name: Option<String>,
     pub buf: String,
 }
 
@@ -232,6 +249,8 @@ pub struct App {
     /// The open passive-ladder prompt, if any — takes every keystroke while
     /// open.
     pub(crate) passive_prompt: Option<PassivePrompt>,
+    /// The open name prompt, if any — takes every keystroke while open.
+    pub(crate) name_prompt: Option<NamePrompt>,
     /// The open ceremony prompt, if any — takes every keystroke while open.
     pub(crate) ceremony_prompt: Option<CeremonyPrompt>,
     /// Each market's posture: an active one is seeded for and run by its
@@ -354,6 +373,7 @@ impl App {
             amount_input: None,
             leader_prompt: None,
             passive_prompt: None,
+            name_prompt: None,
             ceremony_prompt: None,
             postures,
             bots: BotManager::new(),
@@ -625,6 +645,10 @@ impl App {
             self.handle_passive_key(k);
             return Flow::Continue;
         }
+        if self.name_prompt.is_some() {
+            self.handle_name_key(k);
+            return Flow::Continue;
+        }
         if self.ceremony_prompt.is_some() {
             self.handle_ceremony_key(k);
             return Flow::Continue;
@@ -656,10 +680,12 @@ impl App {
             KeyCode::Char('S') => self.flip_swap_side(),
             // Open the swap-amount input — subsequent keys edit the amount.
             KeyCode::Char('a') => self.begin_amount_input(),
-            // The leader's own stake on the selected market — the runtime
-            // pane's `vault` group; each opens the amount → typed-`yes` prompt.
+            // The leader's own vault on the selected market — the runtime
+            // pane's `vault` group; the stake commands open the amount →
+            // typed-`yes` prompt, the rename its name → typed-`yes` one.
             KeyCode::Char('+') => self.run_action(Action::LeaderDeposit),
             KeyCode::Char('-') => self.run_action(Action::LeaderWithdraw),
+            KeyCode::Char('N') => self.run_action(Action::RenameVault),
             // The passive ladder on the selected market — post one, or
             // re-center the one resting; each opens its form → typed-`yes`
             // prompt, and the same entries are in the menu.
@@ -1324,7 +1350,12 @@ impl App {
             }
             KeyCode::Enter => {
                 if let Some(prompt) = self.ceremony_prompt.take() {
-                    self.confirm_ceremony(prompt.action, prompt.planned, &prompt.buf);
+                    self.confirm_ceremony(
+                        prompt.action,
+                        prompt.planned,
+                        prompt.vault_name,
+                        &prompt.buf,
+                    );
                 }
             }
             KeyCode::Char(c) if prompt.buf.len() < MAX_CONFIRM_CHARS => prompt.buf.push(c),
@@ -1336,11 +1367,13 @@ impl App {
     /// prompt could have outlived — and the chain's genesis hash itself, read
     /// again now, so the last thing before a mainnet write is proof of which
     /// chain it goes to. An emergency action's job is confined to the
-    /// `planned` vaults the operator just read, on every market the plan read.
+    /// `planned` vaults the operator just read, on every market the plan read;
+    /// the create-vault step's is sent with the `vault_name` its plan showed.
     fn confirm_ceremony(
         &mut self,
         action: Action,
         planned: Option<crate::emergency::Planned>,
+        vault_name: Option<String>,
         word: &str,
     ) {
         let label = action.label();
@@ -1363,13 +1396,14 @@ impl App {
             self.log(LogKind::Err, "A job is already running.".to_string());
             return;
         }
-        match planned {
-            Some(planned) => {
+        match (planned, vault_name) {
+            (Some(planned), _) => {
                 self.job_running = true;
                 self.log(LogKind::Info, format!("\u{25b6} {label}"));
                 action::dispatch_emergency(&self.ctx, action, Some(planned), self.tx.clone());
             }
-            None => self.start_job(action),
+            (None, Some(name)) => self.start_create_vault(name),
+            (None, None) => self.start_job(action),
         }
     }
 
@@ -1518,24 +1552,192 @@ impl App {
             self.log(LogKind::Err, "A job is already running.".to_string());
             return;
         }
+        if let Some(op) = action.name_op() {
+            self.name_prompt = Some(NamePrompt::Form(naming::Form::new(op)));
+            return;
+        }
+        self.open_ceremony_or_start(action, None);
+    }
+
+    /// Open `action`'s ceremony prompt when it needs one, else start it.
+    /// `vault_name` is the create-vault step's typed name.
+    fn open_ceremony_or_start(&mut self, action: Action, vault_name: Option<String>) {
         if action.needs_ceremony_confirm(self.ctx.cluster) {
             // Planning reads the chain on this thread, as sizing a leader
             // ticket does: the operator is about to read the result, and a
             // frame that waits is better than a prompt over a stale plan.
-            match action::ceremony_plan(action, &self.ctx) {
+            let name = vault_name.as_deref().unwrap_or("");
+            match action::ceremony_plan(action, &self.ctx, name) {
                 Ok((plan, planned)) => {
                     self.ceremony_prompt = Some(CeremonyPrompt {
                         action,
                         plan,
                         planned,
+                        vault_name,
                         buf: String::new(),
                     })
                 }
-                Err(e) => self.log(LogKind::Err, format!("{} — {e:#}", action.label())),
+                Err(e) => {
+                    self.log(LogKind::Err, format!("{} — {e:#}", action.label()));
+                    // A refused create plan (a taken name, say) re-opens the
+                    // name form with the name kept, as a refused ticket does.
+                    if let Some(name) = vault_name {
+                        let mut form = naming::Form::new(naming::NameOp::Create);
+                        form.name = name;
+                        self.name_prompt = Some(NamePrompt::Form(form));
+                    }
+                }
             }
             return;
         }
-        self.start_job(action);
+        match vault_name {
+            Some(name) => self.start_create_vault(name),
+            None => self.start_job(action),
+        }
+    }
+
+    /// Mark a job running and start the create-vault step with `name`.
+    fn start_create_vault(&mut self, name: String) {
+        if self.job_running {
+            self.log(LogKind::Err, "A job is already running.".to_string());
+            return;
+        }
+        self.job_running = true;
+        self.log(
+            LogKind::Info,
+            format!("\u{25b6} {} \"{name}\"", Action::CreateVault.label()),
+        );
+        action::dispatch_create_vault(&self.ctx, name, self.tx.clone());
+    }
+
+    /// Edit the open name prompt. On the form, `↑`/`↓` pick a line, `←`/`→`
+    /// or space flip the lock, and Enter submits; on the confirm stage,
+    /// Enter sends only on the exact word `yes`. Esc closes it, nothing sent;
+    /// a refusal at submit keeps the form open.
+    fn handle_name_key(&mut self, k: KeyEvent) {
+        let Some(prompt) = self.name_prompt.as_mut() else {
+            return;
+        };
+        if k.code == KeyCode::Esc {
+            self.name_prompt = None;
+            self.log(
+                LogKind::Info,
+                "Name prompt cancelled — nothing sent.".to_string(),
+            );
+            return;
+        }
+        match prompt {
+            NamePrompt::Form(form) => match k.code {
+                KeyCode::Up => form.move_cursor(-1),
+                KeyCode::Down => form.move_cursor(1),
+                KeyCode::Left | KeyCode::Right => form.toggle(),
+                KeyCode::Backspace => form.backspace(),
+                KeyCode::Char(c) => form.type_char(c),
+                KeyCode::Enter => {
+                    if let Some(NamePrompt::Form(form)) = self.name_prompt.take() {
+                        self.submit_name_form(form);
+                    }
+                }
+                _ => {}
+            },
+            NamePrompt::Confirm { buf, .. } => match k.code {
+                KeyCode::Backspace => {
+                    buf.pop();
+                }
+                KeyCode::Char(c) if buf.len() < MAX_CONFIRM_CHARS => buf.push(c),
+                KeyCode::Enter => {
+                    if let Some(NamePrompt::Confirm { ticket, buf }) = self.name_prompt.take() {
+                        self.confirm_name(*ticket, &buf);
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+
+    /// Submit the name `form`: the create name goes on to its step; a rename
+    /// or override is sized against the selected market, read fresh, and
+    /// moves to the confirm stage. A refusal keeps the form open.
+    fn submit_name_form(&mut self, form: naming::Form) {
+        let label = form.op.label();
+        let prepared = match form.op {
+            naming::NameOp::Create => {
+                if let Some(reason) = naming::create_refusal(&form.name, self.ctx.cluster) {
+                    Err(anyhow::anyhow!(reason))
+                } else {
+                    self.open_ceremony_or_start(Action::CreateVault, Some(form.name));
+                    return;
+                }
+            }
+            naming::NameOp::Rename | naming::NameOp::Override => self.size_name_ticket(&form),
+        };
+        match prepared {
+            Ok(ticket) => {
+                self.name_prompt = Some(NamePrompt::Confirm {
+                    ticket: Box::new(ticket),
+                    buf: String::new(),
+                });
+            }
+            Err(e) => {
+                self.log(LogKind::Err, format!("{label} — {e:#}"));
+                self.name_prompt = Some(NamePrompt::Form(form));
+            }
+        }
+    }
+
+    /// Size a rename (signed by the session's leader) or an override (by
+    /// the admin wallet) against the selected market.
+    fn size_name_ticket(&mut self, form: &naming::Form) -> anyhow::Result<naming::Ticket> {
+        let signer = match form.op {
+            naming::NameOp::Override => self.ctx.wallet.pubkey(),
+            _ => self.session_leader()?,
+        };
+        let market = self
+            .chain
+            .selected_market(self.selected_market)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("no market selected"))?;
+        let symbol = market::config_for(&self.ctx.repo_root, self.ctx.cluster, &market.base_mint)
+            .map(|c| c.base.symbol)
+            .ok_or_else(|| {
+                anyhow::anyhow!("the selected market is not in this cluster's roster")
+            })?;
+        naming::prepare(
+            &self.client,
+            self.ctx.cluster,
+            &market,
+            symbol,
+            &signer,
+            form,
+        )
+    }
+
+    /// Send `ticket` if `word` is exactly `yes`, re-checking the same gates
+    /// [`App::confirm_leader`] does.
+    fn confirm_name(&mut self, ticket: naming::Ticket, word: &str) {
+        let label = ticket.op.label();
+        if !is_confirmation(word) {
+            self.log(
+                LogKind::Err,
+                format!("{label} — not confirmed; nothing sent"),
+            );
+            return;
+        }
+        if let Some(reason) = self.identity.write_refusal() {
+            self.log(LogKind::Err, format!("{label} — {reason}"));
+            return;
+        }
+        if let Err(e) = self.ctx.cluster.verify_genesis(&self.client) {
+            self.log(LogKind::Err, format!("{label} — {e:#}"));
+            return;
+        }
+        if self.job_running {
+            self.log(LogKind::Err, "A job is already running.".to_string());
+            return;
+        }
+        self.job_running = true;
+        self.log(LogKind::Info, format!("\u{25b6} {label}"));
+        action::dispatch_name(&self.ctx, ticket, self.tx.clone());
     }
 
     /// Mark a job running and dispatch `action` to it.

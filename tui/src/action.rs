@@ -97,6 +97,9 @@ pub enum Action {
     LeaderDeposit,
     /// The leader draws a percentage of its own stake back out. Same prompt.
     LeaderWithdraw,
+    /// The leader renames its own vault on the selected market. Opens the
+    /// name → typed-`yes` prompt — see [`crate::naming`].
+    RenameVault,
     /// Reserved, deliberately unimplemented: the leader-rotation instruction
     /// arrives with its program change, and a builder guessed at its account
     /// shape now would be rework by construction. Never enabled.
@@ -114,6 +117,10 @@ pub enum Action {
     CloseVaults,
     /// Withdraw the leader's whole stake from its closed or frozen vaults.
     DrainLeader,
+    /// An admin replaces or blanks a vault's name and sets its lock — the
+    /// abuse bound on leader-chosen names. Admin-signed, never the quote
+    /// key; opens the name form → typed-`yes` prompt.
+    OverrideVaultName,
     // eCLOB demo controls — keybinds, not menu entries.
     RepegUp,
     RepegDown,
@@ -153,12 +160,13 @@ pub const NUMBER_KEYS: usize = 9;
 
 /// The numbered setup menu in display order — the bootstrap lifecycle plus the
 /// explorer / teardown / wipe utilities, one per number key — then the passive
-/// ladder, past them, reached with `j`/`k` + Enter (or `p` / `c`). The swap
+/// ladder and the admin name override, past them, reached with `j`/`k` +
+/// Enter (or `p` / `c` for the ladder). The swap
 /// and the leader's stake commands are deliberately absent: they are runtime
 /// controls, on letter keys and listed in the "runtime" pane (see
 /// [`VAULT_ACTIONS`]), so each appears in exactly one place rather than
 /// doubling as a numbered step.
-pub const MENU: [Action; NUMBER_KEYS + 2] = [
+pub const MENU: [Action; NUMBER_KEYS + 3] = [
     Action::Deploy,
     Action::InitRegistry,
     Action::CreateMarket,
@@ -170,14 +178,17 @@ pub const MENU: [Action; NUMBER_KEYS + 2] = [
     Action::Wipe,
     Action::PassiveLadder,
     Action::PassiveRecenter,
+    Action::OverrideVaultName,
 ];
 
-/// The leader's own stake — the runtime pane's `vault` group, on both
-/// clusters: deposit on `+`, withdraw on `-`, and the reserved rotation,
-/// shown greyed and on no key until its program change lands.
-pub const VAULT_ACTIONS: [Action; 3] = [
+/// The leader's own vault — the runtime pane's `vault` group, on both
+/// clusters: deposit on `+`, withdraw on `-`, rename on `N`, and the
+/// reserved rotation, shown greyed and on no key until its program change
+/// lands.
+pub const VAULT_ACTIONS: [Action; 4] = [
     Action::LeaderDeposit,
     Action::LeaderWithdraw,
+    Action::RenameVault,
     Action::RotateLeader,
 ];
 
@@ -202,7 +213,7 @@ pub const VAULT_ACTIONS: [Action; 3] = [
 /// [`VAULT_ACTIONS`] — by a test rather than by care: two hand-maintained
 /// lists of the same fact drift, and the direction it would drift here is
 /// toward exposing a write.
-pub const MAINNET_MENU: [Action; 12] = [
+pub const MAINNET_MENU: [Action; 13] = [
     Action::Publish,
     Action::InitRegistry,
     Action::CreateMarket,
@@ -215,6 +226,7 @@ pub const MAINNET_MENU: [Action; 12] = [
     Action::KillLadders,
     Action::CloseVaults,
     Action::DrainLeader,
+    Action::OverrideVaultName,
 ];
 
 /// The menu for `cluster`, in display order.
@@ -252,12 +264,14 @@ impl Action {
             Action::Wipe => "Wipe localnet",
             Action::LeaderDeposit => "Leader deposit",
             Action::LeaderWithdraw => "Leader withdraw",
+            Action::RenameVault => "Rename vault",
             Action::RotateLeader => "Rotate leader",
             Action::PassiveLadder => "Passive ladder",
             Action::PassiveRecenter => "Passive re-center",
             Action::KillLadders => "EMERGENCY: kill ladders",
             Action::CloseVaults => "EMERGENCY: close vaults",
             Action::DrainLeader => "EMERGENCY: drain leader",
+            Action::OverrideVaultName => "EMERGENCY: override vault name",
             Action::RepegUp => "Re-peg +5 bps",
             Action::RepegDown => "Re-peg -5 bps",
             Action::WidenSpread => "Widen spread",
@@ -286,7 +300,8 @@ impl Action {
             | Action::CloseBuffers
             | Action::KillLadders
             | Action::CloseVaults
-            | Action::DrainLeader => phase != Phase::NoValidator,
+            | Action::DrainLeader
+            | Action::OverrideVaultName => phase != Phase::NoValidator,
             Action::InitRegistry => phase == Phase::RegistryAbsent,
             Action::CreateMarket => phase == Phase::MarketAbsent,
             Action::CreateVault => phase == Phase::VaultAbsent,
@@ -322,6 +337,9 @@ impl Action {
             // A passive ladder quotes a seeded vault; the prompt re-reads the
             // leader's own vault fresh, as the stake commands do.
             Action::PassiveLadder | Action::PassiveRecenter => phase == Phase::Ready,
+            // A name needs only the vault; the prompt re-reads it fresh and
+            // refuses a locked, frozen or closed one on its own terms.
+            Action::RenameVault => matches!(phase, Phase::VaultUnseeded | Phase::Ready),
             Action::RotateLeader => false,
             // The demo controls quote against a live vault.
             Action::RepegUp
@@ -373,6 +391,10 @@ impl Action {
             // operator types `yes` over the exact amounts and bounds. The
             // reserved rotation is listed so it is visible — and stays greyed.
             Action::LeaderDeposit | Action::LeaderWithdraw | Action::RotateLeader => true,
+            // The leader's rename: signed by the operator's `--leader` on its
+            // own vault, a label write that moves no funds, and sent only
+            // after a typed `yes` over the old and new name.
+            Action::RenameVault => true,
             // The passive ladder is the demo's liquidity, deployed from here:
             // signed by the operator's `--leader` on its own vault, and sent
             // only after a typed `yes` over the previewed ladder and center.
@@ -381,6 +403,11 @@ impl Action {
             // maker's host does not. Signed by the operator's `--leader`, and
             // each sends only after a typed `yes` over its fresh plan.
             Action::KillLadders | Action::CloseVaults | Action::DrainLeader => true,
+            // The name override is classed with them: the admin's answer to an
+            // abusive name, signed by the admin wallet — never the hot quoting
+            // key — and sent only after a typed `yes` over the vault, the old
+            // and new name and the lock.
+            Action::OverrideVaultName => true,
             // Spends real money, signed by a committed taker role key that has
             // no mainnet counterpart.
             Action::ProbeSwap => false,
@@ -422,6 +449,8 @@ impl Action {
             Action::LeaderDeposit => Some(LeaderOp::Deposit),
             Action::LeaderWithdraw => Some(LeaderOp::Withdraw),
             Action::RotateLeader
+            | Action::RenameVault
+            | Action::OverrideVaultName
             | Action::PassiveLadder
             | Action::PassiveRecenter
             | Action::KillLadders
@@ -460,6 +489,8 @@ impl Action {
             Action::LeaderDeposit
             | Action::LeaderWithdraw
             | Action::RotateLeader
+            | Action::RenameVault
+            | Action::OverrideVaultName
             | Action::KillLadders
             | Action::CloseVaults
             | Action::DrainLeader
@@ -469,6 +500,45 @@ impl Action {
             | Action::InitRegistry
             | Action::CreateMarket
             | Action::CreateVault
+            | Action::Deposit
+            | Action::OpenExplorer
+            | Action::BootstrapAll
+            | Action::ProbeSwap
+            | Action::Teardown
+            | Action::Wipe
+            | Action::RepegUp
+            | Action::RepegDown
+            | Action::WidenSpread
+            | Action::TightenSpread
+            | Action::ThinFarSide
+            | Action::ResetLadder
+            | Action::ResetAllLadders => None,
+        }
+    }
+
+    /// The name prompt this action opens, if any (see [`crate::naming`]). A
+    /// sibling of [`Action::leader_op`], exhaustive for the same reason. The
+    /// create-vault step is here because its name is typed first; on mainnet
+    /// its ceremony plan then follows, naming the vault.
+    pub fn name_op(self) -> Option<crate::naming::NameOp> {
+        use crate::naming::NameOp;
+        match self {
+            Action::CreateVault => Some(NameOp::Create),
+            Action::RenameVault => Some(NameOp::Rename),
+            Action::OverrideVaultName => Some(NameOp::Override),
+            Action::LeaderDeposit
+            | Action::LeaderWithdraw
+            | Action::RotateLeader
+            | Action::PassiveLadder
+            | Action::PassiveRecenter
+            | Action::KillLadders
+            | Action::CloseVaults
+            | Action::DrainLeader
+            | Action::Deploy
+            | Action::Publish
+            | Action::CloseBuffers
+            | Action::InitRegistry
+            | Action::CreateMarket
             | Action::Deposit
             | Action::OpenExplorer
             | Action::BootstrapAll
@@ -520,12 +590,14 @@ impl Action {
             | Action::Deposit
             | Action::LeaderDeposit
             | Action::LeaderWithdraw
+            | Action::RenameVault
             | Action::RotateLeader
             | Action::PassiveLadder
             | Action::PassiveRecenter
             | Action::KillLadders
             | Action::CloseVaults
-            | Action::DrainLeader => "",
+            | Action::DrainLeader
+            | Action::OverrideVaultName => "",
         }
     }
 
@@ -550,9 +622,9 @@ impl Action {
             | Action::KillLadders
             | Action::CloseVaults
             | Action::DrainLeader => true,
-            // The leader commands and the passive ladder have their own
-            // typed-`yes` prompt; the rest read only or are unavailable on
-            // mainnet.
+            // The leader commands, the passive ladder and the two name
+            // writes have their own typed-`yes` prompt; the rest read only or
+            // are unavailable on mainnet.
             Action::Deploy
             | Action::OpenExplorer
             | Action::BootstrapAll
@@ -561,6 +633,8 @@ impl Action {
             | Action::Wipe
             | Action::LeaderDeposit
             | Action::LeaderWithdraw
+            | Action::RenameVault
+            | Action::OverrideVaultName
             | Action::RotateLeader
             | Action::PassiveLadder
             | Action::PassiveRecenter
@@ -597,7 +671,8 @@ impl Action {
             | Action::CloseBuffers
             | Action::KillLadders
             | Action::CloseVaults
-            | Action::DrainLeader => "",
+            | Action::DrainLeader
+            | Action::OverrideVaultName => "",
             Action::InitRegistry if phase == Phase::ProgramAbsent && cluster.is_mainnet() => {
                 "the program is not published on this cluster"
             }
@@ -619,6 +694,7 @@ impl Action {
             | Action::LeaderWithdraw
             | Action::PassiveLadder
             | Action::PassiveRecenter => "needs every vault seeded",
+            Action::RenameVault => "create the vaults first",
             Action::RotateLeader => "reserved — arrives with the leader-rotation program change",
             Action::RepegUp
             | Action::RepegDown
@@ -785,26 +861,6 @@ pub fn dispatch(
                 })
             });
         }
-        Action::CreateVault => {
-            job::spawn_recorded(tx, "Create vaults", record, move |log| {
-                let client = chain::rpc(&rpc_url);
-                over_roster(cluster, "vault", log, |config| {
-                    let quote =
-                        market::quote_authority(&repo_root, config, operator_quote.as_ref())?;
-                    let leader = market::leader(&repo_root, config, operator_leader.as_deref())?;
-                    do_create_vault(
-                        &client,
-                        &wallet,
-                        &repo_root,
-                        cluster,
-                        config,
-                        &leader,
-                        &quote.pubkey(),
-                        log,
-                    )
-                })
-            });
-        }
         Action::Deposit => {
             job::spawn_recorded(tx, "Seed deposits", record, move |log| {
                 let client = chain::rpc(&rpc_url);
@@ -898,7 +954,9 @@ pub fn dispatch(
                                 )?
                                 .log_skip(&log);
                                 // Localnet: the committed leader is also
-                                // the quote authority.
+                                // the quote authority. One keystroke, so
+                                // no prompt: the vault takes the
+                                // leader-derived bootstrap name.
                                 do_create_vault(
                                     &client,
                                     &wallet,
@@ -907,6 +965,7 @@ pub fn dispatch(
                                     config,
                                     &leader,
                                     &leader.pubkey(),
+                                    &chain::default_vault_name(&leader.pubkey()),
                                     &log,
                                 )?
                                 .log_skip(&log);
@@ -1100,14 +1159,77 @@ pub fn dispatch(
         // commands open its amount → confirm prompt instead, and dispatch
         // through [`dispatch_leader`] once the operator types `yes`; the
         // passive ladder likewise through [`dispatch_passive`]; the reserved
-        // rotation is never enabled.
+        // rotation is never enabled. The create-vault step opens its name
+        // prompt first and dispatches through [`dispatch_create_vault`] with
+        // the typed name; the rename and the override through
+        // [`dispatch_name`].
         Action::Wipe
         | Action::LeaderDeposit
         | Action::LeaderWithdraw
         | Action::RotateLeader
         | Action::PassiveLadder
-        | Action::PassiveRecenter => {}
+        | Action::PassiveRecenter
+        | Action::CreateVault
+        | Action::RenameVault
+        | Action::OverrideVaultName => {}
     }
+}
+
+/// Spawn the create-vault step over the roster, each vault created with
+/// `name` — the operator's, typed at the step's prompt (see
+/// [`crate::naming::create_refusal`]). Names are unique per market, so one
+/// name serves every roster market.
+pub fn dispatch_create_vault(ctx: &JobContext, name: String, tx: Sender<JobEvent>) {
+    let rpc_url = ctx.rpc_url.clone();
+    let repo_root = ctx.repo_root.clone();
+    let wallet = ctx.wallet();
+    let cluster = ctx.cluster;
+    let operator_leader = ctx.leader.clone();
+    let operator_quote = ctx.quote.as_ref().map(Keypair::insecure_clone);
+    let record = ctx.ceremony_log.clone();
+    job::spawn_recorded(tx, "Create vaults", record, move |log| {
+        let client = chain::rpc(&rpc_url);
+        over_roster(cluster, "vault", log, |config| {
+            let quote = market::quote_authority(&repo_root, config, operator_quote.as_ref())?;
+            let leader = market::leader(&repo_root, config, operator_leader.as_deref())?;
+            do_create_vault(
+                &client,
+                &wallet,
+                &repo_root,
+                cluster,
+                config,
+                &leader,
+                &quote.pubkey(),
+                &name,
+                log,
+            )
+        })
+    });
+}
+
+/// Spawn the job that sends a confirmed rename or override `ticket`: the
+/// rename signed by the pair's leader, resolved here as the ceremony's vault
+/// steps resolve it; the override by the admin wallet itself.
+pub fn dispatch_name(ctx: &JobContext, ticket: crate::naming::Ticket, tx: Sender<JobEvent>) {
+    use crate::naming::NameOp;
+    let rpc_url = ctx.rpc_url.clone();
+    let repo_root = ctx.repo_root.clone();
+    let wallet = ctx.wallet();
+    let cluster = ctx.cluster;
+    let operator_leader = ctx.leader.clone();
+    let record = ctx.ceremony_log.clone();
+    job::spawn_recorded(tx, ticket.op.label(), record, move |log| {
+        let client = chain::rpc(&rpc_url);
+        let signer = match ticket.op {
+            NameOp::Override => wallet.insecure_clone(),
+            NameOp::Rename | NameOp::Create => {
+                let config = market::config_for(&repo_root, cluster, &ticket.base_mint)
+                    .context("the selected market is not in this cluster's roster")?;
+                market::leader(&repo_root, config, operator_leader.as_deref())?
+            }
+        };
+        crate::naming::execute(&client, &wallet, &signer, cluster, &ticket, log)
+    });
 }
 
 /// Spawn the job that sends a confirmed passive-ladder `ticket`, signed by the
@@ -1189,10 +1311,12 @@ pub fn dispatch_leader(ctx: &JobContext, ticket: crate::leader::Ticket, tx: Send
 /// operator is never asked to confirm a no-op. The step re-checks everything
 /// again when it runs; this is what the operator reads, not what guards. An
 /// emergency action also returns the vaults its lines list, which bound what
-/// its job may touch on every market the plan read.
+/// its job may touch on every market the plan read. `vault_name` is the
+/// create-vault step's typed name, ignored by every other step.
 pub fn ceremony_plan(
     action: Action,
     ctx: &JobContext,
+    vault_name: &str,
 ) -> Result<(Vec<String>, Option<emergency::Planned>)> {
     let client = chain::rpc(&ctx.rpc_url);
     let admin = ctx.wallet.pubkey();
@@ -1293,13 +1417,19 @@ pub fn ceremony_plan(
                 };
                 let line = match (action, deposit_seat(&seats, &leader)) {
                     (Action::CreateVault, DepositSeat::NoVault) => {
+                        if let Some(other) = crate::naming::taken_by(&seats, vault_name, u32::MAX) {
+                            anyhow::bail!(
+                                "{symbol}: the name \"{vault_name}\" is taken by vault #{}",
+                                other.seq
+                            );
+                        }
                         work += 1;
                         let quote =
                             market::quote_authority(&ctx.repo_root, config, ctx.quote.as_ref())?
                                 .pubkey();
                         format!(
-                            "{symbol}: CREATE vault on {address}, leader {leader}, quote \
-                             authority {quote} (fee waived)"
+                            "{symbol}: CREATE vault \"{vault_name}\" on {address}, leader \
+                             {leader}, quote authority {quote} (fee waived)"
                         )
                     }
                     (Action::CreateVault, _) => {
@@ -1327,6 +1457,12 @@ pub fn ceremony_plan(
                     }
                 };
                 lines.push(line);
+            }
+            if action == Action::CreateVault {
+                lines.insert(
+                    0,
+                    format!("vault name: \"{vault_name}\" — every vault created here takes it"),
+                );
             }
         }
         other => anyhow::bail!("{} has no ceremony plan", other.label()),
@@ -1852,6 +1988,10 @@ pub(crate) fn do_create_market(
 /// mainnet it must be a key of its own, so the custody key is never the
 /// vault's daily signer — not even for the instant before a separate
 /// `set_quote_authority` could land.
+///
+/// The vault is created named `name`, checked against the program's rules
+/// and, on the same fresh read, against the market's other names — a taken
+/// one refuses here, nothing sent, rather than failing on chain.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn do_create_vault(
     client: &solana_client::rpc_client::RpcClient,
@@ -1861,8 +2001,10 @@ pub(crate) fn do_create_vault(
     config: &PairConfig,
     leader: &Keypair,
     quote: &Pubkey,
+    name: &str,
     log: &Logger,
 ) -> Result<Outcome> {
+    crate::naming::validate(name)?;
     if leader.pubkey() == wallet.pubkey() {
         anyhow::bail!(
             "the leader must not be the admin wallet ({})",
@@ -1889,10 +2031,18 @@ pub(crate) fn do_create_vault(
             config.base.symbol
         )));
     }
+    if let Some(other) = crate::naming::taken_by(&seats, name, u32::MAX) {
+        anyhow::bail!(
+            "the name \"{name}\" is taken on the {} market by vault #{} — nothing sent",
+            config.base.symbol,
+            other.seq
+        );
+    }
     ensure_funded(client, &wallet.pubkey(), cluster, log)?;
     let fee_source = Keypair::new().pubkey();
     log.log(format!("vault leader: {}", leader.pubkey()));
     log.log(format!("quote authority: {quote}"));
+    log.log(format!("vault name: \"{name}\""));
     let ix = chain::build_create_vault_ix(
         cluster,
         &wallet.pubkey(),
@@ -1902,6 +2052,7 @@ pub(crate) fn do_create_vault(
         &registry.fee_token_program,
         &leader.pubkey(),
         quote,
+        name,
     );
     // Trailing rent top-up for the market PDA, which create_vault grows —
     // see RENT_TOPUP_LAMPORTS.
@@ -1912,6 +2063,11 @@ pub(crate) fn do_create_vault(
     );
     chain::send_logged(client, wallet, &[wallet], &[ix, topup], "create_vault", log)
         .context("send create_vault")?;
+    // After the send, so the record holds only a name a vault was created with.
+    log.record(
+        "create-vault-name",
+        &[("market", &market_address.to_string()), ("name", name)],
+    );
     log.accounts_changed();
     Ok(Outcome::Done(format!(
         "{} vault created — empty until seeded",
@@ -2162,7 +2318,7 @@ mod tests {
     /// Kept complete by [`all_actions_lists_every_variant`], not by care — the
     /// array's length annotation does not change when a variant is
     /// added, so nothing else would notice the list going stale.
-    const ALL_ACTIONS: [Action; 27] = [
+    const ALL_ACTIONS: [Action; 29] = [
         Action::Deploy,
         Action::Publish,
         Action::CloseBuffers,
@@ -2177,12 +2333,14 @@ mod tests {
         Action::Wipe,
         Action::LeaderDeposit,
         Action::LeaderWithdraw,
+        Action::RenameVault,
         Action::RotateLeader,
         Action::PassiveLadder,
         Action::PassiveRecenter,
         Action::KillLadders,
         Action::CloseVaults,
         Action::DrainLeader,
+        Action::OverrideVaultName,
         Action::RepegUp,
         Action::RepegDown,
         Action::WidenSpread,
@@ -2207,10 +2365,11 @@ mod tests {
         // reachable writes are the confirm-gated ceremony steps (the kill
         // switch among them), the leader's own stake, which sends only after a
         // typed `yes` over the exact amounts (the reserved rotation is shown
-        // in the vault group but never enabled), and the leader's passive
-        // ladder, which sends only after one over its preview. A later change
-        // that exposes anything else — a mock-minting bootstrap, a
-        // committed-key demo control — fails here.
+        // in the vault group but never enabled), the leader's rename and
+        // passive ladder, each sent only after one over its preview, and the
+        // admin's name override, likewise. A later change that exposes
+        // anything else — a mock-minting bootstrap, a committed-key demo
+        // control — fails here.
         let ceremony = [
             Action::Publish,
             Action::CloseBuffers,
@@ -2222,16 +2381,21 @@ mod tests {
             Action::CloseVaults,
             Action::DrainLeader,
         ];
-        let leader_stake = [
+        let leader_vault = [
             Action::LeaderDeposit,
             Action::LeaderWithdraw,
+            Action::RenameVault,
             Action::RotateLeader,
         ];
         let passive = [Action::PassiveLadder, Action::PassiveRecenter];
+        // The admin's name override: an emergency action with its own
+        // typed-`yes` prompt rather than the ceremony's.
+        let name_override = Action::OverrideVaultName;
         for a in ALL_ACTIONS {
             let expected = a == Action::OpenExplorer
+                || a == name_override
                 || ceremony.contains(&a)
-                || leader_stake.contains(&a)
+                || leader_vault.contains(&a)
                 || passive.contains(&a);
             assert_eq!(
                 a.available_on(M),
@@ -2308,6 +2472,8 @@ mod tests {
             idx,
             seq: u64::from(idx) + 1,
             leader,
+            name: [0; crate::naming::VAULT_NAME_LEN],
+            name_locked: false,
             seeded,
             stake: accounts::VaultStake::default(),
         }
@@ -2473,8 +2639,8 @@ mod tests {
 
     #[test]
     fn all_actions_lists_every_variant() {
-        // The completeness guard the MENU check above cannot be: MENU holds 11
-        // of the 27 variants, so a new shortcut-only action would be absent from
+        // The completeness guard the MENU check above cannot be: MENU holds 12
+        // of the 29 variants, so a new shortcut-only action would be absent from
         // both MENU and ALL_ACTIONS and silently escape all four cluster-gate
         // tests — a variant reachable only by a shortcut. PR 2 and PR 3 of this
         // series add exactly that shape.
@@ -2483,7 +2649,7 @@ mod tests {
         // one arm and no wildcard, so adding a variant fails to compile here
         // until someone edits this test; the count pins the fixture's size at
         // the enum's size; and the pairwise check rules out duplicates.
-        // Twenty-seven distinct variants drawn from a twenty-seven-variant
+        // Twenty-nine distinct variants drawn from a twenty-nine-variant
         // enum is all of them.
         fn is_known(a: Action) -> bool {
             match a {
@@ -2501,12 +2667,14 @@ mod tests {
                 | Action::Wipe
                 | Action::LeaderDeposit
                 | Action::LeaderWithdraw
+                | Action::RenameVault
                 | Action::RotateLeader
                 | Action::PassiveLadder
                 | Action::PassiveRecenter
                 | Action::KillLadders
                 | Action::CloseVaults
                 | Action::DrainLeader
+                | Action::OverrideVaultName
                 | Action::RepegUp
                 | Action::RepegDown
                 | Action::WidenSpread
@@ -2518,7 +2686,7 @@ mod tests {
         }
         assert_eq!(
             ALL_ACTIONS.len(),
-            27,
+            29,
             "ALL_ACTIONS must list every Action variant"
         );
         for (i, a) in ALL_ACTIONS.iter().enumerate() {
@@ -2545,6 +2713,42 @@ mod tests {
         // Mainnet is where the demo's passive book is deployed from.
         assert!(Action::PassiveLadder.available_on(Cluster::Mainnet));
         assert!(MAINNET_MENU.contains(&Action::PassiveRecenter));
+    }
+
+    #[test]
+    fn only_the_three_name_writes_open_the_name_prompt() {
+        use crate::naming::NameOp;
+        for a in ALL_ACTIONS {
+            let expected = match a {
+                Action::CreateVault => Some(NameOp::Create),
+                Action::RenameVault => Some(NameOp::Rename),
+                Action::OverrideVaultName => Some(NameOp::Override),
+                _ => None,
+            };
+            assert_eq!(a.name_op(), expected, "{a:?}");
+            // At most one prompt per action.
+            let prompts = [
+                a.name_op().is_some(),
+                a.leader_op().is_some(),
+                a.passive_op().is_some(),
+            ];
+            assert!(prompts.iter().filter(|p| **p).count() <= 1, "{a:?}");
+        }
+        // The override is an emergency lever: any answering endpoint, on
+        // both menus. The rename needs a vault to name.
+        for phase in PHASES {
+            assert_eq!(
+                Action::OverrideVaultName.enabled(phase, M),
+                phase != Phase::NoValidator
+            );
+            assert_eq!(
+                Action::RenameVault.enabled(phase, L),
+                matches!(phase, Phase::VaultUnseeded | Phase::Ready)
+            );
+        }
+        assert!(MENU.contains(&Action::OverrideVaultName));
+        assert!(MAINNET_MENU.contains(&Action::OverrideVaultName));
+        assert!(VAULT_ACTIONS.contains(&Action::RenameVault));
     }
 
     #[test]

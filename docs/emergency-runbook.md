@@ -55,6 +55,27 @@ re-running one is always safe.
    since the program's min-leader-share floor would reject a full
    withdrawal; that is why it comes after close.
 
+## An abusive vault name
+
+A leader names its own vault, and the name is public. The admin's answer
+is menu: `EMERGENCY: override vault name`. It is not a stop and moves no
+funds; it is signed by the admin wallet, never the quote key.
+
+1. Select the market (`[` / `]`). The accounts pane lists its first four
+   vaults, each as `#number`, name and leader.
+1. In the form, type the vault's `#number` or its current name (a vault
+   past the listed four is reached by its name), then the replacement
+   name.
+   Leave the replacement empty to blank the name; the vault then shows as
+   `#` plus its per-market sequence number, never its sector index. The
+   lock starts on, which stops the leader renaming it back; clear it
+   (`←` / `→` or space) only to unlock.
+1. Enter previews the change, read fresh: the vault, the old and new name,
+   the lock. Type `yes` in the red **REAL FUNDS** box to send.
+
+Unlocking takes the same override with the lock cleared. A closed vault
+releases its name and its lock on its own.
+
 ## When something goes wrong
 
 - **A vault is listed as REFUSED.** The line says why. A kill refused for

@@ -19,7 +19,8 @@ use dropset_sdk::instructions::{
     CloseVaultInstructionArgs, CreateMarket, CreateVault, CreateVaultInstructionArgs,
     DepositLeader, DepositLeaderInstructionArgs, ForceWithdrawDepositor,
     ForceWithdrawDepositorInstructionArgs, ForceWithdrawLeader, ForceWithdrawLeaderInstructionArgs,
-    Init, InitInstructionArgs, Swap, SwapInstructionArgs, WithdrawLeader,
+    Init, InitInstructionArgs, OverrideVaultName, OverrideVaultNameInstructionArgs, SetVaultName,
+    SetVaultNameInstructionArgs, Swap, SwapInstructionArgs, WithdrawLeader,
     WithdrawLeaderInstructionArgs,
 };
 use dropset_sdk::SWAP_COMPUTE_UNIT_LIMIT;
@@ -222,8 +223,9 @@ pub fn build_create_market_ix(
 /// slots when one is mutable. `fee_source` likewise must differ from
 /// `payer`. `fee_mint` / `fee_token_program` are the market's stamped fee
 /// config. `quote_authority` is set at creation, so the vault never sits
-/// with it defaulted to the leader. The vault is named by
-/// [`default_vault_name`].
+/// with it defaulted to the leader. `name` is the vault's display name —
+/// the operator's, from the create prompt, or [`default_vault_name`] on the
+/// bootstrap; empty means unset.
 #[allow(clippy::too_many_arguments)]
 pub fn build_create_vault_ix(
     cluster: Cluster,
@@ -234,6 +236,7 @@ pub fn build_create_vault_ix(
     fee_token_program: &Pubkey,
     leader: &Pubkey,
     quote_authority: &Pubkey,
+    name: &str,
 ) -> Instruction {
     let registry = registry_pda(cluster);
     CreateVault {
@@ -255,7 +258,58 @@ pub fn build_create_vault_ix(
             quote_authority: *quote_authority,
             allow_outside_depositors: false,
             leader_override: *leader,
-            name: default_vault_name(leader),
+            name: name.to_string(),
+        },
+    )
+}
+
+/// `set_vault_name` — the vault's `leader` (signer) renames the vault at
+/// sector `vault_idx` on `market`.
+pub fn build_set_vault_name_ix(
+    cluster: Cluster,
+    leader: &Pubkey,
+    market: &Pubkey,
+    vault_idx: u32,
+    name: &str,
+) -> Instruction {
+    SetVaultName {
+        signer: *leader,
+        market: *market,
+        event_authority: event_authority(cluster),
+        program: cluster.program_id(),
+    }
+    .instruction(
+        cluster.deployment(),
+        SetVaultNameInstructionArgs {
+            vault_idx,
+            name: name.to_string(),
+        },
+    )
+}
+
+/// `override_vault_name` — a registry `admin` (signer) rewrites the name of
+/// the vault at sector `vault_idx` on `market` and sets its lock.
+pub fn build_override_vault_name_ix(
+    cluster: Cluster,
+    admin: &Pubkey,
+    market: &Pubkey,
+    vault_idx: u32,
+    name: &str,
+    lock: bool,
+) -> Instruction {
+    OverrideVaultName {
+        admin: *admin,
+        registry: registry_pda(cluster),
+        market: *market,
+        event_authority: event_authority(cluster),
+        program: cluster.program_id(),
+    }
+    .instruction(
+        cluster.deployment(),
+        OverrideVaultNameInstructionArgs {
+            vault_idx,
+            name: name.to_string(),
+            lock,
         },
     )
 }
@@ -1170,7 +1224,10 @@ mod tests {
                 &SPL_TOKEN_PROGRAM_ID,
                 &k(6),
                 &k(7),
+                "Desk",
             ),
+            build_set_vault_name_ix(m, &k(6), &market, 0, "Desk"),
+            build_override_vault_name_ix(m, &a, &market, 0, "", true),
             build_deposit_leader_ix(
                 m,
                 &a,
@@ -1337,6 +1394,7 @@ mod tests {
             &SPL_TOKEN_PROGRAM_ID,
             &leader,
             &quote,
+            "AUDD Desk",
         );
         // The quote authority is its own argument, never defaulted to the
         // leader, and each key sits in its own slot: the args run
@@ -1345,6 +1403,8 @@ mod tests {
         let at = |k: &Pubkey| ix.data.windows(32).position(|w| w == k.as_ref());
         let (quote_at, leader_at) = (at(&quote).unwrap(), at(&leader).unwrap());
         assert_eq!(leader_at, quote_at + 33);
+        // The caller's name closes the args as a length-prefixed string.
+        assert!(ix.data.ends_with(b"\x09\0\0\0AUDD Desk"));
         assert_eq!(
             metas(&ix),
             vec![
