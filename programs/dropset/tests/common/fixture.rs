@@ -22,9 +22,9 @@
 
 use super::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
-    create_spl_mint, deploy_with_authority, deploy_with_authority_from, mint_to, send_ixn,
-    send_ixn_meta, send_ixn_signed_meta, ATA_PROGRAM_ID, CREATE_MARKET_FEE_ATOMS, PROGRAM_ID,
-    REF_PROGRAM_SO_PATH, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
+    create_spl_mint, deploy_with_authority, deploy_with_authority_from, mint_to, mint_to_under,
+    send_ixn, send_ixn_meta, send_ixn_signed_meta, ATA_PROGRAM_ID, CREATE_MARKET_FEE_ATOMS,
+    PROGRAM_ID, REF_PROGRAM_SO_PATH, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
 };
 use anchor_lang::{bytemuck, programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
@@ -323,6 +323,12 @@ pub struct Fixture {
     pub dummy: Keypair,
     pub base_mint: Pubkey,
     pub quote_mint: Pubkey,
+    /// Token program owning each leg's mint — SPL Token unless the fixture
+    /// came from [`Fixture::bootstrap_with_quote`] or
+    /// [`Fixture::bootstrap_with_base`]. Every leg ATA,
+    /// treasury and instruction meta the fixture builds derives from it.
+    pub base_token_program: Pubkey,
+    pub quote_token_program: Pubkey,
     pub market: Pubkey,
     pub base_treasury: Pubkey,
     pub quote_treasury: Pubkey,
@@ -347,10 +353,63 @@ impl Fixture {
         Self::bootstrap_on(svm, authority)
     }
 
+    /// Like [`Self::bootstrap`] but with a caller-built quote leg: `make_quote`
+    /// creates the quote mint (mint authority `authority`) under
+    /// `quote_token_program` — e.g. a Token-2022 mint carrying extensions.
+    /// The base leg stays a plain SPL mint.
+    pub fn bootstrap_with_quote(
+        quote_token_program: Pubkey,
+        make_quote: impl FnOnce(&mut LiteSVM, &Keypair) -> Pubkey,
+    ) -> Self {
+        let authority = Keypair::new();
+        let mut svm = deploy_with_authority(&authority);
+        let base_mint = create_spl_mint(&mut svm, &authority);
+        let quote_mint = make_quote(&mut svm, &authority);
+        Self::bootstrap_with_legs(
+            svm,
+            authority,
+            (base_mint, SPL_TOKEN_PROGRAM_ID),
+            (quote_mint, quote_token_program),
+        )
+    }
+
+    /// The base-leg mirror of [`Self::bootstrap_with_quote`]: `make_base`
+    /// builds the base mint under `base_token_program`; the quote leg stays
+    /// a plain SPL mint.
+    pub fn bootstrap_with_base(
+        base_token_program: Pubkey,
+        make_base: impl FnOnce(&mut LiteSVM, &Keypair) -> Pubkey,
+    ) -> Self {
+        let authority = Keypair::new();
+        let mut svm = deploy_with_authority(&authority);
+        let base_mint = make_base(&mut svm, &authority);
+        let quote_mint = create_spl_mint(&mut svm, &authority);
+        Self::bootstrap_with_legs(
+            svm,
+            authority,
+            (base_mint, base_token_program),
+            (quote_mint, SPL_TOKEN_PROGRAM_ID),
+        )
+    }
+
     fn bootstrap_on(mut svm: LiteSVM, authority: Keypair) -> Self {
-        let fee_mint = create_mock_usdc_mint(&mut svm, &authority);
         let base_mint = create_spl_mint(&mut svm, &authority);
         let quote_mint = create_spl_mint(&mut svm, &authority);
+        Self::bootstrap_with_legs(
+            svm,
+            authority,
+            (base_mint, SPL_TOKEN_PROGRAM_ID),
+            (quote_mint, SPL_TOKEN_PROGRAM_ID),
+        )
+    }
+
+    fn bootstrap_with_legs(
+        mut svm: LiteSVM,
+        authority: Keypair,
+        (base_mint, base_token_program): (Pubkey, Pubkey),
+        (quote_mint, quote_token_program): (Pubkey, Pubkey),
+    ) -> Self {
+        let fee_mint = create_mock_usdc_mint(&mut svm, &authority);
         let registry = registry_pda();
         let market = market_pda(&base_mint, &quote_mint);
         let dummy = Keypair::new();
@@ -374,9 +433,11 @@ impl Fixture {
             dummy,
             base_mint,
             quote_mint,
+            base_token_program,
+            quote_token_program,
             market,
-            base_treasury: associated_token_address(&market, &base_mint, &SPL_TOKEN_PROGRAM_ID),
-            quote_treasury: associated_token_address(&market, &quote_mint, &SPL_TOKEN_PROGRAM_ID),
+            base_treasury: associated_token_address(&market, &base_mint, &base_token_program),
+            quote_treasury: associated_token_address(&market, &quote_mint, &quote_token_program),
         };
         f.init_and_create_market();
         f
@@ -426,8 +487,8 @@ impl Fixture {
                 AccountMeta::new(self.registry, false),
                 AccountMeta::new_readonly(self.base_mint, false),
                 AccountMeta::new_readonly(self.quote_mint, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(self.base_token_program, false),
+                AccountMeta::new_readonly(self.quote_token_program, false),
                 AccountMeta::new(self.market, false),
                 AccountMeta::new(self.base_treasury, false),
                 AccountMeta::new(self.quote_treasury, false),
@@ -484,14 +545,31 @@ impl Fixture {
     /// [`ladder_profile`]). Same 1.0850 reference anchor and `quote_slot` 0;
     /// seeds `(base, quote)` via `deposit_leader`.
     pub fn seeded_with(base: u64, quote: u64, profile: [u8; PROFILE_BYTES]) -> Self {
-        let mut f = Self::with_vault();
-        f.set_reference_price(&f.authority.insecure_clone(), 0, ref_price(), 0)
-            .expect("set_reference_price");
-        f.set_liquidity_profile(&f.authority.insecure_clone(), 0, profile)
-            .expect("set_liquidity_profile");
-        f.deposit_leader(0, base, quote, base, quote)
+        let mut f = Self::bootstrap();
+        f.seed_vault(base, quote, profile)
             .expect("seed deposit_leader");
         f
+    }
+
+    /// The vault half of [`Self::seeded_with`], on an already-bootstrapped
+    /// fixture (e.g. one from [`Self::bootstrap_with_quote`]): open admin
+    /// vault 0, anchor it at 1.0850, set `profile`, then seed `(base,
+    /// quote)` via `deposit_leader`. Returns the seed's result so a test
+    /// whose subject is the seed itself can assert on a rejection.
+    pub fn seed_vault(
+        &mut self,
+        base: u64,
+        quote: u64,
+        profile: [u8; PROFILE_BYTES],
+    ) -> Result<(), String> {
+        let auth = self.authority.insecure_clone();
+        self.create_vault(0, auth.pubkey(), false, Pubkey::default())
+            .expect("create_vault");
+        self.set_reference_price(&auth, 0, ref_price(), 0)
+            .expect("set_reference_price");
+        self.set_liquidity_profile(&auth, 0, profile)
+            .expect("set_liquidity_profile");
+        self.deposit_leader(0, base, quote, base, quote)
     }
 
     /// Bootstrap → open one outside-deposit-enabled vault (sector 0) led
@@ -606,12 +684,11 @@ impl Fixture {
     pub fn funded_depositor(&mut self, base: u64, quote: u64) -> Keypair {
         let kp = self.funded_keypair(10 * SIGNER_FUNDING_LAMPORTS);
         let (b_ata, q_ata) = self.create_atas(&kp.pubkey());
-        let auth = self.authority.insecure_clone();
         if base > 0 {
-            mint_to(&mut self.svm, &auth, &self.base_mint, &b_ata, base);
+            self.mint_leg(true, &b_ata, base);
         }
         if quote > 0 {
-            mint_to(&mut self.svm, &auth, &self.quote_mint, &q_ata, quote);
+            self.mint_leg(false, &q_ata, quote);
         }
         kp
     }
@@ -631,7 +708,7 @@ impl Fixture {
                 &auth,
                 owner,
                 &self.base_mint,
-                &SPL_TOKEN_PROGRAM_ID,
+                &self.base_token_program,
             );
         }
         if self.svm.get_account(&q).is_none() {
@@ -640,17 +717,28 @@ impl Fixture {
                 &auth,
                 owner,
                 &self.quote_mint,
-                &SPL_TOKEN_PROGRAM_ID,
+                &self.quote_token_program,
             );
         }
         (b, q)
     }
 
     pub fn base_ata(&self, owner: &Pubkey) -> Pubkey {
-        associated_token_address(owner, &self.base_mint, &SPL_TOKEN_PROGRAM_ID)
+        associated_token_address(owner, &self.base_mint, &self.base_token_program)
     }
     pub fn quote_ata(&self, owner: &Pubkey) -> Pubkey {
-        associated_token_address(owner, &self.quote_mint, &SPL_TOKEN_PROGRAM_ID)
+        associated_token_address(owner, &self.quote_mint, &self.quote_token_program)
+    }
+
+    /// Mint `amount` of one leg to `ata`, under that leg's token program.
+    pub fn mint_leg(&mut self, is_base: bool, ata: &Pubkey, amount: u64) {
+        let auth = self.authority.insecure_clone();
+        let (mint, program) = if is_base {
+            (self.base_mint, self.base_token_program)
+        } else {
+            (self.quote_mint, self.quote_token_program)
+        };
+        mint_to_under(&mut self.svm, &auth, &mint, ata, amount, &program);
     }
 
     /// Create (idempotently) `owner`'s ATA for an arbitrary `mint` under
@@ -1460,6 +1548,7 @@ impl Fixture {
                 AccountMeta::new(self.registry, false),
                 AccountMeta::new_readonly(base_mint, false),
                 AccountMeta::new_readonly(quote_mint, false),
+                // Fresh SPL mints, not the fixture's legs.
                 AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
                 AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
                 AccountMeta::new(market, false),
@@ -1533,29 +1622,16 @@ impl Fixture {
     ) -> Result<TransactionMetadata, String> {
         let leader = signer.pubkey();
         let (leader_base, leader_quote) = self.create_atas(&leader);
-        let auth = self.authority.insecure_clone();
         // Fund up to the slippage caps, not just the sized leg: a
         // single-leg-sized top-up still pulls the proportional *other*
         // leg as part of the basket, and the basket is bounded above by
         // `max_*_in`. Minting the caps guarantees the leader can cover
         // whatever basket the handler derives.
         if max_base_in > 0 {
-            mint_to(
-                &mut self.svm,
-                &auth,
-                &self.base_mint,
-                &leader_base,
-                max_base_in,
-            );
+            self.mint_leg(true, &leader_base, max_base_in);
         }
         if max_quote_in > 0 {
-            mint_to(
-                &mut self.svm,
-                &auth,
-                &self.quote_mint,
-                &leader_quote,
-                max_quote_in,
-            );
+            self.mint_leg(false, &leader_quote, max_quote_in);
         }
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
@@ -1572,8 +1648,8 @@ impl Fixture {
                 AccountMeta::new(self.market, false),
                 AccountMeta::new_readonly(self.base_mint, false),
                 AccountMeta::new_readonly(self.quote_mint, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(self.base_token_program, false),
+                AccountMeta::new_readonly(self.quote_token_program, false),
                 AccountMeta::new(leader_base, false),
                 AccountMeta::new(leader_quote, false),
                 AccountMeta::new(self.base_treasury, false),
@@ -1638,8 +1714,8 @@ impl Fixture {
                 AccountMeta::new(self.market, false),
                 AccountMeta::new_readonly(self.base_mint, false),
                 AccountMeta::new_readonly(self.quote_mint, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(self.base_token_program, false),
+                AccountMeta::new_readonly(self.quote_token_program, false),
                 AccountMeta::new(leader_base, false),
                 AccountMeta::new(leader_quote, false),
                 AccountMeta::new(self.base_treasury, false),
@@ -1705,8 +1781,8 @@ impl Fixture {
                 AccountMeta::new(vd, false),
                 AccountMeta::new_readonly(self.base_mint, false),
                 AccountMeta::new_readonly(self.quote_mint, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(self.base_token_program, false),
+                AccountMeta::new_readonly(self.quote_token_program, false),
                 AccountMeta::new(b_ata, false),
                 AccountMeta::new(q_ata, false),
                 AccountMeta::new(self.base_treasury, false),
@@ -1762,8 +1838,8 @@ impl Fixture {
                 AccountMeta::new(vd, false),
                 AccountMeta::new_readonly(self.base_mint, false),
                 AccountMeta::new_readonly(self.quote_mint, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(self.base_token_program, false),
+                AccountMeta::new_readonly(self.quote_token_program, false),
                 AccountMeta::new(b_ata, false),
                 AccountMeta::new(q_ata, false),
                 AccountMeta::new(self.base_treasury, false),
@@ -1860,8 +1936,8 @@ impl Fixture {
                 AccountMeta::new(self.market, false),
                 AccountMeta::new_readonly(self.base_mint, false),
                 AccountMeta::new_readonly(self.quote_mint, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(self.base_token_program, false),
+                AccountMeta::new_readonly(self.quote_token_program, false),
                 AccountMeta::new(self.base_ata(taker), false),
                 AccountMeta::new(self.quote_ata(taker), false),
                 AccountMeta::new(self.base_treasury, false),
@@ -2068,8 +2144,8 @@ impl Fixture {
                 AccountMeta::new(vd, false),
                 AccountMeta::new_readonly(self.base_mint, false),
                 AccountMeta::new_readonly(self.quote_mint, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(self.base_token_program, false),
+                AccountMeta::new_readonly(self.quote_token_program, false),
                 AccountMeta::new(self.base_ata(owner), false),
                 AccountMeta::new(self.quote_ata(owner), false),
                 AccountMeta::new(self.base_treasury, false),
@@ -2114,8 +2190,8 @@ impl Fixture {
                 AccountMeta::new_readonly(*leader, false),
                 AccountMeta::new_readonly(self.base_mint, false),
                 AccountMeta::new_readonly(self.quote_mint, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
-                AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(self.base_token_program, false),
+                AccountMeta::new_readonly(self.quote_token_program, false),
                 AccountMeta::new(self.base_ata(leader), false),
                 AccountMeta::new(self.quote_ata(leader), false),
                 AccountMeta::new(self.base_treasury, false),

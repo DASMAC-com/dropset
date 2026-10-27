@@ -476,12 +476,13 @@ Mechanics and bounds:
   (`max_vaults_per_market` is a `u8`, default 10) on a cold admin path.
 - The accrued counters are **subtracted, never touched**. This is not a
   harvest.
-- The subtraction **saturates at zero**. A Token-2022 mint with a
-  transfer-fee extension delivers less than was sent, which can push the
-  treasury *below* the claimed sum; then there is simply nothing to
-  sweep, and the emitted event carries all three terms so an operator can
-  see the shortfall. That extension already threatens the custody
-  invariant and is not introduced by fee accrual.
+- The subtraction **saturates at zero**. Every inbound leg (`deposit`,
+  `deposit_leader`, `swap`'s input) rejects a transfer that delivers less
+  than it books (`TransferShortfall`), so a transfer-fee mint cannot
+  short the treasury; what still can is an issuer lever outside the
+  program — a Token-2022 permanent delegate moving treasury atoms. Then
+  there is simply nothing to sweep, and the emitted event carries all
+  three terms so an operator can see the shortfall.
 
 ### Market closure
 
@@ -1590,6 +1591,7 @@ authoritative.
 | Swap `side` neither Buy nor Sell                            | `InvalidSwapSide`              |
 | Swap `limit_price` sentinel wrong for the side              | `InvalidLimitPrice`            |
 | Close / sweep mint is not a market base/quote leg           | `NotAMarketTreasury`           |
+| Treasury received ≠ amount booked on an inbound leg         | `TransferShortfall`            |
 | Teardown ix invoked with the `admin-teardown` feature off   | `TeardownDisabled`             |
 
 ## Leader operations

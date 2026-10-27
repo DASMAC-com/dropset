@@ -50,6 +50,7 @@ use dropset_math_core::matching_math::{
     self, level_is_live, platform_fee_atoms, sort_key, taker_fee_atoms,
 };
 
+use super::transfer_in_leg;
 use crate::{
     errors::DropsetError,
     events::{FillEvent, PlatformFeeEvent, LEG_KIND_FLIPPED, LEG_KIND_PRIMARY},
@@ -1183,43 +1184,39 @@ impl Swap {
         // rather than only on a stray external send.
         let taker_in_atoms = (amount_in as u128 - taker_unfilled_in) as u64;
 
-        // Input leg: taker → treasury. The two settlement CPIs (this
-        // and the output leg below) are kept as explicit `match side`
-        // arms rather than folded behind a helper: each arm selects a
-        // distinct set of token accounts (quote vs base ATA, mint,
-        // treasury, program), so the duplication is account wiring, not
-        // matching logic, and is clearest read inline. The Buy and Sell
-        // arms here MUST stay mirror images — Buy pays quote in / base
-        // out, Sell pays base in / quote out.
-        if taker_in_atoms > 0 {
-            match side {
-                SwapSide::Buy => {
-                    let decimals = self.quote_mint.decimals();
-                    let cpi = CpiContext::new(
-                        self.quote_token_program.address(),
-                        TransferChecked {
-                            from: self.taker_quote_ata.cpi_handle_mut(),
-                            mint: self.quote_mint.cpi_handle(),
-                            to: self.market_quote_treasury.cpi_handle_mut(),
-                            authority: self.taker.cpi_handle(),
-                        },
-                    );
-                    transfer_checked(cpi, taker_in_atoms, decimals)?;
-                }
-                SwapSide::Sell => {
-                    let decimals = self.base_mint.decimals();
-                    let cpi = CpiContext::new(
-                        self.base_token_program.address(),
-                        TransferChecked {
-                            from: self.taker_base_ata.cpi_handle_mut(),
-                            mint: self.base_mint.cpi_handle(),
-                            to: self.market_base_treasury.cpi_handle_mut(),
-                            authority: self.taker.cpi_handle(),
-                        },
-                    );
-                    transfer_checked(cpi, taker_in_atoms, decimals)?;
-                }
-            }
+        // Input leg: taker → treasury, through the same `transfer_in_leg`
+        // the deposit paths use, so the treasury must receive exactly
+        // `taker_in_atoms` — the priced input the matching loop credited
+        // to vault inventory plus the exact-in residue it left as
+        // unattributed residual. A transfer-fee mint would otherwise leave
+        // the treasury short of the vault credits. The check reads the
+        // treasury's live balance, so it costs no reload.
+        //
+        // The two settlement legs (this and the output leg below) are
+        // kept as explicit `match side` arms: each selects a distinct set
+        // of token accounts (quote vs base ATA, mint, treasury, program),
+        // so the duplication is account wiring, not matching logic. The
+        // Buy and Sell arms here MUST stay mirror images — Buy pays quote
+        // in / base out, Sell pays base in / quote out.
+        match side {
+            SwapSide::Buy => transfer_in_leg(
+                self.quote_token_program.address(),
+                self.taker_quote_ata.cpi_handle_mut(),
+                self.quote_mint.cpi_handle(),
+                &mut self.market_quote_treasury,
+                self.taker.cpi_handle(),
+                taker_in_atoms,
+                self.quote_mint.decimals(),
+            )?,
+            SwapSide::Sell => transfer_in_leg(
+                self.base_token_program.address(),
+                self.taker_base_ata.cpi_handle_mut(),
+                self.base_mint.cpi_handle(),
+                &mut self.market_base_treasury,
+                self.taker.cpi_handle(),
+                taker_in_atoms,
+                self.base_mint.decimals(),
+            )?,
         }
         // Output leg: treasury → taker, then treasury → integrator, both
         // signed by the market PDA and both drawn from the same output-leg

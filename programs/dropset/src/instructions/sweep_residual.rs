@@ -126,13 +126,14 @@ impl SweepResidual {
             self.market.accrued_quote_fee_atoms.get()
         };
         let treasury_amount = self.treasury.amount();
-        // Saturating on purpose: a Token-2022 mint with a transfer-fee
-        // extension delivers less than was sent, so the treasury can hold
-        // *less* than the claimed sum and drive this negative. That is a
-        // pre-existing threat to the custody invariant, not something this
-        // instruction introduces; here it simply means there is nothing to
-        // sweep. The emitted event carries all three terms so an operator
-        // can see the shortfall.
+        // Saturating on purpose: the inbound legs reject a short delivery
+        // (`transfer_in_leg`), but a Token-2022 permanent delegate can still
+        // move treasury atoms without the market's signature, so the
+        // treasury can hold *less* than the claimed sum and drive this
+        // negative. That is an issuer lever, not something this instruction
+        // introduces; here it simply means there is nothing to sweep. The
+        // emitted event carries all three terms so an operator can see the
+        // shortfall.
         let claimed = vault_sum.saturating_add(accrued as u128);
         let residual = (treasury_amount as u128).saturating_sub(claimed);
         // Both `u128 → u64` conversions below clamp rather than wrap. This

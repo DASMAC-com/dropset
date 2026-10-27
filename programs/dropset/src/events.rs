@@ -200,10 +200,11 @@ pub struct SetTakerFeeEvent {
 /// treasury custody invariant's three terms. A non-zero `swept` is the
 /// expected case: atoms nobody claims, from an exact-in fill residue or a
 /// recovered unsolicited transfer. A `treasury_amount` *below*
-/// `vault_sum + accrued_fee` is the one unhealthy reading — the
-/// transfer-fee-mint shortfall, where nothing is swept and the treasury
-/// cannot cover its claims. See the spec's **Fee model → Residual
-/// sweep**.
+/// `vault_sum + accrued_fee` is the one unhealthy reading, where nothing
+/// is swept and the treasury cannot cover its claims. The inbound legs
+/// reject a short delivery, so it marks an issuer lever acting on the
+/// treasury — a Token-2022 permanent delegate moving its atoms. See the
+/// spec's **Fee model → Residual sweep**.
 #[event]
 pub struct SweepResidualEvent {
     pub market: Address,
@@ -267,8 +268,8 @@ pub struct CloseMarketTreasuryEvent {
     /// birth.
     ///
     /// **Saturate that subtraction.** `accrued_fee` can exceed `drained`
-    /// on a transfer-fee mint, where atoms were booked to the counter but
-    /// withheld in transit — the same pre-existing shortfall
+    /// when an issuer lever (a Token-2022 permanent delegate) has moved
+    /// treasury atoms the counter still claims — the same shortfall
     /// `sweep_residual` saturates against. Both terms are reported raw so
     /// the shortfall stays visible; it is the consumer that must not
     /// underflow.

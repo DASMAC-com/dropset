@@ -17,9 +17,12 @@
 //! Titan's framework discovers fill bounds by calling `quote` with an
 //! exponential/binary search, so it requires a **zero-input-safe** quote —
 //! [`DropsetAmm::quote`] returns an empty [`DropsetQuote`] for `amount == 0`
-//! (covered by a unit test in [`super::amm`]). Token-2022 transfer-fee
-//! mints are handled by the venue program's `transfer_checked` CPIs; the
-//! per-leg token program is carried in [`DropsetSwapParams`].
+//! (covered by a unit test in [`super::amm`]). Token-2022 legs settle
+//! through the venue program's `transfer_checked` CPIs, with the per-leg
+//! token program carried in [`DropsetSwapParams`]. On a transfer-fee
+//! mint the venue rejects the swap when that leg is the input
+//! (`TransferShortfall`: the treasury must receive the full amount), and
+//! delivers less than the quote when it is the output, net of the fee.
 //!
 //! ## Wiring to the upstream crate
 //!

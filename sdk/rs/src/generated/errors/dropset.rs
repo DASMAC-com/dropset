@@ -198,6 +198,9 @@ pub enum DropsetError {
     /// 6061 - quote write market account is not writable
     #[error("quote write market account is not writable")]
     QuoteWriteMarketNotWritable = 0x17AD,
+    /// 6062 - treasury did not receive exactly the transferred amount (transfer-fee mint?)
+    #[error("treasury did not receive exactly the transferred amount (transfer-fee mint?)")]
+    TransferShortfall = 0x17AE,
 }
 
 impl From<DropsetError> for solana_program_error::ProgramError {

@@ -43,7 +43,10 @@ pub mod close_registry;
 pub mod force_withdraw;
 
 use anchor_lang::prelude::*;
-use anchor_spl::token_2022::{transfer_checked, TransferChecked};
+use anchor_spl::{
+    token_2022::{transfer_checked, TransferChecked},
+    token_interface::TokenAccount,
+};
 
 use crate::{errors::DropsetError, state::Market, AdminSet, Registry, VaultDepositorHeader};
 
@@ -67,39 +70,58 @@ pub fn require_registry_admin(registry: &Registry, admin: &Signer) -> Result<()>
     Ok(())
 }
 
-/// Inbound single-leg deposit transfer: move `amount` of one mint from
-/// the signer's ATA into the market treasury via `transfer_checked`,
+/// Inbound single-leg transfer: move `amount` of one mint from the
+/// signer's ATA into the market treasury via `transfer_checked`,
 /// authorized by the signer itself (`CpiContext::new`, no PDA seeds).
 ///
-/// Shared by `deposit` and `deposit_leader` so the zero-skip and CPI
-/// shape stay identical across both. `transfer_checked` rejects zero
+/// Shared by `deposit`, `deposit_leader` and `swap`'s input leg so the
+/// zero-skip, CPI shape and received-amount check stay identical across
+/// all three. `transfer_checked` rejects zero
 /// amounts on classic SPL Token, so a zero leg is skipped here rather
 /// than at each call site. This is the **inbound** family (authority =
 /// the signer); the outbound treasury→user pair uses
 /// `new_with_signer` with the market PDA seeds.
+///
+/// Every caller books `amount`, so the treasury must receive exactly
+/// `amount`: its balance is snapshotted before the CPI and compared
+/// after, failing [`DropsetError::TransferShortfall`] otherwise.
+/// `transfer_checked` validates the transfer's shape, not the quantity
+/// delivered — a Token-2022 transfer-fee mint withholds part of it in
+/// the destination, which would leave `treasury.amount()` below the
+/// vault legs it backs. On the deposit paths, rejecting rather than
+/// crediting the delta also keeps `single_leg_basket`'s VPS-preserving
+/// basket exact. No `reload` is needed: `InterfaceAccount` reads through
+/// to the live account data, so `treasury.amount()` after the CPI is the
+/// post-transfer balance.
 #[allow(clippy::too_many_arguments)]
 pub fn transfer_in_leg<'a>(
     token_program: &'a Address,
     from_signer_ata: CpiHandleMut<'a>,
     mint: CpiHandle<'a>,
-    treasury: CpiHandleMut<'a>,
+    treasury: &mut InterfaceAccount<TokenAccount>,
     authority: CpiHandle<'a>,
     amount: u64,
     decimals: u8,
-) -> core::result::Result<(), ProgramError> {
+) -> Result<()> {
     if amount == 0 {
         return Ok(());
     }
+    let before = treasury.amount();
     let cpi = CpiContext::new(
         token_program,
         TransferChecked {
             from: from_signer_ata,
             mint,
-            to: treasury,
+            to: treasury.cpi_handle_mut(),
             authority,
         },
     );
-    transfer_checked(cpi, amount, decimals)
+    transfer_checked(cpi, amount, decimals)?;
+    require!(
+        treasury.amount().checked_sub(before) == Some(amount),
+        DropsetError::TransferShortfall
+    );
+    Ok(())
 }
 
 /// Outbound single-leg payout transfer: move `amount` of one mint out of

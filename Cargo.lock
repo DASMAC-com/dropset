@@ -1722,6 +1722,7 @@ dependencies = [
  "solana-pubkey 4.3.0",
  "solana-rent 4.4.0",
  "solana-sdk-ids",
+ "spl-token-2022-interface",
  "wincode",
 ]
 
