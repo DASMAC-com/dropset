@@ -86,6 +86,8 @@ dtolnay
 dwarnings
 eclob
 econia
+elfclass
+elfdata
 elif
 equi
 erapi
@@ -228,6 +230,7 @@ rasterizing
 ratatui
 raydium
 readback
+readelf
 reauthored
 rebalances
 recalibratable

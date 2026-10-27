@@ -131,4 +131,17 @@ pub enum DropsetError {
     VaultNameLocked,
     #[msg("new quote authority is the vault's current quote authority")]
     SameQuoteAuthority,
+    // The four below are raised only by the assembly quote-write fast path
+    // (`asm/entrypoint.s`), whose structural guards run before any anchor
+    // account validation. The reference build rejects the same inputs with
+    // anchor's own constraint errors (2xxx), so the two builds map these
+    // failures rather than equate them.
+    #[msg("quote write needs at least two accounts: [signer, market]")]
+    QuoteWriteTooFewAccounts,
+    #[msg("quote write account 0 is not a signer")]
+    QuoteWriteSignerMissing,
+    #[msg("quote write signer must carry no account data")]
+    QuoteWriteSignerHasData,
+    #[msg("quote write market account is not writable")]
+    QuoteWriteMarketNotWritable,
 }

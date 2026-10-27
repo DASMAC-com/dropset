@@ -36,6 +36,32 @@ pub mod err {
     /// `vault_idx` is past the live sector count
     /// (`DropsetError::InvalidSectorIndex`).
     pub const INVALID_SECTOR_INDEX: u32 = 6010;
+
+    /// The assembly's structural (account-layout) codes. The kernels never
+    /// return these — the guards run in `entrypoint.s` before a kernel is
+    /// reached — and the reference build rejects the same inputs with
+    /// anchor's constraint errors instead, so they exist only to keep the
+    /// fast path out of anchor's reserved 100-5999 range. Each is DERIVED
+    /// from its variant, so the const asserts below tie the `.s` literal to
+    /// the enum itself: a variant inserted or appended ahead of these (which
+    /// shifts their index) fails the build, not just a test.
+    pub mod structural {
+        use crate::errors::DropsetError;
+
+        /// anchor-lang's `#[error_code]` offset: a fieldless variant
+        /// surfaces as `Custom(index + 6000)`.
+        const OFFSET: u32 = 6000;
+
+        /// Fewer than `[signer, market]`.
+        pub const TOO_FEW_ACCOUNTS: u32 = DropsetError::QuoteWriteTooFewAccounts as u32 + OFFSET;
+        /// Account 0 is not a signer.
+        pub const SIGNER_MISSING: u32 = DropsetError::QuoteWriteSignerMissing as u32 + OFFSET;
+        /// Account 0 carries data.
+        pub const SIGNER_HAS_DATA: u32 = DropsetError::QuoteWriteSignerHasData as u32 + OFFSET;
+        /// Account 1 is not writable.
+        pub const MARKET_NOT_WRITABLE: u32 =
+            DropsetError::QuoteWriteMarketNotWritable as u32 + OFFSET;
+    }
 }
 
 // ── Byte offsets within the market account DATA region ───────────────
@@ -114,6 +140,10 @@ const _: () = assert!((VAULT_REFERENCE_PRICE_OFF + RP_STAMP_OFF) as u64 == equ::
 // edit has exactly one home, the `.s`.
 const _: () = assert!(equ::E_UNAUTHORIZED == err::UNAUTHORIZED as u64);
 const _: () = assert!(equ::E_INVALID_SECTOR == err::INVALID_SECTOR_INDEX as u64);
+const _: () = assert!(equ::E_FEW_ACCOUNTS == err::structural::TOO_FEW_ACCOUNTS as u64);
+const _: () = assert!(equ::E_NOT_SIGNER == err::structural::SIGNER_MISSING as u64);
+const _: () = assert!(equ::E_SIGNER_HAS_DATA == err::structural::SIGNER_HAS_DATA as u64);
+const _: () = assert!(equ::E_MARKET_NOT_WRITABLE == err::structural::MARKET_NOT_WRITABLE as u64);
 
 /// Bounds-check `vault_idx` and authorize the write, returning the target
 /// sector's byte offset within `data` on success.

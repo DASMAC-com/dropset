@@ -1502,7 +1502,10 @@ precondition on the leader account.
 **Zero-data signer on the two quote writes.** The one exception, and
 only in the `asm-entrypoint` build: `SetReferencePrice` and
 `SetLiquidityProfile` require their signer to carry `data_len == 0`,
-rejecting otherwise with an asm-specific structural code. Nothing about
+rejecting otherwise with a structural `DropsetError::QuoteWrite*` code
+(the fast path's four layout guards each have a variant, so their codes
+sit in the program's 6000+ range, never in anchor's reserved 100–5999,
+and the generated clients decode them). Nothing about
 the *addressing* needs it — `vault_idx` still indexes the slab — but
 pinning the signer's size keeps the **market's account record** at a
 static input-buffer offset, so the assembly's market offsets are

@@ -64,7 +64,9 @@ held in 1Password and never enters the repo, a build, or an agent
 session; only the publish step reads it, by its 1Password reference.
 
 The program crate's `mainnet` feature selects this id's `declare_id!`
-(`make program-mainnet`, artifact `target/deploy/dropset_mainnet.so`),
+(`make program-mainnet`, artifact `target/deploy/dropset_mainnet.so`, its
+sha256 recorded beside it — see `docs/program-build.md` → "The mainnet
+artifact"),
 and the SDKs expose it as `DROPSET_MAINNET_ID` (Rust) and
 `DROPSET_MAINNET_PROGRAM_ADDRESS` (TS), resolved per cluster through
 `Deployment::program_id` / `dropsetProgramAddress`. Parity tests in both

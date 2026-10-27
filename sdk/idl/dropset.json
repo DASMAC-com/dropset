@@ -3766,6 +3766,26 @@
       "code": 6057,
       "name": "SameQuoteAuthority",
       "msg": "new quote authority is the vault's current quote authority"
+    },
+    {
+      "code": 6058,
+      "name": "QuoteWriteTooFewAccounts",
+      "msg": "quote write needs at least two accounts: [signer, market]"
+    },
+    {
+      "code": 6059,
+      "name": "QuoteWriteSignerMissing",
+      "msg": "quote write account 0 is not a signer"
+    },
+    {
+      "code": 6060,
+      "name": "QuoteWriteSignerHasData",
+      "msg": "quote write signer must carry no account data"
+    },
+    {
+      "code": 6061,
+      "name": "QuoteWriteMarketNotWritable",
+      "msg": "quote write market account is not writable"
     }
   ],
   "types": [

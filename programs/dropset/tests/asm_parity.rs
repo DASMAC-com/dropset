@@ -39,7 +39,11 @@
 //! layout guards never fire on inputs the reference build would accept.
 //! Those structural guards are asm-only (they keep the market at a static
 //! input offset) and are intentionally not part of the parity contract —
-//! see the architecture spec's **SetReferencePrice**.
+//! see the architecture spec's **SetReferencePrice**. Their codes are real
+//! `DropsetError` variants (`QuoteWrite*`, pinned to the enum in
+//! `quote_write.rs`), while the reference build surfaces anchor's
+//! constraint codes (2xxx) for the same inputs: parity there is a mapping,
+//! never an equality.
 //!
 //! The same carve-out covers **short instruction data**, which the assembly
 //! deliberately does not bound: the reference build rejects it at
