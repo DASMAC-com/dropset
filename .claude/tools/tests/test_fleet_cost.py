@@ -271,6 +271,11 @@ class WalkTest(unittest.TestCase):
     def test_verb_of_prompt(self) -> None:
         self.assertEqual(fc.verb_of_prompt("/plan"), "plan")
         self.assertEqual(fc.verb_of_prompt("/plan anthropic"), "plan")
+        self.assertEqual(fc.verb_of_prompt("/curate"), "curate")
+        self.assertEqual(
+            fc.verb_of_prompt("<command-name>/curate</command-name>"), "curate"
+        )
+        self.assertIsNone(fc.verb_of_prompt("/curated list"))
         self.assertEqual(
             fc.verb_of_prompt("<command-name>/housekeeping</command-name>"),
             "housekeeping",

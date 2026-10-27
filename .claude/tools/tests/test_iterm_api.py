@@ -816,33 +816,47 @@ class DispatchPlacement(unittest.TestCase):
     def test_a_rightmost_planning_tab_takes_new_tabs_on_its_left(self):
         tabs = [self._tab("a"), self._tab("b"), self._tab("plan", "plan")]
         window = self._window(tabs, current=tabs[0])
-        self.assertEqual(asyncio.run(iterm_api._plan_insert_index(window)), 2)
+        self.assertEqual(asyncio.run(iterm_api._seat_insert_index(window)), 2)
+
+    def test_the_curator_and_scheduler_tabs_both_stay_right_of_new_tabs(self):
+        tabs = [
+            self._tab("a"),
+            self._tab("curate", "curate"),
+            self._tab("plan", "plan"),
+        ]
+        window = self._window(tabs, current=tabs[0])
+        self.assertEqual(asyncio.run(iterm_api._seat_insert_index(window)), 1)
+
+    def test_a_lone_rightmost_curator_tab_takes_new_tabs_on_its_left(self):
+        tabs = [self._tab("a"), self._tab("curate", "curate")]
+        window = self._window(tabs, current=tabs[0])
+        self.assertEqual(asyncio.run(iterm_api._seat_insert_index(window)), 1)
 
     def test_a_planning_tab_not_rightmost_leaves_the_default(self):
         # It is in an attention group on the left; appending is the resting order.
         tabs = [self._tab("plan", "plan"), self._tab("a")]
         window = self._window(tabs, current=tabs[0])
-        self.assertIsNone(asyncio.run(iterm_api._plan_insert_index(window)))
+        self.assertIsNone(asyncio.run(iterm_api._seat_insert_index(window)))
 
     def test_no_planning_tab_or_no_tabs_leaves_the_default(self):
         tabs = [self._tab("a"), self._tab("b", "task")]
         self.assertIsNone(
-            asyncio.run(iterm_api._plan_insert_index(self._window(tabs, tabs[0])))
+            asyncio.run(iterm_api._seat_insert_index(self._window(tabs, tabs[0])))
         )
         self.assertIsNone(
-            asyncio.run(iterm_api._plan_insert_index(self._window([], None)))
+            asyncio.run(iterm_api._seat_insert_index(self._window([], None)))
         )
 
     def test_an_unreadable_role_is_not_a_planning_tab(self):
         tabs = [self._tab("a"), self._tab("plan", "plan", unreadable=True)]
         window = self._window(tabs, current=tabs[0])
-        self.assertIsNone(asyncio.run(iterm_api._plan_insert_index(window)))
+        self.assertIsNone(asyncio.run(iterm_api._seat_insert_index(window)))
 
     def test_a_batch_fills_left_of_the_planning_tab_in_order(self):
         reading, plan = self._tab("reading"), self._tab("plan", "plan")
         window = self._window([reading, plan], current=reading)
         original = iterm_api._focus_to_restore(window, plan)
-        insert_at = asyncio.run(iterm_api._plan_insert_index(window))
+        insert_at = asyncio.run(iterm_api._seat_insert_index(window))
         ttys, untyped = [], []
         asyncio.run(
             iterm_api._open_and_type(

@@ -206,18 +206,19 @@ def issue_of_prompt(text: str) -> str | None:
     return f"ENG-{int(match.group(1) or match.group(2))}"
 
 
-# The bootstrap prompt of a launch with no issue at all: `plan` types `/plan`
-# in the base checkout, as the retired `housekeeping` typed `/housekeeping`.
+# The bootstrap prompt of a launch with no issue at all: the scheduler's `plan`
+# types `/plan` in the base checkout and the curator's `curate` types
+# `/curate`, as the retired `housekeeping` typed `/housekeeping`.
 PROMPT_VERB_RE = re.compile(
-    r"<command-name>/(plan|housekeeping)</command-name>"
-    r"|^/(plan|housekeeping)(?:\s|$)",
+    r"<command-name>/(plan|curate|housekeeping)</command-name>"
+    r"|^/(plan|curate|housekeeping)(?:\s|$)",
     re.IGNORECASE,
 )
 
 
 def verb_of_prompt(text: str) -> str | None:
     """The verb an issue-less base-checkout session ran as, from its first
-    prompt — the key it groups under in the per-issue table, so each planning
+    prompt — the key it groups under in the per-issue table, so each seat
     cycle's cost is a line of its own rather than part of ``(no issue)``."""
     match = PROMPT_VERB_RE.search(text.strip())
     if not match:

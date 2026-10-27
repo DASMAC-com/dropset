@@ -51,14 +51,15 @@ if [[ -n "$MIDNIGHT" ]]; then
     esac
   }
 fi
+_ds_iterm_role() { print -r -- "role:$1" >> "$STATE/role-calls" }
 _ds_session() {
-  print -r -- "$1|$2|$3|$DS_PLAN_DATE" >> "$CALLS"
+  print -r -- "$1|$2|$3|$DS_PLAN_DATE|$DS_DAILY_KIND" >> "$CALLS"
   local n=$(wc -l < "$CALLS")
-  (( n <= CYCLES )) && print -r -- "$1" > "$STATE/plan-cycle-pending"
+  (( n <= CYCLES )) && print -r -- "$1" > "$STATE/$VERB-cycle-pending"
   [[ -n "$MIDNIGHT" ]] && : > "$STATE/rolled"
   return ${CLIENT_RC:-0}
 }
-plan
+$VERB
 """
 
 
@@ -75,19 +76,24 @@ class CycleLoop(unittest.TestCase):
         self.home = self.root / "claude"
         (self.home / "sessions").mkdir(parents=True)
         self.day = datetime.now().strftime("%Y%m%d")
-        self.name = f"plan-{datetime.now().day}"
+        self.name = f"schedule-{datetime.now().day}"
 
     def _plan(
-        self, cycles: int, client_rc: int = 0, midnight: bool = False
+        self,
+        cycles: int,
+        client_rc: int = 0,
+        midnight: bool = False,
+        verb: str = "plan",
     ) -> subprocess.CompletedProcess:
         env = {**os.environ}
         # A suite run from inside a planning session inherits the launcher's
         # DS_PLAN_DATE, which would mask a launcher that stopped passing it.
-        for inherited in ("DS_PLAN_DATE", "MIDNIGHT"):
+        for inherited in ("DS_PLAN_DATE", "DS_DAILY_KIND", "MIDNIGHT"):
             env.pop(inherited, None)
         if midnight:
             env["MIDNIGHT"] = "1"
         env |= {
+            "VERB": verb,
             "CLIENT_RC": str(client_rc),
             "INIT": str(INIT),
             "REPO": str(REPO),
@@ -117,7 +123,9 @@ class CycleLoop(unittest.TestCase):
     def test_a_cycle_relaunches_under_a_fresh_id_and_the_same_name(self):
         result = self._plan(cycles=1)
         self.assertEqual(result.returncode, 0, result.stderr)
-        (sid0, name0, prompt0, date0), (sid1, name1, prompt1, date1) = self._launches()
+        (sid0, name0, prompt0, date0, _), (sid1, name1, prompt1, date1, _) = (
+            self._launches()
+        )
         # The shell seed and resolve_session's must name the same sessions,
         # or plan_cycle.py cannot find its own transcript or client.
         self.assertEqual(sid0, rs.daily_session_id("plan", self.day, 0))
@@ -137,12 +145,12 @@ class CycleLoop(unittest.TestCase):
         self.assertEqual(self._launches()[0][0], cycled)
 
     def test_a_cycle_past_midnight_keeps_the_launch_day(self):
-        # Worker addressing must not change: the relaunch stays `plan-10`, on
-        # the 10th's ids, even though the clock now reads the 11th.
+        # Worker addressing must not change: the relaunch stays `schedule-10`,
+        # on the 10th's ids, even though the clock now reads the 11th.
         result = self._plan(cycles=1, midnight=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        (sid0, name0, _, date0), (sid1, name1, _, date1) = self._launches()
-        self.assertEqual((name0, name1), ("plan-10", "plan-10"))
+        (sid0, name0, _, date0, _), (sid1, name1, _, date1, _) = self._launches()
+        self.assertEqual((name0, name1), ("schedule-10", "schedule-10"))
         self.assertEqual((date0, date1), ("20260910", "20260910"))
         self.assertEqual(sid0, rs.daily_session_id("plan", "20260910", 0))
         self.assertEqual(sid1, rs.daily_session_id("plan", "20260910", 1))
@@ -160,6 +168,39 @@ class CycleLoop(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("not cycling", result.stderr)
         self.assertEqual(len(self._launches()), 1)
+
+    def test_curate_cycles_on_its_own_counter_without_upkeep(self):
+        result = self._plan(cycles=1, verb="curate")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        launches = self._launches()
+        name = f"curate-{datetime.now().day}"
+        self.assertEqual(
+            launches,
+            [
+                [
+                    rs.daily_session_id("curate", self.day, cycle),
+                    name,
+                    "/curate",
+                    self.day,
+                    "curate",
+                ]
+                for cycle in (0, 1)
+            ],
+        )
+        counter = self.state / f"curate-cycle-{self.day}"
+        self.assertEqual(counter.read_text().strip(), "1")
+        self.assertFalse((self.state / f"plan-cycle-{self.day}").exists())
+        self.assertFalse((self.state / "curate-cycle-pending").exists())
+        # The scheduler's launch alone runs upkeep; the role is set and cleared.
+        self.assertFalse((self.state / "upkeep-calls").exists())
+        roles = (self.state / "role-calls").read_text().splitlines()
+        self.assertEqual(roles, ["role:curate", "role:"])
+
+    def test_plan_marks_its_tab_and_its_kind(self):
+        self.assertEqual(self._plan(cycles=0).returncode, 0)
+        self.assertEqual(self._launches()[0][4], "plan")
+        roles = (self.state / "role-calls").read_text().splitlines()
+        self.assertEqual(roles, ["role:plan", "role:"])
 
 
 #: The real `_ds_upkeep`, with `python3` and the secrets fetch stubbed: the

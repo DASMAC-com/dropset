@@ -1613,7 +1613,8 @@ names alive was the outcome to avoid.
 | `task resume [n]`       | resume by number (bare = the picker)       | as recorded            | re-pinned | as recorded         | —                         |
 | `explore [s] <n\|name>` | research / audit, read-only, temp worktree | Bedrock, or `[s]`      | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
 | `chore [s] <n>`         | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    | executor if Bedrock | `[Chore/<Substrate>]`     |
-| `plan [a]`              | upkeep pass, then daily planning session   | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
+| `plan [a]`              | upkeep pass, then the scheduler's day      | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
+| `curate [a]`            | the curator: Backlog→Todo review, no PR    | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
 | `architect [b] <n>`     | design thread, read-only, temp worktree    | advisor's, or override | advisor   | executor if Bedrock | `[Architect/<Substrate>]` |
 | `fleet [go]`            | batch resume                               | per-window             | re-pinned | per-window          | —                         |
 | `models [check]`        | print the tier table; `check` it for free  | —                      | —         | —                   | —                         |
@@ -2293,8 +2294,8 @@ The bare `task resume` picker cannot know
 which session will be chosen, so it resumes unpinned.
 
 **A per-session record sits beside the tag marker.** Every new session
-of every verb — `_ds_session` (`plan`, `architect`, `explore`,
-`chore`) and `task`'s own launch, which now passes a fresh
+of every verb — `_ds_session` (`plan`, `curate`, `architect`,
+`explore`, `chore`) and `task`'s own launch, which now passes a fresh
 `--session-id` — writes `sessions/<session-id>` holding `bedrock` or
 `anthropic`, decided by whether `CLAUDE_CODE_USE_BEDROCK` is set. It
 is written on create and never on a resume; a create overwrites, since
@@ -2330,7 +2331,8 @@ drives the real zsh functions.
 
 **Every launch prints its session's cost estimate when `claude`
 returns**, whether by `/exit`, Ctrl+C or Ctrl+D. That covers
-`_ds_session` (`plan`, `architect`, `explore`, `chore`), `task`'s own
+`_ds_session` (`plan`, `curate`, `architect`, `explore`, `chore`),
+`task`'s own
 launch and every `task resume <n>` form. The epilogue, `_ds_exit_estimate`,
 runs `session_metrics.py --brief --session-id <sid>` and prints the
 one-paragraph figure, priced at Bedrock rates on either substrate (a
@@ -2548,16 +2550,19 @@ a terminal closed outright, is covered by the next morning's digest.
   with no word keeps the recorded substrate. See "Architect and
   explore sessions: temporary worktree, no PR" above for the shape.
 
-- **`plan [anthropic|bedrock]`** — start **or resume** a **planning**
-  session. It derives the session name `plan-<day-of-month>` from
-  today's date (run on the 14th → `plan-14`), `cd`s to the base repo,
+- **`plan [anthropic|bedrock]`** — start **or resume** the
+  **scheduler**'s planning session. It derives the session name
+  `schedule-<day-of-month>` from today's date (run on the 14th →
+  `schedule-14`; only the display name is the verb-form word — the
+  launch line, the daily id seed and the cycle counter stay keyed
+  `plan`, so no resume broke), `cd`s to the base repo,
   and launches Claude Code on the advisor tier with `/plan` as the
   initial prompt, on Bedrock. The optional word is the substrate
   override — `plan anthropic` for the seat; a reopen keeps the
   substrate its session recorded. See "Model tiers" for the
   retention line.
 
-  `plan` is **idempotent by design** — if today's latest `plan-<day>`
+  `plan` is **idempotent by design** — if today's latest `schedule-<day>`
   session (see cycling below) exists it resumes it, otherwise it creates
   it. That collapses
   the new-vs-resume split into one verb, which is the point: a planning
@@ -2575,9 +2580,10 @@ a terminal closed outright, is covered by the next morning's digest.
   addressing never changes. It refuses to relaunch while a live session
   already holds the name — or when that check itself fails — since a
   duplicate name would break that addressing. The relaunch carries
-  `DS_PLAN_DATE` (the launch day) into the client, so the session's
-  own tools still compute its id after midnight. A later bare `plan`
-  resumes the day's latest cycle.
+  `DS_PLAN_DATE` (the launch day) and `DS_DAILY_KIND` (`plan`) into
+  the client, so the session's own tools still compute its id after
+  midnight and `plan_cycle.py` knows which seat it serves. A later
+  bare `plan` resumes the day's latest cycle.
 
   **It runs the upkeep pass before the client starts.** After the
   AWS gate and before the cycle loop, `plan` resolves the session
@@ -2656,13 +2662,33 @@ a terminal closed outright, is covered by the next morning's digest.
     program.
 
   This **supersedes** hand-naming a base-repo session `planning-<day>`
-  and resuming it by that name. `plan` is now the
-  only daily **base-repo** session verb — `explore` moved to its own
-  worktree, so it is no longer the general-purpose base-repo entry
-  point it once was.
+  and resuming it by that name. `plan` and `curate` are the two daily
+  **base-repo** session verbs — `explore` moved to its own worktree,
+  so it is no longer the general-purpose base-repo entry point it once
+  was.
 
-  `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not
-  `plan-05`.
+  `date +%-d` gives an unpadded day, so the 5th is `schedule-5`, not
+  `schedule-05`.
+
+- **`curate [anthropic|bedrock]`** — start **or resume** the
+  **curator**'s daily session: review between Backlog and Todo, the
+  scheduler's seat-mate. Built from the same parts as `plan` (one
+  shared `_ds_daily_seat` body): the advisor tier, Bedrock by default
+  whatever `DS_MODEL_ADVISOR_SUBSTRATE` says, `anthropic` by word, a
+  reopen keeping the substrate its session recorded; the base repo, no
+  worktree, no PR, no issue; display name `curate-<day>`, initial
+  prompt `/curate`; the same idempotent create-or-resume and the same
+  in-place cycle loop on its own `curate-cycle-<YYYYMMDD>` counter and
+  `curate-cycle-pending` marker, carrying `DS_DAILY_KIND=curate`. It
+  is a **free** seat verb (class stamped `free` through the shared
+  resolver; lane 0, as the base checkout always is). It runs **no AWS
+  gate** (it reads no cost data) and **no upkeep pass** (that is the
+  scheduler's launch). Its tab carries `ds_role=curate` around the
+  loop, cleared on every way out: `iterm-reorder.py` rests it just
+  left of the scheduler's tab, which stays outermost, and
+  `session_dispatch.py` opens new tabs left of both. Sourcing the init
+  warns once if a `curate` command on `PATH` is shadowed. `fleet` and
+  `task resume` leave it alone — it names no issue.
 
 - **`architect <n>`** — start **or resume** an **architect** session on
   the design thread governed by issue `<n>`, its only argument: the CEO

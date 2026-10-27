@@ -4,12 +4,13 @@
 A single app-level daemon that keeps each iTerm2 window's tabs sorted into
 attention groups so you can park at position 1 and sweep right:
 
-    [ yellow (permission) … ] [ green (reply wanted) … ] [ the rest … ] [ plan ]
+    [ yellow … ] [ green … ] [ the rest … ] [ curate ] [ plan ]
 
-The planning tab, once attended, sorts LAST so Command-9 always lands on it;
-while it needs attention it queues in its yellow or green group like any other
-tab. It is identified by the `user.ds_role` variable the `plan` launcher sets
-(see `.claude/shell/init.zsh`), never by its title.
+The two seat tabs, once attended, sort LAST — the curator's just left of the
+scheduler's, which stays outermost so Command-9 always lands on it; while
+either needs attention it queues in its yellow or green group like any other
+tab. Each is identified by the `user.ds_role` variable its launcher sets
+(`plan` / `curate`, see `.claude/shell/init.zsh`), never by its title.
 
 Within each attention group the order is **FIFO** — the oldest tab to enter
 the group stays leftmost, and a tab that newly needs attention goes to the
@@ -70,14 +71,17 @@ _PALETTE_KEYS = {
 _STATE_ASSIGNMENT = re.compile(r'^(STATE_[A-Z]+)="([0-9a-fA-F]{6})"', re.MULTILINE)
 
 # Group ordering: yellow first, then green, then everything else, then a
-# resting planning tab.
-_PRIORITY = {"yellow": 0, "green": 1, "neutral": 2, "plan": 3}
+# resting curator tab, then a resting scheduler tab at the far right.
+_PRIORITY = {"yellow": 0, "green": 1, "neutral": 2, "curate": 3, "plan": 4}
 
-# The iTerm user variable the `plan` launcher sets on its session, and the value
-# that marks it. A plan launched with the switch off carries no marker, so it
-# sorts as an ordinary tab.
+# The iTerm user variable the `plan` and `curate` launchers set on their
+# session, and the values that mark them. A seat verb launched with the switch
+# off carries no marker, so it sorts as an ordinary tab.
 ROLE_VARIABLE = "user.ds_role"
 PLAN_ROLE = "plan"
+CURATE_ROLE = "curate"
+#: The seat roles, outermost first: a tab carrying both reads as the first.
+SEAT_ROLES = (PLAN_ROLE, CURATE_ROLE)
 
 POLL_SECONDS = 0.3
 
@@ -157,26 +161,27 @@ def _read_group(tty: str) -> str:
 
 def effective_group(group: str, role: str | None) -> str:
     """The sort group of a tab: its attention group, except that a RESTING
-    planning tab gets a group of its own at the far right. A planning tab that
-    needs attention keeps its yellow or green group, so it still surfaces at
-    position 1 in FIFO order.
+    seat tab (the scheduler's or the curator's) gets a group of its own at the
+    far right. A seat tab that needs attention keeps its yellow or green group,
+    so it still surfaces at position 1 in FIFO order.
     """
-    if role == PLAN_ROLE and group == "neutral":
-        return "plan"
+    if role in SEAT_ROLES and group == "neutral":
+        return role
     return group
 
 
 async def _tab_role(tab) -> str | None:
-    """The planning role if ANY pane of ``tab`` carries it, else None.
+    """The seat role if ANY pane of ``tab`` carries one, else None — the
+    outermost (`SEAT_ROLES` order) when panes carry both.
 
     Every pane, not just the focused one, to match the dispatcher's lookup in
-    `iterm_api._plan_insert_index`: focusing a sibling pane of a split planning
-    tab must not drop it out of the rightmost slot.
+    `iterm_api._seat_insert_index`: focusing a sibling pane of a split seat
+    tab must not drop it out of its resting slot.
     """
+    found = set()
     for session in tab.sessions:
-        if await session.async_get_variable(ROLE_VARIABLE) == PLAN_ROLE:
-            return PLAN_ROLE
-    return None
+        found.add(await session.async_get_variable(ROLE_VARIABLE))
+    return next((role for role in SEAT_ROLES if role in found), None)
 
 
 def plan_order(entries, seq: dict, last_group: dict, counter: int):

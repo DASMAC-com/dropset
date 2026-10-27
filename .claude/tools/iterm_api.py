@@ -80,11 +80,13 @@ PER_TAB_TIMEOUT_SECONDS = 10
 #: a malformed `ps` answer cannot loop forever.
 CALLER_TTY_MAX_HOPS = 32
 
-#: The iTerm user variable the `plan` launcher sets, and its value. Read here to
-#: place new tabs left of a rightmost planning tab; `iterm-reorder.py` reads the
-#: same pair to keep it there.
+#: The iTerm user variable the `plan` and `curate` launchers set, and their
+#: values. Read here to place new tabs left of the seat tabs resting at the
+#: right edge; `iterm-reorder.py` reads the same pairs to keep them there.
 ROLE_VARIABLE = "user.ds_role"
 PLAN_ROLE = "plan"
+CURATE_ROLE = "curate"
+SEAT_ROLES = (PLAN_ROLE, CURATE_ROLE)
 
 #: The attend-mark script, shared by both launchers.
 ATTEND_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "iterm-attend.sh"
@@ -551,26 +553,32 @@ def _focus_to_restore(window, caller_tab):
     return current if current is not None else caller_tab
 
 
-async def _plan_insert_index(window):
-    """Where new tabs go: just left of the planning tab when it is the
-    RIGHTMOST tab, else None (iTerm's default, the end).
+async def _is_seat_tab(tab) -> bool:
+    """Whether any pane of ``tab`` carries a seat role (scheduler or curator)."""
+    for session in getattr(tab, "sessions", None) or []:
+        try:
+            if await session.async_get_variable(ROLE_VARIABLE) in SEAT_ROLES:
+                return True
+        except Exception:  # noqa: BLE001 - an unreadable role is no seat tab
+            continue
+    return False
 
-    Placing it at creation keeps the planning tab rightmost, where Command-9
-    reaches it, without waiting on a reorder pass. While the reorderer runs, a
-    planning tab that is not rightmost is in an attention group on the left,
-    and appending is then already its resting order. iTerm has no tab pin to
-    use instead.
+
+async def _seat_insert_index(window):
+    """Where new tabs go: just left of the run of seat tabs (the scheduler's
+    and the curator's) at the RIGHT edge, else None (iTerm's default, the end).
+
+    Placing it at creation keeps the seat tabs rightmost, where Command-9
+    reaches the scheduler, without waiting on a reorder pass. While the
+    reorderer runs, a seat tab that is not at the edge is in an attention group
+    on the left, and appending is then already its resting order. iTerm has no
+    tab pin to use instead.
     """
     tabs = list(getattr(window, "tabs", None) or [])
-    if not tabs:
-        return None
-    for session in getattr(tabs[-1], "sessions", None) or []:
-        try:
-            if await session.async_get_variable(ROLE_VARIABLE) == PLAN_ROLE:
-                return len(tabs) - 1
-        except Exception:  # noqa: BLE001 - an unreadable role is no planning tab
-            continue
-    return None
+    index = len(tabs)
+    while index and await _is_seat_tab(tabs[index - 1]):
+        index -= 1
+    return None if index == len(tabs) else index
 
 
 async def _open_and_type(
@@ -580,8 +588,8 @@ async def _open_and_type(
 
     Mutates ``ttys`` / ``untyped`` in place. The driver published both into its
     result before calling, which is what lets a mid-batch failure report them.
-    ``insert_at`` is the creation index from :func:`_plan_insert_index`; each
-    insert pushes the planning tab right by one, so the batch keeps its order.
+    ``insert_at`` is the creation index from :func:`_seat_insert_index`; each
+    insert pushes the seat tabs right by one, so the batch keeps its order.
     """
     for index, command in enumerate(commands):
         if insert_at is None:
@@ -672,7 +680,7 @@ async def _driver_body(connection, request, result):  # pragma: no cover
         # separately rather than being inferred from a falsy entry.
         untyped = []
         result["untyped"] = untyped
-        insert_at = await _plan_insert_index(window)
+        insert_at = await _seat_insert_index(window)
         try:
             await _open_and_type(
                 window, original, request["commands"], ttys, untyped, insert_at

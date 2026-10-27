@@ -421,9 +421,9 @@ class GatedVerbSurface(unittest.TestCase):
         # Ordering matters: the seat guard clears an `AWS_REGION` inherited from a
         # previous `task` in the same tab, and the AWS CLI reads that variable, so
         # probing first would probe the Bedrock launcher's environment. `plan`
-        # reaches the guard through `_ds_substrate_enter`, which also carries
-        # its `bedrock` override.
-        guard = self.source.index("_ds_substrate_enter \"$substrate\" 'plan'")
+        # reaches the guard through `_ds_substrate_enter` in the shared
+        # `_ds_daily_seat` body, which also carries its `bedrock` override.
+        guard = self.source.index('_ds_substrate_enter "$substrate" "$kind"')
         gate = self.source.index("_ds_aws_login 'plan'")
         self.assertLess(guard, gate, "plan probes before clearing the env")
 
@@ -431,6 +431,12 @@ class GatedVerbSurface(unittest.TestCase):
         # It argues design rather than reading cost data, and a browser login is a
         # poor thing to stand between the operator and a design thought.
         self.assertNotIn("_ds_aws_login 'architect'", self.source)
+
+    def test_curate_is_deliberately_not_gated(self):
+        # The curator reads no cost data: the gate sits behind the scheduler's
+        # kind in the shared body, and nowhere else.
+        self.assertNotIn("_ds_aws_login 'curate'", self.source)
+        self.assertIn('if [[ "$kind" == plan ]]; then', self.source)
 
 
 if __name__ == "__main__":

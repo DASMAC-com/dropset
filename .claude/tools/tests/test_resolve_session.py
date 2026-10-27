@@ -403,7 +403,7 @@ class DailySessionIdTests(unittest.TestCase):
         # Pinned against the `_ds_daily_sid` callers in
         # `.claude/shell/init.zsh`. If a second daily verb is added there, this
         # fails and points at the list that needs it.
-        self.assertEqual(rs.DAILY_KINDS, ("plan",))
+        self.assertEqual(rs.DAILY_KINDS, ("plan", "curate"))
 
 
 class CycleIdTests(unittest.TestCase):
@@ -444,6 +444,33 @@ class CycleIdTests(unittest.TestCase):
                 )
         self.assertEqual(rc, 0)
         self.assertEqual(out.getvalue().strip(), "9d60ce20-44af-0b89-a8d0-9358a6d2fae9")
+
+    #: Pinned against `md5 -qs 'dropset-curate-20260910-c1'`, the seed
+    #: `_ds_daily_sid curate 1` builds.
+    def test_the_curator_reads_its_own_counter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            counter = rs.cycle_counter_path(repo, "20260910", "curate")
+            self.assertEqual(counter.name, "curate-cycle-20260910")
+            counter.parent.mkdir(parents=True)
+            counter.write_text("1\n")
+            # The scheduler's counter is untouched by the curator's.
+            self.assertEqual(rs.read_cycle(repo, "20260910"), 0)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = rs.run(
+                    [
+                        "resolve_session.py",
+                        "--daily-id",
+                        "curate",
+                        "--date",
+                        "20260910",
+                        "--repo",
+                        tmp,
+                    ]
+                )
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue().strip(), "361cefcc-6fcd-ba55-9a40-d14afc9bc2d8")
 
     def test_the_counter_reads_like_the_shell_does(self):
         # The launcher keeps digits only after `$(<counter)` (trailing newlines
