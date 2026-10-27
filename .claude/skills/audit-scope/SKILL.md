@@ -96,7 +96,7 @@ explore sessions: temporary worktree, no PR". Don't restate
 them here. A non-audit explore session's filed tasks stage under
 `Session pending` through `ratify-staged`, as an architect's do.
 
-Three duties this skill owns directly:
+Four duties this skill owns directly:
 
 - **A findings or spec file is never the only copy** —
   durable state is the filed issue. Writer body files
