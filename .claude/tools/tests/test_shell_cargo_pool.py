@@ -80,6 +80,7 @@ class LaunchKeysTest(unittest.TestCase):
             env={
                 "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
                 "HOME": self.tmp.name,
+                "CLAUDE_CONFIG_DIR": self.tmp.name,
                 "DS_CARGO_LANES": "2",
             },
             check=False,
@@ -101,20 +102,43 @@ class LaunchKeysTest(unittest.TestCase):
         self.assertEqual(out["in"], self.keys_of(self.worktree, "-1"))
         self.assertEqual(out["after"], self.keys_of(self.repo, ""))
 
+    def test_a_resume_from_the_base_slug_still_gets_the_worktree_s_keys(
+        self,
+    ) -> None:
+        # A transcript filed under the base checkout's slug resumes without the
+        # `cd` into the worktree, so no `chpwd` keys it.
+        slug = Path(self.tmp.name) / "projects" / "-base-slug"
+        slug.mkdir(parents=True)
+        (slug / "sid-2.jsonl").write_text("{}\n")
+        out = self.launch("_ds_session sid-2 2281 '' model 2281")
+        self.assertEqual(out["in"], self.keys_of(self.worktree, "-1"))
+        self.assertEqual(out["after"], self.keys_of(self.repo, ""))
+
+    def test_the_launch_s_exit_status_survives_the_restore(self) -> None:
+        out = self.launch(
+            "claude() { return 3; }; _ds_claude_pooled 2281 model; rc=$?; "
+            "print -- --in--; print -r -- RC=$rc"
+        )
+        self.assertEqual(out["in"]["RC"], "3")
+
     def test_a_launch_with_no_worktree_keeps_the_base_keys(self) -> None:
         out = self.launch("_ds_claude_pooled '' model")
         self.assertEqual(out["in"], self.keys_of(self.repo, ""))
 
-    def test_every_worktree_launch_goes_through_the_pooled_launcher(self) -> None:
-        # A `-w` or `--resume` launch calling `_ds_claude` directly is the bug
-        # this guards: its session would build on the base checkout's slots.
-        direct = [
-            line.strip()
-            for line in INIT.read_text().splitlines()
-            if re.search(r"(^|\s)_ds_claude\s", line)
-            and re.search(r"\s(-w|--resume)\s", line)
-        ]
-        self.assertEqual(direct, [])
+    def test_only_the_pooled_launcher_calls_the_bare_one(self) -> None:
+        # A launch calling `_ds_claude` directly is the bug this guards: a
+        # `-w` session would build on the base checkout's slots. Keyed on the
+        # call itself, not its flags, so a flag on a continuation line or in
+        # an array (`"${worktree_flag[@]}"`) cannot slip past.
+        callers, fn = [], None
+        for line in INIT.read_text().splitlines():
+            head = re.match(r"^(\w+)\(\) \{", line)
+            if head:
+                fn = head.group(1)
+            code = line.split("#", 1)[0]
+            if re.search(r"(^|[\s;(])_ds_claude(\s|$)", code):
+                callers.append(fn)
+        self.assertEqual(callers, ["_ds_claude_pooled"])
 
 
 CRATE_A = "pub struct Level {\n    pub price: u64,\n}\n"
@@ -157,7 +181,9 @@ class TwoCheckoutsTest(unittest.TestCase):
         env = {
             k: v
             for k, v in os.environ.items()
-            if k not in KEYS and not k.startswith("CARGO_BUILD")
+            # A host RUSTC_WRAPPER (sccache) could serve a cached artifact
+            # across the two checkouts and mask the key.
+            if k not in (*KEYS, "RUSTC_WRAPPER") and not k.startswith("CARGO_BUILD")
         }
         env["CARGO_TARGET_DIR"] = str(self.root / "target")
         env["RUSTC_WORKSPACE_WRAPPER"] = str(self.root / wrapper_of / WRAPPER.name)

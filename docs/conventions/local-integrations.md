@@ -1404,12 +1404,14 @@ so `anchor keys sync` would re-key that repo.
 verb launches from the base checkout and `claude -w` enters the worktree
 inside the CLI, where no `chpwd` fires, so on its own the hook would hand
 every session lane 0 and the base checkout's keys — the shared slot the
-keys exist to prevent. The launcher (`_ds_session`) therefore evaluates
-the pool for the worktree it is about to start (`_ds_cargo_pool <dir>`)
-and re-evaluates for the tab's own directory once the session exits,
-however it exits. A worded tag's new worktree is created by the CLI itself,
-after that point, so its session keeps the base keys (and lane 0, which
-is its lane anyway).
+keys exist to prevent. Every launch therefore goes through
+`_ds_claude_pooled`, which evaluates the pool for the worktree it is
+about to start (`_ds_cargo_pool <dir>`, when that directory exists) and
+re-evaluates for the tab's own directory once the session exits, however
+it exits. A fresh `task` once bypassed it and launched on the base keys.
+A worded tag's new worktree is created by the CLI itself, after that
+point, so its session keeps the base keys (and lane 0, which is its lane
+anyway).
 
 #### Lanes
 
@@ -1489,7 +1491,7 @@ it. **A hand-typed `anchor build` gets none of this.** Go through
 **Cleaning.** `make clean` removes the worktree's own `target/` (plus its
 `node_modules` and `.next`), never the pool. Under the pool that `target/`
 holds the Anchor outputs, the copied bots and, until the editor joins,
-rust-analyzer's checks. **Never clean the pool from a worktree.** A bare
+rust-analyzer's checks. **Never `cargo clean` the pool from a worktree.** A bare
 `cargo clean` wipes the current lane, the build of every worktree on it,
 and `cargo clean -p <crate>` is no narrower than it looks: it removes that
 crate's slots for **every** checkout on the lane, under their running
