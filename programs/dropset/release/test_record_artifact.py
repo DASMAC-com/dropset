@@ -75,17 +75,27 @@ class Record(unittest.TestCase):
         self.assertEqual(prov["commit"], "abc123")
         self.assertFalse(prov["dirty"])
 
-    def test_refuses_v0_and_writes_nothing(self):
+    def test_refuses_v0_and_clears_stale_records(self):
         so = self.dir / "dropset_mainnet.so"
+        sha = self.dir / "dropset_mainnet.so.sha256"
+        prov = self.dir / "dropset_mainnet.so.provenance.json"
+        # A previous good build's records, then a wrong-arch rebuild.
+        so.write_bytes(elf(0x3))
+        record_artifact.record(so, "old", False)
+        self.assertTrue(sha.exists() and prov.exists())
         so.write_bytes(elf(0x0))
         with self.assertRaisesRegex(record_artifact.ArtifactError, "0x0"):
             record_artifact.record(so, "abc123", False)
-        self.assertFalse((self.dir / "dropset_mainnet.so.sha256").exists())
+        self.assertFalse(sha.exists())
+        self.assertFalse(prov.exists())
 
     def test_main_exits_nonzero_on_wrong_arch(self):
         so = self.dir / "dropset_mainnet.so"
         so.write_bytes(elf(0x0))
         self.assertEqual(record_artifact.main([str(so)]), 1)
+
+    def test_git_state_outside_a_repo_is_unknown_and_dirty(self):
+        self.assertEqual(record_artifact.git_state(self.dir), ("unknown", True))
 
 
 if __name__ == "__main__":

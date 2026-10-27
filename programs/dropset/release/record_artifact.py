@@ -59,7 +59,9 @@ def git_state(cwd: Path) -> tuple[str, bool]:
             check=True,
         ).stdout.strip()
         status = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
+            # Untracked files count (an untracked .cargo/config.toml or .s
+            # can change the build); ignored ones, target/ included, don't.
+            ["git", "status", "--porcelain"],
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -71,7 +73,15 @@ def git_state(cwd: Path) -> tuple[str, bool]:
 
 
 def record(artifact: Path, commit: str, dirty: bool) -> dict:
-    """Check ``artifact`` and write its ``.sha256`` and provenance files."""
+    """Check ``artifact`` and write its ``.sha256`` and provenance files.
+
+    A previous run's files are removed first, so a failed check never
+    leaves an earlier build's hash beside a newer artifact.
+    """
+    sha_path = artifact.with_name(artifact.name + ".sha256")
+    prov_path = artifact.with_name(artifact.name + ".provenance.json")
+    sha_path.unlink(missing_ok=True)
+    prov_path.unlink(missing_ok=True)
     data = artifact.read_bytes()
     e_flags = read_e_flags(data[:64])
     if e_flags != SBPF_V3:
@@ -85,9 +95,7 @@ def record(artifact: Path, commit: str, dirty: bool) -> dict:
         "commit": commit,
         "dirty": dirty,
     }
-    sha_path = artifact.with_name(artifact.name + ".sha256")
     sha_path.write_text(f"{digest}  {artifact.name}\n")
-    prov_path = artifact.with_name(artifact.name + ".provenance.json")
     prov_path.write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest
 
@@ -96,7 +104,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("artifact", type=Path)
     args = parser.parse_args(argv)
-    commit, dirty = git_state(args.artifact.resolve().parent)
+    # The checkout this script lives in is the source tree being built,
+    # wherever the artifact (or a shared target dir) sits.
+    commit, dirty = git_state(Path(__file__).resolve().parent)
     try:
         manifest = record(args.artifact, commit, dirty)
     except (OSError, ArtifactError) as e:

@@ -58,8 +58,10 @@ recipe that produced them, so nobody has to re-measure them.
   format, so `shasum -a 256 -c` run from `target/deploy/` re-checks it.
 - **writes `dropset_mainnet.so.provenance.json`**, holding the hash,
   `e_flags`, byte size and the commit the build ran at. Its `dirty` flag is
-  set (with a warning) when tracked files had uncommitted changes, since
-  such a hash does not reproduce from the commit alone.
+  set (with a warning) when the checkout had uncommitted changes or
+  untracked, non-ignored files, since such a hash does not reproduce from
+  the commit alone. A failed check deletes the previous run's two files, so
+  a stale hash never sits beside a newer artifact.
 
 The target records the hash of what it built and never carries an expected
 one, so a program upgrade changes nothing in it. The deploy ceremony copies

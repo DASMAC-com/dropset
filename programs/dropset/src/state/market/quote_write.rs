@@ -40,20 +40,27 @@ pub mod err {
     /// The assembly's structural (account-layout) codes. The kernels never
     /// return these — the guards run in `entrypoint.s` before a kernel is
     /// reached — and the reference build rejects the same inputs with
-    /// anchor's constraint errors instead, so they are pinned to their
-    /// variants here only to keep the fast path out of anchor's reserved
-    /// 100-5999 range.
+    /// anchor's constraint errors instead, so they exist only to keep the
+    /// fast path out of anchor's reserved 100-5999 range. Each is DERIVED
+    /// from its variant, so the const asserts below tie the `.s` literal to
+    /// the enum itself: a variant inserted or appended ahead of these (which
+    /// shifts their index) fails the build, not just a test.
     pub mod structural {
-        /// Fewer than `[signer, market]`
-        /// (`DropsetError::QuoteWriteTooFewAccounts`).
-        pub const TOO_FEW_ACCOUNTS: u32 = 6058;
-        /// Account 0 is not a signer (`DropsetError::QuoteWriteSignerMissing`).
-        pub const SIGNER_MISSING: u32 = 6059;
-        /// Account 0 carries data (`DropsetError::QuoteWriteSignerHasData`).
-        pub const SIGNER_HAS_DATA: u32 = 6060;
-        /// Account 1 is not writable
-        /// (`DropsetError::QuoteWriteMarketNotWritable`).
-        pub const MARKET_NOT_WRITABLE: u32 = 6061;
+        use crate::errors::DropsetError;
+
+        /// anchor-lang's `#[error_code]` offset: a fieldless variant
+        /// surfaces as `Custom(index + 6000)`.
+        const OFFSET: u32 = 6000;
+
+        /// Fewer than `[signer, market]`.
+        pub const TOO_FEW_ACCOUNTS: u32 = DropsetError::QuoteWriteTooFewAccounts as u32 + OFFSET;
+        /// Account 0 is not a signer.
+        pub const SIGNER_MISSING: u32 = DropsetError::QuoteWriteSignerMissing as u32 + OFFSET;
+        /// Account 0 carries data.
+        pub const SIGNER_HAS_DATA: u32 = DropsetError::QuoteWriteSignerHasData as u32 + OFFSET;
+        /// Account 1 is not writable.
+        pub const MARKET_NOT_WRITABLE: u32 =
+            DropsetError::QuoteWriteMarketNotWritable as u32 + OFFSET;
     }
 }
 
@@ -322,31 +329,18 @@ mod tests {
     }
 
     #[test]
-    fn structural_codes_are_dropset_variants() {
-        // Each structural code is its variant's custom value, which also
-        // proves it clears anchor's reserved 100-5999 range.
-        const OFFSET: u32 = 6000;
-        let pins = [
-            (
-                err::structural::TOO_FEW_ACCOUNTS,
-                DropsetError::QuoteWriteTooFewAccounts,
-            ),
-            (
-                err::structural::SIGNER_MISSING,
-                DropsetError::QuoteWriteSignerMissing,
-            ),
-            (
-                err::structural::SIGNER_HAS_DATA,
-                DropsetError::QuoteWriteSignerHasData,
-            ),
-            (
-                err::structural::MARKET_NOT_WRITABLE,
-                DropsetError::QuoteWriteMarketNotWritable,
-            ),
-        ];
-        for (code, variant) in pins {
-            assert!(code >= OFFSET, "{code} is in anchor's reserved range");
-            assert_eq!(code, variant as u32 + OFFSET);
+    fn structural_codes_clear_anchor_reserved_range() {
+        // The structural codes are derived from their variants (so the
+        // const asserts pin `.s` to the enum); this pins the namespace rule
+        // `entrypoint.s` states — nothing below 6000, where anchor's own
+        // errors live.
+        for code in [
+            err::structural::TOO_FEW_ACCOUNTS,
+            err::structural::SIGNER_MISSING,
+            err::structural::SIGNER_HAS_DATA,
+            err::structural::MARKET_NOT_WRITABLE,
+        ] {
+            assert!(code >= 6000, "{code} is in anchor's reserved range");
         }
     }
 
