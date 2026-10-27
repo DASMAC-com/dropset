@@ -67,7 +67,8 @@ does not accumulate similar trim tasks. The rest file as **small
 themed** propose-only `Claude:` batches — roughly 4–5 parts each, one
 `**Fingerprint**:` per part, composed by `trim_levers.py compose` —
 **straight into Backlog with no milestone**: the analyst is the
-planning session's own sub-agent and its output is already folded, so
+planning session's own sub-agent (or a by-hand run of the same fold)
+and its output is already folded, so
 the park-then-promote hop executor filings take does not apply. The
 planning session names the new batches in its review ask. A candidate
 rejected on judgment is filed `Canceled` with its reason, which
@@ -677,8 +678,10 @@ derivable — and the parking names are the closed set.
 when its legacy contents drain. `Claude meta` merged into `Follow-ups`
 (operator, 2026-10-23): a meta stray is a follow-up to the agent
 material, and the `Claude:` prefix already says which kind it is.
-`Trim levers` retired with the per-session lever filing; planning
-closes it once its last open lever is disposed of.
+`Trim levers` retired with the per-session lever filing and is in
+neither kind: upkeep no longer counts it, so its residue of open
+levers is disposed of by hand in a planning session (folded into one
+inbox batch or closed with reasons), which then closes the milestone.
 
 One place the two kinds *do* behave alike, which is easy to
 misattribute: `board_batch.py list` drops **every** milestoned issue by

@@ -496,8 +496,8 @@ def run(argv: list[str]) -> int:
         metavar="N",
         help="with --headings, keep only headings N hashes deep or shallower. "
         "`--headings --max-depth 2` over a dump with one `## <id> | <title>` "
-        "section per item, whose own headings sit below it, returns exactly "
-        "the identifier lines",
+        "section per item, whose own headings sit below it, returns just the "
+        "identifier lines (plus any shallower title)",
     )
     mode.add_argument(
         "--slice", default=None, metavar="A:B", help="inclusive line range"

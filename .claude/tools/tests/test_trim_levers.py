@@ -238,6 +238,34 @@ class SplitPartsTests(unittest.TestCase):
         with self.assertRaises(TrimLeversError):
             tl.split_parts("just prose\n")
 
+    def test_a_fenced_section_heading_stays_inside_its_part(self):
+        text = "## a:one | One\n\n```md\n## b:two | quoted\n```\n\nProse.\n"
+        parts = tl.split_parts(text)
+        self.assertEqual([k for k, _, _ in parts], ["a:one"])
+        self.assertIn("## b:two | quoted", parts[0][2])
+
+    def test_a_malformed_section_heading_is_refused(self):
+        with self.assertRaises(TrimLeversError) as caught:
+            tl.split_parts("## a:one | One\n\nx\n\n## a:two - bad heading\n\ny\n")
+        self.assertIn("a:two - bad heading", str(caught.exception))
+
+    def test_text_before_the_first_section_is_refused(self):
+        with self.assertRaises(TrimLeversError):
+            tl.split_parts("stray\n\n## a:one | One\n\nx\n")
+
+    def test_an_empty_part_body_is_refused(self):
+        with self.assertRaises(TrimLeversError):
+            tl.split_parts("## a:one | One\n\n## a:two | Two\n\ny\n")
+
+    def test_a_duplicated_identical_field_line_is_refused(self):
+        text = "## a:one | One\n\n**Fingerprint**: a:one\n\n**Fingerprint**: a:one\n"
+        with self.assertRaises(TrimLeversError):
+            tl.split_parts(text)
+
+    def test_a_fenced_same_key_still_gets_the_real_field(self):
+        body, _ = tl.compose_one("## a:one | One\n\n~~~\n**Fingerprint**: a:one\n~~~\n")
+        self.assertEqual(tl.field_values(body, "Fingerprint"), ["a:one"])
+
 
 class ComposeOneTests(unittest.TestCase):
     def test_every_part_carries_its_fingerprint_exactly_once(self):

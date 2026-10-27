@@ -246,7 +246,7 @@ def probe(api_key: str, project_id: str, fingerprint: str) -> list[dict]:
 # Compose
 # --------------------------------------------------------------------------
 
-_PART_SECTION_RE = re.compile(r"^## (\S+) \| (.*)$", re.MULTILINE)
+_PART_SECTION_RE = re.compile(r"^## (\S+) \| (.*)$")
 
 
 def demote_headings(body: str) -> str:
@@ -278,23 +278,53 @@ def split_parts(text: str) -> list[tuple[str, str, str]]:
     batch without one, and the body's own ``**Fingerprint**:`` line (if the
     analyst wrote one) must agree with it.
     """
-    matches = list(_PART_SECTION_RE.finditer(text))
-    if not matches:
+    # Scanned line by line with the same fence toggle as `field_values`, so a
+    # fenced `## …` example inside a part is quoted material, not a new part.
+    # Any other out-of-fence `## ` line is a malformed section heading: merged
+    # silently into the part above, it would carry that part's content away.
+    sections: list[tuple[re.Match, list[str]]] = []
+    preamble: list[str] = []
+    malformed: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+        elif not in_fence and line.startswith("## "):
+            match = _PART_SECTION_RE.match(line)
+            if match:
+                sections.append((match, []))
+                continue
+            malformed.append(line.strip())
+        (sections[-1][1] if sections else preamble).append(line)
+    if malformed:
+        raise TrimLeversError(
+            "these '## ' lines are not '## <fingerprint> | <title>' section "
+            f"headings: {'; '.join(malformed)}"
+        )
+    if not sections:
         raise TrimLeversError(
             "no '## <fingerprint> | <title>' sections found in the parts file"
+        )
+    if any(line.strip() for line in preamble):
+        raise TrimLeversError(
+            "the parts file has text before its first section — it would be "
+            "dropped; move it into a part or delete it"
         )
     parts: list[tuple[str, str, str]] = []
     seen: set[str] = set()
     repeated: list[str] = []
     foreign: list[str] = []
-    for i, match in enumerate(matches):
+    empty: list[str] = []
+    for match, lines in sections:
         key = validate_fingerprint(match.group(1))
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        body = text[match.end() : end].strip("\n")
+        body = "\n".join(lines).strip("\n")
+        if not body.strip():
+            empty.append(key)
         # A part owns one key. A body carrying a different field would store
         # two, and a probe for either would then match this batch — the dedup
         # guard failing in the direction hardest to notice.
-        if any(v.strip() != key for v in field_values(body, "Fingerprint")):
+        values = [v.strip() for v in field_values(body, "Fingerprint")]
+        if any(v != key for v in values) or len(values) > 1:
             foreign.append(key)
         if key in seen:
             repeated.append(key)
@@ -308,15 +338,19 @@ def split_parts(text: str) -> list[tuple[str, str, str]]:
     if foreign:
         raise TrimLeversError(
             "these parts carry a **Fingerprint**: line that differs from their "
-            f"section key: {', '.join(foreign)}"
+            f"section key, or more than one: {', '.join(foreign)}"
         )
+    if empty:
+        raise TrimLeversError(f"these parts have an empty body: {', '.join(empty)}")
     return parts
 
 
 def render_part(number: int, key: str, title: str, body: str) -> str:
     """One ``# Part N`` section, carrying its ``**Fingerprint**:`` exactly once."""
     text = demote_headings(body).rstrip()
-    if not field_line_re("Fingerprint", key).search(text):
+    # Fence-aware, like `split_parts`: a fenced example carrying the same key
+    # is quoted material, so the real field is still appended.
+    if not field_values(text, "Fingerprint"):
         # Joined with a blank line: a field abutting prose is how Linear's round
         # trip has re-parsed a paragraph as a setext heading before.
         text = (

@@ -161,8 +161,10 @@ whole title, prefix included. No relations, ever.
 
 **7. Record a rejection that should stick.** A candidate that clears
 the bar on its face but is rejected on judgment — a standing decision,
-a quality cost — is filed **Canceled** with its fingerprint and the
-reason, so the next probe drops it instead of re-litigating:
+a quality cost — is filed **Canceled**, its body the reason followed by
+a `**Fingerprint**: <domain>:<slug>` line on its own (outside any
+fence, which is what `probe` matches), so the next probe drops it
+instead of re-litigating:
 
 ```sh
 python3 .claude/tools/linear_issue.py create --title 'Claude: <lever>' \

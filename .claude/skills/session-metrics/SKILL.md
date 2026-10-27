@@ -357,8 +357,8 @@ all three fields, because the block is the only record of the
 lever: the **target** the edit lands in, the **measured**
 figure (tokens, dollars or turns, with the session's own
 numbers), and the **lever** as an imperative. Summarize a sink
-by tool and target, never a raw command or URL. This interim
-step is part 4's to retire when the shared close-out lands.
+by tool and target, never a raw command or URL. This step is
+interim: the later shared session close-out task retires it.
 
 **5. Report** in one line — the session, the top sink, and how
 many levers the account names.
