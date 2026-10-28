@@ -179,7 +179,13 @@ shape (dry runs included), never polling a backgrounded log,
 `make tools-tests` whole, `wait_for_checks.py` for CI, and never
 re-reading what you authored. A refused search leaves its question
 unanswered, never zero hits (`docs/conventions/shell-commands.md`).
-Five reminders neither states:
+Six reminders neither states:
+
+- **Test one tools module with the wrapper**:
+  `make tools-test T=test_<tool>` (`K=<name>` narrows). It resolves the
+  tree and the `-s` / `-t` pair, which a hand-typed
+  `python3 -m unittest <path>` gets wrong. `make tools-tests` whole
+  stays the checkpoint run.
 
 - **Lint the changed set** with one bare command; full `make lint`
   only before committing and at the end:

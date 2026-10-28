@@ -399,7 +399,10 @@ def deny_rules(settings: dict) -> set[str]:
 
 
 def committed_hooks(repo: Path) -> list[str]:
-    """Base names of every ``.py`` under ``.claude/hooks/``.
+    """Base names of every guard ``.py`` under ``.claude/hooks/``.
+
+    A leading underscore marks a shared module the guards import (the shell
+    tokenizer), not a guard, so it is never reported ``UNWIRED``.
 
     Tracked-ness is deliberately not checked: the directory holds committed
     guards, so listing it is the same answer without shelling out to git. The
@@ -411,7 +414,9 @@ def committed_hooks(repo: Path) -> list[str]:
     if not hooks_dir.is_dir():
         return []
     return sorted(
-        p.name for p in hooks_dir.iterdir() if p.is_file() and p.suffix == ".py"
+        p.name
+        for p in hooks_dir.iterdir()
+        if p.is_file() and p.suffix == ".py" and not p.name.startswith("_")
     )
 
 

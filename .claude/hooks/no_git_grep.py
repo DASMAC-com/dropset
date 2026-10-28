@@ -12,12 +12,18 @@ session ran `git -C <path> grep` eight times), so this hook enforces the
 rule mechanically, mirroring `.claude/hooks/no_compound_bash.py`.
 
 It reads the PreToolUse payload as JSON on stdin, tokenizes the `command`
-string (quote-aware, via `shlex`), and blocks (exit 2, reason on stderr)
-when the git subcommand is `grep` — including `git -C <path> grep`,
+string with the guards' shared quote-aware tokenizer (`_shell_tokens.py`
+beside this file), and blocks (exit 2, reason on stderr) when a command's
+git subcommand is `grep` — including `git -C <path> grep`,
 `git --no-pager grep`, `git -c core.pager=cat grep`, and `--flag=value`
-global-option variants, and when `git grep` follows a shell control
-operator (`&&`, `|`, `;`). The guard fails *open*: any parse problem
-returns 0 rather than wedging the session.
+global-option variants; after any control operator, glued or spaced, or a
+newline; behind a wrapper or an assignment (`env`, `sudo`, `X=1`); and
+inside a live command substitution, a `-c` payload or `eval`. A `git grep`
+that is only quoted text (a commit message, a single-quoted `$(…)`) or
+sits in a comment passes. A line whose quotes do not balance is scanned
+word by word rather than skipped, as the shared tokenizer does for every
+guard. The guard fails *open* on an unparseable payload, an internal
+error, or a shared module that does not import.
 
 There is deliberately **no escape hatch** (unlike the compound guard's
 `#compound-ok`): the Grep tool — or a bare `grep` — covers every
@@ -26,8 +32,17 @@ through.
 """
 
 import json
-import shlex
+import os
 import sys
+
+try:
+    import _shell_tokens as sh
+except ImportError:  # fail open: a missing parse must never wedge the session
+    sh = None
+
+# Nesting bound for substitutions and `-c` payloads, as in the private-key
+# guard.
+MAX_DEPTH = 6
 
 # git *global* options (before the subcommand) that consume the FOLLOWING
 # token as their value, so the subcommand sits one token further along. The
@@ -40,13 +55,6 @@ VALUE_FLAGS = {
     "--namespace",
     "--super-prefix",
 }
-
-# Shell control operators that begin a new command word; a `git` token right
-# after one is a command (like `git` at position 0), not an argument to some
-# earlier command (`echo git grep`). Newline separation is handled by scanning
-# per line in is_git_grep, not here — shlex swallows `\n` so it never surfaces
-# as a token.
-CONTROL = {"|", "||", "&&", ";", "&", "|&"}
 
 
 def _subcommand_is_grep(rest):
@@ -73,30 +81,29 @@ def _subcommand_is_grep(rest):
     return False
 
 
-def is_git_grep(cmd):
+def is_git_grep(cmd, depth=0):
     """Return True iff `cmd` invokes `git grep` as a command.
 
-    Scans **per logical line**: a newline separates commands, but `shlex`
-    swallows it, so a `git grep` on a later line (`ls\\ngit grep foo`) would
-    otherwise escape the control-operator anchoring. `comments=True` drops an
-    unquoted trailing `#…` comment (matching the compound guard), so a
-    `git grep` sitting inside a comment isn't flagged. Quote-aware via
-    `shlex`; a line whose quotes don't balance raises `ValueError` and is
-    skipped (fail open), so a malformed command is never blocked *by this
-    guard* — the compound guard, or manual approval, handles those.
+    Each command the shared tokenizer finds is unwrapped to the argv that
+    runs; one whose program is `git` with a `grep` subcommand blocks. The
+    substitutions the shell would run, and the nested strings a wrapper
+    hands a shell, are scanned the same way, to a bounded depth.
     """
-    for line in cmd.split("\n"):
-        try:
-            tokens = shlex.split(line, comments=True)
-        except ValueError:
-            continue
-        for idx, tok in enumerate(tokens):
-            if tok != "git":
-                continue
-            if idx == 0 or tokens[idx - 1] in CONTROL:
-                if _subcommand_is_grep(tokens[idx + 1 :]):
-                    return True
-    return False
+    if sh is None or depth > MAX_DEPTH:
+        return False
+    rewritten, nested, _ = sh.raw_pass(cmd.replace("\\\n", ""))
+    nested = list(nested)
+    for seg, _ in sh.segments(sh.tokenize(rewritten)):
+        argv, inner, _, _ = sh.unwrap(seg)
+        nested.extend(inner)
+        if argv and os.path.basename(argv[0]) == "git":
+            if _subcommand_is_grep(argv[1:]):
+                return True
+    return any(
+        is_git_grep(payload, depth + 1)
+        for payload in nested
+        if payload and payload != cmd
+    )
 
 
 DENY_MESSAGE = (
@@ -144,9 +151,26 @@ def _self_test():
         ("git grep -n 'x' | head", True),
         # Newline-separated command on a later line is still caught.
         ("ls\ngit grep foo", True),
+        # Shapes the shared tokenizer reaches: glued operators, wrappers,
+        # assignments, live substitutions, nested shells.
+        ("ls;git grep foo", True),
+        ("(git grep foo)", True),
+        ("env git grep foo", True),
+        ("sudo -u x /usr/bin/git grep foo", True),
+        ("GIT_PAGER=cat git grep foo", True),
+        ("echo $(git grep -l foo)", True),
+        ('echo "`git grep -l foo`"', True),
+        ("bash -c 'git grep foo'", True),
+        ("xargs git grep foo", True),
+        # An unbalanced line is scanned word by word, never skipped.
+        ("git grep 'unterminated", True),
         # Not git grep.
         # A git grep inside a trailing comment is inert, not a real command.
         ("git log # note ; git grep foo", False),
+        # Quoted text is not a command: a commit message, a literal `$(…)`.
+        ("git commit -m 'never run git grep; use Grep'", False),
+        ("echo '$(git grep foo)'", False),
+        ("command -v git grep", False),
         ("grep -rn foo .", False),
         ("git log --grep=foo", False),
         ("git log -n 5", False),
@@ -156,8 +180,6 @@ def _self_test():
         ("cargo test grep", False),
         # `git` is an argument here, not a command word.
         ("echo git grep", False),
-        # Fails open on an unbalanced quote.
-        ("git grep 'unterminated", False),
     ]
     failures = []
     for cmd, should_block in cases:

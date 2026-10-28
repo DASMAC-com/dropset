@@ -161,6 +161,14 @@ class ScanTests(RepoFixture):
         result = hw.scan(self.repo, self.no_user)
         self.assertNotIn("README.md", result["unwired"])
 
+    def test_an_underscored_shared_module_is_not_a_guard(self):
+        (self.repo / ".claude" / "hooks" / "_shell_tokens.py").write_text(
+            "", encoding="utf-8"
+        )
+        result = hw.scan(self.repo, self.no_user)
+        self.assertNotIn("_shell_tokens.py", result["unwired"])
+        self.assertNotIn("_shell_tokens.py", hw.committed_hooks(self.repo))
+
     def test_a_repo_with_no_hooks_dir_reports_nothing(self):
         with tempfile.TemporaryDirectory() as d:
             result = hw.scan(Path(d), self.no_user)
