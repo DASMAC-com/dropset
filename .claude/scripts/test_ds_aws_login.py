@@ -25,6 +25,10 @@ from pathlib import Path
 
 INIT = Path(__file__).resolve().parents[1] / "shell" / "init.zsh"
 
+# No case may reach a real iTerm tab, whatever it forgets to stub: inherited by
+# every zsh this spawns (`iterm_api.DISABLED_ENV`).
+os.environ["DS_ITERM_DISABLED"] = "1"
+
 # Resolved once, ABSOLUTELY, because the absent-CLI cases empty `PATH` to hide
 # `aws` — and a bare "zsh" in the argv would then not be found either, failing
 # those cases for a reason that has nothing to do with the helper.

@@ -36,6 +36,10 @@ from pathlib import Path
 
 INIT = Path(__file__).resolve().parents[1] / "shell" / "init.zsh"
 
+# No case may reach a real iTerm tab, whatever it forgets to stub: inherited by
+# every zsh this spawns (`iterm_api.DISABLED_ENV`).
+os.environ["DS_ITERM_DISABLED"] = "1"
+
 # The helpers are zsh and deliberately so (`<->` all-digit tests, `>|` clobber),
 # and the Linux CI runner ships no zsh: without this guard every case fails with
 # FileNotFoundError, which says nothing about the code under test.

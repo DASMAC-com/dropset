@@ -64,6 +64,12 @@ ITERM_SOCKET = (
     Path.home() / "Library" / "Application Support" / "iTerm2" / "private" / "socket"
 )
 
+#: Set to `1` and every driver call refuses before touching iTerm. The test
+#: suites set it, because a harness that runs a real launch verb reaches the
+#: real dispatcher: one did, and the tabs it opened typed `plan anthropic`,
+#: which resumed the live scheduler session into a second client.
+DISABLED_ENV = "DS_ITERM_DISABLED"
+
 #: Base wait on the driver: connection setup plus one round trip. Bounded,
 #: because a hung driver would otherwise hang a session launcher and the whole
 #: family's contract is "fatal never".
@@ -195,6 +201,8 @@ def bundled_interpreter(root: Path | None = None) -> Path | None:
 
 def preflight() -> str | None:
     """A one-line reason iTerm automation cannot work, or None. Cheap checks."""
+    if os.environ.get(DISABLED_ENV) == "1":
+        return f"iTerm automation is disabled ({DISABLED_ENV}=1, a test run)"
     if sys.platform != "darwin":
         return "iTerm2 is macOS-only, and this is not macOS"
     if not ITERM_SOCKET.exists():

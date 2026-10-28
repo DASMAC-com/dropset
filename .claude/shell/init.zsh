@@ -2359,6 +2359,27 @@ _ds_plan_prelaunch() {
   fi
 }
 
+# Internal: refuse to resume daily seat $2 (display name; $1 the verb, for the
+# message) while a live client already holds it. Resuming by id never checks,
+# so a second `plan` forks the running session into a second client — measured
+# 2026-10-28, when a test harness's dispatched `plan anthropic` did exactly that
+# to the live scheduler, twice. Refuses only on a positive answer from
+# `plan_cycle.py live-name` (0 held, 1 free); an unanswered check warns and
+# proceeds, so a broken probe never locks the operator out of their own seat.
+_ds_live_guard() {
+  local rc
+  python3 "$_DS_REPO/.claude/tools/plan_cycle.py" live-name "$2" 2>/dev/null
+  rc=$?
+  if (( rc == 0 )); then
+    print -u2 "$1: $2 already has a live client — switch to its tab; a second" \
+      'resume would fork the session.'
+    return 1
+  fi
+  (( rc == 1 )) ||
+    print -u2 "$1: could not check for a live $2 client (exit $rc) — resuming."
+  return 0
+}
+
 # Internal: start OR resume today's session of a daily SEAT verb — the body
 # `plan` and `curate` share. $1 the kind (the id seed, the counter and marker
 # names, the `/<kind>` prompt and the iTerm role), $2 the display-name prefix,
@@ -2376,6 +2397,7 @@ _ds_daily_seat() {
   counter="$_DS_SUBSTRATE_DIR/$kind-cycle-$day"
   sid="$(_ds_daily_sid "$kind" "$(_ds_plan_cycle "$counter")" "$day")"
   if _ds_session_exists "$sid"; then
+    _ds_live_guard "$kind" "$name" || return 1
     local recorded="$(_ds_substrate_read "sessions/$sid")"
     if [[ ! -f "$_DS_SUBSTRATE_DIR/sessions/$sid" ]]; then
       print -u2 "$kind: $name has no substrate record — reopening on anthropic," \
@@ -2486,6 +2508,7 @@ launch() {
   day="$(date +%Y%m%d)" name="launch-$(date +%-d)"
   sid="$(_ds_daily_sid launch 0 "$day")"
   if _ds_session_exists "$sid"; then
+    _ds_live_guard launch "$name" || return 1
     local recorded="$(_ds_substrate_read "sessions/$sid")"
     if [[ -n "$word" && "$word" != "$recorded" ]]; then
       print -u2 "launch: $name is recorded on $recorded — keeping it; a session" \

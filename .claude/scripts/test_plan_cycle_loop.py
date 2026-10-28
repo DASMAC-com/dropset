@@ -27,6 +27,10 @@ sys.path.insert(0, str(REPO / ".claude" / "tools"))
 
 import resolve_session as rs  # noqa: E402
 
+# No case may reach a real iTerm tab, whatever it forgets to stub: inherited by
+# every zsh this spawns (`iterm_api.DISABLED_ENV`).
+os.environ["DS_ITERM_DISABLED"] = "1"
+
 ZSH = shutil.which("zsh")
 _NEEDS_ZSH = "the session helpers are zsh; no zsh on this machine"
 
@@ -185,6 +189,29 @@ class CycleLoop(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("not cycling", result.stderr)
         self.assertEqual(len(self._launches()), 1)
+
+    def test_a_reopen_refuses_while_the_session_has_a_live_client(self):
+        # Measured: a second `plan` resumed the live scheduler by id and forked
+        # it into a second client. The seat and the launcher both refuse.
+        for verb, kind, name in (
+            ("plan", "plan", self.name),
+            ("launch", "launch", f"launch-{datetime.now().day}"),
+        ):
+            with self.subTest(verb=verb):
+                seed = f"dropset-{kind}-{self.day}".encode()
+                raw = hashlib.md5(seed).hexdigest()  # noqa: S324 - an id
+                sid = f"{raw[:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:]}"
+                project = self.home / "projects" / "x"
+                project.mkdir(parents=True, exist_ok=True)
+                (project / f"{sid}.jsonl").write_text("")
+                (self.home / "sessions" / "1.json").write_text(
+                    json.dumps({"pid": os.getpid(), "name": name, "sessionId": sid})
+                )
+                self.calls.write_text("")
+                result = self._plan(cycles=0, verb=verb)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("already has a live client", result.stderr)
+                self.assertEqual(self._launches(), [])
 
     def test_curate_cycles_on_its_own_counter_without_upkeep(self):
         result = self._plan(cycles=1, verb="curate")
