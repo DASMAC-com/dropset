@@ -61,6 +61,7 @@ cofounder
 coingecko
 coinmarketcap
 cooldown
+coproc
 coprocess
 coreutils
 cpis
@@ -216,6 +217,7 @@ permwait
 pgid
 pgrep
 pids
+pipefail
 pkill
 poppler
 ppid
@@ -231,6 +233,7 @@ psql
 pubkeys
 pullable
 pytest
+pyyaml
 qrcode
 rasterizing
 ratatui

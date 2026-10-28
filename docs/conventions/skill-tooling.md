@@ -48,6 +48,23 @@ coupling skill tooling to the program's toolchain.
   (`-t .claude/tools`) to keep those imports resolving — an empty
   `tests/__init__.py` marks the package.
 
+  For one module after an edit, run
+  `make tools-test T=test_<tool>` (optionally `K=<name filter>`, passed
+  to `unittest -k`). It finds the module in any of the tools-tests trees
+  and supplies the `-s` / `-t` pair. A hand-typed
+  `python3 -m unittest <path>` gets that wrong ("Empty module name", "No
+  module named tests"). Keep `make tools-tests` whole for checkpoints.
+
+  **PyYAML is the one suite-only dependency.** `test_dashboard_sql`
+  cross-checks the stdlib YAML reader against a real parser, and it
+  fails, deliberately, rather than skip without one. Both targets
+  run under `TOOLS_PY`: where **`uv`** is installed, that is the same
+  `python3` with PyYAML added through `uv run --with pyyaml` (cached
+  after the first run), so an externally managed Homebrew Python stays
+  green with nothing installed into it. Install `uv` locally
+  (`brew install uv`). CI has no `uv` and its `python3` ships PyYAML, so
+  CI exercises the plain `python3` fallback.
+
 - A skill drives its tool through a stable interface — usually a
   `make` target (e.g. `make session-metrics`) so the skill's
   allow-rule (`Bash(make session-metrics:*)`) is unchanged if the tool

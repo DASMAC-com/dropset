@@ -263,6 +263,36 @@ state is the check itself:
 make hook-wiring
 ```
 
+## The guards' shared shell tokenizer
+
+A guard's shell parse is **best-effort**: a model of the bash an agent
+actually types, not bash itself, and every guard here treats it as the
+loud first layer, never the last. The quote-aware parse lives once, in
+`.claude/hooks/_shell_tokens.py` — a raw pass (comments, `$'…'`, live
+versus literal substitutions), one lex with newline as a separator, glued
+operators split, commands segmented and unwrapped past wrappers to the
+argv that runs — pinned directly by
+`.claude/tools/tests/test_shell_tokens.py`, and end to end by the
+private-key guard's case table and the git-grep guard's self-test. A
+heredoc body is scanned as shell even under a quoted delimiter: a false
+block, never a missed command.
+It came out of the private-key guard after four adversarial rounds each
+found a real quoting misread, so **a new guard imports it** rather than
+re-deriving bash quoting under review. The leading underscore keeps it
+off the [wired-guard report](#which-guards-are-actually-wired); a guard
+importing it keeps its fail-open contract at that boundary, a failed
+import (missing, or raising at import) disabling only its parse-driven
+checks.
+
+The private-key and git-grep guards use it. Three guards keep their own
+parse, since none is a drop-in and each would move a pinned verdict:
+the compound-shell guard (a character scanner whose findings are the
+operators themselves), the destructive-command guard (a regex
+classifier over inert-span masking), and the AI-attribution guard
+(it reads message *values* per logical line, and skips a line that
+does not lex where the shared parse scans it word by word). Move one
+onto it when it is next reworked.
+
 ## The git-grep guard hook
 
 The [shell-commands](shell-commands.md) rule "never `git grep`" is also
@@ -271,9 +301,14 @@ enforced **mechanically**. A `PreToolUse` Bash hook
 **blocks** any that runs `git grep` — including `git -C <path> grep`,
 `git --no-pager grep`, `git -c core.pager=cat grep`, `--flag=value`
 global-option variants, and a `git grep` that follows a shell control
-operator (`&&` / `|` / `;`). It nudges the model to the **Grep tool**
-(or a bare `grep` where Grep is absent). The scan is **quote-aware**
-and the guard fails *open* — any payload it can't parse is allowed — so
+operator (glued or spaced), a newline, a wrapper (`env`, `sudo`,
+`xargs`), or inside a live substitution or `-c` payload. It nudges the
+model to the **Grep tool** (or a bare `grep` where Grep is absent). The
+scan is the [shared tokenizer](#the-guards-shared-shell-tokenizer), so
+quoted text (a commit message) and a single-quoted `$(…)` pass. A
+`git grep` whose quoting never closes still blocks, and so does one in a
+heredoc body. The guard fails *open* only on an unreadable hook payload
+(bad JSON), a tokenizer that does not import, or an internal error, so
 it never wedges a session.
 
 Why a guard beats allow-listing `git grep`: a plain `git grep foo`
@@ -684,7 +719,8 @@ brief:
    `agent.toml` names which keys the agent offers; none holds key
    material.
 
-The hook tokenizes the whole command once, quote-aware, so a quoted
+The hook tokenizes the whole command once with the
+[shared tokenizer](#the-guards-shared-shell-tokenizer), so a quoted
 string spanning lines — a commit message describing this guard — stays
 one word rather than reading as commands, and glued operators
 (`ls;(op …)`) split into their parts. A backtick or `$(` inside single
@@ -698,7 +734,7 @@ variable indirection (`P=op; $P read`), a symlinked spelling of a
 reference file, a recursive delete of a parent directory, an MCP tool
 that shells out, and a session or sub-agent without the wiring. The
 hook's shell parse is also a best-effort model of bash, not bash itself:
-three adversarial review rounds each found a quoting shape it misread,
+four adversarial review rounds each found a quoting shape it misread,
 so treat it as the loud first layer, never the last one. There
 the layer that holds is the **1Password SSH agent's own per-key
 prompt**: a signing request from any process names the key and the

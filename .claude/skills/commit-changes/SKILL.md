@@ -57,6 +57,14 @@ changes here belong to this session.
      missed sibling tests the edit had just broken.
      This is what `review-pr` and `init-pr` also say.
 
+     The one inner-loop form between checkpoints is the
+     committed wrapper `make tools-test T=test_X`
+     (`K=<name>` narrows further), which `init-pr` names
+     too. It resolves the right tree and `-s` / `-t`,
+     where a hand-typed `python3 -m unittest <path>`
+     fails outright. It never stands in for the whole
+     run at a checkpoint.
+
    - **Frequency:** run it at a **checkpoint**, not
      after every single-file edit. Measured: one session
      ran `make tools-tests` **53 times** (≈12.0k of

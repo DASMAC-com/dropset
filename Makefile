@@ -1382,8 +1382,18 @@ session-metrics:
 ci-metrics:
 	python3 .claude/tools/ci_metrics.py $(ARGS)
 
-# Run every Python skill-tool's unit tests (stdlib `unittest`, no third-party
-# dep). Covers the `.claude/tools/` skill helpers (tests live under
+# The interpreter the tools suites run under. The tools are stdlib-only, but
+# `test_dashboard_sql` cross-checks its stdlib YAML reader against PyYAML
+# and fails, by design, without it. Where `uv` is installed it supplies PyYAML
+# to the same `python3` in a cached ephemeral environment, so a Homebrew
+# Python (externally managed, no PyYAML) stays green; CI has no `uv`, and its
+# `python3` ships PyYAML, so CI takes the plain fallback.
+TOOLS_PY_UV := uv run --quiet --no-project --with pyyaml \
+	--python $(shell command -v python3) python
+TOOLS_PY := $(if $(shell command -v uv),$(TOOLS_PY_UV),python3)
+
+# Run every Python skill-tool's unit tests (stdlib `unittest`; PyYAML for one
+# cross-check, above). Covers the `.claude/tools/` skill helpers (tests under
 # `.claude/tools/tests/`) plus the Python under `.claude/scripts/` (the iTerm
 # tab-ordering logic). The tools tests import their modules bare (`import
 # firm_core`), so discovery runs with the tests dir as start and the tool home
@@ -1397,11 +1407,34 @@ ci-metrics:
 # which left the most security-sensitive files here the least covered.
 .PHONY: tools-tests
 tools-tests:
-	python3 -m unittest discover \
+	$(TOOLS_PY) -m unittest discover \
 		-s .claude/tools/tests -t .claude/tools -p 'test_*.py'
-	python3 -m unittest discover -s .claude/scripts -p 'test_*.py'
-	python3 -m unittest discover -s keys -p 'test_*.py'
-	python3 -m unittest discover -s programs/dropset/release -p 'test_*.py'
+	$(TOOLS_PY) -m unittest discover -s .claude/scripts -p 'test_*.py'
+	$(TOOLS_PY) -m unittest discover -s keys -p 'test_*.py'
+	$(TOOLS_PY) -m unittest discover -s programs/dropset/release -p 'test_*.py'
+
+# Run ONE test module from any of the tools-tests trees — the inner-loop form
+# after an edit; `make tools-tests` stays the checkpoint run. `T` is the
+# module (`T=test_session_metrics`, `.py` optional); a directory prefix
+# (`T=keys/test_x`) pins the tree, else the first tree holding it wins.
+# `K` optionally narrows to matching test names (`unittest -k`). Resolves the
+# module's tree and its `-s` / `-t` pair, the part a hand-typed
+# `python3 -m unittest <path>` gets wrong ("Empty module name", "No module
+# named tests").
+TOOLS_TEST_DIRS := .claude/tools/tests .claude/scripts keys \
+	programs/dropset/release
+TOOLS_TEST_NAME = $(basename $(notdir $(T))).py
+TOOLS_TEST_PIN = $(patsubst %/,%,$(filter-out ./,$(dir $(patsubst ./%,%,$(T)))))
+TOOLS_TEST_FILE = $(firstword $(wildcard $(addsuffix /$(TOOLS_TEST_NAME), \
+	$(or $(TOOLS_TEST_PIN),$(TOOLS_TEST_DIRS)))))
+TOOLS_TEST_DIR = $(patsubst %/,%,$(dir $(TOOLS_TEST_FILE)))
+.PHONY: tools-test
+tools-test:
+	$(if $(T),,$(error usage: make tools-test T=test_<module> [K=<filter>]))
+	$(if $(TOOLS_TEST_FILE),,$(error no $(TOOLS_TEST_NAME) in a tools tree))
+	$(TOOLS_PY) -m unittest discover -s $(TOOLS_TEST_DIR) \
+		$(if $(filter .claude/tools/tests,$(TOOLS_TEST_DIR)),-t .claude/tools) \
+		-p $(TOOLS_TEST_NAME) $(if $(K),-k '$(K)')
 
 # The stable crates.io anchor-cli, at the exact ANCHOR_CLI_VERSION. How it
 # relates to the program crate's anchor-lang pin: interface.md § SDK, CI
