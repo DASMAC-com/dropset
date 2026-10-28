@@ -5,9 +5,17 @@ import {
   forward,
   JUPITER_SEARCH_UPSTREAM,
   type KeyedUpstream,
+  type ProxyRoute,
   proxyFlags,
   serverKey,
 } from "./apiProxy";
+
+// A route whose check accepts any query unchanged, so these tests exercise
+// forwarding alone; the real checks are tested in proxyQuery.test.ts.
+const passThrough = (upstream: KeyedUpstream): ProxyRoute => ({
+  upstream,
+  validate: async (params) => ({ ok: true, search: params.toString() }),
+});
 
 const KEY = "sk-test-0123456789";
 
@@ -67,9 +75,13 @@ const PROXIES: [string, KeyedUpstream][] = [
 describe.each(PROXIES)("%s proxy", (_, upstream) => {
   it("sends the key upstream to the keyed endpoint and never echoes it", async () => {
     const seen = stubUpstream(ok);
-    const res = await forward(upstream, request("inputMint=A&amount=7"), {
-      [upstream.keyVar]: KEY,
-    });
+    const res = await forward(
+      passThrough(upstream),
+      request("inputMint=A&amount=7"),
+      {
+        [upstream.keyVar]: KEY,
+      },
+    );
 
     expect(seen).toHaveLength(1);
     expect(seen[0]?.url).toBe(`${upstream.keyedUrl}?inputMint=A&amount=7`);
@@ -82,7 +94,7 @@ describe.each(PROXIES)("%s proxy", (_, upstream) => {
 
   it("forwards keyless to the public endpoint when the key is unset", async () => {
     const seen = stubUpstream(ok);
-    const res = await forward(upstream, request("query=M"), {});
+    const res = await forward(passThrough(upstream), request("query=M"), {});
 
     expect(seen[0]?.url).toBe(`${upstream.keylessUrl}?query=M`);
     expect(seen[0]?.headers).not.toHaveProperty("x-api-key");
@@ -92,7 +104,7 @@ describe.each(PROXIES)("%s proxy", (_, upstream) => {
   it("refuses an unresolved 1Password reference without calling upstream", async () => {
     const seen = stubUpstream(ok);
     const ref = "op://vault/item/credential";
-    const res = await forward(upstream, request("query=M"), {
+    const res = await forward(passThrough(upstream), request("query=M"), {
       [upstream.keyVar]: ref,
     });
 
@@ -111,15 +123,18 @@ describe("forward", () => {
         new Response('{"msg":"rate limited"}', {
           status: 429,
           headers: {
+            "content-type": "application/json; charset=utf-8",
             "x-ratelimit-limit": "60",
             "x-ratelimit-remaining": "0",
             "set-cookie": "upstream=1",
           },
         }),
     );
-    const res = await forward(DFLOW_QUOTE_UPSTREAM, request("amount=1"), {
-      DFLOW_API_KEY: KEY,
-    });
+    const res = await forward(
+      passThrough(DFLOW_QUOTE_UPSTREAM),
+      request("amount=1"),
+      { DFLOW_API_KEY: KEY },
+    );
 
     expect(res.status).toBe(429);
     expect(res.headers.get("x-ratelimit-remaining")).toBe("0");
@@ -127,13 +142,152 @@ describe("forward", () => {
     expect(await res.json()).toEqual({ msg: "rate limited" });
   });
 
+  it("adds nosniff to a JSON upstream response", async () => {
+    stubUpstream(ok);
+    const res = await forward(
+      passThrough(JUPITER_SEARCH_UPSTREAM),
+      request("query=M"),
+      {},
+    );
+
+    expect(res.headers.get("content-type")).toBe("application/json");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("passes a bodiless status through without a body", async () => {
+    stubUpstream(() => new Response(null, { status: 204 }));
+    const res = await forward(
+      passThrough(JUPITER_SEARCH_UPSTREAM),
+      request("query=M"),
+      {},
+    );
+
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+  });
+
+  it("checks the query before reading the key", async () => {
+    stubUpstream(ok);
+    const route: ProxyRoute = {
+      upstream: JUPITER_SEARCH_UPSTREAM,
+      validate: async () => ({ ok: false, msg: "bad query" }),
+    };
+    const res = await forward(route, request("query=M"), {
+      JUPITER_API_KEY: "op://vault/item/credential",
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("answers a non-JSON 2xx with a 502", async () => {
+    stubUpstream(
+      () =>
+        new Response("<html></html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        }),
+    );
+    const res = await forward(
+      passThrough(JUPITER_SEARCH_UPSTREAM),
+      request("query=M"),
+      {},
+    );
+
+    expect(res.status).toBe(502);
+    expect((await res.json()).msg).toContain("non-JSON");
+  });
+
+  it("replaces a non-JSON upstream error body under the same status", async () => {
+    const page = "<script>alert(1)</script>";
+    stubUpstream(
+      () =>
+        new Response(page, {
+          status: 429,
+          headers: { "content-type": "text/html" },
+        }),
+    );
+    const res = await forward(
+      passThrough(JUPITER_SEARCH_UPSTREAM),
+      request("query=M"),
+      {},
+    );
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get("content-type")).toBe("application/json");
+    const body = await res.text();
+    expect(body).not.toContain(page);
+    expect(JSON.parse(body).msg).toContain("non-JSON");
+  });
+
+  it("forwards the query the route's check rebuilt, not the caller's", async () => {
+    const seen = stubUpstream(ok);
+    const route: ProxyRoute = {
+      upstream: JUPITER_SEARCH_UPSTREAM,
+      validate: async () => ({ ok: true, search: "query=REBUILT" }),
+    };
+    await forward(route, request("query=M&extra=1"), {});
+
+    expect(seen[0]?.url).toBe(
+      `${JUPITER_SEARCH_UPSTREAM.keylessUrl}?query=REBUILT`,
+    );
+  });
+
+  it("answers a refused query with a 400 and never calls upstream", async () => {
+    const seen = stubUpstream(ok);
+    const route: ProxyRoute = {
+      upstream: JUPITER_SEARCH_UPSTREAM,
+      validate: async () => ({ ok: false, msg: "bad query" }),
+    };
+    const res = await forward(route, request("query=M"), {
+      JUPITER_API_KEY: KEY,
+    });
+
+    expect(seen).toHaveLength(0);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ msg: "bad query" });
+  });
+
+  it.each([
+    ["HEAD", {}, 405],
+    ["GET", { "sec-fetch-site": "cross-site" }, 403],
+    ["GET", { "sec-fetch-site": "same-site" }, 403],
+    // The route opened from the address bar: the app only fetches it.
+    ["GET", { "sec-fetch-site": "none" }, 403],
+  ])("refuses %s with %o without calling upstream", async (method, headers, status) => {
+    const seen = stubUpstream(ok);
+    const res = await forward(
+      passThrough(JUPITER_SEARCH_UPSTREAM),
+      new Request("https://app.test/api/route?query=M", { method, headers }),
+      { JUPITER_API_KEY: KEY },
+    );
+
+    expect(seen).toHaveLength(0);
+    expect(res.status).toBe(status);
+  });
+
+  it("forwards a same-origin browser request", async () => {
+    const seen = stubUpstream(ok);
+    const res = await forward(
+      passThrough(JUPITER_SEARCH_UPSTREAM),
+      new Request("https://app.test/api/route?query=M", {
+        headers: { "sec-fetch-site": "same-origin" },
+      }),
+      {},
+    );
+
+    expect(seen).toHaveLength(1);
+    expect(res.status).toBe(200);
+  });
+
   it("answers a network failure with a 502 naming the host only", async () => {
     vi.stubGlobal("fetch", async () => {
       throw new TypeError("fetch failed");
     });
-    const res = await forward(DFLOW_ORDER_UPSTREAM, request("amount=1"), {
-      DFLOW_API_KEY: KEY,
-    });
+    const res = await forward(
+      passThrough(DFLOW_ORDER_UPSTREAM),
+      request("amount=1"),
+      { DFLOW_API_KEY: KEY },
+    );
 
     expect(res.status).toBe(502);
     const body = await res.text();
