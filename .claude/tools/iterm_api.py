@@ -64,6 +64,13 @@ ITERM_SOCKET = (
     Path.home() / "Library" / "Application Support" / "iTerm2" / "private" / "socket"
 )
 
+#: Set to `1` and every driver call refuses before touching iTerm, and the
+#: attend mark is skipped. The test
+#: suites set it, because a harness that runs a real launch verb reaches the
+#: real dispatcher: one did, and the tabs it opened typed `plan anthropic`,
+#: which resumed the live scheduler session into a second client.
+DISABLED_ENV = "DS_ITERM_DISABLED"
+
 #: Base wait on the driver: connection setup plus one round trip. Bounded,
 #: because a hung driver would otherwise hang a session launcher and the whole
 #: family's contract is "fatal never".
@@ -80,13 +87,15 @@ PER_TAB_TIMEOUT_SECONDS = 10
 #: a malformed `ps` answer cannot loop forever.
 CALLER_TTY_MAX_HOPS = 32
 
-#: The iTerm user variable the `plan` and `curate` launchers set, and their
-#: values. Read here to place new tabs left of the seat tabs resting at the
-#: right edge; `iterm-reorder.py` reads the same pairs to keep them there.
+#: The iTerm user variable the `plan`, `curate` and `launch` launchers set, and
+#: their values. Read here to place new tabs left of the seat tabs resting at
+#: the right edge; `iterm-reorder.py` reads the same pairs to keep them there.
+#: Outermost first: a tab whose panes carry two reads as the first.
 ROLE_VARIABLE = "user.ds_role"
 PLAN_ROLE = "plan"
 CURATE_ROLE = "curate"
-SEAT_ROLES = (PLAN_ROLE, CURATE_ROLE)
+LAUNCH_ROLE = "launch"
+SEAT_ROLES = (PLAN_ROLE, CURATE_ROLE, LAUNCH_ROLE)
 
 #: The attend-mark script, shared by both launchers.
 ATTEND_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "iterm-attend.sh"
@@ -193,6 +202,8 @@ def bundled_interpreter(root: Path | None = None) -> Path | None:
 
 def preflight() -> str | None:
     """A one-line reason iTerm automation cannot work, or None. Cheap checks."""
+    if os.environ.get(DISABLED_ENV) == "1":
+        return f"iTerm automation is disabled ({DISABLED_ENV}=1, a test run)"
     if sys.platform != "darwin":
         return "iTerm2 is macOS-only, and this is not macOS"
     if not ITERM_SOCKET.exists():
@@ -328,7 +339,9 @@ def mark_attention(tty: str) -> bool:
     `--mark` sets green outright instead of toggling: a toggle's outcome depends
     on the tab's history, and a launcher wants green, not "the other one".
     """
-    if not ATTEND_SCRIPT.exists():
+    # Not a driver call, so `preflight` never sees it: the test switch is
+    # checked here too, or a test reaching this would tint a real tab.
+    if os.environ.get(DISABLED_ENV) == "1" or not ATTEND_SCRIPT.exists():
         return False
     try:
         completed = subprocess.run(
@@ -346,8 +359,17 @@ def mark_attention(tty: str) -> bool:
     return completed.returncode == 0
 
 
-def open_tabs(commands: list[str], *, tty: str | None = None) -> list[str | None]:
+def open_tabs(
+    commands: list[str],
+    *,
+    tty: str | None = None,
+    roles: list[str | None] | None = None,
+) -> list[str | None]:
     """Open one tab per command in the caller's window, typing each. Returns ttys.
+
+    ``roles`` names the seat role each command's tab will carry (positional,
+    None for a worker), which places it by :func:`insert_index`; omitted, every
+    tab is a worker's.
 
     The caller's window is the one with a session on ``tty``, which defaults to
     :func:`caller_tty`. When no session matches (or no tty resolves) the driver
@@ -395,8 +417,11 @@ def open_tabs(commands: list[str], *, tty: str | None = None) -> list[str | None
     if not commands:
         return []
     tty = caller_tty() if tty is None else tty
+    request = {"op": "open_tabs", "commands": list(commands), "caller_tty": tty}
+    if roles:
+        request["roles"] = list(roles)
     response = _call(
-        {"op": "open_tabs", "commands": list(commands), "caller_tty": tty},
+        request,
         # One round trip per tab against a GUI app, so the budget scales.
         timeout=DRIVER_TIMEOUT_SECONDS + PER_TAB_TIMEOUT_SECONDS * len(commands),
     )
@@ -553,50 +578,74 @@ def _focus_to_restore(window, caller_tab):
     return current if current is not None else caller_tab
 
 
-async def _is_seat_tab(tab) -> bool:
-    """Whether any pane of ``tab`` carries a seat role (scheduler or curator)."""
+async def _tab_role(tab) -> str | None:
+    """The seat role if ANY pane of ``tab`` carries one, else None — the
+    outermost (`SEAT_ROLES` order) when panes carry two."""
+    found = set()
     for session in getattr(tab, "sessions", None) or []:
         try:
-            if await session.async_get_variable(ROLE_VARIABLE) in SEAT_ROLES:
-                return True
+            found.add(await session.async_get_variable(ROLE_VARIABLE))
         except Exception:  # noqa: BLE001 - an unreadable role is no seat tab
             continue
-    return False
+    return next((role for role in SEAT_ROLES if role in found), None)
 
 
-async def _seat_insert_index(window):
-    """Where new tabs go: just left of the run of seat tabs (the scheduler's
-    and the curator's) at the RIGHT edge, else None (iTerm's default, the end).
+async def _tab_roles(window) -> list[str | None]:
+    """Each tab's seat role, left to right."""
+    return [await _tab_role(tab) for tab in getattr(window, "tabs", None) or []]
 
-    Placing it at creation keeps the seat tabs rightmost, where Command-9
-    reaches the scheduler, without waiting on a reorder pass. While the
-    reorderer runs, a seat tab that is not at the edge is in an attention group
-    on the left, and appending is then already its resting order. iTerm has no
-    tab pin to use instead.
+
+def insert_index(tab_roles: list[str | None], role: str | None) -> int | None:
+    """Where a new tab that will carry ``role`` is created, given each existing
+    tab's seat role left to right; None is iTerm's default, the end.
+
+    * The scheduler's (``plan``) goes RIGHTMOST, where Command-9 reaches it.
+    * Any other seat goes just left of the rightmost scheduler tab, so a
+      later seat lands nearest the scheduler: the morning's `plan + launch`
+      batch, then a dispatched `curate`, rests as plan, curate, launch from
+      the right, and any other order is the reorderer's to repair. With no
+      scheduler tab a seat takes a worker's place.
+    * Everything else goes just left of the run of seat tabs at the right
+      edge, so they stay outermost without waiting on a reorder pass. While the
+      reorderer runs, a seat tab not at the edge is in an attention group on
+      the left, and appending is then already its resting order. iTerm has no
+      tab pin to use instead.
     """
-    tabs = list(getattr(window, "tabs", None) or [])
-    index = len(tabs)
-    while index and await _is_seat_tab(tabs[index - 1]):
+    if role == PLAN_ROLE:
+        return None
+    if role in SEAT_ROLES:
+        plans = [i for i, r in enumerate(tab_roles) if r == PLAN_ROLE]
+        if plans:
+            return plans[-1]
+    index = len(tab_roles)
+    while index and tab_roles[index - 1] in SEAT_ROLES:
         index -= 1
-    return None if index == len(tabs) else index
+    return None if index == len(tab_roles) else index
 
 
 async def _open_and_type(
-    window, original, commands, ttys, untyped, insert_at=None
+    window, original, commands, ttys, untyped, tab_roles=None, roles=None
 ) -> None:
     """The ``open_tabs`` loop: one tab per command, typed, focus handed back.
 
     Mutates ``ttys`` / ``untyped`` in place. The driver published both into its
     result before calling, which is what lets a mid-batch failure report them.
-    ``insert_at`` is the creation index from :func:`_seat_insert_index`; each
-    insert pushes the seat tabs right by one, so the batch keeps its order.
+    ``tab_roles`` is the window's from :func:`_tab_roles`, or None to append
+    every tab; ``roles`` the seat role each command's tab will carry. Each new
+    tab's role is booked into ``tab_roles`` as it is created, since its shell
+    has not set the variable yet — so a ``plan + launch`` batch puts the
+    launcher left of the scheduler tab it just opened.
     """
+    roles = list(roles or [])
     for index, command in enumerate(commands):
+        role = roles[index] if index < len(roles) else None
+        insert_at = None if tab_roles is None else insert_index(tab_roles, role)
         if insert_at is None:
             tab = await window.async_create_tab()
         else:
             tab = await window.async_create_tab(index=insert_at)
-            insert_at += 1
+        if tab_roles is not None:
+            tab_roles.insert(len(tab_roles) if insert_at is None else insert_at, role)
         # Straight back, before typing: the steal then lasts one round trip
         # rather than the whole batch, since typing needs no selection.
         await _reselect(original)
@@ -680,10 +729,16 @@ async def _driver_body(connection, request, result):  # pragma: no cover
         # separately rather than being inferred from a falsy entry.
         untyped = []
         result["untyped"] = untyped
-        insert_at = await _seat_insert_index(window)
+        tab_roles = await _tab_roles(window)
         try:
             await _open_and_type(
-                window, original, request["commands"], ttys, untyped, insert_at
+                window,
+                original,
+                request["commands"],
+                ttys,
+                untyped,
+                tab_roles,
+                request.get("roles"),
             )
         finally:
             # Once more on the way out, failure path included: a batch that

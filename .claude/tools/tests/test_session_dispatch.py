@@ -286,6 +286,17 @@ class Grammar(unittest.TestCase):
             session_dispatch.classify(["curate"]).cls, session_dispatch.FREE
         )
 
+    def test_launch_validates_as_a_free_seat(self):
+        self.assertEqual(session_dispatch.validate(["launch"]), ["launch"])
+        self.assertEqual(
+            session_dispatch.validate(["launch", "anthropic"]), ["launch", "anthropic"]
+        )
+        with self.assertRaises(ValueError):
+            session_dispatch.validate(["launch", "1234"])
+        self.assertEqual(
+            session_dispatch.classify(["launch"]).cls, session_dispatch.FREE
+        )
+
     def test_the_retired_housekeeping_verb_is_unknown(self):
         with self.assertRaises(ValueError):
             session_dispatch.validate(["housekeeping"])
@@ -433,9 +444,11 @@ class Dispatch(unittest.TestCase):
         """Replace `open_tabs`, recording its argument. `result` is a list or an
         exception to raise."""
         seen = []
+        self.roles = []
 
-        def fake(commands):
+        def fake(commands, roles=None):
             seen.append(list(commands))
+            self.roles.append(roles)
             if isinstance(result, Exception):
                 raise result
             return result
@@ -484,6 +497,16 @@ class Dispatch(unittest.TestCase):
         self.assertIn("task anthropic 1234 -> /dev/a", text)
         self.assertIn("plan (free) -> /dev/b", text)
         self.assertIn("architect 56 (free) -> /dev/c", text)
+        # Only the seat verb's tab carries a role; it alone is placed as a seat.
+        self.assertEqual(self.roles, [[None, "plan", None]])
+
+    def test_a_curate_tab_is_placed_as_a_seat_beside_the_scheduler(self):
+        self._stub_tabs(["/dev/a", "/dev/b"])
+        self._stub_names([])
+        with redirect_stdout(io.StringIO()):
+            rc = session_dispatch.run(["curate", "+", "launch"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.roles, [["curate", "launch"]])
 
     def test_one_bad_verb_in_a_batch_dispatches_nothing(self):
         # A partial batch is the bad outcome: the caller cannot tell which tabs
@@ -550,7 +573,7 @@ class BlockedDispatch(unittest.TestCase):
         stub_gate(self)
 
     def _fail_with(self, message, ttys=None, untyped=None):
-        def boom(_commands):
+        def boom(_commands, roles=None):
             raise iterm_api.ItermUnavailable(message, ttys=ttys, untyped=untyped)
 
         original = iterm_api.open_tabs
@@ -984,7 +1007,7 @@ class GatedRun(unittest.TestCase):
         _, directory = stub_gate(self, *readings, bodies=bodies)
         seen = []
 
-        def fake(commands):
+        def fake(commands, roles=None):
             seen.append(list(commands))
             return ttys or [f"/dev/t{n}" for n in range(len(commands))]
 

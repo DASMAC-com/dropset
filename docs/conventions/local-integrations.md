@@ -1041,21 +1041,25 @@ Beyond coloring, `iterm-reorder.py` keeps each window's tabs sorted into
 attention groups so you can park at position 1 and sweep right:
 
 ```txt
-[ yellow (permission) … ] [ green (reply) … ] [ the rest … ] [ curate ] [ plan ]
+[ yellow (permission) … ] [ green (reply) … ] [ the rest … ]
+                                    [ launch ] [ curate ] [ plan ]
 ```
 
 **The planning tab is always locatable, by position alone** (no color of
 its own). While it is resting it sorts last, so `Cmd-9` — which selects
 the last tab even with fewer than nine — always lands on it; a resting
-curator tab sits just left of it, so the two seat tabs sit together at
-the far right. While either needs attention it queues in its yellow or
-green group like any other tab, so a seat ask still surfaces at
-position 1 in FIFO order, and it returns to its resting slot once
-cleared. The reorderer finds them by the iTerm user variable
-`user.ds_role` — `plan` or `curate`, which the `plan` and `curate`
-launchers set around their cycle loops and clear on exit — never by
-title. Set `DS_PLAN_TAB_RIGHTMOST=0` in the runtime config to skip the
-marker for both; the seat tabs then sort like any other.
+curator tab sits just left of it and a resting launcher tab left of
+that, so the seat tabs sit together at the far right. While one needs
+attention it queues in its yellow or green group like any other tab,
+so a seat ask still surfaces at position 1 in FIFO order, and it
+returns to its resting slot once cleared. The reorderer finds them by
+the iTerm user variable `user.ds_role` — `plan`, `curate` or `launch`,
+which those launchers set around their sessions and clear on exit —
+never by title. `session_dispatch.py` places a new tab by the same
+roles: a scheduler tab rightmost, another seat just left of the
+rightmost scheduler tab, a worker left of the seat run. Set
+`DS_PLAN_TAB_RIGHTMOST=0` in the runtime config to skip the marker for
+all three; the seat tabs then sort like any other.
 
 Within each attention group the order is **FIFO**: the tab that has
 waited longest stays leftmost, and a tab that newly needs attention goes
@@ -1651,8 +1655,9 @@ names alive was the outcome to avoid.
 | `task resume [n]`       | resume by number (bare = the picker)       | as recorded            | re-pinned | as recorded         | —                         |
 | `explore [s] <n\|name>` | research / audit, read-only, temp worktree | Bedrock, or `[s]`      | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
 | `chore [s] <n>`         | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    | executor if Bedrock | `[Chore/<Substrate>]`     |
-| `plan [a]`              | upkeep pass, then the scheduler's day      | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
+| `plan [a]`              | fresh day: pass + seat tabs; else schedule | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
 | `curate [a]`            | the curator: Backlog→Todo review, no PR    | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
+| `launch [a]`            | the morning launcher, base checkout, no PR | Bedrock, or `[a]`      | executor  | the session's       | — (no issue)              |
 | `architect [b] <n>`     | design thread, read-only, temp worktree    | advisor's, or override | advisor   | executor if Bedrock | `[Architect/<Substrate>]` |
 | `fleet [go]`            | batch resume                               | per-window             | re-pinned | per-window          | —                         |
 | `models [check]`        | print the tier table; `check` it for free  | —                      | —         | —                   | —                         |
@@ -2622,27 +2627,47 @@ a terminal closed outright, is covered by the next morning's digest.
   `DS_PLAN_DATE` (the launch day) and `DS_DAILY_KIND` (`plan`) into
   the client, so the session's own tools still compute its id after
   midnight and `plan_cycle.py` knows which seat it serves. A later
-  bare `plan` resumes the day's latest cycle.
+  bare `plan` resumes the day's latest cycle — and **refuses while a
+  live client already holds it** (`plan_cycle.py live-name`), naming
+  the tab to switch to: a resume by id never checked, and a second
+  `plan` once forked the running scheduler into a second client. The
+  same guard covers `curate` and `launch`; a check that cannot answer
+  warns and resumes.
 
-  **It runs the upkeep pass before the client starts.** After the
-  AWS gate and before the cycle loop, `plan` resolves the session
-  secrets and runs `.claude/tools/upkeep.py run --if-stale` in the
-  operator's terminal: fast-forward, CLI upgrade, the prune of
-  completed or canceled issues' worktrees and the dismissal of their
+  **On a fresh day it is the pre-launch, not the scheduler.** A day
+  is fresh while the pass has not stamped it, no pre-launch has run
+  that day (`plan-prelaunch-<YYYYMMDD>` beside the substrate
+  markers) and no scheduler session of that day exists. Then `plan`
+  prints `plan: pre-launch`, clears inherited Bedrock exports, runs
+  the AWS gate and then `.claude/tools/upkeep.py run --if-stale` in
+  the typed tab: fast-forward, CLI upgrade, the prune of completed or
+  canceled issues' worktrees and the dismissal of their
   notifications (both dry runs unless the runtime config exports
-  `DS_UPKEEP_ARMED=1`), the settings checks and the purge dry-run. A
-  hung step sits visibly in the terminal rather than inside a
-  session, and Ctrl-C there skips the pass rather than the launch;
-  the AWS gate runs first, so a refused login stops the morning
-  before anything else runs. The
-  report lands under the Planning document's upkeep heading, which
-  the bootstrap reads; the destructive items (allowlist cruft,
+  `DS_UPKEEP_ARMED=1`), the settings checks and the purge dry-run.
+  The pass prints a line to stderr as each step starts (its name,
+  what it does, the timeout bounding its slowest call) and ends (the
+  elapsed seconds, or `crashed`), then a total, so a hung step names
+  itself; Ctrl-C there skips the pass rather than the launch. It then
+  writes the day's marker and opens **two tabs in one
+  `session_dispatch.py plan + launch` batch**: the scheduler's
+  rightmost and the launcher's just left of it. The typed tab's
+  prompt returns with the log in its scrollback. A tab the machine
+  gate **holds** is said out loud and never overridden here. For a
+  tab that neither opened nor was held: a launcher runs in the typed
+  tab instead; with neither open, the launcher runs there with
+  `DS_LAUNCH_SCHEDULER` naming the scheduler verb its skill dispatches
+  as its first act; a scheduler missing beside an open launcher is
+  named for the operator to type. The report
+  lands under the Planning document's upkeep heading, which the
+  bootstrap reads; the destructive items (allowlist cruft,
   permission-refresh additions, the purge apply) wait for the
-  planning tab's one consolidated `AskUserQuestion`, so upkeep never
-  costs a tab visit. `--if-stale` makes a same-day reopen free — the
-  tool stamps only a run whose report reached the document — and a
-  cycle relaunch never repeats it. `DS_SKIP_UPKEEP=1` skips it; a
-  failed pass warns and the launch proceeds.
+  planning tab's one consolidated `AskUserQuestion`. **Every later
+  `plan` that day is warm** — the one typed into the scheduler's tab
+  first — and runs the scheduler in the tab it was typed in, with no
+  pass and no launcher. The marker is what stops a pass that failed
+  to stamp from re-running the pre-launch on each `plan`.
+  `DS_SKIP_UPKEEP=1` skips the pass and still opens the tabs; a
+  failed pass warns and the pre-launch proceeds.
 
   Four things it makes deterministic, each of which used to be a
   manual step the operator could forget:
@@ -2701,8 +2726,8 @@ a terminal closed outright, is covered by the next morning's digest.
     program.
 
   This **supersedes** hand-naming a base-repo session `planning-<day>`
-  and resuming it by that name. `plan` and `curate` are the two daily
-  **base-repo** session verbs — `explore` moved to its own worktree,
+  and resuming it by that name. `plan`, `curate` and `launch` are the
+  daily **base-repo** session verbs — `explore` moved to its own worktree,
   so it is no longer the general-purpose base-repo entry point it once
   was.
 
@@ -2722,12 +2747,27 @@ a terminal closed outright, is covered by the next morning's digest.
   is a **free** seat verb (class stamped `free` through the shared
   resolver; lane 0, as the base checkout always is). It runs **no AWS
   gate** (it reads no cost data) and **no upkeep pass** (that is the
-  scheduler's launch). Its tab carries `ds_role=curate` around the
+  `plan` pre-launch's). Its tab carries `ds_role=curate` around the
   loop, cleared on every way out: `iterm-reorder.py` rests it just
   left of the scheduler's tab, which stays outermost, and
-  `session_dispatch.py` opens new tabs left of both. Sourcing the init
+  `session_dispatch.py` opens worker tabs left of both. Sourcing the init
   warns once if a `curate` command on `PATH` is shadowed. `fleet` and
   `task resume` leave it alone — it names no issue.
+
+- **`launch [anthropic|bedrock]`** — start **or resume** the day's
+  **launcher**, the session the `plan` pre-launch opens just left of
+  the scheduler's tab to dispatch the morning: the **executor** tier,
+  Bedrock by default, `anthropic` by word, a reopen keeping the
+  substrate its session recorded; the base repo, no worktree, no PR,
+  no issue; display name `launch-<day>`, initial prompt `/launch`, a
+  daily id seeded `launch` with no cycle loop. Its per-session
+  substrate record is written on create, so the pricing tools meter it
+  as any other session, and `fleet_cost.py` groups it under `launch`.
+  A **free** seat verb, whose reopen refuses while a live client holds
+  it, as `plan`'s does. It runs no AWS gate and no upkeep pass (the
+  pre-launch ran both). Its tab carries `ds_role=launch`:
+  `iterm-reorder.py` rests it left of the curator's, and
+  `session_dispatch.py` opens worker tabs left of it.
 
 - **`architect <n>`** — start **or resume** an **architect** session on
   the design thread governed by issue `<n>`, its only argument: the CEO

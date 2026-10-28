@@ -362,6 +362,21 @@ class MarkAttention(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = self._tmp.name
+        # Every case points ATTEND_SCRIPT at a stub, so the test-run switch
+        # the package sets can be lifted here without reaching a real tab.
+        switch = mock.patch.dict(os.environ, {fr.iterm_api.DISABLED_ENV: "0"})
+        switch.start()
+        self.addCleanup(switch.stop)
+
+    def test_the_test_run_switch_skips_the_mark(self):
+        record = os.path.join(self.root, "ran.txt")
+        stub = self._stub("#!/bin/sh\n: > " + record + "\nexit 0\n")
+        with (
+            mock.patch.object(fr.iterm_api, "ATTEND_SCRIPT", Path(stub)),
+            mock.patch.dict(os.environ, {fr.iterm_api.DISABLED_ENV: "1"}),
+        ):
+            self.assertFalse(fr.mark_attention("/dev/ttys009"))
+        self.assertFalse(os.path.exists(record))
 
     def _stub(self, body: str, mode: int = 0o755) -> str:
         path = os.path.join(self.root, "iterm-attend.sh")

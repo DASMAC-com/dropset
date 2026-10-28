@@ -207,11 +207,12 @@ def issue_of_prompt(text: str) -> str | None:
 
 
 # The bootstrap prompt of a launch with no issue at all: the scheduler's `plan`
-# types `/plan` in the base checkout and the curator's `curate` types
-# `/curate`, as the retired `housekeeping` typed `/housekeeping`.
+# types `/plan` in the base checkout, the curator's `curate` types `/curate`
+# and the morning launcher's `launch` types `/launch`, as the retired
+# `housekeeping` typed `/housekeeping`.
 PROMPT_VERB_RE = re.compile(
-    r"<command-name>/(plan|curate|housekeeping)</command-name>"
-    r"|^/(plan|curate|housekeeping)(?:\s|$)",
+    r"<command-name>/(plan|curate|launch|housekeeping)</command-name>"
+    r"|^/(plan|curate|launch|housekeeping)(?:\s|$)",
     re.IGNORECASE,
 )
 

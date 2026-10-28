@@ -36,6 +36,10 @@ from pathlib import Path
 
 INIT = Path(__file__).resolve().parents[1] / "shell" / "init.zsh"
 
+# No case may reach a real iTerm tab, whatever it forgets to stub: inherited by
+# every zsh this spawns (`iterm_api.DISABLED_ENV`).
+os.environ["DS_ITERM_DISABLED"] = "1"
+
 # The helpers are zsh and deliberately so (`<->` all-digit tests, `>|` clobber),
 # and the Linux CI runner ships no zsh: without this guard every case fails with
 # FileNotFoundError, which says nothing about the code under test.
@@ -239,6 +243,9 @@ class VerbLaunch(SubstrateHarness):
         ' ARGS=$*"; }; '
         "_ds_base() { :; }; _ds_secrets() { :; }; _ds_aws_login() { :; }; "
         "_ds_pull() { :; }; "
+        # A warm day: these cases test the scheduler's own launch, not the
+        # morning pre-launch (`test_plan_cycle_loop.PreLaunch`).
+        "_ds_plan_fresh_day() { return 1; }; "
         # The title guard reads Linear; its outcomes are `test_verb_check.py`'s.
         "_ds_verb_check() { :; }; "
         # The model probe's transport: argv and stdin logged apart, so a case

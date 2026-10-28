@@ -1,4 +1,5 @@
 #!/usr/bin/env zsh
+# cspell:word extendedglob
 # cspell:word localoptions
 # cspell:word localtraps
 # cspell:word ncpu
@@ -2071,7 +2072,7 @@ explore() {
 }
 
 # Internal: the model-free morning upkeep pass (.claude/tools/upkeep.py), run in
-# the operator's terminal before a planning client starts, so a hung step is
+# the operator's terminal by the `plan` pre-launch, so a hung step is
 # visible here rather than buried in a session. The tool writes the Planning
 # document's upkeep heading, which the bootstrap reads; destructive items wait
 # for the planning tab's one consolidated question.
@@ -2252,9 +2253,13 @@ _ds_plan_cycle() {
 # `date +%-d` gives an unpadded day, so the 5th is `schedule-5`, not
 # `schedule-05`.
 #
-# THE UPKEEP PASS runs next, BEFORE the client starts — see `_ds_upkeep`. It sits
-# after the AWS gate so a refused login stops the morning at this terminal before
-# anything else runs, and outside the cycle loop so a relaunch never repeats it.
+# THE PRE-LAUNCH. On a FRESH day (`_ds_plan_fresh_day`) a bare `plan` starts
+# no session in the typed tab: it runs the AWS gate and the upkeep pass there,
+# in the foreground with the pass's progress lines, then opens the scheduler's
+# tab rightmost and the launcher's just left of it (`_ds_plan_prelaunch`). The
+# typed tab's prompt returns with the log in its scrollback. Any later `plan`
+# that day — the one typed into the scheduler's own tab first — is WARM and
+# runs the scheduler below, in the tab it was typed in, with no pass.
 #
 # THE CYCLE LOOP. A planning session that cycles (the `plan` skill's "Cycling")
 # closes out, writes `plan-cycle-pending` beside the substrate markers and ends
@@ -2286,14 +2291,115 @@ plan() {
     print -u2 'Usage: plan [anthropic|bedrock]   (the name is derived from the date)'
     return 1
   fi
+  local day="$(date +%Y%m%d)"
+  if _ds_plan_fresh_day "$day"; then
+    _ds_plan_prelaunch "$day" "$1"
+    return
+  fi
   _ds_daily_seat plan schedule "$1"
+}
+
+# Internal: is $1 (YYYYMMDD) a FRESH day for `plan`? Yes only while the upkeep
+# pass has not stamped today, no pre-launch has run today, and no scheduler
+# session of today's exists. The last two make a pass that failed to stamp
+# (its document write refused) cost one pre-launch, not one per `plan` — the
+# scheduler tab's own `plan` among them, which would otherwise loop.
+_ds_plan_fresh_day() {
+  local seen counter="$_DS_SUBSTRATE_DIR/plan-cycle-$1"
+  [[ -f "$_DS_SUBSTRATE_DIR/plan-prelaunch-$1" ]] && return 1
+  _ds_session_exists "$(_ds_daily_sid plan "$(_ds_plan_cycle "$counter")" "$1")" &&
+    return 1
+  # `upkeep.py` refuses anywhere but the base checkout, hence the subshell.
+  seen="$(cd "$_DS_REPO" 2>/dev/null &&
+    python3 "$_DS_REPO/.claude/tools/upkeep.py" ran-today 2>/dev/null)"
+  [[ "$seen" != *'"ran_today": true'* ]]
+}
+
+# Internal: the morning PRE-LAUNCH — $1 the day, $2 the scheduler's substrate
+# word or "". The AWS gate and the pass run in this tab (the gate first, so a
+# refused login stops the morning before the minutes-long pass, and in the
+# operator's own environment: inherited Bedrock exports are cleared first, as
+# the seat guard would). The day's marker is written only after the pass, so a
+# refused login or a Ctrl-C at the gate leaves the day fresh for a retry.
+#
+# Then ONE dispatch opens both tabs (`session_dispatch.py plan + launch`): a
+# batch, because the scheduler tab's role is not set until its shell runs, and
+# only the batch books it, which is what puts the launcher on its left. What
+# opened is read back from the dispatch's own per-tab lines, failure listing
+# included, and so is what the machine gate HELD: a hold is the gate's
+# refusal, so it is said out loud and never overridden by a fallback here.
+# FALLBACKS, for a tab that neither opened nor was held: a launcher that did
+# not open runs in this tab instead; with neither open, the launcher runs here
+# with `DS_LAUNCH_SCHEDULER` naming the scheduler verb it dispatches as its
+# first act; a scheduler that did not open beside an open launcher is named for
+# the operator to type.
+_ds_plan_prelaunch() {
+  setopt localoptions extendedglob
+  local day="$1" word="$2" out rc line plan_tab='' launch_tab=''
+  print -u2 'plan: pre-launch'
+  _ds_substrate_unset
+  _ds_aws_login 'plan' || return 1
+  _ds_upkeep
+  mkdir -p "$_DS_SUBSTRATE_DIR" && : >| "$_DS_SUBSTRATE_DIR/plan-prelaunch-$day"
+  # Both streams: a driver that fails part-way lists the tabs it DID open on
+  # stderr, and those must not be launched a second time here.
+  out="$(python3 "$_DS_REPO/.claude/tools/session_dispatch.py" \
+    plan ${word:+"$word"} + launch 2>&1)"
+  rc=$?
+  print -r -- "$out"
+  for line in "${(@f)out}"; do
+    [[ "$line" == [[:space:]]#plan(| *)' -> '* ]] && plan_tab=opened
+    [[ "$line" == [[:space:]]#launch(| *)' -> '* ]] && launch_tab=opened
+    [[ "$line" == 'held  plan'(| *)':'* ]] && plan_tab=held
+    [[ "$line" == 'held  launch'(| *)':'* ]] && launch_tab=held
+  done
+  [[ "$plan_tab" == held ]] && print -u2 'plan: the machine gate held the' \
+    "scheduler — type \`plan${word:+ $word}\` once a slot frees."
+  [[ "$launch_tab" == held ]] && print -u2 'plan: the machine gate held the' \
+    'launcher — type `launch` once a slot frees.'
+  if [[ -n "$launch_tab" ]]; then
+    [[ -z "$plan_tab" ]] && print -u2 "plan: the scheduler's tab did not" \
+      "open (dispatch exit $rc) — type \`plan${word:+ $word}\` in a new tab."
+    return 0
+  fi
+  if [[ -n "$plan_tab" ]]; then
+    print -u2 "plan: the launcher's tab did not open (dispatch exit $rc) —" \
+      'running it in this tab.'
+    launch
+  else
+    print -u2 "plan: neither tab opened (dispatch exit $rc) — running the" \
+      'launcher in this tab; it dispatches the scheduler first.'
+    DS_LAUNCH_SCHEDULER="plan${word:+ $word}" launch
+  fi
+}
+
+# Internal: refuse to resume daily seat $2 (display name; $1 the verb, for the
+# message) while a live client already holds it. Resuming by id never checks,
+# so a second `plan` forks the running session into a second client — measured
+# 2026-10-28, when a test harness's dispatched `plan anthropic` did exactly that
+# to the live scheduler, twice. Refuses only on a positive answer from
+# `plan_cycle.py live-name` (0 held, 1 free); an unanswered check warns and
+# proceeds, so a broken probe never locks the operator out of their own seat.
+_ds_live_guard() {
+  local rc
+  python3 "$_DS_REPO/.claude/tools/plan_cycle.py" live-name "$2" 2>/dev/null
+  rc=$?
+  if (( rc == 0 )); then
+    print -u2 "$1: $2 already has a live client — switch to its tab; a second" \
+      'resume would fork the session.'
+    return 1
+  fi
+  (( rc == 1 )) ||
+    print -u2 "$1: could not check for a live $2 client (exit $rc) — resuming."
+  return 0
 }
 
 # Internal: start OR resume today's session of a daily SEAT verb — the body
 # `plan` and `curate` share. $1 the kind (the id seed, the counter and marker
 # names, the `/<kind>` prompt and the iTerm role), $2 the display-name prefix,
 # $3 the substrate word or "". Everything `plan`'s header describes holds for
-# both; the AWS gate and the upkeep pass are the scheduler's alone.
+# both; the AWS gate is the scheduler's alone, and the upkeep pass is the
+# pre-launch's (`_ds_plan_prelaunch`), never a seat's.
 #
 # DS_PLAN_DATE tells the session its LAUNCH day and DS_DAILY_KIND its kind, so
 # plan_cycle.py and resolve_session.py name it after midnight, and a bare
@@ -2305,6 +2411,7 @@ _ds_daily_seat() {
   counter="$_DS_SUBSTRATE_DIR/$kind-cycle-$day"
   sid="$(_ds_daily_sid "$kind" "$(_ds_plan_cycle "$counter")" "$day")"
   if _ds_session_exists "$sid"; then
+    _ds_live_guard "$kind" "$name" || return 1
     local recorded="$(_ds_substrate_read "sessions/$sid")"
     if [[ ! -f "$_DS_SUBSTRATE_DIR/sessions/$sid" ]]; then
       print -u2 "$kind: $name has no substrate record — reopening on anthropic," \
@@ -2326,7 +2433,6 @@ _ds_daily_seat() {
       _ds_substrate_unset
       return 1
     fi
-    _ds_upkeep
   fi
   [[ "${DS_PLAN_TAB_RIGHTMOST:-1}" == 1 ]] && _ds_iterm_role "$kind"
   {
@@ -2372,10 +2478,10 @@ _ds_daily_seat() {
 # free, non-building seat verb, so its class is stamped `free` through the same
 # resolver and it builds on lane 0, as the base checkout always does.
 #
-# NO AWS GATE (it reads no cost data) and NO UPKEEP PASS (that is the
-# scheduler's launch). Its tab carries `ds_role=curate`, which rests it just
+# NO AWS GATE (it reads no cost data) and NO UPKEEP PASS (that is the `plan`
+# pre-launch's). Its tab carries `ds_role=curate`, which rests it just
 # left of the scheduler's at the right edge (`iterm-reorder.py`), and
-# `session_dispatch.py` opens new tabs left of both.
+# `session_dispatch.py` opens worker tabs left of both.
 curate() {
   if [[ -n "$2" || ( -n "$1" && "$1" != (anthropic|bedrock) ) ]]; then
     print -u2 'Usage: curate [anthropic|bedrock]   (the name is derived from the date)'
@@ -2388,6 +2494,64 @@ curate() {
 # by the function above, silently.
 if (( $+commands[curate] )); then
   print -u2 "dropset: the curate helper shadows $commands[curate]."
+fi
+
+# Start OR resume today's LAUNCHER session — the morning's dispatcher, which the
+# `plan` pre-launch opens just left of the scheduler's tab:
+#
+#   launch             the executor tier on Bedrock
+#   launch anthropic   the executor tier on the subscription — the override
+#   launch bedrock     the default, spelled out; a no-op
+#
+# The base checkout, no worktree, no PR; display name `launch-<day>`, prompt
+# `/launch`, a daily id seeded `launch` (`_ds_daily_sid`, no cycling). Its
+# per-session substrate record is written on create (`_ds_session_mark`), the
+# marker the pricing tools read, and a reopen keeps the substrate it recorded.
+# A free seat verb, stamped `free`. Its tab carries `ds_role=launch`, which
+# rests it left of the curator's (`iterm-reorder.py`) and keeps worker tabs
+# left of it (`session_dispatch.py`). NO AWS GATE and NO UPKEEP PASS — both
+# ran in the pre-launch before this tab opened. `DS_LAUNCH_SCHEDULER`, set
+# only by the pre-launch's last fallback, names the scheduler verb the session
+# dispatches as its first act.
+launch() {
+  if [[ -n "$2" || ( -n "$1" && "$1" != (anthropic|bedrock) ) ]]; then
+    print -u2 'Usage: launch [anthropic|bedrock]   (the name is derived from the date)'
+    return 1
+  fi
+  local day model substrate name sid word="$1"
+  day="$(date +%Y%m%d)" name="launch-$(date +%-d)"
+  sid="$(_ds_daily_sid launch 0 "$day")"
+  if _ds_session_exists "$sid"; then
+    _ds_live_guard launch "$name" || return 1
+    local recorded="$(_ds_substrate_read "sessions/$sid")"
+    if [[ ! -f "$_DS_SUBSTRATE_DIR/sessions/$sid" ]]; then
+      print -u2 "launch: $name has no substrate record — reopening on" \
+        'anthropic, where an unmarked reopen reads.'
+    elif [[ -n "$word" && "$word" != "$recorded" ]]; then
+      print -u2 "launch: $name is recorded on $recorded — keeping it; a session" \
+        'keeps its substrate.'
+    fi
+    word="$recorded"
+  fi
+  { read -r model; read -r substrate; } <<< \
+    "$(_ds_tier executor "${word:-bedrock}")"
+  [[ -n "$substrate" ]] || return 1
+  _ds_substrate_enter "$substrate" 'launch' || return 1
+  if [[ "$substrate" == bedrock ]] && ! _ds_model_probe "$model"; then
+    _ds_substrate_unset
+    return 1
+  fi
+  [[ "${DS_PLAN_TAB_RIGHTMOST:-1}" == 1 ]] && _ds_iterm_role launch
+  {
+    local _ds_class_key="sessions/$sid" _ds_class=free
+    DS_PLAN_DATE="$day" _ds_session "$sid" "$name" '/launch' "$model"
+  } always {
+    _ds_iterm_role ''
+  }
+}
+
+if (( $+commands[launch] )); then
+  print -u2 "dropset: the launch helper shadows $commands[launch]."
 fi
 
 # Start OR resume an ARCHITECT session on one design thread — the CEO hat. Same

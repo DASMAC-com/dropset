@@ -4,13 +4,14 @@
 A single app-level daemon that keeps each iTerm2 window's tabs sorted into
 attention groups so you can park at position 1 and sweep right:
 
-    [ yellow … ] [ green … ] [ the rest … ] [ curate ] [ plan ]
+    [ yellow … ] [ green … ] [ the rest … ] [ launch ] [ curate ] [ plan ]
 
-The two seat tabs, once attended, sort LAST — the curator's just left of the
-scheduler's, which stays outermost so Command-9 always lands on it; while
-either needs attention it queues in its yellow or green group like any other
+The seat tabs, once attended, sort LAST — the launcher's, then the curator's,
+then the scheduler's, which stays outermost so Command-9 always lands on it;
+while one needs attention it queues in its yellow or green group like any other
 tab. Each is identified by the `user.ds_role` variable its launcher sets
-(`plan` / `curate`, see `.claude/shell/init.zsh`), never by its title.
+(`plan` / `curate` / `launch`, see `.claude/shell/init.zsh`), never by its
+title.
 
 Within each attention group the order is **FIFO** — the oldest tab to enter
 the group stays leftmost, and a tab that newly needs attention goes to the
@@ -71,17 +72,26 @@ _PALETTE_KEYS = {
 _STATE_ASSIGNMENT = re.compile(r'^(STATE_[A-Z]+)="([0-9a-fA-F]{6})"', re.MULTILINE)
 
 # Group ordering: yellow first, then green, then everything else, then a
-# resting curator tab, then a resting scheduler tab at the far right.
-_PRIORITY = {"yellow": 0, "green": 1, "neutral": 2, "curate": 3, "plan": 4}
+# resting launcher tab, a resting curator tab, and a resting scheduler tab at
+# the far right.
+_PRIORITY = {
+    "yellow": 0,
+    "green": 1,
+    "neutral": 2,
+    "launch": 3,
+    "curate": 4,
+    "plan": 5,
+}
 
-# The iTerm user variable the `plan` and `curate` launchers set on their
-# session, and the values that mark them. A seat verb launched with the switch
-# off carries no marker, so it sorts as an ordinary tab.
+# The iTerm user variable the seat launchers set on their session, and the
+# values that mark them. A seat verb launched with the switch off carries no
+# marker, so it sorts as an ordinary tab.
 ROLE_VARIABLE = "user.ds_role"
 PLAN_ROLE = "plan"
 CURATE_ROLE = "curate"
-#: The seat roles, outermost first: a tab carrying both reads as the first.
-SEAT_ROLES = (PLAN_ROLE, CURATE_ROLE)
+LAUNCH_ROLE = "launch"
+#: The seat roles, outermost first: a tab carrying two reads as the first.
+SEAT_ROLES = (PLAN_ROLE, CURATE_ROLE, LAUNCH_ROLE)
 
 POLL_SECONDS = 0.3
 
@@ -175,7 +185,7 @@ async def _tab_role(tab) -> str | None:
     outermost (`SEAT_ROLES` order) when panes carry both.
 
     Every pane, not just the focused one, to match the dispatcher's lookup in
-    `iterm_api._seat_insert_index`: focusing a sibling pane of a split seat
+    `iterm_api._tab_role`: focusing a sibling pane of a split seat
     tab must not drop it out of its resting slot.
     """
     found = set()

@@ -25,6 +25,10 @@ from pathlib import Path
 
 INIT = Path(__file__).resolve().parents[1] / "shell" / "init.zsh"
 
+# No case may reach a real iTerm tab, whatever it forgets to stub: inherited by
+# every zsh this spawns (`iterm_api.DISABLED_ENV`).
+os.environ["DS_ITERM_DISABLED"] = "1"
+
 # Resolved once, ABSOLUTELY, because the absent-CLI cases empty `PATH` to hide
 # `aws` — and a bare "zsh" in the argv would then not be found either, failing
 # those cases for a reason that has nothing to do with the helper.
@@ -353,6 +357,9 @@ class TheGateActuallyGates(unittest.TestCase):
             'source "%s" 2>/dev/null; %s'
             '_DS_SUBSTRATE_DIR="$CALLS.state"; '
             "_ds_seat_guard() { : }; "
+            # The scheduler's own gate, on a warm day; the pre-launch's gate is
+            # `test_plan_cycle_loop.PreLaunch`'s.
+            "_ds_plan_fresh_day() { return 1 }; "
             '_ds_session() { print -r -- "1|LAUNCHED" >> "$CALLS" }; '
             "%s" % (INIT, _STUB, verb)
         )
@@ -424,8 +431,14 @@ class GatedVerbSurface(unittest.TestCase):
         # reaches the guard through `_ds_substrate_enter` in the shared
         # `_ds_daily_seat` body, which also carries its `bedrock` override.
         guard = self.source.index('_ds_substrate_enter "$substrate" "$kind"')
-        gate = self.source.index("_ds_aws_login 'plan'")
+        gate = self.source.index("if ! _ds_aws_login 'plan'; then")
         self.assertLess(guard, gate, "plan probes before clearing the env")
+        # The pre-launch probes in the operator's own environment too: it
+        # clears inherited Bedrock exports before its gate.
+        body = self.source.index("_ds_plan_prelaunch() {")
+        unset = self.source.index("_ds_substrate_unset", body)
+        early = self.source.index("_ds_aws_login 'plan' || return 1", body)
+        self.assertLess(unset, early, "the pre-launch probes before clearing")
 
     def test_architect_is_deliberately_not_gated(self):
         # It argues design rather than reading cost data, and a browser login is a
@@ -436,11 +449,13 @@ class GatedVerbSurface(unittest.TestCase):
         # The curator reads no cost data: the gate sits behind the scheduler's
         # kind in the shared body, and nowhere else.
         self.assertNotIn("_ds_aws_login 'curate'", self.source)
-        # The only gate call sits INSIDE the scheduler-only guard, before its fi.
+        # The shared body's gate call sits INSIDE the scheduler-only guard,
+        # before its fi; the only other is the scheduler's own pre-launch.
         guard = self.source.index('if [[ "$kind" == plan ]]; then')
-        gate = self.source.index("_ds_aws_login 'plan'")
+        gate = self.source.index("if ! _ds_aws_login 'plan'; then")
         close = self.source.index("\n  fi\n", guard)
-        self.assertEqual(self.source.count("_ds_aws_login 'plan'"), 1)
+        self.assertEqual(self.source.count("_ds_aws_login 'plan'"), 2)
+        self.assertIn("_ds_aws_login 'plan' || return 1", self.source)
         self.assertLess(guard, gate)
         self.assertLess(gate, close)
 

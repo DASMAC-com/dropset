@@ -276,6 +276,8 @@ class WalkTest(unittest.TestCase):
             fc.verb_of_prompt("<command-name>/curate</command-name>"), "curate"
         )
         self.assertIsNone(fc.verb_of_prompt("/curated list"))
+        self.assertEqual(fc.verb_of_prompt("/launch"), "launch")
+        self.assertIsNone(fc.verb_of_prompt("/launcher"))
         self.assertEqual(
             fc.verb_of_prompt("<command-name>/housekeeping</command-name>"),
             "housekeeping",
