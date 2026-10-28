@@ -1844,7 +1844,9 @@ migrations or generation inputs, and whether it spans crates.
 
    - [ ] **Close** — the follow-up ledger, then the one question.
      Name every operator-facing item as addressed, handed to a
-     planning session, or filed as a task. Then ask via
+     planning session, or filed as a task — each filing messaged to
+     the curator (`curate-<day>`, via `ListAgents`; with none live,
+     the scheduler). Then ask via
      `AskUserQuestion` — *"all follow-up complete: metrics filed,
      feedback forwarded — mark Done?"* — offering **"Mark Done and
      remove the worktree (Recommended)"** first and **"Mark Done, keep

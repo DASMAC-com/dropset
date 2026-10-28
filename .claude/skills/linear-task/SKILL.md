@@ -45,9 +45,9 @@ is empty, stop and tell the user to export it in
 their shell profile (`~/.zshrc`); don't guess the
 value.
 
-Every issue is filed **into the Backlog, parked under
-`Follow-ups`, with no parent** (`state: "Backlog"`, no
-`parentId`; step 1 says why it parks). There is
+Every issue is filed **into the Backlog, with no milestone
+and no parent** (`state: "Backlog"`, no `parentId`; step 1
+says who reviews it). There is
 no umbrella issue. What gates what is recorded as
 native Linear blocking edges, which a **human curates** —
 this skill may propose one but never files one unasked
@@ -81,16 +81,10 @@ what to file.
      product / on-chain / SDK / frontend code gets no
      prefix.
 
-     **Every filing is PARKED** — set state **Backlog
-     plus the `Follow-ups` milestone, in the creating
-     call**, meta or not. Without the milestone a
-     follow-up lands in the operator's review inbox one at
-     a time, unfolded; the milestone keeps it out of the
-     inbox by construction. The planning bootstrap is its
-     one reviewer: once a day it folds that milestone into
-     small themed batch issues, meta apart from product by
-     the prefix, and promotes them into the inbox whole
-     (an `[Operator]` item parks too, but is never folded).
+     **Every filing lands in the inbox** — state
+     **Backlog, no milestone**, meta or not; the
+     `Follow-ups` milestone is no longer written. The
+     curator is its reviewer: step 4 messages it.
 
      **Ask the verb and substrate** with the
      `AskUserQuestion` selector, the default — Task on
@@ -220,8 +214,7 @@ what to file.
      team: "<$LINEAR_TEAM_ID>",
      project: "<$LINEAR_PROJECT_ID>",
      assignee: "<$LINEAR_ASSIGNEE_ID>",
-     state: "Backlog",
-     milestone: "Follow-ups",  // every filing parks (step 1)
+     state: "Backlog",  // no milestone (step 1)
      title: "<title>",
      description: "<markdown body>",
      priority: 3,  // 2 if the user calls it urgent
@@ -242,4 +235,8 @@ what to file.
    overlap is planning-session work.
 
 1. Print the new issue's identifier (e.g. ENG-123)
-   and URL so the user can jump to it.
+   and URL so the user can jump to it, then **message the
+   curator** (`curate-<day>`, found with `ListAgents`) the
+   identifier and title. With no curator live, message the
+   scheduler (`plan-<day>`): its first filer message of the
+   day dispatches one.

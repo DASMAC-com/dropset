@@ -36,20 +36,26 @@ the document's state sections.
    sessions, Sonnet-class, Bedrock by default, pinned with the 1M
    suffix in the runtime config.
    Model ids live only in the operator's runtime config; unset
-   refuses the launch.
+   refuses the launch. Role nouns (2026-10-26): the **scheduler**
+   (`plan`) and the **curator** (`curate`).
 
 1. **Next means dispatchable right now.** A planning hold is a
    blocking edge the operator can see, never prose-only state.
-   Planning places and removes edges; automated filers never
-   place one. (`SKILL.md` step 2.)
+   Automated filers never place an edge. (`SKILL.md` step 2.)
+   **The coordination rule** (2026-10-26): the scheduler and the
+   curator both write edges and priorities anywhere; a write
+   touching what the other placed is messaged to it in the same
+   turn with the reason; neither deletes the other's edge
+   without a message; the Planning document records the result at the
+   scheduler's next write-back.
 
-1. **Meta discretion — the necessity kill gate.** Every full
-   bootstrap kills before it assembles: a pooled issue that cannot
-   name a concrete recurring cost larger than its
+1. **The necessity kill gate.** A pool member
+   that cannot name a concrete recurring cost larger than its
    landing-plus-ratification cost is closed, and doubt still
    kills. Doubt means doubt the issue is worth doing, never "not
-   this week": what survives is assembled and promoted whole
-   (2026-10-23). The one-time cull of the whole meta stock ran on
+   this week". Relocated 2026-10-26: the curator's commentary
+   recommends cancel with the reason; the operator's drop comment
+   executes it. The one-time cull of the whole meta stock ran on
    2026-10-15 (34 closed, 12 folds).
 
 1. **Headroom ratchet.** A shrinking PR commits its ceiling at
@@ -71,8 +77,8 @@ the document's state sections.
    planning the remainder as pullable units, and ends its
    session; planning files them and **re-points the blocking
    edges to the chain's tail**, so ratifying the first issue does
-   not release work that depends on the whole. (`SKILL.md`
-   step 5.)
+   not release work that depends on the whole, and messages the
+   curator the filing (2026-10-26). (`SKILL.md` step 5.)
 
 1. **Meta stack deliberateness.** Meta work is dispatched
    deliberately, not as a constant stream.
@@ -101,7 +107,12 @@ the document's state sections.
    answer the session moves the whole set to Todo in one batch —
    never on its own judgment — and its close gate asserts none is
    still parked. The same machinery serves explore sessions, and
-   audit findings once their own ratification lands.
+   audit findings once their own ratification lands. **The
+   curator's carve-out** (2026-10-26): it moves a ticked,
+   uncommented pool member to Todo one at a time, the tick in its
+   tab being the operator's move, and places an edge or priority
+   the operator ticks in the same tab, messaging the scheduler
+   each one.
 
 1. **Planning is read-only toward the repo.** A planning session
    writes Linear state only; a fast-forward of the base checkout
@@ -142,10 +153,10 @@ the document's state sections.
 
 1. **Parked hygiene is a rhythm.** Every full bootstrap says each
    parked milestone's count with its direction, machine-written by
-   upkeep; the digest's levers fold there (ruling 23), Follow-ups
-   folds and promotes whole (`SKILL.md` step 1), Audit findings
-   drains by promotion or kill, and Session pending gets a
-   count-and-offer line (`SKILL.md` step 8).
+   upkeep; the digest's levers fold there (ruling 23), Audit
+   findings drains by promotion or kill, and Session pending gets
+   a count-and-offer line (`SKILL.md` step 8). Follow-ups and
+   Claude meta left the rhythm 2026-10-26: filers no longer park.
 
 1. **Alpenglow proof is explicit.** The v3 port closes only with
    a recorded end-to-end deploy on an Alpenglow-enabled 4.3
@@ -158,7 +169,7 @@ the document's state sections.
    their account and file none; the bootstrap's fold analyst
    files from the digest every morning, folding a near-duplicate
    into the open Backlog issue rather than filing a sibling, and
-   the meta review kills on doubt. A Backlog of similar trim
+   the curator recommends cancel on doubt (ruling 3). A Backlog of similar trim
    tasks is an analyst defect (raise the reservoir bar), not a
    backlog. A couple hundred dollars a day is acceptable spend;
    unbounded growth is the only failure watched.
@@ -181,9 +192,9 @@ the document's state sections.
 
 1. **Operator-executed items are not tasks.** An item executed in
    a vendor dashboard, credentials or deploy env is never
-   dispatched; it parks under Follow-ups, is never folded or
-   promoted, and goes on the document's operator-actions list by
-   hand.
+   dispatched; it is filed `[Operator]` in Backlog, reviewed by
+   the curator, and once in Todo sits on the operator-actions
+   list until marked Done (2026-10-26).
 
 1. **Cost telemetry is reconciled against the bill.**
    Session-reported costs are projections;
@@ -209,7 +220,9 @@ the document's state sections.
   overages accepted as one PR when a split would ship inert code.
 - **Guards stay on under auto mode.**
 - **Per-tab ratification outranks planning holds.**
-- **Follow-ups park under the Follow-ups milestone.**
+- ~~**Follow-ups park under the Follow-ups milestone.**~~ Struck
+  2026-10-26: follow-ups file un-parked and are messaged to the
+  curator.
 - **The resident budget is CI-enforced**, and compression means
   **less text**.
 - **Model defaults are runtime-config edits**, never repo changes.
@@ -219,9 +232,11 @@ the document's state sections.
 
 ## Fleet doctrine
 
-1. **Planning-only dispatch**, as new tabs in the planning window,
-   with one consolidated ask; ratification and gate approvals are
-   per-tab. Run `fleet resume` **before** dispatching new tasks. A
+1. **Dispatch through the dispatcher tool**, by the scheduler, or
+   by the curator for the architect tasks it files (2026-10-26),
+   as new tabs in the dispatcher's window, with one consolidated
+   ask; the fleet bound lives in the tool. Ratification and gate
+   approvals are per-tab. Run `fleet resume` **before** dispatching new tasks. A
    session resumed outside its verb has no secrets.
 1. **The antichain practice**: dispatch file-disjoint sets, and
    publish the dispatchable antichain at every bootstrap; every
@@ -248,8 +263,8 @@ the document's state sections.
    heartbeat, with the tier question asked first and the
    tool-usage lens.
 1. **Verbs**: `task`, `task anthropic`, `task resume`, `chore`,
-   `chore anthropic`, `explore`, `explore anthropic`, `plan`,
-   `plan cycle`, `architect`
+   `chore anthropic`, `explore`, `explore anthropic`, `plan` (the
+   scheduler), `plan cycle`, `curate` (the curator), `architect`
    (bare number, idempotent), and `fleet`; a substrate word always
    precedes the number (`architect bedrock <n>`); `housekeeping` is
    retired, its upkeep run by the `plan` launcher. Audit issues
@@ -269,7 +284,8 @@ line here is struck.
 
 - **Board and process**: edges human-curated and planning-placed;
   Linear tags never in PR bodies; AI attribution never in commits
-  or PRs; follow-ups to the Follow-ups milestone; no committed
+  or PRs; follow-ups to the un-parked Backlog, messaged to the
+  curator; no committed
   model ids; the issue filer and appender are the zero-echo
   paths; the board tool's lookup lags on a just-created
   issue.

@@ -456,6 +456,16 @@ def _resolve_named(nodes: list, wanted: str, kind: str) -> str:
     raise LinearIssueError(f"no {kind} named {wanted!r} — have: {names}")
 
 
+# A filing naming state Backlog and no milestone enters the curator's review
+# pool, and the curator learns of it by message, never by polling the board.
+# Every filing skill passes --state, so an omitted one is not guessed at. The
+# tool only reminds; messaging is the filing session's act.
+CURATOR_REMINDER = (
+    "REMINDER: message the curator (curate-<day>, via ListAgents) this "
+    "filing; with none live, message the scheduler (plan-<day>)"
+)
+
+
 def create_issue(
     api_key: str,
     *,
@@ -545,7 +555,10 @@ def create_issue(
     if not result.get("success"):
         raise LinearIssueError(f"issueCreate failed for {title!r}")
     issue = result.get("issue") or {}
-    return f"FILED {issue.get('identifier')} {issue.get('url')} | {', '.join(plan)}"
+    line = f"FILED {issue.get('identifier')} {issue.get('url')} | {', '.join(plan)}"
+    if (state or "").strip().lower() == "backlog" and not milestone:
+        line += "\n" + CURATOR_REMINDER
+    return line
 
 
 def _read_file(path: str) -> str:

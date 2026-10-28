@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a planning session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), polls the Backlog review inbox, runs the audit heartbeat (file an audit issue or decline with a recorded reason), and folds the parked `Follow-ups` pool into small themed edge-free batches, promoting every one. Then keeps the board coherent: Todo dispatched as standing authorization, blocking edges curated by a human, file collisions reconciled by reading, parked findings promoted to keep the inbox stocked, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
+description: Run a planning session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), runs the audit heartbeat (file an audit issue or decline with a recorded reason), and dispatches the curator to walk the operator through the Backlog review inbox. Then keeps the board coherent: Todo dispatched as standing authorization, blocking edges curated by a human, file collisions reconciled by reading, the inbox kept stocked with staged specs, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
 user-invocable: true
 model: fable
 ---
@@ -108,7 +108,7 @@ operator lever, never this mechanism.
   there is **warm**: read `rulings.md` and the document, run
   `ListAgents`, surface
   the outstanding list — and skip the once-a-day duties (the lever
-  and meta folds, the audit heartbeat, the parked counts, the upkeep
+  fold, the audit heartbeat, the parked counts, the upkeep
   report, step 8). No stamp
   means a full bootstrap.
 
@@ -123,7 +123,8 @@ handoff — and, warm or full:
 - **Act on each `Discuss with operator` item first**, before the
   board — one needing the operator's word joins step 8's ask.
 - **Surface `Operator actions outstanding` unprompted**, itemized
-  and numbered, so the operator answers all of it in one message.
+  and numbered — every `[Operator]` item in Todo plus what the
+  document holds — so the operator answers all of it in one message.
   Never leave it waiting for the operator to open the document.
 - **Verify overnight landings with `git log`** and the In Review
   listing, never the Done column; release chains as blockers land.
@@ -184,8 +185,7 @@ spawn, do every duty that asks nothing — the outstanding list,
 `fleet resume`, the overnight landing check, the board read, the
 Queue's honesty — then end the turn (with no spawn, go straight
 on). The completion notification resumes it: say the report,
-record it under `In-session notes`, finish the board (the meta
-review included, since the fold's batches enter the inbox), and
+record it under `In-session notes`, finish the board, and
 stop at step 8's consolidated ask. A
 Discuss item or duty needing the operator's word joins that ask.
 Never fold levers by hand while a sub-agent can.
@@ -213,29 +213,28 @@ python3 .claude/tools/board_batch.py list --include-milestoned \
 python3 .claude/tools/board_batch.py list --state Todo
 ```
 
-The first keeps parked issues, tagged, for the meta review.
+The first keeps parked issues, tagged, for step 8's counts.
 **Say three counts**: the inbox (untagged Backlog), its Urgent
 subset, and Todo. Pull a body only when a decision turns on it.
 
-**Poll the inbox** — inbox specs changed since the day before
-the prior stamp (`<WHEN>` as `<YYYY-MM-DD>T00:00:00Z`), skipping
-any a live architect or explore session owns:
+**The fold protocol**, which every reviser reuses: fold the
+comment into the body, reply saying how it was addressed, then
+resolve the thread (`linear_gate.py resolve <comment-id>`).
+Resolved means addressed-and-how, never approval. Never fold an
+In Progress spec; a fold into an approved (Todo) body moves it
+back to Backlog, priority and edges unchanged.
 
-```sh
-python3 .claude/tools/board_batch.py list --updated-since <WHEN>
-```
-
-Handle their open threads by **the fold protocol**, which every
-reviser reuses: fold the comment into the body, reply saying how
-it was addressed, then resolve the thread
-(`linear_gate.py resolve <comment-id>`). Resolved means
-addressed-and-how, never approval. Never fold an In Progress
-spec; a fold into an approved (Todo) body moves it back to
-Backlog, priority and edges unchanged.
-
-**The one relay is "please review the Urgent specs (N)".** Keep
-the Urgent set small, a few at a time, and the inbox stocked so
-the operator is never idle: when it runs thin, stage more specs
+**The curator reviews the inbox; the scheduler dispatches it.**
+After step 8's answer and the bootstrap's write-back of the state
+of play, when the pool (the un-parked Backlog) is non-empty,
+dispatch `curate` through step 5's tool on the substrate that ask
+named (Bedrock by default). Its
+kick-off is this fixed text, never a paraphrase: "The state of
+play is written. Rank the pool against it and walk the operator
+through it in fours; message me each Todo move and each edge or
+priority you place." On an empty pool dispatch nothing; the
+first filer's message that day triggers it. The scheduler still
+keeps the inbox stocked: when it runs thin, stage more specs
 before anything else.
 
 **Then read Next as the operator sees it** — their named Linear
@@ -285,80 +284,6 @@ sessions: temporary worktree, no PR". An
 audit sits **In Progress** until its findings are ratified and
 folded, so an old In Progress audit is live, not stalled.
 
-**Fold the `Follow-ups` pool into SMALL THEMED batches, then
-promote them all — by default, unprompted.** An executor
-session's follow-ups and `Claude:` strays land parked (Backlog
-plus `Follow-ups`); this bootstrap is their one reviewer. The
-pool is that milestone **plus every open, unblocked `Claude:`
-inbox stray** (never Todo), so a meta issue filed outside the
-parking rule is still absorbed; never a product spec awaiting
-review, an `[Operator]` item, or a `trim-context` output task,
-which is already a batch. Group by the surface each issue
-changes, meta apart from product by the `Claude:` prefix, and
-fold each group into its lowest-numbered survivor via
-`/merge-tasks`. Routine bookkeeping; no per-fold proposal.
-
-- **Roughly 4–5 parts per batch** (operator rule, 2026-09-11):
-  five or fewer parts is one batch, fifteen is three. Session
-  cost is roughly quadratic in length —
-  `docs/conventions/context-economy.md` → "Session length is
-  itself a cost lever". Cross-check against that doc's line band
-  (300–800 changed lines, floor ~150, split at 1,000); the parts
-  count is the primary bound. A batch far under the floor may
-  take another part **of the same theme** — never an unrelated
-  one, never padding. Which rule yields when they disagree: same
-  doc → "Which one yields in the interim".
-
-- **Fold strays, promote batches.** An already-assembled batch,
-  parked or promoted, is never a fold input —
-  `/merge-tasks` cannot split, so a re-fold only grows it.
-
-- **Promotion is whole; assembly comes first.** Every assembled
-  batch enters the inbox, Urgent — never a parked remainder.
-
-- **Nothing serializes batches** — no edge, no in-flight gate,
-  no disjoint slate. The file-disjoint test binds at dispatch
-  (step 5).
-
-- **Assembly consumes the pool as of this bootstrap.** A later
-  stray waits for the next one.
-
-- **Never fold an In Progress issue**, nor across the meta /
-  product boundary.
-
-- **Append to a batch with the zero-echo writer**, never
-  `save_issue`: the MCP echoes the whole accumulated body on
-  every write (one ~30-line append cost ≈6.6k).
-
-  ```sh
-  python3 .claude/tools/linear_issue.py append \
-    --id <ENG-###> --file <scratchpad>/addition.md
-  ```
-
-  Anchored edits stay on `patch`.
-
-**Review every pooled issue and every meta issue at every full
-bootstrap — parked, Next and Blocked — whether or not the
-document names a lane.** It is
-a **necessity gate**: each ends doable, blocked, or killed. From
-the two listings:
-
-1. Say the counts out loud.
-1. **Before assembly, kill on doubt**, per issue: one that cannot
-   name a concrete recurring cost larger than its
-   landing-plus-ratification cost goes on a kill list (titles
-   first; read only a kill candidate's body). Kill candidates
-   stay out of assembly until step 8's answer; a declined kill
-   is assembled and promoted right after it.
-1. After assembly, promote every batch in one
-   `board_batch.py fields` write (milestone `null`, Urgent); the
-   operator reviews each in the inbox. A `[blocked by …]` row
-   stays behind its human-placed edge.
-1. Offer the kill list in step 8's `AskUserQuestion`; on a yes,
-   close each kill `Canceled` with its reason, as `trim-context`
-   step 6 does.
-1. Record promoted, killed and blocked under `In-session notes`.
-
 **Bound the Planning document.** It grows between close-out
 rewrites: other sessions append, and an abrupt close skips the
 rewrite. So:
@@ -396,8 +321,10 @@ with no refactor-later burden a later issue will undo.
 - An issue is in Next **iff** it is in Todo with no live
   blocking edge. "Put it in Next" means resolving or re-scoping
   what blocks it — **never** silently dropping a real dependency.
-- **Edges and Backlog priorities are curated here**;
-  implementation sessions never place edges.
+- **Edges and priorities are the scheduler's and the curator's**
+  (ruling 2); implementation sessions never place edges. Message
+  the curator every direction change, and any write touching an
+  edge or priority it placed, with the reason, in the same turn.
 - **A hold is an edge or it does not exist** (ruling 2). An issue
   held behind an in-flight surface or a sequencing reason gets a
   blocking edge on that blocker, asked in step 8's ask at
@@ -406,10 +333,6 @@ with no refactor-later burden a later issue will undo.
   dispatched. A completed blocker stops blocking on its own;
   removing a hold edge on a re-sequence is the operator's call
   too, asked the same way and run through step 3.
-- **A promoted `Claude:` batch is Urgent**, so agent-infra goes
-  first (operator rule, 2026-08-17). Meta lands
-  as short batches (step 1), several possibly in flight, with no
-  edge and no exception to the proposal-per-edge rule.
 
 An issue that isn't startable gets reordered behind what it
 depends on, re-scoped, or split so its first actionable unit is
@@ -422,9 +345,9 @@ crate, language-domain) fold via `/merge-tasks`. Step 1's
 collision clusters are the raw material. The **coherence floor**
 binds: never across separate apps, languages, or deploy units.
 
-**3. Curate blocking edges — the one place they are placed.**
-Edges mean **semantic rollout ordering** or **this session's own
-dispatch hold** (step 2), and are human-curated end to end
+**3. Curate blocking edges.** Edges mean **semantic rollout
+ordering** or **the scheduler's own dispatch hold** (step 2),
+and are human-curated end to end
 (`docs/conventions/linear-automation.md` → "Blocking
 relations"). Place the operator's decided edges in one batch:
 
@@ -471,8 +394,8 @@ filing skill binds this session:
   states its seat and a token profile instead: dollar bands bind
   Bedrock workers only.
 
-- **The Todo / Backlog split** (step 1), **the `Claude:` prefix
-  with its parked landing**, and **the mandatory
+- **The Todo / Backlog split** (step 1), **the `Claude:` prefix**,
+  and **the mandatory
   `**Fingerprint**:` line** — as `CLAUDE.md` states them. **File
   no relations**: overlap is step 1's prose, edges step 3's.
 
@@ -522,8 +445,9 @@ first, self-contained PR and messages the remainder here as
 pullable units. File each, insert it into the lane, and
 **re-point the issue's dependents' blocking edges to the chain's
 tail**, so the operator's Done on the first issue does not
-release work that needs the whole. The re-point is this
-session's write, never the worker's.
+release work that needs the whole. The re-point is the
+scheduler's write, never the worker's; message the curator the
+filing.
 
 **Dispatching is the other half; Todo is its standing
 authorization.** The gate is two checks: state Todo
@@ -535,9 +459,7 @@ that move (2026-10-21); the probe's count feeds a later fold.
 Dispatch unblocked Todo as the dispatcher's reading admits, in
 file-disjoint sets judged here on the collision clusters, overlap
 paid as a rebase, with no per-dispatch ask. Moving an issue back
-to Backlog is the operator's "not now". The inbox is bounded by
-the kill gate and batch size alone: one the operator cannot keep
-up with means kill harder, never re-park.
+to Backlog is the operator's "not now".
 
 ```sh
 python3 .claude/tools/session_dispatch.py task 1234
@@ -656,13 +578,15 @@ the decision context does not — the analyst rejects those.
 
 **8. Drain the legacy findings, and ask once.** **At bootstrap,
 say each count, never a listing.** **The consolidated ask**
-carries only what needs the operator's word — the kill list, the
-holds' edges, Discuss items and the upkeep's destructive items.
+carries only what needs the operator's word — the curator's
+substrate, the `Audit findings` kill list, the holds' edges,
+Discuss items and the upkeep's destructive items.
 
 **`Audit findings` is a legacy pool, drained one finding at a
-time**: each bootstrap promotes or kills what it holds, by step
-1's kill gate, and the milestone leaves the parking set once
-empty. List
+time**: each bootstrap promotes what it holds, or lists it for a
+kill by ruling 3's necessity test, closing each `Canceled` with
+its reason on the operator's yes; the milestone leaves the parking
+set once empty. List
 it **field-selected** (title, priority); promote by **clearing
 the milestone** in one `board_batch.py fields` write, never by
 closing and refiling. **Do not re-adjudicate a finding** —
@@ -677,7 +601,6 @@ session that died mid-review — offer to resume it.
   Planning document; it authors no diff and commits nothing.
 - **It is not a one-shot** — a planning session spans hours or
   days.
-- **The board is this session's alone.** No other skill analyses
-  it, and none folds or merges the meta pool — the filing skills
-  only feed it — so two can't reach conflicting conclusions: one
-  folder, one rhythm (`history.md`).
+- **The board is shared with the curator alone**, under ruling
+  2's coordination rule: each messages the other any write
+  touching what the other placed.
