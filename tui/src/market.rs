@@ -1262,7 +1262,7 @@ mod tests {
     }
 
     /// The seeded passive book is thickest at the top of book on both sides:
-    /// no rung is smaller than its outer neighbor, so there is no tip.
+    /// no rung is smaller than its outer neighbor.
     #[test]
     fn a_passive_seed_never_grows_outward() {
         let bytes = seed_profile(Posture::Passive, WallSpan::UNBOUNDED);

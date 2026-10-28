@@ -236,7 +236,8 @@ impl Default for TightLadder {
 
 impl TightLadder {
     /// The rungs, innermost first, committing the full leg (`Σ size_bps =
-    /// BPS`, since the full-width bell is [`BELL_SIZES_BPS`] exactly).
+    /// BPS`). The sizes are [`BELL_SIZES_BPS`] as they stand, so nothing is
+    /// floored.
     pub fn levels(&self) -> Vec<LadderLevel> {
         let scale = f64::from(self.horizon_days.max(1)).sqrt();
         let offsets = TIGHT_OFFSETS_BPS.map(|bps| (f64::from(bps * 100) * scale).round() as u32);

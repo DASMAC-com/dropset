@@ -767,8 +767,8 @@ impl StrategyConfig {
     /// changes with the mode because the right ladder differs by mode (§2):
     /// passive wants tight spacing, flip spreads and unbounded expiry, none of
     /// which suit a bot that re-stamps every 30 s. The re-center bound counts
-    /// `PASSIVE_RECENTER_INNER_LEVELS` rungs, so a tight top of book does not
-    /// pull it in to 6 bps.
+    /// `PASSIVE_RECENTER_INNER_LEVELS` rungs rather than the active default's
+    /// two, which would put it at 6 bps.
     pub fn into_passive(self) -> Self {
         Self {
             mode: StrategyMode::Passive,
@@ -917,7 +917,7 @@ mod tests {
     }
 
     /// The passive ladder fills the level cap, commits the full leg, and is a
-    /// bell with no tip: offsets widen outward while sizes shrink from L1, so
+    /// bell: offsets widen outward while sizes shrink from L1, so
     /// the top of book is the largest rung (§2 per-mode shape rule).
     #[test]
     fn passive_ladder_is_a_full_leg_bell_from_the_top_of_book() {
