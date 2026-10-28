@@ -20,7 +20,7 @@
       }
     ]
   },
-  "description": "Raw collected series first, then the regime analytics derived from them. Read it top-down: is there data for this venue and product, what does the store hold across every venue, what does the data say about volatility by hour, and how does this currency's whole pair set compare. The candlestick and the vol panel read one product at a time; the cross-pair index deliberately reads the whole currency at once. Every panel except Spot ticks reads the candle tier, so Venue source lists candle venues only; the tick-only venues (kraken among them) are under Tick venue and drawn by the Spot ticks panel at the bottom.",
+  "description": "Raw collected series first, then the regime analytics derived from them. Read it top-down: is there data for this venue and product, what does the store hold across every venue, what does the data say about volatility by hour, and how does this currency's whole pair set compare. The candlestick and the vol panel read one product at a time; the cross-pair index deliberately reads the whole currency at once. Every panel above the tGBP row except Spot ticks reads the candle tier, so Venue source lists candle venues only; the tick-only venues (kraken and orca among them) are under Tick venue and drawn by the Spot ticks panel. The tGBP row at the bottom takes no variable: it fixes TGBP-USDC and reads the Orca pool, the Coinbase candles and the estimator's fair_price directly.",
   "editable": true,
   "graphTooltip": 1,
   "links": [
@@ -998,7 +998,7 @@
           "uid": "dropset-postgres"
         },
         "definition": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
-        "description": "The venue whose collected series is being shown. Single-select: the candlestick and the vol panel each read one venue and product at a time, and the cross-pair index reads one venue across many pairs, so two vendors carrying the same pair never draw duplicate lines. CANDLE VENUES ONLY: this lists the sources in the candle tier, so a venue that writes only spot ticks (kraken, erapi, frankfurter, pyth) is absent by construction, not by omission. Those are under Tick venue, which drives the Spot ticks panel at the bottom; coinbase writes both tiers, so it appears in both pickers.",
+        "description": "The venue whose collected series is being shown. Single-select: the candlestick and the vol panel each read one venue and product at a time, and the cross-pair index reads one venue across many pairs, so two vendors carrying the same pair never draw duplicate lines. CANDLE VENUES ONLY: this lists the sources in the candle tier, so a venue that writes only spot ticks (kraken, erapi, frankfurter, pyth, orca) is absent by construction, not by omission. Those are under Tick venue, which drives the Spot ticks panel; coinbase writes both tiers, so it appears in both pickers.",
         "includeAll": false,
         "label": "Venue source",
         "multi": false,
@@ -1179,7 +1179,7 @@
           "uid": "dropset-postgres"
         },
         "definition": "SELECT DISTINCT source FROM spot_ticks ORDER BY 1",
-        "description": "The tick-tier venues: every source that has ever written spot ticks. kraken, erapi, frankfurter, pyth and orca write nothing else, which is why they do not appear under Venue source; coinbase writes both tiers and appears in both. Drives only the Spot ticks panel at the bottom. Multi-select and All by default, because the panel's question is how one product reads across venues; narrow it to isolate one.",
+        "description": "The tick-tier venues: every source that has ever written spot ticks. kraken, erapi, frankfurter, pyth and orca write nothing else, which is why they do not appear under Venue source; coinbase writes both tiers and appears in both. Drives only the Spot ticks panel, above the tGBP row. Multi-select and All by default, because the panel's question is how one product reads across venues; narrow it to isolate one.",
         "includeAll": true,
         "label": "Tick venue",
         "multi": true,
