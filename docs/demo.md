@@ -19,8 +19,11 @@ and every market opens **dark**. Once the log reads `Bootstrap complete`:
 
 ## 2. Run the check
 
-From a second terminal: `make demo-check`. One line per surface, then
-`demo stack ready` or the count of fails, exiting non-zero on any fail.
+From a second terminal, while `make demo` is up and after
+`Bootstrap complete` and `M`: `make demo-check`. Every line reads the live
+stack, and the check says so in its first line. One line per surface, then
+`demo stack ready` or the count of fails and skips, exiting non-zero on any
+fail.
 
 | Line                   | Pass means                                                                  |
 | ---------------------- | --------------------------------------------------------------------------- |
@@ -34,6 +37,16 @@ From a second terminal: `make demo-check`. One line per surface, then
 
 The quote line is chain-side: it proves the book quotes, not that the page
 renders one. Step 4 is the browser half.
+
+An active market's liveness is read off the chain, never off which makers
+the TUI started. `no quote on chain yet (start the makers with M)` means its
+vault has never stamped a quote: either `M` was not pressed, or the maker
+started and has not quoted yet, so re-run after a few seconds. `maker stale`
+means it quoted and went quiet.
+
+`SKIPPED` is neither a pass nor a fail. With the validator down, the market
+and quote lines print as `SKIPPED` with the validator's reason, so the one
+fault fails once, and the closing line names every skipped surface.
 
 `EXPECTED` is not a fail. There are two such states:
 

@@ -19,6 +19,10 @@
 //!   only: the page itself is not driven;
 //! - **frontend** and **grafana** — each server answering.
 //!
+//! With the validator down, the market and quote lines print as skipped
+//! rather than vanish or fail a second time, so the count of surfaces is
+//! the same on every run.
+//!
 //! **Keyless is a state, not a failure.** A stack brought up without the
 //! OANDA and Twelve Data credentials has no FX tape, so the FX-fed markets
 //! halt; the check reads the keyed containers' absence as that mode and
@@ -197,6 +201,9 @@ pub enum Verdict {
     Fail,
     /// Not healthy, and not wrong either: a named state the stack is in.
     Expected,
+    /// Not checked, because a surface it reads through already failed —
+    /// neither a pass nor a second fail for the one fault.
+    Skipped,
 }
 
 impl Verdict {
@@ -205,8 +212,37 @@ impl Verdict {
             Verdict::Pass => "PASS",
             Verdict::Fail => "FAIL",
             Verdict::Expected => "EXPECTED",
+            Verdict::Skipped => "SKIPPED",
         }
     }
+}
+
+/// Printed before the surfaces: every line reads a live stack, so a run
+/// against one still bootstrapping, or with its makers not started, fails
+/// lines that are not broken.
+pub const HEADER: &str = "against the live demo: run from a second terminal while `make demo` \
+                          is up, after `Bootstrap complete` and M";
+
+/// The closing line, and whether the run passed: a fail makes it non-zero,
+/// and a skip is named so a down stack is not read as partially passing.
+pub fn summary(checks: &[Check]) -> (bool, String) {
+    let failed = checks.iter().filter(|c| c.verdict == Verdict::Fail).count();
+    let skipped: Vec<&str> = checks
+        .iter()
+        .filter(|c| c.verdict == Verdict::Skipped)
+        .map(|c| c.surface.as_str())
+        .collect();
+    let skipped = match skipped.len() {
+        0 => String::new(),
+        n => format!("; {n} skipped ({})", skipped.join(", ")),
+    };
+    if failed == 0 && skipped.is_empty() {
+        return (true, "demo stack ready".into());
+    }
+    (
+        failed == 0,
+        format!("{failed} surface(s) failed{skipped} — see docs/demo.md for what each line means"),
+    )
 }
 
 /// One printed line.
@@ -275,11 +311,12 @@ pub fn run(targets: &Targets<'_>) -> Vec<Check> {
     });
     let client = chain::rpc(targets.rpc_url);
     let validator = validator_check(&client);
-    let up = validator.verdict == Verdict::Pass;
-    checks.push(validator);
-    if up {
+    if validator.verdict == Verdict::Pass {
+        checks.push(validator);
         checks.extend(market_checks(&client, targets.repo_root, keyless));
         checks.push(quote_check(&client, targets.repo_root, keyless));
+    } else {
+        checks.extend(chain_skipped(validator));
     }
     checks.push(http_check("frontend", FRONTEND_PORT, "/"));
     checks.push(http_check("grafana", GRAFANA_PORT, "/api/health"));
@@ -593,12 +630,32 @@ struct BookState {
     liveness: Liveness,
 }
 
+const QUOTE_SURFACE: &str = "quote TGBP-USDC";
+
+fn market_surface(config: &PairConfig) -> String {
+    format!("market {}-USDC", config.base.symbol)
+}
+
+/// A failed validator line, then every line read through the chain as
+/// skipped with its reason — the surface count stays stable, and the one
+/// fault fails once.
+fn chain_skipped(validator: Check) -> Vec<Check> {
+    let reason = format!("not checked — validator failed: {}", validator.evidence);
+    let surfaces = market::roster(Cluster::Localnet)
+        .iter()
+        .map(|config| market_surface(config))
+        .chain([QUOTE_SURFACE.to_string()]);
+    std::iter::once(validator)
+        .chain(surfaces.map(|s| Check::new(s, Verdict::Skipped, reason.clone())))
+        .collect()
+}
+
 fn market_checks(client: &RpcClient, repo_root: &Path, keyless: bool) -> Vec<Check> {
     let head = client.get_slot().ok();
     market::roster(Cluster::Localnet)
         .iter()
         .map(|config| {
-            let surface = format!("market {}-USDC", config.base.symbol);
+            let surface = market_surface(config);
             match book_state(client, repo_root, config, head) {
                 Ok(Some(state)) => market_verdict(surface, config.posture, state, keyless),
                 Ok(None) => Check::new(surface, Verdict::Fail, "no market or vault on chain"),
@@ -677,7 +734,7 @@ fn market_verdict(surface: String, posture: Posture, s: BookState, keyless: bool
         ),
         Posture::Active => (
             two_sided && s.liveness == Liveness::Live,
-            format!("active; {book}; maker {}", liveness_label(s.liveness)),
+            format!("active; {book}; {}", liveness_label(s.liveness)),
         ),
     };
     let halted = s.asks == 0 && s.bids == 0;
@@ -692,11 +749,14 @@ fn market_verdict(surface: String, posture: Posture, s: BookState, keyless: bool
     }
 }
 
+/// Read off the vault's quote slot on chain, never off which makers the TUI
+/// started: a zero slot is a maker not started and one started but not yet
+/// quoting alike, so it reads "yet", and a re-run settles the second.
 fn liveness_label(l: Liveness) -> &'static str {
     match l {
-        Liveness::Live => "quoting",
-        Liveness::Stale => "stale",
-        Liveness::Unknown => "never quoted",
+        Liveness::Live => "maker quoting",
+        Liveness::Stale => "maker stale",
+        Liveness::Unknown => "no quote on chain yet (start the makers with M)",
     }
 }
 
@@ -722,14 +782,14 @@ fn quote_check(client: &RpcClient, repo_root: &Path, keyless: bool) -> Check {
     });
     match quote {
         Ok(q) => quote_verdict(q.out_amount, q.legs, config.base.decimals, keyless),
-        Err(e) => Check::new("quote TGBP-USDC", Verdict::Fail, format!("{e:#}")),
+        Err(e) => Check::new(QUOTE_SURFACE, Verdict::Fail, format!("{e:#}")),
     }
 }
 
 /// A fill passes; an empty one is the keyless halt when keyless, and a
 /// failure otherwise.
 fn quote_verdict(out_amount: u64, legs: u32, base_decimals: u8, keyless: bool) -> Check {
-    let surface = "quote TGBP-USDC";
+    let surface = QUOTE_SURFACE;
     if out_amount > 0 {
         let out = out_amount as f64 / 10f64.powi(i32::from(base_decimals));
         return Check::new(
@@ -1067,7 +1127,73 @@ mod tests {
             false,
         );
         assert_eq!(stale.verdict, Verdict::Fail);
-        assert!(stale.evidence.contains("maker stale"), "{stale}");
+        assert!(stale.evidence.ends_with("; maker stale"), "{stale}");
+    }
+
+    #[test]
+    fn a_zero_quote_slot_reads_not_yet_not_never() {
+        let unknown = market_verdict(
+            "m".into(),
+            Posture::Active,
+            book(0, 0, 0, Liveness::Unknown),
+            false,
+        );
+        assert_eq!(unknown.verdict, Verdict::Fail);
+        assert!(
+            unknown
+                .evidence
+                .ends_with("; no quote on chain yet (start the makers with M)"),
+            "{unknown}"
+        );
+        let live = market_verdict(
+            "m".into(),
+            Posture::Active,
+            book(4, 4, 0, Liveness::Live),
+            false,
+        );
+        assert!(live.evidence.ends_with("; maker quoting"), "{live}");
+    }
+
+    #[test]
+    fn a_failed_validator_skips_every_chain_line_once() {
+        let validator = Check::new("validator", Verdict::Fail, "unreachable: refused");
+        let checks = chain_skipped(validator.clone());
+        let roster = market::roster(Cluster::Localnet);
+        assert_eq!(checks.len(), roster.len() + 2);
+        assert_eq!(checks[0], validator);
+        assert_eq!(checks[1].surface, market_surface(roster[0]));
+        assert_eq!(checks.last().unwrap().surface, QUOTE_SURFACE);
+        for c in &checks[1..] {
+            assert_eq!(c.verdict, Verdict::Skipped, "{c}");
+            assert_eq!(
+                c.evidence, "not checked — validator failed: unreachable: refused",
+                "{c}"
+            );
+            assert!(c.to_string().starts_with("SKIPPED "), "{c}");
+        }
+    }
+
+    #[test]
+    fn the_summary_fails_only_on_a_fail_and_names_the_skips() {
+        let pass = Check::new("frontend", Verdict::Pass, "");
+        let expected = Check::new("mode", Verdict::Expected, "");
+        assert_eq!(
+            summary(&[pass.clone(), expected]),
+            (true, "demo stack ready".into())
+        );
+        let down = chain_skipped(Check::new("validator", Verdict::Fail, "unreachable"));
+        let skipped = down.len() - 1;
+        let (passed, line) = summary(&[pass.clone()].into_iter().chain(down).collect::<Vec<_>>());
+        assert!(!passed);
+        assert!(
+            line.starts_with(&format!("1 surface(s) failed; {skipped} skipped (market ")),
+            "{line}"
+        );
+        assert!(line.contains(&format!("{QUOTE_SURFACE})")), "{line}");
+        let only_skipped = Check::new("quote TGBP-USDC", Verdict::Skipped, "");
+        let (passed, line) = summary(&[pass, only_skipped]);
+        assert!(passed, "a skip alone is not a fail");
+        assert!(line.contains("1 skipped (quote TGBP-USDC)"), "{line}");
     }
 
     #[test]
