@@ -10,6 +10,8 @@ is the grown body rather than a replacement.
 from __future__ import annotations
 
 import io
+import os
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 
@@ -591,6 +593,26 @@ class Tick(_Stubbed):
         update = recorder.calls[-1][1]["input"]
         self.assertEqual(update, {"description": "- [x] One\n- [x] Two"})
         self.assertIn("2 box(es) ticked", out.getvalue())
+
+    def test_the_cli_reads_code_span_boxes_from_a_box_file(self):
+        """A code span in a box is refused inline by the shell guard."""
+        body = "- [ ] `--since` day mode\n- [ ] Two\n- [ ] Three"
+        recorder = self.install([self.issue(body), self.ok()])
+        real = li.linear_api.env_var
+        self.addCleanup(lambda: setattr(li.linear_api, "env_var", real))
+        li.linear_api.env_var = lambda *_a, **_k: "k"
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "boxes.txt")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("`--since` day mode\n\n")
+            argv = ["linear_issue.py", "tick", "--id", "ENG-1", "--box", "Two"]
+            with redirect_stdout(io.StringIO()):
+                code = li.run([*argv, "--box-file", path, "--keep-state"])
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            recorder.calls[-1][1]["input"]["description"],
+            "- [x] `--since` day mode\n- [x] Two\n- [ ] Three",
+        )
 
     def test_nothing_to_tick_and_already_in_progress_writes_nothing(self):
         recorder = self.install([self.issue(state=("In Progress", "started"))])

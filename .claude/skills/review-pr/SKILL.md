@@ -226,7 +226,8 @@ migrations or generation inputs, and whether it spans crates.
 
    - **One write**: the addressed ticks and the move to In Progress,
      zero-echo, one `--box` per box (its text as written; a duplicate
-     box is named once per tick):
+     box is named once per tick; a box with a backtick goes one per
+     line in a `--box-file`, which the shell guard cannot refuse):
 
      ```sh
      python3 .claude/tools/linear_issue.py tick --id <ENG-###> \
@@ -272,7 +273,8 @@ migrations or generation inputs, and whether it spans crates.
    (through the quiet runner) runs only when `ci=` says
    `not-consulted(unreachable)` — `dirty` / `unpushed` heal by committing and
    pushing. To narrow one hook, call
-   `lint_paths.py --changed -- <hook-id>`, or `--files <paths> --`; a
+   `lint_paths.py --changed -- <hook-id>`, or `--files <paths> --`,
+   backgrounded too when a cargo-backed hook runs; a
    local full sweep in between is a mistake unless a hook is
    repo-global (`history.md` → "Full-sweep loops").
 
@@ -1049,7 +1051,9 @@ migrations or generation inputs, and whether it spans crates.
    python3 .claude/tools/regen_artifacts.py --base <base>
    ```
 
-   Read each family's `status` and record it in the summary:
+   Launch it with `run_in_background: true`: on the fleet's shared
+   cargo pool it outlasts the 600-second foreground cap. Read each
+   family's `status` and record it in the summary:
    `fresh`, `committed`, `skipped` (no generation input changed — a
    rule, not a judgment call), `failed` (a build or commit error:
    read its `log`, and it is blocking), or **`unverifiable`** (a
@@ -1622,7 +1626,8 @@ migrations or generation inputs, and whether it spans crates.
 
    With step-3 ticks deferred to here, the same move carries them in
    one write instead:
-   `linear_issue.py tick --id <ENG-###> --state "In Review" --box …`.
+   `linear_issue.py tick --id <ENG-###> --state "In Review" --box …`
+   (or `--box-file`, as in step 3).
 
    **One write, no retry loop**: if it disagrees, verify once, report
    the discrepancy and move on (`history.md` → "State-write echo").
@@ -1687,14 +1692,14 @@ migrations or generation inputs, and whether it spans crates.
 
    ```json
    {
-     // merged dequeued closed not_queued timeout probe_failed
+     // merged dequeued conflicting closed not_queued timeout probe_failed
      "conclusion": "merged",
      "seen_queue_entry": true,
      "last": {"gql_state": "MERGED", "view_state": "MERGED", …},
      "queue_runs": [{"run_id": "…", "name": "…", "conclusion": "…"}],
      "failing_runs": [],
      "enqueued_at": "…",
-     // on dequeued only:
+     // on dequeued / conflicting only:
      "dequeue": {"dequeue_reason": "merge_conflict", "base_gained": […], …},
      "log_path": "…/wait-for-queue-<number>.log"
    }
@@ -1749,18 +1754,16 @@ migrations or generation inputs, and whether it spans crates.
      watch), a dequeue older than the tool's run window reads the same —
      check `gh run list` before re-enqueueing.
 
-   - **`dequeued`** → read the cause off the verdict's `dequeue`
-     first. **`dequeue_reason: merge_conflict`** means a PR that
-     landed first conflicts with this one; the queue never built, so
-     empty `queue_runs` / `failing_runs` are expected, and
-     `base_gained` lists the base's commits the head lacks — the ones
-     the rebase must absorb. Go straight to step 2's rebase and
-     re-run from there: no timeline query, mergeability read or
-     `git log` to rediscover what the verdict already says. When
-     `dequeue.error` is set, read by hand only what is `null` — the
-     reason, or just `base_gained` after a failed compare.
-     Any other reason → diagnose from the **queue branch's** runs, never
-     the PR's own checks: the queue builds `main` plus this PR on
+   - **`conflicting`** (or `dequeue_reason: merge_conflict`) → a PR
+     that landed first conflicts with this one; `dequeue.base_gained`
+     lists the base commits the rebase must absorb. Go straight to
+     step 2's rebase and re-run — no timeline, mergeability or
+     `git log` read. On `dequeue.error`, read by hand only what is
+     `null`.
+
+   - **`dequeued`**, any other reason → diagnose from the **queue
+     branch's** runs, never the PR's own checks: the queue builds
+     `main` plus this PR on
      `gh-readonly-queue/<base>/pr-<number>-<sha>`, so a failure there
      dequeues the PR while every PR check stays green. The tool reads
      those runs on every poll because concluding without them once

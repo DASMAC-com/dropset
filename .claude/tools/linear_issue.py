@@ -45,6 +45,7 @@ Subcommands::
 
     linear_issue.py append --id ENG-123 --file notes.md
     linear_issue.py tick   --id ENG-123 --box "Part 1 text" --box "Part 2 text"
+    linear_issue.py tick   --id ENG-123 --box-file boxes.txt   # one per line
     linear_issue.py find   --query "reference price" --limit 5
     linear_issue.py create --title "…" --body-file body.md \
         --state Todo --milestone "Audit findings"
@@ -623,6 +624,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="a box's text (repeatable; name a duplicate box once per tick)",
     )
     tick_cmd.add_argument(
+        "--box-file",
+        default=None,
+        help="read box texts from this file, one per line (blank lines skipped) "
+        "— for a box carrying a backtick the shell guard refuses inline",
+    )
+    tick_cmd.add_argument(
         "--state",
         default="In Progress",
         help="target state NAME (default In Progress; never leaves Done/Canceled)",
@@ -680,7 +687,10 @@ def run(argv: list[str]) -> int:
 
     if args.command == "tick":
         state = None if args.keep_state else args.state
-        print(tick(api_key, args.id, args.box, state=state, dry_run=args.dry_run))
+        boxes = list(args.box)
+        if args.box_file is not None:
+            boxes += [ln for ln in _read_file(args.box_file).splitlines() if ln.strip()]
+        print(tick(api_key, args.id, boxes, state=state, dry_run=args.dry_run))
         return 0
 
     if args.command == "create":

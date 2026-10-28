@@ -47,6 +47,10 @@ reported under ``slices``), ``--gate-only`` (emit just the verdict fields and
 write no diff — for a mid-review re-check), ``--print-grep-excludes`` (print
 the exclude flags a hoisted repo-wide grep should reuse, and exit).
 
+An ``--only`` run (a lens sub-slice) prints just ``diff_path``, ``diff_lines``,
+``files``, ``slices``, ``ready`` and ``blockers`` — the full verdict was read
+on the first run — unless ``--full`` is passed. ``--gate-only`` wins over both.
+
 The diff and the file inventory are taken from the **merge base**
 (``origin/<base>...HEAD``), so a base that moved after the rebase cannot put
 phantom hunks in either.
@@ -2069,6 +2073,17 @@ def gate_only(verdict: dict) -> dict:
     return {k: verdict[k] for k in GATE_ONLY_FIELDS if k in verdict}
 
 
+# What a lens sub-slice handoff consumes. The run that produced the full
+# verdict has already been read, so repeating `targets`, `crates` and
+# `added_shape` on each `--only` slice only adds resident payload.
+SLICE_FIELDS = ("diff_path", "diff_lines", "files", "slices", "ready", "blockers")
+
+
+def slice_only(verdict: dict) -> dict:
+    """``verdict`` reduced to what an ``--only`` sub-slice run is read for."""
+    return {k: verdict[k] for k in SLICE_FIELDS if k in verdict}
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="review_diff.py")
     parser.add_argument("--base", default="main", help="base branch (default main)")
@@ -2105,6 +2120,11 @@ def run(argv: list[str]) -> int:
         action="store_true",
         help="emit just the verdict fields (base freshness, ready, blockers) — "
         "for a mid-review re-check that consumes no inventory",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="with --only, print the full verdict instead of the slice summary",
     )
     parser.add_argument(
         "--print-grep-excludes",
@@ -2150,7 +2170,13 @@ def run(argv: list[str]) -> int:
     # Narrow AFTER gating, never instead of it: the exit status below and the
     # blockers both have to reflect the full computation, so --gate-only is a
     # projection of the answer and not a cheaper way of reaching one.
-    json.dump(gate_only(verdict) if args.gate_only else verdict, sys.stdout, indent=2)
+    if args.gate_only:
+        shown = gate_only(verdict)
+    elif args.only and not args.full:
+        shown = slice_only(verdict)
+    else:
+        shown = verdict
+    json.dump(shown, sys.stdout, indent=2)
     sys.stdout.write("\n")
     # Exit non-zero when the gate says don't fan out, so a caller that only
     # checks the status still can't proceed on a stale base.

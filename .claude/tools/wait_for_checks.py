@@ -138,8 +138,8 @@ or, under ``--queue``::
     {
       "pr": 285,
       "mode": "queue",
-      "conclusion": "merged",    // merged | dequeued | closed | not_queued |
-                                 // timeout | probe_failed
+      "conclusion": "merged",    // merged | dequeued | conflicting | closed |
+                                 // not_queued | timeout | probe_failed
       "settled": true,
       "elapsed_seconds": 1310,
       "polls": 22,
@@ -166,6 +166,11 @@ conclusion. See :func:`dismiss_pr_notifications`.
 
 ``base_gained`` (the base's commits the head lacks) is read only on a conflict
 reason, so the rebase starts from the verdict. See :func:`dequeue_cause`.
+
+A dequeue with **no** queue run also settles the PR's ``mergeable`` (reported
+beside ``merge_state_status`` and ``mergeable_error``); a ``CONFLICTING`` / ``DIRTY`` read turns the
+conclusion into ``conflicting``, ``dequeue`` filled the same way, with
+``base_gained`` read whatever the timeline's reason says.
 
 Exit code is 0 when ``conclusion`` is ``pass`` (or ``merged``, or
 ``mergeable``), else 1 — so a
@@ -896,7 +901,9 @@ def _subject(commit) -> str:
     return message.split("\n")[0] if isinstance(message, str) else ""
 
 
-def dequeue_cause(pr: int, repo: str, enqueued_at: str | None = None) -> dict:
+def dequeue_cause(
+    pr: int, repo: str, enqueued_at: str | None = None, conflicting: bool = False
+) -> dict:
     """Why ``repo``'s PR ``pr`` left the queue, and what landed meanwhile.
 
     Called on a ``dequeued`` queue verdict, so the session reads the cause off
@@ -913,7 +920,9 @@ def dequeue_cause(pr: int, repo: str, enqueued_at: str | None = None) -> dict:
 
     ``enqueued_at`` (the watch's earliest seen enqueue) guards against a stale
     event: a newest removal older than it belongs to an earlier cycle, so its
-    reason is withheld and ``error`` says why. Never raises: the dequeue
+    reason is withheld and ``error`` says why. ``conflicting`` (the PR's own
+    mergeability read ``CONFLICTING``) reads ``base_gained`` whatever the
+    timeline says, since the event can lag the dequeue. Never raises: the dequeue
     already happened, so a failed read is reported in ``error`` and the
     session falls back to reading by hand.
     """
@@ -949,19 +958,19 @@ def dequeue_cause(pr: int, repo: str, enqueued_at: str | None = None) -> dict:
         cause["error"] = f"dequeue timeline query: {exc!r}"
         return cause
     last = events[-1] if events and isinstance(events[-1], dict) else None
+    removed = _parse_time((last or {}).get("createdAt"))
+    since = _parse_time(enqueued_at)
     if last is None:
         cause["error"] = "no RemovedFromMergeQueueEvent on the timeline"
-        return cause
-    removed, since = _parse_time(last.get("createdAt")), _parse_time(enqueued_at)
-    if removed is not None and since is not None and removed < since:
+    elif removed is not None and since is not None and removed < since:
         cause["error"] = (
             f"newest RemovedFromMergeQueueEvent ({last.get('createdAt')}) predates "
             f"this enqueue ({enqueued_at}) — not yet on the timeline"
         )
-        return cause
-    cause["dequeue_reason"] = last.get("reason")
-    cause["dequeued_at"] = last.get("createdAt")
-    if "conflict" not in str(last.get("reason") or "").lower():
+    else:
+        cause["dequeue_reason"] = last.get("reason")
+        cause["dequeued_at"] = last.get("createdAt")
+    if not conflicting and "conflict" not in str(cause["dequeue_reason"]).lower():
         return cause
     try:
         compare = _gh_json(
@@ -971,7 +980,9 @@ def dequeue_cause(pr: int, repo: str, enqueued_at: str | None = None) -> dict:
         commits = compare["commits"]
         cause["base_gained_total"] = int(compare["ahead_by"])
     except (WaitForChecksError, KeyError, TypeError, ValueError) as exc:
-        cause["error"] = f"base compare: {exc!r}"
+        cause["error"] = "; ".join(
+            e for e in (cause["error"], f"base compare: {exc!r}") if e
+        )
         return cause
     cause["base_gained"] = [
         {"sha": str(c.get("sha", ""))[:12], "subject": _subject(c)}
@@ -1374,6 +1385,13 @@ def settle_mergeability(
     return state, reads
 
 
+def _is_conflicting(state: dict) -> bool:
+    """A :func:`mergeability` read that says the PR cannot merge as it stands."""
+    return (state.get("mergeable") or "").upper() == "CONFLICTING" or (
+        state.get("merge_state_status") or ""
+    ).upper() == "DIRTY"
+
+
 def wait_mergeable(
     pr: int,
     repo: str = DEFAULT_REPO,
@@ -1399,7 +1417,7 @@ def wait_mergeable(
             "gate": "unverified",
             "do": "re-run; never read a failed probe as clean",
         }
-    elif value == "CONFLICTING" or (status or "").upper() == "DIRTY":
+    elif _is_conflicting(state):
         conclusion = "conflicting"
         hint = {
             "gate": "blocking",
@@ -1789,8 +1807,27 @@ def run(argv: list[str]) -> int:
                 args.queue_pr, args.repo
             )
         elif verdict["conclusion"] == "dequeued":
+            conflicting = False
+            if not verdict.get("queue_runs"):
+                # Removed before any queue run started: almost always a sibling
+                # PR landing first, so ask GitHub instead of leaving it to four
+                # session turns.
+                state, _ = settle_mergeability(
+                    args.queue_pr,
+                    args.repo,
+                    MERGEABLE_SETTLE_RETRIES,
+                    MERGEABLE_SETTLE_DELAY,
+                )
+                verdict["mergeable"] = state["mergeable"]
+                verdict["merge_state_status"] = state["merge_state_status"]
+                # As in `wait`: a failed read and a clean one both show
+                # `mergeable: null`, so the reason rides beside it.
+                verdict["mergeable_error"] = state["error"]
+                conflicting = _is_conflicting(state)
+                if conflicting:
+                    verdict["conclusion"] = "conflicting"
             verdict["dequeue"] = dequeue_cause(
-                args.queue_pr, args.repo, verdict.get("enqueued_at")
+                args.queue_pr, args.repo, verdict.get("enqueued_at"), conflicting
             )
     else:
         interval = DEFAULT_INTERVAL if args.interval is None else args.interval
