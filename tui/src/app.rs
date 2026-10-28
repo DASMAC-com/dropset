@@ -1245,8 +1245,10 @@ impl App {
     /// Build the passive ticket `form` describes against the selected market,
     /// reading the quote key's vault fresh, and move the prompt to the confirm
     /// stage. A refusal keeps the form open so the operator can fix the field.
-    fn build_passive_ticket(&mut self, form: passive::Form) {
+    fn build_passive_ticket(&mut self, mut form: passive::Form) {
         let label = form.op.label();
+        // The fresh reads, so a refusal reopens the form showing what refused.
+        let mut fresh = None;
         let prepared = match (
             self.roster_quote,
             self.chain.selected_market(self.selected_market).cloned(),
@@ -1257,7 +1259,8 @@ impl App {
             (_, None) => Err(anyhow::anyhow!("no market selected")),
             (Some(quote), Some(market)) => {
                 let fair = self.read_fair(&market);
-                passive::prepare(
+                let spot = self.read_spot(&market, &fair);
+                let prepared = passive::prepare(
                     &self.client,
                     &self.ctx.repo_root,
                     self.ctx.cluster,
@@ -1265,7 +1268,10 @@ impl App {
                     &quote,
                     &form,
                     &fair,
-                )
+                    spot,
+                );
+                fresh = Some((fair, spot));
+                prepared
             }
         };
         match prepared {
@@ -1277,6 +1283,9 @@ impl App {
             }
             Err(e) => {
                 self.log(LogKind::Err, format!("{label} — {e:#}"));
+                if let Some((fair, spot)) = fresh {
+                    form.refresh_sources(fair, spot);
+                }
                 self.passive_prompt = Some(PassivePrompt::Form(form));
             }
         }
@@ -1297,9 +1306,13 @@ impl App {
 
     /// The on-chain spot print for `market`, read now — only when `fair`
     /// shows the database answered, so an unreachable one costs the form a
-    /// single timeout rather than two.
+    /// single timeout rather than two. A stale, paused or missing fair still
+    /// answered, and the pool is then the chooser's one live source.
     fn read_spot(&self, market: &accounts::MarketView, fair: &fair::Fair) -> Option<fair::Spot> {
-        if !matches!(fair, fair::Fair::Live { .. } | fair::Fair::Paused { .. }) {
+        if matches!(
+            fair,
+            fair::Fair::Off | fair::Fair::Unpublished | fair::Fair::Unread(_)
+        ) {
             return None;
         }
         let config = market::config_for(&self.ctx.repo_root, self.ctx.cluster, &market.base_mint)?;
@@ -1530,8 +1543,8 @@ impl App {
             }
             let mut form = passive::Form::new(op);
             if let Some(market) = self.chain.selected_market(self.selected_market).cloned() {
-                form.fair = self.read_fair(&market);
-                let spot = self.read_spot(&market, &form.fair);
+                let fair = self.read_fair(&market);
+                let spot = self.read_spot(&market, &fair);
                 form.vault = match self.roster_quote {
                     None => vec!["no quote key — the vault view needs one".to_string()],
                     Some(quote) => passive::vault_lines(
@@ -1540,11 +1553,12 @@ impl App {
                         self.ctx.cluster,
                         &market,
                         &quote,
-                        &form.fair,
+                        &fair,
                         spot,
                     )
                     .unwrap_or_else(|e| vec![format!("vault view — {e:#}")]),
                 };
+                form.set_sources(fair, spot);
             }
             self.passive_prompt = Some(PassivePrompt::Form(form));
             return;

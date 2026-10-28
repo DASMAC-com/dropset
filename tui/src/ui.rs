@@ -235,7 +235,7 @@ fn draw_passive_prompt(f: &mut Frame<'_>, app: &App, area: Rect) {
                 .chain(form.vault.iter().map(|l| Line::from(l.clone())))
                 .collect::<Vec<_>>(),
             "Enter preview".to_string(),
-            "\u{2191}\u{2193} field · \u{2190}\u{2192} step · digits type the price · Esc cancel",
+            "\u{2191}\u{2193} field · \u{2190}\u{2192} step / choose the source · digits type a price · Esc cancel",
         ),
         PassivePrompt::Confirm { ticket, buf } => (
             ticket.op.label(),

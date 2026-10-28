@@ -11,10 +11,14 @@ the background and the TUI in front. The TUI runs "Bootstrap all" on its own,
 and every market opens **dark**. Once the log reads `Bootstrap complete`:
 
 - `M` starts a maker on every **active** market (passive ones are skipped).
-- Select tGBP-USDC and `c` to stamp its passive ladder's center. A blank
-  center is the estimator's fair when `DROPSET_TUI_DATABASE_URL` is set to
-  `postgres://dropset_ro:dropset_ro@127.0.0.1:5432/dropset`. Otherwise type
-  one.
+- Select tGBP-USDC and `c` to stamp its passive ladder's center. The center
+  line is a chooser: `←` / `→` cycle the estimator's fair (with its regime
+  and anchor), the Orca pool spot (with its age), and a typed price, and the
+  drift line beneath sets them against each other in bps, to compare with
+  Grafana. It opens on the estimator when its fair is live and not the static
+  peg, else on Orca when its spot is fresh, else on typed. A static peg, a
+  paused or a stale fair is shown and never offered; a stale Orca spot is
+  shown with its age and refused at the preview.
 - `T` starts every taker, if you want flow on the books.
 
 ## 2. Run the check
@@ -72,7 +76,8 @@ tGBP. The regime is named so you can say why, not to fail the run.
   session.
 - **Order book:** the passive ladder rests around the stamped center. `p`
   opens the passive form over the vault (drift from fair, then what rested and
-  what flipped since the stamp), and `c` re-centers it.
+  what flipped since the stamp), and `c` re-centers it through the same
+  chooser — once, by hand; nothing re-centers on its own.
 - **Recent fills:** taker fills land here. A filled passive rung flips to
   rest on the other side.
 - **Vault names:** the accounts pane lists each vault by name, and the
