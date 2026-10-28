@@ -2326,12 +2326,16 @@ _ds_plan_fresh_day() {
 # batch, because the scheduler tab's role is not set until its shell runs, and
 # only the batch books it, which is what puts the launcher on its left. What
 # opened is read back from the dispatch's own per-tab lines, failure listing
-# included. FALLBACKS: a launcher tab that did not open runs in this tab
-# instead; with neither open, the launcher runs here with
-# `DS_LAUNCH_SCHEDULER` naming the scheduler verb it dispatches as its first act.
+# included, and so is what the machine gate HELD: a hold is the gate's
+# refusal, so it is said out loud and never overridden by a fallback here.
+# FALLBACKS, for a tab that neither opened nor was held: a launcher that did
+# not open runs in this tab instead; with neither open, the launcher runs here
+# with `DS_LAUNCH_SCHEDULER` naming the scheduler verb it dispatches as its
+# first act; a scheduler that did not open beside an open launcher is named for
+# the operator to type.
 _ds_plan_prelaunch() {
   setopt localoptions extendedglob
-  local day="$1" word="$2" out rc line opened_plan='' opened_launch=''
+  local day="$1" word="$2" out rc line plan_tab='' launch_tab=''
   print -u2 'plan: pre-launch'
   _ds_substrate_unset
   _ds_aws_login 'plan' || return 1
@@ -2344,11 +2348,21 @@ _ds_plan_prelaunch() {
   rc=$?
   print -r -- "$out"
   for line in "${(@f)out}"; do
-    [[ "$line" == [[:space:]]#plan(| *)' -> '* ]] && opened_plan=1
-    [[ "$line" == [[:space:]]#launch(| *)' -> '* ]] && opened_launch=1
+    [[ "$line" == [[:space:]]#plan(| *)' -> '* ]] && plan_tab=opened
+    [[ "$line" == [[:space:]]#launch(| *)' -> '* ]] && launch_tab=opened
+    [[ "$line" == 'held  plan'(| *)':'* ]] && plan_tab=held
+    [[ "$line" == 'held  launch'(| *)':'* ]] && launch_tab=held
   done
-  [[ -n "$opened_launch" ]] && return 0
-  if [[ -n "$opened_plan" ]]; then
+  [[ "$plan_tab" == held ]] && print -u2 'plan: the machine gate held the' \
+    "scheduler — type \`plan${word:+ $word}\` once a slot frees."
+  [[ "$launch_tab" == held ]] && print -u2 'plan: the machine gate held the' \
+    'launcher — type `launch` once a slot frees.'
+  if [[ -n "$launch_tab" ]]; then
+    [[ -z "$plan_tab" ]] && print -u2 "plan: the scheduler's tab did not" \
+      "open (dispatch exit $rc) — type \`plan${word:+ $word}\` in a new tab."
+    return 0
+  fi
+  if [[ -n "$plan_tab" ]]; then
     print -u2 "plan: the launcher's tab did not open (dispatch exit $rc) —" \
       'running it in this tab.'
     launch
@@ -2467,7 +2481,7 @@ _ds_daily_seat() {
 # NO AWS GATE (it reads no cost data) and NO UPKEEP PASS (that is the `plan`
 # pre-launch's). Its tab carries `ds_role=curate`, which rests it just
 # left of the scheduler's at the right edge (`iterm-reorder.py`), and
-# `session_dispatch.py` opens new tabs left of both.
+# `session_dispatch.py` opens worker tabs left of both.
 curate() {
   if [[ -n "$2" || ( -n "$1" && "$1" != (anthropic|bedrock) ) ]]; then
     print -u2 'Usage: curate [anthropic|bedrock]   (the name is derived from the date)'
@@ -2510,7 +2524,10 @@ launch() {
   if _ds_session_exists "$sid"; then
     _ds_live_guard launch "$name" || return 1
     local recorded="$(_ds_substrate_read "sessions/$sid")"
-    if [[ -n "$word" && "$word" != "$recorded" ]]; then
+    if [[ ! -f "$_DS_SUBSTRATE_DIR/sessions/$sid" ]]; then
+      print -u2 "launch: $name has no substrate record — reopening on" \
+        'anthropic, where an unmarked reopen reads.'
+    elif [[ -n "$word" && "$word" != "$recorded" ]]; then
       print -u2 "launch: $name is recorded on $recorded — keeping it; a session" \
         'keeps its substrate.'
     fi

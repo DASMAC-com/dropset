@@ -64,7 +64,8 @@ ITERM_SOCKET = (
     Path.home() / "Library" / "Application Support" / "iTerm2" / "private" / "socket"
 )
 
-#: Set to `1` and every driver call refuses before touching iTerm. The test
+#: Set to `1` and every driver call refuses before touching iTerm, and the
+#: attend mark is skipped. The test
 #: suites set it, because a harness that runs a real launch verb reaches the
 #: real dispatcher: one did, and the tabs it opened typed `plan anthropic`,
 #: which resumed the live scheduler session into a second client.
@@ -338,7 +339,9 @@ def mark_attention(tty: str) -> bool:
     `--mark` sets green outright instead of toggling: a toggle's outcome depends
     on the tab's history, and a launcher wants green, not "the other one".
     """
-    if not ATTEND_SCRIPT.exists():
+    # Not a driver call, so `preflight` never sees it: the test switch is
+    # checked here too, or a test reaching this would tint a real tab.
+    if os.environ.get(DISABLED_ENV) == "1" or not ATTEND_SCRIPT.exists():
         return False
     try:
         completed = subprocess.run(
@@ -598,8 +601,10 @@ def insert_index(tab_roles: list[str | None], role: str | None) -> int | None:
 
     * The scheduler's (``plan``) goes RIGHTMOST, where Command-9 reaches it.
     * Any other seat goes just left of the rightmost scheduler tab, so a
-      launch, curate, plan batch rests as plan, curate, launch from the right
-      by construction. With no scheduler tab it takes a worker's place.
+      later seat lands nearest the scheduler: the morning's `plan + launch`
+      batch, then a dispatched `curate`, rests as plan, curate, launch from
+      the right, and any other order is the reorderer's to repair. With no
+      scheduler tab a seat takes a worker's place.
     * Everything else goes just left of the run of seat tabs at the right
       edge, so they stay outermost without waiting on a reorder pass. While the
       reorderer runs, a seat tab not at the edge is in an attention group on

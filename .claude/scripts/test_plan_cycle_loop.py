@@ -346,6 +346,27 @@ class PreLaunch(unittest.TestCase):
         )
         self.assertEqual(calls[-1], "dispatch plan + launch")
 
+    def test_a_held_launcher_is_said_never_run_here(self):
+        # A hold is the machine gate's refusal; a fallback must not undo it.
+        proc, calls = self._plan(
+            DISPATCH_OUT="plan (free) -> /dev/a\nheld  launch (free): load 9.1"
+        )
+        self.assertEqual(calls[-1], "dispatch plan + launch")
+        self.assertIn("held the launcher", proc.stderr)
+
+    def test_with_both_held_nothing_runs_here(self):
+        proc, calls = self._plan(
+            DISPATCH_OUT="held  plan (free): cap 20\nheld  launch (free): same"
+        )
+        self.assertEqual(calls[-1], "dispatch plan + launch")
+        self.assertIn("held the scheduler", proc.stderr)
+        self.assertNotIn("neither tab opened", proc.stderr)
+
+    def test_a_launcher_without_its_scheduler_names_the_verb_to_type(self):
+        proc, calls = self._plan("anthropic", DISPATCH_OUT="launch (free) -> /dev/b")
+        self.assertEqual(calls[-1], "dispatch plan anthropic + launch")
+        self.assertIn("type `plan anthropic` in a new tab", proc.stderr)
+
     def test_a_stamped_day_is_warm_and_runs_the_scheduler_here(self):
         proc, calls = self._plan(RAN='{"ran_today": true}')
         self.assertEqual(proc.returncode, 0, proc.stderr)

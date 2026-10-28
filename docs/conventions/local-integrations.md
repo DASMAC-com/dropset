@@ -1655,7 +1655,7 @@ names alive was the outcome to avoid.
 | `task resume [n]`       | resume by number (bare = the picker)       | as recorded            | re-pinned | as recorded         | —                         |
 | `explore [s] <n\|name>` | research / audit, read-only, temp worktree | Bedrock, or `[s]`      | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
 | `chore [s] <n>`         | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    | executor if Bedrock | `[Chore/<Substrate>]`     |
-| `plan [a]`              | fresh day: pass, scheduler + launcher tabs | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
+| `plan [a]`              | fresh day: pass + seat tabs; else schedule | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
 | `curate [a]`            | the curator: Backlog→Todo review, no PR    | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
 | `launch [a]`            | the morning launcher, base checkout, no PR | Bedrock, or `[a]`      | executor  | the session's       | — (no issue)              |
 | `architect [b] <n>`     | design thread, read-only, temp worktree    | advisor's, or override | advisor   | executor if Bedrock | `[Architect/<Substrate>]` |
@@ -2627,7 +2627,12 @@ a terminal closed outright, is covered by the next morning's digest.
   `DS_PLAN_DATE` (the launch day) and `DS_DAILY_KIND` (`plan`) into
   the client, so the session's own tools still compute its id after
   midnight and `plan_cycle.py` knows which seat it serves. A later
-  bare `plan` resumes the day's latest cycle.
+  bare `plan` resumes the day's latest cycle — and **refuses while a
+  live client already holds it** (`plan_cycle.py live-name`), naming
+  the tab to switch to: a resume by id never checked, and a second
+  `plan` once forked the running scheduler into a second client. The
+  same guard covers `curate` and `launch`; a check that cannot answer
+  warns and resumes.
 
   **On a fresh day it is the pre-launch, not the scheduler.** A day
   is fresh while the pass has not stamped it, no pre-launch has run
@@ -2646,10 +2651,13 @@ a terminal closed outright, is covered by the next morning's digest.
   writes the day's marker and opens **two tabs in one
   `session_dispatch.py plan + launch` batch**: the scheduler's
   rightmost and the launcher's just left of it. The typed tab's
-  prompt returns with the log in its scrollback. If the launcher's
-  tab does not open it runs in the typed tab instead; if neither
-  opens, the launcher runs there with `DS_LAUNCH_SCHEDULER` naming
-  the scheduler verb it dispatches as its first act. The report
+  prompt returns with the log in its scrollback. A tab the machine
+  gate **holds** is said out loud and never overridden here. For a
+  tab that neither opened nor was held: a launcher runs in the typed
+  tab instead; with neither open, the launcher runs there with
+  `DS_LAUNCH_SCHEDULER` naming the scheduler verb its skill dispatches
+  as its first act; a scheduler missing beside an open launcher is
+  named for the operator to type. The report
   lands under the Planning document's upkeep heading, which the
   bootstrap reads; the destructive items (allowlist cruft,
   permission-refresh additions, the purge apply) wait for the
@@ -2742,7 +2750,7 @@ a terminal closed outright, is covered by the next morning's digest.
   `plan` pre-launch's). Its tab carries `ds_role=curate` around the
   loop, cleared on every way out: `iterm-reorder.py` rests it just
   left of the scheduler's tab, which stays outermost, and
-  `session_dispatch.py` opens new tabs left of both. Sourcing the init
+  `session_dispatch.py` opens worker tabs left of both. Sourcing the init
   warns once if a `curate` command on `PATH` is shadowed. `fleet` and
   `task resume` leave it alone — it names no issue.
 
@@ -2755,7 +2763,8 @@ a terminal closed outright, is covered by the next morning's digest.
   daily id seeded `launch` with no cycle loop. Its per-session
   substrate record is written on create, so the pricing tools meter it
   as any other session, and `fleet_cost.py` groups it under `launch`.
-  A **free** seat verb. It runs no AWS gate and no upkeep pass (the
+  A **free** seat verb, whose reopen refuses while a live client holds
+  it, as `plan`'s does. It runs no AWS gate and no upkeep pass (the
   pre-launch ran both). Its tab carries `ds_role=launch`:
   `iterm-reorder.py` rests it left of the curator's, and
   `session_dispatch.py` opens worker tabs left of it.
