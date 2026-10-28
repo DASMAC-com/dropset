@@ -201,6 +201,9 @@ pub enum DropsetError {
     /// 6062 - treasury did not receive exactly the transferred amount (transfer-fee mint?)
     #[error("treasury did not receive exactly the transferred amount (transfer-fee mint?)")]
     TransferShortfall = 0x17AE,
+    /// 6063 - new perf_fee_rate is the vault's current perf_fee_rate
+    #[error("new perf_fee_rate is the vault's current perf_fee_rate")]
+    SamePerfFeeRate = 0x17AF,
 }
 
 impl From<DropsetError> for solana_program_error::ProgramError {
