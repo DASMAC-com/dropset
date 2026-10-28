@@ -37,12 +37,11 @@ export type Vault = {
   minLeaderSharePpm: number;
   frozen: boolean;
   outsideDepositsApproved: boolean;
-  // The vault's on-chain identity. `index` is the
-  // sector the deposit / withdraw instructions and the depositor PDA take;
-  // `seq` is the stable per-market vault number. The raw atom and share
-  // counts, and the fee state a withdraw realizes first, are what the
-  // dialog's share preview sizes against, so the SDK's integer kernels see
-  // exactly what the program will.
+  // The vault's on-chain identity. `index` is the sector the deposit /
+  // withdraw instructions and the depositor PDA take; `seq` is the stable
+  // per-market vault number. The raw atom and share counts, and the fee state
+  // a withdraw realizes first, are what the dialog's share preview sizes
+  // against, so the SDK's integer kernels see exactly what the program will.
   chain: {
     index: number;
     seq: bigint;
@@ -55,8 +54,8 @@ export type Vault = {
     frozen: boolean;
   };
   // The vault's live reference price in whole quote tokens per base token,
-  // read off its own sector. Null while the book is dark
-  // (a non-matchable price); see vaultRefPrice for the stand-in.
+  // read off its own sector. Null while the book is dark (a non-matchable
+  // price); see vaultRefPrice for the stand-in.
   refPrice: number | null;
   // USD per quote token, and whether that rate (or TVL's base leg) fell back
   // to the indicative TOKEN_USD table rather than an on-chain price. See
@@ -253,12 +252,16 @@ export const quoteUsdRate = (
   return { rate: tokenUsdPrice(quote), indicative: true };
 };
 
-// The stablecoin pairs the live read probes for a market. Token order encodes
-// the FX convention: USD is the quote for EUR/GBP/AUD (base = EURC, quote =
-// USDC) and the base for JPY/CHF/CAD (base = USDC, quote = GYEN). The live
-// read takes each market's real orientation from the chain, so this order is
-// only the roster's.
-export const VAULT_PAIR_ROSTER: { base: string; quote: string }[] = [
+// A stablecoin pair by symbol, e.g. { base: "EURC", quote: "USDC" }.
+export type VaultPair = { base: string; quote: string };
+
+// The stablecoin pairs whose markets the live read probes. Token order
+// encodes the FX convention: USD is the quote for EUR/GBP/AUD (base = EURC,
+// quote = USDC) and the base for JPY/CHF/CAD (base = USDC, quote = GYEN). The
+// live read takes each market's real orientation from the chain, so this
+// order is only the roster's. Every symbol must be in currencies.json
+// (vaults.test.ts).
+export const VAULT_PAIR_ROSTER: VaultPair[] = [
   { base: "EURC", quote: "USDC" },
   { base: "EURC", quote: "USDT" },
   { base: "USDC", quote: "GYEN" },
@@ -273,10 +276,7 @@ export const VAULT_PAIR_ROSTER: { base: string; quote: string }[] = [
 // fixed by the market, not by which way a taker trades — so USDC→EURC and
 // EURC→USDC both map to the one EURC/USDC pair. Returns null when the roster
 // lists no such pair (callers use this to hide a "view vaults" affordance).
-export const findVaultPair = (
-  a: string,
-  b: string,
-): { base: string; quote: string } | null =>
+export const findVaultPair = (a: string, b: string): VaultPair | null =>
   VAULT_PAIR_ROSTER.find(
     (m) => (m.base === a && m.quote === b) || (m.base === b && m.quote === a),
   ) ?? null;
