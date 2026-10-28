@@ -1181,6 +1181,13 @@ mod tests {
     }
 
     #[test]
+    fn the_header_says_the_check_reads_the_live_demo() {
+        for needle in ["live demo", "second terminal", "Bootstrap complete", " M"] {
+            assert!(HEADER.contains(needle), "{needle}: {HEADER}");
+        }
+    }
+
+    #[test]
     fn the_summary_fails_only_on_a_fail_and_names_the_skips() {
         let pass = Check::new("frontend", Verdict::Pass, "");
         let expected = Check::new("mode", Verdict::Expected, "");
