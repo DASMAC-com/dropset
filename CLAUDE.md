@@ -286,8 +286,8 @@ filed Canceled with its reason is permanent. Detail:
 **No automated writer files a blocking edge — ever**, semantic ones
 included; a human places them, in the **scheduler**, by a ticked
 curator proposal, or by a seat session's filing yes. The scheduler and
-the curator message each other any change to the other's edge or
-priority. The
+the curator message each other any change to the other's edge;
+priorities are the scheduler's alone. The
 board's available-vs-blocked view is a scheduling
 instrument the human drives, so a spurious edge (which drops an issue
 out of the available set) costs more than a missing one (which costs a

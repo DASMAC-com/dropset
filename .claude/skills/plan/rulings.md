@@ -42,12 +42,22 @@ the document's state sections.
 1. **Next means dispatchable right now.** A planning hold is a
    blocking edge the operator can see, never prose-only state.
    Automated filers never place an edge. (`SKILL.md` step 2.)
-   **The coordination rule** (2026-10-26): the scheduler and the
-   curator both write edges and priorities anywhere; a write
+   **The coordination rule** (2026-10-26, amended 2026-10-28): the
+   curator judges — promote, kill, merge; the scheduler schedules,
+   owns priorities, the direction and the Planning document; the
+   launcher starts the day and hands the curator its kill and
+   merge candidates. Priorities are the scheduler's alone: the
+   curator messages one it believes wrong, and with no live
+   scheduler it waits. Both write edges anywhere; an edge write
    touching what the other placed is messaged to it in the same
-   turn with the reason; neither deletes the other's edge
-   without a message; the Planning document records the result at the
-   scheduler's next write-back.
+   turn with the reason; neither deletes the other's edge without
+   a message; the document records the result at the scheduler's
+   next write-back. **The close** (2026-10-28): on the operator's
+   close-out yes the scheduler messages a live curator "closing
+   for the day", waits for no answer, and reports
+   `curator: not live` otherwise; the curator finishes a batch
+   mid-tick, takes no new one, states the inbox remaining, runs
+   its metrics tail and prints `CLEAR TO CLOSE — close this window`.
 
 1. **The necessity kill gate.** A pool member
    that cannot name a concrete recurring cost larger than its
@@ -110,9 +120,9 @@ the document's state sections.
    audit findings. **The
    curator's carve-out** (2026-10-26): it moves a ticked,
    uncommented pool member to Todo one at a time, the tick in its
-   tab being the operator's move, and places an edge or priority
-   the operator ticks in the same tab, messaging the scheduler
-   each one.
+   tab being the operator's move, and executes an edge, kill or
+   merge the operator ticks in the same tab — never a priority —
+   messaging the scheduler each one.
 
 1. **Planning is read-only toward the repo.** A planning session
    writes Linear state only; a fast-forward of the base checkout

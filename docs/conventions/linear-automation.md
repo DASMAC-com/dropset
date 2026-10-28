@@ -650,9 +650,20 @@ harder, never to re-park.
 ### The curator owns review
 
 Everything between Backlog and Todo belongs to the **curator**, a daily
-advisor-tier session in the base repo (the `curate` skill, launched by
-the scheduler on the plan morning or by hand with `curate`). The
-**scheduler** — the `plan` session — owns what happens after Todo.
+advisor-tier session in the base repo (the `curate` skill, launched on
+the plan morning or by hand with `curate`). It has no governing issue:
+it runs every day, named by its date. The division of labour:
+
+- **The curator judges** — what to promote, kill or merge.
+- **The scheduler schedules** — the `plan` session owns dispatch,
+  holds, priorities and the direction after Todo, and owns the Planning
+  document.
+- **The launcher starts the day** — it runs the lever fold, then
+  dispatches the curator with one hand-off message carrying the batches
+  filed and the kill and merge candidates with their evidence. The
+  curator's first ask shows those candidates as checkboxes beside the
+  inbox's first batch; a ticked kill cancels the issue with its reason,
+  a ticked merge runs `merge-tasks`.
 
 **The pool is the un-parked Backlog**: state Backlog, no milestone,
 `[Operator]` items included. Todo means "should this be done", so an
@@ -676,10 +687,20 @@ the fold protocol and carried to the next batch; a comment asking to
 drop it cancels it, and a deferral goes to `Post-validation` only when
 the comment names that milestone.
 
-The curator writes nothing else on its own: no edge or priority the
-operator did not tick (see "Blocking relations"), no other milestone,
-no other issue's state or body beyond the fold. It messages the
-scheduler every Todo move and every edge or priority it places.
+The curator writes nothing else on its own: **no priority** (one it
+believes wrong is messaged to the scheduler, and waits while none is
+live), no edge, kill or merge the operator did not tick (see "Blocking
+relations"), no other milestone, no other issue's state or body beyond
+the fold. It messages the scheduler every Todo move, cancel, merge and
+edge it places.
+
+**The close.** On the operator's close-out yes the scheduler lists live
+sessions and messages a live curator "closing for the day", without
+waiting for an answer, or reports `curator: not live`. The curator
+takes no new batch, finishes one mid-tick, states the inbox remaining
+(count and ids), runs its session-metrics tail with its cost, and
+prints `CLEAR TO CLOSE — close this window`, so its tab goes yellow
+once. No board write accompanies the stop.
 
 ### Which milestones park, and which do not
 
@@ -1493,19 +1514,21 @@ same human-placed form:
   in-tab yes to a named chain of proposed edges, each with its reason,
   ratifies them with the tasks, and the session places exactly those —
   an edge the answer strikes is not placed.
-- **The curator's in-tab tick** (`curate`): each proposed edge or
-  priority is one checkbox with its reason, and the curator places
-  exactly the ticked ones. An unticked proposal is not placed, and not
+- **The curator's in-tab tick** (`curate`): each proposed edge is one
+  checkbox with its reason, and the curator places exactly the ticked
+  ones. An unticked proposal is not placed, and not
   re-asked unless its evidence changes.
 
 Each is the human-placed form executed, never an automated filer
 deciding one.
 
-**Two writers, one coordination rule.** The scheduler and the curator
-both write edges and priorities, anywhere on the board, because each
-sees what the other lacks — the scheduler the fleet and the dispatch
-order, the curator the specs it has just read. A write that places,
-changes or removes an edge or priority **the other session placed** is
+**Two edge writers, one coordination rule.** Priorities are the
+scheduler's alone; the curator messages one it believes wrong. Edges
+have two writers: the scheduler and the curator both write them,
+anywhere on the board, because each sees what the other lacks — the
+scheduler the fleet and the dispatch order, the curator the specs it
+has just read. A write that places, changes or removes an edge **the
+other session placed** is
 messaged to it in the same turn, with the reason; neither deletes the
 other's edge without that message; and the Planning document records the result
 at the scheduler's next write-back.

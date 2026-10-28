@@ -299,7 +299,8 @@ class InboxPoolTests(unittest.TestCase):
         proposals = rs.parse_proposals(
             [
                 {"edge": {"blocker": "eng-1", "blocked": "ENG-2"}, "reason": "API"},
-                {"priority": {"id": "ENG-3", "to": "High"}, "reason": "Demo"},
+                {"kill": "eng-3", "reason": "No recurring cost"},
+                {"merge": ["ENG-12", "eng-9"], "reason": "Same fingerprint"},
             ]
         )
         (call,) = build_ask([_inbox(1), _inbox(2)], proposals=proposals)["calls"]
@@ -311,21 +312,29 @@ class InboxPoolTests(unittest.TestCase):
             extra["options"],
             [
                 {"label": "ENG-1 blocks ENG-2", "description": "API"},
-                {"label": "ENG-3 to high", "description": "Demo"},
+                {"label": "Cancel ENG-3", "description": "No recurring cost"},
+                # Numeric, not lexical: ENG-9 survives ENG-12.
+                {"label": "Merge ENG-12 into ENG-9", "description": "Same fingerprint"},
             ],
         )
 
     def test_a_lone_proposal_is_padded_and_a_bad_one_refused(self):
-        (option,) = rs.parse_proposals(
-            [{"priority": {"id": "ENG-3", "to": 1}, "reason": "Live bug"}]
-        )
+        (option,) = rs.parse_proposals([{"kill": "ENG-3", "reason": "Superseded"}])
         (call,) = build_ask([_inbox(1), _inbox(2)], proposals=[option])["calls"]
         labels = [o["label"] for o in call["questions"][1]["options"]]
-        self.assertEqual(labels, ["ENG-3 to urgent", "None"])
+        self.assertEqual(labels, ["Cancel ENG-3", "None"])
         with self.assertRaisesRegex(RatifyError, "reason"):
             rs.parse_proposals([{"edge": {"blocker": "ENG-1", "blocked": "ENG-2"}}])
         with self.assertRaisesRegex(RatifyError, "neither an edge"):
             rs.parse_proposals([{"relates": "ENG-1", "reason": "x"}])
+        with self.assertRaisesRegex(RatifyError, "two distinct"):
+            rs.parse_proposals([{"merge": ["ENG-4", "eng-4"], "reason": "x"}])
+
+    def test_the_curator_cannot_propose_a_priority(self):
+        with self.assertRaisesRegex(RatifyError, "neither an edge"):
+            rs.parse_proposals(
+                [{"priority": {"id": "ENG-3", "to": "High"}, "reason": "Demo"}]
+            )
 
     def test_the_inbox_approves_one_task_at_a_time(self):
         with self.assertRaisesRegex(RatifyError, "one task at a time, got 2"):
