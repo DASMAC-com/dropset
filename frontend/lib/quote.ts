@@ -64,6 +64,27 @@ export const INITIAL_QUOTE: QuoteState = {
   error: null,
 };
 
+// The quote's output, but only when the quote describes exactly the swap the
+// user is about to send: for this pair, successful, and for this input amount.
+// Null otherwise. The quote is debounced, and an error tick clears it, so the
+// figure on screen can belong to the previous amount, the previous pair, or
+// nothing — and the Swap button must not execute against any of those. The
+// amount compare also refuses a partial fill, whose `inAmount` falls short.
+export const readyOutAmount = (
+  quote: QuoteState,
+  inputMint: string,
+  outputMint: string,
+  inAmount: bigint,
+): bigint | null =>
+  quote.status === "ok" &&
+  quote.inputMint === inputMint &&
+  quote.outputMint === outputMint &&
+  quote.inAmount === inAmount &&
+  quote.outAmount !== null &&
+  quote.outAmount > 0n
+    ? quote.outAmount
+    : null;
+
 // Format an atomic BigInt amount back to a decimal string. Trailing zeros
 // after the decimal point are trimmed; integer-only values render without
 // a trailing dot.

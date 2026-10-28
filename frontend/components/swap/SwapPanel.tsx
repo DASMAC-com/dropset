@@ -16,7 +16,7 @@ import { useEclobQuote } from "@/lib/hooks/useEclobQuote";
 import { useEclobSwap } from "@/lib/hooks/useEclobSwap";
 import { useRouterQuote } from "@/lib/hooks/useRouterQuote";
 import { useTokenInfoRefresh, useUsdQuote } from "@/lib/hooks/useUsdQuote";
-import { formatAtomic } from "@/lib/quote";
+import { formatAtomic, readyOutAmount } from "@/lib/quote";
 import { useSameToken, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useGoToVaultsForPair, useSwapNav } from "@/lib/ui/swapUrl";
 import { PlatformFee } from "./PlatformFee";
@@ -103,7 +103,11 @@ export function SwapPanel() {
   useTokenInfoRefresh([fromMint, toMint]);
 
   const isConnecting = status === "connecting";
-  const hasAmount = Number(amount) > 0;
+  // In base units, so an input finer than the token's decimals (which
+  // truncates to zero, and which the quote hooks skip) reads as no amount
+  // rather than leaving Swap waiting on a quote that will never come.
+  const amountBase = parseAmountToBase(amount, fromDecimals);
+  const hasAmount = amountBase > 0n;
   const needsAmount = !sameToken && connected && !isConnecting && !hasAmount;
   const {
     balanceFor,
@@ -118,7 +122,6 @@ export function SwapPanel() {
   // null (no ATA) is just zero balance for the purposes of the insufficient
   // check — there's nothing to spend.
   const fromBalanceBase = balanceFor(fromMint) ?? 0n;
-  const amountBase = parseAmountToBase(amount, fromDecimals);
   const insufficient =
     !sameToken &&
     connected &&
@@ -161,19 +164,10 @@ export function SwapPanel() {
   // that may still move funds is outstanding.
   const swapPending =
     isSwapPending(dflowSwap.status) || isSwapPending(eclobSwap.status);
-  // The output of a quote that describes exactly this swap: fresh for the
-  // pair, successful, and for the amount now in the field. The quote is
-  // debounced, so right after an edit the shown figure belongs to the
-  // previous amount — Swap waits for the new one rather than execute against
-  // a number the user never saw. Null otherwise.
-  const readyOut =
-    quoteFresh &&
-    quote.status === "ok" &&
-    quote.inAmount === amountBase &&
-    quote.outAmount !== null &&
-    quote.outAmount > 0n
-      ? quote.outAmount
-      : null;
+  // The quote's output only when it describes exactly this swap (see
+  // `readyOutAmount`); Swap waits on it rather than execute against a number
+  // the user never saw.
+  const readyOut = readyOutAmount(quote, fromMint, toMint, amountBase);
   const awaitingQuote =
     connected && !needsAmount && !insufficient && readyOut === null;
   const dimmed = needsAmount || insufficient || balanceUnknown;

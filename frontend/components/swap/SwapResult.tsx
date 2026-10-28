@@ -97,8 +97,8 @@ export function SwapResult({
   }
 
   // Submitted, but no verdict in time — the swap may still land. Neutral
-  // chrome and the signature front and centre: the user must check it before
-  // swapping again, and the panel keeps Swap disabled until this is dismissed.
+  // chrome, with the message itself the link to the transaction: the user must
+  // check it before swapping again, and the panel keeps Swap disabled until this is dismissed.
   if (status === "unconfirmed" && error) {
     return (
       <div
