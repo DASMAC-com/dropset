@@ -65,7 +65,8 @@ jobs:
       id: 'filter'
       if: |
         github.event_name == 'pull_request'
-      uses: 'dorny/paths-filter@v3'
+      uses: >- # v3.0.4
+        dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad
       with:
         filters: |
           code:
@@ -124,7 +125,8 @@ jobs:
     # in lint.yml for the action choice and the neutralized defaults.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'actions-rust-lang/setup-rust-toolchain@v1'
+      uses: >- # v1.17.0
+        actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
       with:
         cache: false
         rustflags: ''
@@ -157,7 +159,8 @@ jobs:
     # one of the two fetches, and specifically the one that has failed.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'mozilla-actions/sccache-action@v0.0.10'
+      uses: >- # v0.0.10
+        mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696
       with:
         version: 'v0.17.0'
     # rust-cache caches ~/.cargo/{registry,git} plus only the *dependency*
@@ -183,7 +186,8 @@ jobs:
     # docs/ci.md §3.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'Swatinem/rust-cache@v2'
+      uses: >- # v2.9.3
+        Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       with:
         cache-on-failure: true
         save-if: >-
@@ -232,7 +236,8 @@ jobs:
     # load-bearing for a required check; bump the four together.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'taiki-e/install-action@v2'
+      uses: >- # v2.88.0
+        taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32
       with:
         tool: 'cargo-nextest@0.9.143'
     # Run the whole Rust workspace test suite — including the math-core
@@ -293,7 +298,8 @@ jobs:
     # in lint.yml for the action choice and the neutralized defaults.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'actions-rust-lang/setup-rust-toolchain@v1'
+      uses: >- # v1.17.0
+        actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
       with:
         cache: false
         rustflags: ''
@@ -310,7 +316,8 @@ jobs:
     # never the SBF build (poor fit, already .so-cached). See the `test` job.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'mozilla-actions/sccache-action@v0.0.10'
+      uses: >- # v0.0.10
+        mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696
       with:
         version: 'v0.17.0'
     # Shares the `test` job's dep-artifact cache via the same shared-key:
@@ -324,7 +331,8 @@ jobs:
     # Saves only on a push to main; see the `test` job's rust-cache step.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'Swatinem/rust-cache@v2'
+      uses: >- # v2.9.3
+        Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       with:
         cache-on-failure: true
         save-if: >-
@@ -366,7 +374,8 @@ jobs:
     # Install the nextest runner (downloaded binary, not compiled).
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'taiki-e/install-action@v2'
+      uses: >- # v2.88.0
+        taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32
       with:
         tool: 'cargo-nextest@0.9.143'
     - env:
@@ -416,7 +425,8 @@ jobs:
     # in lint.yml for the action choice and the neutralized defaults.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'actions-rust-lang/setup-rust-toolchain@v1'
+      uses: >- # v1.17.0
+        actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
       with:
         cache: false
         rustflags: ''
@@ -429,13 +439,15 @@ jobs:
         solana-version: '${{ env.SOLANA_VERSION }}'
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'mozilla-actions/sccache-action@v0.0.10'
+      uses: >- # v0.0.10
+        mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696
       with:
         version: 'v0.17.0'
     # Saves only on a push to main; see the `test` job's rust-cache step.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'Swatinem/rust-cache@v2'
+      uses: >- # v2.9.3
+        Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       with:
         cache-on-failure: true
         save-if: >-
@@ -486,7 +498,8 @@ jobs:
         test -s target/deploy/dropset_ref.so
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'taiki-e/install-action@v2'
+      uses: >- # v2.88.0
+        taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32
       with:
         tool: 'cargo-nextest@0.9.143'
     - env:
@@ -539,19 +552,22 @@ jobs:
     # in lint.yml for the action choice and the neutralized defaults.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'actions-rust-lang/setup-rust-toolchain@v1'
+      uses: >- # v1.17.0
+        actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
       with:
         cache: false
         rustflags: ''
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'mozilla-actions/sccache-action@v0.0.10'
+      uses: >- # v0.0.10
+        mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696
       with:
         version: 'v0.17.0'
     # Saves only on a push to main; see the `test` job's rust-cache step.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'Swatinem/rust-cache@v2'
+      uses: >- # v2.9.3
+        Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       with:
         cache-on-failure: true
         save-if: >-
@@ -560,7 +576,8 @@ jobs:
         shared-key: 'rust-postgres-${{ runner.os }}'
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: 'taiki-e/install-action@v2'
+      uses: >- # v2.88.0
+        taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32
       with:
         tool: 'cargo-nextest@0.9.143'
     # The crate selection, the feature flags and the `oanda_direction`
