@@ -20,7 +20,7 @@
       }
     ]
   },
-  "description": "Raw collected series first, then the regime analytics derived from them. Read it top-down: is there data for this venue and product, what does the store hold across every venue, what does the data say about volatility by hour, and how does this currency's whole pair set compare. The candlestick and the vol panel read one product at a time; the cross-pair index deliberately reads the whole currency at once. Every panel except Spot ticks reads the candle tier, so Venue source lists candle venues only; the tick-only venues (kraken among them) are under Tick venue and drawn by the Spot ticks panel at the bottom.",
+  "description": "Raw collected series first, then the regime analytics derived from them. Read it top-down: is there data for this venue and product, what does the store hold across every venue, what does the data say about volatility by hour, and how does this currency's whole pair set compare. The candlestick and the vol panel read one product at a time; the cross-pair index deliberately reads the whole currency at once. Every panel above the tGBP row except Spot ticks reads the candle tier, so Venue source lists candle venues only; the tick-only venues (kraken and orca among them) are under Tick venue and drawn by the Spot ticks panel. The tGBP row at the bottom takes no variable: it fixes TGBP-USDC and reads the Orca pool, the Coinbase candles and the estimator's fair_price directly.",
   "editable": true,
   "graphTooltip": 1,
   "links": [
@@ -586,7 +586,7 @@
         "type": "postgres",
         "uid": "dropset-postgres"
       },
-      "description": "The tick-tier venues, which no panel above can show. kraken, erapi, frankfurter and pyth write only spot ticks, so they never appear in the Venue source picker \u2014 that picker and every panel driven by it read the candle tier. coinbase writes both, so its ticker appears here as well as its candles above. This panel is where those venues are represented on this page: pick a product with Tick product and every selected Tick venue that printed it inside the window draws one line, so a peg or a reference rate reads across venues at once. A venue that has printed the product but not in the window draws nothing; widen the window or check Tick coverage on the market-data dashboard.\n\nGAPS UNDER FIVE MINUTES ARE JOINED, longer ones are not. With more than one venue selected, two venues rarely print in the same second, so below their poll cadence most aligned rows are half empty and an unjoined line would draw almost nothing; joining gaps up to five minutes closes that. A longer gap breaks the line only where another selected venue printed in the missing bucket. A bucket NO selected venue printed has no row at all and is drawn straight across, so do not read an unbroken line here as proof of no outage; Tick coverage on the market-data dashboard is the panel for that. The once-a-day reference venues are drawn as points where the panel's point density allows.\n\nAVERAGED INTO THE PANEL'S INTERVAL. The default window is thirty days and the minute-cadence venues print tens of thousands of ticks across it, so each line is the mean price per display interval rather than every print. Zoom in until the interval falls below a venue's poll cadence to see its raw prints; Price by source on the market-data dashboard plots them unaggregated.\n\nNot scoped by Currency or Venue source, deliberately: both are scoped to the candle venue's registry, so coupling this panel to them would hide exactly the tick-only products it exists to show.",
+      "description": "The tick-tier venues, which no panel above can show. kraken, erapi, frankfurter, pyth and orca (the Orca Whirlpool pool price, product TGBP-USDC) write only spot ticks, so they never appear in the Venue source picker \u2014 that picker and every panel driven by it read the candle tier. coinbase writes both, so its ticker appears here as well as its candles above. This panel is where those venues are represented on this page (orca also feeds the fixed tGBP row below): pick a product with Tick product and every selected Tick venue that printed it inside the window draws one line, so a peg or a reference rate reads across venues at once. A venue that has printed the product but not in the window draws nothing; widen the window or check Tick coverage on the market-data dashboard.\n\nGAPS UNDER FIVE MINUTES ARE JOINED, longer ones are not. With more than one venue selected, two venues rarely print in the same second, so below their poll cadence most aligned rows are half empty and an unjoined line would draw almost nothing; joining gaps up to five minutes closes that. A longer gap breaks the line only where another selected venue printed in the missing bucket. A bucket NO selected venue printed has no row at all and is drawn straight across, so do not read an unbroken line here as proof of no outage; Tick coverage on the market-data dashboard is the panel for that. The once-a-day reference venues are drawn as points where the panel's point density allows.\n\nAVERAGED INTO THE PANEL'S INTERVAL. The default window is thirty days and the minute-cadence venues print tens of thousands of ticks across it, so each line is the mean price per display interval rather than every print. Zoom in until the interval falls below a venue's poll cadence to see its raw prints; Price by source on the market-data dashboard plots them unaggregated.\n\nNot scoped by Currency or Venue source, deliberately: both are scoped to the candle venue's registry, so coupling this panel to them would hide exactly the tick-only products it exists to show.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -654,12 +654,331 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "-- The tick tier, one line per venue for one product. Every other panel on\n-- this dashboard reads cex_prices, so a venue that only writes spot_ticks\n-- (kraken, erapi, frankfurter, pyth) is invisible to them; this is where\n-- those venues are represented on the page. coinbase writes both tiers.\n--\n-- AVERAGED PER DISPLAY INTERVAL because the default window is thirty days and\n-- a minute-cadence venue prints tens of thousands of ticks across it. The\n-- column is bare inside both macros: Grafana captures a macro argument with a\n-- regex that stops at the first closing paren, so a to_timestamp(...) inside\n-- one truncates the argument. The group alias emits epoch seconds, which the\n-- time_series format reads as time directly.\nSELECT\n  $__unixEpochGroupAlias(observed_at, $__interval),\n  source AS metric,\n  avg(price) AS value\nFROM spot_ticks\nWHERE $__unixEpochFilter(observed_at)\n  AND source = ANY (ARRAY[${tick_source:sqlstring}]::text[])\n  AND product_id = ${tick_product:sqlstring}\nGROUP BY 1, 2\nORDER BY 1, 2\n",
+          "rawSql": "-- The tick tier, one line per venue for one product. Every other panel\n-- above the tGBP row reads cex_prices, so a venue that only writes\n-- spot_ticks (kraken, erapi, frankfurter, pyth, orca) is invisible to them;\n-- this is where those venues are represented on the page. coinbase writes both tiers.\n--\n-- AVERAGED PER DISPLAY INTERVAL because the default window is thirty days and\n-- a minute-cadence venue prints tens of thousands of ticks across it. The\n-- column is bare inside both macros: Grafana captures a macro argument with a\n-- regex that stops at the first closing paren, so a to_timestamp(...) inside\n-- one truncates the argument. The group alias emits epoch seconds, which the\n-- time_series format reads as time directly.\nSELECT\n  $__unixEpochGroupAlias(observed_at, $__interval),\n  source AS metric,\n  avg(price) AS value\nFROM spot_ticks\nWHERE $__unixEpochFilter(observed_at)\n  AND source = ANY (ARRAY[${tick_source:sqlstring}]::text[])\n  AND product_id = ${tick_product:sqlstring}\nGROUP BY 1, 2\nORDER BY 1, 2\n",
           "refId": "A"
         }
       ],
       "title": "Spot ticks \u2014 ${tick_product} by tick venue",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 47
+      },
+      "id": 8,
+      "panels": [],
+      "title": "tGBP center \u2014 TGBP-USDC",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Where the market puts tGBP, from both of its venues on one axis: the Orca Whirlpool pool spot (spot_ticks, source orca) and the Coinbase TGBP-USDC candle close (cex_prices, the finest granularity Coinbase has stored for the product). A gap between the two lines is a disagreement between the pool and the exchange; the estimator's fair, which composes from GBP/USD and the observed basis, is the panel below.\n\nFixed to TGBP-USDC and to these two sources, deliberately: no template variable drives this row, so the pickers above can be anywhere and this row still answers the one question it exists for.\n\nNO DATA IS A READING, NOT A FAULT. On a keyless or paused stack the Orca collector writes no rows and the Coinbase collector may not carry the product, and an empty line here says exactly that. Check Tick coverage on the market-data dashboard before reading an empty panel as a broken one.\n\nTHE ORCA LINE BREAKS ON AN OUTAGE, the Coinbase line does not. The Orca line is averaged into the panel's interval, and an interval with no print is drawn as a gap; gaps under five minutes are joined, so the line does not shatter into dots when zoomed below the pool's poll cadence. The Coinbase close is drawn one point per candle at the finest granularity stored inside the window, and a missing candle is drawn straight across, so an unbroken Coinbase line is not proof of no outage.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "USDC per tGBP",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": 300000
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [
+            "first",
+            "last",
+            "min",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "-- The Orca pool leg. orca is a tick-only venue, so it writes spot_ticks and\n-- never cex_prices; averaged per display interval, as Spot ticks is. The\n-- NULL fill emits an interval with no print as a NULL row rather than no\n-- row, so an outage breaks the line instead of being drawn straight across.\nSELECT\n  $__unixEpochGroupAlias(observed_at, $__interval, NULL),\n  'orca spot' AS metric,\n  avg(price) AS value\nFROM spot_ticks\nWHERE $__unixEpochFilter(observed_at)\n  AND source = 'orca'\n  AND product_id = 'TGBP-USDC'\nGROUP BY 1, 2\nORDER BY 1, 2\n",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "-- The Coinbase leg, the candle close at the finest granularity stored for\n-- the product inside the window, so the line does not depend on the\n-- Granularity picker and a shallow fine series cannot blank a wide window.\nSELECT\n  to_timestamp(bucket_start) AS \"time\",\n  \"close\" AS \"coinbase close\"\nFROM cex_prices\nWHERE $__unixEpochFilter(bucket_start)\n  AND source = 'coinbase'\n  AND product_id = 'TGBP-USDC'\n  AND granularity_secs = (\n    SELECT min(granularity_secs)\n    FROM cex_prices\n    WHERE $__unixEpochFilter(bucket_start)\n      AND source = 'coinbase'\n      AND product_id = 'TGBP-USDC'\n  )\nORDER BY bucket_start\n",
+          "refId": "B"
+        }
+      ],
+      "title": "tGBP market \u2014 Orca pool spot and Coinbase close",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "What the fair-value estimator published for TGBP-USDC (fair_price): the fair, in USDC per tGBP on the left axis, and the smoothed basis on the right. Read it against the panel above: fair is the center the estimator holds, the two lines above are where the market trades.\n\nA BREAK IN THE FAIR LINE IS A PAUSE OR A SILENT ESTIMATOR. fair is NULL exactly when the regime is paused, and never drawn as zero; an interval with no rows at all, meaning the estimator was not publishing, is drawn as a gap too. Both series are averaged into the panel's interval, so a pause shorter than one interval inside an otherwise live one vanishes into the average, and gaps under five minutes are joined: the bound below which a pause is invisible here is the larger of the two. The regime timeline below works on every tick and is the panel that shows a short pause.\n\nThe basis is set only in an FX-anchored regime, so it drops out whenever the anchor below leaves fx.\n\nNOTHING DRAWN on a keyless or paused stack is the correct reading: the estimator publishes nothing for a pair it has no legs for.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "USDC per tGBP",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": 300000
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "basis"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "basis"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 57
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "calcs": [
+            "first",
+            "last",
+            "min",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "-- The estimator's output for the pair. avg ignores NULL, so a bucket that\n-- is paused throughout stays NULL rather than collapsing to zero, and the\n-- NULL fill emits a bucket the estimator wrote nothing in as a NULL row\n-- rather than no row, so a silent estimator breaks the line too.\nSELECT\n  $__unixEpochGroupAlias(ts, $__interval, NULL),\n  avg(fair) AS fair,\n  avg(basis) AS basis\nFROM fair_price\nWHERE $__unixEpochFilter(ts)\n  AND product_id = 'TGBP-USDC'\nGROUP BY 1\nORDER BY 1\n",
+          "refId": "A"
+        }
+      ],
+      "title": "tGBP estimator \u2014 fair and basis",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dropset-postgres"
+      },
+      "description": "Which regime the estimator composed TGBP-USDC under, and which leg anchored the mid, over time (fair_price). A degraded regime shows its degrade beside it (degraded: <which>), so every state the estimator writes is drawn as written; a state this panel has no color for draws in blue under its own name rather than being hidden.\n\nOnly the changes are drawn: each band starts at the first tick that entered the state, and the final band ends at the last tick in the window rather than running on to now, so an estimator that stopped writing reads as stopped. A stretch inside the window where the estimator wrote nothing is NOT shown as a gap here, the band before it is drawn across; the fair line above breaks there.\n\nNOTHING DRAWN on a keyless or paused stack is the correct reading: the estimator publishes nothing for a pair it has no legs for.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0
+          },
+          "mappings": [
+            {
+              "options": {
+                "crypto_only": {
+                  "color": "yellow",
+                  "index": 1
+                },
+                "crypto_reference": {
+                  "color": "yellow",
+                  "index": 7
+                },
+                "fx": {
+                  "color": "green",
+                  "index": 6
+                },
+                "fx_pinned": {
+                  "color": "yellow",
+                  "index": 2
+                },
+                "none": {
+                  "color": "red",
+                  "index": 9
+                },
+                "normal": {
+                  "color": "green",
+                  "index": 0
+                },
+                "paused": {
+                  "color": "red",
+                  "index": 4
+                },
+                "static": {
+                  "color": "orange",
+                  "index": 8
+                },
+                "uncorroborated": {
+                  "color": "orange",
+                  "index": 3
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "pattern": "^degraded",
+                "result": {
+                  "color": "orange",
+                  "index": 5
+                }
+              },
+              "type": "regex"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 66
+      },
+      "id": 11,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dropset-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "-- Change points only: a thirty-day window at the estimator's tick cadence\n-- is far more rows than a state timeline needs. The regime is read as\n-- written, with any degrade appended, so a new regime or degrade value draws\n-- under its own name with no edit here. The window filter sits inside the\n-- subquery so the first tick in the window always opens a band. The last\n-- tick is emitted with NULL states: a state timeline runs its last value\n-- out to the right edge, so without the NULL a stopped estimator would draw\n-- its last state through to now.\nSELECT\n  to_timestamp(ts) AS \"time\",\n  CASE WHEN next_ts IS NULL THEN NULL ELSE regime END AS \"regime\",\n  CASE WHEN next_ts IS NULL THEN NULL ELSE anchor END AS \"anchor\"\nFROM (\n  SELECT\n    ts,\n    CASE WHEN degrade IS NULL THEN regime\n      ELSE regime || ': ' || degrade END AS regime,\n    anchor,\n    lag(regime) OVER w AS prev_regime,\n    lag(degrade) OVER w AS prev_degrade,\n    lag(anchor) OVER w AS prev_anchor,\n    lead(ts) OVER w AS next_ts\n  FROM fair_price\n  WHERE $__unixEpochFilter(ts)\n    AND product_id = 'TGBP-USDC'\n  WINDOW w AS (ORDER BY ts)\n) AS t\nWHERE prev_anchor IS NULL\n  OR next_ts IS NULL\n  OR anchor <> prev_anchor\n  OR regime <> CASE WHEN prev_degrade IS NULL THEN prev_regime\n    ELSE prev_regime || ': ' || prev_degrade END\nORDER BY ts\n",
+          "refId": "A"
+        }
+      ],
+      "title": "tGBP estimator \u2014 regime and anchor",
+      "type": "state-timeline"
     }
   ],
   "preload": false,
@@ -679,7 +998,7 @@
           "uid": "dropset-postgres"
         },
         "definition": "SELECT DISTINCT source FROM cex_prices ORDER BY 1",
-        "description": "The venue whose collected series is being shown. Single-select: the candlestick and the vol panel each read one venue and product at a time, and the cross-pair index reads one venue across many pairs, so two vendors carrying the same pair never draw duplicate lines. CANDLE VENUES ONLY: this lists the sources in the candle tier, so a venue that writes only spot ticks (kraken, erapi, frankfurter, pyth) is absent by construction, not by omission. Those are under Tick venue, which drives the Spot ticks panel at the bottom; coinbase writes both tiers, so it appears in both pickers.",
+        "description": "The venue whose collected series is being shown. Single-select: the candlestick and the vol panel each read one venue and product at a time, and the cross-pair index reads one venue across many pairs, so two vendors carrying the same pair never draw duplicate lines. CANDLE VENUES ONLY: this lists the sources in the candle tier, so a venue that writes only spot ticks (kraken, erapi, frankfurter, pyth, orca) is absent by construction, not by omission. Those are under Tick venue, which drives the Spot ticks panel; coinbase writes both tiers, so it appears in both pickers.",
         "includeAll": false,
         "label": "Venue source",
         "multi": false,
@@ -860,7 +1179,7 @@
           "uid": "dropset-postgres"
         },
         "definition": "SELECT DISTINCT source FROM spot_ticks ORDER BY 1",
-        "description": "The tick-tier venues: every source that has ever written spot ticks. kraken, erapi, frankfurter and pyth write nothing else, which is why they do not appear under Venue source; coinbase writes both tiers and appears in both. Drives only the Spot ticks panel at the bottom. Multi-select and All by default, because the panel's question is how one product reads across venues; narrow it to isolate one.",
+        "description": "The tick-tier venues: every source that has ever written spot ticks. kraken, erapi, frankfurter, pyth and orca write nothing else, which is why they do not appear under Venue source; coinbase writes both tiers and appears in both. Drives only the Spot ticks panel, above the tGBP row. Multi-select and All by default, because the panel's question is how one product reads across venues; narrow it to isolate one.",
         "includeAll": true,
         "label": "Tick venue",
         "multi": true,
