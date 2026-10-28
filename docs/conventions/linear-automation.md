@@ -807,10 +807,11 @@ table it reads against, with each verb's default substrate, is in
   needs it asks in its own tab through `AskUserQuestion` (the scheduler
   for a Done that releases an edge or a login the gate needs, a worker
   for a ratification, the curator for a kill). One that cannot be done
-  in the moment is filed `[Operator]`, or as a chore when a session can
-  do the surrounding work, at Urgent, Backlog, no milestone; the curator
-  surfaces it once and it lives in Todo until the operator's Done.
-  There is no third path — nothing recites an operator-actions list.
+  in the moment is filed at Urgent, Backlog, no milestone, and the
+  curator surfaces it once: `[Operator]`, which lives in Todo until the
+  operator's Done, or a chore when a session can do the surrounding
+  work, which runs to In Review like any chore. There is no third
+  path — nothing recites an operator-actions list.
 - **A Linear-title signal only** — never a PR title, branch or worktree
   name, which keep their own forms.
 - **The title is the authority.** The operator re-routes an issue by

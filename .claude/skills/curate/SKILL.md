@@ -70,8 +70,9 @@ The **un-parked Backlog**: state Backlog, no milestone,
 `[Operator]` items included. An operator item is filed at Urgent,
 so it leads the ranking in priority order, and is **surfaced once**:
 a tick moves it to Todo, where the Next view holds it until the
-operator's Done, and dispatch refuses it downstream. Nothing
-recites it again — no list, no re-ask.
+operator's Done, and dispatch refuses it downstream. Once
+ticked, nothing recites it again — no list, no re-ask; an
+unticked one carries like any unticked task.
 
 Out of the pool, never shown:
 

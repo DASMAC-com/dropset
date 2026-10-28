@@ -123,12 +123,13 @@ handoff — and, warm or full:
 - **Recite no operator list.** An operator action is asked for
   **when it binds**, in the tab that needs it, through
   `AskUserQuestion` — the scheduler for a Done that releases an
-  edge or a login the gate needs, a worker for a ratification,
-  the curator for a kill. One that cannot be done in the moment
-  is filed `[Operator]`, or as a chore when a session can do the
-  surrounding work, at Urgent in Backlog with no milestone; the
-  curator surfaces it once, and Todo holds it until the
-  operator's Done. There is no third path.
+  edge or a login the gate needs (during a bootstrap, joining
+  step 8's ask), a worker for a ratification, the curator for a
+  kill. One that cannot be done in the moment is filed at Urgent
+  in Backlog with no milestone, and the curator surfaces it
+  once: `[Operator]`, which Todo holds until the operator's Done,
+  or a chore when a session can do the surrounding work, which
+  runs to In Review like any chore. There is no third path.
 - **Verify overnight landings with `git log`** and the In Review
   listing, never the Done column; release chains as blockers land.
 
