@@ -13,7 +13,6 @@ import {
   chainVaultId,
   marketOrientation,
 } from "./chainVaults";
-import { shortenMint } from "./currencies";
 import { positionPnl } from "./pnl";
 import {
   contributeClosedReason,
@@ -79,7 +78,7 @@ describe("chainVault", () => {
     ).toBe("GBP Basis");
   });
 
-  it("labels a vault by its name, else #seq, else (mock) the leader", () => {
+  it("labels a vault by its name, else #seq", () => {
     const named = chainVault(
       summary({ name: "GBP Basis" }),
       MARKET,
@@ -90,7 +89,6 @@ describe("chainVault", () => {
     // The per-market seq (5), not the sector index (2).
     const unnamed = chainVault(summary(), MARKET, "TGBP", "USDC");
     expect(vaultLabel(unnamed)).toBe("#5");
-    expect(vaultLabel({ ...unnamed, chain: null })).toBe(shortenMint(LEADER));
   });
 
   it("values TVL at the vault's own reference price", () => {
@@ -302,7 +300,7 @@ describe("contributeClosedReason", () => {
 describe("the public vault link", () => {
   const live = chainVault(summary(), MARKET, "TGBP", "USDC");
   const markets = [
-    resolveVaultMarket(MARKET, "TGBP", "USDC", 0, [
+    resolveVaultMarket(MARKET, "TGBP", "USDC", [
       chainVault(summary({ seq: 4n }), MARKET, "TGBP", "USDC"),
       live,
     ]),

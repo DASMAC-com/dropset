@@ -4,7 +4,7 @@ import { useWalletConnection } from "@solana/react-hooks";
 import { useEffect } from "react";
 import { RateLimitMessage } from "@/components/chrome/RateLimitMessage";
 import { stablecoinDecimals, stablecoinMint } from "@/lib/data/currencies";
-import { findVaultMarket } from "@/lib/data/vaults";
+import { findVaultPair } from "@/lib/data/vaults";
 import { useFeeVaultExists } from "@/lib/dflow/feeVault";
 import { emit, useAppEvent } from "@/lib/events";
 import { parseAmountToBase } from "@/lib/format/balance";
@@ -38,10 +38,10 @@ export function SwapPanel() {
   const store = useSwapStoreApi();
   const gotoSwap = useSwapNav();
   const goToVaults = useGoToVaultsForPair();
-  // The vault market for this pair, if one exists — independent of swap
-  // direction (a vault's base/quote are fixed by the market). Drives the
-  // "view vaults" link, which only shows when there's actually a vault.
-  const vaultMarket = findVaultMarket(fromStablecoin, toStablecoin);
+  // The vault roster's pair for this swap, if it lists one — independent of
+  // swap direction (a vault's base/quote are fixed by the market). Drives the
+  // "view vaults" link, which only shows for a pair vaults can trade.
+  const vaultPair = findVaultPair(fromStablecoin, toStablecoin);
   const fromMint = stablecoinMint(fromStablecoin);
   const toMint = stablecoinMint(toStablecoin);
   const fromDecimals = stablecoinDecimals(fromStablecoin);
@@ -304,14 +304,14 @@ export function SwapPanel() {
           (globe). Hidden below `sm` — real mobile devices redirect /vaults
           back to /swap (see MobileSwapRedirect), so the link would be a
           no-op at phone widths. */}
-      {vaultMarket && (
+      {vaultPair && (
         <div className="hidden justify-center sm:flex">
           <button
             type="button"
-            onClick={() => goToVaults(vaultMarket.base, vaultMarket.quote)}
+            onClick={() => goToVaults(vaultPair.base, vaultPair.quote)}
             className="text-muted-fg text-xs transition-colors hover:text-foreground"
           >
-            View {vaultMarket.base} / {vaultMarket.quote} vaults
+            View {vaultPair.base} / {vaultPair.quote} vaults
           </button>
         </div>
       )}

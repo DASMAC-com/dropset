@@ -179,7 +179,7 @@ export async function fetchChainVaultMarkets(
       const vaults = decodeDropsetVaults(route.marketData).map((s) =>
         chainVault(s, route.market, base, quote),
       );
-      return resolveVaultMarket(route.market, base, quote, 0, vaults);
+      return resolveVaultMarket(route.market, base, quote, vaults);
     }),
   );
   const markets: VaultMarket[] = [];
@@ -215,21 +215,17 @@ export async function fetchChainPositions(
   const programAddress = dropsetProgramAddress(CLUSTER);
   const targets = await Promise.all(
     markets.flatMap((m) =>
-      m.vaults.flatMap((v) => {
-        const chain = v.chain;
-        if (!chain) return [];
-        return [
-          findVaultDepositorPda(
-            { market: address(m.marketPubkey), vaultIdx: chain.index, signer },
-            { programAddress },
-          ).then(([pda]) => ({
-            pda,
-            vaultId: v.vaultPubkey,
-            base: m.base,
-            quote: m.quote,
-          })),
-        ];
-      }),
+      m.vaults.map((v) =>
+        findVaultDepositorPda(
+          { market: address(m.marketPubkey), vaultIdx: v.chain.index, signer },
+          { programAddress },
+        ).then(([pda]) => ({
+          pda,
+          vaultId: v.vaultPubkey,
+          base: m.base,
+          quote: m.quote,
+        })),
+      ),
     ),
   );
   const out = new Map<string, VaultPosition>();
