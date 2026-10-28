@@ -539,8 +539,8 @@ mod tests {
             leader,
             name: packed(name),
             name_locked: false,
-            outside_allowed: false,
-            outside_approved: false,
+            allow_outside_depositors: false,
+            outside_deposits_approved: false,
             seeded: true,
             stake: VaultStake::default(),
         }

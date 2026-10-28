@@ -679,18 +679,14 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
         }
         _ => Some(Span::styled(" · O open", off)),
     };
-    let vault_line = Line::from(
-        [
-            Some(tag("vault")),
-            Some(Span::styled("+/- stake · % fee", if ready { live } else { off })),
-            Some(rename),
-            open,
-            Some(Span::styled(" · rotate (reserved)", off)),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>(),
-    );
+    let mut vault_spans = vec![
+        tag("vault"),
+        Span::styled("+/- stake · % fee", if ready { live } else { off }),
+        rename,
+    ];
+    vault_spans.extend(open);
+    vault_spans.push(Span::styled(" · rotate (reserved)", off));
+    let vault_line = Line::from(vault_spans);
     if app.ctx.cluster.is_mainnet() {
         let lines = vec![
             Line::from(vec![
@@ -1786,8 +1782,8 @@ mod tests {
             leader: Pubkey::new_from_array([7; 32]),
             name: packed,
             name_locked: locked,
-            outside_allowed: false,
-            outside_approved: false,
+            allow_outside_depositors: false,
+            outside_deposits_approved: false,
             seeded: true,
             stake: VaultStake::default(),
         }

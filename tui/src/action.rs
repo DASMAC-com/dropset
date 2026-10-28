@@ -2555,8 +2555,8 @@ mod tests {
             leader,
             name: [0; crate::naming::VAULT_NAME_LEN],
             name_locked: false,
-            outside_allowed: false,
-            outside_approved: false,
+            allow_outside_depositors: false,
+            outside_deposits_approved: false,
             seeded,
             stake: accounts::VaultStake::default(),
         }

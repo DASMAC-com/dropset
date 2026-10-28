@@ -35,9 +35,9 @@ pub struct Plan {
 /// admin's only when `holds_admin`.
 pub fn plan(seat: &VaultSeat, holds_admin: bool) -> Plan {
     Plan {
-        leader: !seat.outside_allowed,
-        admin: !seat.outside_approved && holds_admin,
-        admin_outstanding: !seat.outside_approved && !holds_admin,
+        leader: !seat.allow_outside_depositors,
+        admin: !seat.outside_deposits_approved && holds_admin,
+        admin_outstanding: !seat.outside_deposits_approved && !holds_admin,
     }
 }
 
@@ -54,6 +54,15 @@ pub fn open(
     symbol: &str,
     log: &Logger,
 ) -> Result<String> {
+    // The two halves are two signers by design; a leader that is the
+    // wallet would also sign the leader half as the payer, so refuse it
+    // rather than send a transaction listing one key twice.
+    if leader.pubkey() == wallet.pubkey() {
+        bail!(
+            "the leader must not be the admin wallet ({}) — nothing sent",
+            wallet.pubkey()
+        );
+    }
     let seat = read(client, cluster, market, &leader.pubkey())?;
     let holds_admin = accounts::registry_admins_fresh(client, cluster)?.contains(&wallet.pubkey());
     let todo = plan(&seat, holds_admin);
@@ -74,12 +83,15 @@ pub fn open(
             log,
         )
         .context("send set_allow_outside_depositors")?;
+        // Announced per send, so a failed admin half below still leaves the
+        // panel showing the leader half that landed.
+        log.accounts_changed();
         confirm(
             client,
             cluster,
             market,
             &seat,
-            |s| s.outside_allowed,
+            |s| s.allow_outside_depositors,
             "leader",
         )?;
     }
@@ -100,43 +112,48 @@ pub fn open(
             log,
         )
         .context("send set_outside_deposits_approved")?;
+        log.accounts_changed();
         confirm(
             client,
             cluster,
             market,
             &seat,
-            |s| s.outside_approved,
+            |s| s.outside_deposits_approved,
             "admin",
         )?;
     }
-    if todo.leader || todo.admin {
-        log.accounts_changed();
-    }
+    // What the reads above verified: the leader half always holds here, and
+    // the admin half unless it is the outstanding one.
     log.record(
-        "vault-outside-deposits",
+        "vault-outside-deposits-verified",
         &[
             ("market", &market.to_string()),
             ("vault_seq", &seat.seq.to_string()),
-            ("leader_half", "set"),
+            ("allow_outside_depositors", "true"),
             (
-                "admin_half",
+                "outside_deposits_approved",
                 if todo.admin_outstanding {
-                    "outstanding"
+                    "false"
                 } else {
-                    "set"
+                    "true"
                 },
             ),
         ],
     );
     let vault = format!("{symbol} vault {}", seat.label());
-    Ok(match todo {
+    Ok(summary(todo, &vault, &wallet.pubkey()))
+}
+
+/// The job's closing line for `vault` after `todo` ran: the admin half
+/// outstanding names the wallet that could not sign it.
+fn summary(todo: Plan, vault: &str, wallet: &Pubkey) -> String {
+    match todo {
         Plan {
             admin_outstanding: true,
             ..
         } => format!(
             "{vault}: leader half set; the admin half is outstanding — this session's \
-             wallet {} is not a registry admin",
-            wallet.pubkey()
+             wallet {wallet} is not a registry admin"
         ),
         Plan {
             leader: false,
@@ -144,7 +161,7 @@ pub fn open(
             ..
         } => format!("{vault} is already open to outside depositors — nothing sent"),
         _ => format!("{vault} is open to outside depositors"),
-    })
+    }
 }
 
 /// `leader`'s one vault on `market`, read fresh. A frozen or closed vault
@@ -207,8 +224,8 @@ mod tests {
             leader: Pubkey::new_unique(),
             name: [0; VAULT_NAME_LEN],
             name_locked: false,
-            outside_allowed: allowed,
-            outside_approved: approved,
+            allow_outside_depositors: allowed,
+            outside_deposits_approved: approved,
             seeded: true,
             stake: VaultStake::default(),
         }
@@ -238,6 +255,30 @@ mod tests {
         );
         // An admin half someone else set is not outstanding.
         assert!(!plan(&seat(false, true), false).admin_outstanding);
+    }
+
+    #[test]
+    fn the_summary_names_an_outstanding_admin_half_and_its_wallet() {
+        let wallet = Pubkey::new_unique();
+        let s =
+            |a: bool, b: bool, key: bool| summary(plan(&seat(a, b), key), "TGBP vault #1", &wallet);
+        let outstanding = s(false, false, false);
+        assert!(
+            outstanding
+                .starts_with("TGBP vault #1: leader half set; the admin half is outstanding"),
+            "{outstanding}"
+        );
+        assert!(outstanding.contains(&wallet.to_string()), "{outstanding}");
+        assert_eq!(
+            s(true, true, true),
+            "TGBP vault #1 is already open to outside depositors — nothing sent"
+        );
+        assert_eq!(
+            s(false, false, true),
+            "TGBP vault #1 is open to outside depositors"
+        );
+        // Outstanding wins even when nothing else was left to send.
+        assert!(s(true, false, false).contains("outstanding"));
     }
 
     #[test]

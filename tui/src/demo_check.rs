@@ -860,8 +860,8 @@ fn vault_verdict(seat: Option<&accounts::VaultSeat>) -> Check {
         "vault {}: named {}; leader allows outside {}; admin approved {}; leader funded {}",
         seat.label(),
         mark(named),
-        mark(seat.outside_allowed),
-        mark(seat.outside_approved),
+        mark(seat.allow_outside_depositors),
+        mark(seat.outside_deposits_approved),
         mark(funded),
     );
     let verdict = if named && seat.open_to_outside() && funded {
@@ -1311,8 +1311,8 @@ mod tests {
             leader: Pubkey::new_unique(),
             name: packed,
             name_locked: false,
-            outside_allowed: allowed,
-            outside_approved: approved,
+            allow_outside_depositors: allowed,
+            outside_deposits_approved: approved,
             seeded: leader_shares > 0,
             stake: accounts::VaultStake {
                 leader_shares,

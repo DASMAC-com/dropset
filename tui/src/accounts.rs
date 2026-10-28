@@ -474,8 +474,8 @@ pub struct VaultSeat {
     /// The two halves of the outside-deposit gate: the leader's
     /// `allow_outside_depositors` and the admin's `outside_deposits_approved`.
     /// Outside deposits need both.
-    pub outside_allowed: bool,
-    pub outside_approved: bool,
+    pub allow_outside_depositors: bool,
+    pub outside_deposits_approved: bool,
     /// Whether it holds a deposit (any shares or inventory).
     pub seeded: bool,
     /// The share ledger and inventory, as of this read — what the leader
@@ -492,8 +492,8 @@ impl VaultSeat {
             leader: Pubkey::new_from_array(v.leader),
             name: v.name,
             name_locked: v.name_locked != 0,
-            outside_allowed: v.allow_outside_depositors != 0,
-            outside_approved: v.outside_deposits_approved != 0,
+            allow_outside_depositors: v.allow_outside_depositors != 0,
+            outside_deposits_approved: v.outside_deposits_approved != 0,
             seeded: is_seeded(v),
             stake: VaultStake::of(v),
         }
@@ -513,7 +513,7 @@ impl VaultSeat {
     /// Whether both halves of the gate are set, so an outside depositor's
     /// `deposit` is reachable.
     pub fn open_to_outside(&self) -> bool {
-        self.outside_allowed && self.outside_approved
+        self.allow_outside_depositors && self.outside_deposits_approved
     }
 }
 
@@ -1078,8 +1078,8 @@ pub(crate) mod tests {
                 leader: other,
                 name: [0; VAULT_NAME_LEN],
                 name_locked: false,
-                outside_allowed: false,
-                outside_approved: false,
+                allow_outside_depositors: false,
+                outside_deposits_approved: false,
                 seeded: true,
                 stake: VaultStake::default(),
             },
@@ -1089,8 +1089,8 @@ pub(crate) mod tests {
                 leader: me,
                 name: [0; VAULT_NAME_LEN],
                 name_locked: false,
-                outside_allowed: false,
-                outside_approved: false,
+                allow_outside_depositors: false,
+                outside_deposits_approved: false,
                 seeded: false,
                 stake: VaultStake::default(),
             },
@@ -1297,7 +1297,7 @@ pub(crate) mod tests {
         assert!(!VaultSeat::of(0, &v).open_to_outside());
         v.allow_outside_depositors = 1;
         let seat = VaultSeat::of(0, &v);
-        assert!(seat.outside_allowed && !seat.outside_approved);
+        assert!(seat.allow_outside_depositors && !seat.outside_deposits_approved);
         assert!(!seat.open_to_outside());
         v.outside_deposits_approved = 1;
         assert!(VaultSeat::of(0, &v).open_to_outside());
@@ -1362,8 +1362,8 @@ pub(crate) mod tests {
             leader,
             name: [0; VAULT_NAME_LEN],
             name_locked: false,
-            outside_allowed: false,
-            outside_approved: false,
+            allow_outside_depositors: false,
+            outside_deposits_approved: false,
             seeded: true,
             stake: VaultStake::default(),
         };
