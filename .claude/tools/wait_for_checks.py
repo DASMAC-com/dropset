@@ -208,6 +208,11 @@ DEFAULT_INTERVAL = 30
 # session open indefinitely. An hour is well past this repo's slowest suite.
 DEFAULT_TIMEOUT = 3600
 
+# A bound on one non-watching `gh` read (a JSON view, a probe). Such a read
+# answers in seconds; two minutes is far past a slow API and short enough that
+# a hung `gh` becomes an error instead of a verdict that never prints.
+GH_CALL_TIMEOUT = 120
+
 # How many times the watch may be re-entered after it exits with a check still
 # pending. Each re-entry costs one gh invocation, and in practice a late
 # registration is caught by the second round; the cap exists so that a check
@@ -329,7 +334,9 @@ def _gh(args: list[str]) -> tuple[int, str, str]:
     """Run a ``gh`` command, returning ``(returncode, stdout, stderr)``.
 
     Never raises on a non-zero exit — ``gh pr checks`` uses non-zero to mean
-    "some check failed", which is an outcome to report, not an error.
+    "some check failed", which is an outcome to report, not an error. A ``gh``
+    that does not answer within :data:`GH_CALL_TIMEOUT` is refused, so a hung
+    read cannot hang the verdict.
     """
     try:
         completed = subprocess.run(
@@ -339,7 +346,12 @@ def _gh(args: list[str]) -> tuple[int, str, str]:
             text=True,
             errors="replace",
             check=False,
+            timeout=GH_CALL_TIMEOUT,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise WaitForChecksError(
+            f"gh {' '.join(args[:2])} did not answer within {GH_CALL_TIMEOUT}s"
+        ) from exc
     except OSError as exc:
         raise WaitForChecksError(f"cannot run gh: {exc}") from exc
     return completed.returncode, completed.stdout, completed.stderr

@@ -1,5 +1,4 @@
 # cspell:word waitpid
-# cspell:word WNOHANG
 """Stdlib ``unittest`` tests for the HEAD verification race.
 
 The race runs against fake stages, a scripted CI read, a scripted HEAD and a
@@ -413,6 +412,167 @@ class StageKillTest(unittest.TestCase):
         else:
             os.kill(grandchild, signal.SIGKILL)
             self.fail("grandchild survived the group kill")
+
+    def exited_stage(self) -> vh.Stage:
+        """A stage whose only member, the leader, is a zombie not yet reaped."""
+        log = Path(tempfile.mkdtemp()) / "s.log"
+        stage = vh.Stage("lint", [sys.executable, "-c", "pass"], log)
+        flags = os.WEXITED | os.WNOHANG | os.WNOWAIT
+        deadline = time.monotonic() + 10
+        while os.waitid(os.P_PID, stage.proc.pid, flags) is None:
+            self.assertLess(time.monotonic(), deadline, "leader never exited")
+            time.sleep(0.02)
+        return stage
+
+    @unittest.skipUnless(hasattr(os, "waitid"), "needs waitid")
+    def test_kill_on_a_zombie_leader(self):
+        # The issue's case, unmocked: macOS answers EPERM for this group.
+        stage = self.exited_stage()
+        stage.kill()
+        stage.force()
+        self.assertEqual(stage.poll(), 0)
+
+    @unittest.skipUnless(hasattr(os, "waitid"), "needs waitid")
+    def test_grace_leaves_the_leader_a_zombie(self):
+        # Reaping inside the grace would free the pgid before the SIGKILL.
+        stage = self.exited_stage()
+        stage._await_exit(5)
+        self.assertIsNone(stage.proc.returncode)
+        self.assertIsNotNone(
+            os.waitid(os.P_PID, stage.proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        )
+        stage.force()
+
+    @unittest.skipUnless(hasattr(os, "waitid"), "needs waitid")
+    def test_eperm_on_a_gone_group_is_tolerated(self):
+        # macOS answers EPERM, not ESRCH, for a zombie-only or recycled group.
+        stage = self.exited_stage()
+        calls = []
+
+        def eperm(pgid, sig):
+            calls.append(sig)
+            raise PermissionError(1, "Operation not permitted")
+
+        real, os.killpg = os.killpg, eperm
+        try:
+            stage.kill()
+            stage.force()
+        finally:
+            os.killpg = real
+        self.assertEqual(calls, [signal.SIGTERM, signal.SIGKILL])
+
+    def test_race_ci_first_with_eperm_prints_a_verdict(self):
+        # CI settles lint while the real local lint runs; the kill hits EPERM.
+        tmp = Path(tempfile.mkdtemp())
+        reads = iter([ci(), ci(lint=GREEN_LINT), ci(test=GREEN_TEST)])
+        real_killpg = os.killpg
+
+        stages = []
+
+        def start(name):
+            stages.append(
+                vh.Stage(
+                    name,
+                    [sys.executable, "-c", "import time;time.sleep(30)"],
+                    tmp / f"{name}.log",
+                )
+            )
+            return stages[-1]
+
+        def killpg(pgid, sig):
+            real_killpg(pgid, sig)
+            if sig == signal.SIGKILL:
+                raise PermissionError(1, "Operation not permitted")
+
+        clock = Clock()
+        os.killpg = killpg
+        try:
+            r = vh.race(
+                SHA,
+                "",
+                start=start,
+                ci=lambda: next(reads, None),
+                head=lambda: SHA,
+                dirty=lambda: False,
+                clock=clock,
+                sleep=clock.sleep,
+                interval=1,
+                timeout=60,
+            )
+        finally:
+            os.killpg = real_killpg
+        self.assertEqual(r.outcome, "GREEN")
+        self.assertEqual(r.killed, ["lint", "test"])
+        self.assertTrue(all(s.poll() is not None for s in stages))
+        self.assertIn("verify-head: GREEN", vh.render(r, 1))
+
+
+class MainSignalTest(unittest.TestCase):
+    """The handler path: an interrupt mid-race cleans up every started group."""
+
+    def setUp(self):
+        names = ("race", "read_head", "local_only_reason", "Stage", "STAGES")
+        self.saved = {n: getattr(vh, n) for n in names}
+        self.handlers = {
+            s: signal.getsignal(s)
+            for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+        }
+        vh.read_head = lambda: SHA
+        vh.local_only_reason = lambda sha: vh.NOT_PUSHED
+
+    def stages(self, code: str) -> None:
+        vh.STAGES = (("lint", [sys.executable, "-c", code]),)
+
+    def tearDown(self):
+        for name, value in self.saved.items():
+            setattr(vh, name, value)
+        for sig, handler in self.handlers.items():
+            signal.signal(sig, handler)
+
+    def test_interrupt_after_a_stage_exited_raises_only_the_exit(self):
+        started = []
+
+        def race(sha, local_only, *, start, **_):
+            started.append(start("lint"))
+            started[-1].proc.wait(timeout=10)
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(5)
+            raise AssertionError("SIGTERM was not delivered")
+
+        def eperm(pgid, sig):
+            raise PermissionError(1, "Operation not permitted")
+
+        self.stages("pass")
+        vh.race = race
+        real_killpg, os.killpg = os.killpg, eperm
+        try:
+            with self.assertRaises(SystemExit) as caught:
+                vh.main([])
+        finally:
+            os.killpg = real_killpg
+        self.assertEqual(caught.exception.code, 128 + signal.SIGTERM)
+        self.assertEqual(started[0].poll(), 0)
+
+    def test_signal_during_spawn_is_held_until_recorded(self):
+        recorded = []
+
+        class SignalledStage(self.saved["Stage"]):
+            def __init__(self, *a):
+                super().__init__(*a)
+                os.kill(os.getpid(), signal.SIGTERM)  # inside the window
+                recorded.append(self)
+
+        def race(sha, local_only, *, start, **_):
+            start("lint")
+            raise AssertionError("the held signal was not raised")
+
+        self.stages("import time;time.sleep(30)")
+        vh.Stage = SignalledStage
+        vh.race = race
+        with self.assertRaises(SystemExit) as caught:
+            vh.main([])
+        self.assertEqual(caught.exception.code, 128 + signal.SIGTERM)
+        self.assertIsNotNone(recorded[0].poll())  # recorded, then killed
 
 
 if __name__ == "__main__":

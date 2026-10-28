@@ -135,6 +135,27 @@ class RunIdTests(unittest.TestCase):
         self.assertEqual(wfc.run_id_from_link(""), "")
 
 
+class GhCallTests(unittest.TestCase):
+    def test_a_hung_gh_is_refused_in_plain_words(self):
+        seen = {}
+
+        def hang(cmd, **kwargs):
+            seen.update(kwargs)
+            raise wfc.subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+        real, wfc.subprocess.run = wfc.subprocess.run, hang
+        try:
+            with self.assertRaises(wfc.WaitForChecksError) as caught:
+                wfc._gh(["pr", "view", "656", "--json", "number"])
+        finally:
+            wfc.subprocess.run = real
+        self.assertEqual(seen["timeout"], wfc.GH_CALL_TIMEOUT)
+        self.assertEqual(
+            str(caught.exception),
+            f"gh pr view did not answer within {wfc.GH_CALL_TIMEOUT}s",
+        )
+
+
 class ReadChecksTests(unittest.TestCase):
     """``gh`` overloads its exit code, so an empty payload has to be classified
     rather than trusted."""
