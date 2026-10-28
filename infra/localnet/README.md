@@ -80,6 +80,20 @@ source. The from-source build is the fallback, used only when the pull
 is unavailable (offline, or a freshly-bumped version CI hasn't published
 yet); that build takes a few minutes.
 
+Pulling is the normal path for the explorer (`make explorer`), and a
+source build is the fallback; every Rust service builds locally either
+way. A bare `docker compose build` compiles every service at once, the
+explorer included, and a killed build (exit code 137) is usually
+Docker's memory: Docker Desktop's default 8 GB was measured too small
+for that and 20 GB enough, so raise it under Docker Desktop, Settings,
+Resources. The make targets print the same advisory when a build fails.
+
+`make demo` checks the frontend toolchain in the foreground before it
+starts anything: node's major version must equal `engines.node` in
+`frontend/package.json` and pnpm must equal its `packageManager` pin.
+It installs nothing; a mismatch prints the fix, `corepack enable` under
+the pinned node.
+
 Pin or bump the explorer version by editing two coupled values in one
 commit: the `image:` tag on the `explorer` service in
 `docker-compose.yml` (what localnet pulls) and `ARG EXPLORER_REF` in
