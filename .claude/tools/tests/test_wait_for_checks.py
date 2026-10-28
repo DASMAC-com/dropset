@@ -983,7 +983,7 @@ class QueueProbeTests(unittest.TestCase):
 
 
 class QueueModeCliTests(unittest.TestCase):
-    def _queue_mode(self, conclusion, extra=()):
+    def _queue_mode(self, conclusion, extra=(), runs=(), mergeable="MERGEABLE"):
         seen = {}
         real = wfc.wait_queue
 
@@ -991,7 +991,20 @@ class QueueModeCliTests(unittest.TestCase):
             seen.update(
                 pr=pr, repo=repo, interval=interval, timeout=timeout, since=since
             )
-            return {"conclusion": conclusion, "pr": pr}
+            return {"conclusion": conclusion, "pr": pr, "queue_runs": list(runs)}
+
+        def settle(pr, repo, retries, delay):
+            seen.setdefault("settled", []).append(pr)
+            status = "DIRTY" if mergeable == "CONFLICTING" else "BLOCKED"
+            return {
+                "mergeable": mergeable,
+                "merge_state_status": status,
+                "error": None,
+            }, 1
+
+        real_settle = wfc.settle_mergeability
+        wfc.settle_mergeability = settle
+        self.addCleanup(setattr, wfc, "settle_mergeability", real_settle)
 
         real_dismiss = wfc.dismiss_pr_notifications
         out = io.StringIO()
@@ -1002,8 +1015,9 @@ class QueueModeCliTests(unittest.TestCase):
 
         real_cause = wfc.dequeue_cause
 
-        def cause(pr, repo, enqueued_at=None):
+        def cause(pr, repo, enqueued_at=None, conflicting=False):
             seen.setdefault("caused", []).append((pr, repo))
+            seen["cause_conflicting"] = conflicting
             return {"dequeue_reason": "merge_conflict", "error": None}
 
         wfc.wait_queue = stub
@@ -1040,6 +1054,29 @@ class QueueModeCliTests(unittest.TestCase):
                 _, seen = self._queue_mode(conclusion)
                 self.assertNotIn("caused", seen)
                 self.assertNotIn("dequeue", seen["verdict"])
+
+    def test_a_no_run_dequeue_on_a_conflict_concludes_conflicting(self):
+        code, seen = self._queue_mode("dequeued", mergeable="CONFLICTING")
+        self.assertEqual(code, 1)
+        self.assertEqual(seen["settled"], [285])
+        self.assertEqual(seen["verdict"]["conclusion"], "conflicting")
+        self.assertEqual(seen["verdict"]["merge_state_status"], "DIRTY")
+        # The compare is forced, so base_gained names what landed first.
+        self.assertTrue(seen["cause_conflicting"])
+        self.assertIn("dequeue", seen["verdict"])
+
+    def test_a_no_run_dequeue_that_still_merges_stays_dequeued(self):
+        _, seen = self._queue_mode("dequeued")
+        self.assertEqual(seen["verdict"]["conclusion"], "dequeued")
+        self.assertEqual(seen["verdict"]["mergeable"], "MERGEABLE")
+        self.assertFalse(seen["cause_conflicting"])
+
+    def test_a_dequeue_after_queue_runs_skips_the_mergeability_read(self):
+        runs = [{"run_id": "1", "conclusion": "failure"}]
+        _, seen = self._queue_mode("dequeued", runs=runs, mergeable="CONFLICTING")
+        self.assertNotIn("settled", seen)
+        self.assertEqual(seen["verdict"]["conclusion"], "dequeued")
+        self.assertNotIn("mergeable", seen["verdict"])
 
     def test_queue_mode_uses_its_own_pacing_defaults(self):
         code, seen = self._queue_mode("merged")
@@ -1153,7 +1190,15 @@ class DequeueCauseTests(unittest.TestCase):
         }
         return json.dumps({"data": {"repository": {"pullRequest": pr}}})
 
-    def _run(self, reason, compare=None, compare_code=0, gql_code=0, enqueued_at=None):
+    def _run(
+        self,
+        reason,
+        compare=None,
+        compare_code=0,
+        gql_code=0,
+        enqueued_at=None,
+        conflicting=False,
+    ):
         calls = []
 
         def fake(args):
@@ -1165,7 +1210,7 @@ class DequeueCauseTests(unittest.TestCase):
         real = wfc._gh
         wfc._gh = fake
         self.addCleanup(setattr, wfc, "_gh", real)
-        return wfc.dequeue_cause(285, REPO, enqueued_at), calls
+        return wfc.dequeue_cause(285, REPO, enqueued_at, conflicting), calls
 
     def test_a_conflict_lists_what_the_base_gained(self):
         commits = [
@@ -1225,6 +1270,20 @@ class DequeueCauseTests(unittest.TestCase):
         self.assertIn("predates this enqueue", result["error"])
         result, _ = self._run("checks_failed", enqueued_at=ENQUEUED)
         self.assertEqual(result["dequeue_reason"], "checks_failed")
+
+    def test_a_conflicting_read_lists_the_base_gain_without_the_event(self):
+        """The timeline can lag the dequeue; mergeability already proved it."""
+        commits = [{"sha": "d" * 40, "commit": {"message": "feat: sibling"}}]
+        compare = {"ahead_by": 1, "commits": commits}
+        for reason in (None, "checks_failed"):
+            with self.subTest(reason=reason):
+                result, _ = self._run(reason, compare, conflicting=True)
+                self.assertEqual(result["base_gained"][0]["subject"], "feat: sibling")
+        result, _ = self._run(
+            None, compare_code=1, conflicting=True, enqueued_at=ENQUEUED
+        )
+        self.assertIn("no RemovedFromMergeQueueEvent", result["error"])
+        self.assertIn("HTTP 404", result["error"])
 
     def test_the_watch_reports_the_enqueue_it_anchored_on(self):
         snap = {

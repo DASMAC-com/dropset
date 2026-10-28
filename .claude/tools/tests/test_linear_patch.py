@@ -288,6 +288,18 @@ class ZeroEchoTests(unittest.TestCase):
         self.assertNotIn(self.SECRET, printed)
         self.assertIn(str(len(self.SECRET)), printed)
 
+    def test_read_creates_a_missing_out_directory(self):
+        # The init-pr bootstrap's `--spec-out` names a fresh scratchpad.
+        with tempfile.TemporaryDirectory() as d:
+            out_path = os.path.join(d, "fresh", "scratch", "spec.md")
+            self._run(
+                ["read", "ENG-942", "--out", out_path],
+                [{"issue": self._issue(self.SECRET)}],
+            )
+            with open(out_path, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), self.SECRET)
+            self.assertEqual(os.stat(out_path).st_mode & 0o777, 0o600)
+
     def test_a_state_transition_reads_no_body_into_its_output(self):
         printed = self._run(
             ["state", "ENG-942", "--state", "In Review"],

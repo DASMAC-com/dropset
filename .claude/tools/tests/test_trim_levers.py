@@ -402,6 +402,16 @@ class ComposeCliTests(unittest.TestCase):
             with open(dest, encoding="utf-8") as fh:
                 self.assertIn("# Part 3 — First part", fh.read())
 
+    def test_single_mode_creates_a_missing_out_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parts = os.path.join(tmp, "parts.md")
+            dest = os.path.join(tmp, "fresh", "fold.md")
+            with open(parts, "w", encoding="utf-8") as fh:
+                fh.write(PARTS)
+            code, _, _ = _run(["compose", "--parts-file", parts, "--out", dest])
+            self.assertEqual(code, 0)
+            self.assertEqual(os.stat(dest).st_mode & 0o777, 0o600)
+
     def test_mixed_modes_are_refused(self):
         for argv in (
             ["compose", "--parts-file", "p"],

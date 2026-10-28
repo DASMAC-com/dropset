@@ -1043,6 +1043,25 @@ class GateTests(unittest.TestCase):
         for field in ("files", "commits", "diff_path", "diff_lines", "slices"):
             self.assertNotIn(field, parsed)
 
+    def _only_run(self, *extra):
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        argv = ["review_diff.py", "--base", "main", "--out", str(self.out)]
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = rd.run([*argv, "--no-fetch", "--only", "tui/**", *extra])
+        return code, json.loads(buf.getvalue())
+
+    def test_an_only_run_prints_the_slice_summary(self):
+        code, parsed = self._only_run("--split")
+        self.assertEqual(code, 0)
+        self.assertEqual(set(parsed), set(rd.SLICE_FIELDS))
+        self.assertEqual([f["path"] for f in parsed["files"]], ["tui/src/ui.rs"])
+
+    def test_full_restores_the_whole_verdict_on_an_only_run(self):
+        _, parsed = self._only_run("--full")
+        for field in ("targets", "crates", "added_shape", "base_fresh"):
+            self.assertIn(field, parsed)
+
     def test_gate_only_still_gates_and_still_sets_the_exit_status(self):
         # The narrowing is a projection of the answer, not a cheaper way of
         # reaching one: an unready verdict must still exit non-zero.

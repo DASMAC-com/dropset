@@ -533,9 +533,11 @@ def _write_private(path: str, text: str) -> None:
 
     O_NOFOLLOW because the mode protects only content this call creates;
     scratchpads live under a shared /tmp root. The chmod covers re-running over
-    an existing looser file, whose mode O_CREAT would leave intact.
+    an existing looser file, whose mode O_CREAT would leave intact. A missing
+    parent directory (a fresh scratchpad) is created rather than failing.
     """
     try:
+        os.makedirs(os.path.dirname(path) or ".", mode=0o700, exist_ok=True)
         handle = os.open(
             path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600
         )

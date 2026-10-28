@@ -44,8 +44,9 @@ signer answers)
 with that subject as its title (byte-identical, which the Semantic PR
 workflow compares while one commit is on the branch), the notification
 mute, the Linear In Progress move, and the issue body spilled to
-`--spec-out`. The manifest's shape is in the tool's docstring; report
-the PR URL, any `failed` step and any `notes` in a line each.
+`--spec-out` (a missing parent directory is created). The manifest's
+shape is in the tool's docstring; report the PR URL, any `failed`
+step and any `notes` in a line each.
 
 **Every step is idempotent, so the remedy for any stop is to fix the
 cause and re-run the same command** — it resumes, never redoes. Read
