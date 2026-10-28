@@ -852,8 +852,10 @@ fn build_legs(
             receipt_age,
             stale,
         ),
-        crypto_stand_in: Candidates::none()
-            .push(SOURCE_ORCA, pool_reading(market, &snapshot.ticks, now_unix, receipt_age)),
+        crypto_stand_in: Candidates::none().push(
+            SOURCE_ORCA,
+            pool_reading(market, &snapshot.ticks, now_unix, receipt_age),
+        ),
         usdc_usd,
         static_usd: market.static_usd,
     }
@@ -1367,8 +1369,10 @@ mod tests {
         assert_eq!(c.reading.map(|r| r.value), Some(1.324));
     }
 
-    /// The pool never stands alone: with the candle stale it is not offered,
-    /// so the leg is absent rather than composed on a print anyone can move.
+    /// The pool never stands alone **in the reference leg**: with the candle
+    /// stale it is not offered there, so that leg is absent rather than
+    /// corroborated by a print anyone can move. It reaches the engine as the
+    /// stand-in instead — see the next test.
     #[test]
     fn a_pool_is_not_offered_without_a_fresh_candle() {
         let tight = LegStaleness::uniform(Duration::from_secs(120));
@@ -1398,6 +1402,48 @@ mod tests {
             tight,
         );
         assert!(no_candle.is_empty());
+    }
+
+    /// A dark candle with a fresh pool composes `pool_only` off the pool rather
+    /// than falling to the static peg — the weekend-evening tGBP case.
+    #[test]
+    fn a_dark_candle_composes_off_the_pool_stand_in() {
+        let tight = LegStaleness::uniform(Duration::from_secs(120));
+        let stale_candle = vec![candle(SOURCE_COINBASE, "TGBP-USDC", 100, 1.324)];
+        let live_pool = vec![pool_tick(1_050, 1.34)];
+        let receipt = Duration::from_secs(1);
+        let stand_in = pool_reading(&tgbp(), &live_pool, 1_060, receipt);
+        assert_eq!(stand_in.map(|r| r.value), Some(1.34));
+
+        let legs = Legs {
+            fx: Candidates::none(),
+            crypto_usdc: crypto_candidates(
+                &tgbp(),
+                &stale_candle,
+                &live_pool,
+                1_060,
+                receipt,
+                tight,
+            ),
+            crypto_stand_in: Candidates::none().push(SOURCE_ORCA, stand_in),
+            usdc_usd: Candidates::none(),
+            static_usd: tgbp().static_usd,
+        };
+        let mut engine = FairValueEngine::new(FairValueConfig {
+            leg_stale: tight,
+            ..FairValueConfig::default()
+        });
+        let fair = engine.compose(legs, Duration::from_secs(5), ClockCtx::closed());
+        assert_eq!(
+            fair.regime,
+            dropset_fair_value::Regime::Degraded(dropset_fair_value::Degrade::PoolOnly)
+        );
+        assert_eq!(fair.fair, Some(1.34));
+
+        // A market with no corroborator offers no stand-in at all.
+        let mut plain = tgbp();
+        plain.pool_corroborator = None;
+        assert!(pool_reading(&plain, &live_pool, 1_060, receipt).is_none());
     }
 
     /// A market without a corroborator offers its candle untrusted, so a

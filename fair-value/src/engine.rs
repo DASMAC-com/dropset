@@ -789,7 +789,7 @@ impl FairValueEngine {
             dt,
         );
 
-        // The stand-in is priced off its consensus reading, unfused: the crypto
+        // The stand-in is priced off its consensus reading, not fused: the crypto
         // estimator above fused the designated leg's empty set and carries its
         // prior, so the tape's return blends against the tape's own history
         // rather than against the pool's.
@@ -1031,7 +1031,7 @@ impl FairValueEngine {
     /// [`Degrade::LegDispersed`], the stand-in having disagreed with the history
     /// it was meant to continue. There must be a **usable carried basis** to
     /// judge against: the EMA's seeding tick is ungated, so letting a stand-in
-    /// seed it would hand an undesignated pool the basis outright. With none,
+    /// seed it would hand a pool nobody designated the basis outright. With none,
     /// the market falls back as any FX-anchored market without a basis does.
     ///
     /// **With no FX** the stand-in's price is the mid, the crypto-only shape. No
@@ -1050,7 +1050,13 @@ impl FairValueEngine {
             // Unreachable: the caller passes a stand-in only once it resolved
             // to a reading. Falling back rather than panicking keeps the
             // degrade honest if that ever changes.
-            return self.fall_back(legs.static_usd, Degrade::StaticPeg, usdc_breach, false, false);
+            return self.fall_back(
+                legs.static_usd,
+                Degrade::StaticPeg,
+                usdc_breach,
+                false,
+                false,
+            );
         };
         let Some(fx) = fx_leg.reading else {
             return FairValue {
@@ -1075,7 +1081,12 @@ impl FairValueEngine {
         // Usable on both branches: it was usable before the offer, a refusal
         // leaves it untouched, and a fold resets its age.
         let Some(basis) = self.usable_basis() else {
-            return self.without_usable_basis(legs.static_usd, usdc_breach, observed_breach, outlier);
+            return self.without_usable_basis(
+                legs.static_usd,
+                usdc_breach,
+                observed_breach,
+                outlier,
+            );
         };
         let regime = if outlier {
             Regime::Degraded(Degrade::LegDispersed)
@@ -2928,6 +2939,7 @@ mod tests {
             Degrade::LegDispersed,
             Degrade::NoBasisLeg,
             Degrade::BasisUnusable,
+            Degrade::PoolOnly,
             Degrade::StaticPeg,
         ] {
             assert_eq!(Regime::Degraded(d).health(), Health::Degraded, "{d:?}");
@@ -3007,5 +3019,112 @@ mod tests {
         assert_eq!(r.regime, Regime::Normal);
         assert_eq!(r.basis_age, Some(Duration::ZERO));
         assert!(!r.basis_outlier);
+    }
+
+    /// Legs whose designated crypto reference is dark, with a pool standing in.
+    fn pool_only(pool: f64) -> Legs {
+        Legs {
+            crypto_usdc: Candidates::none(),
+            crypto_stand_in: lone("orca", fresh(pool)),
+            ..normal(1.0)
+        }
+    }
+
+    /// An engine whose basis was observed at 1.02 off a live candle.
+    fn seeded_at_1_02() -> FairValueEngine {
+        let mut e = engine();
+        let seed = e.compose(normal(1.02), secs(5), ClockCtx::in_session());
+        assert_eq!(seed.regime, Regime::Normal);
+        e
+    }
+
+    #[test]
+    fn a_dark_candle_with_a_fresh_pool_composes_pool_only_in_session() {
+        let mut e = seeded_at_1_02();
+        let r = e.compose(pool_only(1.03), secs(5), ClockCtx::in_session());
+        assert_eq!(r.regime, Regime::Degraded(Degrade::PoolOnly));
+        assert_eq!(r.health, Health::Degraded);
+        assert_eq!(r.anchor, Anchor::Fx);
+        // fx × a basis the pool observation folded into, so strictly between
+        // the carried basis and the pool's own.
+        let fair = r.fair.unwrap();
+        assert!(fair > 1.02 && fair < 1.03, "{fair}");
+        assert_eq!(r.basis, Some(fair));
+        assert_eq!(r.basis_age, Some(Duration::ZERO));
+        assert!(!r.basis_outlier);
+        // The report names the source the mid rests on.
+        assert_eq!(r.crypto_leg.contributors.dominant().unwrap().source, "orca");
+    }
+
+    #[test]
+    fn a_dark_candle_with_a_fresh_pool_prices_off_the_pool_out_of_session() {
+        let mut e = seeded_at_1_02();
+        let r = e.compose(pool_only(1.03), secs(5), ClockCtx::closed());
+        assert_eq!(r.regime, Regime::Degraded(Degrade::PoolOnly));
+        assert_eq!(r.anchor, Anchor::CryptoReference);
+        assert_eq!(r.fair, Some(1.03));
+        assert_eq!(r.basis, None);
+    }
+
+    #[test]
+    fn a_pool_the_carried_basis_refuses_stays_leg_dispersed() {
+        let mut e = seeded_at_1_02();
+        // 1.20 sits ~18% off the carried 1.02, past the 5% jump band.
+        let r = e.compose(pool_only(1.20), secs(5), ClockCtx::in_session());
+        assert_eq!(r.regime, Regime::Degraded(Degrade::LegDispersed));
+        assert!(r.basis_outlier);
+        // The mid stays on the carried basis; the pool composed nothing.
+        assert!((r.fair.unwrap() - 1.02).abs() < 1e-12);
+        assert_eq!(r.basis, Some(1.02));
+    }
+
+    #[test]
+    fn a_pool_never_seeds_a_basis() {
+        // The seeding tick is ungated, so a pool nobody designated must not be the
+        // one to set the basis.
+        let mut e = engine();
+        let r = e.compose(pool_only(1.03), secs(5), ClockCtx::in_session());
+        assert_eq!(r.regime, Regime::Degraded(Degrade::BasisUnusable));
+        assert_eq!(r.anchor, Anchor::Static);
+        let next = e.compose(normal(1.02), secs(5), ClockCtx::in_session());
+        assert_eq!(next.basis, Some(1.02), "the pool left no trace on the EMA");
+    }
+
+    #[test]
+    fn a_dark_candle_and_a_dark_pool_fall_to_the_static_peg() {
+        let mut e = seeded_at_1_02();
+        let legs = Legs {
+            crypto_stand_in: lone("orca", Reading::new(1.03, secs(3600))),
+            ..pool_only(1.03)
+        };
+        let r = e.compose(legs, secs(5), ClockCtx::closed());
+        assert_eq!(r.regime, Regime::Degraded(Degrade::StaticPeg));
+        assert_eq!(r.anchor, Anchor::Static);
+    }
+
+    #[test]
+    fn a_fresh_candle_ignores_the_pool_stand_in() {
+        let mut e = seeded_at_1_02();
+        let legs = Legs {
+            crypto_stand_in: lone("orca", fresh(1.20)),
+            ..normal(1.02)
+        };
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
+        assert_eq!(r.regime, Regime::Normal);
+        assert!((r.fair.unwrap() - 1.02).abs() < 1e-12);
+        assert_eq!(r.crypto_leg.contributors.dominant().unwrap().source, "test");
+    }
+
+    #[test]
+    fn a_pinned_market_ignores_the_pool_stand_in() {
+        let r = pinned_engine().compose(
+            Legs {
+                fx: Candidates::none(),
+                ..pool_only(1.03)
+            },
+            secs(5),
+            ClockCtx::closed(),
+        );
+        assert_eq!(r.regime, Regime::Degraded(Degrade::StaticPeg));
     }
 }
