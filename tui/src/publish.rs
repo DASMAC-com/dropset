@@ -508,7 +508,10 @@ pub fn publish(
         )),
         Ok(()) => e.context("hand the buffer to the admin"),
     })?;
-    written?;
+    // The handoff landed, so any buffer is now the admin's to reclaim.
+    written.context(
+        "the buffer, if created, is the admin's — close it with \"Close stranded buffers\"",
+    )?;
 
     // Read the buffer back before it becomes the program: a write that landed
     // short or out of place is caught here, while nothing has been replaced.
@@ -656,9 +659,9 @@ fn write_buffer(
     )
     // Withheld rather than formatted: a transport error's text carries the
     // endpoint URL (see `describe_rpc_error`).
-    .map_err(|_| anyhow!("writing the buffer failed — close it with \"Close stranded buffers\""))?;
+    .map_err(|_| anyhow!("writing the buffer failed"))?;
     if let Some(err) = failed.into_iter().flatten().next() {
-        bail!("a buffer write failed ({err}) — close it with \"Close stranded buffers\"");
+        bail!("a buffer write failed ({err})");
     }
     Ok(())
 }
