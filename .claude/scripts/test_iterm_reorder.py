@@ -226,6 +226,12 @@ class CuratorTab(unittest.TestCase):
         order, _ = ir.plan_order(entries, {}, {}, 0)
         self.assertEqual([entries[i][0] for i in order], ["A", "Q"])
 
+    def test_a_resting_launcher_sorts_left_of_the_curator(self):
+        ids = self.step(
+            [("L", ir.effective_group("neutral", ir.LAUNCH_ROLE)), ("A", "neutral")]
+        )
+        self.assertEqual(ids, ["A", "L", "Q", "P"])
+
 
 class GroupForColor(unittest.TestCase):
     def test_maps_state_hexes(self):

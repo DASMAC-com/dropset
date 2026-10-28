@@ -213,6 +213,11 @@ class CallContract(DriverStub, unittest.TestCase):
             },
         )
 
+    def test_open_tabs_sends_the_seat_roles_positionally(self):
+        self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/a", "/dev/b"]}))
+        iterm_api.open_tabs(["plan", "task 1"], roles=["plan", None])
+        self.assertEqual(self.sent_request()["roles"], ["plan", None])
+
     def test_an_explicit_tty_overrides_the_resolved_one(self):
         self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/a"]}))
         iterm_api.open_tabs(["task 1"], tty="/dev/ttys009")
@@ -813,10 +818,14 @@ class DispatchPlacement(unittest.TestCase):
         window = self._window([plan], current=None)
         self.assertIs(iterm_api._focus_to_restore(window, plan), plan)
 
+    def _worker_index(self, window):
+        roles = asyncio.run(iterm_api._tab_roles(window))
+        return iterm_api.insert_index(roles, None)
+
     def test_a_rightmost_planning_tab_takes_new_tabs_on_its_left(self):
         tabs = [self._tab("a"), self._tab("b"), self._tab("plan", "plan")]
         window = self._window(tabs, current=tabs[0])
-        self.assertEqual(asyncio.run(iterm_api._seat_insert_index(window)), 2)
+        self.assertEqual(self._worker_index(window), 2)
 
     def test_the_curator_and_scheduler_tabs_both_stay_right_of_new_tabs(self):
         tabs = [
@@ -825,42 +834,79 @@ class DispatchPlacement(unittest.TestCase):
             self._tab("plan", "plan"),
         ]
         window = self._window(tabs, current=tabs[0])
-        self.assertEqual(asyncio.run(iterm_api._seat_insert_index(window)), 1)
+        self.assertEqual(self._worker_index(window), 1)
 
     def test_a_lone_rightmost_curator_tab_takes_new_tabs_on_its_left(self):
         tabs = [self._tab("a"), self._tab("curate", "curate")]
         window = self._window(tabs, current=tabs[0])
-        self.assertEqual(asyncio.run(iterm_api._seat_insert_index(window)), 1)
+        self.assertEqual(self._worker_index(window), 1)
 
     def test_a_planning_tab_not_rightmost_leaves_the_default(self):
         # It is in an attention group on the left; appending is the resting order.
         tabs = [self._tab("plan", "plan"), self._tab("a")]
         window = self._window(tabs, current=tabs[0])
-        self.assertIsNone(asyncio.run(iterm_api._seat_insert_index(window)))
+        self.assertIsNone(self._worker_index(window))
 
     def test_no_planning_tab_or_no_tabs_leaves_the_default(self):
         tabs = [self._tab("a"), self._tab("b", "task")]
-        self.assertIsNone(
-            asyncio.run(iterm_api._seat_insert_index(self._window(tabs, tabs[0])))
-        )
-        self.assertIsNone(
-            asyncio.run(iterm_api._seat_insert_index(self._window([], None)))
-        )
+        self.assertIsNone(self._worker_index(self._window(tabs, tabs[0])))
+        self.assertIsNone(self._worker_index(self._window([], None)))
 
     def test_an_unreadable_role_is_not_a_planning_tab(self):
         tabs = [self._tab("a"), self._tab("plan", "plan", unreadable=True)]
         window = self._window(tabs, current=tabs[0])
-        self.assertIsNone(asyncio.run(iterm_api._seat_insert_index(window)))
+        self.assertIsNone(self._worker_index(window))
+
+    def test_a_scheduler_tab_opens_rightmost(self):
+        self.assertIsNone(iterm_api.insert_index([None, "curate", "plan"], "plan"))
+
+    def test_a_curate_tab_opens_left_of_the_rightmost_plan_tab(self):
+        # Past a launcher already resting there, and past a worker at the edge.
+        self.assertEqual(iterm_api.insert_index([None, "launch", "plan"], "curate"), 2)
+        self.assertEqual(
+            iterm_api.insert_index(["plan", None, "plan", None], "curate"), 2
+        )
+
+    def test_a_seat_with_no_scheduler_tab_takes_a_workers_place(self):
+        self.assertEqual(iterm_api.insert_index([None, "curate"], "launch"), 1)
+        self.assertIsNone(iterm_api.insert_index([None], "launch"))
+
+    def test_a_worker_opens_left_of_every_seat_at_the_edge(self):
+        self.assertEqual(
+            iterm_api.insert_index([None, "launch", "curate", "plan"], None), 1
+        )
+
+    def test_a_plan_launch_batch_puts_the_launcher_left_of_the_scheduler(self):
+        # The new scheduler tab's shell has not set its role yet, so the batch
+        # books it — the morning pre-launch's own dispatch.
+        typed = self._tab("typed")
+        window = self._window([typed], current=typed)
+        tab_roles = asyncio.run(iterm_api._tab_roles(window))
+        ttys, untyped = [], []
+        asyncio.run(
+            iterm_api._open_and_type(
+                window,
+                typed,
+                ["plan", "launch"],
+                ttys,
+                untyped,
+                tab_roles,
+                ["plan", "launch"],
+            )
+        )
+        creates = [entry for entry in self.log if entry[0] == "create"]
+        self.assertEqual(creates, [("create", "new0", None), ("create", "new1", 1)])
+        self.assertEqual(tab_roles, [None, "launch", "plan"])
 
     def test_a_batch_fills_left_of_the_planning_tab_in_order(self):
         reading, plan = self._tab("reading"), self._tab("plan", "plan")
         window = self._window([reading, plan], current=reading)
         original = iterm_api._focus_to_restore(window, plan)
-        insert_at = asyncio.run(iterm_api._seat_insert_index(window))
+        tab_roles = asyncio.run(iterm_api._tab_roles(window))
         ttys, untyped = [], []
         asyncio.run(
             iterm_api._open_and_type(
-                window, original, ["A", "B"], ttys, untyped, insert_at
+                window, original, ["A", "B"], ttys, untyped, tab_roles
             )
         )
         # Index 1 then 2: each insert pushes the planning tab right by one, so

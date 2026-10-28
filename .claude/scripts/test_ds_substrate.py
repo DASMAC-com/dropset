@@ -239,6 +239,9 @@ class VerbLaunch(SubstrateHarness):
         ' ARGS=$*"; }; '
         "_ds_base() { :; }; _ds_secrets() { :; }; _ds_aws_login() { :; }; "
         "_ds_pull() { :; }; "
+        # A warm day: these cases test the scheduler's own launch, not the
+        # morning pre-launch (`test_plan_cycle_loop.PreLaunch`).
+        "_ds_plan_fresh_day() { return 1; }; "
         # The title guard reads Linear; its outcomes are `test_verb_check.py`'s.
         "_ds_verb_check() { :; }; "
         # The model probe's transport: argv and stdin logged apart, so a case

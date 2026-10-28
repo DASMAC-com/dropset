@@ -952,7 +952,9 @@ def step_start_line(index: int, total: int, name: str) -> str:
     return f"upkeep: [{index}/{total}] {name} — {what} ({bound})"
 
 
-def step_end_line(index: int, total: int, name: str, elapsed: float, crashed: bool) -> str:
+def step_end_line(
+    index: int, total: int, name: str, elapsed: float, crashed: bool
+) -> str:
     verdict = "crashed" if crashed else "done"
     return f"upkeep: [{index}/{total}] {name} — {verdict} in {elapsed:.1f}s"
 

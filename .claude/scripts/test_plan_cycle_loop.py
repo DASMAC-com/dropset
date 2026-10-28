@@ -10,6 +10,7 @@ Run with: ``python3 -m unittest discover -s .claude/scripts``
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -39,6 +40,8 @@ _ds_tier() { print -r -- model; print -r -- anthropic }
 _ds_substrate_enter() { : }
 _ds_aws_login() { : }
 _ds_upkeep() { print -r -- upkeep >> "$STATE/upkeep-calls" }
+# Every case here is a warm day; the pre-launch has its own class below.
+_ds_plan_fresh_day() { return 1 }
 if [[ -n "$MIDNIGHT" ]]; then
   # The clock rolls from the 10th to the 11th once the first client exits.
   date() {
@@ -114,11 +117,25 @@ class CycleLoop(unittest.TestCase):
         self.assertEqual(len(self._launches()), 1)
         self.assertFalse((self.state / f"plan-cycle-{self.day}").exists())
 
-    def test_upkeep_runs_once_before_the_loop_not_per_cycle(self):
+    def test_a_warm_day_scheduler_runs_no_pass(self):
+        # The pass is the pre-launch's alone, so no cycle repeats it either.
         self.assertEqual(self._plan(cycles=2).returncode, 0)
         self.assertEqual(len(self._launches()), 3)
-        upkeep = (self.state / "upkeep-calls").read_text().splitlines()
-        self.assertEqual(upkeep, ["upkeep"])
+        self.assertFalse((self.state / "upkeep-calls").exists())
+
+    def test_launch_is_a_daily_seat_of_its_own(self):
+        result = self._plan(cycles=0, verb="launch")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        seed = f"dropset-launch-{self.day}".encode()
+        raw = hashlib.md5(seed).hexdigest()  # noqa: S324 - an id, not a secret
+        sid = f"{raw[:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:]}"
+        self.assertEqual(
+            self._launches(),
+            [[sid, f"launch-{datetime.now().day}", "/launch", self.day, ""]],
+        )
+        roles = (self.state / "role-calls").read_text().splitlines()
+        self.assertEqual(roles, ["role:launch", "role:"])
+        self.assertFalse((self.state / "upkeep-calls").exists())
 
     def test_a_cycle_relaunches_under_a_fresh_id_and_the_same_name(self):
         result = self._plan(cycles=1)
@@ -201,6 +218,126 @@ class CycleLoop(unittest.TestCase):
         self.assertEqual(self._launches()[0][4], "plan")
         roles = (self.state / "role-calls").read_text().splitlines()
         self.assertEqual(roles, ["role:plan", "role:"])
+
+
+#: The real `plan` up to its two exits — the pre-launch's dispatch and the warm
+#: day's seat — with every outward call recorded. `python3` answers the
+#: stamp read from `$RAN` and the dispatch with `$DISPATCH_OUT` / `$DISPATCH_RC`.
+_PRELAUNCH_SCRIPT = """
+source "$INIT" 2>/dev/null
+_DS_REPO="$REPO" _DS_SUBSTRATE_DIR="$STATE"
+rec() { print -r -- "$*" >> "$STATE/calls" }
+_ds_substrate_unset() { : }
+_ds_aws_login() { rec aws; return ${AWS_RC:-0} }
+_ds_upkeep() { rec upkeep }
+_ds_daily_seat() { rec "seat $*" }
+launch() { rec "launch $* [${DS_LAUNCH_SCHEDULER}]" }
+python3() {
+  if [[ "$*" == *session_dispatch.py* ]]; then
+    rec "dispatch ${@[2,-1]}"
+    print -r -- "$DISPATCH_OUT"
+    return ${DISPATCH_RC:-0}
+  fi
+  [[ "$*" == *ran-today* ]] && print -r -- "$RAN"
+}
+plan $WORD
+"""
+
+
+@unittest.skipUnless(ZSH, _NEEDS_ZSH)
+class PreLaunch(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.state = self.root / "state"
+        self.state.mkdir()
+        self.home = self.root / "claude"
+        self.home.mkdir()
+        self.day = datetime.now().strftime("%Y%m%d")
+        self.marker = self.state / f"plan-prelaunch-{self.day}"
+
+    def _plan(self, word: str = "", **extra: str):
+        env = {k: v for k, v in os.environ.items() if k != "DS_LAUNCH_SCHEDULER"}
+        env |= {
+            "INIT": str(INIT),
+            "REPO": str(REPO),
+            "STATE": str(self.state),
+            "CLAUDE_CONFIG_DIR": str(self.home),
+            "WORD": word,
+            "DISPATCH_OUT": "plan (free) -> /dev/a\nlaunch (free) -> /dev/b",
+            **extra,
+        }
+        proc = subprocess.run(
+            [ZSH, "-c", _PRELAUNCH_SCRIPT],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        path = self.state / "calls"
+        calls = path.read_text().splitlines() if path.exists() else []
+        return proc, calls
+
+    def test_a_fresh_day_runs_the_pass_then_opens_both_tabs_in_one_batch(self):
+        proc, calls = self._plan()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("plan: pre-launch", proc.stderr)
+        self.assertEqual(calls, ["aws", "upkeep", "dispatch plan + launch"])
+        self.assertTrue(self.marker.exists())
+
+    def test_the_substrate_word_rides_to_the_scheduler_tab(self):
+        _, calls = self._plan("anthropic")
+        self.assertIn("dispatch plan anthropic + launch", calls)
+
+    def test_a_refused_login_stops_before_the_pass_and_leaves_the_day_fresh(self):
+        proc, calls = self._plan(AWS_RC="1")
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(calls, ["aws"])
+        self.assertFalse(self.marker.exists())
+
+    def test_a_launcher_tab_that_did_not_open_runs_here(self):
+        proc, calls = self._plan(DISPATCH_OUT="plan (free) -> /dev/a")
+        self.assertEqual(calls[-1], "launch  []")
+        self.assertIn("running it in this tab", proc.stderr)
+
+    def test_with_neither_tab_the_launcher_runs_here_and_dispatches_plan(self):
+        # A driver failure lists the tabs it DID open on stderr, indented.
+        proc, calls = self._plan(
+            "anthropic",
+            DISPATCH_OUT="session-dispatch: iTerm went away\n  launch",
+            DISPATCH_RC="1",
+        )
+        self.assertEqual(calls[-1], "launch  [plan anthropic]")
+        self.assertIn("neither tab opened (dispatch exit 1)", proc.stderr)
+
+    def test_a_partial_batch_counts_the_tabs_the_driver_did_open(self):
+        _, calls = self._plan(
+            DISPATCH_OUT="session-dispatch: 2 tab(s) were already opened\n"
+            "  plan -> /dev/a\n  launch -> tty unknown",
+            DISPATCH_RC="1",
+        )
+        self.assertEqual(calls[-1], "dispatch plan + launch")
+
+    def test_a_stamped_day_is_warm_and_runs_the_scheduler_here(self):
+        proc, calls = self._plan(RAN='{"ran_today": true}')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(calls, ["seat plan schedule "])
+        self.assertNotIn("pre-launch", proc.stderr)
+
+    def test_after_the_pre_launch_the_scheduler_tabs_plan_is_warm(self):
+        # The pass failed to stamp, but the day's marker stops a second
+        # pre-launch — the scheduler tab's own `plan` would otherwise loop.
+        self.marker.write_text("")
+        _, calls = self._plan()
+        self.assertEqual(calls, ["seat plan schedule "])
+
+    def test_a_scheduler_session_of_todays_makes_the_day_warm(self):
+        sid = rs.daily_session_id("plan", self.day, 0)
+        (self.home / "projects" / "x").mkdir(parents=True)
+        (self.home / "projects" / "x" / f"{sid}.jsonl").write_text("")
+        _, calls = self._plan()
+        self.assertEqual(calls, ["seat plan schedule "])
 
 
 #: The real `_ds_upkeep`, with `python3` and the secrets fetch stubbed: the
