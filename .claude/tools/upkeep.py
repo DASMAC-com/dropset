@@ -886,13 +886,16 @@ STEPS = (
 STEP_LABELS = {
     "pull": ("fast-forward main", f"per-call timeout {TIMEOUT_GIT}s"),
     "cli": ("upgrade the Claude Code CLI", f"per-call timeout {TIMEOUT_BREW}s"),
-    "prs": ("PR and notification state", f"per-call timeout {TIMEOUT_GH}s"),
+    "prs": ("terminal and open PR sets", f"per-call timeout {TIMEOUT_GH}s"),
     "board": (
         "the board's verdict per branch",
         f"per-call timeout {linear_api.REQUEST_TIMEOUT}s",
     ),
     "prune": ("prune worktrees and branches", f"per-call timeout {TIMEOUT_TOOL}s"),
-    "notifications": ("dismiss PR notifications", f"per-call timeout {TIMEOUT_GH}s"),
+    "notifications": (
+        "dismiss settled PR notifications",
+        f"timeout {TIMEOUT_DISMISS}s",
+    ),
     "parked": (
         "parked milestone counts",
         f"per-call timeout {linear_api.REQUEST_TIMEOUT}s",
