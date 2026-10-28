@@ -19,8 +19,8 @@ use dropset_sdk::instructions::{
     CloseVaultInstructionArgs, CreateMarket, CreateVault, CreateVaultInstructionArgs,
     DepositLeader, DepositLeaderInstructionArgs, ForceWithdrawDepositor,
     ForceWithdrawDepositorInstructionArgs, ForceWithdrawLeader, ForceWithdrawLeaderInstructionArgs,
-    Init, InitInstructionArgs, OverrideVaultName, OverrideVaultNameInstructionArgs,
-    SetPerfFeeRate, SetPerfFeeRateInstructionArgs, SetVaultName, SetVaultNameInstructionArgs, Swap,
+    Init, InitInstructionArgs, OverrideVaultName, OverrideVaultNameInstructionArgs, SetPerfFeeRate,
+    SetPerfFeeRateInstructionArgs, SetVaultName, SetVaultNameInstructionArgs, Swap,
     SwapInstructionArgs, WithdrawLeader, WithdrawLeaderInstructionArgs,
 };
 use dropset_sdk::SWAP_COMPUTE_UNIT_LIMIT;
