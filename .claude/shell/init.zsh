@@ -618,8 +618,8 @@ _ds_aws_login() {
 
 # Internal: a deterministic per-day session UUID, seeded by kind + full date.
 #
-# The full date is in the seed so that `plan-18` in August and `plan-18` in
-# September cannot collide; the display name stays day-only by operator choice,
+# The full date is in the seed so that `schedule-18` in August and
+# `schedule-18` in September cannot collide; the display name stays day-only by operator choice,
 # and this id is what actually disambiguates them. The kind prefix keeps the
 # second daily verb, `curate`, from colliding with `plan`'s ids.
 #
