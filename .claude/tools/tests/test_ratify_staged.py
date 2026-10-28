@@ -330,6 +330,30 @@ class InboxPoolTests(unittest.TestCase):
         with self.assertRaisesRegex(RatifyError, "two distinct"):
             rs.parse_proposals([{"merge": ["ENG-4", "eng-4"], "reason": "x"}])
 
+    def test_hand_off_ids_are_normalized_and_never_contested(self):
+        (option,) = rs.parse_proposals(
+            [{"merge": ["ENG-09", "ENG-12"], "reason": "Same fingerprint"}]
+        )
+        self.assertEqual(option["label"], "Merge ENG-12 into ENG-9")
+        with self.assertRaisesRegex(RatifyError, "two distinct"):
+            rs.parse_proposals([{"merge": ["ENG-09", "ENG-9"], "reason": "x"}])
+        with self.assertRaisesRegex(RatifyError, "not ENG-###"):
+            rs.parse_proposals([{"kill": "oops", "reason": "x"}])
+        with self.assertRaisesRegex(RatifyError, "not ENG-###"):
+            rs.parse_proposals([{"merge": ["ENG-1", "ABC-2"], "reason": "x"}])
+        with self.assertRaisesRegex(RatifyError, "mixes kill and merge"):
+            rs.parse_proposals(
+                [{"kill": "ENG-3", "merge": ["ENG-3", "ENG-4"], "reason": "x"}]
+            )
+        # A kill and a merge of one issue cannot both execute.
+        with self.assertRaisesRegex(RatifyError, "two kills or merges: ENG-3"):
+            rs.parse_proposals(
+                [
+                    {"kill": "ENG-3", "reason": "Superseded"},
+                    {"merge": ["ENG-3", "ENG-5"], "reason": "Same fingerprint"},
+                ]
+            )
+
     def test_the_curator_cannot_propose_a_priority(self):
         with self.assertRaisesRegex(RatifyError, "neither an edge"):
             rs.parse_proposals(

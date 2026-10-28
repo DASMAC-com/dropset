@@ -1,6 +1,6 @@
 ---
 name: curate
-description: Run the curator — the daily advisor-tier session that owns everything between Backlog and Todo, in the base repo with no worktree, branch or PR. Launched by the scheduler as part of the plan morning, or by hand with the `curate` verb (Bedrock; `curate anthropic` is the escape). Bootstraps from the Planning document, the rulings file and one compact pool listing; ranks the un-parked Backlog against the day's direction; walks the operator through it four tasks at a time, one checkbox each with a line of commentary, plus a second checklist of proposed edges and, in the first ask, the launcher's kill and merge candidates. Moves each ticked, uncommented task to Todo one at a time, folds comments into the task's body, places only the edges, kills and merges the operator ticks — never a priority, the scheduler's — and spins off an architect task when a spec needs a design conversation first. Messages the scheduler every move it makes. Event-driven, never polls; stops on the scheduler's closing message.
+description: Run the curator — the daily advisor-tier session that owns everything between Backlog and Todo, in the base repo with no worktree, branch or PR. Dispatched by the launcher each morning, or by hand with the `curate` verb (Bedrock; `curate anthropic` is the escape). Bootstraps from the Planning document, the rulings file and one compact pool listing; ranks the un-parked Backlog against the day's direction; walks the operator through it four tasks at a time, one checkbox each with a line of commentary, plus a second checklist of proposed edges and, in the first ask, the launcher's kill and merge candidates. Moves each ticked, uncommented task to Todo one at a time, folds comments into the task's body, places only the edges, kills and merges the operator ticks — never a priority, the scheduler's — and spins off an architect task when a spec needs a design conversation first. Messages the scheduler every move it makes. Event-driven, never polls; stops on the scheduler's closing message.
 user-invocable: true
 ---
 
@@ -24,9 +24,10 @@ batch at the end.
 
 The **base repo**, never a worktree; no branch, no commits, no PR.
 It is advisor tier, **Bedrock** by default; `curate anthropic` is
-the escape. The scheduler launches it as part of the plan morning,
-or the operator types `curate`. The launcher pins the model and
-refuses an unresolved tier, so there is no in-session model check
+the escape. The launcher session dispatches it each morning, or
+the operator types `curate`. The `curate` shell verb pins the
+model and refuses an unresolved tier, so there is no in-session
+model check
 (`docs/conventions/local-integrations.md`).
 
 There is **no governing issue**: the curator is a session that
@@ -196,18 +197,20 @@ An unticked task approves nothing, and stays in the ranking.
 
 - **An edge**: `board_batch.py edges --pairs <file>`, rehearsed
   with `--dry-run` first.
-- **A kill**: append the evidence to the body
-  (`linear_issue.py append`), then cancel it
-  (`approve --pool inbox --cancel <id>`).
+- **A kill**: cancel it first (`approve --pool inbox --cancel <id>`),
+  then append the evidence to the body (`linear_issue.py append`).
+  A kill the tool skips as out of the pool is not executed: no
+  append, and the batch message hands it to the scheduler.
 - **A merge**: run `merge-tasks` over its ids; the label names the
   survivor.
 
 **Then one message to the scheduler for the batch** (`ListAgents`,
 then `SendMessage`), sent in the turn the writes land: every Todo
-move, every cancel, every merge, every edge placed. No live
-scheduler: the moves are on the board, and the close note carries
-the rest — except a change to an edge **the scheduler placed**,
-which waits until a scheduler is live to receive the message.
+move, every cancel, every merge, every edge placed, and any kill
+skipped as out of the pool. No live scheduler: the moves are on
+the board — except a change to an edge **the scheduler placed**,
+or a skipped kill, which waits until a scheduler is live to
+receive the message.
 
 ## The coordination rule
 
@@ -297,17 +300,15 @@ for the day". On it:
 1. Session metrics, unprompted (`session-metrics`), and the day's
    cost in one line.
 
-1. **One process note** under the Planning document's
-   `Notes for the next planning session` heading — what moved to
-   Todo, what is held, what is awaiting design. A pointer, not a
-   transcript.
-
 1. Print one line, so the tab goes yellow once:
 
    ```text
    CLEAR TO CLOSE — close this window
    ```
 
-No board write accompanies the stop, and no issue state: there is
-no governing issue. A close the operator starts by hand runs the
-same tail.
+No board write accompanies the stop, no issue state (there is no
+governing issue), and no Planning-document note: the scheduler,
+which owns the document, has every move by message and is
+rewriting it as this runs. A close the operator starts by hand
+runs the same tail; with no live scheduler, the inbox line is the
+day's record and the board holds the rest.

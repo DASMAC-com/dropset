@@ -687,11 +687,12 @@ the fold protocol and carried to the next batch; a comment asking to
 drop it cancels it, and a deferral goes to `Post-validation` only when
 the comment names that milestone.
 
-The curator writes nothing else on its own: **no priority** (one it
-believes wrong is messaged to the scheduler, and waits while none is
-live), no edge, kill or merge the operator did not tick (see "Blocking
-relations"), no other milestone, no other issue's state or body beyond
-the fold. It messages the scheduler every Todo move, cancel, merge and
+The curator writes nothing else on its own: **no priority** beyond the
+architect task's fixed Urgent at filing (one it believes wrong is
+messaged to the scheduler, and waits while none is live), no edge,
+kill or merge the operator did not tick (see "Blocking relations"), no
+other milestone, no other issue's state or body beyond the fold. It
+messages the scheduler every Todo move, cancel, merge and
 edge it places.
 
 **The close.** On the operator's close-out yes the scheduler lists live
@@ -700,7 +701,8 @@ waiting for an answer, or reports `curator: not live`. The curator
 takes no new batch, finishes one mid-tick, states the inbox remaining
 (count and ids), runs its session-metrics tail with its cost, and
 prints `CLEAR TO CLOSE — close this window`, so its tab goes yellow
-once. No board write accompanies the stop.
+once. No board write accompanies the stop, and no Planning-document
+note: the scheduler is rewriting the document as the curator stops.
 
 ### Which milestones park, and which do not
 

@@ -87,6 +87,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 
 import board_batch
@@ -229,12 +230,27 @@ def parse_notes(raw: object, ids: list[str]) -> dict[str, str]:
     return notes
 
 
-def _issue_number(ident: str) -> int:
-    """The numeric part of an ``ENG-###`` id, for picking a merge survivor."""
-    try:
-        return int(ident.rsplit("-", 1)[-1])
-    except ValueError as exc:
-        raise RatifyError(f"merge id {ident!r} is not ENG-###") from exc
+PROPOSAL_KINDS = ("edge", "kill", "merge")
+ISSUE_ID = re.compile(r"ENG-(\d+)")
+
+
+def _issue_id(raw: object) -> tuple[str, int]:
+    """A hand-off id as ``("ENG-<n>", n)``, leading zeros dropped so
+    ``ENG-09`` and ``ENG-9`` are one issue; anything else is refused."""
+    match = ISSUE_ID.fullmatch(str(raw).strip().upper())
+    if not match:
+        raise RatifyError(f"hand-off id {raw!r} is not ENG-###")
+    number = int(match.group(1))
+    return f"ENG-{number}", number
+
+
+def _hand_off_ids(proposal: dict) -> list[str]:
+    """The issues a kill or merge consumes; an edge consumes none."""
+    if "kill" in proposal:
+        return [_issue_id(proposal["kill"])[0]]
+    if "merge" in proposal:
+        return [_issue_id(i)[0] for i in proposal["merge"]]
+    return []
 
 
 def proposal_option(proposal: object) -> dict:
@@ -243,23 +259,23 @@ def proposal_option(proposal: object) -> dict:
     priority kind: priorities are the scheduler's alone."""
     if not isinstance(proposal, dict) or not str(proposal.get("reason", "")).strip():
         raise RatifyError(f"proposal {proposal!r} needs a one-line reason")
+    kinds = [k for k in PROPOSAL_KINDS if k in proposal]
+    if len(kinds) > 1:
+        raise RatifyError(f"proposal {proposal!r} mixes {' and '.join(kinds)}")
     reason = str(proposal["reason"]).strip()
-    edge, kill, merge = (
-        proposal.get("edge"),
-        proposal.get("kill"),
-        proposal.get("merge"),
-    )
+    edge, kill, merge = (proposal.get(k) for k in PROPOSAL_KINDS)
     if isinstance(edge, dict) and edge.get("blocker") and edge.get("blocked"):
         blocker = str(edge["blocker"]).strip().upper()
         blocked = str(edge["blocked"]).strip().upper()
         return {"label": f"{blocker} blocks {blocked}", "description": reason}
-    if isinstance(kill, str) and kill.strip():
-        return {"label": f"Cancel {kill.strip().upper()}", "description": reason}
+    if kill is not None:
+        return {"label": f"Cancel {_issue_id(kill)[0]}", "description": reason}
     if isinstance(merge, list) and len(merge) >= 2:
         # merge-tasks folds into the lowest-numbered survivor; name it.
-        ids = sorted({str(i).strip().upper() for i in merge}, key=_issue_number)
-        if len(ids) < 2:
+        numbers = sorted({_issue_id(i)[1] for i in merge})
+        if len(numbers) < 2:
             raise RatifyError(f"merge {merge!r} needs two distinct ids")
+        ids = [f"ENG-{n}" for n in numbers]
         return {
             "label": f"Merge {' '.join(ids[1:])} into {ids[0]}",
             "description": reason,
@@ -281,6 +297,13 @@ def parse_proposals(raw: object) -> list[dict]:
     if repeated:
         # Two checkboxes with one label make the operator's ticks ambiguous.
         raise RatifyError(f"--proposals repeats: {', '.join(repeated)}")
+    consumed = [i for p in raw for i in _hand_off_ids(p)]
+    contested = sorted({i for i in consumed if consumed.count(i) > 1})
+    if contested:
+        # Ticking both a kill and a merge of one issue cannot both execute.
+        raise RatifyError(
+            f"--proposals names an issue in two kills or merges: {', '.join(contested)}"
+        )
     return options
 
 
