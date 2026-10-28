@@ -3,9 +3,11 @@
 -- Regenerate: make dashboard-sql
 
 -- The estimator's output for the pair. avg ignores NULL, so a bucket that
--- is paused throughout stays NULL rather than collapsing to zero.
+-- is paused throughout stays NULL rather than collapsing to zero, and the
+-- NULL fill emits a bucket the estimator wrote nothing in as a NULL row
+-- rather than no row, so a silent estimator breaks the line too.
 SELECT
-  $__unixEpochGroupAlias(ts, $__interval),
+  $__unixEpochGroupAlias(ts, $__interval, NULL),
   avg(fair) AS fair,
   avg(basis) AS basis
 FROM fair_price

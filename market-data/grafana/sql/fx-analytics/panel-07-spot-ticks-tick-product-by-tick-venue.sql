@@ -2,10 +2,10 @@
 -- Source: fx-analytics.json
 -- Regenerate: make dashboard-sql
 
--- The tick tier, one line per venue for one product. Every other panel on
--- this dashboard reads cex_prices, so a venue that only writes spot_ticks
--- (kraken, erapi, frankfurter, pyth, orca) is invisible to them; this is
--- where those venues are represented on the page. coinbase writes both tiers.
+-- The tick tier, one line per venue for one product. Every other panel
+-- above the tGBP row reads cex_prices, so a venue that only writes
+-- spot_ticks (kraken, erapi, frankfurter, pyth, orca) is invisible to them;
+-- this is where those venues are represented on the page. coinbase writes both tiers.
 --
 -- AVERAGED PER DISPLAY INTERVAL because the default window is thirty days and
 -- a minute-cadence venue prints tens of thousands of ticks across it. The

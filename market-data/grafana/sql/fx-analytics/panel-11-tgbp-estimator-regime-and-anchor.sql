@@ -6,12 +6,14 @@
 -- is far more rows than a state timeline needs. The regime is read as
 -- written, with any degrade appended, so a new regime or degrade value draws
 -- under its own name with no edit here. The window filter sits inside the
--- subquery so the first tick in the window always opens a band, and the
--- last tick is kept so the final band ends where the data does.
+-- subquery so the first tick in the window always opens a band. The last
+-- tick is emitted with NULL states: a state timeline runs its last value
+-- out to the right edge, so without the NULL a stopped estimator would draw
+-- its last state through to now.
 SELECT
   to_timestamp(ts) AS "time",
-  regime AS "regime",
-  anchor AS "anchor"
+  CASE WHEN next_ts IS NULL THEN NULL ELSE regime END AS "regime",
+  CASE WHEN next_ts IS NULL THEN NULL ELSE anchor END AS "anchor"
 FROM (
   SELECT
     ts,

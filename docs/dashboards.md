@@ -433,6 +433,9 @@ One sentence each; if a panel needs more, the panel is doing two jobs.
   cursor-based collector is, in wall-clock time. Only the paged
   collectors appear: an HTTP live source never commits a cursor.
 
+### 5.1 FX analytics: the tGBP center row
+
+Not part of the market-data dashboard or its ten-panel budget above.
 The FX analytics dashboard closes with one fixed row, **tGBP center**,
 the one place the operator judges where a tGBP-USDC center sits. It
 takes no template variable, so the pickers above it cannot hide it:
@@ -441,13 +444,14 @@ takes no template variable, so the pickers above it cannot hide it:
   and the Coinbase candle close (`cex_prices`) on one axis; a gap
   between them is the pool disagreeing with the exchange.
 - **tGBP estimator: fair and basis** — what the estimator published
-  (`fair_price`); a pause breaks the fair line rather than drawing
-  zero, and the basis exists only while the anchor is FX.
+  (`fair_price`); a pause or a silent estimator breaks the fair line
+  rather than drawing zero, and the basis exists only while the anchor
+  is FX.
 - **tGBP estimator: regime and anchor** — a state timeline of the
   change points, with a degrade shown beside its regime and any new
   regime or degrade drawn under its own name with no panel edit.
 
-On a keyless or paused stack the row shows no data, and that is the
+On a keyless or paused stack the row draws nothing, and that is the
 correct reading, not a fault.
 
 ## 6. Two tiers, deliberately

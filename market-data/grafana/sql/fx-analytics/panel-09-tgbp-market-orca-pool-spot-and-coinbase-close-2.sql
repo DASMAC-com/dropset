@@ -3,7 +3,8 @@
 -- Regenerate: make dashboard-sql
 
 -- The Coinbase leg, the candle close at the finest granularity stored for
--- the product, so the line does not depend on the Granularity picker.
+-- the product inside the window, so the line does not depend on the
+-- Granularity picker and a shallow fine series cannot blank a wide window.
 SELECT
   to_timestamp(bucket_start) AS "time",
   "close" AS "coinbase close"
@@ -14,7 +15,8 @@ WHERE $__unixEpochFilter(bucket_start)
   AND granularity_secs = (
     SELECT min(granularity_secs)
     FROM cex_prices
-    WHERE source = 'coinbase'
+    WHERE $__unixEpochFilter(bucket_start)
+      AND source = 'coinbase'
       AND product_id = 'TGBP-USDC'
   )
 ORDER BY bucket_start

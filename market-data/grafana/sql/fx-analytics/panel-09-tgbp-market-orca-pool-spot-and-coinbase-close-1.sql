@@ -3,9 +3,11 @@
 -- Regenerate: make dashboard-sql
 
 -- The Orca pool leg. orca is a tick-only venue, so it writes spot_ticks and
--- never cex_prices; averaged per display interval, as Spot ticks is.
+-- never cex_prices; averaged per display interval, as Spot ticks is. The
+-- NULL fill emits an interval with no print as a NULL row rather than no
+-- row, so an outage breaks the line instead of being drawn straight across.
 SELECT
-  $__unixEpochGroupAlias(observed_at, $__interval),
+  $__unixEpochGroupAlias(observed_at, $__interval, NULL),
   'orca spot' AS metric,
   avg(price) AS value
 FROM spot_ticks
