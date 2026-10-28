@@ -9,14 +9,13 @@ import {
   type Instruction,
   pipe,
   type SendableTransaction,
-  type Signature,
   setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash,
   type Transaction,
   type TransactionSigner,
 } from "@solana/kit";
 import { getErrorMessage } from "../guards";
-import { CANCEL_PATTERN, SwapError } from "../swap/types";
+import { CANCEL_PATTERN, type Submitted, SwapError } from "../swap/types";
 
 type Rpc = SolanaClientRuntime["rpc"];
 
@@ -54,7 +53,7 @@ export async function submitInstructions({
   instructions: readonly Instruction[];
   walletSession: WalletSession;
   rpc: Rpc;
-}): Promise<Signature> {
+}): Promise<Submitted> {
   const { value: latestBlockhash } = await rpc
     .getLatestBlockhash({ commitment: "finalized" })
     .send();
@@ -65,6 +64,7 @@ export async function submitInstructions({
     (m) => appendTransactionMessageInstructions(instructions, m),
   );
   const tx = compileTransaction(message);
+  const { lastValidBlockHeight } = latestBlockhash;
 
   try {
     // Cast via unknown: the compiled tx has an empty signature slot for the
@@ -80,20 +80,22 @@ export async function submitInstructions({
       // switching the wallet (e.g. Phantom) off mainnet. The blockhash was
       // fetched from this same RPC, so it's valid on the node we submit to.
       const signed = await walletSession.signTransaction(unsigned);
-      return await rpc
+      const signature = await rpc
         .sendTransaction(getBase64EncodedWireTransaction(signed), {
           encoding: "base64",
           preflightCommitment: "finalized",
         })
         .send();
+      return { signature, lastValidBlockHeight };
     }
     if (walletSession.sendTransaction) {
       // Fallback for a wallet that can only sign-and-submit in one step: it
       // submits over its own network (fine on mainnet; a localnet demo needs
       // the wallet pointed at the local RPC in that case).
-      return await walletSession.sendTransaction(unsigned, {
+      const signature = await walletSession.sendTransaction(unsigned, {
         commitment: "finalized",
       });
+      return { signature, lastValidBlockHeight };
     }
     throw new SwapError("Connected wallet can't sign", "wallet");
   } catch (e) {

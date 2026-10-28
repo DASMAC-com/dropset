@@ -54,7 +54,15 @@ export type ParsedDflowOrder = {
   transaction: string;
   inAmount: bigint;
   outAmount: bigint;
+  // The slippage the order was built with — the server's pick under "auto".
+  slippageBps: number;
+  // The last block height at which the transaction's blockhash is valid; null
+  // when the response omits it (DFlow sends it whenever `userPublicKey` is set).
+  lastValidBlockHeight: bigint | null;
 };
+
+const isNonNegativeInteger = (v: unknown): v is number =>
+  isNumber(v) && Number.isInteger(v) && v >= 0;
 
 export const parseDflowOrder = (raw: unknown): ParsedDflowOrder => {
   if (!isObject(raw)) {
@@ -63,10 +71,19 @@ export const parseDflowOrder = (raw: unknown): ParsedDflowOrder => {
   if (!isString(raw.transaction) || raw.transaction.length === 0) {
     throw new ValidationError("order.transaction missing or empty");
   }
+  if (!isNonNegativeInteger(raw.slippageBps)) {
+    throw new ValidationError("order.slippageBps missing or not an integer");
+  }
+  const lvbh = raw.lastValidBlockHeight;
+  if (lvbh !== undefined && lvbh !== null && !isNonNegativeInteger(lvbh)) {
+    throw new ValidationError("order.lastValidBlockHeight is not an integer");
+  }
   return {
     transaction: raw.transaction,
     inAmount: parseBigIntString(raw.inAmount, "order.inAmount"),
     outAmount: parseBigIntString(raw.outAmount, "order.outAmount"),
+    slippageBps: raw.slippageBps,
+    lastValidBlockHeight: isNonNegativeInteger(lvbh) ? BigInt(lvbh) : null,
   };
 };
 

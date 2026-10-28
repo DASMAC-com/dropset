@@ -18,7 +18,6 @@ import {
   type Address,
   address,
   createNoopSigner,
-  type Signature,
   type TransactionSigner,
 } from "@solana/kit";
 import {
@@ -27,7 +26,7 @@ import {
 } from "@solana-program/token";
 import { stablecoinMint } from "../data/currencies";
 import { depositClosedReason } from "../data/vaults";
-import { SwapError } from "../swap/types";
+import { type Submitted, SwapError } from "../swap/types";
 import { applySlippage } from "./eclobSwap";
 import { type EclobRoute, resolveEclobRoute } from "./route";
 import { assertWalletCanSign, submitInstructions } from "./submit";
@@ -241,8 +240,7 @@ type VaultTxContext = {
 };
 
 // What the caller needs to read the position back once the transaction lands.
-export type VaultTxOutcome = {
-  signature: Signature;
+export type VaultTxOutcome = Submitted & {
   depositor: Address;
 };
 
@@ -386,14 +384,14 @@ export async function executeVaultDeposit({
     { programAddress: route.programAddress },
   );
   onSigning?.();
-  const signature = await submitInstructions({
+  const submitted = await submitInstructions({
     feePayer: signer,
     instructions: [...createAtas, depositIx],
     walletSession,
     rpc,
   });
   return {
-    signature,
+    ...submitted,
     depositor: await depositorPda(route, summary.index, signer.address),
   };
 }
@@ -447,13 +445,13 @@ export async function executeVaultWithdraw({
     { programAddress: route.programAddress },
   );
   onSigning?.();
-  const signature = await submitInstructions({
+  const submitted = await submitInstructions({
     feePayer: signer,
     instructions: [...createAtas, withdrawIx],
     walletSession,
     rpc,
   });
-  return { signature, depositor };
+  return { ...submitted, depositor };
 }
 
 // The depositor's share balance as the chain holds it; 0 once a full

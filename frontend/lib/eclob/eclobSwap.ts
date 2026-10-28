@@ -63,6 +63,10 @@ export type EclobSwapInput = {
   // Slippage tolerance in basis points — applied to the freshly simulated
   // output to compute the on-chain `minOut` soft-revert floor.
   slippageBps: number;
+  // The output the panel showed the user when they pressed Swap. The swap is
+  // refused when the fresh simulation falls more than `slippageBps` below it,
+  // so the figure the user agreed to bounds what is signed.
+  quotedOutAmount: bigint;
   userPublicKey: string;
   walletSession: WalletSession;
   rpc: Rpc;
@@ -124,6 +128,7 @@ export async function executeEclobSwap(
     outputMint,
     atomicAmount,
     slippageBps,
+    quotedOutAmount,
     userPublicKey,
     walletSession,
     rpc,
@@ -203,6 +208,21 @@ export async function executeEclobSwap(
   if (quote.outAmount === 0n) {
     throw new SwapError("No liquidity for this size", "api");
   }
+  // A partial fill spends less than the user asked to swap at the book's
+  // deepest levels, which the panel's figure does not describe; the best
+  // route's `classifyEclobQuote` excludes partials for the same reason.
+  if (quote.inAmount !== atomicAmount) {
+    throw new SwapError(
+      "The book can no longer fill this size — reduce the amount",
+      "api",
+    );
+  }
+  if (quote.outAmount < applySlippage(quotedOutAmount, slippageBps)) {
+    throw new SwapError(
+      "The price moved past your slippage since the quote — review it and try again",
+      "api",
+    );
+  }
   const minOut = applySlippage(quote.outAmount, slippageBps);
 
   const taker = createNoopSigner(address(userPublicKey));
@@ -278,7 +298,7 @@ export async function executeEclobSwap(
     { programAddress },
   );
 
-  const signature = await submitInstructions({
+  const submitted = await submitInstructions({
     feePayer: taker,
     instructions: [createBaseAta, createQuoteAta, swapIx],
     walletSession,
@@ -286,7 +306,7 @@ export async function executeEclobSwap(
   });
 
   return {
-    signature,
+    ...submitted,
     inAmount: quote.inAmount,
     outAmount: quote.outAmount,
     settlement: settlementFor(route, taker.address),

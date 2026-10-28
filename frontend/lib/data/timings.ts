@@ -23,12 +23,11 @@ export const MIN_TOKENS_TO_FETCH = 3;
 // Hold off until projected remaining reaches this many tokens after a 429.
 export const RECOVERY_TOKEN_TARGET = 10;
 
-// Swap-confirmation polling.
-export const SWAP_CONFIRMATION_TIMEOUT_MS = 60_000;
+// Swap-confirmation polling. The timeout outlasts a blockhash's validity
+// window (~150 blocks, roughly 60–90 s), so an unseen transaction normally
+// reaches its expiry verdict before the "unknown" outcome fires.
+export const SWAP_CONFIRMATION_TIMEOUT_MS = 120_000;
 export const SWAP_CONFIRMATION_POLL_MS = 500;
-// Tolerated consecutive nulls (RPC has never seen the signature) before
-// declaring the tx dropped instead of polling to timeout.
-export const SWAP_CONFIRM_MAX_UNKNOWN_POLLS = 10;
 
 // Attempts to fetch a confirmed swap's transaction metadata before giving up
 // and reporting its realized fill as unreadable. A transaction is readable by
