@@ -1,14 +1,16 @@
 // cspell:word hostaddr
 
-//! The fair-price estimator's current value — what a blank passive center
-//! seeds from.
+//! The fair-price estimator's current value — one of the passive center's
+//! sources.
 //!
 //! The TUI otherwise has no market-data dependency, so this read is optional:
 //! with no database configured the passive form centers on a typed price, the
-//! vault's live reference or the book mid, as it always has. Once one is
-//! configured a blank center means the estimator's fair, and nothing else —
-//! a paused, stale or unreadable fair refuses the blank rather than quietly
-//! falling back to an older center, so the operator types one.
+//! vault's live reference or the book mid, as it always has. `make tui` and
+//! `make tui-mainnet` configure the local reader by default. Once one is
+//! configured the form's chooser offers the estimator's fair beside the
+//! [`SPOT_SOURCE`] spot — a paused, stale, static-pegged or unreadable fair is
+//! never offered, and a blank typed center refuses rather than quietly falling
+//! back to an older one.
 //!
 //! The read goes through the dashboards' read-only role, refused by name
 //! otherwise, on a session pinned read-only besides. It reuses market-data's
@@ -16,8 +18,8 @@
 //! paused or malformed here is exactly what the maker bot refuses.
 //!
 //! The same database also serves the newest on-chain spot print
-//! ([`FairDb::spot`]), which the passive pane shows beside the fair and
-//! nothing ever centers on.
+//! ([`FairDb::spot`]), which the passive form offers beside the fair while it
+//! is inside [`MAX_SPOT_AGE_SECS`].
 
 use anyhow::{bail, Context, Result};
 use dropset_market_data::estimator::published_product;
@@ -122,7 +124,8 @@ impl FairDb {
     /// The newest [`SPOT_SOURCE`] print for the market whose base is
     /// `base_symbol`, under the estimator's product id — `None` when there is
     /// none, it does not decode as a price, or the read fails. Shown beside
-    /// the fair, never centered on, so a miss is silence rather than an error.
+    /// the fair and offered as a center, so a miss is one source fewer rather
+    /// than an error.
     pub fn spot(&self, base_symbol: &str) -> Option<Spot> {
         let product = published_product(base_symbol)?;
         let rows = self
@@ -185,9 +188,18 @@ impl FairDb {
     }
 }
 
-/// The `spot_ticks` source the passive pane shows beside the fair: the
+/// The `spot_ticks` source the passive form offers beside the fair: the
 /// on-chain venue the market's flow is likeliest to arb against.
 pub const SPOT_SOURCE: &str = "orca";
+
+/// The oldest [`Spot`] a center may take: the estimator's default bound for a
+/// tape source (`FairValueConfig`'s `leg_stale.tape`), so the form refuses
+/// the pool exactly when the estimator would drop it as a leg.
+pub const MAX_SPOT_AGE_SECS: i64 = 5 * 60;
+
+/// The `anchor` a `fair_price` row names when its fair is the configured
+/// constant peg rather than a market read — never offered as a center.
+const STATIC_ANCHOR: &str = "static";
 
 /// A [`SPOT_SOURCE`] print, human quote-per-base.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -196,7 +208,7 @@ pub struct Spot {
     pub age_secs: i64,
 }
 
-/// What a blank center would be, as of one read.
+/// The estimator's verdict on one market, as of one read.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Fair {
     /// No database configured — the blank center is the live reference or
@@ -211,18 +223,25 @@ pub enum Fair {
         age_secs: u64,
         /// The composition regime, named when it is not `normal`.
         regime: String,
+        /// What the fair is anchored on — [`STATIC_ANCHOR`] for the peg.
+        anchor: String,
     },
     /// The estimator is up and says not to quote: shown, never centered on.
     Paused {
         product: &'static str,
         regime: String,
     },
-    /// No usable row — absent, stale, future-stamped, malformed or unread.
+    /// The newest row is older than `MAX_PUBLISHED_FAIR_AGE`.
+    Stale {
+        product: &'static str,
+        age_secs: u64,
+    },
+    /// No usable row — absent, future-stamped, malformed or unread.
     Unusable(String),
 }
 
 impl Fair {
-    /// The price a blank center takes, when there is one.
+    /// The fresh fair's price, when there is one — the peg's included.
     pub fn price(&self) -> Option<f64> {
         match self {
             Fair::Live { price, .. } => Some(*price),
@@ -230,7 +249,13 @@ impl Fair {
         }
     }
 
-    /// Whether a blank center must come from here rather than the vault.
+    /// Whether the fair is the constant peg rather than a market read.
+    pub fn is_static(&self) -> bool {
+        matches!(self, Fair::Live { anchor, .. } if anchor == STATIC_ANCHOR)
+    }
+
+    /// Whether a blank center must come from a chosen source rather than the
+    /// vault — an estimator is configured for this market.
     pub fn governs(&self) -> bool {
         !matches!(self, Fair::Off | Fair::Unpublished)
     }
@@ -245,6 +270,7 @@ impl Fair {
                 price,
                 age_secs,
                 regime,
+                ..
             } => {
                 let regime = if regime == "normal" {
                     String::new()
@@ -258,6 +284,9 @@ impl Fair {
             }
             Fair::Paused { product, regime } => {
                 format!("the estimator is paused on {product} ({regime})")
+            }
+            Fair::Stale { product, age_secs } => {
+                format!("{product}'s row is {age_secs} s old — is the estimator running?")
             }
             Fair::Unusable(why) => format!("no usable fair: {why}"),
         }
@@ -275,10 +304,10 @@ fn classify(product: &'static str, row: Option<&FairPriceRow>, now_unix: i64) ->
     }
     let age = row.age(now_unix);
     if age > MAX_PUBLISHED_FAIR_AGE {
-        return Fair::Unusable(format!(
-            "{product}'s row is {} s old — is the estimator running?",
-            age.as_secs()
-        ));
+        return Fair::Stale {
+            product,
+            age_secs: age.as_secs(),
+        };
     }
     match row.fair_value() {
         Err(e) => Fair::Unusable(format!("{product}: {e}")),
@@ -288,6 +317,7 @@ fn classify(product: &'static str, row: Option<&FairPriceRow>, now_unix: i64) ->
                 price,
                 age_secs: age.as_secs(),
                 regime: row.regime.clone(),
+                anchor: row.anchor.clone(),
             },
             None => Fair::Paused {
                 product,
@@ -335,6 +365,11 @@ mod tests {
         assert!(matches!(paused, Fair::Paused { .. }), "{paused:?}");
         assert_eq!(paused.price(), None);
         assert!(paused.governs());
+        // The peg is a fresh fair, flagged so the chooser never offers it.
+        let mut pegged = row(Some(1.0), "normal", "ok", NOW);
+        pegged.anchor = "static".into();
+        let pegged = classify("TGBP-USDC", Some(&pegged), NOW);
+        assert!(pegged.is_static() && !live.is_static(), "{pegged:?}");
     }
 
     #[test]
@@ -342,11 +377,13 @@ mod tests {
         let unusable = |f: Fair| matches!(f, Fair::Unusable(_));
         assert!(unusable(classify("TGBP-USDC", None, NOW)));
         let stale = NOW - MAX_PUBLISHED_FAIR_AGE.as_secs() as i64 - 1;
-        assert!(unusable(classify(
+        let stale = classify(
             "TGBP-USDC",
             Some(&row(Some(1.3), "normal", "ok", stale)),
-            NOW
-        )));
+            NOW,
+        );
+        assert!(matches!(stale, Fair::Stale { .. }), "{stale:?}");
+        assert_eq!(stale.price(), None);
         assert!(unusable(classify(
             "TGBP-USDC",
             Some(&row(Some(1.3), "normal", "ok", NOW + 600)),

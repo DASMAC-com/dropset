@@ -17,10 +17,17 @@
 //! found by that key and the leader — the custody key — is never needed: a
 //! daily visit loads only the quote key.
 //!
-//! A blank center is the estimator's fair when a fair-price database is
-//! configured ([`crate::fair`]), and the vault's live reference or the book
-//! mid when none is. The form opens over [`vault_lines`] — where the fair
-//! sits against the stamped center, then what rested and what flipped since
+//! The center's price line is a chooser over three [`Source`]s — the
+//! estimator's fair, the [`SPOT_SOURCE`] pool spot ([`crate::fair`]), and a
+//! typed price — each with its live value, and a drift line beneath sets them
+//! against each other in bps. It opens on the estimator when its fair is live
+//! and not the static peg, else on the pool when its spot is fresh, else on a
+//! typed price; a blank typed price re-stamps the vault's live reference or
+//! the book mid only when no estimator is configured. Nothing re-centers on
+//! its own: the visit is one-shot.
+//!
+//! The form opens over [`vault_lines`] — where the fair sits against the
+//! stamped center, then what rested and what flipped since
 //! the last stamp — so the daily visit sees the drift and the fills before it
 //! re-centers.
 //!
@@ -32,7 +39,7 @@ use crate::book;
 use crate::chain;
 use crate::cluster::Cluster;
 use crate::emergency::{self, SectorSeat};
-use crate::fair::{Fair, Spot, SPOT_SOURCE};
+use crate::fair::{Fair, Spot, MAX_SPOT_AGE_SECS, SPOT_SOURCE};
 use crate::job::Logger;
 use crate::market;
 use anyhow::{anyhow, bail, Context, Result};
@@ -162,15 +169,18 @@ pub struct Form {
     pub book: Book,
     pub tight: TightLadder,
     pub ladder: PassiveLadder,
-    /// Typed human quote-per-base; blank takes the estimator's fair, or —
-    /// with no fair-price database — re-stamps the vault's live reference,
-    /// or centers on the book mid when it has none.
+    /// Where the center comes from.
+    pub source: Source,
+    /// Typed human quote-per-base, for [`Source::Typed`]; blank — with no
+    /// fair-price database — re-stamps the vault's live reference, or
+    /// centers on the book mid when it has none.
     pub price: String,
     /// Index into [`Form::fields`] of the line being edited.
     pub cursor: usize,
-    /// The fair as the form opened — what a blank center reads as. The
-    /// ticket reads it again, fresh.
+    /// The fair and the spot as the form opened — what the chooser shows.
+    /// The ticket reads both again, fresh.
     pub fair: Fair,
+    pub spot: Option<Spot>,
     /// [`vault_lines`] as the form opened, or the reason it could not read.
     pub vault: Vec<String>,
 }
@@ -182,11 +192,21 @@ impl Form {
             book: Book::Tight,
             tight: TightLadder::default(),
             ladder: PassiveLadder::default(),
+            source: Source::Typed,
             price: String::new(),
             cursor: 0,
             fair: Fair::Off,
+            spot: None,
             vault: Vec::new(),
         }
+    }
+
+    /// Show `fair` and `spot` in the chooser and land it on the default
+    /// source they offer (see [`default_source`]).
+    pub fn set_sources(&mut self, fair: Fair, spot: Option<Spot>) {
+        self.source = default_source(&fair, spot);
+        self.fair = fair;
+        self.spot = spot;
     }
 
     pub fn fields(&self) -> &'static [Field] {
@@ -246,7 +266,21 @@ impl Form {
         let t = &mut self.tight;
         let l = &mut self.ladder;
         match field {
-            Field::Price => {}
+            Field::Price => {
+                // Typed is always selectable, so the walk always ends.
+                let mut at = SOURCES.iter().position(|&s| s == self.source).unwrap_or(0);
+                loop {
+                    at = if up {
+                        (at + 1) % SOURCES.len()
+                    } else {
+                        (at + SOURCES.len() - 1) % SOURCES.len()
+                    };
+                    if selectable(SOURCES[at], &self.fair, self.spot) {
+                        break;
+                    }
+                }
+                self.source = SOURCES[at];
+            }
             Field::Shape => {
                 let next = if up {
                     (at + 1) % SHAPES.len()
@@ -303,21 +337,82 @@ impl Form {
         }
     }
 
-    /// Type `c` into the price — the one free-text field. Anything else is
-    /// ignored rather than swallowed into a number it would corrupt.
+    /// Type `c` into the price — the one free-text field, which typing
+    /// selects. Anything else is ignored rather than swallowed into a number
+    /// it would corrupt.
     pub fn type_char(&mut self, c: char) {
         if self.field() == Field::Price
             && (c.is_ascii_digit() || c == '.')
             && self.price.len() < MAX_PRICE_CHARS
         {
+            self.source = Source::Typed;
             self.price.push(c);
         }
     }
 
     pub fn backspace(&mut self) {
-        if self.field() == Field::Price {
+        if self.field() == Field::Price && self.source == Source::Typed {
             self.price.pop();
         }
+    }
+
+    /// The price line's value: each source with its live value, the chosen
+    /// one bracketed.
+    fn chooser(&self) -> String {
+        SOURCES
+            .iter()
+            .map(|&source| {
+                let entry = match source {
+                    Source::Estimator => match estimator_offer(&self.fair) {
+                        Ok(_) => format!("estimator {}", fair_label(&self.fair)),
+                        Err(why) => format!("estimator {why}"),
+                    },
+                    Source::Orca => match self.spot {
+                        Some(spot) => format!(
+                            "{SPOT_SOURCE} {} ({} s old{})",
+                            book::fmt_price(spot.price),
+                            spot.age_secs,
+                            if spot.age_secs > MAX_SPOT_AGE_SECS {
+                                ", stale"
+                            } else {
+                                ""
+                            }
+                        ),
+                        None => format!("{SPOT_SOURCE} no pool print"),
+                    },
+                    Source::Typed if !self.price.is_empty() => format!("typed {}", self.price),
+                    Source::Typed if self.fair.governs() => "typed (enter one)".to_string(),
+                    Source::Typed => "typed (blank: live reference or book mid)".to_string(),
+                };
+                if source == self.source {
+                    format!("[{entry}]")
+                } else {
+                    entry
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
+
+    /// The three sources against each other in bps, each pair once — `None`
+    /// until two of them have a value.
+    fn drift(&self) -> Option<String> {
+        let values: Vec<(&str, f64)> = [
+            ("estimator", estimator_offer(&self.fair).ok()),
+            (SPOT_SOURCE, self.spot.map(|s| s.price)),
+            ("typed", parse_price(&self.price)),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| Some((name, value?)))
+        .collect();
+        let pairs: Vec<String> = (0..values.len())
+            .flat_map(|i| (i + 1..values.len()).map(move |j| (i, j)))
+            .map(|(i, j)| {
+                let ((base, against), (name, value)) = (values[i], values[j]);
+                format!("{name} {:+.1} bps vs {base}", (value / against - 1.0) * 1e4)
+            })
+            .collect();
+        (!pairs.is_empty()).then(|| format!("  {:<13} {}", "drift", pairs.join(" · ")))
     }
 
     /// The form's lines, the edited one marked — what the prompt draws.
@@ -330,17 +425,13 @@ impl Form {
             }
             _ => String::new(),
         };
-        self.fields()
+        let mut lines: Vec<String> = self
+            .fields()
             .iter()
             .enumerate()
             .map(|(i, field)| {
                 let value = match field {
-                    Field::Price if self.price.is_empty() => match &self.fair {
-                        Fair::Off | Fair::Unpublished => "live reference (or book mid)".to_string(),
-                        Fair::Live { .. } => self.fair.describe(),
-                        _ => format!("type one — {}", self.fair.describe()),
-                    },
-                    Field::Price => self.price.clone(),
+                    Field::Price => self.chooser(),
                     Field::Shape => match (self.book, l.shape) {
                         (Book::Tight, _) => "tight-8 (a tip, then a bell)".to_string(),
                         (Book::Spaced, PassiveShape::Bell) => "bell, evenly spaced".to_string(),
@@ -376,7 +467,81 @@ impl Form {
                 let mark = if i == self.cursor { '\u{25b8}' } else { ' ' };
                 format!("{mark} {name:<13} {value}")
             })
-            .collect()
+            .collect();
+        // Under the price line, which is always the first.
+        if let Some(drift) = self.drift() {
+            lines.insert(1, drift);
+        }
+        lines
+    }
+}
+
+/// Where the center comes from — the price line's entries, in the order `→`
+/// steps through them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    /// The estimator's fair, when it is live and not the static peg.
+    Estimator,
+    /// The newest [`SPOT_SOURCE`] pool print.
+    Orca,
+    /// A price the operator types.
+    Typed,
+}
+
+const SOURCES: [Source; 3] = [Source::Estimator, Source::Orca, Source::Typed];
+
+/// The estimator's fair as a center, or what the chooser reads instead: the
+/// static peg, a paused, stale or unusable fair, and no estimator at all are
+/// never offered.
+fn estimator_offer(fair: &Fair) -> Result<f64, String> {
+    match fair {
+        _ if fair.is_static() => Err("static peg, not offered".to_string()),
+        Fair::Live { price, .. } => Ok(*price),
+        Fair::Paused { .. } => Err("paused".to_string()),
+        Fair::Stale { age_secs, .. } => Err(format!("stale ({age_secs} s old)")),
+        Fair::Off => Err("off (no fair-price database)".to_string()),
+        Fair::Unpublished => Err("publishes nothing for this market".to_string()),
+        Fair::Unusable(_) => Err("unusable".to_string()),
+    }
+}
+
+/// A live fair's chooser entry: its price, then its regime and anchor.
+fn fair_label(fair: &Fair) -> String {
+    match fair {
+        Fair::Live {
+            price,
+            age_secs,
+            regime,
+            anchor,
+            ..
+        } => format!(
+            "{} ({regime}, {anchor} anchor, {age_secs} s old)",
+            book::fmt_price(*price)
+        ),
+        _ => fair.describe(),
+    }
+}
+
+/// Whether `→` may land on `source`. A stale spot stays selectable — its
+/// entry shows its age and the ticket refuses it — while an estimator that
+/// offers nothing, or no pool print at all, is skipped.
+fn selectable(source: Source, fair: &Fair, spot: Option<Spot>) -> bool {
+    match source {
+        Source::Estimator => estimator_offer(fair).is_ok(),
+        Source::Orca => spot.is_some(),
+        Source::Typed => true,
+    }
+}
+
+/// The source the chooser opens on: the estimator when it offers its fair,
+/// else the pool when its spot is fresh, else a typed price.
+fn default_source(fair: &Fair, spot: Option<Spot>) -> Source {
+    if estimator_offer(fair).is_ok() {
+        Source::Estimator
+    } else if spot.is_some_and(|s| s.age_secs <= MAX_SPOT_AGE_SECS) {
+        Source::Orca
+    } else {
+        Source::Typed
     }
 }
 
@@ -546,8 +711,9 @@ fn pick_seat(seats: Vec<SectorSeat>, quote_authority: &Pubkey) -> Result<SectorS
 }
 
 /// Read the vault `quote_authority` signs for on `market` fresh and build the
-/// ticket `form` describes, a blank center taking `fair` — read fresh by the
-/// caller — when it governs. Sends nothing.
+/// ticket `form` describes, centered through its chosen source on `fair` and
+/// `spot` — both read fresh by the caller. Sends nothing.
+#[allow(clippy::too_many_arguments)]
 pub fn prepare(
     client: &RpcClient,
     repo_root: &Path,
@@ -556,6 +722,7 @@ pub fn prepare(
     quote_authority: &Pubkey,
     form: &Form,
     fair: &Fair,
+    spot: Option<Spot>,
 ) -> Result<Ticket> {
     let config = market::config_for(repo_root, cluster, &market.base_mint)
         .context("the selected market is not in this cluster's roster")?;
@@ -572,7 +739,7 @@ pub fn prepare(
     let mid = (!market.asks.is_empty() && !market.bids.is_empty())
         .then(|| book::mid_price(market))
         .flatten();
-    let (center, center_source) = resolve_center(&form.price, live, mid, fair)?;
+    let (center, center_source) = resolve_center(form.source, &form.price, live, mid, fair, spot)?;
     let ratio = human_to_atoms_ratio(center, market.base_decimals, market.quote_decimals);
     let price = Price::from_value(ratio).with_context(|| format!("encode the center {center}"))?;
     let (levels, mut warnings) = match form.op {
@@ -584,11 +751,12 @@ pub fn prepare(
         PassiveOp::Recenter => (Vec::new(), Vec::new()),
     };
     warnings.extend(live.and_then(|live| center_warning(center, live, "live reference")));
-    // Silent when the center is the fair itself.
+    // Each silent when the center is that source itself.
     warnings.extend(
         fair.price()
             .and_then(|f| center_warning(center, f, "estimator's fair")),
     );
+    warnings.extend(spot.and_then(|s| center_warning(center, s.price, "orca spot")));
     Ok(Ticket {
         op: form.op,
         market: market.address,
@@ -605,18 +773,48 @@ pub fn prepare(
     })
 }
 
-/// The center `typed` names, or — blank — the one the session's sources give,
-/// with where it came from. Split out of [`prepare`] so the precedence is
-/// testable without a chain: a typed price wins; with an estimator to ask, a
-/// blank center is its fair and nothing older, since a paused or unreadable
-/// one is a reason to stop, not to keep quoting yesterday's center; without
+/// The center `source` gives, with where it came from — the same chooser the
+/// form shows, so `c`'s re-center and a deploy resolve alike. Split out of
+/// [`prepare`] so each source state is testable without a chain.
+///
+/// The estimator gives its fair only when [`estimator_offer`] does, and the
+/// pool its spot only inside [`MAX_SPOT_AGE_SECS`]; either refusal names the
+/// way out rather than falling back. A typed price is itself; blank, it is
+/// nothing older when an estimator is configured — a paused or unreadable one
+/// is a reason to stop, not to keep quoting yesterday's center — and without
 /// one, the vault's `live` reference, then the two-sided book's `mid`.
 fn resolve_center(
+    source: Source,
     typed: &str,
     live: Option<f64>,
     mid: Option<f64>,
     fair: &Fair,
+    spot: Option<Spot>,
 ) -> Result<(f64, &'static str)> {
+    match source {
+        Source::Estimator => {
+            return estimator_offer(fair)
+                .map(|price| (price, "the estimator's fair"))
+                .map_err(|why| {
+                    anyhow!(
+                        "the estimator is {why} ({}) — choose another source",
+                        fair.describe()
+                    )
+                });
+        }
+        Source::Orca => {
+            return match spot {
+                None => bail!("no {SPOT_SOURCE} pool print — choose another source"),
+                Some(s) if s.age_secs > MAX_SPOT_AGE_SECS => bail!(
+                    "the {SPOT_SOURCE} spot is {} s old, past the {MAX_SPOT_AGE_SECS} s bound — \
+                     choose another source",
+                    s.age_secs
+                ),
+                Some(s) => Ok((s.price, "the orca pool spot")),
+            };
+        }
+        Source::Typed => {}
+    }
     if let Some(typed) = parse_price(typed) {
         return Ok((typed, "typed"));
     }
@@ -624,10 +822,7 @@ fn resolve_center(
         bail!("enter a positive number, e.g. 1.324");
     }
     if fair.governs() {
-        return match fair.price() {
-            Some(price) => Ok((price, "the estimator's fair")),
-            None => bail!("{} — type a price", fair.describe()),
-        };
+        bail!("{} — type a price or choose a source", fair.describe());
     }
     match (live, mid) {
         // A blank re-stamp is the daily keep-alive: same center, fresh stamp.
@@ -1405,51 +1600,189 @@ mod tests {
             price,
             age_secs: 2,
             regime: "normal".into(),
+            anchor: "fx".into(),
+        }
+    }
+
+    fn degraded_fair(price: f64) -> Fair {
+        Fair::Live {
+            product: "TGBP-USDC",
+            price,
+            age_secs: 2,
+            regime: "degraded".into(),
+            anchor: "fx".into(),
+        }
+    }
+
+    fn pegged_fair() -> Fair {
+        Fair::Live {
+            product: "TGBP-USDC",
+            price: 1.25,
+            age_secs: 2,
+            regime: "degraded".into(),
+            anchor: "static".into(),
+        }
+    }
+
+    fn paused_fair() -> Fair {
+        Fair::Paused {
+            product: "TGBP-USDC",
+            regime: "paused".into(),
+        }
+    }
+
+    fn stale_fair() -> Fair {
+        Fair::Stale {
+            product: "TGBP-USDC",
+            age_secs: 95,
+        }
+    }
+
+    fn spot(price: f64, age_secs: i64) -> Option<Spot> {
+        Some(Spot { price, age_secs })
+    }
+
+    #[test]
+    fn the_estimator_centers_only_on_a_live_market_fair() {
+        let (live, mid) = (Some(1.30), Some(1.31));
+        let center = |fair: &Fair| resolve_center(Source::Estimator, "", live, mid, fair, None);
+        assert_eq!(
+            center(&live_fair(1.32)).unwrap(),
+            (1.32, "the estimator's fair")
+        );
+        // A degraded market fair is offered; the chooser labels its regime.
+        assert_eq!(center(&degraded_fair(1.32)).unwrap().0, 1.32);
+        // Never the peg, a paused or stale fair, nor no estimator at all —
+        // and never a fallback to the reference or the mid.
+        for (fair, why) in [
+            (pegged_fair(), "static peg, not offered"),
+            (paused_fair(), "paused"),
+            (stale_fair(), "stale (95 s old)"),
+            (Fair::Unusable("unread".into()), "unusable"),
+            (Fair::Off, "off"),
+            (Fair::Unpublished, "publishes nothing"),
+        ] {
+            let err = center(&fair).unwrap_err().to_string();
+            assert!(
+                err.contains(why) && err.contains("choose another source"),
+                "{err}"
+            );
         }
     }
 
     #[test]
-    fn a_governing_fair_is_the_blank_center_and_a_paused_one_refuses() {
-        let (live, mid) = (Some(1.30), Some(1.31));
-        // A typed price beats every source.
+    fn the_pool_centers_only_inside_the_tick_store_bound() {
+        let center = |spot| resolve_center(Source::Orca, "", None, None, &paused_fair(), spot);
         assert_eq!(
-            resolve_center("1.5", live, mid, &live_fair(1.32)).unwrap(),
-            (1.5, "typed")
+            center(spot(1.3251, 40)).unwrap(),
+            (1.3251, "the orca pool spot")
         );
-        assert!(resolve_center("1.x", live, mid, &live_fair(1.32)).is_err());
-        // A live fair is the blank center, over the reference and the mid.
-        assert_eq!(
-            resolve_center("", live, mid, &live_fair(1.32)).unwrap(),
-            (1.32, "the estimator's fair")
-        );
-        // A paused or unusable fair refuses — no fallback to the reference.
-        let paused = Fair::Paused {
-            product: "TGBP-USDC",
-            regime: "paused".into(),
-        };
-        let err = resolve_center("", live, mid, &paused)
+        assert_eq!(center(spot(1.3, MAX_SPOT_AGE_SECS)).unwrap().0, 1.3);
+        let err = center(spot(1.3, MAX_SPOT_AGE_SECS + 1))
             .unwrap_err()
             .to_string();
-        assert!(
-            err.contains("paused") && err.contains("type a price"),
-            "{err}"
+        assert!(err.contains("301 s old, past the 300 s bound"), "{err}");
+        assert!(center(None).unwrap_err().to_string().contains("no orca"));
+    }
+
+    #[test]
+    fn a_typed_center_is_itself_and_blank_falls_back_only_without_an_estimator() {
+        let (live, mid) = (Some(1.30), Some(1.31));
+        let typed = |buf, live, mid, fair: &Fair| {
+            resolve_center(Source::Typed, buf, live, mid, fair, spot(1.33, 1))
+        };
+        assert_eq!(
+            typed("1.5", live, mid, &live_fair(1.32)).unwrap(),
+            (1.5, "typed")
         );
-        assert!(resolve_center("", live, mid, &Fair::Unusable("stale".into())).is_err());
-        // No estimator to ask: the reference, then the mid, then nothing.
-        for none in [Fair::Off, Fair::Unpublished] {
-            assert_eq!(resolve_center("", live, mid, &none).unwrap().0, 1.30);
-            assert_eq!(resolve_center("", None, mid, &none).unwrap().0, 1.31);
-            assert!(resolve_center("", None, None, &none).is_err());
+        assert!(typed("1.x", live, mid, &live_fair(1.32)).is_err());
+        // With an estimator configured, blank is nothing older.
+        for fair in [live_fair(1.32), paused_fair(), stale_fair()] {
+            let err = typed("", live, mid, &fair).unwrap_err().to_string();
+            assert!(err.contains("type a price"), "{err}");
         }
-        // The form says the same before the ticket is built.
+        // Without one: the reference, then the mid, then nothing.
+        for none in [Fair::Off, Fair::Unpublished] {
+            assert_eq!(typed("", live, mid, &none).unwrap().0, 1.30);
+            assert_eq!(typed("", None, mid, &none).unwrap().0, 1.31);
+            assert!(typed("", None, None, &none).is_err());
+        }
+    }
+
+    #[test]
+    fn the_chooser_opens_on_the_best_source_and_skips_what_it_cannot_offer() {
+        let opened = |fair, spot| {
+            let mut form = Form::new(PassiveOp::Recenter);
+            form.set_sources(fair, spot);
+            form
+        };
+        assert_eq!(
+            opened(live_fair(1.32), spot(1.33, 1)).source,
+            Source::Estimator
+        );
+        assert_eq!(opened(pegged_fair(), spot(1.33, 1)).source, Source::Orca);
+        assert_eq!(opened(paused_fair(), spot(1.33, 1)).source, Source::Orca);
+        // A stale pool is not a default, and with nothing else it is typed.
+        assert_eq!(
+            opened(stale_fair(), spot(1.33, MAX_SPOT_AGE_SECS + 1)).source,
+            Source::Typed
+        );
+        assert_eq!(opened(Fair::Off, None).source, Source::Typed);
+
+        // The peg is shown, never landed on: → walks orca, typed, orca.
+        let mut form = opened(pegged_fair(), spot(1.33, 1));
+        assert!(
+            form.lines()[0].contains("estimator static peg, not offered · [orca 1.3300"),
+            "{:?}",
+            form.lines()
+        );
+        form.step(1);
+        assert_eq!(form.source, Source::Typed);
+        form.step(1);
+        assert_eq!(form.source, Source::Orca);
+        form.step(-1);
+        assert_eq!(form.source, Source::Typed);
+        // A stale pool stays selectable, its age shown.
+        let mut form = opened(stale_fair(), spot(1.33, 400));
+        form.step(-1);
+        assert_eq!(form.source, Source::Orca);
+        assert!(form.lines()[0].contains("[orca 1.3300 (400 s old, stale)]"));
+        // Nothing to offer: typed is the only stop, and works as before.
+        let mut form = opened(Fair::Off, None);
+        form.step(1);
+        assert_eq!(form.source, Source::Typed);
+        assert!(form.lines()[0].contains("[typed (blank: live reference or book mid)]"));
+        // Typing selects typed from wherever the chooser was.
+        let mut form = opened(live_fair(1.32), None);
+        form.type_char('1');
+        assert_eq!(form.source, Source::Typed);
+    }
+
+    #[test]
+    fn the_price_line_shows_every_source_and_the_drift_sets_them_against_each_other() {
         let mut form = Form::new(PassiveOp::Recenter);
-        form.fair = paused;
-        assert!(form.lines()[0].contains("type one — the estimator is paused"));
-        form.fair = live_fair(1.32);
-        let line = &form.lines()[0];
-        assert!(line.ends_with("fair 1.3200 (TGBP-USDC, 2 s old)"), "{line}");
-        form.fair = Fair::Unpublished;
-        assert!(form.lines()[0].contains("live reference"));
+        form.set_sources(degraded_fair(1.32), spot(1.3233, 40));
+        let lines = form.lines();
+        assert_eq!(
+            lines[0],
+            "\u{25b8} center price  [estimator 1.3200 (degraded, fx anchor, 2 s old)] · \
+             orca 1.3233 (40 s old) · typed (enter one)"
+        );
+        assert_eq!(lines[1], "  drift         orca +25.0 bps vs estimator");
+        for c in "1.34".chars() {
+            form.type_char(c);
+        }
+        let lines = form.lines();
+        assert!(lines[0].ends_with("[typed 1.34]"), "{}", lines[0]);
+        assert_eq!(
+            lines[1],
+            "  drift         orca +25.0 bps vs estimator · typed +151.5 bps vs estimator \
+             · typed +126.2 bps vs orca"
+        );
+        // One source alone has nothing to drift against.
+        let mut form = Form::new(PassiveOp::Recenter);
+        form.set_sources(paused_fair(), spot(1.33, 1));
+        assert_eq!(form.lines().len(), 1);
     }
 
     #[test]

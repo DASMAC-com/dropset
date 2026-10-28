@@ -460,10 +460,16 @@ tui-prebuild-explorer:
 # panel will later drive mainnet too. Passes `--bootstrap` by default so the
 # panel auto-runs "Bootstrap all" once the localnet is up; override with
 # `make tui TUI_ARGS=` for the step-by-step manual control plane.
+#
+# Both this and `tui-mainnet` point the passive form's center chooser at the
+# local estimator through the dashboards' read-only role (0002), the same
+# default `demo-check` reads: the operator runs the estimator locally on
+# either cluster. An exported `DROPSET_TUI_DATABASE_URL` wins.
 TUI_ARGS ?= --bootstrap
+TUI_DATABASE_URL := $(or $(DROPSET_TUI_DATABASE_URL),postgres://dropset_ro:dropset_ro@127.0.0.1:5432/dropset)
 .PHONY: tui
 tui: tui-prebuild
-	cargo run -p dropset-tui -- $(TUI_ARGS)
+	DROPSET_TUI_DATABASE_URL='$(TUI_DATABASE_URL)' cargo run -p dropset-tui -- $(TUI_ARGS)
 
 # Assert a required environment variable is set, naming it and why:
 # `$(call require-env,VAR,reason)`. Keep the reason free of commas — make
@@ -523,7 +529,8 @@ endef
 # TUI_MAINNET_ARGS carries `--program-key` for a first publish, or a one-off
 # override of a keys-file line; see `cargo run -p dropset-tui -- --help`.
 #
-# `make demo` and `make tui` are untouched.
+# `make demo` and `make tui` are otherwise untouched; the fair-price reader
+# default is shared (see `tui`).
 TUI_KEYS_FILE ?= tui/private-keys.env
 TUI_MAINNET_ARGS ?=
 MAINNET_RPC_HINT := mainnet mode has no default endpoint; set it explicitly
@@ -542,7 +549,8 @@ endef
 tui-mainnet:
 	$(refuse-agent-shell)
 	$(call require-env,DROPSET_MAINNET_RPC_URL,$(MAINNET_RPC_HINT))
-	cargo run -p dropset-tui -- --cluster mainnet --keys-file '$(TUI_KEYS_FILE)' \
+	DROPSET_TUI_DATABASE_URL='$(TUI_DATABASE_URL)' \
+		cargo run -p dropset-tui -- --cluster mainnet --keys-file '$(TUI_KEYS_FILE)' \
 		$(TUI_MAINNET_ARGS)
 
 # Film-the-startup variant of `tui-mainnet`: the same cockpit, with the two

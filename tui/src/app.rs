@@ -1257,6 +1257,7 @@ impl App {
             (_, None) => Err(anyhow::anyhow!("no market selected")),
             (Some(quote), Some(market)) => {
                 let fair = self.read_fair(&market);
+                let spot = self.read_spot(&market, &fair);
                 passive::prepare(
                     &self.client,
                     &self.ctx.repo_root,
@@ -1265,6 +1266,7 @@ impl App {
                     &quote,
                     &form,
                     &fair,
+                    spot,
                 )
             }
         };
@@ -1297,9 +1299,13 @@ impl App {
 
     /// The on-chain spot print for `market`, read now — only when `fair`
     /// shows the database answered, so an unreachable one costs the form a
-    /// single timeout rather than two.
+    /// single timeout rather than two. A stale fair still answered, and the
+    /// pool is then the chooser's one live source.
     fn read_spot(&self, market: &accounts::MarketView, fair: &fair::Fair) -> Option<fair::Spot> {
-        if !matches!(fair, fair::Fair::Live { .. } | fair::Fair::Paused { .. }) {
+        if !matches!(
+            fair,
+            fair::Fair::Live { .. } | fair::Fair::Paused { .. } | fair::Fair::Stale { .. }
+        ) {
             return None;
         }
         let config = market::config_for(&self.ctx.repo_root, self.ctx.cluster, &market.base_mint)?;
@@ -1530,8 +1536,8 @@ impl App {
             }
             let mut form = passive::Form::new(op);
             if let Some(market) = self.chain.selected_market(self.selected_market).cloned() {
-                form.fair = self.read_fair(&market);
-                let spot = self.read_spot(&market, &form.fair);
+                let fair = self.read_fair(&market);
+                let spot = self.read_spot(&market, &fair);
                 form.vault = match self.roster_quote {
                     None => vec!["no quote key — the vault view needs one".to_string()],
                     Some(quote) => passive::vault_lines(
@@ -1540,11 +1546,12 @@ impl App {
                         self.ctx.cluster,
                         &market,
                         &quote,
-                        &form.fair,
+                        &fair,
                         spot,
                     )
                     .unwrap_or_else(|e| vec![format!("vault view — {e:#}")]),
                 };
+                form.set_sources(fair, spot);
             }
             self.passive_prompt = Some(PassivePrompt::Form(form));
             return;
