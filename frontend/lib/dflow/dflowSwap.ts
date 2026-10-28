@@ -4,16 +4,24 @@
 import { extractDflowApiError } from "@dropset/sdk";
 import type { SolanaClientRuntime, WalletSession } from "@solana/client";
 import {
+  blockhash,
   getBase64Encoder,
+  getCompiledTransactionMessageDecoder,
   getTransactionDecoder,
   type SendableTransaction,
   type Signature,
   type Transaction,
 } from "@solana/kit";
 import { DFLOW_ORDER_TIMEOUT_MS } from "../data/timings";
+import { applySlippage } from "../eclob/eclobSwap";
 import { absoluteUrl, DFLOW_ORDER_URL, PLATFORM_FEE } from "../env";
 import { getErrorMessage } from "../guards";
-import { CANCEL_PATTERN, SwapError, type SwapOutcome } from "../swap/types";
+import {
+  CANCEL_PATTERN,
+  type Lifetime,
+  SwapError,
+  type SwapOutcome,
+} from "../swap/types";
 import {
   type ParsedDflowOrder,
   parseDflowOrder,
@@ -50,6 +58,9 @@ export type DflowSwapInput = {
   atomicAmount: bigint;
   // Either "auto" (server picks slippage) or a numeric basis-points string.
   slippageBps: string;
+  // The output the panel showed when the user pressed Swap; the order is
+  // refused when it falls more than the slippage tolerance below it.
+  quotedOutAmount: bigint;
   userPublicKey: string;
   walletSession: WalletSession;
   // Used to check (once, cached) whether the platform-fee vault for the output
@@ -57,10 +68,61 @@ export type DflowSwapInput = {
   rpc: SolanaClientRuntime["rpc"];
 };
 
+// Check a decoded /order against what the user asked for, before the wallet
+// is asked to sign it. The route inside the transaction is the aggregator's
+// and is opaque to us — trusting it is inherent, and the endpoint is ours —
+// so this is defense in depth over the parts we can check:
+//   * the order spends exactly the requested input;
+//   * its expected output is within the slippage tolerance of the figure the
+//     panel showed (under "auto", the tolerance the server picked);
+//   * the user is the fee payer and the only signer, so the wallet signs for
+//     nothing but the user's own spend.
+// Throws `SwapError(…, "api")` on the first mismatch. Exported to be pinned.
+export const checkDflowOrder = (
+  order: ParsedDflowOrder,
+  tx: Transaction,
+  {
+    atomicAmount,
+    quotedOutAmount,
+    slippageBps,
+    userPublicKey,
+  }: Pick<
+    DflowSwapInput,
+    "atomicAmount" | "quotedOutAmount" | "slippageBps" | "userPublicKey"
+  >,
+): void => {
+  if (order.inAmount !== atomicAmount) {
+    throw new SwapError(
+      "DFlow returned an order for a different input amount",
+      "api",
+    );
+  }
+  const tolerance =
+    slippageBps === "auto" ? order.slippageBps : Number(slippageBps);
+  if (order.outAmount < applySlippage(quotedOutAmount, tolerance)) {
+    throw new SwapError(
+      "The price moved past your slippage since the quote — review it and try again",
+      "api",
+    );
+  }
+  // The signature map is keyed by the message's signer accounts in order, the
+  // fee payer first. This would reject every order if `/order`'s `sponsor`
+  // parameter (another wallet paying the fee) were ever adopted — we never
+  // send it, and this check must change with that decision.
+  const signers = Object.keys(tx.signatures);
+  if (signers.length !== 1 || signers[0] !== userPublicKey) {
+    throw new SwapError(
+      "DFlow returned a transaction with an unexpected fee payer or signer",
+      "api",
+    );
+  }
+};
+
 // Execute a swap end-to-end:
 //   1. GET /order with `allowAsyncExec=false` so DFlow returns a sync single
 //      tx (no Jito open-order/fill split — simplest confirm path).
-//   2. Base64-decode the returned transaction to a kit Transaction object.
+//   2. Base64-decode the returned transaction to a kit Transaction object, and
+//      check it against the request (checkDflowOrder).
 //   3. Hand it to the wallet's `sendTransaction` which signs & submits in one
 //      shot. Whether it also waits for the requested `finalized` is up to
 //      the wallet, so the caller's `waitForSwapConfirmation` polls for it.
@@ -139,10 +201,28 @@ export async function executeDflowSwap(
     );
   }
 
-  let tx: ReturnType<ReturnType<typeof getTransactionDecoder>["decode"]>;
+  let tx: Transaction;
+  let lifetime: Lifetime | null;
   try {
     const txBytes = getBase64Encoder().encode(order.transaction);
     tx = getTransactionDecoder().decode(txBytes);
+    // The order's expiry height, paired with the blockhash actually inside
+    // its transaction, so confirmation checks the height against the chain's
+    // own view of that blockhash rather than taking DFlow's figure on trust.
+    // Null when the order omits the height: nothing is then ever declared
+    // dropped. A durable-nonce transaction would carry a nonce here instead
+    // of a blockhash; DFlow documents `lastValidBlockHeight` as the
+    // blockhash's expiry, so a sync order is taken to be blockhash-lifetime.
+    lifetime =
+      order.lastValidBlockHeight === null
+        ? null
+        : {
+            blockhash: blockhash(
+              getCompiledTransactionMessageDecoder().decode(tx.messageBytes)
+                .lifetimeToken,
+            ),
+            lastValidBlockHeight: order.lastValidBlockHeight,
+          };
   } catch (e) {
     throw new SwapError(
       `DFlow returned an undecodable transaction: ${getErrorMessage(e)}`,
@@ -150,6 +230,7 @@ export async function executeDflowSwap(
       res.status,
     );
   }
+  checkDflowOrder(order, tx, input);
 
   if (!walletSession.sendTransaction) {
     throw new SwapError(
@@ -179,6 +260,7 @@ export async function executeDflowSwap(
 
   return {
     signature,
+    lifetime,
     inAmount: order.inAmount,
     outAmount: order.outAmount,
   };

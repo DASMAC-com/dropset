@@ -5,10 +5,9 @@
 // its own error type from the competing route's module. Nothing here knows
 // about either venue, so it belongs above both.
 
-import type { Signature } from "@solana/kit";
+import type { Blockhash, Signature } from "@solana/kit";
 
-export type SwapOutcome = {
-  signature: Signature;
+export type SwapOutcome = Submitted & {
   inAmount: bigint;
   outAmount: bigint;
 };
@@ -17,25 +16,48 @@ export type SwapErrorKind =
   | "network" // fetch threw — likely offline or DNS failure
   | "api" // /order returned non-2xx
   | "wallet" // wallet adapter failed in a non-user-cancel way
-  | "rejected"; // user explicitly cancelled in the wallet UI
+  | "rejected" // user explicitly cancelled in the wallet UI
+  // Submitted, but confirmation ran out of time without a verdict: the
+  // transaction may still land, so this must not read as safe to retry.
+  | "unconfirmed";
 
 export class SwapError extends Error {
   readonly kind: SwapErrorKind;
   readonly httpStatus?: number;
   readonly code?: string;
+  // The submitted transaction, when the error came after submission (a
+  // revert, an unconfirmed outcome), so the UI can link to it.
+  readonly signature?: Signature;
   constructor(
     message: string,
     kind: SwapErrorKind,
     httpStatus?: number,
     code?: string,
+    signature?: Signature,
   ) {
     super(message);
     this.name = "SwapError";
     this.kind = kind;
     this.httpStatus = httpStatus;
     this.code = code;
+    this.signature = signature;
   }
 }
+
+// A transaction's blockhash lifetime: the blockhash it was built on, and the
+// last block height at which that blockhash is valid.
+export type Lifetime = {
+  blockhash: Blockhash;
+  lastValidBlockHeight: bigint;
+};
+
+// A submitted transaction: its signature, and its lifetime (null when the
+// builder could not say) — what `waitForSwapConfirmation` needs to tell "not
+// yet" from "dropped".
+export type Submitted = {
+  signature: Signature;
+  lifetime: Lifetime | null;
+};
 
 // Common wallets each surface user-rejection with a slightly different
 // message. Match conservatively — we'd rather classify a true wallet

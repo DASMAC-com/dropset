@@ -1,7 +1,8 @@
 "use client";
 
+import type { RouterVenue } from "@dropset/sdk";
 import { useWalletConnection } from "@solana/react-hooks";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { RateLimitMessage } from "@/components/chrome/RateLimitMessage";
 import { stablecoinDecimals, stablecoinMint } from "@/lib/data/currencies";
 import { findVaultPair } from "@/lib/data/vaults";
@@ -9,13 +10,13 @@ import { useFeeVaultExists } from "@/lib/dflow/feeVault";
 import { emit, useAppEvent } from "@/lib/events";
 import { parseAmountToBase } from "@/lib/format/balance";
 import { useAllBalances } from "@/lib/hooks/useAllBalances";
-import { useDflowSwap } from "@/lib/hooks/useDflowSwap";
+import { isSwapPending, useDflowSwap } from "@/lib/hooks/useDflowSwap";
 import { useEclobAvailable } from "@/lib/hooks/useEclobAvailable";
 import { useEclobQuote } from "@/lib/hooks/useEclobQuote";
 import { useEclobSwap } from "@/lib/hooks/useEclobSwap";
 import { useRouterQuote } from "@/lib/hooks/useRouterQuote";
 import { useTokenInfoRefresh, useUsdQuote } from "@/lib/hooks/useUsdQuote";
-import { formatAtomic } from "@/lib/quote";
+import { formatAtomic, readyOutAmount } from "@/lib/quote";
 import { useSameToken, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useGoToVaultsForPair, useSwapNav } from "@/lib/ui/swapUrl";
 import { PlatformFee } from "./PlatformFee";
@@ -102,7 +103,11 @@ export function SwapPanel() {
   useTokenInfoRefresh([fromMint, toMint]);
 
   const isConnecting = status === "connecting";
-  const hasAmount = Number(amount) > 0;
+  // In base units, so an input finer than the token's decimals (which
+  // truncates to zero, and which the quote hooks skip) reads as no amount
+  // rather than leaving Swap waiting on a quote that will never come.
+  const amountBase = parseAmountToBase(amount, fromDecimals);
+  const hasAmount = amountBase > 0n;
   const needsAmount = !sameToken && connected && !isConnecting && !hasAmount;
   const {
     balanceFor,
@@ -117,7 +122,6 @@ export function SwapPanel() {
   // null (no ATA) is just zero balance for the purposes of the insufficient
   // check — there's nothing to spend.
   const fromBalanceBase = balanceFor(fromMint) ?? 0n;
-  const amountBase = parseAmountToBase(amount, fromDecimals);
   const insufficient =
     !sameToken &&
     connected &&
@@ -136,20 +140,39 @@ export function SwapPanel() {
   // Pick the swap executor to match the venue the router actually chose — not
   // the route *mode*. Under "Best route" our own book can win, and the swap
   // then has to go through our program rather than the aggregator. Both hooks
-  // mount; only the selected one's `execute` is ever called (see the Swap
+  // mount; only the routed one's `execute` is ever called (see the Swap
   // button). Before the first fresh quote lands there's nothing to swap yet,
   // so the mode's default venue stands in.
   const dflowSwap = useDflowSwap();
   const eclobSwap = useEclobSwap();
-  const routedVenue =
+  const hookFor = (venue: RouterVenue) =>
+    venue === "dropset" ? eclobSwap : dflowSwap;
+  const routedVenue: RouterVenue =
     (quoteFresh ? quote.venue : null) ?? (useBestRoute ? "dflow" : "dropset");
-  const swap = routedVenue === "dropset" ? eclobSwap : dflowSwap;
-  const swapInFlight =
-    swap.status === "preparing" ||
-    swap.status === "signing" ||
-    swap.status === "confirming";
+  // The venue a swap was sent through, pinned at `execute` and held until its
+  // result is dismissed. The routed venue cannot stand in for it: the quote
+  // keeps polling while the wallet popup is open, and an error tick (which
+  // nulls `venue`) or a change of best-route winner flips `routedVenue` to the
+  // other hook — which reads idle, so the label would fall back to "Swap", the
+  // button would re-enable, and the pending swap's result would never show.
+  // On a phone, returning from the wallet, that is a second real swap.
+  const [executingVenue, setExecutingVenue] = useState<RouterVenue | null>(
+    null,
+  );
+  const swap = hookFor(executingVenue ?? routedVenue);
+  // Either hook, not just the shown one: nothing may go out while anything
+  // that may still move funds is outstanding.
+  const swapPending =
+    isSwapPending(dflowSwap.status) || isSwapPending(eclobSwap.status);
+  // The quote's output only when it describes exactly this swap (see
+  // `readyOutAmount`); Swap waits on it rather than execute against a number
+  // the user never saw.
+  const readyOut = readyOutAmount(quote, fromMint, toMint, amountBase);
+  const awaitingQuote =
+    connected && !needsAmount && !insufficient && readyOut === null;
   const dimmed = needsAmount || insufficient || balanceUnknown;
-  const disabled = sameToken || isConnecting || swapInFlight || balanceUnknown;
+  const disabled =
+    sameToken || isConnecting || swapPending || balanceUnknown || awaitingQuote;
 
   let label: string;
   let onClick: () => void;
@@ -159,15 +182,6 @@ export function SwapPanel() {
   } else if (!connected) {
     label = isConnecting ? "Connecting…" : "Connect Wallet";
     onClick = () => emit("openWalletModal");
-  } else if (balanceUnknown) {
-    label = "Balance unavailable";
-    onClick = () => {};
-  } else if (needsAmount) {
-    label = "Enter an amount";
-    onClick = () => emit("focusFromAmount");
-  } else if (insufficient) {
-    label = `Insufficient ${fromStablecoin}`;
-    onClick = () => emit("focusFromAmount");
   } else if (swap.status === "preparing") {
     label = "Preparing swap…";
     onClick = () => {};
@@ -177,10 +191,32 @@ export function SwapPanel() {
   } else if (swap.status === "confirming") {
     label = "Confirming…";
     onClick = () => {};
+  } else if (swap.status === "unconfirmed") {
+    label = "Check the last swap first";
+    onClick = () => {};
+  } else if (balanceUnknown) {
+    label = "Balance unavailable";
+    onClick = () => {};
+  } else if (needsAmount) {
+    label = "Enter an amount";
+    onClick = () => emit("focusFromAmount");
+  } else if (insufficient) {
+    label = `Insufficient ${fromStablecoin}`;
+    onClick = () => emit("focusFromAmount");
+  } else if (readyOut === null) {
+    label =
+      quote.status === "error" || quote.status === "rateLimited"
+        ? "Price unavailable"
+        : "Fetching price…";
+    onClick = () => {};
   } else {
     label = "Swap";
     onClick = () => {
-      void swap.execute();
+      const venue = routedVenue;
+      // Clear the other venue's last result so only this swap's shows.
+      hookFor(venue === "dropset" ? "dflow" : "dropset").reset();
+      setExecutingVenue(venue);
+      void hookFor(venue).execute(readyOut);
     };
   }
 
@@ -321,7 +357,10 @@ export function SwapPanel() {
         status={swap.status}
         result={swap.result}
         error={swap.error}
-        onClose={swap.reset}
+        onClose={() => {
+          swap.reset();
+          setExecutingVenue(null);
+        }}
       />
     </>
   );
