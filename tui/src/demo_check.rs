@@ -17,9 +17,11 @@
 //! - **quote** — a tGBP-USDC quote through `simulate_swap`, the function the
 //!   frontend's WASM build wraps, over the live market account. Chain-side
 //!   only: the page itself is not driven;
+//! - **vault** — tGBP-USDC's leader vault named, open to outside depositors
+//!   on both halves of the gate, and funded by its leader;
 //! - **frontend** and **grafana** — each server answering.
 //!
-//! With the validator down, the market and quote lines print as skipped
+//! With the validator down, the market, quote and vault lines print as skipped
 //! rather than vanish or fail a second time, so the count of surfaces is
 //! the same on every run.
 //!
@@ -42,6 +44,7 @@ use dropset_sdk::matching::{simulate_swap, SwapSide};
 use dropset_sdk::price::Price;
 use solana_client::rpc_client::RpcClient;
 use solana_pubkey::Pubkey;
+use solana_signer::Signer;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::future::Future;
@@ -315,6 +318,7 @@ pub fn run(targets: &Targets<'_>) -> Vec<Check> {
         checks.push(validator);
         checks.extend(market_checks(&client, targets.repo_root, keyless));
         checks.push(quote_check(&client, targets.repo_root, keyless));
+        checks.push(vault_check(&client, targets.repo_root));
     } else {
         checks.extend(chain_skipped(validator));
     }
@@ -631,6 +635,7 @@ struct BookState {
 }
 
 const QUOTE_SURFACE: &str = "quote TGBP-USDC";
+const VAULT_SURFACE: &str = "vault TGBP-USDC";
 
 fn market_surface(config: &PairConfig) -> String {
     format!("market {}-USDC", config.base.symbol)
@@ -644,7 +649,7 @@ fn chain_skipped(validator: Check) -> Vec<Check> {
     let surfaces = market::roster(Cluster::Localnet)
         .iter()
         .map(|config| market_surface(config))
-        .chain([QUOTE_SURFACE.to_string()]);
+        .chain([QUOTE_SURFACE.to_string(), VAULT_SURFACE.to_string()]);
     std::iter::once(validator)
         .chain(surfaces.map(|s| Check::new(s, Verdict::Skipped, reason.clone())))
         .collect()
@@ -815,6 +820,56 @@ fn quote_verdict(out_amount: u64, legs: u32, base_decimals: u8, keyless: bool) -
     } else {
         Check::new(surface, Verdict::Fail, empty)
     }
+}
+
+/// tGBP-USDC's leader vault, read fresh: present, named, open to outside
+/// depositors on both halves of the gate, and funded by its leader — what
+/// the browser's deposit in step 4 needs. Not excused keyless: the gate and
+/// the seed deposit do not depend on the FX tape.
+fn vault_check(client: &RpcClient, repo_root: &Path) -> Check {
+    let config = &market::MARKET_TGBP;
+    let seat = (|| {
+        let leader = market::leader(repo_root, config, None)?.pubkey();
+        let (base, quote) = market::pair_mints(repo_root, config)?;
+        let address = chain::market_pda(Cluster::Localnet, &base, &quote);
+        let seats = accounts::vault_seats_fresh(client, Cluster::Localnet, &address)?
+            .context("no market on chain")?;
+        Ok::<_, anyhow::Error>(accounts::sole_seat_led_by(&seats, &leader))
+    })();
+    match seat {
+        Ok(seat) => vault_verdict(seat.as_ref()),
+        Err(e) => Check::new(VAULT_SURFACE, Verdict::Fail, format!("{e:#}")),
+    }
+}
+
+/// Pass only when every one of the four holds; the evidence names each, so
+/// a fail says which is missing.
+fn vault_verdict(seat: Option<&accounts::VaultSeat>) -> Check {
+    let Some(seat) = seat else {
+        return Check::new(
+            VAULT_SURFACE,
+            Verdict::Fail,
+            "no leader vault — bootstrap from the TUI",
+        );
+    };
+    let mark = |ok: bool| if ok { "yes" } else { "NO" };
+    let name = seat.name();
+    let named = !name.is_empty();
+    let funded = seat.stake.leader_shares > 0;
+    let evidence = format!(
+        "vault {}: named {}; leader allows outside {}; admin approved {}; leader funded {}",
+        seat.label(),
+        mark(named),
+        mark(seat.outside_allowed),
+        mark(seat.outside_approved),
+        mark(funded),
+    );
+    let verdict = if named && seat.open_to_outside() && funded {
+        Verdict::Pass
+    } else {
+        Verdict::Fail
+    };
+    Check::new(VAULT_SURFACE, verdict, evidence)
 }
 
 /// A plain HTTP/1.0 GET on loopback, passing on any 2xx or 3xx — a redirect
@@ -1166,10 +1221,13 @@ mod tests {
         let validator = Check::new("validator", Verdict::Fail, "unreachable: refused");
         let checks = chain_skipped(validator.clone());
         let roster = market::roster(Cluster::Localnet);
-        assert_eq!(checks.len(), roster.len() + 2);
+        // The validator, every market, the quote and the vault — the
+        // surfaces the validator-up path prints, in its order.
+        assert_eq!(checks.len(), roster.len() + 3);
         assert_eq!(checks[0], validator);
         assert_eq!(checks[1].surface, market_surface(roster[0]));
-        assert_eq!(checks.last().unwrap().surface, QUOTE_SURFACE);
+        assert_eq!(checks[checks.len() - 2].surface, QUOTE_SURFACE);
+        assert_eq!(checks.last().unwrap().surface, VAULT_SURFACE);
         for c in &checks[1..] {
             assert_eq!(c.verdict, Verdict::Skipped, "{c}");
             assert_eq!(
@@ -1203,7 +1261,10 @@ mod tests {
             line.starts_with(&format!("1 surface(s) failed; {skipped} skipped (market ")),
             "{line}"
         );
-        assert!(line.contains(&format!("{QUOTE_SURFACE})")), "{line}");
+        assert!(
+            line.contains(&format!("{QUOTE_SURFACE}, {VAULT_SURFACE})")),
+            "{line}"
+        );
         let only_skipped = Check::new("quote TGBP-USDC", Verdict::Skipped, "");
         let (passed, line) = summary(&[pass, only_skipped]);
         assert!(passed, "a skip alone is not a fail");
@@ -1234,6 +1295,61 @@ mod tests {
             true,
         );
         assert_eq!(one_sided.verdict, Verdict::Fail, "{one_sided}");
+    }
+
+    fn vault_seat(
+        name: &str,
+        allowed: bool,
+        approved: bool,
+        leader_shares: u64,
+    ) -> accounts::VaultSeat {
+        let mut packed = [0; crate::naming::VAULT_NAME_LEN];
+        packed[..name.len()].copy_from_slice(name.as_bytes());
+        accounts::VaultSeat {
+            idx: 0,
+            seq: 4,
+            leader: Pubkey::new_unique(),
+            name: packed,
+            name_locked: false,
+            outside_allowed: allowed,
+            outside_approved: approved,
+            seeded: leader_shares > 0,
+            stake: accounts::VaultStake {
+                leader_shares,
+                total_shares: leader_shares,
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn the_vault_passes_only_named_open_and_funded() {
+        let ok = vault_verdict(Some(&vault_seat("DASMAC", true, true, 10)));
+        assert_eq!(ok.verdict, Verdict::Pass, "{ok}");
+        assert!(ok.evidence.starts_with("vault DASMAC: named yes"), "{ok}");
+        // Each missing piece fails, and the evidence names it.
+        for (seat, missing) in [
+            (vault_seat("", true, true, 10), "named NO"),
+            (
+                vault_seat("DASMAC", false, true, 10),
+                "leader allows outside NO",
+            ),
+            (vault_seat("DASMAC", true, false, 10), "admin approved NO"),
+            (vault_seat("DASMAC", true, true, 0), "leader funded NO"),
+        ] {
+            let c = vault_verdict(Some(&seat));
+            assert_eq!(c.verdict, Verdict::Fail, "{c}");
+            assert!(c.evidence.contains(missing), "{c}");
+        }
+        // An unnamed vault shows as its number, as on every surface.
+        assert!(vault_verdict(Some(&vault_seat("", true, true, 10)))
+            .evidence
+            .starts_with("vault #4:"));
+        let none = vault_verdict(None);
+        assert_eq!(
+            (none.verdict, none.surface.as_str()),
+            (Verdict::Fail, "vault TGBP-USDC")
+        );
     }
 
     #[test]

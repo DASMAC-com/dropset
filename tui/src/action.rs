@@ -596,7 +596,9 @@ impl Action {
                 "localnet only — no validator or ledger to drive on mainnet"
             }
             Action::ProbeSwap => "spends real funds — no mainnet taker key",
-            Action::OpenVault => "opens at public launch, signed through the cockpit — not wired yet",
+            Action::OpenVault => {
+                "opens at public launch, signed through the cockpit — not wired yet"
+            }
             Action::Teardown => "use the headless teardown binary on a real cluster",
             // Enumerated rather than a `_` arm, and that is the point:
             // `available_on` above is exhaustive, so adding a variant is a

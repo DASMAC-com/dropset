@@ -618,10 +618,8 @@ fn decode_admins(data: &[u8]) -> Result<Vec<Pubkey>> {
     let keys = data
         .get(tail + 4..tail + 4 + n * 32)
         .with_context(|| format!("the registry is too short for its {n} admins"))?;
-    Ok(keys
-        .chunks_exact(32)
-        .map(|k| Pubkey::new_from_array(k.try_into().expect("32 bytes")))
-        .collect())
+    let (keys, _) = keys.as_chunks::<32>();
+    Ok(keys.iter().map(|k| Pubkey::new_from_array(*k)).collect())
 }
 
 /// Every live vault on `market`, read **fresh**: `Ok(None)` when the market

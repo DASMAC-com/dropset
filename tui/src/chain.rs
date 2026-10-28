@@ -1514,7 +1514,10 @@ mod tests {
         );
         let ix = build_set_allow_outside_depositors_ix(L, &leader, &market, 3, true);
         assert_eq!(ix.program_id, DROPSET_ID);
-        assert_eq!(metas(&ix), vec![(leader, true, false), (market, false, true)]);
+        assert_eq!(
+            metas(&ix),
+            vec![(leader, true, false), (market, false, true)]
+        );
         // Discriminator, then the u32 sector and the one-byte flag.
         assert_eq!(&ix.data[ix.data.len() - 5..], &[3, 0, 0, 0, 1]);
         let ix = build_set_outside_deposits_approved_ix(L, &admin, &market, 3, false);

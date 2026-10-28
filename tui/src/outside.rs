@@ -4,7 +4,7 @@
 //! Both halves start unset at `create_vault`, so a vault the cockpit
 //! creates takes no outside capital until each side opts in: the leader
 //! through `set_allow_outside_depositors`, then a registry admin through
-//! `set_outside_deposits_approved`. [`open`] sends the leader's half and
+//! `set_outside_deposits_approved`. [`open()`] sends the leader's half and
 //! reads it back, then the admin's when this session's wallet is in the
 //! registry's admin set — and when it is not, stops there and says the
 //! admin half is outstanding, rather than send a write the program
@@ -21,7 +21,7 @@ use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 
-/// What [`open`] still has to send for `seat`, given whether the session
+/// What [`open()`] still has to send for `seat`, given whether the session
 /// holds an admin key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Plan {
@@ -74,7 +74,14 @@ pub fn open(
             log,
         )
         .context("send set_allow_outside_depositors")?;
-        confirm(client, cluster, market, &seat, |s| s.outside_allowed, "leader")?;
+        confirm(
+            client,
+            cluster,
+            market,
+            &seat,
+            |s| s.outside_allowed,
+            "leader",
+        )?;
     }
     if todo.admin {
         let ix = chain::build_set_outside_deposits_approved_ix(
@@ -93,7 +100,14 @@ pub fn open(
             log,
         )
         .context("send set_outside_deposits_approved")?;
-        confirm(client, cluster, market, &seat, |s| s.outside_approved, "admin")?;
+        confirm(
+            client,
+            cluster,
+            market,
+            &seat,
+            |s| s.outside_approved,
+            "admin",
+        )?;
     }
     if todo.leader || todo.admin {
         log.accounts_changed();
@@ -135,13 +149,21 @@ pub fn open(
 
 /// `leader`'s one vault on `market`, read fresh. A frozen or closed vault
 /// is refused: it takes no deposit whatever the gate says.
-fn read(client: &RpcClient, cluster: Cluster, market: &Pubkey, leader: &Pubkey) -> Result<VaultSeat> {
+fn read(
+    client: &RpcClient,
+    cluster: Cluster,
+    market: &Pubkey,
+    leader: &Pubkey,
+) -> Result<VaultSeat> {
     let seats = accounts::vault_seats_fresh(client, cluster, market)?
         .context("market not found — create the market first")?;
     let seat = accounts::sole_seat_led_by(&seats, leader)
         .with_context(|| format!("{leader} does not lead exactly one vault on {market}"))?;
     if seat.stake.winding_down {
-        bail!("vault {} is frozen or closed — it takes no deposits", seat.label());
+        bail!(
+            "vault {} is frozen or closed — it takes no deposits",
+            seat.label()
+        );
     }
     Ok(seat)
 }
@@ -164,7 +186,10 @@ fn confirm(
         );
     }
     if !set(&now) {
-        bail!("vault {}'s {half} half reads unset after the write", seat.label());
+        bail!(
+            "vault {}'s {half} half reads unset after the write",
+            seat.label()
+        );
     }
     Ok(())
 }
