@@ -57,13 +57,6 @@ export const CLUSTER: Cluster =
     : "mainnet";
 export const IS_LOCALNET = CLUSTER === "localnet";
 
-// Show the committed mock vaults (lib/data/vaults.json) as a separate, labeled
-// section below the live ones on /vaults. Off by default: the live section is
-// read straight off the chain, and fake rows beside real vaults would read as
-// real. Set NEXT_PUBLIC_SHOW_MOCK_VAULTS=1 for demos.
-export const SHOW_MOCK_VAULTS =
-  process.env.NEXT_PUBLIC_SHOW_MOCK_VAULTS?.trim() === "1";
-
 // External APIs. With a server-side key set (DFLOW_API_KEY, JUPITER_API_KEY),
 // next.config.ts sets the matching *_PROXY flag and the browser calls the
 // app's own route handler, which adds the key; without one it calls the

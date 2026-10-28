@@ -17,11 +17,7 @@ import { TokenIcon } from "@/components/ui/TokenIcon";
 import { VaultActionDialog } from "@/components/vaults/VaultActionDialog";
 import { shortenMint } from "@/lib/data/currencies";
 import { allTimePnl, positionPnl } from "@/lib/data/pnl";
-import {
-  MOCK_OWNER,
-  userPosition,
-  type VaultPosition,
-} from "@/lib/data/positions";
+import type { VaultPosition } from "@/lib/data/positions";
 import {
   contributeClosedReason,
   type FxPairGroup,
@@ -30,14 +26,12 @@ import {
   groupMetric,
   groupVaultMarkets,
   type MetricKey,
-  MOCK_VAULT_FX_GROUPS,
   type Vault,
   type VaultMarket,
   vaultLabel,
   vaultMetric,
   vaultRefPrice,
 } from "@/lib/data/vaults";
-import { SHOW_MOCK_VAULTS } from "@/lib/env";
 import { emit, useAppEvent } from "@/lib/events";
 import { FORMATS } from "@/lib/format/formats";
 import { useChainVaults } from "@/lib/hooks/useChainVaults";
@@ -57,9 +51,6 @@ import {
 // Pin the generic shared header to this table's metric keys so the literal
 // `sortKey` props type-check against `sort` / `onToggle`.
 const VaultSortHeader = SortableHeader<MetricKey>;
-
-// The mock rows, shown only behind the flag, as their own section.
-const MOCK_GROUPS: FxPairGroup[] = SHOW_MOCK_VAULTS ? MOCK_VAULT_FX_GROUPS : [];
 
 // Shared null-sinking, case-insensitive comparator (see SortableHeader).
 const cmpMetric = compareSortValues;
@@ -392,30 +383,15 @@ function MessageRow({ colSpan, text }: { colSpan: number; text: string }) {
   );
 }
 
-// The heading above the mock section, so its rows never read as live ones.
-function MockSectionHeading({ colSpan }: { colSpan: number }) {
-  return (
-    <tr className="bg-background">
-      <td
-        colSpan={colSpan}
-        className="border-border border-t px-3 pt-10 pb-1 text-muted-fg text-xs"
-      >
-        <span className="font-medium text-amber-400">Demo vaults.</span> Mock
-        data, not on-chain.
-      </td>
-    </tr>
-  );
-}
-
-// One section of the table (live or mock), filtered and sorted both ways.
+// The table's rows, filtered and sorted both ways.
 type ArrangedSection = {
   groups: { group: FxPairGroup; vaults: GroupedVault[] }[];
   flat: GroupedVault[];
 };
 
-// Filter + sort one section's groups: grouped (each group's vaults filtered
-// and sorted, then the groups sorted, dropping any left empty) and flat (every
-// vault in the section, filtered and sorted as one list).
+// Filter + sort the groups: grouped (each group's vaults filtered and sorted,
+// then the groups sorted, dropping any left empty) and flat (every vault,
+// filtered and sorted as one list).
 function arrangeSection(
   sectionGroups: FxPairGroup[],
   keep: (group: FxPairGroup, entry: GroupedVault) => boolean,
@@ -526,31 +502,22 @@ function VaultsInner() {
     [pin.base, pin.quote, pin.leader],
   );
 
-  // A live vault's position is the connected wallet's VaultDepositor account.
-  // On a mock row a connected wallet stands in for the mock depositor, so the
-  // seeded positions surface; disconnected → no positions either way.
-  const mockOwner = connected ? MOCK_OWNER : null;
+  // A vault's position is the connected wallet's VaultDepositor account.
   const positionFor = useCallback(
     (vault: Vault): VaultPosition | null =>
-      vault.chain
-        ? (chain.positions.get(vault.vaultPubkey) ?? null)
-        : mockOwner
-          ? userPosition(mockOwner, vault.vaultPubkey)
-          : null,
-    [mockOwner, chain.positions],
+      chain.positions.get(vault.vaultPubkey) ?? null,
+    [chain.positions],
   );
 
   // The dialog's vault as the latest poll has it. The row is captured at
-  // click, but a live vault's reserves, shares and gates move while the
-  // dialog stays open (its own deposit or withdraw moves them), and the
-  // previews and the deposit gate must read the current state. A mock row,
-  // or a vault the latest poll no longer lists, keeps the captured row.
+  // click, but a vault's reserves, shares and gates move while the dialog
+  // stays open (its own deposit or withdraw moves them), and the previews and
+  // the deposit gate must read the current state. A vault the latest poll no
+  // longer lists keeps the captured row.
   const currentVault = (captured: Vault): Vault =>
-    captured.chain
-      ? (chain.markets
-          .flatMap((m) => m.vaults)
-          .find((v) => v.vaultPubkey === captured.vaultPubkey) ?? captured)
-      : captured;
+    chain.markets
+      .flatMap((m) => m.vaults)
+      .find((v) => v.vaultPubkey === captured.vaultPubkey) ?? captured;
 
   // The connected user's position value in a vault (0 if none) — the sort key
   // "position" can't live in vaultMetric since it depends on wallet state.
@@ -613,9 +580,7 @@ function VaultsInner() {
 
   const q = query.trim().toLowerCase();
 
-  // The live and mock sections are arranged separately so sorting never
-  // interleaves mock rows among live ones.
-  const [live, mock] = useMemo(() => {
+  const live = useMemo(() => {
     const { key, direction } = effective;
     const keep = (group: FxPairGroup, entry: GroupedVault) =>
       matchesQuery(q, group, entry) && matchesPin(entry);
@@ -623,10 +588,7 @@ function VaultsInner() {
       cmpMetric(groupSortValue(a, key), groupSortValue(b, key), direction);
     const cmpVault = (a: GroupedVault, b: GroupedVault) =>
       cmpMetric(vaultSortValue(a, key), vaultSortValue(b, key), direction);
-    return [
-      arrangeSection(liveGroups, keep, cmpGroup, cmpVault),
-      arrangeSection(MOCK_GROUPS, keep, cmpGroup, cmpVault),
-    ] as const;
+    return arrangeSection(liveGroups, keep, cmpGroup, cmpVault);
   }, [liveGroups, effective, q, matchesPin, groupSortValue, vaultSortValue]);
 
   const onManage = (market: VaultMarket, vault: Vault) =>
@@ -649,26 +611,23 @@ function VaultsInner() {
     );
 
   // `m` opens the manage dialog when the current filters resolve to exactly one
-  // vault across both sections, like /currencies' f/t lone-result picks. The
-  // flat lists hold the same rows as the groups, so they serve either view.
-  // The dialog itself shows Connect / Deposit / Manage as appropriate.
+  // vault, like /currencies' f/t lone-result picks. The flat list holds the
+  // same rows as the groups, so it serves either view. The dialog itself
+  // shows Connect / Deposit / Manage as appropriate.
   useAppEvent("vaultsManageOnlyResult", () => {
-    const entries = [...live.flat, ...mock.flat];
-    const only = entries.length === 1 ? entries[0] : null;
+    const only = live.flat.length === 1 ? live.flat[0] : null;
     if (only) setDialog({ market: only.market, vault: only.vault });
   });
 
   // Columns: Pair, Name, Your Position, Manage, TVL.
   const colSpan = 5;
 
-  // One section's rows: FX headings over their vaults when grouped, else the
-  // flat list. Both sections can hold the same FX pair, so the heading key
-  // carries the section's name.
-  const sectionRows = (section: ArrangedSection, name: string) =>
+  // The rows: FX headings over their vaults when grouped, else the flat list.
+  const sectionRows = (section: ArrangedSection) =>
     groupByPair
       ? section.groups.flatMap(({ group, vaults }) => [
           <FxGroupHeading
-            key={`h-${name}-${group.key}`}
+            key={`h-${group.key}`}
             group={group}
             colSpan={colSpan}
           />,
@@ -702,7 +661,7 @@ function VaultsInner() {
           />
         ));
 
-  // What the live section says when it has no rows: still loading, the chain
+  // What the table says when it has no rows: still loading, the chain
   // unreachable, nothing on-chain at all, or vaults the filters hide.
   const liveEmptyText =
     chain.status === "loading"
@@ -819,14 +778,10 @@ function VaultsInner() {
             </thead>
             <tbody>
               {live.flat.length > 0 ? (
-                sectionRows(live, "live")
+                sectionRows(live)
               ) : (
                 <MessageRow colSpan={colSpan} text={liveEmptyText} />
               )}
-              {mock.flat.length > 0 && [
-                <MockSectionHeading key="mock-heading" colSpan={colSpan} />,
-                ...sectionRows(mock, "mock"),
-              ]}
             </tbody>
           </table>
         </div>

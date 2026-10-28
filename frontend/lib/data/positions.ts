@@ -1,11 +1,7 @@
 // cspell:ignore soulbound
-import positionsData from "./positions.json";
 
-// Outside-depositor positions, one per (owner, vault). This module is the seam
-// between the UI and the position data source: today it parses a committed
-// mock fixture (positions.json), but every consumer reads through the accessor
-// below, so swapping in a real indexer fetch (or an on-chain VaultDepositor
-// account read) later is a one-file change. Mirrors lib/data/vaults.ts.
+// An outside depositor's position, one per (owner, vault), read from the
+// owner's VaultDepositor account (lib/data/chainVaults.ts → chainPosition).
 //
 // See docs/architecture.md → "Depositor positions and cost basis": the
 // VaultDepositor account stores the depositor's claim (`shares`) and cost
@@ -42,20 +38,3 @@ export type VaultPosition = {
   realizedYield: number;
   realizedPrice: number;
 };
-
-// The mock depositor whose positions the preview surfaces. A connected wallet
-// is treated as this owner so the seeded positions are visible without a real
-// indexer; the live accessor will key off the connected wallet's pubkey.
-export const MOCK_OWNER = "MockHolderBootStrapXk9PqVtZ7rWmYhJ2nGcQsLe4d";
-
-const POSITIONS = (positionsData as { positions: VaultPosition[] }).positions;
-
-// The caller's position in a vault, or null if they hold none. At most one row
-// can match — the VaultDepositor PDA is soulbound (one per owner+vault), not a
-// transferable NFT.
-export const userPosition = (
-  owner: string,
-  vaultPubkey: string,
-): VaultPosition | null =>
-  POSITIONS.find((p) => p.owner === owner && p.vaultPubkey === vaultPubkey) ??
-  null;
