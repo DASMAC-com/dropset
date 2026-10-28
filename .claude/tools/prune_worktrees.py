@@ -439,14 +439,18 @@ def _read_merged(args) -> set[str]:
 # What a removal under --closed leaves to recover from. `git branch -D` drops
 # the branch's own reflog and `git worktree remove` drops the tree's HEAD log,
 # so neither reflog keeps it: the reported tip is the handle, and the commits
-# stay in the object store until `git gc` prunes unreachable objects.
+# stay in the object store only until `git gc` prunes them — an expiry measured
+# from the OBJECT's age, not the deletion, so an old stray's commits can go at
+# the very next gc. A dirty tree's uncommitted files have no handle at all.
 CLOSED_HELP = (
     "branch names whose issue is completed or canceled: the uncommitted, "
     "unpushed and no-upstream holds are lifted, and only a live session lock "
-    "holds. A removed name's commits are not kept by any reflog (the branch's "
-    "is deleted with it); restore one with `git branch <name> <tip>` from the "
-    "report's `ahead` entry, before `git gc` prunes unreachable objects "
-    "(gc.pruneExpire, two weeks by default)"
+    "holds. A removed tree's uncommitted and untracked files are discarded "
+    "for good. Its commits are not kept by any reflog (the branch's is "
+    "deleted with it); restore one promptly with `git branch <name> <tip>` "
+    "from the report's `ahead` entry, since `git gc` prunes unreachable "
+    "objects older than gc.pruneExpire (two weeks by default), counted from "
+    "the commit's own age, so an old branch's can go at the next gc"
 )
 
 

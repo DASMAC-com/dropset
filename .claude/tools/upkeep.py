@@ -1191,9 +1191,11 @@ def run(argv: list[str]) -> int:
 
     if args.cmd == "prune":
         # Armed by the flag, not the environment: the caller is the operator,
-        # whose `--apply` is the approval. The gates that make that safe are the board rule and the pruner's
-        # dirty/unpushed refusal, not a prompt. No document write and no stamp
-        # — this is not the day's pass.
+        # whose `--apply` is the approval. The gates that make that safe are
+        # the board rule (completed or canceled, no open PR) and the pruner's
+        # live-lock hold, not a prompt: a closed name's dirty or unpushed work
+        # no longer holds it. No document write and no stamp — this is not the
+        # day's pass.
         ctx = Ctx(
             base=base,
             armed=args.apply,

@@ -511,6 +511,37 @@ class NotificationTests(unittest.TestCase):
             "notifications: dismissed 0 notification(s), 1 failed", result["notes"]
         )
 
+    def test_no_pr_reads_no_notifications(self):
+        rc, result, runner = self._close(prs=[], threads=[("t1", 503)])
+        self.assertEqual(rc, 0, result)
+        self.assertFalse(any(c[:2] == ["gh", "api"] for c in runner.calls))
+        self.assertIsNone(result["notifications"])
+
+    def test_an_unreadable_list_is_a_note_and_the_removal_still_happens(self):
+        class ObjectPage(NotifyingRun):
+            # gh exits 0 with an error object rather than a thread list.
+            def __call__(self, cmd, cwd=None):
+                if cmd[:2] == ["gh", "api"] and "notifications?" in cmd[2]:
+                    self.calls.append(cmd)
+                    return 0, json.dumps({"message": "Bad credentials"}), ""
+                return super().__call__(cmd, cwd)
+
+        runner = ObjectPage()
+        rc, result = close(ns(), run=runner, writer=Writer(), pid=1000)
+        self.assertEqual(rc, 0, result)
+        self.assertTrue(result["removed"])
+        self.assertTrue(any("not a thread list" in n for n in result["notes"]))
+
+    def test_a_dismissal_that_raises_is_a_note_not_a_lost_removal(self):
+        def boom(*_a, **_k):
+            raise AttributeError("'str' object has no attribute 'get'")
+
+        with mock.patch.object(close_session.pr_notifications, "dismiss", boom):
+            rc, result, _ = self._close(threads=[("t1", 503)])
+        self.assertEqual(rc, 0, result)
+        self.assertTrue(result["removed"])
+        self.assertIn("dismissal failed: AttributeError", result["notifications"])
+
     def test_a_dry_run_or_a_refusal_dismisses_nothing(self):
         for args, fake in ((ns(dry_run=True), {}), (ns(), {"status": " M x\n"})):
             _, result, runner = self._close(args, threads=[("t1", 503)], **fake)

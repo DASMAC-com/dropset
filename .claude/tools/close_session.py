@@ -324,9 +324,14 @@ def dismiss_threads(run: Runner, prs: list[dict], result: dict) -> None:
     numbers = {int(p["number"]) for p in prs if p.get("number") is not None}
     if not numbers:
         return
-    rc, out = pr_notifications.dismiss(
-        lambda gh_args: run(["gh", *gh_args], None), numbers, apply=True
-    )
+    try:
+        rc, out = pr_notifications.dismiss(
+            lambda gh_args: run(["gh", *gh_args], None), numbers, apply=True
+        )
+    except Exception as e:  # noqa: BLE001 — the state landed; never lose the removal
+        result["notifications"] = f"dismissal failed: {type(e).__name__}: {e}"
+        result["notes"].append(f"notifications: {result['notifications']}")
+        return
     result["notifications"] = pr_notifications.summary(out)
     if rc != 0 or out["failed"] or out["notice"]:
         result["notes"].append(f"notifications: {result['notifications']}")

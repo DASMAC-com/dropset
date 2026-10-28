@@ -91,9 +91,17 @@ def list_threads(gh: Gh) -> list[tuple[str, int]]:
     threads: list[tuple[str, int]] = []
     for page in range(1, MAX_PAGES + 1):
         path = f"/repos/{REPO}/notifications?all=true&per_page={PER_PAGE}&page={page}"
-        raw = _json(gh, ["api", path]) or []
+        raw = _json(gh, ["api", path])
+        if raw is None:
+            raw = []
+        if not isinstance(raw, list):
+            # An rc-0 object (an error body) is unreadable, never zero threads.
+            raise ValueError(f"page {page} is not a thread list")
         for n in raw:
-            m = PR_URL_RE.search(((n.get("subject") or {}).get("url")) or "")
+            subject = n.get("subject") if isinstance(n, dict) else None
+            if not isinstance(subject, dict):
+                continue
+            m = PR_URL_RE.search(subject.get("url") or "")
             if m:
                 threads.append((str(n["id"]), int(m.group(1))))
         if len(raw) < PER_PAGE:

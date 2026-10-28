@@ -9,10 +9,12 @@ injected runner and lookup, so nothing here touches git, GitHub or Linear.
 import contextlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 import planning_doc
 import prune_conversations
@@ -390,8 +392,20 @@ class PassTests(unittest.TestCase):
             ),
             "",
         )
+        notice = (
+            0,
+            json.dumps(
+                {
+                    "summary": "dismissed 0 notification(s); PR list failed (x)",
+                    "failed": [],
+                    "notice": "PR list failed (x)",
+                }
+            ),
+            "",
+        )
         for out, want in (
             (partial, "1 failed"),
+            (notice, "PR list failed"),
             ((1, "", "gh: not logged in"), "dismissal tool failed: gh: not logged in"),
         ):
             ctx = make_ctx(FakeRun(dismiss_out=out), dismiss=True)
@@ -996,6 +1010,29 @@ class CliTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(upkeep.run(["upkeep.py", "run"]), 2)
         self.assertIn("refused", err.getvalue())
+
+    def test_the_daily_pass_always_dismisses_and_prune_only_under_apply(self):
+        # The pre-launch's notifications line reads "dismissed": `run` arms the
+        # dismissal whatever DS_UPKEEP_ARMED says, while `prune` arms both
+        # steps on its own --apply alone.
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            upkeep.check_base = lambda run, cwd: (base, [], "")
+            upkeep.write_report = lambda report: None
+            seen = []
+
+            def fake_pass(ctx, only=None):
+                seen.append((ctx.armed, ctx.dismiss))
+                return {"ran_at": "t", "armed": ctx.armed, "steps": []}
+
+            upkeep.run_pass = fake_pass
+            invocations = (["run", "--no-doc"], ["prune"], ["prune", "--apply"])
+            with mock.patch.dict(os.environ, {upkeep.ARM_ENV: "0"}):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    for argv in invocations:
+                        upkeep.run(["upkeep.py", *argv])
+        self.assertEqual(seen, [(False, True), (False, False), (True, True)])
 
     def test_a_written_report_stamps_the_run(self):
         with tempfile.TemporaryDirectory() as d:

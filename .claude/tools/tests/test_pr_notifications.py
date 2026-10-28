@@ -4,8 +4,10 @@ Run via the repo's ``make tools-tests`` (discovery adds ``.claude/tools`` as
 the top-level dir so the bare ``import pr_notifications`` below resolves).
 """
 
+import io
 import json
 import unittest
+from unittest import mock
 
 import pr_notifications
 from pr_notifications import compact, dismiss, select, summary
@@ -195,6 +197,62 @@ class PagingTests(unittest.TestCase):
         dismiss(gh, {663}, apply=False)
         pages = [a for a in gh.calls if a[0] == "api" and "notifications?" in a[1]]
         self.assertEqual(len(pages), pr_notifications.MAX_PAGES)
+
+
+class MalformedListTests(unittest.TestCase):
+    def test_an_object_page_is_unreadable_not_zero_threads(self):
+        # gh exits 0 with an error body: never read as an empty inbox, and
+        # never an AttributeError escaping to an in-process caller.
+        gh = FakeGh(pages=[{"message": "Bad credentials"}])
+        rc, out = dismiss(gh, None, apply=True)
+        self.assertEqual(rc, 1)
+        self.assertIn("not a thread list", out["notice"])
+        self.assertEqual(gh.deletes(), [])
+
+    def test_malformed_items_are_skipped(self):
+        page = ["junk", {"id": "s1", "subject": "x"}, {"id": "s2"}, THREADS[0]]
+        gh = FakeGh(pages=[page])
+        _, out = dismiss(gh, {663}, apply=False)
+        self.assertEqual(out["threads"], 1)
+        self.assertEqual([t["id"] for t in out["selected"]], ["m1"])
+
+
+class CliTests(unittest.TestCase):
+    def parse(self, *argv):
+        return pr_notifications.parse_args(["prog", *argv])
+
+    def test_pr_is_repeatable_and_dry_run_is_the_default(self):
+        args = self.parse("dismiss", "--pr", "663", "--pr", "664")
+        self.assertEqual(args.pr, [663, 664])
+        self.assertFalse(args.settled)
+        self.assertFalse(args.apply)
+
+    def test_exactly_one_selector_is_required(self):
+        for argv in (["dismiss"], ["dismiss", "--pr", "1", "--settled"]):
+            with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+                self.parse(*argv)
+
+    def test_main_passes_mode_and_apply_through_and_prints_compact(self):
+        seen = []
+
+        def fake_dismiss(gh, prs, apply):
+            seen.append((prs, apply))
+            return 0, {
+                "mode": "settled", "dry_run": not apply, "threads": 0,
+                "selected": [], "dismissed": 0, "failed": [],
+                "unresolved": [], "notice": None,
+            }  # fmt: skip
+
+        out = io.StringIO()
+        with mock.patch.object(pr_notifications, "dismiss", fake_dismiss):
+            for argv in (["dismiss", "--settled", "--apply"], ["dismiss", "--pr", "7"]):
+                with (
+                    mock.patch("sys.argv", ["prog", *argv]),
+                    mock.patch("sys.stdout", out),
+                ):
+                    self.assertEqual(pr_notifications.main(), 0)
+        self.assertEqual(seen, [(None, True), ({7}, False)])
+        self.assertIn('"summary": "would dismiss 0 notification(s)"', out.getvalue())
 
 
 class OutputTests(unittest.TestCase):

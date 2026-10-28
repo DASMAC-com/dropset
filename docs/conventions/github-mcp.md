@@ -126,11 +126,13 @@ which drifted behind it twice:
   one rule every other caller applies: `dismiss --settled` marks done
   every thread whose PR is merged or closed, **whatever its issue's
   Linear state** (a merged PR whose issue sits In Review is settled
-  code), never an open PR's; `dismiss --pr N` does it for named PRs.
-  One `DELETE` per thread, never mark-all, dry run unless `--apply`.
-  The upkeep pass runs it armed every morning, the planning close-out
-  runs it, and `close_session.py` runs `--pr` for its branch before
-  removing the worktree.
+  code), never an open PR's. `dismiss --pr N` instead marks done every
+  thread on the named PRs **whatever their state** — the caller vouches
+  they are settled. One `DELETE` per thread, never mark-all, dry run
+  unless `--apply`. The upkeep pass runs `--settled` armed every
+  morning, the planning close-out runs it, and `close_session.py` calls
+  the `--pr` path in-process for its branch's PRs (having already
+  refused an open one) before removing the worktree.
 
 - **Unsubscribing from a new PR's notifications** (`init-pr`) — right
   after the draft PR is created, so its lifecycle (CI, assignment,

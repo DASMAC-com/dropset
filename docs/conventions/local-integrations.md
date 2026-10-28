@@ -1797,8 +1797,10 @@ running is **stale** and lifted; a reused pid, a bare `locked` or
 a hand-written reason reads as live, which only skips the tree.
 The report names each name's commits ahead of `origin/main` and
 its tip: `git branch -D` drops the branch's reflog, so the tip is
-the restore handle (`git branch <name> <tip>`) until `git gc`
-prunes the unreachable commits.
+the restore handle (`git branch <name> <tip>`) — use it promptly,
+since `git gc`'s expiry counts from the commit's own age, so an old
+stray's commits can go at the next gc. A dirty tree's uncommitted
+files are discarded for good.
 
 A name passed as **`--merged`** instead — `prune_worktrees.py`
 called directly; upkeep's daily pass and its `prune --apply` both
