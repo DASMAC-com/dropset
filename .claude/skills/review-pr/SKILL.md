@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff re-check the PR still merges cleanly before moving the issue In Review and offering to enqueue the PR, then watch the queue itself through to merged or dequeued and, on a merge, run the post-merge tail — session metrics filed unprompted, then one mark-Done-and-close question.
+description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff re-check the PR still merges cleanly before moving the issue In Review and offering to enqueue the PR, then watch the queue itself through to merged or dequeued and, on a merge, run the post-merge tail — the session-metrics tail run unprompted, then one mark-Done-and-close question.
 user-invocable: true
 ---
 
@@ -1668,16 +1668,8 @@ migrations or generation inputs, and whether it spans crates.
    dequeue left for the user), say in the report that session metrics
    were **not** captured this run.
 
-   Invoke `/session-metrics`. It derives the session id from the
-   scratchpad path, ranks the run's sinks and hardening candidates in
-   its own process (the transcript never enters context), and writes
-   each trim lever into the final message's `Session account` block,
-   filing nothing — the digest lifts it for the fold analyst. It
-   authors no source edit. **Ground it in
-   this run:** carry the wasteful payloads you noticed (a whole-file
-   Read, a verbose log, a repeated PR read) into it, per
-   `docs/conventions/context-economy.md` → "Track consumption ideas as
-   you go", so its levers are concrete.
+   Invoke `/session-metrics`, the shared tail: the brief, then the
+   `Session account`.
 
 1. **Surface the merge-queue outcome.** Only if the enqueue was
    approved. **Watch the queue yourself: "come back and tell me when
@@ -1847,7 +1839,7 @@ migrations or generation inputs, and whether it spans crates.
      planning session, or filed as a task — each filing messaged to
      the curator (`curate-<day>`, via `ListAgents`; with none live,
      the scheduler). Then ask via
-     `AskUserQuestion` — *"all follow-up complete: metrics filed,
+     `AskUserQuestion` — *"all follow-up complete: metrics captured,
      feedback forwarded — mark Done?"* — offering **"Mark Done and
      remove the worktree (Recommended)"** first and **"Mark Done, keep
      the worktree"** second. Only this approval moves the issue to
@@ -1855,10 +1847,11 @@ migrations or generation inputs, and whether it spans crates.
      the state write lands before any removal:
 
      ```sh
-     python3 .claude/tools/close_session.py --state Done
+     python3 .claude/tools/close_session.py --state Done --session-id <uuid>
      ```
 
-     (`--keep-worktree` for the second option). It refuses with
+     (`--keep-worktree` for the second option; the id appends the
+     cost line). It refuses with
      nothing changed when it cannot prove the close safe — a dirty
      tree, an unpushed commit, an open or unreadable PR, a lock another
      session holds, a failed state write — naming the reason in

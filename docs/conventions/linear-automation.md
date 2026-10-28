@@ -48,9 +48,10 @@ pattern: reference the variable **names**, and keep the resolved
 UUIDs out of every committed file.
 
 **The trim-lever pipeline runs on the daily digest.** Sessions
-**report**; the analyst **judges**. A session ends by writing its
-levers into its own `Session account` block (`session-metrics` step 4)
-and the daily upkeep pass's digest lifts each block verbatim beside
+**report**; the analyst **judges**. A session ends by writing what it
+kept running into in its own `Session account` block (the
+`session-metrics` tail) and the daily upkeep pass's digest lifts each
+block verbatim beside
 that session's numbers (`docs/conventions/context-economy.md` → "The
 daily digest"). `trim-context` is the **fold analyst**: it reads the
 whole day's digest at once — every session's sinks, hardening

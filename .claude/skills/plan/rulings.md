@@ -126,10 +126,11 @@ the document's state sections.
    128-character hex string of the 64-byte keypair; the cockpit
    decodes hex, base58 or JSON in memory.
 
-1. **Session metrics is not an ask.** It files unprompted
-   immediately before the atomic-close question; nothing files if
-   the PR leaves the queue. Cost is reported right before the
-   close.
+1. **Session metrics is a digest, not a session step.** A session
+   prints a tool estimate at its end, writes its account, and files
+   nothing; upkeep digests every transcript each morning and the
+   bootstrap's fold analyst files from the digest. The cost line on
+   the issue is the close tool's write.
 
 1. **Housekeeping never costs a tab visit.** Upkeep runs as a tool
    inside the plan launch with its report in the bootstrap;

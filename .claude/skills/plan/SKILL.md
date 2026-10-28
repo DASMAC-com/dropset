@@ -553,22 +553,12 @@ nothing, since the row records what was audited, not scheduled.
 through its `End of upkeep report.` line: the tool splices only
 between the two and refuses a section whose end line is gone.
 
-**7. Capture the session's token profile at close-out.** A
-planning session is a lever producer too. **Compute its id; never
-list the projects directory** (`history.md`):
-
-```sh
-python3 .claude/tools/resolve_session.py --daily-id plan
-```
-
-```sh
-make session-metrics SESSION=<uuid>
-```
-
-It reads the cycle counter itself; pass `--date YYYYMMDD` (and
-`--cycle N`) for an earlier session. Levers go in the final
-message's `Session account` block, never filed;
-`/session-metrics` step 5 writes it.
+**7. Run `/session-metrics` at close-out**, the shared tail,
+before the final document write. Its id comes from
+`resolve_session.py --daily-id plan` (`--date YYYYMMDD`,
+`--cycle N` for an earlier one; `history.md`), and the rewrite
+carries its `session_metrics.py --cost-line` output as one line
+under `Session-metrics state`.
 
 **A planning-derived lever must be quality-preserving.** Fidelity
 is the point and is never traded for tokens: a cheaper fetch, a

@@ -1,6 +1,6 @@
 ---
 name: harden
-description: Turn a proven ad-hoc command shape into a committed, tested Python tool — the consumer for the hardening candidates session-metrics already ranks. Takes a candidate (a repeated command shape, or a named workflow), demands provenance that it actually recurred, writes the tool under .claude/tools/ with unittest coverage and a real assertion over an embedded fixture, wires the skill reference that will drive it, and verifies it runs before committing. Refuses to harden a shape with no measured recurrence.
+description: Turn a proven ad-hoc command shape into a committed, tested Python tool — the consumer for the hardening candidates the daily digest already ranks. Takes a candidate (a repeated command shape, or a named workflow), demands provenance that it actually recurred, writes the tool under .claude/tools/ with unittest coverage and a real assertion over an embedded fixture, wires the skill reference that will drive it, and verifies it runs before committing. Refuses to harden a shape with no measured recurrence.
 user-invocable: true
 ---
 
@@ -12,7 +12,7 @@ artifact.**
 The repo already has both halves of this loop except the
 middle. The tooling convention says a workflow that is
 established and repeated should become a Python tool. And
-`session-metrics` already **produces the signal** — it ranks
+the daily digest already **carries the signal** — it ranks
 repeated command shapes worth hardening, each labelled by cost
 class (context / context (failures) / wall-clock /
 prompt-churn).
@@ -25,12 +25,12 @@ step in the meta loop stayed manual. This verb closes the gap.
 
 A candidate, in any of these forms:
 
-- a **command shape** from a `session-metrics` hardening list
+- a **command shape** from a digest's `Hardening` line
   ("14 invocations of `psql -v … -f …`");
 - a **named workflow** the operator describes ("verifying a
   provisioned Grafana instance");
-- nothing — in which case run `/session-metrics` for this
-  session first and take its top candidate.
+- nothing — in which case take the top candidate from the latest
+  digest (`<base>/.claude/session-metrics/digest-<YYYY-MM-DD>.md`).
 
 **Prefer a candidate that eliminates turns.** A multi-turn flow
 with no judgment in it, collapsed into one tool run, beats a

@@ -48,8 +48,18 @@ backstop: the pruner refuses a branch with no upstream (every architect close,
 and a pruned squash-merge) and skips a locked tree, so the exit-2 note says
 when the tree needs removing by hand.
 
+``--session-id <uuid>`` adds the session's one-line cost estimate
+(``session_metrics.cost_line``) to the issue body, appended zero-echo once the
+state write is confirmed and before the removal. It is priced before the write,
+so a session that cannot be priced is known before anything changes. A session id that
+resolves to no transcript skips the line and says so in ``notes``; a failed
+append is a note too, never a refusal, since the state has landed. In the
+result, ``cost_line`` is the line appended — or, on a dry run, the line that
+would be. A re-run after an exit 2 appends a second line; remove the tree by
+hand instead.
+
 Prints one JSON object ``{issue, state, worktree, branch, pr, dry_run,
-keep_worktree, refused, state_written, removed, notes}``. Exit 0 on a complete
+keep_worktree, refused, state_written, removed, cost_line, notes}``. Exit 0 on a complete
 close; 1 on a refusal or error before any removal — a gate refusal changes
 nothing, while a write reported "unconfirmed" may have landed; 2 when the state
 landed but the removal did not.
@@ -75,7 +85,9 @@ from pathlib import Path
 from typing import Callable
 
 import board_batch
+import linear_issue
 import prune_worktrees
+import session_metrics
 
 REPO = "DASMAC-com/dropset"
 TIMEOUT = 60
@@ -338,12 +350,34 @@ def remove(
     return None
 
 
+def append_line(issue: str, line: str) -> None:
+    """The cost line, through the zero-echo body append. Raises on failure."""
+    linear_issue.append_body(
+        board_batch.env_var("LINEAR_API_KEY"), issue, line, dry_run=False
+    )
+
+
+def price_session(session_id: str | None, notes: list[str]) -> str | None:
+    """The session's cost line, or ``None`` with a note saying why it is
+    skipped. Priced before any write, so the close never waits on a
+    transcript read between the state landing and the removal."""
+    if not session_id:
+        return None
+    try:
+        return session_metrics.session_cost_line(session_id)
+    except Exception as e:  # noqa: BLE001 — a skipped line never stops a close
+        notes.append(f"cost line skipped, session {session_id} not priced: {e}")
+        return None
+
+
 def close(
     args: argparse.Namespace,
     run: Runner = real_run,
     writer: Callable[[str, str, bool], None] = write_state,
     pid: int | None = None,
     alive: Callable[[int], bool] = pid_alive,
+    coster: Callable[[str | None, list[str]], str | None] = price_session,
+    appender: Callable[[str, str], None] = append_line,
 ) -> tuple[int, dict]:
     result: dict = {
         "issue": None,
@@ -356,6 +390,7 @@ def close(
         "refused": None,
         "state_written": False,
         "removed": False,
+        "cost_line": None,
         "notes": [],
     }
     try:
@@ -383,15 +418,23 @@ def close(
         result["refused"] = str(e)
         return 1, result
 
+    line = coster(args.session_id, result["notes"])
     try:
         writer(result["issue"], args.state, args.dry_run)
     except Exception as e:  # noqa: BLE001 — any failure must stop the removal
         result["refused"] = f"state write failed or unconfirmed, nothing removed: {e}"
         return 1, result
     if args.dry_run:
+        result["cost_line"] = line
         result["notes"].append("dry run: gates passed, state name resolved")
         return 0, result
     result["state_written"] = True
+    if line is not None:
+        try:
+            appender(result["issue"], line)
+            result["cost_line"] = line
+        except Exception as e:  # noqa: BLE001 — the state landed; go on
+            result["notes"].append(f"cost line not appended: {e}")
 
     if args.keep_worktree:
         result["notes"].append("worktree kept; the operator removes it")
@@ -421,6 +464,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="run every gate, write nothing"
+    )
+    parser.add_argument(
+        "--session-id",
+        default=None,
+        help="the session UUID: append its cost line to the issue after the state",
     )
     return parser.parse_args(argv[1:])
 

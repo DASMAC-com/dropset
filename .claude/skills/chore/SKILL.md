@@ -50,9 +50,11 @@ sessions: temporary worktree, no PR".
 1. **Do the work.** Decisions go through `AskUserQuestion`, the
    recommended option first.
 
-1. **Hand off.** Record the outcome on the issue with a zero-echo
-   append — what was produced, where it is, anything left over — then
-   move it to In Review:
+1. **Hand off.** Run `/session-metrics`, the shared tail. Record the
+   outcome on the issue with a zero-echo append — what was produced,
+   where it is, anything left over, and last the cost line from
+   `session_metrics.py --cost-line --session-id <uuid>` — then move it
+   to In Review:
 
    ```sh
    python3 .claude/tools/linear_issue.py append --id ENG-<n> \
@@ -66,5 +68,4 @@ sessions: temporary worktree, no PR".
 
    There is no worktree to keep or remove, so `close_session.py` (which
    refuses the base checkout) is not the close; the operator's Done
-   comes later, through `wrap`'s chore branch. Say the session's cost
-   at close, as every session does.
+   comes later, through `wrap`'s chore branch.

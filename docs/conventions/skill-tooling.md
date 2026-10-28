@@ -269,7 +269,8 @@ reads a large file (a transcript) in its own process keeps it out of
 context entirely.
 
 This is a guiding rule, not a mandate to rewrite every MCP call at
-once. `session-metrics` itself nominates candidates: beyond ranking
+once. `session_metrics.py` itself nominates candidates, carried to the
+daily digest: beyond ranking
 token sinks, it flags **repeated, deterministic Bash command shapes**
 as "hardening candidates," and **`/harden` is the consumer** — it
 takes a candidate, demands the provenance that it actually recurred,

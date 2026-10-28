@@ -12,8 +12,10 @@ import subprocess
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 import board_batch
+import close_session
 from close_session import (
     Refusal,
     ancestor_pids,
@@ -111,7 +113,13 @@ class FakeRun:
 
 
 def ns(**kw):
-    base = {"state": "Done", "issue": None, "keep_worktree": False, "dry_run": False}
+    base = {
+        "state": "Done",
+        "issue": None,
+        "keep_worktree": False,
+        "dry_run": False,
+        "session_id": None,
+    }
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -350,6 +358,105 @@ class CloseTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("git"), "git not installed")
+class CostLineTests(unittest.TestCase):
+    LINE = "**Cost actual**: $72 estimate, 140 turns, peak prefix 310k, 2026-10-27\n"
+
+    def _close(self, args, coster, appender=None, writer=None):
+        order: list[str] = []
+        writer = writer or (lambda *_: order.append("write"))
+
+        def append(issue, line):
+            order.append("append")
+            if appender is not None:
+                appender(issue, line)
+
+        runner = FakeRun()
+
+        def tracking_run(cmd, cwd=None):
+            if cmd[3:5] == ["worktree", "remove"]:
+                order.append("remove")
+            return runner(cmd, cwd)
+
+        rc, result = close(
+            args,
+            run=tracking_run,
+            writer=writer,
+            pid=1000,
+            alive=lambda _pid: True,
+            coster=coster,
+            appender=append,
+        )
+        return rc, result, order
+
+    def test_line_is_appended_after_the_state_and_before_removal(self):
+        priced = []
+
+        def coster(sid, _notes):
+            priced.append(sid)
+            return self.LINE
+
+        events: list[str] = []
+        rc, result, order = self._close(
+            ns(session_id="sid-1"),
+            coster,
+            writer=lambda *_: events.append(f"write after {len(priced)} pricing"),
+            appender=lambda *_: events.append("append"),
+        )
+        self.assertEqual(rc, 0, result)
+        self.assertEqual(priced, ["sid-1"])
+        # Priced before the write, appended only after it, removed last.
+        self.assertEqual(events, ["write after 1 pricing", "append"])
+        self.assertEqual(order, ["append", "remove"])
+        self.assertEqual(result["cost_line"], self.LINE)
+
+    def test_no_session_id_appends_nothing(self):
+        rc, result, order = self._close(ns(), close_session.price_session)
+        self.assertEqual(rc, 0, result)
+        self.assertNotIn("append", order)
+        self.assertIsNone(result["cost_line"])
+
+    def test_unresolvable_session_skips_the_line_and_says_so(self):
+        def missing(_sid, *_):
+            raise FileNotFoundError("no transcript sid-x.jsonl found")
+
+        with mock.patch.object(
+            close_session.session_metrics, "session_cost_line", missing
+        ):
+            rc, result, order = self._close(
+                ns(session_id="sid-x"), close_session.price_session
+            )
+        self.assertEqual(rc, 0, result)
+        self.assertNotIn("append", order)
+        self.assertTrue(any("cost line skipped" in n for n in result["notes"]))
+
+    def test_a_failed_append_is_a_note_not_a_refusal(self):
+        def boom(*_):
+            raise RuntimeError("linear down")
+
+        rc, result, order = self._close(
+            ns(session_id="sid-1"), lambda *_: self.LINE, appender=boom
+        )
+        self.assertEqual(rc, 0, result)
+        self.assertTrue(result["removed"])
+        self.assertIsNone(result["cost_line"])
+        self.assertTrue(any("not appended" in n for n in result["notes"]))
+
+    def test_dry_run_prices_but_appends_nothing(self):
+        rc, result, order = self._close(
+            ns(session_id="sid-1", dry_run=True), lambda *_: self.LINE
+        )
+        self.assertEqual(rc, 0, result)
+        self.assertNotIn("append", order)
+        self.assertEqual(result["cost_line"], self.LINE)
+
+    def test_failed_state_write_appends_nothing(self):
+        rc, result, order = self._close(
+            ns(session_id="sid-1"), lambda *_: self.LINE, writer=Writer(fail=True)
+        )
+        self.assertEqual(rc, 1)
+        self.assertEqual(order, [])
+
+
 class RealGitRemoveTests(unittest.TestCase):
     """``remove`` against a real repository: a harness-style lock and an
     ignored build tree must not stop a no-``--force`` removal."""

@@ -386,7 +386,8 @@ ratifying in this tab, so Done lands before the removal (the
 branch is not `eng-###`, so name the issue):
 
 ```sh
-python3 .claude/tools/close_session.py --state Done --issue ENG-###
+python3 .claude/tools/close_session.py --state Done --issue ENG-### \
+  --session-id <uuid>
 ```
 
 This replaces a "the fold is the cleanup — close the PR and
@@ -465,7 +466,9 @@ is still in stage 1. Planning treats a handoff **without** that
 line as unratified, its tasks awaiting review.
 
 **Move the governing issue to In Review as part of this
-handoff** — that is what the handoff *is*. Then stop: Done is
+handoff** — that is what the handoff *is* — running
+`/session-metrics`, the shared tail, immediately before that
+write. Then stop: Done is
 the operator's call, and the planning session executes every
 board consequence.
 
