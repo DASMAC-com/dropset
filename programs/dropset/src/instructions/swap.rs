@@ -820,7 +820,7 @@ impl Swap {
         // outgrown buffer: no take fills more than `MAX_LEGS_PER_SWAP` legs
         // nor more than the book has entries, and each filled leg pushes
         // one record here and one snapshot below, so the smaller bound is
-        // exact. The records are compact (`FilledLeg`, not the 256-byte
+        // never exceeded. The records are compact (`FilledLeg`, not the 256-byte
         // `FillEvent`): `lib.rs` builds each event from one at emit time.
         let leg_bound = heap.len().min(MAX_LEGS_PER_SWAP as usize);
         let mut filled: alloc::vec::Vec<FilledLeg> = alloc::vec::Vec::with_capacity(leg_bound);
@@ -1354,8 +1354,9 @@ impl Swap {
     }
 
     /// Widen one [`FilledLeg`] into its `FillEvent`, for `lib.rs` to emit.
-    /// The per-swap constants come from the accounts and the vault-scoped
-    /// ones (`leader`, `quote_authority`, `seq`) from the leg's sector: a
+    /// The market and taker come from the accounts, `side` from the caller,
+    /// and the vault-scoped fields (`leader`, `quote_authority`, `seq`)
+    /// from the leg's sector: a
     /// swap rewrites none of them, so reading them now gives what the walk
     /// would have read when the leg filled.
     pub fn fill_event(&self, leg: &FilledLeg, side: u8) -> Result<FillEvent> {

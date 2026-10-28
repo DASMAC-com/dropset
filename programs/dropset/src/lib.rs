@@ -180,7 +180,9 @@ pub mod dropset {
         // Granularity: every leg is recorded, never truncated. The
         // matching engine accumulates a compact record per leg and we
         // build each `FillEvent` from it here, one at a time, right
-        // before `emit_cpi!` — so only one event is ever live. When the
+        // before `emit_cpi!`, so the walk never buffers whole events (the
+        // macro's own per-call allocations remain, and are what
+        // `MAX_LEGS_PER_SWAP` is sized against). When the
         // swap soft-reverts (achievable output below `min_out`), no
         // legs are returned — the loop emits nothing and the
         // instruction returns Ok so the surrounding tx can survive.

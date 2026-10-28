@@ -19,14 +19,14 @@
 //! levels are not dust-sized:
 //!
 //! - the costliest take: a cold book (every vault flushed in the same
-//!   transaction) taken to the leg cap, twenty-two legs, with or without a
-//!   one-atom remainder left over or a budget for the whole book, about 240k
-//!   to 255k CU (it varies with the keys a run derives) — over the 200k a
+//!   transaction) taken to the leg cap, nineteen legs, with or without a
+//!   one-atom remainder left over or a budget for the whole book, about 215k
+//!   to 245k CU (it varies with the keys a run derives) — over the 200k a
 //!   bare `swap` gets, which covers the first fourteen or fifteen legs (the
 //!   test pins at least fourteen), and under [`SWAP_COMPUTE_UNIT_LIMIT`]. A
-//!   remainder stranded short of the cap adds no walk, since it ends the
-//!   take, and the cap ends a whole-book take: both complete all twenty-two
-//!   legs, which the test pins, within the same range;
+//!   remainder stranded a leg short of the cap adds no walk, since it ends
+//!   the take (the test pins its eighteen legs under 300k CU), and the
+//!   cap ends a whole-book take at nineteen legs;
 //! - a one-atom sell on a fully flipped book (160 entries, nothing filled):
 //!   about 70k CU, since the walk ends at the first entry.
 //!

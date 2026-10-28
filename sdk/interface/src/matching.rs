@@ -1686,7 +1686,7 @@ mod tests {
     }
 
     /// Three vaults on one DLL, each resting all eight asks at 1_000 base
-    /// atoms, ascending from 1.09 — 24 entries, two more than the leg cap.
+    /// atoms, ascending from 1.09 — 24 entries, more than the leg cap.
     fn three_deep_vaults_market() -> Vec<u8> {
         let mut header = MarketHeader::zeroed();
         header.head = 0u32.into();

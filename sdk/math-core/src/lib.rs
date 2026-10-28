@@ -70,7 +70,7 @@ pub const N_LEVELS: usize = 8;
 /// the way it stops on an exhausted budget: the taker keeps the unspent
 /// remainder and the `min_out` soft-revert still runs, so a book deeper
 /// than one transaction can settle gives a bounded partial fill (or a clean
-/// soft-revert), never a transaction failure. The engine and the off-chain
+/// soft-revert), never a heap abort. The engine and the off-chain
 /// simulator both read it from here, so a quote and its execution stop on
 /// the same leg.
 ///
@@ -81,16 +81,15 @@ pub const N_LEVELS: usize = 8;
 /// plus flipped), so a dust-quoting vault ahead of the honest book could
 /// push every take past the heap into a VM abort.
 ///
-/// Sized from the litesvm measurement in `programs/dropset/tests/flip.rs`:
-/// on a fully flipped book at the default ten-vault cap (160 entries, the
-/// largest matching heap a take builds there) a 23-leg take completes and a
-/// 24-leg one faults, so the cap keeps one leg (~570 bytes) of headroom.
-/// That clears one dust vault's sixteen entries with six honest legs to
-/// spare. The bound falls by about one leg per vault past ten, since each
-/// vault adds `2 × N_LEVELS` matching-heap entries (640 bytes), so a
-/// vault-cap raise re-runs that test first. The instruction-trace limit (every event
-/// is a self-CPI) binds far later, near sixty legs.
-pub const MAX_LEGS_PER_SWAP: u32 = 22;
+/// Measured on a fully flipped book at the default ten-vault cap, the
+/// largest matching heap a take builds there, with the market's maximum
+/// platform fee declared, the costliest settlement: 20 legs fit and 21
+/// fault, so 19 keeps one leg of headroom and clears one dust vault's
+/// sixteen entries with three honest legs to spare. Each vault past ten
+/// costs about one leg, so a vault-cap raise re-measures first. The sizing
+/// is in `docs/architecture.md` (Order matching, heap and capacity), and
+/// `programs/dropset/tests/flip.rs` pins that a take at the cap completes.
+pub const MAX_LEGS_PER_SWAP: u32 = 19;
 
 /// "Null" sentinel for sector-index pointers (`MarketHeader::head`,
 /// `Vault::next`, `Vault::prev`). Sector indices are at most

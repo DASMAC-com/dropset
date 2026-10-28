@@ -432,9 +432,16 @@ fn a_one_atom_sell_ends_the_walk() {
 ///
 /// The Buy that follows can afford every entry, so only
 /// [`MAX_LEGS_PER_SWAP`] stops it: it must complete with exactly that many
-/// legs and leave the rest of its budget with the taker. Before the cap the
-/// same take aborted on the heap at its seventeenth leg, so this is the
-/// figure that bounds the cap from above.
+/// legs and leave the rest of its budget with the taker. It declares the
+/// market's maximum platform fee, so the heap also holds the fee's ATA
+/// create, its transfer and its `PlatformFeeEvent` after the capped legs —
+/// the most a take allocates. Before the cap the same take aborted on the
+/// heap at its seventeenth leg. With the cap edited for a one-off
+/// measurement, this take completed at 20 legs and faulted at 21 (fee-free,
+/// 23 and 24), which is what sizes the cap at 19.
+///
+/// First the same take soft-reverts at the cap (a `min_out` no fill can
+/// meet): it must restore every leg it touched and transfer nothing.
 #[test]
 fn a_whole_book_take_on_a_fully_flipped_book_stops_at_the_leg_cap() {
     let (mut f, taker) = ten_vault_book();
@@ -457,8 +464,55 @@ fn a_whole_book_take_on_a_fully_flipped_book_stops_at_the_leg_cap() {
 
     let quote_ata = f.quote_ata(&taker.pubkey());
     let budget = f.token_balance(&quote_ata);
-    let buy = f.swap_ix(&taker.pubkey(), BUY, budget, Price::INFINITY.as_u32(), 1);
+    let vaults_before: Vec<Vault> = (0..VAULTS).map(|i| f.vault(i)).collect();
+    let revert = f.swap_ix(
+        &taker.pubkey(),
+        BUY,
+        budget,
+        Price::INFINITY.as_u32(),
+        u64::MAX,
+    );
+    let meta = send_at_max_cu(&mut f, &taker, revert).expect("a soft-revert at the cap");
+    assert!(
+        common::events::fills(&meta).is_empty(),
+        "a soft-revert emits nothing"
+    );
+    assert_eq!(f.token_balance(&quote_ata), budget, "nothing is spent");
+    for (i, before) in (0..VAULTS).zip(&vaults_before) {
+        let after = f.vault(i);
+        assert_eq!(
+            (
+                after.base_atoms.get(),
+                after.quote_atoms.get(),
+                resting(&after)
+            ),
+            (
+                before.base_atoms.get(),
+                before.quote_atoms.get(),
+                resting(before)
+            ),
+            "vault {i} is restored"
+        );
+    }
+
+    let integrator = f.funded_keypair(common::SIGNER_FUNDING_LAMPORTS);
+    let fee_bps = f.market_header().max_platform_fee_bps.get();
+    assert!(fee_bps > 0, "the fixture market allows a platform fee");
+    f.svm.expire_blockhash();
+    let buy = f.swap_ix_with_fee(
+        &taker.pubkey(),
+        BUY,
+        budget,
+        Price::INFINITY.as_u32(),
+        1,
+        Some(&integrator.pubkey()),
+        fee_bps,
+    );
     let meta = send_at_max_cu(&mut f, &taker, buy).expect("a whole-book take completes");
+    assert!(
+        f.token_balance(&f.platform_fee_ata(&integrator.pubkey(), BUY)) > 0,
+        "the platform fee is paid"
+    );
     let legs = common::events::fills(&meta).len();
     let cu = meta.compute_units_consumed;
     let spent = budget - f.token_balance(&quote_ata);
@@ -486,10 +540,10 @@ fn a_whole_book_take_on_a_fully_flipped_book_stops_at_the_leg_cap() {
 /// derives from).
 const DEFAULT_BUDGET_LEGS: usize = 14;
 
-/// Ceiling on a cold take that strands one atom at the leg cap. It
-/// measures about 245k to 250k CU; were the atom left over to walk the rest
-/// of the book rather than end the take, the 58 entries a side has left past
-/// the cap would add ~2.4k CU each, well past this.
+/// Ceiling on a cold take that strands one atom one leg short of the cap,
+/// where the atom, not the cap, must end the walk. It measures about 245k
+/// CU; were the atom to walk the rest of the book instead, the 60-odd entries
+/// a side has left would add ~2.4k CU each, well past this.
 const STRANDED_TAKE_CU: u64 = 300_000;
 
 /// The costliest take: a take on a cold ten-vault book (every vault flushed
@@ -497,10 +551,10 @@ const STRANDED_TAKE_CU: u64 = 300_000;
 /// each side, with and without one atom stranded past its last leg, then
 /// once with a budget for the whole book. The deepest of them needs the
 /// [`SWAP_COMPUTE_UNIT_LIMIT`] clients send; the first
-/// [`DEFAULT_BUDGET_LEGS`] legs must fit what a bare `swap` gets. The
-/// stranded take must complete at the cap too: the atom left over ends the
-/// walk rather than opening a dust walk, and the whole-book take stops at
-/// the cap rather than faulting past it.
+/// [`DEFAULT_BUDGET_LEGS`] legs must fit what a bare `swap` gets. A take
+/// stranding one atom a leg short of the cap must complete without walking
+/// the book, and the whole-book take stops at the cap rather than faulting
+/// past it.
 #[test]
 fn a_cold_take_at_the_leg_cap_fits_the_swap_compute_budget() {
     let cap = MAX_LEGS_PER_SWAP as usize;
@@ -520,8 +574,10 @@ fn a_cold_take_at_the_leg_cap_fits_the_swap_compute_budget() {
         assert_eq!(legs, cap, "side {side}: legs a take completes");
         let (stranded_legs, stranded_cu) = stranded;
         assert_eq!(
-            stranded_legs, cap,
-            "side {side}: a take stranding one atom should complete {cap} legs"
+            stranded_legs,
+            cap - 1,
+            "side {side}: a take stranding one atom past {} legs should complete them",
+            cap - 1
         );
         assert!(
             stranded_cu < STRANDED_TAKE_CU,
@@ -616,7 +672,10 @@ fn cold_take_to_the_leg_cap(side: u8) -> ColdCeiling {
             if used < common::DEFAULT_INSTRUCTION_CU {
                 ceiling.legs_in_default = ceiling.legs_in_default.max(filled);
             }
-            if remainder == 1 {
+            // Recorded one leg short of the cap: at the cap itself the cap
+            // ends the walk whatever the stranded atom does, so only below
+            // it can the measurement catch an atom that walks the book.
+            if remainder == 1 && legs == cap - 1 {
                 ceiling.stranded = (filled, used);
             }
         }
@@ -704,7 +763,8 @@ struct ColdCeiling {
     /// The most legs a take completed within
     /// [`common::DEFAULT_INSTRUCTION_CU`].
     legs_in_default: usize,
-    /// The deepest sized take that stranded one atom: its legs and CU.
+    /// The take stranding one atom past `MAX_LEGS_PER_SWAP - 1` legs: its
+    /// legs and CU.
     stranded: (usize, u64),
     /// The take with a budget for the whole book: its legs and CU.
     whole_book: (usize, u64),

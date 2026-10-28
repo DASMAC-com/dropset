@@ -135,7 +135,7 @@ The per-market cap on vault count (`max_vaults_per_market`) is set by
 the cost to reconstruct the ephemeral order book during each take
 and can be tuned across the protocol's lifecycle as CU budgets and
 runtime performance evolve. A take's cost is the entries it visits:
-the legs it fills, at most `MAX_LEGS_PER_SWAP` (22), plus the entries it
+the legs it fills, at most `MAX_LEGS_PER_SWAP` (19), plus the entries it
 skips. It ends its walk once its own remainder is a single unfillable
 atom, so a dust taker no longer walks the book, but an entry whose level
 or vault cap prices to zero input is still skipped. Two budgets are
@@ -2792,16 +2792,20 @@ design:
   is attacker-shaped: one vault rests up to `2 × N_LEVELS` entries, own
   plus flipped, and nothing floors a level's size, so without a bound a
   vault quoting dust ahead of the honest book could abort every take on
-  the heap. So the walk fills at most **`MAX_LEGS_PER_SWAP` = 22** legs,
+  the heap. So the walk fills at most **`MAX_LEGS_PER_SWAP` = 19** legs,
   declared once in math-core and read by the engine and the off-chain
   simulator alike, and stops there the way it stops on an exhausted
   budget — the taker keeps the remainder and the `min_out` soft-revert
   still runs. A book deeper than one transaction can settle gives a
-  bounded partial fill or a clean soft-revert, never a VM abort; past
-  one dust vault's sixteen entries a taker still fills six honest legs.
-  `tests/flip.rs` pins the bound on a fully flipped ten-vault book,
-  where 23 legs fit and 24 fault, so the cap keeps one leg of headroom;
-  each vault past ten costs the book ~640 B, about one leg.
+  bounded partial fill or a clean soft-revert, never a heap abort; past
+  one dust vault's sixteen entries a taker still fills three honest legs.
+  The sizing case is a fully flipped ten-vault book taken with the
+  market's maximum platform fee declared, whose ATA create, transfer and
+  event cost the heap about two legs more after the fills: a one-off
+  measurement with the cap edited found that 20 legs fit and 21 fault (23
+  and 24 without the fee), so the cap keeps one leg of headroom, and
+  `tests/flip.rs` pins that the fee-bearing take at the cap completes.
+  Each vault past ten costs the book ~640 B, about one leg.
   `RequestHeapFrame` does not help without a custom
   `#[global_allocator]` (see the research note below). A floor on
   materialized level size, the only lever against the dust shape
@@ -3097,10 +3101,11 @@ after the fills when a platform fee was skimmed; per-take fill figures
 by grouping the legs of one transaction. An aggregated `FillBatch` was
 considered and rejected — per-leg emit is the simplest fixed-size record, each
 `FillEvent` sits far inside the per-CPI 10 KiB data cap so a leg never
-splits, and the only ceiling is the 64-instruction trace count above
-(not event size). Because fills ride as inner-instruction data rather
-than logs, no leg is ever silently truncated: the leg cap stops the
-*walk*, never the record, so every leg that filled is emitted and the
+splits, and the only emission ceiling is the 64-instruction trace count
+above (not event size), which the leg cap keeps a take well inside.
+Because fills ride as inner-instruction data rather than logs, no leg
+is ever silently truncated: the leg cap stops the *walk*, never the
+record, so every leg that filled is emitted and the
 budget past the cap stays with the taker.
 
 **Serialization mode.** Anchor v2's `#[event]` macro picks between two
