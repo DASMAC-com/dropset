@@ -79,10 +79,18 @@ pub const N_LEVELS: usize = 8;
 /// `emit_cpi!` path a few hundred bytes more. Without the cap the leg count
 /// is attacker-shaped — one vault rests up to `2 × N_LEVELS` entries (own
 /// plus flipped), so a dust-quoting vault ahead of the honest book could
-/// push every take past the heap into a VM abort. Sized from the litesvm
-/// measurement in `programs/dropset/tests/flip.rs`, which pins that a take
-/// at the cap completes on a fully flipped book at the default vault cap.
-pub const MAX_LEGS_PER_SWAP: u32 = 32;
+/// push every take past the heap into a VM abort.
+///
+/// Sized from the litesvm measurement in `programs/dropset/tests/flip.rs`:
+/// on a fully flipped book at the default ten-vault cap (160 entries, the
+/// largest matching heap a take builds there) a 23-leg take completes and a
+/// 24-leg one faults, so the cap keeps one leg (~570 bytes) of headroom.
+/// That clears one dust vault's sixteen entries with six honest legs to
+/// spare. The bound falls by about one leg per vault past ten, since each
+/// vault adds `2 × N_LEVELS` matching-heap entries (640 bytes), so a
+/// vault-cap raise re-runs that test first. The instruction-trace limit (every event
+/// is a self-CPI) binds far later, near sixty legs.
+pub const MAX_LEGS_PER_SWAP: u32 = 22;
 
 /// "Null" sentinel for sector-index pointers (`MarketHeader::head`,
 /// `Vault::next`, `Vault::prev`). Sector indices are at most

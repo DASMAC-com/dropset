@@ -1684,4 +1684,73 @@ mod tests {
             "a zero-leg take consumes nothing and delivers nothing"
         );
     }
+
+    /// Three vaults on one DLL, each resting all eight asks at 1_000 base
+    /// atoms, ascending from 1.09 — 24 entries, two more than the leg cap.
+    fn three_deep_vaults_market() -> Vec<u8> {
+        let mut header = MarketHeader::zeroed();
+        header.head = 0u32.into();
+        header.tombstone_head = NULL_SECTOR.into();
+        header.free_head = NULL_SECTOR.into();
+        header.active_count = 3u32.into();
+        let vaults: Vec<Vault> = (0..3u32)
+            .map(|s| {
+                let mut v = Vault::zeroed();
+                v.next = if s == 2 { NULL_SECTOR } else { s + 1 }.into();
+                v.prev = if s == 0 { NULL_SECTOR } else { s - 1 }.into();
+                v.leader = [1u8; 32];
+                v.reference_price = ReferencePrice {
+                    stamp: u64::from(s + 1).into(),
+                    price: Price::encode(10_850_000, 0).unwrap().as_u32().into(),
+                    quote_slot: FIX_QUOTE_SLOT.into(),
+                    quote_unix: FIX_QUOTE_UNIX.into(),
+                };
+                v.base_atoms = 10_000_000u64.into();
+                v.quote_atoms = 10_000_000u64.into();
+                for (i, ask) in v.remaining.asks.iter_mut().enumerate() {
+                    *ask = position(10_900_000 + 10_000 * (3 * i as u32 + s), 1_000);
+                }
+                v
+            })
+            .collect();
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&[0u8; ACCOUNT_DISCRIMINATOR_LEN]);
+        buf.extend_from_slice(bytes_of(&header));
+        buf.extend_from_slice(&(vaults.len() as u32).to_le_bytes());
+        while !buf.len().is_multiple_of(VAULT_ALIGN) {
+            buf.push(0);
+        }
+        buf.extend_from_slice(cast_slice(&vaults));
+        buf
+    }
+
+    /// The walk stops at `MAX_LEGS_PER_SWAP` the way the engine's does: a
+    /// budget for the whole book fills exactly the cap, the best legs
+    /// first, and the input past them stays with the taker.
+    #[test]
+    fn a_take_deeper_than_the_leg_cap_stops_at_the_cap() {
+        let data = three_deep_vaults_market();
+        let view = MarketView::load(&data).unwrap();
+        let book = resting_levels(&view, SwapSide::Buy, NOW_SLOT, NOW_WALL);
+        assert_eq!(book.len(), 24, "every ask rests");
+
+        let budget = 1_000_000_000;
+        let q = simulate_swap(
+            &view,
+            SwapSide::Buy,
+            budget,
+            Price::INFINITY,
+            NOW_SLOT,
+            NOW_WALL,
+            0,
+        );
+        let cap = super::MAX_LEGS_PER_SWAP as usize;
+        assert_eq!(q.legs as usize, cap, "the walk stops at the cap");
+        let cost: u64 = book[..cap]
+            .iter()
+            .map(|l| l.price.quote_for_base(l.size) as u64)
+            .sum();
+        assert_eq!(q.in_amount, cost, "only the best `cap` levels are paid for");
+        assert!(q.in_amount < budget, "the remainder stays with the taker");
+    }
 }
