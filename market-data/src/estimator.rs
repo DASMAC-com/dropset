@@ -86,7 +86,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use dropset_fair_value::{
-    Candidates, ClockCtx, FairValue, FairValueConfig, FairValueEngine, LegStaleness, Legs,
+    Candidates, ClockCtx, FairValue, FairValueConfig, FairValueEngine, LegStaleness, Legs, Reading,
 };
 use dropset_feeds::now_secs;
 use sqlx::PgPool;
@@ -852,6 +852,8 @@ fn build_legs(
             receipt_age,
             stale,
         ),
+        crypto_stand_in: Candidates::none()
+            .push(SOURCE_ORCA, pool_reading(market, &snapshot.ticks, now_unix, receipt_age)),
         usdc_usd,
         static_usd: market.static_usd,
     }
@@ -903,9 +905,11 @@ fn fx_candidates(
 ///
 /// The cost, accepted when the rule was chosen: a lone candle reads
 /// `SingleTrusted`, not `SingleUnverified`, so a market whose pool is dark no
-/// longer says `Uncorroborated`. The pool is offered only while the candle is
-/// fresh at the tape bound, so a dark candle leaves the leg absent and the
-/// market degraded rather than composed on the pool alone.
+/// longer says `Uncorroborated`. The pool is offered here only while the candle
+/// is fresh at the tape bound, so a dark candle leaves this leg absent; the
+/// pool then reaches the engine as the leg's stand-in instead (see
+/// [`pool_reading`]), and the market composes at
+/// [`dropset_fair_value::Degrade::PoolOnly`] rather than on the static peg.
 ///
 /// Empty for a pinned market, which has no such series. The engine drops a
 /// pinned market's crypto set unconditionally anyway; offering nothing here
@@ -925,17 +929,34 @@ fn crypto_candidates(
         .iter()
         .find(|r| r.source == SOURCE_COINBASE && r.product_id == product)
         .and_then(|r| store_reading(r.close, r.published_at, now_unix, receipt_age));
-    let Some(pool) = market.pool_corroborator else {
+    if market.pool_corroborator.is_none() {
         return Candidates::none().push(SOURCE_COINBASE, candle);
-    };
-    let pool_reading = ticks
-        .iter()
-        .find(|r| r.source == SOURCE_ORCA && r.product_id == pool)
-        .and_then(|r| r.reading(now_unix, receipt_age))
+    }
+    let pool = pool_reading(market, ticks, now_unix, receipt_age)
         .filter(|_| candle.is_some_and(|c| c.fresh(stale.tape)));
     Candidates::none()
         .push_trusted(SOURCE_COINBASE, candle)
-        .push(SOURCE_ORCA, pool_reading)
+        .push(SOURCE_ORCA, pool)
+}
+
+/// The market's pool corroborator reading, when it has one and the row exists.
+///
+/// Offered twice, in two roles: beside a fresh candle as its corroborator, and
+/// as the crypto leg's stand-in, which the engine consults only once the
+/// reference leg resolves to nothing. The stand-in is offered unconditionally
+/// rather than gated on the candle here, so the engine's own resolution is the
+/// one judgment of whether the reference is dark.
+fn pool_reading(
+    market: &EstimatorMarket,
+    ticks: &[TickStoreRow],
+    now_unix: i64,
+    receipt_age: Duration,
+) -> Option<Reading> {
+    let pool = market.pool_corroborator?;
+    ticks
+        .iter()
+        .find(|r| r.source == SOURCE_ORCA && r.product_id == pool)
+        .and_then(|r| r.reading(now_unix, receipt_age))
 }
 
 /// The portfolio-wide USDC/USD peg leg, from `spot_ticks`.

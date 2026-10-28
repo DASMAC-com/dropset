@@ -69,6 +69,7 @@ fn composed() -> FairValue {
             .push("coinbase", Some(Reading::new(1.141, age)))
             .push("kraken", Some(Reading::new(1.142, age))),
         usdc_usd: Candidates::none().push("kraken", Some(Reading::new(1.0, age))),
+        crypto_stand_in: Candidates::none(),
         static_usd: 1.14,
     };
     engine.compose(legs, Duration::from_secs(5), ClockCtx::in_session())
@@ -299,6 +300,7 @@ async fn fx_tape_live_follows_the_fx_leg_contributors() {
             .push_reference("frankfurter", Some(Reading::new(1.14, age))),
         crypto_usdc: Candidates::none().push("coinbase", Some(Reading::new(1.141, age))),
         usdc_usd: Candidates::none().push("kraken", Some(Reading::new(1.0, age))),
+        crypto_stand_in: Candidates::none(),
         static_usd: 1.14,
     };
     let fixed = quiet(engine.compose(legs, Duration::from_secs(5), ClockCtx::in_session()));
@@ -337,6 +339,7 @@ async fn crypto_leg_outlier_names_the_dispersed_legs_outlier() {
             .push_trusted("coinbase", Some(Reading::new(1.0, age)))
             .push("orca", Some(Reading::new(0.80, age))),
         usdc_usd: Candidates::none().push("kraken", Some(Reading::new(1.0, age))),
+        crypto_stand_in: Candidates::none(),
         static_usd: 1.0,
     };
     let walked = engine.compose(legs, Duration::from_secs(5), ClockCtx::in_session());

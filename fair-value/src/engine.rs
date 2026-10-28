@@ -54,6 +54,17 @@ pub struct Legs {
     /// (`crypto_usdc / fx`) in the normal regime, and the anchor itself in the
     /// crypto-only regime.
     pub crypto_usdc: Candidates,
+    /// A stand-in for the crypto reference, in the same units — an on-chain
+    /// pool the leg's designated tape is corroborated by. Consulted **only**
+    /// when `crypto_usdc` resolves to nothing, so it never overrides a live
+    /// reference, and composed at [`Degrade::PoolOnly`] when it is.
+    ///
+    /// A separate leg rather than another candidate on `crypto_usdc`, because
+    /// once the designated tape is gone the consensus cannot tell a promoted
+    /// corroborator from a market's only source: a lone pool reading would
+    /// resolve as `SingleUnverified` and compose as merely uncorroborated.
+    /// Empty for a market with no corroborator.
+    pub crypto_stand_in: Candidates,
     /// USDC/USD peg truth as **USD per USDC** — a *separate* USDC anchor
     /// (Coinbase USDC/USD, Circle redemption). Drives the portfolio-wide
     /// common-mode guard (§1 fm1). Empty simply means the guard can't fire
@@ -357,6 +368,17 @@ pub enum Degrade {
     /// falls to the static peg instead (or pauses if there is none), which is
     /// the same treatment any other unusable leg gets.
     BasisUnusable,
+    /// The crypto reference is dark and its **stand-in** carries the leg — see
+    /// [`Legs::crypto_stand_in`]. In session the mid is `fx × basis` with the
+    /// basis observed off the stand-in; with no FX it is the stand-in's price,
+    /// the crypto-only shape.
+    ///
+    /// Never healthy, whatever the session: the stand-in is a corroborator
+    /// promoted only because the designated tape went quiet, and a source
+    /// nobody designated is exactly the reading the kill switches should
+    /// tighten around. It still beats the static peg, which is a constant that
+    /// drifts off the market for as long as the tape stays dark.
+    PoolOnly,
     /// Every live leg down to the static peg — the deepest degraded case.
     StaticPeg,
 }
@@ -733,6 +755,13 @@ impl FairValueEngine {
         } else {
             legs.crypto_usdc.resolve(stale, dispersion)
         };
+        // The stand-in is resolved only once the reference has resolved to
+        // nothing, which is what makes "never overrides a live reference" a
+        // property of the control flow rather than of the arms below. A pinned
+        // market drops it for the reason it drops the reference.
+        let stand_in = (crypto.reading.is_none() && self.cfg.pinned_basis.is_none())
+            .then(|| legs.crypto_stand_in.resolve(stale, dispersion))
+            .filter(|c| c.reading.is_some());
 
         // Fuse each leg's healthy sources into the value the composition prices
         // off. The filters are advanced on every tick they have candidates,
@@ -760,20 +789,29 @@ impl FairValueEngine {
             dt,
         );
 
-        let mut out = self.compose_resolved(
-            &legs,
-            clock,
-            fused_into(fx, &fx_fusion),
-            fused_into(crypto, &crypto_fusion),
-            usdc,
-        );
+        // The stand-in is priced off its consensus reading, unfused: the crypto
+        // estimator above fused the designated leg's empty set and carries its
+        // prior, so the tape's return blends against the tape's own history
+        // rather than against the pool's.
+        let mut out = match stand_in {
+            Some(pool) => self.compose_stand_in(&legs, fused_into(fx, &fx_fusion), pool, usdc),
+            None => self.compose_resolved(
+                &legs,
+                clock,
+                fused_into(fx, &fx_fusion),
+                fused_into(crypto, &crypto_fusion),
+                usdc,
+            ),
+        };
         // The per-leg view is reported whatever the composition did with it, so
         // an operator can see a dispersed leg even on a tick that degraded for
         // some unrelated reason.
         // On a shut market this reports the ORIGINAL set, resolved before the leg
         // was emptied, so the per-leg view still shows what the feeds published.
         out.fx_leg = fx_reported.unwrap_or(fx).into();
-        out.crypto_leg = crypto.into();
+        // A standing-in pool is reported as the crypto leg, so the operator
+        // reads the source the mid actually rests on.
+        out.crypto_leg = stand_in.unwrap_or(crypto).into();
         out.fx_fusion = fx_fusion;
         out.crypto_fusion = crypto_fusion;
         out
@@ -980,6 +1018,78 @@ impl FairValueEngine {
                 false,
                 false,
             ),
+        }
+    }
+
+    /// Compose from the crypto reference's stand-in, the reference itself having
+    /// resolved to nothing — always [`Degrade::PoolOnly`] or worse.
+    ///
+    /// **In session** the stand-in is a basis observation like any other: it is
+    /// divided by the FX anchor and offered to the basis EMA, whose jump gate is
+    /// the outlier check against the carried basis. A reading the gate refuses
+    /// does not compose — the mid stays `fx ×` the carried basis at
+    /// [`Degrade::LegDispersed`], the stand-in having disagreed with the history
+    /// it was meant to continue. There must be a **usable carried basis** to
+    /// judge against: the EMA's seeding tick is ungated, so letting a stand-in
+    /// seed it would hand an undesignated pool the basis outright. With none,
+    /// the market falls back as any FX-anchored market without a basis does.
+    ///
+    /// **With no FX** the stand-in's price is the mid, the crypto-only shape. No
+    /// basis is observable without an FX anchor to divide by, so the carried
+    /// basis has nothing to judge here; what bounds this case is the consensus
+    /// resolution, the degraded health, and the operator reading `pool_only`.
+    fn compose_stand_in(
+        &mut self,
+        legs: &Legs,
+        fx_leg: Consensus,
+        stand_in: Consensus,
+        usdc_leg: Consensus,
+    ) -> FairValue {
+        let usdc_breach = self.usdc_breach(legs, &usdc_leg);
+        let Some(pool) = stand_in.reading else {
+            // Unreachable: the caller passes a stand-in only once it resolved
+            // to a reading. Falling back rather than panicking keeps the
+            // degrade honest if that ever changes.
+            return self.fall_back(legs.static_usd, Degrade::StaticPeg, usdc_breach, false, false);
+        };
+        let Some(fx) = fx_leg.reading else {
+            return FairValue {
+                usdc_breach,
+                ..FairValue::of(
+                    Regime::Degraded(Degrade::PoolOnly),
+                    Anchor::CryptoReference,
+                    Some(pool.value),
+                )
+            };
+        };
+        if self.usable_basis().is_none() {
+            return self.without_usable_basis(legs.static_usd, usdc_breach, false, false);
+        }
+        let observation = observed_basis(pool.value, fx.value);
+        let observed_breach = observation.is_some_and(|o| self.basis_out_of_band(o));
+        let fold = observation.map(|o| self.basis.update(o, self.since_basis));
+        let outlier = fold.is_none_or(Fold::rejected);
+        if let Some(Fold::Folded(_)) = fold {
+            self.since_basis = Duration::ZERO;
+        }
+        // Usable on both branches: it was usable before the offer, a refusal
+        // leaves it untouched, and a fold resets its age.
+        let Some(basis) = self.usable_basis() else {
+            return self.without_usable_basis(legs.static_usd, usdc_breach, observed_breach, outlier);
+        };
+        let regime = if outlier {
+            Regime::Degraded(Degrade::LegDispersed)
+        } else {
+            Regime::Degraded(Degrade::PoolOnly)
+        };
+        FairValue {
+            basis: Some(basis),
+            basis_age: Some(self.since_basis),
+            uncertain: fx.uncertain(self.cfg.fx_max_confidence_frac),
+            basis_breach: observed_breach || self.basis_out_of_band(basis),
+            basis_outlier: outlier,
+            usdc_breach,
+            ..FairValue::of(regime, Anchor::Fx, Some(fx.value * basis))
         }
     }
 
@@ -1196,6 +1306,7 @@ mod tests {
             fx: src(fresh(0.0573)),
             crypto_usdc: Candidates::none(),
             usdc_usd: src(fresh(1.0)),
+            crypto_stand_in: Candidates::none(),
             static_usd: 0.0573,
         };
         let r = e.compose(legs, secs(5), ClockCtx::in_session());
@@ -1220,6 +1331,7 @@ mod tests {
             fx: src(fresh(0.0573)),
             crypto_usdc: src(fresh(0.03064)),
             usdc_usd: src(fresh(1.0)),
+            crypto_stand_in: Candidates::none(),
             static_usd: 0.0573,
         };
         let r = e.compose(legs, secs(5), ClockCtx::in_session());
@@ -1238,6 +1350,7 @@ mod tests {
             fx: Candidates::none(),
             crypto_usdc: Candidates::none(),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 0.0573,
         };
         let r = e.compose(legs, secs(5), ClockCtx::in_session());
@@ -1255,6 +1368,7 @@ mod tests {
             fx: src(fresh(0.0573)),
             crypto_usdc: Candidates::none(),
             usdc_usd: src(fresh(0.80)),
+            crypto_stand_in: Candidates::none(),
             static_usd: 0.0573,
         };
         let r = e.compose(legs, secs(5), ClockCtx::in_session());
@@ -1270,6 +1384,7 @@ mod tests {
             fx: src(fresh(1.14)),
             crypto_usdc: src(fresh(1.14)),
             usdc_usd: src(fresh(1.0)),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         let r = e.compose(legs, secs(5), ClockCtx::in_session());
@@ -1290,6 +1405,7 @@ mod tests {
             fx: src(fresh(1.10)),
             crypto_usdc: src(fresh(1.122)),
             usdc_usd: src(fresh(1.0)),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.10,
         };
         let r = e.compose(legs, secs(5), ClockCtx::in_session());
@@ -1311,6 +1427,7 @@ mod tests {
             fx: src(fresh(1.0)),
             crypto_usdc: src(fresh(0.98)),
             usdc_usd: src(fresh(1.02)),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.0,
         };
         let r = e.compose(legs, secs(5), ClockCtx::in_session());
@@ -1326,6 +1443,7 @@ mod tests {
             fx: Candidates::none(),
             crypto_usdc: src(fresh(1.14)),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         let r = e.compose(legs, secs(5), ClockCtx::closed());
@@ -1349,6 +1467,7 @@ mod tests {
             fx: Candidates::none().push("grid", Some(fresh(1.10))),
             crypto_usdc: src(fresh(1.14)),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
 
@@ -1397,6 +1516,7 @@ mod tests {
             fx: Candidates::none().push_trusted("self-fencing", Some(fresh(1.10))),
             crypto_usdc: src(fresh(1.14)),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         let r = e.compose(legs, secs(5), ClockCtx::closed());
@@ -1424,6 +1544,7 @@ mod tests {
             fx: src(fresh(1.10)),
             crypto_usdc: src(fresh(1.14)),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         let r = e.compose(legs, secs(5), ClockCtx::unknown());
@@ -1453,6 +1574,7 @@ mod tests {
             fx: src(fresh(1.10)),
             crypto_usdc: src(fresh(1.14)),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         let mut outage = engine();
@@ -1477,6 +1599,7 @@ mod tests {
             fx: src(fresh(1.10)),
             crypto_usdc: src(fresh(1.14)),
             usdc_usd: src(fresh(0.80)),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         let r = e.compose(legs, secs(5), ClockCtx::unknown());
@@ -1507,6 +1630,7 @@ mod tests {
             fx: src(fresh(1.10)),
             crypto_usdc: src(fresh(1.14)),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         assert_eq!(FxSession::default(), FxSession::Unknown);
@@ -1534,6 +1658,7 @@ mod tests {
             fx: Candidates::none(),
             crypto_usdc: src(fresh(1.14)),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         let r = e.compose(legs, secs(5), ClockCtx::in_session());
@@ -1552,6 +1677,7 @@ mod tests {
             fx: src(fresh(1.10)),
             crypto_usdc: src(fresh(1.122)), // basis 1.02
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.10,
         };
         e.compose(seed, secs(5), ClockCtx::in_session());
@@ -1559,6 +1685,7 @@ mod tests {
             fx: src(fresh(1.10)),
             crypto_usdc: Candidates::none(),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.10,
         };
         let r = e.compose(no_basis, secs(5), ClockCtx::in_session());
@@ -1574,6 +1701,7 @@ mod tests {
             fx: Candidates::none(),
             crypto_usdc: Candidates::none(),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         let r = e.compose(legs, secs(5), ClockCtx::in_session());
@@ -1589,6 +1717,7 @@ mod tests {
             fx: Candidates::none(),
             crypto_usdc: Candidates::none(),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 0.0,
         };
         let r = e.compose(legs, secs(5), ClockCtx::in_session());
@@ -1606,6 +1735,7 @@ mod tests {
             fx: src(Reading::new(1.14, secs(600))),
             crypto_usdc: src(Reading::new(1.14, secs(600))),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         let r = e.compose(legs, secs(5), ClockCtx::in_session());
@@ -1621,6 +1751,7 @@ mod tests {
             fx: src(fresh(1.14)),
             crypto_usdc: src(fresh(1.14)),
             usdc_usd: src(fresh(0.90)), // depeg past the 0.97 floor
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         let r = e.compose(legs, secs(5), ClockCtx::in_session());
@@ -1678,6 +1809,7 @@ mod tests {
             fx: src(Reading::with_confidence(1.14, secs(1), 0.05)),
             crypto_usdc: src(fresh(1.14)),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         let r = e.compose(legs, secs(5), ClockCtx::in_session());
@@ -1693,6 +1825,7 @@ mod tests {
             fx: src(fresh(1.0)),
             crypto_usdc: src(fresh(crypto)),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.0,
         }
     }
@@ -1935,6 +2068,7 @@ mod tests {
                 fx: Candidates::none(),
                 crypto_usdc: src(fresh(0.03064)),
                 usdc_usd: src(fresh(1.0)),
+                crypto_stand_in: Candidates::none(),
                 static_usd: 0.0573,
             },
             secs(5),
@@ -1958,6 +2092,7 @@ mod tests {
                 fx: Candidates::none(),
                 crypto_usdc: src(fresh(0.03064)),
                 usdc_usd: Candidates::none(),
+                crypto_stand_in: Candidates::none(),
                 static_usd: 0.0573,
             },
             secs(5),
@@ -1975,6 +2110,7 @@ mod tests {
                 fx: src(fresh(0.0573)),
                 crypto_usdc: Candidates::none(),
                 usdc_usd: Candidates::none(),
+                crypto_stand_in: Candidates::none(),
                 static_usd: 0.0573,
             },
             secs(5),
@@ -1996,6 +2132,7 @@ mod tests {
             fx: src(fresh(0.0573)),
             crypto_usdc: src(fresh(0.0573)),
             usdc_usd: src(fresh(1.0)),
+            crypto_stand_in: Candidates::none(),
             static_usd: 0.0573,
         };
         assert_eq!(base.observed_basis(open, stale, BAND), Some(1.0));
@@ -2055,6 +2192,7 @@ mod tests {
             fx: src(fresh(0.0573)),
             crypto_usdc: src(fresh(0.0573)),
             usdc_usd: src(fresh(1.0)),
+            crypto_stand_in: Candidates::none(),
             static_usd: 0.0573,
         };
         assert_eq!(legs.observed_basis(ClockCtx::closed(), stale, BAND), None);

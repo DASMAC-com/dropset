@@ -284,6 +284,7 @@ pub fn degrade_name(regime: Regime) -> Option<&'static str> {
             Degrade::FxInvalid => "fx_invalid",
             Degrade::NoBasisLeg => "no_basis_leg",
             Degrade::BasisUnusable => "basis_unusable",
+            Degrade::PoolOnly => "pool_only",
             Degrade::StaticPeg => "static_peg",
         }),
         Regime::Normal
@@ -360,6 +361,7 @@ pub fn parse_regime(regime: &str, degrade: Option<&str>) -> Option<Regime> {
             "fx_invalid" => Degrade::FxInvalid,
             "no_basis_leg" => Degrade::NoBasisLeg,
             "basis_unusable" => Degrade::BasisUnusable,
+            "pool_only" => Degrade::PoolOnly,
             "static_peg" => Degrade::StaticPeg,
             _ => return None,
         })),
@@ -798,6 +800,7 @@ mod tests {
             Degrade::FxInvalid,
             Degrade::NoBasisLeg,
             Degrade::BasisUnusable,
+            Degrade::PoolOnly,
             Degrade::StaticPeg,
         ];
         let mut names: Vec<&str> = all
@@ -889,6 +892,7 @@ mod tests {
             (Degrade::FxInvalid, "fx_invalid"),
             (Degrade::NoBasisLeg, "no_basis_leg"),
             (Degrade::BasisUnusable, "basis_unusable"),
+            (Degrade::PoolOnly, "pool_only"),
             (Degrade::StaticPeg, "static_peg"),
         ] {
             assert_eq!(degrade_name(Regime::Degraded(degrade)), Some(expected));
@@ -917,6 +921,7 @@ mod tests {
             Regime::Degraded(Degrade::FxInvalid),
             Regime::Degraded(Degrade::NoBasisLeg),
             Regime::Degraded(Degrade::BasisUnusable),
+            Regime::Degraded(Degrade::PoolOnly),
             Regime::Degraded(Degrade::StaticPeg),
         ];
         for regime in regimes {
