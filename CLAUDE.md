@@ -490,9 +490,9 @@ guard that
 cannot fire — unwired, under a `matcher` that never selects its tools,
 or pointed at a missing path — and writes nothing. The **session
 helpers** (`cdds`, `task`, `explore`, `chore`, `plan`, `curate`,
-`architect`, `fleet`) are the exception that *is* committed, at
-`.claude/shell/init.zsh`, sourced from the base checkout by one guarded
-line in the shell profile; only their 1Password coordinates stay
+`launch`, `architect`, `fleet`) are the exception that *is* committed,
+at `.claude/shell/init.zsh`, sourced by one guarded shell-profile
+line; only their 1Password coordinates stay
 untracked — defined as env vars in the runtime config, or in an
 optional file outside the repo. Full detail — every hook's
 wiring, the helper family, and the iTerm setup:
