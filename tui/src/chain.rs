@@ -19,7 +19,9 @@ use dropset_sdk::instructions::{
     CloseVaultInstructionArgs, CreateMarket, CreateVault, CreateVaultInstructionArgs,
     DepositLeader, DepositLeaderInstructionArgs, ForceWithdrawDepositor,
     ForceWithdrawDepositorInstructionArgs, ForceWithdrawLeader, ForceWithdrawLeaderInstructionArgs,
-    Init, InitInstructionArgs, OverrideVaultName, OverrideVaultNameInstructionArgs, SetPerfFeeRate,
+    Init, InitInstructionArgs, OverrideVaultName, OverrideVaultNameInstructionArgs,
+    SetAllowOutsideDepositors, SetAllowOutsideDepositorsInstructionArgs,
+    SetOutsideDepositsApproved, SetOutsideDepositsApprovedInstructionArgs, SetPerfFeeRate,
     SetPerfFeeRateInstructionArgs, SetVaultName, SetVaultNameInstructionArgs, Swap,
     SwapInstructionArgs, WithdrawLeader, WithdrawLeaderInstructionArgs,
 };
@@ -224,8 +226,8 @@ pub fn build_create_market_ix(
 /// `payer`. `fee_mint` / `fee_token_program` are the market's stamped fee
 /// config. `quote_authority` is set at creation, so the vault never sits
 /// with it defaulted to the leader. `name` is the vault's display name —
-/// the operator's, from the create prompt, or [`default_vault_name`] on the
-/// bootstrap; empty means unset.
+/// the operator's, from the create prompt, or [`BOOTSTRAP_VAULT_NAME`] on
+/// the bootstrap; empty means unset.
 #[allow(clippy::too_many_arguments)]
 pub fn build_create_vault_ix(
     cluster: Cluster,
@@ -314,16 +316,51 @@ pub fn build_override_vault_name_ix(
     )
 }
 
-/// The bootstrap vault's name: `Vault ` plus the leader key's first eight
-/// base58 characters. Names are unique per market, and the program allows
-/// one live vault per leader per market, so a leader-derived name is
-/// practically unique among bootstrap vaults. It is not guaranteed: any
-/// leader may already hold the same name through `set_vault_name`, which
-/// fails this create with `VaultNameTaken`. Base58 is printable ASCII,
-/// which the name rules require.
-pub fn default_vault_name(leader: &Pubkey) -> String {
-    format!("Vault {}", &leader.to_string()[..8])
+/// `set_allow_outside_depositors` — the vault's `leader` (signer) sets its
+/// half of the two-key outside-deposit gate on the vault at sector
+/// `vault_idx`.
+pub fn build_set_allow_outside_depositors_ix(
+    cluster: Cluster,
+    leader: &Pubkey,
+    market: &Pubkey,
+    vault_idx: u32,
+    flag: bool,
+) -> Instruction {
+    SetAllowOutsideDepositors {
+        signer: *leader,
+        market: *market,
+    }
+    .instruction(
+        cluster.deployment(),
+        SetAllowOutsideDepositorsInstructionArgs { vault_idx, flag },
+    )
 }
+
+/// `set_outside_deposits_approved` — a registry `admin` (signer) sets the
+/// protocol's half of the gate on the vault at sector `vault_idx`.
+pub fn build_set_outside_deposits_approved_ix(
+    cluster: Cluster,
+    admin: &Pubkey,
+    market: &Pubkey,
+    vault_idx: u32,
+    flag: bool,
+) -> Instruction {
+    SetOutsideDepositsApproved {
+        admin: *admin,
+        registry: registry_pda(cluster),
+        market: *market,
+    }
+    .instruction(
+        cluster.deployment(),
+        SetOutsideDepositsApprovedInstructionArgs { vault_idx, flag },
+    )
+}
+
+/// The name the localnet bootstrap gives every vault it creates. Names are
+/// unique per market, and the bootstrap opens one vault per market, so one
+/// name serves the whole roster. It is not guaranteed free: a vault already
+/// renamed to it fails this create with `VaultNameTaken`.
+pub const BOOTSTRAP_VAULT_NAME: &str = "DASMAC";
 
 /// `deposit_leader` — the vault's `leader` (signer) moves atoms from its own
 /// ATAs into the market treasuries; the leader's ATAs must already hold the
@@ -1283,6 +1320,8 @@ mod tests {
             build_close_market_ix(m, &a, &market, &k(7), &k(8), &a),
             build_close_registry_fee_vault_ix(m, &a, &mint, &SPL_TOKEN_PROGRAM_ID, &k(9), &a),
             build_close_registry_ix(m, &a, &a),
+            build_set_allow_outside_depositors_ix(m, &k(6), &market, 0, true),
+            build_set_outside_deposits_approved_ix(m, &a, &market, 0, true),
         ];
         let localnet = [
             DROPSET_ID,
@@ -1454,16 +1493,43 @@ mod tests {
         assert_ne!(payer, leader);
     }
 
-    /// The bootstrap name must pass the program's rules — at most 32 bytes
-    /// of printable ASCII — and differ between leaders.
+    /// The bootstrap name must pass the program's rules — the TUI's mirror
+    /// of them, so a bad constant fails here rather than on every create.
     #[test]
-    fn default_vault_name_is_valid_and_per_leader() {
-        let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
-        let name = default_vault_name(&a);
-        assert!(name.len() <= 32);
-        assert!(name.bytes().all(|c| (0x20..=0x7E).contains(&c)));
-        assert_eq!(name, format!("Vault {}", &a.to_string()[..8]));
-        assert_ne!(name, default_vault_name(&b));
+    fn the_bootstrap_vault_name_is_valid() {
+        crate::naming::validate(BOOTSTRAP_VAULT_NAME).unwrap();
+        assert_eq!(BOOTSTRAP_VAULT_NAME, "DASMAC");
+    }
+
+    /// Pins the two gate setters' orderings against the program's account
+    /// structs: the leader setter is signer · market(w); the admin setter
+    /// is admin(signer) · registry · market(w). Neither carries the event
+    /// authority, since neither emits.
+    #[test]
+    fn outside_deposit_gate_orderings_match_the_program() {
+        let (leader, admin, market) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let ix = build_set_allow_outside_depositors_ix(L, &leader, &market, 3, true);
+        assert_eq!(ix.program_id, DROPSET_ID);
+        assert_eq!(
+            metas(&ix),
+            vec![(leader, true, false), (market, false, true)]
+        );
+        // Discriminator, then the u32 sector and the one-byte flag.
+        assert_eq!(&ix.data[ix.data.len() - 5..], &[3, 0, 0, 0, 1]);
+        let ix = build_set_outside_deposits_approved_ix(L, &admin, &market, 3, false);
+        assert_eq!(
+            metas(&ix),
+            vec![
+                (admin, true, false),
+                (registry_pda(L), false, false),
+                (market, false, true),
+            ]
+        );
+        assert_eq!(&ix.data[ix.data.len() - 5..], &[3, 0, 0, 0, 0]);
     }
 
     /// Pins the `deposit_leader` ordering against `fixture`'s

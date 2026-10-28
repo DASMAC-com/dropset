@@ -669,12 +669,24 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
         }
         _ => Span::styled(" · N rename", off),
     };
-    let vault_line = Line::from(vec![
+    // Opening to outside depositors: localnet only, and shown as done once
+    // both halves of the gate are set on the leader's vault.
+    let open = match leader_seat(app) {
+        _ if app.ctx.cluster.is_mainnet() => None,
+        Some((_, seat)) if seat.open_to_outside() => Some(Span::styled(" · O open (done)", off)),
+        _ if Action::OpenVault.enabled(app.chain.phase(), app.ctx.cluster) => {
+            Some(Span::styled(" · O open", live))
+        }
+        _ => Some(Span::styled(" · O open", off)),
+    };
+    let mut vault_spans = vec![
         tag("vault"),
         Span::styled("+/- stake · % fee", if ready { live } else { off }),
         rename,
-        Span::styled(" · rotate (reserved)", off),
-    ]);
+    ];
+    vault_spans.extend(open);
+    vault_spans.push(Span::styled(" · rotate (reserved)", off));
+    let vault_line = Line::from(vault_spans);
     if app.ctx.cluster.is_mainnet() {
         let lines = vec![
             Line::from(vec![
@@ -1770,6 +1782,8 @@ mod tests {
             leader: Pubkey::new_from_array([7; 32]),
             name: packed,
             name_locked: locked,
+            allow_outside_depositors: false,
+            outside_deposits_approved: false,
             seeded: true,
             stake: VaultStake::default(),
         }

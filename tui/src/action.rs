@@ -104,6 +104,11 @@ pub enum Action {
     /// at the old rate first). Opens the amount → typed-`yes` prompt, the
     /// amount a rate in bps.
     SetPerfFee,
+    /// Open the leader's vault on the selected market to outside depositors:
+    /// the leader's half of the gate, then the admin's when the session holds
+    /// an admin key — see [`crate::outside`]. Localnet only for now; mainnet
+    /// opens at public launch, signed through the cockpit then.
+    OpenVault,
     /// Reserved, deliberately unimplemented: the leader-rotation instruction
     /// arrives with its program change, and a builder guessed at its account
     /// shape now would be rework by construction. Never enabled.
@@ -271,6 +276,7 @@ impl Action {
             Action::LeaderWithdraw => "Leader withdraw",
             Action::RenameVault => "Rename vault",
             Action::SetPerfFee => "Set performance fee",
+            Action::OpenVault => "Open to outside depositors",
             Action::RotateLeader => "Rotate leader",
             Action::PassiveLadder => "Passive ladder",
             Action::PassiveRecenter => "Passive re-center",
@@ -349,6 +355,9 @@ impl Action {
             // A name needs only the vault; the prompt re-reads it fresh and
             // refuses a locked, frozen or closed one on its own terms.
             Action::RenameVault => matches!(phase, Phase::VaultUnseeded | Phase::Ready),
+            // Opening needs only the vault, like the rename; the job re-reads
+            // it fresh and skips a half already set.
+            Action::OpenVault => matches!(phase, Phase::VaultUnseeded | Phase::Ready),
             Action::RotateLeader => false,
             // The demo controls quote against a live vault.
             Action::RepegUp
@@ -381,6 +390,10 @@ impl Action {
             // "Bootstrap all" belongs here too: it mints mock pairs and funds
             // the committed taker, and on mainnet each step is worth watching.
             Action::Deploy | Action::BootstrapAll | Action::Wipe => false,
+            // Opening a vault to outside capital is the public-launch step,
+            // signed through the cockpit then; until that is wired it stays
+            // here, where nothing it opens holds real funds.
+            Action::OpenVault => false,
             // Publishing signs in memory with the 1Password-held admin and
             // program keys, decides first-publish versus upgrade from the
             // chain, and verifies the deployed bytes; the buffer recovery
@@ -464,6 +477,7 @@ impl Action {
             Action::SetPerfFee => Some(LeaderOp::SetPerfFee),
             Action::RotateLeader
             | Action::RenameVault
+            | Action::OpenVault
             | Action::OverrideVaultName
             | Action::PassiveLadder
             | Action::PassiveRecenter
@@ -505,6 +519,7 @@ impl Action {
             | Action::SetPerfFee
             | Action::RotateLeader
             | Action::RenameVault
+            | Action::OpenVault
             | Action::OverrideVaultName
             | Action::KillLadders
             | Action::CloseVaults
@@ -545,6 +560,7 @@ impl Action {
             | Action::LeaderWithdraw
             | Action::SetPerfFee
             | Action::RotateLeader
+            | Action::OpenVault
             | Action::PassiveLadder
             | Action::PassiveRecenter
             | Action::KillLadders
@@ -580,6 +596,9 @@ impl Action {
                 "localnet only — no validator or ledger to drive on mainnet"
             }
             Action::ProbeSwap => "spends real funds — no mainnet taker key",
+            Action::OpenVault => {
+                "opens at public launch, signed through the cockpit — not wired yet"
+            }
             Action::Teardown => "use the headless teardown binary on a real cluster",
             // Enumerated rather than a `_` arm, and that is the point:
             // `available_on` above is exhaustive, so adding a variant is a
@@ -651,6 +670,7 @@ impl Action {
             | Action::LeaderDeposit
             | Action::LeaderWithdraw
             | Action::RenameVault
+            | Action::OpenVault
             | Action::OverrideVaultName
             | Action::SetPerfFee
             | Action::RotateLeader
@@ -713,7 +733,7 @@ impl Action {
             | Action::SetPerfFee
             | Action::PassiveLadder
             | Action::PassiveRecenter => "needs every vault seeded",
-            Action::RenameVault => "create the vaults first",
+            Action::RenameVault | Action::OpenVault => "create the vaults first",
             Action::RotateLeader => "reserved — arrives with the leader-rotation program change",
             Action::RepegUp
             | Action::RepegDown
@@ -975,8 +995,8 @@ pub fn dispatch(
                                 // Localnet: the committed leader is also
                                 // the quote authority. One keystroke, so
                                 // no prompt: the vault takes the
-                                // leader-derived bootstrap name.
-                                do_create_vault(
+                                // bootstrap name.
+                                let created = do_create_vault(
                                     &client,
                                     &wallet,
                                     repo_root,
@@ -984,10 +1004,11 @@ pub fn dispatch(
                                     config,
                                     &leader,
                                     &leader.pubkey(),
-                                    &chain::default_vault_name(&leader.pubkey()),
+                                    chain::BOOTSTRAP_VAULT_NAME,
                                     &log,
-                                )?
-                                .log_skip(&log);
+                                )?;
+                                let created_here = matches!(created, Outcome::Done(_));
+                                created.log_skip(&log);
                                 do_deposit(
                                     &client,
                                     &wallet,
@@ -1001,6 +1022,28 @@ pub fn dispatch(
                                     &log,
                                 )?
                                 .log_skip(&log);
+                                // Every vault the bootstrap creates opens to
+                                // outside depositors — the localnet wallet is
+                                // the genesis admin, so both halves. After
+                                // the seed, so a failed open never costs the
+                                // market its deposit. One that already
+                                // existed is left as it is — a re-run cannot
+                                // tell an older vault from one this run
+                                // created and failed to open — and `O` opens
+                                // it by hand.
+                                if created_here {
+                                    let (base, quote) = market::pair_mints(repo_root, config)?;
+                                    let address = chain::market_pda(cluster, &base, &quote);
+                                    log.log(crate::outside::open(
+                                        &client,
+                                        &wallet,
+                                        &leader,
+                                        cluster,
+                                        &address,
+                                        config.base.symbol,
+                                        &log,
+                                    )?);
+                                }
                                 Ok(())
                             })
                         })
@@ -1167,6 +1210,25 @@ pub fn dispatch(
                     )?;
                 }
                 Ok(format!("Reset {total} ladders to the default shape"))
+            });
+        }
+        Action::OpenVault => {
+            job::spawn_recorded(tx, "Open vault", record, move |log| {
+                let client = chain::rpc(&rpc_url);
+                let market = target_market.context("no market selected")?;
+                let base_mint = target_base_mint.context("no market selected")?;
+                let config = market::config_for(&repo_root, cluster, &base_mint)
+                    .context("the selected market is not in this cluster's roster")?;
+                let leader = market::leader(&repo_root, config, operator_leader.as_deref())?;
+                crate::outside::open(
+                    &client,
+                    &wallet,
+                    &leader,
+                    cluster,
+                    &market,
+                    config.base.symbol,
+                    log,
+                )
             });
         }
         // Unplanned: only localnet dispatches these here — mainnet's confirmed
@@ -2338,7 +2400,7 @@ mod tests {
     /// Kept complete by [`all_actions_lists_every_variant`], not by care — the
     /// array's length annotation does not change when a variant is
     /// added, so nothing else would notice the list going stale.
-    const ALL_ACTIONS: [Action; 30] = [
+    const ALL_ACTIONS: [Action; 31] = [
         Action::Deploy,
         Action::Publish,
         Action::CloseBuffers,
@@ -2355,6 +2417,7 @@ mod tests {
         Action::LeaderWithdraw,
         Action::RenameVault,
         Action::SetPerfFee,
+        Action::OpenVault,
         Action::RotateLeader,
         Action::PassiveLadder,
         Action::PassiveRecenter,
@@ -2496,6 +2559,8 @@ mod tests {
             leader,
             name: [0; crate::naming::VAULT_NAME_LEN],
             name_locked: false,
+            allow_outside_depositors: false,
+            outside_deposits_approved: false,
             seeded,
             stake: accounts::VaultStake::default(),
         }
@@ -2662,7 +2727,7 @@ mod tests {
     #[test]
     fn all_actions_lists_every_variant() {
         // The completeness guard the MENU check above cannot be: MENU holds 12
-        // of the 29 variants, so a new shortcut-only action would be absent from
+        // of the 31 variants, so a new shortcut-only action would be absent from
         // both MENU and ALL_ACTIONS and silently escape all four cluster-gate
         // tests — a variant reachable only by a shortcut. PR 2 and PR 3 of this
         // series add exactly that shape.
@@ -2671,8 +2736,8 @@ mod tests {
         // one arm and no wildcard, so adding a variant fails to compile here
         // until someone edits this test; the count pins the fixture's size at
         // the enum's size; and the pairwise check rules out duplicates.
-        // Twenty-nine distinct variants drawn from a twenty-nine-variant
-        // enum is all of them.
+        // Thirty-one distinct variants drawn from a thirty-one-variant enum
+        // is all of them.
         fn is_known(a: Action) -> bool {
             match a {
                 Action::Deploy
@@ -2691,6 +2756,7 @@ mod tests {
                 | Action::LeaderWithdraw
                 | Action::RenameVault
                 | Action::SetPerfFee
+                | Action::OpenVault
                 | Action::RotateLeader
                 | Action::PassiveLadder
                 | Action::PassiveRecenter
@@ -2709,7 +2775,7 @@ mod tests {
         }
         assert_eq!(
             ALL_ACTIONS.len(),
-            30,
+            31,
             "ALL_ACTIONS must list every Action variant"
         );
         for (i, a) in ALL_ACTIONS.iter().enumerate() {
@@ -2772,6 +2838,24 @@ mod tests {
         assert!(MENU.contains(&Action::OverrideVaultName));
         assert!(MAINNET_MENU.contains(&Action::OverrideVaultName));
         assert!(VAULT_ACTIONS.contains(&Action::RenameVault));
+    }
+
+    #[test]
+    fn opening_a_vault_needs_a_vault_and_stays_off_mainnet() {
+        for phase in PHASES {
+            assert_eq!(
+                Action::OpenVault.enabled(phase, L),
+                matches!(phase, Phase::VaultUnseeded | Phase::Ready),
+                "{phase:?}"
+            );
+        }
+        // A shortcut, not a menu entry; and no prompt, so it dispatches.
+        assert!(!MENU.contains(&Action::OpenVault));
+        assert!(!VAULT_ACTIONS.contains(&Action::OpenVault));
+        let a = Action::OpenVault;
+        assert!(a.leader_op().is_none() && a.passive_op().is_none() && a.name_op().is_none());
+        assert!(!a.available_on(M));
+        assert!(a.unavailable_reason(M).contains("public launch"));
     }
 
     #[test]

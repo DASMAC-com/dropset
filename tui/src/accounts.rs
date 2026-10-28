@@ -18,7 +18,7 @@ use crate::naming::{self, VAULT_NAME_LEN};
 use anyhow::{anyhow, bail, Context, Result};
 use dropset_math_core::share::realize_perf_fee;
 use dropset_sdk::accounts::{
-    fetch_maybe_registry_header, VaultDepositorHeader, MARKET_HEADER_DISCRIMINATOR,
+    fetch_maybe_registry_header, RegistryHeader, VaultDepositorHeader, MARKET_HEADER_DISCRIMINATOR,
     VAULT_DEPOSITOR_HEADER_DISCRIMINATOR,
 };
 use dropset_sdk::clock::{SlotTime, WallTime};
@@ -471,6 +471,11 @@ pub struct VaultSeat {
     pub name: [u8; VAULT_NAME_LEN],
     /// Whether an admin locked the name, refusing the leader's rename.
     pub name_locked: bool,
+    /// The two halves of the outside-deposit gate: the leader's
+    /// `allow_outside_depositors` and the admin's `outside_deposits_approved`.
+    /// Outside deposits need both.
+    pub allow_outside_depositors: bool,
+    pub outside_deposits_approved: bool,
     /// Whether it holds a deposit (any shares or inventory).
     pub seeded: bool,
     /// The share ledger and inventory, as of this read — what the leader
@@ -487,6 +492,8 @@ impl VaultSeat {
             leader: Pubkey::new_from_array(v.leader),
             name: v.name,
             name_locked: v.name_locked != 0,
+            allow_outside_depositors: v.allow_outside_depositors != 0,
+            outside_deposits_approved: v.outside_deposits_approved != 0,
             seeded: is_seeded(v),
             stake: VaultStake::of(v),
         }
@@ -501,6 +508,12 @@ impl VaultSeat {
     /// it has none (see [`naming::label`]).
     pub fn label(&self) -> String {
         naming::label(&self.name(), self.seq)
+    }
+
+    /// Whether both halves of the gate are set, so an outside depositor's
+    /// `deposit` is reachable.
+    pub fn open_to_outside(&self) -> bool {
+        self.allow_outside_depositors && self.outside_deposits_approved
     }
 }
 
@@ -583,6 +596,30 @@ pub fn registry_fresh(client: &RpcClient, cluster: Cluster) -> Result<Option<Reg
     read_registry(client, cluster)
         .map(Some)
         .context("the registry exists but could not be read back — refusing")
+}
+
+/// The registry's admin set, read **fresh** — an error, never an empty set,
+/// when the account is absent or cannot be read.
+pub fn registry_admins_fresh(client: &RpcClient, cluster: Cluster) -> Result<Vec<Pubkey>> {
+    let account = chain::fetch_fresh(client, &chain::registry_pda(cluster), "registry")?
+        .context("registry not found — init first")?;
+    decode_admins(&account.data)
+}
+
+/// The admin keys in a registry account's data: the discriminator and
+/// header ([`RegistryHeader::LEN`] covers both), then the slab tail — a
+/// `u32` count and that many keys.
+fn decode_admins(data: &[u8]) -> Result<Vec<Pubkey>> {
+    let tail = RegistryHeader::LEN;
+    let len = data
+        .get(tail..tail + 4)
+        .context("the registry is too short for its admin count")?;
+    let n = u32::from_le_bytes(len.try_into().expect("four bytes")) as usize;
+    let keys = data
+        .get(tail + 4..tail + 4 + n * 32)
+        .with_context(|| format!("the registry is too short for its {n} admins"))?;
+    let (keys, _) = keys.as_chunks::<32>();
+    Ok(keys.iter().map(|k| Pubkey::new_from_array(*k)).collect())
 }
 
 /// Every live vault on `market`, read **fresh**: `Ok(None)` when the market
@@ -1041,6 +1078,8 @@ pub(crate) mod tests {
                 leader: other,
                 name: [0; VAULT_NAME_LEN],
                 name_locked: false,
+                allow_outside_depositors: false,
+                outside_deposits_approved: false,
                 seeded: true,
                 stake: VaultStake::default(),
             },
@@ -1050,6 +1089,8 @@ pub(crate) mod tests {
                 leader: me,
                 name: [0; VAULT_NAME_LEN],
                 name_locked: false,
+                allow_outside_depositors: false,
+                outside_deposits_approved: false,
                 seeded: false,
                 stake: VaultStake::default(),
             },
@@ -1250,6 +1291,36 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn vault_seat_is_open_only_with_both_gate_halves() {
+        use bytemuck::Zeroable;
+        let mut v = Vault::zeroed();
+        assert!(!VaultSeat::of(0, &v).open_to_outside());
+        v.allow_outside_depositors = 1;
+        let seat = VaultSeat::of(0, &v);
+        assert!(seat.allow_outside_depositors && !seat.outside_deposits_approved);
+        assert!(!seat.open_to_outside());
+        v.outside_deposits_approved = 1;
+        assert!(VaultSeat::of(0, &v).open_to_outside());
+        // The admin half alone does not open it either.
+        v.allow_outside_depositors = 0;
+        assert!(!VaultSeat::of(0, &v).open_to_outside());
+    }
+
+    #[test]
+    fn decode_admins_reads_the_counted_tail_and_refuses_a_short_account() {
+        let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let mut data = vec![0u8; RegistryHeader::LEN];
+        data.extend_from_slice(&2u32.to_le_bytes());
+        data.extend_from_slice(a.as_ref());
+        data.extend_from_slice(b.as_ref());
+        // Spare capacity past the count is not an admin.
+        data.extend_from_slice(&[7u8; 32]);
+        assert_eq!(decode_admins(&data).unwrap(), vec![a, b]);
+        assert!(decode_admins(&data[..RegistryHeader::LEN + 2]).is_err());
+        assert!(decode_admins(&data[..RegistryHeader::LEN + 4 + 40]).is_err());
+    }
+
+    #[test]
     fn vault_stake_maps_every_field_and_either_wind_down_flag() {
         use bytemuck::Zeroable;
         // Distinct values per field, so a transposed mapping fails.
@@ -1291,6 +1362,8 @@ pub(crate) mod tests {
             leader,
             name: [0; VAULT_NAME_LEN],
             name_locked: false,
+            allow_outside_depositors: false,
+            outside_deposits_approved: false,
             seeded: true,
             stake: VaultStake::default(),
         };

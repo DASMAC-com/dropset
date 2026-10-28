@@ -37,6 +37,7 @@ fail.
 | `validator`            | Localnet answering, program deployed at the localnet id                     |
 | `market <SYM>-USDC`    | Passive: two-sided book, rungs flip. Active: two-sided book, maker quoting  |
 | `quote TGBP-USDC`      | A \$10 buy fills through `simulate_swap`, the code the frontend's WASM runs |
+| `vault TGBP-USDC`      | Leader vault named, open to outside depositors (both flags), leader funded  |
 | `frontend` / `grafana` | `localhost:3000` / `localhost:3200` answering                               |
 
 The quote line is chain-side: it proves the book quotes, not that the page
@@ -48,8 +49,8 @@ vault has never stamped a quote: either `M` was not pressed, or the maker
 started and has not quoted yet, so re-run after a few seconds. `maker stale`
 means it quoted and went quiet.
 
-`SKIPPED` is neither a pass nor a fail. With the validator down, the market
-and quote lines print as `SKIPPED` with the validator's reason, so the one
+`SKIPPED` is neither a pass nor a fail. With the validator down, the market,
+quote and vault lines print as `SKIPPED` with the validator's reason, so the one
 fault fails once, and the closing line names every skipped surface.
 
 `EXPECTED` is not a fail. There are two such states:
@@ -82,16 +83,33 @@ tGBP. The regime is named so you can say why, not to fail the run.
   rest on the other side.
 - **Vault names:** the accounts pane lists each vault by name, and the
   leader pane shows the leader's. The bootstrap names each vault
-  `Vault <leader prefix>`; `N` renames the leader's vault, and the menu's
+  `DASMAC`; `N` renames the leader's vault, and the menu's
   name override replaces or blanks any vault's name and can lock it. A
   vault with no name shows as `#` plus its per-market sequence number
   (`#5`), never its sector index — the same on every surface.
+- **Outside deposits:** a vault takes an outside deposit only once its
+  leader allows it and an admin approves it. The bootstrap sets both on
+  every vault it creates. `O` opens the selected market's leader vault by
+  hand, for one that was created closed; the vault row reads `O open (done)`
+  once both are set.
 
 ## 4. Try it in the browser
 
 Open `localhost:3000`, choose tGBP-USDC, and quote a \$10 buy. It should match
 the check's `quote TGBP-USDC` line, unless `NEXT_PUBLIC_PLATFORM_FEE_BPS` is
 set: the check quotes with no platform fee.
+
+Then the vaults:
+
+1. Open **Vaults**. Each market lists its leader vault by name, `DASMAC`,
+   with its Deposit button live. A vault that reads "Not open yet" is
+   missing a flag: for tGBP-USDC the check's `vault TGBP-USDC` line says
+   which, and on any market `O` in the TUI sets what is missing.
+1. Connect the swap wallet, the one the bootstrap funds.
+1. Deposit \$10 into the tGBP-USDC vault. Your position appears, and the
+   vault's reserves grow by the deposit.
+1. Withdraw it. The position goes back to zero and the reserves return to
+   where they were, less any fills in between.
 
 The localnet frontend points its RPC at `127.0.0.1:8899`, which a phone
 resolves to itself, so the phone can't reach this stack. On the phone, open the

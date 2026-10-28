@@ -127,7 +127,7 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
                 config,
                 &leader,
                 &quote_authority.pubkey(),
-                &chain::default_vault_name(&leader.pubkey()),
+                chain::BOOTSTRAP_VAULT_NAME,
                 &log,
             )
         },
