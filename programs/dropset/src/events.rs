@@ -144,6 +144,25 @@ pub struct SetQuoteAuthorityEvent {
     pub new_authority: Address,
 }
 
+/// Emitted by `set_perf_fee_rate` when a leader retunes a vault's
+/// performance fee. The handler realizes at `old_rate` first, so any
+/// `RealizeEvent` in the same instruction precedes this record and was
+/// minted at the old rate. Re-stamping the incumbent rate is rejected,
+/// so `old_rate != new_rate`. See the spec's **SetPerfFeeRate**.
+#[event]
+pub struct SetPerfFeeRateEvent {
+    pub market: Address,
+    pub sector_idx: u32,
+    /// The occupying vault's `Vault::seq`. `(market, sector_idx, vault_seq)`
+    /// identifies a vault across sector reuse; `sector_idx` alone does not.
+    pub vault_seq: u64,
+    pub leader: Address,
+    /// Rate in ppm before the change.
+    pub old_rate: u32,
+    /// Rate in ppm after the change.
+    pub new_rate: u32,
+}
+
 /// Emitted by `set_min_leader_share` when an admin retunes a vault's
 /// skin-in-the-game floor after creation. See the spec's
 /// **SetMinLeaderShare**.
@@ -370,8 +389,9 @@ pub struct WithdrawEvent {
     pub realized_pnl_delta: i64,
 }
 
-/// Emitted by `deposit` / `withdraw` whenever the implicit `Realize`
-/// step mints new shares to the leader. Per spec, the hot path never
+/// Emitted by `deposit` / `withdraw` (and `set_perf_fee_rate`, which
+/// realizes at the old rate first) whenever the implicit `Realize` step
+/// mints new shares to the leader. Per spec, the hot path never
 /// touches `Realize`, so swap does not emit this.
 #[event]
 pub struct RealizeEvent {

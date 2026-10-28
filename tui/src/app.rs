@@ -686,6 +686,7 @@ impl App {
             KeyCode::Char('+') => self.run_action(Action::LeaderDeposit),
             KeyCode::Char('-') => self.run_action(Action::LeaderWithdraw),
             KeyCode::Char('N') => self.run_action(Action::RenameVault),
+            KeyCode::Char('%') => self.run_action(Action::SetPerfFee),
             // The passive ladder on the selected market — post one, or
             // re-center the one resting; each opens its form → typed-`yes`
             // prompt, and the same entries are in the menu.
@@ -1109,10 +1110,10 @@ impl App {
     /// Size the leader ticket for `buf` against the selected market, reading
     /// its vault fresh, and move the prompt to the confirm stage.
     fn size_leader_ticket(&mut self, op: LeaderOp, buf: &str) {
-        let Some(amount) = parse_positive_amount(buf) else {
+        let Some(amount) = op.parse_amount(buf) else {
             self.log(
                 LogKind::Err,
-                format!("{} — enter a positive whole number", op.label()),
+                format!("{} — enter {}", op.label(), op.amount_hint()),
             );
             return;
         };
@@ -2034,10 +2035,11 @@ fn now_hms() -> String {
     format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
-/// Parse a typed amount buffer — the swap units, a leader deposit's quote
-/// units or a withdraw's percentage — into a whole number: `Some(n)` for a
+/// Parse the typed swap-units buffer into a whole number: `Some(n)` for a
 /// positive integer, `None` for empty, zero, or non-numeric input (the caller
-/// refuses it). Split out so it's testable without an `App`.
+/// refuses it). Split out so it's testable without an `App`. The leader
+/// prompt parses through [`LeaderOp::parse_amount`] instead, since a 0% fee
+/// is a real rate.
 pub(crate) fn parse_positive_amount(buf: &str) -> Option<u64> {
     match buf.parse::<u64>() {
         Ok(n) if n > 0 => Some(n),
@@ -2216,6 +2218,7 @@ mod tests {
         use crate::leader::LeaderOp;
         assert_eq!(Action::LeaderDeposit.leader_op(), Some(LeaderOp::Deposit));
         assert_eq!(Action::LeaderWithdraw.leader_op(), Some(LeaderOp::Withdraw));
+        assert_eq!(Action::SetPerfFee.leader_op(), Some(LeaderOp::SetPerfFee));
         // Reserved: it must not open a prompt that sizes nothing.
         assert_eq!(Action::RotateLeader.leader_op(), None);
         assert_eq!(Action::Deposit.leader_op(), None);

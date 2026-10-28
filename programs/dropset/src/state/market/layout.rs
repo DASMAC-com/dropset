@@ -230,7 +230,9 @@ pub struct Vault {
     pub leader_shares: PodU64,
     /// High-water mark of `L / total_shares` as Q32.32.
     pub hwm: PodU64,
-    /// Performance fee rate in ppm. Set at `CreateVault`; immutable.
+    /// Performance fee rate in ppm. Set at `CreateVault`, then
+    /// leader-retunable via `SetPerfFeeRate`, which realizes at the old
+    /// rate before the write.
     pub perf_fee_rate: PodU32,
     /// Floor on `leader_shares / total_shares` in ppm. Stamped at
     /// `CreateVault` from `MarketHeader.default_min_leader_share`, then

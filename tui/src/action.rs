@@ -100,6 +100,10 @@ pub enum Action {
     /// The leader renames its own vault on the selected market. Opens the
     /// name → typed-`yes` prompt — see [`crate::naming`].
     RenameVault,
+    /// The leader retunes its vault's performance fee (the program realizes
+    /// at the old rate first). Opens the amount → typed-`yes` prompt, the
+    /// amount a rate in bps.
+    SetPerfFee,
     /// Reserved, deliberately unimplemented: the leader-rotation instruction
     /// arrives with its program change, and a builder guessed at its account
     /// shape now would be rework by construction. Never enabled.
@@ -182,13 +186,14 @@ pub const MENU: [Action; NUMBER_KEYS + 3] = [
 ];
 
 /// The leader's own vault — the runtime pane's `vault` group, on both
-/// clusters: deposit on `+`, withdraw on `-`, rename on `N`, and the
-/// reserved rotation, shown greyed and on no key until its program change
-/// lands.
-pub const VAULT_ACTIONS: [Action; 4] = [
+/// clusters: deposit on `+`, withdraw on `-`, rename on `N`, the fee retune
+/// on `%`, and the reserved rotation, shown greyed and on no key until its
+/// program change lands.
+pub const VAULT_ACTIONS: [Action; 5] = [
     Action::LeaderDeposit,
     Action::LeaderWithdraw,
     Action::RenameVault,
+    Action::SetPerfFee,
     Action::RotateLeader,
 ];
 
@@ -265,6 +270,7 @@ impl Action {
             Action::LeaderDeposit => "Leader deposit",
             Action::LeaderWithdraw => "Leader withdraw",
             Action::RenameVault => "Rename vault",
+            Action::SetPerfFee => "Set performance fee",
             Action::RotateLeader => "Rotate leader",
             Action::PassiveLadder => "Passive ladder",
             Action::PassiveRecenter => "Passive re-center",
@@ -330,10 +336,13 @@ impl Action {
                     | Phase::Ready
             ),
             Action::Wipe => true,
-            // Moving a stake needs one to exist: a seeded vault. `Ready` is
+            // Moving a stake needs one to exist, and the fee retune a vault
+            // to retune: a seeded vault. `Ready` is
             // every roster market at once; the prompt then re-reads the
             // selected market's vault fresh and refuses on its own terms.
-            Action::LeaderDeposit | Action::LeaderWithdraw => phase == Phase::Ready,
+            Action::LeaderDeposit | Action::LeaderWithdraw | Action::SetPerfFee => {
+                phase == Phase::Ready
+            }
             // A passive ladder quotes a seeded vault; the prompt re-reads the
             // leader's own vault fresh, as the stake commands do.
             Action::PassiveLadder | Action::PassiveRecenter => phase == Phase::Ready,
@@ -390,7 +399,11 @@ impl Action {
             // balance-checked and never minted; and nothing sends until the
             // operator types `yes` over the exact amounts and bounds. The
             // reserved rotation is listed so it is visible — and stays greyed.
-            Action::LeaderDeposit | Action::LeaderWithdraw | Action::RotateLeader => true,
+            // The fee retune moves no funds, under the same signer and `yes`.
+            Action::LeaderDeposit
+            | Action::LeaderWithdraw
+            | Action::SetPerfFee
+            | Action::RotateLeader => true,
             // The leader's rename: signed by the operator's `--leader` on its
             // own vault, a label write that moves no funds, and sent only
             // after a typed `yes` over the old and new name.
@@ -448,6 +461,7 @@ impl Action {
         match self {
             Action::LeaderDeposit => Some(LeaderOp::Deposit),
             Action::LeaderWithdraw => Some(LeaderOp::Withdraw),
+            Action::SetPerfFee => Some(LeaderOp::SetPerfFee),
             Action::RotateLeader
             | Action::RenameVault
             | Action::OverrideVaultName
@@ -488,6 +502,7 @@ impl Action {
             Action::PassiveRecenter => Some(PassiveOp::Recenter),
             Action::LeaderDeposit
             | Action::LeaderWithdraw
+            | Action::SetPerfFee
             | Action::RotateLeader
             | Action::RenameVault
             | Action::OverrideVaultName
@@ -528,6 +543,7 @@ impl Action {
             Action::OverrideVaultName => Some(NameOp::Override),
             Action::LeaderDeposit
             | Action::LeaderWithdraw
+            | Action::SetPerfFee
             | Action::RotateLeader
             | Action::PassiveLadder
             | Action::PassiveRecenter
@@ -591,6 +607,7 @@ impl Action {
             | Action::LeaderDeposit
             | Action::LeaderWithdraw
             | Action::RenameVault
+            | Action::SetPerfFee
             | Action::RotateLeader
             | Action::PassiveLadder
             | Action::PassiveRecenter
@@ -635,6 +652,7 @@ impl Action {
             | Action::LeaderWithdraw
             | Action::RenameVault
             | Action::OverrideVaultName
+            | Action::SetPerfFee
             | Action::RotateLeader
             | Action::PassiveLadder
             | Action::PassiveRecenter
@@ -692,6 +710,7 @@ impl Action {
             Action::OpenExplorer | Action::Wipe => "",
             Action::LeaderDeposit
             | Action::LeaderWithdraw
+            | Action::SetPerfFee
             | Action::PassiveLadder
             | Action::PassiveRecenter => "needs every vault seeded",
             Action::RenameVault => "create the vaults first",
@@ -1166,6 +1185,7 @@ pub fn dispatch(
         Action::Wipe
         | Action::LeaderDeposit
         | Action::LeaderWithdraw
+        | Action::SetPerfFee
         | Action::RotateLeader
         | Action::PassiveLadder
         | Action::PassiveRecenter
@@ -2318,7 +2338,7 @@ mod tests {
     /// Kept complete by [`all_actions_lists_every_variant`], not by care — the
     /// array's length annotation does not change when a variant is
     /// added, so nothing else would notice the list going stale.
-    const ALL_ACTIONS: [Action; 29] = [
+    const ALL_ACTIONS: [Action; 30] = [
         Action::Deploy,
         Action::Publish,
         Action::CloseBuffers,
@@ -2334,6 +2354,7 @@ mod tests {
         Action::LeaderDeposit,
         Action::LeaderWithdraw,
         Action::RenameVault,
+        Action::SetPerfFee,
         Action::RotateLeader,
         Action::PassiveLadder,
         Action::PassiveRecenter,
@@ -2385,6 +2406,7 @@ mod tests {
             Action::LeaderDeposit,
             Action::LeaderWithdraw,
             Action::RenameVault,
+            Action::SetPerfFee,
             Action::RotateLeader,
         ];
         let passive = [Action::PassiveLadder, Action::PassiveRecenter];
@@ -2668,6 +2690,7 @@ mod tests {
                 | Action::LeaderDeposit
                 | Action::LeaderWithdraw
                 | Action::RenameVault
+                | Action::SetPerfFee
                 | Action::RotateLeader
                 | Action::PassiveLadder
                 | Action::PassiveRecenter
@@ -2686,7 +2709,7 @@ mod tests {
         }
         assert_eq!(
             ALL_ACTIONS.len(),
-            29,
+            30,
             "ALL_ACTIONS must list every Action variant"
         );
         for (i, a) in ALL_ACTIONS.iter().enumerate() {
@@ -2767,6 +2790,7 @@ mod tests {
                 let ready = phase == Phase::Ready;
                 assert_eq!(Action::LeaderDeposit.enabled(phase, cluster), ready);
                 assert_eq!(Action::LeaderWithdraw.enabled(phase, cluster), ready);
+                assert_eq!(Action::SetPerfFee.enabled(phase, cluster), ready);
                 // Reserved, not guessed at: no phase on either cluster arms it.
                 assert!(!Action::RotateLeader.enabled(phase, cluster));
             }
@@ -2778,6 +2802,7 @@ mod tests {
         for a in [
             Action::LeaderDeposit,
             Action::LeaderWithdraw,
+            Action::SetPerfFee,
             Action::RotateLeader,
         ] {
             assert!(!BOOTSTRAP.contains(&a));

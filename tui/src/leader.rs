@@ -12,6 +12,10 @@
 //! The first deposit into an empty vault is not here: that is the two-leg
 //! seed, `Action::Deposit`. A top-up is single-leg by the program's rule, and
 //! this module supplies the quote leg and lets the program derive the base.
+//!
+//! The leader's performance-fee retune rides the same prompt: it moves no
+//! stake, but it is the leader's term of business on the same vault, signed by
+//! the same key, under the same typed `yes`.
 
 use crate::accounts::{self, MarketView, VaultSeat, VaultStake};
 use crate::chain;
@@ -40,11 +44,16 @@ const BPS: u128 = 10_000;
 /// Parts per million — the unit of the min-leader-share floor.
 const PPM: u128 = 1_000_000;
 
-/// Which way the leader's stake moves.
+/// Basis points to ppm — the fee prompt types bps, the program stores ppm.
+const PPM_PER_BPS: u64 = 100;
+
+/// Which way the leader's stake moves, or the fee retune.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LeaderOp {
     Deposit,
     Withdraw,
+    /// Retune the vault's performance fee; the amount is the new rate in bps.
+    SetPerfFee,
 }
 
 impl LeaderOp {
@@ -52,6 +61,7 @@ impl LeaderOp {
         match self {
             LeaderOp::Deposit => "Leader deposit",
             LeaderOp::Withdraw => "Leader withdraw",
+            LeaderOp::SetPerfFee => "Set performance fee",
         }
     }
 
@@ -60,6 +70,18 @@ impl LeaderOp {
         match self {
             LeaderOp::Deposit => "whole quote units",
             LeaderOp::Withdraw => "% of the leader's stake (1-100)",
+            LeaderOp::SetPerfFee => "bps of gains (0-10000; 1000 = 10%)",
+        }
+    }
+
+    /// Parse the typed amount buffer: a whole number, positive for the stake
+    /// moves, and zero allowed for the fee — a 0% fee is a real rate. `None`
+    /// for anything the prompt refuses.
+    pub fn parse_amount(self, buf: &str) -> Option<u64> {
+        match (self, buf.parse::<u64>()) {
+            (LeaderOp::SetPerfFee, Ok(n)) => Some(n),
+            (LeaderOp::Deposit | LeaderOp::Withdraw, Ok(n)) if n > 0 => Some(n),
+            _ => None,
         }
     }
 }
@@ -84,6 +106,8 @@ pub enum Plan {
         min_base_out: u64,
         min_quote_out: u64,
     },
+    /// Both rates in ppm, the old one as of the read.
+    SetPerfFee { old_ppm: u32, new_ppm: u32 },
 }
 
 /// A sized, not-yet-sent leader operation on one vault.
@@ -173,6 +197,16 @@ fn plan_lines(
             "note    fee shares minted at send stay behind even at 100%".to_string(),
             "        the program re-checks the leader-share floor".to_string(),
         ],
+        Plan::SetPerfFee { old_ppm, new_ppm } => vec![
+            format!(
+                "fee     {} -> {} of gains",
+                ppm_percent(old_ppm),
+                ppm_percent(new_ppm)
+            ),
+            // The program realizes at the old rate before the write, so
+            // nothing accrued so far is re-priced by the change.
+            "note    gains so far are realized at the old rate first".to_string(),
+        ],
     }
 }
 
@@ -214,7 +248,25 @@ pub fn plan(op: LeaderOp, stake: &VaultStake, amount: u64, quote_decimals: u8) -
             plan_deposit(stake, atoms)
         }
         LeaderOp::Withdraw => plan_withdraw(stake, amount),
+        LeaderOp::SetPerfFee => plan_perf_fee(stake, amount),
     }
+}
+
+/// Size a fee retune to `bps` of gains against `stake`'s current rate,
+/// refusing what the program would: a rate above 100%, and the current rate
+/// (`SamePerfFeeRate`).
+pub fn plan_perf_fee(stake: &VaultStake, bps: u64) -> Result<Plan> {
+    if bps > BPS as u64 {
+        bail!("the fee is at most 10000 bps (100%)");
+    }
+    let new_ppm = (bps * PPM_PER_BPS) as u32;
+    if new_ppm == stake.perf_fee_rate {
+        bail!("the fee is already {}", ppm_percent(new_ppm));
+    }
+    Ok(Plan::SetPerfFee {
+        old_ppm: stake.perf_fee_rate,
+        new_ppm,
+    })
 }
 
 /// Size a quote-leg top-up of `quote_in` atoms against `stake`, after the
@@ -438,6 +490,11 @@ pub fn preview(
             format!("preview  -{shares_in} shares"),
             format!("         {}", basket_text(base_out, quote_out, b, q, price)),
         ]),
+        Ok(Plan::SetPerfFee { old_ppm, new_ppm }) => Ok(vec![format!(
+            "preview  fee {} -> {}",
+            ppm_percent(old_ppm),
+            ppm_percent(new_ppm)
+        )]),
         Err(e) => Err(format!("{e:#}")),
     })
 }
@@ -463,7 +520,8 @@ fn led_seat(
 }
 
 /// Read the leader's vault on `market` fresh and size `op` for `amount` —
-/// whole quote units on a deposit, a percentage on a withdraw. Sends nothing.
+/// whole quote units on a deposit, a percentage on a withdraw, bps on a fee
+/// retune. Sends nothing.
 pub fn prepare(
     client: &RpcClient,
     repo_root: &Path,
@@ -516,7 +574,17 @@ pub fn execute(
         );
     }
     let m = &ticket.market;
-    let ix = match ticket.plan {
+    let atas = || {
+        leader_ata_creates(
+            &wallet.pubkey(),
+            &ticket.leader,
+            &m.base_mint,
+            &m.quote_mint,
+        )
+    };
+    // The stake moves ride behind the leader's ATA creates; the fee retune
+    // touches no token account, so it goes alone.
+    let (ixs, label) = match ticket.plan {
         Plan::Deposit {
             quote_in,
             max_base_in,
@@ -533,7 +601,8 @@ pub fn execute(
                 quote_in,
                 log,
             )?;
-            chain::build_deposit_leader_ix(
+            let mut ixs = atas();
+            ixs.push(chain::build_deposit_leader_ix(
                 cluster,
                 &ticket.leader,
                 &m.address,
@@ -544,37 +613,41 @@ pub fn execute(
                 ticket.seat.idx,
                 (0, quote_in),
                 (max_base_in, quote_in),
-            )
+            ));
+            (ixs, "deposit_leader")
         }
         Plan::Withdraw {
             shares_in,
             min_base_out,
             min_quote_out,
             ..
-        } => chain::build_withdraw_leader_ix(
-            cluster,
-            &ticket.leader,
-            &m.address,
-            &m.base_mint,
-            &m.quote_mint,
-            &m.base_treasury,
-            &m.quote_treasury,
-            ticket.seat.idx,
-            shares_in,
-            min_base_out,
-            min_quote_out,
+        } => {
+            let mut ixs = atas();
+            ixs.push(chain::build_withdraw_leader_ix(
+                cluster,
+                &ticket.leader,
+                &m.address,
+                &m.base_mint,
+                &m.quote_mint,
+                &m.base_treasury,
+                &m.quote_treasury,
+                ticket.seat.idx,
+                shares_in,
+                min_base_out,
+                min_quote_out,
+            ));
+            (ixs, "withdraw_leader")
+        }
+        Plan::SetPerfFee { new_ppm, .. } => (
+            vec![chain::build_set_perf_fee_rate_ix(
+                cluster,
+                &ticket.leader,
+                &m.address,
+                ticket.seat.idx,
+                new_ppm,
+            )],
+            "set_perf_fee_rate",
         ),
-    };
-    let mut ixs = leader_ata_creates(
-        &wallet.pubkey(),
-        &ticket.leader,
-        &m.base_mint,
-        &m.quote_mint,
-    );
-    ixs.push(ix);
-    let label = match ticket.op {
-        LeaderOp::Deposit => "deposit_leader",
-        LeaderOp::Withdraw => "withdraw_leader",
     };
     chain::send_logged(client, wallet, &[wallet, leader], &ixs, label, log).context(label)?;
     log.accounts_changed();
@@ -711,6 +784,42 @@ mod tests {
         );
         let refused = preview(LeaderOp::Withdraw, &s, Some(101), b, q, None);
         assert!(matches!(refused, Some(Err(e)) if e.contains("between 1 and 100")));
+    }
+
+    #[test]
+    fn the_fee_retune_scales_bps_to_ppm_and_refuses_what_the_program_would() {
+        let s = VaultStake {
+            perf_fee_rate: 100_000,
+            ..stake(1_000, 600, 10, 20)
+        };
+        assert_eq!(
+            plan_perf_fee(&s, 2_000).unwrap(),
+            Plan::SetPerfFee {
+                old_ppm: 100_000,
+                new_ppm: 200_000
+            }
+        );
+        // Zero and the 100% bound are both real rates.
+        assert!(plan_perf_fee(&s, 0).is_ok());
+        assert!(plan_perf_fee(&s, 10_000).is_ok());
+        assert!(plan_perf_fee(&s, 10_001).is_err());
+        // The current rate is `SamePerfFeeRate` on chain; refused here first.
+        let same = plan_perf_fee(&s, 1_000).unwrap_err();
+        assert!(format!("{same:#}").contains("already 10.00%"));
+        let (b, q) = (("EURC", 6), ("USDC", 6));
+        assert_eq!(
+            preview(LeaderOp::SetPerfFee, &s, Some(2_000), b, q, None),
+            Some(Ok(vec!["preview  fee 10.00% -> 20.00%".to_string()]))
+        );
+    }
+
+    #[test]
+    fn only_the_fee_retune_takes_a_zero_amount() {
+        assert_eq!(LeaderOp::SetPerfFee.parse_amount("0"), Some(0));
+        assert_eq!(LeaderOp::Deposit.parse_amount("0"), None);
+        assert_eq!(LeaderOp::Withdraw.parse_amount("0"), None);
+        assert_eq!(LeaderOp::Withdraw.parse_amount("50"), Some(50));
+        assert_eq!(LeaderOp::SetPerfFee.parse_amount(""), None);
     }
 
     #[test]

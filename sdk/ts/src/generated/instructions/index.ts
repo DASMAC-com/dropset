@@ -30,6 +30,7 @@ export * from './setMarketFeeConfig';
 export * from './setMaxPlatformFee';
 export * from './setMinLeaderShare';
 export * from './setOutsideDepositsApproved';
+export * from './setPerfFeeRate';
 export * from './setQuoteAuthority';
 export * from './setReferencePrice';
 export * from './setRegistryDefaults';

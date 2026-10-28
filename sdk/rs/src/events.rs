@@ -38,7 +38,7 @@ use crate::types::{
     CloseMarketTreasuryEvent, CloseRegistryFeeVaultEvent, CloseVaultEvent, CreateVaultEvent,
     DepositEvent, FillEvent, FreezeVaultEvent, OverrideVaultNameEvent, PlatformFeeEvent,
     RealizeEvent, SetDefaultFeeConfigEvent, SetLeaderEvent, SetMarketFeeConfigEvent,
-    SetMaxPlatformFeeEvent, SetMinLeaderShareEvent, SetQuoteAuthorityEvent,
+    SetMaxPlatformFeeEvent, SetMinLeaderShareEvent, SetPerfFeeRateEvent, SetQuoteAuthorityEvent,
     SetRegistryDefaultsEvent, SetTakerFeeEvent, SetVaultNameEvent, SweepResidualEvent,
     WithdrawEvent,
 };
@@ -102,6 +102,8 @@ pub const SET_MAX_PLATFORM_FEE_EVENT_DISCRIMINATOR: [u8; 8] = [45, 40, 179, 93, 
 /// Discriminator for `SetMinLeaderShareEvent`.
 pub const SET_MIN_LEADER_SHARE_EVENT_DISCRIMINATOR: [u8; 8] =
     [159, 194, 164, 181, 227, 131, 179, 105];
+/// Discriminator for `SetPerfFeeRateEvent`.
+pub const SET_PERF_FEE_RATE_EVENT_DISCRIMINATOR: [u8; 8] = [122, 175, 149, 21, 181, 46, 147, 226];
 /// Discriminator for `SetQuoteAuthorityEvent`.
 pub const SET_QUOTE_AUTHORITY_EVENT_DISCRIMINATOR: [u8; 8] = [29, 44, 6, 38, 69, 146, 112, 138];
 /// Discriminator for `SetRegistryDefaultsEvent`.
@@ -132,6 +134,7 @@ pub enum DropsetEvent {
     FreezeVault(FreezeVaultEvent),
     SetLeader(SetLeaderEvent),
     SetQuoteAuthority(SetQuoteAuthorityEvent),
+    SetPerfFeeRate(SetPerfFeeRateEvent),
     SetVaultName(SetVaultNameEvent),
     OverrideVaultName(OverrideVaultNameEvent),
     Realize(RealizeEvent),
@@ -160,6 +163,7 @@ impl DropsetEvent {
             Self::FreezeVault(_) => "FreezeVaultEvent",
             Self::SetLeader(_) => "SetLeaderEvent",
             Self::SetQuoteAuthority(_) => "SetQuoteAuthorityEvent",
+            Self::SetPerfFeeRate(_) => "SetPerfFeeRateEvent",
             Self::SetVaultName(_) => "SetVaultNameEvent",
             Self::OverrideVaultName(_) => "OverrideVaultNameEvent",
             Self::Realize(_) => "RealizeEvent",
@@ -265,6 +269,7 @@ pub fn try_decode_event_payload(payload: &[u8]) -> Result<DropsetEvent, DecodeEr
         SET_QUOTE_AUTHORITY_EVENT_DISCRIMINATOR => {
             decode!(SetQuoteAuthority, SetQuoteAuthorityEvent)
         }
+        SET_PERF_FEE_RATE_EVENT_DISCRIMINATOR => decode!(SetPerfFeeRate, SetPerfFeeRateEvent),
         SET_VAULT_NAME_EVENT_DISCRIMINATOR => decode!(SetVaultName, SetVaultNameEvent),
         OVERRIDE_VAULT_NAME_EVENT_DISCRIMINATOR => {
             decode!(OverrideVaultName, OverrideVaultNameEvent)
@@ -444,6 +449,7 @@ mod tests {
             SET_MIN_LEADER_SHARE_EVENT_DISCRIMINATOR,
             "SetMinLeaderShareEvent",
         ),
+        (SET_PERF_FEE_RATE_EVENT_DISCRIMINATOR, "SetPerfFeeRateEvent"),
         (
             SET_QUOTE_AUTHORITY_EVENT_DISCRIMINATOR,
             "SetQuoteAuthorityEvent",

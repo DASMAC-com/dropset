@@ -25,7 +25,7 @@ use dropset::{
     CloseMarketTreasuryEvent, CloseRegistryFeeVaultEvent, CloseVaultEvent, CreateVaultEvent,
     DepositEvent, FillEvent, FreezeVaultEvent, OverrideVaultNameEvent, PlatformFeeEvent,
     RealizeEvent, SetDefaultFeeConfigEvent, SetLeaderEvent, SetMarketFeeConfigEvent,
-    SetMaxPlatformFeeEvent, SetMinLeaderShareEvent, SetQuoteAuthorityEvent,
+    SetMaxPlatformFeeEvent, SetMinLeaderShareEvent, SetPerfFeeRateEvent, SetQuoteAuthorityEvent,
     SetRegistryDefaultsEvent, SetTakerFeeEvent, SetVaultNameEvent, SweepResidualEvent,
     WithdrawEvent,
 };
@@ -300,6 +300,31 @@ pub fn set_quote_authority(meta: &TransactionMetadata) -> SetQuoteAuthority {
         leader: c.pubkey(),
         old_authority: c.pubkey(),
         new_authority: c.pubkey(),
+    };
+    c.finish();
+    d
+}
+
+#[derive(Debug)]
+pub struct SetPerfFeeRate {
+    pub market: [u8; 32],
+    pub sector_idx: u32,
+    pub vault_seq: u64,
+    pub leader: [u8; 32],
+    pub old_rate: u32,
+    pub new_rate: u32,
+}
+
+pub fn set_perf_fee_rate(meta: &TransactionMetadata) -> SetPerfFeeRate {
+    let body = one_body::<SetPerfFeeRateEvent>(meta);
+    let mut c = Cursor::new(&body);
+    let d = SetPerfFeeRate {
+        market: c.pubkey(),
+        sector_idx: c.u32(),
+        vault_seq: c.u64(),
+        leader: c.pubkey(),
+        old_rate: c.u32(),
+        new_rate: c.u32(),
     };
     c.finish();
     d
