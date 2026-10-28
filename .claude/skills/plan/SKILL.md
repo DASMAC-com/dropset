@@ -43,7 +43,6 @@ exactly these headings, in this order, and nothing else:
    next).
 1. **Current direction and checkpoints** — the phase, the live
    tracks, and the next bootstrap's first moves.
-1. **Operator actions outstanding** — numbered, kept current.
 1. **Fleet state and chains** — in flight, in review, queued,
    held with reasons, and the parked counts.
 1. **Collision clusters** (step 1).
@@ -106,8 +105,7 @@ operator lever, never this mechanism.
   `Bootstrap stamp: <YYYY-MM-DD>` line to the document, and every
   close-out rewrite keeps it. A bootstrap finding today's date
   there is **warm**: read `rulings.md` and the document, run
-  `ListAgents`, surface
-  the outstanding list — and skip the once-a-day duties (the lever
+  `ListAgents` — and skip the once-a-day duties (the lever
   fold, the audit heartbeat, the parked counts, the upkeep
   report, step 8). No stamp
   means a full bootstrap.
@@ -122,15 +120,21 @@ handoff — and, warm or full:
 
 - **Act on each `Discuss with operator` item first**, before the
   board — one needing the operator's word joins step 8's ask.
-- **Surface `Operator actions outstanding` unprompted**, itemized
-  and numbered — every `[Operator]` item in Todo plus what the
-  document holds — so the operator answers all of it in one message.
-  Never leave it waiting for the operator to open the document.
+- **Recite no operator list.** An operator action is asked for
+  **when it binds**, in the tab that needs it, through
+  `AskUserQuestion` — the scheduler for a Done that releases an
+  edge or a login the gate needs (during a bootstrap, joining
+  step 8's ask), a worker for a ratification, the curator for a
+  kill. One that cannot be done in the moment is filed at Urgent
+  in Backlog with no milestone, and the curator surfaces it
+  once: `[Operator]`, which Todo holds until the operator's Done,
+  or a chore when a session can do the surrounding work, which
+  runs to In Review like any chore. There is no third path.
 - **Verify overnight landings with `git log`** and the In Review
   listing, never the Done column; release chains as blockers land.
 
-On a full bootstrap, the last two run after the lever-fold spawn
-below.
+On a full bootstrap, the landing check runs after the lever-fold
+spawn below.
 
 **Say the upkeep report's highlights, with the parked counts.**
 The `plan` launcher ran `.claude/tools/upkeep.py` before this
@@ -182,14 +186,13 @@ paragraph only for what the operator said that the document does
 not hold. The fold's reads stay in its context.
 
 **The bootstrap runs unattended until its one ask.** After the
-spawn, do every duty that asks nothing — the outstanding list,
-`fleet resume`, the overnight landing check, the board read, the
-Queue's honesty — then end the turn (with no spawn, go straight
-on). The completion notification resumes it: say the report,
-record it under `In-session notes`, finish the board, and
-stop at step 8's consolidated ask. A
-Discuss item or duty needing the operator's word joins that ask.
-Never fold levers by hand while a sub-agent can.
+spawn, do every duty that asks nothing — `fleet resume`, the
+overnight landing check, the board read, the Queue's honesty —
+then end the turn (with no spawn, go straight on). The
+completion notification resumes it: say the report, record it
+under `In-session notes`, finish the board, and stop at step 8's
+consolidated ask. A Discuss item or duty needing the operator's
+word joins that ask. Never fold levers by hand while a sub-agent can.
 
 Then read the board. **Which tier an issue sits in is the whole
 scoping signal:**
@@ -527,8 +530,8 @@ phases, dated addenda and the session's incremental notes
 disappear, and no ruling, doctrine or method text survives
 outside `In-session notes`. **Restore `Discuss with operator`
 to a single blank checkbox**, once its items are acted on, and
-**bring `Operator actions outstanding` current**, so the next
-bootstrap surfaces something true. **Read the document back**
+carry no operator-actions list: an open operator action is an
+`[Operator]` issue, never document text. **Read the document back**
 after the write: a write against a stale snapshot silently saves
 the stale base. A wholesale replacement re-parses on the round
 trip, so compose it:

@@ -191,11 +191,15 @@ the document's state sections.
    documented early-mainnet build, dropped only at the final
    immutable deploy.
 
-1. **Operator-executed items are not tasks.** An item executed in
-   a vendor dashboard, credentials or deploy env is never
-   dispatched; it is filed `[Operator]` in Backlog, reviewed by
-   the curator, and once in Todo sits on the operator-actions
-   list until marked Done (2026-10-26).
+1. **Operator-executed items are never dispatched.** An item
+   executed in a vendor dashboard, credentials or deploy env is
+   asked through `AskUserQuestion` in the tab that needs it, or
+   filed at Urgent, Backlog, no milestone, surfaced once by the
+   curator: as an `[Operator]` task, which lives in Todo until
+   the operator's Done, or as a chore when a session can do the
+   surrounding work, which runs its normal course to In Review.
+   An operator action is an ask or an Urgent task, never a list
+   entry (2026-10-26, amended 2026-10-27).
 
 1. **Cost telemetry is reconciled against the bill.**
    Session-reported costs are projections;
