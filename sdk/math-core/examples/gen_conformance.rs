@@ -120,6 +120,19 @@ fn main() {
         })
         .collect();
 
+    // The saturating regime the clamped cases above cannot reach: the
+    // smallest exponent over the largest quote scales the numerator past
+    // `u128::MAX`, where Rust's `saturating_mul` clamps per decade. Stored
+    // without the `u64` clamp, so the `u128` saturation is what this pins,
+    // and as decimal strings, since neither amount survives a JSON number
+    // into TS.
+    let tiny = Price::encode(10_000_000, -16).unwrap(); // biased exponent 0
+    let base_for_quote_saturating = json!([{
+        "bits": tiny.as_u32(),
+        "quote": u64::MAX.to_string(),
+        "expected": tiny.base_for_quote(u64::MAX).to_string(),
+    }]);
+
     // Flip pricing: the price a filled level's proceeds rest at, `price ×
     // (PPM ∓ spread) / PPM` in decoded space (asks minus, bids plus),
     // re-encoded. A zero spread is the unmatchable `ZERO` sentinel rather
@@ -151,6 +164,7 @@ fn main() {
         "encode_reject": encode_reject,
         "quote_for_base": quote_for_base,
         "base_for_quote": base_for_quote,
+        "base_for_quote_saturating": base_for_quote_saturating,
         "flip_level_price": flip_level_price_rows,
     });
     emit(&doc, "price_vectors.json");

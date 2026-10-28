@@ -103,6 +103,21 @@ fn base_for_quote_vectors() {
 }
 
 #[test]
+fn base_for_quote_saturating_vectors() {
+    let cases = vectors()["base_for_quote_saturating"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert!(!cases.is_empty(), "saturating vectors present");
+    for c in &cases {
+        let p = Price::from_bits(u32_of(c, "bits"));
+        let quote: u64 = c["quote"].as_str().unwrap().parse().unwrap();
+        let expected: u128 = c["expected"].as_str().unwrap().parse().unwrap();
+        assert_eq!(p.base_for_quote(quote), expected);
+    }
+}
+
+#[test]
 fn flip_level_price_vectors() {
     let cases = vectors()["flip_level_price"].as_array().unwrap().clone();
     assert!(!cases.is_empty(), "flip_level_price vectors present");
