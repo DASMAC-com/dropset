@@ -138,8 +138,9 @@ session started and spliced its report under the document's
 machine-written `Upkeep report` heading, so the fetch above holds
 it; never re-run the pass here. Say its `parked` line — each
 pool's count and direction (ruling 23) — what was pruned and dismissed
-(or would have been, unarmed), each refusal (unpushed work, an
-open PR — reported, never retried), and any inert guard,
+(or would have been, unarmed), each refusal (a live session
+lock, an open PR — reported, never retried) and each pruned
+name's ahead count, and any inert guard,
 dangling reference or file near its size cap. Say the
 `fleet-cost` day lines and the `allowance` per-day figure too,
 any flagged day first. A run stamp

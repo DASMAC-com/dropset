@@ -1785,28 +1785,39 @@ everything else is cleanup-eligible (`upkeep.py`, daily, or its
 spelling (`worktree-<n>`, `worktree-eng-<n>`, `worktree-ceo-<n>`,
 `worktree-exp-<n>`) resolve to issue `<n>`. So every issue-keyed worktree is
 **protected while its issue is In Progress or In Review and
-eligible once it is Done or canceled**. Eligible is not removed:
-`prune_worktrees.py` then gates by **tier**, read from the launch's
+eligible once it is Done or canceled**. Upkeep passes the eligible
+names to `prune_worktrees.py` as **`--closed`**: the issue's work
+is settled, so uncommitted changes, unpushed commits and a missing
+upstream no longer hold the name — they held a stray branch
+forever — and the tree goes with one `--force`. **Only a live
+session's lock holds it.** The CLI can leave its lock
+(`claude session <n> (pid … start …)`) behind at exit — measured
+on a headless run — so a Claude Code lock whose pid is no longer
+running is **stale** and lifted; a reused pid, a bare `locked` or
+a hand-written reason reads as live, which only skips the tree.
+The report names each name's commits ahead of `origin/main` and
+its tip: `git branch -D` drops the branch's reflog, so the tip is
+the restore handle (`git branch <name> <tip>`) until `git gc`
+prunes the unreachable commits.
+
+A name passed as **`--merged`** instead (a by-hand prune, not
+upkeep) keeps the per-**tier** gate, read from the launch's
 substrate marker (`tier_of`), never from the branch name. An
 **executor** worktree — or one with no marker — keeps the full
 refusal: uncommitted changes, unpushed commits, or no upstream with
 a commit beyond `origin/main` all hold it. An **advisor** worktree
 (`architect`, `explore`) is removed with one `--force`, discarding
 its untracked spec file, which the read-only rule makes expendable
-once the issue is Done. A **live session's lock** holds it, and so
-does a commit of its own beyond `origin/main`, since a read-only
-session never makes one. The CLI can leave its lock
-(`claude session <n> (pid … start …)`) behind at exit — measured
-on a headless run — so a Claude Code lock whose pid is no longer
-running is **stale** and lifted for an advisor tree only; a reused
-pid reads as live, which only skips the tree. The table's tier
-column is each verb's own; the gate follows the marker actually on
-disk, so a pre-marker explore worktree, a free-form one, a number
-whose marker a `task <n>` wrote first, a tree some other launch
-made before `explore` or `architect` reached it (neither records
-its tier on a tree it did not create), and a pre-rename-named
-directory all get the executor gate — permanently, so a spec file
-left in one is removed by hand. A worded
+once the issue is Done. A live lock holds it (a stale one is
+lifted as above), and so does a commit of its own beyond
+`origin/main`, since a read-only session never makes one. The table's
+tier column is each verb's own; the gate follows the marker
+actually on disk, so a pre-marker explore worktree, a free-form
+one, a number whose marker a `task <n>` wrote first, a tree some
+other launch made before `explore` or `architect` reached it
+(neither records its tier on a tree it did not create), and a
+pre-rename-named directory all get the executor gate under
+`--merged`. A worded
 `ceo-<topic>` or `exp-<name>` worktree matches no issue: it is
 reported as unresolvable, never removed. A
 canceled issue whose PR is still open is always flagged, never
