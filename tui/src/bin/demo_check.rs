@@ -1,9 +1,9 @@
 //! `dropset-demo-check` — the pre-demo smoke check.
 //!
 //! Runs [`demo_check::run`] against a `make demo` stack that is already up
-//! and prints one line per surface: pass, fail, or a named expected state
-//! (keyless mode, the FX weekend), each with its evidence. Exits non-zero on
-//! any fail. Reads only — no transaction, no database write, no container
+//! and prints one line per surface: pass, fail, a named expected state
+//! (keyless mode, the FX weekend), or skipped behind a failed validator,
+//! each with its evidence. Exits non-zero on any fail. Reads only — no transaction, no database write, no container
 //! touched.
 //!
 //! ```text
@@ -16,7 +16,7 @@
 //!   (default the stack's `dropset_ro` on `127.0.0.1:5432`).
 
 use anyhow::{anyhow, bail, Result};
-use dropset_tui::demo_check::{self, Targets, Verdict, DEFAULT_DATABASE_URL};
+use dropset_tui::demo_check::{self, Targets, DEFAULT_DATABASE_URL};
 use dropset_tui::validator;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -33,6 +33,7 @@ fn main() -> Result<ExitCode> {
         .parent()
         .ok_or_else(|| anyhow!("locate repo root from crate dir"))?
         .to_path_buf();
+    println!("{}\n", demo_check::HEADER);
     let checks = demo_check::run(&Targets {
         repo_root: &repo_root,
         rpc_url: args
@@ -44,14 +45,13 @@ fn main() -> Result<ExitCode> {
     for check in &checks {
         println!("{check}");
     }
-    let failed = checks.iter().filter(|c| c.verdict == Verdict::Fail).count();
-    if failed == 0 {
-        println!("\ndemo stack ready");
-        Ok(ExitCode::SUCCESS)
+    let (passed, line) = demo_check::summary(&checks);
+    println!("\n{line}");
+    Ok(if passed {
+        ExitCode::SUCCESS
     } else {
-        println!("\n{failed} surface(s) failed — see docs/demo.md for what each line means");
-        Ok(ExitCode::FAILURE)
-    }
+        ExitCode::FAILURE
+    })
 }
 
 fn print_help() {
