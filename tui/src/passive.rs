@@ -719,7 +719,7 @@ fn drift_lines(vault: &Vault, legs: &Legs, fair: &Fair, spot: Option<Spot>) -> V
     let used = |side: &[Level; N_LEVELS]| -> Vec<u32> {
         side.iter()
             .filter(|l| l.size_bps.get() > 0)
-            .map(|l| l.price_offset.get())
+            .map(|l| l.price_offset_ppm.get())
             .collect()
     };
     match (center, fair.price()) {
@@ -1329,8 +1329,8 @@ mod tests {
     fn spaced_vault(flush: bool) -> Vault {
         let mut v = ladder_vault(flush);
         for (i, offset) in [500u32, 1_000].into_iter().enumerate() {
-            v.profile.asks[i].price_offset = offset.into();
-            v.profile.bids[i].price_offset = offset.into();
+            v.profile.asks[i].price_offset_ppm = offset.into();
+            v.profile.bids[i].price_offset_ppm = offset.into();
         }
         v
     }

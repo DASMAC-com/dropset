@@ -176,7 +176,7 @@ const _: () = assert!(equ::E_MARKET_NOT_WRITABLE == err::structural::MARKET_NOT_
 ///   the book — but the anchor does not, so neither side's distance from
 ///   the market is bounded, and in ratio terms bids reach the farther of
 ///   the two. Deliberate, and **not fixable by a write-time band**:
-///   `Level::price_offset` is measured from a reference price the *same*
+///   `Level::price_offset_ppm` is measured from a reference price the *same*
 ///   leader chooses, so
 ///   bounding the offset bounds the ladder's *shape*, not its distance
 ///   from the market — a leader wanting to quote far out just stamps a

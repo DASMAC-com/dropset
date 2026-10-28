@@ -25,7 +25,7 @@ defaultMinLeaderShare: number;
 defaultTakerFee: number; 
 /**
  * Default platform-fee ceiling (bps, `Bps16`) stamped into
- * `MarketHeader.max_platform_fee` at creation. Bounds the
+ * `MarketHeader.max_platform_fee_bps` at creation. Bounds the
  * caller-declared `platform_fee_bps` a `swap` may skim off the taker's
  * output; retunable per market afterwards via `SetMaxPlatformFee`.
  */
@@ -62,7 +62,7 @@ defaultMinLeaderShare: number;
 defaultTakerFee: number; 
 /**
  * Default platform-fee ceiling (bps, `Bps16`) stamped into
- * `MarketHeader.max_platform_fee` at creation. Bounds the
+ * `MarketHeader.max_platform_fee_bps` at creation. Bounds the
  * caller-declared `platform_fee_bps` a `swap` may skim off the taker's
  * output; retunable per market afterwards via `SetMaxPlatformFee`.
  */

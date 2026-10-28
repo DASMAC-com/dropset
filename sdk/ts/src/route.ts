@@ -105,7 +105,7 @@ function warnClamped(
   warnedClamps.add(key);
   console.warn(
     `[dropset] platform fee clamped on market ${market}: its on-chain ` +
-      `max_platform_fee is ${ceilingBps} bps but ${configuredBps} bps is ` +
+      `max_platform_fee_bps is ${ceilingBps} bps but ${configuredBps} bps is ` +
       `configured, so swaps on this market are quoted and charged at ` +
       `${ceilingBps} bps. Lower the configured rate or raise the market's ` +
       `ceiling to make the two agree. Note that an aggregator route for the ` +
@@ -258,7 +258,7 @@ export async function resolveEclobRoute(
       // already hold the raw bytes, so slice and decode directly.)
       maxPlatformFeeBps: getMarketHeaderDecoder().decode(
         marketData.subarray(0, getMarketHeaderSize()),
-      ).maxPlatformFee,
+      ).maxPlatformFeeBps,
     };
   }
   return null;

@@ -17,7 +17,7 @@ pub struct SetMaxPlatformFee {
     pub admin: solana_pubkey::Pubkey,
     /// Singleton registry, read for the admin-membership check.
     pub registry: solana_pubkey::Pubkey,
-    /// Market whose `max_platform_fee` is being retuned. `mut` for the
+    /// Market whose `max_platform_fee_bps` is being retuned. `mut` for the
     /// write.
     pub market: solana_pubkey::Pubkey,
     /// CHECK: Only the event authority can invoke self-CPI
@@ -146,7 +146,7 @@ impl SetMaxPlatformFeeBuilder {
         self.registry = Some(registry);
         self
     }
-    /// Market whose `max_platform_fee` is being retuned. `mut` for the
+    /// Market whose `max_platform_fee_bps` is being retuned. `mut` for the
     /// write.
     #[inline(always)]
     pub fn market(&mut self, market: solana_pubkey::Pubkey) -> &mut Self {
@@ -211,7 +211,7 @@ pub struct SetMaxPlatformFeeCpiAccounts<'a, 'b> {
     pub admin: &'b solana_account_info::AccountInfo<'a>,
     /// Singleton registry, read for the admin-membership check.
     pub registry: &'b solana_account_info::AccountInfo<'a>,
-    /// Market whose `max_platform_fee` is being retuned. `mut` for the
+    /// Market whose `max_platform_fee_bps` is being retuned. `mut` for the
     /// write.
     pub market: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Only the event authority can invoke self-CPI
@@ -228,7 +228,7 @@ pub struct SetMaxPlatformFeeCpi<'a, 'b> {
     pub admin: &'b solana_account_info::AccountInfo<'a>,
     /// Singleton registry, read for the admin-membership check.
     pub registry: &'b solana_account_info::AccountInfo<'a>,
-    /// Market whose `max_platform_fee` is being retuned. `mut` for the
+    /// Market whose `max_platform_fee_bps` is being retuned. `mut` for the
     /// write.
     pub market: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: Only the event authority can invoke self-CPI
@@ -376,7 +376,7 @@ impl<'a, 'b> SetMaxPlatformFeeCpiBuilder<'a, 'b> {
         self.instruction.registry = Some(registry);
         self
     }
-    /// Market whose `max_platform_fee` is being retuned. `mut` for the
+    /// Market whose `max_platform_fee_bps` is being retuned. `mut` for the
     /// write.
     #[inline(always)]
     pub fn market(&mut self, market: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {

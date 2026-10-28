@@ -184,7 +184,7 @@
 # rather than aborting the take (it is the sole enforcement of
 # Σ size_bps <= BPS), level_fill_atoms falls back to 0, flush_level_price
 # cannot fail (saturating subtraction plus Price::ZERO fallbacks — an
-# extreme price_offset yields a bogus-but-valid price, never a trap), and
+# extreme price_offset_ppm yields a bogus-but-valid price, never a trap), and
 # side_size_sums saturates. No panic and no Err, so no taker is ever
 # blocked.
 #

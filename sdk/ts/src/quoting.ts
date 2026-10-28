@@ -26,7 +26,7 @@ const BPS = 10_000n;
 /** Common scale for the integer price ratio — mirrors Rust's `SCALE`. */
 const SCALE = 1_000_000_000n;
 /**
- * On-wire width of one `Level`: `price_offset` u32, `flip_spread_ppm` u32,
+ * On-wire width of one `Level`: `price_offset_ppm` u32, `flip_spread_ppm` u32,
  * `size_bps` u16, and one u32 expiry offset per domain (wall and slot).
  * Every field is alignment-1, so the struct is byte-packed.
  */
@@ -68,7 +68,7 @@ export type NativeBook = {
 export class QuotingError extends Error {}
 
 type RelLevel = {
-  priceOffset: number;
+  priceOffsetPpm: number;
   flipSpreadPpm: number;
   sizeBps: number;
   expiryOffsetSecs: WallSpan;
@@ -109,7 +109,7 @@ function levelToRelative(
     throw new QuotingError('flip spread is not a u32');
   }
   return {
-    priceOffset: Number(offset),
+    priceOffsetPpm: Number(offset),
     flipSpreadPpm,
     sizeBps: Number(sizeBps),
     expiryOffsetSecs: lvl.expiryOffsetSecs,
@@ -118,7 +118,7 @@ function levelToRelative(
 }
 
 function writeLevel(view: DataView, offset: number, l: RelLevel): void {
-  view.setUint32(offset, l.priceOffset, true);
+  view.setUint32(offset, l.priceOffsetPpm, true);
   view.setUint32(offset + 4, l.flipSpreadPpm, true);
   view.setUint16(offset + 8, l.sizeBps, true);
   view.setUint32(offset + 10, l.expiryOffsetSecs, true);

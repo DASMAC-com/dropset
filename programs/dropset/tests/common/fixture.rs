@@ -13,7 +13,7 @@
 //! — a cyclic `next` pointer, a `u64::MAX` nonce, an HWM lagging NAV.
 //! Fields that have a real admin lever are driven through it instead, so
 //! their pokes are gone: `min_leader_share` →
-//! [`Fixture::set_min_leader_share`], `taker_fee` →
+//! [`Fixture::set_min_leader_share`], `taker_fee_ppm` →
 //! [`Fixture::set_taker_fee`], `frozen` → [`Fixture::freeze_vault`]. The
 //! remaining pokes exist only for the out-of-band states no instruction
 //! can reach.
@@ -168,7 +168,7 @@ pub fn dual_profile(
 ) -> [u8; PROFILE_BYTES] {
     let mut profile: LiquidityProfile = bytemuck::Zeroable::zeroed();
     for side in [&mut profile.bids, &mut profile.asks] {
-        side[0].price_offset = offset_ppm.into();
+        side[0].price_offset_ppm = offset_ppm.into();
         side[0].size_bps = size_bps.into();
         side[0].expiry_offset_secs = expiry_secs.into();
         side[0].expiry_offset_slots = expiry_slots.into();
@@ -231,13 +231,13 @@ pub fn dual_expiry_profile(
 ) -> [u8; PROFILE_BYTES] {
     let mut profile: LiquidityProfile = bytemuck::Zeroable::zeroed();
     for (i, &(offset_ppm, size_bps, expiry_secs, expiry_slots)) in asks.iter().enumerate() {
-        profile.asks[i].price_offset = offset_ppm.into();
+        profile.asks[i].price_offset_ppm = offset_ppm.into();
         profile.asks[i].size_bps = size_bps.into();
         profile.asks[i].expiry_offset_secs = expiry_secs.into();
         profile.asks[i].expiry_offset_slots = expiry_slots.into();
     }
     for (i, &(offset_ppm, size_bps, expiry_secs, expiry_slots)) in bids.iter().enumerate() {
-        profile.bids[i].price_offset = offset_ppm.into();
+        profile.bids[i].price_offset_ppm = offset_ppm.into();
         profile.bids[i].size_bps = size_bps.into();
         profile.bids[i].expiry_offset_secs = expiry_secs.into();
         profile.bids[i].expiry_offset_slots = expiry_slots.into();

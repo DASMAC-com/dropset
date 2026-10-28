@@ -1,7 +1,7 @@
 //! `set_liquidity_profile` — leader-driven reshape of the bid/ask
 //! ladder.
 //!
-//! Writes the full `LiquidityProfile` — each level a `(price_offset,
+//! Writes the full `LiquidityProfile` — each level a `(price_offset_ppm,
 //! size_bps, expiry_offset_secs, expiry_offset_slots)` tuple — leaves
 //! the whole `reference_price` untouched (price and both expiry datums),
 //! bumps `market.nonce`,

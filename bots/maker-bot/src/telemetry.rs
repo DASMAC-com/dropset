@@ -1000,7 +1000,7 @@ pub fn ladder_epoch_rows(
                 side: side.to_string(),
                 // `N_LEVELS` is 8, so the cast cannot truncate.
                 level_idx: idx as i16,
-                offset_ppm: i64::from(level.price_offset.get()),
+                offset_ppm: i64::from(level.price_offset_ppm.get()),
                 size_bps: i32::from(level.size_bps.get()),
                 profile_kind: kind.clone(),
             });

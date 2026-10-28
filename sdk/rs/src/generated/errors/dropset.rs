@@ -148,8 +148,8 @@ pub enum DropsetError {
     /// 6045 - max_platform_fee exceeds 10_000 bps (100%)
     #[error("max_platform_fee exceeds 10_000 bps (100%)")]
     InvalidMaxPlatformFee = 0x179D,
-    /// 6046 - declared platform_fee_bps exceeds the market's max_platform_fee
-    #[error("declared platform_fee_bps exceeds the market's max_platform_fee")]
+    /// 6046 - declared platform_fee_bps exceeds the market's max_platform_fee_bps
+    #[error("declared platform_fee_bps exceeds the market's max_platform_fee_bps")]
     PlatformFeeTooHigh = 0x179E,
     /// 6047 - a non-zero platform_fee_bps requires both the fee authority and its fee token account
     #[error(

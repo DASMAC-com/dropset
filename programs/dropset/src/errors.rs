@@ -107,7 +107,7 @@ pub enum DropsetError {
     VaultTombstoned,
     #[msg("max_platform_fee exceeds 10_000 bps (100%)")]
     InvalidMaxPlatformFee,
-    #[msg("declared platform_fee_bps exceeds the market's max_platform_fee")]
+    #[msg("declared platform_fee_bps exceeds the market's max_platform_fee_bps")]
     PlatformFeeTooHigh,
     #[msg("a non-zero platform_fee_bps requires both the fee authority and its fee token account")]
     MissingPlatformFeeAccounts,

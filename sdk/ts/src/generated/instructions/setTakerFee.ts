@@ -38,7 +38,7 @@ export type SetTakerFeeAsyncInput<TAccountAdmin extends string = string, TAccoun
 admin: TransactionSigner<TAccountAdmin>;
 /** Singleton registry, read for the admin-membership check. */
 registry: Address<TAccountRegistry>;
-/** Market whose `taker_fee` is being retuned. `mut` for the write. */
+/** Market whose `taker_fee_ppm` is being retuned. `mut` for the write. */
 market: Address<TAccountMarket>;
 /** CHECK: Only the event authority can invoke self-CPI */
 eventAuthority?: Address<TAccountEventAuthority>;
@@ -74,7 +74,7 @@ export type SetTakerFeeInput<TAccountAdmin extends string = string, TAccountRegi
 admin: TransactionSigner<TAccountAdmin>;
 /** Singleton registry, read for the admin-membership check. */
 registry: Address<TAccountRegistry>;
-/** Market whose `taker_fee` is being retuned. `mut` for the write. */
+/** Market whose `taker_fee_ppm` is being retuned. `mut` for the write. */
 market: Address<TAccountMarket>;
 /** CHECK: Only the event authority can invoke self-CPI */
 eventAuthority: Address<TAccountEventAuthority>;
@@ -108,7 +108,7 @@ accounts: {
 admin: TAccountMetas[0];
 /** Singleton registry, read for the admin-membership check. */
 registry: TAccountMetas[1];
-/** Market whose `taker_fee` is being retuned. `mut` for the write. */
+/** Market whose `taker_fee_ppm` is being retuned. `mut` for the write. */
 market: TAccountMetas[2];
 /** CHECK: Only the event authority can invoke self-CPI */
 eventAuthority: TAccountMetas[3];

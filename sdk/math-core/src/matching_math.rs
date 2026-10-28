@@ -189,7 +189,7 @@ pub fn level_is_live(
 /// Taker fee on a single leg: `output_leg_atoms × taker_fee_ppm / PPM`
 /// (u128, truncating). `output_leg_atoms` is the *output* leg the fee is
 /// charged on — base atoms on a Buy, quote atoms on a Sell — and
-/// `taker_fee_ppm` is the market header's `taker_fee`. Returns the raw
+/// `taker_fee_ppm` is read straight off the market header. Returns the raw
 /// u128 product; callers clamp to `u64` themselves (the engine per leg,
 /// the simulator after summing every leg's fee), so the byte-identical
 /// truncation lives here while each side keeps its own accumulation.

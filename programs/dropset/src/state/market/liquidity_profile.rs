@@ -234,7 +234,7 @@ mod tests {
         }
         let mut data = buf.read_data().to_vec();
         let mut profile = LiquidityProfile::zeroed();
-        profile.asks[0].price_offset = 5_000u32.into();
+        profile.asks[0].price_offset_ppm = 5_000u32.into();
         profile.asks[0].size_bps = 10_000u16.into();
         let bytes = wire_bytes(&profile);
 
@@ -244,7 +244,7 @@ mod tests {
         buf.write_data(&data);
         let market = load_market(&buf);
         let v = &market.as_slice()[1];
-        assert_eq!(v.profile.asks[0].price_offset.get(), 5_000);
+        assert_eq!(v.profile.asks[0].price_offset_ppm.get(), 5_000);
         assert_eq!(v.profile.asks[0].size_bps.get(), 10_000);
         assert!(v.reference_price.stamp.get() & FLUSH_BIT != 0);
     }

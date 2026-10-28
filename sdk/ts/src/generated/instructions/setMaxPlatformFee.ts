@@ -39,7 +39,7 @@ admin: TransactionSigner<TAccountAdmin>;
 /** Singleton registry, read for the admin-membership check. */
 registry: Address<TAccountRegistry>;
 /**
- * Market whose `max_platform_fee` is being retuned. `mut` for the
+ * Market whose `max_platform_fee_bps` is being retuned. `mut` for the
  * write.
  */
 market: Address<TAccountMarket>;
@@ -78,7 +78,7 @@ admin: TransactionSigner<TAccountAdmin>;
 /** Singleton registry, read for the admin-membership check. */
 registry: Address<TAccountRegistry>;
 /**
- * Market whose `max_platform_fee` is being retuned. `mut` for the
+ * Market whose `max_platform_fee_bps` is being retuned. `mut` for the
  * write.
  */
 market: Address<TAccountMarket>;
@@ -115,7 +115,7 @@ admin: TAccountMetas[0];
 /** Singleton registry, read for the admin-membership check. */
 registry: TAccountMetas[1];
 /**
- * Market whose `max_platform_fee` is being retuned. `mut` for the
+ * Market whose `max_platform_fee_bps` is being retuned. `mut` for the
  * write.
  */
 market: TAccountMetas[2];

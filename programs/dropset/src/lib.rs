@@ -393,7 +393,7 @@ pub mod dropset {
     // ── Post-create admin retuning levers ────────────────────────────
     // Always-on admin mutators (not teardown-gated) that retune values
     // stamped once at create time — a vault's `min_leader_share` floor, a
-    // market's create-vault `fee_config` and `taker_fee`, and the
+    // market's create-vault `fee_config` and `taker_fee_ppm`, and the
     // registry-wide defaults future markets inherit. Appended after the
     // teardown surface so discriminants 0–21 keep their numbers: clients
     // key instructions on the discriminant, so inserting mid-list would

@@ -206,8 +206,8 @@ impl CreateMarket {
         market.quote_mint = quote_mint_addr;
         market.base_treasury = base_treasury_addr;
         market.quote_treasury = quote_treasury_addr;
-        market.taker_fee = default_taker_fee.into();
-        market.max_platform_fee = default_max_platform_fee.into();
+        market.taker_fee_ppm = default_taker_fee.into();
+        market.max_platform_fee_bps = default_max_platform_fee.into();
         market.default_min_leader_share = default_min_leader_share.into();
         market.fee_config = FeeConfig {
             mint: default_fee_config.mint,

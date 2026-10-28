@@ -34,7 +34,7 @@ export type QuoteState = {
   // The platform fee, in bps, this quote was actually computed with — the
   // number to *display*, which is not always the configured `PLATFORM_FEE.bps`.
   // The eCLOB route clamps the configured rate to the market's on-chain
-  // `max_platform_fee`, so a market with a lower (or zero) ceiling is quoted,
+  // `max_platform_fee_bps`, so a market with a lower (or zero) ceiling is quoted,
   // and charged, at less than the config asks for. Reporting the config value
   // instead would show a fee the user isn't paying — or invent one on a market
   // where fees are turned off entirely.

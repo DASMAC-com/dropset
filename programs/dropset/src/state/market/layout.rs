@@ -78,7 +78,7 @@ pub struct ReferencePrice {
 pub struct Level {
     /// Spread from `reference_price.price` in ppm — direction is implicit
     /// from which side this level sits on (bids subtract, asks add).
-    pub price_offset: PodU32,
+    pub price_offset_ppm: PodU32,
     /// Flip spread in ppm, relative to this level's own absolute price,
     /// never the reference: a filled ask's proceeds are to rest as a bid at
     /// `price × (PPM − flip_spread_ppm) / PPM`, a filled bid's as an ask at
@@ -428,16 +428,15 @@ pub struct MarketHeader {
     /// admin-retunable via `SetMarketFeeConfig`.
     pub fee_config: FeeConfig,
     /// Taker fee rate, capped at ~6.55% (`Ppm16` max).
-    pub taker_fee: PodU16,
-    /// Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —
-    /// note the different denominator from `taker_fee` above. Seeded from
-    /// `Registry.default_max_platform_fee` at creation, then admin-retunable
-    /// via `SetMaxPlatformFee`.
+    pub taker_fee_ppm: PodU16,
+    /// Ceiling on the caller-declared platform fee, in bps (`Bps16`). Seeded
+    /// from `Registry.default_max_platform_fee` at creation, then
+    /// admin-retunable via `SetMaxPlatformFee`.
     ///
-    /// A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the
-    /// bound: every write path range-checks `<= BPS` so a market can never
-    /// hold a ceiling above 100% of the taker's output.
-    pub max_platform_fee: PodU16,
+    /// A `u16` reaches past `BPS`, so unlike `taker_fee_ppm` the type is not
+    /// the bound: every write path range-checks `<= BPS` so a market can
+    /// never hold a ceiling above 100% of the taker's output.
+    pub max_platform_fee_bps: PodU16,
     /// Default min-leader-share for vaults opened on this market.
     /// Stamped from `Registry.default_min_leader_share` at creation.
     pub default_min_leader_share: PodU32,
@@ -608,7 +607,7 @@ const _: () = assert!(
 );
 
 // The flip fields are pinned absolutely: each shares a width with a
-// neighbor (`flip_spread_ppm` with `price_offset`, `flip_price` with the
+// neighbor (`flip_spread_ppm` with `price_offset_ppm`, `flip_price` with the
 // deadlines), so a swap keeps every size assert green while the SDK
 // builders, which write the profile by offset, silently mis-target.
 const _: () = assert!(core::mem::offset_of!(Level, flip_spread_ppm) == 4);

@@ -44,16 +44,15 @@ pub struct MarketHeader {
     /// admin-retunable via `SetMarketFeeConfig`.
     pub fee_config: FeeConfig,
     /// Taker fee rate, capped at ~6.55% (`Ppm16` max).
-    pub taker_fee: u16,
-    /// Ceiling on the caller-declared platform fee, in **bps** (`Bps16`) —
-    /// note the different denominator from `taker_fee` above. Seeded from
-    /// `Registry.default_max_platform_fee` at creation, then admin-retunable
-    /// via `SetMaxPlatformFee`.
+    pub taker_fee_ppm: u16,
+    /// Ceiling on the caller-declared platform fee, in bps (`Bps16`). Seeded
+    /// from `Registry.default_max_platform_fee` at creation, then
+    /// admin-retunable via `SetMaxPlatformFee`.
     ///
-    /// A `u16` reaches past `BPS`, so unlike `taker_fee` the type is not the
-    /// bound: every write path range-checks `<= BPS` so a market can never
-    /// hold a ceiling above 100% of the taker's output.
-    pub max_platform_fee: u16,
+    /// A `u16` reaches past `BPS`, so unlike `taker_fee_ppm` the type is not
+    /// the bound: every write path range-checks `<= BPS` so a market can
+    /// never hold a ceiling above 100% of the taker's output.
+    pub max_platform_fee_bps: u16,
     /// Default min-leader-share for vaults opened on this market.
     /// Stamped from `Registry.default_min_leader_share` at creation.
     pub default_min_leader_share: u32,

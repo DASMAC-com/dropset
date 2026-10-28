@@ -49,7 +49,7 @@ pub fn build_profile(ladder: &[LadderLevel]) -> LiquidityProfile {
     let mut profile = LiquidityProfile::zeroed();
     for (i, lvl) in ladder.iter().take(N_LEVELS).enumerate() {
         for side in [&mut profile.bids, &mut profile.asks] {
-            side[i].price_offset = lvl.offset_ppm.into();
+            side[i].price_offset_ppm = lvl.offset_ppm.into();
             side[i].flip_spread_ppm = lvl.flip_spread_ppm.into();
             side[i].size_bps = lvl.size_bps.into();
             side[i].expiry_offset_secs = lvl.expiry_offset_secs.get().into();
@@ -445,7 +445,7 @@ mod tests {
         for (i, lvl) in levels.iter().enumerate() {
             assert_eq!(p.bids[i].flip_spread_ppm.get(), lvl.flip_spread_ppm);
             assert_eq!(p.asks[i].flip_spread_ppm.get(), lvl.flip_spread_ppm);
-            assert_eq!(p.bids[i].price_offset.get(), lvl.offset_ppm);
+            assert_eq!(p.bids[i].price_offset_ppm.get(), lvl.offset_ppm);
             assert_eq!(p.asks[i].size_bps.get(), lvl.size_bps);
         }
         assert!(p.validate_size_sums().is_ok());

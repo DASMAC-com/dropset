@@ -93,7 +93,7 @@ pub struct ReferencePrice {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct Level {
-    pub price_offset: LeU32,
+    pub price_offset_ppm: LeU32,
     /// Flip spread in ppm off this level's own absolute price. Zero does
     /// not flip: the flush materializes `Position::flip_price` as
     /// `Price::ZERO`, and a fill credits the flipped side only while that
@@ -187,10 +187,9 @@ pub struct MarketHeader {
     pub base_treasury: [u8; 32],
     pub quote_treasury: [u8; 32],
     pub fee_config: FeeConfig,
-    pub taker_fee: LeU16,
-    /// Ceiling on a swap's caller-declared `platform_fee_bps`. Note the
-    /// denominator differs from `taker_fee` above: bps here, ppm there.
-    pub max_platform_fee: LeU16,
+    pub taker_fee_ppm: LeU16,
+    /// Ceiling on a swap's caller-declared `platform_fee_bps`.
+    pub max_platform_fee_bps: LeU16,
     pub default_min_leader_share: LeU32,
     /// Taker fee accrued in `base_treasury` as protocol revenue. Part of
     /// the treasury custody invariant

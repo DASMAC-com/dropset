@@ -77,7 +77,7 @@ fn quoting_vectors() {
         for (i, v) in asks.iter().enumerate() {
             let lvl = &profile.asks[i];
             assert_eq!(
-                lvl.price_offset.get(),
+                lvl.price_offset_ppm.get(),
                 u32_of(v, "price_offset"),
                 "ask[{i}] offset"
             );
@@ -105,7 +105,7 @@ fn quoting_vectors() {
         for (i, v) in bids.iter().enumerate() {
             let lvl = &profile.bids[i];
             assert_eq!(
-                lvl.price_offset.get(),
+                lvl.price_offset_ppm.get(),
                 u32_of(v, "price_offset"),
                 "bid[{i}] offset"
             );
