@@ -1290,8 +1290,6 @@ mod tests {
             ),
             build_set_vault_name_ix(m, &k(6), &market, 0, "Desk"),
             build_override_vault_name_ix(m, &a, &market, 0, "", true),
-            build_set_allow_outside_depositors_ix(m, &k(6), &market, 0, true),
-            build_set_outside_deposits_approved_ix(m, &a, &market, 0, true),
             build_deposit_leader_ix(
                 m,
                 &a,
@@ -1322,6 +1320,8 @@ mod tests {
             build_close_market_ix(m, &a, &market, &k(7), &k(8), &a),
             build_close_registry_fee_vault_ix(m, &a, &mint, &SPL_TOKEN_PROGRAM_ID, &k(9), &a),
             build_close_registry_ix(m, &a, &a),
+            build_set_allow_outside_depositors_ix(m, &k(6), &market, 0, true),
+            build_set_outside_deposits_approved_ix(m, &a, &market, 0, true),
         ];
         let localnet = [
             DROPSET_ID,

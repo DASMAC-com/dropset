@@ -30,6 +30,7 @@ pub mod keys;
 pub mod leader;
 pub mod market;
 pub mod naming;
+pub mod outside;
 pub mod passive;
 pub mod publish;
 pub mod teardown;

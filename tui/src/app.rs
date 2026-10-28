@@ -687,6 +687,9 @@ impl App {
             KeyCode::Char('-') => self.run_action(Action::LeaderWithdraw),
             KeyCode::Char('N') => self.run_action(Action::RenameVault),
             KeyCode::Char('%') => self.run_action(Action::SetPerfFee),
+            // Open it to outside depositors — localnet only; the cluster
+            // gate in `run_action` refuses it on mainnet with the reason.
+            KeyCode::Char('O') => self.run_action(Action::OpenVault),
             // The passive ladder on the selected market — post one, or
             // re-center the one resting; each opens its form → typed-`yes`
             // prompt, and the same entries are in the menu.
