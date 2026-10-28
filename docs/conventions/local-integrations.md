@@ -1800,8 +1800,9 @@ its tip: `git branch -D` drops the branch's reflog, so the tip is
 the restore handle (`git branch <name> <tip>`) until `git gc`
 prunes the unreachable commits.
 
-A name passed as **`--merged`** instead (a by-hand prune, not
-upkeep) keeps the per-**tier** gate, read from the launch's
+A name passed as **`--merged`** instead — `prune_worktrees.py`
+called directly; upkeep's daily pass and its `prune --apply` both
+pass `--closed` — keeps the per-**tier** gate, read from the launch's
 substrate marker (`tier_of`), never from the branch name. An
 **executor** worktree — or one with no marker — keeps the full
 refusal: uncommitted changes, unpushed commits, or no upstream with
