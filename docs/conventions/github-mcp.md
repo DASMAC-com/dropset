@@ -120,8 +120,19 @@ which drifted behind it twice:
   single call** for that one id, because it embeds the complete
   repository object (every `*_url` template) once per notification.
   The dismissal is best-effort — a failure is reported in the verdict's
-  `notifications` field, and the upkeep pass's finished-PR notification
-  sweep is the fallback.
+  `notifications` field, and the settled sweep below is the fallback.
+
+- **The settled-PR notification sweep** (`pr_notifications.py`) — the
+  one rule every other caller applies: `dismiss --settled` marks done
+  every thread whose PR is merged or closed, **whatever its issue's
+  Linear state** (a merged PR whose issue sits In Review is settled
+  code), never an open PR's. `dismiss --pr N` instead marks done every
+  thread on the named PRs **whatever their state** — the caller vouches
+  they are settled. One `DELETE` per thread, never mark-all, dry run
+  unless `--apply`. The upkeep pass runs `--settled` armed every
+  morning, the planning close-out runs it, and `close_session.py` calls
+  the `--pr` path in-process for its branch's PRs (having already
+  refused an open one) before removing the worktree.
 
 - **Unsubscribing from a new PR's notifications** (`init-pr`) — right
   after the draft PR is created, so its lifecycle (CI, assignment,

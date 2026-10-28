@@ -138,8 +138,9 @@ session started and spliced its report under the document's
 machine-written `Upkeep report` heading, so the fetch above holds
 it; never re-run the pass here. Say its `parked` line — each
 pool's count and direction (ruling 23) — what was pruned and dismissed
-(or would have been, unarmed), each refusal (unpushed work, an
-open PR — reported, never retried), and any inert guard,
+(or would have been, unarmed), each refusal (a live session
+lock, an open PR — reported, never retried) and each pruned
+name's ahead count, and any inert guard,
 dangling reference or file near its size cap. Say the
 `fleet-cost` day lines and the `allowance` per-day figure too,
 any flagged day first. A run stamp
@@ -552,6 +553,18 @@ nothing, since the row records what was audited, not scheduled.
 **Carry the upkeep report forward verbatim** — its heading
 through its `End of upkeep report.` line: the tool splices only
 between the two and refuses a section whose end line is gone.
+
+**Dismiss the settled PRs' notifications at close-out**, one
+bare call, so the day's merges leave no inbox behind them:
+
+```sh
+python3 .claude/tools/pr_notifications.py dismiss --settled --apply
+```
+
+It selects every thread whose PR is merged or closed, whatever
+its issue's state, never an open PR's, and prints counts, not
+threads; say its `summary` line in the close-out report. A
+failure is that line, never a blocker.
 
 **7. Run `/session-metrics` at close-out**, the shared tail,
 before the final document write. Its id comes from

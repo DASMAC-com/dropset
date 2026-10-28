@@ -12,10 +12,11 @@ Usage (run from the base repo root — you can't remove the worktree you stand i
 
     python3 .claude/tools/prune_worktrees.py --merged eng-701 eng-702
     python3 .claude/tools/prune_worktrees.py --merged-file /tmp/merged.txt --dry-run
+    python3 .claude/tools/prune_worktrees.py --closed eng-704 --dry-run
 
 Prints JSON ``{removed: [{path, branch}], branches_removed: [branch],
 skipped: [{path, branch, reason}], left: [{path, branch}], unmatched: [branch],
-pruned: bool, dry_run: bool}``:
+ahead: {branch: {ahead, tip}}, pruned: bool, dry_run: bool}``:
 
 * ``removed`` — merged worktrees whose worktree + branch were dropped;
 * ``branches_removed`` — merged local branches with no worktree, deleted under
@@ -27,7 +28,12 @@ pruned: bool, dry_run: bool}``:
   locked tree). Both are the safe outcome and both name their reason;
 * ``left`` — non-merged worktrees (PR still open / closed-without-merge / no
   PR), untouched;
+* ``ahead`` — per matched name, its commits beyond ``origin/main`` and its
+  tip, in the dry run and the real one alike;
 * ``pruned`` — whether ``git worktree prune`` ran (skipped in ``--dry-run``).
+
+A ``--closed`` name (its issue completed or canceled) skips the safety
+pre-flight: only a live session's lock holds it (:func:`prune`).
 
 **The gate is per tier**, read from the launch's substrate marker
 (:func:`tier_of`), never from the branch name. An executor worktree (``task``,
@@ -258,8 +264,25 @@ def stale_lock(reason: str | None, alive=_real_alive) -> bool:
     return not alive(int(m.group(1)), m.group(2))
 
 
+def ahead_of_main(branch: str, git=_real_git) -> dict:
+    """``{ahead, tip}`` for one name: its commits beyond ``origin/main`` and the
+    tip they hang from, each ``None`` when unreadable. Reported for every
+    candidate, so a removal under ``closed`` says what it discarded and the tip
+    to restore it from (``git branch <name> <tip>``)."""
+    rc, out, _ = git(["rev-list", "--count", f"origin/main..{branch}"])
+    ahead = int(out.strip()) if rc == 0 and out.strip().isdigit() else None
+    rc, out, _ = git(["rev-parse", "--verify", "--quiet", branch])
+    tip = (out.strip() or None) if rc == 0 else None
+    return {"ahead": ahead, "tip": tip}
+
+
 def prune(
-    merged: set[str], dry_run: bool, git=_real_git, tier=None, alive=_real_alive
+    merged: set[str],
+    dry_run: bool,
+    git=_real_git,
+    tier=None,
+    alive=_real_alive,
+    closed: set[str] = frozenset(),
 ) -> dict:
     """Remove each merged branch's worktree + local branch, skipping unsafe ones.
 
@@ -270,7 +293,13 @@ def prune(
     those still holding uncommitted or unpushed work — or, for an advisor
     worktree, :func:`advisor_unsafe_reason`. ``git`` is an injectable
     ``(args) -> (rc, stdout, stderr)`` runner; ``tier`` an injectable
-    ``(path) -> tier | None``, defaulting to :func:`tier_of` on the base."""
+    ``(path) -> tier | None``, defaulting to :func:`tier_of` on the base.
+
+    ``closed`` names are candidates too, and for them the second gate is
+    lifted: their issue is completed or canceled, so its work is settled, and
+    an unpushed commit, a missing upstream or a dirty tree no longer holds the
+    name forever. Only a live session's lock does — a stale Claude Code lock is
+    lifted as for an advisor, and the tree goes with one ``--force``."""
     rc, out, err = git(["worktree", "list", "--porcelain"])
     if rc != 0:
         raise RuntimeError(f"git worktree list failed: {err.strip()}")
@@ -278,31 +307,39 @@ def prune(
     if tier is None:
         base = next((t["path"] for t in trees if is_base(t)), None)
         tier = (lambda p: tier_of(base, p)) if base else (lambda p: None)
+    candidates = set(merged) | set(closed)
 
     removed: list[dict] = []
     skipped: list[dict] = []
     left: list[dict] = []
+    ahead: dict[str, dict] = {}
 
     for tree in trees:
         if is_base(tree) or tree.get("branch") is None:
             continue
         path, branch = tree["path"], tree["branch"]
-        if branch not in merged:
+        if branch not in candidates:
             left.append({"path": path, "branch": branch})
             continue
+        ahead[branch] = ahead_of_main(branch, git)
+        settled = branch in closed
         advisor = tier(path) == ADVISOR
         # Checked before the dry-run branch, so a dry run reports what it would
         # actually do rather than promising a removal the real run would refuse.
-        if advisor:
+        if settled:
+            reason = None
+        elif advisor:
             reason = advisor_unsafe_reason(branch, git)
         else:
             reason = unsafe_reason(path, branch, git)
         lock = tree.get("locked")
-        # A live session's lock holds every tier. Only an advisor's STALE
-        # Claude Code lock — its holder gone — is lifted, since the CLI can
-        # leave one behind at exit; an executor keeps git's plain refusal.
-        unlock = advisor and lock is not None and stale_lock(lock, alive)
-        if reason is None and lock is not None and advisor and not unlock:
+        # A live session's lock holds every tier. Only an advisor's or a closed
+        # name's STALE Claude Code lock — its holder gone — is lifted, since the
+        # CLI can leave one behind at exit; an executor keeps git's plain
+        # refusal.
+        forced = advisor or settled
+        unlock = forced and lock is not None and stale_lock(lock, alive)
+        if reason is None and lock is not None and forced and not unlock:
             reason = f"locked by a live session ({lock or 'no reason'})"
         if reason is not None:
             skipped.append({"path": path, "branch": branch, "reason": reason})
@@ -322,10 +359,10 @@ def prune(
                 continue
             git(["worktree", "unlock", path])
         # An executor gets no --force: a dirty or locked worktree refuses, which
-        # is the safe outcome — record it as skipped and move on. An advisor
-        # gets ONE --force, which discards its expendable spec file but still
-        # refuses a locked tree (that takes two).
-        force = ["--force"] if advisor else []
+        # is the safe outcome — record it as skipped and move on. An advisor or
+        # a closed name gets ONE --force, which discards its expendable files
+        # but still refuses a locked tree (that takes two).
+        force = ["--force"] if forced else []
         r_rc, _, r_err = git(["worktree", "remove", *force, path])
         if r_rc != 0:
             if unlock:
@@ -347,8 +384,9 @@ def prune(
     refs_rc, refs, _ = git(["for-each-ref", "--format=%(refname:short)", "refs/heads"])
     local = set(refs.split()) if refs_rc == 0 else set()
     branches_removed: list[str] = []
-    for branch in sorted((merged & local) - in_trees - {"main"}):
-        reason = unpushed_reason(branch, git)
+    for branch in sorted((candidates & local) - in_trees - {"main"}):
+        ahead[branch] = ahead_of_main(branch, git)
+        reason = None if branch in closed else unpushed_reason(branch, git)
         if reason is not None:
             skipped.append({"path": None, "branch": branch, "reason": reason})
             continue
@@ -380,18 +418,41 @@ def prune(
         # the name itself was wrong.
         # Empty when the branch list itself failed: then every name would read
         # as unmatched, which says nothing about the names.
-        "unmatched": sorted(merged - in_trees - local) if refs_rc == 0 else [],
+        "unmatched": sorted(candidates - in_trees - local) if refs_rc == 0 else [],
+        "ahead": ahead,
         "pruned": pruned,
         "dry_run": dry_run,
     }
 
 
+def _read_names(names: list[str] | None, path: str | None) -> set[str]:
+    out: list[str] = list(names or [])
+    if path:
+        out.extend(Path(path).read_text(encoding="utf-8").split())
+    return {normalize_branch(m) for m in out if m.strip()}
+
+
 def _read_merged(args) -> set[str]:
-    merged: list[str] = list(args.merged or [])
-    if args.merged_file:
-        text = Path(args.merged_file).read_text(encoding="utf-8")
-        merged.extend(text.split())
-    return {normalize_branch(m) for m in merged if m.strip()}
+    return _read_names(args.merged, args.merged_file)
+
+
+# What a removal under --closed leaves to recover from. `git branch -D` drops
+# the branch's own reflog and `git worktree remove` drops the tree's HEAD log,
+# so neither reflog keeps it: the reported tip is the handle, and the commits
+# stay in the object store only until `git gc` prunes them — an expiry measured
+# from the OBJECT's age, not the deletion, so an old stray's commits can go at
+# the very next gc. A dirty tree's uncommitted files have no handle at all.
+CLOSED_HELP = (
+    "branch names whose issue is completed or canceled: the uncommitted, "
+    "unpushed and no-upstream holds are lifted, and only a live session lock "
+    "holds. A removed tree's uncommitted and untracked files are discarded "
+    "for good. Its commits are not kept by any reflog (the branch's is "
+    "deleted with it); restore one promptly with `git branch <name> <tip>` "
+    "from the report's `ahead` entry, since `git gc` prunes unreachable "
+    "objects older than gc.pruneExpire (two weeks by default), counted from "
+    "the object file's or pack's age rather than the deletion, so an old "
+    "branch's can go at the next gc"
+)
 
 
 def run(argv: list[str]) -> int:
@@ -402,13 +463,20 @@ def run(argv: list[str]) -> int:
     parser.add_argument(
         "--merged-file", default=None, help="file of whitespace-separated branches"
     )
+    parser.add_argument("--closed", nargs="*", default=[], help=CLOSED_HELP)
+    parser.add_argument(
+        "--closed-file",
+        default=None,
+        help="file of whitespace-separated --closed names",
+    )
     parser.add_argument(
         "--dry-run", action="store_true", help="report what would be removed only"
     )
     args = parser.parse_args(argv[1:])
 
     merged = _read_merged(args)
-    result = prune(merged, args.dry_run)
+    closed = _read_names(args.closed, args.closed_file)
+    result = prune(merged, args.dry_run, closed=closed)
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0

@@ -41,12 +41,14 @@ Every gate runs **before** any write, and each fails closed:
   lifted.
 
 Then the state is written through ``board_batch`` (zero-echo GraphQL); only on
-a confirmed write is the worktree unlocked, removed **without** ``--force``, and
-its branch deleted. A removal that fails after the write re-locks the tree and
-exits 2. The issue is resolved by then, but ``upkeep``'s sweep is only a partial
-backstop: the pruner refuses a branch with no upstream (every architect close,
-and a pruned squash-merge) and skips a locked tree, so the exit-2 note says
-when the tree needs removing by hand.
+a confirmed write are the branch's PR notification threads dismissed
+(``pr_notifications``, best-effort — a failure is a note) and the worktree
+unlocked, removed **without** ``--force``, and its branch deleted. A removal that fails after the write re-locks the tree and
+exits 2. The issue is resolved by then (a removal follows only a Done or
+Canceled write), so ``upkeep`` passes the tree to the pruner as a closed name:
+no upstream and unpushed work no longer hold it, and the restored lock goes
+stale once this session exits, so the next pass collects it. The exit-2 note
+says so, and how to remove it by hand sooner.
 
 ``--session-id <uuid>`` adds the session's one-line cost estimate
 (``session_metrics.cost_line``) to the issue body, appended zero-echo once the
@@ -59,7 +61,9 @@ would be. A re-run after an exit 2 appends a second line; remove the tree by
 hand instead.
 
 Prints one JSON object ``{issue, state, worktree, branch, pr, dry_run,
-keep_worktree, refused, state_written, removed, cost_line, notes}``. Exit 0 on a complete
+keep_worktree, refused, state_written, notifications, removed, cost_line,
+notes}`` (``notifications`` the dismissal's one-line summary, ``None`` when no
+PR or no write). Exit 0 on a complete
 close; 1 on a refusal or error before any removal — a gate refusal changes
 nothing, while a write reported "unconfirmed" may have landed; 2 when the state
 landed but the removal did not.
@@ -86,6 +90,7 @@ from typing import Callable
 
 import board_batch
 import linear_issue
+import pr_notifications
 import prune_worktrees
 import session_metrics
 
@@ -313,6 +318,26 @@ def write_state(issue: str, state: str, dry_run: bool) -> None:
     )
 
 
+def dismiss_threads(run: Runner, prs: list[dict], result: dict) -> None:
+    """Dismiss the branch's PR threads, before the removal. Best-effort: the
+    state already landed and the gates passed, so a failure is a note — and
+    upkeep's settled run collects whatever is left the next morning."""
+    numbers = {int(p["number"]) for p in prs if p.get("number") is not None}
+    if not numbers:
+        return
+    try:
+        rc, out = pr_notifications.dismiss(
+            lambda gh_args: run(["gh", *gh_args], None), numbers, apply=True
+        )
+    except Exception as e:  # noqa: BLE001 — the state landed; never lose the removal
+        result["notifications"] = f"dismissal failed: {type(e).__name__}: {e}"
+        result["notes"].append(f"notifications: {result['notifications']}")
+        return
+    result["notifications"] = pr_notifications.summary(out)
+    if rc != 0 or out["failed"] or out["notice"]:
+        result["notes"].append(f"notifications: {result['notifications']}")
+
+
 def remove(
     run: Runner,
     base: str,
@@ -389,6 +414,7 @@ def close(
         "keep_worktree": args.keep_worktree,
         "refused": None,
         "state_written": False,
+        "notifications": None,
         "removed": False,
         "cost_line": None,
         "notes": [],
@@ -435,6 +461,7 @@ def close(
             result["cost_line"] = line
         except Exception as e:  # noqa: BLE001 — the state landed; go on
             result["notes"].append(f"cost line not appended: {e}")
+    dismiss_threads(run, prs, result)
 
     if args.keep_worktree:
         result["notes"].append("worktree kept; the operator removes it")
@@ -442,9 +469,9 @@ def close(
     why = remove(run, base, worktree, branch, lock, result["notes"])
     if why is not None:
         result["notes"].append(
-            f"{why}; once this session exits, remove it by hand from the base "
-            f"checkout (git worktree remove {worktree}) — upkeep collects only "
-            "an unlocked tree whose branch has an upstream"
+            f"{why}; upkeep's next pass collects it once this session exits "
+            "(the issue is closed, so only a live lock holds it), or remove it "
+            f"by hand from the base checkout (git worktree remove {worktree})"
         )
         return 2, result
     result["removed"] = True

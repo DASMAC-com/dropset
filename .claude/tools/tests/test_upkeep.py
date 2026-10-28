@@ -9,10 +9,12 @@ injected runner and lookup, so nothing here touches git, GitHub or Linear.
 import contextlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 import planning_doc
 import prune_conversations
@@ -241,9 +243,12 @@ class FakeRun:
         closed_fails=False,
         refresh_due=False,
         metrics_out=None,
+        dismiss_out=None,
     ):
         self.calls = []
+        # Settled threads the dismissal tool answers for; it does its own reads.
         self.notifications = list(notifications)
+        self.dismiss_out = dismiss_out
         self.open_prs = self.OPEN if open_prs is None else open_prs
         self.closed_fails = closed_fails
         self.refresh_due = refresh_due
@@ -283,25 +288,22 @@ class FakeRun:
                     "",
                 )
             return 0, json.dumps(self.open_prs), ""
-        if cmd[:2] == ["gh", "api"] and cmd[2].startswith("/notifications?all=true"):
+        tool = Path(cmd[1]).name if len(cmd) > 1 else ""
+        if tool == "pr_notifications.py":
+            if self.dismiss_out is not None:
+                return self.dismiss_out
+            n = len(self.notifications)
+            applied = "--apply" in cmd
+            summary = (
+                f"dismissed {n} notification(s)"
+                if applied
+                else f"would dismiss {n} notification(s)"
+            )
             return (
                 0,
-                json.dumps(
-                    [
-                        {
-                            "id": tid,
-                            "subject": {
-                                "url": f"https://api.github.com/repos/DASMAC-com/dropset/pulls/{n}"
-                            },
-                        }
-                        for tid, n in self.notifications
-                    ]
-                ),
+                json.dumps({"summary": summary, "failed": [], "notice": None}),
                 "",
             )
-        if cmd[:3] == ["gh", "api", "-X"]:
-            return 0, "", ""
-        tool = Path(cmd[1]).name if len(cmd) > 1 else ""
         if tool == "prune_worktrees.py":
             return 0, json.dumps(self.prune_out), ""
         if tool == "allowlist.py" and "refresh-due" in cmd:
@@ -321,10 +323,11 @@ PARKED = {
 }
 
 
-def make_ctx(run, armed=False, lookup=None, parked=None):
+def make_ctx(run, armed=False, lookup=None, parked=None, dismiss=False):
     ctx = Ctx(
         base=Path(BASE),
         armed=armed,
+        dismiss=dismiss,
         now=datetime(2026, 10, 8, tzinfo=timezone.utc),
         run=run,
         lookup=lookup
@@ -353,24 +356,77 @@ class PassTests(unittest.TestCase):
         self.assertIn("not a worktree", why)
 
     def test_disarmed_pass_dry_runs_the_eligible_set_only(self):
-        run = FakeRun(notifications=[("t10", 10), ("t11", 11), ("t13", 13)])
+        run = FakeRun(notifications=[("t10", 10), ("t11", 11)])
         ctx = make_ctx(run)
         run_pass(ctx)
         self.assertEqual(ctx.data["eligible"], {"eng-10", "eng-12"})
         prune_call = tool_calls(run, "prune_worktrees.py")[0]
         self.assertIn("--dry-run", prune_call)
-        self.assertFalse(any(c[:3] == ["gh", "api", "-X"] for c in run.calls))
+        # The eligible set goes as closed names, not merged ones.
+        self.assertIn("--closed-file", prune_call)
+        self.assertNotIn("--merged-file", prune_call)
+        dismiss = tool_calls(run, "pr_notifications.py")[0]
+        self.assertEqual(dismiss[2:], ["dismiss", "--settled"])
         line = next(s for s in ctx.steps if s["step"] == "notifications")["line"]
-        self.assertEqual(line, "would dismiss 1 notification(s)")
+        self.assertEqual(line, "would dismiss 2 notification(s)")
 
-    def test_armed_pass_dismisses_only_eligible_threads(self):
-        run = FakeRun(notifications=[("t10", 10), ("t11", 11), ("t13", 13)])
-        ctx = make_ctx(run, armed=True)
+    def test_the_dismissal_is_armed_on_its_own_flag_without_a_board_gate(self):
+        # eng-11's issue is still started (In Review, say), but its PR merged:
+        # the settled run is not narrowed by the board, and it applies even
+        # though the prune stays a dry run.
+        run = FakeRun(notifications=[("t10", 10), ("t11", 11)])
+        ctx = make_ctx(run, dismiss=True)
         run_pass(ctx)
-        self.assertNotIn("--dry-run", tool_calls(run, "prune_worktrees.py")[0])
-        deletes = [c for c in run.calls if c[:3] == ["gh", "api", "-X"]]
+        self.assertIn("--dry-run", tool_calls(run, "prune_worktrees.py")[0])
+        dismiss = tool_calls(run, "pr_notifications.py")[0]
+        self.assertEqual(dismiss[2:], ["dismiss", "--settled", "--apply"])
+        step = next(s for s in ctx.steps if s["step"] == "notifications")
+        self.assertEqual(step["line"], "dismissed 2 notification(s)")
+        self.assertTrue(step["ok"])
+
+    def test_a_failed_dismissal_is_a_failed_line(self):
+        partial = (
+            0,
+            json.dumps(
+                {"summary": "dismissed 1 notification(s), 1 failed", "failed": ["t"]}
+            ),
+            "",
+        )
+        notice = (
+            0,
+            json.dumps(
+                {
+                    "summary": "dismissed 0 notification(s); PR list failed (x)",
+                    "failed": [],
+                    "notice": "PR list failed (x)",
+                }
+            ),
+            "",
+        )
+        for out, want in (
+            (partial, "1 failed"),
+            (notice, "PR list failed"),
+            ((1, "", "gh: not logged in"), "dismissal tool failed: gh: not logged in"),
+        ):
+            ctx = make_ctx(FakeRun(dismiss_out=out), dismiss=True)
+            run_pass(ctx, ("notifications",))
+            step = ctx.steps[0]
+            self.assertFalse(step["ok"])
+            self.assertIn(want, step["line"])
+
+    def test_the_prune_report_names_each_closed_names_ahead_count(self):
+        out = {
+            "removed": [],
+            "branches_removed": ["eng-12"],
+            "skipped": [],
+            "ahead": {"eng-12": {"ahead": 3, "tip": "0123456789abcdef"}},
+            "dry_run": True,
+        }
+        ctx = make_ctx(FakeRun(prune_out=out))
+        run_pass(ctx, ("prs", "board", "prune"))
+        step = next(s for s in ctx.steps if s["step"] == "prune")
         self.assertEqual(
-            deletes, [["gh", "api", "-X", "DELETE", "/notifications/threads/t10"]]
+            step["ahead"], ["eng-12: 3 ahead of origin/main, tip 0123456789ab"]
         )
 
     def test_the_prune_subset_runs_only_the_cleanup_steps(self):
@@ -695,16 +751,15 @@ class PassTests(unittest.TestCase):
 
     def test_a_completed_issue_with_an_open_pr_is_kept_by_the_whole_pass(self):
         # eng-10's issue is completed and it has a local trace, but it also has an
-        # OPEN PR: neither its worktree nor its notification may be touched.
+        # OPEN PR: its worktree may not be touched. (An open PR's threads are
+        # the dismissal tool's guard, tested there.)
         open_prs = [{"number": 20, "headRefName": "eng-10", "state": "OPEN"}]
-        run = FakeRun(open_prs=open_prs, notifications=[("t20", 20), ("t10", 10)])
+        run = FakeRun(open_prs=open_prs)
         ctx = make_ctx(run, armed=True)
         run_pass(ctx)
         self.assertNotIn("eng-10", ctx.data["eligible"])
-        merged_file_calls = tool_calls(run, "prune_worktrees.py")
-        self.assertTrue(merged_file_calls)  # eng-12 is still eligible
-        deletes = [c[-1] for c in run.calls if c[:3] == ["gh", "api", "-X"]]
-        self.assertEqual(deletes, [])
+        closed_file_calls = tool_calls(run, "prune_worktrees.py")
+        self.assertTrue(closed_file_calls)  # eng-12 is still eligible
 
     def test_unmatched_names_reach_the_report(self):
         out = {
@@ -955,6 +1010,29 @@ class CliTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(upkeep.run(["upkeep.py", "run"]), 2)
         self.assertIn("refused", err.getvalue())
+
+    def test_the_daily_pass_always_dismisses_and_prune_only_under_apply(self):
+        # The pre-launch's notifications line reads "dismissed": `run` arms the
+        # dismissal whatever DS_UPKEEP_ARMED says, while `prune` arms both
+        # steps on its own --apply alone.
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            upkeep.check_base = lambda run, cwd: (base, [], "")
+            upkeep.write_report = lambda report: None
+            seen = []
+
+            def fake_pass(ctx, only=None):
+                seen.append((ctx.armed, ctx.dismiss))
+                return {"ran_at": "t", "armed": ctx.armed, "steps": []}
+
+            upkeep.run_pass = fake_pass
+            invocations = (["run", "--no-doc"], ["prune"], ["prune", "--apply"])
+            with mock.patch.dict(os.environ, {upkeep.ARM_ENV: "0"}):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    for argv in invocations:
+                        upkeep.run(["upkeep.py", *argv])
+        self.assertEqual(seen, [(False, True), (False, False), (True, True)])
 
     def test_a_written_report_stamps_the_run(self):
         with tempfile.TemporaryDirectory() as d:
