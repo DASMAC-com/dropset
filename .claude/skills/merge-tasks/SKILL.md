@@ -142,7 +142,7 @@ That is the whole reason it exists. Folded bodies used to
 transit context roughly **three** times per fold: once as
 each `get_issue` echo, once as the hand-written `Write`
 composing that same JSON, and once as the `Read` of the
-generated ops. About **50k of one planning session's ~135k
+generated ops. About **50k of one scheduler session's ~135k
 output** was body re-emission. This removes the first two —
 measured on a real pair, 68KB of body handled at zero
 context cost.
@@ -367,7 +367,7 @@ declared-scope field it read. A survivor whose scope has
 obviously widened is worth a line in the report as prose,
 since it is a signal for the next consolidation pass, but it
 produces no relation write. Reconciling overlap is
-planning-session work.
+scheduler work.
 
 ## Notes
 
@@ -376,7 +376,7 @@ planning-session work.
   coherent PRs** (`docs/conventions/linear-automation.md` →
   "Fold coupled findings into one issue"); when coupled
   issues nonetheless landed separately, `merge-tasks` folds
-  them back into one, usually on a planning session's
+  them back into one, usually on a scheduler session's
   proposal. The **coherence floor** — never fold
   across separate apps, languages, or deploy units — is
   enforced by the `cross_area` warning in step 4: don't

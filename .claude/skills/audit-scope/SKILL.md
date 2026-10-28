@@ -58,8 +58,8 @@ offer an abridged tier on a small diff, and an unanswered one
 proceeds at the regular tier.
 
 **This skill is what an audit issue runs.** Auditing reaches
-the board as a first-class Backlog issue filed by a planning
-session's audit heartbeat, naming one target from
+the board as a first-class Backlog issue filed by the
+scheduler's audit heartbeat, naming one target from
 `docs/conventions/audit-registry.md` with its scope and
 rationale; the session that pulls it invokes this skill once,
 scoped to that target; no upkeep pass runs one. The broad random
@@ -476,8 +476,8 @@ Optional (ask on a scoped run if not provided):
 
      State, milestone and priority are writer *parameters*,
      which is what lets one filer serve this skill's
-     Backlog + `Session pending` staging and a planning
-     session's plain Backlog follow-up filings
+     Backlog + `Session pending` staging and the
+     scheduler's plain Backlog follow-up filings
      (27 calls / ≈30.1k in one measured pass) without a
      second implementation.
 
@@ -583,7 +583,7 @@ Optional (ask on a scoped run if not provided):
    kind.** The automated file-collision machinery is
    **retired**: there is no per-issue sweep here, nothing to
    build around one, and nothing to reintroduce. Collision
-   reconciliation belongs to a planning session, judged on
+   reconciliation belongs to a scheduler session, judged on
    content from its own board read. Blocking edges remain
    human-curated (`CLAUDE.md` → "Blocking relations").
 
@@ -614,7 +614,7 @@ Optional (ask on a scoped run if not provided):
    write and its close gate unchanged — the shared skill is the
    one source for that wording. A rotation runs it once, after
    its last `DONE` line. Before presenting a finding the
-   session may message a live planning session to check it
+   session may message a live scheduler to check it
    against open or in-flight work; that answer is feedback, and
    planning never promotes a finding itself.
 

@@ -36,7 +36,7 @@ Usage::
 when several sections are wanted: slice that file with ``read_result.py``
 afterwards rather than re-fetching.
 
-**A live planning session is still the better source when there is one.** It
+**A live scheduler is still the better source when there is one.** It
 answers the question rather than the text — one session that read the document
 then messaged its planning peer got the state of both blockers, the operator's
 posture, a ruling on the actual question, and an unprompted correction to a

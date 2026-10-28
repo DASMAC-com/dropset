@@ -6,7 +6,7 @@ rule once. Read on demand, never on invocation.
 
 ## Computing the session id (step 7)
 
-One planning session ran a bare long-format listing of the
+One scheduler session ran a bare long-format listing of the
 Claude projects folder to find its own transcript, at
 **≈6.0k** for that single call — its sixth-largest result, and
 ≈6.4k across five such calls, making the listing that
@@ -29,7 +29,7 @@ several against maker-model and fair-value files that open
 Backlog issues were already slated to rewrite. The engine was
 working; the targeting was not — and because the parked pool
 drains only through the promotion step (step 8, which runs at
-bootstrap), over-filing costs the planning session directly.
+bootstrap), over-filing costs the scheduler directly.
 
 ## Why tiers, not structure, scope the bootstrap (step 1)
 
@@ -108,7 +108,7 @@ that pool would only race the assembly.
 
 The document's growth between rewrites is the same failure shape
 as the retired Session Metrics inbox. The close-out rewrite bounds
-a planning session's own appends,
+a scheduler session's own appends,
 but nothing bounded what accumulated between sessions:
 `housekeeping` and implementation sessions appended post-close
 notes with no consolidation owner, and an abrupt close skipped
@@ -132,7 +132,7 @@ the tell, not the failure.
 
 ## Coordinating with in-flight sessions (step 5)
 
-In one planning session, eleven cross-session messages at ~0.5k
+In one scheduler session, eleven cross-session messages at ~0.5k
 each prevented duplicated work three times; twice the message
 *was* the amendment, saving both the body echo and a description
 of the edit. A 09-11 form of the spec-fold rule was a three-part

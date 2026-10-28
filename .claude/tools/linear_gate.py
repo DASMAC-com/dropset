@@ -3,7 +3,7 @@
 
 Backlog is the operator's review inbox and Todo the approved queue: the
 operator's own move from one to the other *is* the approval, since nobody else
-may make it. A planning session dispatches a task only once it sits in Todo,
+may make it. A scheduler session dispatches a task only once it sits in Todo,
 and closes a folded comment thread by resolving it — which the MCP cannot do.
 
 Subcommands

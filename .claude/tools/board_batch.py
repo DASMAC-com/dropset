@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """board_batch.py — batched Linear board writes and a compact board read.
 
-The planning session's hands. Every subcommand here exists because the
+The scheduler's hands. Every subcommand here exists because the
 equivalent MCP call echoes an issue's **entire stored body** back for each
-write, which dominates a planning session's token profile: one measured
+write, which dominates a scheduler session's token profile: one measured
 session made 21 writes of which **17 touched no body at all** — a priority
 change, some parent/state moves, eleven milestone stamps and a relation
 removal — and paid roughly 40k echoing bodies to confirm changes that fit on
@@ -19,7 +19,7 @@ ids, never a committed token):
   or duration, so planning's review-inbox poll is one call.
 * ``view [--name NAME]`` — the same compact listing of the operator's named
   custom view (default ``Next``), resolved by name and filtered by Linear, so
-  the planning session sees the same issue set the operator sees (sorted by
+  the scheduler sees the same issue set the operator sees (sorted by
   number, like ``list``, not in the view's own order).
 * ``fields --updates FILE`` — every non-body **issue field**: priority, state,
   parent, milestone, labels, assignee. Takes an explicit map of issue number
@@ -206,7 +206,7 @@ _ISSUE_NODE = """
       team { id }
       # Blocking edges, in the SAME query as the listing.
       #
-      # "Is this issue blocked" is the planning session's most-asked question by
+      # "Is this issue blocked" is the scheduler's most-asked question by
       # construction — Next IS the unblocked Backlog, and edge curation is that
       # session's own job — yet the cheap listing used to be blind to edges, so
       # the answer came either from the previous close-out's prose summary or
@@ -246,7 +246,7 @@ query($filter: IssueFilter, $first: Int!, $after: String) {
 
 # The operator's named custom view, resolved by NAME so no view id is committed.
 # `view` exists because "Next" is a view the operator curates in Linear, and the
-# planning session's own reconstruction of it (unblocked, un-milestoned Backlog)
+# scheduler session's own reconstruction of it (unblocked, un-milestoned Backlog)
 # can drift from what the operator actually sees — which is the gap a hold
 # recorded only in prose fell through. Reading the view itself closes it.
 _VIEWS_QUERY = """
@@ -569,7 +569,7 @@ def format_listing(issues: list[dict], *, show_milestone: bool = False) -> list[
     listing carries, minus the bodies nobody asked for.
 
     A blocked issue is marked ``[blocked by ENG-###]``, so the question the
-    planning session asks every bootstrap — "is this blocked" — is answered by
+    scheduler session asks every bootstrap — "is this blocked" — is answered by
     the cheap listing rather than by a full-body fetch or by the previous
     close-out's prose summary. That summary stays useful as context and is **not**
     the authority: it was measured giving a wrong answer about three Next issues,

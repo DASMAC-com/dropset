@@ -110,7 +110,7 @@ class PlanCycleError(Exception):
 
 
 def default_repo() -> Path:
-    # This file sits at <repo>/.claude/tools/, and a planning session runs in
+    # This file sits at <repo>/.claude/tools/, and a scheduler session runs in
     # the base checkout, so its own location names the state directory.
     return Path(__file__).resolve().parents[2]
 

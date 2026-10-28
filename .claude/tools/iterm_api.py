@@ -569,8 +569,8 @@ def _focus_to_restore(window, caller_tab):
     one the operator is reading, and the caller's own tab only when no
     selection is known.
 
-    This used to be the caller's tab outright. The caller is the planning
-    session, so a dispatch made while the operator was reading some other tab
+    This used to be the caller's tab outright. The caller is the
+    scheduler, so a dispatch made while the operator was reading some other tab
     pulled them onto the planning tab — the steal the re-select exists to
     prevent, merely redirected.
     """

@@ -22,14 +22,14 @@ planning-filed audit issue naming one target, run as a scoped
 in a heavy-feature phase audits code about to be rewritten, and one pass
 filed fifteen parked findings, several against files open Backlog issues
 already covered. Reach for it deliberately, when breadth is wanted; a
-planning session may also file a random-target pass as an audit issue
+scheduler session may also file a random-target pass as an audit issue
 when its heartbeat wants breadth rather than depth.
 
 **It is finite.** It runs the seven units `N` times, files what they
 surface, ends each rotation with one `DONE` line, and after the last
 hands its findings to `SKILL.md` step 8's review. No `/loop`,
 no finding cap — the rotation *is* the bound. Nothing runs it on a
-cadence; the planning session's audit heartbeat is what keeps the repo
+cadence; the scheduler's audit heartbeat is what keeps the repo
 audited.
 
 ## The seven units
@@ -215,7 +215,7 @@ unattended; thirty or forty findings queued into the Backlog would be
 both board bloat and bootstrap-read bloat for the most expensive
 session in the fleet. *Rejected alternative, recorded so it is not
 re-derived:* a doc-based findings inbox (by analogy to `trim-context`)
-relocates that bloat into the planning session and, decisively, breaks
+relocates that bloat into the scheduler and, decisively, breaks
 dedup — dedup searches *issues* for a fingerprint, so findings in a
 document are refiled every pass.
 

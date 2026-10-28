@@ -54,7 +54,7 @@ this skill may propose one but never files one unasked
 (per `CLAUDE.md` → "Blocking relations"). File overlap is
 recorded nowhere at filing time — the automated collision
 machinery is retired, and reconciling overlap is
-planning-session work. So just file the to-do; don't
+scheduler work. So just file the to-do; don't
 attach it to a parent, and file no relations.
 
 ## Input
@@ -232,11 +232,11 @@ what to file.
    is the moment to `AskUserQuestion` about a blocking
    edge — never to file one, and never to record the
    overlap as a `related` link instead. Reconciling
-   overlap is planning-session work.
+   overlap is scheduler work.
 
 1. Print the new issue's identifier (e.g. ENG-123)
    and URL so the user can jump to it, then **message the
    curator** (`curate-<day>`, found with `ListAgents`) the
    identifier and title. With no curator live, message the
-   scheduler (`plan-<day>`): its first filer message of the
+   scheduler (`schedule-<day>`): its first filer message of the
    day dispatches one.

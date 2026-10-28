@@ -22,7 +22,7 @@ once, for every call site.
 **It is zero-echo by construction.** Nothing in this module prints a stored
 body. The MCP write path echoes the whole issue description on every call, which
 is a fixed per-call cost that ``patch`` does not shrink; on an accumulator issue
-that compounds (44 saves for ~153k in one measured planning session, the eight
+that compounds (44 saves for ~153k in one measured scheduler session, the eight
 largest results all echoes of the same growing batch). Tools that write through
 here read and modify inside their own process and print a one-line confirmation.
 

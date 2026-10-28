@@ -82,7 +82,7 @@ output to a log and surfaces only a summary — see
 [context economy](context-economy.md)), `review_diff.py` (`review-pr`
 step 5's diff-and-freshness gate, which also **owns** the three path
 lists that decide the review's excludes and which CI-mirroring gates
-run), `board_batch.py` (the planning session's
+run), `board_batch.py` (the scheduler's
 batched board writes and its compact board read — `list`, `fields`,
 `priorities`, `edges`; it exists because every MCP write echoes the
 issue's whole body back, and `issueUpdate` selecting `success` alone
@@ -98,7 +98,7 @@ out to the interpreter iTerm ships, which carries it; consolidating
 `fleet_resume.py` and `session_dispatch.py` here retired AppleScript
 from the toolbox entirely), `session_dispatch.py` (opens an iTerm tab
 per session verb, in the dispatching session's own window, and types
-each — the planning session's dispatch arm, authorized by the
+each — the scheduler's dispatch arm, authorized by the
 operator's yes, and loud enough on failure to print the verbs it would
 have typed),
 `migration_collisions.py` (compares this branch's new
@@ -117,7 +117,7 @@ freshness lens call it so the periodic and PR paths cannot drift),
 `planning_doc.py` (a scoped reader for the Planning document — the MCP
 `get_document` has no slice accessor and returns a document that only
 grows, so one measured read was a session's largest main-loop result at
-≈7.9k for four short passages; ask a live planning session first, use
+≈7.9k for four short passages; ask a live scheduler first, use
 this when none is live), `check_home_paths.py` (the
 committed-agent-material hygiene guard, wired
 as a scoped pre-commit hook), and `lens_preamble.py` (composes a lens

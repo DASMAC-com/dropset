@@ -326,7 +326,7 @@ class CliTests(unittest.TestCase):
 class DailySessionIdTests(unittest.TestCase):
     """The daily id is computed, never searched.
 
-    A planning session that lists the Claude projects directory to find its own
+    A scheduler session that lists the Claude projects directory to find its own
     transcript pays ≈6.0k for one call. The id is an md5 of the launcher's own
     seed, so it is a one-line computation.
     """
@@ -346,7 +346,7 @@ class DailySessionIdTests(unittest.TestCase):
         self.assertRegex(got, r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
 
     def test_the_date_changes_the_id(self):
-        # The full date keeps `plan-18` in August from colliding with September's.
+        # The full date keeps `schedule-18` in August from colliding with September's.
         base = rs.daily_session_id("plan", "20260910")
         self.assertNotEqual(base, rs.daily_session_id("plan", "20260911"))
 
@@ -407,7 +407,7 @@ class DailySessionIdTests(unittest.TestCase):
 
 
 class CycleIdTests(unittest.TestCase):
-    """A cycled planning session gets a fresh id under the same display name."""
+    """A cycled scheduler session gets a fresh id under the same display name."""
 
     #: Pinned against `md5 -qs 'dropset-plan-20260910-c1'`, the seed
     #: `_ds_daily_sid plan 1` builds in `.claude/shell/init.zsh`.

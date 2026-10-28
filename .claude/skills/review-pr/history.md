@@ -14,7 +14,7 @@ the resident-size gate (`docs/conventions/context-economy.md` →
   and its tier together, on the reasoning that the fan-out is one step
   of many and an operator might want lint and CI without eight agents
   and ~2.9M of sub-agent input. Ruled otherwise on 2026-10-12, via the
-  planning session: invoking the skill pre-approves the regular fan-out,
+  scheduler session: invoking the skill pre-approves the regular fan-out,
   as invoking `audit-scope` does its own, and the question survives
   only to offer an opt-down.
 
@@ -407,7 +407,7 @@ the resident-size gate (`docs/conventions/context-economy.md` →
   overlapping PR landing mid-review, an overlap written into the issue
   days earlier. A `gh pr list --json files` costs ~4.0k for the
   two-line answer the tool returns.
-- **Late amendment.** A planning session sent a rewrite of a change's
+- **Late amendment.** A scheduler session sent a rewrite of a change's
   core query after the five-lens fan-out and the cross-check had both
   finished. It was correct and landed, but cost a sixth sub-agent
   (316.5k / 5 turns), two more full re-verify cycles and a lint failure
@@ -1092,7 +1092,7 @@ to move and by how much.
   ~3.8k.
 - **Diverted tail.** One session enqueued, then spent many turns in a
   three-party negotiation about Linear blocking edges (the user plus a
-  peer planning session) and never came back; the user had to ask for
+  peer scheduler session) and never came back; the user had to ask for
   the closing steps. Every step behaved correctly; the sequence ended
   early and silently. The rule recurred three times in one session in
   its general shape — a correct rule stated in one phase failing to

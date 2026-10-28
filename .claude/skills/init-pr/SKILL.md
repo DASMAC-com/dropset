@@ -167,10 +167,10 @@ The three rules specific to `init-pr`:
    exits 2 with none of `--fact`, `--facts-file`, `--no-facts`); pass
    facts instead when you have them.
 
-1. **Ask a live planning session before reading the Planning
+1. **Ask a live scheduler before reading the Planning
    document.** `ListAgents` is the liveness check. The document getter
    returns the whole, growing body with no slice accessor, and a stale
-   line reads exactly like a current one; a planning session answers
+   line reads exactly like a current one; a scheduler session answers
    with the current ruling. Read the document only when none is live.
 
 The convention owns the rules this phase slips on most — the four
@@ -249,7 +249,7 @@ Six reminders neither states:
      300–800 lines, split at 1,000;
      `docs/conventions/context-economy.md`). Over it, ask via
      `AskUserQuestion` before implementing: message the live
-     planning session the split now, or keep one PR — only for a
+     scheduler session the split now, or keep one PR — only for a
      test-heavy or prose-deletion overage, where a split would ship
      inert code. **Never a second PR on this
      issue** later (`docs/conventions/commits-and-prs.md`).
@@ -262,7 +262,7 @@ Six reminders neither states:
    plan stated and then left waiting for "proceed" costs the operator
    one guaranteed turn per launch. State the plan as a report in
    passing, never as a question. The only legitimate stops are a
-   genuine decision point (consult the live planning session first,
+   genuine decision point (consult the live scheduler first,
    then `AskUserQuestion`) or a blocked precondition.
 
 1. **Claim the migration number now if the task adds one** under

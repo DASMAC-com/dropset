@@ -1952,7 +1952,7 @@ irreplaceable at any point.
 
 **Two exits, and only one involves a fold:**
 
-- **A spec** is folded by the planning session at dispatch:
+- **A spec** is folded by the scheduler at dispatch:
   copy it into the implementing issue's body, delete the file.
 - **Audit findings** are already durable as staged Linear
   issues, so there is nothing to fold — the session runs
@@ -1990,7 +1990,7 @@ It reads cost and account data — the upkeep pass it runs first reports
 spend and runs the monthly permission refresh, and the planning
 bootstrap reports that spend —
 and `aws login` is **interactive**, so a session that discovers an
-expired token mid-conversation cannot self-heal. Measured: a planning
+expired token mid-conversation cannot self-heal. Measured: a scheduler
 session's Cost Explorer read failed on an expired session and the spend
 report had to be deferred a day. Launch time is the one moment
 interactivity is free, because the operator is at the keyboard typing
@@ -2025,7 +2025,7 @@ Explorer is readable, and on this account cost access is separately
 gated (a root-only billing toggle, and `PowerUserAccess` does not cover
 everything). And the probe checks validity *now*, not remaining
 lifetime: a token with a minute left passes, while SSO tokens are
-hours-scoped and a planning session is long-lived and resumable. So the
+hours-scoped and a scheduler session is long-lived and resumable. So the
 gate **narrows** the mid-conversation failure rather than closing it.
 Reading the SSO cache's `expiresAt` and re-logging below a threshold
 would close more of it; that is deliberately not built.
@@ -2101,7 +2101,7 @@ neither does:
 - **SSO session expiry** is a *local* credential cache. `aws login`
   refreshes it and the result is usable immediately; there is no
   propagation involved. This is the failure the gate above handles, and
-  it is the one that actually bit a planning session.
+  it is the one that actually bit a scheduler session.
 - **IAM policy propagation** is genuine eventual consistency. AWS
   documents IAM as a distributed, *eventually consistent* service whose
   caching "can add time", with changes not visible "until the previously
@@ -2133,7 +2133,7 @@ Opus-spawning-Opus sub-agents are verified working on Bedrock.
 `explore` left the seat once an audit's sub-agent fan-out (ten at
 1.0M–2.3M input each) spent the session window and most of the
 weekly one; `explore anthropic` is its web-research escape. `plan`
-left it so a planning session is priced: on the seat it has no dollar
+left it so a scheduler session is priced: on the seat it has no dollar
 figure. `plan anthropic` is its way back.
 
 **What Bedrock actually lacks**, measured 2026-10-23 from a Bedrock
@@ -2484,7 +2484,7 @@ a terminal closed outright, is covered by the next morning's digest.
   and the self-refresh. It runs inside `make tools-tests`.
 
 - **`cdds`** — `cd` to the base repo checkout. The starting point for
-  anything that must not run inside a worktree (a planning session).
+  anything that must not run inside a worktree (a scheduler session).
   **It fast-forwards `main` on the way in**, through
   the shared `_ds_pull` helper described below. With a tag
   (`cdds 1077`), the pull happens in the base repo *before* the `cd`, so
@@ -2610,7 +2610,7 @@ a terminal closed outright, is covered by the next morning's digest.
   explore sessions: temporary worktree, no PR" above for the shape.
 
 - **`plan [anthropic|bedrock]`** — start **or resume** the
-  **scheduler**'s planning session. It derives the session name
+  **scheduler**'s session. It derives the session name
   `schedule-<day-of-month>` from today's date (run on the 14th →
   `schedule-14`; only the display name is the verb-form word — the
   launch line, the daily id seed and the cycle counter stay keyed
@@ -2624,12 +2624,12 @@ a terminal closed outright, is covered by the next morning's digest.
   `plan` is **idempotent by design** — if today's latest `schedule-<day>`
   session (see cycling below) exists it resumes it, otherwise it creates
   it. That collapses
-  the new-vs-resume split into one verb, which is the point: a planning
+  the new-vs-resume split into one verb, which is the point: a scheduler
   session is opened and reopened many times in a day, and having to
   remember which state it is in is the friction the helper removes. An
   `rpaps` twin was considered and rejected for that reason.
 
-  **It also relaunches a cycled session in place.** When a planning
+  **It also relaunches a cycled session in place.** When a scheduler
   session cycles (the `plan` skill's "Cycling"), it closes out, leaves
   a `plan-cycle-pending` marker under `.claude/session-substrate/` and
   ends its own client. `plan` wraps the client in a loop: on an exit
@@ -2688,13 +2688,13 @@ a terminal closed outright, is covered by the next morning's digest.
   Four things it makes deterministic, each of which used to be a
   manual step the operator could forget:
 
-  - **The model.** Planning sessions run the advisor tier
+  - **The model.** Scheduler sessions run the advisor tier
     deliberately — fidelity over tokens — pinned on create and resume
     alike, and refused before launch when the tier does not resolve.
     Skill frontmatter (`model: fable` on the `plan` skill) covers only
     a mid-session `/plan`.
 
-  - **The directory.** A planning session touches the board, not a
+  - **The directory.** A scheduler session touches the board, not a
     branch, so it must run in the base repo. `plan` `cd`s there
     itself rather than trusting the shell's cwd.
 
@@ -2705,8 +2705,8 @@ a terminal closed outright, is covered by the next morning's digest.
     create and the resume path. This is a **permission posture**, not a
     convenience, which is why it belongs in an exhaustive list rather
     than being left implicit. Every session verb passes it, so it is
-    the family's posture rather than anything specific to planning
-    sessions.
+    the family's posture rather than anything specific to the
+    scheduler.
 
     The flag is the only lever available: the shared
     `settings.local.json` sets no default, and
@@ -2889,12 +2889,12 @@ a terminal closed outright, is covered by the next morning's digest.
   `.claude/tools/fleet_resume.py`; `fleet` is the thin verb over it, per
   the skill-tooling convention.
 
-  **A planning session's dispatch opens a TAB, never a window.**
+  **A scheduler session's dispatch opens a TAB, never a window.**
   `.claude/tools/session_dispatch.py` is the dispatch arm — it types a
   ready task's verb into a new tab, authorized by the operator's yes
   exactly as `fleet go` is. The tab lands in the **dispatching session's
   own window**: the operator drives the fleet from one window, so a
-  dispatched session has to appear beside the planning session that
+  dispatched session has to appear beside the scheduler that
   started it rather than as another window to find. That is an operator
   ruling of 2026-09-10, made on seeing two resumes arrive as separate
   windows, and it **reverses** an earlier "one iTerm window per session
