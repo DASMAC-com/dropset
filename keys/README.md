@@ -126,26 +126,60 @@ agent session, so no secret ever enters a session or a checkout. One
 command per key, taking its vanity prefix:
 
 ```sh
-python3 keys/grind_key.py <Prefix>
+python3 keys/grind_key.py grind <Prefix>
 ```
 
-The prefix match is case-sensitive. Each run writes one file to
+The prefix match is case-sensitive. Each run writes two files to
 `~/Desktop/dropset-vanity/` (override with `--out-dir`), outside every
-checkout: `<pubkey>.txt`, mode 600, whose entire contents are the base58
-encoding of the 64-byte secret keypair, the form Phantom imports and
-exports. The keygen JSON is deleted, and the script prints only the
-public key, the path and the byte count. If iCloud's "Desktop &
-Documents Folders" sync is on, pass a non-synced `--out-dir` instead, or
-the secret is uploaded the moment it is written.
+checkout, both mode 600:
 
-Verify each file with a Phantom round trip before storing it:
+- `<pubkey>.txt`, whose entire contents are the base58 encoding of the
+  64-byte secret keypair, the form Phantom imports and exports;
+- `<pubkey>.key`, the same key as an OpenSSH Ed25519 private key, the
+  form a 1Password SSH Key item imports, so the 1Password SSH agent can
+  sign with it (an Ed25519 SSH signature is a plain Ed25519 signature
+  over the bytes, which is what a Solana transaction signature is).
+
+The keygen JSON is deleted, and the script prints only the public key,
+the SSH public-key line and the paths with their byte counts. If
+iCloud's "Desktop & Documents Folders" sync is on, pass a non-synced
+`--out-dir` instead, or the secret is uploaded the moment it is written.
+
+For a keypair that already exists, `convert` writes only the `.key`
+form, to the same directory (or `--out-dir`), never beside its input,
+which may sit in a checkout. The input is the 128-hex form, the JSON
+byte array, or the base58 form; `-` reads it from stdin, so it never
+lands on a command line:
+
+```sh
+python3 keys/grind_key.py convert <keypair-file>
+```
+
+After a `grind`, verify the `.txt` with a Phantom round trip before
+storing it:
 
 1. Import the file's contents into Phantom as a private key, and confirm
    the address Phantom shows equals the file name's public key.
 1. Export that account's private key from Phantom, and confirm it equals
    the file's contents byte for byte.
 
-Then put the text file into 1Password and delete it from the Desktop.
+Then store both forms in 1Password, by hand in the app:
+
+1. Put the `.txt` contents in a Crypto Wallet item.
+1. Create an SSH Key item with *Add Private Key → Import a Key File* on
+   the `.key`. The `op` CLI cannot import an existing SSH key (it stores
+   the text without parsing it, and the agent never serves the item), and
+   `op item create` prints every field it writes, concealed ones
+   included, so never use it for a real key.
+1. Confirm the SSH Key item shows an `SHA256:` fingerprint, and that the
+   agent serves it under the file name's public key
+   (`cargo run -p dropset-tui --example agent_transfer -- --list`). An
+   item outside the default Personal or Private vault is served only once
+   `~/.config/1Password/ssh/agent.toml` lists it, and creating that file
+   narrows the agent to the keys it lists, so list every key still
+   needed.
+
+Delete both files from the Desktop only after both items exist.
 A rotation is the same command. Only the program id's public half is
 committed (`dropset-mainnet.pubkey`, see above); every other mainnet key
 is a runtime input and never enters the repo.
