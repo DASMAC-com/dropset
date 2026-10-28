@@ -86,7 +86,7 @@ export function useEclobSwap(): UseDflowSwap {
         });
         setStatus("confirming");
         await waitForSwapConfirmation(client.runtime.rpc, res.signature, {
-          lastValidBlockHeight: res.lastValidBlockHeight,
+          lifetime: res.lifetime,
         });
 
         // Confirmation only proves the transaction didn't revert, and on our own
@@ -115,7 +115,7 @@ export function useEclobSwap(): UseDflowSwap {
         const treatAsFilled = realized === null || realized.filled;
         setResult({
           signature: res.signature,
-          lastValidBlockHeight: res.lastValidBlockHeight,
+          lifetime: res.lifetime,
           inAmount: realized?.amounts?.inAmount ?? res.inAmount,
           outAmount: realized?.amounts?.outAmount ?? res.outAmount,
           fromStablecoin,

@@ -4,7 +4,9 @@
 import { extractDflowApiError } from "@dropset/sdk";
 import type { SolanaClientRuntime, WalletSession } from "@solana/client";
 import {
+  blockhash,
   getBase64Encoder,
+  getCompiledTransactionMessageDecoder,
   getTransactionDecoder,
   type SendableTransaction,
   type Signature,
@@ -14,7 +16,12 @@ import { DFLOW_ORDER_TIMEOUT_MS } from "../data/timings";
 import { applySlippage } from "../eclob/eclobSwap";
 import { absoluteUrl, DFLOW_ORDER_URL, PLATFORM_FEE } from "../env";
 import { getErrorMessage } from "../guards";
-import { CANCEL_PATTERN, SwapError, type SwapOutcome } from "../swap/types";
+import {
+  CANCEL_PATTERN,
+  type Lifetime,
+  SwapError,
+  type SwapOutcome,
+} from "../swap/types";
 import {
   type ParsedDflowOrder,
   parseDflowOrder,
@@ -99,7 +106,9 @@ export const checkDflowOrder = (
     );
   }
   // The signature map is keyed by the message's signer accounts in order, the
-  // fee payer first.
+  // fee payer first. This would reject every order if `/order`'s `sponsor`
+  // parameter (another wallet paying the fee) were ever adopted — we never
+  // send it, and this check must change with that decision.
   const signers = Object.keys(tx.signatures);
   if (signers.length !== 1 || signers[0] !== userPublicKey) {
     throw new SwapError(
@@ -193,9 +202,27 @@ export async function executeDflowSwap(
   }
 
   let tx: Transaction;
+  let lifetime: Lifetime | null;
   try {
     const txBytes = getBase64Encoder().encode(order.transaction);
     tx = getTransactionDecoder().decode(txBytes);
+    // The order's expiry height, paired with the blockhash actually inside
+    // its transaction, so confirmation checks the height against the chain's
+    // own view of that blockhash rather than taking DFlow's figure on trust.
+    // Null when the order omits the height: nothing is then ever declared
+    // dropped. A durable-nonce transaction would carry a nonce here instead
+    // of a blockhash; DFlow documents `lastValidBlockHeight` as the
+    // blockhash's expiry, so a sync order is taken to be blockhash-lifetime.
+    lifetime =
+      order.lastValidBlockHeight === null
+        ? null
+        : {
+            blockhash: blockhash(
+              getCompiledTransactionMessageDecoder().decode(tx.messageBytes)
+                .lifetimeToken,
+            ),
+            lastValidBlockHeight: order.lastValidBlockHeight,
+          };
   } catch (e) {
     throw new SwapError(
       `DFlow returned an undecodable transaction: ${getErrorMessage(e)}`,
@@ -233,7 +260,7 @@ export async function executeDflowSwap(
 
   return {
     signature,
-    lastValidBlockHeight: order.lastValidBlockHeight,
+    lifetime,
     inAmount: order.inAmount,
     outAmount: order.outAmount,
   };

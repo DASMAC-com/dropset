@@ -64,7 +64,10 @@ export async function submitInstructions({
     (m) => appendTransactionMessageInstructions(instructions, m),
   );
   const tx = compileTransaction(message);
-  const { lastValidBlockHeight } = latestBlockhash;
+  const lifetime = {
+    blockhash: latestBlockhash.blockhash,
+    lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+  };
 
   try {
     // Cast via unknown: the compiled tx has an empty signature slot for the
@@ -86,7 +89,7 @@ export async function submitInstructions({
           preflightCommitment: "finalized",
         })
         .send();
-      return { signature, lastValidBlockHeight };
+      return { signature, lifetime };
     }
     if (walletSession.sendTransaction) {
       // Fallback for a wallet that can only sign-and-submit in one step: it
@@ -95,7 +98,7 @@ export async function submitInstructions({
       const signature = await walletSession.sendTransaction(unsigned, {
         commitment: "finalized",
       });
-      return { signature, lastValidBlockHeight };
+      return { signature, lifetime };
     }
     throw new SwapError("Connected wallet can't sign", "wallet");
   } catch (e) {

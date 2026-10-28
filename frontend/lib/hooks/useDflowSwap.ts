@@ -140,7 +140,7 @@ export function useDflowSwap(): UseDflowSwap {
         // we fire next sees stale state.
         setStatus("confirming");
         await waitForSwapConfirmation(client.runtime.rpc, res.signature, {
-          lastValidBlockHeight: res.lastValidBlockHeight,
+          lifetime: res.lifetime,
         });
         setResult({ ...res, fromStablecoin, toStablecoin });
         setStatus("success");

@@ -5,7 +5,7 @@
 // its own error type from the competing route's module. Nothing here knows
 // about either venue, so it belongs above both.
 
-import type { Signature } from "@solana/kit";
+import type { Blockhash, Signature } from "@solana/kit";
 
 export type SwapOutcome = Submitted & {
   inAmount: bigint;
@@ -44,12 +44,19 @@ export class SwapError extends Error {
   }
 }
 
-// A submitted transaction: its signature, and the last block height at which
-// its blockhash is valid (null when the builder could not say) — what
-// `waitForSwapConfirmation` needs to tell "not yet" from "dropped".
+// A transaction's blockhash lifetime: the blockhash it was built on, and the
+// last block height at which that blockhash is valid.
+export type Lifetime = {
+  blockhash: Blockhash;
+  lastValidBlockHeight: bigint;
+};
+
+// A submitted transaction: its signature, and its lifetime (null when the
+// builder could not say) — what `waitForSwapConfirmation` needs to tell "not
+// yet" from "dropped".
 export type Submitted = {
   signature: Signature;
-  lastValidBlockHeight: bigint | null;
+  lifetime: Lifetime | null;
 };
 
 // Common wallets each surface user-rejection with a slightly different

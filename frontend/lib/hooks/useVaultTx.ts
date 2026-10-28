@@ -98,7 +98,7 @@ export function useVaultTx(vault: VaultRef): UseVaultTx {
             : await executeVaultWithdraw({ ...ctx, ...request });
         setStatus("confirming");
         await waitForSwapConfirmation(rpc, res.signature, {
-          lastValidBlockHeight: res.lastValidBlockHeight,
+          lifetime: res.lifetime,
           noun: request.kind === "deposit" ? "deposit" : "withdrawal",
         });
         emit("vaultTxSucceeded");
