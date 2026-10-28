@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Open a new iTerm tab per session verb and type the verb into it.
 
-The scheduler's dispatch arm: it names a task that is ready to start,
+A board session's dispatch arm (the scheduler's, or the curator's for an
+architect spin-off): it names a task that is ready to start,
 offers to start it, and on the operator's yes runs this. The ask-then-yes IS
 the authorization, the same class as `fleet go` — the one gate this tool adds is
 the machine's (below), never a second ask.
@@ -13,7 +14,7 @@ the machine's (below), never a second ask.
 
 **A dispatch opens a TAB in the dispatching session's own window**, never a new
 window: the operator drives the fleet from one window, so a dispatched session
-has to land beside the scheduler that started it rather than as another
+has to land beside the session that started it rather than as another
 window to hunt for. Operator ruling, 2026-09-10, on seeing two resumes arrive as
 separate windows. This reverses an earlier "one iTerm window per session is
 load-bearing" rationale that used to be stated here, in the `plan` skill's step

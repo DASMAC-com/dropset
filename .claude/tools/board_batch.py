@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """board_batch.py — batched Linear board writes and a compact board read.
 
-The scheduler's hands. Every subcommand here exists because the
-equivalent MCP call echoes an issue's **entire stored body** back for each
-write, which dominates a scheduler session's token profile: one measured
+The board sessions' hands (the scheduler's and the curator's). Every
+subcommand here exists because the equivalent MCP call echoes an issue's
+**entire stored body** back for each write, which dominates a scheduler session's token profile: one measured
 session made 21 writes of which **17 touched no body at all** — a priority
 change, some parent/state moves, eleven milestone stamps and a relation
 removal — and paid roughly 40k echoing bodies to confirm changes that fit on
@@ -16,7 +16,7 @@ ids, never a committed token):
 * ``list`` — compact open-Backlog listing: ``number | priority | title``, one
   line each. Roughly 600 tokens where the MCP equivalent measured ~11k.
   ``--updated-since WHEN`` narrows it to issues changed since an ISO timestamp
-  or duration, so planning's review-inbox poll is one call.
+  or duration, so a review-inbox poll is one call.
 * ``view [--name NAME]`` — the same compact listing of the operator's named
   custom view (default ``Next``), resolved by name and filtered by Linear, so
   the scheduler sees the same issue set the operator sees (sorted by

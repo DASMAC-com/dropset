@@ -570,8 +570,8 @@ def _focus_to_restore(window, caller_tab):
     selection is known.
 
     This used to be the caller's tab outright. The caller is the
-    scheduler, so a dispatch made while the operator was reading some other tab
-    pulled them onto the planning tab — the steal the re-select exists to
+    dispatching session, so a dispatch made while the operator was reading
+    some other tab pulled them onto the dispatcher's tab — the steal the re-select exists to
     prevent, merely redirected.
     """
     current = getattr(window, "current_tab", None)

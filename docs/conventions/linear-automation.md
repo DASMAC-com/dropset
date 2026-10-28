@@ -74,7 +74,8 @@ themed** propose-only `Claude:` batches — roughly 4–5 parts each, one
 scheduler's own sub-agent (or a by-hand run of the same fold)
 and its output is already folded, so
 the park-then-promote hop executor filings take does not apply. The
-curator names the new batches in its review ask. A candidate
+new batches are reviewed from the curator's pool like any other
+un-parked Backlog task. A candidate
 rejected on judgment is filed `Canceled` with its reason, which
 suppresses it permanently. The coherence floor still governs audit
 findings and product filings; the meta-work fold's **no-size-bound

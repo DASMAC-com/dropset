@@ -616,7 +616,7 @@ Optional (ask on a scoped run if not provided):
    its last `DONE` line. Before presenting a finding the
    session may message a live scheduler to check it
    against open or in-flight work; that answer is feedback, and
-   planning never promotes a finding itself.
+   the scheduler never promotes a finding itself.
 
    **The close gate precedes In Review.** Once
    `ratify_staged.py gate` passes over every filed id, move a

@@ -273,7 +273,7 @@ Both stages are **mandatory**, file or no file.
 1. **Write the design** — the spec file, or the governing
    issue's body — **ending with the task list it will file**.
    Say where it is, in plain text, the moment it exists: in
-   this tab **and** in a message to any live scheduler.
+   this tab **and** in a message to the live scheduler, if one is running.
 1. **The operator edits it directly**, in a real editor or as
    comments on the issue, between turns.
 1. **Read it back exactly once** per round and fold their edits
@@ -443,7 +443,7 @@ Both, not either — they fail differently.
    This channel is **durable across session death**, which is
    why it is not optional.
 
-1. **Message any live scheduler** (`ListAgents`, then
+1. **Message the live scheduler, if one is running** (`ListAgents`, then
    `SendMessage`), so integration does not wait for the next
    bootstrap.
 

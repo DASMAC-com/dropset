@@ -192,7 +192,8 @@ Below-bar noise gets no record; it is simply not filed.
 whole return), at most thirty lines: the batches filed with their
 ENG-###s and part counts, the parts folded into existing issues, the
 rejections recorded and why, and the sessions and dollars the digest
-covered. The curator names the new batches in its review ask.
+covered. The new batches are reviewed from the curator's pool like any other
+un-parked Backlog task.
 
 ## Notes
 
