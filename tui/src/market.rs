@@ -407,7 +407,7 @@ pub fn mint_symbols(repo_root: &Path, cluster: Cluster) -> Vec<(Pubkey, &'static
 /// exercises any market.
 const TAKER_KEYPAIR_FILE: &str = "keys/FFFF.json";
 
-/// Load the leader keypair `config` names.
+/// Load the leader key `config` names.
 ///
 /// An [`LeaderKey::Operator`] pair names no file, so this needs the key the
 /// operator named at launch as `operator`; without one, it errors rather than

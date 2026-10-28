@@ -792,7 +792,7 @@ pub struct JobContext {
     /// [`market::LeaderKey::Operator`] roster. `None` on localnet, where the
     /// committed leader is also the quote authority.
     pub quote: Option<RoleKey>,
-    /// The program keypair (`--program-key`), needed only by a first
+    /// The program key (`--program-key`), needed only by a first
     /// [`Action::Publish`] — an upgrade is signed by the admin alone.
     pub program_key: Option<RoleKey>,
     /// The ceremony record every write job appends to — always open on

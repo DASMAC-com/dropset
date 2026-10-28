@@ -136,7 +136,7 @@ fn main() -> Result<()> {
         (Arc::new(kp), path)
     };
     let watch_only = wallet_arg.as_deref() == Some(wallet::EPHEMERAL_WALLET);
-    let quote = quote_reference(args.cluster, quote_arg, watch_only)?
+    let quote = quote_address(args.cluster, quote_arg, watch_only)?
         .map(|arg| resolve(&arg, "--quote"))
         .transpose()?;
     let leader = leader_arg
@@ -283,19 +283,20 @@ fn print_help() {
     );
 }
 
-/// The quote-authority reference a launch resolves — the hot-path signer.
+/// The quote-authority address a launch resolves — the hot-path signer and
+/// payer.
 ///
 /// Mainnet-only, and refused on localnet for the same reason as
 /// `--bootstrap`: the localnet roster's committed leader is also its quote
 /// authority, so a supplied one would be silently ignored. Required on
 /// mainnet unless the session is watch-only, naming the missing key, so no
 /// path can fall back to the leader for it.
-fn quote_reference(
+fn quote_address(
     cluster: Cluster,
-    reference: Option<String>,
+    address: Option<String>,
     watch_only: bool,
 ) -> Result<Option<String>> {
-    match reference {
+    match address {
         Some(_) if !cluster.is_mainnet() => bail!(
             "--quote is mainnet-only — the localnet roster's committed leader is its quote authority"
         ),
@@ -304,7 +305,7 @@ fn quote_reference(
              the ladder and re-centre, and create-vault sets it as each vault's quote authority",
             keys::QUOTE_VAR
         ),
-        reference => Ok(reference),
+        address => Ok(address),
     }
 }
 
@@ -422,18 +423,18 @@ mod tests {
             "--keys-file",
             "tui/private-keys.env",
             "--quote",
-            "op://v/quote/key",
+            "<quote-address>",
         ])
         .unwrap();
         assert_eq!(a.keys_file.as_deref(), Some("tui/private-keys.env"));
-        assert_eq!(a.quote.as_deref(), Some("op://v/quote/key"));
+        assert_eq!(a.quote.as_deref(), Some("<quote-address>"));
         assert!(parse(&["--quote"]).is_err());
         assert!(parse(&["--keys-file", "--bootstrap"]).is_err());
     }
 
     #[test]
     fn a_mainnet_launch_without_a_quote_key_is_refused_naming_it() {
-        let err = quote_reference(Cluster::Mainnet, None, false)
+        let err = quote_address(Cluster::Mainnet, None, false)
             .unwrap_err()
             .to_string();
         assert!(
@@ -441,19 +442,16 @@ mod tests {
             "{err}"
         );
         // A watch-only session signs nothing, so it needs none.
-        assert_eq!(quote_reference(Cluster::Mainnet, None, true).unwrap(), None);
-        let given = Some("op://v/quote/key".to_string());
+        assert_eq!(quote_address(Cluster::Mainnet, None, true).unwrap(), None);
+        let given = Some("<quote-address>".to_string());
         assert_eq!(
-            quote_reference(Cluster::Mainnet, given.clone(), false).unwrap(),
+            quote_address(Cluster::Mainnet, given.clone(), false).unwrap(),
             given
         );
         // Localnet's committed leader is its quote authority: a supplied key
         // would be ignored, so it is refused, and none is required.
-        assert!(quote_reference(Cluster::Localnet, given, false).is_err());
-        assert_eq!(
-            quote_reference(Cluster::Localnet, None, false).unwrap(),
-            None
-        );
+        assert!(quote_address(Cluster::Localnet, given, false).is_err());
+        assert_eq!(quote_address(Cluster::Localnet, None, false).unwrap(), None);
     }
 
     #[test]
@@ -462,12 +460,12 @@ mod tests {
             "--cluster",
             "mainnet",
             "--program-key",
-            "op://v/program/key",
+            "<program-address>",
             "--ceremony-log",
             "/tmp/c.log",
         ])
         .unwrap();
-        assert_eq!(a.program_key.as_deref(), Some("op://v/program/key"));
+        assert_eq!(a.program_key.as_deref(), Some("<program-address>"));
         assert_eq!(a.ceremony_log.as_deref(), Some("/tmp/c.log"));
         assert!(parse(&["--program-key"]).is_err());
         let b = parse(&["--cluster", "mainnet", "--agent-sock", "/tmp/a.sock"]).unwrap();

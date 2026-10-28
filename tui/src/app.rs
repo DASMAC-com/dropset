@@ -205,8 +205,8 @@ pub struct App {
     /// operator's), stamped onto every poll beside `roster_markets` so the
     /// vault phases count only this leader's vaults. Every roster pair shares
     /// one leader on both clusters, so the first pair's answers for all.
-    /// `None` on mainnet until a custody step first resolves the leader —
-    /// see [`App::session_leader`].
+    /// `None` when the session has no leader key (a watch-only mainnet
+    /// launch) — see [`App::session_leader`].
     roster_leader: Option<Pubkey>,
     /// The session's vault quote authority (localnet's committed leader, or
     /// the operator's quote key): the passive ladder finds and signs for its
@@ -1253,7 +1253,7 @@ impl App {
             self.chain.selected_market(self.selected_market).cloned(),
         ) {
             (None, _) => Err(anyhow::anyhow!(
-                "no quote key; relaunch with its reference in the keys file or --quote"
+                "no quote key; relaunch with its address in the keys file or --quote"
             )),
             (_, None) => Err(anyhow::anyhow!("no market selected")),
             (Some(quote), Some(market)) => {

@@ -1137,9 +1137,13 @@ pub fn send_logged(
 /// its own blockhash. Best-effort — any RPC hiccup yields `None`.
 fn measure_cu(client: &RpcClient, payer: &Pubkey, ixs: &[Instruction]) -> Option<u64> {
     let tx = Transaction::new_unsigned(Message::new(ixs, Some(payer)));
+    // The client's own commitment, as `simulate_transaction` used: left `None`,
+    // the config resolves to finalized, which lags a send that depends on the
+    // one just before it.
     let config = RpcSimulateTransactionConfig {
         sig_verify: false,
         replace_recent_blockhash: true,
+        commitment: Some(client.commitment()),
         ..RpcSimulateTransactionConfig::default()
     };
     client
