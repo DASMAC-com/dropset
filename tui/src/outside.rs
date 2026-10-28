@@ -17,7 +17,6 @@ use crate::cluster::Cluster;
 use crate::job::Logger;
 use anyhow::{bail, Context, Result};
 use solana_client::rpc_client::RpcClient;
-use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 
@@ -47,8 +46,8 @@ pub fn plan(seat: &VaultSeat, holds_admin: bool) -> Plan {
 /// `wallet` pays both. `symbol` names the market in the log and summary.
 pub fn open(
     client: &RpcClient,
-    wallet: &Keypair,
-    leader: &Keypair,
+    wallet: &dyn Signer,
+    leader: &dyn Signer,
     cluster: Cluster,
     market: &Pubkey,
     symbol: &str,

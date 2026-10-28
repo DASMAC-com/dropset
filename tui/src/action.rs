@@ -1218,7 +1218,7 @@ pub fn dispatch(
                 let base_mint = target_base_mint.context("no market selected")?;
                 let config = market::config_for(&repo_root, cluster, &base_mint)
                     .context("the selected market is not in this cluster's roster")?;
-                let leader = market::leader(&repo_root, config, operator_leader.as_deref())?;
+                let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
                 crate::outside::open(
                     &client,
                     &wallet,
