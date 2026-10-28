@@ -16,8 +16,9 @@ and every market opens **dark**. Once the log reads `Bootstrap complete`:
   and anchor), the Orca pool spot (with its age), and a typed price, and the
   drift line beneath sets them against each other in bps, to compare with
   Grafana. It opens on the estimator when its fair is live and not the static
-  peg, else on Orca, else on typed. A static peg, a paused or a stale fair is
-  shown and never offered.
+  peg, else on Orca when its spot is fresh, else on typed. A static peg, a
+  paused or a stale fair is shown and never offered; a stale Orca spot is
+  shown with its age and refused at the preview.
 - `T` starts every taker, if you want flow on the books.
 
 ## 2. Run the check

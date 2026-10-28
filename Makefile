@@ -461,7 +461,7 @@ tui-prebuild-explorer:
 # panel auto-runs "Bootstrap all" once the localnet is up; override with
 # `make tui TUI_ARGS=` for the step-by-step manual control plane.
 #
-# Both this and `tui-mainnet` point the passive form's center chooser at the
+# This, `tui-mainnet` and `mainnet-demo` point the passive form's chooser at the
 # local estimator through the dashboards' read-only role (0002), the same
 # default `demo-check` reads: the operator runs the estimator locally on
 # either cluster. An exported `DROPSET_TUI_DATABASE_URL` wins.

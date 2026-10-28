@@ -5,8 +5,9 @@
 //!
 //! The TUI otherwise has no market-data dependency, so this read is optional:
 //! with no database configured the passive form centers on a typed price, the
-//! vault's live reference or the book mid, as it always has. `make tui` and
-//! `make tui-mainnet` configure the local reader by default. Once one is
+//! vault's live reference or the book mid, as it always has. `make tui`,
+//! `make tui-mainnet` and `make mainnet-demo` configure the local reader by
+//! default. Once one is
 //! configured the form's chooser offers the estimator's fair beside the
 //! [`SPOT_SOURCE`] spot — a paused, stale, static-pegged or unreadable fair is
 //! never offered, and a blank typed center refuses rather than quietly falling
@@ -18,12 +19,14 @@
 //! paused or malformed here is exactly what the maker bot refuses.
 //!
 //! The same database also serves the newest on-chain spot print
-//! ([`FairDb::spot`]), which the passive form offers beside the fair while it
-//! is inside [`MAX_SPOT_AGE_SECS`].
+//! ([`FairDb::spot`]), which the passive form offers beside the fair and
+//! centers on only while it is inside [`MAX_SPOT_AGE_SECS`].
 
 use anyhow::{bail, Context, Result};
 use dropset_market_data::estimator::published_product;
-use dropset_market_data::fair_price::{FairPriceRow, FairPriceSource, MAX_PUBLISHED_FAIR_AGE};
+use dropset_market_data::fair_price::{
+    FairPriceRow, FairPriceSource, MAX_PUBLISHED_FAIR_AGE, MAX_PUBLISHED_FAIR_SKEW,
+};
 use dropset_market_data::tick_store::TickStoreReader;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::PgPool;
@@ -117,14 +120,16 @@ impl FairDb {
                 rows.iter().find(|r| r.product_id == product),
                 dropset_sdk::time::now_unix(),
             ),
-            Err(e) => Fair::Unusable(format!("{product}: the read failed — {e:#}")),
+            Err(e) => Fair::Unread(format!("{product}: the read failed — {e:#}")),
         }
     }
 
     /// The newest [`SPOT_SOURCE`] print for the market whose base is
     /// `base_symbol`, under the estimator's product id — `None` when there is
-    /// none, it does not decode as a price, or the read fails. Shown beside
-    /// the fair and offered as a center, so a miss is one source fewer rather
+    /// none, it does not decode as a price, it is stamped further ahead of
+    /// this clock than `MAX_PUBLISHED_FAIR_SKEW` (a skewed row would read as
+    /// fresh until the clock caught up), or the read fails. Shown beside the
+    /// fair and offered as a center, so a miss is one source fewer rather
     /// than an error.
     pub fn spot(&self, base_symbol: &str) -> Option<Spot> {
         let product = published_product(base_symbol)?;
@@ -140,13 +145,7 @@ impl FairDb {
             })
             .ok()?;
         let row = rows.into_iter().find(|r| r.product_id == product)?;
-        (row.price.is_finite() && row.price > 0.0).then(|| Spot {
-            price: row.price,
-            // A writer clock ahead of this one reads as fresh, not negative.
-            age_secs: dropset_sdk::time::now_unix()
-                .saturating_sub(row.observed_at)
-                .max(0),
-        })
+        spot_from(row.price, row.observed_at, dropset_sdk::time::now_unix())
     }
 
     fn latest(&self, product: &str) -> Result<Vec<FairPriceRow>> {
@@ -193,9 +192,23 @@ impl FairDb {
 pub const SPOT_SOURCE: &str = "orca";
 
 /// The oldest [`Spot`] a center may take: the estimator's default bound for a
-/// tape source (`FairValueConfig`'s `leg_stale.tape`), so the form refuses
-/// the pool exactly when the estimator would drop it as a leg.
+/// tape source (`FairValueConfig`'s `leg_stale.tape`), so a pool print the
+/// estimator would drop as a leg is not centered on either.
 pub const MAX_SPOT_AGE_SECS: i64 = 5 * 60;
+
+/// [`FairDb::spot`]'s verdict on one print observed at `observed_at`, at
+/// `now_unix` — split out so it is testable without a database.
+fn spot_from(price: f64, observed_at: i64, now_unix: i64) -> Option<Spot> {
+    let ahead = observed_at.saturating_sub(now_unix);
+    if !(price.is_finite() && price > 0.0) || ahead > MAX_PUBLISHED_FAIR_SKEW.as_secs() as i64 {
+        return None;
+    }
+    Some(Spot {
+        price,
+        // A writer clock a little ahead reads as fresh, not negative.
+        age_secs: now_unix.saturating_sub(observed_at).max(0),
+    })
+}
 
 /// The `anchor` a `fair_price` row names when its fair is the configured
 /// constant peg rather than a market read — never offered as a center.
@@ -206,6 +219,13 @@ const STATIC_ANCHOR: &str = "static";
 pub struct Spot {
     pub price: f64,
     pub age_secs: i64,
+}
+
+impl Spot {
+    /// Whether a center may take this print — inside [`MAX_SPOT_AGE_SECS`].
+    pub fn is_fresh(self) -> bool {
+        self.age_secs <= MAX_SPOT_AGE_SECS
+    }
 }
 
 /// The estimator's verdict on one market, as of one read.
@@ -236,8 +256,11 @@ pub enum Fair {
         product: &'static str,
         age_secs: u64,
     },
-    /// No usable row — absent, future-stamped, malformed or unread.
+    /// The database answered with no usable row — absent, future-stamped or
+    /// malformed.
     Unusable(String),
+    /// The database did not answer — so the spot is not asked either.
+    Unread(String),
 }
 
 impl Fair {
@@ -288,7 +311,7 @@ impl Fair {
             Fair::Stale { product, age_secs } => {
                 format!("{product}'s row is {age_secs} s old — is the estimator running?")
             }
-            Fair::Unusable(why) => format!("no usable fair: {why}"),
+            Fair::Unusable(why) | Fair::Unread(why) => format!("no usable fair: {why}"),
         }
     }
 }
@@ -421,6 +444,30 @@ mod tests {
         assert!(FairDb::from_url(detour).is_err());
         assert!(FairDb::from_url(&format!("{remote}?sslmode=verify-full")).is_ok());
         assert!(FairDb::from_url("postgres://dropset_ro:pw@localhost/dropset").is_ok());
+    }
+
+    #[test]
+    fn a_spot_stamped_past_the_skew_or_unpriced_is_no_spot() {
+        let skew = MAX_PUBLISHED_FAIR_SKEW.as_secs() as i64;
+        assert_eq!(
+            spot_from(1.32, NOW - 40, NOW),
+            Some(Spot {
+                price: 1.32,
+                age_secs: 40
+            })
+        );
+        // Inside the skew it reads as fresh; one second past it, as nothing.
+        assert_eq!(spot_from(1.32, NOW + skew, NOW).unwrap().age_secs, 0);
+        assert_eq!(spot_from(1.32, NOW + skew + 1, NOW), None);
+        assert_eq!(spot_from(0.0, NOW, NOW), None);
+        assert_eq!(spot_from(f64::NAN, NOW, NOW), None);
+        // The freshness bound is inclusive.
+        assert!(spot_from(1.0, NOW - MAX_SPOT_AGE_SECS, NOW)
+            .unwrap()
+            .is_fresh());
+        assert!(!spot_from(1.0, NOW - MAX_SPOT_AGE_SECS - 1, NOW)
+            .unwrap()
+            .is_fresh());
     }
 
     #[test]

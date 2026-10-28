@@ -1245,8 +1245,10 @@ impl App {
     /// Build the passive ticket `form` describes against the selected market,
     /// reading the quote key's vault fresh, and move the prompt to the confirm
     /// stage. A refusal keeps the form open so the operator can fix the field.
-    fn build_passive_ticket(&mut self, form: passive::Form) {
+    fn build_passive_ticket(&mut self, mut form: passive::Form) {
         let label = form.op.label();
+        // The fresh reads, so a refusal reopens the form showing what refused.
+        let mut fresh = None;
         let prepared = match (
             self.roster_quote,
             self.chain.selected_market(self.selected_market).cloned(),
@@ -1258,7 +1260,7 @@ impl App {
             (Some(quote), Some(market)) => {
                 let fair = self.read_fair(&market);
                 let spot = self.read_spot(&market, &fair);
-                passive::prepare(
+                let prepared = passive::prepare(
                     &self.client,
                     &self.ctx.repo_root,
                     self.ctx.cluster,
@@ -1267,7 +1269,9 @@ impl App {
                     &form,
                     &fair,
                     spot,
-                )
+                );
+                fresh = Some((fair, spot));
+                prepared
             }
         };
         match prepared {
@@ -1279,6 +1283,9 @@ impl App {
             }
             Err(e) => {
                 self.log(LogKind::Err, format!("{label} — {e:#}"));
+                if let Some((fair, spot)) = fresh {
+                    form.refresh_sources(fair, spot);
+                }
                 self.passive_prompt = Some(PassivePrompt::Form(form));
             }
         }
@@ -1299,12 +1306,12 @@ impl App {
 
     /// The on-chain spot print for `market`, read now — only when `fair`
     /// shows the database answered, so an unreachable one costs the form a
-    /// single timeout rather than two. A stale fair still answered, and the
-    /// pool is then the chooser's one live source.
+    /// single timeout rather than two. A stale, paused or missing fair still
+    /// answered, and the pool is then the chooser's one live source.
     fn read_spot(&self, market: &accounts::MarketView, fair: &fair::Fair) -> Option<fair::Spot> {
-        if !matches!(
+        if matches!(
             fair,
-            fair::Fair::Live { .. } | fair::Fair::Paused { .. } | fair::Fair::Stale { .. }
+            fair::Fair::Off | fair::Fair::Unpublished | fair::Fair::Unread(_)
         ) {
             return None;
         }
