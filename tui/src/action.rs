@@ -543,6 +543,7 @@ impl Action {
             Action::OverrideVaultName => Some(NameOp::Override),
             Action::LeaderDeposit
             | Action::LeaderWithdraw
+            | Action::SetPerfFee
             | Action::RotateLeader
             | Action::PassiveLadder
             | Action::PassiveRecenter
