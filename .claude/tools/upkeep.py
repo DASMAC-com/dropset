@@ -62,7 +62,9 @@ an operator approval at ``plan``'s gate.
 through its ``REPORT_END`` line — is replaced wholesale each run, bounded to
 ``REPORT_CHAR_CAP``. The same report
 prints to stdout (the standalone interface, and the fallback when Linear is
-unreachable); ``--json`` prints the structured twin instead. A local stamp beside
+unreachable); ``--json`` prints the structured twin instead. Progress — a line
+as each step starts and ends, then a total — goes to stderr, so neither stdout
+form changes and the launcher's terminal shows which wait it is on. A local stamp beside
 the allowlist refresh marker answers ``ran-today`` with no network read, and
 carries the parked counts the next pass measures direction against; it is
 written only when the report reached the document, so a ``--no-doc`` preview or
@@ -85,6 +87,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -196,6 +199,10 @@ class Ctx:
     parked: Callable[[], dict[str, int]] | None = None
     steps: list[dict] = field(default_factory=list)
     data: dict = field(default_factory=dict)
+    # Where the per-step progress lines go — stderr from the CLI, None (silent)
+    # under test — and the clock their elapsed seconds are read from.
+    progress: Callable[[str], None] | None = None
+    clock: Callable[[], float] = time.monotonic
 
     def tool(self, name: str, *args: str, timeout: float = TIMEOUT_TOOL):
         return self.run(
@@ -911,22 +918,71 @@ STEPS = (
     ("purge", step_purge),
 )
 
+# What each step's progress line names, and the timeout bounding its slowest
+# call — so a terminal sitting on one line for minutes says which wait it is.
+STEP_LABELS = {
+    "pull": ("fast-forward main", f"per-call timeout {TIMEOUT_GIT}s"),
+    "cli": ("upgrade the Claude Code CLI", f"per-call timeout {TIMEOUT_BREW}s"),
+    "prs": ("PR and notification state", f"per-call timeout {TIMEOUT_GH}s"),
+    "board": (
+        "the board's verdict per branch",
+        f"per-call timeout {linear_api.REQUEST_TIMEOUT}s",
+    ),
+    "prune": ("prune worktrees and branches", f"per-call timeout {TIMEOUT_TOOL}s"),
+    "notifications": ("dismiss PR notifications", f"per-call timeout {TIMEOUT_GH}s"),
+    "parked": (
+        "parked milestone counts",
+        f"per-call timeout {linear_api.REQUEST_TIMEOUT}s",
+    ),
+    "checks": ("convention and wiring checks", f"per-call timeout {TIMEOUT_TOOL}s"),
+    "cost": ("fleet cost and allowance", f"per-call timeout {TIMEOUT_COST}s"),
+    "digest": ("session digest", f"per-call timeout {TIMEOUT_DIGEST}s"),
+    "memory": ("memory scan gate and audit", f"per-call timeout {TIMEOUT_TOOL}s"),
+    "purge": ("transcript-purge dry run", f"per-call timeout {TIMEOUT_TOOL}s"),
+}
+
 
 # The cleanup half alone — the `prune` subcommand, so a by-hand prune and the
 # daily pass apply ONE survival rule rather than two that drift.
 PRUNE_STEPS = ("prs", "board", "prune", "notifications")
 
 
+def step_start_line(index: int, total: int, name: str) -> str:
+    what, bound = STEP_LABELS.get(name, (name, "no timeout recorded"))
+    return f"upkeep: [{index}/{total}] {name} — {what} ({bound})"
+
+
+def step_end_line(index: int, total: int, name: str, elapsed: float, crashed: bool) -> str:
+    verdict = "crashed" if crashed else "done"
+    return f"upkeep: [{index}/{total}] {name} — {verdict} in {elapsed:.1f}s"
+
+
+def total_line(total: int, elapsed: float, crashed: int) -> str:
+    tail = f", {crashed} crashed" if crashed else ""
+    return f"upkeep: {total} step(s) in {elapsed:.1f}s{tail}"
+
+
 def run_pass(ctx: Ctx, only: tuple[str, ...] | None = None) -> dict:
-    for name, fn in STEPS:
-        if only is not None and name not in only:
-            continue
+    # Progress goes to `ctx.progress` (stderr), never stdout, which stays the
+    # report or its JSON twin byte for byte.
+    say = ctx.progress or (lambda _line: None)
+    chosen = [(n, fn) for n, fn in STEPS if only is None or n in only]
+    began = ctx.clock()
+    crashes = 0
+    for index, (name, fn) in enumerate(chosen, 1):
+        say(step_start_line(index, len(chosen), name))
+        start = ctx.clock()
+        crashed = False
         try:
             fn(ctx)
         except Exception as e:  # noqa: BLE001 — best-effort: a crash is a line
+            crashed = True
+            crashes += 1
             ctx.record(
                 name, f"step crashed: {type(e).__name__}: {first_line(str(e))}", False
             )
+        say(step_end_line(index, len(chosen), name, ctx.clock() - start, crashed))
+    say(total_line(len(chosen), ctx.clock() - began, crashes))
     result = {
         "ran_at": ctx.now.isoformat(),
         "armed": ctx.armed,
@@ -1116,6 +1172,11 @@ def ran_today(path: Path, now: datetime) -> dict:
 # --- CLI -------------------------------------------------------------------
 
 
+def to_stderr(line: str) -> None:
+    # Flushed per line: a terminal is watching, not a log file.
+    print(line, file=sys.stderr, flush=True)
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="upkeep.py", description=__doc__.split("\n")[0]
@@ -1167,7 +1228,13 @@ def run(argv: list[str]) -> int:
         # whose `--apply` is the approval. The gates that make that safe are the board rule and the pruner's
         # dirty/unpushed refusal, not a prompt. No document write and no stamp
         # — this is not the day's pass.
-        ctx = Ctx(base=base, armed=args.apply, now=now, lookup=linear_lookup)
+        ctx = Ctx(
+            base=base,
+            armed=args.apply,
+            now=now,
+            lookup=linear_lookup,
+            progress=to_stderr,
+        )
         ctx.data["trees"] = trees
         result = run_pass(ctx, PRUNE_STEPS)
         print(json.dumps(result, indent=2) if args.json else render(result))
@@ -1179,6 +1246,7 @@ def run(argv: list[str]) -> int:
         now=now,
         lookup=linear_lookup,
         parked=linear_parked,
+        progress=to_stderr,
     )
     ctx.data["trees"] = trees
     ctx.data["previous_parked"] = previous_parked(stamp_path(base))

@@ -388,6 +388,9 @@ class PassTests(unittest.TestCase):
         # STEPS would quietly drop a cleanup step from `upkeep.py prune`.
         self.assertLessEqual(set(upkeep.PRUNE_STEPS), {n for n, _ in upkeep.STEPS})
 
+    def test_every_step_has_a_progress_label(self):
+        self.assertEqual(set(upkeep.STEP_LABELS), {n for n, _ in upkeep.STEPS})
+
     def test_linear_unreachable_cleans_nothing(self):
         def down(nums):
             raise RuntimeError("connection refused")
@@ -866,6 +869,51 @@ class PassTests(unittest.TestCase):
             self.assertIsNone(upkeep.previous_run(path))
             path.write_text(json.dumps({"last_run": "2026-10-07T09:00:00+00:00"}))
             self.assertEqual(upkeep.previous_run(path), "2026-10-07T09:00:00+00:00")
+
+
+class ProgressTests(unittest.TestCase):
+    def run_two(self, cli_raises: bool):
+        def run(cmd, timeout, cwd=None):
+            if cli_raises and cmd[0] == "brew":
+                raise RuntimeError("brew wedged")
+            return 0, "", ""
+
+        ticks = iter(range(0, 100, 2))
+        lines: list[str] = []
+        ctx = make_ctx(run)
+        ctx.progress = lines.append
+        ctx.clock = lambda: float(next(ticks))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            run_pass(ctx, ("pull", "cli"))
+        return lines, out.getvalue()
+
+    def test_a_start_and_an_end_line_per_step_then_a_total(self):
+        lines, out = self.run_two(cli_raises=False)
+        self.assertEqual(
+            lines,
+            [
+                "upkeep: [1/2] pull — fast-forward main (per-call timeout 120s)",
+                "upkeep: [1/2] pull — done in 2.0s",
+                "upkeep: [2/2] cli — upgrade the Claude Code CLI "
+                "(per-call timeout 60s)",
+                "upkeep: [2/2] cli — done in 2.0s",
+                "upkeep: 2 step(s) in 10.0s",
+            ],
+        )
+        # Progress never reaches stdout, which stays the report.
+        self.assertEqual(out, "")
+
+    def test_a_crashed_step_says_so_and_the_total_counts_it(self):
+        lines, _ = self.run_two(cli_raises=True)
+        self.assertEqual(lines[3], "upkeep: [2/2] cli — crashed in 2.0s")
+        self.assertEqual(lines[4], "upkeep: 2 step(s) in 10.0s, 1 crashed")
+
+    def test_no_sink_is_silent(self):
+        ctx = make_ctx(lambda cmd, timeout, cwd=None: (0, "", ""))
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                run_pass(ctx, ("pull",))
+        self.assertEqual((out.getvalue(), err.getvalue()), ("", ""))
 
 
 class WriteReportTests(unittest.TestCase):
