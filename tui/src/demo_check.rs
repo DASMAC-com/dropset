@@ -650,12 +650,19 @@ fn chain_skipped(validator: Check) -> Vec<Check> {
         .collect()
 }
 
+/// The head slot is read once and required: without it `maker_liveness`
+/// reads every vault `Unknown`, which the label would misreport as no quote
+/// on chain.
 fn market_checks(client: &RpcClient, repo_root: &Path, keyless: bool) -> Vec<Check> {
-    let head = client.get_slot().ok();
+    let head = client.get_slot();
     market::roster(Cluster::Localnet)
         .iter()
         .map(|config| {
             let surface = market_surface(config);
+            let head = match &head {
+                Ok(slot) => *slot,
+                Err(e) => return Check::new(surface, Verdict::Fail, format!("head slot: {e}")),
+            };
             match book_state(client, repo_root, config, head) {
                 Ok(Some(state)) => market_verdict(surface, config.posture, state, keyless),
                 Ok(None) => Check::new(surface, Verdict::Fail, "no market or vault on chain"),
@@ -689,7 +696,7 @@ fn book_state(
     client: &RpcClient,
     repo_root: &Path,
     config: &PairConfig,
-    head: Option<u64>,
+    head: u64,
 ) -> Result<Option<BookState>> {
     let Some(view) = market_view(client, repo_root, config)? else {
         return Ok(None);
@@ -706,7 +713,7 @@ fn book_state(
         bids: view.bids.len(),
         rungs: ask_rungs + bid_rungs,
         flipping: ask_flips + bid_flips,
-        liveness: accounts::maker_liveness(head, view.leader_quote_slot),
+        liveness: accounts::maker_liveness(Some(head), view.leader_quote_slot),
     }))
 }
 
