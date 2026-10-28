@@ -650,8 +650,8 @@ harder, never to re-park.
 ### The curator owns review
 
 Everything between Backlog and Todo belongs to the **curator**, a daily
-advisor-tier session in the base repo (the `curate` skill, launched on
-the plan morning or by hand with `curate`). It has no governing issue:
+advisor-tier session in the base repo (the `curate` skill, dispatched by
+the launcher each morning or by hand with `curate`). It has no governing issue:
 it runs every day, named by its date. The division of labour:
 
 - **The curator judges** — what to promote, kill or merge.
@@ -693,7 +693,8 @@ messaged to the scheduler, and waits while none is live), no edge,
 kill or merge the operator did not tick (see "Blocking relations"), no
 other milestone, no other issue's state or body beyond the fold. It
 messages the scheduler every Todo move, cancel, merge and
-edge it places.
+edge it places, and hands it any kill or merge that reaches outside the
+pool.
 
 **The close.** On the operator's close-out yes the scheduler lists live
 sessions and messages a live curator "closing for the day", without

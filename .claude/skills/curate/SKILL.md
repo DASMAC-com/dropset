@@ -199,18 +199,22 @@ An unticked task approves nothing, and stays in the ranking.
   with `--dry-run` first.
 - **A kill**: cancel it first (`approve --pool inbox --cancel <id>`),
   then append the evidence to the body (`linear_issue.py append`).
-  A kill the tool skips as out of the pool is not executed: no
-  append, and the batch message hands it to the scheduler.
-- **A merge**: run `merge-tasks` over its ids; the label names the
-  survivor.
+  A kill the tool refuses (out of the pool, or holding an open
+  thread) is not executed: no append, and the batch message hands
+  it to the scheduler.
+- **A merge**: only when every id is in the last pool listing — a
+  merge never closes a Todo or dispatched issue from this tab. Run
+  `merge-tasks` over its ids; the label names the survivor. A merge
+  reaching outside the pool is handed to the scheduler like a
+  refused kill.
 
 **Then one message to the scheduler for the batch** (`ListAgents`,
 then `SendMessage`), sent in the turn the writes land: every Todo
 move, every cancel, every merge, every edge placed, and any kill
-skipped as out of the pool. No live scheduler: the moves are on
-the board — except a change to an edge **the scheduler placed**,
-or a skipped kill, which waits until a scheduler is live to
-receive the message.
+or merge handed over. No live scheduler: the moves are on the
+board — except a change to an edge **the scheduler placed**, or a
+handed-over kill or merge, which waits until a scheduler is live
+to receive the message.
 
 ## The coordination rule
 
@@ -308,7 +312,7 @@ for the day". On it:
 
 No board write accompanies the stop, no issue state (there is no
 governing issue), and no Planning-document note: the scheduler,
-which owns the document, has every move by message and is
-rewriting it as this runs. A close the operator starts by hand
+which owns the document, is rewriting it as this runs, and the
+board holds any move its rewrite missed. A close the operator starts by hand
 runs the same tail; with no live scheduler, the inbox line is the
 day's record and the board holds the rest.

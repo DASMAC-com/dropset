@@ -249,7 +249,7 @@ def _hand_off_ids(proposal: dict) -> list[str]:
     if "kill" in proposal:
         return [_issue_id(proposal["kill"])[0]]
     if "merge" in proposal:
-        return [_issue_id(i)[0] for i in proposal["merge"]]
+        return sorted({_issue_id(i)[0] for i in proposal["merge"]})
     return []
 
 
