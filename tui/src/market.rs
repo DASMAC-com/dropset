@@ -1260,4 +1260,16 @@ mod tests {
         assert_eq!(seed_profile(Posture::Active, WallSpan::UNBOUNDED), active);
         assert_ne!(active, tight);
     }
+
+    /// The seeded passive book is thickest at the top of book on both sides:
+    /// no rung is smaller than its outer neighbor.
+    #[test]
+    fn a_passive_seed_never_grows_outward() {
+        let bytes = seed_profile(Posture::Passive, WallSpan::UNBOUNDED);
+        let profile: LiquidityProfile = bytemuck::pod_read_unaligned(&bytes);
+        for side in [&profile.bids, &profile.asks] {
+            let sizes: Vec<u16> = side.iter().map(|l| l.size_bps.get()).collect();
+            assert!(sizes.windows(2).all(|w| w[0] >= w[1]), "{sizes:?}");
+        }
+    }
 }

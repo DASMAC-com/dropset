@@ -25,12 +25,11 @@ pub use dropset_sdk::ladder::build_profile;
 /// Shape guidance for a ladder under `mode` (§2), as one human-readable line
 /// per problem — empty when the ladder is sound. The bot logs these at
 /// startup and quotes the ladder it was given. Active mode has nothing to
-/// say; a passive ladder gets the shared [`passive_shape_warnings`] rules,
-/// with `tip` declaring its L1 a tip.
-pub fn shape_warnings(ladder: &[LadderLevel], mode: StrategyMode, tip: bool) -> Vec<String> {
+/// say; a passive ladder gets the shared [`passive_shape_warnings`] rules.
+pub fn shape_warnings(ladder: &[LadderLevel], mode: StrategyMode) -> Vec<String> {
     match mode {
         StrategyMode::Active => Vec::new(),
-        StrategyMode::Passive => passive_shape_warnings(ladder, tip),
+        StrategyMode::Passive => passive_shape_warnings(ladder),
     }
 }
 
@@ -129,11 +128,11 @@ mod tests {
 
     #[test]
     fn the_shipped_ladders_raise_no_shape_warnings() {
-        assert!(shape_warnings(&default_passive_ladder(), StrategyMode::Passive, true).is_empty());
+        assert!(shape_warnings(&default_passive_ladder(), StrategyMode::Passive).is_empty());
         // Active is never checked, though its flip-less levels would fail the
         // passive rule.
-        assert!(shape_warnings(&DEFAULT_LADDER, StrategyMode::Active, false).is_empty());
-        assert!(!shape_warnings(&DEFAULT_LADDER, StrategyMode::Passive, false).is_empty());
+        assert!(shape_warnings(&DEFAULT_LADDER, StrategyMode::Active).is_empty());
+        assert!(!shape_warnings(&DEFAULT_LADDER, StrategyMode::Passive).is_empty());
     }
 
     #[test]
@@ -146,7 +145,7 @@ mod tests {
             })
             .collect();
         // DEFAULT_LADDER's sizes shrink outward, so as given it passes...
-        let warnings = shape_warnings(&ladder, StrategyMode::Passive, false);
+        let warnings = shape_warnings(&ladder, StrategyMode::Passive);
         assert!(warnings.is_empty(), "{warnings:?}");
         // ...and with its sizes reversed onto the same offsets it grows
         // outward at every step.
@@ -155,7 +154,7 @@ mod tests {
         for (lvl, src) in grown.iter_mut().zip(&ladder) {
             lvl.offset_ppm = src.offset_ppm;
         }
-        let warnings = shape_warnings(&grown, StrategyMode::Passive, false);
+        let warnings = shape_warnings(&grown, StrategyMode::Passive);
         assert_eq!(warnings.len(), 3, "{warnings:?}");
         assert!(warnings.iter().all(|w| w.contains("grow-outward")));
         // Uniform sizes are the no-view option, not a grow-outward shape.
@@ -166,15 +165,15 @@ mod tests {
                 ..*l
             })
             .collect();
-        assert!(shape_warnings(&uniform, StrategyMode::Passive, false).is_empty());
+        assert!(shape_warnings(&uniform, StrategyMode::Passive).is_empty());
     }
 
     #[test]
     fn an_empty_passive_ladder_is_warned() {
-        let warnings = shape_warnings(&[], StrategyMode::Passive, false);
+        let warnings = shape_warnings(&[], StrategyMode::Passive);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("empty"));
-        assert!(shape_warnings(&[], StrategyMode::Active, false).is_empty());
+        assert!(shape_warnings(&[], StrategyMode::Active).is_empty());
     }
 
     #[test]
@@ -183,7 +182,7 @@ mod tests {
         // L1's spacing is its distance to the reference.
         ladder[0].flip_spread_ppm = ladder[0].offset_ppm + 1;
         ladder[1].flip_spread_ppm = 0;
-        let warnings = shape_warnings(&ladder, StrategyMode::Passive, true);
+        let warnings = shape_warnings(&ladder, StrategyMode::Passive);
         assert_eq!(warnings.len(), 2, "{warnings:?}");
         assert!(warnings[0].starts_with("L1 flip spread"));
         assert!(warnings[0].ends_with("through the reference"));
@@ -191,7 +190,7 @@ mod tests {
         // Exactly the spacing is allowed.
         ladder[0].flip_spread_ppm = ladder[0].offset_ppm;
         ladder[1].flip_spread_ppm = ladder[1].offset_ppm - ladder[0].offset_ppm;
-        assert!(shape_warnings(&ladder, StrategyMode::Passive, true).is_empty());
+        assert!(shape_warnings(&ladder, StrategyMode::Passive).is_empty());
     }
 
     #[test]
