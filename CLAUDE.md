@@ -489,7 +489,7 @@ live everywhere. A committed guard is **inert until wired**:
 guard that
 cannot fire — unwired, under a `matcher` that never selects its tools,
 or pointed at a missing path — and writes nothing. The **session
-helpers** (`cdds`, `task`, `explore`, `chore`, `plan`,
+helpers** (`cdds`, `task`, `explore`, `chore`, `plan`, `curate`,
 `architect`, `fleet`) are the exception that *is* committed, at
 `.claude/shell/init.zsh`, sourced from the base checkout by one guarded
 line in the shell profile; only their 1Password coordinates stay
@@ -503,11 +503,11 @@ wiring, the helper family, and the iTerm setup:
 A session runs on **Bedrock** unless it needs something Bedrock lacks —
 web search or deep research (web fetch works there) — or it is a **seat
 session by role** (`architect`). Sub-agents are not a differentiator.
-`task`, `chore`, `explore` and `plan` are Bedrock, with `anthropic`
-the escape (`plan anthropic` puts planning back on the seat).
+`task`, `chore`, `explore`, `plan` and `curate` are Bedrock, with
+`anthropic` the escape (`plan anthropic` puts planning back on the seat).
 
-Models are named by **role tier** — advisor (`plan`, `architect`,
-`explore`), executor (`task`), helper
+Models are named by **role tier** — advisor (`plan`, `curate`,
+`architect`, `explore`), executor (`task`), helper
 (`chore`), background — each set in
 the untracked runtime config (`DS_MODEL_<TIER>[_SUBSTRATE]`). Each verb
 pins its tier at launch and refuses an unresolved one, so no skill

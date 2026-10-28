@@ -307,10 +307,10 @@ def resolve(tag: str, repo: Path) -> dict:
     return verdict
 
 
-#: The kinds `.claude/shell/init.zsh` actually seeds a daily id with — only
-#: `plan`, since the `housekeeping` verb retired. Anything else has no session
-#: to name.
-DAILY_KINDS = ("plan",)
+#: The kinds `.claude/shell/init.zsh` actually seeds a daily id with — the
+#: scheduler's `plan` and the curator's `curate` (the `housekeeping` verb
+#: retired). Anything else has no session to name.
+DAILY_KINDS = ("plan", "curate")
 
 _DAILY_DATE_RE = re.compile(r"^\d{8}$")
 
@@ -320,16 +320,17 @@ _DAILY_DATE_RE = re.compile(r"^\d{8}$")
 STATE_DIR = Path(".claude") / "session-substrate"
 
 
-def cycle_counter_path(repo: Path, date: str) -> Path:
-    """The per-day file holding how many times today's `plan` has cycled.
+def cycle_counter_path(repo: Path, date: str, kind: str = "plan") -> Path:
+    """The per-day file holding how many times today's daily `kind` has cycled.
 
     Per DAY, so a reopen later the same day resumes the latest cycle rather
-    than cycle 0, and tomorrow starts from 0 with nothing to clean up.
+    than cycle 0, and tomorrow starts from 0 with nothing to clean up. Per
+    KIND, so the scheduler and the curator cycle independently.
     """
-    return repo / STATE_DIR / f"plan-cycle-{date}"
+    return repo / STATE_DIR / f"{kind}-cycle-{date}"
 
 
-def read_cycle(repo: Path, date: str) -> int:
+def read_cycle(repo: Path, date: str, kind: str = "plan") -> int:
     """Today's cycle number; an absent or garbled counter reads as 0, the
     pre-cycling id, so a missing file can only name the day's first session.
 
@@ -338,18 +339,18 @@ def read_cycle(repo: Path, date: str) -> int:
     different ids from one hand-edited file.
     """
     try:
-        raw = cycle_counter_path(repo, date).read_text().rstrip("\n")
+        raw = cycle_counter_path(repo, date, kind).read_text().rstrip("\n")
     except OSError:
         return 0
     return int(raw) if raw.isascii() and raw.isdigit() else 0
 
 
 def launch_date() -> str:
-    """The date a planning session was LAUNCHED on, not today's.
+    """The date a daily session was LAUNCHED on, not today's.
 
-    The `plan` launcher exports `DS_PLAN_DATE` into the client, so a session
-    still running past midnight computes the id it was started under rather
-    than the new day's.
+    The `plan` and `curate` launchers export `DS_PLAN_DATE` into the client, so
+    a session still running past midnight computes the id it was started under
+    rather than the new day's.
     """
     env = os.environ.get("DS_PLAN_DATE", "")
     if _DAILY_DATE_RE.match(env):
@@ -358,7 +359,7 @@ def launch_date() -> str:
 
 
 def daily_session_id(kind: str, date: str, cycle: int = 0) -> str:
-    """The session id a daily verb (`plan`) computes for itself.
+    """The session id a daily verb (`plan`, `curate`) computes for itself.
 
     A seat session's id is **deterministic**, not discovered: an md5 of
     ``dropset-<kind>-<YYYYMMDD>`` formatted as a UUID. So a session wanting its
@@ -422,7 +423,8 @@ def run(argv: list[str]) -> int:
         "--daily-id",
         default=None,
         metavar="KIND",
-        help="print the deterministic session id for a daily verb (plan) and "
+        help="print the deterministic session id for a daily verb (plan, "
+        "curate) and "
         "exit — compute your own id rather than listing the "
         "projects directory to find it",
     )
@@ -438,8 +440,8 @@ def run(argv: list[str]) -> int:
         type=int,
         default=None,
         metavar="N",
-        help="the planning cycle for --daily-id plan (default: the launcher's "
-        "counter for that date under --repo, 0 when none — so run it from the "
+        help="the cycle for --daily-id (default: the launcher's counter for "
+        "that kind and date under --repo, 0 when none — so run it from the "
         "base checkout)",
     )
     parser.add_argument("--tag", help="eng-### or a bare number")
@@ -467,7 +469,7 @@ def run(argv: list[str]) -> int:
     repo = Path(os.path.abspath(args.repo if args.repo else Path.cwd()))
 
     if args.daily_id:
-        # `plan` is the only daily kind; `daily_session_id` refuses any other.
+        # `daily_session_id` refuses any kind outside DAILY_KINDS.
         date = args.date or launch_date()
         cycle = args.cycle
         # Validated like the kind and the date, and for the same reason: a
@@ -475,7 +477,7 @@ def run(argv: list[str]) -> int:
         if cycle is not None and cycle < 0:
             raise ResolveSessionError(f"--cycle must be >= 0, got {cycle}")
         if cycle is None:
-            cycle = read_cycle(repo, date)
+            cycle = read_cycle(repo, date, args.daily_id)
         print(daily_session_id(args.daily_id, date, cycle))
         return 0
 

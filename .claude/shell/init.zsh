@@ -618,10 +618,10 @@ _ds_aws_login() {
 
 # Internal: a deterministic per-day session UUID, seeded by kind + full date.
 #
-# The full date is in the seed so that `plan-18` in August and `plan-18` in
-# September cannot collide; the display name stays day-only by operator choice,
-# and this id is what actually disambiguates them. The kind prefix keeps a
-# second daily verb, should one return, from colliding with `plan`'s ids.
+# The full date is in the seed so that `schedule-18` in August and
+# `schedule-18` in September cannot collide; the display name stays day-only by operator choice,
+# and this id is what actually disambiguates them. The kind prefix keeps the
+# second daily verb, `curate`, from colliding with `plan`'s ids.
 #
 # An optional $2 is the planning CYCLE: N > 0 appends `-cN`, a fresh id under
 # the same display name (see `plan`). Cycle 0 is the bare seed, so ids computed
@@ -2192,7 +2192,8 @@ _ds_plan_cycle() {
   [[ "$cycle" == <-> ]] && print -r -- $(( 10#$cycle )) || print -r -- 0
 }
 
-# Start OR resume today's PLANNING session. The name is derived from the date.
+# Start OR resume today's SCHEDULER (planning) session. The name is derived
+# from the date.
 #
 #   plan             the advisor tier on Bedrock
 #   plan anthropic   the advisor tier on the subscription — the override
@@ -2248,7 +2249,8 @@ _ds_plan_cycle() {
 #     `plan anthropic`; on its Bedrock default it spends no subscription
 #     allowance at all.
 #
-# `date +%-d` gives an unpadded day, so the 5th is `plan-5`, not `plan-05`.
+# `date +%-d` gives an unpadded day, so the 5th is `schedule-5`, not
+# `schedule-05`.
 #
 # THE UPKEEP PASS runs next, BEFORE the client starts — see `_ds_upkeep`. It sits
 # after the AWS gate so a refused login stops the morning at this terminal before
@@ -2260,7 +2262,7 @@ _ds_plan_cycle() {
 # opened or closed — under a fresh id (the launch day's counter,
 # `plan-cycle-<date>`, bumped) and the same display name, so worker addressing
 # never changes. The launch day is fixed ONCE, before the loop: a cycle past
-# midnight keeps `plan-<launch day>` and that day's ids rather than turning
+# midnight keeps `schedule-<launch day>` and that day's ids rather than turning
 # into tomorrow's session under a new name. It refuses to relaunch while a live
 # session already holds the name, since a duplicate name would break that
 # addressing. The counter is per day, so a later bare `plan` the same day
@@ -2269,27 +2271,46 @@ _ds_plan_cycle() {
 #
 # THE ROLE MARKER. Around the loop the tab carries the iTerm user variable
 # `ds_role=plan`, which `iterm-reorder.py` reads to keep a resting planning tab
-# rightmost (Command-9) and `session_dispatch.py` reads to open new tabs just
-# left of it. Set once outside the loop, so a cycle relaunch inherits it, and
-# cleared by the `always` block on every way out. `DS_PLAN_TAB_RIGHTMOST=0` in
-# the runtime config skips it, and the planning tab then sorts like any other.
+# rightmost (Command-9), the curator's just left of it, and
+# `session_dispatch.py` reads to open new tabs just left of both. Set once
+# outside the loop, so a cycle relaunch inherits it, and cleared by the
+# `always` block on every way out. `DS_PLAN_TAB_RIGHTMOST=0` in the runtime
+# config skips it for both seat tabs, which then sort like any other.
+#
+# THE DISPLAY NAME is `schedule-<day>` — the verb-form word for the scheduler,
+# beside the curator's `curate-<day>` (operator, 2026-10-26). Only the name
+# changed: the launch line, the daily id seed and the cycle counter are still
+# keyed `plan`, so no resume breaks.
 plan() {
-  local model substrate day counter cycle name rc relaunch='' word="$1" sid
-  local marker="$_DS_SUBSTRATE_DIR/plan-cycle-pending"
   if [[ -n "$2" || ( -n "$1" && "$1" != (anthropic|bedrock) ) ]]; then
     print -u2 'Usage: plan [anthropic|bedrock]   (the name is derived from the date)'
     return 1
   fi
-  day="$(date +%Y%m%d)" name="plan-$(date +%-d)"
-  counter="$_DS_SUBSTRATE_DIR/plan-cycle-$day"
-  sid="$(_ds_daily_sid plan "$(_ds_plan_cycle "$counter")" "$day")"
+  _ds_daily_seat plan schedule "$1"
+}
+
+# Internal: start OR resume today's session of a daily SEAT verb — the body
+# `plan` and `curate` share. $1 the kind (the id seed, the counter and marker
+# names, the `/<kind>` prompt and the iTerm role), $2 the display-name prefix,
+# $3 the substrate word or "". Everything `plan`'s header describes holds for
+# both; the AWS gate and the upkeep pass are the scheduler's alone.
+#
+# DS_PLAN_DATE tells the session its LAUNCH day and DS_DAILY_KIND its kind, so
+# plan_cycle.py and resolve_session.py name it after midnight, and a bare
+# `plan_cycle.py check` serves whichever seat ran it.
+_ds_daily_seat() {
+  local kind="$1" model substrate day counter cycle name rc relaunch='' word="$3"
+  local sid marker="$_DS_SUBSTRATE_DIR/$1-cycle-pending"
+  day="$(date +%Y%m%d)" name="$2-$(date +%-d)"
+  counter="$_DS_SUBSTRATE_DIR/$kind-cycle-$day"
+  sid="$(_ds_daily_sid "$kind" "$(_ds_plan_cycle "$counter")" "$day")"
   if _ds_session_exists "$sid"; then
     local recorded="$(_ds_substrate_read "sessions/$sid")"
     if [[ ! -f "$_DS_SUBSTRATE_DIR/sessions/$sid" ]]; then
-      print -u2 "plan: $name has no substrate record — reopening on anthropic," \
+      print -u2 "$kind: $name has no substrate record — reopening on anthropic," \
         'where an unmarked reopen reads.'
     elif [[ -n "$word" && "$word" != "$recorded" ]]; then
-      print -u2 "plan: $name is recorded on $recorded — keeping it; a session" \
+      print -u2 "$kind: $name is recorded on $recorded — keeping it; a session" \
         'keeps its substrate.'
     fi
     word="$recorded"
@@ -2297,15 +2318,17 @@ plan() {
   { read -r model; read -r substrate; } <<< \
     "$(_ds_tier advisor "${word:-bedrock}")"
   [[ -n "$substrate" ]] || return 1
-  _ds_substrate_enter "$substrate" 'plan' || return 1
-  # A refused login must not leave a Bedrock launch's exports — the bearer token
-  # included — behind in the tab with no session to show for them.
-  if ! _ds_aws_login 'plan'; then
-    _ds_substrate_unset
-    return 1
+  _ds_substrate_enter "$substrate" "$kind" || return 1
+  if [[ "$kind" == plan ]]; then
+    # A refused login must not leave a Bedrock launch's exports — the bearer
+    # token included — behind in the tab with no session to show for them.
+    if ! _ds_aws_login 'plan'; then
+      _ds_substrate_unset
+      return 1
+    fi
+    _ds_upkeep
   fi
-  _ds_upkeep
-  [[ "${DS_PLAN_TAB_RIGHTMOST:-1}" == 1 ]] && _ds_iterm_role plan
+  [[ "${DS_PLAN_TAB_RIGHTMOST:-1}" == 1 ]] && _ds_iterm_role "$kind"
   {
   while true; do
     cycle="$(_ds_plan_cycle "$counter")"
@@ -2320,11 +2343,10 @@ plan() {
       fi
     fi
     rm -f "$marker"
-    # DS_PLAN_DATE tells the session its LAUNCH day, so plan_cycle.py and
-    # resolve_session.py still name this session after midnight.
-    sid="$(_ds_daily_sid plan "$cycle" "$day")"
+    sid="$(_ds_daily_sid "$kind" "$cycle" "$day")"
     local _ds_class_key="sessions/$sid" _ds_class=free
-    DS_PLAN_DATE="$day" _ds_session "$sid" "$name" /plan "$model"
+    DS_PLAN_DATE="$day" DS_DAILY_KIND="$kind" \
+      _ds_session "$sid" "$name" "/$kind" "$model"
     rc=$?
     [[ -f "$marker" ]] || return $rc
     mkdir -p "$_DS_SUBSTRATE_DIR"
@@ -2335,6 +2357,38 @@ plan() {
     _ds_iterm_role ''
   }
 }
+
+# Start OR resume today's CURATOR session — review between Backlog and Todo,
+# the scheduler's seat-mate. Built from the same parts as `plan`:
+#
+#   curate             the advisor tier on Bedrock
+#   curate anthropic   the advisor tier on the subscription — the override
+#   curate bedrock     the default, spelled out; a no-op
+#
+# Bedrock by default whatever `DS_MODEL_ADVISOR_SUBSTRATE` says, a reopen
+# keeping the substrate its session recorded; the base repo, no worktree, no
+# PR; its own cycle counter and marker (`curate-cycle-<date>`,
+# `curate-cycle-pending`); display name `curate-<day>`, prompt `/curate`. A
+# free, non-building seat verb, so its class is stamped `free` through the same
+# resolver and it builds on lane 0, as the base checkout always does.
+#
+# NO AWS GATE (it reads no cost data) and NO UPKEEP PASS (that is the
+# scheduler's launch). Its tab carries `ds_role=curate`, which rests it just
+# left of the scheduler's at the right edge (`iterm-reorder.py`), and
+# `session_dispatch.py` opens new tabs left of both.
+curate() {
+  if [[ -n "$2" || ( -n "$1" && "$1" != (anthropic|bedrock) ) ]]; then
+    print -u2 'Usage: curate [anthropic|bedrock]   (the name is derived from the date)'
+    return 1
+  fi
+  _ds_daily_seat curate curate "$1"
+}
+
+# A one-time, source-time check: a `curate` command on PATH would be shadowed
+# by the function above, silently.
+if (( $+commands[curate] )); then
+  print -u2 "dropset: the curate helper shadows $commands[curate]."
+fi
 
 # Start OR resume an ARCHITECT session on one design thread — the CEO hat. Same
 # seat quality as `plan` and the same idempotency; a different job.

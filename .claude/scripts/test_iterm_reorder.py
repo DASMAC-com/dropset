@@ -176,8 +176,11 @@ class PlanningTab(unittest.TestCase):
         split.sessions = [session(None), session(ir.PLAN_ROLE)]
         plain = type("Tab", (), {})()
         plain.sessions = [session(None), session("task")]
+        both = type("Tab", (), {})()
+        both.sessions = [session(ir.CURATE_ROLE), session(ir.PLAN_ROLE)]
         self.assertEqual(asyncio.run(ir._tab_role(split)), ir.PLAN_ROLE)
         self.assertIsNone(asyncio.run(ir._tab_role(plain)))
+        self.assertEqual(asyncio.run(ir._tab_role(both)), ir.PLAN_ROLE)
 
     def test_only_the_marked_role_is_special(self):
         self.assertEqual(ir.effective_group("neutral", None), "neutral")
@@ -185,6 +188,43 @@ class PlanningTab(unittest.TestCase):
         self.assertEqual(ir.effective_group("neutral", "task"), "neutral")
         self.assertEqual(ir.effective_group("green", ir.PLAN_ROLE), "green")
         self.assertEqual(ir.effective_group("yellow", ir.PLAN_ROLE), "yellow")
+        self.assertEqual(ir.effective_group("green", ir.CURATE_ROLE), "green")
+
+
+class CuratorTab(unittest.TestCase):
+    """A resting curator tab sorts just left of the scheduler's, which stays
+    outermost; one that needs attention queues in its group like any other."""
+
+    def setUp(self):
+        self.seq, self.last_group, self.counter = {}, {}, 0
+
+    def step(self, tabs, plan_group="neutral", curate_group="neutral"):
+        # The seat tabs are listed first, scheduler before curator, so every
+        # placement below is the reorderer's doing, not the input order.
+        entries = [
+            ("P", ir.effective_group(plan_group, ir.PLAN_ROLE)),
+            ("Q", ir.effective_group(curate_group, ir.CURATE_ROLE)),
+        ] + tabs
+        order, self.counter = ir.plan_order(
+            entries, self.seq, self.last_group, self.counter
+        )
+        return [entries[i][0] for i in order]
+
+    def test_both_seat_tabs_rest_at_the_right_scheduler_outermost(self):
+        ids = self.step([("A", "neutral"), ("B", "yellow")])
+        self.assertEqual(ids, ["B", "A", "Q", "P"])
+
+    def test_a_curator_ask_surfaces_at_position_one(self):
+        ids = self.step([("A", "neutral")], curate_group="green")
+        self.assertEqual(ids, ["Q", "A", "P"])
+
+    def test_a_lone_curator_tab_rests_rightmost(self):
+        entries = [
+            ("Q", ir.effective_group("neutral", ir.CURATE_ROLE)),
+            ("A", "neutral"),
+        ]
+        order, _ = ir.plan_order(entries, {}, {}, 0)
+        self.assertEqual([entries[i][0] for i in order], ["A", "Q"])
 
 
 class GroupForColor(unittest.TestCase):

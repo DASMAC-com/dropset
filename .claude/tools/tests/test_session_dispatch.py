@@ -272,6 +272,20 @@ class Grammar(unittest.TestCase):
         with self.assertRaises(ValueError):
             session_dispatch.validate(["plan", "extra"])
 
+    def test_curate_validates_beside_plan(self):
+        self.assertEqual(session_dispatch.validate(["curate"]), ["curate"])
+        self.assertEqual(
+            session_dispatch.validate(["curate", "anthropic"]), ["curate", "anthropic"]
+        )
+        for argv in (["curate", "1234"], ["curate", "bedrock", "1234"]):
+            with self.assertRaises(ValueError, msg=argv):
+                session_dispatch.validate(argv)
+
+    def test_curate_is_a_free_seat(self):
+        self.assertEqual(
+            session_dispatch.classify(["curate"]).cls, session_dispatch.FREE
+        )
+
     def test_the_retired_housekeeping_verb_is_unknown(self):
         with self.assertRaises(ValueError):
             session_dispatch.validate(["housekeeping"])

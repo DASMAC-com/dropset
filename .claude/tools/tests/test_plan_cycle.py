@@ -65,6 +65,7 @@ class Fixture:
         # A suite run from inside a planning session inherits the launcher's
         # date; patch.dict restores it on exit.
         os.environ.pop("DS_PLAN_DATE", None)
+        os.environ.pop(pc.KIND_ENV, None)
         return self
 
     def __exit__(self, *exc):
@@ -396,6 +397,94 @@ class LiveAndCycleTests(unittest.TestCase):
             with self.assertRaises(pc.PlanCycleError):
                 pc.cycle(fx.repo, DATE)
             self.assertTrue((fx.repo / rs.STATE_DIR / pc.MARKER).is_file())
+
+
+class CuratorKindTests(unittest.TestCase):
+    """`curate` cycles on its own counter, marker and snooze file, selected by
+    `--kind` or the launcher's `DS_DAILY_KIND`."""
+
+    def test_the_env_kind_cycles_the_curator_alone(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            counter = rs.cycle_counter_path(fx.repo, DATE, "curate")
+            counter.parent.mkdir(parents=True, exist_ok=True)
+            counter.write_text("2\n")
+            sid = rs.daily_session_id("curate", DATE, 2)
+            fx.register(4242, "curate-10", sid)
+            fx.register(1111, "schedule-10", rs.daily_session_id("plan", DATE, 0))
+            os.environ[pc.KIND_ENV] = "curate"
+            rc, killed = fx.cycle_cli()
+            state = fx.repo / rs.STATE_DIR
+            marker = (state / "curate-cycle-pending").read_text().strip()
+            self.assertFalse((state / pc.MARKER).exists())
+        self.assertEqual(rc, 0)
+        self.assertEqual(marker, sid)
+        self.assertEqual(killed, [4242])
+
+    def test_the_curator_snoozes_apart_from_the_scheduler(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx, priced():
+            sid = rs.daily_session_id("curate", DATE, 0)
+            path = fx.home / "projects" / rs.slugify(fx.repo) / f"{sid}.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(assistant(0, 10, 0, WORKER)) + "\n")
+            saved = pc.snooze(fx.repo, DATE, "curate")
+            state = fx.repo / rs.STATE_DIR
+            self.assertTrue((state / pc.snooze_name("curate")).is_file())
+            self.assertFalse((state / pc.SNOOZE).exists())
+        self.assertEqual(saved["sid"], sid)
+
+    def test_the_curators_check_reads_its_own_snooze_only(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx, priced():
+            sid = rs.daily_session_id("curate", DATE, 0)
+            path = fx.home / "projects" / rs.slugify(fx.repo) / f"{sid}.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(assistant(0, 10, 0, WORKER)) + "\n")
+            state = fx.repo / rs.STATE_DIR
+            state.mkdir(parents=True, exist_ok=True)
+            # A scheduler snooze naming the curator's sid must not leak across.
+            (state / pc.SNOOZE).write_text(
+                json.dumps({"sid": sid, "usd": 99.0, "tokens": 9_999_999}) + "\n"
+            )
+            self.assertEqual(
+                pc.check(fx.repo, DATE, "curate")["token_threshold"],
+                pc.TOKEN_THRESHOLD,
+            )
+            saved = pc.snooze(fx.repo, DATE, "curate")
+            got = pc.check(fx.repo, DATE, "curate")
+        self.assertEqual(got["token_threshold"], saved["tokens"])
+        self.assertGreater(got["token_threshold"], pc.TOKEN_THRESHOLD)
+
+    def test_the_kind_flag_wins_over_the_env(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            os.environ[pc.KIND_ENV] = "plan"
+            sid = rs.daily_session_id("curate", DATE, 0)
+            fx.register(4242, "curate-10", sid)
+            sent = []
+            with mock.patch.object(pc.os, "kill", lambda pid, sig: sent.append(pid)):
+                with redirect_stdout(io.StringIO()):
+                    rc = pc.run(
+                        [
+                            "plan_cycle.py",
+                            "--repo",
+                            str(fx.repo),
+                            "--date",
+                            DATE,
+                            "--kind",
+                            "curate",
+                            "cycle",
+                        ]
+                    )
+            marker = fx.repo / rs.STATE_DIR / pc.marker_name("curate")
+            self.assertEqual(marker.read_text().strip(), sid)
+        self.assertEqual(rc, 0)
+        self.assertIn(4242, sent)
+
+    def test_an_unknown_env_kind_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp, Fixture(tmp) as fx:
+            os.environ[pc.KIND_ENV] = "architect"
+            with self.assertRaises(pc.PlanCycleError):
+                pc.run(["plan_cycle.py", "--repo", str(fx.repo), "check"])
+            # live-name is name-keyed, so the stray kind cannot block the guard.
+            self.assertEqual(pc.run(["plan_cycle.py", "live-name", "curate-10"]), 1)
 
 
 def _probe(pid: int) -> None:

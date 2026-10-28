@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
-"""The planning hub's cycle mechanics — the `plan` skill's "Cycling" section.
+"""The daily seats' cycle mechanics — the `plan` skill's "Cycling" section.
 
-A planning session is the fleet's hub, so its prefix only grows: every consult,
-board write and handoff is replayed on every later turn, and session cost is
-roughly quadratic in length (``docs/conventions/context-economy.md``). Cycling
-bounds that: close out, exit, and let the `plan` launcher relaunch a fresh
-session in the same tab under the same display name.
+A daily seat session (the scheduler's `plan`, the curator's `curate`) is a hub,
+so its prefix only grows: every consult, board write and handoff is replayed on
+every later turn, and session cost is roughly quadratic in length
+(``docs/conventions/context-economy.md``). Cycling bounds that: close out, exit,
+and let the launcher relaunch a fresh session in the same tab under the same
+display name.
 
 Usage::
 
     python3 .claude/tools/plan_cycle.py check
     python3 .claude/tools/plan_cycle.py snooze
     python3 .claude/tools/plan_cycle.py cycle
-    python3 .claude/tools/plan_cycle.py live-name plan-8
+    python3 .claude/tools/plan_cycle.py live-name schedule-8
+    python3 .claude/tools/plan_cycle.py --kind curate check
+
+The daily kind defaults to ``$DS_DAILY_KIND``, which each launcher sets, else
+``plan``; each kind keeps its own counter, marker and snooze file.
 
 * ``check`` prints one JSON line — the session's prefix (input + cache read +
   cache write on the last assistant usage), two dollar figures priced at that
@@ -80,9 +85,24 @@ SNOOZE_USD = SNOOZE_TOKENS * ADVISOR_CACHE_READ / PER_MTOK
 #: falls back to the whole file.
 TAIL_BYTES = 1 << 20
 
-#: The marker the launcher's loop checks on exit, beside the substrate markers.
-MARKER = "plan-cycle-pending"
-SNOOZE = "plan-cycle-snooze"
+#: The env var the launcher sets to the daily kind it launched, so a bare
+#: `plan_cycle.py check` from inside a curator session serves `curate`.
+KIND_ENV = "DS_DAILY_KIND"
+
+
+def marker_name(kind: str) -> str:
+    return f"{kind}-cycle-pending"
+
+
+def snooze_name(kind: str) -> str:
+    return f"{kind}-cycle-snooze"
+
+
+#: The marker the launcher's loop checks on exit, beside the substrate markers,
+#: and the snooze file — the scheduler's; each daily kind has its own pair
+#: (`marker_name` / `snooze_name`), so the two seats never trip each other.
+MARKER = marker_name("plan")
+SNOOZE = snooze_name("plan")
 
 
 class PlanCycleError(Exception):
@@ -95,8 +115,8 @@ def default_repo() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def session_id(repo: Path, date: str) -> str:
-    return rs.daily_session_id("plan", date, rs.read_cycle(repo, date))
+def session_id(repo: Path, date: str, kind: str = "plan") -> str:
+    return rs.daily_session_id(kind, date, rs.read_cycle(repo, date, kind))
 
 
 def transcript_path(repo: Path, sid: str) -> Path:
@@ -181,7 +201,7 @@ def session_usd(transcript: Path, sid: str) -> float | None:
     return None if cost is None else cost.total()
 
 
-def thresholds(repo: Path, sid: str) -> tuple[float, int]:
+def thresholds(repo: Path, sid: str, kind: str = "plan") -> tuple[float, int]:
     """The snoozed thresholds for this session, or the ratified defaults.
 
     Keyed by session id, so a snooze never outlives the session it was given in:
@@ -189,7 +209,7 @@ def thresholds(repo: Path, sid: str) -> tuple[float, int]:
     shape reads as no snooze.
     """
     try:
-        saved = json.loads((repo / rs.STATE_DIR / SNOOZE).read_text())
+        saved = json.loads((repo / rs.STATE_DIR / snooze_name(kind)).read_text())
         if saved.get("sid") == sid:
             return float(saved["usd"]), int(saved["tokens"])
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
@@ -197,17 +217,17 @@ def thresholds(repo: Path, sid: str) -> tuple[float, int]:
     return USD_THRESHOLD, TOKEN_THRESHOLD
 
 
-def check(repo: Path, date: str) -> dict:
-    sid = session_id(repo, date)
+def check(repo: Path, date: str, kind: str = "plan") -> dict:
+    sid = session_id(repo, date, kind)
     transcript = transcript_path(repo, sid)
     if not transcript.is_file():
         raise PlanCycleError(
             f"no transcript for this cycle's session {sid} at {transcript} — "
-            f"was this session started by the `plan` launcher?"
+            f"was this session started by the `{kind}` launcher?"
         )
     usage, model = last_usage(transcript)
     prefix = prefix_of(usage)
-    usd, tokens = thresholds(repo, sid)
+    usd, tokens = thresholds(repo, sid, kind)
     status = {
         "sid": sid,
         "model": model,
@@ -236,8 +256,8 @@ def check(repo: Path, date: str) -> dict:
     return status
 
 
-def snooze(repo: Path, date: str) -> dict:
-    status = check(repo, date)
+def snooze(repo: Path, date: str, kind: str = "plan") -> dict:
+    status = check(repo, date, kind)
     replay = status["replay_usd"] or 0.0
     saved = {
         "sid": status["sid"],
@@ -247,7 +267,7 @@ def snooze(repo: Path, date: str) -> dict:
     }
     state = repo / rs.STATE_DIR
     state.mkdir(parents=True, exist_ok=True)
-    (state / SNOOZE).write_text(json.dumps(saved) + "\n")
+    (state / snooze_name(kind)).write_text(json.dumps(saved) + "\n")
     return saved
 
 
@@ -282,17 +302,17 @@ def _started(entry: dict) -> int:
         return 0
 
 
-def cycle(repo: Path, date: str) -> str:
+def cycle(repo: Path, date: str, kind: str = "plan") -> str:
     """Write the marker, then end this session's client. Returns its pid.
 
     The id is deterministic, so a crashed earlier client of the same session
     can leave a registry file naming it; when several live entries match, the
     most recently started is this one.
     """
-    sid = session_id(repo, date)
+    sid = session_id(repo, date, kind)
     state = repo / rs.STATE_DIR
     state.mkdir(parents=True, exist_ok=True)
-    (state / MARKER).write_text(sid + "\n")
+    (state / marker_name(kind)).write_text(sid + "\n")
     mine = [e for e in live_sessions() if e.get("sessionId") == sid]
     if mine:
         entry = max(mine, key=_started)
@@ -318,6 +338,13 @@ def run(argv: list[str]) -> int:
         help="the launch date (default: $DS_PLAN_DATE, which the launcher "
         "sets, else today)",
     )
+    parser.add_argument(
+        "--kind",
+        default=None,
+        choices=rs.DAILY_KINDS,
+        help=f"the daily kind (default: ${KIND_ENV}, which the launcher sets, "
+        "else plan)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("check", help="report prefix, dollar figures and whether due")
     sub.add_parser("snooze", help="push both thresholds out (the 'No' answer)")
@@ -328,16 +355,22 @@ def run(argv: list[str]) -> int:
 
     repo = Path(os.path.abspath(args.repo)) if args.repo else default_repo()
     date = args.date or rs.launch_date()
-
-    if args.command == "check":
-        print(json.dumps(check(repo, date)))
-    elif args.command == "snooze":
-        print(json.dumps(snooze(repo, date)))
-    elif args.command == "cycle":
-        print(f"cycling: ended client pid {cycle(repo, date)}")
-    else:
+    if args.command == "live-name":
+        # Name-keyed only: a stray kind must not block the launcher's guard.
         holders = [s for s in live_sessions() if s.get("name") == args.name]
         return 0 if holders else 1
+    kind = args.kind or os.environ.get(KIND_ENV) or "plan"
+    if kind not in rs.DAILY_KINDS:
+        raise PlanCycleError(
+            f"${KIND_ENV} is {kind!r}, not one of {', '.join(rs.DAILY_KINDS)}"
+        )
+
+    if args.command == "check":
+        print(json.dumps(check(repo, date, kind)))
+    elif args.command == "snooze":
+        print(json.dumps(snooze(repo, date, kind)))
+    else:
+        print(f"cycling: ended client pid {cycle(repo, date, kind)}")
     return 0
 
 

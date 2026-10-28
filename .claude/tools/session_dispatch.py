@@ -193,10 +193,11 @@ def validate(argv: list[str]) -> list[str]:
             return ["fleet", "go"]
         raise ValueError("`fleet` takes nothing or `go`")
 
-    if verb == "plan":
+    if verb in ("plan", "curate"):
+        # The two daily seat verbs: the day names the session, so no number.
         if len(args) > 1 or (args and args[0] not in _SUBSTRATES):
-            raise ValueError("`plan` takes nothing, or anthropic or bedrock")
-        return ["plan", *args]
+            raise ValueError(f"`{verb}` takes nothing, or anthropic or bedrock")
+        return [verb, *args]
 
     raise ValueError(f"unknown verb {verb!r}")
 
@@ -247,14 +248,15 @@ def command_line(words: list[str]) -> str:
 
 FREE, BUILDING = "free", "building"
 
-#: Each verb's class. `architect`, `plan` and `explore` run no cargo and no
-#: Docker and open no PR, so only the machine checks can refuse them; `fleet`
+#: Each verb's class. `architect`, `plan`, `curate` and `explore` run no cargo
+#: and no Docker and open no PR, so only the machine checks can refuse them; `fleet`
 #: is free because each session it resumes meets this same gate inside
 #: `fleet_resume.py`. `chore` is absent on purpose — it is inspected
 #: (`chore_class`) — and a verb added later is building until this says
 #: otherwise, the direction that errs toward refusing.
 VERB_CLASS = {
     "architect": FREE,
+    "curate": FREE,
     "explore": FREE,
     "fleet": FREE,
     "plan": FREE,
