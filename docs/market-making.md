@@ -669,8 +669,8 @@ The passive default is **passive-tight-8** (`TightLadder` in the SDK's
 `ladder` module, shared with the TUI): the bell, thickest at L1 and
 thinner outward with no small rung at the tight end, over geometric
 offsets so the book is tight at the top and still reaches 100 bps at
-the edge. After a fill the flipped rung keeps its size, so the top of
-book stays the thickest part of the book. An evenly spaced
+the edge. A flipped rung keeps its size, so whichever way the levels
+have turned, the size near the market stays largest. An evenly spaced
 eight-rung ladder cannot do both, and at the old 5 bps spacing it went
 one-sided most mornings under a once-a-day re-center. At its one-day
 horizon:

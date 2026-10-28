@@ -129,6 +129,16 @@ const _: () = assert!(PASSIVE_FLIP_SPREAD_PPM <= PASSIVE_SPACING_PPM);
 /// largest at the center and shrinking outward. `Σ = BPS`, so the full-width
 /// bell is these sizes exactly; a narrower one renormalizes a prefix.
 pub const BELL_SIZES_BPS: [u16; N_LEVELS] = [2_000, 1_800, 1_500, 1_300, 1_100, 900, 800, 600];
+// `TightLadder` posts these sizes as they stand, so the sum must be exact.
+const _: () = {
+    let mut sum = 0u64;
+    let mut i = 0;
+    while i < N_LEVELS {
+        sum += BELL_SIZES_BPS[i] as u64;
+        i += 1;
+    }
+    assert!(sum == BPS);
+};
 
 /// How a passive ladder spreads the inventory leg across its rungs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
