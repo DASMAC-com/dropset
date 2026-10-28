@@ -433,6 +433,23 @@ One sentence each; if a panel needs more, the panel is doing two jobs.
   cursor-based collector is, in wall-clock time. Only the paged
   collectors appear: an HTTP live source never commits a cursor.
 
+The FX analytics dashboard closes with one fixed row, **tGBP center**,
+the one place the operator judges where a tGBP-USDC center sits. It
+takes no template variable, so the pickers above it cannot hide it:
+
+- **tGBP market** — the Orca pool spot (`spot_ticks`, source `orca`)
+  and the Coinbase candle close (`cex_prices`) on one axis; a gap
+  between them is the pool disagreeing with the exchange.
+- **tGBP estimator: fair and basis** — what the estimator published
+  (`fair_price`); a pause breaks the fair line rather than drawing
+  zero, and the basis exists only while the anchor is FX.
+- **tGBP estimator: regime and anchor** — a state timeline of the
+  change points, with a degrade shown beside its regime and any new
+  regime or degrade drawn under its own name with no panel edit.
+
+On a keyless or paused stack the row shows no data, and that is the
+correct reading, not a fault.
+
 ## 6. Two tiers, deliberately
 
 - **MVP pairs** (EUR/USD, AUD/USD, CAD/USD) get the full per-pair
@@ -448,8 +465,8 @@ One sentence each; if a panel needs more, the panel is doing two jobs.
 Sources land in **two tiers by storage**, and this is the seam every
 visibility bug so far has fallen through. Candle venues write
 `cex_prices`; tick venues write `spot_ticks`. Today the tick-only class
-is **Kraken, er-api, Frankfurter and Pyth** — and it grows, so no panel
-may assume it away.
+is **Kraken, er-api, Frankfurter, Pyth and Orca** (the Whirlpool pool
+price) — and it grows, so no panel may assume it away.
 
 **Frankfurter joined that class when it was wired, and this sentence
 lagged it** — the "it grows" prediction coming true, found by reading the
