@@ -810,9 +810,9 @@ impl FairValueEngine {
         // On a shut market this reports the ORIGINAL set, resolved before the leg
         // was emptied, so the per-leg view still shows what the feeds published.
         out.fx_leg = fx_reported.unwrap_or(fx).into();
-        // A consulted stand-in is reported as the crypto leg, so the operator
-        // reads the source the composition judged — including on a tick that
-        // refused it, where `basis_outlier` says so. A single source is never
+        // A consulted stand-in is reported as the crypto leg, whether or not it
+        // was offered to the basis: on a tick that refused it `basis_outlier`
+        // says so, and on one with no usable basis the regime does. A single source is never
         // dispersed, so `crypto_leg_outlier` stays empty on those ticks.
         out.crypto_leg = stand_in.unwrap_or(crypto).into();
         out.fx_fusion = fx_fusion;
