@@ -75,7 +75,11 @@ export const parseDflowOrder = (raw: unknown): ParsedDflowOrder => {
     throw new ValidationError("order.slippageBps missing or not an integer");
   }
   const expiry = raw.lastValidBlockHeight;
-  if (expiry !== undefined && expiry !== null && !isNonNegativeInteger(expiry)) {
+  if (
+    expiry !== undefined &&
+    expiry !== null &&
+    !isNonNegativeInteger(expiry)
+  ) {
     throw new ValidationError("order.lastValidBlockHeight is not an integer");
   }
   return {
