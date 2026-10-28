@@ -110,7 +110,54 @@ check-docker:
 .PHONY: check-pnpm
 check-pnpm:
 	@command -v pnpm >/dev/null \
-		|| { echo "pnpm not found (npm i -g pnpm)"; exit 1; }
+		|| { echo "pnpm not found (run corepack enable)"; exit 1; }
+
+# The frontend toolchain preflight `demo` runs in the FOREGROUND, before
+# anything starts. `check-pnpm` alone is not enough there: it runs inside the
+# backgrounded `frontend-localnet`, so its failure lands in $(FRONTEND_LOG)
+# and localhost:3000 just refuses — and it never looked at versions, while
+# frontend/package.json pins node (`engines`) and pnpm (`packageManager`).
+#
+# Each check prints what is wrong and the one-line fix, and installs nothing:
+# switching node or installing pnpm is the operator's act, not the Makefile's.
+# The fix names `corepack enable` because it is node-manager-neutral and
+# serves exactly the `packageManager` pin. The pins are read with tolerant
+# patterns (any non-digit prefix on the node range: `24.x`, `^24`, `>=24`),
+# and a pin that cannot be read names its field rather than passing.
+# `pnpm --version` runs inside frontend/, where it reports the pnpm that will
+# actually run there.
+FRONTEND_PKG = frontend/package.json
+NODE_PIN = sed -n 's/.*"node": *"[^0-9"]*\([0-9][0-9]*\).*/\1/p' \
+	$(FRONTEND_PKG)
+PNPM_PIN = sed -n \
+	's/.*"packageManager": *"pnpm@\([0-9][0-9.]*[0-9]\).*/\1/p' \
+	$(FRONTEND_PKG)
+NODE_CHECK = want="$$($(NODE_PIN))"; \
+	if [ -z "$$want" ]; then \
+	echo "cannot read a node major from engines.node in $(FRONTEND_PKG)"; \
+	exit 1; fi; \
+	if ! command -v node >/dev/null; then \
+	echo "node not found: $(FRONTEND_PKG) pins node $$want (engines.node)"; \
+	echo "fix: install node $$want, then run corepack enable"; exit 1; fi; \
+	have="$$(node -p 'process.versions.node.split(".")[0]')"; \
+	if [ "$$have" != "$$want" ]; then \
+	echo "node $$have is active; $(FRONTEND_PKG) pins node $$want"; \
+	echo "fix: switch to node $$want, then run corepack enable"; exit 1; fi
+PNPM_CHECK = want="$$($(PNPM_PIN))"; node="$$($(NODE_PIN))"; \
+	if [ -z "$$want" ]; then \
+	echo "cannot read a pnpm pin from packageManager in $(FRONTEND_PKG)"; \
+	exit 1; fi; \
+	if ! command -v pnpm >/dev/null; then \
+	echo "pnpm not found: $(FRONTEND_PKG) pins pnpm $$want (packageManager)"; \
+	echo "fix: run corepack enable under node $$node"; exit 1; fi; \
+	have="$$(cd frontend && pnpm --version)"; \
+	if [ "$$have" != "$$want" ]; then \
+	echo "pnpm $$have is active; $(FRONTEND_PKG) pins pnpm $$want"; \
+	echo "fix: run corepack enable under node $$node"; exit 1; fi
+.PHONY: check-frontend
+check-frontend:
+	@$(NODE_CHECK)
+	@$(PNPM_CHECK)
 
 # `test-parity` runs the suite under nextest to match the CI job exactly
 # (see that target). Every other test target uses plain `cargo test`, so
@@ -648,7 +695,9 @@ decks-build: check-pnpm
 # alternate screen — it is the slow, chatty step (it builds the Rust images on
 # a cold tree) and the one that fails when Docker is not running, so both its
 # progress and its errors belong on a plain terminal rather than under a TUI.
-# It is also why this target now needs `check-docker`.
+# It is also why this target now needs `check-docker`. `check-frontend` runs
+# ahead of it for the same reason: a wrong node or pnpm would otherwise fail
+# only inside the backgrounded frontend, out of sight in $(FRONTEND_LOG).
 #
 # On exit the trap stops the background frontend and nothing else, because
 # nothing else is this recipe's to stop. Everything the TUI owns tears itself
@@ -690,7 +739,7 @@ DEMO_FRONTEND = $(MAKE) --no-print-directory frontend-localnet \
 	>$(FRONTEND_LOG) 2>&1 </dev/null
 DEMO_CLEANUP = trap - INT TERM EXIT; kill -TERM -$$group 2>/dev/null
 .PHONY: demo
-demo: check-docker
+demo: check-docker check-frontend
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
 	$(MAKE) --no-print-directory collectors-up KEYED_PAUSE=1
 	$(call open-browser,3200)
@@ -717,10 +766,30 @@ demo-check:
 # docker-compose.yml (with EXPLORER_REF in explorer.Dockerfile). Every `up`
 # target here passes `--quiet-pull` to drop the per-layer progress cascade
 # (per docs/conventions/context-economy.md).
+#
+# Every `up` here that can build appends `|| $(BUILD_HINT)`: one advisory
+# line on a non-zero exit, then the original status. The one exception is
+# the keyed bring-up (`FX_UP`), whose failure already routes to the
+# `KEYED_WARN` banner. Compose reports a failed build with its own exit
+# code, so the hint cannot key on the 137 a killed build step shows, and it
+# fires on any failed bring-up; it is worded as conditional on that 137. A
+# cold source build of many services at once was measured to exhaust an
+# 8 GB Docker Desktop allocation (the measuring host's default; the default
+# scales with host RAM), the explorer's type-check killed, and to pass at
+# 20 GB. Capping `COMPOSE_PARALLEL_LIMIT` is the next lever if this advisory
+# proves insufficient. Cargo builds on the host share a two-lane pool keyed
+# per worktree, but a compose build runs inside Docker's own memory, which
+# is the budget named here.
+BUILD_HINT = { s=$$?; echo "advisory: if a build step above was killed" \
+	"(exit code 137), that is usually Docker's memory: raise it under" \
+	"Docker Desktop, Settings," \
+	"Resources. The explorer is normally pulled prebuilt (make explorer)," \
+	"a source build the fallback; every Rust service builds locally."; \
+	exit $$s; }
 .PHONY: explorer
 explorer: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		up -d --quiet-pull explorer
+		up -d --quiet-pull explorer || $(BUILD_HINT)
 .PHONY: explorer-down
 explorer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
@@ -803,7 +872,8 @@ clean-docker-volume: check-docker
 .PHONY: indexer-up
 indexer-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		up -d --quiet-pull postgres migrate indexer indexer-api
+		up -d --quiet-pull postgres migrate indexer indexer-api \
+		|| $(BUILD_HINT)
 .PHONY: indexer-down
 indexer-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
@@ -883,7 +953,8 @@ indexer-down: check-docker
 .PHONY: collectors-up
 collectors-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		up -d --build --quiet-pull postgres migrate $(KEYLESS_SERVICES) grafana
+		up -d --build --quiet-pull postgres migrate $(KEYLESS_SERVICES) grafana \
+		|| $(BUILD_HINT)
 	@$(KEYED_UP)
 
 # Both profiles, because a profiled service is only addressable under a
@@ -916,7 +987,7 @@ collectors-down: check-docker
 .PHONY: grafana
 grafana: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		up -d --quiet-pull postgres migrate grafana
+		up -d --quiet-pull postgres migrate grafana || $(BUILD_HINT)
 .PHONY: grafana-down
 grafana-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
@@ -1216,7 +1287,7 @@ KEYED_UP = affected='OANDA, Twelve Data and Alpha Vantage'; \
 .PHONY: bots-up
 bots-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		up -d --quiet-pull maker-bot
+		up -d --quiet-pull maker-bot || $(BUILD_HINT)
 .PHONY: bots-down
 bots-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
@@ -1228,7 +1299,7 @@ bots-down: check-docker
 .PHONY: taker-up
 taker-up: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		--profile taker up -d --quiet-pull taker-bot
+		--profile taker up -d --quiet-pull taker-bot || $(BUILD_HINT)
 .PHONY: taker-down
 taker-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
