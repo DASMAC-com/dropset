@@ -466,10 +466,12 @@ tui-prebuild-explorer:
 # default `demo-check` reads: the operator runs the estimator locally on
 # either cluster. An exported `DROPSET_TUI_DATABASE_URL` wins.
 TUI_ARGS ?= --bootstrap
-TUI_DATABASE_URL := $(or $(DROPSET_TUI_DATABASE_URL),postgres://dropset_ro:dropset_ro@127.0.0.1:5432/dropset)
+LOCAL_READER_URL := postgres://dropset_ro:dropset_ro@127.0.0.1:5432/dropset
+TUI_DATABASE_URL := $(or $(DROPSET_TUI_DATABASE_URL),$(LOCAL_READER_URL))
 .PHONY: tui
 tui: tui-prebuild
-	DROPSET_TUI_DATABASE_URL='$(TUI_DATABASE_URL)' cargo run -p dropset-tui -- $(TUI_ARGS)
+	DROPSET_TUI_DATABASE_URL='$(TUI_DATABASE_URL)' \
+		cargo run -p dropset-tui -- $(TUI_ARGS)
 
 # Assert a required environment variable is set, naming it and why:
 # `$(call require-env,VAR,reason)`. Keep the reason free of commas — make
@@ -567,6 +569,7 @@ MAINNET_DEMO_RPC_URL ?= $(or $(DROPSET_MAINNET_RPC_URL),$(PUBLIC_MAINNET_RPC))
 .PHONY: mainnet-demo
 mainnet-demo:
 	DROPSET_MAINNET_RPC_URL='$(MAINNET_DEMO_RPC_URL)' \
+		DROPSET_TUI_DATABASE_URL='$(TUI_DATABASE_URL)' \
 		cargo run -p dropset-tui -- --cluster mainnet --wallet ephemeral \
 		--ceremony-log "$${TMPDIR:-/tmp}/dropset-mainnet-demo.log"
 

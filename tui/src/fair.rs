@@ -223,7 +223,7 @@ pub enum Fair {
         age_secs: u64,
         /// The composition regime, named when it is not `normal`.
         regime: String,
-        /// What the fair is anchored on — [`STATIC_ANCHOR`] for the peg.
+        /// What the fair is anchored on — `static` for the peg.
         anchor: String,
     },
     /// The estimator is up and says not to quote: shown, never centered on.

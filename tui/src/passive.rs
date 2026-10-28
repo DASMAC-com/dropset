@@ -202,7 +202,7 @@ impl Form {
     }
 
     /// Show `fair` and `spot` in the chooser and land it on the default
-    /// source they offer (see [`default_source`]).
+    /// source they offer (see `default_source`).
     pub fn set_sources(&mut self, fair: Fair, spot: Option<Spot>) {
         self.source = default_source(&fair, spot);
         self.fair = fair;
