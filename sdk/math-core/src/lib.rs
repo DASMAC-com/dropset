@@ -66,6 +66,31 @@ pub const Q32_32_ONE: u64 = 1u64 << Q32_SHIFT;
 /// the initial bring-up; widen once CU budgets are measured.
 pub const N_LEVELS: usize = 8;
 
+/// Most `(vault, level)` legs one `swap` fills. The walk stops at the cap
+/// the way it stops on an exhausted budget: the taker keeps the unspent
+/// remainder and the `min_out` soft-revert still runs, so a book deeper
+/// than one transaction can settle gives a bounded partial fill (or a clean
+/// soft-revert), never a heap abort. The engine and the off-chain
+/// simulator both read it from here, so a quote and its execution stop on
+/// the same leg.
+///
+/// What it guards is the program's 32 KiB bump heap, which never frees:
+/// each filled leg buffers a compact record and, at emit time, costs the
+/// `emit_cpi!` path a few hundred bytes more. Without the cap the leg count
+/// is attacker-shaped — one vault rests up to `2 × N_LEVELS` entries (own
+/// plus flipped), so a dust-quoting vault ahead of the honest book could
+/// push every take past the heap into a VM abort.
+///
+/// Measured on a fully flipped book at the default ten-vault cap, the
+/// largest matching heap a take builds there, with the market's maximum
+/// platform fee declared, the costliest settlement: 20 legs fit and 21
+/// fault, so 19 keeps one leg of headroom and clears one dust vault's
+/// sixteen entries with three honest legs to spare. Each vault past ten
+/// costs about one leg, so a vault-cap raise re-measures first. The sizing
+/// is in `docs/architecture.md` (Order matching, heap and capacity), and
+/// `programs/dropset/tests/flip.rs` pins that a take at the cap completes.
+pub const MAX_LEGS_PER_SWAP: u32 = 19;
+
 /// "Null" sentinel for sector-index pointers (`MarketHeader::head`,
 /// `Vault::next`, `Vault::prev`). Sector indices are at most
 /// `registry.max_vaults_per_market` (`u8`), so [`u32::MAX`] is unreachable

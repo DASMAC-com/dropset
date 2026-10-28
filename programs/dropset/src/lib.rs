@@ -173,17 +173,21 @@ pub mod dropset {
         min_out: u64,
         platform_fee_bps: u16,
     ) -> Result<()> {
-        let (fill_events, platform_fee_event) =
+        let (filled, platform_fee_event) =
             ctx.accounts
                 .swap(side, amount_in, limit_price_bits, min_out, platform_fee_bps)?;
         // Per the architecture spec § Events and emission →
         // Granularity: every leg is recorded, never truncated. The
-        // matching engine accumulates `FillEvent`s and we emit them
-        // here one at a time via `emit_cpi!`. When the swap soft-
-        // reverts (achievable output below `min_out`), no fill
-        // events are produced — the loop emits nothing and the
+        // matching engine accumulates a compact record per leg and we
+        // build each `FillEvent` from it here, one at a time, right
+        // before `emit_cpi!`, so the walk never buffers whole events (the
+        // macro's own per-call allocations remain, and are what
+        // `MAX_LEGS_PER_SWAP` is sized against). When the
+        // swap soft-reverts (achievable output below `min_out`), no
+        // legs are returned — the loop emits nothing and the
         // instruction returns Ok so the surrounding tx can survive.
-        for ev in fill_events {
+        for leg in &filled {
+            let ev = ctx.accounts.fill_event(leg, side)?;
             emit_cpi!(ev);
         }
         // At most one platform-fee record per swap, emitted after the fills

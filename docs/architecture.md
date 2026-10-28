@@ -135,18 +135,21 @@ The per-market cap on vault count (`max_vaults_per_market`) is set by
 the cost to reconstruct the ephemeral order book during each take
 and can be tuned across the protocol's lifecycle as CU budgets and
 runtime performance evolve. A take's cost is the entries it visits:
-the legs it fills, which the heap bounds, plus the entries it skips. It
-ends its walk once its own remainder is a single unfillable atom, so a
-dust taker no longer walks the book, but an entry whose level or vault
-cap prices to zero input is still skipped. Two budgets are sized for
-the default cap of ten vaults: an ordinary take (up to fourteen legs on
-a cold book) must fit the 200k CU a bare `swap` gets with no budget
-instruction, and both a take that clears the book to the heap ceiling
+the legs it fills, at most `MAX_LEGS_PER_SWAP` (19), plus the entries it
+skips. It ends its walk once its own remainder is a single unfillable
+atom, so a dust taker no longer walks the book, but an entry whose level
+or vault cap prices to zero input is still skipped. Two budgets are
+sized for the default cap of ten vaults: an ordinary take (up to
+fourteen legs on a cold book) must fit the 200k CU a bare `swap` gets
+with no budget instruction, and both a take that fills to the leg cap
 and a no-fill walk over a book quoted with dust-sized levels throughout
 must fit the limit clients send ahead of a bare `swap`
 (`SWAP_COMPUTE_UNIT_LIMIT` in the Rust SDK). Tests in
 `programs/dropset/tests/flip.rs` pin the ordinary-book cases against a
-measured case, so raising the cap means re-measuring there first.
+measured case, so raising the cap means re-measuring there first —
+including the leg cap, a heap bound that falls by about one leg per vault
+past ten (see **Order matching** → **Implementation notes — heap and
+capacity**).
 
 The byte-exact layout of both records is owned by
 [`state/registry.rs`](../programs/dropset/src/state/registry.rs)
@@ -2780,20 +2783,33 @@ design:
   exhausts the default heap near **50 active vaults**, and the fill
   buffers bring that lower, so a `max_vaults_per_market` raised far
   past the default cannot rely on a frame request to fit.
-- **The fill, not the book, binds.** Each filled leg buffers a 256 B
-  `FillEvent` for `lib.rs` to emit, plus a rollback snapshot, and both
-  grow by doubling. The event buffer is deliberately not pre-sized: any
-  bound built from entry counts is one the taker's budget rarely reaches,
-  and reserving it up front faults a small take on a deep book before
-  its first leg. That buffer exhausts the heap well before compute
-  runs out: on a fully flipped ten-vault book a single take completes
-  ten legs but not twenty, at roughly a tenth of the 1.4M-CU transaction
-  ceiling. The same ceiling held before flips existed, so it is a
-  property of per-leg event buffering, not of the doubled book.
-  `tests/flip.rs` measures it and pins the floor; the figures are
-  recorded on the reverse-orders issue rather than here, since they move
-  with every matcher change. `RequestHeapFrame` does not help without a
-  custom `#[global_allocator]` (see the research note below).
+- **The fill binds, so it is capped.** Each filled leg costs the heap a
+  compact 80 B record (the per-leg part of its `FillEvent`, widened into
+  the event only at emit time), a 48 B rollback snapshot, and the
+  emission's own allocations, roughly 450 B the bump allocator never
+  reclaims — about 570 B a leg. Records and snapshots are pre-sized to
+  `min(entries, MAX_LEGS_PER_SWAP)`, so no doubling leaks. The leg count
+  is attacker-shaped: one vault rests up to `2 × N_LEVELS` entries, own
+  plus flipped, and nothing floors a level's size, so without a bound a
+  vault quoting dust ahead of the honest book could abort every take on
+  the heap. So the walk fills at most **`MAX_LEGS_PER_SWAP` = 19** legs,
+  declared once in math-core and read by the engine and the off-chain
+  simulator alike, and stops there the way it stops on an exhausted
+  budget — the taker keeps the remainder and the `min_out` soft-revert
+  still runs. A book deeper than one transaction can settle gives a
+  bounded partial fill or a clean soft-revert, never a heap abort; past
+  one dust vault's sixteen entries a taker still fills three honest legs.
+  The sizing case is a fully flipped ten-vault book taken with the
+  market's maximum platform fee declared, whose ATA create, transfer and
+  event cost the heap about two legs more after the fills: a one-off
+  measurement with the cap edited found that 20 legs fit and 21 fault (23
+  and 24 without the fee), so the cap keeps one leg of headroom, and
+  `tests/flip.rs` pins that the fee-bearing take at the cap completes.
+  Each vault past ten costs the book ~640 B, about one leg.
+  `RequestHeapFrame` does not help without a custom
+  `#[global_allocator]` (see the research note below). A floor on
+  materialized level size, the only lever against the dust shape
+  itself, is a recorded product call, not built.
 - **Bump allocator, no reclaim.** The runtime's default allocator is a
   bump allocator whose `dealloc` is a no-op, so each `Vec` doubling
   permanently leaks the old buffer for the rest of the instruction. The
@@ -3030,12 +3046,17 @@ invocation overhead + `data_len/250` CU for the payload. The hard
 ceiling is **64 inner instructions per transaction**
 (`MAX_INSTRUCTION_TRACE_LENGTH`), not bytes. With per-leg emit (one
 `emit_cpi!` per matched leg; see **Granularity** below), this count —
-not the per-CPI 10 KiB data cap — is what bounds a take: it can record
-at most `64 − (top-level ix + token CPIs)` legs in one transaction, one
-fewer when a platform fee is skimmed, since its `PlatformFeeEvent` is
-one more self-CPI (a
-single `FillEvent` is a 256 B body behind a 16 B envelope, nowhere near
-the data cap).
+not the per-CPI 10 KiB data cap — would bound a take at
+`64 − (top-level ix + token CPIs)` legs in one transaction, one fewer
+when a platform fee is skimmed, since its `PlatformFeeEvent` is one more
+self-CPI (a single `FillEvent` is a 256 B body behind a 16 B envelope,
+nowhere near the data cap). In practice the heap binds first: the walk
+fills at most `MAX_LEGS_PER_SWAP` legs (see **Order matching** →
+**Implementation notes — heap and capacity**), well inside the trace
+count. Each emit allocates
+roughly 450 B of heap the bump allocator never reclaims, so the matcher
+buffers a compact per-leg record and builds each `FillEvent` from it
+just before its `emit_cpi!`, keeping one event live at a time.
 
 **Why fills must be events, not account diffs.** `market.nonce` is
 bumped on every fill and every quote update, and a geyser stream
@@ -3080,11 +3101,12 @@ after the fills when a platform fee was skimmed; per-take fill figures
 by grouping the legs of one transaction. An aggregated `FillBatch` was
 considered and rejected — per-leg emit is the simplest fixed-size record, each
 `FillEvent` sits far inside the per-CPI 10 KiB data cap so a leg never
-splits, and the only ceiling is the 64-instruction trace count above
-(not event size). Because fills ride as inner-instruction data rather
-than logs, no leg is ever silently truncated; a sweep that would exceed
-the trace-count ceiling fails deterministically rather than dropping a
-leg.
+splits, and the only emission ceiling is the 64-instruction trace count
+above (not event size), which the leg cap keeps a take well inside.
+Because fills ride as inner-instruction data rather than logs, no leg
+is ever silently truncated: the leg cap stops the *walk*, never the
+record, so every leg that filled is emitted and the
+budget past the cap stays with the taker.
 
 **Serialization mode.** Anchor v2's `#[event]` macro picks between two
 serializers: the default (`wincode` with a borsh-wire-compatible

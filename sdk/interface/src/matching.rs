@@ -6,7 +6,8 @@
 //! `LiquidityProfile` when `FLUSH_BIT` is armed, else reading
 //! `remaining`, flipped counters included), sort by cross-vault
 //! price-time priority, then fill the taker leg-by-leg until the input is
-//! exhausted or the limit price is crossed.
+//! exhausted, the limit price is crossed or [`MAX_LEGS_PER_SWAP`] legs
+//! have filled.
 //!
 //! Used by the router quoting adapters (e.g. DFlow) and any depth/quote
 //! endpoint. Part of the consensus-critical logic is shared with the
@@ -38,6 +39,10 @@ use crate::price::Price;
 /// the simulator share one declaration of the `swap` instruction's `side`
 /// encoding.
 pub use crate::matching_math::SwapSide;
+
+/// The engine's per-swap leg cap, re-exported from math-core so the walk
+/// below stops on the same leg `swap.rs` does.
+pub use dropset_math_core::MAX_LEGS_PER_SWAP;
 
 /// Result of simulating a take against the current book.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -205,6 +210,12 @@ pub fn simulate_swap(
         // Limit-price filter — levels are best-first, so the first cross
         // means every remaining level crosses too.
         if crosses_limit(lvl.price, limit_price, is_buy) {
+            break;
+        }
+        // The leg cap ends the walk like an exhausted budget: the remainder
+        // stays with the taker. Mirrors the engine's check, which counts
+        // filled legs only, so a skipped level never spends one.
+        if legs >= MAX_LEGS_PER_SWAP {
             break;
         }
 
@@ -1672,5 +1683,74 @@ mod tests {
             Quote::default(),
             "a zero-leg take consumes nothing and delivers nothing"
         );
+    }
+
+    /// Three vaults on one DLL, each resting all eight asks at 1_000 base
+    /// atoms, ascending from 1.09 — 24 entries, more than the leg cap.
+    fn three_deep_vaults_market() -> Vec<u8> {
+        let mut header = MarketHeader::zeroed();
+        header.head = 0u32.into();
+        header.tombstone_head = NULL_SECTOR.into();
+        header.free_head = NULL_SECTOR.into();
+        header.active_count = 3u32.into();
+        let vaults: Vec<Vault> = (0..3u32)
+            .map(|s| {
+                let mut v = Vault::zeroed();
+                v.next = if s == 2 { NULL_SECTOR } else { s + 1 }.into();
+                v.prev = if s == 0 { NULL_SECTOR } else { s - 1 }.into();
+                v.leader = [1u8; 32];
+                v.reference_price = ReferencePrice {
+                    stamp: u64::from(s + 1).into(),
+                    price: Price::encode(10_850_000, 0).unwrap().as_u32().into(),
+                    quote_slot: FIX_QUOTE_SLOT.into(),
+                    quote_unix: FIX_QUOTE_UNIX.into(),
+                };
+                v.base_atoms = 10_000_000u64.into();
+                v.quote_atoms = 10_000_000u64.into();
+                for (i, ask) in v.remaining.asks.iter_mut().enumerate() {
+                    *ask = position(10_900_000 + 10_000 * (3 * i as u32 + s), 1_000);
+                }
+                v
+            })
+            .collect();
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&[0u8; ACCOUNT_DISCRIMINATOR_LEN]);
+        buf.extend_from_slice(bytes_of(&header));
+        buf.extend_from_slice(&(vaults.len() as u32).to_le_bytes());
+        while !buf.len().is_multiple_of(VAULT_ALIGN) {
+            buf.push(0);
+        }
+        buf.extend_from_slice(cast_slice(&vaults));
+        buf
+    }
+
+    /// The walk stops at `MAX_LEGS_PER_SWAP` the way the engine's does: a
+    /// budget for the whole book fills exactly the cap, the best legs
+    /// first, and the input past them stays with the taker.
+    #[test]
+    fn a_take_deeper_than_the_leg_cap_stops_at_the_cap() {
+        let data = three_deep_vaults_market();
+        let view = MarketView::load(&data).unwrap();
+        let book = resting_levels(&view, SwapSide::Buy, NOW_SLOT, NOW_WALL);
+        assert_eq!(book.len(), 24, "every ask rests");
+
+        let budget = 1_000_000_000;
+        let q = simulate_swap(
+            &view,
+            SwapSide::Buy,
+            budget,
+            Price::INFINITY,
+            NOW_SLOT,
+            NOW_WALL,
+            0,
+        );
+        let cap = super::MAX_LEGS_PER_SWAP as usize;
+        assert_eq!(q.legs as usize, cap, "the walk stops at the cap");
+        let cost: u64 = book[..cap]
+            .iter()
+            .map(|l| l.price.quote_for_base(l.size) as u64)
+            .sum();
+        assert_eq!(q.in_amount, cost, "only the best `cap` levels are paid for");
+        assert!(q.in_amount < budget, "the remainder stays with the taker");
     }
 }

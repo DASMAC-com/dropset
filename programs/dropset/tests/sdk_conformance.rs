@@ -486,6 +486,45 @@ fn sdk_simulate_swap_matches_onchain_across_two_vaults() {
     );
 }
 
+/// The leg cap, pinned differentially. Three vaults each rest a full eight-ask
+/// ladder, 24 entries, and the Buy can afford all of them, so only
+/// `MAX_LEGS_PER_SWAP` stops the walk. Each implementation reads the cap from
+/// math-core; this pins that they stop on the same leg and leave the same
+/// remainder with the taker.
+#[test]
+fn sdk_leg_cap_stops_both_sides_on_the_same_leg() {
+    let ladder: Vec<(u32, u16, u32)> = (0..dropset::N_LEVELS as u32)
+        .map(|i| ((i + 1) * 1_000, 1_200, u32::MAX))
+        .collect();
+    let profile = ladder_profile(&ladder, &ladder);
+    let mut f = Fixture::bootstrap();
+    let auth = f.authority.insecure_clone();
+    let reference = Price::encode(10_850_000, 0).unwrap().as_u32();
+    for i in 0..3 {
+        let leader = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
+        f.create_vault(0, auth.pubkey(), false, leader.pubkey())
+            .expect("vault");
+        f.set_reference_price(&auth, i, reference, 0).expect("ref");
+        f.set_liquidity_profile(&auth, i, profile).expect("profile");
+        f.deposit_leader_as(&leader, i, 1_000_000, 1_085_000, 1_000_000, 1_085_000)
+            .expect("seed");
+        f.svm.expire_blockhash();
+    }
+    let amount_in: u64 = 5_000_000;
+    let taker = f.funded_depositor(0, amount_in);
+
+    let q = predict_and_execute(&mut f, &taker, SwapSide::Buy, amount_in, Price::INFINITY);
+    assert_eq!(
+        q.legs,
+        dropset::MAX_LEGS_PER_SWAP,
+        "the cap, not depth or budget, ends the walk"
+    );
+    assert!(
+        q.in_amount < amount_in,
+        "the remainder stays with the taker"
+    );
+}
+
 /// The far-out walk end, pinned differentially.
 ///
 /// A level the remaining budget cannot buy one output atom of ends the walk
