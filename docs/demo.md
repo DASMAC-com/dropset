@@ -77,7 +77,7 @@ tGBP. The regime is named so you can say why, not to fail the run.
   rest on the other side.
 - **Vault names:** the accounts pane lists each vault by name, and the
   leader pane shows the leader's. The bootstrap names each vault
-  `Vault <leader prefix>`; `N` renames the leader's vault, and the menu's
+  `DASMAC`; `N` renames the leader's vault, and the menu's
   name override replaces or blanks any vault's name and can lock it. A
   vault with no name shows as `#` plus its per-market sequence number
   (`#5`), never its sector index — the same on every surface.

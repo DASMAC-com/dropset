@@ -975,7 +975,7 @@ pub fn dispatch(
                                 // Localnet: the committed leader is also
                                 // the quote authority. One keystroke, so
                                 // no prompt: the vault takes the
-                                // leader-derived bootstrap name.
+                                // bootstrap name.
                                 do_create_vault(
                                     &client,
                                     &wallet,
@@ -984,7 +984,7 @@ pub fn dispatch(
                                     config,
                                     &leader,
                                     &leader.pubkey(),
-                                    &chain::default_vault_name(&leader.pubkey()),
+                                    chain::BOOTSTRAP_VAULT_NAME,
                                     &log,
                                 )?
                                 .log_skip(&log);
