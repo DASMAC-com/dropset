@@ -280,8 +280,9 @@ It came out of the private-key guard after four adversarial rounds each
 found a real quoting misread, so **a new guard imports it** rather than
 re-deriving bash quoting under review. The leading underscore keeps it
 off the [wired-guard report](#which-guards-are-actually-wired); a guard
-importing it keeps its fail-open contract at that boundary, an
-`ImportError` disabling only its parse-driven checks.
+importing it keeps its fail-open contract at that boundary, a failed
+import (missing, or raising at import) disabling only its parse-driven
+checks.
 
 The private-key and git-grep guards use it. Three guards keep their own
 parse, since none is a drop-in and each would move a pinned verdict:

@@ -43,7 +43,7 @@ cost is a false block, never a missed command. The shell rules forbid
 heredocs in agent commands anyway.
 
 ``.claude/tools/tests/test_shell_tokens.py`` pins the tokenizer directly;
-the private-key guard's 165-case table and the git-grep guard's self-test
+the private-key guard's case table and the git-grep guard's self-test
 pin it end to end through the guards that import it.
 """
 

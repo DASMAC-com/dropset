@@ -1424,7 +1424,7 @@ tools-tests:
 TOOLS_TEST_DIRS := .claude/tools/tests .claude/scripts keys \
 	programs/dropset/release
 TOOLS_TEST_NAME = $(basename $(notdir $(T))).py
-TOOLS_TEST_PIN = $(patsubst %/,%,$(filter-out ./,$(dir $(T))))
+TOOLS_TEST_PIN = $(patsubst %/,%,$(filter-out ./,$(dir $(patsubst ./%,%,$(T)))))
 TOOLS_TEST_FILE = $(firstword $(wildcard $(addsuffix /$(TOOLS_TEST_NAME), \
 	$(or $(TOOLS_TEST_PIN),$(TOOLS_TEST_DIRS)))))
 TOOLS_TEST_DIR = $(patsubst %/,%,$(dir $(TOOLS_TEST_FILE)))
