@@ -67,10 +67,11 @@ Urgent set leads, and meta work follows launch work.
 ## The pool
 
 The **un-parked Backlog**: state Backlog, no milestone,
-`[Operator]` items included. An operator item is reviewed and
-ticked like any other — dispatch refuses it downstream, and the
-scheduler draws its operator-actions list from the `[Operator]`
-items in Todo.
+`[Operator]` items included. An operator item is filed at Urgent,
+so it leads the ranking in priority order, and is **surfaced once**:
+a tick moves it to Todo, where the Next view holds it until the
+operator's Done, and dispatch refuses it downstream. Nothing
+recites it again — no list, no re-ask.
 
 Out of the pool, never shown:
 
@@ -118,8 +119,8 @@ The commentary line, by case:
 - **A fresh spec**: what it buys, where it ranks and why.
 - **A carried task**: what happened — "your comment was folded into
   Part 2 and the thread resolved".
-- **An `[Operator]` item**: "yours to do; a tick puts it on your
-  actions list".
+- **An `[Operator]` item**: "yours to do; a tick moves it to Todo,
+  where it waits for your Done" — what it unblocks, and why now.
 - **A spec awaiting design**: "awaiting design in" the architect
   task's title.
 

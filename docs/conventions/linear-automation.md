@@ -656,9 +656,10 @@ the scheduler on the plan morning or by hand with `curate`). The
 
 **The pool is the un-parked Backlog**: state Backlog, no milestone,
 `[Operator]` items included. Todo means "should this be done", so an
-operator item is reviewed and ticked like any other; dispatch refuses it
-downstream, and the scheduler draws its operator-actions list from the
-`[Operator]` items in Todo. `Session pending` (another session's review),
+operator item is reviewed and ticked like any other, surfaced once in
+priority order; the tick moves it to Todo, where the Next view holds it
+until the operator's Done, and dispatch refuses it downstream.
+`Session pending` (another session's review),
 `Audit findings` (the scheduler promotes them while the lane drains) and
 `Post-validation` (the operator's deferral) are out of the pool.
 
@@ -802,6 +803,14 @@ table it reads against, with each verb's default substrate, is in
   agent-infra work.
 - **`[Operator]` takes no substrate.** It marks an item the operator
   executes by hand with no agent session, so it has no launch line.
+  **An operator action is asked for when it binds**: the session that
+  needs it asks in its own tab through `AskUserQuestion` (the scheduler
+  for a Done that releases an edge or a login the gate needs, a worker
+  for a ratification, the curator for a kill). One that cannot be done
+  in the moment is filed `[Operator]`, or as a chore when a session can
+  do the surrounding work, at Urgent, Backlog, no milestone; the curator
+  surfaces it once and it lives in Todo until the operator's Done.
+  There is no third path — nothing recites an operator-actions list.
 - **A Linear-title signal only** — never a PR title, branch or worktree
   name, which keep their own forms.
 - **The title is the authority.** The operator re-routes an issue by

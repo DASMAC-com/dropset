@@ -193,9 +193,12 @@ the document's state sections.
 
 1. **Operator-executed items are not tasks.** An item executed in
    a vendor dashboard, credentials or deploy env is never
-   dispatched; it is filed `[Operator]` in Backlog, reviewed by
-   the curator, and once in Todo sits on the operator-actions
-   list until marked Done (2026-10-26).
+   dispatched; it is asked through `AskUserQuestion` in the tab
+   that needs it, or filed as an `[Operator]` task or a chore at
+   Urgent, Backlog, no milestone, surfaced once by the curator,
+   and lives in Todo until the operator's Done. An operator
+   action is an ask or an Urgent task, never a list entry
+   (2026-10-26, amended 2026-10-27).
 
 1. **Cost telemetry is reconciled against the bill.**
    Session-reported costs are projections;
