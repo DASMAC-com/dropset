@@ -666,29 +666,31 @@ stays largest whichever way the levels have turned. Uniform sizing is
 the no-view alternative.
 
 The passive default is **passive-tight-8** (`TightLadder` in the SDK's
-`ladder` module, shared with the TUI): a small **tip** at L1, then the
-bell from L2 outward, over geometric offsets so the book is tight at
-the top and still reaches 100 bps at the edge. An evenly spaced
+`ladder` module, shared with the TUI): the bell, thickest at L1 and
+thinner outward with no small rung at the tight end, over geometric
+offsets so the book is tight at the top and still reaches 100 bps at
+the edge. After a fill the flipped rung keeps its size, so the top of
+book stays the thickest part of the book. An evenly spaced
 eight-rung ladder cannot do both, and at the old 5 bps spacing it went
 one-sided most mornings under a once-a-day re-center. At its one-day
 horizon:
 
 | Level | `price_offset_ppm` | `size_bps` | `flip_spread_ppm` |
 | ----- | ------------------ | ---------- | ----------------- |
-| 1     | 300 ppm            | 200 (tip)  | 300 (3 bps)       |
-| 2     | 600 ppm            | 2300       | 300               |
-| 3     | 1_000 ppm          | 2000       | 400               |
-| 4     | 1_600 ppm          | 1700       | 600               |
-| 5     | 2_500 ppm          | 1400       | 900               |
-| 6     | 4_000 ppm          | 1100       | 1_500             |
+| 1     | 300 ppm            | 2000       | 300 (3 bps)       |
+| 2     | 600 ppm            | 1800       | 300               |
+| 3     | 1_000 ppm          | 1500       | 400               |
+| 4     | 1_600 ppm          | 1300       | 600               |
+| 5     | 2_500 ppm          | 1100       | 900               |
+| 6     | 4_000 ppm          | 900        | 1_500             |
 | 7     | 6_500 ppm          | 800        | 2_500             |
-| 8     | 10_000 ppm         | 500        | 3_500             |
+| 8     | 10_000 ppm         | 600        | 3_500             |
 
-Three knobs, all on the TUI's passive form: the **visit horizon** `T`
-in days scales every offset by `sqrt(T)` (`T = 3` runs about 5 to
-173 bps); the **tip size** (default 200 bps of the leg) re-sizes the
-bell to the leg the tip leaves; and the **flip fraction** (default
-100%) sets each rung's flip spread to that share of its inward gap.
+The sizes are the same bell the evenly spaced alternative posts. Two
+knobs, both on the TUI's passive form: the **visit horizon** `T` in
+days scales every offset by `sqrt(T)` (`T = 3` runs about 5 to
+173 bps); and the **flip fraction** (default 100%) sets each rung's
+flip spread to that share of its inward gap.
 
 **Flip-spread guidance:** keep a level's flip spread at most its
 spacing to the next rung in (for L1, its distance to the reference).
@@ -700,7 +702,7 @@ taker fee is protocol revenue).
 
 This is guidance, not a protocol check: staying a good LP is the
 maker's call. The bot logs a warning at startup for a passive ladder
-that grows outward (a declared tip excepted), has a non-flipping level,
+that grows outward at any rung, has a non-flipping level,
 or flips past its spacing, and quotes the ladder anyway.
 
 ### Justification (Avellaneda–Stoikov)
@@ -808,8 +810,9 @@ mode has **no heartbeat** on either path. One `SetReferencePrice`
 re-centers when **any** of:
 
 1. Price has walked beyond the inner K levels on one side
-   (`recenter_inner_levels`, default 2; 3 in passive mode — the tip and
-   the bell's first two rungs: past 10 bps on the default ladder). The walk is
+   (`recenter_inner_levels`, default 2 in active mode; passive mode
+   uses 3, the bell's first three rungs: past 10 bps on the default
+   ladder). The walk is
    the fair **mid** against the mid at the last stamp, never the
    skewed reference, so an inventory-skew shift (which the book's own
    flip fills cause) does not re-center a calm market.

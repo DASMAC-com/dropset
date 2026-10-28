@@ -39,7 +39,6 @@ use anyhow::{anyhow, bail, Context, Result};
 use dropset_sdk::clock::{SlotTime, WallSpan, WallTime};
 use dropset_sdk::ladder::{
     build_profile, passive_shape_warnings, LadderLevel, PassiveLadder, PassiveShape, TightLadder,
-    MAX_TIP_BPS,
 };
 use dropset_sdk::layout::{Level, MarketView as SlabView, Position, Vault, N_LEVELS};
 use dropset_sdk::price::Price;
@@ -75,7 +74,6 @@ pub enum Field {
     Price,
     Shape,
     Horizon,
-    Tip,
     FlipFraction,
     Spacing,
     Levels,
@@ -86,7 +84,7 @@ pub enum Field {
 /// Which builder a deploy posts through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Book {
-    /// [`TightLadder`], the default: a tip, then a bell over geometric offsets.
+    /// [`TightLadder`], the default: a bell over geometric offsets.
     Tight,
     /// [`PassiveLadder`] in its bell or uniform shape, at one spacing.
     Spaced,
@@ -101,11 +99,10 @@ const SHAPES: [(Book, PassiveShape); 3] = [
 
 // Both deploy lists keep the shape on line 1, so switching book leaves the
 // cursor where it was.
-const TIGHT_FIELDS: [Field; 6] = [
+const TIGHT_FIELDS: [Field; 5] = [
     Field::Price,
     Field::Shape,
     Field::Horizon,
-    Field::Tip,
     Field::FlipFraction,
     Field::Expiry,
 ];
@@ -121,8 +118,6 @@ const RECENTER_FIELDS: [Field; 1] = [Field::Price];
 
 /// The visit horizon steps by a day, up to a week between visits.
 const MAX_HORIZON_DAYS: u32 = 7;
-/// The tip steps by half a percent of the leg, up to the builder's cap.
-const TIP_STEP_BPS: u16 = 50;
 /// The flip fraction steps by a tenth of the gap, from a tenth to the whole.
 const FLIP_FRACTION_STEP_PCT: u32 = 10;
 const MAX_FLIP_FRACTION_PCT: u32 = 100;
@@ -205,11 +200,6 @@ impl Form {
         }
     }
 
-    /// Whether [`Self::levels`]' L1 is a declared tip.
-    pub fn has_tip(&self) -> bool {
-        self.book == Book::Tight
-    }
-
     fn shape_at(&self) -> usize {
         let shape = match self.book {
             Book::Tight => PassiveShape::Bell,
@@ -261,14 +251,6 @@ impl Form {
             }
             Field::Horizon => {
                 t.horizon_days = stepped(t.horizon_days, 1, up).clamp(1, MAX_HORIZON_DAYS);
-            }
-            Field::Tip => {
-                t.tip_size_bps = if up {
-                    t.tip_size_bps.saturating_add(TIP_STEP_BPS)
-                } else {
-                    t.tip_size_bps.saturating_sub(TIP_STEP_BPS)
-                }
-                .clamp(TIP_STEP_BPS, MAX_TIP_BPS);
             }
             Field::FlipFraction => {
                 t.flip_fraction_pct = stepped(t.flip_fraction_pct, FLIP_FRACTION_STEP_PCT, up)
@@ -342,7 +324,7 @@ impl Form {
                     },
                     Field::Price => self.price.clone(),
                     Field::Shape => match (self.book, l.shape) {
-                        (Book::Tight, _) => "tight-8 (a tip, then a bell)".to_string(),
+                        (Book::Tight, _) => "bell on tight offsets".to_string(),
                         (Book::Spaced, PassiveShape::Bell) => "bell, evenly spaced".to_string(),
                         (Book::Spaced, PassiveShape::Uniform) => {
                             "uniform, evenly spaced".to_string()
@@ -352,7 +334,6 @@ impl Form {
                         let days = if t.horizon_days == 1 { "day" } else { "days" };
                         format!("{} {days} — {}", t.horizon_days, reach(t.levels()))
                     }
-                    Field::Tip => format!("{:.1}% of the leg at L1", t.tip_size_bps as f64 / 100.0),
                     Field::FlipFraction => format!("{}% of each rung's gap", t.flip_fraction_pct),
                     Field::Spacing => bps(l.spacing_ppm),
                     Field::Levels => format!("{} a side", l.levels),
@@ -366,7 +347,6 @@ impl Form {
                     Field::Price => "center price",
                     Field::Shape => "shape",
                     Field::Horizon => "visit horizon",
-                    Field::Tip => "tip size",
                     Field::FlipFraction => "flip fraction",
                     Field::Spacing => "spacing",
                     Field::Levels => "levels",
@@ -578,7 +558,7 @@ pub fn prepare(
     let (levels, mut warnings) = match form.op {
         PassiveOp::Deploy => {
             let levels = form.levels();
-            let warnings = passive_shape_warnings(&levels, form.has_tip());
+            let warnings = passive_shape_warnings(&levels);
             (levels, warnings)
         }
         PassiveOp::Recenter => (Vec::new(), Vec::new()),
@@ -975,16 +955,15 @@ mod tests {
         let form = Form::new(PassiveOp::Deploy);
         assert_eq!(form.book, Book::Tight);
         assert_eq!(form.levels(), TightLadder::default().levels());
-        assert!(form.has_tip());
         assert_eq!(form.field(), Field::Price);
         assert_eq!(form.fields(), &TIGHT_FIELDS);
         let lines = form.lines();
+        assert!(lines[1].ends_with("bell on tight offsets"), "{lines:?}");
         assert!(
             lines[2].ends_with("1 day — 3.0 bps to 100.0 bps"),
             "{lines:?}"
         );
-        assert!(lines[3].ends_with("2.0% of the leg at L1"), "{lines:?}");
-        assert!(lines[4].ends_with("100% of each rung's gap"), "{lines:?}");
+        assert!(lines[3].ends_with("100% of each rung's gap"), "{lines:?}");
         // A re-center edits the price alone.
         assert_eq!(Form::new(PassiveOp::Recenter).fields(), &[Field::Price]);
     }
@@ -1002,7 +981,6 @@ mod tests {
         assert_eq!(form.fields(), &SPACED_FIELDS);
         assert_eq!(form.field(), Field::Shape, "the cursor stays on the shape");
         assert_eq!(form.levels(), PassiveLadder::default().levels());
-        assert!(!form.has_tip());
         form.step(1);
         assert_eq!(form.ladder.shape, PassiveShape::Uniform);
         form.step(1);
@@ -1032,16 +1010,6 @@ mod tests {
         // Three days widens every rung by sqrt(3).
         assert_eq!(form.levels()[7].offset_ppm, 17_321);
         form.move_cursor(1);
-        assert_eq!(form.field(), Field::Tip);
-        for _ in 0..50 {
-            form.step(1);
-        }
-        assert_eq!(form.tight.tip_size_bps, MAX_TIP_BPS);
-        for _ in 0..50 {
-            form.step(-1);
-        }
-        assert_eq!(form.tight.tip_size_bps, TIP_STEP_BPS);
-        form.move_cursor(1);
         assert_eq!(form.field(), Field::FlipFraction);
         for _ in 0..20 {
             form.step(1);
@@ -1057,7 +1025,7 @@ mod tests {
         assert_eq!(form.tight.expiry_secs, EXPIRY_PRESETS[1]);
         assert_eq!(form.ladder.expiry_secs, WallSpan::UNBOUNDED);
         // Every setting the form allows posts a sound tight ladder.
-        assert!(passive_shape_warnings(&form.levels(), form.has_tip()).is_empty());
+        assert!(passive_shape_warnings(&form.levels()).is_empty());
     }
 
     #[test]
