@@ -20,9 +20,14 @@ onlyBuiltDependencies:
 # without this pin pnpm collapses them onto a single @types/react major and
 # the wrong React typings leak across packages. Force one @types major for
 # the whole workspace so type resolution is deterministic.
+#
+# The sharp floor closes the image optimizer's SVG RCE (fixed in 0.35.5);
+# Next pulls sharp in as an optional dependency, so the floor is pinned
+# here rather than trusting each Next release's own range.
 overrides:
   '@types/react': '^19'
   '@types/react-dom': '^19'
+  'sharp': '>=0.35.5'
 packages:
 - 'frontend'
 - 'decks'
