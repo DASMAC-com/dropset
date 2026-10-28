@@ -41,7 +41,11 @@ import {
   sizeWithdraw,
   VAULT_SLIPPAGE_BPS,
 } from "@/lib/eclob/vaultTx";
-import { EXPLORER_NAME, explorerAddressUrl } from "@/lib/explorer";
+import {
+  EXPLORER_NAME,
+  explorerAddressUrl,
+  explorerTxUrl,
+} from "@/lib/explorer";
 import {
   formatBaseAmount,
   groupThousands,
@@ -93,7 +97,7 @@ function TxStatusLine({ tx }: { tx: UseVaultTx }) {
           ? tx.sharesAfter === null
             ? "Confirmed."
             : `Confirmed. You now hold ${groupThousands(tx.sharesAfter.toString())} shares.`
-          : tx.status === "error"
+          : tx.status === "error" || tx.status === "unconfirmed"
             ? tx.error
             : null;
   if (!text) return null;
@@ -106,6 +110,19 @@ function TxStatusLine({ tx }: { tx: UseVaultTx }) {
   return (
     <p role="status" className={`text-center text-xs ${tone}`}>
       {text}
+      {tx.signature && (
+        <>
+          {" "}
+          <a
+            href={explorerTxUrl(tx.signature)}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-0.5 underline hover:text-foreground"
+          >
+            View transaction <ExternalLink size={10} />
+          </a>
+        </>
+      )}
     </p>
   );
 }
@@ -622,10 +639,13 @@ export function VaultActionDialog({
     [market.base, market.quote, chain?.seq],
   );
   const tx = useVaultTx(vaultRef);
+  // "unconfirmed" counts: the transaction may still land, so the form stays
+  // locked until the dialog is closed and reopened after checking it.
   const busy =
     tx.status === "preparing" ||
     tx.status === "signing" ||
-    tx.status === "confirming";
+    tx.status === "confirming" ||
+    tx.status === "unconfirmed";
 
   // Quote tokens per base token; null for an empty vault (no ratio to hold).
   const ratio = vaultReserveRatio(vault);

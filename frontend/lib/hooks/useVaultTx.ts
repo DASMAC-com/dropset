@@ -13,6 +13,7 @@ import {
 import { emit } from "../events";
 import { getErrorMessage } from "../guards";
 import { waitForSwapConfirmation } from "../swap/confirm";
+import { SwapError } from "../swap/types";
 
 export type VaultTxStatus =
   | "idle"
@@ -21,6 +22,10 @@ export type VaultTxStatus =
   | "signing"
   | "confirming"
   | "success"
+  // Submitted, but confirmation ran out of time without a verdict: it may
+  // still land, so the form stays locked rather than invite a second deposit
+  // or withdrawal. `signature` names the transaction to check.
+  | "unconfirmed"
   | "error";
 
 export type VaultTxRequest =
@@ -38,6 +43,9 @@ export type UseVaultTx = {
   // The share balance read back from chain after the last confirmed
   // transaction; null when none has confirmed or the read-back failed.
   sharesAfter: bigint | null;
+  // The submitted transaction behind an "unconfirmed" or reverted outcome,
+  // for an explorer link; null otherwise.
+  signature: string | null;
   // Resolves true once the transaction confirms, false on any failure (the
   // reason is in `error`) or when one is already in flight.
   execute: (request: VaultTxRequest) => Promise<boolean>;
@@ -54,11 +62,13 @@ export function useVaultTx(vault: VaultRef): UseVaultTx {
   const [status, setStatus] = useState<VaultTxStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [sharesAfter, setSharesAfter] = useState<bigint | null>(null);
+  const [signature, setSignature] = useState<string | null>(null);
   const inFlight = useRef(false);
 
   const reset = useCallback(() => {
     setStatus("idle");
     setError(null);
+    setSignature(null);
   }, []);
 
   const execute = useCallback(
@@ -71,6 +81,7 @@ export function useVaultTx(vault: VaultRef): UseVaultTx {
       }
       inFlight.current = true;
       setError(null);
+      setSignature(null);
       setStatus("preparing");
       const rpc = client.runtime.rpc;
       const ctx = {
@@ -86,7 +97,10 @@ export function useVaultTx(vault: VaultRef): UseVaultTx {
             ? await executeVaultDeposit({ ...ctx, ...request })
             : await executeVaultWithdraw({ ...ctx, ...request });
         setStatus("confirming");
-        await waitForSwapConfirmation(rpc, res.signature);
+        await waitForSwapConfirmation(rpc, res.signature, {
+          lastValidBlockHeight: res.lastValidBlockHeight,
+          noun: request.kind === "deposit" ? "deposit" : "withdrawal",
+        });
         emit("vaultTxSucceeded");
         // The resulting balance comes off the chain, never the preview: the
         // program realizes the leader's fee before minting, so the shares it
@@ -101,7 +115,13 @@ export function useVaultTx(vault: VaultRef): UseVaultTx {
         return true;
       } catch (e) {
         setError(getErrorMessage(e));
-        setStatus("error");
+        const unconfirmed = e instanceof SwapError && e.kind === "unconfirmed";
+        setSignature(
+          e instanceof SwapError && e.signature ? e.signature.toString() : null,
+        );
+        setStatus(unconfirmed ? "unconfirmed" : "error");
+        // It may have landed, so the balances and the table may be stale.
+        if (unconfirmed) emit("vaultTxSucceeded");
         return false;
       } finally {
         inFlight.current = false;
@@ -110,5 +130,5 @@ export function useVaultTx(vault: VaultRef): UseVaultTx {
     [wallet, client, vault],
   );
 
-  return { status, error, sharesAfter, execute, reset };
+  return { status, error, sharesAfter, signature, execute, reset };
 }

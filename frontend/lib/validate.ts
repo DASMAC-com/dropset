@@ -74,8 +74,8 @@ export const parseDflowOrder = (raw: unknown): ParsedDflowOrder => {
   if (!isNonNegativeInteger(raw.slippageBps)) {
     throw new ValidationError("order.slippageBps missing or not an integer");
   }
-  const lvbh = raw.lastValidBlockHeight;
-  if (lvbh !== undefined && lvbh !== null && !isNonNegativeInteger(lvbh)) {
+  const expiry = raw.lastValidBlockHeight;
+  if (expiry !== undefined && expiry !== null && !isNonNegativeInteger(expiry)) {
     throw new ValidationError("order.lastValidBlockHeight is not an integer");
   }
   return {
@@ -83,7 +83,7 @@ export const parseDflowOrder = (raw: unknown): ParsedDflowOrder => {
     inAmount: parseBigIntString(raw.inAmount, "order.inAmount"),
     outAmount: parseBigIntString(raw.outAmount, "order.outAmount"),
     slippageBps: raw.slippageBps,
-    lastValidBlockHeight: isNonNegativeInteger(lvbh) ? BigInt(lvbh) : null,
+    lastValidBlockHeight: isNonNegativeInteger(expiry) ? BigInt(expiry) : null,
   };
 };
 

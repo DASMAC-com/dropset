@@ -9,7 +9,7 @@ import { resolveEclobRoute } from "../eclob/route";
 import { PLATFORM_FEE } from "../env";
 import { parseAmountToBase } from "../format/balance";
 import { getErrorMessage } from "../guards";
-import { INITIAL_QUOTE, type QuoteState } from "../quote";
+import { formatAtomic, INITIAL_QUOTE, type QuoteState } from "../quote";
 
 // Quote the swap directly against our own market — the core-style, eCLOB-only
 // route, bypassing the aggregator entirely. The SDK's `quoteEclob` does the
@@ -123,6 +123,20 @@ export const useEclobQuote = (
             ...INITIAL_QUOTE,
             status: "error",
             error: "No liquidity for this size",
+          });
+          schedule(QUOTE_REFRESH_MS, gen);
+          return;
+        }
+        if (q.inAmount !== atomic) {
+          // A partial fill: the book can't absorb the whole input, and the
+          // output would describe only the part it can, priced at its deepest
+          // levels. Shown as an error (which keeps Swap disabled) rather than
+          // a normal figure, as the best route's `classifyEclobQuote` excludes
+          // partials. Transient like a thin book, so the loop stays alive.
+          setQuote({
+            ...INITIAL_QUOTE,
+            status: "error",
+            error: `The book can fill only ${formatAtomic(q.inAmount, inputDecimals)} — reduce the amount`,
           });
           schedule(QUOTE_REFRESH_MS, gen);
           return;

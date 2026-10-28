@@ -57,7 +57,7 @@ export async function waitForSwapConfirmation(
   let landed = false;
   while (Date.now() < deadline) {
     const { value } = await rpc.getSignatureStatuses([signature]).send();
-    let status = value[0];
+    let status = value[0] ?? null;
     if (status === null && !landed && lastValidBlockHeight !== null) {
       // Read at `finalized`, which trails the tip: a height that is too low
       // only delays the verdict, never brings it forward.
@@ -71,7 +71,7 @@ export async function waitForSwapConfirmation(
         const { value: final } = await rpc
           .getSignatureStatuses([signature], { searchTransactionHistory: true })
           .send();
-        status = final[0];
+        status = final[0] ?? null;
         if (status === null) {
           throw new SwapError(
             `The ${noun} expired before it reached the chain — nothing moved.`,

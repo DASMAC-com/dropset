@@ -64,7 +64,7 @@ export type DflowSwapInput = {
 // Check a decoded /order against what the user asked for, before the wallet
 // is asked to sign it. The route inside the transaction is the aggregator's
 // and is opaque to us — trusting it is inherent, and the endpoint is ours —
-// so this is defence in depth over the parts we can check:
+// so this is defense in depth over the parts we can check:
 //   * the order spends exactly the requested input;
 //   * its expected output is within the slippage tolerance of the figure the
 //     panel showed (under "auto", the tolerance the server picked);

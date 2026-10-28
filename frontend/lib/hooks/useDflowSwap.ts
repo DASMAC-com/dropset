@@ -28,7 +28,20 @@ export type SwapStatus =
   // ordinary way and lands on "error". Shared here because both hooks return
   // one `UseDflowSwap`, so the panel switches on one union either way.
   | "no-fill"
+  // Submitted, but confirmation ran out of time without a verdict, so the
+  // swap may still land. Not an error: the form must stay locked rather than
+  // invite a retry that would be a second real swap. `error` carries the
+  // message and the signature to check.
+  | "unconfirmed"
   | "error";
+
+// Statuses during which a swap may still move funds: the Swap button stays
+// disabled through all of them, whichever venue's hook holds them.
+export const isSwapPending = (status: SwapStatus): boolean =>
+  status === "preparing" ||
+  status === "signing" ||
+  status === "confirming" ||
+  status === "unconfirmed";
 
 // Augment the bare DFlow result with the from/to symbols captured at the
 // moment of execution. Pinning these here (rather than reading from the
@@ -50,7 +63,9 @@ export type UseDflowSwap = {
   status: SwapStatus;
   result: CompletedSwap | null;
   error: SwapError | null;
-  execute: () => Promise<void>;
+  // `quotedOutAmount` is the output the panel showed when Swap was pressed;
+  // the executor refuses a fresh price more than the slippage below it.
+  execute: (quotedOutAmount: bigint) => Promise<void>;
   reset: () => void;
 };
 
@@ -79,78 +94,78 @@ export function useDflowSwap(): UseDflowSwap {
     setError(null);
   }, []);
 
-  const execute = useCallback(async () => {
-    if (inFlight.current) return;
-    if (wallet.status !== "connected") {
-      setError(new SwapError("Wallet not connected", "wallet"));
-      setStatus("error");
-      return;
-    }
-    const fromMint = stablecoinMint(fromStablecoin);
-    const toMint = stablecoinMint(toStablecoin);
-    const fromDecimals = stablecoinDecimals(fromStablecoin);
-    const atomicAmount = parseAmountToBase(amount, fromDecimals);
-    if (atomicAmount === 0n) return;
-    if (fromMint === toMint) return;
-
-    inFlight.current = true;
-    setError(null);
-    setResult(null);
-    setStatus("preparing");
-
-    try {
-      setStatus("signing");
-      // Re-check wallet status right before handing off to the order +
-      // signing path. The initial check above is racy: between then and
-      // now we've awaited nothing, but useCallback could be re-invoked
-      // after a disconnect dispatched during the same tick. Catching it
-      // here keeps the failure mode "Wallet not connected" instead of a
-      // confusing wallet-adapter error during sendTransaction.
+  const execute = useCallback(
+    async (quotedOutAmount: bigint) => {
+      if (inFlight.current) return;
       if (wallet.status !== "connected") {
-        throw new SwapError("Wallet not connected", "wallet");
+        setError(new SwapError("Wallet not connected", "wallet"));
+        setStatus("error");
+        return;
       }
-      const res = await executeDflowSwap({
-        inputMint: fromMint,
-        outputMint: toMint,
-        atomicAmount,
-        slippageBps: slippageBpsParam(slippage),
-        userPublicKey: wallet.session.account.address.toString(),
-        walletSession: wallet.session,
-        rpc: client.runtime.rpc,
-      });
-      // Wallet `sendTransaction` resolves at submission — wait for on-chain
-      // confirmation before declaring success, otherwise the balance refetch
-      // we fire next sees stale state.
-      setStatus("confirming");
-      await waitForSwapConfirmation(client.runtime.rpc, res.signature);
-      setResult({ ...res, fromStablecoin, toStablecoin });
-      setStatus("success");
-      // Clear the input once the swap confirms: the from-balance just
-      // dropped by `amount`, so leaving it populated invites a re-submit
-      // the user likely can no longer fund (or didn't intend to repeat).
-      setAmount("");
-      // Tell components subscribed via useSplToken to refetch — the swap
-      // mutated balances for both the from- and to-mints.
-      emit("swapSucceeded");
-    } catch (e) {
-      const err =
-        e instanceof SwapError
-          ? e
-          : new SwapError(getErrorMessage(e), "wallet");
-      setError(err);
-      setStatus("error");
-    } finally {
-      inFlight.current = false;
-    }
-  }, [
-    wallet,
-    client,
-    fromStablecoin,
-    toStablecoin,
-    amount,
-    slippage,
-    setAmount,
-  ]);
+      const fromMint = stablecoinMint(fromStablecoin);
+      const toMint = stablecoinMint(toStablecoin);
+      const fromDecimals = stablecoinDecimals(fromStablecoin);
+      const atomicAmount = parseAmountToBase(amount, fromDecimals);
+      if (atomicAmount === 0n) return;
+      if (fromMint === toMint) return;
+
+      inFlight.current = true;
+      setError(null);
+      setResult(null);
+      setStatus("preparing");
+
+      try {
+        setStatus("signing");
+        // Re-check wallet status right before handing off to the order +
+        // signing path. The initial check above is racy: between then and
+        // now we've awaited nothing, but useCallback could be re-invoked
+        // after a disconnect dispatched during the same tick. Catching it
+        // here keeps the failure mode "Wallet not connected" instead of a
+        // confusing wallet-adapter error during sendTransaction.
+        if (wallet.status !== "connected") {
+          throw new SwapError("Wallet not connected", "wallet");
+        }
+        const res = await executeDflowSwap({
+          inputMint: fromMint,
+          outputMint: toMint,
+          atomicAmount,
+          slippageBps: slippageBpsParam(slippage),
+          quotedOutAmount,
+          userPublicKey: wallet.session.account.address.toString(),
+          walletSession: wallet.session,
+          rpc: client.runtime.rpc,
+        });
+        // Wallet `sendTransaction` resolves at submission — wait for on-chain
+        // confirmation before declaring success, otherwise the balance refetch
+        // we fire next sees stale state.
+        setStatus("confirming");
+        await waitForSwapConfirmation(client.runtime.rpc, res.signature, {
+          lastValidBlockHeight: res.lastValidBlockHeight,
+        });
+        setResult({ ...res, fromStablecoin, toStablecoin });
+        setStatus("success");
+        // Clear the input once the swap confirms: the from-balance just
+        // dropped by `amount`, so leaving it populated invites a re-submit
+        // the user likely can no longer fund (or didn't intend to repeat).
+        setAmount("");
+        // Tell components subscribed via useSplToken to refetch — the swap
+        // mutated balances for both the from- and to-mints.
+        emit("swapSucceeded");
+      } catch (e) {
+        const err =
+          e instanceof SwapError
+            ? e
+            : new SwapError(getErrorMessage(e), "wallet");
+        setError(err);
+        setStatus(err.kind === "unconfirmed" ? "unconfirmed" : "error");
+        // The swap may have landed, so the balances on screen may be stale.
+        if (err.kind === "unconfirmed") emit("swapSucceeded");
+      } finally {
+        inFlight.current = false;
+      }
+    },
+    [wallet, client, fromStablecoin, toStablecoin, amount, slippage, setAmount],
+  );
 
   return { status, result, error, execute, reset };
 }

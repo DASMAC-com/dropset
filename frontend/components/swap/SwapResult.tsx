@@ -96,6 +96,45 @@ export function SwapResult({
     );
   }
 
+  // Submitted, but no verdict in time — the swap may still land. Neutral
+  // chrome and the signature front and centre: the user must check it before
+  // swapping again, and the panel keeps Swap disabled until this is dismissed.
+  if (status === "unconfirmed" && error) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm"
+      >
+        <CircleAlert size={18} className="shrink-0 text-muted-fg" aria-hidden />
+        <span className="font-medium text-foreground">Status Unknown</span>
+        {error.signature ? (
+          <a
+            href={explorerTxUrl(error.signature.toString())}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-w-0 items-center gap-1 truncate text-muted-fg transition-colors hover:text-foreground"
+          >
+            <span className="truncate">{error.message}</span>
+            <ExternalLink size={12} className="shrink-0" />
+          </a>
+        ) : (
+          <span className="min-w-0 truncate text-muted-fg">
+            {error.message}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Dismiss"
+          className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-fg hover:bg-background hover:text-foreground"
+        >
+          <X size={14} />
+        </button>
+      </div>
+    );
+  }
+
   if (status === "error" && error) {
     const isCancel = error.kind === "rejected";
     return (
@@ -114,11 +153,23 @@ export function SwapResult({
         >
           {isCancel ? "Swap Cancelled" : "Swap Failed"}
         </span>
-        {!isCancel && (
-          <span className="min-w-0 truncate text-muted-fg">
-            {error.message}
-          </span>
-        )}
+        {!isCancel &&
+          (error.signature ? (
+            // A revert happened on-chain, so there is a transaction to show.
+            <a
+              href={explorerTxUrl(error.signature.toString())}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-w-0 items-center gap-1 truncate text-muted-fg transition-colors hover:text-foreground"
+            >
+              <span className="truncate">{error.message}</span>
+              <ExternalLink size={12} className="shrink-0" />
+            </a>
+          ) : (
+            <span className="min-w-0 truncate text-muted-fg">
+              {error.message}
+            </span>
+          ))}
         <button
           type="button"
           onClick={onClose}
