@@ -273,8 +273,8 @@ criterion fired, with evidence), and its **sequencing** as prose.
 It competes in the queue like any capacity spend — an audit that
 cannot win that argument should not run this week. The pulling
 session runs it as one scoped `audit-scope` run, which that pull
-authorizes, fan-out included; findings file parked (Backlog plus
-`Audit findings`).
+authorizes, fan-out included; findings are ratified in its tab
+(`ratify-staged`).
 
 **Title it `[Explore/Bedrock]`** (`[Explore/Anthropic]` when the
 audit needs the web): it runs as `explore`, never `task` (operator

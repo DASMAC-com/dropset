@@ -1886,7 +1886,7 @@ useful than "keep the issue honest," because it holds even when
 the issue state is wrong.
 
 For an audit the pair is already satisfied by design: findings
-land as parked issues under `Audit findings`, which is durable
+land as staged issues under `Session pending`, which is durable
 from the moment they are filed, so the worktree holds nothing
 irreplaceable at any point.
 
@@ -1894,16 +1894,16 @@ irreplaceable at any point.
 
 - **A spec** is folded by the planning session at dispatch:
   copy it into the implementing issue's body, delete the file.
-- **Audit findings** are already durable as parked Linear
-  issues, so there is nothing to fold — the session closes and
-  the worktree is simply expendable.
+- **Audit findings** are already durable as staged Linear
+  issues, so there is nothing to fold — the session runs
+  `ratify-staged`, closes, and the worktree is simply expendable.
 
 **The read-back protocol** — stage 1 writes the design (a file or
 the issue body) ending in its task list, names where it is in
 plain text, lets the operator edit it in place and reads it back
 **once** per round; stage 2 is `ratify-staged`, whose filed tasks
-sit under `Session pending` — a non-audit explore session's
-included — until the operator's review clears them —
+sit under `Session pending` — every explore session's, audit
+findings included — until the operator's review clears them —
 plus the `NEEDS-CONFIRM` /
 `NEEDS-FEEDBACK` markers and the top-of-file index of open items,
 is specified in

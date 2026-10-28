@@ -322,7 +322,7 @@ the conclusion it records is a **cluster** — the issues that collide on
 one shared area — never an ordering. A cluster is the candidate set for
 "these would land as one PR", which is what the merge-group proposal
 step consumes (it also picks the parallelizable batch when promoting
-parked audit findings).
+the legacy `Audit findings` pool).
 
 Group **per shared area, not by connected component.** Coupling chains
 through shared files, so the transitive reading is worthless: when the
@@ -589,8 +589,8 @@ the operator's **inbox** until it has been reviewed.
 (operator ruling, 2026-10-23: nothing sits in a giant backlog). Who
 resolves a filing splits by the filer's tier:
 
-- **An advisor-tier session** (architect, explore, and audit once its
-  staging lands) resolves its own proposals before it closes: they
+- **An advisor-tier session** (architect, explore, audit) resolves its
+  own proposals before it closes: they
   stage under `Session pending` and are ratified in that session's tab,
   its close gate leaving none behind.
 - **An executor session** (`task`, `chore`) never holds a review: its
@@ -598,14 +598,19 @@ resolves a filing splits by the filer's tier:
   not at all — see the trim-lever pipeline), where the curator reviews
   them with the rest of the pool.
 
-`Audit findings` drains one finding at a time: each scheduler bootstrap
-promotes or kills what it holds, and it leaves the parking set once
-empty.
+**New audit findings are ratified in the audit session's tab**, never
+promoted by the scheduler: `audit-scope` stages them under
+`Session pending` and runs `ratify-staged` before the audit issue goes
+In Review, and a scheduler session it messages about a finding answers
+with feedback only. `Audit findings` is **retired as a filing target**;
+its legacy contents drain one finding at a time — each scheduler
+bootstrap promotes or kills what it holds — and it leaves the parking
+set once empty.
 
 **`Session pending` is never promoted by the scheduler or the
 curator.** It is the unified
-staging lane for every seat session's filed tasks — architect and
-explore now, audit findings once their own ratification lands — so the
+staging lane for every seat session's filed tasks — architect,
+explore and audit findings — so the
 operator reviews them in one place, in the
 filing session's own tab, through the shared `ratify-staged` skill:
 one checkbox per task, and once every task is ticked and uncommented
@@ -691,8 +696,8 @@ Say which kind you mean when you write a rule against "a milestone",
 because the two behave oppositely. The distinction is by **name**, not
 by any field Linear exposes, so it lives here rather than being
 derivable — and the parking names are the closed set.
-`Audit findings` takes no new filings once audit findings stage under
-`Session pending` like any other seat session's output, and it retires
+`Audit findings` takes no new filings — audit findings stage under
+`Session pending` like any other seat session's output — and it retires
 when its legacy contents drain.
 `Trim levers` retired with the per-session lever filing and is in
 neither kind: upkeep no longer counts it, so its residue of open

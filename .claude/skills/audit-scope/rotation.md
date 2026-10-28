@@ -26,7 +26,8 @@ planning session may also file a random-target pass as an audit issue
 when its heartbeat wants breadth rather than depth.
 
 **It is finite.** It runs the seven units `N` times, files what they
-surface, and **stops** with one `DONE` line per rotation. No `/loop`,
+surface, ends each rotation with one `DONE` line, and after the last
+hands its findings to `SKILL.md` step 8's review. No `/loop`,
 no finding cap — the rotation *is* the bound. Nothing runs it on a
 cadence; the planning session's audit heartbeat is what keeps the repo
 audited.
@@ -229,19 +230,20 @@ counts and titles only, never bodies:
 FILED ENG-### [<dimension>/<severity>] <subject> — <title>
 ```
 
-Close the announcement saying plainly that the findings are **parked
-under the Audit findings milestone and await sequencing** — a rotation
-must not read as having queued work.
+Close the announcement saying plainly that the findings are **staged
+under the Session pending milestone and await this tab's review**
+(`SKILL.md` step 8, after the last rotation) — a rotation must not read
+as having queued work.
 
 If at least one **high-severity** issue was filed, send exactly **one**
 `PushNotification` naming the top one (where the harness offers it;
 otherwise print that line prominently); otherwise send none.
 
-After the seventh unit, print one line and stop (or start the next of
-the `N` rotations):
+After the seventh unit, print one line, then start the next of the `N`
+rotations or, after the last, run `SKILL.md` step 8:
 
 ```txt
-DONE audit-scope rotation <i>/<N> | filed <t> parked Todo (h/m/l) | deduped <d>
+DONE audit-scope rotation <i>/<N> | filed <t> staged (h/m/l) | deduped <d>
 ```
 
 ## Notes
