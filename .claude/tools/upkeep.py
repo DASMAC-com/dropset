@@ -23,18 +23,19 @@ refuses the whole pass, since every later step assumes it.
  2. fast-forward main (on failure, continue on the checked-out commit);
  3. upgrade the Claude Code CLI cask;
  4. read the terminal PR set (merged AND closed — a PR closed early leaves its
-    branch and notifications behind too), the open set, and the PR
-    notifications;
- 5. intersect with the board: a worktree, local branch or notification is
-    cleanup-eligible when its issue's status TYPE is completed or canceled and
-    no PR for its branch is open. PR-merged alone is never enough — a merged
-    In Review session is still a live conversation the fleet launcher resumes.
+    branch behind too) and the open set;
+ 5. intersect with the board: a worktree or local branch is cleanup-eligible
+    when its issue's status TYPE is completed or canceled and no PR for its
+    branch is open. PR-merged alone is never enough — a merged In Review
+    session is still a live conversation the fleet launcher resumes.
     A canceled issue with an open PR is flagged; a branch whose issue cannot be
     resolved is reported; Linear unreachable cleans NOTHING;
- 6. prune the eligible worktrees and stray local branches (``prune_worktrees``,
-    whose unpushed-work gate still applies);
- 7. dismiss the eligible PRs' notifications, one thread at a time (never
-    mark-all);
+ 6. prune the eligible worktrees and stray local branches, passed to
+    ``prune_worktrees`` as ``--closed`` names: only a live session lock holds
+    one, and the report names each one's commits ahead of ``origin/main``;
+ 7. dismiss every settled PR's notifications (``pr_notifications dismiss
+    --settled``) — merged or closed, whatever its issue's state, one thread at
+    a time (never mark-all);
  8. the open count of each parked milestone, with its direction since the
     previous stamp — the line the ``plan`` bootstrap says, and the lever
     count its fold sub-agent's spawn gate reads;
@@ -53,10 +54,12 @@ refuses the whole pass, since every later step assumes it.
 12. the memory scan gate, then the memory audit when due;
 13. the transcript-purge dry-run manifest.
 
-**Arming.** Steps 6 and 7 run as dry runs and touch nothing unless
-``DS_UPKEEP_ARMED=1`` is exported from the untracked runtime config. The
-open-PR guard holds even when armed, and the purge never arms — its apply stays
-an operator approval at ``plan``'s gate.
+**Arming.** Step 6 runs as a dry run and touches nothing unless
+``DS_UPKEEP_ARMED=1`` is exported from the untracked runtime config. Step 7 is
+always armed in ``run``: with the board gate gone, a settled PR's threads are
+dismissible on sight, and a dismissal destroys nothing. The open-PR guard holds
+even when armed, and the purge never arms — its apply stays an operator
+approval at ``plan``'s gate. ``prune`` arms both steps only under ``--apply``.
 
 **Report.** One section of the Planning document — from ``REPORT_HEADING``
 through its ``REPORT_END`` line — is replaced wholesale each run, bounded to
@@ -126,23 +129,21 @@ TIMEOUT_GH = 60
 TIMEOUT_TOOL = 120
 # The transcript walk alone takes about a minute, before the Cost Explorer read.
 TIMEOUT_COST = 300
+# One DELETE per thread; the first armed pass meets a backlog of a hundred-odd.
+TIMEOUT_DISMISS = 300
 # The digest's transcript walk plus its CI read: a cold job cache is one
 # `gh api` read per merge-queue run of the past week, a few hundred.
 TIMEOUT_DIGEST = 600
 
 # How many recent digests the refresh gate mines — an upper bound: the purge
 # ages digests out on the transcripts' two-day rule, so once it is applied
-# only the last few survive — and how many notification
-# PRs outside the listed sets are resolved one by one before giving up.
+# only the last few survive.
 MINE_DIGESTS = 7
-MAX_NOTIFICATION_LOOKUPS = 20
 
 # PR list bounds. A full open page means the open set may be truncated, and the
 # open-PR guard is only as good as that set, so a full page fails closed.
 CLOSED_PR_LIMIT = 30
 OPEN_PR_LIMIT = 100
-
-NOTIFICATIONS_PATH = "/notifications?all=true&per_page=50"
 
 RESOLVED_TYPES = ("completed", "canceled")
 # The parking milestones, in report order. Session pending is short-lived by
@@ -164,7 +165,6 @@ PARKED_MILESTONES = (
 BRANCH_RE = re.compile(
     r"^(?:worktree-)?(?:eng-|ceo-|exp-)?(\d+)$", re.IGNORECASE | re.ASCII
 )
-PR_URL_RE = re.compile(r"/repos/DASMAC-com/dropset/pulls/(\d+)$")
 
 Runner = Callable[[list[str], float, "str | None"], "tuple[int, str, str]"]
 
@@ -192,6 +192,9 @@ class Ctx:
     base: Path
     armed: bool
     now: datetime
+    # The notifications step's own arming: the daily pass dismisses for real
+    # whatever `armed` says, `prune` only under `--apply`.
+    dismiss: bool = False
     run: Runner = real_run
     # numbers -> {number: status type}; raises when Linear is unreachable.
     lookup: Callable[[list[int]], dict[int, str]] | None = None
@@ -374,46 +377,12 @@ def step_prs(ctx: Ctx) -> None:
     except (RuntimeError, ValueError) as e:
         ctx.record("prs", f"PR list failed ({e}); nothing is cleanup-eligible", False)
         return
-    prs = list(closed or []) + list(opened or [])
-    by_number = {int(p["number"]): p for p in prs}
-
-    notifications: list[tuple[str, int]] = []
-    notice = ""
-    try:
-        # `all=true`: the default lists UNREAD threads only, and a thread read
-        # but never marked done still sits in the inbox.
-        raw = _gh_json(ctx, ["api", NOTIFICATIONS_PATH])
-        for n in raw or []:
-            m = PR_URL_RE.search(((n.get("subject") or {}).get("url")) or "")
-            if m:
-                notifications.append((str(n["id"]), int(m.group(1))))
-    except (RuntimeError, ValueError, KeyError) as e:
-        notice = f"; notification list failed ({e})"
-
-    unknown = sorted({num for _, num in notifications if num not in by_number})
-    for num in unknown[:MAX_NOTIFICATION_LOOKUPS]:
-        try:
-            pr = _gh_json(
-                ctx,
-                ["pr", "view", str(num), "--repo", REPO, "--json", fields],
-            )
-        except (RuntimeError, ValueError):
-            continue
-        if isinstance(pr, dict):
-            by_number[num] = pr
-            prs.append(pr)
-
-    ctx.data["prs"] = prs
-    ctx.data["pr_by_number"] = by_number
-    ctx.data["notifications"] = notifications
+    ctx.data["prs"] = list(closed or []) + list(opened or [])
     ctx.data["open_branches"] = sorted(
         p["headRefName"] for p in opened or [] if p.get("headRefName")
     )
     ctx.record(
-        "prs",
-        f"{len(closed or [])} terminal PR(s), {len(opened or [])} open, "
-        f"{len(notifications)} PR notification(s){notice}",
-        ok=not notice,
+        "prs", f"{len(closed or [])} terminal PR(s), {len(opened or [])} open"
     )
 
 
@@ -430,13 +399,7 @@ def step_board(ctx: Ctx) -> None:
     local = {b for b in refs.split() if BRANCH_RE.match(b)} if rc == 0 else set()
     flags = [] if rc == 0 else ["local branch list failed; strays not considered"]
     in_trees = {t["branch"] for t in ctx.data.get("trees", []) if t.get("branch")}
-    by_number = ctx.data["pr_by_number"]
-    notified = {
-        by_number[num]["headRefName"]
-        for _, num in ctx.data["notifications"]
-        if num in by_number and by_number[num].get("headRefName")
-    }
-    candidates = (local | in_trees | notified) - {"main"}
+    candidates = (local | in_trees) - {"main"}
     numbers = sorted({int(m.group(1)) for b in candidates if (m := BRANCH_RE.match(b))})
     try:
         status = ctx.lookup(numbers) if numbers else {}
@@ -469,12 +432,15 @@ def step_prune(ctx: Ctx) -> None:
         return
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
         f.write("\n".join(targets))
-        merged_file = f.name
+        closed_file = f.name
     try:
-        args = ["--merged-file", merged_file] + ([] if ctx.armed else ["--dry-run"])
+        # Every target's issue is completed or canceled, so it goes as a closed
+        # name: the unpushed and no-upstream holds that kept a stray branch
+        # forever are lifted, and only a live session lock holds.
+        args = ["--closed-file", closed_file] + ([] if ctx.armed else ["--dry-run"])
         rc, out, err = ctx.tool("prune_worktrees.py", *args)
     finally:
-        os.unlink(merged_file)
+        os.unlink(closed_file)
     if rc != 0:
         ctx.record("prune", f"pruner failed: {first_line(err)}", False)
         return
@@ -487,6 +453,11 @@ def step_prune(ctx: Ctx) -> None:
         f"{len(result.get('branches_removed', []))} stray branch(es); "
         f"{len(result['skipped'])} held back",
         skipped=[f"{s['branch']}: {s['reason']}" for s in result["skipped"]],
+        ahead=[
+            f"{b}: {a['ahead'] if a.get('ahead') is not None else '?'} ahead of "
+            f"origin/main, tip {(a.get('tip') or '?')[:12]}"
+            for b, a in sorted(result.get("ahead", {}).items())
+        ],
         unmatched=[
             f"{b}: matches no worktree or branch" for b in result.get("unmatched", [])
         ],
@@ -494,32 +465,26 @@ def step_prune(ctx: Ctx) -> None:
 
 
 def step_notifications(ctx: Ctx) -> None:
-    eligible = ctx.data.get("eligible", set())
-    by_number = ctx.data.get("pr_by_number", {})
-    threads = [
-        tid
-        for tid, num in ctx.data.get("notifications", [])
-        if by_number.get(num, {}).get("headRefName") in eligible
-        and by_number[num].get("state") != "OPEN"
-    ]
-    if not ctx.armed:
-        ctx.record("notifications", f"would dismiss {len(threads)} notification(s)")
-        return
-    failed = 0
-    for tid in threads:
-        # DELETE on a thread is GitHub's "mark as done" — read-only marking would
-        # leave it in the inbox.
-        rc, _, _ = ctx.run(
-            ["gh", "api", "-X", "DELETE", f"/notifications/threads/{tid}"],
-            TIMEOUT_GH,
-            None,
+    # No board gate: a merged or closed PR's threads are settled whatever its
+    # issue's state, and an open PR's are never selected. Armed on its own
+    # flag, since dismissal destroys nothing the way a prune can.
+    args = ["dismiss", "--settled"] + (["--apply"] if ctx.dismiss else [])
+    rc, out, err = ctx.tool("pr_notifications.py", *args, timeout=TIMEOUT_DISMISS)
+    try:
+        result = json.loads(out)
+    except ValueError:
+        result = None
+    if not isinstance(result, dict) or "summary" not in result:
+        ctx.record(
+            "notifications",
+            f"dismissal tool failed: {first_line(err) or f'exit {rc}'}",
+            False,
         )
-        failed += rc != 0
+        return
     ctx.record(
         "notifications",
-        f"dismissed {len(threads) - failed} notification(s)"
-        + (f", {failed} failed" if failed else ""),
-        ok=not failed,
+        result["summary"],
+        ok=rc == 0 and not result.get("failed") and not result.get("notice"),
     )
 
 
@@ -1017,6 +982,7 @@ LIST_KEYS = (
     "near",
     "flags",
     "skipped",
+    "ahead",
     "unmatched",
     "dangling",
     "inert",
@@ -1234,6 +1200,7 @@ def run(argv: list[str]) -> int:
             base=base,
             armed=args.apply,
             now=now,
+            dismiss=args.apply,
             lookup=linear_lookup,
             progress=to_stderr,
         )
@@ -1246,6 +1213,7 @@ def run(argv: list[str]) -> int:
         base=base,
         armed=os.environ.get(ARM_ENV) == "1",
         now=now,
+        dismiss=True,
         lookup=linear_lookup,
         parked=linear_parked,
         progress=to_stderr,
