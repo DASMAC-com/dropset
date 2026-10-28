@@ -1101,6 +1101,29 @@ mod tests {
         );
     }
 
+    /// A dark candle with the pool standing in passes, and the line names the
+    /// degrade so the operator can tell the pool is carrying the mid.
+    #[test]
+    fn the_estimator_check_names_a_pool_only_composition() {
+        let products = vec!["TGBP-USDC".to_string()];
+        let now = THURSDAY_NOON;
+        let rows = vec![FairPriceRow {
+            anchor: "crypto_reference".to_string(),
+            degrade: Some("pool_only".to_string()),
+            health: "degraded".to_string(),
+            basis: None,
+            basis_age_secs: None,
+            ..row("TGBP-USDC", now - 5, "degraded")
+        }];
+        let c = fair_verdict(&products, &rows, now, false);
+        assert_eq!(c.verdict, Verdict::Pass, "{c}");
+        assert!(
+            c.evidence
+                .contains("TGBP-USDC degraded (pool_only), anchor crypto_reference, no basis"),
+            "{c}"
+        );
+    }
+
     #[test]
     fn a_stale_or_absent_fair_fails() {
         let products = vec!["EURC-USDC".to_string(), "TGBP-USDC".to_string()];

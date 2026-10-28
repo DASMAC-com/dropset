@@ -75,6 +75,9 @@ pub use dropset_fair_value::FairValue;
 /// Each leg carries every source that answered this tick; the engine drops the
 /// stale and invalid ones, resolves the rest by consensus, and selects the
 /// regime from what survives.
+///
+/// No crypto stand-in: the bot's own feeds carry no pool corroborator, so a
+/// dark crypto leg here degrades on the carried basis or the static peg.
 pub fn build_legs(
     fx: Candidates,
     crypto_usdc: Candidates,
@@ -84,6 +87,7 @@ pub fn build_legs(
     Legs {
         fx,
         crypto_usdc,
+        crypto_stand_in: Candidates::none(),
         usdc_usd,
         static_usd,
     }

@@ -2533,6 +2533,7 @@ mod tests {
             // Deliberately garbage: were this market not pinned, it would trip.
             crypto_usdc: one("coingecko", 0.03064),
             usdc_usd: one("kraken", 1.0),
+            crypto_stand_in: Candidates::none(),
             static_usd: 0.0573,
         };
 

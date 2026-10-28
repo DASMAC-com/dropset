@@ -2008,6 +2008,7 @@ mod tests {
             fx: Candidates::none().push_reference("frankfurter", Some(fix)),
             crypto_usdc: Candidates::none(),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
 
@@ -2034,6 +2035,7 @@ mod tests {
             crypto_usdc: one("coinbase", 1.1401),
             // Nothing offered at all, so nothing resolves.
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
 
@@ -2066,12 +2068,14 @@ mod tests {
                 .push_trusted("pyth-hermes", Some(Reading::new(1.14, Duration::ZERO))),
             crypto_usdc: Candidates::none(),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         let unverified = Legs {
             fx: one("frankfurter", 1.14),
             crypto_usdc: Candidates::none(),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
 
@@ -2094,6 +2098,7 @@ mod tests {
                 .push("kraken", Some(Reading::new(1.141, Duration::ZERO)))
                 .push("coingecko", Some(Reading::new(0.570, Duration::ZERO))),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
 
@@ -2120,6 +2125,7 @@ mod tests {
                 .push("kraken", Some(Reading::new(1.021, Duration::ZERO)))
                 .push("coingecko", Some(Reading::new(0.530, Duration::ZERO))),
             usdc_usd: one("kraken", 1.0),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         let mut engine = FairValueEngine::new(FairValueConfig::default());
@@ -2192,6 +2198,7 @@ mod tests {
             fx: one("oanda", a).push("twelvedata", Some(Reading::new(b, Duration::ZERO))),
             crypto_usdc: one("coinbase", 1.0),
             usdc_usd: one("kraken", 1.0),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
 
@@ -2238,6 +2245,7 @@ mod tests {
             ),
             crypto_usdc: Candidates::none(),
             usdc_usd: Candidates::none(),
+            crypto_stand_in: Candidates::none(),
             static_usd: 1.14,
         };
         assert!(leg_samples(1, "EURC", &legs, STALE, BAND, &fair(None)).is_empty());

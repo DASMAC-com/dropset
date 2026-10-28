@@ -61,6 +61,8 @@
 //!         .push("coinbase", Some(Reading::new(1.141, age)))              // EURC/USDC
 //!         .push("kraken", Some(Reading::new(1.142, age)))
 //!         .push("coingecko", Some(Reading::new(1.140, age))),
+//!     // Consulted only if the crypto leg above resolves to nothing.
+//!     crypto_stand_in: Candidates::none(),
 //!     usdc_usd: Candidates::none().push("kraken", Some(Reading::new(1.0, age))),
 //!     static_usd: 1.14,
 //! };
