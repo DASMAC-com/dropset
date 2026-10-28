@@ -21,13 +21,15 @@ onlyBuiltDependencies:
 # the wrong React typings leak across packages. Force one @types major for
 # the whole workspace so type resolution is deterministic.
 #
-# The sharp floor closes the image optimizer's SVG RCE (fixed in 0.35.5);
-# Next pulls sharp in as an optional dependency, so the floor is pinned
-# here rather than trusting each Next release's own range.
+# The sharp floor is the workaround for the image optimizer's SVG RCE
+# (0.35.5 or later). Next pulls sharp in as an optional dependency, so the
+# floor is pinned here rather than trusting each Next release's own range;
+# the caret keeps it inside the range Next declares, so revisit it when a
+# Next bump moves sharp's range.
 overrides:
   '@types/react': '^19'
   '@types/react-dom': '^19'
-  'sharp': '>=0.35.5'
+  'sharp': '^0.35.5'
 packages:
 - 'frontend'
 - 'decks'
