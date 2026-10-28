@@ -37,7 +37,7 @@ import sys
 
 try:
     import _shell_tokens as sh
-except ImportError:  # fail open: a missing parse must never wedge the session
+except Exception:  # fail open: a missing parse must never wedge the session
     sh = None
 
 # Nesting bound for substitutions and `-c` payloads, as in the private-key
@@ -164,6 +164,9 @@ def _self_test():
         ("xargs git grep foo", True),
         # An unbalanced line is scanned word by word, never skipped.
         ("git grep 'unterminated", True),
+        # A heredoc body is scanned as shell even under a quoted delimiter:
+        # a false block, never a miss (the shell rules forbid heredocs).
+        ("git commit -F - <<'EOF'\nnever run `git grep`\nEOF", True),
         # Not git grep.
         # A git grep inside a trailing comment is inert, not a real command.
         ("git log # note ; git grep foo", False),

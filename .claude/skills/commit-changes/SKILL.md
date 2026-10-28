@@ -56,12 +56,14 @@ changes here belong to this session.
      wrapped and the discover call is not, and it
      missed sibling tests the edit had just broken.
      This is what `review-pr` and `init-pr` also say.
+
      The one inner-loop form between checkpoints is the
      committed wrapper `make tools-test T=test_X`
-     (`K=<name>` narrows further). It resolves the right
-     tree and `-s` / `-t`, where a hand-typed
-     `python3 -m unittest <path>` fails outright. It
-     never stands in for the whole run at a checkpoint.
+     (`K=<name>` narrows further), which `init-pr` names
+     too. It resolves the right tree and `-s` / `-t`,
+     where a hand-typed `python3 -m unittest <path>`
+     fails outright. It never stands in for the whole
+     run at a checkpoint.
 
    - **Frequency:** run it at a **checkpoint**, not
      after every single-file edit. Measured: one session

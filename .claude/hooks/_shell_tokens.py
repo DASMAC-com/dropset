@@ -12,8 +12,8 @@ Not a guard: the leading underscore keeps it out of ``hook_wiring.py``'s
 guard list, and it wires to no event. A guard imports it from its own
 directory (the harness runs a hook as a script, so ``sys.path[0]`` is
 ``.claude/hooks/``) and must keep its **fail-open** contract at that
-boundary: an ``ImportError`` disables the guard's parse-driven checks, never
-the session.
+boundary: a failed import (missing, or raising at import) disables the
+guard's parse-driven checks, never the session.
 
 The parse is **best-effort**, like every guard that reads bash: it models
 the shapes an agent actually types, not the whole grammar. It was extracted
@@ -37,8 +37,14 @@ into commands at control operators; ``unwrap`` strips one command's
 redirects, keywords, assignments and wrappers down to the argv that runs,
 plus the nested command strings a shell would run on its behalf.
 
+A heredoc body is scanned as shell text even under a quoted delimiter
+(``<<'EOF'``, where bash keeps it literal): ``uncertain`` is set, and the
+cost is a false block, never a missed command. The shell rules forbid
+heredocs in agent commands anyway.
+
 ``.claude/tools/tests/test_shell_tokens.py`` pins the tokenizer directly;
-the private-key guard's case table pins it end to end.
+the private-key guard's 165-case table and the git-grep guard's self-test
+pin it end to end through the guards that import it.
 """
 
 import os
@@ -74,7 +80,9 @@ SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "fish"})
 SHELL_VALUE_FLAGS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
 
 ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\+?=")
-NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# `\Z`, never `$`: `$` also matches before a trailing newline, and a quoted
+# `read 'x<newline>'` operand must not read as the name `x`.
+NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 # Builtins whose operands are assignments (`export X=1`) or, for the last two,
 # bare variable names they set (`printf -v X …`, `read X`).
 DECLARERS = frozenset({"export", "declare", "typeset", "local", "readonly"})

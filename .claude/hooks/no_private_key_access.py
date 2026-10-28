@@ -88,7 +88,7 @@ import sys
 
 try:
     import _shell_tokens as sh
-except ImportError:  # fail open on the parse; the name checks still run
+except Exception:  # fail open on the parse; the name checks still run
     sh = None
 
 VAULT_ENV = "DS_OP_PRIVATE_KEYS_VAULT"
@@ -367,9 +367,11 @@ def _mutation_candidates(name, args):
 
 def _command_reason(argv, assigns, env_args, cwd):
     for assign in assigns:
-        var = sh.ASSIGN_RE.match(assign).group(1)
-        if HANDLE_NAME_RE.match(var):
-            return "an assignment to %s" % var
+        # A malformed spelling (`x\n=`) is no assignment the shell makes;
+        # dereferencing its failed match would crash the guard into an allow.
+        match = sh.ASSIGN_RE.match(assign)
+        if match and HANDLE_NAME_RE.match(match.group(1)):
+            return "an assignment to %s" % match.group(1)
     if not argv:
         return None
     name = os.path.basename(argv[0])
@@ -566,6 +568,11 @@ BASH_CASES = [
     ("SSH_AUTH_SOCK+=/x git log", True),
     ("export SSH_AUTH_SOCK=/tmp/x", True),
     ("printf -v SSH_AUTH_SOCK %s /x", True),
+    # A name operand ending in a newline must not crash the guard into an
+    # allow that waves the rest of the command through.
+    ("read 'x\n'; export SSH_AUTH_SOCK=/tmp/x", True),
+    ("printf -v 'y\n' a; export SSH_AUTH_SOCK=/tmp/x", True),
+    ("read 'SSH_AUTH_SOCK\n'; export SSH_AUTH_SOCK=/tmp/x", True),
     ("env OP_SESSION_my=abc ls", True),
     ("OP_SERVICE_ACCOUNT_TOKEN=x make collectors-up", True),
     ("ssh-add -l", True),

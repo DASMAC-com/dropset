@@ -125,6 +125,8 @@ class UnwrapTests(unittest.TestCase):
         self.assertIn("SSH_AUTH_SOCK=", self.unwrap("printf -v SSH_AUTH_SOCK %s x")[2])
         self.assertIn("V=", self.unwrap("read -r V")[2])
         self.assertNotIn("-r=", self.unwrap("read -r V")[2])
+        # `$` would match before the newline; the name must end the operand.
+        self.assertEqual(self.unwrap("read 'x\n'")[2], [])
         self.assertIn("A=1", self.unwrap("export A=1 B")[2])
 
 

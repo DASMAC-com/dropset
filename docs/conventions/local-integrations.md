@@ -271,7 +271,11 @@ loud first layer, never the last. The quote-aware parse lives once, in
 `.claude/hooks/_shell_tokens.py` — a raw pass (comments, `$'…'`, live
 versus literal substitutions), one lex with newline as a separator, glued
 operators split, commands segmented and unwrapped past wrappers to the
-argv that runs — pinned by `.claude/tools/tests/test_shell_tokens.py`.
+argv that runs — pinned directly by
+`.claude/tools/tests/test_shell_tokens.py`, and end to end by the
+private-key guard's case table and the git-grep guard's self-test. A
+heredoc body is scanned as shell even under a quoted delimiter: a false
+block, never a missed command.
 It came out of the private-key guard after four adversarial rounds each
 found a real quoting misread, so **a new guard imports it** rather than
 re-deriving bash quoting under review. The leading underscore keeps it
@@ -300,8 +304,10 @@ operator (glued or spaced), a newline, a wrapper (`env`, `sudo`,
 `xargs`), or inside a live substitution or `-c` payload. It nudges the
 model to the **Grep tool** (or a bare `grep` where Grep is absent). The
 scan is the [shared tokenizer](#the-guards-shared-shell-tokenizer), so
-quoted text (a commit message) and a single-quoted `$(…)` pass, and the
-guard fails *open* on a payload it can't read or an internal error, so
+quoted text (a commit message) and a single-quoted `$(…)` pass. A
+`git grep` whose quoting never closes still blocks, and so does one in a
+heredoc body. The guard fails *open* only on an unreadable hook payload
+(bad JSON), a tokenizer that does not import, or an internal error, so
 it never wedges a session.
 
 Why a guard beats allow-listing `git grep`: a plain `git grep foo`

@@ -1415,7 +1415,8 @@ tools-tests:
 
 # Run ONE test module from any of the tools-tests trees — the inner-loop form
 # after an edit; `make tools-tests` stays the checkpoint run. `T` is the
-# module (`T=test_session_metrics`, `.py` and a directory prefix optional);
+# module (`T=test_session_metrics`, `.py` optional); a directory prefix
+# (`T=keys/test_x`) pins the tree, else the first tree holding it wins.
 # `K` optionally narrows to matching test names (`unittest -k`). Resolves the
 # module's tree and its `-s` / `-t` pair, the part a hand-typed
 # `python3 -m unittest <path>` gets wrong ("Empty module name", "No module
@@ -1423,8 +1424,9 @@ tools-tests:
 TOOLS_TEST_DIRS := .claude/tools/tests .claude/scripts keys \
 	programs/dropset/release
 TOOLS_TEST_NAME = $(basename $(notdir $(T))).py
-TOOLS_TEST_FILE = $(firstword \
-	$(wildcard $(addsuffix /$(TOOLS_TEST_NAME),$(TOOLS_TEST_DIRS))))
+TOOLS_TEST_PIN = $(patsubst %/,%,$(filter-out ./,$(dir $(T))))
+TOOLS_TEST_FILE = $(firstword $(wildcard $(addsuffix /$(TOOLS_TEST_NAME), \
+	$(or $(TOOLS_TEST_PIN),$(TOOLS_TEST_DIRS)))))
 TOOLS_TEST_DIR = $(patsubst %/,%,$(dir $(TOOLS_TEST_FILE)))
 .PHONY: tools-test
 tools-test:
