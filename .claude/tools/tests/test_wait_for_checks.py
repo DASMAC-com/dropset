@@ -1069,6 +1069,7 @@ class QueueModeCliTests(unittest.TestCase):
         _, seen = self._queue_mode("dequeued")
         self.assertEqual(seen["verdict"]["conclusion"], "dequeued")
         self.assertEqual(seen["verdict"]["mergeable"], "MERGEABLE")
+        self.assertIsNone(seen["verdict"]["mergeable_error"])
         self.assertFalse(seen["cause_conflicting"])
 
     def test_a_dequeue_after_queue_runs_skips_the_mergeability_read(self):

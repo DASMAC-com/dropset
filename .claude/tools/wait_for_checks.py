@@ -168,7 +168,7 @@ conclusion. See :func:`dismiss_pr_notifications`.
 reason, so the rebase starts from the verdict. See :func:`dequeue_cause`.
 
 A dequeue with **no** queue run also settles the PR's ``mergeable`` (reported
-beside ``merge_state_status``); a ``CONFLICTING`` / ``DIRTY`` read turns the
+beside ``merge_state_status`` and ``mergeable_error``); a ``CONFLICTING`` / ``DIRTY`` read turns the
 conclusion into ``conflicting``, ``dequeue`` filled the same way, with
 ``base_gained`` read whatever the timeline's reason says.
 
@@ -1820,6 +1820,9 @@ def run(argv: list[str]) -> int:
                 )
                 verdict["mergeable"] = state["mergeable"]
                 verdict["merge_state_status"] = state["merge_state_status"]
+                # As in `wait`: a failed read and a clean one both show
+                # `mergeable: null`, so the reason rides beside it.
+                verdict["mergeable_error"] = state["error"]
                 conflicting = _is_conflicting(state)
                 if conflicting:
                     verdict["conclusion"] = "conflicting"
