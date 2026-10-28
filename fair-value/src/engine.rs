@@ -36,6 +36,7 @@ use crate::consensus::{
     Candidate, Candidates, Consensus, ConsensusState, Contributors, LegStaleness,
 };
 use crate::fusion::{Fusion, FusionReport, FusionStep};
+use crate::reading::Reading;
 
 /// The raw feed legs for one market on one tick. Each leg carries **every
 /// source that answered**, not the winner of a priority ladder — the engine
@@ -57,7 +58,7 @@ pub struct Legs {
     /// A stand-in for the crypto reference, in the same units — an on-chain
     /// pool the leg's designated tape is corroborated by. Consulted **only**
     /// when `crypto_usdc` resolves to nothing, so it never overrides a live
-    /// reference, and composed at [`Degrade::PoolOnly`] when it is.
+    /// reference, and composed at [`Degrade::PoolOnly`] or worse when it is.
     ///
     /// A separate leg rather than another candidate on `crypto_usdc`, because
     /// once the designated tape is gone the consensus cannot tell a promoted
@@ -370,8 +371,8 @@ pub enum Degrade {
     BasisUnusable,
     /// The crypto reference is dark and its **stand-in** carries the leg — see
     /// [`Legs::crypto_stand_in`]. In session the mid is `fx × basis` with the
-    /// basis observed off the stand-in; with no FX it is the stand-in's price,
-    /// the crypto-only shape.
+    /// stand-in's observation folded into the basis; with no FX it is the
+    /// stand-in's price, the crypto-only shape.
     ///
     /// Never healthy, whatever the session: the stand-in is a corroborator
     /// promoted only because the designated tape went quiet, and a source
@@ -793,7 +794,7 @@ impl FairValueEngine {
         // estimator above fused the designated leg's empty set and carries its
         // prior, so the tape's return blends against the tape's own history
         // rather than against the pool's.
-        let mut out = match stand_in {
+        let mut out = match stand_in.and_then(|c| c.reading) {
             Some(pool) => self.compose_stand_in(&legs, fused_into(fx, &fx_fusion), pool, usdc),
             None => self.compose_resolved(
                 &legs,
@@ -809,8 +810,10 @@ impl FairValueEngine {
         // On a shut market this reports the ORIGINAL set, resolved before the leg
         // was emptied, so the per-leg view still shows what the feeds published.
         out.fx_leg = fx_reported.unwrap_or(fx).into();
-        // A standing-in pool is reported as the crypto leg, so the operator
-        // reads the source the mid actually rests on.
+        // A consulted stand-in is reported as the crypto leg, so the operator
+        // reads the source the composition judged — including on a tick that
+        // refused it, where `basis_outlier` says so. A single source is never
+        // dispersed, so `crypto_leg_outlier` stays empty on those ticks.
         out.crypto_leg = stand_in.unwrap_or(crypto).into();
         out.fx_fusion = fx_fusion;
         out.crypto_fusion = crypto_fusion;
@@ -1034,30 +1037,41 @@ impl FairValueEngine {
     /// seed it would hand a pool nobody designated the basis outright. With none,
     /// the market falls back as any FX-anchored market without a basis does.
     ///
+    /// **The offer is judged as if at most one half-life had passed**, however
+    /// long the basis has gone unfolded. The EMA widens its gate and raises its
+    /// fold weight with the time since the last fold, which is right for an
+    /// honest gap in the designated tape — and exploitable by a source anyone
+    /// can move: hold the pool outside the gate until the allowance has widened,
+    /// then step it back in, and one fold at near-full weight would carry the
+    /// basis most of the way there. Capped, every stand-in offer meets the base
+    /// allowance at no more than half weight, so a persistent push moves the
+    /// basis at the EMA's own pace. A stand-in that stays outside the base gate
+    /// never folds, and the carried basis ages out to the static peg instead.
+    ///
+    /// What a stand-in folded **outlives it**: when the candle returns, the
+    /// basis it meets is the one the pool left, and a candle more than the gate
+    /// away from it is refused as an outlier (`NoBasisLeg`) until the allowance
+    /// has widened enough to take it. Bounded by the gate's widening and by
+    /// `basis_max_age`, and healed by the candle, which is the designated tape.
+    ///
     /// **With no FX** the stand-in's price is the mid, the crypto-only shape. No
     /// basis is observable without an FX anchor to divide by, so the carried
     /// basis has nothing to judge here; what bounds this case is the consensus
     /// resolution, the degraded health, and the operator reading `pool_only`.
+    ///
+    /// `PoolOnly` names the stand-in **in preference to an FX-side cause** — a
+    /// stale, invalid or dispersed FX leg in session reads `pool_only`, not
+    /// `fx_stale` and its siblings. The row carries one degrade, and the pool
+    /// carrying the leg is the more manipulable of the two facts; the FX leg's
+    /// own state is still in its leg report.
     fn compose_stand_in(
         &mut self,
         legs: &Legs,
         fx_leg: Consensus,
-        stand_in: Consensus,
+        pool: Reading,
         usdc_leg: Consensus,
     ) -> FairValue {
         let usdc_breach = self.usdc_breach(legs, &usdc_leg);
-        let Some(pool) = stand_in.reading else {
-            // Unreachable: the caller passes a stand-in only once it resolved
-            // to a reading. Falling back rather than panicking keeps the
-            // degrade honest if that ever changes.
-            return self.fall_back(
-                legs.static_usd,
-                Degrade::StaticPeg,
-                usdc_breach,
-                false,
-                false,
-            );
-        };
         let Some(fx) = fx_leg.reading else {
             return FairValue {
                 usdc_breach,
@@ -1073,7 +1087,8 @@ impl FairValueEngine {
         }
         let observation = observed_basis(pool.value, fx.value);
         let observed_breach = observation.is_some_and(|o| self.basis_out_of_band(o));
-        let fold = observation.map(|o| self.basis.update(o, self.since_basis));
+        let judged_at = self.since_basis.min(self.cfg.basis_half_life);
+        let fold = observation.map(|o| self.basis.update(o, judged_at));
         let outlier = fold.is_none_or(Fold::rejected);
         if let Some(Fold::Folded(_)) = fold {
             self.since_basis = Duration::ZERO;
@@ -1257,8 +1272,6 @@ pub(crate) fn observed_basis(crypto_usdc: f64, fx: f64) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::reading::Reading;
 
     /// The default config's dispersion band, for the leg-resolution helpers
     /// that take it explicitly.
@@ -3088,6 +3101,45 @@ mod tests {
         assert_eq!(r.anchor, Anchor::Static);
         let next = e.compose(normal(1.02), secs(5), ClockCtx::in_session());
         assert_eq!(next.basis, Some(1.02), "the pool left no trace on the EMA");
+    }
+
+    /// A pool held outside the gate cannot wait for the allowance to widen and
+    /// then step back in at near-full weight.
+    #[test]
+    fn a_refusal_streak_does_not_widen_the_gate_for_the_pool() {
+        let mut e = seeded_at_1_02();
+        // Ten refused offers, 50 minutes in all: inside the 60-minute age bound,
+        // and five half-lives — a 25% allowance on the uncapped gate.
+        for _ in 0..10 {
+            let r = e.compose(pool_only(1.40), secs(300), ClockCtx::in_session());
+            assert_eq!(r.regime, Regime::Degraded(Degrade::LegDispersed));
+        }
+        // ~7.8% off the carried 1.02: inside a widened gate, outside the base.
+        let r = e.compose(pool_only(1.10), secs(5), ClockCtx::in_session());
+        assert_eq!(r.regime, Regime::Degraded(Degrade::LegDispersed));
+        assert_eq!(r.basis, Some(1.02), "the basis must not have moved");
+    }
+
+    #[test]
+    fn an_in_session_fx_outage_names_the_pool_not_the_fx_cause() {
+        let mut e = seeded_at_1_02();
+        let legs = Legs {
+            fx: Candidates::none(),
+            ..pool_only(1.03)
+        };
+        let r = e.compose(legs, secs(5), ClockCtx::in_session());
+        assert_eq!(r.regime, Regime::Degraded(Degrade::PoolOnly));
+        assert_eq!(r.anchor, Anchor::CryptoReference);
+        assert_eq!(r.fair, Some(1.03));
+    }
+
+    #[test]
+    fn a_pool_does_not_revive_an_expired_basis() {
+        let mut e = seeded_at_1_02();
+        // Past the 60-minute age bound since the candle last folded.
+        let r = e.compose(pool_only(1.03), secs(3601), ClockCtx::in_session());
+        assert_eq!(r.regime, Regime::Degraded(Degrade::BasisUnusable));
+        assert_eq!(r.anchor, Anchor::Static);
     }
 
     #[test]

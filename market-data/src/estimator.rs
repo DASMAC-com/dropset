@@ -147,9 +147,10 @@ pub struct EstimatorMarket {
     /// **Setting it designates the candle.** A market with a pool corroborator
     /// offers its candle as the believable-alone tape and the pool beside it,
     /// untrusted, so a pool walked past the dispersion band is named the
-    /// outlier and flagged rather than vetoing the leg. The pool is offered
-    /// only while the candle is itself fresh: it corroborates and never stands
-    /// alone, since anyone paying the slippage can move it.
+    /// outlier and flagged rather than vetoing the leg. The pool corroborates
+    /// only while the candle is itself fresh; with the candle dark it stands
+    /// in for the leg, at a degraded regime, since anyone paying the slippage
+    /// can move it.
     pub pool_corroborator: Option<&'static str>,
     /// Basis to pin because the market has no candle series fit to compose
     /// from: CADC was never listed, and `AUDD-USDC` trades too thinly. The

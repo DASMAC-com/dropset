@@ -77,7 +77,7 @@ pub use dropset_fair_value::FairValue;
 /// regime from what survives.
 ///
 /// No crypto stand-in: the bot's own feeds carry no pool corroborator, so a
-/// dark crypto leg here degrades as it always has.
+/// dark crypto leg here degrades on the carried basis or the static peg.
 pub fn build_legs(
     fx: Candidates,
     crypto_usdc: Candidates,

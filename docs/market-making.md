@@ -490,15 +490,21 @@ corroborator (`EstimatorMarket::pool_corroborator`), and the rule is:
   `Degraded(PoolOnly)`, published as `pool_only` — never `Normal` or
   `CryptoOnly`. In session the pool is a basis observation, so the mid is
   `fair = fx × basis` with the pool's reading folded into the carried
-  basis through its jump gate. A reading the gate refuses composes
-  nothing and the market reads `LegDispersed` on the carried basis, and
-  the pool never seeds a basis that is unseeded or expired. Out of
-  session the pool price is the mid, the crypto-only shape at a degraded
-  regime; with no FX there is no basis to judge it against, so what
-  guards it is the degraded health (kill switches tightened by half) and
-  the operator reading `pool_only`. A fresh candle is never overridden,
-  and the static peg remains the fallback only when the candle and the
-  pool are both dark.
+  basis through its jump gate. The gate judges the pool as if at most one
+  half-life had passed, so a pool held outside it cannot wait for the
+  allowance to widen and then fold at near-full weight. A reading the
+  gate refuses composes nothing and the market reads `LegDispersed` on
+  the carried basis, and the pool never seeds a basis that is unseeded or
+  expired. With no FX — out of session, or an FX outage in session — the
+  pool price is the mid, the crypto-only shape at a degraded regime;
+  there is no basis to judge it against, so what guards it is the
+  degraded health (kill switches tightened by half) and the operator
+  reading `pool_only`, which names the pool in preference to an FX-side
+  cause. A fresh candle is never overridden, and the static peg remains
+  the fallback only when the candle and the pool are both dark. A basis
+  the pool moved outlives it: a returning candle more than the gate away
+  from it reads `NoBasisLeg` until the allowance widens enough to fold
+  it.
 
 The cost, accepted when the rule was chosen: a lone candle now reads
 `SingleTrusted` rather than `SingleUnverified`, so tGBP no longer reports
