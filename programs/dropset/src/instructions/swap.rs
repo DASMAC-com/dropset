@@ -32,9 +32,15 @@
 //!
 //! Per spec § **Events and emission**, every filled `(vault, level)`
 //! leg emits one bytemuck `FillEvent` via `emit_cpi!`. No
-//! truncation: the matcher accumulates a `Vec<FillEvent>` and
-//! `lib.rs` dispatches each via the macro one at a time. A fee-bearing
-//! swap adds a single `PlatformFeeEvent` alongside them.
+//! truncation: the matcher accumulates a compact `Vec<FilledLeg>` and
+//! `lib.rs` widens and dispatches each via the macro one at a time. A
+//! fee-bearing swap adds a single `PlatformFeeEvent` alongside them.
+//!
+//! The walk fills at most `MAX_LEGS_PER_SWAP` legs. The program heap is
+//! a 32 KiB bump allocator that never frees, and every filled leg costs
+//! it a record here plus the emit path's own allocations, so an unbounded
+//! walk would let a book deep in dust legs abort every take. At the cap
+//! the walk stops as it does on an exhausted budget.
 
 extern crate alloc;
 
@@ -55,7 +61,7 @@ use crate::{
     errors::DropsetError,
     events::{FillEvent, PlatformFeeEvent, LEG_KIND_FLIPPED, LEG_KIND_PRIMARY},
     state::{Market, VaultAccess, FLUSH_BIT},
-    Price, SlotTime, WallTime, N_LEVELS,
+    Price, SlotTime, WallTime, MAX_LEGS_PER_SWAP, N_LEVELS,
 };
 
 /// Side of a taker fill, shared with the off-chain simulator so the wire
@@ -548,12 +554,35 @@ struct HeapEntry {
     size: u64,
 }
 
+/// One filled leg as the walk records it: the per-leg part of its
+/// `FillEvent`, which [`Swap::fill_event`] widens into the event at emit
+/// time. The per-swap constants (market, taker, side) and the vault-scoped
+/// ones (leader, quote authority, `seq`) are left out, since a swap
+/// rewrites none of them, so a record is 80 bytes against the event's 256
+/// — the difference is heap a deep take no longer spends.
+pub struct FilledLeg {
+    sector_idx: u32,
+    level_idx: u32,
+    fill_price: crate::Price,
+    flip_price: crate::Price,
+    fill_base: u64,
+    fill_quote: u64,
+    /// The consumed counter after the debit, in that side's atoms.
+    remaining_after: u64,
+    base_atoms_after: u64,
+    quote_atoms_after: u64,
+    nonce_after: u64,
+    taker_fee_atoms: u64,
+    /// `true` when the leg consumed the flipped counter.
+    flipped: bool,
+}
+
 impl Swap {
-    /// Returns the per-leg `FillEvent` list for `lib.rs` to dispatch
-    /// via `emit_cpi!`. The matching engine can't call `emit_cpi!`
-    /// directly — the macro requires `ctx` in scope, which the
-    /// `&mut self` handler can't see. Accumulating and emitting at
-    /// the lib.rs layer preserves the spec's per-leg-fill rule
+    /// Returns the filled legs for `lib.rs` to dispatch via `emit_cpi!`,
+    /// each widened by [`Swap::fill_event`]. The matching engine can't
+    /// call `emit_cpi!` directly — the macro requires `ctx` in scope,
+    /// which the `&mut self` handler can't see. Accumulating and emitting
+    /// at the lib.rs layer preserves the spec's per-leg-fill rule
     /// (§ Events and emission → Granularity).
     pub fn swap(
         &mut self,
@@ -562,7 +591,7 @@ impl Swap {
         limit_price_bits: u32,
         min_out: u64,
         platform_fee_bps: u16,
-    ) -> Result<(alloc::vec::Vec<FillEvent>, Option<PlatformFeeEvent>)> {
+    ) -> Result<(alloc::vec::Vec<FilledLeg>, Option<PlatformFeeEvent>)> {
         let side = SwapSide::from_u8(side_u8).ok_or(DropsetError::InvalidSwapSide)?;
         let limit_price = Price::from_bits(limit_price_bits);
         require!(limit_price.is_valid(), DropsetError::InvalidPrice);
@@ -787,11 +816,14 @@ impl Swap {
         let mut total_out: u128 = 0;
         let mut total_fee: u128 = 0;
         let mut filled_legs: u32 = 0;
-        // Deliberately not pre-sized. Any entry-count bound is a ceiling the
-        // taker's budget rarely reaches, and reserving it up front on the
-        // 32 KiB bump heap faults a small take on a deep book before its
-        // first leg; growth by doubling costs less in the common case.
-        let mut fill_events: alloc::vec::Vec<FillEvent> = alloc::vec::Vec::new();
+        // Pre-sized, like `heap`, so the bump allocator never leaks an
+        // outgrown buffer: no take fills more than `MAX_LEGS_PER_SWAP` legs
+        // nor more than the book has entries, and each filled leg pushes
+        // one record here and one snapshot below, so the smaller bound is
+        // exact. The records are compact (`FilledLeg`, not the 256-byte
+        // `FillEvent`): `lib.rs` builds each event from one at emit time.
+        let leg_bound = heap.len().min(MAX_LEGS_PER_SWAP as usize);
+        let mut filled: alloc::vec::Vec<FilledLeg> = alloc::vec::Vec::with_capacity(leg_bound);
         // Snapshots taken BEFORE each leg mutates state, so that a
         // failed `min_out` check can restore the per-vault inventory
         // and both of the touched level's counters (`size` and
@@ -808,7 +840,7 @@ impl Swap {
             size_before: u64,
             flip_size_before: u64,
         }
-        let mut snapshots: alloc::vec::Vec<LegSnapshot> = alloc::vec::Vec::new();
+        let mut snapshots: alloc::vec::Vec<LegSnapshot> = alloc::vec::Vec::with_capacity(leg_bound);
         let nonce_at_start = self.market.nonce.get();
         // Pre-swap protocol-fee accumulators. The per-leg increments below
         // are — with the nonce — the only header writes the matching walk
@@ -860,6 +892,15 @@ impl Swap {
                 break;
             }
             if taker_unfilled_in == 0 {
+                break;
+            }
+            // The leg cap ends the walk as `Exhausted` does: the remainder
+            // stays with the taker and the `min_out` check below still
+            // runs, so a book deeper than one transaction can settle gives
+            // a bounded partial fill or a clean soft-revert, never a heap
+            // abort. Counts filled legs, so a skipped level spends none.
+            // Mirrored in the simulator (`dropset_interface::matching`).
+            if filled_legs >= MAX_LEGS_PER_SWAP {
                 break;
             }
 
@@ -1048,35 +1089,20 @@ impl Swap {
             total_fee = total_fee.saturating_add(fee);
             filled_legs = filled_legs.saturating_add(1);
 
-            // Emit one event per matched (vault, level) leg.
-            let (leader, quote_authority, vault_seq) = {
-                let v = self.market.read_vault(sector_idx)?;
-                (v.leader, v.quote_authority, v.seq.get())
-            };
-            fill_events.push(FillEvent {
-                market: market_addr,
-                taker: *self.taker.address(),
-                leader,
-                quote_authority,
-                sector_idx: sector_idx.into(),
-                level_idx: level_idx.into(),
-                vault_seq: vault_seq.into(),
+            // Record the leg for its one event per matched (vault, level).
+            filled.push(FilledLeg {
+                sector_idx,
+                level_idx,
                 fill_price: price,
                 flip_price: level_flip_price,
-                fill_base: fill_base.into(),
-                fill_quote: fill_quote.into(),
-                remaining_after: remaining_after.into(),
-                base_atoms_after: new_base.into(),
-                quote_atoms_after: new_quote.into(),
-                nonce_after: new_nonce.into(),
-                taker_fee_atoms: fee_u64.into(),
-                side: side_u8,
-                leg_kind: if flipped {
-                    LEG_KIND_FLIPPED
-                } else {
-                    LEG_KIND_PRIMARY
-                },
-                _reserved: [0; 46],
+                fill_base,
+                fill_quote,
+                remaining_after,
+                base_atoms_after: new_base,
+                quote_atoms_after: new_quote,
+                nonce_after: new_nonce,
+                taker_fee_atoms: fee_u64,
+                flipped,
             });
         }
 
@@ -1324,7 +1350,41 @@ impl Swap {
                     atoms: platform_fee,
                     platform_fee_bps,
                 });
-        Ok((fill_events, platform_fee_event))
+        Ok((filled, platform_fee_event))
+    }
+
+    /// Widen one [`FilledLeg`] into its `FillEvent`, for `lib.rs` to emit.
+    /// The per-swap constants come from the accounts and the vault-scoped
+    /// ones (`leader`, `quote_authority`, `seq`) from the leg's sector: a
+    /// swap rewrites none of them, so reading them now gives what the walk
+    /// would have read when the leg filled.
+    pub fn fill_event(&self, leg: &FilledLeg, side: u8) -> Result<FillEvent> {
+        let v = self.market.read_vault(leg.sector_idx)?;
+        Ok(FillEvent {
+            market: *self.market.address(),
+            taker: *self.taker.address(),
+            leader: v.leader,
+            quote_authority: v.quote_authority,
+            sector_idx: leg.sector_idx.into(),
+            level_idx: leg.level_idx.into(),
+            vault_seq: v.seq.get().into(),
+            fill_price: leg.fill_price,
+            flip_price: leg.flip_price,
+            fill_base: leg.fill_base.into(),
+            fill_quote: leg.fill_quote.into(),
+            remaining_after: leg.remaining_after.into(),
+            base_atoms_after: leg.base_atoms_after.into(),
+            quote_atoms_after: leg.quote_atoms_after.into(),
+            nonce_after: leg.nonce_after.into(),
+            taker_fee_atoms: leg.taker_fee_atoms.into(),
+            side,
+            leg_kind: if leg.flipped {
+                LEG_KIND_FLIPPED
+            } else {
+                LEG_KIND_PRIMARY
+            },
+            _reserved: [0; 46],
+        })
     }
 
     /// Pay the platform fee out of the **base** treasury (the output leg on

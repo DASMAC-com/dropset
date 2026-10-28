@@ -6,7 +6,8 @@
 //! `LiquidityProfile` when `FLUSH_BIT` is armed, else reading
 //! `remaining`, flipped counters included), sort by cross-vault
 //! price-time priority, then fill the taker leg-by-leg until the input is
-//! exhausted or the limit price is crossed.
+//! exhausted, the limit price is crossed or [`MAX_LEGS_PER_SWAP`] legs
+//! have filled.
 //!
 //! Used by the router quoting adapters (e.g. DFlow) and any depth/quote
 //! endpoint. Part of the consensus-critical logic is shared with the
@@ -38,6 +39,10 @@ use crate::price::Price;
 /// the simulator share one declaration of the `swap` instruction's `side`
 /// encoding.
 pub use crate::matching_math::SwapSide;
+
+/// The engine's per-swap leg cap, re-exported from math-core so the walk
+/// below stops on the same leg `swap.rs` does.
+pub use dropset_math_core::MAX_LEGS_PER_SWAP;
 
 /// Result of simulating a take against the current book.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -205,6 +210,12 @@ pub fn simulate_swap(
         // Limit-price filter — levels are best-first, so the first cross
         // means every remaining level crosses too.
         if crosses_limit(lvl.price, limit_price, is_buy) {
+            break;
+        }
+        // The leg cap ends the walk like an exhausted budget: the remainder
+        // stays with the taker. Mirrors the engine's check, which counts
+        // filled legs only, so a skipped level never spends one.
+        if legs >= MAX_LEGS_PER_SWAP {
             break;
         }
 

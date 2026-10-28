@@ -69,12 +69,14 @@ pub use dropset_math_core::share::{compute_pro_rata_slice, isqrt_u128, min_leade
 pub const VAULT_NAME_LEN: usize = 32;
 
 // The layout sentinels (level count, null sector, flush flag, Q32.32 one),
-// the Q32.32 shift width and the parts-per-million and basis-points
-// denominators are re-exported from math-core rather than redeclared, for
+// the Q32.32 shift width, the per-swap leg cap and the parts-per-million
+// and basis-points denominators are re-exported from math-core rather than redeclared, for
 // the same reason as the kernels above: the off-chain layout mirror, the
 // bounds this crate checks and the divisions math-core performs must all
 // read the same constant, not two literals that happen to agree.
-pub use dropset_math_core::{BPS, FLUSH_BIT, NULL_SECTOR, N_LEVELS, PPM, Q32_32_ONE, Q32_SHIFT};
+pub use dropset_math_core::{
+    BPS, FLUSH_BIT, MAX_LEGS_PER_SWAP, NULL_SECTOR, N_LEVELS, PPM, Q32_32_ONE, Q32_SHIFT,
+};
 
 /// Market account: [`MarketHeader`] followed by a slab tail of [`Vault`]
 /// sectors. Sectors are managed via the [`VaultDll`] operations rather
