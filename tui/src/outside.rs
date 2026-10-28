@@ -54,12 +54,11 @@ pub fn open(
     symbol: &str,
     log: &Logger,
 ) -> Result<String> {
-    // The two halves are two signers by design; a leader that is the
-    // wallet would also sign the leader half as the payer, so refuse it
-    // rather than send a transaction listing one key twice.
+    // The same rule `do_create_vault` holds: the vault's leader is never
+    // this session's own wallet, so a key that is both refuses here too.
     if leader.pubkey() == wallet.pubkey() {
         bail!(
-            "the leader must not be the admin wallet ({}) — nothing sent",
+            "the leader must not be this session's wallet ({}) — nothing sent",
             wallet.pubkey()
         );
     }

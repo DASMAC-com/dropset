@@ -98,7 +98,8 @@ Then the vaults:
 
 1. Open **Vaults**. Each market lists its leader vault by name, `DASMAC`,
    with its Deposit button live. A vault that reads "Not open yet" is
-   missing a flag: the check's `vault TGBP-USDC` line says which.
+   missing a flag: for tGBP-USDC the check's `vault TGBP-USDC` line says
+   which, and on any market `O` in the TUI sets what is missing.
 1. Connect the swap wallet, the one the bootstrap funds.
 1. Deposit \$10 into the tGBP-USDC vault. Your position appears, and the
    vault's reserves grow by the deposit.

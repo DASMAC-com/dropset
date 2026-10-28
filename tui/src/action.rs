@@ -1007,26 +1007,8 @@ pub fn dispatch(
                                     chain::BOOTSTRAP_VAULT_NAME,
                                     &log,
                                 )?;
-                                // Every vault the bootstrap creates opens to
-                                // outside depositors — the localnet wallet is
-                                // the genesis admin, so both halves. One that
-                                // already existed is left as it is; `O`
-                                // opens it by hand.
-                                let opened = matches!(created, Outcome::Done(_));
+                                let created_here = matches!(created, Outcome::Done(_));
                                 created.log_skip(&log);
-                                if opened {
-                                    let (base, quote) = market::pair_mints(repo_root, config)?;
-                                    let address = chain::market_pda(cluster, &base, &quote);
-                                    log.log(crate::outside::open(
-                                        &client,
-                                        &wallet,
-                                        &leader,
-                                        cluster,
-                                        &address,
-                                        config.base.symbol,
-                                        &log,
-                                    )?);
-                                }
                                 do_deposit(
                                     &client,
                                     &wallet,
@@ -1040,6 +1022,28 @@ pub fn dispatch(
                                     &log,
                                 )?
                                 .log_skip(&log);
+                                // Every vault the bootstrap creates opens to
+                                // outside depositors — the localnet wallet is
+                                // the genesis admin, so both halves. After
+                                // the seed, so a failed open never costs the
+                                // market its deposit. One that already
+                                // existed is left as it is — a re-run cannot
+                                // tell an older vault from one this run
+                                // created and failed to open — and `O` opens
+                                // it by hand.
+                                if created_here {
+                                    let (base, quote) = market::pair_mints(repo_root, config)?;
+                                    let address = chain::market_pda(cluster, &base, &quote);
+                                    log.log(crate::outside::open(
+                                        &client,
+                                        &wallet,
+                                        &leader,
+                                        cluster,
+                                        &address,
+                                        config.base.symbol,
+                                        &log,
+                                    )?);
+                                }
                                 Ok(())
                             })
                         })
