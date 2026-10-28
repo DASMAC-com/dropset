@@ -235,7 +235,7 @@ class CycleLoop(unittest.TestCase):
         self.assertEqual(counter.read_text().strip(), "1")
         self.assertFalse((self.state / f"plan-cycle-{self.day}").exists())
         self.assertFalse((self.state / "curate-cycle-pending").exists())
-        # The scheduler's launch alone runs upkeep; the role is set and cleared.
+        # Only the pre-launch runs upkeep; the role is set and cleared.
         self.assertFalse((self.state / "upkeep-calls").exists())
         roles = (self.state / "role-calls").read_text().splitlines()
         self.assertEqual(roles, ["role:curate", "role:"])

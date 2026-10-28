@@ -2072,7 +2072,7 @@ explore() {
 }
 
 # Internal: the model-free morning upkeep pass (.claude/tools/upkeep.py), run in
-# the operator's terminal before a planning client starts, so a hung step is
+# the operator's terminal by the `plan` pre-launch, so a hung step is
 # visible here rather than buried in a session. The tool writes the Planning
 # document's upkeep heading, which the bootstrap reads; destructive items wait
 # for the planning tab's one consolidated question.
@@ -2464,8 +2464,8 @@ _ds_daily_seat() {
 # free, non-building seat verb, so its class is stamped `free` through the same
 # resolver and it builds on lane 0, as the base checkout always does.
 #
-# NO AWS GATE (it reads no cost data) and NO UPKEEP PASS (that is the
-# scheduler's launch). Its tab carries `ds_role=curate`, which rests it just
+# NO AWS GATE (it reads no cost data) and NO UPKEEP PASS (that is the `plan`
+# pre-launch's). Its tab carries `ds_role=curate`, which rests it just
 # left of the scheduler's at the right edge (`iterm-reorder.py`), and
 # `session_dispatch.py` opens new tabs left of both.
 curate() {

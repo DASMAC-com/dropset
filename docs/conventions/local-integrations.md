@@ -2739,7 +2739,7 @@ a terminal closed outright, is covered by the next morning's digest.
   is a **free** seat verb (class stamped `free` through the shared
   resolver; lane 0, as the base checkout always is). It runs **no AWS
   gate** (it reads no cost data) and **no upkeep pass** (that is the
-  scheduler's launch). Its tab carries `ds_role=curate` around the
+  `plan` pre-launch's). Its tab carries `ds_role=curate` around the
   loop, cleared on every way out: `iterm-reorder.py` rests it just
   left of the scheduler's tab, which stays outermost, and
   `session_dispatch.py` opens new tabs left of both. Sourcing the init
