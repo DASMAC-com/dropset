@@ -279,11 +279,14 @@ off the [wired-guard report](#which-guards-are-actually-wired); a guard
 importing it keeps its fail-open contract at that boundary, an
 `ImportError` disabling only its parse-driven checks.
 
-The private-key and git-grep guards use it. The compound-shell guard (a
-character scanner whose findings are the operators themselves) and the
-destructive-command guard (a regex classifier over inert-span masking)
-keep their own parse, since neither is a drop-in: each would move a
-pinned verdict. Move either onto it when it is next reworked.
+The private-key and git-grep guards use it. Three guards keep their own
+parse, since none is a drop-in and each would move a pinned verdict:
+the compound-shell guard (a character scanner whose findings are the
+operators themselves), the destructive-command guard (a regex
+classifier over inert-span masking), and the AI-attribution guard
+(it reads message *values* per logical line, and skips a line that
+does not lex where the shared parse scans it word by word). Move one
+onto it when it is next reworked.
 
 ## The git-grep guard hook
 
