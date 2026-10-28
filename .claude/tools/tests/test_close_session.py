@@ -457,6 +457,67 @@ class CostLineTests(unittest.TestCase):
         self.assertEqual(order, [])
 
 
+class NotifyingRun(FakeRun):
+    """A closable session whose PR has notification threads: the repo-scoped
+    list answers ``threads`` as ``(id, pr)``, and a DELETE fails for an id in
+    ``delete_fails``."""
+
+    def __init__(self, threads=(), delete_fails=(), **overrides):
+        super().__init__(**overrides)
+        self.threads = list(threads)
+        self.delete_fails = set(delete_fails)
+
+    def __call__(self, cmd, cwd=None):
+        if cmd[:2] == ["gh", "api"] and "notifications?" in cmd[2]:
+            self.calls.append(cmd)
+            url = "https://api.github.com/repos/DASMAC-com/dropset/pulls/{}"
+            page = [
+                {"id": t, "subject": {"url": url.format(n)}} for t, n in self.threads
+            ]
+            return 0, json.dumps(page), ""
+        if cmd[:3] == ["gh", "api", "-X"]:
+            self.calls.append(cmd)
+            tid = cmd[-1].rsplit("/", 1)[1]
+            return (1, "", "HTTP 500") if tid in self.delete_fails else (0, "", "")
+        return super().__call__(cmd, cwd)
+
+
+class NotificationTests(unittest.TestCase):
+    def _close(self, args=None, **fake):
+        runner = NotifyingRun(**fake)
+        rc, result = close(args or ns(), run=runner, writer=Writer(), pid=1000)
+        return rc, result, runner
+
+    def test_the_branch_threads_are_dismissed_before_the_removal(self):
+        rc, result, runner = self._close(threads=[("t1", 503), ("t2", 777)])
+        self.assertEqual(rc, 0, result)
+        deletes = [c[-1] for c in runner.calls if c[:3] == ["gh", "api", "-X"]]
+        # Only the closed branch's PR — never another PR's thread.
+        self.assertEqual(deletes, ["/notifications/threads/t1"])
+        self.assertEqual(result["notifications"], "dismissed 1 notification(s)")
+        first_delete = next(
+            i for i, c in enumerate(runner.calls) if c[:3] == ["gh", "api", "-X"]
+        )
+        remove_at = next(
+            i for i, c in enumerate(runner.calls) if c[3:5] == ["worktree", "remove"]
+        )
+        self.assertLess(first_delete, remove_at)
+
+    def test_a_failed_dismissal_is_a_note_not_a_refusal(self):
+        rc, result, _ = self._close(threads=[("t1", 503)], delete_fails=["t1"])
+        self.assertEqual(rc, 0, result)
+        self.assertTrue(result["removed"])
+        self.assertIn(
+            "notifications: dismissed 0 notification(s), 1 failed", result["notes"]
+        )
+
+    def test_a_dry_run_or_a_refusal_dismisses_nothing(self):
+        for args, fake in ((ns(dry_run=True), {}), (ns(), {"status": " M x\n"})):
+            _, result, runner = self._close(args, threads=[("t1", 503)], **fake)
+            self.assertFalse(any(c[:3] == ["gh", "api", "-X"] for c in runner.calls))
+            self.assertIsNone(result["notifications"])
+
+
 class RealGitRemoveTests(unittest.TestCase):
     """``remove`` against a real repository: a harness-style lock and an
     ignored build tree must not stop a no-``--force`` removal."""

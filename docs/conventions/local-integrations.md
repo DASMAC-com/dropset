@@ -2641,9 +2641,10 @@ a terminal closed outright, is covered by the next morning's digest.
   prints `plan: pre-launch`, clears inherited Bedrock exports, runs
   the AWS gate and then `.claude/tools/upkeep.py run --if-stale` in
   the typed tab: fast-forward, CLI upgrade, the prune of completed or
-  canceled issues' worktrees and the dismissal of their
-  notifications (both dry runs unless the runtime config exports
-  `DS_UPKEEP_ARMED=1`), the settings checks and the purge dry-run.
+  canceled issues' worktrees (a dry run unless the runtime config
+  exports `DS_UPKEEP_ARMED=1`), the dismissal of every merged or
+  closed PR's notifications (always armed — it destroys nothing),
+  the settings checks and the purge dry-run.
   The pass prints a line to stderr as each step starts (its name,
   what it does, the timeout bounding its slowest call) and ends (the
   elapsed seconds, or `crashed`), then a total, so a hung step names

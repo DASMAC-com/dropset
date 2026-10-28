@@ -381,9 +381,7 @@ def step_prs(ctx: Ctx) -> None:
     ctx.data["open_branches"] = sorted(
         p["headRefName"] for p in opened or [] if p.get("headRefName")
     )
-    ctx.record(
-        "prs", f"{len(closed or [])} terminal PR(s), {len(opened or [])} open"
-    )
+    ctx.record("prs", f"{len(closed or [])} terminal PR(s), {len(opened or [])} open")
 
 
 def step_board(ctx: Ctx) -> None:

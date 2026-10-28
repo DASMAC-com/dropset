@@ -90,9 +90,7 @@ def list_threads(gh: Gh) -> list[tuple[str, int]]:
     not. Raises when a page is unreadable."""
     threads: list[tuple[str, int]] = []
     for page in range(1, MAX_PAGES + 1):
-        path = (
-            f"/repos/{REPO}/notifications?all=true&per_page={PER_PAGE}&page={page}"
-        )
+        path = f"/repos/{REPO}/notifications?all=true&per_page={PER_PAGE}&page={page}"
         raw = _json(gh, ["api", path]) or []
         for n in raw:
             m = PR_URL_RE.search(((n.get("subject") or {}).get("url")) or "")
@@ -151,9 +149,7 @@ def select(
     return selected, sorted(unresolved)
 
 
-def dismiss(
-    gh: Gh, prs: set[int] | None, apply: bool
-) -> tuple[int, dict]:
+def dismiss(gh: Gh, prs: set[int] | None, apply: bool) -> tuple[int, dict]:
     """The whole act; ``prs`` None is settled mode."""
     result: dict = {
         "mode": "settled" if prs is None else "pr",

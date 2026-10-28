@@ -460,7 +460,9 @@ def run(argv: list[str]) -> int:
     )
     parser.add_argument("--closed", nargs="*", default=[], help=CLOSED_HELP)
     parser.add_argument(
-        "--closed-file", default=None, help="file of whitespace-separated --closed names"
+        "--closed-file",
+        default=None,
+        help="file of whitespace-separated --closed names",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="report what would be removed only"

@@ -11,6 +11,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+import prune_worktrees
 from prune_worktrees import (
     _read_merged,
     _real_alive,
@@ -105,6 +106,8 @@ class FakeGit:
             return 0, "".join(f"{b}\n" for b in self.local_branches), ""
         if args[:2] == ["branch", "-D"] and args[2] in self.delete_fails:
             return 1, "", "error: cannot delete\nhint: second line\n"
+        if args[0] == "rev-parse":
+            return 0, f"{args[-1]}-tip\n", ""
 
         if args[0] == "rev-list":
             if args[2].startswith("origin/main.."):
@@ -372,8 +375,9 @@ LOCKED_PORCELAIN = ADVISOR_PORCELAIN.replace(
 
 
 class LockTests(unittest.TestCase):
-    """A live session's lock holds every tier; only an advisor's stale Claude
-    Code lock — measured to outlive its session — is lifted."""
+    """A live session's lock holds every tier; only an advisor's (or a closed
+    name's, see ``ClosedTests``) stale Claude Code lock — measured to outlive
+    its session — is lifted."""
 
     TIERS = staticmethod(TierGateTests.TIERS)
 
@@ -563,6 +567,114 @@ class StrayBranchTests(unittest.TestCase):
         git = FakeGit(PORCELAIN, local_branches=self.LOCALS)
         out = prune({"eng-701", "eng-999"}, dry_run=True, git=git)
         self.assertEqual(out["unmatched"], ["eng-999"])
+
+
+class ClosedTests(unittest.TestCase):
+    """A ``closed`` name's issue is completed or canceled: the unpushed,
+    no-upstream and dirty holds are lifted, only a live session lock holds,
+    and every name reports its commits ahead of ``origin/main``."""
+
+    LOCALS = StrayBranchTests.LOCALS
+    TIERS = staticmethod(TierGateTests.TIERS)
+
+    def test_a_no_upstream_stray_with_unpushed_commits_is_removed(self):
+        git = FakeGit(PORCELAIN, local_branches=self.LOCALS, no_upstream=["eng-800"])
+        out = prune(set(), dry_run=False, git=git, closed={"eng-800"})
+        self.assertEqual(out["branches_removed"], ["eng-800"])
+        self.assertIn(["branch", "-D", "eng-800"], git.calls)
+        self.assertEqual(out["ahead"]["eng-800"], {"ahead": 1, "tip": "eng-800-tip"})
+
+    def test_the_same_stray_merged_but_not_closed_is_still_held(self):
+        git = FakeGit(PORCELAIN, local_branches=self.LOCALS, no_upstream=["eng-800"])
+        out = prune({"eng-800"}, dry_run=False, git=git)
+        self.assertEqual(out["branches_removed"], [])
+        self.assertIn("no upstream", out["skipped"][0]["reason"])
+
+    def test_a_dirty_unpushed_tree_is_removed_with_one_force(self):
+        path = "/repo/dropset/.claude/worktrees/eng-701"
+        git = FakeGit(
+            PORCELAIN, dirty=[path], modified=[path], unpushed=[("eng-701", 3)]
+        )
+        out = prune(set(), dry_run=False, git=git, closed={"eng-701"})
+        self.assertEqual([r["branch"] for r in out["removed"]], ["eng-701"])
+        self.assertIn(["worktree", "remove", "--force", path], git.calls)
+        self.assertIn(["branch", "-D", "eng-701"], git.calls)
+        # No safety pre-flight was read for it.
+        self.assertFalse(any(c[:1] == ["-C"] and c[1] == path for c in git.calls))
+
+    def test_a_live_lock_holds_a_closed_executor_tree(self):
+        git = FakeGit(LOCKED_PORCELAIN, locked=[EXECUTOR_PATH])
+        out = prune(
+            set(),
+            False,
+            git=git,
+            tier=self.TIERS,
+            alive=lambda p, s: True,
+            closed={"eng-1958"},
+        )
+        self.assertEqual(out["removed"], [])
+        self.assertIn("live session", out["skipped"][0]["reason"])
+        self.assertFalse(any(c[:2] == ["worktree", "remove"] for c in git.calls))
+        # Held names still report what they carry.
+        self.assertIn("eng-1958", out["ahead"])
+
+    def test_a_stale_lock_on_a_closed_executor_tree_is_lifted(self):
+        git = FakeGit(LOCKED_PORCELAIN, locked=[EXECUTOR_PATH])
+        out = prune(
+            set(),
+            False,
+            git=git,
+            tier=self.TIERS,
+            alive=lambda p, s: False,
+            closed={"eng-1958"},
+        )
+        self.assertEqual([r["branch"] for r in out["removed"]], ["eng-1958"])
+        self.assertLess(
+            git.calls.index(["worktree", "unlock", EXECUTOR_PATH]),
+            git.calls.index(["worktree", "remove", "--force", EXECUTOR_PATH]),
+        )
+
+    def test_a_dry_run_reports_the_ahead_count_and_removes_nothing(self):
+        git = FakeGit(PORCELAIN, local_branches=self.LOCALS, unpushed=[("eng-800", 2)])
+        out = prune(set(), dry_run=True, git=git, closed={"eng-800", "eng-701"})
+        self.assertEqual(out["branches_removed"], ["eng-800"])
+        self.assertEqual([r["branch"] for r in out["removed"]], ["eng-701"])
+        self.assertEqual(set(out["ahead"]), {"eng-800", "eng-701"})
+        self.assertFalse(
+            any(c[:2] in (["branch", "-D"], ["worktree", "remove"]) for c in git.calls)
+        )
+
+    def test_an_unreadable_ahead_count_is_none_not_zero(self):
+        class NoCount(FakeGit):
+            def __call__(self, args):
+                if args[0] == "rev-list" and args[2].startswith("origin/main.."):
+                    self.calls.append(args)
+                    return 128, "", "fatal: bad revision"
+                return super().__call__(args)
+
+        git = NoCount(PORCELAIN, local_branches=self.LOCALS)
+        out = prune(set(), dry_run=True, git=git, closed={"eng-800"})
+        self.assertIsNone(out["ahead"]["eng-800"]["ahead"])
+
+    def test_the_cli_reads_closed_args_and_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = os.path.join(d, "closed.txt")
+            with open(f, "w", encoding="utf-8") as fh:
+                fh.write("refs/heads/eng-702\n")
+            with (
+                mock.patch.object(prune_worktrees, "prune") as p,
+                mock.patch("sys.stdout"),
+            ):
+                p.return_value = {}
+                prune_worktrees.run(
+                    ["prog", "--closed", "eng-701", "--closed-file", f, "--dry-run"]
+                )
+            self.assertEqual(p.call_args.kwargs["closed"], {"eng-701", "eng-702"})
+            self.assertEqual(p.call_args.args, (set(), True))
+
+    def test_the_help_does_not_promise_a_reflog(self):
+        self.assertIn("git branch <name> <tip>", prune_worktrees.CLOSED_HELP)
+        self.assertNotIn("thirty days", prune_worktrees.CLOSED_HELP)
 
 
 class ReadMergedTests(unittest.TestCase):
