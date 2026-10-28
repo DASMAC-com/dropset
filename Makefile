@@ -148,7 +148,7 @@ PNPM_CHECK = want="$$($(PNPM_PIN))"; node="$$($(NODE_PIN))"; \
 	echo "cannot read a pnpm pin from packageManager in $(FRONTEND_PKG)"; \
 	exit 1; fi; \
 	if ! command -v pnpm >/dev/null; then \
-	echo "pnpm not found under node $$node ($(FRONTEND_PKG) pins $$want)"; \
+	echo "pnpm not found: $(FRONTEND_PKG) pins pnpm $$want (packageManager)"; \
 	echo "fix: run corepack enable under node $$node"; exit 1; fi; \
 	have="$$(cd frontend && pnpm --version)"; \
 	if [ "$$have" != "$$want" ]; then \
@@ -768,17 +768,20 @@ demo-check:
 # (per docs/conventions/context-economy.md).
 #
 # Every `up` here that can build appends `|| $(BUILD_HINT)`: one advisory
-# line on a non-zero exit, then the original status. Compose reports a
-# failed build with its own exit code, so the hint cannot key on the 137 a
-# killed build step shows; it says what that 137 usually means instead. A
+# line on a non-zero exit, then the original status. The one exception is
+# the keyed bring-up (`FX_UP`), whose failure already routes to the
+# `KEYED_WARN` banner. Compose reports a failed build with its own exit
+# code, so the hint cannot key on the 137 a killed build step shows, and it
+# fires on any failed bring-up; it is worded as conditional on that 137. A
 # cold source build of many services at once was measured to exhaust Docker
 # Desktop's default 8 GB (the explorer's type-check killed) and to pass at
 # 20 GB. Capping `COMPOSE_PARALLEL_LIMIT` is the next lever if this advisory
 # proves insufficient. Cargo builds on the host share a two-lane pool keyed
 # per worktree, but a compose build runs inside Docker's own memory, which
 # is the budget named here.
-BUILD_HINT = { s=$$?; echo "advisory: a killed build (exit code 137 above)" \
-	"is usually Docker's memory: raise it under Docker Desktop, Settings," \
+BUILD_HINT = { s=$$?; echo "advisory: if a build step above was killed" \
+	"(exit code 137), that is usually Docker's memory: raise it under" \
+	"Docker Desktop, Settings," \
 	"Resources. The explorer is normally pulled prebuilt (make explorer)," \
 	"a source build the fallback; every Rust service builds locally."; \
 	exit $$s; }
@@ -983,7 +986,7 @@ collectors-down: check-docker
 .PHONY: grafana
 grafana: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \
-		up -d --quiet-pull postgres migrate grafana
+		up -d --quiet-pull postgres migrate grafana || $(BUILD_HINT)
 .PHONY: grafana-down
 grafana-down: check-docker
 	docker compose -f infra/localnet/docker-compose.yml \

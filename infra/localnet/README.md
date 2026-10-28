@@ -86,7 +86,8 @@ way. A bare `docker compose build` compiles every service at once, the
 explorer included, and a killed build (exit code 137) is usually
 Docker's memory: Docker Desktop's default 8 GB was measured too small
 for that and 20 GB enough, so raise it under Docker Desktop, Settings,
-Resources. The make targets print the same advisory when a build fails.
+Resources. The make targets print the same advisory when a bring-up
+fails.
 
 `make demo` checks the frontend toolchain in the foreground before it
 starts anything: node's major version must equal `engines.node` in
