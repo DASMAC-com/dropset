@@ -402,7 +402,18 @@ class WaitTests(unittest.TestCase):
         """A `none` is a seconds-scale registration race and a `pending` is a
         whole CI run, so they must not share a delay. Nothing asserted this —
         the stubbed sleep discarded its argument.
+
+        The `none` probe's gh call is stubbed too: a real subprocess wait with a
+        timeout polls through the same patched `time.sleep` (CPython's doubling
+        0.0005..0.05 s loop), so a slow runner recorded stray sleeps here.
         """
+        real_gh = wfc._gh
+        wfc._gh = lambda _args: (
+            0,
+            '{"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"}',
+            "",
+        )
+        self.addCleanup(setattr, wfc, "_gh", real_gh)
         self._stub_rounds([[]])
         wfc.wait(285, repo="o/r")
         self.assertTrue(self.sleeps)
