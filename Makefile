@@ -773,8 +773,9 @@ demo-check:
 # `KEYED_WARN` banner. Compose reports a failed build with its own exit
 # code, so the hint cannot key on the 137 a killed build step shows, and it
 # fires on any failed bring-up; it is worded as conditional on that 137. A
-# cold source build of many services at once was measured to exhaust Docker
-# Desktop's default 8 GB (the explorer's type-check killed) and to pass at
+# cold source build of many services at once was measured to exhaust an
+# 8 GB Docker Desktop allocation (the measuring host's default; the default
+# scales with host RAM), the explorer's type-check killed, and to pass at
 # 20 GB. Capping `COMPOSE_PARALLEL_LIMIT` is the next lever if this advisory
 # proves insufficient. Cargo builds on the host share a two-lane pool keyed
 # per worktree, but a compose build runs inside Docker's own memory, which

@@ -84,9 +84,9 @@ Pulling is the normal path for the explorer (`make explorer`), and a
 source build is the fallback; every Rust service builds locally either
 way. A bare `docker compose build` compiles every service at once, the
 explorer included, and a killed build (exit code 137) is usually
-Docker's memory: Docker Desktop's default 8 GB was measured too small
-for that and 20 GB enough, so raise it under Docker Desktop, Settings,
-Resources. The make targets print the same advisory when a bring-up
+Docker's memory: an 8 GB Docker Desktop allocation was measured too
+small for that and 20 GB enough, so raise it under Docker Desktop,
+Settings, Resources. The make targets print the same advisory when a bring-up
 fails.
 
 `make demo` checks the frontend toolchain in the foreground before it
