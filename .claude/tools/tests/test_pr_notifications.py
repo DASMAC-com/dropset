@@ -210,7 +210,14 @@ class MalformedListTests(unittest.TestCase):
         self.assertEqual(gh.deletes(), [])
 
     def test_malformed_items_are_skipped(self):
-        page = ["junk", {"id": "s1", "subject": "x"}, {"id": "s2"}, THREADS[0]]
+        # A PR-URL subject with no `id` is skipped too, never a list failure.
+        page = [
+            "junk",
+            {"id": "s1", "subject": "x"},
+            {"id": "s2"},
+            {"subject": {"url": URL.format("pulls", 663)}},
+            THREADS[0],
+        ]
         gh = FakeGh(pages=[page])
         _, out = dismiss(gh, {663}, apply=False)
         self.assertEqual(out["threads"], 1)

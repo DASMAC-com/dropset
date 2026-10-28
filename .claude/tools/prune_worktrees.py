@@ -450,7 +450,8 @@ CLOSED_HELP = (
     "deleted with it); restore one promptly with `git branch <name> <tip>` "
     "from the report's `ahead` entry, since `git gc` prunes unreachable "
     "objects older than gc.pruneExpire (two weeks by default), counted from "
-    "the commit's own age, so an old branch's can go at the next gc"
+    "the object file's or pack's age rather than the deletion, so an old "
+    "branch's can go at the next gc"
 )
 
 

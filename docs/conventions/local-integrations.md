@@ -1798,7 +1798,8 @@ a hand-written reason reads as live, which only skips the tree.
 The report names each name's commits ahead of `origin/main` and
 its tip: `git branch -D` drops the branch's reflog, so the tip is
 the restore handle (`git branch <name> <tip>`) — use it promptly,
-since `git gc`'s expiry counts from the commit's own age, so an old
+since `git gc`'s expiry counts from the object file's or pack's
+age, not the deletion, so an old
 stray's commits can go at the next gc. A dirty tree's uncommitted
 files are discarded for good.
 

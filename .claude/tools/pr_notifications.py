@@ -102,6 +102,8 @@ def list_threads(gh: Gh) -> list[tuple[str, int]]:
             if not isinstance(subject, dict):
                 continue
             m = PR_URL_RE.search(subject.get("url") or "")
+            if m and n.get("id") is None:
+                continue
             if m:
                 threads.append((str(n["id"]), int(m.group(1))))
         if len(raw) < PER_PAGE:
