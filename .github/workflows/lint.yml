@@ -1,6 +1,5 @@
 ---
 env:
-  NODE_VERSION: '24'
   PRE_COMMIT_VERSION: '4.5.1'
   PYTHON_VERSION: '3.14.4'
 jobs:
@@ -69,11 +68,12 @@ jobs:
         pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
       with:
         package_json_file: 'frontend/package.json'
-    - uses: 'actions/setup-node@v6'
+    - id: 'setup-node'
+      uses: 'actions/setup-node@v6'
       with:
         cache: 'pnpm'
         cache-dependency-path: 'pnpm-lock.yaml'
-        node-version: '${{ env.NODE_VERSION }}'
+        node-version-file: 'frontend/.node-version'
     # Root install: the frontend + SDK packages share one pnpm workspace.
     - run: 'pnpm install --frozen-lockfile'
     - uses: 'actions/setup-python@v6'
@@ -106,9 +106,9 @@ jobs:
       uses: 'actions/cache/restore@v5'
       with:
         key: 'pre-commit-lint-${{ runner.os }}-${{ runner.arch }}-node-${{
-              env.NODE_VERSION }}-python-${{ env.PYTHON_VERSION
-              }}-pre-commit-${{ env.PRE_COMMIT_VERSION }}-${{
-              hashFiles(env.CONFIG_PATH) }}'
+              steps.setup-node.outputs.node-version }}-python-${{
+              env.PYTHON_VERSION }}-pre-commit-${{ env.PRE_COMMIT_VERSION
+              }}-${{ hashFiles(env.CONFIG_PATH) }}'
         path: '~/.cache/pre-commit'
     - run: 'pre-commit install-hooks -c ${{ env.CONFIG_PATH }}'
     - run: >-
@@ -119,9 +119,9 @@ jobs:
       uses: 'actions/cache/save@v5'
       with:
         key: 'pre-commit-lint-${{ runner.os }}-${{ runner.arch }}-node-${{
-              env.NODE_VERSION }}-python-${{ env.PYTHON_VERSION
-              }}-pre-commit-${{ env.PRE_COMMIT_VERSION }}-${{
-              hashFiles(env.CONFIG_PATH) }}'
+              steps.setup-node.outputs.node-version }}-python-${{
+              env.PYTHON_VERSION }}-pre-commit-${{ env.PRE_COMMIT_VERSION
+              }}-${{ hashFiles(env.CONFIG_PATH) }}'
         path: '~/.cache/pre-commit'
 name: 'Lint'
 'on':

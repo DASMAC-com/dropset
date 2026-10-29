@@ -16,7 +16,6 @@ env:
   NEXT_PUBLIC_GET_MULTIPLE_ACCOUNTS_BATCH_SIZE: '10'
   NEXT_PUBLIC_RPC_URL: 'https://api.mainnet-beta.solana.com'
   NEXT_PUBLIC_WS_URL: 'wss://api.mainnet-beta.solana.com'
-  NODE_VERSION: '24'
 jobs:
   frontend:
     name: 'Frontend'
@@ -33,7 +32,7 @@ jobs:
       with:
         cache: 'pnpm'
         cache-dependency-path: 'pnpm-lock.yaml'
-        node-version: '${{ env.NODE_VERSION }}'
+        node-version-file: 'frontend/.node-version'
     - run: 'pnpm install --frozen-lockfile'
     # Token icons are COMMITTED (brand-assets/token-icons/), so this gate
     # dials nothing: it checks that every currency listed in currencies.json

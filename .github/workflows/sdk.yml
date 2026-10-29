@@ -1,6 +1,4 @@
 ---
-env:
-  NODE_VERSION: '24'
 jobs:
   sdk:
     name: 'SDK'
@@ -39,7 +37,7 @@ jobs:
       with:
         cache: 'pnpm'
         cache-dependency-path: 'pnpm-lock.yaml'
-        node-version: '${{ env.NODE_VERSION }}'
+        node-version-file: 'frontend/.node-version'
     - run: 'pnpm install --frozen-lockfile'
     # The generated TS + Rust clients must match a fresh codegen from the
     # checked-in IDL — no manual edits, no drift (cf. the CPI-bindings
