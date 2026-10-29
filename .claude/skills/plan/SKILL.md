@@ -102,7 +102,8 @@ operator lever, never this mechanism.
 - **The warm bootstrap.** A full bootstrap writes a
   `Bootstrap stamp: <YYYY-MM-DD>` line to the document, and every
   close-out rewrite keeps it. A bootstrap finding today's date
-  there is **warm**: read `rulings.md` and the document, run
+  there is **warm**: read `rulings.md` and the document (step 1's
+  spill and slice), run
   `ListAgents` — and skip the once-a-day duties (the fold line,
   the audit heartbeat, the parked counts, the upkeep report, the
   launcher's message, step 8). No stamp

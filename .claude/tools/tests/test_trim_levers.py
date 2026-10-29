@@ -99,7 +99,9 @@ class FingerprintTests(unittest.TestCase):
             "   ",
             "Session-Metrics:Foo",
             "wait::cause",
+            "wait:op::cause",
             "wait:operator:",
+            "wait:Operator:x",
         ):
             with self.subTest(key=key), self.assertRaises(TrimLeversError):
                 validate_fingerprint(key)
