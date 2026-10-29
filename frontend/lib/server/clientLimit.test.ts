@@ -29,6 +29,25 @@ describe("clientLimiter", () => {
     expect(limiter.take("a", 60_000)).toBe(1);
   });
 
+  it("credits no refill twice when the clock steps back", () => {
+    const limiter = clientLimiter({ capacity: 2, refillPerSec: 1 });
+    expect(limiter.take("a", 10_000)).toBeNull();
+    // Admitted on a clock stepped back to 9 s: the bucket's clock stays at
+    // 10 s, so half a second later there is half a token, not one and a half.
+    expect(limiter.take("a", 9_000)).toBeNull();
+    expect(limiter.take("a", 10_500)).toBe(1);
+  });
+
+  it("keeps a refused caller off the eviction front", () => {
+    const limiter = clientLimiter({ capacity: 1, refillPerSec: 1 });
+    limiter.take("hammer", 0);
+    for (let i = 0; i < MAX_CLIENTS - 1; i++) limiter.take(`c${i}`, 0);
+    // Refused, so moved to the back: the flood's eviction takes c0.. first.
+    expect(limiter.take("hammer", 0)).toBe(1);
+    limiter.take("next", 0);
+    expect(limiter.take("hammer", 0)).toBe(1);
+  });
+
   it("keeps one caller's spend off another's bucket", () => {
     const limiter = clientLimiter({ capacity: 1, refillPerSec: 1 });
     expect(limiter.take("a", 0)).toBeNull();
@@ -71,6 +90,19 @@ describe("clientAddress", () => {
     expect(
       clientAddress(req({ "x-forwarded-for": " 2.2.2.2 , 10.0.0.1" })),
     ).toBe("2.2.2.2");
+  });
+
+  it("keys an IPv6 caller on its /64", () => {
+    const key = (ip: string) => clientAddress(req({ "x-real-ip": ip }));
+    expect(key("2001:db8:1:2:aaaa::1")).toBe("2001:db8:1:2::/64");
+    expect(key("2001:0db8:0001:0002:ffff:ffff:ffff:ffff")).toBe(
+      "2001:db8:1:2::/64",
+    );
+    expect(key("2001:db8::5")).toBe("2001:db8:0:0::/64");
+    expect(key("fe80::1%eth0")).toBe("fe80:0:0:0::/64");
+    expect(key("2001:db8:1:3::1")).not.toBe(key("2001:db8:1:2::1"));
+    expect(key("::ffff:1.2.3.4")).toBe("1.2.3.4");
+    expect(() => key("1:2:3:4:5:6:7:8::9")).not.toThrow();
   });
 
   it("shares one bucket when no address is known", () => {

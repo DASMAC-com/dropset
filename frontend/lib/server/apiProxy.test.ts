@@ -287,8 +287,10 @@ describe("forward", () => {
 
   it("answers a caller over its limit with a 429 the app reads as DFlow's", async () => {
     const seen = stubUpstream(ok);
+    const validate = vi.fn(passThrough(DFLOW_QUOTE_UPSTREAM).validate);
     const route: ProxyRoute = {
-      ...passThrough(DFLOW_QUOTE_UPSTREAM),
+      upstream: DFLOW_QUOTE_UPSTREAM,
+      validate,
       limiter: clientLimiter({ capacity: 2, refillPerSec: 0.25 }),
     };
     const from = (ip: string) =>
@@ -301,6 +303,8 @@ describe("forward", () => {
     expect((await forward(route, from("1.1.1.1"), env)).status).toBe(200);
     const refused = await forward(route, from("1.1.1.1"), env);
 
+    // Refused before its query is checked, so it costs no validation either.
+    expect(validate).toHaveBeenCalledTimes(2);
     expect(seen).toHaveLength(2);
     expect(refused.status).toBe(429);
     expect(refused.headers.get("retry-after")).toBe("4");

@@ -46,7 +46,9 @@ export function clientLimiter(limit: ClientLimit): ClientLimiter {
       if (refilled(b, now) >= limit.capacity) buckets.delete(client);
     }
     // Map iterates in insertion order, and a caller is re-inserted on every
-    // request, so the first entries are the least recently seen. Evicting to
+    // request, refused ones included, so the first entries are the least
+    // recently seen and a caller hammering past its limit is never the one
+    // evicted (which would hand it a full bucket). Evicting to
     // below the cap, not just under it, keeps a flood from paying this scan
     // on every request.
     for (const client of buckets.keys()) {
@@ -59,25 +61,53 @@ export function clientLimiter(limit: ClientLimit): ClientLimiter {
     take(client, now = Date.now()) {
       const prev = buckets.get(client);
       const tokens = prev ? refilled(prev, now) : limit.capacity;
-      if (tokens < 1) {
+      buckets.delete(client);
+      if (prev && tokens < 1) {
+        // Moved to the back unchanged: a refusal spends nothing.
+        buckets.set(client, prev);
         return Math.max(1, Math.ceil((1 - tokens) / limit.refillPerSec));
       }
-      buckets.delete(client);
       if (buckets.size >= MAX_CLIENTS) prune(now);
-      buckets.set(client, { tokens: tokens - 1, updatedAt: now });
+      // Never rewound: a clock stepping back would otherwise credit the same
+      // interval as refill twice once it caught up.
+      const updatedAt = Math.max(prev?.updatedAt ?? now, now);
+      buckets.set(client, { tokens: tokens - 1, updatedAt });
       return null;
     },
     size: () => buckets.size,
   };
 }
 
-// The caller's address. The host's edge sets these headers from the
-// connection and overwrites a client-supplied value (Vercel does, for both),
-// so they name the caller, never this server. Absent (a local `next dev`),
-// every caller shares one bucket.
+// The caller's address, as the bucket key. The host's edge sets these headers
+// from the connection and overwrites a client-supplied value (Vercel does,
+// for both), so they name the caller, never this server. Absent (a local
+// `next dev`), every caller shares one bucket.
 export function clientAddress(req: Request): string {
   const real = req.headers.get("x-real-ip")?.trim();
-  if (real) return real;
   const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwarded || "unknown";
+  const address = real || forwarded;
+  return address ? bucketKey(address) : "unknown";
+}
+
+// An IPv6 host is normally handed a whole /64, so keying on its full address
+// would let it draw a fresh bucket per request by rotating the low bits; it
+// is keyed on the /64 instead. An IPv4 address, IPv4-mapped IPv6 included,
+// is its own key.
+function bucketKey(address: string): string {
+  if (!address.includes(":")) return address;
+  if (address.includes(".")) return address.slice(address.lastIndexOf(":") + 1);
+  const bare = address.replace(/^\[|\]$|%.*$/g, "").toLowerCase();
+  const [head, tail] = bare.split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  // Clamped so a malformed address with too many groups keys oddly rather
+  // than throwing.
+  const zeros = Math.max(0, 8 - left.length - right.length);
+  const groups =
+    tail === undefined ? left : [...left, ...Array(zeros).fill("0"), ...right];
+  const prefix = groups
+    .slice(0, 4)
+    .map((g) => g.replace(/^0+(?=.)/, ""))
+    .join(":");
+  return `${prefix}::/64`;
 }
