@@ -697,6 +697,27 @@ _ds_daily_sid() {
 # Code addresses it by; anything else resumes from the base checkout as before
 # (whether `--resume <id>` from there reaches a copy under some THIRD slug is
 # unverified, but the create branch on an existing id was no better).
+# Internal: refuse a launch while either fleet knob the machine-load probe
+# requires is unset, naming the variable — the same refusal an unset model tier
+# gets. `DS_FLEET_TOTAL` is the ceiling on top-level sessions of every class,
+# `DS_FLEET_CPU_LOAD_MAX` the one-minute load average above which nothing new
+# starts; both are per machine, so the repo carries no default. A shell opened
+# before the runtime config gained them refuses here until it is reopened.
+_ds_fleet_knobs() {
+  local var rc=0
+  for var in DS_FLEET_TOTAL DS_FLEET_CPU_LOAD_MAX; do
+    if [[ -z "${(P)var}" ]]; then
+      print -u2 "dropset: $var is unset — set it in the runtime config (the" \
+        'repo pins no fleet ceiling). Refusing to launch.'
+      rc=1
+    fi
+  done
+  [[ -n "$DS_FLEET_CAP" || -n "$DS_FLEET_LOAD_PER_CORE" ]] &&
+    print -u2 'dropset: DS_FLEET_CAP and DS_FLEET_LOAD_PER_CORE are retired —' \
+      'DS_FLEET_TOTAL and DS_FLEET_CPU_LOAD_MAX replace them.'
+  return $rc
+}
+
 # Internal: THE shared launcher — every managed `claude` start or resume goes
 # through here. $1 the session's model, the rest `claude`'s own arguments.
 #
@@ -711,6 +732,7 @@ _ds_daily_sid() {
 # included, so the CLI is signed out here first (`_ds_op_signout`).
 _ds_claude() {
   _ds_op_signout
+  _ds_fleet_knobs || { _ds_substrate_unset; return 1; }
   local -x ANTHROPIC_MODEL="$1"
   shift
   if [[ -n "$CLAUDE_CODE_USE_BEDROCK" ]]; then

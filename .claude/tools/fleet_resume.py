@@ -44,8 +44,9 @@ over the resume list with each session's class read back from its launch
 record, never re-inspected. Resume runs before any new dispatch, so in-flight
 work takes the budget first; what the reading cannot seat is listed as held
 with the number that refused it, and ``--over-budget`` (``fleet go
---over-budget``) seats it anyway, the cap excepted. A resumed building session
-counts like a new one, since it builds again within minutes.
+--over-budget``) seats it anyway, ``DS_FLEET_TOTAL`` excepted. A resumed
+session spends one of that total like a new one, and a resumed building
+session counts as a builder, since it builds again within minutes.
 
 **No AppleScript.** iTerm is driven through its Python API, via the shared
 ``iterm_api`` module — the one owner of iTerm automation in this repo. This tool
@@ -303,7 +304,8 @@ def admit(result: dict, directory: Path, over_budget: bool) -> list[str]:
     result["held"] = [
         {**e, "reason": why[id(s)]} for e, s in zip(entries, seats) if id(s) in why
     ]
-    return admitted.notes + session_dispatch.held_lines(admitted)
+    clients = [admitted.clients] if admitted.clients else []
+    return admitted.notes + session_dispatch.held_lines(admitted) + clients
 
 
 def summarize(result: dict) -> str:
@@ -367,7 +369,7 @@ def run(argv: list[str]) -> int:
     parser.add_argument(
         "--over-budget",
         action="store_true",
-        help="resume past the machine checks (the cap still binds)",
+        help="resume past the machine checks (the total still binds)",
     )
     parser.add_argument("--state-dir", type=Path, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args(argv[1:])

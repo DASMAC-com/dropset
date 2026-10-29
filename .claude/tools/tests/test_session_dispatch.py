@@ -19,6 +19,7 @@ verb fails to validate.
 from __future__ import annotations
 
 import io
+import os
 import tempfile
 import unittest
 import unittest.mock
@@ -40,9 +41,14 @@ def reading(
     building=0,
     longest=0,
     waiting=0,
-    cap=20,
+    total=20,
+    free=0,
 ):
-    """A probe's JSON in the shape `machine_load.as_json` prints."""
+    """A probe's JSON in the shape `machine_load.as_json` prints. The free
+    verdict defaults to the total's room, as the probe's does."""
+    live = building + free
+    if free_slots is None:
+        free_slots = 0 if free_reasons else max(0, total - live)
     return {
         "status": "green",
         "exit": 0,
@@ -55,13 +61,23 @@ def reading(
             "waiting": [{"pid": 9, "step": "clippy", "wait_s": longest}] * waiting,
             "longest_wait_s": longest,
         },
-        "sessions": {"live": building, "building": building, "free": 0, "records": 0},
+        "sessions": {"live": live, "building": building, "free": free, "records": 0},
         "memory": {"headroom": 3 * GIB, "reserve": 8 * GIB},
-        "load": {"load1": 30.0, "cores": 12, "per_core": 2.5},
+        "load": {"load1": 30.0, "cores": 12, "max": 16.0},
         "swap_used": 2 * GIB,
         "pressure": "warn",
-        "knobs": {"build_wait_s": 120, "cap": cap, "load_per_core": 1.5, "notes": []},
+        "knobs": {
+            "build_wait_s": 120,
+            "total": total,
+            "reserve": 8 * GIB,
+            "cpu_load_max": 16.0,
+            "notes": [],
+        },
     }
+
+
+#: The required knobs, as the operator's runtime config sets them.
+FLEET = {"DS_FLEET_TOTAL": "16", "DS_FLEET_CPU_LOAD_MAX": "16"}
 
 
 NO_READING = {"status": "no-reading", "exit": 3, "error": "not Darwin (Linux)"}
@@ -805,7 +821,7 @@ def gate(seats, *readings, over_budget=False, env=None):
         seats,
         Path("/nonexistent"),
         over_budget=over_budget,
-        env=env or {},
+        env=FLEET if env is None else env,
         reader=probe,
     )
     return result, probe
@@ -898,28 +914,50 @@ class Seating(unittest.TestCase):
         )
 
     def test_a_refusal_with_no_wait_is_not_re_probed(self):
-        result, probe = gate(batch(), reading(slots=0, reasons=["cap"], building=20))
+        full = reading(slots=0, reasons=["total"], free_reasons=["total"], building=20)
+        result, probe = gate(batch(), full)
         self.assertEqual(probe.calls, 1)
         self.assertIn(
-            "20 building of the cap 20", session_dispatch.held_lines(result)[0]
+            "20 clients of the total 20", session_dispatch.held_lines(result)[0]
         )
+
+    def test_free_verbs_spend_the_same_total(self):
+        result, _ = gate(batch(), reading(total=4, building=2))
+        self.assertEqual(names(result.seated), ["task 2163", "architect 2230"])
+        self.assertEqual(
+            session_dispatch.held_lines(result),
+            [
+                "held  chore 2240 (free): 2 clients of the total 4",
+                "held  task 2160: same",
+                "held  chore 2241 (builds: make demo): same",
+                "would free a slot: any session closing",
+            ],
+        )
+        self.assertEqual(result.clients, "clients 4 of 4 (builders 3, free 1)")
 
     def test_machine_checks_hold_free_verbs_too(self):
         red = reading(
             slots=0,
-            reasons=["swap", "load"],
+            reasons=["load"],
             free_slots=0,
-            free_reasons=["swap", "load"],
+            free_reasons=["load"],
         )
         result, _ = gate([seat(["plan"])], red)
         self.assertEqual(result.seated, [])
         self.assertEqual(
             session_dispatch.held_lines(result),
             [
-                "held  plan (free): swap 2.0 GiB in use; load 2.50 per core (limit 1.50)",
-                "would free a slot: swap draining to 0; load falling under 1.50 per core",
+                "held  plan (free): load 30.0 (limit 16)",
+                "would free a slot: load falling under 16",
             ],
         )
+
+    def test_swap_in_a_reading_holds_nothing(self):
+        # A reading with swap in use and no refusal: the probe no longer
+        # vetoes on swap, and the gate adds no check of its own.
+        result, _ = gate(batch(), reading())
+        self.assertEqual(len(result.seated), 5)
+        self.assertEqual(result.held, [])
 
     def test_over_budget_seats_past_the_machine_and_says_what_it_overrode(self):
         refused = reading(slots=0, reasons=["wait"], longest=465, waiting=1)
@@ -932,27 +970,33 @@ class Seating(unittest.TestCase):
         )
         self.assertEqual(len(lines), 3)
 
-    def test_over_budget_does_not_lift_the_cap(self):
+    def test_over_budget_does_not_lift_the_total(self):
         full = reading(slots=0, reasons=["wait"], longest=465, building=19)
         result, _ = gate(batch(), full, over_budget=True)
-        self.assertEqual(
-            names(result.seated), ["task 2163", "architect 2230", "chore 2240"]
-        )
+        self.assertEqual(names(result.seated), ["task 2163"])
         self.assertEqual(
             session_dispatch.held_lines(result)[0],
-            "held  task 2160: 19 building of the cap 20",
+            "held  architect 2230 (free): 19 clients of the total 20",
         )
 
-    def test_no_reading_seats_under_the_cap_alone_and_says_why(self):
-        result, _ = gate(batch(), NO_READING, env={"DS_FLEET_CAP": "1"})
-        self.assertEqual(
-            names(result.seated), ["task 2163", "architect 2230", "chore 2240"]
-        )
+    def test_no_reading_seats_under_the_total_alone_and_says_why(self):
+        env = {**FLEET, "DS_FLEET_TOTAL": "1"}
+        result, _ = gate(batch(), NO_READING, env=env)
+        self.assertEqual(names(result.seated), ["task 2163"])
         self.assertEqual(
             result.notes,
-            ["no machine reading (not Darwin (Linux)); seating under the cap 1 alone"],
+            [
+                "no machine reading (not Darwin (Linux)); seating under the total 1 alone"
+            ],
         )
-        self.assertIn("the cap 1 (no reading counted", result.held[0][1])
+        self.assertIn("the total 1 (no reading counted", result.held[0][1])
+        self.assertEqual(result.clients, "")
+
+    def test_no_reading_and_an_unset_total_holds_the_batch_naming_it(self):
+        result, _ = gate(batch(), NO_READING, env={})
+        self.assertEqual(result.seated, [])
+        self.assertEqual(len(result.held), 5)
+        self.assertIn("DS_FLEET_TOTAL is unset", result.held[0][1])
 
 
 class Probe(unittest.TestCase):
@@ -1042,10 +1086,15 @@ class GatedRun(unittest.TestCase):
         self.assertEqual((directory / "2240.class").read_text(), "free\n")
 
     def test_an_all_held_batch_opens_nothing(self):
-        refused = reading(slots=0, reasons=["cap"], building=20)
+        refused = reading(slots=0, reasons=["total"], building=20)
         rc, seen, out, _, _ = self._run("task", "1", readings=(refused,))
         self.assertEqual((rc, seen), (0, []))
-        self.assertIn("held  task 1: 20 building of the cap 20", out)
+        self.assertIn("held  task 1: 20 clients of the total 20", out)
+
+    def test_the_roll_call_prints_the_clients_line(self):
+        rc, _, out, _, _ = self._run("task", "1", readings=(reading(building=3),))
+        self.assertEqual(rc, 0)
+        self.assertIn("clients 4 of 20 (builders 4, free 0)", out)
 
     def test_the_class_flag_reaches_the_chore(self):
         rc, seen, out, _, directory = self._run(
@@ -1063,7 +1112,8 @@ class GatedRun(unittest.TestCase):
                 self.assertIn("must come BEFORE the verb", err)
 
     def test_no_reading_still_dispatches_and_says_why(self):
-        rc, seen, _, err, _ = self._run("task", "1", readings=(NO_READING,))
+        with unittest.mock.patch.dict(os.environ, FLEET):
+            rc, seen, _, err, _ = self._run("task", "1", readings=(NO_READING,))
         self.assertEqual((rc, seen), (0, [["task 1"]]))
         self.assertIn("no machine reading (not Darwin (Linux))", err)
 

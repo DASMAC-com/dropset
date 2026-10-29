@@ -87,8 +87,14 @@ def reading(**kw):
     return ml.read_machine(runner(**kw), state_dir=None)
 
 
+#: The required knobs, as the operator's runtime config sets them; a test
+#: unsets one by passing "".
+FLEET = {"DS_FLEET_TOTAL": "16", "DS_FLEET_CPU_LOAD_MAX": "16"}
+
+
 def knobs(r, **env):
-    return ml.read_knobs({k: str(v) for k, v in env.items()}, r.memory.physical)
+    merged = {**FLEET, **{k: str(v) for k, v in env.items()}}
+    return ml.read_knobs(merged, r.memory.physical)
 
 
 class Parsing(unittest.TestCase):
@@ -169,7 +175,8 @@ class Verdict(unittest.TestCase):
         r = reading()
         k = knobs(r)
         self.assertEqual(ml.verdict(r, k, "building"), (0, ["wait"]))
-        self.assertEqual(ml.verdict(r, k, "free"), (None, []))
+        # Two live clients of 16: the rest of the total is free's.
+        self.assertEqual(ml.verdict(r, k, "free"), (14, []))
 
     def test_anyone_waiting_admits_one_at_a_time(self):
         r = reading()
@@ -177,27 +184,41 @@ class Verdict(unittest.TestCase):
             ml.verdict(r, knobs(r, DS_FLEET_BUILD_WAIT_S=600), "building"), (1, [])
         )
 
-    def test_an_empty_queue_admits_up_to_the_cap(self):
+    def test_an_empty_queue_admits_up_to_the_total(self):
         quiet = [
             line
             for line in PS.splitlines()
             if not line.endswith(("cargo", "cargo-clippy"))
         ]
         r = reading(ps="\n".join(quiet))
-        self.assertEqual(ml.verdict(r, knobs(r, DS_FLEET_CAP=5), "building"), (3, []))
+        self.assertEqual(ml.verdict(r, knobs(r, DS_FLEET_TOTAL=5), "building"), (3, []))
 
-    def test_the_cap_refuses_building(self):
+    def test_the_total_bounds_a_free_verb(self):
         r = reading()
-        slots, reasons = ml.verdict(
-            r, knobs(r, DS_FLEET_CAP=2, DS_FLEET_BUILD_WAIT_S=600), "building"
-        )
-        self.assertEqual((slots, reasons), (0, ["cap"]))
-        # The cap is a building bound only.
-        self.assertEqual(ml.verdict(r, knobs(r, DS_FLEET_CAP=2), "free"), (None, []))
+        self.assertEqual(ml.verdict(r, knobs(r, DS_FLEET_TOTAL=3), "free"), (1, []))
+
+    def test_the_total_refuses_both_classes(self):
+        r = reading()
+        k = knobs(r, DS_FLEET_TOTAL=2, DS_FLEET_BUILD_WAIT_S=600)
+        for cls in ("building", "free"):
+            with self.subTest(cls=cls):
+                self.assertEqual(ml.verdict(r, k, cls), (0, ["total"]))
+
+    def test_the_load_gate_refuses_only_above_its_limit(self):
+        for load, reasons in (("16.00", []), ("16.01", ["load"])):
+            r = reading(ctl=sysctl(load=load))
+            with self.subTest(load=load):
+                self.assertEqual(ml.verdict(r, knobs(r), "free")[1], reasons)
+
+    def test_swap_is_reported_not_refused(self):
+        r = reading(ctl=sysctl(swap="43.00M"))
+        k = knobs(r, DS_FLEET_BUILD_WAIT_S=600)
+        self.assertEqual(ml.verdict(r, k, "free"), (14, []))
+        self.assertEqual(ml.verdict(r, k, "building"), (1, []))
+        self.assertEqual(r.sysctl.swap_used, 43 * 1024**2)
 
     def test_each_machine_check_refuses_both_classes(self):
         cases = {
-            "swap": dict(ctl=sysctl(swap="1.00M")),
             "pressure": dict(ctl=sysctl(pressure=4)),
             "load": dict(ctl=sysctl(load="28.00")),
         }
@@ -219,20 +240,23 @@ class Verdict(unittest.TestCase):
         r = reading()
         self.assertEqual(knobs(r).reserve, 6 * GIB)
 
-    def test_a_bad_knob_falls_back_with_a_note(self):
+    def test_a_bad_optional_knob_falls_back_with_a_note(self):
         r = reading()
-        k = knobs(r, DS_FLEET_CAP="lots")
-        self.assertEqual(k.cap, 20)
-        self.assertIn("DS_FLEET_CAP", k.notes[0])
-
-    def test_a_non_finite_knob_falls_back(self):
-        r = reading()
-        k = knobs(r, DS_FLEET_RESERVE_GB="inf", DS_FLEET_LOAD_PER_CORE="nan")
-        self.assertEqual((k.reserve, k.load_per_core), (6 * GIB, 1.5))
+        k = knobs(r, DS_FLEET_BUILD_WAIT_S="lots", DS_FLEET_RESERVE_GB="inf")
+        self.assertEqual((k.build_wait_s, k.reserve), (120, 6 * GIB))
         self.assertEqual(len(k.notes), 2)
+        self.assertIn("DS_FLEET_BUILD_WAIT_S", k.notes[0])
+
+    def test_an_unset_or_bad_required_knob_is_no_reading_naming_it(self):
+        r = reading()
+        for var in FLEET:
+            for raw in ("", "lots", "nan"):
+                with self.subTest(var=var, raw=raw):
+                    with self.assertRaises(ml.NoReading) as caught:
+                        knobs(r, **{var: raw})
+                    self.assertIn(var, str(caught.exception))
 
     def test_status(self):
-        self.assertEqual(ml.status(None, 5), ml.GREEN)
         self.assertEqual(ml.status(3, 3), ml.GREEN)
         self.assertEqual(ml.status(1, 3), ml.AMBER)
         self.assertEqual(ml.status(0, 1), ml.RED)
@@ -262,7 +286,9 @@ class Main(unittest.TestCase):
             redirect_stderr(err),
         ):
             code = ml.main(
-                [*argv, "--state-dir", tmp], runner=fake or runner(), env=env or {}
+                [*argv, "--state-dir", tmp],
+                runner=fake or runner(),
+                env={**FLEET, **(env or {})},
             )
             log = Path(tmp, ml.SAMPLE_LOG)
             sample = log.read_text() if log.exists() else None
@@ -277,7 +303,15 @@ class Main(unittest.TestCase):
             "35.0 of 48.0 GiB in use (app 21.0, wired 4.0, compressed 10.0)", out
         )
         self.assertIn("would free a slot: the longest wait falling under 2m00s", out)
-        self.assertIn("free: unbounded", out)
+        self.assertIn("clients   2 of 16 (builders 2, free 0)", out)
+        self.assertIn("load      10.8 on 18 cores (limit 16)", out)
+        self.assertIn("free: 14 slots", out)
+
+    def test_an_unset_knob_exits_no_reading_naming_it(self):
+        code, out, err, _ = self.call(env={"DS_FLEET_TOTAL": ""})
+        self.assertEqual(code, ml.NO_READING)
+        self.assertIn("DS_FLEET_TOTAL is unset", err)
+        self.assertEqual(out, "")
 
     def test_amber_when_fewer_fit_than_asked(self):
         code, out, _, _ = self.call(
@@ -316,7 +350,8 @@ class Main(unittest.TestCase):
         data = json.loads(out)
         self.assertEqual((code, data["status"], data["exit"]), (ml.RED, "red", 2))
         self.assertEqual(data["verdict"]["building"], {"slots": 0, "reasons": ["wait"]})
-        self.assertEqual(data["verdict"]["free"], {"slots": None, "reasons": []})
+        self.assertEqual(data["verdict"]["free"], {"slots": 14, "reasons": []})
+        self.assertEqual(data["swap_used"], 0)
         self.assertEqual(data["builds"]["longest_wait_s"], 465)
         self.assertEqual(data["memory"]["in_use"], 35 * GIB)
 
@@ -355,7 +390,7 @@ class LaunchRecord(unittest.TestCase):
                 code = ml.main(
                     [*argv, "--state-dir", tmp, "--record", str(path)],
                     runner=fake or runner(),
-                    env=env or {},
+                    env={**FLEET, **(env or {})},
                 )
             lines = path.read_text().splitlines()
         return code, [json.loads(line) for line in lines]
@@ -374,8 +409,8 @@ class LaunchRecord(unittest.TestCase):
             (2, 3, 465),
         )
         self.assertEqual((rec["in_use"], rec["compressed"]), (35 * GIB, 10 * GIB))
-        self.assertEqual(rec["load1"], 10.8)
-        self.assertEqual(rec["verdict"], {"slots": None, "reasons": []})
+        self.assertEqual((rec["load1"], rec["swap_used"], rec["live"]), (10.8, 0, 2))
+        self.assertEqual(rec["verdict"], {"slots": 14, "reasons": []})
 
     def test_the_verdict_is_the_launching_class(self):
         _, lines = self.record()
@@ -388,7 +423,7 @@ class LaunchRecord(unittest.TestCase):
             code = ml.main(
                 ["--json", "--sample", "--state-dir", tmp, "--record", str(path)],
                 runner=runner(),
-                env={},
+                env=FLEET,
             )
             self.assertEqual(len(Path(tmp, ml.SAMPLE_LOG).read_text().splitlines()), 1)
             self.assertEqual(len(path.read_text().splitlines()), 1)
@@ -405,7 +440,7 @@ class LaunchRecord(unittest.TestCase):
             code = ml.main(
                 ["--json", "--state-dir", tmp, "--record", str(blocker / "x.load")],
                 runner=runner(),
-                env={},
+                env=FLEET,
             )
         self.assertEqual(code, ml.RED)
         self.assertEqual(json.loads(out.getvalue())["status"], "red")

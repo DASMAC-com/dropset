@@ -58,15 +58,25 @@ neither hide a building session nor invent a free one; every live ``claude``
 without a ``free`` record counts as building, which is all of them until the
 launcher writes records.
 
+**One ceiling, every class.** ``DS_FLEET_TOTAL`` bounds the live ``claude``
+processes — top-level clients, since a sub-agent runs inside its parent's
+process — so a free seat and a building one spend the same number. A building
+session is further refused on the pool-lock wait, and seated one at a time
+while any build waits.
+
 **Knobs** come from the environment (the operator's untracked runtime config);
-the repo carries no machine literal: ``DS_FLEET_BUILD_WAIT_S`` (120),
-``DS_FLEET_CAP`` (20), ``DS_FLEET_RESERVE_GB`` (physical / 8),
-``DS_FLEET_LOAD_PER_CORE`` (1.5).
+the repo carries no machine literal. Two are **required**, with no default:
+``DS_FLEET_TOTAL`` and ``DS_FLEET_CPU_LOAD_MAX`` (the one-minute load average,
+read as cores in use, above which nothing new starts). An unset or malformed
+one is a no reading naming the variable. Two have defaults:
+``DS_FLEET_BUILD_WAIT_S`` (120) and ``DS_FLEET_RESERVE_GB`` (physical / 8).
+Swap is reported, never a refusal: macOS leaves a stale residue paged out
+long after the pressure that caused it has gone.
 
 Exit 0 green (every asked session fits), 1 amber (fewer fit), 2 red (none),
-3 no reading (not Darwin, a command or parse failure, a bad argument, any
-unexpected error — never 1 or 2, which a caller would read as a verdict). A
-caller never halts on 3: it falls back to the cap and says so.
+3 no reading (not Darwin, a command or parse failure, a bad argument or knob,
+any unexpected error — never 1 or 2, which a caller would read as a verdict).
+A caller never halts on 3: it falls back to the total alone and says so.
 
 Standard library only. A Python skill-tool under ``.claude/tools/`` —
 deliberately **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill
@@ -123,7 +133,7 @@ COLOUR = {GREEN: "GREEN", AMBER: "AMBER", RED: "RED"}
 
 
 class NoReading(Exception):
-    """The machine could not be read; the caller falls back to the cap."""
+    """The machine could not be read; the caller falls back to the total."""
 
 
 Runner = Callable[[list[str]], str]
@@ -413,25 +423,40 @@ def read_machine(runner: Runner = run, state_dir: Path | None = None) -> Reading
 @dataclass
 class Knobs:
     build_wait_s: float
-    cap: int
+    total: int
     reserve: int
-    load_per_core: float
+    cpu_load_max: float
     notes: list[str] = field(default_factory=list)
 
 
-def read_knobs(env: dict[str, str], physical: int) -> Knobs:
+def _number(raw: str, cast: Callable[[str], float]) -> float:
+    value = cast(raw)
+    # NaN would slip past `< 0` and silently disable its check.
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(raw)
+    return value
+
+
+def read_knobs(env, physical: int) -> Knobs:
+    """The knobs from `env`; an unset or malformed required one raises
+    `NoReading` naming the variable, so every caller refuses alike."""
     notes: list[str] = []
+
+    def required(name: str, cast: Callable[[str], float]) -> float:
+        raw = env.get(name, "").strip()
+        if not raw:
+            raise NoReading(f"{name} is unset; set it in the runtime config")
+        try:
+            return _number(raw, cast)
+        except ValueError:
+            raise NoReading(f"{name}={raw!r} is not a non-negative number") from None
 
     def knob(name: str, default: float, cast: Callable[[str], float]) -> float:
         raw = env.get(name, "").strip()
         if not raw:
             return default
         try:
-            value = cast(raw)
-            # NaN would slip past `< 0` and silently disable its check.
-            if not math.isfinite(value) or value < 0:
-                raise ValueError
-            return value
+            return _number(raw, cast)
         except ValueError:
             notes.append(
                 f"{name}={raw!r} is not a non-negative number; using {default:g}"
@@ -440,9 +465,9 @@ def read_knobs(env: dict[str, str], physical: int) -> Knobs:
 
     return Knobs(
         build_wait_s=knob("DS_FLEET_BUILD_WAIT_S", 120, float),
-        cap=int(knob("DS_FLEET_CAP", 20, int)),
+        total=int(required("DS_FLEET_TOTAL", int)),
         reserve=int(knob("DS_FLEET_RESERVE_GB", physical / 8 / GIB, float) * GIB),
-        load_per_core=knob("DS_FLEET_LOAD_PER_CORE", 1.5, float),
+        cpu_load_max=required("DS_FLEET_CPU_LOAD_MAX", float),
         notes=notes,
     )
 
@@ -450,35 +475,39 @@ def read_knobs(env: dict[str, str], physical: int) -> Knobs:
 def machine_refusals(r: Reading, k: Knobs) -> list[str]:
     """The checks that refuse every class, as reason keys."""
     reasons = []
-    if r.sysctl.swap_used > 0:
-        reasons.append("swap")
     if r.sysctl.pressure > 1:
         reasons.append("pressure")
-    if r.sysctl.load1 / r.sysctl.cores > k.load_per_core:
+    if r.sysctl.load1 > k.cpu_load_max:
         reasons.append("load")
     if r.memory.in_use > r.memory.physical - k.reserve:
         reasons.append("memory")
     return reasons
 
 
-def verdict(r: Reading, k: Knobs, cls: str) -> tuple[int | None, list[str]]:
-    """``(slots, reasons)``; ``None`` slots is unbounded."""
+def room(r: Reading, k: Knobs) -> int:
+    """Clients the total still admits, whatever their class."""
+    return max(0, k.total - r.sessions.live)
+
+
+def verdict(r: Reading, k: Knobs, cls: str) -> tuple[int, list[str]]:
+    """``(slots, reasons)`` for one class."""
     reasons = machine_refusals(r, k)
-    if cls == "free":
-        return (0, reasons) if reasons else (None, [])
-    longest = r.queue.longest
-    if longest and longest.elapsed_s >= k.build_wait_s:
-        reasons.append("wait")
-    room = max(0, k.cap - r.sessions.building)
-    if room == 0:
-        reasons.append("cap")
+    left = room(r, k)
+    if left == 0:
+        reasons.append("total")
+    if cls == "building":
+        longest = r.queue.longest
+        if longest and longest.elapsed_s >= k.build_wait_s:
+            reasons.append("wait")
     if reasons:
         return 0, reasons
-    return (min(1, room) if r.queue.waiting else room), []
+    if cls == "building" and r.queue.waiting:
+        return min(1, left), []
+    return left, []
 
 
-def status(slots: int | None, asked: int) -> int:
-    if slots is None or slots >= asked:
+def status(slots: int, asked: int) -> int:
+    if slots >= asked:
         return GREEN
     return AMBER if slots > 0 else RED
 
@@ -511,30 +540,25 @@ def headroom(r: Reading, k: Knobs) -> int:
 def remedy(reason: str, r: Reading, k: Knobs) -> str:
     return {
         "wait": f"the longest wait falling under {duration(k.build_wait_s)}",
-        "cap": f"a building session closing (cap {k.cap})",
+        "total": f"a session closing (total {k.total})",
         "memory": "memory headroom",
-        "swap": "swap draining to 0",
         "pressure": "kernel pressure back to normal",
-        "load": f"load falling under {k.load_per_core:.2f} per core",
+        "load": f"load falling under {k.cpu_load_max:g}",
     }[reason]
 
 
 def refusal(reason: str, r: Reading, k: Knobs) -> str:
     return {
+        "total": f"clients ({r.sessions.live} of {k.total})",
         "memory": f"memory (headroom {gib(headroom(r, k))} GiB)",
-        "swap": f"swap ({size(r.sysctl.swap_used)} used)",
         "pressure": f"kernel pressure {PRESSURE.get(r.sysctl.pressure, r.sysctl.pressure)}",
-        "load": f"load ({r.sysctl.load1 / r.sysctl.cores:.2f} per core)",
+        "load": f"load ({r.sysctl.load1:.1f}, limit {k.cpu_load_max:g})",
     }[reason]
-
-
-def slots_text(slots: int | None) -> str:
-    return "unbounded" if slots is None else str(slots)
 
 
 def render(r: Reading, k: Knobs, cls: str, asked: int, asked_given: bool) -> str:
     slots, reasons = verdict(r, k, cls)
-    head = f"{slots_text(slots)} slot{'' if slots == 1 else 's'} for {cls}"
+    head = f"{slots} slot{'' if slots == 1 else 's'} for {cls}"
     if asked_given:
         head += f" ({asked} asked)"
     q, m, s = r.queue, r.memory, r.sysctl
@@ -558,7 +582,8 @@ def render(r: Reading, k: Knobs, cls: str, asked: int, asked_given: bool) -> str
         )
     seats = r.sessions
     lines += [
-        f"  sessions  {seats.building} building of cap {k.cap}; {seats.free} free"
+        f"  clients   {seats.live} of {k.total}"
+        f" (builders {seats.building}, free {seats.free})"
         + (
             ""
             if seats.records
@@ -567,8 +592,7 @@ def render(r: Reading, k: Knobs, cls: str, asked: int, asked_given: bool) -> str
         f"  memory    {gib(m.in_use)} of {gib(m.physical)} GiB in use"
         f" (app {gib(m.app)}, wired {gib(m.wired)}, compressed {gib(m.compressed)})",
         f"            reserve {gib(k.reserve)} -> headroom {gib(headroom(r, k))} GiB",
-        f"  load      {s.load1:.1f} on {s.cores} cores = {s.load1 / s.cores:.2f} per core"
-        f" (limit {k.load_per_core:.2f})",
+        f"  load      {s.load1:.1f} on {s.cores} cores (limit {k.cpu_load_max:g})",
         f"  swap      {size(s.swap_used)}; kernel pressure"
         f" {PRESSURE.get(s.pressure, f'level {s.pressure}')}",
         "  docker    "
@@ -584,9 +608,9 @@ def render(r: Reading, k: Knobs, cls: str, asked: int, asked_given: bool) -> str
     lines.append(
         "  free: "
         + (
-            "unbounded"
-            if free_slots is None
-            else "refused on " + "; ".join(refusal(x, r, k) for x in free_reasons)
+            "refused on " + "; ".join(refusal(x, r, k) for x in free_reasons)
+            if free_reasons
+            else f"{free_slots} slot{'' if free_slots == 1 else 's'}"
         )
     )
     lines += [f"  note: {note}" for note in k.notes]
@@ -625,7 +649,7 @@ def as_json(r: Reading, k: Knobs, cls: str, asked: int) -> dict:
         "load": {
             "load1": r.sysctl.load1,
             "cores": r.sysctl.cores,
-            "per_core": r.sysctl.load1 / r.sysctl.cores,
+            "max": k.cpu_load_max,
         },
         "swap_used": r.sysctl.swap_used,
         "pressure": PRESSURE.get(r.sysctl.pressure, f"level {r.sysctl.pressure}"),
@@ -677,6 +701,8 @@ def record_line(
             "in_use": r.memory.in_use,
             "compressed": r.memory.compressed,
             "load1": r.sysctl.load1,
+            "swap_used": r.sysctl.swap_used,
+            "live": r.sessions.live,
             "building": r.sessions.building,
             "free": r.sessions.free,
             "verdict": {"slots": slots, "reasons": reasons},
@@ -711,7 +737,7 @@ def no_reading(reason: str, as_json: bool) -> int:
         print(json.dumps({"status": "no-reading", "exit": NO_READING, "error": reason}))
     else:
         print(
-            f"machine-load: NO READING - {reason}; fall back to the cap",
+            f"machine-load: NO READING - {reason}; fall back to the total",
             file=sys.stderr,
         )
     return NO_READING
