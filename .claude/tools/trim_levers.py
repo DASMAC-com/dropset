@@ -67,8 +67,13 @@ MAX_PAGES = 40
 # Linear linkifies a hostname-valid basename, which silently rewrites the stored
 # key and breaks the dedup probe that is this pipeline's only guard against
 # refiling. Roughly 40 stored keys were corrupted this way before the rule was
-# written down, so it is enforced here rather than trusted to the caller.
-FINGERPRINT_RE = re.compile(r"^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9._/-]*$")
+# written down, so it is enforced here rather than trusted to the caller. The
+# slug may itself be colon-separated: a wait lever files under
+# ``wait:<dimension>:<cause>`` verbatim, so each segment is validated alike.
+_SLUG_SEGMENT = r"[a-z0-9][a-z0-9._/-]*"
+FINGERPRINT_RE = re.compile(
+    rf"^[a-z0-9][a-z0-9-]*:{_SLUG_SEGMENT}(?::{_SLUG_SEGMENT})*$"
+)
 
 # A fenced code block, opening or closing. Part bodies quote filing examples, so
 # a `**Field**:` line inside a fence is an illustration, not a field — see
