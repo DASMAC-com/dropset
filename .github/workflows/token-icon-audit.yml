@@ -39,7 +39,7 @@ jobs:
     - uses: 'actions/checkout@v6'
     - uses: 'actions/setup-node@v6'
       with:
-        node-version: '25'
+        node-version: '24'
     - name: 'Committed icons match their declared upstream sources'
       run: 'node frontend/scripts/audit-token-icons.mjs'
 name: 'Token icon audit'

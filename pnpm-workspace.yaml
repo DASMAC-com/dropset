@@ -1,4 +1,15 @@
 ---
+# Hold any dependency version published less than two days ago (the value is
+# in minutes): every 2026 npm worm's malicious versions were pulled from the
+# registry inside that window. Seven days buys no extra coverage and only
+# delays routine bumps. The excludes are the packages whose security patches
+# must never be held.
+minimumReleaseAge: 2880
+minimumReleaseAgeExclude:
+- 'next'
+- 'react'
+- 'react-dom'
+- 'sharp'
 # `onlyBuiltDependencies` allow-lists deps whose install scripts may run
 # (e.g. sharp's native build for Next); it must live at the workspace root
 # to take effect. The frontend + SDK packages share this one workspace.

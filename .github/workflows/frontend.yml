@@ -16,7 +16,7 @@ env:
   NEXT_PUBLIC_GET_MULTIPLE_ACCOUNTS_BATCH_SIZE: '10'
   NEXT_PUBLIC_RPC_URL: 'https://api.mainnet-beta.solana.com'
   NEXT_PUBLIC_WS_URL: 'wss://api.mainnet-beta.solana.com'
-  NODE_VERSION: '25'
+  NODE_VERSION: '24'
 jobs:
   frontend:
     name: 'Frontend'
@@ -25,7 +25,8 @@ jobs:
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
-    - uses: 'pnpm/action-setup@v6'
+    - uses: >- # v6.0.10
+        pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
       with:
         package_json_file: 'frontend/package.json'
     - uses: 'actions/setup-node@v6'
