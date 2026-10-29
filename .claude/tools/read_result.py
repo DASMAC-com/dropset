@@ -30,6 +30,7 @@ Usage::
     # Narrow searches and explicit line ranges
     python3 .claude/tools/read_result.py <file> --grep 'PAGE_SIZE' --context 2
     python3 .claude/tools/read_result.py <file> --slice 120:180
+    python3 .claude/tools/read_result.py <log> --tail 5
 
     # What changed between two fetches of the same object?
     python3 .claude/tools/read_result.py <new> --field description --diff <old>
@@ -149,13 +150,26 @@ def extract_field(text: str, path: str) -> str:
     A list index is written as a bare integer (``attachments.0.url``). The value
     is returned as-is when it is a string and re-serialized when it is not, so
     ``--field labels`` prints readable JSON instead of a Python ``repr``.
+
+    Only the LEADING JSON value is parsed; text after it is ignored, with a note
+    on stderr. Some payloads append prose to their JSON (a tool's trailing
+    advisory, a second block), and a strict ``json.loads`` rejected the whole
+    file as "Extra data" — a refused call for a field that was right there.
     """
+    stripped = text.lstrip()
     try:
-        node = json.loads(text)
+        node, end = json.JSONDecoder().raw_decode(stripped)
     except (json.JSONDecodeError, ValueError) as e:
         raise ReadResultError(
             f"--field {path} needs a JSON payload, but the text is not JSON: {e}"
         ) from e
+    trailing = stripped[end:].strip()
+    if trailing:
+        print(
+            f"read-result | NOTE: ignored {len(trailing)} char(s) of trailing text "
+            "after the JSON value",
+            file=sys.stderr,
+        )
 
     for part in path.split("."):
         if isinstance(node, list):
@@ -459,7 +473,8 @@ def run(argv: list[str]) -> int:
         default=None,
         metavar="DOTTED",
         help="dotted path into the payload parsed as JSON (e.g. description). "
-        f"May be passed alone to print a field of at most "
+        "Only the leading JSON value is parsed; trailing text after it is "
+        f"ignored. May be passed alone to print a field of at most "
         f"{FIELD_PRINT_MAX_LINES} lines",
     )
     mode = parser.add_mutually_exclusive_group()
@@ -501,6 +516,13 @@ def run(argv: list[str]) -> int:
     )
     mode.add_argument(
         "--slice", default=None, metavar="A:B", help="inclusive line range"
+    )
+    mode.add_argument(
+        "--tail",
+        type=int,
+        default=None,
+        metavar="N",
+        help="the last N lines, numbered — a background log's verdict line",
     )
     mode.add_argument(
         "--diff", default=None, metavar="FILE", help="unified diff against FILE"
@@ -571,6 +593,12 @@ def run(argv: list[str]) -> int:
         lo, hi = parse_slice(args.slice, len(lines))
         out = [f"{i}:{lines[i - 1]}" for i in range(lo, hi + 1)]
         summary = f"lines {lo}-{hi} of {len(lines)}"
+    elif args.tail is not None:
+        if args.tail < 1:
+            parser.error("--tail must be at least 1")
+        lo = max(1, len(lines) - args.tail + 1)
+        out = [f"{i}:{lines[i - 1]}" for i in range(lo, len(lines) + 1)]
+        summary = f"last {len(out)} of {len(lines)} line(s)"
     elif args.spill is not None:
         dest = Path(args.spill)
         _, note = spill(text, dest)
@@ -630,8 +658,8 @@ def run(argv: list[str]) -> int:
             summary = f"field {args.field}, {len(lines)} line(s)"
     else:
         raise ReadResultError(
-            "pick a mode: --headings, --section, --grep, --slice, --diff, "
-            "--count, or --spill. (--field may be passed alone for a short "
+            "pick a mode: --headings, --section, --grep, --slice, --tail, "
+            "--diff, --count, or --spill. (--field may be passed alone for a short "
             "field.)"
         )
 

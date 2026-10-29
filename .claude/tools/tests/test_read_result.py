@@ -151,6 +151,38 @@ class ExtractFieldTests(unittest.TestCase):
             extract_field("plain text", "description")
         self.assertIn("not JSON", str(caught.exception))
 
+    def test_trailing_text_after_the_json_is_ignored_with_a_note(self):
+        # A strict `json.loads` refused this payload as "Extra data" even though
+        # the field was right there at its head.
+        text = '  {"status": "Todo"}\n\nAdvisory: something appended.\n'
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(extract_field(text, "status"), "Todo")
+        self.assertIn("trailing text", err.getvalue())
+
+    def test_the_cli_field_tolerates_trailing_text(self):
+        path = _plain('{"status": "In Review"}\ntrailing prose')
+        rc, out, _ = _invoke(path, "--field", "status")
+        self.assertEqual((rc, out), (0, "In Review\n"))
+
+
+class TailTests(unittest.TestCase):
+    def test_the_last_n_lines_come_back_numbered(self):
+        path = _plain("one\ntwo\nthree\nfour\n")
+        rc, out, err = _invoke(path, "--tail", "2")
+        self.assertEqual((rc, out), (0, "3:three\n4:four\n"))
+        self.assertIn("last 2 of 4", err)
+
+    def test_a_tail_longer_than_the_payload_returns_all_of_it(self):
+        path = _plain("only\nlines\n")
+        _, out, _ = _invoke(path, "--tail", "50")
+        self.assertEqual(out, "1:only\n2:lines\n")
+
+    def test_a_non_positive_tail_is_a_usage_error(self):
+        code, err = _invoke_usage_error(_plain("x\n"), "--tail", "0")
+        self.assertEqual(code, 2)
+        self.assertIn("--tail", err)
+
 
 class HeadingsTests(unittest.TestCase):
     def test_headings_carry_line_numbers_and_depth_indent(self):

@@ -47,6 +47,8 @@ Subcommands::
     linear_issue.py tick   --id ENG-123 --box "Part 1 text" --box "Part 2 text"
     linear_issue.py tick   --id ENG-123 --box-file boxes.txt   # one per line
     linear_issue.py find   --query "reference price" --limit 5
+    linear_issue.py find   --query "first title" --query "second title"
+    linear_issue.py find   --queries-file titles.txt   # one per line
     linear_issue.py create --title "…" --body-file body.md \
         --state Todo --milestone "Audit findings"
     linear_issue.py create --title "…" --body-file body.md \
@@ -61,7 +63,10 @@ milestone and priority are parameters so one filer serves `audit-scope`
 (``Todo`` + ``Audit findings``), a planning follow-up (Backlog + a priority),
 and anything else that files in bulk.
 
-Each prints ONE line of accounting on success; ``find`` prints its rows.
+Each prints ONE line of accounting on success; ``find`` prints its rows —
+grouped under a ``## <query> — N match(es)`` heading per query when it is given
+more than one, so a filer's whole title-dedup sweep is one call rather than one
+round per candidate.
 ``--dry-run`` reports what would happen and writes nothing.
 """
 
@@ -408,6 +413,22 @@ def find(
     return [f"{n.get('identifier')}  {n.get('title')}" for n in nodes]
 
 
+def find_lines(results: list[tuple[str, list[str]]]) -> list[str]:
+    """The stdout lines for a ``find`` over one or more queries.
+
+    One query prints its bare rows, the shape callers already parse. Several
+    print a ``## <query> — N match(es)`` heading before each group, the count
+    included so an empty group reads as a miss rather than a dropped payload.
+    """
+    if len(results) == 1:
+        return list(results[0][1])
+    lines: list[str] = []
+    for query, rows in results:
+        lines.append(f"## {query} — {len(rows)} match(es)")
+        lines.extend(rows)
+    return lines
+
+
 _CREATE_MUTATION = """
 mutation Create($input: IssueCreateInput!) {
   issueCreate(input: $input) {
@@ -666,7 +687,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
 
     find_cmd = subs.add_parser("find", help="title-only search")
-    find_cmd.add_argument("--query", required=True, help="text to match in titles")
+    find_cmd.add_argument(
+        "--query",
+        action="append",
+        default=[],
+        help="text to match in titles (repeatable; one group per query)",
+    )
+    find_cmd.add_argument(
+        "--queries-file", help="more queries, one per line (blank lines skipped)"
+    )
     find_cmd.add_argument("--project", help="restrict to this project id")
     find_cmd.add_argument("--state", help="restrict to this workflow state name")
     find_cmd.add_argument(
@@ -728,18 +757,35 @@ def run(argv: list[str]) -> int:
         )
         return 0
 
-    rows = find(
-        api_key,
-        query=args.query,
-        project_id=args.project,
-        state=args.state,
-        limit=args.limit,
-    )
-    for row in rows:
-        print(row)
+    queries = list(args.query)
+    if args.queries_file is not None:
+        queries += [
+            ln.strip()
+            for ln in _read_file(args.queries_file).splitlines()
+            if ln.strip()
+        ]
+    if not queries:
+        raise LinearIssueError("find needs at least one --query or --queries-file")
+    results = [
+        (
+            query,
+            find(
+                api_key,
+                query=query,
+                project_id=args.project,
+                state=args.state,
+                limit=args.limit,
+            ),
+        )
+        for query in queries
+    ]
+    for line in find_lines(results):
+        print(line)
     # The count goes to stderr so a caller can consume the rows alone, and an
     # empty result says so rather than looking like a dropped payload.
-    print(f"linear-issue | {len(rows)} match(es)", file=sys.stderr)
+    total = sum(len(rows) for _, rows in results)
+    across = f" across {len(queries)} queries" if len(queries) > 1 else ""
+    print(f"linear-issue | {total} match(es){across}", file=sys.stderr)
     return 0
 
 

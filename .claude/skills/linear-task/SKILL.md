@@ -195,7 +195,10 @@ what to file.
      --project "$LINEAR_PROJECT_ID" --state Backlog --limit 5
    ```
 
-   It prints `identifier  title` lines and nothing else. Every
+   It prints `identifier  title` lines and nothing else; with
+   several candidate titles, repeat `--query` (or pass
+   `--queries-file`) for one grouped block per query in one call.
+   Every
    other filing skill's dedup step (`audit-scope`) runs this
    same probe and should use it too.
 

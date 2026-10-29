@@ -29,6 +29,12 @@ the whole fall-through inside one Bash call::
 4. **A red on either side ends the race.** A CI failure kills the local run
    and names the job; a local failure names the log line and leaves CI
    running.
+   **One exception: the E0463 doctest race.** A local test red whose only
+   failures are doctests that could not find a crate (``error[E0463]``,
+   every other test binary green) is the cargo pool swapping an rlib under
+   rustdoc, not the change. The doctests alone are rerun once, at the same
+   scope, and that rerun settles the check; the verdict line carries
+   ``recovered=doctest-e0463`` (before ``ci=``) so the retry is never silent.
 5. **HEAD moving** ends the race (commit, then call again); ``--timeout``
    bounds it; a CI read failing :data:`MAX_CI_ERRORS` times in a row stops
    the polling, and the local side settles alone.
@@ -64,6 +70,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -103,6 +110,21 @@ KILL_GRACE = 5.0
 #: The first line of a local log that names a failure, else its last line.
 _FAIL_LINE = re.compile(r"\.Failed$|FAILED|^error(\[|:)|panicked at")
 
+#: The pseudo-stage that reruns only the doctests after the E0463 race.
+DOC_RETRY = "test-doc"
+
+#: The ``recovered=`` value naming that recovery on the verdict line.
+DOCTEST_RACE = "doctest-e0463"
+
+#: Where cargo's doctest run for one crate begins in a ``cargo test`` log.
+_DOC_HEADER = re.compile(r"^\s*Doc-tests\s+\S+")
+
+#: One failing test's block header in the test harness's ``failures:`` section.
+_FAILURE_HEADER = re.compile(r"^---- .+ stdout ----$")
+
+#: The scoped test command ``cargo_scope.py`` echoes before running it.
+_SCOPED_TEST = re.compile(r"^cargo_scope: (cargo test\b.*)$")
+
 #: The ``ci=`` field when CI was not consulted, last on the line so it can
 #: carry the instruction that goes with it.
 NOT_PUSHED = "not-consulted(unpushed) - push for the full sweep"
@@ -124,6 +146,7 @@ class Race:
     killed: list[str] = field(default_factory=list)
     outcome: str = ""
     ci_note: str = ""
+    recovered: str = ""
 
 
 def log_path_for(sha: str, stage: str) -> Path:
@@ -145,6 +168,57 @@ def failure_line(log: Path) -> str:
     if hit < 0:
         return str(log)
     return f"{log}:{hit + 1}: {lines[hit].strip()[:160]}"
+
+
+def is_doctest_race(log: Path) -> bool:
+    """Whether a red test log is the pool's E0463 doctest race and nothing else.
+
+    The shape: every unit and integration binary passed (cargo runs the
+    doctests last and stops at the first red binary, so reaching them proves
+    that), and every failing doctest failed on ``error[E0463]`` — a crate not
+    found because a sibling checkout on the cargo pool swapped the rlib out
+    from under rustdoc. A real doctest failure beside it, or an E0463 outside
+    the doctests (a genuine build break), is not the race.
+    """
+    try:
+        lines = log.read_text(errors="replace").splitlines()
+    except OSError:
+        return False
+    first_doc = next((i for i, t in enumerate(lines) if _DOC_HEADER.match(t)), None)
+    if first_doc is None:
+        return False
+    before, doc = lines[:first_doc], lines[first_doc:]
+    if any("E0463" in t or "test result: FAILED" in t for t in before):
+        return False
+    blocks: list[list[str]] = []
+    open_block = False
+    for text in doc:
+        if _FAILURE_HEADER.match(text.strip()):
+            blocks.append([])
+            open_block = True
+        elif text.strip() == "failures:" or text.startswith("test result:"):
+            open_block = False  # The name list that follows is not a block.
+        elif open_block:
+            blocks[-1].append(text)
+    return bool(blocks) and all(any("E0463" in t for t in b) for b in blocks)
+
+
+def doctest_retry_cmd(log: Path) -> list[str]:
+    """``cargo test --doc`` at the scope the failed run used.
+
+    ``cargo_scope.py`` echoes each command it runs, so the last echoed
+    ``cargo test`` line is the failed run's exact package and feature set;
+    with none to read, the workspace doctests.
+    """
+    try:
+        lines = log.read_text(errors="replace").splitlines()
+    except OSError:
+        lines = []
+    for text in reversed(lines):
+        hit = _SCOPED_TEST.match(text.strip())
+        if hit:
+            return [*shlex.split(hit.group(1)), "--doc"]
+    return ["cargo", "test", "--doc"]
 
 
 class Stage:
@@ -361,6 +435,10 @@ def race(
                     if polling and dirty():
                         polling = False
                         r.ci_note = DIRTY
+                elif name == "test" and not r.recovered and is_doctest_race(stage.log):
+                    # Once only: a second E0463 is no longer a race to retry.
+                    r.recovered = DOCTEST_RACE
+                    current = (name, start(DOC_RETRY))
                 else:
                     r.settled[name] = Settled("local", False, failure_line(stage.log))
                     r.outcome = "RED"
@@ -388,6 +466,7 @@ def render(r: Race, wall: float) -> str:
             *(check(name) for name, _ in STAGES),
             f"wall={round(wall)}s",
             f"killed={','.join(r.killed) or '-'}",
+            *([f"recovered={r.recovered}"] if r.recovered else []),
             f"ci={r.ci_note}",
         ]
     )
@@ -433,7 +512,12 @@ def main(argv: list[str] | None = None) -> int:
         nonlocal spawning
         spawning = True
         try:
-            started.append(Stage(name, commands[name], log_path_for(sha, name)))
+            cmd = (
+                doctest_retry_cmd(log_path_for(sha, "test"))
+                if name == DOC_RETRY
+                else commands[name]
+            )
+            started.append(Stage(name, cmd, log_path_for(sha, name)))
         finally:
             spawning = False
         if deferred:
