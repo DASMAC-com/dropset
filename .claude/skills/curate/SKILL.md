@@ -61,8 +61,11 @@ when empty).
 Two feed the first ask — `Kill candidates:` and
 `Merge candidates:`, each with its evidence — and
 `Batches filed:` leads its first batch; `Folds made:` and
-`Levers rejected:` are context only. The fold is finished before
-this session starts; the only folding here is a review comment
+`Levers rejected:` are context only. A hand-off that arrives
+**after** the first ask (a held dispatch, the operator typing
+`curate` by hand) is never dropped: its candidates and batches
+ride the next batch's ask instead. The fold is finished before
+the launcher sends it; the only folding here is a review comment
 into a task body.
 
 Then state, in a few lines:
