@@ -45,11 +45,6 @@ __pycache__/
 # refreshes were its own.
 .claude/.allowlist-refresh.json
 
-# The seat allowance's sample log, at most one reading per upkeep pass, written by
-# .claude/tools/subscription_usage.py --log. Machine-local: it samples one
-# operator's subscription.
-.claude/.allowance-samples.jsonl
-
 # The launcher's lever-fold stamp, written by .claude/tools/upkeep.py fold-stamp
 # and read by the scheduler's bootstrap. Machine-local: it records one
 # machine's day.

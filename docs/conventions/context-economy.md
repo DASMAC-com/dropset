@@ -334,12 +334,13 @@ all measured 2026-10-14/15 over the Opus 5.5 fleet days 10-08 to 10-13
   session in the base checkout is keyed `plan`, so each Bedrock
   planning cycle is a priced line of the per-issue table.
 - **It runs daily, unprompted.** The `upkeep` pass the `plan` launcher
-  runs calls `reconcile` and reads the seat allowance, which has no bill
-  line, with `subscription_usage.py --log`. Each pass that gets a reading
-  appends one sample to an untracked log beside its stamp, and the
-  allowance's per-day figure is derived from those samples rather than
-  from a configured constant. The bootstrap says both out loud, so a rate
-  change or a metering bug is flagged as soon as its day settles (D-2).
+  runs calls `reconcile`, and the bootstrap says its day lines out loud,
+  so a rate change or a metering bug is flagged as soon as its day
+  settles (D-2). The same step prints `fleet_cost.py local`, the last
+  seven days and today by the machine's local midnight: billed from Cost
+  Explorer's hourly buckets (it needs the payer account's hourly
+  preference, and says so when it is off), beside the meter. Only the
+  settled reconcile is judged; the local view is for reading.
 
 ### The daily digest: the telemetry check-in
 

@@ -50,10 +50,9 @@ refuses the whole pass, since every later step assumes it.
     (``skill_size --utilization``), allowlist cruft, and the
     monthly refresh gate — mining the recent session digests when due and
     stamping the marker whatever the yield, writing no allow-rule;
-10. the fleet cost: ``fleet_cost reconcile`` per day (Bedrock metered beside
-    the bill, with its drift flag) and the seat allowance, which has no bill
-    line, read with ``subscription_usage --log`` so each pass that gets a reading appends the one
-    sample its per-day figure is derived from;
+10. the fleet cost: ``fleet_cost reconcile`` per settled UTC day (Bedrock
+    metered beside the bill, with its drift flag), then ``fleet_cost local``,
+    the last seven local days and today so far, billed beside metered;
 11. the session digest (``session_metrics digest``) over every transcript since
     the last digest's window closed, its rate-calibration line fed by step 10's
     reconcile figure and the settled day's ``fleet_cost rates`` read, and its
@@ -62,9 +61,12 @@ refuses the whole pass, since every later step assumes it.
 13. the transcript-purge dry-run manifest;
 14. the dependency advisories (``deps_audit --json``): one line, by severity,
     with the delta against the previous run's ids kept beside the stamp.
-    Report-only — never a CI gate.
+    Report-only — never a CI gate;
+15. the cargo lanes (``cargo_lanes``): each lane under the cargo target root
+    and every non-lane entry there, sized, with whether a build is running on
+    it; armed, every idle one is wiped — the bound on the lanes' growth.
 
-**Arming.** Step 6 runs as a dry run and touches nothing unless
+**Arming.** Steps 6 and 15 run as a dry run and touch nothing unless
 ``DS_UPKEEP_ARMED=1`` is exported from the untracked runtime config. Step 7 is
 always armed in ``run``: with the board gate gone, a settled PR's threads are
 dismissible on sight, and a dismissal destroys nothing. The open-PR guard holds
@@ -108,13 +110,13 @@ from pathlib import Path
 from typing import Callable
 
 import board_batch
+import cargo_lanes
 import fleet_cost
 import linear_api
 import planning_doc
 import prune_conversations
 import prune_worktrees
 import session_digest
-import subscription_usage
 
 TOOLS = Path(__file__).resolve().parent
 REPO = "DASMAC-com/dropset"
@@ -126,9 +128,6 @@ REPORT_HEADING = "Upkeep report — machine-written, latest run only"
 REPORT_END = "End of upkeep report."
 STAMP_NAME = ".upkeep-last-run.json"
 FOLD_STAMP_NAME = ".fold-last-run.json"
-# The seat allowance's sample log, at most one reading per pass — machine-local beside
-# the stamp, since the allowance is one operator's subscription.
-SAMPLES_NAME = ".allowance-samples.jsonl"
 # The last dependency audit's advisory ids, the deps line's delta baseline —
 # machine-local beside the stamp, never the repo.
 DEPS_STATE_NAME = ".deps-audit-last.json"
@@ -153,6 +152,9 @@ TIMEOUT_DIGEST = 600
 # Both audits (300s each) plus the version probe; the pass never installs
 # cargo-audit, so no source build sits under this bound.
 TIMEOUT_DEPS = 900
+# A `du` over each lane (a hundred-odd GiB is tens of seconds), then the
+# removal of every idle one.
+TIMEOUT_LANES = 900
 
 # How many recent digests the refresh gate mines — an upper bound: the purge
 # ages digests out on the transcripts' two-day rule, so once it is applied
@@ -720,39 +722,30 @@ def step_cost(ctx: Ctx) -> None:
             ok=bool(days) and not unreadable,
             days=[cost_day_line(d, s) for d, s in days],
         )
-    rc, out, err = ctx.tool(
-        "subscription_usage.py", "--log", str(ctx.base / ".claude" / SAMPLES_NAME)
+    # The operator's own day, midnight to midnight in the machine zone. A billed
+    # column the hourly preference leaves off is a state, not a failed read.
+    local = _json_tool(
+        ctx,
+        "local-cost",
+        "fleet_cost.py",
+        "local",
+        "--json",
+        ok_rcs=(0,),
+        timeout=TIMEOUT_COST,
     )
-    lines = [ln for ln in out.splitlines() if ln.strip()]
-    if rc == 0:
-        # Exit 0 also covers the no-credential and stale-token non-readings,
-        # which print one line and sample nothing; only a logged reading
-        # prints the marker.
-        sampled = subscription_usage.SAMPLE_LOGGED in lines
-        lines = [ln for ln in lines if ln != subscription_usage.SAMPLE_LOGGED]
-        trouble = [
-            ln
-            for ln in lines
-            if ln.startswith(("sample not logged", "sample log unreadable"))
-        ]
-        summary = (
-            "seat allowance, sampled for the per-day figure"
-            if sampled
-            else f"no reading, nothing sampled: {first_line(out)}"
-        )
-        # The per-day figure and any log trouble lead, so the list cap can only
-        # ever cut a limit row.
+    if local is not None:
+        state = local.get("billed", "")
+        rows = [fleet_cost.local_row(r, state) for r in local.get("days", [])]
+        rows.append(fleet_cost.local_week(local))
         ctx.record(
-            "allowance",
-            summary,
-            ok=sampled and not trouble,
-            rows=[ln for ln in lines if ln not in trouble and " per day " in ln]
-            + trouble
-            + [ln for ln in lines if ln not in trouble and " per day " not in ln],
+            "local-cost",
+            fleet_cost.local_heading(local),
+            ok=state in ("ok", fleet_cost.HOURLY_OFF)
+            and not local.get("unreadable_transcripts"),
+            days=rows,
+            # Every day is the table; the list cap would cut the newest.
+            list_cap=len(rows),
         )
-    else:
-        reason = first_line(out) or first_line(err) or f"exit {rc}"
-        ctx.record("allowance", f"allowance read failed: {reason}", False)
 
 
 def digest_calibration(ctx: Ctx) -> dict:
@@ -907,6 +900,25 @@ def step_deps(ctx: Ctx) -> None:
     ctx.record("deps", f"deps-audit: {data['line']}", ok=not data.get("errors"))
 
 
+def step_lanes(ctx: Ctx) -> None:
+    # Armed like the prune: a wipe costs the day's first build on each lane a
+    # cold dependency build and destroys nothing else, and a lane with a
+    # build running on it is held by the tool's own probe.
+    args = ["--json"] + (["--apply"] if ctx.armed else [])
+    result = _json_tool(
+        ctx, "lanes", "cargo_lanes.py", *args, ok_rcs=(0,), timeout=TIMEOUT_LANES
+    )
+    if result is None:
+        return
+    failed = [e for e in result["entries"] if e["action"].startswith("failed")]
+    ctx.record(
+        "lanes",
+        cargo_lanes.summary(result),
+        ok=result.get("probe") == "ok" and not failed,
+        rows=cargo_lanes.rows(result),
+    )
+
+
 STEPS = (
     ("pull", step_pull),
     ("cli", step_cli),
@@ -921,6 +933,7 @@ STEPS = (
     ("memory", step_memory),
     ("purge", step_purge),
     ("deps", step_deps),
+    ("lanes", step_lanes),
 )
 
 # What each step's progress line names, and the timeout bounding its slowest
@@ -943,11 +956,15 @@ STEP_LABELS = {
         f"per-call timeout {linear_api.REQUEST_TIMEOUT}s",
     ),
     "checks": ("convention and wiring checks", f"per-call timeout {TIMEOUT_TOOL}s"),
-    "cost": ("fleet cost and allowance", f"per-call timeout {TIMEOUT_COST}s"),
+    "cost": (
+        "fleet cost, settled and by local day",
+        f"per-call timeout {TIMEOUT_COST}s",
+    ),
     "digest": ("session digest", f"per-call timeout {TIMEOUT_DIGEST}s"),
     "memory": ("memory scan gate and audit", f"per-call timeout {TIMEOUT_TOOL}s"),
     "purge": ("transcript-purge dry run", f"per-call timeout {TIMEOUT_TOOL}s"),
     "deps": ("dependency advisories", f"timeout {TIMEOUT_DEPS}s"),
+    "lanes": ("report and wipe the cargo lanes", f"timeout {TIMEOUT_LANES}s"),
 }
 
 
@@ -1050,12 +1067,14 @@ def render(result: dict, cap: int = REPORT_CHAR_CAP) -> str:
     for s in result["steps"]:
         mark = "" if s["ok"] else " (failed)"
         lines.append(f"- {s['step']}{mark}: {one_line(s['line'])}")
+        # A step whose list is a table (the local-cost days) lifts the cap.
+        list_cap = s.get("list_cap", LIST_CAP)
         for key in LIST_KEYS:
             items = s.get(key) or []
-            for item in items[:LIST_CAP]:
+            for item in items[:list_cap]:
                 lines.append(f"  - {one_line(item)}")
-            if len(items) > LIST_CAP:
-                lines.append(f"  - and {len(items) - LIST_CAP} more")
+            if len(items) > list_cap:
+                lines.append(f"  - and {len(items) - list_cap} more")
     text = "\n".join(lines)
     if len(text) > cap:
         text = text[: cap - 40].rsplit("\n", 1)[0] + "\n- report truncated at the cap"

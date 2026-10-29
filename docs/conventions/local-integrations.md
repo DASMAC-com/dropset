@@ -1550,13 +1550,46 @@ worktree.** A bare `cargo clean` wipes the current lane, the build of
 every worktree on it, and `cargo clean -p <crate>` is no narrower than it
 looks: it removes that crate's slots for **every** checkout on the lane,
 under their running builds (a likely cause of the "test binaries
-vanished" failure). The worktree pruner no longer frees build artifacts,
-so the pool is the place disk accumulates.
-When it grows too large, delete it while no build is running:
-`rm -rf "$CARGO_TARGET_DIR"` clears the current checkout's lane only, and
-the next build in each worktree on that lane is then cold. Lowering
-`DS_CARGO_LANES` strands the higher lanes' `dropset-<n>` directories;
-delete those the same way.
+vanished" failure). The worktree pruner frees no build artifacts, so the
+lanes are where disk accumulates, and the daily wipe below is what bounds
+them.
+
+#### Where a lane lives, why it grows, and the daily wipe
+
+A lane is a plain directory under the cargo home's `target/`:
+`$CARGO_HOME/target/dropset` for lane 0, `…/dropset-<i>` for lane `i`.
+Nothing creates it ahead of time. The directory-change hook exports
+`CARGO_TARGET_DIR` to the checkout's lane (its issue number modulo
+`DS_CARGO_LANES`, the base checkout on lane 0), and cargo creates the
+directory on the first build into it. A lane is **serial** because cargo
+locks its target directory for a build's length.
+
+A lane **grows without bound**. The workspace wrapper keys every
+workspace crate's artifacts by the checkout's path, so each worktree that
+ever built on the lane leaves its own slots behind after its worktree is
+gone. And a dependency bump leaves the old version's artifacts beside the
+new, since cargo never removes what it no longer needs. Measured
+2026-10-28: lane 0 at 101 GiB, lane 1 at 42 GiB.
+
+**The bound is a daily wipe.** The upkeep pass's `lanes` step
+(`.claude/tools/cargo_lanes.py`) lists each lane and every non-lane entry
+under the target root, with its size and whether a cargo build is running
+on it right now. The build-queue read is the load probe's own, each
+cargo root attributed to the entry its `CARGO_TARGET_DIR` names. When
+upkeep is armed (`DS_UPKEEP_ARMED=1`), it removes every lane with no build
+running, and every non-lane entry: the stale two-hex-character
+directories of an older layout, a lane above the current count, any stray
+per-issue directory, a `.wipe-` tombstone left by an interrupted wipe. A
+lane with a build running is skipped and the line says so. A session that
+opened before the pre-launch and started a build is the usual cause, and
+that lane waits for the next day. Unarmed, the step is a dry run, as the
+prune is. The `plan` pre-launch runs upkeep, so a bare `plan` triggers
+the wipe each morning. The first build on each lane that day pays a cold
+dependency build of about five minutes, and every later build is
+incremental. The localnet program keypair in the lane's `deploy/` is
+re-staged from the committed file by `make program-keypair` on the next
+build. By hand, `rm -rf "$CARGO_TARGET_DIR"` while no build runs still
+clears the current lane.
 
 **Adopting it, once.** A session launched before the init change does not
 see the variables (see the shell-snapshot note under "Session secrets"), so
