@@ -42,10 +42,13 @@ drives through the same machinery:
 * ``ask`` takes ``--notes`` (a JSON object, inline or a file path, mapping
   id to the one-line commentary that becomes that checkbox's description; the
   title otherwise) and ``--proposals`` (a JSON list of edges
-  ``{"edge": {"blocker": …, "blocked": …}, "reason": …}`` and priority changes
-  ``{"priority": {"id": …, "to": …}, "reason": …}``, rendered as a further
-  multi-select question whose ticks the session executes through
-  ``board_batch.py``). Both work on either pool.
+  ``{"edge": {"blocker": …, "blocked": …}, "reason": …}``, and the launcher's
+  hand-off kills ``{"kill": …, "reason": …}`` and merges
+  ``{"merge": [… two or more], "reason": …}``, rendered as a further
+  multi-select question whose ticks the session executes — an edge through
+  ``board_batch.py``, a kill as a cancel, a merge through ``merge-tasks``).
+  There is no priority kind: priorities are the scheduler's alone. Both work
+  on either pool.
 * ``approve --pool inbox`` takes **at most one** ``--ids`` — the
   one-at-a-time rule, enforced here rather than in prose — plus any number of
   ``--cancel`` rejects. The approved id moves to Todo; the rest is as above.
@@ -84,6 +87,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 
 import board_batch
@@ -226,25 +230,59 @@ def parse_notes(raw: object, ids: list[str]) -> dict[str, str]:
     return notes
 
 
+PROPOSAL_KINDS = ("edge", "kill", "merge")
+ISSUE_ID = re.compile(r"ENG-(\d+)")
+
+
+def _issue_id(raw: object) -> tuple[str, int]:
+    """A hand-off id as ``("ENG-<n>", n)``, leading zeros dropped so
+    ``ENG-09`` and ``ENG-9`` are one issue; anything else is refused."""
+    match = ISSUE_ID.fullmatch(str(raw).strip().upper())
+    if not match:
+        raise RatifyError(f"hand-off id {raw!r} is not ENG-###")
+    number = int(match.group(1))
+    return f"ENG-{number}", number
+
+
+def _hand_off_ids(proposal: dict) -> list[str]:
+    """The issues a kill or merge consumes; an edge consumes none."""
+    if "kill" in proposal:
+        return [_issue_id(proposal["kill"])[0]]
+    if "merge" in proposal:
+        return sorted({_issue_id(i)[0] for i in proposal["merge"]})
+    return []
+
+
 def proposal_option(proposal: object) -> dict:
-    """One proposal as a checkbox: an edge or a priority change, its reason as
-    the description."""
+    """One proposal as a checkbox: an edge, or a kill or merge from the
+    launcher's hand-off, its reason (the evidence) as the description. No
+    priority kind: priorities are the scheduler's alone."""
     if not isinstance(proposal, dict) or not str(proposal.get("reason", "")).strip():
         raise RatifyError(f"proposal {proposal!r} needs a one-line reason")
+    kinds = [k for k in PROPOSAL_KINDS if k in proposal]
+    if len(kinds) > 1:
+        raise RatifyError(f"proposal {proposal!r} mixes {' and '.join(kinds)}")
     reason = str(proposal["reason"]).strip()
-    edge, change = proposal.get("edge"), proposal.get("priority")
+    edge, kill, merge = (proposal.get(k) for k in PROPOSAL_KINDS)
     if isinstance(edge, dict) and edge.get("blocker") and edge.get("blocked"):
         blocker = str(edge["blocker"]).strip().upper()
         blocked = str(edge["blocked"]).strip().upper()
         return {"label": f"{blocker} blocks {blocked}", "description": reason}
-    if isinstance(change, dict) and change.get("id") and "to" in change:
-        level = board_batch.normalize_priority(change["to"])
-        ident = str(change["id"]).strip().upper()
-        label = board_batch.PRIORITY_LABELS.get(level, str(level))
-        return {"label": f"{ident} to {label}", "description": reason}
+    if kill is not None:
+        return {"label": f"Cancel {_issue_id(kill)[0]}", "description": reason}
+    if isinstance(merge, list) and len(merge) >= 2:
+        # merge-tasks folds into the lowest-numbered survivor; name it.
+        numbers = sorted({_issue_id(i)[1] for i in merge})
+        if len(numbers) < 2:
+            raise RatifyError(f"merge {merge!r} needs two distinct ids")
+        ids = [f"ENG-{n}" for n in numbers]
+        return {
+            "label": f"Merge {' '.join(ids[1:])} into {ids[0]}",
+            "description": reason,
+        }
     raise RatifyError(
-        f"proposal {proposal!r} is neither an edge {{blocker, blocked}} nor a "
-        "priority change {id, to}"
+        f"proposal {proposal!r} is neither an edge {{blocker, blocked}}, a kill "
+        "(an id) nor a merge (two or more ids)"
     )
 
 
@@ -252,13 +290,20 @@ def parse_proposals(raw: object) -> list[dict]:
     if raw is None:
         return []
     if not isinstance(raw, list):
-        raise RatifyError("--proposals expects a list of edges and priority changes")
+        raise RatifyError("--proposals expects a list of edges, kills and merges")
     options = [proposal_option(p) for p in raw]
     labels = [o["label"] for o in options]
     repeated = sorted({label for label in labels if labels.count(label) > 1})
     if repeated:
         # Two checkboxes with one label make the operator's ticks ambiguous.
         raise RatifyError(f"--proposals repeats: {', '.join(repeated)}")
+    consumed = [i for p in raw for i in _hand_off_ids(p)]
+    contested = sorted({i for i in consumed if consumed.count(i) > 1})
+    if contested:
+        # Ticking both a kill and a merge of one issue cannot both execute.
+        raise RatifyError(
+            f"--proposals names an issue in two kills or merges: {', '.join(contested)}"
+        )
     return options
 
 
@@ -445,7 +490,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     ask = sub.add_parser("ask", help="the one-checkbox-per-task review ask")
     ask.add_argument("--ids", nargs="+", required=True)
     ask.add_argument("--notes", help="JSON id -> note, inline or a file path")
-    ask.add_argument("--proposals", help="JSON list of edges / priority changes")
+    ask.add_argument("--proposals", help="JSON list of edges / kills / merges")
     ask.add_argument("--out", help="write the JSON here instead of stdout")
     review = sub.add_parser("review", help="approved or held, per ticked task")
     review.add_argument("--ids", nargs="+", required=True)

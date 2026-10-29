@@ -1,16 +1,18 @@
 ---
 name: curate
-description: Run the curator — the daily advisor-tier session that owns everything between Backlog and Todo, in the base repo with no worktree, branch or PR. Launched by the scheduler as part of the plan morning, or by hand with the `curate` verb (Bedrock; `curate anthropic` is the escape). Bootstraps from the Planning document, the rulings file and one compact pool listing; ranks the un-parked Backlog against the day's direction; walks the operator through it four tasks at a time, one checkbox each with a line of commentary, plus a second checklist of proposed edges and priorities. Moves each ticked, uncommented task to Todo one at a time, folds comments into the task's body, places only the edges and priorities the operator ticks, and spins off an architect task when a spec needs a design conversation first. Messages the scheduler every move it makes. Event-driven, never polls.
+description: Run the curator — the daily advisor-tier session that owns everything between Backlog and Todo, in the base repo with no worktree, branch or PR. Dispatched by the launcher each morning, or by hand with the `curate` verb (Bedrock; `curate anthropic` is the escape). Bootstraps from the Planning document, the rulings file and one compact pool listing; ranks the un-parked Backlog against the day's direction; walks the operator through it four tasks at a time, one checkbox each with a line of commentary, plus a second checklist of proposed edges and, in the first ask, the launcher's kill and merge candidates. Moves each ticked, uncommented task to Todo one at a time, folds comments into the task's body, places only the edges, kills and merges the operator ticks — never a priority, the scheduler's — and spins off an architect task when a spec needs a design conversation first. Messages the scheduler every move it makes. Event-driven, never polls; stops on the scheduler's closing message.
 user-invocable: true
 ---
 
 # `curate`
 
-The **curator** owns review: everything between Backlog and Todo.
-The **scheduler** (the `plan` session) owns what happens after —
-dispatch, holds, the Planning document. Todo means "should this be
-done", and the operator answers that question in this tab, four
-tasks at a time.
+The **curator** judges: everything between Backlog and Todo —
+what to promote, kill or merge. The **scheduler** (the `plan`
+session) schedules — dispatch, holds, priorities, the direction —
+and owns the Planning document. The **launcher** starts the day:
+it runs the lever fold and hands its kill and merge candidates to
+this session. Todo means "should this be done", and the operator
+answers that question in this tab, four tasks at a time.
 
 The sibling shapes: `architect` for the seat-session discipline,
 `ratify-staged` for the review round this reuses — the same ask
@@ -22,13 +24,15 @@ batch at the end.
 
 The **base repo**, never a worktree; no branch, no commits, no PR.
 It is advisor tier, **Bedrock** by default; `curate anthropic` is
-the escape. The scheduler launches it as part of the plan morning,
-or the operator types `curate`. The launcher pins the model and
-refuses an unresolved tier, so there is no in-session model check
+the escape. The launcher session dispatches it each morning, or
+the operator types `curate`. The `curate` shell verb pins the
+model and refuses an unresolved tier, so there is no in-session
+model check
 (`docs/conventions/local-integrations.md`).
 
-There is **no governing issue**, so no In Review write and no
-close tool.
+There is **no governing issue**: the curator is a session that
+runs every day, named by its date, so it writes no issue state of
+its own and has no close tool.
 
 ## Bootstrap: three reads
 
@@ -50,7 +54,19 @@ close tool.
 
 **Nothing else.** No issue bodies — a body is read when its batch
 comes up. No PR checks, no parked counts, no audit heartbeat:
-those are the scheduler's.
+those are the scheduler's. The **launcher's hand-off** arrives as
+one message, not a read: its first line names the sender,
+`Hand-off from launch-<day>: …`, then five labelled lists (`none`
+when empty).
+Two feed the first ask — `Kill candidates:` and
+`Merge candidates:`, each with its evidence — and
+`Batches filed:` leads its first batch; `Folds made:` and
+`Levers rejected:` are context only. A hand-off that arrives
+**after** the first ask (a held dispatch, the operator typing
+`curate` by hand) is never dropped: its candidates and batches
+ride the next batch's ask instead. The fold is finished before
+the launcher sends it; the only folding here is a review comment
+into a task body.
 
 Then state, in a few lines:
 
@@ -93,7 +109,8 @@ arrival joins and a lost message costs latency, not work.
 ```sh
 python3 .claude/tools/ratify_staged.py ask --pool inbox \
   --ids <the four, ranked …> \
-  --notes <scratchpad>/notes.json --out <scratchpad>/ask.json
+  --notes <scratchpad>/notes.json \
+  --proposals <scratchpad>/proposals.json --out <scratchpad>/ask.json
 ```
 
 `--ids` is the batch: the tool never ranks or chooses, and the
@@ -113,7 +130,8 @@ operator's, verbatim:
 task, your commentary in its description. Read each task's body
 before you write its line. The batch is **four**, or the pool's
 remainder: tasks held from the last round carry over first, and
-the top of the ranking fills the rest.
+the top of the ranking fills the rest. In the **first** batch the
+hand-off's `Batches filed:` lead.
 
 The commentary line, by case:
 
@@ -125,12 +143,16 @@ The commentary line, by case:
 - **A spec awaiting design**: "awaiting design in" the architect
   task's title.
 
-**Question 2**, only when there is something to propose: **edges
-and priorities**, one checkbox per proposal with its one-line
-reason (what it consumes, what it unblocks, why it ranks there).
-A ticked proposal is placed after the ticks (below). An unticked
-one is **not placed and not re-asked** unless its evidence changes.
-A tick here is the operator placing the edge through an explicit
+**Question 2**, only when there is something to propose, passed as
+`--proposals`: **edges**, one checkbox per proposal with its
+one-line reason (what it consumes, what it unblocks). In the
+**first ask** it also carries the launcher's hand-off, one
+checkbox per candidate with its evidence as the reason —
+`{"kill": <id>}` and `{"merge": [<ids> …]}`. The tool has no
+priority kind: a priority goes to the scheduler (below). A ticked
+proposal is executed after the ticks (below). An unticked one is
+**not executed and not re-asked** unless its evidence changes.
+A tick on an edge is the operator placing it through an explicit
 in-tab instruction — ruling 2's human-placed form
 (`docs/conventions/linear-automation.md` → "Blocking relations").
 
@@ -174,26 +196,42 @@ follow. Then, per ticked task:
 
 An unticked task approves nothing, and stays in the ranking.
 
-**Then place the ticked proposals** from question 2 — edges with
-`board_batch.py edges --pairs <file>`, priorities with
-`board_batch.py priorities --updates <file>`, each rehearsed with
-`--dry-run` first.
+**Then execute the ticked proposals** from question 2:
+
+- **An edge**: `board_batch.py edges --pairs <file>`, rehearsed
+  with `--dry-run` first.
+- **A kill**: cancel it first (`approve --pool inbox --cancel <id>`),
+  then append the evidence to the body (`linear_issue.py append`).
+  A kill the tool refuses (out of the pool, or holding an open
+  thread) is not executed: no append, and the batch message hands
+  it to the scheduler.
+- **A merge**: only when every id is in the last pool listing — a
+  merge never closes a Todo or dispatched issue from this tab. Run
+  `merge-tasks` over its ids; the label names the survivor. A merge
+  reaching outside the pool is handed to the scheduler like a
+  refused kill.
 
 **Then one message to the scheduler for the batch** (`ListAgents`,
 then `SendMessage`), sent in the turn the writes land: every Todo
-move, every cancel, every edge or priority placed. No live
-scheduler: the moves are on the board, and the close note carries
-the rest — except a change to an edge or priority **the scheduler
-placed**, which waits until a scheduler is live to receive the
-message.
+move, every cancel, every merge, every edge placed, and any kill
+or merge handed over. No live scheduler: the moves are on the
+board — except a change to an edge **the scheduler placed**, or a
+handed-over kill or merge, which waits until a scheduler is live
+to receive the message.
 
-## The coordination rule: two writers
+## The coordination rule
 
-The scheduler and the curator both write edges and priorities,
-anywhere on the board — each sees what the other lacks. So:
+**Priorities are the scheduler's alone.** The curator writes none.
+A priority it believes wrong goes to the scheduler by message,
+with the reason; with no live scheduler it **waits** — the same
+rule as a change to a scheduler-placed edge.
 
-- A write that **places, changes or removes** an edge or priority
-  the scheduler placed is messaged to it **in the same turn**, with
+**Edges have two writers.** The scheduler and the curator both
+write them, anywhere on the board — each sees what the other
+lacks. So:
+
+- A write that **places, changes or removes** an edge the
+  scheduler placed is messaged to it **in the same turn**, with
   the reason.
 - Neither session deletes the other's edge without that message.
 - The Planning document records the result at the scheduler's next
@@ -201,10 +239,11 @@ anywhere on the board — each sees what the other lacks. So:
 
 **What the curator never writes:**
 
-- an edge or priority the operator did not tick;
+- a priority, beyond the architect task's fixed one at filing;
+- an edge, kill or merge the operator did not tick;
 - a milestone, except `Post-validation` when a comment names it;
-- any other issue's state or body beyond the fold and the
-  ticked task's Todo move or cancel.
+- any other issue's state or body beyond the fold, a ticked kill
+  or merge, and the ticked task's Todo move or cancel.
 
 The one filing it makes is the architect task below, drafted with
 the operator in the tab; its Urgent priority and Backlog state are
@@ -257,13 +296,26 @@ re-list, never the state. **Never poll** the board between messages.
 ask once whether to cycle (`plan` → "Cycling"). The pool listing
 is the state, so a relaunch re-lists and carries on.
 
-**The close tail**, in order:
+**The stop.** The scheduler's close-out sends the line "closing
+for the day". On it:
 
-1. Session metrics, unprompted (`session-metrics`).
-1. The day's cost, stated in one line.
-1. **One process note** under the Planning document's
-   `Notes for the next planning session` heading — what moved to
-   Todo, what is held, what is awaiting design. A pointer, not a
-   transcript.
+1. Take **no new batch**; finish a batch that is mid-tick — its
+   writes and its message to the scheduler.
 
-No In Review write: there is no governing issue.
+1. State the **inbox remaining**: the count and the ids.
+
+1. Session metrics, unprompted (`session-metrics`), and the day's
+   cost in one line.
+
+1. Print one line, so the tab goes yellow once:
+
+   ```text
+   CLEAR TO CLOSE — close this window
+   ```
+
+No board write accompanies the stop, no issue state (there is no
+governing issue), and no Planning-document note: the scheduler,
+which owns the document, is rewriting it as this runs, and the
+board holds any move its rewrite missed. A close the operator starts by hand
+runs the same tail; with no live scheduler, the inbox line is the
+day's record and the board holds the rest.

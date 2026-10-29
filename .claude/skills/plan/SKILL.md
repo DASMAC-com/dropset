@@ -325,10 +325,12 @@ with no refactor-later burden a later issue will undo.
 - An issue is in Next **iff** it is in Todo with no live
   blocking edge. "Put it in Next" means resolving or re-scoping
   what blocks it — **never** silently dropping a real dependency.
-- **Edges and priorities are the scheduler's and the curator's**
-  (ruling 2); implementation sessions never place edges. Message
-  the curator every direction change, and any write touching an
-  edge or priority it placed, with the reason, in the same turn.
+- **Priorities are the scheduler's alone; edges are the
+  scheduler's and the curator's** (ruling 2); implementation
+  sessions never place edges. The curator messages a priority it
+  believes wrong. Message the curator every direction change, and
+  any write touching an edge it placed, with the reason, in the
+  same turn.
 - **A hold is an edge or it does not exist** (ruling 2). An issue
   held behind an in-flight surface or a sequencing reason gets a
   blocking edge on that blocker, asked in step 8's ask at
@@ -524,6 +526,11 @@ decisions, offer via `AskUserQuestion` — "close out now?
 (rewrites the Planning doc to the current state of play)" —
 recommended first.
 
+**On the yes, stop the curator first.** `ListAgents`; a live
+curator gets one `SendMessage`, "closing for the day", and its
+`curate` stop tail ends in `CLEAR TO CLOSE`. Do not wait for an
+answer. None live: report `curator: not live`.
+
 **The close-out deliverable is the whole document, rewritten**
 to the ephemeral shape above and nothing else: superseded
 phases, dated addenda and the session's incremental notes
@@ -608,5 +615,7 @@ session that died mid-review — offer to resume it.
 - **It is not a one-shot** — a scheduler session spans hours or
   days.
 - **The board is shared with the curator alone**, under ruling
-  2's coordination rule: each messages the other any write
-  touching what the other placed.
+  2's coordination rule: the curator judges (promote, kill,
+  merge), the scheduler schedules and owns priorities and the
+  document; each messages the other any edge write touching what
+  the other placed.
