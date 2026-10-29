@@ -1593,6 +1593,7 @@ authoritative.
 | `SetQuoteAuthority` names the current quote authority       | `SameQuoteAuthority`           |
 | `CreateVault` / `SetPerfFeeRate` rate above 1,000,000 ppm   | `InvalidPerfFeeRate`           |
 | `SetPerfFeeRate` names the current rate                     | `SamePerfFeeRate`              |
+| `SetOutsideDepositsApproved` seq ≠ the sector's `Vault.seq` | `VaultSeqMismatch`             |
 | Reference price unset where a basis read needs it           | `ReferencePriceNotSet`         |
 | Swap `limit_price` bits not a well-formed `Price`           | `InvalidPrice`                 |
 | Swap `amount_in == 0`                                       | `InvalidAmountIn`              |

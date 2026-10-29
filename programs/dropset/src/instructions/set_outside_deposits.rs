@@ -91,8 +91,9 @@ impl SetOutsideDepositsApproved {
         // the dispatcher via `#[access_control]` (`lib.rs`), so the caller
         // is already a known admin here.
         // Same validate-then-mutate shape as the leader setter above:
-        // confirm the sector is live through an immutable borrow, then
-        // narrow to the single store.
+        // confirm the sector is live and still holds the vault the caller
+        // read, through an immutable borrow, then narrow to the single
+        // store.
         {
             let vault = self.market.read_vault(vault_idx)?;
             require!(vault.is_occupied(), DropsetError::VaultEmpty);
