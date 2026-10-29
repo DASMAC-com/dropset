@@ -951,7 +951,7 @@ A vault leaves the active eCLOB by either of two lifecycle paths:
 | -------------- | ------------------------------- | ---------------------------------------------------- | -------------------------------------------- | -------- | ---------------------------------------------------- | --------------------------------- | -------------------------------- |
 | **Active**     | default                         | active                                               | accepted                                     | accepted | accepted                                             | accrues                           | becomes frozen or tombstoned     |
 | **Frozen**     | admin via `FreezeVault`         | stays on active DLL; matcher skips it from next take | accepted but inert (matcher skips the vault) | rejected | accepted; `min_leader_share` bypassed for the leader | no-op (HWM pinned at freeze time) | Reclaim when `total_shares == 0` |
-| **Tombstoned** | leader via `CloseVault`         | tombstone DLL; takers do not iterate                 | rejected (vault not visited)                 | rejected | accepted; `min_leader_share` bypassed for the leader | no-op (HWM pinned at close time)  | Reclaim when `total_shares == 0` |
+| **Tombstoned** | leader via `CloseVault`         | tombstone DLL; takers do not iterate                 | accepted but inert (vault not visited)       | rejected | accepted; `min_leader_share` bypassed for the leader | no-op (HWM pinned at close time)  | Reclaim when `total_shares == 0` |
 | **Reclaimed**  | implicit on draining `Withdraw` | free DLL                                             | n/a                                          | n/a      | n/a                                                  | n/a                               | sector available for reuse       |
 
 Both terminal states are designed so depositors can always exit and
@@ -1924,7 +1924,7 @@ This is a general rule for the hot path, not a one-off: **when new
 fields land here, place same-width ones adjacently and move them
 together.** The rest of the entrypoint already obeys it — the
 `quote_authority` compare reads 32 bytes as 4×`u64`, and the profile
-write is one `sol_memcpy_` rather than 28 hand-rolled pairs — and the
+write is one `sol_memcpy_` rather than 36 hand-rolled pairs — and the
 remaining single-word accesses (the discriminator byte, `vault_idx`,
 `price`) have no adjacent same-domain partner to pair with, so they are
 already minimal.

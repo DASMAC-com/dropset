@@ -61,8 +61,8 @@ pub trait VaultAccess {
     /// same market and keep quoting for the price of a create fee (the
     /// rule is per key) — tombstoned or not, since `close_vault` doesn't
     /// refuse a frozen vault and would otherwise launder the freeze. A
-    /// sole-holder leader can close, drain, reclaim and re-create for one
-    /// fee; that is deliberate (pinned by
+    /// sole-holder leader can drain (closing first is optional), reclaim
+    /// and re-create for one fee; that is deliberate (pinned by
     /// `frozen_leader_may_reenter_once_the_sector_is_reclaimed`). An unfrozen
     /// tombstone doesn't count: a stranded depositor on it (reclaimed only
     /// on the last draining withdraw) must not lock a leader who closed
