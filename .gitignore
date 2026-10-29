@@ -55,6 +55,11 @@ __pycache__/
 # machine's day.
 .claude/.fold-last-run.json
 
+# The last dependency audit's advisory ids, written by .claude/tools/deps_audit.py
+# --state from the upkeep pass, the baseline its deps line's delta is read
+# against. Machine-local: it records one machine's last run.
+.claude/.deps-audit-last.json
+
 # Which substrate — Bedrock or the seat — each session launched on, one file
 # per worktree tag, written by the session verbs in .claude/shell/init.zsh so a
 # resume lands on the provider its session started with. Machine-local runtime

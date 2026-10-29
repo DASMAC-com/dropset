@@ -1,0 +1,35 @@
+# cspell:word bigint
+# cspell:word libsecp
+# cspell:word rkyv
+# cspell:word secp
+# cspell:word syscalls
+# cspell:word zstd
+# Standing exceptions for `cargo audit`, read by .claude/tools/deps_audit.py
+# (`make deps-audit` and the daily upkeep pass). cargo-audit's own format: one
+# RUSTSEC id per line, each with a trailing `# reason` — an id without one
+# fails the tool's tests. Ignore only what no lockfile bump can fix, so the
+# upkeep line reads zero when only the known-unfixable ones remain.
+[advisories]
+ignore = [
+  "RUSTSEC-2021-0139", # ansi_term unmaintained; pulled by litesvm, no successor release
+  "RUSTSEC-2023-0071", # rsa, no fix upstream; lock-only via sqlx-mysql, never built
+  "RUSTSEC-2024-0388", # derivative unmaintained; pulled by ark 0.4 in the Solana graph
+  "RUSTSEC-2024-0436", # paste unmaintained; pulled by ark-ff in the Solana graph
+  "RUSTSEC-2025-0141", # bincode unmaintained; the Solana crates' wire format
+  "RUSTSEC-2025-0161", # libsecp256k1 unmaintained; pulled by solana-syscalls
+  "RUSTSEC-2026-0235", # rkyv; lock-only via rust_decimal's optional feature, never built
+  "RUSTSEC-2026-0387", # crypto-bigint 0.5; k256 0.13 via solana-secp256k1-recover pins it
+  "RUSTSEC-2026-0391", # zstd 0.13; pinned by solana-account-decoder 3.1
+  "RUSTSEC-2026-0395", # zstd-safe 7; pinned by solana-account-decoder 3.1
+  "RUSTSEC-2026-0396", # zstd-safe 7; pinned by solana-account-decoder 3.1
+  "RUSTSEC-2026-0397", # zstd-safe 7; pinned by solana-account-decoder 3.1
+  "RUSTSEC-2026-0398", # zstd-safe 7; pinned by solana-account-decoder 3.1
+  "RUSTSEC-2026-0399", # zstd-safe 7; pinned by solana-account-decoder 3.1
+  "RUSTSEC-2026-0400", # zstd-safe 7; pinned by solana-account-decoder 3.1
+  "RUSTSEC-2026-0401", # zstd-safe 7; pinned by solana-account-decoder 3.1
+  "RUSTSEC-2026-0402", # zstd-safe 7; pinned by solana-account-decoder 3.1
+  "RUSTSEC-2026-0403", # zstd-safe 7; pinned by solana-account-decoder 3.1
+  "RUSTSEC-2026-0404", # zstd-safe 7; pinned by solana-account-decoder 3.1
+  "RUSTSEC-2026-0405", # zstd-safe 7; pinned by solana-account-decoder 3.1
+  "RUSTSEC-2026-0406", # zstd-safe 7; pinned by solana-account-decoder 3.1
+]

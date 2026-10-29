@@ -970,6 +970,39 @@ class PassTests(unittest.TestCase):
             path.write_text(json.dumps({"last_run": "2026-10-07T09:00:00+00:00"}))
             self.assertEqual(upkeep.previous_run(path), "2026-10-07T09:00:00+00:00")
 
+    def _deps_step(self, rc: int, payload: dict | None):
+        calls = []
+
+        def run(cmd, timeout, cwd=None):
+            calls.append(cmd)
+            return rc, json.dumps(payload) if payload is not None else "", "boom"
+
+        ctx = make_ctx(run)
+        upkeep.step_deps(ctx)
+        return calls, next(s for s in ctx.steps if s["step"] == "deps")
+
+    def test_deps_step_prints_the_tool_line_with_its_state_beside_the_stamp(self):
+        line = (
+            "2 advisories (1 high, 1 moderate), 1 new / 0 resolved since the last run"
+        )
+        calls, step = self._deps_step(1, {"line": line, "errors": []})
+        self.assertTrue(step["ok"])
+        self.assertEqual(step["line"], f"deps-audit: {line}")
+        state = calls[0][calls[0].index("--state") + 1]
+        self.assertEqual(state, str(Path(BASE) / ".claude" / upkeep.DEPS_STATE_NAME))
+
+    def test_deps_step_marks_a_failed_scanner(self):
+        _calls, step = self._deps_step(
+            2, {"line": "0 advisories (none); FAILED: pnpm: x", "errors": ["pnpm: x"]}
+        )
+        self.assertFalse(step["ok"])
+        self.assertIn("FAILED", step["line"])
+
+    def test_deps_step_tool_crash_is_a_line(self):
+        _calls, step = self._deps_step(3, None)
+        self.assertFalse(step["ok"])
+        self.assertIn("deps_audit.py failed", step["line"])
+
 
 class ProgressTests(unittest.TestCase):
     def run_two(self, cli_raises: bool):
