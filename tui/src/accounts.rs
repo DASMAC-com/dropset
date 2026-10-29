@@ -471,8 +471,8 @@ pub struct VaultSeat {
     pub name: [u8; VAULT_NAME_LEN],
     /// Whether an admin locked the name, refusing the leader's rename.
     pub name_locked: bool,
-    /// Whether an admin froze it — the one winding-down state whose custody
-    /// cannot move (`set_leader` refuses it; a closed vault's can).
+    /// Whether an admin froze it — `set_leader` refuses a frozen vault, so
+    /// its custody cannot move.
     pub frozen: bool,
     /// The two halves of the outside-deposit gate: the leader's
     /// `allow_outside_depositors` and the admin's `outside_deposits_approved`.

@@ -12,7 +12,9 @@
 //! so the ticket never asks for a `yes` the chain would refuse: the vault is
 //! not frozen, the incoming key is neither the current leader nor the zero
 //! address, leads no open vault on the market, and holds no depositor
-//! position on this one. Only the leader moves — the quote authority, the
+//! position on this one. The vault rotated is the leader's live one: the
+//! program also allows rotating a closed, unfrozen vault, which the panel
+//! does not offer. Only the leader moves — the quote authority, the
 //! shares and the vault's number stay — so the maker keeps quoting through
 //! the rotation, and the vault keeps the number a person knows it by.
 //!
@@ -23,6 +25,7 @@
 use crate::accounts::{self, MarketView, VaultSeat};
 use crate::chain;
 use crate::cluster::Cluster;
+use crate::emergency::{self, SectorSeat};
 use crate::job::Logger;
 use crate::keys::{self, RoleKey};
 use crate::wallet;
@@ -147,7 +150,9 @@ impl Ticket {
 
 /// Why `seat` among `seats` cannot be handed to `new_leader`, if it cannot —
 /// the program's own refusals, in the order it checks them.
-pub fn refusal(seats: &[VaultSeat], seat: &VaultSeat, new_leader: &Pubkey) -> Option<String> {
+/// `led_by_new` is every sector the incoming key leads on the market, closed
+/// ones included.
+pub fn refusal(seat: &VaultSeat, new_leader: &Pubkey, led_by_new: &[SectorSeat]) -> Option<String> {
     if seat.frozen {
         return Some(format!(
             "vault #{} is frozen — a frozen vault's custody cannot move",
@@ -163,16 +168,46 @@ pub fn refusal(seats: &[VaultSeat], seat: &VaultSeat, new_leader: &Pubkey) -> Op
             seat.seq
         ));
     }
-    // One open vault per leader per market. A frozen vault counts whether or
-    // not it is closed; an unfrozen closed one does not.
-    let open = |s: &&VaultSeat| s.frozen || !s.stake.winding_down;
-    if let Some(other) = seats.iter().filter(open).find(|s| s.leader == *new_leader) {
+    // One open vault per leader per market, the program's `leads_open_vault`:
+    // a frozen vault counts whether or not it is closed — and a closed one has
+    // left the active list, which is why this reads every sector — while an
+    // unfrozen closed one does not.
+    if let Some(other) = led_by_new.iter().find(|s| s.frozen || !s.tombstoned) {
         return Some(format!(
             "{new_leader} already leads vault #{} on this market — one open vault per leader",
             other.seq
         ));
     }
     None
+}
+
+/// Refuse handing `seat` on `market` to `new_leader` whenever the program
+/// would, reading fresh every sector the new key leads and its depositor
+/// position on this vault. Run at the preview and again just before the
+/// send, so a change in between is a clean "nothing was sent".
+fn check_fresh(
+    client: &RpcClient,
+    cluster: Cluster,
+    market: &Pubkey,
+    seat: &VaultSeat,
+    new_leader: &Pubkey,
+) -> Result<()> {
+    let led_by_new = emergency::leader_seats(client, cluster, market, new_leader)?
+        .context("the market is gone")?
+        .seats;
+    if let Some(reason) = refusal(seat, new_leader, &led_by_new) {
+        bail!(reason);
+    }
+    let depositor = chain::vault_depositor_pda(cluster, market, seat.idx, new_leader);
+    let position = chain::fetch_fresh(client, &depositor, "the new leader's depositor position")?;
+    if position.is_some_and(|a| a.owner == cluster.program_id()) {
+        bail!(
+            "{new_leader} holds a depositor position on vault #{} — a leader never also \
+             deposits into its own vault; withdraw it first",
+            seat.seq
+        );
+    }
+    Ok(())
 }
 
 /// Size the rotation of the vault `leader` leads on `market` to the key
@@ -199,18 +234,7 @@ pub fn prepare(
         .context("the market is gone")?;
     let seat = accounts::sole_seat_led_by(&seats, leader)
         .with_context(|| format!("{leader} does not lead exactly one vault here"))?;
-    if let Some(reason) = refusal(&seats, &seat, &new_leader) {
-        bail!(reason);
-    }
-    let depositor = chain::vault_depositor_pda(cluster, &market.address, seat.idx, &new_leader);
-    let position = chain::fetch_fresh(client, &depositor, "the new leader's depositor position")?;
-    if position.is_some_and(|a| a.owner == cluster.program_id()) {
-        bail!(
-            "{new_leader} holds a depositor position on vault #{} — a leader never also \
-             deposits into its own vault; withdraw it first",
-            seat.seq
-        );
-    }
+    check_fresh(client, cluster, &market.address, &seat, &new_leader)?;
     Ok(Ticket {
         market: market.address,
         base_mint: market.base_mint,
@@ -265,6 +289,8 @@ pub fn execute(
             now.leader
         );
     }
+    check_fresh(client, cluster, &ticket.market, &now, &ticket.new_leader)
+        .context("nothing was sent")?;
     let ix = chain::build_set_leader_ix(
         cluster,
         &ticket.old_leader,
@@ -281,14 +307,9 @@ pub fn execute(
     chain::send_logged(client, payer, &signers, &[ix], "set_leader", log)
         .context("send set_leader")?;
     log.accounts_changed();
-    let seat = read()?.context("the vault is not readable after the write")?;
-    if seat.leader != ticket.new_leader {
-        bail!(
-            "vault #{} is led by {} after the write",
-            seat.seq,
-            seat.leader
-        );
-    }
+    // Recorded once the send confirms, before the read-back: custody has
+    // moved, and a read that then fails must not leave the ceremony record
+    // without it.
     log.record(
         "vault-leader-rotated",
         &[
@@ -298,6 +319,15 @@ pub fn execute(
             ("new_leader", &ticket.new_leader.to_string()),
         ],
     );
+    let seat =
+        read()?.context("set_leader confirmed, but the vault is not readable after the write")?;
+    if seat.leader != ticket.new_leader {
+        bail!(
+            "vault #{} is led by {} after the write",
+            seat.seq,
+            seat.leader
+        );
+    }
     Ok(format!(
         "{} vault #{} is now led by {} — relaunch with it as the leader to manage the vault",
         ticket.symbol, ticket.vault_seq, ticket.new_leader
@@ -309,6 +339,7 @@ mod tests {
     use super::*;
     use crate::accounts::VaultStake;
     use crate::naming::VAULT_NAME_LEN;
+    use solana_keypair::Keypair;
 
     fn seat(idx: u32, leader: Pubkey) -> VaultSeat {
         VaultSeat {
@@ -328,8 +359,7 @@ mod tests {
     #[test]
     fn a_rotation_to_a_fresh_key_is_allowed() {
         let (me, new) = (Pubkey::new_unique(), Pubkey::new_unique());
-        let seats = [seat(0, Pubkey::new_unique()), seat(3, me)];
-        assert_eq!(refusal(&seats, &seats[1], &new), None);
+        assert_eq!(refusal(&seat(3, me), &new, &[]), None);
     }
 
     #[test]
@@ -338,35 +368,83 @@ mod tests {
         let mut frozen = seat(0, me);
         frozen.frozen = true;
         frozen.stake.winding_down = true;
-        let err = refusal(&[frozen], &frozen, &Pubkey::new_unique()).unwrap();
+        let err = refusal(&frozen, &Pubkey::new_unique(), &[]).unwrap();
         assert!(err.contains("frozen") && err.contains("#10"), "{err}");
         let open = seat(0, me);
-        assert!(refusal(&[open], &open, &Pubkey::default())
+        assert!(refusal(&open, &Pubkey::default(), &[])
             .unwrap()
             .contains("zero"));
-        assert!(refusal(&[open], &open, &me)
+        assert!(refusal(&open, &me, &[])
             .unwrap()
             .contains("nothing to send"));
+    }
+
+    #[test]
+    fn a_wrong_signing_key_is_refused_before_any_read() {
+        let (leader, new_leader, stranger) = (Keypair::new(), Keypair::new(), Keypair::new());
+        let ticket = Ticket {
+            market: Pubkey::new_unique(),
+            base_mint: Pubkey::new_unique(),
+            symbol: "TGBP".into(),
+            vault_idx: 0,
+            vault_seq: 1,
+            vault_label: "#1".into(),
+            old_leader: leader.pubkey(),
+            new_leader: new_leader.pubkey(),
+            typed: String::new(),
+        };
+        // An endpoint that answers nothing: reaching a read would error
+        // differently, so each refusal below is the guard's own.
+        let client = RpcClient::new("http://127.0.0.1:1".to_string());
+        let log = Logger::new(std::sync::mpsc::channel().0);
+        let run = |l: &Keypair, n: &Keypair| {
+            execute(&client, l, l, n, Cluster::Localnet, &ticket, &log)
+                .unwrap_err()
+                .to_string()
+        };
+        let err = run(&stranger, &new_leader);
+        assert!(
+            err.contains("current leader") && err.contains("nothing was sent"),
+            "{err}"
+        );
+        let err = run(&leader, &stranger);
+        assert!(
+            err.contains("new leader") && err.contains("nothing was sent"),
+            "{err}"
+        );
     }
 
     #[test]
     fn a_key_leading_an_open_or_frozen_vault_is_refused_and_a_closed_one_is_not() {
         let (me, other) = (Pubkey::new_unique(), Pubkey::new_unique());
         let mine = seat(0, me);
-        let theirs = seat(1, other);
-        let err = refusal(&[mine, theirs], &mine, &other).unwrap();
+        let theirs = SectorSeat {
+            idx: 1,
+            seq: 11,
+            quote_authority: Pubkey::new_unique(),
+            frozen: false,
+            tombstoned: false,
+            quoting: false,
+            stake: VaultStake::default(),
+        };
+        let err = refusal(&mine, &other, &[theirs]).unwrap();
         assert!(
             err.contains("#11") && err.contains("one open vault"),
             "{err}"
         );
         // Closed and unfrozen: the leader walked away, and is free again.
-        let mut closed = theirs;
-        closed.stake.winding_down = true;
-        assert_eq!(refusal(&[mine, closed], &mine, &other), None);
-        // Frozen counts whether or not it is closed.
-        let mut frozen = closed;
-        frozen.frozen = true;
-        assert!(refusal(&[mine, frozen], &mine, &other).is_some());
+        let closed = SectorSeat {
+            tombstoned: true,
+            ..theirs
+        };
+        assert_eq!(refusal(&mine, &other, &[closed]), None);
+        // Frozen counts whether or not it is closed — the case a read of
+        // the active list alone would miss, since closing drops it from there.
+        let frozen = SectorSeat {
+            frozen: true,
+            ..closed
+        };
+        assert!(refusal(&mine, &other, &[frozen]).is_some());
     }
 
     #[test]
