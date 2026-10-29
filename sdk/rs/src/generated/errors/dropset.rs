@@ -204,6 +204,9 @@ pub enum DropsetError {
     /// 6063 - new perf_fee_rate is the vault's current perf_fee_rate
     #[error("new perf_fee_rate is the vault's current perf_fee_rate")]
     SamePerfFeeRate = 0x17AF,
+    /// 6064 - vault sector is occupied by a different vault than expected (seq mismatch)
+    #[error("vault sector is occupied by a different vault than expected (seq mismatch)")]
+    VaultSeqMismatch = 0x17B0,
 }
 
 impl From<DropsetError> for solana_program_error::ProgramError {

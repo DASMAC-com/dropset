@@ -2227,6 +2227,10 @@
           "type": "u32"
         },
         {
+          "name": "expected_seq",
+          "type": "u64"
+        },
+        {
           "name": "flag",
           "type": "bool"
         }
@@ -3880,6 +3884,11 @@
       "code": 6063,
       "name": "SamePerfFeeRate",
       "msg": "new perf_fee_rate is the vault's current perf_fee_rate"
+    },
+    {
+      "code": 6064,
+      "name": "VaultSeqMismatch",
+      "msg": "vault sector is occupied by a different vault than expected (seq mismatch)"
     }
   ],
   "types": [

@@ -1593,6 +1593,7 @@ authoritative.
 | `SetQuoteAuthority` names the current quote authority       | `SameQuoteAuthority`           |
 | `CreateVault` / `SetPerfFeeRate` rate above 1,000,000 ppm   | `InvalidPerfFeeRate`           |
 | `SetPerfFeeRate` names the current rate                     | `SamePerfFeeRate`              |
+| `SetOutsideDepositsApproved` seq ≠ the sector's `Vault.seq` | `VaultSeqMismatch`             |
 | Reference price unset where a basis read needs it           | `ReferencePriceNotSet`         |
 | Swap `limit_price` bits not a well-formed `Price`           | `InvalidPrice`                 |
 | Swap `amount_in == 0`                                       | `InvalidAmountIn`              |
@@ -2247,6 +2248,13 @@ takes outside baskets only when an admin has approved it
 (`allow_outside_depositors == 1`). New vaults start unapproved
 (`outside_deposits_approved == 0` at `CreateVault`), so an admin must
 explicitly sign off before any outside depositor can join.
+
+The ix carries `expected_seq` beside `vault_idx` and reverts with
+`VaultSeqMismatch` unless the sector's `Vault.seq` equals it. A sector
+index can be reused once its vault closes, so without the pin an approval
+read against one vault could land on whichever vault reopened in that
+sector. The leader-side setter needs no such pin: its leader-signer
+check already refuses a different leader.
 
 Setting the flag back to `false` **revokes** approval: it blocks
 **new** outside `Deposit` ix but, like the leader's

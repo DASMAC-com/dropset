@@ -89,6 +89,7 @@ impl Default for SetOutsideDepositsApprovedInstructionData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SetOutsideDepositsApprovedInstructionArgs {
     pub vault_idx: u32,
+    pub expected_seq: u64,
     pub flag: bool,
 }
 
@@ -111,6 +112,7 @@ pub struct SetOutsideDepositsApprovedBuilder {
     registry: Option<solana_pubkey::Pubkey>,
     market: Option<solana_pubkey::Pubkey>,
     vault_idx: Option<u32>,
+    expected_seq: Option<u64>,
     flag: Option<bool>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
@@ -143,6 +145,11 @@ impl SetOutsideDepositsApprovedBuilder {
         self
     }
     #[inline(always)]
+    pub fn expected_seq(&mut self, expected_seq: u64) -> &mut Self {
+        self.expected_seq = Some(expected_seq);
+        self
+    }
+    #[inline(always)]
     pub fn flag(&mut self, flag: bool) -> &mut Self {
         self.flag = Some(flag);
         self
@@ -171,6 +178,7 @@ impl SetOutsideDepositsApprovedBuilder {
         };
         let args = SetOutsideDepositsApprovedInstructionArgs {
             vault_idx: self.vault_idx.clone().expect("vault_idx is not set"),
+            expected_seq: self.expected_seq.clone().expect("expected_seq is not set"),
             flag: self.flag.clone().expect("flag is not set"),
         };
 
@@ -307,6 +315,7 @@ impl<'a, 'b> SetOutsideDepositsApprovedCpiBuilder<'a, 'b> {
             registry: None,
             market: None,
             vault_idx: None,
+            expected_seq: None,
             flag: None,
             __remaining_accounts: Vec::new(),
         });
@@ -333,6 +342,11 @@ impl<'a, 'b> SetOutsideDepositsApprovedCpiBuilder<'a, 'b> {
     #[inline(always)]
     pub fn vault_idx(&mut self, vault_idx: u32) -> &mut Self {
         self.instruction.vault_idx = Some(vault_idx);
+        self
+    }
+    #[inline(always)]
+    pub fn expected_seq(&mut self, expected_seq: u64) -> &mut Self {
+        self.instruction.expected_seq = Some(expected_seq);
         self
     }
     #[inline(always)]
@@ -380,6 +394,11 @@ impl<'a, 'b> SetOutsideDepositsApprovedCpiBuilder<'a, 'b> {
                 .vault_idx
                 .clone()
                 .expect("vault_idx is not set"),
+            expected_seq: self
+                .instruction
+                .expected_seq
+                .clone()
+                .expect("expected_seq is not set"),
             flag: self.instruction.flag.clone().expect("flag is not set"),
         };
         let instruction = SetOutsideDepositsApprovedCpi {
@@ -406,6 +425,7 @@ struct SetOutsideDepositsApprovedCpiBuilderInstruction<'a, 'b> {
     registry: Option<&'b solana_account_info::AccountInfo<'a>>,
     market: Option<&'b solana_account_info::AccountInfo<'a>>,
     vault_idx: Option<u32>,
+    expected_seq: Option<u64>,
     flag: Option<bool>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,

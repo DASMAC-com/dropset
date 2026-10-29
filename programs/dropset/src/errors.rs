@@ -148,4 +148,6 @@ pub enum DropsetError {
     TransferShortfall,
     #[msg("new perf_fee_rate is the vault's current perf_fee_rate")]
     SamePerfFeeRate,
+    #[msg("vault sector is occupied by a different vault than expected (seq mismatch)")]
+    VaultSeqMismatch,
 }

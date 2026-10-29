@@ -1116,15 +1116,41 @@ impl Fixture {
         send_ixn(&mut self.svm, signer, ix)
     }
 
+    /// `set_outside_deposits_approved` pinned to the sector's current
+    /// `Vault::seq` — the shape every honest caller sends. An out-of-range
+    /// sector pins `0`, leaving the program's own bounds check to refuse it.
     pub fn set_outside_deposits_approved(
         &mut self,
         admin: &Keypair,
         vault_idx: u32,
         flag: bool,
     ) -> Result<(), String> {
+        let acct = self.svm.get_account(&self.market).expect("market");
+        let off = vault_byte_offset(vault_idx);
+        let expected_seq = acct
+            .data
+            .get(off..off + core::mem::size_of::<Vault>())
+            .map_or(0, |b| bytemuck::pod_read_unaligned::<Vault>(b).seq.get());
+        self.set_outside_deposits_approved_with_seq(admin, vault_idx, expected_seq, flag)
+    }
+
+    /// `set_outside_deposits_approved` with a caller-chosen `expected_seq`,
+    /// for the stale-seq refusal tests.
+    pub fn set_outside_deposits_approved_with_seq(
+        &mut self,
+        admin: &Keypair,
+        vault_idx: u32,
+        expected_seq: u64,
+        flag: bool,
+    ) -> Result<(), String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
-            &SetOutsideDepositsApprovedIx { vault_idx, flag }.data(),
+            &SetOutsideDepositsApprovedIx {
+                vault_idx,
+                expected_seq,
+                flag,
+            }
+            .data(),
             vec![
                 AccountMeta::new_readonly(admin.pubkey(), true),
                 AccountMeta::new_readonly(self.registry, false),

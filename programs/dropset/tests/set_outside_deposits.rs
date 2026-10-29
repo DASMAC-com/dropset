@@ -3,7 +3,9 @@
 
 mod common;
 
+use anchor_v2_testing::Signer;
 use common::fixture::Fixture;
+use solana_pubkey::Pubkey;
 
 // ── set_allow_outside_depositors (leader-only) ───────────────────────
 
@@ -112,4 +114,45 @@ fn outside_deposits_approved_rejects_empty_sector() {
         .set_outside_deposits_approved(&admin, 0, true)
         .expect_err("an empty sector must reject");
     common::assert_program_error(&err, dropset::DropsetError::VaultEmpty);
+}
+
+#[test]
+fn outside_deposits_approved_rejects_stale_seq() {
+    let mut f = Fixture::with_vault();
+    let admin = f.authority.insecure_clone();
+    let seq = f.vault(0).seq.get();
+    let err = f
+        .set_outside_deposits_approved_with_seq(&admin, 0, seq + 1, true)
+        .expect_err("a seq the sector does not carry must reject");
+    common::assert_program_error(&err, dropset::DropsetError::VaultSeqMismatch);
+    assert!(!f.vault(0).outside_deposits_approved.get());
+}
+
+#[test]
+fn outside_deposits_approved_refuses_a_reused_sector() {
+    // The race the seq pin closes: the admin reads sector 0's vault, the
+    // vault closes and a new one reopens on the same sector, then the
+    // approval arrives carrying the first vault's seq.
+    let mut f = Fixture::seeded(1_000_000, 1_000_000);
+    let admin = f.authority.insecure_clone();
+    let leader = f.authority.insecure_clone();
+    let read_seq = f.vault(0).seq.get();
+
+    f.close_vault(&leader, 0).expect("tombstone");
+    let shares = f.vault(0).leader_shares.get();
+    f.withdraw_leader(0, shares, 0, 0)
+        .expect("full exit reclaims");
+    f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
+        .expect("re-create on the freed sector");
+    assert_ne!(
+        f.vault(0).seq.get(),
+        read_seq,
+        "reuse stamps a new identity"
+    );
+
+    let err = f
+        .set_outside_deposits_approved_with_seq(&admin, 0, read_seq, true)
+        .expect_err("the old vault's seq must not approve the new one");
+    common::assert_program_error(&err, dropset::DropsetError::VaultSeqMismatch);
+    assert!(!f.vault(0).outside_deposits_approved.get());
 }
