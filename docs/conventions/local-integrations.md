@@ -1376,9 +1376,10 @@ operator ("re-source your profile and retry", which cannot work).
 
 #### The frontend's server-side API keys
 
-The frontend's route handlers read two optional server-only keys,
+The frontend's route handlers read two server-only keys,
 `DFLOW_API_KEY` and `JUPITER_API_KEY`, which lift the per-IP limits a
-crowd behind one venue Wi-Fi would otherwise share. They follow the
+crowd behind one venue Wi-Fi would otherwise share (DFlow's only under
+the endpoint selector below). They follow the
 same boundary by a different mechanism: the consumer is a dev server,
 not a session, so `_ds_secrets` does not resolve them. Instead the
 git-ignored `frontend/.env.local` holds each as an `op://` reference
@@ -1395,7 +1396,9 @@ keys are simply absent and the browser calls the public endpoints
 directly, so a checkout with no 1Password access loses nothing. The
 DFlow key takes effect only under `DFLOW_ENDPOINT=production`, the
 explicit endpoint selector a mainnet production build must set; the
-key alone no longer selects DFlow's production endpoint. The
+key alone no longer selects DFlow's production endpoint, and the DFlow
+routes answer a 500 without it rather than falling back to the
+developer endpoint. The
 placeholders, the selector's rules and the Vercel variables live in
 `frontend/.env.example`.
 

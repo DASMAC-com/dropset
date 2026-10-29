@@ -60,6 +60,14 @@ describe("external API endpoints", () => {
     ).rejects.toThrow(/NEXT_PUBLIC_DFLOW_ORDER_URL/);
   });
 
+  it("ignores a blank DFlow override on the production endpoint", async () => {
+    const env = await load({
+      NEXT_PUBLIC_DFLOW_PROXY: "1",
+      NEXT_PUBLIC_DFLOW_QUOTE_URL: "  ",
+    });
+    expect(env.DFLOW_QUOTE_URL).toBe("/api/dflow/quote");
+  });
+
   it("keeps Jupiter's override winning over its proxy", async () => {
     const env = await load({
       NEXT_PUBLIC_JUPITER_PROXY: "1",

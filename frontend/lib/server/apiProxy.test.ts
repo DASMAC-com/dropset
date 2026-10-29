@@ -67,6 +67,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("keeps DFlow's routes keyed-only and Jupiter's keyless-capable", () => {
+  expect(DFLOW_QUOTE_UPSTREAM.keylessUrl).toBeNull();
+  expect(DFLOW_ORDER_UPSTREAM.keylessUrl).toBeNull();
+  expect(JUPITER_SEARCH_UPSTREAM.keylessUrl).not.toBeNull();
+});
+
 const PROXIES: [string, KeyedUpstream][] = [
   ["DFlow quote", DFLOW_QUOTE_UPSTREAM],
   ["DFlow order", DFLOW_ORDER_UPSTREAM],
@@ -93,10 +99,16 @@ describe.each(PROXIES)("%s proxy", (_, upstream) => {
     expect(await visible(res)).not.toContain(KEY);
   });
 
-  it("forwards keyless to the public endpoint when the key is unset", async () => {
+  it("forwards keyless when it may, and refuses when it is keyed-only", async () => {
     const seen = stubUpstream(ok);
     const res = await forward(passThrough(upstream), request("query=M"), {});
 
+    if (upstream.keylessUrl === null) {
+      expect(seen).toHaveLength(0);
+      expect(res.status).toBe(500);
+      expect(await res.text()).toContain(upstream.keyVar);
+      return;
+    }
     expect(seen[0]?.url).toBe(`${upstream.keylessUrl}?query=M`);
     expect(seen[0]?.headers).not.toHaveProperty("x-api-key");
     expect(res.status).toBe(200);
@@ -367,6 +379,39 @@ describe("dflowEndpoint", () => {
         NEXT_PUBLIC_DFLOW_QUOTE_URL: "https://x.test",
       }),
     ).toBe("dev");
+  });
+
+  it("treats a blank selector as unset", () => {
+    expect(dflowEndpoint({ DFLOW_ENDPOINT: "  " })).toBe("dev");
+    expect(() =>
+      dflowEndpoint({ ...PROD_BUILD, DFLOW_ENDPOINT: "  " }),
+    ).toThrow(/DFLOW_ENDPOINT is unset/);
+  });
+
+  it("refuses an unresolved key reference under every selection", () => {
+    const ref = "op://vault/item/credential";
+    for (const selection of [{}, { DFLOW_ENDPOINT: "dev" }]) {
+      expect(() => dflowEndpoint({ ...selection, DFLOW_API_KEY: ref })).toThrow(
+        /DFLOW_API_KEY holds an unresolved 1Password reference/,
+      );
+    }
+    expect(() =>
+      dflowEndpoint({ DFLOW_ENDPOINT: "production", DFLOW_API_KEY: ref }),
+    ).toThrow(/DFLOW_API_KEY holds an unresolved 1Password reference/);
+  });
+
+  it("names both overrides, and ignores blank ones", () => {
+    const prod = { DFLOW_ENDPOINT: "production", DFLOW_API_KEY: KEY };
+    expect(() =>
+      dflowEndpoint({
+        ...prod,
+        NEXT_PUBLIC_DFLOW_QUOTE_URL: "https://x.test",
+        NEXT_PUBLIC_DFLOW_ORDER_URL: "https://x.test",
+      }),
+    ).toThrow(/NEXT_PUBLIC_DFLOW_QUOTE_URL and NEXT_PUBLIC_DFLOW_ORDER_URL/);
+    expect(dflowEndpoint({ ...prod, NEXT_PUBLIC_DFLOW_QUOTE_URL: " " })).toBe(
+      "production",
+    );
   });
 
   it("refuses an unknown endpoint", () => {
