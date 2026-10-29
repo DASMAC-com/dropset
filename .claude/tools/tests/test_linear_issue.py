@@ -244,6 +244,17 @@ class FindMany(_Stubbed):
         ]
         self.assertEqual(sent, ["first", "alpha", "beta"])
 
+    def test_repeated_and_blank_queries_are_sent_once(self):
+        recorder = self.install([Find.rows([]), Find.rows([])])
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
+            fh.write("alpha\nbeta\n")
+        self.addCleanup(os.unlink, fh.name)
+        self.run_cli(
+            ["find", "--query", " alpha ", "--query", "  ", "--queries-file", fh.name]
+        )
+        sent = [c[1]["filter"]["title"]["containsIgnoreCase"] for c in recorder.calls]
+        self.assertEqual(sent, ["alpha", "beta"])
+
     def test_no_query_at_all_is_a_clean_error(self):
         self.install([])
         with self.assertRaises(li.LinearIssueError):

@@ -123,7 +123,8 @@ python3 .claude/tools/linear_issue.py find \
   --queries-file <scratchpad>/dedup-queries.txt --state Backlog
 ```
 
-It prints a `## <query> — N match(es)` group per query; repeat the
+It prints a `## <query> — N match(es)` group per query (a single
+query prints bare rows); repeat the
 call with `--state Todo` when a candidate could already be approved.
 
 A batch or part that is plainly the same work as an open issue is

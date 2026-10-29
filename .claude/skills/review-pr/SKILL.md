@@ -163,12 +163,13 @@ migrations or generation inputs, and whether it spans crates.
      for a 2-line change). Inspect the other hunks with `Read`
      `offset` / `limit` (`history.md` → "Conflict inspection").
 
-     **Format a resolution before `git rebase --continue`.** The
-     continue commits the resolved tree without the pre-commit hooks'
-     formatters, so an unformatted resolution reaches CI and turns
-     `Lint` red — a fix commit and a whole CI cycle. Run the hooks
-     over just the resolved
-     files, re-stage whatever they rewrote, then continue:
+     **When a resolution is made by hand — the user's, or at their
+     explicit direction — format it before `git rebase --continue`.**
+     No commit here runs the formatters (no git `pre-commit` hook is
+     installed), so an unformatted resolution reaches CI and turns
+     `Lint` red — a fix commit and a whole CI cycle. Run the hooks over
+     just the resolved files until green, re-stage whatever they
+     rewrote, then continue; a checker red is a stop, not a re-stage:
 
      ```sh
      python3 .claude/tools/run_quiet.py -- \

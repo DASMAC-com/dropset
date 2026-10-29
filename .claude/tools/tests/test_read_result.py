@@ -160,6 +160,11 @@ class ExtractFieldTests(unittest.TestCase):
             self.assertEqual(extract_field(text, "status"), "Todo")
         self.assertIn("trailing text", err.getvalue())
 
+    def test_prose_opening_with_a_json_scalar_is_still_not_json(self):
+        with self.assertRaises(ReadResultError) as caught:
+            extract_field("1. First item\n2. Second item\n", "status")
+        self.assertIn("not JSON", str(caught.exception))
+
     def test_the_cli_field_tolerates_trailing_text(self):
         path = _plain('{"status": "In Review"}\ntrailing prose')
         rc, out, _ = _invoke(path, "--field", "status")

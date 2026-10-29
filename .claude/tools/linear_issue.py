@@ -757,13 +757,16 @@ def run(argv: list[str]) -> int:
         )
         return 0
 
-    queries = list(args.query)
+    queries = [q.strip() for q in args.query if q.strip()]
     if args.queries_file is not None:
         queries += [
             ln.strip()
             for ln in _read_file(args.queries_file).splitlines()
             if ln.strip()
         ]
+    # A repeated candidate would buy the same request twice and print the same
+    # group twice, so the first occurrence wins and the order is kept.
+    queries = list(dict.fromkeys(queries))
     if not queries:
         raise LinearIssueError("find needs at least one --query or --queries-file")
     results = [

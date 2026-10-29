@@ -425,9 +425,46 @@ class DoctestRaceTest(unittest.TestCase):
         )
         self.assertFalse(vh.is_doctest_race(self.log(text)))
 
-    def test_an_e0463_in_the_build_is_not_the_race(self):
+    def test_no_doctest_section_is_not_the_race(self):
         text = "error[E0463]: can't find crate for `std`\nerror: could not compile\n"
         self.assertFalse(vh.is_doctest_race(self.log(text)))
+
+    def test_an_e0463_before_the_doctests_is_not_the_race(self):
+        # A build-time E0463 above the doctest section is a real break, even
+        # when the doctests that follow fail the same way.
+        text = RACE_LOG.replace(
+            "   Doc-tests", "error[E0463]: can't find crate for `serde`\n   Doc-tests"
+        )
+        self.assertFalse(vh.is_doctest_race(self.log(text)))
+
+    def test_the_retry_stage_reads_the_failed_test_log(self):
+        tmp = Path(tempfile.mkdtemp())
+        real = wfc.log_dir
+        self.addCleanup(setattr, wfc, "log_dir", real)
+        wfc.log_dir = lambda: tmp
+        vh.log_path_for(SHA, "test").write_text(RACE_LOG)
+        self.assertEqual(
+            vh.stage_cmd(vh.DOC_RETRY, SHA)[-3:],
+            ["--features", "dropset-feeds/http", "--doc"],
+        )
+        self.assertEqual(vh.stage_cmd("test", SHA), ["make", "test-abridged"])
+
+    def test_a_retry_killed_by_ci_claims_no_recovery(self):
+        h = Harness(
+            {
+                "lint": (1, 0, ""),
+                "test": (2, 101, RACE_LOG),
+                vh.DOC_RETRY: (None, 0, ""),
+            },
+            [ci()] * 3 + [ci(test=GREEN_TEST)] * 5,
+            interval=2,
+        )
+        r = h.run()
+        self.assertEqual(r.outcome, "GREEN")
+        self.assertEqual(r.settled["test"].side, "ci")
+        self.assertIn(vh.DOC_RETRY, h.started)
+        self.assertEqual(r.recovered, "")
+        self.assertNotIn("recovered=", vh.render(r, 1))
 
     def test_the_retry_keeps_the_failed_run_scope(self):
         self.assertEqual(

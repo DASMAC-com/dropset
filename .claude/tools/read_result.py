@@ -164,6 +164,13 @@ def extract_field(text: str, path: str) -> str:
             f"--field {path} needs a JSON payload, but the text is not JSON: {e}"
         ) from e
     trailing = stripped[end:].strip()
+    if trailing and not isinstance(node, (dict, list)):
+        # Prose that merely opens with a JSON token (`1. First item`, `true
+        # story`) is not a JSON payload with trailing text — say "not JSON".
+        raise ReadResultError(
+            f"--field {path} needs a JSON payload, but the text is not JSON: it "
+            "opens with a bare scalar followed by more text"
+        )
     if trailing:
         print(
             f"read-result | NOTE: ignored {len(trailing)} char(s) of trailing text "

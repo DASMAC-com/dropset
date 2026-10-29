@@ -384,6 +384,7 @@ def race(
     next_ci = began
     order = [name for name, _ in STAGES]
     current = None  # (name, Stage)
+    retried = False  # The doctest-race retry was started (at most once).
 
     def stop_local(name: str | None = None) -> None:
         nonlocal current
@@ -430,14 +431,18 @@ def race(
             if code is not None:
                 name, stage = current
                 current = None
+                if name == "test" and retried:
+                    # Named only once the retry itself settles the check: one
+                    # killed by CI, HEAD moving or the timeout recovered nothing.
+                    r.recovered = DOCTEST_RACE
                 if code == 0:
                     r.settled[name] = Settled("local", True, str(stage.log))
                     if polling and dirty():
                         polling = False
                         r.ci_note = DIRTY
-                elif name == "test" and not r.recovered and is_doctest_race(stage.log):
+                elif name == "test" and not retried and is_doctest_race(stage.log):
                     # Once only: a second E0463 is no longer a race to retry.
-                    r.recovered = DOCTEST_RACE
+                    retried = True
                     current = (name, start(DOC_RETRY))
                 else:
                     r.settled[name] = Settled("local", False, failure_line(stage.log))
@@ -450,6 +455,14 @@ def race(
                 return r
             current = (todo[0], start(todo[0]))
         sleep(TICK)
+
+
+def stage_cmd(name: str, sha: str) -> list[str]:
+    """The argv a stage runs: its make target, or the doctest retry, scoped
+    from the failed test stage's own log."""
+    if name == DOC_RETRY:
+        return doctest_retry_cmd(log_path_for(sha, "test"))
+    return dict(STAGES)[name]
 
 
 def render(r: Race, wall: float) -> str:
@@ -501,7 +514,6 @@ def main(argv: list[str] | None = None) -> int:
     if not sha:
         print("verify-head: cannot read HEAD", file=sys.stderr)
         return 2
-    commands = dict(STAGES)
     started: list[Stage] = []
     deferred: list[int] = []
     spawning = False
@@ -512,12 +524,7 @@ def main(argv: list[str] | None = None) -> int:
         nonlocal spawning
         spawning = True
         try:
-            cmd = (
-                doctest_retry_cmd(log_path_for(sha, "test"))
-                if name == DOC_RETRY
-                else commands[name]
-            )
-            started.append(Stage(name, cmd, log_path_for(sha, name)))
+            started.append(Stage(name, stage_cmd(name, sha), log_path_for(sha, name)))
         finally:
             spawning = False
         if deferred:
