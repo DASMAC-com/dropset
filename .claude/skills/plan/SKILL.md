@@ -117,8 +117,8 @@ Then read the Planning document — the last session's handoff —
 with `python3 .claude/tools/planning_doc.py --out <scratch>`,
 which spills it and prints only the heading map, and slice it by
 `--section`. **The document and `rulings.md` are each read
-once**; a later check is a `--section` read, never a second whole
-fetch. Then, warm or full:
+once**; a later check is a `--section` read, never the whole body
+in context a second time. Then, warm or full:
 
 - **Act on each `Discuss with operator` item first**, before the
   board — one needing the operator's word joins step 8's ask.
