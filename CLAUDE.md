@@ -273,13 +273,19 @@ skip it; if the tooling is absent, stop and ask. Detail: the
 A session files **nothing that is only a trim**: what it kept
 running into goes in its `Session account` block, which the daily
 digest lifts.
-`trim-context`, the **fold analyst** (a sub-agent of every full
-`plan` bootstrap), judges the whole day at once, dedups by
-`**Fingerprint**:` and by Backlog title — folding a near-match
-into the existing issue — and files **small themed `Claude:`
-batches of ~4–5 parts** into Backlog, no milestone. A rejection
-filed Canceled with its reason is permanent. Detail:
-`docs/conventions/linear-automation.md` and the two skills.
+`trim-context`, the **fold analyst**, judges the whole day at once,
+dedups by `**Fingerprint**:` and by Backlog title — folding a
+near-match into the existing issue — and files **small themed
+`Claude:` batches of ~4–5 parts** into Backlog, no milestone. A
+rejection filed Canceled with its reason is permanent.
+
+The **launcher** (`launch`, executor tier, its own tab) runs that
+fold each morning, dispatches the curator on the scheduler's
+`state of play written` and hands it the kill and merge
+candidates, and asks the day's **one destructive
+question**.
+Detail: `docs/conventions/linear-automation.md`, `trim-context`
+and `launch`.
 
 ### Blocking relations
 
@@ -459,7 +465,7 @@ ad hoc (the dominant path), `fewer-permission-prompts` on demand, and
 the upkeep pass's refresh gate on a roughly **monthly** clock — the only
 periodic adder, because the auto permission-mode classifier that made a
 per-session sweep unnecessary is also what makes the remaining churn
-invisible. It proposes; `plan`'s bootstrap gate approves. The same pass
+invisible. It proposes; the launcher's one ask approves. The same pass
 reports cruft to prune. Do not reinstate a per-session pass;
 the bar is net-negative instruction cost.
 

@@ -29,15 +29,17 @@ the document's state sections.
 
 1. **Tier names are advisor / executor / helper / background.**
    Advisor: `architect` and `explore anthropic` on the Anthropic
-   subscription, `plan` on Bedrock (its lever fold on the executor),
-   `explore` on Bedrock with executor-tier sub-agents. Executor:
-   task workers on Bedrock (`housekeeping`, once the seat exception
-   here, is retired). Helper: `chore`
+   subscription, `plan` on Bedrock, `explore` on Bedrock with
+   executor-tier sub-agents. Executor: task workers on Bedrock, and
+   the launcher (`launch`), which runs the lever fold in its own
+   tab (`housekeeping`, once the seat exception here, is retired).
+   Helper: `chore`
    sessions, Sonnet-class, Bedrock by default, pinned with the 1M
    suffix in the runtime config.
    Model ids live only in the operator's runtime config; unset
    refuses the launch. Role nouns (2026-10-26): the **scheduler**
-   (`plan`) and the **curator** (`curate`).
+   (`plan`), the **curator** (`curate`) and the **launcher**
+   (`launch`).
 
 1. **Next means dispatchable right now.** A planning hold is a
    blocking edge the operator can see, never prose-only state.
@@ -101,7 +103,8 @@ the document's state sections.
 
 1. **Fan-out gate.** Invoking a verb pre-approves its
    regular sub-agent fan-out — `review-pr`'s reviewers,
-   `audit-scope`'s cross-check, `plan`'s bootstrap lever fold.
+   `audit-scope`'s cross-check. Invoking `launch` likewise
+   authorizes its lever fold's Linear writes.
 
 1. **Architect read-back: two stages, two questions.** Stage 1 is
    the spec: fold the operator's comments into it in place; it
@@ -139,14 +142,14 @@ the document's state sections.
 1. **Session metrics is a digest, not a session step.** A session
    prints a tool estimate at its end, writes its account, and files
    nothing; upkeep digests every transcript each morning and the
-   bootstrap's fold analyst files from the digest. The cost line on
+   launcher's lever fold files from the digest. The cost line on
    the issue is the close tool's write.
 
-1. **Housekeeping never costs a tab visit.** Upkeep runs as a tool
-   inside the plan launch with its report in the bootstrap;
-   destructive items are asked once in the planning tab; the
-   trim-lever fold runs as a sub-agent of the scheduler.
-   Neither costs a tab.
+1. **Housekeeping never costs an extra tab visit.** Upkeep runs
+   as the pre-launch in the typed tab, its report in the
+   scheduler's bootstrap; the lever fold runs in the launcher's
+   tab, and destructive items are asked once there, in one ask,
+   applied only on a yes (2026-10-28).
 
 1. **Dispatch never steals focus, and no notification for
    self-waiting.** A yellow tab is a trigger problem, not a window
@@ -177,7 +180,7 @@ the document's state sections.
 1. **The tGBP basis is observed, not pinned.**
 
 1. **Trim tasks must not accumulate.** Sessions report levers in
-   their account and file none; the bootstrap's fold analyst
+   their account and file none; the launcher's lever fold
    files from the digest every morning, folding a near-duplicate
    into the open Backlog issue rather than filing a sibling, and
    the curator recommends cancel on doubt (ruling 3). A Backlog of similar trim
@@ -247,11 +250,13 @@ the document's state sections.
 
 ## Fleet doctrine
 
-1. **Dispatch through the dispatcher tool**, by the scheduler, or
-   by the curator for the architect tasks it files (2026-10-26),
-   as new tabs in the dispatcher's window, with one consolidated
-   ask; the fleet bound lives in the tool. Ratification and gate
-   approvals are per-tab. Run `fleet resume` **before** dispatching new tasks. A
+1. **Dispatch through the dispatcher tool**, by the scheduler, by
+   the curator for the architect tasks it files (2026-10-26), or by
+   the launcher, which dispatches the curator once the scheduler's
+   `state of play written` arrives (2026-10-28), as new tabs in
+   the dispatcher's window, with one consolidated ask; the fleet
+   bound lives in the tool. Ratification and gate approvals are
+   per-tab. Run `fleet resume` **before** dispatching new tasks. A
    session resumed outside its verb has no secrets.
 1. **The antichain practice**: dispatch file-disjoint sets, and
    publish the dispatchable antichain at every bootstrap; every
@@ -279,10 +284,11 @@ the document's state sections.
    tool-usage lens.
 1. **Verbs**: `task`, `task anthropic`, `task resume`, `chore`,
    `chore anthropic`, `explore`, `explore anthropic`, `plan` (the
-   scheduler), `plan cycle`, `curate` (the curator), `architect`
+   scheduler), `plan cycle`, `curate` (the curator), `launch` (the
+   launcher), `architect`
    (bare number, idempotent), and `fleet`; a substrate word always
    precedes the number (`architect bedrock <n>`); `housekeeping` is
-   retired, its upkeep run by the `plan` launcher. Audit issues
+   retired, its upkeep run by the `plan` pre-launch. Audit issues
    dispatch as
    `explore`.
 1. **Announce a fleet-wide toolchain change** (a global anchor or

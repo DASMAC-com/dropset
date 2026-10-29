@@ -1,6 +1,6 @@
 ---
 name: trim-context
-description: The fold analyst — `plan`'s bootstrap fold sub-agent, or run by hand. Reads the day's session digest (every session's numbers beside its own Session account, plus flagged CI lines), judges across all of them at once which trim levers clear the bar, dedups each candidate by fingerprint and by Backlog title, folds a near-match into the existing issue as a new part, and files the rest as small themed `Claude:` batches of about 4–5 parts, one `**Fingerprint**:` per part, straight into Backlog with no milestone. Never edits a skill or convention doc — filing a batch is the proposal.
+description: The fold analyst — the method the `launch` session runs in its own tab each morning, or run by hand. Reads the day's session digest (every session's numbers beside its own Session account, plus flagged CI lines), judges across all of them at once which trim levers clear the bar, dedups each candidate by fingerprint and by Backlog title, folds a near-match into the existing issue as a new part, and files the rest as small themed `Claude:` batches of about 4–5 parts, one `**Fingerprint**:` per part, straight into Backlog with no milestone. Never edits a skill or convention doc — filing a batch is the proposal.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -17,13 +17,13 @@ A session files nothing that is only a trim, so no session spends
 context checking what other sessions filed — the analyst sees the
 whole day at once, which is where a shared sink is visible.
 
-It runs identically by hand or as the `plan` bootstrap's background
-sub-agent, and **asks nothing**. Filing a batch *is* the proposal: it
+It runs identically by hand or as the launcher's fold (`launch`
+step 1), and **asks nothing**. Filing a batch *is* the proposal: it
 never edits a skill, a convention doc or `CLAUDE.md`.
 
 ## Input
 
-The brief names the digest path — the upkeep report's `digest` line,
+The digest path is the upkeep report's `digest` line,
 `<base>/.claude/session-metrics/digest-<YYYY-MM-DD>.md`. By hand, take
 the newest `digest-*.md` there. No digest, or one with no session
 blocks: report that and stop.
@@ -169,10 +169,10 @@ python3 .claude/tools/linear_issue.py create --title 'Claude: <theme>' \
   --body-file <scratchpad>/tasks/01-<slug>.md --state Backlog --priority 1
 ```
 
-**Backlog with no milestone**: the analyst is the scheduler's
-own sub-agent and its output is already folded, so the park-then-
-promote hop executor filings take does not apply. The `--title` is the
-whole title, prefix included. No relations, ever.
+**Backlog with no milestone**: the fold's output is already
+deduped and folded, so the park-then-promote hop executor filings
+take does not apply; the curator reviews it in the inbox. The
+`--title` is the whole title, prefix included. No relations, ever.
 
 **7. Record a rejection that should stick.** A candidate that clears
 the bar on its face but is rejected on judgment — a standing decision,
@@ -188,12 +188,12 @@ python3 .claude/tools/linear_issue.py create --title 'Claude: <lever>' \
 
 Below-bar noise gets no record; it is simply not filed.
 
-**8. Report as your final message** (a sub-agent's last message is its
-whole return), at most thirty lines: the batches filed with their
+**8. Report**, at most thirty lines: the batches filed with their
 ENG-###s and part counts, the parts folded into existing issues, the
 rejections recorded and why, and the sessions and dollars the digest
-covered. The new batches are reviewed from the curator's pool like any other
-un-parked Backlog task.
+covered. The launcher carries the same lists to the curator in its
+hand-off, and the batches are reviewed from the curator's pool like
+any other un-parked Backlog task.
 
 ## Notes
 

@@ -229,6 +229,37 @@ class ReportTests(unittest.TestCase):
             path.write_text(json.dumps({"last_run": old.isoformat()}))
             self.assertFalse(ran_today(path, now)["ran_today"])
 
+    def test_the_fold_stamp_reads_back_as_the_schedulers_line(self):
+        # Local noon, so `ran` half an hour earlier is the same local day in
+        # every zone the suite runs in.
+        now = datetime(2026, 10, 8, 12).astimezone()
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            path = upkeep.fold_stamp_path(base)
+            self.assertEqual(upkeep.fold_today(path, now), "no fold today")
+            ran = now - timedelta(minutes=30)
+            upkeep.write_fold_stamp(base, ran, 3, 0)
+            self.assertEqual(
+                upkeep.fold_today(path, now),
+                f"fold ran at {ran.astimezone():%H:%M}, 3 batches",
+            )
+            upkeep.write_fold_stamp(base, ran, 2, 1)
+            self.assertTrue(
+                upkeep.fold_today(path, now).endswith(", 1 folded into open issues")
+            )
+
+    def test_a_stale_or_broken_fold_stamp_reads_as_no_fold(self):
+        now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            path = upkeep.fold_stamp_path(base)
+            upkeep.write_fold_stamp(base, now - timedelta(days=2), 3, 0)
+            self.assertEqual(upkeep.fold_today(path, now), "no fold today")
+            path.write_text("not json")
+            self.assertEqual(upkeep.fold_today(path, now), "no fold today")
+
 
 class FakeRun:
     """Answers each external command; records every call."""
@@ -1124,6 +1155,23 @@ class CliTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 self.assertEqual(upkeep.run(["upkeep.py", "run", "--if-stale"]), 0)
             self.assertIn("already ran today", out.getvalue())
+
+    def test_fold_stamp_writes_and_fold_today_reads_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            upkeep.check_base = lambda run, cwd: (base, [], "")
+            upkeep.run_pass = lambda *a, **k: self.fail("the fold stamp ran a pass")
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(upkeep.run(["upkeep.py", "fold-today"]), 0)
+                self.assertEqual(
+                    upkeep.run(["upkeep.py", "fold-stamp", "--batches", "2"]), 0
+                )
+                self.assertEqual(upkeep.run(["upkeep.py", "fold-today"]), 0)
+            lines = out.getvalue().splitlines()
+            self.assertEqual(lines[0], "no fold today")
+            self.assertRegex(lines[1], r"^fold ran at \d\d:\d\d, 2 batches$")
+            self.assertEqual(lines[2], lines[1])
 
     def test_prune_ignores_the_run_only_stamp_gate(self):
         with tempfile.TemporaryDirectory() as d:

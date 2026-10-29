@@ -2,17 +2,25 @@
 # cspell:word defang
 """The model-free morning upkeep pass — what the retired ``housekeeping`` skill
 did, composed from the committed helpers it drove one call at a time. The
-``plan`` launcher runs it; its approvals ride ``plan``'s bootstrap gate.
+``plan`` pre-launch runs it; its approvals ride the launcher's one prune ask.
 
 Usage (from the base repo root; a worktree is refused):
 
     python3 .claude/tools/upkeep.py run [--json] [--no-doc] [--if-stale]
     python3 .claude/tools/upkeep.py ran-today
     python3 .claude/tools/upkeep.py prune [--apply] [--json]
+    python3 .claude/tools/upkeep.py fold-stamp --batches N [--folds M]
+    python3 .claude/tools/upkeep.py fold-today
 
 ``prune`` runs steps 4–7 alone, disarmed unless ``--apply`` — the operator's
-by-hand cleanup on a machine whose pass is not armed, applying the one rule
-below rather than a second one that drifts.
+by-hand cleanup on a machine whose pass is not armed, and the launcher's apply
+on the operator's yes, applying the one rule below rather than a second one
+that drifts.
+
+``fold-stamp`` is the launcher's record that the day's lever fold ran, written
+beside this pass's stamp; ``fold-today`` prints the scheduler's line for it
+(``fold ran at HH:MM, N batches[, M folded into open issues]`` or
+``no fold today``). Neither reads the network.
 
 ``run`` executes twelve steps in order, each under its own timeout and each
 **best-effort**: a failure is a report line, never an abort of later steps.
@@ -37,8 +45,7 @@ refuses the whole pass, since every later step assumes it.
     --settled``) — merged or closed, whatever its issue's state, one thread at
     a time (never mark-all);
  8. the open count of each parked milestone, with its direction since the
-    previous stamp — the line the ``plan`` bootstrap says, and the lever
-    count its fold sub-agent's spawn gate reads;
+    previous stamp — the line the ``plan`` bootstrap says;
  9. convention-reference check, hook-wiring check, the skill-size watch line
     (``skill_size --utilization``), allowlist cruft, and the
     monthly refresh gate — mining the recent session digests when due and
@@ -59,7 +66,8 @@ refuses the whole pass, since every later step assumes it.
 always armed in ``run``: with the board gate gone, a settled PR's threads are
 dismissible on sight, and a dismissal destroys nothing. The open-PR guard holds
 even when armed, and the purge never arms — its apply stays an operator
-approval at ``plan``'s gate. ``prune`` arms both steps only under ``--apply``.
+approval at the launcher's prune ask. ``prune`` arms both steps only under
+``--apply``.
 
 **Report.** One section of the Planning document — from ``REPORT_HEADING``
 through its ``REPORT_END`` line — is replaced wholesale each run, bounded to
@@ -114,6 +122,7 @@ REPORT_HEADING = "Upkeep report — machine-written, latest run only"
 # swallowed as part of it on the next run.
 REPORT_END = "End of upkeep report."
 STAMP_NAME = ".upkeep-last-run.json"
+FOLD_STAMP_NAME = ".fold-last-run.json"
 # The seat allowance's sample log, at most one reading per pass — machine-local beside
 # the stamp, since the allowance is one operator's subscription.
 SAMPLES_NAME = ".allowance-samples.jsonl"
@@ -863,7 +872,7 @@ def step_purge(ctx: Ctx) -> None:
         ),
         "nothing",
     )
-    ctx.record("purge", f"purge dry-run: {total} to free (apply is plan's gate)")
+    ctx.record("purge", f"purge dry-run: {total} to free (apply is the launcher's ask)")
 
 
 STEPS = (
@@ -1126,6 +1135,34 @@ def previous_run(path: Path) -> str | None:
     return last if isinstance(last, str) and last else None
 
 
+def fold_stamp_path(base: Path) -> Path:
+    return base / ".claude" / FOLD_STAMP_NAME
+
+
+def write_fold_stamp(base: Path, now: datetime, batches: int, folds: int) -> None:
+    """The launcher's record that the day's lever fold ran — beside the pass's
+    own stamp, read by the scheduler's bootstrap instead of a fold report."""
+    stamp = {"ran_at": now.isoformat(), "batches": batches, "folds": folds}
+    fold_stamp_path(base).write_text(json.dumps(stamp) + "\n", encoding="utf-8")
+
+
+def fold_today(path: Path, now: datetime) -> str:
+    """The bootstrap's one line: ``fold ran at HH:MM, N batches`` (local time,
+    with ``, M folded into open issues`` when M > 0), or ``no fold today`` for
+    a missing or unreadable stamp, or one not from today's local date."""
+    try:
+        stamp = json.loads(path.read_text("utf-8"))
+        ran = datetime.fromisoformat(stamp["ran_at"]).astimezone()
+        batches = int(stamp["batches"])
+        folds = int(stamp.get("folds", 0))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return "no fold today"
+    if ran.date() != now.astimezone().date():
+        return "no fold today"
+    line = f"fold ran at {ran:%H:%M}, {batches} batches"
+    return line + (f", {folds} folded into open issues" if folds else "")
+
+
 def ran_today(path: Path, now: datetime) -> dict:
     """Whether the stamp's local calendar date is ``now``'s."""
     try:
@@ -1164,6 +1201,14 @@ def run(argv: list[str]) -> int:
         help="skip the pass when today's run is already stamped",
     )
     sub.add_parser("ran-today", help="did a pass run today? (no network read)")
+    p_fold = sub.add_parser(
+        "fold-stamp", help="record that the launcher's lever fold ran (no network)"
+    )
+    p_fold.add_argument("--batches", type=int, required=True, help="batches filed")
+    p_fold.add_argument(
+        "--folds", type=int, default=0, help="parts folded into open issues"
+    )
+    sub.add_parser("fold-today", help="the scheduler's fold line (no network read)")
     p_prune = sub.add_parser(
         "prune",
         help="only the cleanup steps (PR set, board, prune, notifications); "
@@ -1185,6 +1230,13 @@ def run(argv: list[str]) -> int:
 
     if args.cmd == "ran-today":
         print(json.dumps(ran_today(stamp_path(base), now)))
+        return 0
+    if args.cmd == "fold-stamp":
+        write_fold_stamp(base, now, args.batches, args.folds)
+        print(fold_today(fold_stamp_path(base), now))
+        return 0
+    if args.cmd == "fold-today":
+        print(fold_today(fold_stamp_path(base), now))
         return 0
     if args.cmd == "run" and args.if_stale:
         seen = ran_today(stamp_path(base), now)

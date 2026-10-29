@@ -318,14 +318,14 @@ Concrete rules:
     mined in one go.
   - **On a slow clock** — the upkeep pass's refresh gate, roughly
     monthly by `allowlist.py refresh-due`; it mines and proposes, and
-    the candidates ride `plan`'s bootstrap gate. This is the *only*
+    the candidates ride the launcher's one ask. This is the *only*
     periodic adder, and it exists because the classifier that made the
     per-session sweep unnecessary is also what makes the remaining
     churn invisible: nobody sees the prompts any more, so nothing
     prompts a human to firm them. Most passes pay one cheap call and
     skip.
   - **Pruning** — the upkeep pass's `allowlist.py cruft` report, the
-    removals approved at `plan`'s bootstrap gate;
+    removals approved in the launcher's one ask;
     `allowlist.py prune-dead` (dead globs, ungated) is by hand now, on
     no schedule.
 
