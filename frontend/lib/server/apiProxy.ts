@@ -15,6 +15,7 @@ import {
   JUPITER_SEARCH_URLS,
   type UpstreamUrls,
 } from "../upstreams";
+import { type ClientLimiter, clientAddress } from "./clientLimit";
 
 // An unresolved 1Password reference. Locally the key's variable holds one in
 // the git-ignored .env.local, and `make frontend` resolves it through `op run`;
@@ -56,11 +57,15 @@ export type QueryValidator = (
   env: Env,
 ) => Promise<QueryCheck>;
 
-// One route handler: the upstream it forwards to, and the check every query
-// passes before the key is attached. The validators live in
-// lib/server/proxyQuery.ts, apart from this module, which next.config.ts
-// imports.
-export type ProxyRoute = { upstream: KeyedUpstream; validate: QueryValidator };
+// One route handler: the upstream it forwards to, the check every query
+// passes before the key is attached, and optionally a per-caller limit. The
+// validators and limits live in lib/server/proxyQuery.ts, apart from this
+// module, which next.config.ts imports.
+export type ProxyRoute = {
+  upstream: KeyedUpstream;
+  validate: QueryValidator;
+  limiter?: ClientLimiter;
+};
 
 // The key, or null when unset. Throws on an unresolved reference, naming the
 // variable and never its value.
@@ -91,10 +96,14 @@ const NULL_BODY_STATUSES = new Set([204, 205, 304]);
 
 // A failure of the proxy's own: a `{ msg }` body, the shape DFlow's errors
 // take.
-const fail = (status: number, msg: string): Response =>
+const fail = (
+  status: number,
+  msg: string,
+  headers: Record<string, string> = {},
+): Response =>
   Response.json(
     { msg },
-    { status, headers: { "x-content-type-options": "nosniff" } },
+    { status, headers: { ...headers, "x-content-type-options": "nosniff" } },
   );
 
 // Forward a GET to the upstream with the key when one is set, after the
@@ -110,8 +119,10 @@ const fail = (status: number, msg: string): Response =>
 // claims. A browser request from another site (`Sec-Fetch-Site` other than
 // same-origin) is refused, so no other page can spend the key through its
 // visitors' browsers; a non-browser client omits the header and is not
-// stopped by this. HEAD, which Next answers through the GET handler, is
-// refused too, since it would spend quota for nothing.
+// stopped by this. What bounds that client is the route's limiter, when it
+// has one: a caller over it gets a 429 with `retry-after` before its query
+// is checked or the key read. HEAD, which Next answers through the GET
+// handler, is refused too, since it would spend quota for nothing.
 export async function forward(
   route: ProxyRoute,
   req: Request,
@@ -121,6 +132,13 @@ export async function forward(
   const site = req.headers.get("sec-fetch-site");
   if (site !== null && site !== "same-origin") {
     return fail(403, "Cross-site requests are not proxied");
+  }
+
+  const wait = route.limiter?.take(clientAddress(req)) ?? null;
+  if (wait !== null) {
+    return fail(429, `Too many requests; retry in ${wait}s`, {
+      "retry-after": String(wait),
+    });
   }
 
   const { upstream } = route;

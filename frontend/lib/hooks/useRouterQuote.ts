@@ -99,10 +99,11 @@ export const useRouterQuote = (
         return;
       }
 
-      // Respect the aggregator's rate-limit budget. Currently dormant in the
-      // browser — DFlow's dev endpoint sends `x-ratelimit-*` but doesn't
-      // expose them via CORS, so `projectedRemaining` returns null and we lean
-      // on DFlow's own 429. The guard reactivates behind a proxy route handler.
+      // Respect the aggregator's rate-limit budget. Dormant on a direct call —
+      // DFlow's dev endpoint sends `x-ratelimit-*` but doesn't expose them via
+      // CORS, so `projectedRemaining` returns null and we lean on the 429 —
+      // and live behind the keyed proxy route, which forwards them. A 429
+      // there may also be the proxy's own per-caller limit, which sends none.
       const projected = projectedRemaining(DFLOW_QUOTE);
       if (projected !== null && projected < MIN_TOKENS_TO_FETCH) {
         schedule(QUOTE_REFRESH_MS, gen);

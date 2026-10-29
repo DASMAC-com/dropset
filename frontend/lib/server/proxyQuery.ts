@@ -14,6 +14,10 @@ import {
 } from "@solana-program/token";
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@solana-program/token-2022";
 import {
+  DFLOW_PROXY_ORDER_LIMIT,
+  DFLOW_PROXY_QUOTE_LIMIT,
+} from "../data/timings";
+import {
   DFLOW_ORDER_UPSTREAM,
   DFLOW_QUOTE_UPSTREAM,
   type Env,
@@ -22,6 +26,7 @@ import {
   type QueryCheck,
   type QueryValidator,
 } from "./apiProxy";
+import { clientLimiter } from "./clientLimit";
 
 const refuse = (msg: string): QueryCheck => ({ ok: false, msg });
 
@@ -174,13 +179,17 @@ export const dflowOrderQuery = dflowQuery({
   dynamicComputeUnitLimit: fixed("true"),
 });
 
+// Each DFlow route holds its own buckets; Jupiter's search is unlimited, as
+// its one caller batches mints and refreshes on a slow cadence.
 export const DFLOW_QUOTE_ROUTE: ProxyRoute = {
   upstream: DFLOW_QUOTE_UPSTREAM,
   validate: dflowQuoteQuery,
+  limiter: clientLimiter(DFLOW_PROXY_QUOTE_LIMIT),
 };
 export const DFLOW_ORDER_ROUTE: ProxyRoute = {
   upstream: DFLOW_ORDER_UPSTREAM,
   validate: dflowOrderQuery,
+  limiter: clientLimiter(DFLOW_PROXY_ORDER_LIMIT),
 };
 export const JUPITER_SEARCH_ROUTE: ProxyRoute = {
   upstream: JUPITER_SEARCH_UPSTREAM,
