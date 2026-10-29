@@ -313,7 +313,7 @@ judged on content. Detail: `docs/conventions/linear-automation.md`.
 All GitHub operations go through the **GitHub MCP** (`mcp__github__*`),
 passing `owner: "DASMAC-com"`, `repo: "dropset"`. The deliberate `gh`
 exceptions (the merge-queue enqueue + dequeue probe, and the polled
-CI / PR-state reads `gh pr checks` / `gh pr view --json`), the
+CI / PR-state reads `gh api` / `gh pr checks` / `gh pr view --json`), the
 PAT-not-OAuth auth setup, and the read/write permission split all live
 in `docs/conventions/github-mcp.md`.
 

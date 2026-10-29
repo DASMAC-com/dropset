@@ -1438,7 +1438,10 @@ migrations or generation inputs, and whether it spans crates.
    diff (uncommitted and untracked work included, so recovery is one
    `git apply` on `snapshot.merge_base` even when the commit could not
    be made), blocks until the checks settle, and prints one compact
-   verdict; the tool's docstring has the schema:
+   verdict. It polls the head SHA's check runs every `DS_PR_POLL_S`
+   seconds (default 20) with conditional reads, so an unchanged poll
+   is a free 304, and backs off to 60 under a fifth of the rate limit;
+   the tool's docstring has the schema:
 
    ```sh
    python3 .claude/tools/wait_for_checks.py --pr <number> \
@@ -1454,7 +1457,7 @@ migrations or generation inputs, and whether it spans crates.
    shell `while … sleep` loop, no `jq` filter, and never a **bare**
    `gh pr checks --watch` or `gh run watch`, which re-prints its whole
    table every refresh into one replayed result (`history.md` → "Bare
-   watch cost"); `--watch` is right only inside the tool.
+   watch cost"); the tool's own loop is the only poller.
 
    **Say once, then silent** — the same rule for the step-22 queue
    watch: tell the human once that CI is in flight, then say nothing
@@ -1712,14 +1715,16 @@ migrations or generation inputs, and whether it spans crates.
    ```json
    {
      // merged dequeued conflicting closed not_queued timeout probe_failed
+     // stopped
      "conclusion": "merged",
      "seen_queue_entry": true,
-     "last": {"gql_state": "MERGED", "view_state": "MERGED", …},
+     "last": {"rest_state": "MERGED", "gql_state": "MERGED", …},
      "queue_runs": [{"run_id": "…", "name": "…", "conclusion": "…"}],
      "failing_runs": [],
      "enqueued_at": "…",
-     // on merged only:
+     // on every exit but probe_failed (unsubscribed: 0 unless merged):
      "notifications": {"dismissed": 1, "unsubscribed": 1, "failed": 0, …},
+     // on merged only:
      "todays_merge_count": 4,
      // on dequeued / conflicting only:
      "dequeue": {"dequeue_reason": "merge_conflict", "base_gained": […], …},
@@ -1727,31 +1732,38 @@ migrations or generation inputs, and whether it spans crates.
    }
    ```
 
-   It polls the GraphQL `mergeQueueEntry` probe, the
-   `gh pr view --json state,mergedAt` read, and this PR's
-   `gh-readonly-queue/…/pr-<number>-…` runs each minute, stays silent
-   while queued, and exits 0 only on `merged` — having first unsubscribed
-   from and marked done the PR's notification threads (`notifications`)
-   and counted the PRs merged since local midnight
-   (`todays_merge_count`). It
-   owns the reasoning
+   Every `DS_PR_POLL_S` seconds (default 20) it reads the PR (merged,
+   closed) and its timeline (the `added_to_merge_queue` /
+   `removed_from_merge_queue` events), both conditional, so a merge or
+   a dequeue is reported within one poll of happening; the GraphQL
+   `mergeQueueEntry` probe and this PR's
+   `gh-readonly-queue/…/pr-<number>-…` runs are re-read once a minute
+   as corroboration. It stays silent while queued and exits 0 only on
+   `merged`. **On every exit but `probe_failed` it marks the PR's
+   notification threads done first** (`notifications` in the verdict),
+   stopping included: a SIGTERM or SIGINT, when you stop the watch
+   early having learned the outcome another way, still dismisses and
+   prints a `stopped` verdict. **It unsubscribes only on a merge**: a
+   PR still open keeps its subscription, which re-creates its thread on
+   new activity. On `merged` it also counts the PRs merged since local
+   midnight (`todays_merge_count`). It owns the reasoning
    this step used to spell out
    (`docs/conventions/github-mcp.md` → "The merge-queue handoff"):
-   key on `mergeQueueEntry` (`autoMergeRequest` only keeps a classic
-   auto-merge repo waiting, never outranking a failed queue run);
-   **a terminal `MERGED` from either source is authoritative**, and
-   nothing concludes "dequeued" until both agree the PR is not merged
-   (`history.md` → "The two sources disagree both ways"); an all-null
-   probe is the registration window **or** a removal, and the newest
-   queue SHA's runs tell them apart. Say once that the PR is queued,
-   then stay silent until the exit.
+   **a terminal `MERGED` from any source is authoritative**, and a
+   merge writes a removal event too, so a removal is a dequeue only
+   where nothing says merged (`history.md` → "The two sources disagree
+   both ways"); `autoMergeRequest` only keeps a classic auto-merge repo
+   waiting, never outranking a failed queue run; and with the timeline
+   silent, a failed run on the newest queue SHA or 120 seconds of
+   all-null is the fallback. Say once that the PR is queued, then stay
+   silent until the exit.
 
    Where a background command is unavailable, fall back to a
    session-scoped cron running the same command about every 12 minutes
-   with `--timeout 660` — above the tool's 600-second grace — and
-   `--since <the enqueue time, UTC ISO-8601>`, which every firing needs:
-   each one is a fresh call, and without the anchor a dequeue older
-   than the tool's 15-minute run window reads as `not_queued`. It
+   with `--timeout 660`, under the cadence so firings never overlap, and
+   `--since <the enqueue time, UTC ISO-8601>`: each firing is a fresh
+   call, and where the timeline lacks the enqueue event the anchor is
+   what keeps an old dequeue from reading as `not_queued`. It
    deletes itself on a terminal verdict; a `timeout` from a cron firing
    is silent and the cron stays. If the classifier denies the cron, ask
    the operator to approve it in this tab; never silently hand over the
@@ -1774,9 +1786,9 @@ migrations or generation inputs, and whether it spans crates.
 
    - **`not_queued`** → no entry and no queue run ever appeared: the
      enqueue did not take. Apply step 20's already-clean remedy and
-     restart the watch. On any fresh call without `--since` (a resumed
-     watch), a dequeue older than the tool's run window reads the same —
-     check `gh run list` before re-enqueueing.
+     restart the watch. The timeline's enqueue event normally rules out
+     an old dequeue reading the same; where it is missing on a fresh
+     call without `--since`, check `gh run list` before re-enqueueing.
 
    - **`conflicting`** (or `dequeue_reason: merge_conflict`) → a PR
      that landed first conflicts with this one; `dequeue.base_gained`
@@ -1816,14 +1828,16 @@ migrations or generation inputs, and whether it spans crates.
        user to rebase on `main` and re-run `/review-pr`.
 
      Report the removal either way, naming the job (or the reason). An
-     empty `failing_runs` with a non-conflict reason means the entry
-     vanished with every run green for the tool's whole grace window —
-     `dequeue_reason` is the timeline's answer; weigh it before
-     re-enqueueing.
+     empty `failing_runs` with a non-conflict reason means the removal
+     came with no failed queue run behind it — `dequeue_reason` is the
+     timeline's answer; weigh it before re-enqueueing.
 
    - **`timeout`** / **`probe_failed`** from the backgrounded watch →
      report the `last` snapshot (and `error`), then restart the watch;
      never report it as queued-and-fine.
+
+   - **`stopped`** → you stopped the watch; act on what you learned
+     instead, its threads already dismissed.
 
    **The post-merge tail, on `merged` only — one batched sequence with
    a single operator touch at the very end.** Work it as a checklist;

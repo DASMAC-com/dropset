@@ -48,27 +48,33 @@ which drifted behind it twice:
   ahead of the state read, one behind it, and one with both stale
   together. So neither source is reliably the fresher one, and a rule
   naming either as the tiebreak is wrong half the time. What holds:
-  **a terminal `MERGED` from either source is authoritative** — merge
-  is terminal and neither source reports it spuriously, so only
+  **a terminal `MERGED` from any source is authoritative** — merge
+  is terminal and no source reports it spuriously, so only
   lateness is possible, never a false positive. Conclude "still
-  queued" or "dequeued" only when **both** agree the PR is not merged;
-  when neither says merged and the queue entry looks impossible for
-  the run state, wait and re-probe. All three reads — the GraphQL
-  probe, the state read and the queue-branch `gh run list` — now run
+  queued" or "dequeued" only when **no** source says the PR is merged;
+  when none does and the queue entry looks impossible for
+  the run state, wait and re-probe. Every read — the PR timeline and
+  then the REST pull (the state read's successor) each poll, the
+  GraphQL probe and the queue-branch runs once a minute — now runs
   inside `wait_for_checks.py --queue`, which applies the invariant on
-  every poll, including the `AWAITING_CHECKS` one that otherwise polls
+  every poll (a merge writes a `removed_from_merge_queue` event too,
+  so a removal never concludes a dequeue ahead of it), including the
+  `AWAITING_CHECKS` one that otherwise polls
   a merged PR indefinitely; `review-pr`'s history ledger carries the
   per-PR evidence.
 
-- **The CI-wait and PR-state reads** — `gh pr checks <number>` for the
-  CI-wait poll, and `gh pr view <number> --json <fields>` for the
-  one-shot `mergeable` / PR-lookup reads. These reads are **polled
-  repeatedly** across the CI and merge-queue waits, and the MCP
+- **The CI-wait and PR-state reads** — conditional `gh api -i` REST
+  reads for the CI-wait and queue polls (an unchanged poll answers
+  `304`, which the rate limit does not count), `gh pr checks --json`
+  for the CI verdict, and `gh pr view <number> --json <fields>` for
+  the one-shot `mergeable` / PR-lookup reads. These reads are
+  **polled repeatedly** across the CI and merge-queue waits, and the MCP
   equivalents (`pull_request_read` `get` / `get_check_runs`) return
   the **full** PR object or check array on every poll — a fat payload
   that, because a tool result is replayed as input on every later
   turn (see [context economy](context-economy.md)), is paid many times
-  over. `gh pr checks` is one compact line per check, and
+  over. The polls run inside the tool and land in its log, never in
+  context; `gh pr checks` is one compact line per check, and
   `--json <fields>` selects only the fields the decision needs.
   `--json` / `--jq` are command **flags**, not shell pipes, so they
   stay shell-rule-clean and reduce to `Bash(gh pr checks:*)` /
@@ -110,14 +116,17 @@ which drifted behind it twice:
   `review_diff.py --overlap`, which exist so the per-PR file lists never
   reach a transcript at all.)
 
-- **The post-merge notification dismissal** (`review-pr`) — done
-  **inside** `wait_for_checks.py --queue`, which on a `merged` verdict
-  calls `pr_notifications.py`'s `--pr` path in its own process, before
-  it exits: every thread on the PR is ignored
+- **The queue-exit notification dismissal** (`review-pr`) — done
+  **inside** `wait_for_checks.py --queue`, which on every exit but
+  `probe_failed` calls `pr_notifications.py`'s `--pr` path in its own
+  process, before it exits: every thread on the PR is marked done
+  (`DELETE /notifications/threads/{id}`). **It unsubscribes only on
+  merge** — on a `merged` verdict each thread is first ignored
   (`PUT /notifications/threads/{id}/subscription`, `ignored=true`) so a
-  later bot comment cannot re-create it, then marked done
-  (`DELETE /notifications/threads/{id}`). That leaves no turn between the
-  merge and the dismissal, and no list payload in any transcript:
+  later bot comment cannot re-create it; a PR still open keeps its
+  subscription, which is what brings its thread back on new activity.
+  That leaves no turn between the
+  outcome and the dismissal, and no list payload in any transcript:
   `mcp__github__list_notifications` once returned **3.7k tokens in a
   single call** for that one id, because it embeds the complete
   repository object (every `*_url` template) once per notification.
@@ -129,9 +138,12 @@ which drifted behind it twice:
   every thread whose PR is merged or closed, **whatever its issue's
   Linear state** (a merged PR whose issue sits In Review is settled
   code), never an open PR's. `dismiss --pr N` instead dismisses every
-  thread on the named PRs **whatever their state** — the caller vouches
-  they are settled. To dismiss a thread is two calls, never mark-all:
-  ignore it, then mark it done; dry run unless `--apply`. The ignore is
+  thread on the named PRs **whatever their state**, unsubscribing unless
+  `--keep-subscription` says they are not merged. **Unsubscribe only on
+  merge**: a merged PR's thread is two calls, never mark-all — ignore
+  it, then mark it done — while a closed PR's (which can be reopened,
+  and must resurface) is marked done only; dry run unless `--apply`.
+  The ignore is
   a `PUT` with `ignored=true`, never a `DELETE` on the subscription,
   which GitHub documents as not holding for a watcher of the
   repository. Dismissal waits for the PR to settle, so the merge or

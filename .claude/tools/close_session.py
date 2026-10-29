@@ -325,9 +325,18 @@ def dismiss_threads(run: Runner, prs: list[dict], result: dict) -> None:
     numbers = {int(p["number"]) for p in prs if p.get("number") is not None}
     if not numbers:
         return
+    # Unsubscribe only on merge: a closed PR can be reopened.
+    keep = {
+        int(p["number"])
+        for p in prs
+        if p.get("number") is not None and p.get("state") != "MERGED"
+    }
     try:
         rc, out = pr_notifications.dismiss(
-            lambda gh_args: run(["gh", *gh_args], None), numbers, apply=True
+            lambda gh_args: run(["gh", *gh_args], None),
+            numbers,
+            apply=True,
+            keep_subscription=keep,
         )
     except Exception as e:  # noqa: BLE001 — the state landed; never lose the removal
         result["notifications"] = f"dismissal failed: {type(e).__name__}: {e}"

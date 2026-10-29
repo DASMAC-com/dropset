@@ -15,22 +15,33 @@ across eight sessions:
 * **It read the wrong thing on failure.** Diagnosing which check failed took
   repeated per-check reads, when one JSON read answers it completely.
 
-So the wait is a **bounded** pair of ``gh`` invocations — no model-driven loop:
+So the wait is a **bounded** pair — no model-driven loop:
 
-1. ``gh pr checks --watch`` — gh does the pacing and exits when the checks
-   settle. Its live-updating table is captured to a log, never to stdout, for
-   the same reason ``run_quiet.py`` captures a build log.
+1. A watch loop over the head SHA's check runs (:func:`watch_checks`) —
+   conditional REST reads every :data:`DEFAULT_POLL` seconds, one log line
+   per poll, never to stdout, for the same reason ``run_quiet.py`` captures a
+   build log. It replaced a ``gh pr checks --watch`` child on a thirty-second
+   refresh: an unchanged poll now answers ``304``, which the rate limit does
+   not count (see :class:`Conditional`).
 2. ``gh pr checks --json`` — one structured read that *is* the verdict, including
    every failing check's name, workflow, and link.
 
-The JSON read, not the watch's exit code, is the authority on the outcome: ``gh``
-overloads its exit status (non-zero covers "a check failed", "checks are still
-pending", and "there are no checks at all"), and a review must distinguish those.
+The JSON read, not the watch, is the authority on the outcome: the watch sees
+check runs only, while the read also carries commit statuses and gh's
+normalized ``bucket``, and a review must distinguish "a check failed", "checks
+are still pending" and "there are no checks at all".
 
-**The pair repeats when the read disagrees with the watch.** ``--watch`` settles
-on gh's *own* census of the check set, which is not the same as the PR being
+**One poll interval for every wait** — this loop, the ``--queue`` watch, and
+``verify_head.py``'s CI poll: ``DS_PR_POLL_S`` seconds (default
+:data:`DEFAULT_POLL`), ``--interval`` overriding it per call. Each REST
+response's ``X-RateLimit-Remaining`` is read, and under
+:data:`LOW_QUOTA_FRACTION` of the limit the wait backs off to
+:data:`BACKOFF_INTERVAL` (:meth:`Conditional.pace`).
+
+**The pair repeats when the read disagrees with the watch.** The watch settles
+on its *own* census of the check set, which is not the same as the PR being
 done: a workflow that registers late — one whose trigger matches a path only
-some PRs touch — is still pending when gh returns. Believing that single
+some PRs touch — is still pending when the watch returns. Believing that single
 post-watch read is how this tool once reported ``settled: true`` alongside
 ``conclusion: "pending"``, twice in a row, for ~14 minutes of dead wall-clock on
 a PR where nothing was actually wrong. A pending read therefore re-enters the
@@ -54,9 +65,12 @@ needed the terminal state re-probed afterwards.
 
 A third mode, ``--queue <pr>``, watches an **enqueued PR** through to merged or
 dequeued, including the window before any queue run exists (where ``--run`` has
-no id to take). It polls both PR-state sources and the PR's queue-branch runs,
-prints nothing until a terminal outcome, and is meant to run as one backgrounded
-command so its exit wakes the session. See :func:`wait_queue`.
+no id to take). Every poll reads the REST pull (merged / closed) and the PR's
+timeline (enqueue / dequeue events), both conditional; the GraphQL queue entry
+and the queue-branch runs are corroboration, read once a minute. It prints
+nothing until a terminal outcome, and is meant to run as one backgrounded
+command so its exit wakes the session. See :func:`wait_queue` and
+:class:`QueueProbe`.
 
 A fourth, ``--mergeable <pr>``, is the mergeability tri-state with its settle
 loop — one call serving ``review-pr`` steps 16 and 20. See :func:`wait_mergeable`.
@@ -74,8 +88,8 @@ Options: exactly one of ``--pr`` / ``--run`` / ``--queue`` / ``--mergeable``,
 ``--repo`` (default ``DASMAC-com/dropset``), ``--verdict-out <path>`` (also
 write the verdict there), ``--snapshot <path>`` with ``--base`` (checks mode:
 see :func:`snapshot`),
-``--interval`` (seconds between refreshes, default 30, or 60 under
-``--queue``; honored in every watching mode), ``--timeout``
+``--interval`` (seconds between polls, default ``DS_PR_POLL_S`` or
+:data:`DEFAULT_POLL`; honored in every watching mode), ``--timeout``
 (seconds before giving up on the watch, default 3600, or 7200 under
 ``--queue``) — both rejected with ``--mergeable``, whose settle loop is
 fixed — ``--no-watch`` (skip the
@@ -139,28 +153,36 @@ or, under ``--queue``::
       "pr": 285,
       "mode": "queue",
       "conclusion": "merged",    // merged | dequeued | conflicting | closed |
-                                 // not_queued | timeout | probe_failed
+                                 // not_queued | timeout | probe_failed |
+                                 // stopped
       "settled": true,
       "elapsed_seconds": 1310,
       "polls": 22,
       "seen_queue_entry": true,
       "enqueued_at": "2026-10-22T23:40:27Z",  // earliest enqueue seen, or --since
-      "last": {"gql_state": "MERGED", "entry_state": null, …},
+      "last": {"rest_state": "MERGED", "gql_state": "MERGED",
+               "entry_state": null, "removed_at": null, …},
       "queue_runs": [{"run_id": "…", "name": "…", "conclusion": "…", …}],
       "failing_runs": [],
+      "requests": {"sent": 140, "not_modified": 131, "rate_remaining": 4710},
       "notifications": {"dismissed": 1, "unsubscribed": 1, "failed": 0,
                         "error": null},
       "todays_merge_count": 4,
       "log_path": "/…/wait-for-queue-285.log"
     }
 
-``notifications`` and ``todays_merge_count`` are filled only on ``merged``: the
-watch unsubscribes from and marks done the PR's GitHub notification threads
-itself, so no session turn sits between the merge and the dismissal, and counts
-the PRs merged since local midnight, this one included. Both are best-effort —
-a failure is reported there (``todays_merge_count: null``), never changes the
-conclusion. See :func:`dismiss_pr_notifications` and
-:func:`todays_merge_count`.
+``notifications`` is filled on **every exit but** ``probe_failed``: the watch
+marks the PR's GitHub notification threads done itself through
+``pr_notifications.dismiss``, so no session turn sits between the outcome and
+the dismissal. **It unsubscribes only on** ``merged``: a PR still open (or
+closed, which can be reopened) keeps its subscription, which is what re-creates
+its thread on new activity. That includes ``stopped`` — a SIGTERM or SIGINT
+(the session stopping the watch early, having learned the outcome another way)
+raises into the same ``finally`` that dismisses, then the verdict prints.
+``todays_merge_count`` is filled on ``merged`` only: the PRs merged since local
+midnight, this one included. Both are best-effort — a failure is reported there
+(``todays_merge_count: null``), never changes the conclusion. See
+:func:`dismiss_pr_notifications` and :func:`todays_merge_count`.
 
 ``dequeue`` is filled only on ``dequeued``, and is best-effort the same way::
 
@@ -193,6 +215,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -205,16 +228,39 @@ import pr_notifications
 
 DEFAULT_REPO = "DASMAC-com/dropset"
 
+#: The env knob every PR wait reads its poll interval from, and its default.
+#: The operator accepted fifteen to thirty seconds; twenty is the middle. A
+#: missing, non-integer or non-positive value falls back to the default.
+POLL_ENV = "DS_PR_POLL_S"
+DEFAULT_POLL = 20
+
+#: Under this fraction of the REST limit remaining, a wait backs off to
+#: :data:`BACKOFF_INTERVAL`. Twenty watchers at twenty seconds send up to
+#: 3,600 pull reads an hour (more with the timeline beside them) against a
+#: 5,000-an-hour limit — before the 304s, which are not counted, and which an
+#: unchanged queue wait mostly is.
+LOW_QUOTA_FRACTION = 0.2
+BACKOFF_INTERVAL = 60
+
+
+def poll_interval(env=os.environ) -> int:
+    """``DS_PR_POLL_S`` as positive seconds, else :data:`DEFAULT_POLL`."""
+    try:
+        value = int(env.get(POLL_ENV, "").strip())
+    except ValueError:
+        return DEFAULT_POLL
+    return value if value > 0 else DEFAULT_POLL
+
+
 # How many times to re-probe a mergeable value of UNKNOWN, and how long to wait
 # between. GitHub computes mergeability asynchronously; a couple of seconds is
 # usually enough, and concluding from UNKNOWN is the failure being avoided.
 MERGEABLE_RETRIES = 3
 MERGEABLE_RETRY_DELAY = 2
 
-# gh's own refresh cadence under --watch. 30s matches CI's granularity: the
-# shortest job on this repo is several seconds and the longest many minutes, so a
-# tighter interval only produces redraws nobody reads.
-DEFAULT_INTERVAL = 30
+# The fallback interval for a caller that passes none; the CLI resolves
+# `poll_interval()` instead, so the env knob reaches every mode.
+DEFAULT_INTERVAL = DEFAULT_POLL
 
 # An outer bound on the watch, so a wedged or cancelled run can't hold the
 # session open indefinitely. An hour is well past this repo's slowest suite.
@@ -369,42 +415,183 @@ def _gh(args: list[str]) -> tuple[int, str, str]:
     return completed.returncode, completed.stdout, completed.stderr
 
 
-def watch_checks(pr: int, repo: str, interval: int, timeout: int, log: Path) -> bool:
-    """Block until the PR's checks settle. Returns ``False`` on timeout.
+_STATUS_RE = re.compile(r"^HTTP/[\d.]+ (\d{3})")
 
-    gh owns the pacing, so there is no loop here — just one child process whose
-    output is written straight to ``log``. On timeout the child is killed and the
-    caller still reads the current state, so a timed-out wait reports what the
-    checks *were* rather than nothing at all.
+
+def _split_response(text: str) -> tuple[int | None, dict[str, str], str]:
+    """``(status, headers, body)`` from ``gh api -i`` output.
+
+    Header names are lowercased (GitHub sends ``Etag``). ``status`` is ``None``
+    when the output carries no status line — gh failed before any response.
     """
-    args = [
-        "pr",
-        "checks",
-        str(pr),
-        "--repo",
-        repo,
-        "--watch",
-        "--interval",
-        str(interval),
-    ]
+    head, _, body = text.replace("\r\n", "\n").partition("\n\n")
+    lines = head.split("\n")
+    match = _STATUS_RE.match(lines[0]) if lines else None
+    if match is None:
+        return None, {}, ""
+    headers = {}
+    for line in lines[1:]:
+        name, sep, value = line.partition(":")
+        if sep:
+            headers[name.strip().lower()] = value.strip()
+    return int(match.group(1)), headers, body
+
+
+class Conditional:
+    """Conditional REST GETs through ``gh api -i``, one ETag per path.
+
+    A path read before is re-sent with ``If-None-Match``; a ``304`` returns the
+    cached body and is **not counted against the rate limit** (GitHub's REST
+    docs, "conditional requests"). Verified against this repo at
+    implementation: the pull, timeline and check-runs endpoints all answer a
+    repeated ETag with ``304`` and an unchanged ``X-RateLimit-Remaining``;
+    the latter two send weak (``W/``) ETags, which are matched as sent. gh
+    exits 1 on a ``304``, so the status line, never the exit code, decides.
+
+    ``remaining`` / ``limit`` hold the last response's quota headers, which
+    :meth:`pace` turns into the back-off.
+    """
+
+    def __init__(self, gh=None):
+        # None resolves the module's `_gh` at call time, so a test that
+        # patches `wfc._gh` reaches this client too.
+        self._gh = gh
+        self._cache: dict[str, tuple[str, object]] = {}
+        self.remaining: int | None = None
+        self.limit: int | None = None
+        self.sent = 0
+        self.not_modified = 0
+
+    def get(self, path: str):
+        """The JSON body at ``path``, from cache on a ``304``."""
+        cached = self._cache.get(path)
+        args = ["api", "-i", path]
+        if cached is not None:
+            args += ["-H", f"If-None-Match: {cached[0]}"]
+        code, out, err = (self._gh or _gh)(args)
+        status, headers, body = _split_response(out)
+        if status is None:
+            raise WaitForChecksError(
+                f"GET {path} failed: {err.strip() or f'exit {code}'}"
+            )
+        self.sent += 1
+        try:
+            self.remaining = int(headers["x-ratelimit-remaining"])
+            self.limit = int(headers["x-ratelimit-limit"])
+        except (KeyError, ValueError):
+            pass
+        if status == 304 and cached is not None:
+            self.not_modified += 1
+            return cached[1]
+        if status != 200:
+            raise WaitForChecksError(f"GET {path}: HTTP {status}")
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise WaitForChecksError(f"decoding GET {path}: {exc}") from exc
+        if headers.get("etag"):
+            self._cache[path] = (headers["etag"], payload)
+        return payload
+
+    def pace(self, interval: int) -> int:
+        """``interval``, or :data:`BACKOFF_INTERVAL` once the quota is low."""
+        if self.remaining is not None and self.limit:
+            if self.remaining < LOW_QUOTA_FRACTION * self.limit:
+                return max(interval, BACKOFF_INTERVAL)
+        return interval
+
+    def report(self) -> dict:
+        """The verdict's ``requests`` block."""
+        return {
+            "sent": self.sent,
+            "not_modified": self.not_modified,
+            "rate_remaining": self.remaining,
+        }
+
+
+# Check runs per page, and the most pages one poll reads: this repo registers
+# a few dozen per commit, so a second page is already the unusual case.
+CHECK_RUNS_PER_PAGE = 100
+CHECK_RUNS_MAX_PAGES = 3
+
+
+def _check_runs(client: Conditional, repo: str, sha: str) -> list[dict]:
+    runs: list[dict] = []
+    for page in range(1, CHECK_RUNS_MAX_PAGES + 1):
+        payload = client.get(
+            f"/repos/{repo}/commits/{sha}/check-runs"
+            f"?per_page={CHECK_RUNS_PER_PAGE}&page={page}"
+        )
+        batch = payload.get("check_runs") if isinstance(payload, dict) else None
+        if not isinstance(batch, list):
+            raise WaitForChecksError("check-runs read returned no list")
+        runs += [r for r in batch if isinstance(r, dict)]
+        if len(runs) >= int(payload.get("total_count") or 0):
+            break
+    return runs
+
+
+def watch_checks(
+    pr: int,
+    repo: str,
+    interval: int,
+    timeout: int,
+    log: Path,
+    client: Conditional | None = None,
+    sleep=None,
+    clock=None,
+) -> bool:
+    """Block until the PR head's check runs all complete. ``False`` on timeout.
+
+    Each poll is two conditional reads — the pull, for the head SHA (so a push
+    mid-wait moves the watch with it), and that SHA's check runs — and one log
+    line. No check run at all settles at once, as gh's watch did: the caller's
+    ``none`` rounds own the registration race. A read failing
+    :data:`MAX_PROBE_ERRORS` times running also returns, settled, so the
+    caller's verdict read surfaces the failure rather than the watch spinning
+    out its budget. On timeout the caller still reads the current state, so a
+    timed-out wait reports what the checks *were* rather than nothing at all.
+
+    Check runs only, never commit statuses (gh's watch waited on both): this
+    repo posts none, and the verdict read still sees one. A status producer
+    added later would leave a pending status re-entering this watch at once
+    each round, spending :data:`MAX_WATCH_ROUNDS` at ``interval`` pacing.
+    """
+    client = client or Conditional()
+    sleep = sleep or time.sleep
+    clock = clock or time.monotonic
+    started = clock()
+    errors = 0
     try:
         fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     except OSError as exc:
         raise WaitForChecksError(f"cannot write {log}: {exc}") from exc
     with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fh:
-        try:
-            proc = subprocess.Popen(
-                ["gh", *args], stdout=fh, stderr=subprocess.STDOUT, text=True
-            )
-        except OSError as exc:
-            raise WaitForChecksError(f"cannot run gh: {exc}") from exc
-        try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-            return False
-    return True
+        while True:
+            line: dict = {"t": int(clock() - started)}
+            try:
+                pull = client.get(f"/repos/{repo}/pulls/{pr}")
+                sha = str(((pull or {}).get("head") or {}).get("sha") or "")
+                if not sha:
+                    raise WaitForChecksError("pull read carried no head SHA")
+                runs = _check_runs(client, repo, sha)
+                errors = 0
+                open_runs = [r for r in runs if r.get("status") != "completed"]
+                line |= {"sha": sha[:12], "runs": len(runs), "open": len(open_runs)}
+                settled = not open_runs
+            except WaitForChecksError as exc:
+                errors += 1
+                line["error"] = str(exc)
+                settled = errors >= MAX_PROBE_ERRORS
+            line["rate_remaining"] = client.remaining
+            fh.write(json.dumps(line) + "\n")
+            fh.flush()
+            if settled:
+                return True
+            pause = client.pace(interval)
+            if clock() - started + pause > timeout:
+                return False
+            sleep(pause)
 
 
 def watch_run(
@@ -521,22 +708,34 @@ query($owner: String!, $name: String!, $number: Int!) {
 }
 """
 
-# Queue state moves on the scale of a whole CI run behind other branches, so a
-# poll a minute is ample; each poll is three small reads, written to the log.
-QUEUE_INTERVAL = 60
-
 # A queue wait sits behind every branch ahead of it, so it gets a longer outer
 # bound than one CI run does.
 QUEUE_TIMEOUT = 7200
 
-# All-null with no queue-branch run for this long means the enqueue never took.
-# Registration lands within seconds of a good enqueue, so this is generous.
-NOT_QUEUED_AFTER_SECONDS = 180
+# How often the corroborating reads — the GraphQL queue entry and the queue
+# branch's runs — are re-taken. The pull and the timeline answer every poll.
+CORROBORATE_SECONDS = 60
 
-# All-null after the entry demonstrably existed, with no failed queue run to
-# explain it. Both state sources were once stale together for several minutes
-# after a real merge, so wait this long before calling it a dequeue.
-AMBIGUOUS_GRACE_SECONDS = 600
+# The silence fallbacks, for when the timeline says nothing. The timeline now
+# carries enqueue and dequeue as events, so these no longer have to outwait a
+# stale pair of state sources (once several minutes after a real merge).
+#
+# All-null with no enqueue event and no queue-branch run for this long means
+# the enqueue never took; registration lands within seconds of a good one.
+NOT_QUEUED_AFTER_SECONDS = 120
+
+# All-null after the entry demonstrably existed, with no removal event and no
+# failed queue run to explain it.
+AMBIGUOUS_GRACE_SECONDS = 120
+
+# How far before the watch's start a removal may sit and still be this
+# cycle's, when no `--since` says when the enqueue was: the watch starts
+# seconds after the enqueue, and a conflict removal lands seconds after that.
+REMOVAL_SLACK_SECONDS = 60
+
+# Timeline events per page, and the most pages one poll reads.
+TIMELINE_PER_PAGE = 100
+TIMELINE_MAX_PAGES = 5
 
 # A dequeue backed by a failed queue run must hold on this many consecutive
 # polls, so one stale read of both sources cannot turn a merge into a dequeue.
@@ -575,13 +774,68 @@ def _gh_json(args: list[str], what: str):
         raise WaitForChecksError(f"decoding {what}: {exc}") from exc
 
 
-def probe_queue(pr: int, repo: str) -> dict:
-    """One snapshot of a queued PR: both state sources plus its queue runs.
+def timeline_state(events: list) -> dict:
+    """The queue facts in a PR's REST timeline, oldest event first.
 
-    Two sources because they disagree in **both** directions: GraphQL once read
-    ``MERGED`` while ``gh pr view`` still said ``OPEN``, and once still read
-    ``AWAITING_CHECKS`` after ``gh pr view`` said ``MERGED``.
+    Event names verified against this repo's API at implementation (PR 685):
+    ``added_to_merge_queue`` and ``removed_from_merge_queue``. **A merge also
+    writes ``removed_from_merge_queue``**, at the same second as its
+    ``merged`` and ``closed`` — so ``removed_at`` is a dequeue only where
+    ``merged`` is false, which :func:`wait_queue` checks first.
+
+    ``enqueued_at`` is the newest enqueue; ``removed_at`` the newest removal
+    **after** it in timeline order (order, not timestamps: a conflict removal
+    can share the enqueue's second), else ``None``.
     """
+    names = [
+        (str(e.get("event") or ""), e.get("created_at"))
+        for e in events
+        if isinstance(e, dict)
+    ]
+    added = [i for i, (name, _) in enumerate(names) if name == "added_to_merge_queue"]
+    state: dict = {
+        "enqueued_at": names[added[-1]][1] if added else None,
+        "removed_at": None,
+        "merged": any(name == "merged" for name, _ in names),
+    }
+    if added:
+        for name, at in names[added[-1] + 1 :]:
+            if name == "removed_from_merge_queue":
+                state["removed_at"] = at
+    return state
+
+
+def _queue_runs(client: Conditional, repo: str, pr: int) -> list[dict]:
+    """This PR's ``gh-readonly-queue/…/pr-<n>-…`` runs, newest hundred.
+
+    ``event=merge_group`` narrows server-side, so the page spans queue runs
+    only rather than every push on a busy repo.
+    """
+    payload = client.get(f"/repos/{repo}/actions/runs?event=merge_group&per_page=100")
+    runs = payload.get("workflow_runs") if isinstance(payload, dict) else None
+    if not isinstance(runs, list):
+        raise WaitForChecksError("queue run list returned no list")
+    marker = f"/pr-{pr}-"
+    return [
+        {
+            "run_id": str(r.get("id", "")),
+            "head_branch": str(r.get("head_branch", "")),
+            "name": r.get("name", ""),
+            "status": r.get("status", ""),
+            "conclusion": r.get("conclusion") or "",
+            "created_at": r.get("created_at", ""),
+            "url": r.get("html_url", ""),
+        }
+        for r in runs
+        if isinstance(r, dict)
+        and str(r.get("head_branch", "")).startswith("gh-readonly-queue/")
+        and marker in str(r.get("head_branch", ""))
+    ]
+
+
+def _queue_graphql(pr: int, repo: str) -> dict:
+    """The GraphQL queue entry. Not conditional: GraphQL has no ETags, and
+    its own points budget, so it is the once-a-minute corroboration."""
     owner, _, name = repo.partition("/")
     gql = _gh_json(
         [
@@ -604,56 +858,81 @@ def probe_queue(pr: int, repo: str) -> dict:
         raise WaitForChecksError("queue graphql probe returned no PR") from exc
     if not isinstance(node, dict):
         raise WaitForChecksError("queue graphql probe returned no PR")
-    view = _gh_json(
-        ["pr", "view", str(pr), "--repo", repo, "--json", "state,mergedAt"],
-        "gh pr view",
-    )
-    if not isinstance(view, dict):
-        raise WaitForChecksError("gh pr view did not return an object")
-    # `--event merge_group` narrows server-side, so the limit spans queue runs
-    # only rather than every push on a busy repo.
-    runs = _gh_json(
-        [
-            "run",
-            "list",
-            "--repo",
-            repo,
-            "--event",
-            "merge_group",
-            "--limit",
-            "100",
-            "--json",
-            "databaseId,headBranch,name,status,conclusion,createdAt,url",
-        ],
-        "gh run list",
-    )
-    if not isinstance(runs, list):
-        raise WaitForChecksError("gh run list did not return a list")
-    marker = f"/pr-{pr}-"
-    queue_runs = [
-        {
-            "run_id": str(r.get("databaseId", "")),
-            "head_branch": str(r.get("headBranch", "")),
-            "name": r.get("name", ""),
-            "status": r.get("status", ""),
-            "conclusion": r.get("conclusion", ""),
-            "created_at": r.get("createdAt", ""),
-            "url": r.get("url", ""),
-        }
-        for r in runs
-        if isinstance(r, dict)
-        and str(r.get("headBranch", "")).startswith("gh-readonly-queue/")
-        and marker in str(r.get("headBranch", ""))
-    ]
     return {
         "gql_state": node.get("state"),
         "gql_merged": bool(node.get("merged")),
         "entry": node.get("mergeQueueEntry"),
         "auto": node.get("autoMergeRequest"),
-        "view_state": view.get("state"),
-        "view_merged_at": view.get("mergedAt"),
-        "queue_runs": queue_runs,
     }
+
+
+class QueueProbe:
+    """One snapshot of a queued PR per call, keeping its ETags across calls.
+
+    Every call reads the timeline (:func:`timeline_state`) and then the REST
+    pull (merged / closed), both conditional, so an unchanged poll costs
+    two free ``304`` s and a merge or dequeue is seen at the next poll. The
+    GraphQL entry and the queue runs are re-read every
+    :data:`CORROBORATE_SECONDS`, and **at once on a new removal**, so the
+    poll that concludes a dequeue carries a fresh second opinion on the
+    merge. Several sources because they have disagreed in **both**
+    directions: GraphQL once read ``MERGED`` while the PR view still said
+    ``OPEN``, and once still read ``AWAITING_CHECKS`` after it said
+    ``MERGED``.
+    """
+
+    def __init__(self, client: Conditional | None = None, clock=time.monotonic):
+        self.client = client or Conditional()
+        self._clock = clock
+        self._slow_at: float | None = None
+        self._slow: dict = {}
+        self._removed_at: str | None = None
+
+    def _timeline(self, pr: int, repo: str) -> list:
+        events: list = []
+        for page in range(1, TIMELINE_MAX_PAGES + 1):
+            batch = self.client.get(
+                f"/repos/{repo}/issues/{pr}/timeline"
+                f"?per_page={TIMELINE_PER_PAGE}&page={page}"
+            )
+            if not isinstance(batch, list):
+                raise WaitForChecksError("timeline read returned no list")
+            events += batch
+            if len(batch) < TIMELINE_PER_PAGE:
+                break
+        return events
+
+    def __call__(self, pr: int, repo: str) -> dict:
+        # The timeline first, so a removal it shows is always followed by a
+        # pull read: a merge landing between the two reads is then seen
+        # merged, never as a fresh removal beside a pre-merge pull.
+        events = timeline_state(self._timeline(pr, repo))
+        pull = self.client.get(f"/repos/{repo}/pulls/{pr}")
+        if not isinstance(pull, dict):
+            raise WaitForChecksError("pull read did not return an object")
+        now = self._clock()
+        # A NEW removal corroborates at once; a standing one (a previous
+        # cycle's, which the watch may sit beside for minutes) keeps the
+        # once-a-minute pace, since GraphQL reads are never conditional.
+        fresh_removal = events["removed_at"] not in (None, self._removed_at)
+        self._removed_at = events["removed_at"]
+        if (
+            fresh_removal
+            or self._slow_at is None
+            or now - self._slow_at >= CORROBORATE_SECONDS
+        ):
+            self._slow = _queue_graphql(pr, repo)
+            self._slow["queue_runs"] = _queue_runs(self.client, repo, pr)
+            self._slow_at = now
+        return {
+            **self._slow,
+            "rest_state": "MERGED"
+            if pull.get("merged")
+            else (str(pull.get("state") or "").upper() or None),
+            "rest_merged_at": pull.get("merged_at"),
+            "events": events,
+            "queue_runs": list(self._slow.get("queue_runs", [])),
+        }
 
 
 def _failing_on_latest(runs: list[dict]) -> list[dict]:
@@ -679,9 +958,9 @@ def _failing_on_latest(runs: list[dict]) -> list[dict]:
 def wait_queue(
     pr: int,
     repo: str = DEFAULT_REPO,
-    interval: int = QUEUE_INTERVAL,
+    interval: int = DEFAULT_POLL,
     timeout: int = QUEUE_TIMEOUT,
-    probe=probe_queue,
+    probe=None,
     sleep=time.sleep,
     clock=time.monotonic,
     wall=time.time,
@@ -697,17 +976,35 @@ def wait_queue(
 
     ``conclusion`` is ``merged`` (exit 0), or ``dequeued`` / ``closed`` /
     ``not_queued`` / ``timeout`` / ``probe_failed`` (exit 1). A terminal
-    ``MERGED`` from **either** source wins; nothing else concludes until both
-    sources agree the PR is not merged.
+    ``MERGED`` from **any** source wins — the REST pull, the timeline's
+    ``merged`` event, or GraphQL — and is checked before anything else.
+
+    The timeline decides the rest at the next poll: a removal after the
+    newest enqueue is ``dequeued``, and an enqueue with no removal after it
+    keeps the watch waiting. A removal counts only when newer than ``since``,
+    or without it the watch's start less :data:`REMOVAL_SLACK_SECONDS`: an
+    enqueue made while its checks are still pending writes no event until
+    they pass, so for minutes the newest add-then-remove pair can be the
+    previous cycle's. A fresh call made after an older dequeue therefore needs
+    ``since``, or reads it through the fallbacks. A failed run on the newest queue branch still
+    dequeues after :data:`DEQUEUE_CONFIRM_POLLS`, and silence still concludes
+    after :data:`AMBIGUOUS_GRACE_SECONDS` / :data:`NOT_QUEUED_AFTER_SECONDS` —
+    the fallbacks, for a timeline that says nothing.
 
     ``since`` (the enqueue time, ISO-8601) anchors the run window when no
     entry has been seen in *this* call — which is every firing of a cron
     fallback. Without it a fresh call keeps only runs from the last
-    :data:`RUN_WINDOW_SECONDS`, so an older dequeue reads as ``not_queued``.
+    :data:`RUN_WINDOW_SECONDS`; the timeline's own enqueue event now anchors
+    it too, so ``since`` matters only where that event is missing.
     """
+    probe = probe or QueueProbe(clock=clock)
+    client = getattr(probe, "client", None)
     log = queue_log_path_for(pr)
     started = clock()
     started_wall = wall()
+    removal_floor = (
+        _parse_time(since) if since else started_wall - REMOVAL_SLACK_SECONDS
+    )
     seen_entry = False
     anchor: float | None = _parse_time(since)
     null_since: float | None = None
@@ -742,13 +1039,27 @@ def wait_queue(
 
             if fresh:
                 entry = snap.get("entry")
+                events = snap.get("events") or {}
                 runs = snap.get("queue_runs", [])
-                enqueued = _parse_time((entry or {}).get("enqueuedAt"))
-                if enqueued is not None and (anchor is None or enqueued < anchor):
-                    anchor = enqueued
+                removed = _parse_time(events.get("removed_at"))
+                # A timeline enqueue is this cycle's only while nothing has
+                # removed it: a removed one is a finished cycle, whose anchor
+                # would pull that cycle's failed queue runs back into view.
+                current_enqueue = events.get("enqueued_at") if removed is None else None
+                for enqueued in (
+                    _parse_time((entry or {}).get("enqueuedAt")),
+                    _parse_time(current_enqueue),
+                ):
+                    if enqueued is not None and (anchor is None or enqueued < anchor):
+                        anchor = enqueued
                 floor = (
                     anchor if anchor is not None else started_wall - RUN_WINDOW_SECONDS
                 )
+                # A removal older than the removal floor closed a previous
+                # cycle, and every run before it is that cycle's: kept, its
+                # failure would dequeue a re-enqueue still waiting on checks.
+                if removed is not None and removed < removal_floor:
+                    floor = max(floor, removed)
                 runs = [
                     r
                     for r in runs
@@ -760,11 +1071,14 @@ def wait_queue(
                     json.dumps(
                         {
                             "t": int(now - started),
+                            "rest": snap.get("rest_state"),
                             "gql": snap.get("gql_state"),
                             "entry": (entry or {}).get("state"),
-                            "view": snap.get("view_state"),
+                            "enqueued": events.get("enqueued_at"),
+                            "removed": events.get("removed_at"),
                             "runs": len(runs),
                             "failing": len(failing),
+                            "rate_remaining": getattr(client, "remaining", None),
                         }
                     )
                     + "\n"
@@ -774,18 +1088,32 @@ def wait_queue(
                 merged = (
                     snap.get("gql_merged")
                     or snap.get("gql_state") == "MERGED"
-                    or snap.get("view_state") == "MERGED"
-                    or bool(snap.get("view_merged_at"))
+                    or snap.get("rest_state") == "MERGED"
+                    or bool(snap.get("rest_merged_at"))
+                    or bool(events.get("merged"))
                 )
                 if merged:
                     conclusion = "merged"
                     break
-                if "CLOSED" in (snap.get("gql_state"), snap.get("view_state")):
+                if "CLOSED" in (snap.get("gql_state"), snap.get("rest_state")):
                     conclusion = "closed"
                     break
+                # A removal after the newest enqueue, on a poll where no source
+                # says merged (a merge writes a removal too), and no older than
+                # the floor: before a re-enqueue's own event lands, the newest
+                # add-then-remove pair is the previous cycle's.
+                if removed is not None and removed >= removal_floor:
+                    conclusion = "dequeued"
+                    break
                 # `autoMergeRequest` keeps classic auto-merge (no queue, so no
-                # queue runs) waiting, but never outranks a failed queue run.
-                if entry or (snap.get("auto") and not failing):
+                # queue runs) and an enqueue waiting on its checks waiting, but
+                # never outranks a failed queue run; neither does a timeline
+                # enqueue, whose removal may lag.
+                if (
+                    entry
+                    or (current_enqueue and not failing)
+                    or (snap.get("auto") and not failing)
+                ):
                     seen_entry = True
                     null_since = None
                     dequeue_streak = 0
@@ -807,11 +1135,13 @@ def wait_queue(
                             conclusion = "not_queued"
                             break
 
-            if clock() - started + interval > timeout:
+            pause = client.pace(interval) if client is not None else interval
+            if clock() - started + pause > timeout:
                 break
-            sleep(interval)
+            sleep(pause)
 
     runs = snap.get("queue_runs", [])
+    events = snap.get("events") or {}
     return {
         "pr": pr,
         "repo": repo,
@@ -831,13 +1161,15 @@ def wait_queue(
             )
         ),
         "last": {
+            "rest_state": snap.get("rest_state"),
+            "rest_merged_at": snap.get("rest_merged_at"),
             "gql_state": snap.get("gql_state"),
             "entry_state": (snap.get("entry") or {}).get("state"),
-            "view_state": snap.get("view_state"),
-            "view_merged_at": snap.get("view_merged_at"),
+            "removed_at": events.get("removed_at"),
         },
         "queue_runs": runs,
         "failing_runs": _failing_on_latest(runs),
+        "requests": client.report() if client is not None else None,
         # The last probe error, whatever the conclusion: a timeout reached
         # through failed probes must not read as a quiet queue.
         "error": error,
@@ -845,19 +1177,31 @@ def wait_queue(
     }
 
 
-def dismiss_pr_notifications(pr: int, repo: str) -> dict:
-    """Unsubscribe from and mark done every notification thread on ``repo``'s
-    PR ``pr``, through ``pr_notifications.dismiss`` (the one rule every caller
-    applies).
+def dismiss_pr_notifications(pr: int, repo: str, merged: bool = True) -> dict:
+    """Mark done every notification thread on ``repo``'s PR ``pr``, and
+    unsubscribe from them only when ``merged``, through
+    ``pr_notifications.dismiss`` (the one rule every caller applies).
 
-    Called on a ``merged`` queue verdict. ``failed`` counts failed calls (a
-    thread whose ignore and mark-done both fail counts twice). Never raises:
-    the merge already happened, so a failure is reported, and the upkeep
-    pass's settled-PR sweep is the fallback.
+    Called on every queue exit but ``probe_failed``. ``failed`` counts failed
+    calls (a thread whose ignore and mark-done both fail counts twice). Never
+    raises: the outcome already happened, so a failure is reported, and the
+    upkeep pass's settled-PR sweep is the fallback.
     """
-    rc, result = pr_notifications.dismiss(
-        pr_notifications.real_gh, {pr}, apply=True, repo=repo
-    )
+    try:
+        rc, result = pr_notifications.dismiss(
+            pr_notifications.real_gh,
+            {pr},
+            apply=True,
+            repo=repo,
+            keep_subscription=set() if merged else {pr},
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort by contract
+        return {
+            "dismissed": 0,
+            "unsubscribed": 0,
+            "failed": 0,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
     failed = len(result["failed"]) + len(result["unsubscribe_failed"])
     error = result["notice"] if rc else result["error"]
     return {
@@ -901,6 +1245,21 @@ def todays_merge_count(pr: int, repo: str, now: datetime | None = None) -> int |
     except (WaitForChecksError, KeyError, TypeError, ValueError):
         return None
     return len(numbers | {pr})
+
+
+class Stopped(Exception):
+    """A SIGTERM or SIGINT, raised into the queue watch's ``finally``."""
+
+    def __init__(self, number: int):
+        super().__init__(signal.Signals(number).name)
+        self.number = number
+
+
+def _raise_stopped(number, _frame):
+    raise Stopped(number)
+
+
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 
 
 # The newest queue removal event, and the head to compare the base against.
@@ -1570,8 +1929,12 @@ def wait(
     watch: bool = True,
     snapshot_path: Path | None = None,
     base: str = "main",
+    sleep=None,
 ) -> dict:
     """The whole wait: watch, read, and re-watch while the read says pending.
+
+    ``sleep`` paces the re-entry between rounds (``time.sleep`` when ``None``)
+    — injected so a test records this module's own pacing and nothing else.
 
     With ``snapshot_path``, :func:`snapshot` runs first, before anything can
     block. On ``fail``, ``failed_steps`` carries :func:`diagnose_failures`;
@@ -1652,12 +2015,12 @@ def wait(
             exhausted_on = state if state_rounds.get("pending", 0) == 0 else None
             settled = False
             break
-        # gh exits immediately when it sees nothing left to wait on, so pace the
-        # re-entry rather than spinning through the cap in a few milliseconds.
-        # Each round re-truncates the log; the last round's is the one that
-        # describes the state actually being reported.
+        # The watch returns at once when it sees nothing left to wait on, so
+        # pace the re-entry rather than spinning through the cap in a few
+        # milliseconds. Each round re-truncates the log; the last round's is
+        # the one that describes the state actually being reported.
         pause = float(NONE_SETTLE_SECONDS if state == "none" else interval)
-        time.sleep(max(0.0, min(pause, deadline - time.monotonic())))
+        (sleep or time.sleep)(max(0.0, min(pause, deadline - time.monotonic())))
 
     # `--no-watch`, or a timeout budget already spent before the first round.
     if summary is None:
@@ -1731,6 +2094,82 @@ def wait(
     return verdict
 
 
+def _settle_dequeue(verdict: dict, pr: int, repo: str) -> None:
+    """Fill a ``dequeued`` verdict's cause, turning it ``conflicting`` when a
+    no-run removal reads as a conflict."""
+    conflicting = False
+    if not verdict.get("queue_runs"):
+        # Removed before any queue run started: almost always a sibling PR
+        # landing first, so ask GitHub instead of leaving it to four session
+        # turns.
+        state, _ = settle_mergeability(
+            pr, repo, MERGEABLE_SETTLE_RETRIES, MERGEABLE_SETTLE_DELAY
+        )
+        verdict["mergeable"] = state["mergeable"]
+        verdict["merge_state_status"] = state["merge_state_status"]
+        # As in `wait`: a failed read and a clean one both show
+        # `mergeable: null`, so the reason rides beside it.
+        verdict["mergeable_error"] = state["error"]
+        conflicting = _is_conflicting(state)
+        if conflicting:
+            verdict["conclusion"] = "conflicting"
+    verdict["dequeue"] = dequeue_cause(
+        pr, repo, verdict.get("enqueued_at"), conflicting
+    )
+
+
+def watch_queue(
+    pr: int, repo: str, interval: int, timeout: int, since: str | None
+) -> dict:
+    """``--queue``: :func:`wait_queue`, its dequeue cause, and the dismissal.
+
+    SIGTERM and SIGINT raise :class:`Stopped` for the length of the watch,
+    so a session that stops it early — having learned the outcome another
+    way — still reaches the one ``finally`` that dismisses the PR's threads,
+    and gets a ``stopped`` verdict back. Every verdict dismisses but
+    ``probe_failed``, which never learned the PR's state, and only ``merged``
+    unsubscribes; ``todays_merge_count`` is read on ``merged`` alone. The signals are
+    ignored while the dismissal runs, so a second stop cannot cut it short,
+    and restored after.
+    """
+    previous = {s: signal.signal(s, _raise_stopped) for s in STOP_SIGNALS}
+    verdict: dict = {}
+    try:
+        verdict = wait_queue(
+            pr, repo=repo, interval=interval, timeout=timeout, since=since
+        )
+        if verdict["conclusion"] == "merged":
+            verdict["todays_merge_count"] = todays_merge_count(pr, repo)
+        elif verdict["conclusion"] == "dequeued":
+            _settle_dequeue(verdict, pr, repo)
+    except Stopped as exc:
+        # A stop after the watch concluded keeps that conclusion; only the
+        # cause read it interrupted is missing.
+        verdict = verdict or {
+            "pr": pr,
+            "repo": repo,
+            "mode": "queue",
+            "conclusion": "stopped",
+            "settled": False,
+            "log_path": str(queue_log_path_for(pr)),
+        }
+        verdict["signal"] = str(exc)
+    finally:
+        for s in STOP_SIGNALS:
+            signal.signal(s, signal.SIG_IGN)
+        try:
+            # No conclusion is a crash, which, like `probe_failed`, never
+            # learned the PR's state.
+            if verdict.get("conclusion") not in (None, "probe_failed"):
+                verdict["notifications"] = dismiss_pr_notifications(
+                    pr, repo, merged=verdict["conclusion"] == "merged"
+                )
+        finally:
+            for s, handler in previous.items():
+                signal.signal(s, handler)
+    return verdict
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="wait_for_checks.py")
     parser.add_argument("--pr", type=int, help="PR number (checks mode)")
@@ -1775,10 +2214,7 @@ def run(argv: list[str]) -> int:
         "--interval",
         type=int,
         default=None,
-        help=(
-            f"seconds between refreshes (default {DEFAULT_INTERVAL}; "
-            f"{QUEUE_INTERVAL} with --queue)"
-        ),
+        help=f"seconds between polls (default ${POLL_ENV}, else {DEFAULT_POLL})",
     )
     parser.add_argument(
         "--timeout",
@@ -1810,6 +2246,7 @@ def run(argv: list[str]) -> int:
         raise WaitForChecksError("--snapshot is meaningful only with --pr")
     if args.base is not None and args.snapshot is None:
         raise WaitForChecksError("--base is meaningful only with --snapshot")
+    interval = poll_interval() if args.interval is None else args.interval
 
     if args.mergeable_pr is not None:
         if args.no_watch or args.interval is not None or args.timeout is not None:
@@ -1823,43 +2260,14 @@ def run(argv: list[str]) -> int:
             raise WaitForChecksError("--no-watch is meaningless with --queue")
         if args.since is not None and _parse_time(args.since) is None:
             raise WaitForChecksError(f"--since is not an ISO-8601 time: {args.since}")
-        verdict = wait_queue(
+        verdict = watch_queue(
             args.queue_pr,
-            repo=args.repo,
-            interval=QUEUE_INTERVAL if args.interval is None else args.interval,
-            timeout=QUEUE_TIMEOUT if args.timeout is None else args.timeout,
-            since=args.since,
+            args.repo,
+            interval,
+            QUEUE_TIMEOUT if args.timeout is None else args.timeout,
+            args.since,
         )
-        if verdict["conclusion"] == "merged":
-            verdict["notifications"] = dismiss_pr_notifications(
-                args.queue_pr, args.repo
-            )
-            verdict["todays_merge_count"] = todays_merge_count(args.queue_pr, args.repo)
-        elif verdict["conclusion"] == "dequeued":
-            conflicting = False
-            if not verdict.get("queue_runs"):
-                # Removed before any queue run started: almost always a sibling
-                # PR landing first, so ask GitHub instead of leaving it to four
-                # session turns.
-                state, _ = settle_mergeability(
-                    args.queue_pr,
-                    args.repo,
-                    MERGEABLE_SETTLE_RETRIES,
-                    MERGEABLE_SETTLE_DELAY,
-                )
-                verdict["mergeable"] = state["mergeable"]
-                verdict["merge_state_status"] = state["merge_state_status"]
-                # As in `wait`: a failed read and a clean one both show
-                # `mergeable: null`, so the reason rides beside it.
-                verdict["mergeable_error"] = state["error"]
-                conflicting = _is_conflicting(state)
-                if conflicting:
-                    verdict["conclusion"] = "conflicting"
-            verdict["dequeue"] = dequeue_cause(
-                args.queue_pr, args.repo, verdict.get("enqueued_at"), conflicting
-            )
     else:
-        interval = DEFAULT_INTERVAL if args.interval is None else args.interval
         timeout = DEFAULT_TIMEOUT if args.timeout is None else args.timeout
         if args.run_id is not None:
             if args.no_watch:

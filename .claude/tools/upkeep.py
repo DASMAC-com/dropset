@@ -41,9 +41,9 @@ refuses the whole pass, since every later step assumes it.
  6. prune the eligible worktrees and stray local branches, passed to
     ``prune_worktrees`` as ``--closed`` names: only a live session lock holds
     one, and the report names each one's commits ahead of ``origin/main``;
- 7. unsubscribe from and dismiss every settled PR's notifications
-    (``pr_notifications dismiss --settled``) — merged or closed, whatever its
-    issue's state, one thread at a time (never mark-all);
+ 7. dismiss every settled PR's notifications, unsubscribing only from a
+    merged one's (``pr_notifications dismiss --settled``) — merged or closed,
+    whatever its issue's state, one thread at a time (never mark-all);
  8. the cargo lanes (``cargo_lanes``): each lane under the cargo target root
     and every non-lane entry there, sized, with whether a build is running on
     it; armed, every idle one is wiped — the bound on the lanes' growth.

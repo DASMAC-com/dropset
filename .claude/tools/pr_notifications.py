@@ -5,7 +5,8 @@ queue watcher on merged only, and the close paths never).
 
 Usage:
 
-    python3 .claude/tools/pr_notifications.py dismiss --pr 663 [--pr 664] [--apply]
+    python3 .claude/tools/pr_notifications.py dismiss --pr 663 [--pr 664] \
+      [--keep-subscription] [--apply]
     python3 .claude/tools/pr_notifications.py dismiss --settled [--apply]
 
 ``--pr`` selects every thread on the named PRs, whatever their state — the
@@ -14,19 +15,27 @@ every thread whose PR is merged or closed, whatever its issue's Linear state:
 a merged PR whose issue sits In Review is settled code, and its threads are
 the bulk of the inbox. An open PR's threads are never selected by it.
 
-A dry run unless ``--apply``. Each selected thread is first unsubscribed by
-ignoring it (``PUT /notifications/threads/<id>/subscription`` with
-``ignored=true``), so a later bot comment on the settled PR cannot re-create
-it — a ``DELETE`` on the subscription would not hold, since a watcher of the
-repository still receives the thread's notifications — then dismissed with its
+A dry run unless ``--apply``. **Unsubscribe only on merge**: a thread on a
+merged PR is first unsubscribed by ignoring it
+(``PUT /notifications/threads/<id>/subscription`` with ``ignored=true``), so a
+later bot comment on the merged PR cannot re-create it — a ``DELETE`` on the
+subscription would not hold, since a watcher of the repository still receives
+the thread's notifications. Every selected thread is then dismissed with its
 own ``DELETE /notifications/threads/<id>`` — GitHub's "mark as done"; marking
-read would leave it in the inbox — and never with a mark-all. A thread cannot
-be ignored before GitHub creates it, and the PR is settled only at its merge or
-close, so that is the earliest point and ``--settled`` catches the rest.
+read would leave it in the inbox — and never with a mark-all. A thread on a PR
+not merged is marked done only, its subscription kept: an open PR's is what
+re-creates the thread on new activity, and a closed PR can be reopened. So
+``--settled`` ignores its ``MERGED`` threads and only marks its ``CLOSED``
+ones done, and a ``--pr`` caller passes ``--keep-subscription`` (in process,
+``keep_subscription``) for PRs not merged. A thread cannot be ignored before
+GitHub creates it, and a PR merges at one moment, so that is the earliest
+point and ``--settled`` catches the rest.
 
 The queue watcher (``wait_for_checks.py --queue``) calls :func:`dismiss` in
-process on a ``merged`` verdict; upkeep's ``notifications`` step and the
-scheduler's close-out run ``dismiss --settled --apply``.
+process on every exit but ``probe_failed``, keeping the subscription unless
+the verdict is ``merged``; the close path keeps it for any PR not merged;
+upkeep's ``notifications`` step and the scheduler's close-out run
+``dismiss --settled --apply``.
 
 The thread list is read through ``gh api`` on the repo-scoped notifications
 path with ``all=true`` (the default lists unread threads only), paged up to
@@ -178,10 +187,26 @@ def select(
     return selected, sorted(unresolved)
 
 
+def unsubscribes(thread: dict, keep_subscription: set[int]) -> bool:
+    """Whether a selected thread is ignored before it is marked done.
+
+    **Unsubscribe only on merge.** A still-open PR's subscription is what
+    re-creates its thread on new activity, and a closed PR can be reopened,
+    so both keep it: a ``--pr`` caller names its non-merged PRs in
+    ``keep_subscription``, and settled mode keeps every ``CLOSED`` one."""
+    return thread["pr"] not in keep_subscription and thread["state"] != "CLOSED"
+
+
 def dismiss(
-    gh: Gh, prs: set[int] | None, apply: bool, repo: str = REPO
+    gh: Gh,
+    prs: set[int] | None,
+    apply: bool,
+    repo: str = REPO,
+    keep_subscription: set[int] = frozenset(),
 ) -> tuple[int, dict]:
-    """The whole act; ``prs`` None is settled mode."""
+    """The whole act; ``prs`` None is settled mode. Threads on PRs in
+    ``keep_subscription``, and settled mode's closed ones, are marked done
+    without being ignored (:func:`unsubscribes`)."""
     result: dict = {
         "mode": "settled" if prs is None else "pr",
         "dry_run": not apply,
@@ -206,20 +231,26 @@ def dismiss(
         states, result["notice"] = pr_states(gh, {num for _, num in threads}, repo)
     result["selected"], result["unresolved"] = select(threads, states, prs)
     if not apply:
+        result["would_keep"] = sum(
+            not unsubscribes(t, keep_subscription) for t in result["selected"]
+        )
         return 0, result
     for t in result["selected"]:
         # Ignore first: the subscription is what lets a later event on the PR
         # re-create the thread once it is marked done. Not a DELETE on the
         # subscription, which a watcher of the repository outlives.
         thread = f"/notifications/threads/{t['id']}"
-        for args, count, failed in (
-            (
-                ["PUT", f"{thread}/subscription", "-F", "ignored=true"],
-                "unsubscribed",
-                "unsubscribe_failed",
-            ),
-            (["DELETE", thread], "dismissed", "failed"),
-        ):
+        calls = [(["DELETE", thread], "dismissed", "failed")]
+        if unsubscribes(t, keep_subscription):
+            calls.insert(
+                0,
+                (
+                    ["PUT", f"{thread}/subscription", "-F", "ignored=true"],
+                    "unsubscribed",
+                    "unsubscribe_failed",
+                ),
+            )
+        for args, count, failed in calls:
             rc, _, err = gh(["api", "-X", *args])
             if rc == 0:
                 result[count] += 1
@@ -233,7 +264,13 @@ def summary(result: dict) -> str:
     """One report line, for a caller that prints rather than parses."""
     n = len(result["selected"])
     if result["dry_run"]:
+        kept = result.get("would_keep", 0)
         line = f"would unsubscribe and dismiss {n} notification(s)"
+        if kept:
+            line = (
+                f"would dismiss {n} notification(s), unsubscribing {n - kept}"
+                f" ({kept} kept subscribed: not merged)"
+            )
     else:
         line = (
             f"dismissed {result['dismissed']} notification(s), "
@@ -262,6 +299,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="every thread whose PR is merged or closed",
     )
+    p.add_argument(
+        "--keep-subscription",
+        action="store_true",
+        help="with --pr: mark done only, never ignore (the PRs are not merged)",
+    )
     p.add_argument("--apply", action="store_true", help="dismiss for real")
     p.add_argument(
         "--full", action="store_true", help="print every selected thread, not counts"
@@ -281,7 +323,11 @@ def compact(result: dict) -> dict:
 
 def main() -> int:
     args = parse_args(sys.argv)
-    rc, result = dismiss(real_gh, None if args.settled else set(args.pr), args.apply)
+    if args.keep_subscription and args.settled:
+        sys.exit("--keep-subscription is meaningful only with --pr")
+    prs = None if args.settled else set(args.pr)
+    keep = prs if args.keep_subscription else set()
+    rc, result = dismiss(real_gh, prs, args.apply, keep_subscription=keep)
     json.dump(result if args.full else compact(result), sys.stdout, indent=2)
     sys.stdout.write("\n")
     return rc

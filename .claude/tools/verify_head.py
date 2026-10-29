@@ -15,7 +15,8 @@ the whole fall-through inside one Bash call::
    watcher's log directory (``wait_for_checks.py``), never to the session.
 2. **Poll CI when HEAD is pushed and the tree clean** (HEAD is its
    upstream, nothing uncommitted — CI checks the commit, the local stages
-   the tree): every ``--interval`` seconds, one
+   the tree): every ``--interval`` seconds (default ``DS_PR_POLL_S``, else
+   20 — the one knob every PR wait reads), one
    ``gh pr view --json headRefOid`` and the watcher's own
    ``gh pr checks --json`` read, believed only while the PR's head is this
    SHA. Otherwise the run is local only and the verdict says why.
@@ -95,7 +96,6 @@ TEST_JOBS = frozenset(
     {"Tests", "Tests (no teardown)", "Tests (asm parity)", "Tests (Postgres)"}
 )
 
-DEFAULT_INTERVAL = 30
 DEFAULT_TIMEOUT = 3600
 
 #: Consecutive failed CI reads before the race stops consulting CI.
@@ -504,7 +504,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--pr", default="", help="PR number (default: the branch's)")
     parser.add_argument("--repo", default=wfc.DEFAULT_REPO)
-    parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL)
+    parser.add_argument("--interval", type=int, default=wfc.poll_interval())
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     opts = parser.parse_args(argv)
     if opts.interval < 1 or opts.timeout < 1:
