@@ -11,7 +11,9 @@ from __future__ import annotations
 import io
 import json
 import os
+import signal
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
@@ -405,9 +407,11 @@ class WaitTests(unittest.TestCase):
         whole CI run, so they must not share a delay. Nothing asserted this —
         the stubbed sleep discarded its argument.
 
-        The `none` probe's gh call is stubbed too: a real subprocess wait with a
-        timeout polls through the same patched `time.sleep` (CPython's doubling
-        0.0005..0.05 s loop), so a slow runner recorded stray sleeps here.
+        The pacing is recorded through the injected ``sleep``, never the
+        patched global: a real subprocess wait with a timeout polls through
+        ``time.sleep`` (CPython's doubling 0.0005..0.05 s loop), so a slow
+        runner recorded stray sleeps here when the global was the recorder.
+        The `none` probe's gh call is stubbed as well, keeping it offline.
         """
         real_gh = wfc._gh
         wfc._gh = lambda _args: (
@@ -416,16 +420,17 @@ class WaitTests(unittest.TestCase):
             "",
         )
         self.addCleanup(setattr, wfc, "_gh", real_gh)
+        pacing = []
         self._stub_rounds([[]])
-        wfc.wait(285, repo="o/r")
-        self.assertTrue(self.sleeps)
-        self.assertEqual(set(self.sleeps), {wfc.NONE_SETTLE_SECONDS})
+        wfc.wait(285, repo="o/r", sleep=pacing.append)
+        self.assertTrue(pacing)
+        self.assertEqual(set(pacing), {wfc.NONE_SETTLE_SECONDS})
 
-        self.sleeps = []
+        pacing = []
         self._stub_rounds([[check("a", "pending")]])
-        wfc.wait(285, repo="o/r", interval=17)
-        self.assertTrue(self.sleeps)
-        self.assertEqual(set(self.sleeps), {17})
+        wfc.wait(285, repo="o/r", interval=17, sleep=pacing.append)
+        self.assertTrue(pacing)
+        self.assertEqual(set(pacing), {17})
 
     def test_settled_never_coexists_with_a_pending_conclusion(self):
         """The contradiction the retry exists to prevent: `settled: true` next
@@ -515,48 +520,114 @@ class LogPathTests(unittest.TestCase):
         self.assertNotEqual(wfc.log_path_for(1), wfc.log_path_for(2))
 
 
+def check_runs(*statuses, conclusion="success"):
+    runs = [
+        {
+            "name": f"job{i}",
+            "status": s,
+            "conclusion": conclusion if s == "completed" else None,
+        }
+        for i, s in enumerate(statuses)
+    ]
+    return {"total_count": len(runs), "check_runs": runs}
+
+
 class WatchChecksTests(unittest.TestCase):
-    """`watch_checks` runs a real subprocess, so it gets a `gh` shim on PATH
-    rather than being stubbed out — otherwise the log's mode and the timeout kill
-    are never exercised."""
+    """The CI watch loop over recorded check-run responses, time advancing
+    only through ``sleep``."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.bin = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
-        self._path = os.environ.get("PATH", "")
-        os.environ["PATH"] = f"{self.bin}{os.pathsep}{self._path}"
-        self.addCleanup(os.environ.__setitem__, "PATH", self._path)
-        self.log = self.bin / "watch.log"
+        self.log = Path(self._tmp.name) / "watch.log"
 
-    def _shim(self, body):
-        gh = self.bin / "gh"
-        gh.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
-        gh.chmod(0o755)
+    def _watch(self, gh, interval=20, timeout=3600):
+        now = [0.0]
+        self.sleeps = []
 
-    def test_settles_and_captures_output_to_the_log(self):
-        self._shim("echo 'Tests  pass  1m0s'")
-        settled = wfc.watch_checks(285, "o/r", 1, 30, self.log)
-        self.assertTrue(settled)
-        self.assertIn("pass", self.log.read_text(encoding="utf-8"))
+        def sleep(seconds):
+            self.sleeps.append(seconds)
+            now[0] += seconds
+
+        return wfc.watch_checks(
+            285,
+            "o/r",
+            interval,
+            timeout,
+            self.log,
+            client=wfc.Conditional(gh),
+            sleep=sleep,
+            clock=lambda: now[0],
+        )
+
+    def test_settles_when_every_run_completes_and_logs_each_poll(self):
+        gh = RecordedGh(
+            {
+                "pull": [pull()],
+                "check_runs": [check_runs("queued", "in_progress")] * 3
+                + [check_runs("completed", "completed")],
+            }
+        )
+        self.assertTrue(self._watch(gh))
+        self.assertEqual(self.sleeps, [20, 20, 20])
+        lines = [json.loads(x) for x in self.log.read_text().splitlines()]
+        self.assertEqual([x["open"] for x in lines], [2, 2, 2, 0])
+        # Unchanged reads answer 304: the pull on polls 2-4, the runs on 2-3.
+        self.assertEqual([s for _, s in gh.statuses].count(304), 5)
+
+    def test_a_failed_run_settles_too(self):
+        """A red run is an outcome; the verdict read says which."""
+        gh = RecordedGh(
+            {
+                "pull": [pull()],
+                "check_runs": [check_runs("completed", conclusion="failure")],
+            }
+        )
+        self.assertTrue(self._watch(gh))
+
+    def test_no_run_at_all_settles_at_once(self):
+        """The registration race is the caller's `none` rounds, not this loop's."""
+        gh = RecordedGh({"pull": [pull()], "check_runs": [check_runs()]})
+        self.assertTrue(self._watch(gh))
+        self.assertEqual(self.sleeps, [])
+
+    def test_a_push_mid_wait_moves_the_watch_to_the_new_head(self):
+        gh = RecordedGh(
+            {
+                "pull": [pull(), pull(sha="b" * 40)],
+                "check_runs": [check_runs("in_progress"), check_runs("completed")],
+            }
+        )
+        self.assertTrue(self._watch(gh))
+        lines = [json.loads(x) for x in self.log.read_text().splitlines()]
+        self.assertEqual([x["sha"] for x in lines], ["a" * 12, "b" * 12])
+
+    def test_an_open_run_times_out(self):
+        gh = RecordedGh({"pull": [pull()], "check_runs": [check_runs("in_progress")]})
+        self.assertFalse(self._watch(gh, timeout=100))
+        self.assertLessEqual(sum(self.sleeps), 100)
+
+    def test_a_low_quota_backs_off(self):
+        gh = RecordedGh(
+            {
+                "pull": [pull()],
+                "check_runs": [check_runs("in_progress"), check_runs("completed")],
+            },
+            remaining=500,
+        )
+        self.assertTrue(self._watch(gh))
+        self.assertEqual(self.sleeps, [wfc.BACKOFF_INTERVAL])
+
+    def test_persistent_read_errors_hand_over_to_the_verdict_read(self):
+        client_gh = lambda args: (1, "", "HTTP 401")  # noqa: E731
+        self.assertTrue(self._watch(client_gh))
+        self.assertEqual(len(self.sleeps), wfc.MAX_PROBE_ERRORS - 1)
 
     def test_the_log_is_owner_only(self):
         """A CI log can carry build output worth keeping off a shared /tmp — the
         same reason review_diff.py's slices are 0o600."""
-        self._shim("echo hi")
-        wfc.watch_checks(285, "o/r", 1, 30, self.log)
+        self._watch(RecordedGh({"pull": [pull()], "check_runs": [check_runs()]}))
         self.assertEqual(self.log.stat().st_mode & 0o777, 0o600)
-
-    def test_a_hung_watch_times_out_and_is_killed(self):
-        self._shim("sleep 30")
-        settled = wfc.watch_checks(285, "o/r", 1, 1, self.log)
-        self.assertFalse(settled)
-
-    def test_a_nonzero_watch_still_settles(self):
-        """gh exits non-zero when a check failed; that is an outcome, not a
-        failure to settle — the verdict comes from the separate JSON read."""
-        self._shim("echo 'Tests  fail  1m0s'\nexit 1")
-        self.assertTrue(wfc.watch_checks(285, "o/r", 1, 30, self.log))
 
 
 class WatchRunTests(unittest.TestCase):
@@ -699,17 +770,21 @@ def snap(
     merged=False,
     entry=None,
     auto=None,
-    view="OPEN",
+    rest="OPEN",
     merged_at=None,
     runs=(),
+    enqueued=None,
+    removed=None,
+    tl_merged=False,
 ):
     return {
         "gql_state": gql,
         "gql_merged": merged,
         "entry": entry,
         "auto": auto,
-        "view_state": view,
-        "view_merged_at": merged_at,
+        "rest_state": rest,
+        "rest_merged_at": merged_at,
+        "events": {"enqueued_at": enqueued, "removed_at": removed, "merged": tl_merged},
         "queue_runs": list(runs),
     }
 
@@ -781,16 +856,65 @@ class QueueWatchTests(unittest.TestCase):
         self.assertTrue(v["seen_queue_entry"])
 
     def test_a_stale_entry_does_not_outrank_a_merge_on_the_other_source(self):
-        """The PR #420 shape: GraphQL still AWAITING_CHECKS, gh pr view MERGED."""
+        """The PR #420 shape: GraphQL still AWAITING_CHECKS, the PR MERGED."""
         stale = {"state": "AWAITING_CHECKS", "enqueuedAt": ENQUEUED}
-        v = self._watch([snap(entry=stale, view="MERGED", merged_at=ENQUEUED)])
+        v = self._watch([snap(entry=stale, rest="MERGED", merged_at=ENQUEUED)])
         self.assertEqual(v["conclusion"], "merged")
         self.assertEqual(v["polls"], 1)
 
     def test_a_graphql_merge_wins_over_a_stale_view(self):
         """The PR #424 shape: the opposite direction of staleness."""
-        v = self._watch([snap(gql="MERGED", merged=True, view="OPEN")])
+        v = self._watch([snap(gql="MERGED", merged=True, rest="OPEN")])
         self.assertEqual(v["conclusion"], "merged")
+
+    def test_a_timeline_removal_dequeues_at_the_next_poll(self):
+        """No confirmation streak and no grace: the event is the answer."""
+        v = self._watch(
+            [snap(entry=QUEUED, enqueued=ENQUEUED)] * 3
+            + [snap(enqueued=ENQUEUED, removed="2026-10-13T12:01:00Z")],
+            interval=20,
+        )
+        self.assertEqual(v["conclusion"], "dequeued")
+        self.assertEqual(v["polls"], 4)
+        self.assertEqual(v["elapsed_seconds"], 60)
+        self.assertEqual(v["last"]["removed_at"], "2026-10-13T12:01:00Z")
+
+    def test_a_merge_writes_a_removal_too_and_is_still_a_merge(self):
+        """A merge's timeline carries `removed_from_merge_queue` beside it."""
+        merged = snap(enqueued=ENQUEUED, removed=ENQUEUED, tl_merged=True)
+        v = self._watch([snap(entry=QUEUED), merged])
+        self.assertEqual(v["conclusion"], "merged")
+
+    def test_a_timeline_enqueue_keeps_the_watch_waiting_past_the_grace(self):
+        """GraphQL's entry silent, the timeline still queued: not a dequeue."""
+        queued = snap(enqueued=ENQUEUED)
+        polls = int(wfc.AMBIGUOUS_GRACE_SECONDS / 20) + 3
+        v = self._watch([queued] * polls + [snap(rest="MERGED")], interval=20)
+        self.assertEqual(v["conclusion"], "merged")
+        self.assertTrue(v["seen_queue_entry"])
+
+    def test_a_low_quota_backs_the_poll_off(self):
+        client = wfc.Conditional()
+        client.remaining, client.limit = 900, 5000
+        probe_calls = [0]
+
+        def probe(pr, repo):
+            probe_calls[0] += 1
+            return snap(entry=QUEUED) if probe_calls[0] < 3 else snap(rest="MERGED")
+
+        probe.client = client
+        sleeps = []
+        now = [0.0]
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            now[0] += seconds
+
+        v = wfc.wait_queue(
+            285, interval=20, probe=probe, sleep=sleep, clock=lambda: now[0]
+        )
+        self.assertEqual(v["conclusion"], "merged")
+        self.assertEqual(set(sleeps), {wfc.BACKOFF_INTERVAL})
 
     def test_a_failed_queue_run_dequeues_after_confirmation(self):
         gone = snap(runs=[queue_run("failure")])
@@ -830,7 +954,7 @@ class QueueWatchTests(unittest.TestCase):
         self.assertEqual(v["queue_runs"], [])
 
     def test_closed_without_merge_is_not_a_merge(self):
-        v = self._watch([snap(entry=QUEUED), snap(gql="CLOSED", view="CLOSED")])
+        v = self._watch([snap(entry=QUEUED), snap(gql="CLOSED", rest="CLOSED")])
         self.assertEqual(v["conclusion"], "closed")
 
     def test_a_persistent_probe_failure_gives_up_loudly(self):
@@ -924,83 +1048,376 @@ class QueueWatchTests(unittest.TestCase):
         self.assertEqual(json.loads(lines[0])["entry"], "QUEUED")
 
 
-class QueueProbeTests(unittest.TestCase):
-    """``probe_queue`` keeps only this PR's queue-branch runs."""
+def _route(path: str) -> str:
+    for marker, key in (
+        ("/timeline", "timeline"),
+        ("/check-runs", "check_runs"),
+        ("/actions/runs", "runs"),
+        ("/pulls/", "pull"),
+    ):
+        if marker in path:
+            return key
+    raise AssertionError(f"unrouted path {path}")
 
-    def test_filters_runs_to_this_prs_queue_branch(self):
-        replies = [
-            json.dumps(
-                {
-                    "data": {
-                        "repository": {
-                            "pullRequest": {
-                                "state": "OPEN",
-                                "merged": False,
-                                "mergeQueueEntry": QUEUED,
-                                "autoMergeRequest": None,
-                            }
-                        }
-                    }
-                }
-            ),
-            json.dumps({"state": "OPEN", "mergedAt": None}),
-            json.dumps(
-                [
-                    {
-                        "databaseId": 1,
-                        "headBranch": "gh-readonly-queue/main/pr-285-abc",
-                    },
-                    {
-                        "databaseId": 2,
-                        "headBranch": "gh-readonly-queue/main/pr-2850-abc",
-                    },
-                    {"databaseId": 3, "headBranch": "eng-285"},
-                ]
-            ),
+
+class RecordedGh:
+    """A ``gh api -i`` stand-in serving recorded responses the way GitHub does.
+
+    ``routes`` maps a route key (:func:`_route`) to its bodies, one per poll —
+    the poll being the count of first reads so far, the last body repeating.
+    Each body carries an ETag derived from its content (weak, as the timeline
+    and check-runs send), and a request whose ``If-None-Match`` matches gets a
+    ``304`` that leaves ``remaining`` untouched, with gh's exit 1. The GraphQL
+    read answers ``graphql`` (not conditional).
+    """
+
+    def __init__(self, routes, graphql=None, remaining=4000, limit=5000):
+        self.routes = routes
+        self.graphql = graphql or {"state": "OPEN", "merged": False}
+        self.remaining = remaining
+        self.limit = limit
+        self.polls = 0
+        self.statuses: list[tuple[str, int]] = []
+
+    def _headers(self, status, etag=None):
+        lines = [
+            f"HTTP/2.0 {status} {'OK' if status == 200 else 'Not Modified'}",
+            f"X-Ratelimit-Limit: {self.limit}",
+            f"X-Ratelimit-Remaining: {self.remaining}",
         ]
-        seen = []
+        if etag:
+            lines.append(f"Etag: {etag}")
+        return "\r\n".join(lines) + "\r\n\r\n"
+
+    def __call__(self, args):
+        if args[:2] == ["api", "graphql"]:
+            node = {"autoMergeRequest": None, "mergeQueueEntry": None, **self.graphql}
+            body = {"data": {"repository": {"pullRequest": node}}}
+            return 0, json.dumps(body), ""
+        path = args[2]
+        sent = args[args.index("-H") + 1].split(": ", 1)[1] if "-H" in args else None
+        key = _route(path)
+        # A poll starts with its first read: the timeline in queue mode, the
+        # pull in checks mode.
+        if key == ("timeline" if "timeline" in self.routes else "pull"):
+            self.polls += 1
+        bodies = self.routes[key]
+        body = bodies[min(max(self.polls, 1) - 1, len(bodies) - 1)]
+        text = json.dumps(body)
+        etag = f'W/"{abs(hash(text))}"'
+        if sent == etag:
+            self.statuses.append((key, 304))
+            return 1, self._headers(304, etag), "gh: HTTP 304"
+        self.remaining -= 1
+        self.statuses.append((key, 200))
+        return 0, self._headers(200, etag) + text, ""
+
+
+def pull(merged=False, state="open", sha="a" * 40):
+    return {
+        "state": "closed" if merged else state,
+        "merged": merged,
+        "merged_at": ENQUEUED if merged else None,
+        "head": {"sha": sha},
+    }
+
+
+def event(name, at=ENQUEUED):
+    return {"event": name, "created_at": at}
+
+
+NO_RUNS = {"workflow_runs": []}
+
+
+class ConditionalTests(unittest.TestCase):
+    def test_an_unchanged_read_is_a_304_served_from_cache(self):
+        gh = RecordedGh({"pull": [pull()]})
+        client = wfc.Conditional(gh)
+        first = client.get("/repos/o/r/pulls/1")
+        second = client.get("/repos/o/r/pulls/1")
+        self.assertEqual(first, second)
+        self.assertEqual([s for _, s in gh.statuses], [200, 304])
+        self.assertEqual(
+            client.report(),
+            {
+                "sent": 2,
+                "not_modified": 1,
+                "rate_remaining": 3999,
+            },
+        )
+
+    def test_the_quota_header_drives_the_back_off(self):
+        client = wfc.Conditional(RecordedGh({"pull": [pull()]}, remaining=999))
+        client.get("/repos/o/r/pulls/1")
+        self.assertEqual(client.pace(20), wfc.BACKOFF_INTERVAL)
+        client = wfc.Conditional(RecordedGh({"pull": [pull()]}, remaining=1001))
+        client.get("/repos/o/r/pulls/1")
+        self.assertEqual(client.pace(20), 20)
+
+    def test_no_status_line_is_an_error_naming_gh(self):
+        client = wfc.Conditional(lambda args: (1, "", "HTTP 401: Bad credentials"))
+        with self.assertRaisesRegex(wfc.WaitForChecksError, "Bad credentials"):
+            client.get("/repos/o/r/pulls/1")
+
+    def test_a_non_200_is_an_error(self):
+        reply = "HTTP/2.0 502 Bad Gateway\r\n\r\n"
+        client = wfc.Conditional(lambda args: (1, reply, ""))
+        with self.assertRaisesRegex(wfc.WaitForChecksError, "HTTP 502"):
+            client.get("/repos/o/r/pulls/1")
+
+    def test_the_poll_knob(self):
+        self.assertEqual(wfc.poll_interval({}), wfc.DEFAULT_POLL)
+        self.assertEqual(wfc.poll_interval({wfc.POLL_ENV: "15"}), 15)
+        for bad in ("", "x", "0", "-5"):
+            with self.subTest(bad=bad):
+                self.assertEqual(
+                    wfc.poll_interval({wfc.POLL_ENV: bad}), wfc.DEFAULT_POLL
+                )
+
+
+class TimelineStateTests(unittest.TestCase):
+    def test_a_removal_counts_only_after_the_newest_enqueue(self):
+        events = [
+            event("added_to_merge_queue", "2026-10-13T11:00:00Z"),
+            event("removed_from_merge_queue", "2026-10-13T11:05:00Z"),
+            event("added_to_merge_queue"),
+        ]
+        state = wfc.timeline_state(events)
+        self.assertEqual(state["enqueued_at"], ENQUEUED)
+        self.assertIsNone(state["removed_at"])
+        state = wfc.timeline_state([*events, event("removed_from_merge_queue")])
+        self.assertEqual(state["removed_at"], ENQUEUED)
+        self.assertFalse(state["merged"])
+
+    def test_no_enqueue_means_no_removal(self):
+        state = wfc.timeline_state([event("removed_from_merge_queue")])
+        self.assertEqual(
+            state, {"enqueued_at": None, "removed_at": None, "merged": False}
+        )
+
+
+class RecordedQueueScenarioTests(unittest.TestCase):
+    """The queue watch end to end — :class:`wfc.QueueProbe` over
+    :class:`RecordedGh` — with time advancing only through ``sleep``."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        real = wfc.queue_log_path_for
+        wfc.queue_log_path_for = lambda pr: Path(self.tmp.name) / f"q-{pr}.log"
+        self.addCleanup(setattr, wfc, "queue_log_path_for", real)
+
+    def _watch(self, gh, interval=20):
         real = wfc._gh
+        wfc._gh = gh
+        self.addCleanup(setattr, wfc, "_gh", real)
+        now = [0.0]
 
-        def fake(args):
-            seen.append(args)
-            return 0, replies[len(seen) - 1], ""
+        def sleep(seconds):
+            now[0] += seconds
 
-        wfc._gh = fake
-        try:
-            got = wfc.probe_queue(285, wfc.DEFAULT_REPO)
-        finally:
-            wfc._gh = real
-        self.assertEqual([r["run_id"] for r in got["queue_runs"]], ["1"])
-        self.assertEqual(got["entry"]["state"], "QUEUED")
-        self.assertIn("state,mergedAt", seen[1])
-        self.assertIn("merge_group", seen[2])
+        probe = wfc.QueueProbe(wfc.Conditional(gh), clock=lambda: now[0])
+        return wfc.wait_queue(
+            285,
+            interval=interval,
+            probe=probe,
+            sleep=sleep,
+            clock=lambda: now[0],
+            wall=lambda: ENQUEUED_EPOCH + now[0],
+        )
+
+    def test_a_304_stream_costs_no_quota_until_the_merge(self):
+        queued = [event("added_to_merge_queue")]
+        gh = RecordedGh(
+            {
+                "pull": [pull()] * 5 + [pull(merged=True)],
+                "timeline": [queued] * 5
+                + [
+                    [
+                        *queued,
+                        event("merged"),
+                        event("closed"),
+                        event("removed_from_merge_queue"),
+                    ]
+                ],
+                "runs": [NO_RUNS],
+            },
+            graphql={"mergeQueueEntry": QUEUED},
+        )
+        v = self._watch(gh)
+        self.assertEqual(v["conclusion"], "merged")
+        self.assertEqual(v["polls"], 6)
+        # Polls 2-5: the pull and the timeline both answer 304.
+        unchanged = [k for k, s in gh.statuses if s == 304 and k != "runs"]
+        self.assertEqual(len(unchanged), 8)
+        self.assertEqual(v["requests"]["rate_remaining"], gh.remaining)
+        self.assertGreaterEqual(v["requests"]["not_modified"], 8)
+
+    def test_an_enqueue_then_a_dequeue_is_known_at_the_next_poll(self):
+        added = [event("added_to_merge_queue")]
+        gh = RecordedGh(
+            {
+                "pull": [pull()],
+                "timeline": [
+                    [],
+                    added,
+                    added,
+                    [*added, event("removed_from_merge_queue")],
+                ],
+                "runs": [NO_RUNS],
+            }
+        )
+        v = self._watch(gh)
+        self.assertEqual(v["conclusion"], "dequeued")
+        self.assertEqual(v["polls"], 4)
+        self.assertEqual(v["elapsed_seconds"], 60)
+        self.assertTrue(v["seen_queue_entry"])
+        self.assertEqual(v["enqueued_at"], ENQUEUED)
+
+    def test_a_prior_cycles_dequeue_is_not_this_cycles(self):
+        """Re-enqueued after a fix, its checks still pending: GitHub writes no
+        new enqueue event yet, so the newest add-then-remove pair is the last
+        cycle's. Auto-merge keeps the watch waiting until the new cycle shows."""
+        # The old cycle sits inside the run window, its failed run with it.
+        old = [
+            event("added_to_merge_queue", "2026-10-13T11:48:00Z"),
+            event("removed_from_merge_queue", "2026-10-13T11:52:00Z"),
+        ]
+        new_add = [*old, event("added_to_merge_queue", "2026-10-13T12:02:00Z")]
+        gh = RecordedGh(
+            {
+                "pull": [pull()],
+                "timeline": [old] * 4
+                + [
+                    new_add,
+                    new_add,
+                    [
+                        *new_add,
+                        event("removed_from_merge_queue", "2026-10-13T12:03:00Z"),
+                    ],
+                ],
+                "runs": [
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": 9,
+                                "conclusion": "failure",
+                                "status": "completed",
+                                "head_branch": "gh-readonly-queue/main/pr-285-old",
+                                "created_at": "2026-10-13T11:50:00Z",
+                            }
+                        ]
+                    }
+                ],
+            },
+            graphql={"autoMergeRequest": {"enabledAt": ENQUEUED}},
+        )
+        v = self._watch(gh)
+        self.assertEqual(v["conclusion"], "dequeued")
+        self.assertEqual(v["polls"], 7)
+        self.assertEqual(v["last"]["removed_at"], "2026-10-13T12:03:00Z")
+        # The old cycle's failed run never entered the window.
+        self.assertEqual(v["queue_runs"], [])
+        # A standing old removal keeps corroboration at once a minute:
+        # polls 1 and 4, then poll 7's new removal.
+        self.assertEqual([k for k, _ in gh.statuses].count("runs"), 3)
+
+    def test_since_admits_a_removal_older_than_the_watch(self):
+        """A resumed call: the dequeue predates the watch, `--since` vouches."""
+        added = [event("added_to_merge_queue", "2026-10-13T11:40:00Z")]
+        gone = [*added, event("removed_from_merge_queue", "2026-10-13T11:41:00Z")]
+        gh = RecordedGh({"pull": [pull()], "timeline": [gone], "runs": [NO_RUNS]})
+        real = wfc._gh
+        wfc._gh = gh
+        self.addCleanup(setattr, wfc, "_gh", real)
+        now = [0.0]
+        v = wfc.wait_queue(
+            285,
+            interval=20,
+            probe=wfc.QueueProbe(wfc.Conditional(gh), clock=lambda: now[0]),
+            sleep=lambda s: now.__setitem__(0, now[0] + s),
+            clock=lambda: now[0],
+            wall=lambda: ENQUEUED_EPOCH + now[0],
+            since="2026-10-13T11:40:00Z",
+        )
+        self.assertEqual(v["conclusion"], "dequeued")
+        self.assertEqual(v["polls"], 1)
+
+    def test_a_merge_is_reported_at_the_next_poll(self):
+        gh = RecordedGh(
+            {
+                "pull": [pull(), pull(), pull(merged=True)],
+                "timeline": [[event("added_to_merge_queue")]],
+                "runs": [NO_RUNS],
+            },
+            graphql={"mergeQueueEntry": QUEUED},
+        )
+        v = self._watch(gh)
+        self.assertEqual(v["conclusion"], "merged")
+        self.assertEqual(v["elapsed_seconds"], 40)
+        self.assertEqual(v["last"]["rest_state"], "MERGED")
+
+    def test_corroboration_is_once_a_minute_and_at_once_on_a_removal(self):
+        added = [event("added_to_merge_queue")]
+        gh = RecordedGh(
+            {
+                "pull": [pull()],
+                "timeline": [added] * 5 + [[*added, event("removed_from_merge_queue")]],
+                "runs": [NO_RUNS],
+            },
+            graphql={"mergeQueueEntry": QUEUED},
+        )
+        self._watch(gh)
+        runs_reads = [i for i, (k, _) in enumerate(gh.statuses) if k == "runs"]
+        # Polls 1 and 4 (the minute), then poll 6 for the removal.
+        self.assertEqual(len(runs_reads), 3)
+
+    def test_the_queue_runs_keep_only_this_prs_branch(self):
+        runs = {
+            "workflow_runs": [
+                {
+                    "id": 1,
+                    "head_branch": "gh-readonly-queue/main/pr-285-abc",
+                    "created_at": ENQUEUED,
+                },
+                {
+                    "id": 2,
+                    "head_branch": "gh-readonly-queue/main/pr-2850-abc",
+                    "created_at": ENQUEUED,
+                },
+                {"id": 3, "head_branch": "eng-285", "created_at": ENQUEUED},
+            ]
+        }
+        gh = RecordedGh({"pull": [pull()], "timeline": [[]], "runs": [runs]})
+        got = wfc.QueueProbe(wfc.Conditional(gh))
+        real = wfc._gh
+        wfc._gh = gh
+        self.addCleanup(setattr, wfc, "_gh", real)
+        self.assertEqual([r["run_id"] for r in got(285, "o/r")["queue_runs"]], ["1"])
 
     def test_a_null_pull_request_is_a_probe_error_not_a_crash(self):
         reply = json.dumps({"data": {"repository": {"pullRequest": None}}})
+        rest = RecordedGh({"pull": [pull()], "timeline": [[]], "runs": [NO_RUNS]})
         real = wfc._gh
-        wfc._gh = lambda args: (0, reply, "")
-        try:
-            with self.assertRaises(wfc.WaitForChecksError):
-                wfc.probe_queue(285, wfc.DEFAULT_REPO)
-        finally:
-            wfc._gh = real
+        wfc._gh = lambda args: (0, reply, "") if "graphql" in args else rest(args)
+        self.addCleanup(setattr, wfc, "_gh", real)
+        with self.assertRaises(wfc.WaitForChecksError):
+            wfc.QueueProbe(wfc.Conditional())(285, "o/r")
 
     def test_a_failed_read_raises(self):
-        real = wfc._gh
-        wfc._gh = lambda args: (1, "", "HTTP 502")
-        try:
-            with self.assertRaises(wfc.WaitForChecksError):
-                wfc.probe_queue(285, wfc.DEFAULT_REPO)
-        finally:
-            wfc._gh = real
+        client = wfc.Conditional(lambda args: (1, "", "HTTP 502"))
+        with self.assertRaises(wfc.WaitForChecksError):
+            wfc.QueueProbe(client)(285, "o/r")
 
 
 class QueueModeCliTests(unittest.TestCase):
-    def _queue_mode(self, conclusion, extra=(), runs=(), mergeable="MERGEABLE"):
+    def _queue_mode(
+        self, conclusion, extra=(), runs=(), mergeable="MERGEABLE", stub=True
+    ):
         seen = {}
         real = wfc.wait_queue
 
-        def stub(pr, repo=None, interval=None, timeout=None, since=None):
+        def stub_wait(pr, repo=None, interval=None, timeout=None, since=None):
             seen.update(
                 pr=pr, repo=repo, interval=interval, timeout=timeout, since=since
             )
@@ -1022,9 +1439,15 @@ class QueueModeCliTests(unittest.TestCase):
         real_dismiss = wfc.dismiss_pr_notifications
         out = io.StringIO()
 
-        def dismiss(pr, repo):
+        def dismiss(pr, repo, merged=True):
             seen.setdefault("dismissed", []).append((pr, repo))
-            return {"dismissed": 1, "failed": 0, "error": None}
+            seen["unsubscribe"] = merged
+            return {
+                "dismissed": 1,
+                "unsubscribed": int(merged),
+                "failed": 0,
+                "error": None,
+            }
 
         real_cause = wfc.dequeue_cause
 
@@ -1039,7 +1462,8 @@ class QueueModeCliTests(unittest.TestCase):
             seen.setdefault("counted", []).append((pr, repo))
             return 4
 
-        wfc.wait_queue = stub
+        if stub:
+            wfc.wait_queue = stub_wait
         wfc.dismiss_pr_notifications = dismiss
         wfc.dequeue_cause = cause
         wfc.todays_merge_count = count
@@ -1059,19 +1483,68 @@ class QueueModeCliTests(unittest.TestCase):
         self.assertEqual(seen["dismissed"], [(285, wfc.DEFAULT_REPO)])
         self.assertEqual(seen["verdict"]["notifications"]["dismissed"], 1)
 
-    def test_a_merge_reports_todays_merge_count(self):
+    def test_a_merge_reports_todays_merge_count_and_unsubscribes(self):
         _, seen = self._queue_mode("merged")
         self.assertEqual(seen["counted"], [(285, wfc.DEFAULT_REPO)])
         self.assertEqual(seen["verdict"]["todays_merge_count"], 4)
+        self.assertTrue(seen["unsubscribe"])
 
-    def test_no_other_conclusion_dismisses_or_counts(self):
+    def test_every_other_exit_but_probe_failed_dismisses_never_counts(self):
+        """Unsubscribe only on merge: an exit that is not a merge marks the
+        threads done and keeps the subscription, and never counts."""
         for conclusion in ("dequeued", "closed", "not_queued", "timeout"):
             with self.subTest(conclusion=conclusion):
                 _, seen = self._queue_mode(conclusion)
-                self.assertNotIn("dismissed", seen)
+                self.assertEqual(seen["dismissed"], [(285, wfc.DEFAULT_REPO)])
+                self.assertIn("notifications", seen["verdict"])
+                self.assertFalse(seen["unsubscribe"])
                 self.assertNotIn("counted", seen)
-                self.assertNotIn("notifications", seen["verdict"])
                 self.assertNotIn("todays_merge_count", seen["verdict"])
+        _, seen = self._queue_mode("probe_failed")
+        self.assertNotIn("dismissed", seen)
+        self.assertNotIn("counted", seen)
+        self.assertNotIn("notifications", seen["verdict"])
+
+    def test_a_crash_never_dismisses(self):
+        """Like `probe_failed`, a crash never learned the PR's state."""
+        dismissed = []
+        for name, value in (
+            ("wait_queue", lambda *a, **k: (_ for _ in ()).throw(OSError("disk"))),
+            ("dismiss_pr_notifications", lambda pr, repo, merged: dismissed.append(pr)),
+        ):
+            self.addCleanup(setattr, wfc, name, getattr(wfc, name))
+            setattr(wfc, name, value)
+        with self.assertRaises(OSError):
+            wfc.watch_queue(285, wfc.DEFAULT_REPO, 20, 60, None)
+        self.assertEqual(dismissed, [])
+
+    def test_a_sigterm_mid_wait_still_dismisses(self):
+        """The session stops the watch early: the signal raises into the one
+        `finally`, which dismisses, and a `stopped` verdict prints."""
+        state = {}
+
+        def stopped_mid_wait(pr, repo=None, interval=None, timeout=None, since=None):
+            state["handler"] = signal.getsignal(signal.SIGTERM)
+            os.kill(os.getpid(), signal.SIGTERM)
+            for _ in range(1000):  # the handler runs between instructions
+                time.sleep(0.001)
+            raise AssertionError("SIGTERM never raised into the watch")
+
+        before = signal.getsignal(signal.SIGTERM)
+        real = wfc.wait_queue
+        wfc.wait_queue = stopped_mid_wait
+        self.addCleanup(setattr, wfc, "wait_queue", real)
+        code, seen = self._queue_mode("unused", stub=False)
+        self.assertEqual(code, 1)
+        self.assertEqual(seen["verdict"]["conclusion"], "stopped")
+        self.assertEqual(seen["verdict"]["signal"], "SIGTERM")
+        self.assertEqual(seen["dismissed"], [(285, wfc.DEFAULT_REPO)])
+        self.assertEqual(seen["verdict"]["notifications"]["dismissed"], 1)
+        # A stopped PR is still open: its subscription is kept, nothing counted.
+        self.assertFalse(seen["unsubscribe"])
+        self.assertNotIn("counted", seen)
+        self.assertIs(state["handler"], wfc._raise_stopped)
+        self.assertIs(signal.getsignal(signal.SIGTERM), before)
 
     def test_only_a_dequeue_reads_its_cause(self):
         _, seen = self._queue_mode("dequeued")
@@ -1107,12 +1580,19 @@ class QueueModeCliTests(unittest.TestCase):
         self.assertEqual(seen["verdict"]["conclusion"], "dequeued")
         self.assertNotIn("mergeable", seen["verdict"])
 
-    def test_queue_mode_uses_its_own_pacing_defaults(self):
+    def test_queue_mode_takes_the_poll_knob_and_its_own_timeout(self):
+        real = os.environ.pop(wfc.POLL_ENV, None)
+        if real is not None:
+            self.addCleanup(os.environ.__setitem__, wfc.POLL_ENV, real)
         code, seen = self._queue_mode("merged")
         self.assertEqual(code, 0)
         self.assertEqual(seen["pr"], 285)
-        self.assertEqual(seen["interval"], wfc.QUEUE_INTERVAL)
+        self.assertEqual(seen["interval"], wfc.DEFAULT_POLL)
         self.assertEqual(seen["timeout"], wfc.QUEUE_TIMEOUT)
+        os.environ[wfc.POLL_ENV] = "25"
+        self.addCleanup(os.environ.pop, wfc.POLL_ENV, None)
+        _, seen = self._queue_mode("merged")
+        self.assertEqual(seen["interval"], 25)
 
     def test_since_is_passed_through_and_validated(self):
         _, seen = self._queue_mode("merged", ["--since", ENQUEUED])
@@ -1174,7 +1654,8 @@ class DismissNotificationsTests(unittest.TestCase):
         {"id": "15", "subject": {"url": None}},
     ]
 
-    def _run(self, list_reply, delete_code=0):
+    def _run(self, list_reply, delete_code=0, merged=True):
+        """Through the dismissal tool's `--pr` mode, its gh stubbed."""
         calls = []
 
         def fake(args):
@@ -1185,7 +1666,7 @@ class DismissNotificationsTests(unittest.TestCase):
 
         # The shared tool owns the gh calls; the watcher's own `_gh` is unused.
         with mock.patch.object(wfc.pr_notifications, "real_gh", fake):
-            return wfc.dismiss_pr_notifications(285, REPO), calls
+            return wfc.dismiss_pr_notifications(285, REPO, merged=merged), calls
 
     def test_only_this_prs_threads_are_unsubscribed_and_marked_done(self):
         result, calls = self._run((0, json.dumps(self.THREADS), ""))
@@ -1216,6 +1697,30 @@ class DismissNotificationsTests(unittest.TestCase):
             result,
             {"dismissed": 0, "unsubscribed": 0, "failed": 4, "error": "HTTP 404"},
         )
+
+    def test_an_exit_that_is_not_a_merge_keeps_the_subscription(self):
+        """Unsubscribe only on merge: the PR is still open, and its
+        subscription is what re-creates its thread on new activity."""
+        result, calls = self._run((0, json.dumps(self.THREADS), ""), merged=False)
+        writes = [c[2:4] for c in calls if c[:2] == ["api", "-X"]]
+        self.assertEqual(
+            writes,
+            [
+                ["DELETE", "/notifications/threads/11"],
+                ["DELETE", "/notifications/threads/14"],
+            ],
+        )
+        self.assertEqual(
+            result, {"dismissed": 2, "unsubscribed": 0, "failed": 0, "error": None}
+        )
+
+    def test_a_raising_tool_is_reported_not_raised(self):
+        with mock.patch.object(
+            wfc.pr_notifications, "dismiss", side_effect=RuntimeError("boom")
+        ):
+            result = wfc.dismiss_pr_notifications(285, REPO)
+        self.assertEqual(result["dismissed"], 0)
+        self.assertIn("RuntimeError: boom", result["error"])
 
 
 class TodaysMergeCountTests(unittest.TestCase):
@@ -1379,7 +1884,7 @@ class DequeueCauseTests(unittest.TestCase):
         snap = {
             "gql_state": "OPEN",
             "entry": {"state": "QUEUED", "enqueuedAt": ENQUEUED},
-            "view_state": "OPEN",
+            "rest_state": "OPEN",
             "queue_runs": [],
         }
         verdict = wfc.wait_queue(

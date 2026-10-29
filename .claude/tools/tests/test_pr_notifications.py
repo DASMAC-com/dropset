@@ -110,10 +110,18 @@ class SettledTests(unittest.TestCase):
         # Only PR threads on this repository count, and the open PR's never.
         self.assertEqual(out["threads"], 5)
         self.assertEqual(sorted(gh.deletes()), ["c1", "m1", "m2", "x1"])
-        self.assertEqual(sorted(gh.unsubscribes()), ["c1", "m1", "m2", "x1"])
+        # Unsubscribe only on merge: the closed PR's c1 is marked done only.
+        self.assertEqual(sorted(gh.unsubscribes()), ["m1", "m2", "x1"])
         self.assertEqual(out["dismissed"], 4)
-        self.assertEqual(out["unsubscribed"], 4)
+        self.assertEqual(out["unsubscribed"], 3)
         self.assertEqual(out["unresolved"], [])
+
+    def test_a_closed_pr_keeps_its_subscription_so_a_reopen_resurfaces(self):
+        gh = FakeGh(pages=[[THREADS[2]]])  # c1, on closed #660
+        _, out = dismiss(gh, None, apply=True)
+        self.assertEqual(gh.deletes(), ["c1"])
+        self.assertEqual(gh.unsubscribes(), [])
+        self.assertEqual((out["dismissed"], out["unsubscribed"]), (1, 0))
 
     def test_an_open_pr_is_never_selected(self):
         gh = FakeGh()
@@ -156,6 +164,13 @@ class PrModeTests(unittest.TestCase):
         )
         self.assertEqual(out["mode"], "pr")
 
+    def test_a_pr_not_merged_is_marked_done_and_keeps_its_subscription(self):
+        gh = FakeGh()
+        _, out = dismiss(gh, {663, 677}, apply=True, keep_subscription={677})
+        self.assertEqual(sorted(gh.deletes()), ["m1", "m2", "o1"])
+        self.assertEqual(sorted(gh.unsubscribes()), ["m1", "m2"])
+        self.assertEqual((out["dismissed"], out["unsubscribed"]), (3, 2))
+
 
 class ApplyTests(unittest.TestCase):
     def test_a_dry_run_deletes_nothing(self):
@@ -164,9 +179,11 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(gh._writes(), [])
         self.assertTrue(out["dry_run"])
+        # m1, m2 (merged) and c1 (closed, kept subscribed).
         self.assertEqual(
             summary(out),
-            "would unsubscribe and dismiss 3 notification(s); 1 PR(s) unresolved, left",
+            "would dismiss 3 notification(s), unsubscribing 2 (1 kept subscribed:"
+            " not merged); 1 PR(s) unresolved, left",
         )
 
     def test_each_thread_is_ignored_then_marked_done_never_a_mark_all(self):
@@ -288,8 +305,8 @@ class CliTests(unittest.TestCase):
     def test_main_passes_mode_and_apply_through_and_prints_compact(self):
         seen = []
 
-        def fake_dismiss(gh, prs, apply):
-            seen.append((prs, apply))
+        def fake_dismiss(gh, prs, apply, keep_subscription=frozenset()):
+            seen.append((prs, apply, set(keep_subscription)))
             return 0, {
                 "mode": "settled", "dry_run": not apply, "threads": 0,
                 "selected": [], "dismissed": 0, "unsubscribed": 0,
@@ -299,13 +316,19 @@ class CliTests(unittest.TestCase):
 
         out = io.StringIO()
         with mock.patch.object(pr_notifications, "dismiss", fake_dismiss):
-            for argv in (["dismiss", "--settled", "--apply"], ["dismiss", "--pr", "7"]):
+            for argv in (
+                ["dismiss", "--settled", "--apply"],
+                ["dismiss", "--pr", "7"],
+                ["dismiss", "--pr", "8", "--keep-subscription"],
+            ):
                 with (
                     mock.patch("sys.argv", ["prog", *argv]),
                     mock.patch("sys.stdout", out),
                 ):
                     self.assertEqual(pr_notifications.main(), 0)
-        self.assertEqual(seen, [(None, True), ({7}, False)])
+        self.assertEqual(
+            seen, [(None, True, set()), ({7}, False, set()), ({8}, False, {8})]
+        )
         self.assertIn(
             '"summary": "would unsubscribe and dismiss 0 notification(s)"',
             out.getvalue(),
