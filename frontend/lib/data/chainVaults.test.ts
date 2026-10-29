@@ -11,6 +11,8 @@ import {
   VAULT_PIN_PARAM,
   VAULT_SEQ_PARAM,
   vaultLinkHref,
+  vaultPinFromParams,
+  vaultPinParams,
   vaultsHref,
 } from "../ui/swapUrl";
 import {
@@ -24,11 +26,13 @@ import {
   contributeClosedReason,
   depositClosedReason,
   findVaultBySeq,
+  isVaultPinned,
   resolveLegacyLeaderPin,
   resolveVaultMarket,
   tokenUsdPrice,
   vaultLabel,
   vaultNumberLabel,
+  vaultPinMatches,
   vaultRefPrice,
 } from "./vaults";
 
@@ -363,6 +367,64 @@ describe("the vault pin", () => {
         "https://dropset.example",
       ).searchParams.has(VAULT_PIN_PARAM),
     ).toBe(false);
+  });
+
+  it("reads the link back to a pin matching only the vault it names", () => {
+    const market = markets[0];
+    if (!market) throw new Error("fixture market missing");
+    const pin = vaultPinFromParams(
+      new URL(vaultsHref("TGBP", "USDC", 5n), "https://dropset.example")
+        .searchParams,
+    );
+    expect(pin).toEqual({
+      base: "TGBP",
+      quote: "USDC",
+      vault: "5",
+      leader: "",
+    });
+    expect(
+      market.vaults.filter((v) => vaultPinMatches(pin, market, v)),
+    ).toEqual([live]);
+    expect(market.vaults.filter((v) => isVaultPinned(pin, market, v))).toEqual([
+      live,
+    ]);
+    // The pin's own writes reproduce the link's params.
+    expect(vaultPinParams(pin)).toEqual({
+      base: "TGBP",
+      quote: "USDC",
+      [VAULT_PIN_PARAM]: "5",
+      [LEGACY_LEADER_PARAM]: "",
+    });
+    // Another market's vault #5 is not this one.
+    expect(vaultPinMatches(pin, { base: "USDC", quote: "TGBP" }, live)).toBe(
+      false,
+    );
+  });
+
+  it("drops a vault number that isn't a decimal integer", () => {
+    for (const raw of ["05x", "5.0", " 5", "-1", "Vault #5"]) {
+      const params = new URLSearchParams({
+        base: "TGBP",
+        [VAULT_PIN_PARAM]: raw,
+      });
+      expect(vaultPinFromParams(params).vault).toBe("");
+    }
+  });
+
+  it("keeps an unresolved legacy leader as a prefix filter", () => {
+    const market = markets[0];
+    if (!market) throw new Error("fixture market missing");
+    const pin = vaultPinFromParams(
+      new URLSearchParams({
+        base: "TGBP",
+        quote: "USDC",
+        [LEGACY_LEADER_PARAM]: "vote",
+      }),
+    );
+    expect(pin.vault).toBe("");
+    expect(
+      market.vaults.filter((v) => vaultPinMatches(pin, market, v)),
+    ).toHaveLength(1);
   });
 
   it("resolves an old leader-keyed link to the vault it named", () => {

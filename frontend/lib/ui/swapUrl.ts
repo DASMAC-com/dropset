@@ -3,6 +3,7 @@
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import type { IsoCurrencyCode } from "@/lib/data/currencies";
+import type { VaultPin } from "@/lib/data/vaults";
 import { useSwapStoreApi } from "@/lib/store";
 
 // Canonical URL for a swap pair. Ordering is fixed (`from` then `to`) so the
@@ -19,8 +20,32 @@ export const VAULT_PIN_PARAM = "vault";
 
 // The pre-number pin key, a leader pubkey or prefix. Read for one release so
 // an old shared link still resolves to the vault it named (see
-// resolveLegacyLeaderPin), never written.
+// resolveLegacyLeaderPin); never newly set, only carried forward while
+// unresolved.
 export const LEGACY_LEADER_PARAM = "leader";
+
+// The pin a Vaults URL carries. A `vault` that isn't a decimal integer names
+// no vault, so it is dropped rather than shown in the pin's chip.
+export const vaultPinFromParams = (
+  params: Pick<URLSearchParams, "get">,
+): VaultPin => {
+  const vault = params.get(VAULT_PIN_PARAM) ?? "";
+  return {
+    base: params.get("base") ?? "",
+    quote: params.get("quote") ?? "",
+    vault: /^\d+$/.test(vault) ? vault : "",
+    leader: params.get(LEGACY_LEADER_PARAM) ?? "",
+  };
+};
+
+// The URL writes for a pin: every key, an empty one deleting its param (see
+// replaceUrlParams).
+export const vaultPinParams = (pin: VaultPin): Record<string, string> => ({
+  base: pin.base,
+  quote: pin.quote,
+  [VAULT_PIN_PARAM]: pin.vault,
+  [LEGACY_LEADER_PARAM]: pin.leader,
+});
 
 // Canonical URL for the Vaults tab filtered to a pair (and optionally a single
 // vault, by its number). `base`/`quote` are stablecoin symbols. The page reads

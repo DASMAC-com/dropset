@@ -25,13 +25,16 @@ import {
   type GroupedVault,
   groupMetric,
   groupVaultMarkets,
+  isVaultPinned,
   type MetricKey,
   resolveLegacyLeaderPin,
   type Vault,
   type VaultMarket,
+  type VaultPin,
   vaultLabel,
   vaultMetric,
   vaultNumberLabel,
+  vaultPinMatches,
   vaultRefPrice,
 } from "@/lib/data/vaults";
 import { emit, useAppEvent } from "@/lib/events";
@@ -40,11 +43,11 @@ import { useChainVaults } from "@/lib/hooks/useChainVaults";
 import { groupedRowClassName } from "@/lib/ui/groupedRows";
 import { pnlTone } from "@/lib/ui/pnlTone";
 import {
-  LEGACY_LEADER_PARAM,
   replaceUrlParams,
   useGoToSwapPair,
-  VAULT_PIN_PARAM,
   VAULT_SEQ_PARAM,
+  vaultPinFromParams,
+  vaultPinParams,
 } from "@/lib/ui/swapUrl";
 
 // The table shows only what the chain gives. APR, 24h volume and the pair's
@@ -283,19 +286,20 @@ function VaultRow({
       </td>
       <td className="w-px whitespace-nowrap border-border border-r px-3 py-2 align-middle last:border-r-0">
         <div className="flex items-center gap-1">
-          {/* The vault number is the identity (leadership rotates), shown
-              beside the name when there is one and alone when not
-              (vaultLabel). The leader is an attribute: the hover keeps the
-              full address; its copy and explorer links live in the dialog. */}
+          {/* The vault number is the identity (leadership rotates), so it
+              leads, ahead of the leader-set name, which can't then pass for
+              another vault's number. The leader is an attribute: the hover
+              keeps the full address; its copy and explorer links live in
+              the dialog. */}
           <span
-            className={`max-w-48 truncate text-foreground ${vault.name ? "font-medium text-sm" : "font-mono text-xs"}`}
+            className="shrink-0 font-mono text-foreground text-xs"
             title={`${vaultLabel(vault)} — Leader ${vault.leader}`}
           >
-            {vaultLabel(vault)}
+            {vaultNumberLabel(vault)}
           </span>
           {vault.name && (
-            <span className="shrink-0 font-mono text-muted-fg text-xs">
-              {vaultNumberLabel(vault)}
+            <span className="max-w-48 truncate font-medium text-foreground text-sm">
+              {vault.name}
             </span>
           )}
           {/* Pin the view to this exact vault — writes base/quote/vault into
@@ -372,22 +376,6 @@ function FilterChip({
   );
 }
 
-// A structured filter pinning the view to a market (base/quote symbols) and an
-// optional vault number (`seq`). Driven by the `?base=&quote=&vault=` URL
-// params so a filtered view is a shareable deep link to a vault that survives
-// a leader rotation. `leader` is the pre-number key (LEGACY_LEADER_PARAM),
-// only ever read from an old link: resolved to its vault number once the
-// first live read lands, and kept as a prefix filter when it resolves to no
-// single vault.
-type Pin = { base: string; quote: string; vault: string; leader: string };
-
-const pinFromParams = (params: Pick<URLSearchParams, "get">): Pin => ({
-  base: params.get("base") ?? "",
-  quote: params.get("quote") ?? "",
-  vault: params.get(VAULT_PIN_PARAM) ?? "",
-  leader: params.get(LEGACY_LEADER_PARAM) ?? "",
-});
-
 // A full-width message row in the table body.
 function MessageRow({ colSpan, text }: { colSpan: number; text: string }) {
   return (
@@ -454,27 +442,27 @@ function VaultsInner() {
   // Seed the pin from the URL once, then own it in state. Updates write back to
   // the URL via replaceState (no router transition) so the address bar always
   // reflects — and can reproduce — the current filter, mirroring /currencies.
-  const [pin, setPin] = useState<Pin>(() => pinFromParams(searchParams));
+  // The pin (VaultPin) is driven by the `?base=&quote=&vault=` URL params, so
+  // a filtered view is a shareable deep link to a vault that survives a
+  // leader rotation.
+  const [pin, setPin] = useState<VaultPin>(() =>
+    vaultPinFromParams(searchParams),
+  );
   // Merge against the current pin and apply the URL write as a plain side
   // effect — NOT inside the setPin updater, which React may re-run during
   // render (replaceState there pokes the Router mid-render). updatePin runs
   // from event handlers and the one-shot legacy resolve below, so the `pin`
   // closure is current.
-  const updatePin = (next: Partial<Pin>) => {
+  const updatePin = (next: Partial<VaultPin>) => {
     const merged = { ...pin, ...next };
     setPin(merged);
-    replaceUrlParams({
-      base: merged.base,
-      quote: merged.quote,
-      [VAULT_PIN_PARAM]: merged.vault,
-      [LEGACY_LEADER_PARAM]: merged.leader,
-    });
+    replaceUrlParams(vaultPinParams(merged));
   };
 
   // An old leader-keyed link resolves, on the first live read, to the vault
   // number it named, which then replaces the leader in the pin and the URL.
   // One that names no single vault keeps filtering by leader prefix, as it
-  // did. Tried once.
+  // did. Tried once. One-release fallback; drop it with LEGACY_LEADER_PARAM.
   const [legacyPending, setLegacyPending] = useState(
     () => pin.leader !== "" && pin.vault === "",
   );
@@ -520,22 +508,15 @@ function VaultsInner() {
   // under the state — without this the table/chips would keep a stale pin.
   useEffect(() => {
     const onPop = () =>
-      setPin(pinFromParams(new URLSearchParams(window.location.search)));
+      setPin(vaultPinFromParams(new URLSearchParams(window.location.search)));
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  // The pin predicate: exact market on base/quote (when set), the exact vault
-  // number, and — for an unresolved legacy link — a case-insensitive prefix
-  // match on the leader so short slugs work.
   const matchesPin = useCallback(
     (entry: GroupedVault): boolean =>
-      (!pin.base || entry.market.base === pin.base) &&
-      (!pin.quote || entry.market.quote === pin.quote) &&
-      (!pin.vault || entry.vault.chain.seq.toString() === pin.vault) &&
-      (!pin.leader ||
-        entry.vault.leader.toLowerCase().startsWith(pin.leader.toLowerCase())),
-    [pin.base, pin.quote, pin.vault, pin.leader],
+      vaultPinMatches(pin, entry.market, entry.vault),
+    [pin],
   );
 
   // A vault's position is the connected wallet's VaultDepositor account.
@@ -632,9 +613,7 @@ function VaultsInner() {
 
   // The pin "crosshair" on each row toggles the URL filter to that exact vault.
   const isPinnedVault = (e: GroupedVault) =>
-    pin.base === e.market.base &&
-    pin.quote === e.market.quote &&
-    pin.vault === e.vault.chain.seq.toString();
+    isVaultPinned(pin, e.market, e.vault);
   const togglePinVault = (e: GroupedVault) =>
     updatePin(
       isPinnedVault(e)
@@ -761,7 +740,8 @@ function VaultsInner() {
             {(pin.base || pin.quote) && (
               <FilterChip
                 label={`${pin.base || "·"} / ${pin.quote || "·"}`}
-                onClear={() => updatePin({ base: "", quote: "" })}
+                // A vault number is per-market, so it clears with its pair.
+                onClear={() => updatePin({ base: "", quote: "", vault: "" })}
               />
             )}
             {pin.vault && (

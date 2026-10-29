@@ -300,6 +300,42 @@ export const findVaultBySeq = (
   return null;
 };
 
+// The Vaults tab's structured filter: a market (base/quote symbols) and an
+// optional vault number (`seq`, decimal), each empty when unset. A vault
+// number is per-market, so it means something only beside its pair. `leader`
+// is the pre-number key (LEGACY_LEADER_PARAM), only ever read from an old
+// link: a case-insensitive prefix filter until it resolves to a vault number
+// (resolveLegacyLeaderPin). One-release fallback; drop it with the param.
+export type VaultPin = {
+  base: string;
+  quote: string;
+  vault: string;
+  leader: string;
+};
+
+// Whether a vault passes the pin: exact market on base/quote (when set), the
+// exact vault number, and the legacy leader prefix.
+export const vaultPinMatches = (
+  pin: VaultPin,
+  market: Pick<VaultMarket, "base" | "quote">,
+  vault: Vault,
+): boolean =>
+  (!pin.base || market.base === pin.base) &&
+  (!pin.quote || market.quote === pin.quote) &&
+  (!pin.vault || vault.chain.seq.toString() === pin.vault) &&
+  (!pin.leader ||
+    vault.leader.toLowerCase().startsWith(pin.leader.toLowerCase()));
+
+// Whether the pin names exactly this vault (the row's pin toggle).
+export const isVaultPinned = (
+  pin: VaultPin,
+  market: Pick<VaultMarket, "base" | "quote">,
+  vault: Vault,
+): boolean =>
+  pin.base === market.base &&
+  pin.quote === market.quote &&
+  pin.vault === vault.chain.seq.toString();
+
 // The vault number an old leader-keyed pin (LEGACY_LEADER_PARAM) named: the
 // one vault in the base / quote market whose leader the pin prefixes,
 // case-insensitively, as the old filter matched. Null when none or several
