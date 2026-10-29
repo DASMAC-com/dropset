@@ -9,6 +9,12 @@ import {
   proxyFlags,
   serverKey,
 } from "./apiProxy";
+import { clientLimiter } from "./clientLimit";
+import {
+  DFLOW_ORDER_ROUTE,
+  DFLOW_QUOTE_ROUTE,
+  JUPITER_SEARCH_ROUTE,
+} from "./proxyQuery";
 
 // A route whose check accepts any query unchanged, so these tests exercise
 // forwarding alone; the real checks are tested in proxyQuery.test.ts.
@@ -277,6 +283,43 @@ describe("forward", () => {
 
     expect(seen).toHaveLength(1);
     expect(res.status).toBe(200);
+  });
+
+  it("answers a caller over its limit with a 429 the app reads as DFlow's", async () => {
+    const seen = stubUpstream(ok);
+    const route: ProxyRoute = {
+      ...passThrough(DFLOW_QUOTE_UPSTREAM),
+      limiter: clientLimiter({ capacity: 2, refillPerSec: 0.25 }),
+    };
+    const from = (ip: string) =>
+      new Request("https://app.test/api/route?amount=1", {
+        headers: { "x-forwarded-for": `${ip}, 10.0.0.1` },
+      });
+    const env = { DFLOW_API_KEY: KEY };
+
+    expect((await forward(route, from("1.1.1.1"), env)).status).toBe(200);
+    expect((await forward(route, from("1.1.1.1"), env)).status).toBe(200);
+    const refused = await forward(route, from("1.1.1.1"), env);
+
+    expect(seen).toHaveLength(2);
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("retry-after")).toBe("4");
+    expect(refused.headers.get("x-content-type-options")).toBe("nosniff");
+    // No x-ratelimit-* of its own: those describe DFlow's bucket, which
+    // lib/dflow/rateLimitBudget.ts tracks.
+    expect(refused.headers.get("x-ratelimit-remaining")).toBeNull();
+    expect(await refused.json()).toEqual({
+      msg: "Too many requests; retry in 4s",
+    });
+    // Keyed on the caller, not the server: another address is unaffected.
+    expect((await forward(route, from("2.2.2.2"), env)).status).toBe(200);
+  });
+
+  it("limits each DFlow route and leaves Jupiter's search unlimited", () => {
+    expect(DFLOW_QUOTE_ROUTE.limiter).toBeDefined();
+    expect(DFLOW_ORDER_ROUTE.limiter).toBeDefined();
+    expect(DFLOW_QUOTE_ROUTE.limiter).not.toBe(DFLOW_ORDER_ROUTE.limiter);
+    expect(JUPITER_SEARCH_ROUTE.limiter).toBeUndefined();
   });
 
   it("answers a network failure with a 502 naming the host only", async () => {

@@ -17,6 +17,16 @@ export const QUOTE_REFRESH_MS = 2_000;
 export const DFLOW_BUCKET_CAPACITY = 60;
 export const DFLOW_REFILL_PER_SEC = 1;
 
+// Per-caller limits on the keyed /api/dflow/* routes (lib/server/clientLimit.ts),
+// sized from the app's own call rate. A visible tab quotes once per
+// QUOTE_REFRESH_MS (0.5/s) and typing at most once per QUOTE_DEBOUNCE_MS
+// (2/s): a 1/s refill carries two steady tabs from one address, and the
+// capacity carries half a minute of continuous retyping. /order is one call
+// per swap submitted, so five back to back and one per 10 s after is far
+// past a person's pace.
+export const DFLOW_PROXY_QUOTE_LIMIT = { capacity: 30, refillPerSec: 1 };
+export const DFLOW_PROXY_ORDER_LIMIT = { capacity: 5, refillPerSec: 0.1 };
+
 // Defensive floor for projected `remaining` tokens. Drop below this and
 // the timer defers another cycle rather than risk a 429.
 export const MIN_TOKENS_TO_FETCH = 3;
