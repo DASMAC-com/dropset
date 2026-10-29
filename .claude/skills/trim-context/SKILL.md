@@ -100,10 +100,14 @@ one scoped search); a landed candidate is dropped.
 the line it names, `claude-skills:resident-<slug>`). Then:
 
 ```sh
-python3 .claude/tools/trim_levers.py probe --fingerprint <domain>:<slug>
+python3 .claude/tools/trim_levers.py probe \
+  --fingerprints-file <scratchpad>/keys.txt
 ```
 
-- `NONE` (exit 1) — new; go on to the title check.
+One key per line, every candidate in one call (`--fingerprint` repeats
+for a few); the verdict lines name their key.
+
+- `NONE` — new; go on to the title check.
 - A **`canceled`-type** match (the `[Name:type]` field reads
   `:canceled`, e.g. Canceled or Duplicate) — a recorded rejection. Drop
   the candidate

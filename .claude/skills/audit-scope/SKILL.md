@@ -211,7 +211,9 @@ Optional (ask on a scoped run if not provided):
    via the `Agent` tool (single message, multiple calls),
    each scoped to the subject. **Prepend the standing
    sub-agent brief from `docs/conventions/sub-agent-brief.md`**
-   to every one — these agents don't inherit that brief (or
+   to every one **by pointer** (that doc's opening; never
+   pasted per lane), and hand the step 4 skeptics their
+   findings as a file path. These agents don't inherit that brief (or
    `CLAUDE.md`), and an audit legitimately ranges across
    the codebase, so they need the brief's shell discipline
    (Read/Grep/Glob over shell, one bare globbable command
@@ -234,6 +236,11 @@ Optional (ask on a scoped run if not provided):
    counts, doc-freshness's symbol sweep) splits the same
    way: spawn the mechanical lane first and pass its output
    inline to the judging lane, spawned with the rest.
+
+   **A comment-accuracy lane gets about 25–30 non-test
+   source files**, counted at plan time; over budget, split
+   by feature directory. Two unbudgeted lanes once cost
+   ≈ \$12 of one audit's fan-out, at 73 and 44 turns.
 
    At minimum (spelling and term consistency are **not**
    lanes — cspell runs under `make lint`, and step 5 drops
@@ -271,7 +278,10 @@ Optional (ask on a scoped run if not provided):
 
    - **Comment accuracy** — comments and doc-comments
      that contradict, overstate, or no longer match the
-     code they annotate.
+     code they annotate. Tell the lane to Grep for comment
+     lines that name something checkable (a file, symbol,
+     number or env var) and to read only those regions
+     against the code. It should not read every file whole.
 
    - **Magic numbers / DRY / duplication** — unnamed
      values that should be named or configured; repeated
@@ -405,15 +415,16 @@ Optional (ask on a scoped run if not provided):
    their own cross-check — see `rotation.md`.)
 
    - **Dedup against live Linear, open *and* resolved.**
-     Build the set once per run: list every Dropset-project
-     issue with `mcp__claude_ai_Linear__list_issues`
-     (`includeArchived: true`) and collect **every**
-     `**Fingerprint**:` line on each — a combined issue
-     carries several — with its state. A finding whose
-     fingerprint is already present, in **any** state, is
-     not refiled: a resolved match (Done / Won't-fix /
-     Canceled) was already triaged, and refiling it would
-     reopen settled noise.
+     Probe every fingerprint, one per line in a file, in
+     one zero-echo call (never `list_issues` text search):
+
+     ```sh
+     python3 .claude/tools/trim_levers.py probe \
+       --fingerprints-file <scratchpad>/keys.txt
+     ```
+
+     A finding with **any** `MATCH`, in any state, is not
+     refiled: a resolved match was already triaged.
 
    - **File** the surviving findings as Linear
      issues **staged under the `Session pending` project

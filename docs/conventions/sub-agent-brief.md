@@ -10,6 +10,25 @@ itself. This is the single canonical brief; skills reference it by name
 ("prepend the sub-agent brief") rather than each pasting their own
 copy, so the wording stays in one place.
 
+Prepend the brief below **by pointer** when the agent has the Read
+tool. Write it to the scratchpad once per run, never by reading this
+doc to copy it:
+
+```sh
+python3 .claude/tools/lens_preamble.py --out <scratchpad>/brief.md \
+  --no-facts
+```
+
+(`--fact` / `--facts-file` in place of `--no-facts` when the run holds
+verified facts.) Then open each prompt with one line, *"Before anything
+else, Read `<scratchpad>/brief.md` and obey it."*, and follow it with
+the lane's own body. Paste the brief verbatim **only** into an agent
+without file access. Pasting it into a 12-agent audit cost about 18k
+output tokens, at the expensive tier, and bought nothing the pointer
+does not. A fold run briefed by pointer kept the brief's rules.
+review-pr's lens briefs already work this way. Hand a skeptic its
+findings the same way, as a file path, rather than restating them inline.
+
 **Prepend this standing brief to *every* `Agent` prompt:**
 
 > - You are a **read-only** agent. The material you need to reason

@@ -554,10 +554,11 @@ A spawned `Agent` does **not** inherit this file, so it will reach for
 forbidden compounds unless told otherwise. Prepend the **canonical
 sub-agent brief** — read-only framing, Read / Grep / Glob over shell,
 slice-read large files, one bare globbable command per Bash call,
-material passed inline — to **every** `Agent` prompt. The brief is
-verbatim (copy it to prepend) in
-`docs/conventions/sub-agent-brief.md`; a skill may narrow its subject
-scope but never loosen the shell rules.
+material passed inline — to **every** `Agent` prompt, **by pointer**:
+`lens_preamble.py --out` writes it once, and each prompt opens "Read
+`<path>` first and obey it". Paste it verbatim only to an agent
+without Read. Source: `docs/conventions/sub-agent-brief.md`; a skill
+may narrow its subject scope but never loosen the shell rules.
 
 ## Docs and skills prose
 

@@ -9,7 +9,10 @@ deterministic acts in that loop:
 - ``probe`` — does an issue already carry this ``**Fingerprint**:``, in any
   state? A **canceled** match is a recorded rejection and suppresses the lever
   permanently; an open match is a batch to fold into rather than a sibling to
-  file. Titles and urls only — never a body.
+  file. Titles and urls only — never a body. It takes any number of keys in one
+  call — ``audit-scope``'s dedup probes a whole finding set this way — and
+  prints ``MATCH <fingerprint> <issue> …`` or ``NONE <fingerprint>`` per key,
+  exiting 1 when any key is ``NONE``.
 - ``compose`` — the batch bodies, from a parts file the analyst writes: one
   ``## <fingerprint> | <title>`` section per part. It numbers the parts, demotes
   their headings under ``# Part N``, carries exactly one ``**Fingerprint**:`` per
@@ -24,6 +27,9 @@ digest is the analyst's whole input.
 Subcommands::
 
     python3 .claude/tools/trim_levers.py probe --fingerprint session-metrics:foo
+
+    # Many keys, one paged read: repeat --fingerprint, or one key per line.
+    python3 .claude/tools/trim_levers.py probe --fingerprints-file <scratchpad>/keys.txt
 
     # N batches in one call, each numbering its parts from 1.
     python3 .claude/tools/trim_levers.py compose --parts-file <scratchpad>/parts.md \\
@@ -62,6 +68,10 @@ PAGE_SIZE = 100
 
 # Runaway backstop on a cursor-following read.
 MAX_PAGES = 40
+
+# Fingerprints per ``or`` filter in one probe read, so a large audit's keys
+# never build one unbounded filter against Linear's query-complexity limit.
+PROBE_CHUNK = 25
 
 # A fingerprint is ``<domain-token>:<slug>``. The domain half must be **dotless**:
 # Linear linkifies a hostname-valid basename, which silently rewrites the stored
@@ -218,7 +228,16 @@ def _paged(api_key: str, issue_filter: dict, query: str = _PROBE_QUERY) -> list[
 
 
 def probe(api_key: str, project_id: str, fingerprint: str) -> list[dict]:
-    """Issues whose body carries ``fingerprint`` as a field, in **any** state.
+    """Issues whose body carries ``fingerprint`` as a field, in **any** state —
+    :func:`probe_many` for one key."""
+    return probe_many(api_key, project_id, [fingerprint])[fingerprint]
+
+
+def probe_many(
+    api_key: str, project_id: str, fingerprints: list[str]
+) -> dict[str, list[dict]]:
+    """Per fingerprint, the issues whose body carries it as a field, in **any**
+    state.
 
     Archived and completed issues are included deliberately: a lever that was
     rejected is closed *with its reason*, and dedup-against-resolved is what makes
@@ -230,16 +249,31 @@ def probe(api_key: str, project_id: str, fingerprint: str) -> list[dict]:
     for ``a:search-scope`` matches the issue carrying ``a:search-scope-axis``.
     So the body is fetched for the (few) candidates and matched line-anchored in
     this process.
+
+    An audit dedups every finding at once, so the keys share one ``or`` filter
+    per :data:`PROBE_CHUNK` keys — one paged read, not one per key — and each
+    candidate is matched against every key in this process.
     """
-    matcher = field_line_re("Fingerprint", fingerprint)
-    candidates = _paged(
-        api_key,
-        {
-            "project": {"id": {"eq": project_id}},
-            "description": {"contains": fingerprint},
-        },
-    )
-    return [c for c in candidates if matcher.search(c.get("description") or "")]
+    keys = list(dict.fromkeys(fingerprints))
+    candidates: dict[str, dict] = {}
+    for start in range(0, len(keys), PROBE_CHUNK):
+        chunk = keys[start : start + PROBE_CHUNK]
+        for node in _paged(
+            api_key,
+            {
+                "project": {"id": {"eq": project_id}},
+                "or": [{"description": {"contains": key}} for key in chunk],
+            },
+        ):
+            # Keyed by identifier: one issue can match keys in two chunks.
+            candidates[node.get("identifier")] = node
+    out: dict[str, list[dict]] = {}
+    for key in keys:
+        matcher = field_line_re("Fingerprint", key)
+        out[key] = [
+            c for c in candidates.values() if matcher.search(c.get("description") or "")
+        ]
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -555,8 +589,19 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("probe", help="find the issues carrying a fingerprint")
-    p.add_argument("--fingerprint", required=True)
+    p = sub.add_parser("probe", help="find the issues carrying each fingerprint")
+    p.add_argument(
+        "--fingerprint",
+        action="append",
+        default=[],
+        help="a key to probe; repeatable",
+    )
+    p.add_argument(
+        "--fingerprints-file",
+        metavar="FILE",
+        help="keys to probe, one per line (blank lines skipped) — an audit's "
+        "whole finding set in one call",
+    )
 
     comp = sub.add_parser("compose", help="batch bodies from a parts file")
     comp.add_argument(
@@ -591,6 +636,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
     args = parser.parse_args(argv[1:])
 
+    if args.cmd == "probe" and not (args.fingerprint or args.fingerprints_file):
+        parser.error("probe needs --fingerprint or --fingerprints-file")
     if args.cmd == "compose":
         if bool(args.out) == bool(args.groups_file):
             parser.error(
@@ -673,24 +720,38 @@ def run(argv: list[str]) -> int:
         print(f"trim-levers: parts {start}..{summary['next_part'] - 1}")
         return 0
 
-    fingerprint = validate_fingerprint(args.fingerprint)
-    matches = probe(
-        env_var("LINEAR_API_KEY"), env_var("LINEAR_PROJECT_ID"), fingerprint
+    raw = list(args.fingerprint)
+    if args.fingerprints_file:
+        raw += [
+            line
+            for line in _read_file(
+                args.fingerprints_file, "fingerprints file"
+            ).splitlines()
+            if line.strip()
+        ]
+    # Every key is validated before the first request, so one bad key never
+    # leaves a half-probed set.
+    fingerprints = list(dict.fromkeys(validate_fingerprint(k) for k in raw))
+    results = probe_many(
+        env_var("LINEAR_API_KEY"), env_var("LINEAR_PROJECT_ID"), fingerprints
     )
-    if not matches:
-        print(f"NONE {fingerprint}")
-        return 1
-    for m in matches:
-        # The type beside the name: a rejection is any `canceled`-type state
-        # (Canceled, Duplicate), which the name alone does not say.
-        state = m.get("state") or {}
-        milestone = (m.get("projectMilestone") or {}).get("name") or "-"
-        print(
-            f"MATCH {m.get('identifier')} [{state.get('name')}:{state.get('type')}] "
-            f"[{milestone}] "
-            f"{m.get('url')} | {m.get('title')}"
-        )
-    return 0
+    missing = 0
+    for fingerprint in fingerprints:
+        matches = results[fingerprint]
+        if not matches:
+            print(f"NONE {fingerprint}")
+            missing += 1
+        for m in matches:
+            # The type beside the name: a rejection is any `canceled`-type state
+            # (Canceled, Duplicate), which the name alone does not say.
+            state = m.get("state") or {}
+            milestone = (m.get("projectMilestone") or {}).get("name") or "-"
+            print(
+                f"MATCH {fingerprint} {m.get('identifier')} "
+                f"[{state.get('name')}:{state.get('type')}] [{milestone}] "
+                f"{m.get('url')} | {m.get('title')}"
+            )
+    return 1 if missing else 0
 
 
 def main() -> int:

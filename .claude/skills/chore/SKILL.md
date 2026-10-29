@@ -31,16 +31,23 @@ sessions: temporary worktree, no PR".
 1. **Validate the argument.** It is an issue number (`1843`) or tag
    (`eng-1843`); anything else, stop and ask.
 
-1. **Mark the issue In Progress and keep the response** — its echo is
-   the spec, so this is the read, not an extra one:
+1. **Mark the issue In Progress, then read the spec**, both zero-echo
+   — never through `save_issue`, which echoes the whole body:
 
-   ```txt
-   save_issue(id: "ENG-<n>", state: "In Progress")   # the Linear MCP
+   ```sh
+   python3 .claude/tools/board_batch.py state --id ENG-<n> \
+     --state 'In Progress'
    ```
 
-   Then `list_comments` once: acceptance criteria sometimes live in a
-   comment. Treat any `file:line` or "already landed" claim as a
-   snapshot of its filing day and verify it before acting.
+   ```sh
+   python3 .claude/tools/linear_patch.py read \
+     --out <scratchpad>/spec.md ENG-<n>
+   ```
+
+   Read that file once, whole. Then `list_comments` once: acceptance
+   criteria sometimes live in a comment. Treat any `file:line` or
+   "already landed" claim as a snapshot of its filing day and verify it
+   before acting.
 
 1. **Restate the job in three lines** before doing it: the
    deliverable, where it lands (outside the repo, or on the issue),
