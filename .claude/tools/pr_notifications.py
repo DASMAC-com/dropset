@@ -14,9 +14,19 @@ every thread whose PR is merged or closed, whatever its issue's Linear state:
 a merged PR whose issue sits In Review is settled code, and its threads are
 the bulk of the inbox. An open PR's threads are never selected by it.
 
-A dry run unless ``--apply``. Each selected thread is dismissed with its own
-``DELETE /notifications/threads/<id>`` — GitHub's "mark as done"; marking read
-would leave it in the inbox — and never with a mark-all.
+A dry run unless ``--apply``. Each selected thread is first unsubscribed by
+ignoring it (``PUT /notifications/threads/<id>/subscription`` with
+``ignored=true``), so a later bot comment on the settled PR cannot re-create
+it — a ``DELETE`` on the subscription would not hold, since a watcher of the
+repository still receives the thread's notifications — then dismissed with its
+own ``DELETE /notifications/threads/<id>`` — GitHub's "mark as done"; marking
+read would leave it in the inbox — and never with a mark-all. A thread cannot
+be ignored before GitHub creates it, and the PR is settled only at its merge or
+close, so that is the earliest point and ``--settled`` catches the rest.
+
+The queue watcher (``wait_for_checks.py --queue``) calls :func:`dismiss` in
+process on a ``merged`` verdict; upkeep's ``notifications`` step and the
+scheduler's close-out run ``dismiss --settled --apply``.
 
 The thread list is read through ``gh api`` on the repo-scoped notifications
 path with ``all=true`` (the default lists unread threads only), paged up to
@@ -24,12 +34,14 @@ path with ``all=true`` (the default lists unread threads only), paged up to
 all`` read, then up to ``MAX_LOOKUPS`` one-by-one reads for PRs outside it; a
 PR still unresolved is reported and left, never guessed settled.
 
-Prints JSON ``{mode, dry_run, threads, selected, prs, dismissed, failed: [id],
-unresolved: [pr], notice, summary}``: ``threads`` counts the PR threads
-listed, ``selected`` those chosen (``--full`` lists each as ``{id, pr,
-state}`` instead, with no ``prs`` or ``summary``), ``dismissed`` the deletes
-that succeeded (0 in a dry run), ``notice`` a list or lookup failure (``None``
-when clean) and ``summary`` the one report line. Exit 0 unless the thread list
+Prints JSON ``{mode, dry_run, threads, selected, prs, dismissed, unsubscribed,
+failed: [id], unsubscribe_failed: [id], error, unresolved: [pr], notice,
+summary}``: ``threads`` counts the PR threads listed, ``selected`` those chosen
+(``--full`` lists each as ``{id, pr, state}`` instead, with no ``prs`` or
+``summary``), ``dismissed`` / ``unsubscribed`` the calls that succeeded (0 in a
+dry run), ``failed`` / ``unsubscribe_failed`` the thread ids whose call failed,
+``error`` the first failed call's reason, ``notice`` a list or
+lookup failure (``None`` when clean) and ``summary`` the one report line. Exit 0 unless the thread list
 itself was unreadable (1).
 
 Stdlib only; a Python skill-tool under ``.claude/tools/`` — deliberately
@@ -55,7 +67,11 @@ MAX_PAGES = 10
 PR_LIST_LIMIT = 200
 MAX_LOOKUPS = 20
 SETTLED_STATES = ("MERGED", "CLOSED")
-PR_URL_RE = re.compile(rf"/repos/{REPO}/pulls/(\d+)$")
+
+
+def pr_url_re(repo: str) -> re.Pattern:
+    return re.compile(rf"/repos/{re.escape(repo)}/pulls/(\d+)$")
+
 
 # (gh args) -> (rc, stdout, stderr); `gh` itself is implied.
 Gh = Callable[[list[str]], "tuple[int, str, str]"]
@@ -85,12 +101,13 @@ def _json(gh: Gh, args: list[str]):
     return json.loads(out or "null")
 
 
-def list_threads(gh: Gh) -> list[tuple[str, int]]:
+def list_threads(gh: Gh, repo: str = REPO) -> list[tuple[str, int]]:
     """``[(thread id, PR number)]`` for every PR thread on the repo, read or
     not. Raises when a page is unreadable."""
+    url_re = pr_url_re(repo)
     threads: list[tuple[str, int]] = []
     for page in range(1, MAX_PAGES + 1):
-        path = f"/repos/{REPO}/notifications?all=true&per_page={PER_PAGE}&page={page}"
+        path = f"/repos/{repo}/notifications?all=true&per_page={PER_PAGE}&page={page}"
         raw = _json(gh, ["api", path])
         if raw is None:
             raw = []
@@ -101,7 +118,7 @@ def list_threads(gh: Gh) -> list[tuple[str, int]]:
             subject = n.get("subject") if isinstance(n, dict) else None
             if not isinstance(subject, dict):
                 continue
-            m = PR_URL_RE.search(subject.get("url") or "")
+            m = url_re.search(subject.get("url") or "")
             if m and n.get("id") is None:
                 continue
             if m:
@@ -111,7 +128,9 @@ def list_threads(gh: Gh) -> list[tuple[str, int]]:
     return threads
 
 
-def pr_states(gh: Gh, numbers: set[int]) -> tuple[dict[int, str], str | None]:
+def pr_states(
+    gh: Gh, numbers: set[int], repo: str = REPO
+) -> tuple[dict[int, str], str | None]:
     """``({number: state}, notice)`` for ``numbers``, as far as resolvable."""
     states: dict[int, str] = {}
     notice = None
@@ -119,7 +138,7 @@ def pr_states(gh: Gh, numbers: set[int]) -> tuple[dict[int, str], str | None]:
         listed = _json(
             gh,
             [
-                "pr", "list", "--repo", REPO, "--state", "all",
+                "pr", "list", "--repo", repo, "--state", "all",
                 "--json", "number,state", "--limit", str(PR_LIST_LIMIT),
             ],
         )  # fmt: skip
@@ -129,7 +148,7 @@ def pr_states(gh: Gh, numbers: set[int]) -> tuple[dict[int, str], str | None]:
         notice = f"PR list failed ({e})"
     for num in sorted(numbers - set(states))[:MAX_LOOKUPS]:
         try:
-            pr = _json(gh, ["pr", "view", str(num), "--repo", REPO, "--json", "state"])
+            pr = _json(gh, ["pr", "view", str(num), "--repo", repo, "--json", "state"])
         except (RuntimeError, ValueError):
             continue
         if isinstance(pr, dict) and pr.get("state"):
@@ -159,7 +178,9 @@ def select(
     return selected, sorted(unresolved)
 
 
-def dismiss(gh: Gh, prs: set[int] | None, apply: bool) -> tuple[int, dict]:
+def dismiss(
+    gh: Gh, prs: set[int] | None, apply: bool, repo: str = REPO
+) -> tuple[int, dict]:
     """The whole act; ``prs`` None is settled mode."""
     result: dict = {
         "mode": "settled" if prs is None else "pr",
@@ -167,28 +188,44 @@ def dismiss(gh: Gh, prs: set[int] | None, apply: bool) -> tuple[int, dict]:
         "threads": 0,
         "selected": [],
         "dismissed": 0,
+        "unsubscribed": 0,
         "failed": [],
+        "unsubscribe_failed": [],
+        "error": None,
         "unresolved": [],
         "notice": None,
     }
     try:
-        threads = list_threads(gh)
+        threads = list_threads(gh, repo)
     except (RuntimeError, ValueError, KeyError, TypeError) as e:
         result["notice"] = f"notification list failed ({e})"
         return 1, result
     result["threads"] = len(threads)
     states: dict[int, str] = {}
     if prs is None:
-        states, result["notice"] = pr_states(gh, {num for _, num in threads})
+        states, result["notice"] = pr_states(gh, {num for _, num in threads}, repo)
     result["selected"], result["unresolved"] = select(threads, states, prs)
     if not apply:
         return 0, result
     for t in result["selected"]:
-        rc, _, _ = gh(["api", "-X", "DELETE", f"/notifications/threads/{t['id']}"])
-        if rc == 0:
-            result["dismissed"] += 1
-        else:
-            result["failed"].append(t["id"])
+        # Ignore first: the subscription is what lets a later event on the PR
+        # re-create the thread once it is marked done. Not a DELETE on the
+        # subscription, which a watcher of the repository outlives.
+        thread = f"/notifications/threads/{t['id']}"
+        for args, count, failed in (
+            (
+                ["PUT", f"{thread}/subscription", "-F", "ignored=true"],
+                "unsubscribed",
+                "unsubscribe_failed",
+            ),
+            (["DELETE", thread], "dismissed", "failed"),
+        ):
+            rc, _, err = gh(["api", "-X", *args])
+            if rc == 0:
+                result[count] += 1
+            else:
+                result[failed].append(t["id"])
+                result["error"] = result["error"] or first_line(err) or f"exit {rc}"
     return 0, result
 
 
@@ -196,11 +233,15 @@ def summary(result: dict) -> str:
     """One report line, for a caller that prints rather than parses."""
     n = len(result["selected"])
     if result["dry_run"]:
-        line = f"would dismiss {n} notification(s)"
+        line = f"would unsubscribe and dismiss {n} notification(s)"
     else:
-        line = f"dismissed {result['dismissed']} notification(s)"
-        if result["failed"]:
-            line += f", {len(result['failed'])} failed"
+        line = (
+            f"dismissed {result['dismissed']} notification(s), "
+            f"unsubscribed {result['unsubscribed']}"
+        )
+        failed = len(result["failed"]) + len(result["unsubscribe_failed"])
+        if failed:
+            line += f", {failed} call(s) failed"
     if result["unresolved"]:
         line += f"; {len(result['unresolved'])} PR(s) unresolved, left"
     if result["notice"]:

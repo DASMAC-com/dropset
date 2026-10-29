@@ -41,9 +41,9 @@ refuses the whole pass, since every later step assumes it.
  6. prune the eligible worktrees and stray local branches, passed to
     ``prune_worktrees`` as ``--closed`` names: only a live session lock holds
     one, and the report names each one's commits ahead of ``origin/main``;
- 7. dismiss every settled PR's notifications (``pr_notifications dismiss
-    --settled``) — merged or closed, whatever its issue's state, one thread at
-    a time (never mark-all);
+ 7. unsubscribe from and dismiss every settled PR's notifications
+    (``pr_notifications dismiss --settled``) — merged or closed, whatever its
+    issue's state, one thread at a time (never mark-all);
  8. the open count of each parked milestone, with its direction since the
     previous stamp — the line the ``plan`` bootstrap says;
  9. convention-reference check, hook-wiring check, the skill-size watch line
@@ -138,7 +138,8 @@ TIMEOUT_GH = 60
 TIMEOUT_TOOL = 120
 # The transcript walk alone takes about a minute, before the Cost Explorer read.
 TIMEOUT_COST = 300
-# One DELETE per thread; the first armed pass meets a backlog of a hundred-odd.
+# Two calls per thread (ignore, mark done); the first armed pass meets a
+# backlog of a hundred-odd.
 TIMEOUT_DISMISS = 300
 # The digest's transcript walk plus its CI read: a cold job cache is one
 # `gh api` read per merge-queue run of the past week, a few hundred.
@@ -491,7 +492,10 @@ def step_notifications(ctx: Ctx) -> None:
     ctx.record(
         "notifications",
         result["summary"],
-        ok=rc == 0 and not result.get("failed") and not result.get("notice"),
+        ok=rc == 0
+        and not result.get("failed")
+        and not result.get("unsubscribe_failed")
+        and not result.get("notice"),
     )
 
 

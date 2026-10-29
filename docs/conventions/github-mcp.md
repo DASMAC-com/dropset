@@ -112,9 +112,11 @@ which drifted behind it twice:
 
 - **The post-merge notification dismissal** (`review-pr`) — done
   **inside** `wait_for_checks.py --queue`, which on a `merged` verdict
-  lists the notification threads and marks each one whose `subject.url`
-  ends in the PR's number as done (`DELETE /notifications/threads/{id}`),
-  in its own process, before it exits. That leaves no turn between the
+  calls `pr_notifications.py`'s `--pr` path in its own process, before
+  it exits: every thread on the PR is ignored
+  (`PUT /notifications/threads/{id}/subscription`, `ignored=true`) so a
+  later bot comment cannot re-create it, then marked done
+  (`DELETE /notifications/threads/{id}`). That leaves no turn between the
   merge and the dismissal, and no list payload in any transcript:
   `mcp__github__list_notifications` once returned **3.7k tokens in a
   single call** for that one id, because it embeds the complete
@@ -123,14 +125,19 @@ which drifted behind it twice:
   `notifications` field, and the settled sweep below is the fallback.
 
 - **The settled-PR notification sweep** (`pr_notifications.py`) — the
-  one rule every other caller applies: `dismiss --settled` marks done
+  one rule every other caller applies: `dismiss --settled` dismisses
   every thread whose PR is merged or closed, **whatever its issue's
   Linear state** (a merged PR whose issue sits In Review is settled
-  code), never an open PR's. `dismiss --pr N` instead marks done every
+  code), never an open PR's. `dismiss --pr N` instead dismisses every
   thread on the named PRs **whatever their state** — the caller vouches
-  they are settled. One `DELETE` per thread, never mark-all, dry run
-  unless `--apply`. The upkeep pass runs `--settled` armed every
-  morning, the planning close-out runs it, and `close_session.py` calls
+  they are settled. To dismiss a thread is two calls, never mark-all:
+  ignore it, then mark it done; dry run unless `--apply`. The ignore is
+  a `PUT` with `ignored=true`, never a `DELETE` on the subscription,
+  which GitHub documents as not holding for a watcher of the
+  repository. Dismissal waits for the PR to settle, so the merge or
+  close is the earliest point. The upkeep pass
+  runs `--settled` armed every morning, the planning close-out runs it,
+  and `close_session.py` calls
   the `--pr` path in-process for its branch's PRs (having already
   refused an open one) before removing the worktree.
 

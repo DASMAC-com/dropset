@@ -434,9 +434,23 @@ class PassTests(unittest.TestCase):
             ),
             "",
         )
+        ignore_only = (
+            0,
+            json.dumps(
+                {
+                    "summary": "dismissed 1 notification(s), unsubscribed 0, "
+                    "1 call(s) failed",
+                    "failed": [],
+                    "unsubscribe_failed": ["t"],
+                    "notice": None,
+                }
+            ),
+            "",
+        )
         for out, want in (
             (partial, "1 failed"),
             (notice, "PR list failed"),
+            (ignore_only, "1 call(s) failed"),
             ((1, "", "gh: not logged in"), "dismissal tool failed: gh: not logged in"),
         ):
             ctx = make_ctx(FakeRun(dismiss_out=out), dismiss=True)

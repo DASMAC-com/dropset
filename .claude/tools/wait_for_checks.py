@@ -148,14 +148,19 @@ or, under ``--queue``::
       "last": {"gql_state": "MERGED", "entry_state": null, …},
       "queue_runs": [{"run_id": "…", "name": "…", "conclusion": "…", …}],
       "failing_runs": [],
-      "notifications": {"dismissed": 1, "failed": 0, "error": null},
+      "notifications": {"dismissed": 1, "unsubscribed": 1, "failed": 0,
+                        "error": null},
+      "todays_merge_count": 4,
       "log_path": "/…/wait-for-queue-285.log"
     }
 
-``notifications`` is filled only on ``merged``: the watch marks the PR's GitHub
-notification threads done itself, so no session turn sits between the merge and
-the dismissal. Best-effort — a failure is reported there, never changes the
-conclusion. See :func:`dismiss_pr_notifications`.
+``notifications`` and ``todays_merge_count`` are filled only on ``merged``: the
+watch unsubscribes from and marks done the PR's GitHub notification threads
+itself, so no session turn sits between the merge and the dismissal, and counts
+the PRs merged since local midnight, this one included. Both are best-effort —
+a failure is reported there (``todays_merge_count: null``), never changes the
+conclusion. See :func:`dismiss_pr_notifications` and
+:func:`todays_merge_count`.
 
 ``dequeue`` is filled only on ``dequeued``, and is best-effort the same way::
 
@@ -195,6 +200,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
+
+import pr_notifications
 
 DEFAULT_REPO = "DASMAC-com/dropset"
 
@@ -838,41 +845,62 @@ def wait_queue(
     }
 
 
-# `all=true`: the default lists UNREAD threads only, and a thread read but never
-# marked done still sits in the inbox.
-NOTIFICATIONS_PATH = "/notifications?all=true&per_page=50"
-
-
 def dismiss_pr_notifications(pr: int, repo: str) -> dict:
-    """Mark every notification thread for ``repo``'s PR ``pr`` as done.
+    """Unsubscribe from and mark done every notification thread on ``repo``'s
+    PR ``pr``, through ``pr_notifications.dismiss`` (the one rule every caller
+    applies).
 
-    Called on a ``merged`` queue verdict. ``DELETE`` on a thread is GitHub's
-    "mark as done"; marking it read would leave it in the inbox. Never raises:
-    the merge already happened, so a failed dismissal is reported, and
-    the upkeep pass's finished-PR notification sweep is the fallback.
+    Called on a ``merged`` queue verdict. ``failed`` counts failed calls (a
+    thread whose ignore and mark-done both fail counts twice). Never raises:
+    the merge already happened, so a failure is reported, and the upkeep
+    pass's settled-PR sweep is the fallback.
     """
-    suffix = f"/repos/{repo}/pulls/{pr}"
+    rc, result = pr_notifications.dismiss(
+        pr_notifications.real_gh, {pr}, apply=True, repo=repo
+    )
+    failed = len(result["failed"]) + len(result["unsubscribe_failed"])
+    error = result["notice"] if rc else result["error"]
+    return {
+        "dismissed": result["dismissed"],
+        "unsubscribed": result["unsubscribed"],
+        "failed": failed,
+        "error": error,
+    }
+
+
+# Comfortably above any day's merges; `gh pr list` defaults to 30.
+MERGE_COUNT_LIMIT = 500
+
+
+def local_midnight(now: datetime | None = None) -> str:
+    """Today's local midnight as an ISO-8601 time with its UTC offset, the
+    form GitHub's ``merged:>=`` search qualifier takes. ``now`` defaults to
+    the machine's own zone, localized at midnight itself so a DST change later
+    in the day cannot shift the window; an aware ``now`` keeps its zone."""
+    if now is None:
+        midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        return midnight.astimezone().isoformat()
+    return now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+
+def todays_merge_count(pr: int, repo: str, now: datetime | None = None) -> int | None:
+    """PRs merged into ``repo`` since local midnight, ``pr`` included even if
+    the search index has not caught up with its merge. ``None`` when the
+    read fails — the merge already happened, so the count is best-effort.
+    """
     try:
-        threads = _gh_json(["api", NOTIFICATIONS_PATH], "notification list")
-    except WaitForChecksError as exc:
-        return {"dismissed": 0, "failed": 0, "error": str(exc)}
-    ids = [
-        str(t["id"])
-        for t in threads or []
-        if isinstance(t, dict)
-        and ((t.get("subject") or {}).get("url") or "").endswith(suffix)
-    ]
-    failed = 0
-    error = None
-    for tid in ids:
-        try:
-            code, _, err = _gh(["api", "-X", "DELETE", f"/notifications/threads/{tid}"])
-        except WaitForChecksError as exc:
-            code, err = 1, str(exc)
-        if code != 0:
-            failed += 1
-            error = err.strip() or f"exit {code}"
-    return {"dismissed": len(ids) - failed, "failed": failed, "error": error}
+        merged = _gh_json(
+            [
+                "pr", "list", "--repo", repo, "--state", "merged",
+                "--search", f"merged:>={local_midnight(now)}",
+                "--json", "number", "--limit", str(MERGE_COUNT_LIMIT),
+            ],
+            "merged PR list",
+        )  # fmt: skip
+        numbers = {int(p["number"]) for p in merged or []}
+    except (WaitForChecksError, KeyError, TypeError, ValueError):
+        return None
+    return len(numbers | {pr})
 
 
 # The newest queue removal event, and the head to compare the base against.
@@ -1806,6 +1834,7 @@ def run(argv: list[str]) -> int:
             verdict["notifications"] = dismiss_pr_notifications(
                 args.queue_pr, args.repo
             )
+            verdict["todays_merge_count"] = todays_merge_count(args.queue_pr, args.repo)
         elif verdict["conclusion"] == "dequeued":
             conflicting = False
             if not verdict.get("queue_runs"):

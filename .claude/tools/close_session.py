@@ -334,7 +334,7 @@ def dismiss_threads(run: Runner, prs: list[dict], result: dict) -> None:
         result["notes"].append(f"notifications: {result['notifications']}")
         return
     result["notifications"] = pr_notifications.summary(out)
-    if rc != 0 or out["failed"] or out["notice"]:
+    if rc != 0 or out["failed"] or out["unsubscribe_failed"] or out["notice"]:
         result["notes"].append(f"notifications: {result['notifications']}")
 
 

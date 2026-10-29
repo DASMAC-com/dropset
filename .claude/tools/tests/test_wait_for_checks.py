@@ -14,7 +14,9 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 import wait_for_checks as wfc
 
@@ -1031,9 +1033,16 @@ class QueueModeCliTests(unittest.TestCase):
             seen["cause_conflicting"] = conflicting
             return {"dequeue_reason": "merge_conflict", "error": None}
 
+        real_count = wfc.todays_merge_count
+
+        def count(pr, repo):
+            seen.setdefault("counted", []).append((pr, repo))
+            return 4
+
         wfc.wait_queue = stub
         wfc.dismiss_pr_notifications = dismiss
         wfc.dequeue_cause = cause
+        wfc.todays_merge_count = count
         try:
             with redirect_stdout(out):
                 code = wfc.run(["wait_for_checks.py", "--queue", "285", *extra])
@@ -1041,6 +1050,7 @@ class QueueModeCliTests(unittest.TestCase):
             wfc.wait_queue = real
             wfc.dismiss_pr_notifications = real_dismiss
             wfc.dequeue_cause = real_cause
+            wfc.todays_merge_count = real_count
         seen["verdict"] = json.loads(out.getvalue())
         return code, seen
 
@@ -1049,12 +1059,19 @@ class QueueModeCliTests(unittest.TestCase):
         self.assertEqual(seen["dismissed"], [(285, wfc.DEFAULT_REPO)])
         self.assertEqual(seen["verdict"]["notifications"]["dismissed"], 1)
 
-    def test_no_other_conclusion_dismisses(self):
+    def test_a_merge_reports_todays_merge_count(self):
+        _, seen = self._queue_mode("merged")
+        self.assertEqual(seen["counted"], [(285, wfc.DEFAULT_REPO)])
+        self.assertEqual(seen["verdict"]["todays_merge_count"], 4)
+
+    def test_no_other_conclusion_dismisses_or_counts(self):
         for conclusion in ("dequeued", "closed", "not_queued", "timeout"):
             with self.subTest(conclusion=conclusion):
                 _, seen = self._queue_mode(conclusion)
                 self.assertNotIn("dismissed", seen)
+                self.assertNotIn("counted", seen)
                 self.assertNotIn("notifications", seen["verdict"])
+                self.assertNotIn("todays_merge_count", seen["verdict"])
 
     def test_only_a_dequeue_reads_its_cause(self):
         _, seen = self._queue_mode("dequeued")
@@ -1166,18 +1183,26 @@ class DismissNotificationsTests(unittest.TestCase):
                 return delete_code, "", "HTTP 404" if delete_code else ""
             return list_reply
 
-        real = wfc._gh
-        wfc._gh = fake
-        self.addCleanup(setattr, wfc, "_gh", real)
-        return wfc.dismiss_pr_notifications(285, REPO), calls
+        # The shared tool owns the gh calls; the watcher's own `_gh` is unused.
+        with mock.patch.object(wfc.pr_notifications, "real_gh", fake):
+            return wfc.dismiss_pr_notifications(285, REPO), calls
 
-    def test_only_this_prs_threads_are_marked_done(self):
+    def test_only_this_prs_threads_are_unsubscribed_and_marked_done(self):
         result, calls = self._run((0, json.dumps(self.THREADS), ""))
-        deleted = [c[-1] for c in calls if c[:2] == ["api", "-X"]]
+        self.assertIn(f"/repos/{REPO}/notifications?", calls[0][1])
+        writes = [c[2:4] for c in calls if c[:2] == ["api", "-X"]]
         self.assertEqual(
-            deleted, ["/notifications/threads/11", "/notifications/threads/14"]
+            writes,
+            [
+                ["PUT", "/notifications/threads/11/subscription"],
+                ["DELETE", "/notifications/threads/11"],
+                ["PUT", "/notifications/threads/14/subscription"],
+                ["DELETE", "/notifications/threads/14"],
+            ],
         )
-        self.assertEqual(result, {"dismissed": 2, "failed": 0, "error": None})
+        self.assertEqual(
+            result, {"dismissed": 2, "unsubscribed": 2, "failed": 0, "error": None}
+        )
 
     def test_a_failed_list_is_reported_not_raised(self):
         result, calls = self._run((1, "", "HTTP 401"))
@@ -1187,7 +1212,60 @@ class DismissNotificationsTests(unittest.TestCase):
 
     def test_a_failed_delete_is_counted(self):
         result, _ = self._run((0, json.dumps(self.THREADS), ""), delete_code=1)
-        self.assertEqual(result, {"dismissed": 0, "failed": 2, "error": "HTTP 404"})
+        self.assertEqual(
+            result,
+            {"dismissed": 0, "unsubscribed": 0, "failed": 4, "error": "HTTP 404"},
+        )
+
+
+class TodaysMergeCountTests(unittest.TestCase):
+    # 09:30 in UTC+10, so local midnight is 14:00 UTC the day before.
+    NOW = datetime(2026, 10, 29, 9, 30, tzinfo=timezone(timedelta(hours=10)))
+
+    def _run(self, reply):
+        calls = []
+
+        def fake(args):
+            calls.append(args)
+            return reply
+
+        real = wfc._gh
+        wfc._gh = fake
+        self.addCleanup(setattr, wfc, "_gh", real)
+        return wfc.todays_merge_count(285, REPO, now=self.NOW), calls
+
+    def test_the_window_opens_at_local_midnight_with_its_offset(self):
+        self.assertEqual(wfc.local_midnight(self.NOW), "2026-10-29T00:00:00+10:00")
+        _, calls = self._run((0, "[]", ""))
+        args = calls[0]
+        self.assertEqual(
+            args[args.index("--search") + 1], "merged:>=2026-10-29T00:00:00+10:00"
+        )
+        self.assertEqual(args[args.index("--state") + 1], "merged")
+        # `gh pr list` stops at 30 by default; a busy day must not.
+        self.assertGreater(int(args[args.index("--limit") + 1]), 30)
+
+    def test_the_just_merged_pr_counts_once_whether_indexed_or_not(self):
+        listed = json.dumps([{"number": 280}, {"number": 285}])
+        self.assertEqual(self._run((0, listed, ""))[0], 2)
+        self.assertEqual(self._run((0, json.dumps([{"number": 280}]), ""))[0], 2)
+
+    def test_a_failed_read_is_none_not_raised(self):
+        self.assertIsNone(self._run((1, "", "HTTP 502"))[0])
+        self.assertIsNone(self._run((0, "{", ""))[0])
+
+    def test_a_wrong_shaped_reply_is_none_not_raised(self):
+        for body in ('[{"num": 1}]', "[1]", '[{"number": "x"}]'):
+            with self.subTest(body=body):
+                self.assertIsNone(self._run((0, body, ""))[0])
+
+    def test_the_default_midnight_takes_the_zones_own_offset_for_midnight(self):
+        # Naive local midnight, localized afterwards: on a DST-change day the
+        # offset is midnight's, not the current hour's.
+        got = datetime.fromisoformat(wfc.local_midnight())
+        expected = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        self.assertEqual(got, expected.astimezone())
+        self.assertEqual(got.utcoffset(), expected.astimezone().utcoffset())
 
 
 class DequeueCauseTests(unittest.TestCase):

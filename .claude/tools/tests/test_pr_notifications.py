@@ -46,6 +46,7 @@ class FakeGh:
         list_fails=False,
         pr_list_fails=False,
         delete_fails=(),
+        unsubscribe_fails=(),
     ):
         self.pages = [THREADS] if pages is None else pages
         self.listed = listed
@@ -53,6 +54,7 @@ class FakeGh:
         self.list_fails = list_fails
         self.pr_list_fails = pr_list_fails
         self.delete_fails = set(delete_fails)
+        self.unsubscribe_fails = set(unsubscribe_fails)
         self.calls = []
 
     def __call__(self, args):
@@ -73,12 +75,31 @@ class FakeGh:
                 return 0, json.dumps({"state": self.views[num]}), ""
             return 1, "", "no pull requests found"
         if args[:2] == ["api", "-X"]:
-            tid = args[-1].rsplit("/", 1)[1]
+            method, path = args[2], args[3]
+            if path.endswith("/subscription"):
+                # Only an ignore holds against a repository watch.
+                assert method == "PUT" and args[4:] == ["-F", "ignored=true"], args
+                tid = path.split("/")[-2]
+                fails = tid in self.unsubscribe_fails
+                return (1, "", "HTTP 403") if fails else (0, "", "")
+            assert method == "DELETE", args
+            tid = path.rsplit("/", 1)[1]
             return (1, "", "HTTP 500") if tid in self.delete_fails else (0, "", "")
         raise AssertionError(f"unexpected gh call {args}")
 
+    def _writes(self):
+        return [a[3] for a in self.calls if a[:2] == ["api", "-X"]]
+
     def deletes(self):
-        return [a[-1].rsplit("/", 1)[1] for a in self.calls if a[:2] == ["api", "-X"]]
+        """Threads marked done."""
+        return [
+            p.rsplit("/", 1)[1]
+            for p in self._writes()
+            if not p.endswith("/subscription")
+        ]
+
+    def unsubscribes(self):
+        return [p.split("/")[-2] for p in self._writes() if p.endswith("/subscription")]
 
 
 class SettledTests(unittest.TestCase):
@@ -89,7 +110,9 @@ class SettledTests(unittest.TestCase):
         # Only PR threads on this repository count, and the open PR's never.
         self.assertEqual(out["threads"], 5)
         self.assertEqual(sorted(gh.deletes()), ["c1", "m1", "m2", "x1"])
+        self.assertEqual(sorted(gh.unsubscribes()), ["c1", "m1", "m2", "x1"])
         self.assertEqual(out["dismissed"], 4)
+        self.assertEqual(out["unsubscribed"], 4)
         self.assertEqual(out["unresolved"], [])
 
     def test_an_open_pr_is_never_selected(self):
@@ -139,20 +162,24 @@ class ApplyTests(unittest.TestCase):
         gh = FakeGh()
         rc, out = dismiss(gh, None, apply=False)
         self.assertEqual(rc, 0)
-        self.assertEqual(gh.deletes(), [])
+        self.assertEqual(gh._writes(), [])
         self.assertTrue(out["dry_run"])
         self.assertEqual(
-            summary(out), "would dismiss 3 notification(s); 1 PR(s) unresolved, left"
+            summary(out),
+            "would unsubscribe and dismiss 3 notification(s); 1 PR(s) unresolved, left",
         )
 
-    def test_one_delete_per_thread_never_a_mark_all(self):
+    def test_each_thread_is_ignored_then_marked_done_never_a_mark_all(self):
         gh = FakeGh()
         dismiss(gh, {663}, apply=True)
         writes = [a for a in gh.calls if a[:2] == ["api", "-X"]]
+        ignore = ["-F", "ignored=true"]
         self.assertEqual(
             writes,
             [
+                ["api", "-X", "PUT", "/notifications/threads/m1/subscription", *ignore],
                 ["api", "-X", "DELETE", "/notifications/threads/m1"],
+                ["api", "-X", "PUT", "/notifications/threads/m2/subscription", *ignore],
                 ["api", "-X", "DELETE", "/notifications/threads/m2"],
             ],
         )
@@ -161,8 +188,27 @@ class ApplyTests(unittest.TestCase):
         gh = FakeGh(delete_fails=["m2"])
         _, out = dismiss(gh, {663}, apply=True)
         self.assertEqual(out["dismissed"], 1)
+        self.assertEqual(out["unsubscribed"], 2)
         self.assertEqual(out["failed"], ["m2"])
-        self.assertEqual(summary(out), "dismissed 1 notification(s), 1 failed")
+        self.assertEqual(out["error"], "HTTP 500")
+        self.assertEqual(
+            summary(out),
+            "dismissed 1 notification(s), unsubscribed 2, 1 call(s) failed",
+        )
+
+    def test_a_failed_unsubscribe_still_marks_the_thread_done(self):
+        gh = FakeGh(unsubscribe_fails=["m1"])
+        _, out = dismiss(gh, {663}, apply=True)
+        self.assertEqual(out["dismissed"], 2)
+        self.assertEqual(out["unsubscribed"], 1)
+        self.assertEqual(out["unsubscribe_failed"], ["m1"])
+        self.assertEqual(out["error"], "HTTP 403")
+
+    def test_another_repo_is_scoped_by_its_own_name(self):
+        gh = FakeGh()  # r1 is the a/b thread
+        _, out = dismiss(gh, {663}, apply=False, repo="a/b")
+        self.assertEqual([t["id"] for t in out["selected"]], ["r1"])
+        self.assertIn("/repos/a/b/notifications?", gh.calls[0][1])
 
     def test_an_unreadable_list_exits_one_and_dismisses_nothing(self):
         gh = FakeGh(list_fails=True)
@@ -246,7 +292,8 @@ class CliTests(unittest.TestCase):
             seen.append((prs, apply))
             return 0, {
                 "mode": "settled", "dry_run": not apply, "threads": 0,
-                "selected": [], "dismissed": 0, "failed": [],
+                "selected": [], "dismissed": 0, "unsubscribed": 0,
+                "failed": [], "unsubscribe_failed": [], "error": None,
                 "unresolved": [], "notice": None,
             }  # fmt: skip
 
@@ -259,7 +306,10 @@ class CliTests(unittest.TestCase):
                 ):
                     self.assertEqual(pr_notifications.main(), 0)
         self.assertEqual(seen, [(None, True), ({7}, False)])
-        self.assertIn('"summary": "would dismiss 0 notification(s)"', out.getvalue())
+        self.assertIn(
+            '"summary": "would unsubscribe and dismiss 0 notification(s)"',
+            out.getvalue(),
+        )
 
 
 class OutputTests(unittest.TestCase):
@@ -275,7 +325,9 @@ class OutputTests(unittest.TestCase):
         short = compact(out)
         self.assertEqual(short["selected"], 2)
         self.assertEqual(short["prs"], [663])
-        self.assertEqual(short["summary"], "would dismiss 2 notification(s)")
+        self.assertEqual(
+            short["summary"], "would unsubscribe and dismiss 2 notification(s)"
+        )
 
 
 if __name__ == "__main__":

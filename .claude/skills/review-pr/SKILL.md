@@ -1699,6 +1699,9 @@ migrations or generation inputs, and whether it spans crates.
      "queue_runs": [{"run_id": "…", "name": "…", "conclusion": "…"}],
      "failing_runs": [],
      "enqueued_at": "…",
+     // on merged only:
+     "notifications": {"dismissed": 1, "unsubscribed": 1, "failed": 0, …},
+     "todays_merge_count": 4,
      // on dequeued / conflicting only:
      "dequeue": {"dequeue_reason": "merge_conflict", "base_gained": […], …},
      "log_path": "…/wait-for-queue-<number>.log"
@@ -1708,8 +1711,10 @@ migrations or generation inputs, and whether it spans crates.
    It polls the GraphQL `mergeQueueEntry` probe, the
    `gh pr view --json state,mergedAt` read, and this PR's
    `gh-readonly-queue/…/pr-<number>-…` runs each minute, stays silent
-   while queued, and exits 0 only on `merged` — having first marked the
-   PR's notification threads done (`notifications` in the verdict). It
+   while queued, and exits 0 only on `merged` — having first unsubscribed
+   from and marked done the PR's notification threads (`notifications`)
+   and counted the PRs merged since local midnight
+   (`todays_merge_count`). It
    owns the reasoning
    this step used to spell out
    (`docs/conventions/github-mcp.md` → "The merge-queue handoff"):
@@ -1810,13 +1815,18 @@ migrations or generation inputs, and whether it spans crates.
    `AskUserQuestion` is a deferral the user chose; an unasked one is a
    dropped step.
 
+   - [ ] **Say today's merge count** — print exactly
+     `Today's merge count is now N.`, N the verdict's
+     `todays_merge_count` (this PR included). On `null` the read failed:
+     say so in one line instead; never count by hand.
+
    - [ ] **The PR's notification is already dismissed** — the watch
-     marked its threads done on `merged`, before it exited, so no turn
-     is spent on it. Read the verdict's `notifications`: `error: null`
-     needs nothing (`dismissed: 0` just means already cleared). On an
-     error, say so in the report and leave it; the upkeep pass's
-     finished-PR notification sweep is the fallback. Never dismiss by hand or
-     `mark_all_notifications_read`.
+     unsubscribed from and marked done its threads on `merged`, before
+     it exited, so no turn is spent on it. Read the verdict's
+     `notifications`: `error: null` needs nothing (`dismissed: 0` just
+     means already cleared). On an error, say so in the report and
+     leave it; the upkeep pass's settled-PR notification sweep is the
+     fallback. Never dismiss by hand or `mark_all_notifications_read`.
 
    - [ ] **Reclaim the worktree's disk** — the multi-GB `target/` and
      `node_modules` are dead weight until the worktree is pruned:
