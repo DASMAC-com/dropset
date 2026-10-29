@@ -433,7 +433,7 @@ compression task through the normal meta filing flow.
 The memory index lives under the home directory, which CI does not
 have, so its cap runs in the **local tier**: `.claude/tools/memory_audit.py`
 reports the whole index past **12,000 bytes** and any line past 160
-characters; the upkeep pass runs it, and `plan`'s bootstrap gate acts on
+characters; the upkeep pass runs it, and the launcher's one ask acts on
 what it reports. **An index
 line is a pointer** — name plus a few-word hook, one line, never
 content; the content lives in the memory file it points at.

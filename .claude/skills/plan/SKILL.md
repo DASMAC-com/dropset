@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a scheduler session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), runs the audit heartbeat (file an audit issue or decline with a recorded reason), and dispatches the curator to walk the operator through the Backlog review inbox. Then keeps the board coherent: Todo dispatched as standing authorization, blocking edges curated by a human, file collisions reconciled by reading, the inbox kept stocked with staged specs, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
+description: Run a scheduler session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), runs the audit heartbeat (file an audit issue or decline with a recorded reason), and messages the launcher once the state of play is written, so it starts the curator on the Backlog review inbox. Then keeps the board coherent: Todo dispatched as standing authorization, blocking edges curated by a human, file collisions reconciled by reading, the inbox kept stocked with staged specs, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
 user-invocable: true
 model: fable
 ---
@@ -69,14 +69,14 @@ The **base repo**, never a worktree. Start or resume with a bare
 `plan-<day-of-month>` on the advisor tier's model, with `/plan`
 as a new session's prompt, on Bedrock; `plan anthropic` is the
 seat override, and a reopen keeps the substrate its session
-recorded. There is no in-session model check: the launcher pins
+recorded. There is no in-session model check: the `plan` helper pins
 the model and refuses an unresolved tier. Verbs:
 `docs/conventions/local-integrations.md`.
 
 ## Cycling
 
 The hub's prefix only grows, so the session **cycles**: close
-out, exit, and the `plan` launcher relaunches it in the same tab
+out, exit, and the `plan` helper relaunches it in the same tab
 under a fresh id and the same name. Compaction is a manual
 operator lever, never this mechanism.
 
@@ -90,10 +90,8 @@ operator lever, never this mechanism.
   ```
 
   `due` fires on dollars (250k at the advisor read rate; tokens
-  if unpriced). On `"due": true`, and no
-  fold sub-agent still running (its notification would be lost),
-  ask once: cycle now? — yes recommended. On no, run
-  `plan_cycle.py snooze`.
+  if unpriced). On `"due": true`, ask once: cycle now? — yes
+  recommended. On no, run `plan_cycle.py snooze`.
 
 - **The procedure.** A one-line FYI to every live worker with an
   unanswered consult — planning is cycling, re-send anything
@@ -105,9 +103,9 @@ operator lever, never this mechanism.
   `Bootstrap stamp: <YYYY-MM-DD>` line to the document, and every
   close-out rewrite keeps it. A bootstrap finding today's date
   there is **warm**: read `rulings.md` and the document, run
-  `ListAgents` — and skip the once-a-day duties (the lever
-  fold, the audit heartbeat, the parked counts, the upkeep
-  report, step 8). No stamp
+  `ListAgents` — and skip the once-a-day duties (the fold line,
+  the audit heartbeat, the parked counts, the upkeep report, the
+  launcher's message, step 8). No stamp
   means a full bootstrap.
 
 ## Steps
@@ -133,11 +131,8 @@ handoff — and, warm or full:
 - **Verify overnight landings with `git log`** and the In Review
   listing, never the Done column; release chains as blockers land.
 
-On a full bootstrap, the landing check runs after the lever-fold
-spawn below.
-
 **Say the upkeep report's highlights, with the parked counts.**
-The `plan` launcher ran `.claude/tools/upkeep.py` before this
+The pre-launch ran `.claude/tools/upkeep.py` before this
 session started and spliced its report under the document's
 machine-written `Upkeep report` heading, so the fetch above holds
 it; never re-run the pass here. Say its `parked` line — each
@@ -149,50 +144,28 @@ dangling reference or file near its size cap. Say the
 `fleet-cost` day lines and the `allowance` per-day figure too,
 any flagged day first. A run stamp
 older than today means the pass did not reach the document —
-say so. Its **destructive items**
-are operator-only and ride step 8's `AskUserQuestion`:
+say so. Its **destructive items** (the prune, the transcript
+purge, allowlist cruft, refresh candidates, stale memories) are
+the launcher's one ask (ruling 16) — never asked here.
 
-- **allowlist cruft** — remove the approved entries from
-  `<base>/.claude/settings.local.json` with the Edit tool, then
-  an exit-code-only parse check;
-- **permission-refresh candidates**, when listed —
-  `allowlist.py add` per approved rule;
-- **stale memories**, when the `memory` line lists any — delete
-  each approved memory file **and** its `MEMORY.md` pointer;
-- **the transcript-purge apply** — `/purge-conversations`, this
-  yes being its approval.
-
-**Spawn the fold analyst — every full bootstrap, unasked**, right
-after saying the parked counts, unless the report's `digest` line
-wrote no digest. Invoking `plan` is the authorization (ruling 11).
-One fresh background `general-purpose` `Agent` — never a fork,
-on the executor tier (spelled `opus` in the Agent call; on
-`plan anthropic`, Claude Code's own Opus): a fold is carried-out
-work, not a planning judgment — whose brief is
-pointers, not content: the
-canonical brief from
+**Say the fold line.** The lever fold runs in the launcher's own
+tab (`launch`), alongside this bootstrap, never here:
 
 ```sh
-python3 .claude/tools/lens_preamble.py --out <scratchpad>/fold.md \
-  --no-facts
+python3 .claude/tools/upkeep.py fold-today
 ```
 
-then: this is a fold, not a review — read-only toward the repo,
-but its Linear writes are the task; run `/trim-context` on the
-digest at `<path from the digest line>`; its batches land in the
-inbox (Backlog, no milestone), never parked; at most 40 turns;
-the final message is the report, at most thirty lines. Add one
-paragraph only for what the operator said that the document does
-not hold. The fold's reads stay in its context.
+Say its line verbatim — `fold ran at HH:MM, N batches` or
+`no fold today`. The fold runs alongside this bootstrap, so
+`no fold today` with a live `launch-<day>` means not yet stamped,
+likely still folding: say that, not "no fold". The new batches
+reach the inbox, where the curator reviews them.
 
-**The bootstrap runs unattended until its one ask.** After the
-spawn, do every duty that asks nothing — `fleet resume`, the
-overnight landing check, the board read, the Queue's honesty —
-then end the turn (with no spawn, go straight on). The
-completion notification resumes it: say the report, record it
-under `In-session notes`, finish the board, and stop at step 8's
+**The bootstrap runs unattended until its one ask.** Do every duty
+that asks nothing — `fleet resume`, the overnight landing check,
+the board read, the Queue's honesty — then stop at step 8's
 consolidated ask. A Discuss item or duty needing the operator's
-word joins that ask. Never fold levers by hand while a sub-agent can.
+word joins that ask.
 
 Then read the board. **Which tier an issue sits in is the whole
 scoping signal:**
@@ -228,18 +201,17 @@ Resolved means addressed-and-how, never approval. Never fold an
 In Progress spec; a fold into an approved (Todo) body moves it
 back to Backlog, priority and edges unchanged.
 
-**The curator reviews the inbox; the scheduler dispatches it.**
-After step 8's answer and the bootstrap's write-back of the state
-of play, when the pool (the un-parked Backlog) is non-empty,
-dispatch `curate` through step 5's tool on the substrate that ask
-named (Bedrock by default). Its
-kick-off is this fixed text, never a paraphrase: "The state of
-play is written. Rank the pool against it and walk the operator
-through it in fours; message me each Todo move and each edge or
-priority you place." On an empty pool dispatch nothing; the
-first filer's message that day triggers it. The scheduler still
-keeps the inbox stocked: when it runs thin, stage more specs
-before anything else.
+**The curator reviews the inbox; the launcher dispatches it.**
+After step 8's answer (or straight away when it has nothing to
+ask) and the bootstrap's write-back of the state of play, run
+`ListAgents` and message the live `launch-<day>` exactly
+`state of play written`, once — its cue to dispatch the curator
+with the fold's hand-off. No launcher live: say
+`launcher: not live`, tell the operator to type `launch` in a new
+tab, and dispatch no curator from here. Todo is
+dispatched as ever, by step 5 after the Next read below. The scheduler
+still keeps the inbox stocked: when it runs thin, stage more
+specs before anything else.
 
 **Then read Next as the operator sees it** — their named Linear
 view, filtered by Linear rather than reconstructed:
@@ -488,7 +460,7 @@ held verb rides the next dispatch, when a session hands off.
 "The verb/substrate title token"): `[Chore/Bedrock]` on 1234 is
 `chore bedrock 1234`, no token is `task 1234`. **Refuse `task <n>`**
 on a token naming another verb, and dispatch nothing for
-`[Operator]` — the launcher's title guard refuses each of these too.
+`[Operator]` — the session helpers' title guard refuses each of these too.
 Until the title sweep, judge a token-less legacy issue by its body,
 and fix its title before dispatching anything but `task <n>`.
 File operator-attended agent work (a key file, a local deploy)
@@ -591,9 +563,8 @@ the decision context does not — the analyst rejects those.
 
 **8. Drain the legacy findings, and ask once.** **At bootstrap,
 say each count, never a listing.** **The consolidated ask**
-carries only what needs the operator's word — the curator's
-substrate, the `Audit findings` kill list, the holds' edges,
-Discuss items and the upkeep's destructive items.
+carries only what needs the operator's word — the
+`Audit findings` kill list, the holds' edges and Discuss items.
 
 **`Audit findings` is a legacy pool, drained one finding at a
 time**: each bootstrap promotes what it holds, or lists it for a

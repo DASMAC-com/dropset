@@ -1697,8 +1697,8 @@ worktree cannot be named without a name. `plan` remains a
 **base-repo** verb — it touches the board, not a branch.
 
 **`housekeeping` is retired — deleted, not aliased.** Its upkeep is
-`upkeep.py`, which the `plan` launcher runs before the session starts,
-and its approvals ride `plan`'s bootstrap gate. An alias would keep a
+`upkeep.py`, which the `plan` pre-launch runs before the session starts,
+and its approvals ride the launcher's one ask. An alias would keep a
 name whose meaning changed from a session with a closing gate to a
 script. The 30-minute `/loop` cadence went with it and has no
 replacement; the daily pass and `upkeep.py prune --apply` by hand
@@ -2675,9 +2675,9 @@ a terminal closed outright, is covered by the next morning's digest.
   as its first act; a scheduler missing beside an open launcher is
   named for the operator to type. The report
   lands under the Planning document's upkeep heading, which the
-  bootstrap reads; the destructive items (allowlist cruft,
-  permission-refresh additions, the purge apply) wait for the
-  planning tab's one consolidated `AskUserQuestion`. **Every later
+  bootstrap reads; the destructive items (the prune, allowlist
+  cruft, permission-refresh additions, stale memories, the purge
+  apply) wait for the launcher tab's one `AskUserQuestion`. **Every later
   `plan` that day is warm** — the one typed into the scheduler's tab
   first — and runs the scheduler in the tab it was typed in, with no
   pass and no launcher. The marker is what stops a pass that failed
@@ -2783,7 +2783,18 @@ a terminal closed outright, is covered by the next morning's digest.
   it, as `plan`'s does. It runs no AWS gate and no upkeep pass (the
   pre-launch ran both). Its tab carries `ds_role=launch`:
   `iterm-reorder.py` rests it left of the curator's, and
-  `session_dispatch.py` opens worker tabs left of it.
+  `session_dispatch.py` opens worker tabs left of it. What the session
+  does is the `launch` skill's: the day's lever fold in this visible
+  tab (its stamp, `.claude/.fold-last-run.json`, written by
+  `upkeep.py fold-stamp` and said by the scheduler through
+  `upkeep.py fold-today`), the curator's dispatch on the scheduler's
+  `state of play written` message with the fold's hand-off as the
+  curator's first message, and the morning's one destructive ask —
+  `upkeep.py prune` naming each finished worktree and stray branch
+  with its commits ahead of main, the transcript purge, and the
+  upkeep report's other destructive items (allowlist cruft,
+  permission-refresh candidates, stale memories) — each applied only
+  where the operator ticks it.
 
 - **`architect <n>`** — start **or resume** an **architect** session on
   the design thread governed by issue `<n>`, its only argument: the CEO

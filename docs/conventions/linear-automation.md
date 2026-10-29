@@ -70,12 +70,15 @@ through the zero-echo append, never filed as a sibling, so the Backlog
 does not accumulate similar trim tasks. The rest file as **small
 themed** propose-only `Claude:` batches — roughly 4–5 parts each, one
 `**Fingerprint**:` per part, composed by `trim_levers.py compose` —
-**straight into Backlog with no milestone**: the analyst is the
-scheduler's own sub-agent (or a by-hand run of the same fold)
-and its output is already folded, so
-the park-then-promote hop executor filings take does not apply. The
-new batches are reviewed from the curator's pool like any other
-un-parked Backlog task. A candidate
+**straight into Backlog with no milestone**: the fold runs in the
+**launcher**'s own tab each morning (`.claude/skills/launch/SKILL.md`,
+or a by-hand run of the same method) and its output is already
+folded, so the park-then-promote hop executor filings take does not
+apply. The launcher hands the new batches, with the kill and merge
+candidates it gathered, to the curator as its first message, and
+writes a fold stamp the scheduler's bootstrap says
+(`upkeep.py fold-today`); the batches are reviewed from the
+curator's pool like any other un-parked Backlog task. A candidate
 rejected on judgment is filed `Canceled` with its reason, which
 suppresses it permanently. The coherence floor still governs audit
 findings and product filings; the meta-work fold's **no-size-bound

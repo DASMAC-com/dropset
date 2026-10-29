@@ -1,6 +1,6 @@
 ---
 name: purge-conversations
-description: Reclaim disk from Claude Code's local state — old session transcripts (`~/.claude/projects`), the file-history store (`~/.claude/file-history`), and the CLI cache (`~/Library/Caches/claude-cli-nodejs`) — under an age rule with open-PR protection. The deterministic filesystem logic lives in the committed `.claude/tools/prune_conversations.py` (dry-run by default, hard-delete only on `--apply`); this skill drives the GitHub PR lookups over the MCP, hands the tool the worktree branches with an open PR, shows the grouped dry-run manifest, gets one approval via AskUserQuestion, then applies and reports bytes freed. Offered at `plan`'s bootstrap gate; nothing is deleted without an explicit yes.
+description: Reclaim disk from Claude Code's local state — old session transcripts (`~/.claude/projects`), the file-history store (`~/.claude/file-history`), and the CLI cache (`~/Library/Caches/claude-cli-nodejs`) — under an age rule with open-PR protection. The deterministic filesystem logic lives in the committed `.claude/tools/prune_conversations.py` (dry-run by default, hard-delete only on `--apply`); this skill drives the GitHub PR lookups over the MCP, hands the tool the worktree branches with an open PR, shows the grouped dry-run manifest, gets one approval via AskUserQuestion, then applies and reports bytes freed. Offered in the launcher's one prune ask; nothing is deleted without an explicit yes.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -153,8 +153,8 @@ invariant".
   `$CLAUDE_CONFIG_DIR` / `$HOME` (the tool reuses
   `claude_home()`); the dropset root is discovered at
   runtime from `git worktree list`; the slug is `slugify()`.
-- **`plan` offers it** at its bootstrap's `AskUserQuestion`,
-  from the upkeep pass's dry-run line — never an
+- **The launcher offers it** in its one prune ask (`launch`
+  step 3), running steps 1–3 here first — never an
   unattended auto-step; nothing deletes without a yes.
 
 ## Safety invariant
