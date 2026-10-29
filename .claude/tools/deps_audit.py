@@ -298,7 +298,8 @@ def _findings_of(out: str, key: str) -> dict:
     error = data.get("error")
     if error is not None or not isinstance(data.get(key), dict):
         detail = error.get("message") if isinstance(error, dict) else error
-        raise ValueError(f"no {key!r} in the audit's JSON: {first_line(str(detail))}")
+        reason = f": {first_line(str(detail))}" if detail is not None else ""
+        raise ValueError(f"no {key!r} in the audit's JSON{reason}")
     return data
 
 
@@ -386,7 +387,9 @@ def summarize(
         "findings": live,
         "ids": ids,
         "ignored": sorted(i for i in ignores if i in seen),
-        "stale_ignores": sorted(i for i in ignores if i not in seen),
+        # A failed scanner matched none of its own ignores; calling them stale
+        # would ask for exceptions that are still needed to be deleted.
+        "stale_ignores": [] if errors else sorted(i for i in ignores if i not in seen),
         "delta": delta,
         "errors": errors,
     }

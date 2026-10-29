@@ -299,6 +299,14 @@ class RunTests(unittest.TestCase):
             self.assertIn("no delta over a partial run", s["line"])
             self.assertIn("FAILED", s["line"])
 
+    def test_a_failed_scanner_reports_no_stale_ignores(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "cfg").mkdir()
+            (Path(tmp) / deps_audit.CARGO_IGNORES).write_text(IGNORES)
+            s, _state, _ = self.run_in(tmp, installed=False)
+            self.assertEqual(s["stale_ignores"], [])
+            self.assertNotIn("stale ignores", s["line"])
+
     def test_a_pnpm_error_object_at_exit_1_is_a_failure_not_an_all_clear(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.run_in(tmp)
@@ -311,7 +319,9 @@ class RunTests(unittest.TestCase):
     def test_cargo_json_without_its_findings_key_is_a_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             s, state, _ = self.run_in(tmp, cargo_out={"database": {}})
-            self.assertTrue(s["errors"][0].startswith("cargo: no 'vulnerabilities'"))
+            self.assertEqual(
+                s["errors"][0], "cargo: no 'vulnerabilities' in the audit's JSON"
+            )
             self.assertFalse(state.exists())
 
     def test_an_unexpected_shape_is_one_scanners_failure(self):
