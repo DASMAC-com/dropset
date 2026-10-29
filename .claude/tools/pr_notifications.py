@@ -14,13 +14,15 @@ every thread whose PR is merged or closed, whatever its issue's Linear state:
 a merged PR whose issue sits In Review is settled code, and its threads are
 the bulk of the inbox. An open PR's threads are never selected by it.
 
-A dry run unless ``--apply``. Each selected thread is first unsubscribed
-(``DELETE /notifications/threads/<id>/subscription``), so a later bot comment
-on the settled PR cannot re-create it, then dismissed with its own ``DELETE
-/notifications/threads/<id>`` — GitHub's "mark as done"; marking read would
-leave it in the inbox — and never with a mark-all. A thread cannot be
-unsubscribed before GitHub creates it at its first notifying event, so the
-merge is the earliest point and ``--settled`` catches the rest.
+A dry run unless ``--apply``. Each selected thread is first unsubscribed by
+ignoring it (``PUT /notifications/threads/<id>/subscription`` with
+``ignored=true``), so a later bot comment on the settled PR cannot re-create
+it — a ``DELETE`` on the subscription would not hold, since a watcher of the
+repository still receives the thread's notifications — then dismissed with its
+own ``DELETE /notifications/threads/<id>`` — GitHub's "mark as done"; marking
+read would leave it in the inbox — and never with a mark-all. A thread cannot
+be ignored before GitHub creates it, and the PR is settled only at its merge or
+close, so that is the earliest point and ``--settled`` catches the rest.
 
 The queue watcher (``wait_for_checks.py --queue``) calls :func:`dismiss` in
 process on a ``merged`` verdict; upkeep's ``notifications`` step and the
@@ -36,8 +38,9 @@ Prints JSON ``{mode, dry_run, threads, selected, prs, dismissed, unsubscribed,
 failed: [id], unsubscribe_failed: [id], error, unresolved: [pr], notice,
 summary}``: ``threads`` counts the PR threads listed, ``selected`` those chosen
 (``--full`` lists each as ``{id, pr, state}`` instead, with no ``prs`` or
-``summary``), ``dismissed`` / ``unsubscribed`` the deletes that succeeded (0 in
-a dry run), ``error`` the first failed delete's reason, ``notice`` a list or
+``summary``), ``dismissed`` / ``unsubscribed`` the calls that succeeded (0 in a
+dry run), ``failed`` / ``unsubscribe_failed`` the thread ids whose call failed,
+``error`` the first failed call's reason, ``notice`` a list or
 lookup failure (``None`` when clean) and ``summary`` the one report line. Exit 0 unless the thread list
 itself was unreadable (1).
 
@@ -205,14 +208,19 @@ def dismiss(
     if not apply:
         return 0, result
     for t in result["selected"]:
-        # Unsubscribe first: the subscription is what lets a later event on
-        # the PR re-create the thread once it is marked done.
+        # Ignore first: the subscription is what lets a later event on the PR
+        # re-create the thread once it is marked done. Not a DELETE on the
+        # subscription, which a watcher of the repository outlives.
         thread = f"/notifications/threads/{t['id']}"
-        for path, count, failed in (
-            (f"{thread}/subscription", "unsubscribed", "unsubscribe_failed"),
-            (thread, "dismissed", "failed"),
+        for args, count, failed in (
+            (
+                ["PUT", f"{thread}/subscription", "-F", "ignored=true"],
+                "unsubscribed",
+                "unsubscribe_failed",
+            ),
+            (["DELETE", thread], "dismissed", "failed"),
         ):
-            rc, _, err = gh(["api", "-X", "DELETE", path])
+            rc, _, err = gh(["api", "-X", *args])
             if rc == 0:
                 result[count] += 1
             else:
@@ -233,7 +241,7 @@ def summary(result: dict) -> str:
         )
         failed = len(result["failed"]) + len(result["unsubscribe_failed"])
         if failed:
-            line += f", {failed} delete(s) failed"
+            line += f", {failed} call(s) failed"
     if result["unresolved"]:
         line += f"; {len(result['unresolved'])} PR(s) unresolved, left"
     if result["notice"]:

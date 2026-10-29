@@ -1190,14 +1190,14 @@ class DismissNotificationsTests(unittest.TestCase):
     def test_only_this_prs_threads_are_unsubscribed_and_marked_done(self):
         result, calls = self._run((0, json.dumps(self.THREADS), ""))
         self.assertIn(f"/repos/{REPO}/notifications?", calls[0][1])
-        deleted = [c[-1] for c in calls if c[:2] == ["api", "-X"]]
+        writes = [c[2:4] for c in calls if c[:2] == ["api", "-X"]]
         self.assertEqual(
-            deleted,
+            writes,
             [
-                "/notifications/threads/11/subscription",
-                "/notifications/threads/11",
-                "/notifications/threads/14/subscription",
-                "/notifications/threads/14",
+                ["PUT", "/notifications/threads/11/subscription"],
+                ["DELETE", "/notifications/threads/11"],
+                ["PUT", "/notifications/threads/14/subscription"],
+                ["DELETE", "/notifications/threads/14"],
             ],
         )
         self.assertEqual(
@@ -1253,6 +1253,19 @@ class TodaysMergeCountTests(unittest.TestCase):
     def test_a_failed_read_is_none_not_raised(self):
         self.assertIsNone(self._run((1, "", "HTTP 502"))[0])
         self.assertIsNone(self._run((0, "{", ""))[0])
+
+    def test_a_wrong_shaped_reply_is_none_not_raised(self):
+        for body in ('[{"num": 1}]', "[1]", '[{"number": "x"}]'):
+            with self.subTest(body=body):
+                self.assertIsNone(self._run((0, body, ""))[0])
+
+    def test_the_default_midnight_takes_the_zones_own_offset_for_midnight(self):
+        # Naive local midnight, localized afterwards: on a DST-change day the
+        # offset is midnight's, not the current hour's.
+        got = datetime.fromisoformat(wfc.local_midnight())
+        expected = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        self.assertEqual(got, expected.astimezone())
+        self.assertEqual(got.utcoffset(), expected.astimezone().utcoffset())
 
 
 class DequeueCauseTests(unittest.TestCase):

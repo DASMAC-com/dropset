@@ -850,9 +850,10 @@ def dismiss_pr_notifications(pr: int, repo: str) -> dict:
     PR ``pr``, through ``pr_notifications.dismiss`` (the one rule every caller
     applies).
 
-    Called on a ``merged`` queue verdict. Never raises: the merge already
-    happened, so a failure is reported, and the upkeep pass's settled-PR
-    sweep is the fallback.
+    Called on a ``merged`` queue verdict. ``failed`` counts failed calls (a
+    thread whose ignore and mark-done both fail counts twice). Never raises:
+    the merge already happened, so a failure is reported, and the upkeep
+    pass's settled-PR sweep is the fallback.
     """
     rc, result = pr_notifications.dismiss(
         pr_notifications.real_gh, {pr}, apply=True, repo=repo
@@ -874,8 +875,11 @@ MERGE_COUNT_LIMIT = 500
 def local_midnight(now: datetime | None = None) -> str:
     """Today's local midnight as an ISO-8601 time with its UTC offset, the
     form GitHub's ``merged:>=`` search qualifier takes. ``now`` defaults to
-    the machine's own zone; an aware ``now`` keeps its zone."""
-    now = now or datetime.now().astimezone()
+    the machine's own zone, localized at midnight itself so a DST change later
+    in the day cannot shift the window; an aware ``now`` keeps its zone."""
+    if now is None:
+        midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        return midnight.astimezone().isoformat()
     return now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
 
 

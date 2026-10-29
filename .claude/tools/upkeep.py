@@ -138,7 +138,7 @@ TIMEOUT_GH = 60
 TIMEOUT_TOOL = 120
 # The transcript walk alone takes about a minute, before the Cost Explorer read.
 TIMEOUT_COST = 300
-# Two DELETEs per thread (unsubscribe, mark done); the first armed pass meets a
+# Two calls per thread (ignore, mark done); the first armed pass meets a
 # backlog of a hundred-odd.
 TIMEOUT_DISMISS = 300
 # The digest's transcript walk plus its CI read: a cold job cache is one

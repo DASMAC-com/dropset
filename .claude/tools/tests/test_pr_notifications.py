@@ -75,17 +75,20 @@ class FakeGh:
                 return 0, json.dumps({"state": self.views[num]}), ""
             return 1, "", "no pull requests found"
         if args[:2] == ["api", "-X"]:
-            path = args[-1]
+            method, path = args[2], args[3]
             if path.endswith("/subscription"):
+                # Only an ignore holds against a repository watch.
+                assert method == "PUT" and args[4:] == ["-F", "ignored=true"], args
                 tid = path.split("/")[-2]
                 fails = tid in self.unsubscribe_fails
                 return (1, "", "HTTP 403") if fails else (0, "", "")
+            assert method == "DELETE", args
             tid = path.rsplit("/", 1)[1]
             return (1, "", "HTTP 500") if tid in self.delete_fails else (0, "", "")
         raise AssertionError(f"unexpected gh call {args}")
 
     def _writes(self):
-        return [a[-1] for a in self.calls if a[:2] == ["api", "-X"]]
+        return [a[3] for a in self.calls if a[:2] == ["api", "-X"]]
 
     def deletes(self):
         """Threads marked done."""
@@ -166,16 +169,17 @@ class ApplyTests(unittest.TestCase):
             "would unsubscribe and dismiss 3 notification(s); 1 PR(s) unresolved, left",
         )
 
-    def test_each_thread_is_unsubscribed_then_marked_done_never_a_mark_all(self):
+    def test_each_thread_is_ignored_then_marked_done_never_a_mark_all(self):
         gh = FakeGh()
         dismiss(gh, {663}, apply=True)
         writes = [a for a in gh.calls if a[:2] == ["api", "-X"]]
+        ignore = ["-F", "ignored=true"]
         self.assertEqual(
             writes,
             [
-                ["api", "-X", "DELETE", "/notifications/threads/m1/subscription"],
+                ["api", "-X", "PUT", "/notifications/threads/m1/subscription", *ignore],
                 ["api", "-X", "DELETE", "/notifications/threads/m1"],
-                ["api", "-X", "DELETE", "/notifications/threads/m2/subscription"],
+                ["api", "-X", "PUT", "/notifications/threads/m2/subscription", *ignore],
                 ["api", "-X", "DELETE", "/notifications/threads/m2"],
             ],
         )
@@ -189,7 +193,7 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(out["error"], "HTTP 500")
         self.assertEqual(
             summary(out),
-            "dismissed 1 notification(s), unsubscribed 2, 1 delete(s) failed",
+            "dismissed 1 notification(s), unsubscribed 2, 1 call(s) failed",
         )
 
     def test_a_failed_unsubscribe_still_marks_the_thread_done(self):

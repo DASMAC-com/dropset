@@ -459,13 +459,14 @@ class CostLineTests(unittest.TestCase):
 
 class NotifyingRun(FakeRun):
     """A closable session whose PR has notification threads: the repo-scoped
-    list answers ``threads`` as ``(id, pr)``, and a DELETE fails for an id in
-    ``delete_fails``."""
+    list answers ``threads`` as ``(id, pr)``, and a mark-done DELETE fails for
+    an id in ``delete_fails``, an ignore PUT for one in ``ignore_fails``."""
 
-    def __init__(self, threads=(), delete_fails=(), **overrides):
+    def __init__(self, threads=(), delete_fails=(), ignore_fails=(), **overrides):
         super().__init__(**overrides)
         self.threads = list(threads)
         self.delete_fails = set(delete_fails)
+        self.ignore_fails = set(ignore_fails)
 
     def __call__(self, cmd, cwd=None):
         if cmd[:2] == ["gh", "api"] and "notifications?" in cmd[2]:
@@ -477,8 +478,12 @@ class NotifyingRun(FakeRun):
             return 0, json.dumps(page), ""
         if cmd[:3] == ["gh", "api", "-X"]:
             self.calls.append(cmd)
-            tid = cmd[-1].rsplit("/", 1)[1]
-            return (1, "", "HTTP 500") if tid in self.delete_fails else (0, "", "")
+            path = cmd[4]
+            if path.endswith("/subscription"):
+                fails = path.split("/")[-2] in self.ignore_fails
+            else:
+                fails = path.rsplit("/", 1)[1] in self.delete_fails
+            return (1, "", "HTTP 500") if fails else (0, "", "")
         return super().__call__(cmd, cwd)
 
 
@@ -491,11 +496,14 @@ class NotificationTests(unittest.TestCase):
     def test_the_branch_threads_are_dismissed_before_the_removal(self):
         rc, result, runner = self._close(threads=[("t1", 503), ("t2", 777)])
         self.assertEqual(rc, 0, result)
-        deletes = [c[-1] for c in runner.calls if c[:3] == ["gh", "api", "-X"]]
+        writes = [c[3:5] for c in runner.calls if c[:3] == ["gh", "api", "-X"]]
         # Only the closed branch's PR — never another PR's thread.
         self.assertEqual(
-            deletes,
-            ["/notifications/threads/t1/subscription", "/notifications/threads/t1"],
+            writes,
+            [
+                ["PUT", "/notifications/threads/t1/subscription"],
+                ["DELETE", "/notifications/threads/t1"],
+            ],
         )
         self.assertEqual(
             result["notifications"], "dismissed 1 notification(s), unsubscribed 1"
@@ -514,7 +522,16 @@ class NotificationTests(unittest.TestCase):
         self.assertTrue(result["removed"])
         self.assertIn(
             "notifications: dismissed 0 notification(s), unsubscribed 1, "
-            "1 delete(s) failed",
+            "1 call(s) failed",
+            result["notes"],
+        )
+
+    def test_a_failed_ignore_alone_is_still_a_note(self):
+        rc, result, _ = self._close(threads=[("t1", 503)], ignore_fails=["t1"])
+        self.assertEqual(rc, 0, result)
+        self.assertIn(
+            "notifications: dismissed 1 notification(s), unsubscribed 0, "
+            "1 call(s) failed",
             result["notes"],
         )
 
