@@ -42,7 +42,7 @@ use anyhow::{anyhow, bail, Result};
 use dropset_tui::ceremony::{self, CeremonyLog};
 use dropset_tui::cluster::{self, Cluster};
 use dropset_tui::keys::{self, KeyAddresses, RoleKey};
-use dropset_tui::{action, agent_shell, app, chain, explorer, fair, wallet};
+use dropset_tui::{action, agent_shell, app, chain, explorer, fair, publish, wallet};
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::path::{Path, PathBuf};
@@ -221,6 +221,7 @@ fn main() -> Result<()> {
         leader,
         quote,
         program_key,
+        stranded: publish::Stranded::default(),
         ceremony_log,
         // Mainnet never starts the managed container — it indexes the localnet.
         // The distinction is load-bearing (it stops `App`'s `Drop` tearing down
