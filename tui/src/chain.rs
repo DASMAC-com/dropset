@@ -362,12 +362,16 @@ pub fn build_set_allow_outside_depositors_ix(
 }
 
 /// `set_outside_deposits_approved` — a registry `admin` (signer) sets the
-/// protocol's half of the gate on the vault at sector `vault_idx`.
+/// protocol's half of the gate on the vault at sector `vault_idx`. The
+/// program refuses unless that sector still carries `expected_seq`, so a
+/// vault closed and its sector reused since the caller's read is never
+/// approved by mistake.
 pub fn build_set_outside_deposits_approved_ix(
     cluster: Cluster,
     admin: &Pubkey,
     market: &Pubkey,
     vault_idx: u32,
+    expected_seq: u64,
     flag: bool,
 ) -> Instruction {
     SetOutsideDepositsApproved {
@@ -377,7 +381,11 @@ pub fn build_set_outside_deposits_approved_ix(
     }
     .instruction(
         cluster.deployment(),
-        SetOutsideDepositsApprovedInstructionArgs { vault_idx, flag },
+        SetOutsideDepositsApprovedInstructionArgs {
+            vault_idx,
+            expected_seq,
+            flag,
+        },
     )
 }
 
@@ -1357,7 +1365,7 @@ mod tests {
             build_close_registry_fee_vault_ix(m, &a, &mint, &SPL_TOKEN_PROGRAM_ID, &k(9), &a),
             build_close_registry_ix(m, &a, &a),
             build_set_allow_outside_depositors_ix(m, &k(6), &market, 0, true),
-            build_set_outside_deposits_approved_ix(m, &a, &market, 0, true),
+            build_set_outside_deposits_approved_ix(m, &a, &market, 0, 1, true),
         ];
         let localnet = [
             DROPSET_ID,
@@ -1587,7 +1595,7 @@ mod tests {
         );
         // Discriminator, then the u32 sector and the one-byte flag.
         assert_eq!(&ix.data[ix.data.len() - 5..], &[3, 0, 0, 0, 1]);
-        let ix = build_set_outside_deposits_approved_ix(L, &admin, &market, 3, false);
+        let ix = build_set_outside_deposits_approved_ix(L, &admin, &market, 3, 7, false);
         assert_eq!(
             metas(&ix),
             vec![
@@ -1596,7 +1604,11 @@ mod tests {
                 (market, false, true),
             ]
         );
-        assert_eq!(&ix.data[ix.data.len() - 5..], &[3, 0, 0, 0, 0]);
+        // The u32 sector, the u64 expected seq, then the flag.
+        assert_eq!(
+            &ix.data[ix.data.len() - 13..],
+            &[3, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
     }
 
     /// Pins the `deposit_leader` ordering against `fixture`'s

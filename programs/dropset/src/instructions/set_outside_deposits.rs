@@ -81,17 +81,30 @@ pub struct SetOutsideDepositsApproved {
 
 impl SetOutsideDepositsApproved {
     #[inline(always)]
-    pub fn set_outside_deposits_approved(&mut self, vault_idx: u32, flag: bool) -> Result<()> {
+    pub fn set_outside_deposits_approved(
+        &mut self,
+        vault_idx: u32,
+        expected_seq: u64,
+        flag: bool,
+    ) -> Result<()> {
         // Admin-only — the protocol's half of the two-key gate. Gated at
         // the dispatcher via `#[access_control]` (`lib.rs`), so the caller
         // is already a known admin here.
         // Same validate-then-mutate shape as the leader setter above:
         // confirm the sector is live through an immutable borrow, then
         // narrow to the single store.
-        require!(
-            self.market.read_vault(vault_idx)?.is_occupied(),
-            DropsetError::VaultEmpty
-        );
+        {
+            let vault = self.market.read_vault(vault_idx)?;
+            require!(vault.is_occupied(), DropsetError::VaultEmpty);
+            // The sector index alone does not name a vault: a close and a
+            // re-open between the admin's read and this write would land
+            // the approval on a stranger's vault. `seq` is the vault's
+            // identity, so pinning it refuses a reused sector.
+            require!(
+                vault.seq.get() == expected_seq,
+                DropsetError::VaultSeqMismatch
+            );
+        }
 
         self.market
             .mutate_vault(vault_idx)?

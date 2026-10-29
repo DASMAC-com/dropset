@@ -99,6 +99,9 @@ pub fn open(
             &wallet.pubkey(),
             market,
             seat.idx,
+            // Pinned to the vault read above: a sector reused since then
+            // makes the program refuse rather than approve a stranger.
+            seat.seq,
             true,
         );
         chain::send_logged(

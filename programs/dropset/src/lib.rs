@@ -250,9 +250,11 @@ pub mod dropset {
     pub fn set_outside_deposits_approved(
         ctx: &mut Context<SetOutsideDepositsApproved>,
         vault_idx: u32,
+        expected_seq: u64,
         flag: bool,
     ) -> Result<()> {
-        ctx.accounts.set_outside_deposits_approved(vault_idx, flag)
+        ctx.accounts
+            .set_outside_deposits_approved(vault_idx, expected_seq, flag)
     }
 
     #[discrim = 14]
