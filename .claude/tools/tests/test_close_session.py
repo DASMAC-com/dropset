@@ -524,6 +524,23 @@ class NotificationTests(unittest.TestCase):
         writes = [c[3:5] for c in runner.calls if c[:3] == ["gh", "api", "-X"]]
         self.assertEqual(writes, [["DELETE", "/notifications/threads/t1"]])
 
+    def test_a_mixed_pr_set_unsubscribes_only_the_merged_one(self):
+        prs = [
+            {"number": 503, "state": "MERGED", "headRefOid": "abc123"},
+            {"number": 504, "state": "CLOSED", "headRefOid": "def456"},
+        ]
+        rc, result, runner = self._close(prs=prs, threads=[("t1", 503), ("t2", 504)])
+        self.assertEqual(rc, 0, result)
+        writes = [c[3:5] for c in runner.calls if c[:3] == ["gh", "api", "-X"]]
+        self.assertEqual(
+            writes,
+            [
+                ["PUT", "/notifications/threads/t1/subscription"],
+                ["DELETE", "/notifications/threads/t1"],
+                ["DELETE", "/notifications/threads/t2"],
+            ],
+        )
+
     def test_a_failed_dismissal_is_a_note_not_a_refusal(self):
         rc, result, _ = self._close(threads=[("t1", 503)], delete_fails=["t1"])
         self.assertEqual(rc, 0, result)

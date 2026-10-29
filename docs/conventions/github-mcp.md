@@ -116,14 +116,17 @@ which drifted behind it twice:
   `review_diff.py --overlap`, which exist so the per-PR file lists never
   reach a transcript at all.)
 
-- **The post-merge notification dismissal** (`review-pr`) — done
-  **inside** `wait_for_checks.py --queue`, which on a `merged` verdict
-  calls `pr_notifications.py`'s `--pr` path in its own process, before
-  it exits: every thread on the PR is ignored
+- **The queue-exit notification dismissal** (`review-pr`) — done
+  **inside** `wait_for_checks.py --queue`, which on every exit but
+  `probe_failed` calls `pr_notifications.py`'s `--pr` path in its own
+  process, before it exits: every thread on the PR is marked done
+  (`DELETE /notifications/threads/{id}`). **It unsubscribes only on
+  merge** — on a `merged` verdict each thread is first ignored
   (`PUT /notifications/threads/{id}/subscription`, `ignored=true`) so a
-  later bot comment cannot re-create it, then marked done
-  (`DELETE /notifications/threads/{id}`). That leaves no turn between the
-  merge and the dismissal, and no list payload in any transcript:
+  later bot comment cannot re-create it; a PR still open keeps its
+  subscription, which is what brings its thread back on new activity.
+  That leaves no turn between the
+  outcome and the dismissal, and no list payload in any transcript:
   `mcp__github__list_notifications` once returned **3.7k tokens in a
   single call** for that one id, because it embeds the complete
   repository object (every `*_url` template) once per notification.
@@ -135,9 +138,12 @@ which drifted behind it twice:
   every thread whose PR is merged or closed, **whatever its issue's
   Linear state** (a merged PR whose issue sits In Review is settled
   code), never an open PR's. `dismiss --pr N` instead dismisses every
-  thread on the named PRs **whatever their state** — the caller vouches
-  they are settled. To dismiss a thread is two calls, never mark-all:
-  ignore it, then mark it done; dry run unless `--apply`. The ignore is
+  thread on the named PRs **whatever their state**, unsubscribing unless
+  `--keep-subscription` says they are not merged. **Unsubscribe only on
+  merge**: a merged PR's thread is two calls, never mark-all — ignore
+  it, then mark it done — while a closed PR's (which can be reopened,
+  and must resurface) is marked done only; dry run unless `--apply`.
+  The ignore is
   a `PUT` with `ignored=true`, never a `DELETE` on the subscription,
   which GitHub documents as not holding for a watcher of the
   repository. Dismissal waits for the PR to settle, so the merge or
