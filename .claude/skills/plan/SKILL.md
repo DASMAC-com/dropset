@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a planning session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), runs the audit heartbeat (file an audit issue or decline with a recorded reason), and dispatches the curator to walk the operator through the Backlog review inbox. Then keeps the board coherent: Todo dispatched as standing authorization, blocking edges curated by a human, file collisions reconciled by reading, the inbox kept stocked with staged specs, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
+description: Run a scheduler session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), runs the audit heartbeat (file an audit issue or decline with a recorded reason), and dispatches the curator to walk the operator through the Backlog review inbox. Then keeps the board coherent: Todo dispatched as standing authorization, blocking edges curated by a human, file collisions reconciled by reading, the inbox kept stocked with staged specs, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
 user-invocable: true
 model: fable
 ---
@@ -12,7 +12,7 @@ model: fable
 # `plan`
 
 Implementation sessions run one deterministic spec to completion
-in a worktree (`/init-pr` → build → `/review-pr`). Planning
+in a worktree (`/init-pr` → build → `/review-pr`). Scheduler
 sessions are their complement: they stage that work, keep the
 board coherent, and carry direction across days. This skill is
 their method. Measured incidents and retired designs behind the
@@ -297,7 +297,7 @@ rewrite. So:
   wholesale rewrite**, not another append.
 - **This session's incremental notes** live under one
   `In-session notes` heading, so a rewrite sweeps one section.
-- **Non-planning sessions append only under**
+- **Sessions other than the scheduler append only under**
   `Notes for the next planning session` — stated wherever those
   sessions are told to write here.
 
@@ -512,7 +512,7 @@ an item the operator executes by hand `[Operator]`.
   its read-back is live work.
 
 **6. Write back — incrementally, then rewritten at the gate.**
-Write after each major decision: planning sessions are often
+Write after each major decision: scheduler sessions are often
 closed abruptly, and an unwritten decision is lost. A session
 that decides without writing back has dropped its main
 deliverable — the board shows *what*, only the document carries
@@ -605,7 +605,7 @@ session that died mid-review — offer to resume it.
 
 - **No source edits.** This skill writes to Linear and the
   Planning document; it authors no diff and commits nothing.
-- **It is not a one-shot** — a planning session spans hours or
+- **It is not a one-shot** — a scheduler session spans hours or
   days.
 - **The board is shared with the curator alone**, under ruling
   2's coordination rule: each messages the other any write

@@ -25,7 +25,7 @@ Three subcommands, each printing JSON to stdout:
   only identifiers and a byte count. This is the zero-echo half, and it is where
   the cost was: folded bodies used to transit context roughly **three** times
   per fold — each ``get_issue`` echo, the hand-composed ``Write`` of this very
-  file, and the ``Read`` of the generated ops — and about **50k of one planning
+  file, and the ``Read`` of the generated ops — and about **50k of one scheduler
   session's ~135k output** was body re-emission. This removes the first two.
 
   The third is **structural and stays**: the ops are applied through the MCP
@@ -542,7 +542,7 @@ def fetch(api_key: str, survivor: int, numbers: list[int]) -> dict:
     Measured: folded bodies used to transit context roughly *three* times per
     fold — once as each ``get_issue`` echo, once as the ``Write`` composing this
     same JSON by hand, and once as the ``Read`` of the generated ops. Roughly
-    **50k of one planning session's ~135k output** was body re-emission. The
+    **50k of one scheduler session's ~135k output** was body re-emission. The
     first two of those are pure waste: the tool can read the bodies in its own
     process and write the file itself, which is what this does.
 

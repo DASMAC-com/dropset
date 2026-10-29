@@ -364,7 +364,7 @@ _ds_pull_impl() {
 }
 
 # `cd` to the base repo checkout. The starting point for anything that must not
-# run inside a worktree (a planning session).
+# run inside a worktree (a scheduler session).
 #
 # It fast-forwards `main` on the way in, via `_ds_pull` — see there for why that
 # is safe on a navigation command, and why it never touches a worktree's own
@@ -499,7 +499,7 @@ _ds_op_signout() {
 #
 # Why a gate rather than a mid-session fix: the login is **interactive**, so a
 # session that discovers an expired token mid-conversation cannot self-heal.
-# Measured — a planning session's Cost Explorer read failed on an expired
+# Measured — a scheduler session's Cost Explorer read failed on an expired
 # session and the spend report had to be deferred a day. Launch time is the one
 # moment interactivity is free: the operator is at the keyboard typing the verb
 # anyway.
@@ -524,7 +524,7 @@ _ds_op_signout() {
 #     failure; it does not rule out a live session lacking `ce:*`.
 #
 #     It also checks validity NOW, not remaining lifetime: a token with a minute
-#     left passes, and SSO tokens are hours-scoped while a planning session is
+#     left passes, and SSO tokens are hours-scoped while a scheduler session is
 #     long-lived and resumable. So this narrows the mid-conversation failure
 #     rather than closing it. A stricter form would read the SSO cache's
 #     `expiresAt` and re-login below a threshold; that is deliberately not built
@@ -551,7 +551,7 @@ _ds_op_signout() {
 #
 # **An absent CLI warns rather than blocking.** The gate exists to catch an
 # EXPIRED token, which is the measured failure; a machine with no `aws` at all
-# has nothing to log into, and refusing to start a planning session there would
+# has nothing to log into, and refusing to start a scheduler session there would
 # make the committed verb unusable on any checkout without AWS. A failed or
 # dismissed login is a different condition and does stop the launch — that is a
 # live credential problem the operator can act on.
@@ -656,7 +656,7 @@ _ds_daily_sid() {
 # The model rides BOTH branches; the name and the initial prompt ride only the
 # create path. That split is the point, and getting it wrong is silent: `-n`
 # sets a display name and the prompt bootstraps a skill, so re-passing either
-# on a resume is meaningless — but the model is per-launch, and a planning
+# on a resume is meaningless — but the model is per-launch, and a scheduler
 # session is reopened many times a day. Pinning it only on create would honor
 # the pin on the day's FIRST launch and quietly drop to the saved default on
 # every reopen after it — the "still works, so nobody notices" slip.
@@ -957,7 +957,7 @@ _ds_topic_sid() {
 # THE RULE IS CAPABILITY, NOT ATTENDANCE. A session runs on Bedrock unless it
 # needs something Bedrock lacks — web search or deep research (web fetch works
 # there, measured 2026-10-23) — or it is a seat session by role (`architect`).
-# `plan` left the seat by default for pricing: a base-repo planning session on
+# `plan` left the seat by default for pricing: a base-repo scheduler session on
 # the subscription gets only a figure at Bedrock rates, never a billed one, and
 # `plan anthropic` remains the way back.
 # Sub-agents are NOT a differentiator: Opus-spawning-Opus sub-agents are
@@ -2081,7 +2081,7 @@ explore() {
 # same-day reopen free — the tool's own stamp answers "ran today", and it stamps
 # only a run whose report reached the document. DS_SKIP_UPKEEP=1 is the off
 # switch. A failure WARNS and the launch proceeds: upkeep is best-effort, and a
-# planning session must never be held hostage to it.
+# scheduler session must never be held hostage to it.
 #
 # The local INT trap is what makes Ctrl-C on a hung step mean "skip upkeep"
 # rather than "abort plan": without it interactive zsh abandons the calling
@@ -2201,7 +2201,7 @@ _ds_plan_cycle() {
 #   plan bedrock     the default, spelled out; a no-op
 #
 # BEDROCK BY DEFAULT, whatever `DS_MODEL_ADVISOR_SUBSTRATE` says (that governs
-# `architect` alone), so a planning session is priced like a worker rather
+# `architect` alone), so a scheduler session is priced like a worker rather
 # than vanishing into the subscription's opaque allowance. Its lever fold's
 # `model: opus` spawn lands on the executor model there (`_ds_claude`).
 #
@@ -2215,23 +2215,23 @@ _ds_plan_cycle() {
 # AWS human-review opt-in (a model allowing mode `none` does not); the operator
 # accepts that as standing.
 #
-# Idempotent by design — a planning session is opened and reopened many times
+# Idempotent by design — a scheduler session is opened and reopened many times
 # in a day, and having to remember which state it is in is the friction this
 # removes. An `rpaps` twin was considered and rejected for that reason.
 #
 # Things it makes deterministic, each of which used to be a manual step the
 # operator could forget:
 #
-#   * The model. Planning sessions run the advisor tier deliberately —
+#   * The model. Scheduler sessions run the advisor tier deliberately —
 #     fidelity over tokens — resolved from the runtime config and refused
 #     before launch when it does not resolve, on create and resume alike. The
 #     skill's `model:` frontmatter covers a mid-session `/plan` only.
-#   * The directory. A planning session touches the board, not a branch, so it
+#   * The directory. A scheduler session touches the board, not a branch, so it
 #     runs in the base repo.
 #   * The bootstrap. Passing `/plan` as the initial prompt means the skill's
 #     bootstrap read happens without being asked for.
 #   * The AWS session. `_ds_aws_login` refuses the launch when credentials do
-#     not resolve — a planning session reads cost and account data, the login is
+#     not resolve — a scheduler session reads cost and account data, the login is
 #     interactive, and a session cannot fix an expired token from the inside.
 #     Deliberately not called a "hard" gate: it has two documented
 #     warn-and-launch escapes (no `aws` at all, and an `aws` too old for
@@ -2246,7 +2246,7 @@ _ds_plan_cycle() {
 #     and an interactive login is a poor thing to stand between the operator
 #     and a design thought. Add it only if an architect session is actually
 #     found wanting one.
-#   * The 5-hour window. A planning session opens it only as
+#   * The 5-hour window. A scheduler session opens it only as
 #     `plan anthropic`; on its Bedrock default it spends no subscription
 #     allowance at all.
 #
@@ -2261,7 +2261,7 @@ _ds_plan_cycle() {
 # that day — the one typed into the scheduler's own tab first — is WARM and
 # runs the scheduler below, in the tab it was typed in, with no pass.
 #
-# THE CYCLE LOOP. A planning session that cycles (the `plan` skill's "Cycling")
+# THE CYCLE LOOP. A scheduler session that cycles (the `plan` skill's "Cycling")
 # closes out, writes `plan-cycle-pending` beside the substrate markers and ends
 # its own client; this loop sees the marker and relaunches IN THIS TAB — no tab
 # opened or closed — under a fresh id (the launch day's counter,

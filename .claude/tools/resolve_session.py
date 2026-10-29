@@ -367,7 +367,7 @@ def daily_session_id(kind: str, date: str, cycle: int = 0) -> str:
     id rather than searching for it.
 
     That distinction is worth a subcommand because the search is expensive and
-    looks reasonable: one planning session listed the Claude projects directory
+    looks reasonable: one scheduler session listed the Claude projects directory
     to find its own transcript id, at **≈6.0k** for that one call and ≈6.4k
     across five, making a bare directory listing its top hardening candidate by
     result size. The next bootstrap reproduced the same id by computation at
@@ -375,12 +375,12 @@ def daily_session_id(kind: str, date: str, cycle: int = 0) -> str:
 
     **The seed must match `_ds_daily_sid` in `.claude/shell/init.zsh` exactly**,
     since that is what actually names the session at launch. The full date is in
-    it so `plan-18` in August and `plan-18` in September cannot collide — the
+    it so `schedule-18` in August and `schedule-18` in September cannot collide — the
     display name is day-only by operator choice, and this id is what
     disambiguates. An `architect` session deliberately uses a *topic* seed with no
     date, because it is meant to be resumed days later.
 
-    A **cycled** planning session (the `plan` skill's "Cycling") appends
+    A **cycled** scheduler session (the `plan` skill's "Cycling") appends
     ``-c<cycle>`` to the seed: a fresh id under the same display name. Cycle 0
     keeps the bare seed, so every id computed before cycling existed still holds.
 

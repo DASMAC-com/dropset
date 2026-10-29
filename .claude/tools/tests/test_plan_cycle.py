@@ -62,7 +62,7 @@ class Fixture:
 
     def __enter__(self):
         self.env.start()
-        # A suite run from inside a planning session inherits the launcher's
+        # A suite run from inside a scheduler session inherits the launcher's
         # date; patch.dict restores it on exit.
         os.environ.pop("DS_PLAN_DATE", None)
         os.environ.pop(pc.KIND_ENV, None)

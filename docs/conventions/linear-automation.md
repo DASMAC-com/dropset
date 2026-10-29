@@ -16,8 +16,8 @@ shell profile (`~/.zshrc`):
 export LINEAR_TEAM_ID=…
 export LINEAR_PROJECT_ID=…
 export LINEAR_ASSIGNEE_ID=…
-# Used by the plan skill — the "Planning" document a planning
-# session bootstraps from and writes its decisions back into:
+# Used by the plan skill — the "Planning" document the scheduler
+# bootstraps from and writes its decisions back into:
 export LINEAR_PLANNING_DOC_ID=…
 # NOTE: LINEAR_API_KEY belongs here by rights — it has two
 # consumers. The Python board tools are not MCP clients: they
@@ -71,10 +71,11 @@ does not accumulate similar trim tasks. The rest file as **small
 themed** propose-only `Claude:` batches — roughly 4–5 parts each, one
 `**Fingerprint**:` per part, composed by `trim_levers.py compose` —
 **straight into Backlog with no milestone**: the analyst is the
-planning session's own sub-agent (or a by-hand run of the same fold)
+scheduler's own sub-agent (or a by-hand run of the same fold)
 and its output is already folded, so
 the park-then-promote hop executor filings take does not apply. The
-planning session names the new batches in its review ask. A candidate
+new batches are reviewed from the curator's pool like any other
+un-parked Backlog task. A candidate
 rejected on judgment is filed `Canceled` with its reason, which
 suppresses it permanently. The coherence floor still governs audit
 findings and product filings; the meta-work fold's **no-size-bound
@@ -117,10 +118,10 @@ tidiness problem.
 open Backlog's `**Touches**:` globs and filed a `related` relation for
 every glob overlap it found. Nothing files a collision link any more,
 at filing time or on a sweep. The mechanical overlap web added little
-over what a planning session already knows: that session reads the
+over what a scheduler session already knows: that session reads the
 implementation specs into context anyway, so it judges overlap on
 content rather than on exact glob matching. **Reconciling overlap is
-planning-session work**, done from the ordinary board read — including
+scheduler work**, done from the ordinary board read — including
 the merge-group proposals and the scheduling smells the tool used to
 report. The `**Touches**:` field it consumed went with it — see
 "Structured filing fields" below. Relations already on the board are
@@ -292,7 +293,7 @@ the operator's ruling was to drop it rather than keep it on the chance
 that something might want it later.
 
 **Do not reintroduce it, and do not reintroduce what consumed it.** The
-direction is content-based judgement in a planning session — that
+direction is content-based judgement in a scheduler session — that
 session is holding each issue's actual prose, which is strictly more
 than a glob list tells it — not exact glob matching. If a future pass
 wants declared scope back, that is a decision to take deliberately, not
@@ -306,7 +307,7 @@ an old issue preserves
 whatever it declared without requiring a new one to declare anything.
 
 **Be honest about what the whole retirement costs.** Automated collision
-recording was **dropped**, not replaced: a planning session's read is
+recording was **dropped**, not replaced: a scheduler session's read is
 the successor and its coverage is unmeasured. That is an accepted trade
 — a spurious edge costs more than a missing one (see "Blocking
 relations") — not a guarantee of equivalence. Losing the declared-scope
@@ -318,7 +319,7 @@ reads does not catch it either.
 
 ### Overlap is a cluster, never an ordering
 
-When a planning session judges that two issues will edit the same code,
+When a scheduler session judges that two issues will edit the same code,
 the conclusion it records is a **cluster** — the issues that collide on
 one shared area — never an ordering. A cluster is the candidate set for
 "these would land as one PR", which is what the merge-group proposal
@@ -423,7 +424,7 @@ So:
 - **In Review** covers *both* PR-under-review **and**
   merged-with-follow-up-outstanding. A session still owes work after its
   merge — session metrics, post-merge tidy, feedback to
-  hand to a planning session — and that work is invisible if the issue
+  hand to a scheduler session — and that work is invisible if the issue
   reads Done.
 - **Done means operator-ratified complete.** Never merely merged.
 
@@ -481,7 +482,7 @@ sequencing, and accreted operator scope the way real work does.
 - the **rationale** — which criterion fired (*just settled*, *about to
   be built on*, *suspect*) and its evidence;
 - the **sequencing**, as prose. No blocking edge: an automated filer
-  places none, and this one is filed by a planning session, which
+  places none, and this one is filed by a scheduler session, which
   places edges deliberately (see "Blocking relations").
 
 The session that pulls it runs **one scoped `audit-scope`** pass
@@ -506,17 +507,17 @@ has run, and the history lives on the board. The known risk of the
 issue model is cadence decay by neglect; the heartbeat is the guard,
 which is why an unrecorded non-decision counts as a failure of it.
 
-## Reading the Planning document from outside a planning session
+## Reading the Planning document from outside a scheduler session
 
 A worktree session that wants to check itself against planning direction
 is doing something worth **encouraging**, so the check has to be cheap.
 Two rules, in order:
 
-1. **Ask a live planning session first.** `ListAgents` is the liveness
+1. **Ask a live scheduler first.** `ListAgents` is the liveness
    check and `SendMessage` is already the documented channel in the
    other direction. A peer answers the *question* rather than the text:
-   one session that read the document and then messaged its planning
-   peer got the state of both blockers, the operator's posture, a ruling
+   one session that read the document and then messaged the
+   scheduler got the state of both blockers, the operator's posture, a ruling
    on the actual question, and an unprompted correction to a figure in
    the document that had gone stale. The read surfaced none of that,
    because **a stale line reads exactly like a current one.**
@@ -935,7 +936,7 @@ starting its own.
 **With `replace_range`, the `to` anchor stays in place — never repeat it
 in `new_string`.** The range is exclusive of `to`: only the text between
 the anchors is replaced, and `to` itself survives. Restating it in the
-replacement therefore stores it twice. One planning session did exactly
+replacement therefore stores it twice. One scheduler session did exactly
 that and had to spend a full extra echo (≈8k) to remove the doubled
 field token it stored.
 
@@ -1042,7 +1043,7 @@ stores those as mention nodes and the anchor can never match.
 
 Named consumers: the `plan` and `merge-tasks` amendment paths, and any
 apply-and-cancel flow — the accumulator shapes where the echo compounds
-worst (44 saves for ~153.2k on one planning session, its eight largest
+worst (44 saves for ~153.2k on one scheduler session, its eight largest
 results all echoes of the same growing batch).
 
 ### Field-only writes go through `board_batch.py`, not the MCP
@@ -1077,7 +1078,7 @@ whitespace heuristic that protects `milestone` and `assignee` would
 reject every real value), and unlike a milestone a title **cannot be
 cleared**, so `null` or blank is refused rather than sent.
 
-One planning
+One scheduler
 session made 21 writes of which **17 touched no body at all** (a
 priority change, three parent/state/priority moves, eleven milestone
 stamps, one relation removal) and paid roughly **40k** echoing bodies to
@@ -1114,7 +1115,7 @@ cost per call against the body **as it now stands**, and an append
 *grows* that body — so each write echoes everything the previous ones
 added, and the cost is **quadratic in the number of appends, not
 linear**. "Fewer calls" is the usual answer and often has no purchase
-here: one planning session made six appends to a single accumulating
+here: one scheduler session made six appends to a single accumulating
 issue as decisions arrived across hours, echoes growing to 6.2k, 6.9k,
 7.1k and twice 7.7k — five of that session's seven largest single
 results, all the same issue, roughly 35k combined. Each append recorded
@@ -1260,7 +1261,7 @@ Two generalizations of the checklist rule, both measured:
   second save within the hour. When a filing decision sets more than one
   thing, set them in a single call rather than one call per field.
 
-**The worst measured case was a planning session: 97 `save_issue` calls,
+**The worst measured case was a scheduler session: 97 `save_issue` calls,
 ≈164k.** Its top five results were all late folds onto the same
 aggregated survivor body. A burst of peer folds is the shape to watch —
 several handoffs for one issue arriving within minutes, each taking its
@@ -1273,7 +1274,7 @@ transition against the survivor — and the survivor's body is by
 construction the largest. Measured: four unavoidable round-trips on one
 consolidated issue cost **≈30k**, the biggest concentrated sink of that
 run, with every individual call compliant — the bootstrap write, one
-justified `get_issue` (a planning session had rewritten the body after
+justified `get_issue` (a scheduler session had rewritten the body after
 the snapshot), the checklist-tick write, and the In-Review write. The
 documented lever is "fewer calls", and there were already only four. On
 that body a **state-only** transition cost ≈7.6k.
@@ -1313,7 +1314,7 @@ is recorded here rather than treated as a bug to fix:
   independently confirmed their writers were individually compliant with
   no within-skill lever left.
 - Some pairs genuinely **cannot** be collapsed. One session's two tick
-  writes were forced apart because a planning session appended mandate
+  writes were forced apart because a scheduler session appended mandate
   checkboxes *after* `init-pr` had read the body, so the second batch was
   invisible until the first write's echo returned it. Structural, not
   indiscipline.
@@ -1321,7 +1322,7 @@ is recorded here rather than treated as a bug to fix:
   Five touches on one issue measured ≈53k, and per-touch cost rose
   monotonically — 8.4k read, then 9.7k, 11.0k, 11.5k, 12.4k appends —
   because each append enlarged what the next would echo.
-- **Durability can outrank the echo, and does.** One planning session
+- **Durability can outrank the echo, and does.** One scheduler session
   measured ~25k on a single growing survivor and *rejected* the
   buffer-and-write-once fix for the operator-directed case, with reason:
   the parts arrived hours apart in separate turns, and incremental
@@ -1461,14 +1462,14 @@ session reads the body at the start and holds it. **Amendment breaks
 that assumption**, and the resulting extra write is expected rather
 than a lapse.
 
-Concretely: when a planning session appends checkboxes to an issue an
+Concretely: when a scheduler session appends checkboxes to an issue an
 implementation session is *already working from*, that session cannot
 see them until its next echo returns them — so a second write it could
 not have batched is structural, not indiscipline. Do not read the floor
 as blaming a session for a cost it had no way to avoid.
 
-**The avoidance is a message, not a tighter budget.** A planning
-session amending an in-flight issue should **tell the worktree session
+**The avoidance is a message, not a tighter budget.** The
+scheduler amending an in-flight issue should **tell the worktree session
 directly** — the `plan` skill already has a coordinate-with-in-flight-
 sessions step. That turns an invisible amendment into a message and
 removes the wasted round trip entirely.

@@ -5,7 +5,7 @@
 # `plan` rulings and doctrine
 
 The operator's standing rulings, the fleet doctrine and the
-standing decisions a planning session obeys. They are
+standing decisions a scheduler session obeys. They are
 **instruction, not state**, so they live here, committed and
 reviewed, rather than in the Planning document. The bootstrap
 reads this file **before** the document (`SKILL.md` step 1); the
@@ -114,7 +114,7 @@ the document's state sections.
    the operator ticks in the same tab, messaging the scheduler
    each one.
 
-1. **Planning is read-only toward the repo.** A planning session
+1. **Planning is read-only toward the repo.** A scheduler session
    writes Linear state only; a fast-forward of the base checkout
    is not a planning edit. Edits to the operator's runtime config
    on the operator's word are outside the repo and allowed, and so
@@ -135,7 +135,7 @@ the document's state sections.
 1. **Housekeeping never costs a tab visit.** Upkeep runs as a tool
    inside the plan launch with its report in the bootstrap;
    destructive items are asked once in the planning tab; the
-   trim-lever fold runs as a sub-agent of the planning session.
+   trim-lever fold runs as a sub-agent of the scheduler.
    Neither costs a tab.
 
 1. **Dispatch never steals focus, and no notification for
@@ -283,7 +283,7 @@ the document's state sections.
 ## Standing decisions
 
 Process decisions bind here. **Product facts** are recorded here
-as the planning session's quick reference only: the named product
+as the scheduler's quick reference only: the named product
 doc owns each, and where the two disagree the doc wins and the
 line here is struck.
 

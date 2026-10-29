@@ -88,7 +88,7 @@ RESUME_VERB = "task resume"
 # is named by now ("◐ 914"), or a pre-rename "eng-914" / "ceo-914" / "exp-914",
 # after an optional status glyph. Matched against the WHOLE name, never searched
 # for: a search reads the numbers in "Python 3.12" or "10:30" as live issues and
-# silently skips resuming them. A day-keyed "plan-13" does not match either.
+# silently skips resuming them. A day-keyed "schedule-13" does not match either.
 _TAG_RE = re.compile(r"\A\W*(?:(?:eng|ceo|exp)-)?(\d+)\s*\Z", re.IGNORECASE | re.ASCII)
 
 _IDENT_RE = re.compile(r"^ENG-(\d+)$", re.IGNORECASE)
@@ -190,7 +190,7 @@ def live_tags() -> set[str]:
     helpers create, but the distinction matters if a tab is ever split.)
 
     The name carries a status glyph — `"◐ 914"` — which the match skips. A
-    session whose name is not a tag (a plain shell, a planning session, a title
+    session whose name is not a tag (a plain shell, a scheduler session, a title
     that merely contains a number) contributes nothing, and a padded `eng-0914`
     reads as `914`, the form `tag_of` produces.
 

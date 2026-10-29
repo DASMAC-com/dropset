@@ -254,7 +254,7 @@ A default `plan` runs on Bedrock and is priced like a worker.
 **At close** the close tool (`close_session.py --session-id <uuid>`)
 appends one line, marked estimate, in the same zero-echo pass as the
 state write; a chore appends `session_metrics.py --cost-line` output
-itself, and a planning session, with no issue, carries it under the
+itself, and a scheduler session, with no issue, carries it under the
 Planning document's `Session-metrics state` heading. An unresolvable
 session id skips the line and says so. For a Bedrock session:
 

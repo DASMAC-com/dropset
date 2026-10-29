@@ -255,8 +255,8 @@ migrations or generation inputs, and whether it spans crates.
      `file:line` or absence.
 
    - **"This will not fit in one PR" is not a second PR** on the same
-     issue: finish this one self-contained, message the live planning
-     session the remainder, and record the split as a PR-body deferral,
+     issue: finish this one self-contained, message the live
+     scheduler the remainder, and record the split as a PR-body deferral,
      which makes it addressed (`docs/conventions/commits-and-prs.md`).
 
 1. **Run lint — every lint point is one call** that races the abridged
@@ -680,9 +680,9 @@ migrations or generation inputs, and whether it spans crates.
    ≈2.7k for bytes already on disk.
 
    **Ask whether an AMENDMENT is pending before you spawn.** If a
-   planning session, a peer or the operator has work queued for this
+   scheduler session, a peer or the operator has work queued for this
    branch, the fan-out is about to review a diff that changes;
-   `ListAgents` shows whether a planning session is live, and one
+   `ListAgents` shows whether a scheduler session is live, and one
    message costs a fraction of one lens. Fold the amendment in first,
    or spawn and say a re-spawn is coming. One that lands after the
    fan-out gets a **scoped re-review of just the amendment**, never a
@@ -1839,7 +1839,7 @@ migrations or generation inputs, and whether it spans crates.
 
    - [ ] **Close** — the follow-up ledger, then the one question.
      Name every operator-facing item as addressed, handed to a
-     planning session, or filed as a task — each filing messaged to
+     scheduler session, or filed as a task — each filing messaged to
      the curator (`curate-<day>`, via `ListAgents`; with none live,
      the scheduler). Then ask via
      `AskUserQuestion` — *"all follow-up complete: metrics captured,

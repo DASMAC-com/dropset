@@ -58,7 +58,7 @@ reading "no account" still has its numbers.
 edit to a named skill, tool or convention rule. The bar is unchanged —
 a lever is **turn-eliminating**, **prose-subtracting** or
 **hardening**, worth roughly **3k per occurrence**; a lever derived
-from a planning session must be **quality-preserving** (a narrower
+from a scheduler session must be **quality-preserving** (a narrower
 echo or a removed re-read qualifies; a model downgrade or a thinned
 bootstrap read does not). Weigh in this order:
 
@@ -169,7 +169,7 @@ python3 .claude/tools/linear_issue.py create --title 'Claude: <theme>' \
   --body-file <scratchpad>/tasks/01-<slug>.md --state Backlog --priority 1
 ```
 
-**Backlog with no milestone**: the analyst is the planning session's
+**Backlog with no milestone**: the analyst is the scheduler's
 own sub-agent and its output is already folded, so the park-then-
 promote hop executor filings take does not apply. The `--title` is the
 whole title, prefix included. No relations, ever.
@@ -192,7 +192,8 @@ Below-bar noise gets no record; it is simply not filed.
 whole return), at most thirty lines: the batches filed with their
 ENG-###s and part counts, the parts folded into existing issues, the
 rejections recorded and why, and the sessions and dollars the digest
-covered. The planning session names the new batches in its review ask.
+covered. The new batches are reviewed from the curator's pool like any other
+un-parked Backlog task.
 
 ## Notes
 

@@ -7,7 +7,7 @@ model: fable
 
 # `architect`
 
-The **CEO hat**. Where a planning session keeps the board
+The **CEO hat**. Where a scheduler session keeps the board
 coherent, this one asks whether the thing on the board is the
 right thing to build — "market-making versus volatility", not
 "which of these three issues goes first".
@@ -168,7 +168,7 @@ is forbidden.
   tasks' `Session pending`, no closing beyond its own rejects;
 - **nothing on another issue** — not its state, not its body.
 
-The scheduling monopoly stays with the planning session. Two
+The scheduling monopoly stays with the scheduler. Two
 sessions scheduling the board recreates exactly the
 conflicting-conclusions problem the monopoly exists to
 prevent — and it would be worse here, because this session's
@@ -178,7 +178,7 @@ That still forbids the tempting cases: an issue this
 conversation obviously obsoletes, a priority that is obviously
 wrong, a blocking edge that obviously belongs. Obvious is not
 the test; **ownership** is. Name them in the handoff and let the
-planning session execute.
+scheduler session execute.
 
 (An earlier version read "this session **files nothing**, edges
 nothing, re-prioritizes nothing, and closes nothing." The first
@@ -190,7 +190,7 @@ three stand, bar what the operator's own answers direct.)
 
 When a decision affects existing work, **name the tracks or
 issues by number** in the handoff — and do not read or edit
-their bodies. The planning session knows where to reconcile,
+their bodies. The scheduler knows where to reconcile,
 and reading a dozen issue bodies to describe an impact you can
 state in a sentence is precisely the bookkeeping this session
 skipped at bootstrap.
@@ -273,7 +273,7 @@ Both stages are **mandatory**, file or no file.
 1. **Write the design** — the spec file, or the governing
    issue's body — **ending with the task list it will file**.
    Say where it is, in plain text, the moment it exists: in
-   this tab **and** in a message to any live planning session.
+   this tab **and** in a message to the live scheduler, if one is running.
 1. **The operator edits it directly**, in a real editor or as
    comments on the issue, between turns.
 1. **Read it back exactly once** per round and fold their edits
@@ -436,14 +436,14 @@ Both, not either — they fail differently.
    heading `Notes for the next planning session`. Never as a
    free-floating section: the document grows without bound
    between close-out rewrites, and post-close notes from
-   non-planning sessions are a named cause of that. Confining
+   sessions other than the scheduler are a named cause of that. Confining
    them to one heading is what lets the `plan` bootstrap
    consolidate in a single rewrite.
 
    This channel is **durable across session death**, which is
    why it is not optional.
 
-1. **Message any live planning session** (`ListAgents`, then
+1. **Message the live scheduler, if one is running** (`ListAgents`, then
    `SendMessage`), so integration does not wait for the next
    bootstrap.
 
@@ -469,7 +469,7 @@ line as unratified, its tasks awaiting review.
 handoff** — that is what the handoff *is* — running
 `/session-metrics`, the shared tail, immediately before that
 write. Then stop: Done is
-the operator's call, and the planning session executes every
+the operator's call, and the scheduler executes every
 board consequence.
 
 **And if any part of the outcome belongs in the repo, the note

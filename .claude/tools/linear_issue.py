@@ -56,7 +56,7 @@ Subcommands::
 design because the fold convention asks for a part and a fingerprint per
 finding — which is exactly where the echo is worst. One audit session's nine
 ``save_issue`` calls cost ≈22.8k and supplied six of its eight largest single
-results; a planning session absorbing follow-ups made 27 for ≈30.1k. State,
+results; a scheduler session absorbing follow-ups made 27 for ≈30.1k. State,
 milestone and priority are parameters so one filer serves `audit-scope`
 (``Todo`` + ``Audit findings``), a planning follow-up (Backlog + a priority),
 and anything else that files in bulk.
@@ -463,7 +463,7 @@ def _resolve_named(nodes: list, wanted: str, kind: str) -> str:
 # tool only reminds; messaging is the filing session's act.
 CURATOR_REMINDER = (
     "REMINDER: message the curator (curate-<day>, via ListAgents) this "
-    "filing; with none live, message the scheduler (plan-<day>)"
+    "filing; with none live, message the scheduler (schedule-<day>)"
 )
 
 
@@ -489,7 +489,7 @@ def create_issue(
     ones whose bodies are long by design because the fold convention asks for a
     part and a fingerprint per finding. Measured: an audit session's 9
     `save_issue` calls cost ≈22.8k and supplied six of its eight largest single
-    results, roughly half of all main-loop result cost; a planning session
+    results, roughly half of all main-loop result cost; a scheduler session
     absorbing PR follow-ups made 27 calls for ≈30.1k, its top sink, against ≈7k
     for all 26 planning-document writes combined. In every case the echoed
     bytes were content the session had **just authored**, so nothing

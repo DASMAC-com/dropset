@@ -17,7 +17,7 @@ cost line on the issue is the close tool's write, not this skill's.
 
 **1. Derive the session id** from your scratchpad path: the
 directory name immediately above `scratchpad`, a bare UUID. An
-exported `CLAUDE_SESSION_ID` works too. A planning session computes
+exported `CLAUDE_SESSION_ID` works too. A scheduler session computes
 it instead, never listing the projects directory:
 
 ```sh
@@ -64,7 +64,7 @@ That is the whole skill.
   `session_metrics.py --cost-line --session-id <uuid>`, `Write` the
   line into the handoff note, and append that with
   `linear_issue.py append`.
-- **A planning session** has no issue: its close-out rewrite carries
+- **A scheduler session** has no issue: its close-out rewrite carries
   the line under `Session-metrics state`.
 
 The line is `**Cost actual**: $<usd> estimate, …` on Bedrock and a

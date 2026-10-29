@@ -59,11 +59,11 @@ confusing the two forms gives a convincing false negative.
 Full detail — every env var, which skill reads it, the registration, and
 that trap: `docs/conventions/linear-automation.md`.
 
-### Planning sessions
+### Scheduler sessions
 
 Board work — staging issues, keeping the Queue honest, placing
 blocking edges, carrying direction across days — happens in a
-**planning session**, the complement to a worktree implementation
+**scheduler session**, the complement to a worktree implementation
 session. It runs in the base repo (started and resumed with `plan`,
 never a worktree), bootstraps from the
 "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), and writes its
@@ -74,7 +74,7 @@ placed: `docs/conventions/linear-automation.md`.
 ### The architect session — the CEO hat
 
 Long-horizon **design** conversations run in their own session, not
-in a planning session: `plan` keeps the board coherent, `architect`
+in a scheduler session: `plan` keeps the board coherent, `architect`
 asks whether the thing on the board is the right thing to build.
 Launched with **`architect <n>`** (model-pinned,
 idempotent, one resumable session per governing issue, named
@@ -83,7 +83,7 @@ plan's rulings, no more — and makes **no scheduling
 writes** to the board: it files its own Linear tasks and moves its
 own governing issue to In Review, places only edges the operator
 ratified, re-prioritizes nothing and touches no other issue.
-The **scheduling** monopoly stays with the planning session, and the
+The **scheduling** monopoly stays with the scheduler, and the
 architect hands its conclusions over through the Planning document's
 `Notes for the next planning session` heading **and** a direct
 message. Detail: the `architect` skill.
@@ -247,7 +247,7 @@ owns review".
 
 ### An audit is a board issue, not a directive
 
-**No upkeep pass runs an audit.** A planning session files an
+**No upkeep pass runs an audit.** A scheduler session files an
 **audit issue** — a
 Backlog task naming **one** audit-registry target, with scope,
 rationale, and sequencing — and the session that pulls it runs
@@ -519,7 +519,7 @@ verbs re-export (re-pinning the tier); an absent marker reads as
 exports. Detail and the verb table:
 `docs/conventions/local-integrations.md`.
 
-A planning session may **dispatch** a ready task — `session_dispatch.py`
+A scheduler session may **dispatch** a ready task — `session_dispatch.py`
 opens a **tab in the dispatching session's own window** (never a new
 window) and types the verb, authorized by the operator's yes as
 `fleet go` is; several verbs go in one call, separated by a bare `+`.

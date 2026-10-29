@@ -44,8 +44,8 @@ is not repeated here.
   bots" survey was the top sink of three consecutive sessions, each
   needing only ~3–6 named modules the main loop then Read anyway.
 - **Planning document.** A whole-document read cost ≈9.6k (2.4× the
-  next result) to answer a ~six-line question; the live planning
-  session then answered better, correcting a stale fact the document
+  next result) to answer a ~six-line question; the live
+  scheduler then answered better, correcting a stale fact the document
   still carried.
 - **Whole reads.** Router modules read whole after a map (≈8.6k, 62%
   of a session's Read cost).

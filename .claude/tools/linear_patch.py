@@ -6,7 +6,7 @@ is a fixed per-call cost which ``patch`` does not shrink — patching reduces wh
 you *send*, never what you *receive* — and on an accumulator issue it compounds
 until the echoes dominate a session. Measured, repeatedly:
 
-* a planning session paid **44 saves for ~153.2k**, its eight largest results
+* a scheduler session paid **44 saves for ~153.2k**, its eight largest results
   all echoes of one growing meta batch;
 * ten saves against a single large-bodied issue cost **~41.1k** to add ~2k of
   new content, *including a bare state transition* that paid the full echo for

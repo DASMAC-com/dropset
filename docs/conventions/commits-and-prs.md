@@ -67,8 +67,8 @@
 - **Every PR is linked to its own task.** A session that finds
   mid-flight that its issue will not fit one PR never opens a second
   PR on the same issue: it finishes one self-contained PR, messages
-  the live planning session the remainder as pullable units, and ends
-  there. The **planning session** files the follow-ups and re-points
+  the live scheduler the remainder as pullable units, and ends
+  there. The **scheduler session** files the follow-ups and re-points
   the blocking edges to the chain's tail, because the operator's Done
   on the first issue is what releases its dependents.
 
