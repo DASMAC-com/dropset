@@ -141,8 +141,9 @@ Cache entries are readable from the ref that saved them and from the default
 branch. `test.yml` runs on `push: main`, so the shared entry exists on the
 default branch and merge-queue runs restore it. `lint.yml` runs on
 `push: main` only to warm the pre-commit hook cache (see below), skipping the
-Rust toolchain and cache, and `sdk.yml` no longer saves at all — which is the
-second reason both read the test jobs' key instead of keeping their own.
+Rust toolchain and cache, and `sdk.yml` no longer saves a Rust cache at all —
+which is the second reason both read the test jobs' key instead of keeping
+their own.
 
 ### Only a push to main saves
 
@@ -193,9 +194,9 @@ pnpm cache is off there, since nothing installs into the store. Without
 it the cache was cold on every merge-queue run and on the first run of each
 new PR, costing the `install-hooks` step: a median of 1.6 minutes across 86
 queue Lint jobs in 2026-10-12 to 2026-10-21, about a fifth of the queue's
-critical path, which Lint set on 77 of 88 entries. The warm-up costs about
-two runner-minutes per merge, after the merge and so off the critical path,
-and saves only when the key moves. A `schedule:` warm-up would also reach
+critical path, which Lint set on 77 of 88 entries. The warm-up costs up to
+about two runner-minutes per merge, after the merge and so off the critical
+path, and saves only when the key moves. A `schedule:` warm-up would also reach
 the default branch, but a config change would then stay cold in the queue
 until the next scheduled run, so it is not used.
 
