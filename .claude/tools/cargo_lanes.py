@@ -133,13 +133,19 @@ def target_of(command: str) -> str | None:
 
 def entry_of(target: str, root: Path) -> str | None:
     """The target root's entry a target directory sits in, if any — compared
-    with both sides resolved, so a symlinked cargo home or a relative spelling
-    still matches. ``WHOLE_ROOT`` for the root itself."""
-    try:
-        rel = Path(os.path.realpath(target)).relative_to(os.path.realpath(root))
-    except ValueError:
-        return None
-    return rel.parts[0] if rel.parts else WHOLE_ROOT
+    as spelled first (a symlinked lane resolves outside the root), then with
+    both sides resolved (a symlinked cargo home). ``WHOLE_ROOT`` for the root
+    itself."""
+    for t, r in (
+        (os.path.normpath(target), os.path.normpath(root)),
+        (os.path.realpath(target), os.path.realpath(root)),
+    ):
+        try:
+            rel = Path(t).relative_to(r)
+        except ValueError:
+            continue
+        return rel.parts[0] if rel.parts else WHOLE_ROOT
+    return None
 
 
 def cargo_roots(table: list[machine_load.Proc]) -> list[machine_load.Proc]:

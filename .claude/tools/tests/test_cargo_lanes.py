@@ -205,6 +205,14 @@ class Wipe(unittest.TestCase):
         self.assertEqual(self.by_name(again)[".wipe-a3"]["action"], "removed")
         self.assertEqual(list(self.root.iterdir()), [])
 
+    def test_a_build_on_a_symlinked_lane_still_holds_it(self):
+        # A lane moved to another volume and linked back resolves outside the
+        # root; the spelling the hook exported still names it.
+        with tempfile.TemporaryDirectory() as away:
+            (self.root / "dropset-2").symlink_to(away)
+            target = str(self.root / "dropset-2")
+            self.assertEqual(cl.entry_of(target, self.root), "dropset-2")
+
     def test_a_stale_tombstone_never_blocks_a_lane_and_stray_files_unlink(self):
         (self.root / ".wipe-dropset" / "debug").mkdir(parents=True)
         (self.root / ".DS_Store").write_text("x")

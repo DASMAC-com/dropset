@@ -45,6 +45,10 @@ __pycache__/
 # refreshes were its own.
 .claude/.allowlist-refresh.json
 
+# The retired seat-allowance sample log. Nothing writes it any more; the entry
+# stays until every machine's leftover copy is deleted, so none is committed.
+.claude/.allowance-samples.jsonl
+
 # The launcher's lever-fold stamp, written by .claude/tools/upkeep.py fold-stamp
 # and read by the scheduler's bootstrap. Machine-local: it records one
 # machine's day.

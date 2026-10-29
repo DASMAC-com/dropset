@@ -22,7 +22,7 @@ beside this pass's stamp; ``fold-today`` prints the scheduler's line for it
 (``fold ran at HH:MM, N batches[, M folded into open issues]`` or
 ``no fold today``). Neither reads the network.
 
-``run`` executes thirteen steps in order, each under its own timeout and each
+``run`` executes fourteen steps in order, each under its own timeout and each
 **best-effort**: a failure is a report line, never an abort of later steps.
 The one exception is step 1 — running from anywhere but the base checkout
 refuses the whole pass, since every later step assumes it.
