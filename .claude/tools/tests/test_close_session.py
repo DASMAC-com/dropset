@@ -493,8 +493,13 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(rc, 0, result)
         deletes = [c[-1] for c in runner.calls if c[:3] == ["gh", "api", "-X"]]
         # Only the closed branch's PR — never another PR's thread.
-        self.assertEqual(deletes, ["/notifications/threads/t1"])
-        self.assertEqual(result["notifications"], "dismissed 1 notification(s)")
+        self.assertEqual(
+            deletes,
+            ["/notifications/threads/t1/subscription", "/notifications/threads/t1"],
+        )
+        self.assertEqual(
+            result["notifications"], "dismissed 1 notification(s), unsubscribed 1"
+        )
         first_delete = next(
             i for i, c in enumerate(runner.calls) if c[:3] == ["gh", "api", "-X"]
         )
@@ -508,7 +513,9 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(rc, 0, result)
         self.assertTrue(result["removed"])
         self.assertIn(
-            "notifications: dismissed 0 notification(s), 1 failed", result["notes"]
+            "notifications: dismissed 0 notification(s), unsubscribed 1, "
+            "1 delete(s) failed",
+            result["notes"],
         )
 
     def test_no_pr_reads_no_notifications(self):

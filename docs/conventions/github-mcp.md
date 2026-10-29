@@ -112,9 +112,11 @@ which drifted behind it twice:
 
 - **The post-merge notification dismissal** (`review-pr`) — done
   **inside** `wait_for_checks.py --queue`, which on a `merged` verdict
-  lists the notification threads and marks each one whose `subject.url`
-  ends in the PR's number as done (`DELETE /notifications/threads/{id}`),
-  in its own process, before it exits. That leaves no turn between the
+  calls `pr_notifications.py`'s `--pr` path in its own process, before
+  it exits: every thread on the PR is unsubscribed
+  (`DELETE /notifications/threads/{id}/subscription`) so a later bot
+  comment cannot re-create it, then marked done
+  (`DELETE /notifications/threads/{id}`). That leaves no turn between the
   merge and the dismissal, and no list payload in any transcript:
   `mcp__github__list_notifications` once returned **3.7k tokens in a
   single call** for that one id, because it embeds the complete
@@ -128,9 +130,12 @@ which drifted behind it twice:
   Linear state** (a merged PR whose issue sits In Review is settled
   code), never an open PR's. `dismiss --pr N` instead marks done every
   thread on the named PRs **whatever their state** — the caller vouches
-  they are settled. One `DELETE` per thread, never mark-all, dry run
-  unless `--apply`. The upkeep pass runs `--settled` armed every
-  morning, the planning close-out runs it, and `close_session.py` calls
+  they are settled. Each thread is unsubscribed, then marked done — two
+  `DELETE`s per thread, never mark-all — dry run unless `--apply`. A
+  thread cannot be unsubscribed before GitHub creates it at its first
+  notifying event, so the merge is the earliest point. The upkeep pass
+  runs `--settled` armed every morning, the planning close-out runs it,
+  and `close_session.py` calls
   the `--pr` path in-process for its branch's PRs (having already
   refused an open one) before removing the worktree.
 
