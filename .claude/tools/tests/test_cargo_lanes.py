@@ -107,6 +107,29 @@ class Attribution(unittest.TestCase):
         with self.assertRaises(cl.ProbeFailed):
             cl.probe(FakeRun(table_rc=1), self.root, alive=lambda _pid: True)
 
+    def test_a_root_showing_no_environment_fails_closed(self):
+        # Another user's cargo: ps prints its argv but no environment, so its
+        # target dir is unknown rather than its own checkout's.
+        run = FakeRun(table=ONE_ROOT, commands={100: "cargo build --release"})
+        with self.assertRaises(cl.ProbeFailed):
+            cl.probe(run, self.root, alive=lambda _pid: True)
+
+    def test_a_build_into_the_root_itself_holds_everything(self):
+        run = FakeRun(
+            table=ONE_ROOT, commands={100: "cargo b CARGO_TARGET_DIR=/c/target"}
+        )
+        with self.assertRaises(cl.ProbeFailed):
+            cl.probe(run, self.root, alive=lambda _pid: True)
+
+    def test_a_stopped_build_still_holds_its_lane(self):
+        table = "  100     1  9000   01:00 T    cargo\n"
+        run = FakeRun(
+            table=table, commands={100: "cargo t CARGO_TARGET_DIR=/c/target/dropset"}
+        )
+        self.assertEqual(
+            cl.probe(run, self.root, alive=lambda _pid: True), {"dropset": [100]}
+        )
+
 
 class Wipe(unittest.TestCase):
     def setUp(self):
@@ -181,6 +204,19 @@ class Wipe(unittest.TestCase):
         )
         self.assertEqual(self.by_name(again)[".wipe-a3"]["action"], "removed")
         self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_a_stale_tombstone_never_blocks_a_lane_and_stray_files_unlink(self):
+        (self.root / ".wipe-dropset" / "debug").mkdir(parents=True)
+        (self.root / ".DS_Store").write_text("x")
+        (self.root / "link").symlink_to(self.root / "dropset-1")
+        commands = {100: "cargo test CARGO_TARGET_DIR=" + str(self.root / "dropset-1")}
+        result = self.run_report(apply=True, commands=commands, table=ONE_ROOT)
+        entries = self.by_name(result)
+        for name in ("dropset", ".wipe-dropset", ".DS_Store", "link"):
+            self.assertEqual(entries[name]["action"], "removed", name)
+        # The symlink went, not the lane it pointed at.
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["dropset-1"])
+        self.assertNotIn("failed", cl.summary(result))
 
     def test_the_rows_name_each_lane_and_sweep_the_rest_into_one(self):
         rows = cl.rows(self.run_report(apply=False))

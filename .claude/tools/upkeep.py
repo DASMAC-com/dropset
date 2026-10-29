@@ -44,29 +44,30 @@ refuses the whole pass, since every later step assumes it.
  7. unsubscribe from and dismiss every settled PR's notifications
     (``pr_notifications dismiss --settled``) — merged or closed, whatever its
     issue's state, one thread at a time (never mark-all);
- 8. the open count of each parked milestone, with its direction since the
+ 8. the cargo lanes (``cargo_lanes``): each lane under the cargo target root
+    and every non-lane entry there, sized, with whether a build is running on
+    it; armed, every idle one is wiped — the bound on the lanes' growth.
+    Beside the other cleanup, so the report's length cap cannot cut it;
+ 9. the open count of each parked milestone, with its direction since the
     previous stamp — the line the ``plan`` bootstrap says;
- 9. convention-reference check, hook-wiring check, the skill-size watch line
+10. convention-reference check, hook-wiring check, the skill-size watch line
     (``skill_size --utilization``), allowlist cruft, and the
     monthly refresh gate — mining the recent session digests when due and
     stamping the marker whatever the yield, writing no allow-rule;
-10. the fleet cost: ``fleet_cost reconcile`` per settled UTC day (Bedrock
+11. the fleet cost: ``fleet_cost reconcile`` per settled UTC day (Bedrock
     metered beside the bill, with its drift flag), then ``fleet_cost local``,
     the last seven local days and today so far, billed beside metered;
-11. the session digest (``session_metrics digest``) over every transcript since
-    the last digest's window closed, its rate-calibration line fed by step 10's
+12. the session digest (``session_metrics digest``) over every transcript since
+    the last digest's window closed, its rate-calibration line fed by step 11's
     reconcile figure and the settled day's ``fleet_cost rates`` read, and its
     CI section (``--ci``) read from the merge queue over the same window;
-12. the memory scan gate, then the memory audit when due;
-13. the transcript-purge dry-run manifest;
-14. the dependency advisories (``deps_audit --json``): one line, by severity,
+13. the memory scan gate, then the memory audit when due;
+14. the transcript-purge dry-run manifest;
+15. the dependency advisories (``deps_audit --json``): one line, by severity,
     with the delta against the previous run's ids kept beside the stamp.
-    Report-only — never a CI gate;
-15. the cargo lanes (``cargo_lanes``): each lane under the cargo target root
-    and every non-lane entry there, sized, with whether a build is running on
-    it; armed, every idle one is wiped — the bound on the lanes' growth.
+    Report-only — never a CI gate.
 
-**Arming.** Steps 6 and 15 run as a dry run and touch nothing unless
+**Arming.** Steps 6 and 8 run as a dry run and touch nothing unless
 ``DS_UPKEEP_ARMED=1`` is exported from the untracked runtime config. Step 7 is
 always armed in ``run``: with the board gate gone, a settled PR's threads are
 dismissible on sight, and a dismissal destroys nothing. The open-PR guard holds
@@ -926,6 +927,9 @@ STEPS = (
     ("board", step_board),
     ("prune", step_prune),
     ("notifications", step_notifications),
+    # Beside the cleanup it is, and early: the report is cut from the end at
+    # its length cap, and a held lane is a line the operator must see.
+    ("lanes", step_lanes),
     ("parked", step_parked),
     ("checks", step_checks),
     ("cost", step_cost),
@@ -933,7 +937,6 @@ STEPS = (
     ("memory", step_memory),
     ("purge", step_purge),
     ("deps", step_deps),
-    ("lanes", step_lanes),
 )
 
 # What each step's progress line names, and the timeout bounding its slowest

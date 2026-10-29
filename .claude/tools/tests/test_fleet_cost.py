@@ -775,10 +775,11 @@ class LocalDayTest(unittest.TestCase):
         ]
         with mock.patch.object(fc, "aws", side_effect=pages) as aws:
             hours = fc.fetch_hourly(
-                hour("2026-10-28T07:00:00"), hour("2026-10-28T08:20:00")
+                hour("2026-10-28T07:20:00"), hour("2026-10-28T09:20:00")
             )
         self.assertEqual([d for _, d in hours], [1.0, 2.0])
         first, second = (c.args[0] for c in aws.call_args_list)
+        # Both ends floored: the running 09:00 hour is never asked for.
         self.assertIn("Start=2026-10-28T07:00:00Z,End=2026-10-28T09:00:00Z", first)
         self.assertEqual(second[-2:], ["--next-page-token", "next"])
 

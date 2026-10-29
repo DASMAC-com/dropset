@@ -1118,13 +1118,10 @@ def _utc(text: str) -> datetime.datetime:
     return datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
 
 
-def _ce_hour(at: datetime.datetime, up: bool = False) -> str:
-    """``at`` on Cost Explorer's hourly grid, rounded down (or up)."""
+def _ce_hour(at: datetime.datetime) -> str:
+    """``at`` on Cost Explorer's hourly grid, rounded down."""
     utc = at.astimezone(datetime.timezone.utc)
-    floor = utc.replace(minute=0, second=0, microsecond=0)
-    if up and floor < utc:
-        floor += HOUR
-    return floor.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return utc.replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def parse_hourly(response: dict) -> list[tuple[datetime.datetime, float]]:
@@ -1144,13 +1141,15 @@ def parse_hourly(response: dict) -> list[tuple[datetime.datetime, float]]:
 def fetch_hourly(
     start: datetime.datetime, end: datetime.datetime
 ) -> list[tuple[datetime.datetime, float]]:
-    """Every hour from ``start`` to ``end``, paged. Needs the payer account's
-    hourly-granularity preference; without it the read is refused."""
+    """Every complete hour from ``start`` to ``end``, paged — ``end`` floored,
+    so the read never asks for an hour still running, which has no data yet
+    anyway. Needs the payer account's hourly-granularity preference; without
+    it the read is refused."""
     args = [
         "ce",
         "get-cost-and-usage",
         "--time-period",
-        f"Start={_ce_hour(start)},End={_ce_hour(end, up=True)}",
+        f"Start={_ce_hour(start)},End={_ce_hour(end)}",
         "--granularity",
         "HOURLY",
         "--metrics",

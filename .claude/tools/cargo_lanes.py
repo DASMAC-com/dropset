@@ -21,15 +21,20 @@ count, a stray per-issue directory, a tombstone a crashed wipe left behind.
 **Busy is read from the build queue.** The cargo roots of the process table
 (``machine_load.cargo_roots``, the probe's own read) are each attributed to the
 entry their ``--target-dir`` or inherited ``CARGO_TARGET_DIR`` names, read from
-``ps -E``. An entry with a root on it is skipped, and the line names the pid. A
-root whose environment cannot be read makes **every** entry busy — the probe
-fails closed, as does a process table that cannot be read at all.
+``ps -E`` — a stopped build included, since it still holds its lane. An entry
+with a root on it is skipped, and the line names the pid. A root whose
+environment cannot be read, or that builds into the target root itself, makes
+**every** entry busy — the probe fails closed, as does a process table that
+cannot be read at all. Busy means a cargo process: a binary run straight out of
+a lane with no cargo alive is not seen, which is safe for the Make targets
+since they copy what they run into the worktree's own ``target/``.
 
 **The wipe.** Without ``--apply`` nothing is touched (a dry run, as every prune
 step is). With it, every idle entry is first renamed to a ``.wipe-`` tombstone —
 all of them right after one probe, so a build starting mid-wipe meets a fresh
-directory rather than one vanishing under it — and the tombstones are then
-removed. A tombstone that survives a crash is a non-lane entry the next run
+directory rather than one vanishing under it, and a numbered one when a crashed
+wipe's tombstone already holds the name — and the tombstones are then removed
+(a stray file or symlink is unlinked). A tombstone that survives a crash is a non-lane entry the next run
 removes.
 
 Stdout is a ranked summary; ``--json`` the full manifest. Exit 0 on a report,
@@ -101,6 +106,12 @@ def lane_names(count: int) -> list[str]:
 
 _TARGET_ARG = re.compile(r"(?:^|\s)--target-dir(?:=|\s+)(\S+)")
 _TARGET_ENV = re.compile(r"(?:^|\s)CARGO_TARGET_DIR=(\S+)")
+# Every process a login shell starts carries these; a `ps -E` line with
+# neither is one whose environment ps did not show.
+_ANY_ENV = re.compile(r"\s(?:PATH|HOME)=")
+# `entry_of`'s answer for a build into the target root itself, which every
+# entry then holds for.
+WHOLE_ROOT = "*"
 
 
 class ProbeFailed(Exception):
@@ -110,18 +121,37 @@ class ProbeFailed(Exception):
 def target_of(command: str) -> str | None:
     """The target directory one ``ps -E`` command line builds into, or None for
     a cargo building its own checkout's ``target/``. An argument beats the
-    environment, as it does for cargo."""
+    environment, as it does for cargo. A line showing no environment at all
+    raises, since its target cannot be known."""
     match = _TARGET_ARG.search(command) or _TARGET_ENV.search(command)
-    return match.group(1) if match else None
+    if match:
+        return match.group(1)
+    if not _ANY_ENV.search(command):
+        raise ProbeFailed("a cargo root's environment is unreadable")
+    return None
 
 
 def entry_of(target: str, root: Path) -> str | None:
-    """The target root's entry a target directory sits in, if any."""
+    """The target root's entry a target directory sits in, if any — compared
+    with both sides resolved, so a symlinked cargo home or a relative spelling
+    still matches. ``WHOLE_ROOT`` for the root itself."""
     try:
-        rel = Path(target).relative_to(root)
+        rel = Path(os.path.realpath(target)).relative_to(os.path.realpath(root))
     except ValueError:
         return None
-    return rel.parts[0] if rel.parts else None
+    return rel.parts[0] if rel.parts else WHOLE_ROOT
+
+
+def cargo_roots(table: list[machine_load.Proc]) -> list[machine_load.Proc]:
+    """The probe's cargo roots, stopped ones included: a suspended build still
+    holds its lane, though it waits on nothing the load probe counts."""
+    by_pid = {p.pid: p for p in table}
+    return [
+        p
+        for p in table
+        if machine_load.is_cargo(p.comm)
+        and not (p.ppid in by_pid and machine_load.is_cargo(by_pid[p.ppid].comm))
+    ]
 
 
 def _commands(run: Runner, pids: list[int]) -> dict[int, str]:
@@ -147,7 +177,7 @@ def probe(
         rc, out = run(machine_load.PS_TABLE)
         if rc != 0:
             raise ProbeFailed(f"ps exited {rc}")
-        roots = machine_load.cargo_roots(machine_load.parse_ps(out))
+        roots = cargo_roots(machine_load.parse_ps(out))
     except (OSError, machine_load.NoReading) as exc:
         raise ProbeFailed(str(exc)) from exc
     if not roots:
@@ -165,6 +195,8 @@ def probe(
             continue
         target = target_of(commands[pid])
         name = entry_of(target, root) if target else None
+        if name == WHOLE_ROOT:
+            raise ProbeFailed(f"cargo pid {pid} builds into the target root itself")
         if name:
             busy.setdefault(name, []).append(pid)
     return busy
@@ -253,7 +285,12 @@ def wipe(
             continue
         path = root / e.name
         if not e.name.startswith(TOMBSTONE):
+            # A crashed wipe's tombstone may already hold the plain name.
             tomb = root / f"{TOMBSTONE}{e.name}"
+            n = 1
+            while tomb.exists() or tomb.is_symlink():
+                tomb = root / f"{TOMBSTONE}{e.name}-{n}"
+                n += 1
             try:
                 path.rename(tomb)
             except OSError as exc:
@@ -263,7 +300,11 @@ def wipe(
         doomed.append((e, path))
     for e, path in doomed:
         try:
-            remove(path)
+            # A stray file or symlink is unlinked; rmtree refuses both.
+            if path.is_dir() and not path.is_symlink():
+                remove(path)
+            else:
+                path.unlink()
         except OSError as exc:
             e.action = f"failed mid-removal: {exc.strerror or exc}"
             continue
@@ -305,12 +346,15 @@ def summary(result: dict) -> str:
     entries = result["entries"]
     verb = "would free" if result["dry_run"] else "freed"
     gone = [e for e in entries if e["action"] in ("removed", "would remove")]
-    held = [e for e in entries if e["present"] and e not in gone]
+    failed = [e for e in entries if e["action"].startswith("failed")]
+    held = [e for e in entries if e["present"] and e not in gone and e not in failed]
     lanes = sum(e["lane"] for e in gone)
     line = (
         f"{verb} {human(result['freed'])}: {lanes} lane(s) and "
         f"{len(gone) - lanes} non-lane entries; {len(held)} held"
     )
+    if failed:
+        line += f", {len(failed)} failed"
     if result["probe"] != "ok":
         line += f" (build probe {result['probe']})"
     return line

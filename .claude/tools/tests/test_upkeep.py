@@ -808,6 +808,12 @@ class PassTests(unittest.TestCase):
             ],
         )
 
+    def test_the_lanes_line_renders_before_the_long_cost_table(self):
+        # The report is cut from the end at its cap; a held lane must survive.
+        names = [n for n, _ in upkeep.STEPS]
+        self.assertLess(names.index("lanes"), names.index("cost"))
+        self.assertNotIn("lanes", upkeep.PRUNE_STEPS)
+
     def test_a_failed_lane_probe_is_a_failure(self):
         out = {**self.LANES, "dry_run": True, "probe": "failed: ps exited 1"}
         step = self._lanes_step(False, out)
