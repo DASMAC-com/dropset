@@ -2594,8 +2594,8 @@ On every taker instruction:
 
 1. **Iterate** `MarketHeader.vaults` (active DLL only — tombstoned
    and frozen-then-drained vaults are not visited; frozen vaults
-   that still sit on the active DLL are visited but their levels
-   are skipped via per-level expiry).
+   that still sit on the active DLL are excluded at heap build, so
+   none of their levels is visited).
 
 1. **Range-check** the vault's `reference_price.price`. Drop the
    vault entirely if out-of-range (this is the deferred validation

@@ -74,8 +74,8 @@ fn freeze_vault_sets_frozen_flag() {
     f.freeze_vault(&admin, 0).expect("admin freezes the vault");
     assert!(f.vault(0).frozen.get(), "frozen flag set");
 
-    // The vault stays on the active DLL (existing levels keep matching
-    // until expiry) — freeze is not a list move.
+    // The vault stays on the active DLL (the matcher skips it, but it is
+    // still counted) — freeze is not a list move.
     let h = f.market_header();
     assert_eq!(h.active_count.get(), 1, "frozen vault still counted active");
     assert_eq!(h.head.get(), 0, "frozen vault still on the active list");
