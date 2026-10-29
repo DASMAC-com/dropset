@@ -267,15 +267,19 @@ the document's state sections.
    is never the operator's approval.
 1. **A budget, not a ceiling.** The fleet's size is the machine's
    answer, never a board literal: the machine-load probe
-   (`machine_load.py`) says how many more of a class fit. A `task`
-   is a building session. Builders are capped at `DS_FLEET_CAP`
-   and refused while a pool-lock wait is at or past
+   (`machine_load.py`) says how many more of a class fit. Every
+   top-level session, this one included, spends one of
+   `DS_FLEET_TOTAL`; nothing new starts while the one-minute load
+   is past `DS_FLEET_CPU_LOAD_MAX`. Both are the operator's, set
+   in the runtime config. A `task` is a building session, also
+   refused while a pool-lock wait is at or past
    `DS_FLEET_BUILD_WAIT_S`. A free session
    (`plan`, `architect`, `explore`, a chore with no build in its
-   body) is refused only on
-   memory, swap, pressure or load. Builds share the pool's
+   body) is refused only on the total, memory, pressure or load —
+   never swap. Builds share the pool's
    `DS_CARGO_LANES` lanes. On no reading (exit 3) fall back to the
-   cap and say so. The digest's `## Wait` section measures whether
+   total and say so — unless the total itself is unset, which holds
+   the batch. The digest's `## Wait` section measures whether
    the budget is right.
 1. **Cost**: the spend cap is the standing fleet guard, and
    `fleet_cost.py` reconciles telemetry against the bill.

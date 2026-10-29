@@ -43,12 +43,16 @@ TIERS = {
 }
 
 
+#: The fleet knobs every launch requires; a test unsets one by passing "".
+FLEET = {"DS_FLEET_TOTAL": "16", "DS_FLEET_CPU_LOAD_MAX": "16"}
+
+
 def run(command: str, **env: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["zsh", "-fc", SCRIPT, "zsh", str(INIT), command],
         capture_output=True,
         text=True,
-        env={"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", **env},
+        env={"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", **FLEET, **env},
         check=False,
     )
 
@@ -98,6 +102,37 @@ class SharedLauncherTest(unittest.TestCase):
         self.assertEqual(got.returncode, 1)
         self.assertNotIn("in", sections(got.stdout))
         self.assertIn("DS_MODEL_HELPER", got.stderr)
+
+    def test_an_unset_fleet_knob_refuses_every_launch_and_names_it(self) -> None:
+        for var in FLEET:
+            with self.subTest(var=var):
+                got = run('_ds_claude "claude-adv-1[1m]"', **TIERS, **{var: ""})
+                self.assertEqual(got.returncode, 1)
+                self.assertNotIn("in", sections(got.stdout))
+                self.assertIn(f"{var} is unset", got.stderr)
+
+    def test_a_malformed_fleet_knob_refuses_as_the_probe_would(self) -> None:
+        for var, raw in (
+            ("DS_FLEET_TOTAL", " "),
+            ("DS_FLEET_TOTAL", "2.5"),
+            ("DS_FLEET_CPU_LOAD_MAX", "lots"),
+        ):
+            with self.subTest(var=var, raw=raw):
+                got = run('_ds_claude "claude-adv-1[1m]"', **TIERS, **{var: raw})
+                self.assertEqual(got.returncode, 1)
+                self.assertNotIn("in", sections(got.stdout))
+                self.assertIn(f"{var} ('{raw}') is not", got.stderr)
+
+    def test_the_fleet_knobs_reach_the_session_exported(self) -> None:
+        # Plain shell assignments, as a profile might make them: the probe the
+        # session runs reads its environment, so the launch must export them.
+        got = run(
+            "DS_FLEET_TOTAL=12; DS_FLEET_CPU_LOAD_MAX=9.5; "
+            '_ds_claude m; print -r -- "EXPORTED=$(printenv DS_FLEET_TOTAL)"',
+            **{k: "" for k in FLEET},
+        )
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertIn("EXPORTED=12", got.stdout.splitlines())
 
 
 #: A stub `op` and `claude` that append each call to `$OP_LOG`, in order; the
@@ -321,7 +356,7 @@ class ClassStampTest(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
-                env={"PATH": f"{bin_dir}:/usr/bin:/bin"},
+                env={"PATH": f"{bin_dir}:/usr/bin:/bin", **FLEET},
                 check=False,
             )
             self.assertEqual(got.returncode, 0, got.stderr)

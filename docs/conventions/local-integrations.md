@@ -1246,23 +1246,35 @@ credential coordinates, those because they name one machine's setup.
 
 **The fleet's size is a budget the machine sets, not a session count.**
 `.claude/tools/machine_load.py` reads the pool lock's build queue,
-memory, swap, pressure and load, and answers how many more sessions of
-a class fit: `building` or `free`, classed per verb as the dispatcher
-does ("Session helpers" → `session_dispatch.py`). Every launch, and every
+memory, pressure and load, and answers how many more sessions of a
+class fit: `building` or `free`, classed per verb as the dispatcher
+does ("Session helpers" → `session_dispatch.py`). Every class spends
+one ceiling on live top-level `claude` clients (a sub-agent runs inside
+its parent's process), the scheduler, curator, launcher and seats
+included; a builder is further refused on the pool-lock wait. Swap is
+reported, never a refusal — macOS leaves a stale residue paged out long
+after the pressure behind it has gone. Every launch, and every
 resume that knows its session id (all but the bare tag picker), appends
 its reading, under the class its `<key>.class` record carries,
 to `sessions/<id>.load` and its sample line to `fleet-load.log`, both
 beside the substrate markers, and the daily digest's `## Wait` section
-reads them back. The probe's knobs sit in the same file, each with a
-default so that none is required:
+reads them back. The probe's knobs sit in the same file. The first two
+are **required**: unset or malformed, the probe answers no reading
+naming the variable and the launcher refuses the launch, as it does an
+unset model tier. The launcher exports both once they pass, since the
+probe reads its environment and a plain profile assignment would not
+reach it.
 
-| Knob                     | Default      | Bounds                                                           |
-| ------------------------ | ------------ | ---------------------------------------------------------------- |
-| `DS_FLEET_BUILD_WAIT_S`  | 120          | a pool-lock wait at or past this refuses another builder         |
-| `DS_FLEET_CAP`           | 20           | builders at once, whatever the machine says                      |
-| `DS_FLEET_RESERVE_GB`    | physical ÷ 8 | memory headroom kept free; below it every class is refused       |
-| `DS_FLEET_LOAD_PER_CORE` | 1.5          | `load1` per core past which every class is refused               |
-| `DS_CARGO_LANES`         | 2            | the pool's build lanes ("The cargo pool"), in each launch record |
+| Knob                    | Default      | Bounds                                                               |
+| ----------------------- | ------------ | -------------------------------------------------------------------- |
+| `DS_FLEET_TOTAL`        | required     | live top-level clients of every class at once                        |
+| `DS_FLEET_CPU_LOAD_MAX` | required     | the one-minute load average (cores in use) past which nothing starts |
+| `DS_FLEET_BUILD_WAIT_S` | 120          | a pool-lock wait at or past this refuses another builder             |
+| `DS_FLEET_RESERVE_GB`   | physical ÷ 8 | memory headroom kept free; below it every class is refused           |
+| `DS_CARGO_LANES`        | 2            | the pool's build lanes ("The cargo pool"), in each launch record     |
+
+`DS_FLEET_CAP` (builders only) and `DS_FLEET_LOAD_PER_CORE` are
+retired; the launcher names them if a shell still sets them.
 
 The committed function reads whatever `DS_OP_*` variables are
 shell-visible, so plain assignments in the profile satisfy it directly.
@@ -2935,9 +2947,12 @@ a terminal closed outright, is covered by the next morning's digest.
   number that refused it, plus what would free a slot; unlike a typo, a
   held verb is valid, so a partial batch is correct here. A refusal on
   the pool-lock wait is re-probed once first (the probe is one
-  snapshot). `--over-budget` seats past the machine checks; the cap,
-  `DS_FLEET_CAP`, has no override but the config, and a probe with no
-  reading (exit 3) leaves the cap alone binding, said aloud. The class
+  snapshot). Free and building seats spend the same `DS_FLEET_TOTAL`,
+  and the roll-call ends with `clients N of T (builders B, free F)`.
+  `--over-budget` seats past the machine checks; the total has no
+  override but the config, and a probe with no reading (exit 3) leaves
+  the total alone binding, said aloud — unless the total is itself
+  unset, which holds the batch and names the variable. The class
   is recorded as `<key>.class` beside the substrate marker: the
   dispatcher writes a chore's, and the launcher stamps
   `<class> <claude pid>` from a subshell that then `exec`s `claude`, so

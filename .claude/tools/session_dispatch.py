@@ -45,13 +45,14 @@ stdlib-only while still reaching a library that is not.
 (no cargo, no Docker, no PR) or `building` — and the machine-load probe
 (`machine_load.py`) is read once for the batch. What fits is seated; the rest
 is printed as `held` with the number that refused it, and a scheduler session
-re-dispatches it when a slot opens. That reading replaces the session count
-that used to live only in doctrine; the count survives as `DS_FLEET_CAP`, which
-the probe applies and nothing here overrides. `--over-budget` seats past every
-other check, as the operator's word in their own tab. A probe with no reading
-(exit 3) never halts the fleet: the batch is seated under the cap alone, and
-the dispatch says why. `fleet_resume.py` runs the same gate over its resume
-list, which is why the gate is public here rather than inlined in `run`.
+re-dispatches it when a slot opens. Every seat, free or building, spends one
+of `DS_FLEET_TOTAL`, the ceiling on live top-level clients the probe applies
+and nothing here overrides. `--over-budget` seats past every other check, as
+the operator's word in their own tab. A probe with no reading (exit 3) never
+halts the fleet: the batch is seated under the total alone, and the dispatch
+says why — unless the total itself is unset, which holds the whole batch and
+names the variable. `fleet_resume.py` runs the same gate over its resume list,
+which is why the gate is public here rather than inlined in `run`.
 """
 
 from __future__ import annotations
@@ -434,7 +435,7 @@ def probe(seats: list[Seat], directory: Path) -> dict:
     return {"status": "no-reading", "exit": machine_load.NO_READING, "error": error}
 
 
-def _reason(key: str, reading: dict, cap: int) -> str:
+def _reason(key: str, reading: dict, total: int) -> str:
     """The binding number behind one refusal key."""
     knobs = reading.get("knobs") or {}
     sessions = reading.get("sessions") or {}
@@ -445,11 +446,11 @@ def _reason(key: str, reading: dict, cap: int) -> str:
             f"longest build wait {duration(reading['builds']['longest_wait_s'])} "
             f"on the pool lock (limit {duration(knobs['build_wait_s'])})"
         )
-    if key == "cap":
+    if key == "total":
         return (
-            f"{sessions['building']} building of the cap {cap}"
+            f"{sessions['live']} clients of the total {total}"
             if sessions
-            else f"the cap {cap} (no reading counted the live sessions)"
+            else f"the total {total} (no reading counted the live sessions)"
         )
     if key == "slots":
         waiting = (reading.get("builds") or {}).get("waiting")
@@ -464,15 +465,10 @@ def _reason(key: str, reading: dict, cap: int) -> str:
             f"memory headroom {memory['headroom'] / gib:.1f} GiB "
             f"(reserve {memory['reserve'] / gib:.1f})"
         )
-    if key == "swap":
-        return f"swap {machine_load.size(reading['swap_used'])} in use"
     if key == "pressure":
         return f"kernel pressure {reading['pressure']}"
     if key == "load":
-        return (
-            f"load {reading['load']['per_core']:.2f} per core "
-            f"(limit {knobs['load_per_core']:.2f})"
-        )
+        return f"load {reading['load']['load1']:.1f} (limit {knobs['cpu_load_max']:g})"
     return key
 
 
@@ -481,10 +477,10 @@ def _remedy(key: str, reading: dict) -> str:
     return {
         "wait": "the longest wait falling under "
         + machine_load.duration(knobs.get("build_wait_s", 0)),
+        "total": "any session closing",
         "memory": "memory headroom over the reserve",
-        "swap": "swap draining to 0",
         "pressure": "kernel pressure back to normal",
-        "load": f"load falling under {knobs.get('load_per_core', 0):.2f} per core",
+        "load": f"load falling under {knobs.get('cpu_load_max', 0):g}",
     }.get(key, "")
 
 
@@ -498,39 +494,55 @@ class Gate:
     notes: list[str]
     #: Under `--over-budget`, what the reading alone would have held.
     overridden: list[tuple[Seat, str]]
+    #: `clients N of T (builders B, free F)` once the seated are counted, or
+    #: empty when no reading counted the live clients.
+    clients: str = ""
 
 
 def _admit(
-    seats: list[Seat], reading: dict, cap: int, over_budget: bool
+    seats: list[Seat], reading: dict, total: int, over_budget: bool
 ) -> tuple[list[Seat], list[tuple[Seat, list[str]]]]:
-    """Seat in order: free verbs on the machine checks alone, building ones up to
-    the reading's slots. Under `over_budget` only the cap binds, and only
-    building verbs."""
+    """Seat in order, every seat spending one of the total: free verbs on the
+    machine checks, building ones also up to the reading's building slots.
+    Under `over_budget` only the total binds."""
     verdict = reading.get("verdict")
     if verdict is None or over_budget:
-        building = (reading.get("sessions") or {}).get("building", 0)
-        b_slots, b_reasons, spent = max(0, cap - building), [], "cap"
-        f_slots, f_reasons = None, []
+        live = (reading.get("sessions") or {}).get("live", 0)
+        room = max(0, total - live)
+        b_slots, b_reasons, f_slots, f_reasons = room, [], room, []
+        spent = "total"
     else:
         b_slots, b_reasons = (
             verdict["building"]["slots"],
             verdict["building"]["reasons"],
         )
+        # The free verdict is the total's room whenever the machine admits.
         f_slots, f_reasons = verdict["free"]["slots"], verdict["free"]["reasons"]
         spent = "slots"
-    seated, held, taken = [], [], 0
+    seated, held, taken, built = [], [], 0, 0
     for seat in seats:
-        if seat.cls == FREE:
-            if f_slots is None:
-                seated.append(seat)
-            else:
-                held.append((seat, f_reasons))
-        elif taken < b_slots:
-            taken += 1
-            seated.append(seat)
-        else:
+        # The total first: a builder it holds is held on the total, not on
+        # the building slots, and so is freed by any session closing. A
+        # builder's own reasons are a superset of free's (they add the wait).
+        if taken >= f_slots:
+            why = b_reasons if seat.cls == BUILDING else f_reasons
+            held.append((seat, why or ["total"]))
+        elif seat.cls == BUILDING and built >= b_slots:
             held.append((seat, b_reasons or [spent]))
+        else:
+            taken += 1
+            built += seat.cls == BUILDING
+            seated.append(seat)
     return seated, held
+
+
+def _clients(reading: dict, total: int, seated: list[Seat]) -> str:
+    sessions = reading.get("sessions")
+    if not sessions:
+        return ""
+    building = sessions["building"] + sum(s.cls == BUILDING for s in seated)
+    free = sessions["free"] + sum(s.cls == FREE for s in seated)
+    return f"clients {building + free} of {total} (builders {building}, free {free})"
 
 
 def gate(
@@ -551,30 +563,43 @@ def gate(
     env = os.environ if env is None else env
     reading = reader(seats, directory)
     has_reading = "verdict" in reading
-    # The probe's own knob parse, so the cap means the same number in both
-    # places; `physical` feeds only the memory reserve, which is unused here.
-    knobs = machine_load.read_knobs(env, 0)
-    cap = int((reading.get("knobs") or {}).get("cap", knobs.cap))
-    notes = list(knobs.notes) if not has_reading else []
-    if not has_reading:
+    if has_reading:
+        total = int(reading["knobs"]["total"])
+        notes = []
+    else:
+        # The probe's own knob parse, so the total means the same number in
+        # both places; `physical` feeds only the memory reserve, unused here.
+        try:
+            knobs = machine_load.read_knobs(env, 0)
+        except machine_load.NoReading as exc:
+            # No total to seat under: hold the batch, naming the variable.
+            return Gate(
+                seated=[],
+                held=[(seat, str(exc)) for seat in seats],
+                remedies=["the knob set in the runtime config"],
+                notes=[f"no machine reading ({reading.get('error', 'unknown')})"],
+                overridden=[],
+            )
+        total = knobs.total
+        notes = list(knobs.notes)
         notes.append(
             f"no machine reading ({reading.get('error', 'unknown')}); "
-            f"seating under the cap {cap} alone"
+            f"seating under the total {total} alone"
         )
-    seated, held = _admit(seats, reading, cap, over_budget)
+    seated, held = _admit(seats, reading, total, over_budget)
     if has_reading and not over_budget and any("wait" in why for _, why in held):
         # The first reading stands unless the second is one: its holds are
         # rendered from whichever reading produced them.
         second = reader(seats, directory)
         if "verdict" in second:
             reading = second
-            seated, held = _admit(seats, reading, cap, over_budget)
+            seated, held = _admit(seats, reading, total, over_budget)
     overridden: list[tuple[Seat, str]] = []
     if over_budget and has_reading:
-        _, would = _admit(seats, reading, cap, False)
+        _, would = _admit(seats, reading, total, False)
         kept = {id(seat) for seat, _ in held}
         overridden = [
-            (seat, "; ".join(_reason(k, reading, cap) for k in why))
+            (seat, "; ".join(_reason(k, reading, total) for k in why))
             for seat, why in would
             if id(seat) not in kept
         ]
@@ -584,17 +609,19 @@ def gate(
             text = _remedy(key, reading)
             if text and text not in remedies:
                 remedies.append(text)
-    if any(seat.cls == BUILDING for seat, _ in held):
+    held_building = any(seat.cls == BUILDING for seat, _ in held)
+    if held_building and "any session closing" not in remedies:
         remedies.append("any builder closing")
     return Gate(
         seated=seated,
         held=[
-            (seat, "; ".join(_reason(k, reading, cap) for k in why))
+            (seat, "; ".join(_reason(k, reading, total) for k in why))
             for seat, why in held
         ],
         remedies=remedies,
         notes=notes,
         overridden=overridden,
+        clients=_clients(reading, total, seated),
     )
 
 
@@ -637,7 +664,7 @@ def run(argv: list[str]) -> int:
     parser.add_argument(
         "--over-budget",
         action="store_true",
-        help="seat the whole batch past the machine checks (the cap still binds)",
+        help="seat the whole batch past the machine checks (the total still binds)",
     )
     parser.add_argument("--state-dir", type=Path, default=None, help=argparse.SUPPRESS)
     parser.add_argument(
@@ -773,6 +800,8 @@ def run(argv: list[str]) -> int:
         print(f"sessions now open: {', '.join(iterm_api.session_names())}")
     except iterm_api.ItermUnavailable as exc:
         print(f"session-dispatch: tabs opened; roll-call unavailable ({exc})")
+    if admitted.clients:
+        print(admitted.clients)
     return 0
 
 

@@ -82,6 +82,9 @@ class LaunchKeysTest(unittest.TestCase):
                 "HOME": self.tmp.name,
                 "CLAUDE_CONFIG_DIR": self.tmp.name,
                 "DS_CARGO_LANES": "2",
+                # The fleet knobs every launch requires.
+                "DS_FLEET_TOTAL": "16",
+                "DS_FLEET_CPU_LOAD_MAX": "16",
             },
             check=False,
         )

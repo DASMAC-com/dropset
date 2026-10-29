@@ -29,7 +29,7 @@ from pathlib import Path
 from unittest import mock
 
 import fleet_resume as fr
-from tests.test_session_dispatch import NO_READING, Readings, reading
+from tests.test_session_dispatch import FLEET, NO_READING, Readings, reading
 
 
 def _issue(identifier="ENG-889", state="In Progress", title="A task"):
@@ -417,7 +417,7 @@ class MarkAttention(unittest.TestCase):
 class Cli(unittest.TestCase):
     def setUp(self):
         self._env = mock.patch.dict(
-            os.environ, {"LINEAR_API_KEY": "k", "LINEAR_PROJECT_ID": "p"}
+            os.environ, {"LINEAR_API_KEY": "k", "LINEAR_PROJECT_ID": "p", **FLEET}
         )
         self._env.start()
         self.addCleanup(self._env.stop)
@@ -639,23 +639,32 @@ class Cli(unittest.TestCase):
         return code, json.loads(out), err, opened
 
     def test_the_gate_reads_each_class_back_and_holds_what_does_not_fit(self):
-        refused = reading(slots=0, reasons=["cap"], building=20)
+        refused = reading(slots=0, reasons=["wait"], longest=465, waiting=1, building=3)
         code, parsed, err, opened = self._two_in_flight("--apply", readings=(refused,))
         self.assertEqual(code, 0)
-        # 889's record says free, so the cap cannot refuse it; 890 has none,
-        # which reads as building.
+        # 889's record says free, so the pool-lock wait cannot refuse it; 890
+        # has none, which reads as building.
         opened.assert_called_once_with(["task resume 889"])
         self.assertEqual([e["tag"] for e in parsed["resume"]], ["889"])
         self.assertEqual(parsed["resume"][0]["class"], "free")
+        wait = "longest build wait 7m45s on the pool lock (limit 2m00s)"
         self.assertEqual(
             [(e["tag"], e["class"], e["reason"]) for e in parsed["held"]],
-            [("890", "building", "20 building of the cap 20")],
+            [("890", "building", wait)],
         )
-        self.assertIn("held  task resume 890: 20 building of the cap 20", err)
+        self.assertIn(f"held  task resume 890: {wait}", err)
         self.assertIn("1 held by the machine gate", err)
+        self.assertIn("clients 4 of 20 (builders 3, free 1)", err)
+
+    def test_the_total_holds_a_free_resume_too(self):
+        full = reading(slots=0, reasons=["total"], free_reasons=["total"], building=20)
+        code, parsed, err, opened = self._two_in_flight("--apply", readings=(full,))
+        opened.assert_not_called()
+        self.assertEqual([e["tag"] for e in parsed["held"]], ["889", "890"])
+        self.assertIn("held  task resume 889 (free): 20 clients of the total 20", err)
 
     def test_the_read_only_plan_shows_the_holds_too(self):
-        refused = reading(slots=0, reasons=["cap"], building=20)
+        refused = reading(slots=0, reasons=["wait"], longest=465, waiting=1)
         code, parsed, err, opened = self._two_in_flight(readings=(refused,))
         opened.assert_not_called()
         self.assertEqual([e["tag"] for e in parsed["held"]], ["890"])
