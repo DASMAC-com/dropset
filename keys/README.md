@@ -46,22 +46,22 @@ prefix (`GGGG`, `HHHH`, …) into this directory.
 
 No mainnet signing key lives here, and the TUI refuses any key in this
 directory on mainnet, since its secret is public. The mainnet signing keys
-are the operator's, held in 1Password and configured through the TUI's
-git-ignored keys file, `tui/private-keys.env` (start from the committed
-`tui/private-keys.env.example`). An SDK consumer never needs them.
+are the operator's, signed for by the SSH agent and named by address in
+the TUI's git-ignored keys file, `tui/private-keys.env` (start from the
+committed `tui/private-keys.env.example`). An SDK consumer never needs
+them.
 
-`tui/private-keys.env` is one of the repo's two secrets-reference homes.
-The other is the localnet collectors enclave,
-`infra/localnet/secrets.local.env`, which holds the data stack's
-credentials (`docs/data-feeds.md` §12). Each keeps references only; the
-values stay in 1Password.
+`tui/private-keys.env` holds addresses only. The data stack's
+credentials are referenced from the localnet collectors enclave,
+`infra/localnet/secrets.local.env` (`docs/data-feeds.md` §12), which keeps
+`op://` references only; the values stay in 1Password.
 
 ## The mainnet program id
 
 `dropset-mainnet.pubkey` is the one non-localnet key here, and it is
-**public-key only**: the mainnet program id (`eBook…`). Its keypair is
-held in 1Password and never enters the repo, a build, or an agent
-session; only the publish step reads it, by its 1Password reference.
+**public-key only**: the mainnet program id (`eBook…`). Its keypair
+never enters the repo, a build, or an agent session: only a first
+publish signs with it, through the SSH agent, by its address.
 
 The program crate's `mainnet` feature selects this id's `declare_id!`
 (`make program-mainnet`, artifact `target/deploy/dropset_mainnet.so`, its

@@ -1,29 +1,24 @@
-//! The TUI's mainnet key references — one `op://` reference per signing role,
-//! read from a git-ignored env file of the TUI's own (`tui/private-keys.env`,
-//! copied from the committed `tui/private-keys.env.example`), each overridden
-//! by its flag.
+//! The TUI's mainnet keys — one Solana address per signing role, read from a
+//! git-ignored env file of the TUI's own (`tui/private-keys.env`, copied from
+//! the committed `tui/private-keys.env.example`), each overridden by its flag.
 //!
-//! The file holds references, never secrets, and the TUI parses it itself: it
-//! is never `source`d, and the TUI is never run under `op run`, so no resolved
-//! secret reaches the process environment. Every reference is resolved in
-//! memory through [`wallet::resolve_key`].
-//!
-//! The leader is the custody key, so it is the one role resolved **lazily**:
-//! a [`LazyKey`] holds its reference and runs `op read` only when a custody
-//! step first needs the key. A re-centre session, which signs with the quote
-//! key alone, never brings the leader into memory.
+//! The file holds addresses, never secrets, and the TUI parses it itself: it
+//! is never `source`d. Each address becomes an [`AgentSigner`] at launch —
+//! the SSH agent serving that key signs every transaction, prompting the
+//! operator per signature — so the cockpit never holds a mainnet private key.
+//! [`agent_key`] refuses an address no agent serves, naming it, before the
+//! session starts.
 
 // cspell:word QOUTE
 // cspell:word Vjcm
 
-use crate::cluster::Cluster;
-use crate::wallet;
+use crate::agent_signer::AgentSigner;
 use anyhow::{bail, Context, Result};
-use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::path::Path;
-use std::sync::Mutex;
+use std::str::FromStr;
+use std::sync::Arc;
 
 /// The admin wallet's line in the keys file (`--wallet` overrides it).
 pub const WALLET_VAR: &str = "DROPSET_TUI_WALLET";
@@ -31,16 +26,23 @@ pub const WALLET_VAR: &str = "DROPSET_TUI_WALLET";
 pub const LEADER_VAR: &str = "DROPSET_TUI_LEADER";
 /// The vault quote authority's line — the hot-path key (`--quote` overrides it).
 pub const QUOTE_VAR: &str = "DROPSET_TUI_QUOTE";
+/// The program key's line, for a first publish (`--program-key` overrides it).
+pub const PROGRAM_KEY_VAR: &str = "DROPSET_TUI_PROGRAM_KEY";
 
-/// The references one keys file names. A role whose line is absent is `None`.
+/// One role's signer, shared across job threads: a committed keypair on
+/// localnet, an agent-served key on mainnet.
+pub type RoleKey = Arc<dyn Signer + Send + Sync>;
+
+/// The addresses one keys file names. A role whose line is absent is `None`.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub struct KeyRefs {
+pub struct KeyAddresses {
     pub wallet: Option<String>,
     pub leader: Option<String>,
     pub quote: Option<String>,
+    pub program_key: Option<String>,
 }
 
-impl KeyRefs {
+impl KeyAddresses {
     /// Read and parse the keys file at `path`.
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| {
@@ -56,9 +58,9 @@ impl KeyRefs {
     /// skipped and a value may be quoted. Anything ambiguous is refused at
     /// launch rather than read some way that fails later, mid-session: an
     /// unknown or repeated name, and a value carrying an inline comment
-    /// (which would otherwise become part of the reference).
+    /// (which would otherwise become part of the address).
     pub fn parse(text: &str) -> Result<Self> {
-        let mut refs = Self::default();
+        let mut keys = Self::default();
         let mut seen = Vec::new();
         for (n, line) in text.lines().enumerate() {
             let n = n + 1;
@@ -72,14 +74,15 @@ impl KeyRefs {
             let name = name.trim();
             let value = unquote(value.trim());
             let slot = match name {
-                WALLET_VAR => &mut refs.wallet,
-                LEADER_VAR => &mut refs.leader,
-                QUOTE_VAR => &mut refs.quote,
+                WALLET_VAR => &mut keys.wallet,
+                LEADER_VAR => &mut keys.leader,
+                QUOTE_VAR => &mut keys.quote,
+                PROGRAM_KEY_VAR => &mut keys.program_key,
                 // Named only when it is shaped like a name: the text before
                 // a stray `=` could be the body of a pasted base64 secret.
                 other if is_name(other) => bail!(
-                    "line {n}: unknown key `{other}` — expected {WALLET_VAR}, {LEADER_VAR} or \
-                     {QUOTE_VAR}{}",
+                    "line {n}: unknown key `{other}` — expected {WALLET_VAR}, {LEADER_VAR}, \
+                     {QUOTE_VAR} or {PROGRAM_KEY_VAR}{}",
                     if other.starts_with("export ") {
                         ", with no `export` prefix"
                     } else {
@@ -99,7 +102,7 @@ impl KeyRefs {
             }
             *slot = (!value.is_empty()).then(|| value.to_string());
         }
-        Ok(refs)
+        Ok(keys)
     }
 }
 
@@ -122,169 +125,118 @@ fn unquote(value: &str) -> &str {
     value
 }
 
-/// An operator key named by reference and resolved on first use, then cached
-/// for the session. The checks a launch-time key gets — distinct from the
-/// session's other roles, never a committed key on mainnet — run at
-/// resolution instead.
-pub struct LazyKey {
-    reference: String,
-    role: &'static str,
-    cluster: Cluster,
-    /// Keys this one must differ from, each with the role that names it.
-    distinct_from: Vec<(Pubkey, &'static str)>,
-    committed: Vec<Pubkey>,
-    resolved: Mutex<Option<Keypair>>,
+/// Parse `arg` as the Solana address of mainnet `role`.
+///
+/// The value is never echoed: a pasted private key is the one wrong input
+/// whose text must not reach the terminal, and "not an address" is enough to
+/// act on.
+pub fn parse_address(arg: &str, role: &str) -> Result<Pubkey> {
+    Pubkey::from_str(arg).map_err(|_| {
+        anyhow::anyhow!(
+            "{role} on mainnet must be a Solana address — the SSH agent holds the key \
+             (value not shown)"
+        )
+    })
 }
 
-impl LazyKey {
-    pub fn new(
-        reference: String,
-        role: &'static str,
-        cluster: Cluster,
-        distinct_from: Vec<(Pubkey, &'static str)>,
-        committed: Vec<Pubkey>,
-    ) -> Self {
-        Self {
-            reference,
-            role,
-            cluster,
-            distinct_from,
-            committed,
-            resolved: Mutex::new(None),
-        }
-    }
-
-    /// The key, resolving it now if this is its first use.
-    pub fn resolve(&self) -> Result<Keypair> {
-        let mut slot = self.resolved.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(key) = slot.as_ref() {
-            return Ok(key.insecure_clone());
-        }
-        let key = wallet::resolve_key(&self.reference, self.role, self.cluster)?;
-        for (other, role) in &self.distinct_from {
-            if key.pubkey() == *other {
-                bail!("{} must differ from {role}", self.role);
-            }
-        }
-        if self.cluster.is_mainnet() {
-            wallet::refuse_committed(&key.pubkey(), self.role, &self.committed)?;
-        }
-        *slot = Some(key.insecure_clone());
-        Ok(key)
-    }
-
-    /// The reference the key resolves from — not a secret.
-    pub fn reference(&self) -> &str {
-        &self.reference
-    }
-
-    /// The key's pubkey if it has been resolved — never resolves it, and
-    /// never waits: while a resolution holds the lock (an `op read` can sit on
-    /// a 1Password prompt) it answers `None`, so a UI poll cannot freeze on it.
-    pub fn resolved_pubkey(&self) -> Option<Pubkey> {
-        match self.resolved.try_lock() {
-            Ok(slot) => slot.as_ref().map(Keypair::pubkey),
-            Err(std::sync::TryLockError::Poisoned(e)) => {
-                e.into_inner().as_ref().map(Keypair::pubkey)
-            }
-            Err(std::sync::TryLockError::WouldBlock) => None,
-        }
-    }
+/// The [`AgentSigner`] for mainnet `role` at address `arg`: the agent at
+/// `socket` when given, otherwise the first discovered agent that serves it.
+/// Refused, naming the address, when no agent does — the agent config does
+/// not list it, or 1Password is locked.
+pub fn agent_key(arg: &str, role: &str, socket: Option<&Path>) -> Result<AgentSigner> {
+    let address = parse_address(arg, role)?;
+    AgentSigner::connect(address, socket).with_context(|| {
+        format!(
+            "{role} {address} is not served by an SSH agent — list it in the agent's config \
+             and unlock 1Password, then relaunch"
+        )
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn address() -> String {
+        Pubkey::new_unique().to_string()
+    }
+
     #[test]
     fn parses_each_role_and_skips_comments_and_blanks() {
-        let refs = KeyRefs::parse(
-            "# keys\n\nDROPSET_TUI_WALLET=op://v/admin/key\n\
-             DROPSET_TUI_LEADER = \"op://v/lead/key\"\nDROPSET_TUI_QUOTE='op://v/quote/key'\n",
+        let keys = KeyAddresses::parse(
+            "# keys\n\nDROPSET_TUI_WALLET=w\nDROPSET_TUI_LEADER = \"l\"\n\
+             DROPSET_TUI_QUOTE='q'\nDROPSET_TUI_PROGRAM_KEY=p\n",
         )
         .unwrap();
-        assert_eq!(refs.wallet.as_deref(), Some("op://v/admin/key"));
-        assert_eq!(refs.leader.as_deref(), Some("op://v/lead/key"));
-        assert_eq!(refs.quote.as_deref(), Some("op://v/quote/key"));
+        assert_eq!(keys.wallet.as_deref(), Some("w"));
+        assert_eq!(keys.leader.as_deref(), Some("l"));
+        assert_eq!(keys.quote.as_deref(), Some("q"));
+        assert_eq!(keys.program_key.as_deref(), Some("p"));
     }
 
     #[test]
     fn an_empty_value_reads_as_absent() {
-        let refs = KeyRefs::parse("DROPSET_TUI_LEADER=\n").unwrap();
-        assert_eq!(refs, KeyRefs::default());
+        let keys = KeyAddresses::parse("DROPSET_TUI_LEADER=\n").unwrap();
+        assert_eq!(keys, KeyAddresses::default());
     }
 
     #[test]
     fn refuses_an_unknown_key_and_a_line_without_equals() {
-        let err = KeyRefs::parse("DROPSET_TUI_QOUTE=op://v/q/k").unwrap_err();
+        let err = KeyAddresses::parse("DROPSET_TUI_QOUTE=x").unwrap_err();
         assert!(err.to_string().contains("unknown key `DROPSET_TUI_QOUTE`"));
-        assert!(KeyRefs::parse("op://v/q/k").is_err());
+        assert!(KeyAddresses::parse(&address()).is_err());
     }
 
     #[test]
     fn never_echoes_text_that_is_not_shaped_like_a_name() {
         // A pasted base64 secret splits at its `=` padding; its body must not
         // reach the error.
-        let err = KeyRefs::parse("c2VjcmV0Ym9keQ==").unwrap_err().to_string();
+        let err = KeyAddresses::parse("c2VjcmV0Ym9keQ==")
+            .unwrap_err()
+            .to_string();
         assert!(!err.contains("c2VjcmV0Ym9keQ"), "{err}");
     }
 
     #[test]
     fn refuses_a_repeated_name_and_an_inline_comment() {
-        let twice = "DROPSET_TUI_QUOTE=op://v/a/k\nDROPSET_TUI_QUOTE=op://v/b/k\n";
-        assert!(KeyRefs::parse(twice)
+        let twice = "DROPSET_TUI_QUOTE=a\nDROPSET_TUI_QUOTE=b\n";
+        assert!(KeyAddresses::parse(twice)
             .unwrap_err()
             .to_string()
             .contains("set twice"));
-        let commented = "DROPSET_TUI_LEADER=op://v/lead/key  # custody";
-        let err = KeyRefs::parse(commented).unwrap_err().to_string();
+        let commented = format!("DROPSET_TUI_LEADER={}  # custody", address());
+        let err = KeyAddresses::parse(&commented).unwrap_err().to_string();
         assert!(err.contains("inline comment"), "{err}");
     }
 
     #[test]
-    fn the_committed_example_parses() {
+    fn the_committed_example_names_every_role() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("private-keys.env.example");
-        let refs = KeyRefs::load(&path).unwrap();
-        for value in [refs.wallet, refs.leader, refs.quote] {
-            assert!(value.unwrap().starts_with(wallet::OP_REFERENCE_PREFIX));
+        let keys = KeyAddresses::load(&path).unwrap();
+        for value in [keys.wallet, keys.leader, keys.quote, keys.program_key] {
+            assert!(value.unwrap().ends_with("-address>"));
         }
     }
 
-    fn keypair_file(dir: &Path, name: &str) -> (String, Pubkey) {
-        let key = Keypair::new();
-        let path = dir.join(name);
-        solana_keypair::write_keypair_file(&key, &path).unwrap();
-        (path.to_string_lossy().into_owned(), key.pubkey())
+    #[test]
+    fn an_address_that_does_not_parse_is_refused_without_its_value() {
+        // A 64-byte base58 secret is not a 32-byte address.
+        let secret = bs58::encode([7u8; 64]).into_string();
+        let err = parse_address(&secret, "--leader").unwrap_err().to_string();
+        assert!(err.contains("--leader") && !err.contains(&secret), "{err}");
+        let a = address();
+        assert_eq!(parse_address(&a, "--leader").unwrap().to_string(), a);
     }
 
     #[test]
-    fn a_lazy_key_resolves_once_on_first_use() {
-        let dir = std::env::temp_dir().join(format!("lazy-key-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let (path, pubkey) = keypair_file(&dir, "leader.json");
-        let key = LazyKey::new(path.clone(), "--leader", Cluster::Localnet, vec![], vec![]);
-        assert_eq!(key.resolved_pubkey(), None);
-        assert_eq!(key.resolve().unwrap().pubkey(), pubkey);
-        assert_eq!(key.resolved_pubkey(), Some(pubkey));
-        // Cached: a second use reads nothing, so it survives the file going.
-        std::fs::remove_file(&path).unwrap();
-        assert_eq!(key.resolve().unwrap().pubkey(), pubkey);
-    }
-
-    #[test]
-    fn a_lazy_key_refuses_a_key_it_must_differ_from() {
-        let dir = std::env::temp_dir().join(format!("lazy-key-same-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let (path, pubkey) = keypair_file(&dir, "leader.json");
-        let key = LazyKey::new(
-            path,
-            "--leader",
-            Cluster::Localnet,
-            vec![(pubkey, "--quote")],
-            vec![],
+    fn an_address_no_agent_serves_is_refused_by_name() {
+        let dead = std::env::temp_dir().join(format!("no-agent-{}.sock", std::process::id()));
+        let a = address();
+        let err = agent_key(&a, "--quote", Some(&dead)).unwrap_err();
+        let text = format!("{err:#}");
+        assert!(
+            text.contains("--quote") && text.contains(&a) && text.contains("not served"),
+            "{text}"
         );
-        let err = key.resolve().unwrap_err().to_string();
-        assert!(err.contains("--leader must differ from --quote"), "{err}");
-        assert_eq!(key.resolved_pubkey(), None);
     }
 }

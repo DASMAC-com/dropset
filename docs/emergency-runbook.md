@@ -13,11 +13,12 @@ close and drain by its leader.
 
 - The TUI builds on this laptop: `cargo build -p dropset-tui`. Build ahead
   of time, not under pressure.
-- 1Password is unlocked and holds the admin wallet (pays the fees), the
-  vault's quote key and its leader key.
+- The SSH agent serves the admin wallet (pays the kill's fees), the
+  vault's quote key and its leader key, and 1Password is unlocked. The
+  cockpit refuses to start, naming the address, when one is not served.
 - `tui/private-keys.env` exists, copied from
-  `tui/private-keys.env.example`, with one `op://` reference per key.
-  These are references, never files.
+  `tui/private-keys.env.example`, with one address per key. Every
+  signature prompts once.
 - You are in your own terminal. The cockpit refuses an agent's shell
   (`CLAUDECODE` set), sub-agents included.
 - The admin wallet holds some SOL for transaction fees.

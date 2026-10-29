@@ -35,7 +35,7 @@ use crate::deploy;
 use crate::emergency;
 use crate::explorer;
 use crate::job::{self, JobEvent, Logger};
-use crate::keys::LazyKey;
+use crate::keys::RoleKey;
 use crate::market::{self, PairConfig};
 use crate::publish;
 use crate::teardown;
@@ -781,21 +781,20 @@ pub struct JobContext {
     pub cluster: Cluster,
     pub repo_root: PathBuf,
     pub wallet_path: String,
-    pub wallet: Keypair,
+    pub wallet: RoleKey,
     /// The operator-supplied vault leader (the keys file or `--leader`), for a
     /// roster whose pairs name no leader file ([`market::LeaderKey::Operator`]
-    /// — mainnet). The custody key, so it resolves only when a custody step
-    /// first needs it. `None` on localnet, whose pairs use the committed role
-    /// keys.
-    pub leader: Option<Arc<LazyKey>>,
+    /// — mainnet). The custody key. `None` on localnet, whose pairs use the
+    /// committed role keys.
+    pub leader: Option<RoleKey>,
     /// The operator-supplied vault quote authority (the keys file or
     /// `--quote`): the signer of the ladder and reference-price writes on an
     /// [`market::LeaderKey::Operator`] roster. `None` on localnet, where the
     /// committed leader is also the quote authority.
-    pub quote: Option<Keypair>,
-    /// The program keypair (`--program-key`), needed only by a first
+    pub quote: Option<RoleKey>,
+    /// The program key (`--program-key`), needed only by a first
     /// [`Action::Publish`] — an upgrade is signed by the admin alone.
-    pub program_key: Option<Keypair>,
+    pub program_key: Option<RoleKey>,
     /// The ceremony record every write job appends to — always open on
     /// mainnet, optional on localnet.
     pub ceremony_log: Option<Arc<CeremonyLog>>,
@@ -810,8 +809,8 @@ pub struct JobContext {
 }
 
 impl JobContext {
-    fn wallet(&self) -> Keypair {
-        self.wallet.insecure_clone()
+    fn wallet(&self) -> RoleKey {
+        self.wallet.clone()
     }
 }
 
@@ -841,8 +840,8 @@ pub fn dispatch(
     let wallet = ctx.wallet();
     let cluster = ctx.cluster;
     let operator_leader = ctx.leader.clone();
-    let operator_quote = ctx.quote.as_ref().map(Keypair::insecure_clone);
-    let program_key = ctx.program_key.as_ref().map(Keypair::insecure_clone);
+    let operator_quote = ctx.quote.clone();
+    let program_key = ctx.program_key.clone();
     let record = ctx.ceremony_log.clone();
     let explorer_state = ctx.explorer_state.clone();
     let explorer_lock = ctx.explorer_lock.clone();
@@ -914,7 +913,7 @@ pub fn dispatch(
                 over_roster(cluster, "deposit", log, |config| {
                     let quote =
                         market::quote_authority(&repo_root, config, operator_quote.as_ref())?;
-                    let leader = market::leader(&repo_root, config, operator_leader.as_deref())?;
+                    let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
                     do_deposit(
                         &client,
                         &wallet,
@@ -980,7 +979,7 @@ pub fn dispatch(
                         .into_iter()
                         .map(|config| {
                             let rpc_url = rpc_url.clone();
-                            let wallet = wallet.insecure_clone();
+                            let wallet = wallet.clone();
                             let repo_root = &repo_root;
                             let postures = &postures;
                             let log = log.clone();
@@ -1219,7 +1218,7 @@ pub fn dispatch(
                 let base_mint = target_base_mint.context("no market selected")?;
                 let config = market::config_for(&repo_root, cluster, &base_mint)
                     .context("the selected market is not in this cluster's roster")?;
-                let leader = market::leader(&repo_root, config, operator_leader.as_deref())?;
+                let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
                 crate::outside::open(
                     &client,
                     &wallet,
@@ -1267,13 +1266,13 @@ pub fn dispatch_create_vault(ctx: &JobContext, name: String, tx: Sender<JobEvent
     let wallet = ctx.wallet();
     let cluster = ctx.cluster;
     let operator_leader = ctx.leader.clone();
-    let operator_quote = ctx.quote.as_ref().map(Keypair::insecure_clone);
+    let operator_quote = ctx.quote.clone();
     let record = ctx.ceremony_log.clone();
     job::spawn_recorded(tx, "Create vaults", record, move |log| {
         let client = chain::rpc(&rpc_url);
         over_roster(cluster, "vault", log, |config| {
             let quote = market::quote_authority(&repo_root, config, operator_quote.as_ref())?;
-            let leader = market::leader(&repo_root, config, operator_leader.as_deref())?;
+            let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
             do_create_vault(
                 &client,
                 &wallet,
@@ -1303,26 +1302,27 @@ pub fn dispatch_name(ctx: &JobContext, ticket: crate::naming::Ticket, tx: Sender
     job::spawn_recorded(tx, ticket.op.label(), record, move |log| {
         let client = chain::rpc(&rpc_url);
         let signer = match ticket.op {
-            NameOp::Override => wallet.insecure_clone(),
+            NameOp::Override => wallet.clone(),
             NameOp::Rename | NameOp::Create => {
                 let config = market::config_for(&repo_root, cluster, &ticket.base_mint)
                     .context("the selected market is not in this cluster's roster")?;
-                market::leader(&repo_root, config, operator_leader.as_deref())?
+                market::leader(&repo_root, config, operator_leader.as_ref())?
             }
         };
         crate::naming::execute(&client, &wallet, &signer, cluster, &ticket, log)
     });
 }
 
-/// Spawn the job that sends a confirmed passive-ladder `ticket`, signed by the
-/// pair's quote authority ([`market::quote_authority`]) — never the leader,
-/// which this path does not resolve.
+/// Spawn the job that sends a confirmed passive-ladder `ticket`, paid for and
+/// signed by the pair's quote authority ([`market::quote_authority`]) — never
+/// the leader or the admin. The quote key's balance is checked like any
+/// payer's, and a mainnet balance nearing the floor is called out after the
+/// send.
 pub fn dispatch_passive(ctx: &JobContext, ticket: crate::passive::Ticket, tx: Sender<JobEvent>) {
     let rpc_url = ctx.rpc_url.clone();
     let repo_root = ctx.repo_root.clone();
-    let wallet = ctx.wallet();
     let cluster = ctx.cluster;
-    let operator_quote = ctx.quote.as_ref().map(Keypair::insecure_clone);
+    let operator_quote = ctx.quote.clone();
     let record = ctx.ceremony_log.clone();
     job::spawn_recorded(tx, ticket.op.label(), record, move |log| {
         let client = chain::rpc(&rpc_url);
@@ -1330,7 +1330,12 @@ pub fn dispatch_passive(ctx: &JobContext, ticket: crate::passive::Ticket, tx: Se
         let config = market::config_for(&repo_root, cluster, &base_mint)
             .context("the selected market is not in this cluster's roster")?;
         let quote = market::quote_authority(&repo_root, config, operator_quote.as_ref())?;
-        crate::passive::execute(&client, &wallet, &quote, cluster, &ticket, log)
+        ensure_funded(&client, &quote.pubkey(), cluster, log)?;
+        let done = crate::passive::execute(&client, &quote, cluster, &ticket, log)?;
+        if cluster.is_mainnet() {
+            warn_low_quote(&client, &quote.pubkey(), log);
+        }
+        Ok(done)
     });
 }
 
@@ -1348,7 +1353,7 @@ pub fn dispatch_emergency(
     let wallet = ctx.wallet();
     let cluster = ctx.cluster;
     let operator_leader = ctx.leader.clone();
-    let operator_quote = ctx.quote.as_ref().map(Keypair::insecure_clone);
+    let operator_quote = ctx.quote.clone();
     let record = ctx.ceremony_log.clone();
     job::spawn_recorded(tx, action.label(), record, move |log| {
         let client = chain::rpc(&rpc_url);
@@ -1358,7 +1363,7 @@ pub fn dispatch_emergency(
             &wallet,
             &repo_root,
             cluster,
-            operator_leader.as_deref(),
+            operator_leader.as_ref(),
             operator_quote.as_ref(),
             planned.as_ref(),
             log,
@@ -1380,7 +1385,7 @@ pub fn dispatch_leader(ctx: &JobContext, ticket: crate::leader::Ticket, tx: Send
         let client = chain::rpc(&rpc_url);
         let config = market::config_for(&repo_root, cluster, &ticket.market.base_mint)
             .context("the selected market is not in this cluster's roster")?;
-        let leader = market::leader(&repo_root, config, operator_leader.as_deref())?;
+        let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
         crate::leader::execute(&client, &wallet, &leader, &repo_root, cluster, &ticket, log)
     });
 }
@@ -1408,7 +1413,7 @@ pub fn ceremony_plan(
     match action {
         Action::Publish => {
             let artifact = publish::Artifact::load(&ctx.repo_root, ctx.cluster)?;
-            let program_key = ctx.program_key.as_ref().map(Keypair::pubkey);
+            let program_key = ctx.program_key.as_ref().map(|k| k.pubkey());
             let plan = publish::plan(
                 &publish::client(&ctx.rpc_url),
                 &artifact,
@@ -1442,7 +1447,7 @@ pub fn ceremony_plan(
                 &ctx.repo_root,
                 ctx.cluster,
                 &admin,
-                ctx.leader.as_deref(),
+                ctx.leader.as_ref(),
                 ctx.quote.as_ref(),
             )
             .map(|(lines, planned)| (lines, Some(planned)));
@@ -1487,8 +1492,7 @@ pub fn ceremony_plan(
         Action::CreateVault | Action::Deposit => {
             for config in roster {
                 let symbol = config.base.symbol;
-                let leader =
-                    market::leader(&ctx.repo_root, config, ctx.leader.as_deref())?.pubkey();
+                let leader = market::leader(&ctx.repo_root, config, ctx.leader.as_ref())?.pubkey();
                 let (base, quote) = market::pair_mints(&ctx.repo_root, config)?;
                 let address = chain::market_pda(ctx.cluster, &base, &quote);
                 // A missing market or vault is refused here because the step
@@ -1587,7 +1591,7 @@ fn eclob_target(
 #[allow(clippy::too_many_arguments)]
 fn do_repeg(
     client: &solana_client::rpc_client::RpcClient,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     repo_root: &Path,
     market: Option<Pubkey>,
     base_mint: Option<Pubkey>,
@@ -1665,7 +1669,7 @@ fn do_repeg(
 #[allow(clippy::too_many_arguments)]
 fn do_reshape(
     client: &solana_client::rpc_client::RpcClient,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     repo_root: &Path,
     market: Option<Pubkey>,
     base_mint: Option<Pubkey>,
@@ -1779,6 +1783,26 @@ fn open_targets(
 /// cost estimate: a step that needs more still fails cleanly at the send.
 const MAINNET_MIN_PAYER_LAMPORTS: u64 = LAMPORTS_PER_SOL / 10;
 
+/// A mainnet quote-key balance below this is called out after each daily send,
+/// ahead of the [`MAINNET_MIN_PAYER_LAMPORTS`] floor that refuses one.
+const QUOTE_LOW_LAMPORTS: u64 = 5 * MAINNET_MIN_PAYER_LAMPORTS;
+
+/// Log a top-up reminder when the quote key, which pays for the ladder and
+/// re-centre, holds less than [`QUOTE_LOW_LAMPORTS`]. Best-effort: an unread
+/// balance says nothing, since the next send's floor check refuses anyway.
+fn warn_low_quote(client: &solana_client::rpc_client::RpcClient, quote: &Pubkey, log: &Logger) {
+    if let Ok(balance) = client.get_balance(quote) {
+        if balance < QUOTE_LOW_LAMPORTS {
+            log.log(format!(
+                "quote key {quote} holds {} SOL — top it up: it pays for every ladder and \
+                 re-centre, and sends refuse below {} SOL",
+                balance as f64 / LAMPORTS_PER_SOL as f64,
+                MAINNET_MIN_PAYER_LAMPORTS as f64 / LAMPORTS_PER_SOL as f64
+            ));
+        }
+    }
+}
+
 /// Make sure `wallet` can pay for what follows — admin paths waive the
 /// program's fees, but rent and transaction fees still cost lamports.
 ///
@@ -1823,7 +1847,7 @@ fn ensure_funded(
 /// mints mock tokens whose authority is the admin wallet.
 fn fund_taker(
     client: &solana_client::rpc_client::RpcClient,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     repo_root: &Path,
     log: &Logger,
 ) -> Result<()> {
@@ -1936,7 +1960,7 @@ fn over_roster(
 /// charges the per-vault fee in real USDC, verified to exist and never created.
 pub(crate) fn do_init(
     client: &solana_client::rpc_client::RpcClient,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     cluster: Cluster,
     log: &Logger,
 ) -> Result<Outcome> {
@@ -1998,7 +2022,7 @@ pub(crate) fn do_init(
 /// only verified, never created (see [`market::ensure_pair_mints`]).
 pub(crate) fn do_create_market(
     client: &solana_client::rpc_client::RpcClient,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     repo_root: &Path,
     cluster: Cluster,
     config: &PairConfig,
@@ -2077,11 +2101,11 @@ pub(crate) fn do_create_market(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn do_create_vault(
     client: &solana_client::rpc_client::RpcClient,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     repo_root: &Path,
     cluster: Cluster,
     config: &PairConfig,
-    leader: &Keypair,
+    leader: &dyn Signer,
     quote: &Pubkey,
     name: &str,
     log: &Logger,
@@ -2204,12 +2228,12 @@ fn deposit_seat(seats: &[VaultSeat], leader: &Pubkey) -> DepositSeat {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn do_deposit(
     client: &solana_client::rpc_client::RpcClient,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     repo_root: &Path,
     cluster: Cluster,
     config: &PairConfig,
-    leader: &Keypair,
-    quote: &Keypair,
+    leader: &dyn Signer,
+    quote: &dyn Signer,
     funding: market::Funding,
     posture: market::Posture,
     log: &Logger,
@@ -2274,7 +2298,7 @@ pub const DEFAULT_PROBE_UNITS: u64 = 10;
 /// [`chain::send_logged`]; depth and balances refresh after.
 fn do_probe_swap(
     client: &solana_client::rpc_client::RpcClient,
-    wallet: &Keypair,
+    wallet: &dyn Signer,
     repo_root: &Path,
     target: Option<Pubkey>,
     units: u64,

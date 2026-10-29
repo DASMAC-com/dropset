@@ -28,11 +28,13 @@ use dropset_sdk::instructions::{
 use dropset_sdk::SWAP_COMPUTE_UNIT_LIMIT;
 use dropset_util::localnet::{create_ata_idempotent_ix, mint_to_ix};
 use solana_client::rpc_client::RpcClient;
+use solana_client::rpc_config::RpcSimulateTransactionConfig;
 use solana_commitment_config::CommitmentConfig;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
 use solana_loader_v3_interface::get_program_data_address;
+use solana_message::Message;
 use solana_pubkey::{pubkey, Pubkey};
 use solana_signer::Signer;
 use solana_transaction::Transaction;
@@ -744,7 +746,7 @@ pub fn build_close_registry_ix(
 /// Create a 6-decimal SPL Token mint at a fresh random address owned by
 /// `authority`. The registry fee mint uses this — its address is incidental
 /// (read back from the registry), unlike the traded pair's fixed mints.
-pub fn create_spl_mint(client: &RpcClient, authority: &Keypair) -> Result<Pubkey> {
+pub fn create_spl_mint(client: &RpcClient, authority: &dyn Signer) -> Result<Pubkey> {
     create_mint(client, authority, &Keypair::new(), 6)
 }
 
@@ -756,7 +758,7 @@ pub fn create_spl_mint(client: &RpcClient, authority: &Keypair) -> Result<Pubkey
 /// `PairConfig`'s `MintSpec`) at their deterministic addresses.
 pub fn create_mint(
     client: &RpcClient,
-    authority: &Keypair,
+    authority: &dyn Signer,
     mint: &Keypair,
     decimals: u8,
 ) -> Result<Pubkey> {
@@ -938,7 +940,7 @@ fn token_amount(account: &FreshAccount) -> Result<u64> {
 /// before the bootstrap's seed `deposit_leader`.
 pub fn mint_to(
     client: &RpcClient,
-    authority: &Keypair,
+    authority: &dyn Signer,
     mint: &Pubkey,
     ata: &Pubkey,
     amount: u64,
@@ -953,7 +955,7 @@ pub fn mint_to(
 /// doesn't fail on an ATA that already exists.
 pub fn create_ata_idempotent(
     client: &RpcClient,
-    payer: &Keypair,
+    payer: &dyn Signer,
     wallet: &Pubkey,
     mint: &Pubkey,
 ) -> Result<Pubkey> {
@@ -1049,8 +1051,8 @@ pub fn airdrop(client: &RpcClient, to: &Pubkey, lamports: u64) -> Result<()> {
 /// error and logs.
 pub fn send(
     client: &RpcClient,
-    payer: &Keypair,
-    signers: &[&Keypair],
+    payer: &dyn Signer,
+    signers: &[&dyn Signer],
     ixs: &[Instruction],
 ) -> Result<String> {
     let blockhash = client
@@ -1092,18 +1094,20 @@ pub fn describe_rpc_error(err: &solana_client::client_error::ClientError) -> Str
 }
 
 /// Like [`send`], but also reports the transaction's compute-unit cost — the
-/// value the CU pane watches. The CU is read by simulating the (signed)
-/// transaction against the same pre-state it will execute against, which is
-/// exact for these deterministic instructions and needs no transaction-history
-/// RPC. A `None` CU (simulation unavailable) still sends and returns the
-/// signature, so a transient simulate failure never blocks the operation.
+/// value the CU pane watches. The CU is read by simulating the transaction
+/// against the same pre-state it will execute against, which is exact for these
+/// deterministic instructions and needs no transaction-history RPC. The
+/// simulation is unsigned, so measuring costs no signature — an agent-held key
+/// prompts once per send, not twice. A `None` CU (simulation unavailable) still
+/// sends and returns the signature, so a transient simulate failure never
+/// blocks the operation.
 pub fn send_measured(
     client: &RpcClient,
-    payer: &Keypair,
-    signers: &[&Keypair],
+    payer: &dyn Signer,
+    signers: &[&dyn Signer],
     ixs: &[Instruction],
 ) -> Result<(String, Option<u64>)> {
-    let cu = measure_cu(client, payer, signers, ixs);
+    let cu = measure_cu(client, &payer.pubkey(), ixs);
     let sig = send(client, payer, signers, ixs)?;
     Ok((sig, cu))
 }
@@ -1113,8 +1117,8 @@ pub fn send_measured(
 /// one-stop send for operations whose per-instruction cost the TUI surfaces.
 pub fn send_logged(
     client: &RpcClient,
-    payer: &Keypair,
-    signers: &[&Keypair],
+    payer: &dyn Signer,
+    signers: &[&dyn Signer],
     ixs: &[Instruction],
     label: &str,
     log: &Logger,
@@ -1128,17 +1132,25 @@ pub fn send_logged(
     Ok(sig)
 }
 
-/// Simulate `ixs` (signed, against current state) purely to recover the
-/// compute units consumed. Best-effort — any RPC hiccup yields `None`.
-fn measure_cu(
-    client: &RpcClient,
-    payer: &Keypair,
-    signers: &[&Keypair],
-    ixs: &[Instruction],
-) -> Option<u64> {
-    let blockhash = client.get_latest_blockhash().ok()?;
-    let tx = Transaction::new_signed_with_payer(ixs, Some(&payer.pubkey()), signers, blockhash);
-    client.simulate_transaction(&tx).ok()?.value.units_consumed
+/// Simulate `ixs` (unsigned, against current state) purely to recover the
+/// compute units consumed: the node skips signature verification and supplies
+/// its own blockhash. Best-effort — any RPC hiccup yields `None`.
+fn measure_cu(client: &RpcClient, payer: &Pubkey, ixs: &[Instruction]) -> Option<u64> {
+    let tx = Transaction::new_unsigned(Message::new(ixs, Some(payer)));
+    // The client's own commitment, as `simulate_transaction` used: left `None`,
+    // the config resolves to finalized, which lags a send that depends on the
+    // one just before it.
+    let config = RpcSimulateTransactionConfig {
+        sig_verify: false,
+        replace_recent_blockhash: true,
+        commitment: Some(client.commitment()),
+        ..RpcSimulateTransactionConfig::default()
+    };
+    client
+        .simulate_transaction_with_config(&tx, config)
+        .ok()?
+        .value
+        .units_consumed
 }
 
 #[cfg(test)]

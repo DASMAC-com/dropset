@@ -1,16 +1,33 @@
 // cspell:word Upgradeab
 
 //! Publishing the program: the first deploy **and** every later upgrade, on
-//! the upgradeable loader (v3), signed in memory.
+//! the upgradeable loader (v3), signed through each role's [`Signer`].
 //!
 //! The localnet "Deploy" action shells out to `solana program deploy`, which
 //! takes its signers as keypair **files**. A mainnet key never exists as a
-//! file (see [`crate::wallet::resolve_key`]), so this module drives the loader
-//! itself: create a buffer, write the binary into it, read it back, then
+//! file — the SSH agent signs for it (see [`crate::wallet::resolve_key`]) — so
+//! this module drives the loader itself: create a buffer, write the binary into it, read it back, then
 //! either `DeployWithMaxDataLen` (first publish) or `Upgrade` (every one
 //! after), and finally dump the deployed bytes back and compare. The buffer key
-//! is generated per run and discarded; its authority is the admin, so a run
-//! that dies mid-write leaves a buffer [`close_buffers`] can always reclaim.
+//! is generated per run and discarded.
+//!
+//! The write phase signs with a **writer**: a second in-memory keypair, made
+//! per run, that the admin funds with one transfer. The writer creates the
+//! buffer and pays for and authorizes every chunk write, then hands the buffer
+//! to the admin and sweeps its leftover lamports back in one transaction — so
+//! the admin, whose key may prompt per signature, signs twice per publish (the
+//! funding and the deploy or upgrade) however many chunks the binary takes.
+//!
+//! The writer's secret exists only in this process, so the handoff is what
+//! makes a failed run recoverable. After a failed funding or write phase the
+//! run first waits out every transaction it may still have in flight (see
+//! `outlast_in_flight`), then retries the handoff (`HANDOFF_ATTEMPTS`),
+//! re-reading the writer's balance and the buffer's authority each time, so a
+//! buffer handed over is one [`close_buffers`] can reclaim. A handoff that
+//! never lands, or a run killed before it, abandons the buffer's rent and the
+//! writer's lamports for good: nobody holds the writer's key. Both addresses
+//! are in the ceremony log (`writer` at `publish-start`, and a
+//! `buffer-handoff-failed` line when the retries run out).
 //!
 //! Which of the two a run does is decided from the chain, never chosen by the
 //! operator: no program account means first publish (which needs the program
@@ -19,13 +36,14 @@
 //! is therefore safe at every point — it can neither burn the program id nor
 //! redeploy what is already there.
 //!
-//! The admin is payer, buffer authority and upgrade authority in one, because
-//! `init` requires the registry's genesis admin to be the upgrade authority.
+//! The admin is the deploy's payer and the upgrade authority, because `init`
+//! requires the registry's genesis admin to be the upgrade authority.
 
 use crate::ceremony::{self, GitHead};
 use crate::chain::{self, describe_rpc_error};
 use crate::cluster::Cluster;
 use crate::job::Logger;
+use crate::keys::RoleKey;
 use anyhow::{anyhow, bail, Context, Result};
 use dropset_sdk::cluster::embeds_program_id;
 use dropset_sdk::DROPSET_ID;
@@ -39,6 +57,7 @@ use solana_client::send_and_confirm_transactions_in_parallel::{
     send_and_confirm_transactions_in_parallel_blocking_v2, SendAndConfirmConfigV2,
 };
 use solana_commitment_config::{CommitmentConfig, CommitmentLevel};
+use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_loader_v3_interface::{instruction as loader, state::UpgradeableLoaderState};
 use solana_message::Message;
@@ -93,6 +112,22 @@ const LAMPORTS_PER_SIGNATURE: u64 = 5_000;
 
 /// Re-sign rounds the parallel writer gets for writes whose blockhash expired.
 const WRITE_RESIGN_ROUNDS: usize = 5;
+
+/// How many times the writer's handoff is sent before the run gives up on it.
+const HANDOFF_ATTEMPTS: usize = 5;
+/// Pause between handoff attempts.
+const HANDOFF_BACKOFF: Duration = Duration::from_secs(2);
+
+/// Blocks a blockhash stays valid for (the runtime's `MAX_PROCESSING_AGE`), plus
+/// a margin. A transaction signed against any blockhash this run has fetched
+/// can no longer land once the chain is this many blocks past the height read
+/// when the wait began.
+const BLOCKHASH_VALIDITY_BLOCKS: u64 = 150 + 10;
+/// Poll interval while [`outlast_in_flight`] waits.
+const IN_FLIGHT_POLL: Duration = Duration::from_secs(2);
+/// Wall-clock cap on [`outlast_in_flight`], for a node whose block height
+/// cannot be read; the handoff then proceeds on whatever it reads.
+const IN_FLIGHT_MAX_WAIT: Duration = Duration::from_secs(300);
 
 /// Loader-v3 account tags (the bincode `u32` enum discriminant).
 const TAG_BUFFER: u8 = 1;
@@ -273,17 +308,19 @@ pub fn plan(
             .map_err(|e| anyhow!("rent query: {}", describe_rpc_error(&e)))
     };
     let writes = len.div_ceil(WRITE_CHUNK_BYTES);
-    // One signature per write; two each for create-buffer and deploy.
-    let fees = (writes as u64 + 4) * LAMPORTS_PER_SIGNATURE;
     let buffer_rent = rent(UpgradeableLoaderState::size_of_buffer(len))?;
+    let floor = rent(0)?;
     let (max_len, lamports) = match (mode, &deployed) {
         (Mode::First, _) => {
             let max_len = len * MAX_LEN_MULTIPLIER;
             let accounts = rent(UpgradeableLoaderState::size_of_programdata(max_len))?
                 + rent(UpgradeableLoaderState::size_of_program())?;
-            (max_len, buffer_rent + accounts + fees)
+            (
+                max_len,
+                publish_cost(buffer_rent, floor, writes, Some(accounts)),
+            )
         }
-        (_, Some(d)) => (d.code.len(), buffer_rent + fees),
+        (_, Some(d)) => (d.code.len(), publish_cost(buffer_rent, floor, writes, None)),
         (_, None) => unreachable!("classify returns First when nothing is deployed"),
     };
     let balance = client
@@ -395,8 +432,8 @@ pub fn publish(
     rpc_url: &str,
     artifact: &Artifact,
     cluster: Cluster,
-    admin: &Keypair,
-    program_key: Option<&Keypair>,
+    admin: &dyn Signer,
+    program_key: Option<&RoleKey>,
     log: &Logger,
 ) -> Result<String> {
     let client = Arc::new(client(rpc_url));
@@ -415,13 +452,19 @@ pub fn publish(
     }
     let bytes = &artifact.bytes;
     let buffer = Keypair::new();
-    log.log(format!("buffer: {}", buffer.pubkey()));
+    let writer = Keypair::new();
+    log.log(format!(
+        "buffer: {} (writer {})",
+        buffer.pubkey(),
+        writer.pubkey()
+    ));
     log.record(
         "publish-start",
         &[
             ("mode", &format!("{:?}", plan.mode)),
             ("program", &plan.program.to_string()),
             ("buffer", &buffer.pubkey().to_string()),
+            ("writer", &writer.pubkey().to_string()),
             ("sha256", &plan.sha256),
             ("bytes", &plan.len.to_string()),
             ("commit", &plan.commit),
@@ -432,47 +475,43 @@ pub fn publish(
     let rent = client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(bytes.len()))
         .map_err(|e| anyhow!("rent query: {}", describe_rpc_error(&e)))?;
-    let create = loader::create_buffer(
-        &admin.pubkey(),
-        &buffer.pubkey(),
-        &admin.pubkey(),
-        rent,
-        bytes.len(),
-    )?;
-    chain::send_logged(
+    let floor = client
+        .get_minimum_balance_for_rent_exemption(0)
+        .map_err(|e| anyhow!("rent query: {}", describe_rpc_error(&e)))?;
+    let funding = writer_funding(rent, floor, plan.writes);
+    let written = chain::send_logged(
         &client,
         admin,
-        &[admin, &buffer],
-        &create,
-        "create_buffer",
+        &[admin],
+        &[chain::system_transfer_ix(
+            &admin.pubkey(),
+            &writer.pubkey(),
+            funding,
+        )],
+        "fund_writer",
         log,
     )
-    .context("create the buffer")?;
-
-    log.log(format!("writing {} chunks…", plan.writes));
-    let messages = write_messages(&buffer.pubkey(), &admin.pubkey(), bytes);
-    let config = SendAndConfirmConfigV2 {
-        with_spinner: false,
-        resign_txs_count: Some(WRITE_RESIGN_ROUNDS),
-        rpc_send_transaction_config: RpcSendTransactionConfig {
-            skip_preflight: true,
-            preflight_commitment: Some(CommitmentLevel::Finalized),
-            ..RpcSendTransactionConfig::default()
-        },
-    };
-    let failed = send_and_confirm_transactions_in_parallel_blocking_v2(
-        client.clone(),
-        None,
-        &messages,
-        &vec![admin],
-        config,
-    )
-    // Withheld rather than formatted: a transport error's text carries the
-    // endpoint URL (see `describe_rpc_error`).
-    .map_err(|_| anyhow!("writing the buffer failed — close it with \"Close stranded buffers\""))?;
-    if let Some(err) = failed.into_iter().flatten().next() {
-        bail!("a buffer write failed ({err}) — close it with \"Close stranded buffers\"");
+    .context("fund the writer")
+    .and_then(|_| write_buffer(&client, &buffer, &writer, rent, bytes, plan.writes, log));
+    // The handoff runs whether or not the funding and writes landed. A failed
+    // send can still land until its blockhash expires, so a failure waits that
+    // out first and the handoff reads settled state.
+    if written.is_err() {
+        outlast_in_flight(&client, log);
     }
+    let handoff = hand_off(&client, &buffer.pubkey(), &writer, &admin.pubkey(), log);
+    // A failed handoff is reported first: it is the one failure the stranded
+    // buffer recovery cannot undo.
+    handoff.map_err(|e| match &written {
+        Err(first) => e.context(format!(
+            "hand the buffer to the admin, after the publish failed ({first:#})"
+        )),
+        Ok(()) => e.context("hand the buffer to the admin"),
+    })?;
+    // The handoff landed, so any buffer is now the admin's to reclaim.
+    written.context(
+        "the buffer, if created, is the admin's — close it with \"Close stranded buffers\"",
+    )?;
 
     // Read the buffer back before it becomes the program: a write that landed
     // short or out of place is caught here, while nothing has been replaced.
@@ -546,6 +585,214 @@ pub fn publish(
     Ok(format!(
         "Program {label} — on-chain sha256 {deployed_sha} matches the binary"
     ))
+}
+
+/// Upper bound on the lamports a publish needs the admin to hold: the writer's
+/// whole funding ([`writer_funding`], most of which comes back), the program
+/// accounts' rent on a first publish (`first_accounts`), and a fee for each of
+/// the admin's own signatures — one on the funding, then two on a first
+/// publish's deploy (the admin's and the program key's, both paid by the
+/// admin) or one on an upgrade.
+fn publish_cost(buffer_rent: u64, floor: u64, writes: usize, first_accounts: Option<u64>) -> u64 {
+    let deploy_signatures = if first_accounts.is_some() { 2 } else { 1 };
+    writer_funding(buffer_rent, floor, writes)
+        + first_accounts.unwrap_or(0)
+        + (1 + deploy_signatures) * LAMPORTS_PER_SIGNATURE
+}
+
+/// Lamports the admin funds the writer with: the buffer's rent, a fee for
+/// every signature the writer makes — two on create-buffer, one per chunk, one
+/// on the handoff — and `floor`, the rent-exempt minimum of an empty account.
+/// A fee payer may not drop below that floor, so without it the last writes
+/// would be dropped unlanded; the handoff's sweep, which closes the writer,
+/// may. A re-signed write replaces an expired one that never landed, so it
+/// costs no second fee. What is left comes back at the handoff.
+fn writer_funding(buffer_rent: u64, floor: u64, writes: usize) -> u64 {
+    buffer_rent + floor + (writes as u64 + 3) * LAMPORTS_PER_SIGNATURE
+}
+
+/// Create `buffer` and write `bytes` into it, all paid for and signed by
+/// `writer`, which is the buffer's authority until [`hand_off`].
+fn write_buffer(
+    client: &Arc<RpcClient>,
+    buffer: &Keypair,
+    writer: &Keypair,
+    rent: u64,
+    bytes: &[u8],
+    writes: usize,
+    log: &Logger,
+) -> Result<()> {
+    let create = loader::create_buffer(
+        &writer.pubkey(),
+        &buffer.pubkey(),
+        &writer.pubkey(),
+        rent,
+        bytes.len(),
+    )?;
+    chain::send_logged(
+        client,
+        writer,
+        &[writer, buffer],
+        &create,
+        "create_buffer",
+        log,
+    )
+    .context("create the buffer")?;
+
+    log.log(format!("writing {writes} chunks…"));
+    let messages = write_messages(&buffer.pubkey(), &writer.pubkey(), bytes);
+    let config = SendAndConfirmConfigV2 {
+        with_spinner: false,
+        resign_txs_count: Some(WRITE_RESIGN_ROUNDS),
+        rpc_send_transaction_config: RpcSendTransactionConfig {
+            skip_preflight: true,
+            preflight_commitment: Some(CommitmentLevel::Finalized),
+            ..RpcSendTransactionConfig::default()
+        },
+    };
+    let failed = send_and_confirm_transactions_in_parallel_blocking_v2(
+        client.clone(),
+        None,
+        &messages,
+        &vec![writer],
+        config,
+    )
+    // Withheld rather than formatted: a transport error's text carries the
+    // endpoint URL (see `describe_rpc_error`).
+    .map_err(|_| anyhow!("writing the buffer failed"))?;
+    if let Some(err) = failed.into_iter().flatten().next() {
+        bail!("a buffer write failed ({err})");
+    }
+    Ok(())
+}
+
+/// Block until no transaction this run signed can still land: wait for the
+/// chain to pass [`BLOCKHASH_VALIDITY_BLOCKS`] beyond its current height, so
+/// every blockhash fetched before the wait has expired. Called only after a
+/// failed funding or write phase, whose sends may have landed despite the
+/// error. Never fails: an unreadable height is retried until
+/// [`IN_FLIGHT_MAX_WAIT`], and the handoff then proceeds regardless, its own
+/// re-reads being the last line.
+fn outlast_in_flight(client: &RpcClient, log: &Logger) {
+    let started = std::time::Instant::now();
+    let mut until = None;
+    log.log("waiting for in-flight transactions to expire before the handoff…");
+    while started.elapsed() < IN_FLIGHT_MAX_WAIT {
+        if let Ok(height) = client.get_block_height() {
+            let until = *until.get_or_insert(height + BLOCKHASH_VALIDITY_BLOCKS);
+            if height > until {
+                return;
+            }
+        }
+        std::thread::sleep(IN_FLIGHT_POLL);
+    }
+    log.log("in-flight wait timed out — handing off on the current state");
+}
+
+/// Hand `buffer` from `writer` to `admin` and sweep the writer's lamports back
+/// to `admin`, in one transaction the writer pays for and signs.
+///
+/// Retried up to [`HANDOFF_ATTEMPTS`] times, each attempt re-reading the
+/// writer's balance and the buffer's authority, so an attempt whose send
+/// errored but landed is seen as done rather than re-sent. Done means the
+/// buffer is absent or already the admin's and the writer holds nothing. When
+/// every attempt fails, a `buffer-handoff-failed` record names both
+/// addresses.
+fn hand_off(
+    client: &RpcClient,
+    buffer: &Pubkey,
+    writer: &Keypair,
+    admin: &Pubkey,
+    log: &Logger,
+) -> Result<String> {
+    let mut last = None;
+    for attempt in 1..=HANDOFF_ATTEMPTS {
+        if attempt > 1 {
+            std::thread::sleep(HANDOFF_BACKOFF);
+        }
+        let state = client
+            .get_balance(&writer.pubkey())
+            .map_err(|e| anyhow!("writer balance: {}", describe_rpc_error(&e)))
+            .and_then(|balance| {
+                let account = chain::fetch_fresh(client, buffer, "buffer")?;
+                let holds =
+                    account.is_some_and(|a| buffer_authority(&a.data) == Some(writer.pubkey()));
+                Ok((balance, holds))
+            });
+        let (balance, holds) = match state {
+            Ok(state) => state,
+            Err(e) => {
+                last = Some(e);
+                continue;
+            }
+        };
+        let ixs = handoff_ixs(buffer, &writer.pubkey(), admin, balance, holds);
+        if ixs.is_empty() {
+            return Ok(String::new());
+        }
+        match chain::send_logged(client, writer, &[writer], &ixs, "hand_off", log) {
+            Ok(sig) => {
+                log.record(
+                    "buffer-handoff",
+                    &[
+                        ("buffer", &buffer.to_string()),
+                        ("authority", &admin.to_string()),
+                        (
+                            "swept",
+                            &balance.saturating_sub(LAMPORTS_PER_SIGNATURE).to_string(),
+                        ),
+                    ],
+                );
+                return Ok(sig);
+            }
+            Err(e) => last = Some(e),
+        }
+    }
+    log.record(
+        "buffer-handoff-failed",
+        &[
+            ("buffer", &buffer.to_string()),
+            ("writer", &writer.pubkey().to_string()),
+        ],
+    );
+    Err(last
+        .unwrap_or_else(|| anyhow!("no handoff attempt ran"))
+        .context(format!(
+            "the handoff failed {HANDOFF_ATTEMPTS} times — buffer {buffer} and its rent stay \
+             with the writer {}, whose key this run held only in memory",
+            writer.pubkey()
+        )))
+}
+
+/// The authority a loader-v3 `Buffer` account's data names: the bincode `u32`
+/// tag, then an `Option<Pubkey>`. `None` for any other account or an
+/// authority-less (immutable) buffer.
+fn buffer_authority(data: &[u8]) -> Option<Pubkey> {
+    if data.len() < 37 || data[..4] != [TAG_BUFFER, 0, 0, 0] || data[4] != 1 {
+        return None;
+    }
+    Pubkey::try_from(&data[5..37]).ok()
+}
+
+/// [`hand_off`]'s instructions: the authority change while the writer still
+/// holds the buffer, then a transfer of everything but the transaction's own
+/// fee. Empty when there is nothing to hand over and too little to sweep.
+fn handoff_ixs(
+    buffer: &Pubkey,
+    writer: &Pubkey,
+    admin: &Pubkey,
+    balance: u64,
+    writer_holds_buffer: bool,
+) -> Vec<Instruction> {
+    let mut ixs = Vec::new();
+    if writer_holds_buffer {
+        ixs.push(loader::set_buffer_authority(buffer, writer, admin));
+    }
+    let sweep = balance.saturating_sub(LAMPORTS_PER_SIGNATURE);
+    if sweep > 0 {
+        ixs.push(chain::system_transfer_ix(writer, admin, sweep));
+    }
+    ixs
 }
 
 /// An RPC client sized for publishing: reading `ProgramData` returns the whole
@@ -632,7 +879,7 @@ fn buffer_filters(authority: &Pubkey) -> Vec<RpcFilterType> {
 
 /// Close every buffer [`stranded_buffers`] finds for `admin`, returning the
 /// rent to it.
-pub fn close_buffers(client: &RpcClient, admin: &Keypair, log: &Logger) -> Result<String> {
+pub fn close_buffers(client: &RpcClient, admin: &dyn Signer, log: &Logger) -> Result<String> {
     let buffers = stranded_buffers(client, &admin.pubkey())?;
     if buffers.is_empty() {
         bail!(
@@ -674,6 +921,77 @@ pub fn sol(lamports: u64) -> String {
 mod tests {
     use super::*;
     use dropset_sdk::cluster::DROPSET_MAINNET_ID;
+
+    #[test]
+    fn the_writer_is_funded_for_every_signature_and_its_floor() {
+        // Two on create-buffer, one per chunk, one on the handoff.
+        let fees = (10 + 3) * LAMPORTS_PER_SIGNATURE;
+        assert_eq!(writer_funding(1_000, 890_880, 10), 1_000 + 890_880 + fees);
+    }
+
+    #[test]
+    fn the_planned_cost_covers_the_writer_and_every_admin_signature() {
+        let writer = writer_funding(1_000, 890_880, 10);
+        // Upgrade: the funding and the upgrade, one admin signature each.
+        assert_eq!(
+            publish_cost(1_000, 890_880, 10, None),
+            writer + 2 * LAMPORTS_PER_SIGNATURE
+        );
+        // First publish: the funding, then the deploy's two signatures, plus
+        // the program accounts' rent.
+        assert_eq!(
+            publish_cost(1_000, 890_880, 10, Some(7_000)),
+            writer + 7_000 + 3 * LAMPORTS_PER_SIGNATURE
+        );
+        // Every signature of the run: 10 writes, 2 on create, 1 on the
+        // handoff, 1 on the funding, 2 on the deploy.
+        assert_eq!(
+            publish_cost(0, 0, 10, Some(0)),
+            (10 + 2 + 1 + 1 + 2) * LAMPORTS_PER_SIGNATURE
+        );
+    }
+
+    #[test]
+    fn a_buffer_names_its_authority_only_when_it_has_one() {
+        let authority = Pubkey::new_unique();
+        let mut data = vec![TAG_BUFFER, 0, 0, 0, 1];
+        data.extend_from_slice(authority.as_ref());
+        data.extend_from_slice(&[0; 16]);
+        assert_eq!(buffer_authority(&data), Some(authority));
+        // An immutable buffer, another account type, a short read.
+        let mut immutable = data.clone();
+        immutable[4] = 0;
+        assert_eq!(buffer_authority(&immutable), None);
+        let mut programdata = data.clone();
+        programdata[0] = TAG_PROGRAMDATA;
+        assert_eq!(buffer_authority(&programdata), None);
+        assert_eq!(buffer_authority(&data[..20]), None);
+    }
+
+    #[test]
+    fn the_handoff_returns_the_buffer_and_sweeps_all_but_its_fee() {
+        let (buffer, writer, admin) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let ixs = handoff_ixs(&buffer, &writer, &admin, 100_000, true);
+        assert_eq!(
+            ixs,
+            vec![
+                loader::set_buffer_authority(&buffer, &writer, &admin),
+                chain::system_transfer_ix(&writer, &admin, 100_000 - LAMPORTS_PER_SIGNATURE),
+            ]
+        );
+        // A buffer the writer no longer holds (never created, or already
+        // handed over) leaves only the sweep; an empty writer holding no
+        // buffer leaves nothing to send.
+        assert_eq!(
+            handoff_ixs(&buffer, &writer, &admin, 100_000, false).len(),
+            1
+        );
+        assert!(handoff_ixs(&buffer, &writer, &admin, LAMPORTS_PER_SIGNATURE, false).is_empty());
+    }
 
     fn programdata(authority: Option<Pubkey>, code: &[u8]) -> Vec<u8> {
         let mut data = vec![TAG_PROGRAMDATA, 0, 0, 0];
