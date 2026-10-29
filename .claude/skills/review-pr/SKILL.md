@@ -1273,9 +1273,11 @@ migrations or generation inputs, and whether it spans crates.
    spurious `E0463 can't find crate for dropset_sdk` doctest failure
    (`history.md` → "Raced cargo builds"). Other worktrees sharing the
    cargo pool can still race it. **Recover with `cargo test --doc`,
-   never a second `make test`**: on an `E0463` doctest failure with
-   zero test failures in the log, run it once, through the quiet
-   runner, and read the pair as the green `make test`. A full re-run
+   never a second `make test`**: `verify_head.py` does this itself and
+   says so (`recovered=doctest-e0463`); after a plain `make test`, on
+   an `E0463` doctest failure with zero test failures in the log, run
+   it once, through the quiet runner, and read the pair as the green
+   `make test`. A full re-run
    only races again, and cargo stops at the first failing doctest
    crate, so a second full run still never reaches the later crates'
    doctests:
