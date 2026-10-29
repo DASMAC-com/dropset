@@ -95,7 +95,7 @@ impl SetLeader {
         // rather than leaning on that.
         require!(
             !address_eq(&new_leader, &Address::default()),
-            DropsetError::Unauthorized
+            DropsetError::ZeroAddress
         );
         // A no-op rotation would emit an event claiming a hand-off that
         // never happened.

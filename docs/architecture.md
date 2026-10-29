@@ -1405,7 +1405,9 @@ A sibling `force_withdraw_leader` covers the leader's stake, which
 lives in `vault.leader_shares` rather than on a `VaultDepositor`
 PDA and is therefore not reachable via the depositor variant. Same
 admin gate, same payout-to-stake-holder rule (funds always land
-with `vault.leader`, never with the calling admin), and the same
+with `vault.leader`, never with the calling admin; a payout account
+other than the leader is rejected with `LeaderAccountMismatch`), and
+the same
 admin-pays-ATA-rent rule on `init_if_needed`. Vault state: active,
 frozen, or tombstoned — Reclaimed sectors are rejected (the
 sector's leader pubkey has already been zeroed). Mechanically it
@@ -1579,6 +1581,8 @@ authoritative.
 | `CloseVault` against an already-tombstoned vault            | `VaultAlreadyTombstoned`       |
 | Operation disallowed against a tombstoned vault             | `VaultTombstoned`              |
 | Signer is not the vault's `quote_authority` / `leader`      | `Unauthorized`                 |
+| Zero `quote_authority` / `new_authority` / `new_leader` arg | `ZeroAddress`                  |
+| `force_withdraw_leader` payout account is not the leader    | `LeaderAccountMismatch`        |
 | First (seeding) deposit not signed by the leader            | `SeedingRequiresLeader`        |
 | Seeding deposit missing the base or quote leg               | `SeedingRequiresBothLegs`      |
 | Non-seeding deposit not sizing exactly one leg              | `SingleLegRequired`            |
@@ -1646,7 +1650,7 @@ Caller arguments stamped onto the vault:
 - `perf_fee_rate: Ppm32` — at most 1,000,000 (100%,
   `InvalidPerfFeeRate`); retunable post-open via `SetPerfFeeRate`.
 - `quote_authority: Address` — **must not be `Address::default()`**;
-  the zero address is rejected with `Unauthorized`. Having no private
+  the zero address is rejected with `ZeroAddress`. Having no private
   key, it would quote-brick the vault, since `SetReferencePrice` /
   `SetLiquidityProfile` gate on `signer == quote_authority`. (The
   free-list emptiness marker is `Vault.leader`, not this field — see
@@ -2095,7 +2099,7 @@ is how a maker learns its delegation moved.
 
 The new authority must be:
 
-- non-zero (`Unauthorized`) — the zero address has no private key, so
+- non-zero (`ZeroAddress`) — the zero address has no private key, so
   stamping it would brick the quoting hot path;
 - different from the current quote authority (`SameQuoteAuthority`),
   so no event claims a rotation that never happened — the same rule
@@ -2140,7 +2144,7 @@ accept time.
 
 The new leader must be:
 
-- non-zero (`Unauthorized`) — the zero address is the free-list
+- non-zero (`ZeroAddress`) — the zero address is the free-list
   emptiness marker, so a zero leader would put a funded vault on the
   free list. Defensive only: no key signs for it, so the co-signature
   already excludes it;

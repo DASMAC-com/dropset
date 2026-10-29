@@ -98,7 +98,7 @@ fn rejects_default_quote_authority() {
     let err = f
         .create_vault(0, Pubkey::default(), false, Pubkey::default())
         .expect_err("Address::default() quote_authority must reject");
-    common::assert_program_error(&err, DropsetError::Unauthorized);
+    common::assert_program_error(&err, DropsetError::ZeroAddress);
 }
 
 #[test]

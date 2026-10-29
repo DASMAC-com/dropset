@@ -959,6 +959,19 @@ fn force_withdraw_leader_rejects_non_admin() {
     common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
 }
 
+/// The payout account must be the vault's actual leader, so an admin
+/// cannot redirect the drained stake to an account of its choosing.
+#[test]
+fn force_withdraw_leader_rejects_wrong_leader_account() {
+    let mut f = Fixture::seeded(1_000_000, 1_085_000);
+    let admin = f.authority.insecure_clone();
+    let stranger = f.funded_keypair(10 * common::SIGNER_FUNDING_LAMPORTS);
+    let err = f
+        .force_withdraw_leader(&admin, 0, &stranger.pubkey())
+        .expect_err("payout to a non-leader must reject");
+    common::assert_program_error(&err, dropset::DropsetError::LeaderAccountMismatch);
+}
+
 /// A vault that was created but never seeded still occupies a sector, so
 /// `active_count > 0` blocks `close_market` — but it has no stake to
 /// drain, and the share guards used to reject the reclaim with
