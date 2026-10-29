@@ -677,5 +677,151 @@ class UnitTest(unittest.TestCase):
             fc.resolve_days(["2026-10-15"], today)
 
 
+try:
+    from zoneinfo import ZoneInfo
+
+    PACIFIC = ZoneInfo("America/Los_Angeles")
+except Exception:  # noqa: BLE001 — no tz database, so the DST cases skip
+    PACIFIC = None
+
+UTC = datetime.timezone.utc
+EDITION = "Claude Opus 5.5 (Amazon Bedrock Edition)"
+
+
+def hour(text: str) -> datetime.datetime:
+    return datetime.datetime.fromisoformat(text).replace(tzinfo=UTC)
+
+
+def hourly_page(hours: list[tuple[str, float]], token: str | None = None) -> dict:
+    page: dict = {
+        "ResultsByTime": [
+            {
+                "TimePeriod": {"Start": f"{start}Z"},
+                "Groups": [
+                    {
+                        "Keys": [EDITION],
+                        "Metrics": {"UnblendedCost": {"Amount": str(d)}},
+                    },
+                    {
+                        "Keys": ["Amazon S3"],
+                        "Metrics": {"UnblendedCost": {"Amount": "9"}},
+                    },
+                ],
+            }
+            for start, d in hours
+        ]
+    }
+    if token:
+        page["NextPageToken"] = token
+    return page
+
+
+@unittest.skipIf(PACIFIC is None, "no tz database")
+class LocalDayTest(unittest.TestCase):
+    def test_windows_keep_each_days_own_offset_across_dst(self) -> None:
+        # 2026-11-01 is the fall-back day: 25 hours long in Pacific time.
+        windows = fc.local_windows(hour("2026-11-02T17:00:00"), PACIFIC)
+        self.assertEqual(len(windows), fc.LOCAL_DAYS + 1)
+        self.assertEqual(windows[0][0], "2026-10-26")
+        self.assertEqual(windows[0][1], hour("2026-10-26T07:00:00"))
+        fall_back = dict((d, (s, e)) for d, s, e in windows)["2026-11-01"]
+        # Same-tzinfo subtraction is wall-clock, so compare the instants in UTC.
+        start, end = (t.astimezone(UTC) for t in fall_back)
+        self.assertEqual(end - start, datetime.timedelta(hours=25))
+        self.assertEqual(windows[-1][0], "2026-11-02")
+        self.assertEqual(windows[-1][2], hour("2026-11-02T17:00:00"))
+
+    def test_a_timestamp_buckets_under_its_local_date(self) -> None:
+        day_of = fc.local_day_of(PACIFIC)
+        self.assertEqual(day_of("2026-10-28T03:30:00.000Z"), "2026-10-27")
+        self.assertEqual(day_of("2026-10-28T07:00:00.000Z"), "2026-10-28")
+        self.assertEqual(day_of("garbage"), "")
+
+    def test_the_walk_meters_by_local_day(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            projects = Path(tmp) / "projects"
+            (projects / "seat").mkdir(parents=True)
+            line = json.loads(record("msg_late", tmp))
+            line["timestamp"] = "2026-10-28T03:00:00.000Z"
+            (projects / "seat" / "s.jsonl").write_text(json.dumps(line) + "\n")
+            meter = fc.walk(
+                projects,
+                ["2026-10-27", "2026-10-28"],
+                day_of=fc.local_day_of(PACIFIC),
+                floor=hour("2026-10-27T07:00:00").timestamp(),
+            )
+        self.assertIn("seat", fc.day_summary(meter, "2026-10-27")["substrates"])
+        self.assertEqual(fc.day_summary(meter, "2026-10-28")["substrates"], {})
+
+    def test_hours_bucket_by_local_start_and_name_the_last_billed(self) -> None:
+        hours = fc.parse_hourly(
+            hourly_page(
+                [
+                    ("2026-10-28T06:00:00", 1.5),
+                    ("2026-10-28T07:00:00", 2.0),
+                    ("2026-10-28T08:00:00", 0.0),
+                ]
+            )
+        )
+        days, through = fc.bucket_hours(hours, PACIFIC)
+        # The S3 group is not a Bedrock-edition service, so it never counts.
+        self.assertEqual(days, {"2026-10-27": 1.5, "2026-10-28": 2.0})
+        self.assertEqual(through, hour("2026-10-28T08:00:00"))
+
+    def test_the_hourly_read_pages_on_the_hour_grid(self) -> None:
+        pages = [
+            hourly_page([("2026-10-28T07:00:00", 1.0)], token="next"),
+            hourly_page([("2026-10-28T08:00:00", 2.0)]),
+        ]
+        with mock.patch.object(fc, "aws", side_effect=pages) as aws:
+            hours = fc.fetch_hourly(
+                hour("2026-10-28T07:20:00"), hour("2026-10-28T09:20:00")
+            )
+        self.assertEqual([d for _, d in hours], [1.0, 2.0])
+        first, second = (c.args[0] for c in aws.call_args_list)
+        # Both ends floored: the running 09:00 hour is never asked for.
+        self.assertIn("Start=2026-10-28T07:00:00Z,End=2026-10-28T09:00:00Z", first)
+        self.assertEqual(second[-2:], ["--next-page-token", "next"])
+
+    def run_local(self, error: fc.AwsError) -> str:
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(fc.sm, "claude_home", return_value=Path(tmp)),
+                mock.patch.object(fc, "aws", side_effect=error),
+                contextlib.redirect_stdout(out),
+            ):
+                rc = fc.local_main(False, PACIFIC, hour("2026-10-29T17:00:00"))
+        self.assertEqual(rc, 0)
+        return out.getvalue()
+
+    def test_the_billed_column_says_when_hourly_granularity_is_off(self) -> None:
+        text = self.run_local(
+            fc.AwsError(
+                "aws ce get-cost-and-usage exited 254: An error occurred "
+                "(AccessDeniedException) when calling the GetCostAndUsage "
+                "operation: Hourly data granularity is an opt-in only feature."
+            )
+        )
+        self.assertIn("(PDT), hourly granularity off;", text)
+        self.assertIn(
+            "2026-10-28 yesterday: billed hourly granularity off | metered $0.00 (0)",
+            text,
+        )
+        self.assertIn("2026-10-29 today so far:", text)
+        self.assertIn("2026-10-22 Thu:", text)
+
+    def test_any_other_billed_failure_is_named_and_the_meter_still_prints(self) -> None:
+        text = self.run_local(fc.AwsError("aws ce get-cost-and-usage exited 255: x"))
+        self.assertIn("billed read failed: aws ce", text)
+        self.assertIn("last 7 days:", text)
+
+    def test_the_heading_names_the_hour_billed_through(self) -> None:
+        report = {"zone": "PDT", "billed": "ok", "billed_through": "2026-10-29 09:00"}
+        self.assertIn(
+            "(PDT), billed through 2026-10-29 09:00;", fc.local_heading(report)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -87,7 +87,8 @@ fi
 # sets wins (for the lane and the per-checkout keys, one not shaped like the
 # hook's own), the same
 # override shape as `_ds_secrets`. The directory sits under Cargo
-# home, beside the registry, so it is cleaned with the rest of Cargo's state.
+# home, beside the registry, so it is cleaned with the rest of Cargo's state,
+# and the armed upkeep pass wipes every idle lane daily (`cargo_lanes.py`).
 # See docs/conventions/local-integrations.md → "The cargo pool".
 # Each variable the hook exported, mapped to the value it exported. Leaving a
 # checkout unsets a variable only while it still holds that value, so a pin

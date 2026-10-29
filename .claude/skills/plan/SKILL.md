@@ -141,8 +141,7 @@ pool's count and direction (ruling 23) — what was pruned and dismissed
 lock, an open PR — reported, never retried) and each pruned
 name's ahead count, and any inert guard,
 dangling reference or file near its size cap. Say the
-`fleet-cost` day lines and the `allowance` per-day figure too,
-any flagged day first. A run stamp
+`fleet-cost` day lines too, any flagged day first. A run stamp
 older than today means the pass did not reach the document —
 say so. Its **destructive items** (the prune, the transcript
 purge, allowlist cruft, refresh candidates, stale memories) are

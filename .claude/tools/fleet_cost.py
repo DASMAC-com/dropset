@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Price the fleet's Bedrock spend from transcripts and reconcile it with the bill.
 
-The Bedrock side of the fleet cost picture (``subscription_usage.py`` is the
-seat side). Four subcommands, each over **complete UTC days** — AWS reports
-in UTC, so every day boundary here is a UTC one, on both sides:
+The fleet cost picture, Bedrock billed and metered, the seat metered alone.
+Four subcommands over **complete UTC days** — AWS reports in UTC, so every
+day boundary there is a UTC one, on both sides — and ``local``, the one view
+bucketed by the machine's own day:
 
 ``meter``
     Walk every transcript under the Claude projects directory, sub-agents
@@ -44,6 +45,19 @@ in UTC, so every day boundary here is a UTC one, on both sides:
     the model's ``RATES_BY_MODEL`` row reproduces the bill to the cent. A
     provisional day is fine: a rate is a ratio, so a partly billed day yields
     it too.
+
+``local``
+    The last seven local days (the machine zone, midnight to midnight), the
+    last of them yesterday, then today so far: **billed**, from Cost
+    Explorer's hourly buckets over the Bedrock-edition services, each hour on
+    the local day it starts in, beside **metered**, the transcript meter at
+    Bedrock rates over the same windows, with the seat listed apart. Hourly
+    data needs the payer account's hourly-granularity preference; while it
+    is off the billed column reads ``hourly granularity off``. Hourly data
+    lags by hours, so the heading names the last hour billed. The meter is
+    only as complete as the transcripts on disk, and the purge ages them out,
+    so an older day can meter low where its bill does not. The settled
+    ``reconcile`` stays UTC; this view is never reconciled.
 
 **Substrate classes.** ``bedrock`` and ``seat`` come from a marker: the
 session's own record (``sessions/<id>``, written when the launch creates
@@ -87,6 +101,7 @@ Usage::
     python3 .claude/tools/fleet_cost.py reconcile [--day YYYY-MM-DD]...
     python3 .claude/tools/fleet_cost.py spend-cap [--day YYYY-MM-DD]...
     python3 .claude/tools/fleet_cost.py rates YYYY-MM-DD
+    python3 .claude/tools/fleet_cost.py local [--json]
 
 The AWS reads run the CLI under ``DS_AWS_PROFILE`` when it is set, else the
 CLI's own default. Stdlib only; a Python skill-tool under ``.claude/tools/`` —
@@ -105,6 +120,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 import session_metrics as sm
 
@@ -283,6 +299,9 @@ class Meter:
     # Message and tool-use ids every transcript's `Friction` has counted, one
     # set across the walk for the reason `seen` is.
     friction_seen: set[str] = field(default_factory=set)
+    # A record's timestamp -> the day it buckets under: the UTC date unless
+    # `local` swaps in the machine zone's. Friction stays UTC-keyed either way.
+    day_of: Callable[[str], str] = lambda stamp: stamp[:10]
 
     def ingest(
         self, line: str, substrate: str, issue: str | None, session: str
@@ -331,7 +350,7 @@ class Meter:
         msg = rec.get("message")
         if not isinstance(msg, dict) or not isinstance(msg.get("usage"), dict):
             return
-        day = str(rec.get("timestamp", ""))[:10]
+        day = self.day_of(str(rec.get("timestamp", "")))
         if day not in self.days:
             return
         # One count per message id across the WHOLE walk, not per file: a
@@ -408,12 +427,20 @@ def _oldest_first(paths) -> list[Path]:
     return [path for _, _, path in sorted(dated)]
 
 
-def walk(projects: Path, days: list[str]) -> Meter:
+def walk(
+    projects: Path,
+    days: list[str],
+    day_of: Callable[[str], str] | None = None,
+    floor: float | None = None,
+) -> Meter:
     """Meter every transcript that could hold a record on ``days``.
 
     A transcript last written before the first day cannot hold one, so it is
     skipped unread; a sub-agent transcript always finishes before its parent's
-    last write, so the parent's mtime gates both.
+    last write, so the parent's mtime gates both. ``day_of`` and ``floor``
+    re-bucket the walk (``local``): the day a timestamp falls on, and the
+    epoch second the first one starts — UTC midnight of the first day when
+    not given.
 
     A project's transcripts are walked oldest-written first. Every count is
     first-seen-wins across the walk, and a resumed session's parent stops
@@ -423,11 +450,14 @@ def walk(projects: Path, days: list[str]) -> Meter:
     days did span them, and the idle time between is a real stall.
     """
     meter = Meter(days=set(days))
-    floor = (
-        datetime.datetime.fromisoformat(min(days))
-        .replace(tzinfo=datetime.timezone.utc)
-        .timestamp()
-    )
+    if day_of is not None:
+        meter.day_of = day_of
+    if floor is None:
+        floor = (
+            datetime.datetime.fromisoformat(min(days))
+            .replace(tzinfo=datetime.timezone.utc)
+            .timestamp()
+        )
     if not projects.is_dir():
         return meter
     for project in sorted(projects.iterdir()):
@@ -1033,6 +1063,238 @@ def rates_main(day: str, as_json: bool) -> int:
     return 1 if mismatched else 0
 
 
+# --------------------------------------------------------------------------- #
+# Spend by local day.
+# --------------------------------------------------------------------------- #
+
+LOCAL_DAYS = 7
+HOURLY_OFF = "hourly granularity off"
+HOUR = datetime.timedelta(hours=1)
+
+
+def local_midnight(date: datetime.date, tz=None) -> datetime.datetime:
+    """The aware instant ``date`` starts in ``tz`` (the machine zone when
+    None) — computed per day, so a week that crosses a DST change keeps each
+    day's own offset."""
+    naive = datetime.datetime.combine(date, datetime.time())
+    return naive.replace(tzinfo=tz) if tz is not None else naive.astimezone()
+
+
+def local_windows(
+    now: datetime.datetime, tz=None
+) -> list[tuple[str, datetime.datetime, datetime.datetime]]:
+    """``(day, start, end)`` for the last ``LOCAL_DAYS`` complete local days,
+    oldest first, then today from midnight to ``now``."""
+    today = now.astimezone(tz).date()
+    out = []
+    for back in range(LOCAL_DAYS, 0, -1):
+        day = today - datetime.timedelta(days=back)
+        nxt = day + datetime.timedelta(days=1)
+        out.append((day.isoformat(), local_midnight(day, tz), local_midnight(nxt, tz)))
+    out.append((today.isoformat(), local_midnight(today, tz), now))
+    return out
+
+
+def local_day_of(tz=None) -> Callable[[str], str]:
+    """A transcript timestamp (UTC, ``…Z``) -> its local date. Cached by the
+    minute, the finest grain any zone offset has."""
+    cache: dict[str, str] = {}
+
+    def day_of(stamp: str) -> str:
+        key = stamp[:16]
+        if key not in cache:
+            try:
+                at = datetime.datetime.fromisoformat(f"{key}:00+00:00")
+            except ValueError:
+                cache[key] = ""
+            else:
+                cache[key] = at.astimezone(tz).date().isoformat()
+        return cache[key]
+
+    return day_of
+
+
+def _utc(text: str) -> datetime.datetime:
+    return datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+
+
+def _ce_hour(at: datetime.datetime) -> str:
+    """``at`` on Cost Explorer's hourly grid, rounded down."""
+    utc = at.astimezone(datetime.timezone.utc)
+    return utc.replace(minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_hourly(response: dict) -> list[tuple[datetime.datetime, float]]:
+    """An hourly Cost Explorer page -> ``(hour start, Bedrock-edition
+    dollars)`` per period."""
+    out = []
+    for period in response.get("ResultsByTime", []):
+        dollars = sum(
+            float(group["Metrics"]["UnblendedCost"]["Amount"])
+            for group in period.get("Groups", [])
+            if group["Keys"][0].endswith(EDITION_SUFFIX)
+        )
+        out.append((_utc(period["TimePeriod"]["Start"]), dollars))
+    return out
+
+
+def fetch_hourly(
+    start: datetime.datetime, end: datetime.datetime
+) -> list[tuple[datetime.datetime, float]]:
+    """Every complete hour from ``start`` to ``end``, paged — ``end`` floored,
+    so the read never asks for an hour still running, which has no data yet
+    anyway. Needs the payer account's hourly-granularity preference; without
+    it the read is refused."""
+    args = [
+        "ce",
+        "get-cost-and-usage",
+        "--time-period",
+        f"Start={_ce_hour(start)},End={_ce_hour(end)}",
+        "--granularity",
+        "HOURLY",
+        "--metrics",
+        "UnblendedCost",
+        "--filter",
+        json.dumps({"Dimensions": {"Key": "RECORD_TYPE", "Values": ["Usage"]}}),
+        "--group-by",
+        "Type=DIMENSION,Key=SERVICE",
+    ]
+    hours: list[tuple[datetime.datetime, float]] = []
+    token = None
+    while True:
+        response = aws(args + (["--next-page-token", token] if token else []))
+        try:
+            hours += parse_hourly(response)
+            token = response.get("NextPageToken")
+        except SHAPE_ERRORS as exc:
+            raise _shape_error("hourly Cost Explorer", exc) from exc
+        if not token:
+            return hours
+
+
+def hourly_off(exc: AwsError) -> bool:
+    """The refusal Cost Explorer gives while the hourly preference is off:
+    ``Hourly data granularity is an opt-in only feature`` (measured
+    2026-10-29)."""
+    text = str(exc).lower()
+    return "hourly" in text and "opt-in" in text
+
+
+def bucket_hours(
+    hours: list[tuple[datetime.datetime, float]], tz=None
+) -> tuple[dict[str, float], datetime.datetime | None]:
+    """``({local day: dollars}, end of the last hour that billed)``. Each hour
+    lands on the local day it starts in; in a zone whose offset is not whole
+    hours, an hour straddling midnight goes to the day it starts in."""
+    days: dict[str, float] = {}
+    through = None
+    for start, dollars in hours:
+        day = start.astimezone(tz).date().isoformat()
+        days[day] = days.get(day, 0.0) + dollars
+        if dollars > 0 and (through is None or start + HOUR > through):
+            through = start + HOUR
+    return days, through
+
+
+def local_report(meter: Meter, windows, billed, through, billed_state: str, tz=None):
+    """The ``local`` subcommand's structured result."""
+    today = windows[-1][0]
+    rows = []
+    for day, _, _ in windows:
+        subs = day_summary(meter, day)["substrates"]
+        bedrock, seat = subs.get(BEDROCK) or {}, subs.get(SEAT) or {}
+        rows.append(
+            {
+                "day": day,
+                "label": "today so far"
+                if day == today
+                else "yesterday"
+                if day == windows[-2][0]
+                else datetime.date.fromisoformat(day).strftime("%a"),
+                "billed": None if billed is None else billed.get(day, 0.0),
+                "metered": bedrock.get("dollars", 0.0),
+                "sessions": bedrock.get("sessions", 0),
+                "seat": seat.get("dollars", 0.0),
+                "seat_sessions": seat.get("sessions", 0),
+            }
+        )
+    week = rows[:-1]
+    return {
+        "zone": windows[-1][2].astimezone(tz).tzname(),
+        "billed": billed_state,
+        "billed_through": None
+        if through is None
+        else through.astimezone(tz).strftime("%Y-%m-%d %H:%M"),
+        "days": rows,
+        "week": {
+            "billed": None if billed is None else sum(r["billed"] for r in week),
+            "metered": sum(r["metered"] for r in week),
+            "seat": sum(r["seat"] for r in week),
+        },
+        "unreadable_transcripts": meter.unreadable,
+    }
+
+
+def local_heading(report: dict) -> str:
+    """The legend the rows lean on. Shared with upkeep."""
+    state = report["billed"]
+    if state == "ok":
+        through = report["billed_through"]
+        state = f"billed through {through}" if through else "nothing billed yet"
+    return (
+        f"by local day ({report['zone']}), {state}; metered and seat at Bedrock "
+        "rates (sessions), the seat not billed"
+    )
+
+
+def local_row(row: dict, state: str) -> str:
+    """One day: billed beside metered, the seat apart. Shared with upkeep."""
+    billed = money(row["billed"]) if row["billed"] is not None else state
+    return (
+        f"{row['day']} {row['label']}: billed {billed} | metered "
+        f"{money(row['metered'])} ({row['sessions']}) | seat "
+        f"{money(row['seat'])} ({row['seat_sessions']})"
+    )
+
+
+def local_week(report: dict) -> str:
+    week = report["week"]
+    billed = money(week["billed"]) if week["billed"] is not None else report["billed"]
+    return (
+        f"last {LOCAL_DAYS} days: billed {billed} | metered "
+        f"{money(week['metered'])} | seat {money(week['seat'])}"
+    )
+
+
+def local_main(as_json: bool, tz=None, now: datetime.datetime | None = None) -> int:
+    """Spend per local day. A failed billed read is a column state, not an
+    exit: the metered side still prints."""
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    windows = local_windows(now, tz)
+    meter = walk(
+        sm.claude_home() / "projects",
+        [day for day, _, _ in windows],
+        day_of=local_day_of(tz),
+        floor=windows[0][1].timestamp(),
+    )
+    billed, through, state = None, None, "ok"
+    try:
+        billed, through = bucket_hours(fetch_hourly(windows[0][1], now), tz)
+    except AwsError as exc:
+        state = HOURLY_OFF if hourly_off(exc) else f"billed read failed: {exc}"
+    report = local_report(meter, windows, billed, through, state, tz)
+    if as_json:
+        print(json.dumps(report, indent=2))
+        return 0
+    lines = [local_heading(report)]
+    lines += [f"  {local_row(row, report['billed'])}" for row in report["days"]]
+    lines.append(f"  {local_week(report)}")
+    if meter.unreadable:
+        lines.append(f"skipped {meter.unreadable} unreadable transcript(s)")
+    print("\n".join(lines))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1049,7 +1311,11 @@ def main(argv: list[str] | None = None) -> int:
     cmd = sub.add_parser("rates")
     cmd.add_argument("day", help="a complete UTC day")
     cmd.add_argument("--json", action="store_true", help="emit the full breakdown")
+    cmd = sub.add_parser("local")
+    cmd.add_argument("--json", action="store_true", help="emit the full breakdown")
     args = parser.parse_args(argv)
+    if args.command == "local":
+        return local_main(args.json)
 
     today = datetime.datetime.now(datetime.timezone.utc).date()
     try:
