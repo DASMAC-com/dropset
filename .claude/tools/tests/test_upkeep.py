@@ -808,6 +808,36 @@ class PassTests(unittest.TestCase):
             ],
         )
 
+    def _config_step(self, rc, out):
+        base_run = FakeRun()
+
+        def run(cmd, timeout, cwd=None):
+            if len(cmd) > 1 and Path(cmd[1]).name == "runtime_config_check.py":
+                self.assertEqual(cmd[2:], ["--live", "--json"])
+                return rc, json.dumps(out), ""
+            return base_run(cmd, timeout, cwd)
+
+        ctx = make_ctx(run)
+        run_pass(ctx)
+        return next(s for s in ctx.steps if s["step"] == "config")
+
+    def test_a_missing_required_row_is_a_failed_config_line(self):
+        line = "config: 1 required missing (DS_CARGO_LANES); 29 of 30 rows set"
+        step = self._config_step(
+            1, {"line": line, "missing": ["DS_CARGO_LANES"], "rows": [], "unknown": []}
+        )
+        self.assertFalse(step["ok"])
+        self.assertEqual(step["line"], line)
+
+    def test_a_complete_config_is_a_passing_line_ahead_of_the_cost_table(self):
+        line = "config: 30 of 30 rows set or defaulted; 1 pinned"
+        step = self._config_step(
+            0, {"line": line, "missing": [], "rows": [], "unknown": []}
+        )
+        self.assertTrue(step["ok"])
+        names = [n for n, _ in upkeep.STEPS]
+        self.assertLess(names.index("config"), names.index("cost"))
+
     def test_the_lanes_line_renders_before_the_long_cost_table(self):
         # The report is cut from the end at its cap; a held lane must survive.
         names = [n for n, _ in upkeep.STEPS]

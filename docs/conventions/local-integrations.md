@@ -1238,11 +1238,29 @@ to keep out.
 
 That same file carries the non-secret launch knobs too — the
 `DS_MODEL_*` tier table (the substrate section), `DS_AWS_PROFILE`
-(the AWS login gate) and `DS_CARGO_POOL` / `DS_CARGO_LANES` (the cargo
-pool) — each
+(the AWS login gate) and `DS_CARGO_POOL` / `DS_CARGO_LANES` /
+`CARGO_BUILD_JOBS` (the cargo pool) — each
 documented where its consumer is rather than listed twice here. They are
 untracked for different reasons: these `DS_OP_*` refs because they are
 credential coordinates, those because they name one machine's setup.
+
+**The config's shape is committed; its values are not.**
+`.claude/shell/runtime-config.manifest.json` has one row per variable
+the shell init or a tool reads: kind, required or optional, repo
+default, the verbs that need it, and the anchor documenting it.
+`.claude/shell/runtime-config.example.zsh` is a copy of the config
+holding placeholders only. `runtime_config_check.py --static` (a lint
+hook, so CI enforces it) fails on an undocumented read, a stale row, a
+knob default that disagrees with the code, or a row the example omits.
+`--live` reads an environment: each required row set or missing, each
+optional knob at its default or `pinned: NAME=value (default d)`, and
+any prefixed name the manifest does not know. It prints a model id,
+secret reference or Linear id only as `set`. The morning upkeep pass
+runs it as its `config` step, and `_ds_upkeep` exports the shell's
+manifest variables to that pass alone, since a Python child sees only
+exported ones. Run by hand, `--live` sees only what is exported. The
+check exists because three knobs were pinned in the profile on
+2026-10-28 and the repo had no record of it.
 
 **The fleet's size is a budget the machine sets, not a session count.**
 `.claude/tools/machine_load.py` reads the pool lock's build queue,
@@ -1261,9 +1279,10 @@ beside the substrate markers, and the daily digest's `## Wait` section
 reads them back. The probe's knobs sit in the same file. The first two
 are **required**: unset or malformed, the probe answers no reading
 naming the variable and the launcher refuses the launch, as it does an
-unset model tier. The launcher exports both once they pass, since the
-probe reads its environment and a plain profile assignment would not
-reach it.
+unset model tier. The cargo pool's two knobs are required in the
+same way while the pool is on ("The cargo pool"). The launcher exports
+all four once they pass, since the probe and cargo read their
+environment and a plain profile assignment would not reach them.
 
 | Knob                    | Default      | Bounds                                                               |
 | ----------------------- | ------------ | -------------------------------------------------------------------- |
@@ -1271,7 +1290,8 @@ reach it.
 | `DS_FLEET_CPU_LOAD_MAX` | required     | the one-minute load average (cores in use) past which nothing starts |
 | `DS_FLEET_BUILD_WAIT_S` | 120          | a pool-lock wait at or past this refuses another builder             |
 | `DS_FLEET_RESERVE_GB`   | physical ÷ 8 | memory headroom kept free; below it every class is refused           |
-| `DS_CARGO_LANES`        | 2            | the pool's build lanes ("The cargo pool"), in each launch record     |
+| `DS_CARGO_LANES`        | required     | the pool's build lanes ("The cargo pool"), in each launch record     |
+| `CARGO_BUILD_JOBS`      | required     | compiler processes one build runs; lanes × jobs is the fleet ceiling |
 
 `DS_FLEET_CAP` (builders only) and `DS_FLEET_LOAD_PER_CORE` are
 retired; the launcher names them if a shell still sets them.
@@ -1417,9 +1437,9 @@ so the session — and every Bash command its agent runs — inherits the pool
   a build's length, so two worktrees building at once in one lane take
   turns at full width. The only visible change is cargo's one-line
   `Blocking waiting for file lock on …` message.
-- **`CARGO_BUILD_JOBS`** is the core count minus two (left unset on a
-  machine with two cores or fewer), so no single cargo asks for the whole
-  machine. It also bounds any cargo outside the lock.
+- **`CARGO_BUILD_JOBS`** comes from the runtime config, **required**
+  like the lane count (see "Lanes" below): the hook no longer derives
+  it. Exported, it also bounds any cargo outside the lock.
 - **`RUSTC_WORKSPACE_WRAPPER`** and **`CLIPPY_CONF_DIR`** are the
   per-checkout keys: the checkout's own
   `.claude/shell/rustc-workspace-wrapper` (a passthrough) and the
@@ -1475,16 +1495,32 @@ link step; rustdoc runs one thread per crate). Measured with one lane, the
 machine sat about half idle at load 12–17 on 18 cores with 9–11 cargo
 invocations waiting. Before the pool, six per-worktree target
 directories ran six builds at once (load 160). Lanes are the middle:
-**`DS_CARGO_LANES`** directories (default **2**), a worktree on lane
+**`DS_CARGO_LANES`** directories, a worktree on lane
 *its issue number modulo the count* (a directory named `<n>`, or a
 pre-rename `eng-<n>` / `ceo-<n>`), the base repo and any other name on
 lane 0. Lane 0 is the original `dropset` directory, so
 `DS_CARGO_LANES=1` is the single pool exactly, and adopting lanes strands
-no existing build. `CARGO_BUILD_JOBS` stays the cores minus two per
-process: the lane locks already bound how many builds run at once, so
-two lanes mean at most two builds' jobs (32 runnable threads on 18
-cores, mild oversubscription), with the load probe's 1.5-per-core check
-as the backstop.
+no existing build.
+
+**Both knobs are required, with no repo default.** The lane locks bound
+how many builds run at once and `CARGO_BUILD_JOBS` bounds each build,
+so the fleet's compiler ceiling is **lanes × jobs**. That budget belongs
+to one machine, so the runtime config sets both. While the pool is on,
+a launch with either unset or not a whole number of at least 1
+refuses and names the variable (`_ds_fleet_knobs`), as an unset model
+tier does. A bare shell with no lane count falls back to the single
+pool, as it does for a malformed one. The values carried over are 2 and 8.
+
+*Why the defaults were retired (measured 2026-10-28).* The hook used
+to set jobs to the cores minus two: 16 on an 18-core machine (6
+performance, 12 efficiency). With the old default of two lanes, one
+task's start beside a sibling's build ran up to 32 `rustc` processes,
+on top of Docker and the frontend. The machine froze on each task start
+while the load probe still read green. The operator pinned
+`CARGO_BUILD_JOBS=8` in the profile, and the repo had no record of it.
+A committed `.cargo/config.toml` jobs bound was rejected because it
+would bind CI runners and every other machine. A `nice` wrapper around
+cargo was cut outright.
 
 What a lane changes for a session: a worktree waits only on builds in
 its own lane, so a full-tree lint or test in an odd-numbered worktree

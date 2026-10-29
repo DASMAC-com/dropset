@@ -81,8 +81,10 @@ class LaunchKeysTest(unittest.TestCase):
                 "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
                 "HOME": self.tmp.name,
                 "CLAUDE_CONFIG_DIR": self.tmp.name,
+                # The fleet knobs every launch requires, the pool's pair
+                # included.
                 "DS_CARGO_LANES": "2",
-                # The fleet knobs every launch requires.
+                "CARGO_BUILD_JOBS": "8",
                 "DS_FLEET_TOTAL": "16",
                 "DS_FLEET_CPU_LOAD_MAX": "16",
             },

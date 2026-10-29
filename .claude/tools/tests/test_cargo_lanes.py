@@ -49,7 +49,7 @@ class FakeRun:
 
 class LaneNaming(unittest.TestCase):
     def test_the_count_mirrors_the_hook(self):
-        self.assertEqual(cl.lane_count({}), 2)
+        self.assertEqual(cl.lane_count({}), 1)
         self.assertEqual(cl.lane_count({"DS_CARGO_LANES": "3"}), 3)
         # The hook falls back to one lane on anything but a whole number >= 1.
         self.assertEqual(cl.lane_count({"DS_CARGO_LANES": "0"}), 1)

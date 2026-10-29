@@ -1409,6 +1409,13 @@ upkeep:
 render-check:
 	python3 .claude/tools/render_skills.py --check
 
+# Check the runtime-config manifest against what the shell init and the tools
+# read (also a lint hook, so CI enforces it). Exits 0 in sync / 1 drift / 2 on
+# a malformed manifest. `--live` instead reads this shell's exported variables.
+.PHONY: runtime-config-check
+runtime-config-check:
+	python3 .claude/tools/runtime_config_check.py --static
+
 # Refill every rendered region from its source, in place.
 .PHONY: render-skills
 render-skills:

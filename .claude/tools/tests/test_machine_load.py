@@ -435,7 +435,8 @@ class LaunchRecord(unittest.TestCase):
     def test_the_verdict_is_the_launching_class(self):
         _, lines = self.record()
         self.assertEqual(lines[0]["verdict"], {"slots": 0, "reasons": ["wait"]})
-        self.assertEqual(lines[0]["lanes"], ml.DEFAULT_LANES)
+        # Required from the runtime config: unset records null, never a guess.
+        self.assertIsNone(lines[0]["lanes"])
 
     def test_the_launch_call_samples_and_records_together(self):
         with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()):

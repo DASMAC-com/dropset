@@ -52,13 +52,6 @@ _KEYS = ("RUSTC_WORKSPACE_WRAPPER", "CLIPPY_CONF_DIR")
 _UNSET = "<unset>"
 
 
-def _cores() -> int:
-    """The count `nproc` reports on Linux (it honors affinity), else the CPUs."""
-    if hasattr(os, "sched_getaffinity"):
-        return len(os.sched_getaffinity(0))
-    return os.cpu_count() or 0
-
-
 @unittest.skipUnless(ZSH, _NEEDS_ZSH)
 class CargoPoolHarness(unittest.TestCase):
     def setUp(self):
@@ -139,10 +132,11 @@ class TheDefaultPools(CargoPoolHarness):
         target, _ = self._pool(REPO, env={"HOME": "/home/user"})
         self.assertEqual(target, "/home/user/.cargo/target/dropset")
 
-    def test_the_job_bound_is_the_cores_minus_two(self):
-        cores = _cores()
+    def test_the_hook_derives_no_job_bound(self):
+        # `CARGO_BUILD_JOBS` is required from the runtime config; the launch
+        # refuses without it, so the hook no longer guesses one from the cores.
         _, jobs = self._pool(REPO)
-        self.assertEqual(jobs, str(cores - 2) if cores > 2 else _UNSET)
+        self.assertEqual(jobs, _UNSET)
 
 
 class AnExportedValueWins(CargoPoolHarness):
@@ -266,8 +260,9 @@ class EachCheckoutGetsItsOwnKeys(CargoPoolHarness):
 
 class EachWorktreeGetsItsLane(CargoPoolHarness):
     """The lanes, against a fake base repo: a worktree builds in lane <its
-    issue number> modulo `DS_CARGO_LANES` (default 2), the base repo and a
-    worded tag in lane 0, which is the original `dropset` directory."""
+    issue number> modulo `DS_CARGO_LANES` (2 here, as the runtime config sets
+    it; unset is the single pool), the base repo and a worded tag in lane 0,
+    which is the original `dropset` directory."""
 
     POOL = "/opt/cargo/target/dropset"
 
@@ -290,7 +285,7 @@ class EachWorktreeGetsItsLane(CargoPoolHarness):
     def _lane(self, n):
         return f"{self.POOL}-{n}" if n else self.POOL
 
-    def _target(self, *dirs, lanes=None, **kwargs):
+    def _target(self, *dirs, lanes="2", **kwargs):
         env = {"CARGO_HOME": "/opt/cargo", **kwargs.pop("env", {})}
         if lanes is not None:
             env["DS_CARGO_LANES"] = lanes
@@ -302,9 +297,13 @@ class EachWorktreeGetsItsLane(CargoPoolHarness):
     def test_the_base_repo_is_lane_zero(self):
         self.assertEqual(self._target(self.base), self._lane(0))
 
-    def test_a_worktree_takes_its_number_modulo_two_by_default(self):
+    def test_a_worktree_takes_its_number_modulo_the_lane_count(self):
         self.assertEqual(self._target(self._wt("2260")), self._lane(0))
         self.assertEqual(self._target(self._wt("2261")), self._lane(1))
+
+    def test_an_unset_lane_count_is_the_single_pool(self):
+        # Required from the runtime config, so no repo default of 2 applies.
+        self.assertEqual(self._target(self._wt("2261"), lanes=None), self._lane(0))
 
     def test_one_lane_is_the_single_pool(self):
         self.assertEqual(self._target(self._wt("2261"), lanes="1"), self._lane(0))
@@ -352,7 +351,7 @@ class EachWorktreeGetsItsLane(CargoPoolHarness):
                 self.base,
                 init=self.init,
                 pin=pin,
-                env={"CARGO_HOME": "/opt/cargo"},
+                env={"CARGO_HOME": "/opt/cargo", "DS_CARGO_LANES": "2"},
                 names=("CARGO_TARGET_DIR", "RUSTC_WORKSPACE_WRAPPER"),
             ),
             (self._lane(1), str(wt / WRAPPER)),
@@ -390,9 +389,12 @@ class EachWorktreeGetsItsLane(CargoPoolHarness):
                 env={
                     "CARGO_HOME": "/opt/cargo",
                     "HOME": self.outside,
-                    # The fleet knobs every launch requires.
+                    # The fleet knobs every launch requires, the pool's pair
+                    # included.
                     "DS_FLEET_TOTAL": "16",
                     "DS_FLEET_CPU_LOAD_MAX": "16",
+                    "DS_CARGO_LANES": "2",
+                    "CARGO_BUILD_JOBS": "8",
                 },
                 names=("CARGO_TARGET_DIR", "RUSTC_WORKSPACE_WRAPPER"),
             ),

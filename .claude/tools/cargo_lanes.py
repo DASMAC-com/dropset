@@ -90,11 +90,10 @@ def target_root(env: dict[str, str]) -> Path:
 
 
 def lane_count(env: dict[str, str]) -> int:
-    """``DS_CARGO_LANES`` as the hook reads it: 2 when unset, 1 when it is not
-    a whole number of at least 1."""
-    raw = env.get("DS_CARGO_LANES")
-    if raw is None or raw == "":
-        return 2
+    """``DS_CARGO_LANES`` as the hook reads it: 1 (the single pool) when it is
+    unset or not a whole number of at least 1. The runtime config is required
+    to set it, so the fallback is a bare shell's, never a fleet's."""
+    raw = env.get("DS_CARGO_LANES", "")
     return int(raw) if raw.isdecimal() and int(raw) >= 1 else 1
 
 
