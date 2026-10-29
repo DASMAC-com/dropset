@@ -973,7 +973,9 @@ pub fn close_buffers(
         let handed = handed_back?;
         if handed > 0 {
             log.accounts_changed();
-            return Ok(format!("Handed back {handed} writer(s); no buffer was left"));
+            return Ok(format!(
+                "Handed back {handed} writer(s); no buffer was left"
+            ));
         }
         bail!(
             "refused — no stranded buffers for {}; nothing was sent",
