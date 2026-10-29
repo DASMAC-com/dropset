@@ -4,10 +4,10 @@
 // stays out of the browser bundle; the browser calls the relative route and
 // the handler adds the key on the way upstream.
 //
-// Every key is optional. Unset, the handler forwards keyless to the public
-// endpoint, and next.config.ts leaves the browser calling that endpoint
-// directly (see `proxyFlags`), so a deploy with no key behaves as it did
-// before the proxy existed.
+// Jupiter's key is optional: unset, the handler forwards keyless to the
+// public endpoint, and next.config.ts leaves the browser calling that endpoint
+// directly (see `proxyFlags`). DFlow's endpoint is selected explicitly instead
+// (see `dflowEndpoint`), and its production endpoint requires the key.
 
 import {
   DFLOW_ORDER_URLS,
@@ -180,19 +180,73 @@ export async function forward(
   return new Response(res.body, { status: res.status, headers: out });
 }
 
+// The browser-side URL overrides lib/env.ts honours ahead of either DFlow
+// endpoint.
+const DFLOW_URL_OVERRIDES = [
+  "NEXT_PUBLIC_DFLOW_QUOTE_URL",
+  "NEXT_PUBLIC_DFLOW_ORDER_URL",
+];
+
+export type DflowEndpoint = "production" | "dev";
+
+// Which DFlow endpoint the build serves, chosen explicitly by the server-only
+// DFLOW_ENDPOINT rather than inferred from the key, so a missing key can never
+// quietly turn a production build into a dev one. "production" is DFlow's
+// keyed Trade API through the route handlers and requires DFLOW_API_KEY;
+// "dev" is the keyless developer endpoint, called by the browser directly.
+// Unset means dev, except in a production build (NODE_ENV=production, which
+// `next build` and `next start` set) on the mainnet cluster, which must name
+// its endpoint. Throws on any of these, failing the build or dev start.
+export function dflowEndpoint(env: Env = process.env): DflowEndpoint {
+  const selected = env.DFLOW_ENDPOINT?.trim();
+  const mainnetBuild =
+    env.NODE_ENV === "production" &&
+    env.NEXT_PUBLIC_CLUSTER?.trim() !== "localnet";
+  if (!selected) {
+    if (mainnetBuild) {
+      throw new Error(
+        "DFLOW_ENDPOINT is unset in a mainnet production build; set it to production (with DFLOW_API_KEY) or dev",
+      );
+    }
+    return "dev";
+  }
+  if (selected === "dev") return "dev";
+  if (selected !== "production") {
+    throw new Error(
+      `DFLOW_ENDPOINT must be production or dev, not ${JSON.stringify(selected)}`,
+    );
+  }
+  if (serverKey(DFLOW_QUOTE_UPSTREAM.keyVar, env) === null) {
+    throw new Error(
+      `DFLOW_ENDPOINT=production requires ${DFLOW_QUOTE_UPSTREAM.keyVar} at build time`,
+    );
+  }
+  const overrides = DFLOW_URL_OVERRIDES.filter((name) => env[name]?.trim());
+  if (overrides.length > 0) {
+    throw new Error(
+      `DFLOW_ENDPOINT=production refuses ${overrides.join(" and ")}, which would bypass the keyed route`,
+    );
+  }
+  return "production";
+}
+
 // The build-time switches next.config.ts bakes into the browser bundle: "1"
-// when the key is set and the browser should call the route, "" when it
-// should keep calling the public endpoint directly. Keyless traffic stays in
-// the browser on purpose: through the proxy every user would share the
-// server's one IP and its one per-IP quota. Throws (failing the build or dev
-// start) on an unresolved reference, and logs each upstream's mode by
+// when the browser should call the keyed route, "" when it should keep calling
+// the public endpoint directly. DFlow's follows `dflowEndpoint`, Jupiter's the
+// presence of its key. Keyless traffic stays in the browser on purpose:
+// through the proxy every user would share the server's one IP and its one
+// per-IP quota. Throws (failing the build or dev start) on an unresolved
+// reference or a refused DFlow selection, and logs each upstream's mode by
 // hostname on every config load (Next loads the config more than once).
 export function proxyFlags(env: Env = process.env): {
   NEXT_PUBLIC_DFLOW_PROXY: string;
   NEXT_PUBLIC_JUPITER_PROXY: string;
 } {
-  const flag = (label: string, upstream: KeyedUpstream): string => {
-    const keyed = serverKey(upstream.keyVar, env) !== null;
+  const flag = (
+    label: string,
+    upstream: KeyedUpstream,
+    keyed: boolean,
+  ): string => {
     const host = new URL(keyed ? upstream.keyedUrl : upstream.keylessUrl)
       .hostname;
     console.log(
@@ -201,7 +255,15 @@ export function proxyFlags(env: Env = process.env): {
     return keyed ? "1" : "";
   };
   return {
-    NEXT_PUBLIC_DFLOW_PROXY: flag("DFlow", DFLOW_QUOTE_UPSTREAM),
-    NEXT_PUBLIC_JUPITER_PROXY: flag("Jupiter", JUPITER_SEARCH_UPSTREAM),
+    NEXT_PUBLIC_DFLOW_PROXY: flag(
+      "DFlow",
+      DFLOW_QUOTE_UPSTREAM,
+      dflowEndpoint(env) === "production",
+    ),
+    NEXT_PUBLIC_JUPITER_PROXY: flag(
+      "Jupiter",
+      JUPITER_SEARCH_UPSTREAM,
+      serverKey(JUPITER_SEARCH_UPSTREAM.keyVar, env) !== null,
+    ),
   };
 }

@@ -42,12 +42,29 @@ describe("external API endpoints", () => {
     expect(env.JUPITER_SEARCH_URL).toBe("/api/jupiter/search");
   });
 
-  it("lets an explicit URL override win over the proxy", async () => {
+  it("lets an explicit URL override win over the keyless endpoint", async () => {
     const env = await load({
-      NEXT_PUBLIC_DFLOW_PROXY: "1",
+      NEXT_PUBLIC_DFLOW_PROXY: "",
       NEXT_PUBLIC_DFLOW_QUOTE_URL: "https://staging.test/quote",
     });
     expect(env.DFLOW_QUOTE_URL).toBe("https://staging.test/quote");
-    expect(env.DFLOW_ORDER_URL).toBe("/api/dflow/order");
+    expect(env.DFLOW_ORDER_URL).toBe("https://dev-quote-api.dflow.net/order");
+  });
+
+  it("refuses a DFlow URL override on the production endpoint", async () => {
+    await expect(
+      load({
+        NEXT_PUBLIC_DFLOW_PROXY: "1",
+        NEXT_PUBLIC_DFLOW_ORDER_URL: "https://staging.test/order",
+      }),
+    ).rejects.toThrow(/NEXT_PUBLIC_DFLOW_ORDER_URL/);
+  });
+
+  it("keeps Jupiter's override winning over its proxy", async () => {
+    const env = await load({
+      NEXT_PUBLIC_JUPITER_PROXY: "1",
+      NEXT_PUBLIC_JUPITER_SEARCH_URL: "https://staging.test/search",
+    });
+    expect(env.JUPITER_SEARCH_URL).toBe("https://staging.test/search");
   });
 });
