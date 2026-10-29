@@ -387,7 +387,13 @@ class EachWorktreeGetsItsLane(CargoPoolHarness):
                 self.base,
                 init=self.init,
                 pin=pin,
-                env={"CARGO_HOME": "/opt/cargo", "HOME": self.outside},
+                env={
+                    "CARGO_HOME": "/opt/cargo",
+                    "HOME": self.outside,
+                    # The fleet knobs every launch requires.
+                    "DS_FLEET_TOTAL": "16",
+                    "DS_FLEET_CPU_LOAD_MAX": "16",
+                },
                 names=("CARGO_TARGET_DIR", "RUSTC_WORKSPACE_WRAPPER"),
             ),
             (

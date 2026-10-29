@@ -98,6 +98,8 @@ class SubstrateHarness(unittest.TestCase):
         # `_ds_session` globs the projects tree for a session id, so a case must
         # never see the operator's real transcripts.
         child_env["CLAUDE_CONFIG_DIR"] = str(self.claude_home)
+        # The fleet knobs every launch requires (`_ds_fleet_knobs`).
+        child_env.update(_FLEET)
         child_env.update(env or {})
         return subprocess.run(
             ["zsh", "-c", script],
@@ -116,6 +118,10 @@ _CONFIG = {
     "DS_MODEL_HELPER": "help-model[1m]",
     "DS_MODEL_BACKGROUND": "bg-profile-id",
 }
+
+#: The fleet knobs every launch requires; set by the harness, so a case
+#: passing "" for one exercises the refusal.
+_FLEET = {"DS_FLEET_TOTAL": "16", "DS_FLEET_CPU_LOAD_MAX": "16"}
 
 
 class TierResolution(SubstrateHarness):
