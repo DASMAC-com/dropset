@@ -1,8 +1,8 @@
 //! `freeze_vault` — admin revocation lever against a misbehaving leader.
 //!
-//! Sets `Vault.frozen = true`. The vault stays on the active DLL, so
-//! existing materialized levels keep matching until a deadline passes,
-//! but the freeze takes effect the first instruction after it lands:
+//! Sets `Vault.frozen = true`. The vault stays on the active DLL (so
+//! Reclaim can still unlink it), and the freeze takes effect the first
+//! instruction after it lands — no per-level expiry is involved:
 //! `swap`'s matching walk skips frozen vaults entirely, so no new fills
 //! accrue against them — that match-time skip is where the freeze is
 //! actually enforced. Neither quote-write path re-reads `frozen`:

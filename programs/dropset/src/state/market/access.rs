@@ -37,8 +37,9 @@ pub trait VaultAccess {
     /// sector keeps its atom fields until `allocate_sector` re-zeroes them
     /// on reuse. Counting every sector can only *overstate* the claim,
     /// which errs toward leaving atoms in custody. Cheap enough for the
-    /// cold admin paths that use it — `max_vaults_per_market` is a `u8`,
-    /// so this is at most 255 iterations (default 10).
+    /// cold admin paths that use it — O(slab), where only the active set
+    /// is capped by `max_vaults_per_market` and tombstoned / free sectors
+    /// add to it.
     ///
     /// Shared by `sweep_residual` (which subtracts it, plus the accrued
     /// fee, to find the unclaimed residual) and `close_market_treasury`
@@ -55,10 +56,14 @@ pub trait VaultAccess {
     /// The one-vault-per-leader rule. The maker bot keys its fills per
     /// market, not per vault, so a second vault under the same leader
     /// would silently clobber its inventory accounting. A frozen vault
-    /// counts until Reclaim, so a leader key frozen for misbehaving can't
-    /// open a fresh vault on the same market and keep quoting for the price
-    /// of a create fee (the rule is per key) — tombstoned or not, since `close_vault` doesn't refuse a
-    /// frozen vault and would otherwise launder the freeze. An unfrozen
+    /// counts until Reclaim, so while outside depositors hold shares a
+    /// leader key frozen for misbehaving can't open a fresh vault on the
+    /// same market and keep quoting for the price of a create fee (the
+    /// rule is per key) — tombstoned or not, since `close_vault` doesn't
+    /// refuse a frozen vault and would otherwise launder the freeze. A
+    /// sole-holder leader can close, drain, reclaim and re-create for one
+    /// fee; that is deliberate (pinned by
+    /// `frozen_leader_may_reenter_once_the_sector_is_reclaimed`). An unfrozen
     /// tombstone doesn't count: a stranded depositor on it (reclaimed only
     /// on the last draining withdraw) must not lock a leader who closed
     /// voluntarily out of the market. A reclaimed sector (leader zeroed)

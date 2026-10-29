@@ -9,8 +9,9 @@
 //! sector released for reuse. Per the architecture spec's **CloseVault**
 //! and **Vault → Frozen and tombstoned vaults**, this is the leader's
 //! intended "done quoting this market" path — distinct from admin
-//! `freeze_vault`, which leaves the vault on the active DLL so existing
-//! levels keep matching until they expire.
+//! `freeze_vault`, which leaves the vault on the active DLL (so it still
+//! counts toward the one-vault-per-leader rule) but has `swap` skip it
+//! outright.
 //!
 //! Leader-only: rejects when `signer != vault.leader`. A vault that is
 //! already tombstoned is rejected (`VaultAlreadyTombstoned`); a

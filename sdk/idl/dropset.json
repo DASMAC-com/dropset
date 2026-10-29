@@ -2383,7 +2383,7 @@
           "name": "signer",
           "docs": [
             "Quote authority — the only signer the spec accepts here. Set at",
-            "`CreateVault` (defaults to the leader); the kernel checks it",
+            "`CreateVault` (an explicit, non-zero key); the kernel checks it",
             "against the target vault's `quote_authority`."
           ],
           "signer": true
@@ -3589,7 +3589,7 @@
     {
       "code": 6005,
       "name": "Unauthorized",
-      "msg": "signer is not a registry admin"
+      "msg": "signer is not authorized for this operation (registry admin, vault leader, or quote authority as required)"
     },
     {
       "code": 6006,
@@ -4424,8 +4424,9 @@
       "name": "FreezeVaultEvent",
       "docs": [
         "Emitted by `freeze_vault` when an admin freezes a vault. The vault",
-        "stays on the active DLL (existing levels still match until expiry)",
-        "but can no longer be re-quoted. See the spec's **FreezeVault**."
+        "stays on the active DLL but `swap` skips it entirely from the next",
+        "instruction on, so no further fills accrue; quote writes still land",
+        "but are inert. See the spec's **FreezeVault**."
       ],
       "type": {
         "kind": "struct",
