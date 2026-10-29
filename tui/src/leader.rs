@@ -567,9 +567,10 @@ pub fn execute(
     let now = led_seat(client, cluster, &ticket.market.address, &ticket.leader)?;
     if (now.idx, now.seq) != (ticket.seat.idx, ticket.seat.seq) {
         bail!(
-            "vault #{} is no longer at sector {} — nothing was sent; re-run to re-size",
-            ticket.seat.seq,
-            ticket.seat.idx
+            "the leader's vault is now #{}, not the previewed #{} — nothing was sent; \
+             re-run to re-size",
+            now.seq,
+            ticket.seat.seq
         );
     }
     let m = &ticket.market;

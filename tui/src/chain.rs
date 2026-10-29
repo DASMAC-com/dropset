@@ -20,10 +20,11 @@ use dropset_sdk::instructions::{
     DepositLeader, DepositLeaderInstructionArgs, ForceWithdrawDepositor,
     ForceWithdrawDepositorInstructionArgs, ForceWithdrawLeader, ForceWithdrawLeaderInstructionArgs,
     Init, InitInstructionArgs, OverrideVaultName, OverrideVaultNameInstructionArgs,
-    SetAllowOutsideDepositors, SetAllowOutsideDepositorsInstructionArgs,
-    SetOutsideDepositsApproved, SetOutsideDepositsApprovedInstructionArgs, SetPerfFeeRate,
-    SetPerfFeeRateInstructionArgs, SetVaultName, SetVaultNameInstructionArgs, Swap,
-    SwapInstructionArgs, WithdrawLeader, WithdrawLeaderInstructionArgs,
+    SetAllowOutsideDepositors, SetAllowOutsideDepositorsInstructionArgs, SetLeader,
+    SetLeaderInstructionArgs, SetOutsideDepositsApproved,
+    SetOutsideDepositsApprovedInstructionArgs, SetPerfFeeRate, SetPerfFeeRateInstructionArgs,
+    SetVaultName, SetVaultNameInstructionArgs, Swap, SwapInstructionArgs, WithdrawLeader,
+    WithdrawLeaderInstructionArgs,
 };
 use dropset_sdk::SWAP_COMPUTE_UNIT_LIMIT;
 use dropset_util::localnet::{create_ata_idempotent_ix, mint_to_ix};
@@ -316,6 +317,28 @@ pub fn build_override_vault_name_ix(
             lock,
         },
     )
+}
+
+/// `set_leader` — the vault's current `leader` (signer) hands the vault at
+/// sector `vault_idx` on `market` to `new_leader`, which co-signs. The
+/// depositor PDA the new leader would hold there rides along, for the
+/// program to confirm it is uninitialized.
+pub fn build_set_leader_ix(
+    cluster: Cluster,
+    leader: &Pubkey,
+    new_leader: &Pubkey,
+    market: &Pubkey,
+    vault_idx: u32,
+) -> Instruction {
+    SetLeader {
+        leader: *leader,
+        new_leader: *new_leader,
+        market: *market,
+        new_leader_depositor: vault_depositor_pda(cluster, market, vault_idx, new_leader),
+        event_authority: event_authority(cluster),
+        program: cluster.program_id(),
+    }
+    .instruction(cluster.deployment(), SetLeaderInstructionArgs { vault_idx })
 }
 
 /// `set_allow_outside_depositors` — the vault's `leader` (signer) sets its
@@ -1302,6 +1325,7 @@ mod tests {
             ),
             build_set_vault_name_ix(m, &k(6), &market, 0, "Desk"),
             build_override_vault_name_ix(m, &a, &market, 0, "", true),
+            build_set_leader_ix(m, &k(6), &k(9), &market, 0),
             build_deposit_leader_ix(
                 m,
                 &a,
@@ -1511,6 +1535,37 @@ mod tests {
     fn the_bootstrap_vault_name_is_valid() {
         crate::naming::validate(BOOTSTRAP_VAULT_NAME).unwrap();
         assert_eq!(BOOTSTRAP_VAULT_NAME, "DASMAC");
+    }
+
+    /// Pins `set_leader`'s ordering against the test fixture's: leader
+    /// (signer) · new leader (signer) · market(w) · the new leader's
+    /// depositor PDA on this sector · event authority · program.
+    #[test]
+    fn set_leader_ordering_matches_the_program() {
+        let (leader, new_leader, market) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let ix = build_set_leader_ix(L, &leader, &new_leader, &market, 3);
+        assert_eq!(ix.program_id, DROPSET_ID);
+        assert_eq!(
+            metas(&ix),
+            vec![
+                (leader, true, false),
+                (new_leader, true, false),
+                (market, false, true),
+                (
+                    vault_depositor_pda(L, &market, 3, &new_leader),
+                    false,
+                    false
+                ),
+                (event_authority(L), false, false),
+                (DROPSET_ID, false, false),
+            ]
+        );
+        // Discriminator, then the u32 sector.
+        assert_eq!(&ix.data[ix.data.len() - 4..], &[3, 0, 0, 0]);
     }
 
     /// Pins the two gate setters' orderings against the program's account

@@ -109,9 +109,9 @@ pub enum Action {
     /// an admin key — see [`crate::outside`]. Localnet only for now; mainnet
     /// opens at public launch, signed through the cockpit then.
     OpenVault,
-    /// Reserved, deliberately unimplemented: the leader-rotation instruction
-    /// arrives with its program change, and a builder guessed at its account
-    /// shape now would be rework by construction. Never enabled.
+    /// The leader hands its own vault on the selected market to a new key,
+    /// which co-signs (`set_leader`). Opens the key → typed-`yes` prompt —
+    /// see [`crate::rotate`].
     RotateLeader,
     /// Post a set-and-forget passive ladder on the leader's vault. Opens the
     /// form → preview → typed-`yes` prompt — see [`crate::passive`].
@@ -192,8 +192,7 @@ pub const MENU: [Action; NUMBER_KEYS + 3] = [
 
 /// The leader's own vault — the runtime pane's `vault` group, on both
 /// clusters: deposit on `+`, withdraw on `-`, rename on `N`, the fee retune
-/// on `%`, and the reserved rotation, shown greyed and on no key until its
-/// program change lands.
+/// on `%`, and the custody rotation on `L`.
 pub const VAULT_ACTIONS: [Action; 5] = [
     Action::LeaderDeposit,
     Action::LeaderWithdraw,
@@ -358,7 +357,9 @@ impl Action {
             // Opening needs only the vault, like the rename; the job re-reads
             // it fresh and skips a half already set.
             Action::OpenVault => matches!(phase, Phase::VaultUnseeded | Phase::Ready),
-            Action::RotateLeader => false,
+            // Custody moves with or without a stake; the prompt re-reads the
+            // vault fresh and refuses a frozen one on its own terms.
+            Action::RotateLeader => matches!(phase, Phase::VaultUnseeded | Phase::Ready),
             // The demo controls quote against a live vault.
             Action::RepegUp
             | Action::RepegDown
@@ -411,8 +412,10 @@ impl Action {
             // operator's `--leader`, never a committed key; real mints are
             // balance-checked and never minted; and nothing sends until the
             // operator types `yes` over the exact amounts and bounds. The
-            // reserved rotation is listed so it is visible — and stays greyed.
-            // The fee retune moves no funds, under the same signer and `yes`.
+            // fee retune moves no funds, under the same signer and `yes`. The
+            // rotation moves custody, so its incoming key is agent-served and
+            // never a committed one, and it sends only after a `yes` over
+            // both keys.
             Action::LeaderDeposit
             | Action::LeaderWithdraw
             | Action::SetPerfFee
@@ -467,8 +470,8 @@ impl Action {
     /// Exhaustive on purpose, like every table here: a leader action routed
     /// to `None` would fall through `App::run_action` into [`dispatch`],
     /// whose arm for it is a no-op — setting `job_running` with no job behind
-    /// it and wedging the panel. Enabling the reserved rotation is then a
-    /// compile-time decision here, not a silent fall-through.
+    /// it and wedging the panel. Every new prompt is then a compile-time
+    /// decision here, not a silent fall-through.
     pub fn leader_op(self) -> Option<crate::leader::LeaderOp> {
         use crate::leader::LeaderOp;
         match self {
@@ -733,8 +736,9 @@ impl Action {
             | Action::SetPerfFee
             | Action::PassiveLadder
             | Action::PassiveRecenter => "needs every vault seeded",
-            Action::RenameVault | Action::OpenVault => "create the vaults first",
-            Action::RotateLeader => "reserved — arrives with the leader-rotation program change",
+            Action::RenameVault | Action::OpenVault | Action::RotateLeader => {
+                "create the vaults first"
+            }
             Action::RepegUp
             | Action::RepegDown
             | Action::WidenSpread
@@ -1238,11 +1242,11 @@ pub fn dispatch(
         // Wipe is handled by the event loop (owns the validator). The leader
         // commands open its amount → confirm prompt instead, and dispatch
         // through [`dispatch_leader`] once the operator types `yes`; the
-        // passive ladder likewise through [`dispatch_passive`]; the reserved
-        // rotation is never enabled. The create-vault step opens its name
-        // prompt first and dispatches through [`dispatch_create_vault`] with
-        // the typed name; the rename and the override through
-        // [`dispatch_name`].
+        // passive ladder likewise through [`dispatch_passive`], and the
+        // rotation through [`dispatch_rotate`]. The create-vault step opens
+        // its name prompt first and dispatches through
+        // [`dispatch_create_vault`] with the typed name; the rename and the
+        // override through [`dispatch_name`].
         Action::Wipe
         | Action::LeaderDeposit
         | Action::LeaderWithdraw
@@ -1310,6 +1314,34 @@ pub fn dispatch_name(ctx: &JobContext, ticket: crate::naming::Ticket, tx: Sender
             }
         };
         crate::naming::execute(&client, &wallet, &signer, cluster, &ticket, log)
+    });
+}
+
+/// Spawn the job that sends a confirmed rotation `ticket`: signed by the
+/// pair's leader, resolved as [`dispatch_name`] resolves it, and by the new
+/// leader, re-resolved from the typed key; the admin wallet pays.
+pub fn dispatch_rotate(ctx: &JobContext, ticket: crate::rotate::Ticket, tx: Sender<JobEvent>) {
+    let rpc_url = ctx.rpc_url.clone();
+    let repo_root = ctx.repo_root.clone();
+    let wallet = ctx.wallet();
+    let cluster = ctx.cluster;
+    let operator_leader = ctx.leader.clone();
+    let record = ctx.ceremony_log.clone();
+    job::spawn_recorded(tx, crate::rotate::LABEL, record, move |log| {
+        let client = chain::rpc(&rpc_url);
+        let config = market::config_for(&repo_root, cluster, &ticket.base_mint)
+            .context("the selected market is not in this cluster's roster")?;
+        let leader = market::leader(&repo_root, config, operator_leader.as_ref())?;
+        let new_leader = crate::rotate::new_leader_key(cluster, &repo_root, &ticket.typed)?;
+        crate::rotate::execute(
+            &client,
+            &wallet,
+            &leader,
+            &new_leader,
+            cluster,
+            &ticket,
+            log,
+        )
     });
 }
 
@@ -2472,9 +2504,8 @@ mod tests {
         // The load-bearing assertion of the whole mode: on mainnet the only
         // reachable writes are the confirm-gated ceremony steps (the kill
         // switch among them), the leader's own stake, which sends only after a
-        // typed `yes` over the exact amounts (the reserved rotation is shown
-        // in the vault group but never enabled), the leader's rename and
-        // passive ladder, each sent only after one over its preview, and the
+        // typed `yes` over the exact amounts, the leader's rename, rotation
+        // and passive ladder, each sent only after one over its preview, and the
         // admin's name override, likewise. A later change that exposes
         // anything else — a mock-minting bootstrap, a committed-key demo
         // control — fails here.
@@ -2583,6 +2614,7 @@ mod tests {
             leader,
             name: [0; crate::naming::VAULT_NAME_LEN],
             name_locked: false,
+            frozen: false,
             allow_outside_depositors: false,
             outside_deposits_approved: false,
             seeded,
@@ -2883,7 +2915,7 @@ mod tests {
     }
 
     #[test]
-    fn leader_stake_commands_need_a_seeded_book_and_rotation_stays_reserved() {
+    fn leader_stake_commands_need_a_seeded_book_and_rotation_a_vault() {
         let phases = [
             Phase::NoValidator,
             Phase::ProgramAbsent,
@@ -2899,13 +2931,20 @@ mod tests {
                 assert_eq!(Action::LeaderDeposit.enabled(phase, cluster), ready);
                 assert_eq!(Action::LeaderWithdraw.enabled(phase, cluster), ready);
                 assert_eq!(Action::SetPerfFee.enabled(phase, cluster), ready);
-                // Reserved, not guessed at: no phase on either cluster arms it.
-                assert!(!Action::RotateLeader.enabled(phase, cluster));
+                // Custody moves with or without a stake: a vault is enough.
+                assert_eq!(
+                    Action::RotateLeader.enabled(phase, cluster),
+                    matches!(phase, Phase::VaultUnseeded | Phase::Ready)
+                );
             }
             assert!(!Action::RotateLeader
-                .disabled_reason(Phase::Ready, cluster)
+                .disabled_reason(Phase::VaultAbsent, cluster)
                 .is_empty());
         }
+        // Its own prompt, none of the other three.
+        let a = Action::RotateLeader;
+        assert!(a.leader_op().is_none() && a.passive_op().is_none() && a.name_op().is_none());
+        assert!(VAULT_ACTIONS.contains(&a));
         // None of them is a bootstrap step, so none is ever recommended.
         for a in [
             Action::LeaderDeposit,

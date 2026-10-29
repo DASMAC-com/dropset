@@ -222,6 +222,7 @@ mod tests {
             leader: Pubkey::new_unique(),
             name: [0; VAULT_NAME_LEN],
             name_locked: false,
+            frozen: false,
             allow_outside_depositors: allowed,
             outside_deposits_approved: approved,
             seeded: true,
