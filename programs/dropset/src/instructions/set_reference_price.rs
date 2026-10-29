@@ -31,7 +31,7 @@ use crate::state::stamp_reference_price;
 #[derive(Accounts)]
 pub struct SetReferencePrice {
     /// Quote authority — the only signer the spec accepts here. Set at
-    /// `CreateVault` (defaults to the leader); the kernel checks it
+    /// `CreateVault` (an explicit, non-zero key); the kernel checks it
     /// against the target vault's `quote_authority`.
     pub signer: Signer,
     /// CHECK: taken unchecked so the handler can borrow the raw account

@@ -180,9 +180,9 @@ impl CreateMarket {
             }
         }
 
-        // Stamp the header. `init` zeroed the slab, so list heads
-        // start at `NULL_SECTOR` (`u32::MAX`); we set them explicitly
-        // anyway so the invariant is local to this handler.
+        // Stamp the header. `init` zeroed the slab, and zero is a valid
+        // sector index, not `NULL_SECTOR` (`u32::MAX`), so the three
+        // list-head writes below are load-bearing, not a restatement.
         // `active_count`, `outstanding_vault_depositors`, `nonce`, and
         // the slab tail's `len` field are already zero.
         let base_mint_addr = *self.base_mint.address();

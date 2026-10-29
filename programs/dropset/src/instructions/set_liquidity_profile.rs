@@ -2,8 +2,9 @@
 //! ladder.
 //!
 //! Writes the full `LiquidityProfile` — each level a `(price_offset_ppm,
-//! size_bps, expiry_offset_secs, expiry_offset_slots)` tuple — leaves
-//! the whole `reference_price` untouched (price and both expiry datums),
+//! flip_spread_ppm, size_bps, expiry_offset_secs, expiry_offset_slots)`
+//! tuple — leaves the whole `reference_price` untouched (price and both
+//! expiry datums),
 //! bumps `market.nonce`,
 //! and arms `FLUSH_BIT` so the next taker re-materializes
 //! `Vault.remaining` from the new ladder + current inventory. Per the

@@ -712,13 +712,10 @@ impl Swap {
             let (vault_active, stamp) = {
                 let v = self.market.read_vault(cur)?;
                 // Spec § Vault → Frozen and tombstoned vaults: frozen
-                // vaults stay on the active DLL but their levels die
-                // off as `expires_at_unix` passes. Implement that
-                // semantically here by skipping frozen vaults
-                // entirely from the matching set, so the leader's
-                // freeze is enforced from the first instruction
-                // after it lands rather than waiting for level
-                // expiry to kick in.
+                // vaults stay on the active DLL but are skipped
+                // entirely from the matching set here, so the admin's
+                // freeze is enforced from the first instruction after
+                // it lands; no per-level expiry is involved.
                 let frozen = v.frozen.get();
                 (
                     v.has_valid_reference_price() && !frozen,

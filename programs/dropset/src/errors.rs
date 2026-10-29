@@ -12,7 +12,7 @@ pub enum DropsetError {
     AdminSetFull,
     #[msg("the named pubkey is already a registry admin")]
     AlreadyAdmin,
-    #[msg("signer is not a registry admin")]
+    #[msg("signer is not authorized for this operation (registry admin, vault leader, or quote authority as required)")]
     Unauthorized,
     #[msg("the named pubkey is not a registry admin")]
     AdminNotFound,

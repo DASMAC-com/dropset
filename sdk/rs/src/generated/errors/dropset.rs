@@ -25,8 +25,8 @@ pub enum DropsetError {
     /// 6004 - the named pubkey is already a registry admin
     #[error("the named pubkey is already a registry admin")]
     AlreadyAdmin = 0x1774,
-    /// 6005 - signer is not a registry admin
-    #[error("signer is not a registry admin")]
+    /// 6005 - signer is not authorized for this operation (registry admin, vault leader, or quote authority as required)
+    #[error("signer is not authorized for this operation (registry admin, vault leader, or quote authority as required)")]
     Unauthorized = 0x1775,
     /// 6006 - the named pubkey is not a registry admin
     #[error("the named pubkey is not a registry admin")]

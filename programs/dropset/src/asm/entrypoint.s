@@ -269,7 +269,7 @@ quote_write:
     # cost ~100+ CU on a path that otherwise runs in tens.
     #
     # The two clock datums move as ONE double-word. They are adjacent and
-    # in the same order on both sides — ix_data +9/+13 and vault +84/+88 —
+    # in the same order on both sides — ix_data +9/+13 and vault +124/+128 —
     # so a single ldxdw/stxdw carries the pair, halving this payload's
     # store count from three word pairs to two. Registers are 64-bit, so a
     # word-at-a-time copy of adjacent 32-bit fields wastes half of every
@@ -307,8 +307,8 @@ quote_write:
     #
     # Bounds are unchanged: this still reads at most to ix_data+17, so the
     # truncated-payload audit under the error codes above still holds
-    # verbatim. The store covers vault+84..92 — exactly quote_slot and
-    # quote_unix, with base_atoms starting at 92 — so nothing bleeds.
+    # verbatim. The store covers vault+124..132 — exactly quote_slot and
+    # quote_unix, with base_atoms starting at 132 — so nothing bleeds.
     ldxw r3, [r2 + IX_PRICE_BITS_OFF]
     stxw [r9 + RP_PRICE_OFF], r3
     ldxdw r3, [r2 + IX_QUOTE_SLOT_OFF]
@@ -320,7 +320,7 @@ quote_write:
 # --- set_liquidity_profile payload (mirrors liquidity_profile.rs) ---
 write_profile:
     # One `sol_memcpy_` of the whole PROFILE_SIZE blob: the syscall is
-    # metered at max(10, len / 250) CU, so ~10 CU against ~56 for the 28
+    # metered at max(10, len / 250) CU, so ~10 CU against ~72 for the 36
     # hand-rolled ldxdw/stxdw pairs a chunked copy of that width would need.
     # dst is the program-owned writable market data, src the readable
     # instruction-data region — the two never overlap (dst precedes src in

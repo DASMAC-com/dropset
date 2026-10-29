@@ -947,20 +947,21 @@ is treated as any other depositor on exit. See
 
 A vault leaves the active eCLOB by either of two lifecycle paths:
 
-| State          | Set by                          | DLL membership                                        | Quote ix                        | Deposit  | Withdraw                                             | Realize                           | Lifecycle exit                   |
-| -------------- | ------------------------------- | ----------------------------------------------------- | ------------------------------- | -------- | ---------------------------------------------------- | --------------------------------- | -------------------------------- |
-| **Active**     | default                         | active                                                | accepted                        | accepted | accepted                                             | accrues                           | becomes frozen or tombstoned     |
-| **Frozen**     | admin via `FreezeVault`         | stays on active DLL; takers skip via per-level expiry | rejected (`!vault.frozen` gate) | rejected | accepted; `min_leader_share` bypassed for the leader | no-op (HWM pinned at freeze time) | Reclaim when `total_shares == 0` |
-| **Tombstoned** | leader via `CloseVault`         | tombstone DLL; takers do not iterate                  | rejected (vault not visited)    | rejected | accepted; `min_leader_share` bypassed for the leader | no-op (HWM pinned at close time)  | Reclaim when `total_shares == 0` |
-| **Reclaimed**  | implicit on draining `Withdraw` | free DLL                                              | n/a                             | n/a      | n/a                                                  | n/a                               | sector available for reuse       |
+| State          | Set by                          | DLL membership                                       | Quote ix                                     | Deposit  | Withdraw                                             | Realize                           | Lifecycle exit                   |
+| -------------- | ------------------------------- | ---------------------------------------------------- | -------------------------------------------- | -------- | ---------------------------------------------------- | --------------------------------- | -------------------------------- |
+| **Active**     | default                         | active                                               | accepted                                     | accepted | accepted                                             | accrues                           | becomes frozen or tombstoned     |
+| **Frozen**     | admin via `FreezeVault`         | stays on active DLL; matcher skips it from next take | accepted but inert (matcher skips the vault) | rejected | accepted; `min_leader_share` bypassed for the leader | no-op (HWM pinned at freeze time) | Reclaim when `total_shares == 0` |
+| **Tombstoned** | leader via `CloseVault`         | tombstone DLL; takers do not iterate                 | accepted but inert (vault not visited)       | rejected | accepted; `min_leader_share` bypassed for the leader | no-op (HWM pinned at close time)  | Reclaim when `total_shares == 0` |
+| **Reclaimed**  | implicit on draining `Withdraw` | free DLL                                             | n/a                                          | n/a      | n/a                                                  | n/a                               | sector available for reuse       |
 
 Both terminal states are designed so depositors can always exit and
 no further fee accrues to the leader after exit. They differ in
 *who* initiated and *how* matching is suppressed:
 
 - **Frozen** — protocol revocation lever (admin-initiated). Vault
-  stays on the active DLL; existing levels die off as their deadlines
-  pass. Terminal — no "unfreeze".
+  stays on the active DLL (so Reclaim can still unlink it), but the
+  matcher skips it from the first take after the freeze lands; no
+  per-level expiry is involved. Terminal — no "unfreeze".
 - **Tombstoned** — leader's intended lifecycle exit. Vault is
   unlinked from active matching immediately.
 
@@ -1570,7 +1571,7 @@ authoritative.
 | ----------------------------------------------------------- | ------------------------------ |
 | `vault_idx` past the slab tail                              | `InvalidSectorIndex`           |
 | Target sector is on the free list (`leader == default`)     | `VaultEmpty`                   |
-| Quote-mutating ix against a frozen vault                    | `VaultFrozen`                  |
+| Deposit / SetVaultName / SetLeader against a frozen vault   | `VaultFrozen`                  |
 | `CloseVault` against an already-tombstoned vault            | `VaultAlreadyTombstoned`       |
 | Operation disallowed against a tombstoned vault             | `VaultTombstoned`              |
 | Signer is not the vault's `quote_authority` / `leader`      | `Unauthorized`                 |
@@ -1787,7 +1788,7 @@ the full 293 bytes.
 
 Neither case can be turned into an injection. The copy length is a
 constant, never payload-derived, and the destination is the fixed
-`(vault + 144, 160)` window. The one attacker-controlled input to that
+`(vault + 288, 288)` window. The one attacker-controlled input to that
 destination — `vault_idx` — cannot select a sector the caller does not
 already own: it is bounds-checked twice (the index against the slab
 length, then the vault's end against `data_len`), and the resulting
@@ -1912,7 +1913,7 @@ not a second copy of the assembly's offsets.
 Registers are 64-bit, so a word-at-a-time copy of two adjacent `u32`s
 wastes half of every load and store. `quote_slot` and `quote_unix` are
 adjacent, in the same order, on both sides of the stamp — instruction
-data `+9`/`+13` and vault `+84`/`+88` — so the pair moves as a single
+data `+9`/`+13` and vault `+124`/`+128` — so the pair moves as a single
 `ldxdw`/`stxdw` rather than two `ldxw`/`stxw` pairs. That is worth
 exactly the two instructions it removes: adding the `quote_unix` datum
 originally cost one extra load/store pair (~47 → ~49 CU), and fusing the
@@ -1923,7 +1924,7 @@ This is a general rule for the hot path, not a one-off: **when new
 fields land here, place same-width ones adjacently and move them
 together.** The rest of the entrypoint already obeys it — the
 `quote_authority` compare reads 32 bytes as 4×`u64`, and the profile
-write is one `sol_memcpy_` rather than 28 hand-rolled pairs — and the
+write is one `sol_memcpy_` rather than 36 hand-rolled pairs — and the
 remaining single-word accesses (the discriminator byte, `vault_idx`,
 `price`) have no adjacent same-domain partner to pair with, so they are
 already minimal.
@@ -2200,8 +2201,9 @@ the name for the market. Emits `CloseVaultEvent` (`market`,
 
 Admin-only. Sets `Vault.frozen = 1`. This is the protocol's
 revocation lever against a misbehaving leader: the vault stays on
-the active DLL (existing levels still match until their deadlines
-pass) but cannot be re-quoted. There is no "unfreeze", and the
+the active DLL (so Reclaim can still unlink it), but the matcher
+skips it from the first take after the freeze lands; quote writes
+still land but are inert. There is no "unfreeze", and the
 leader cannot re-enter the market until the frozen vault drains and
 is reclaimed. See **Vault → Frozen and tombstoned vaults** for
 full state semantics and the comparison with `CloseVault`.
@@ -2592,8 +2594,8 @@ On every taker instruction:
 
 1. **Iterate** `MarketHeader.vaults` (active DLL only — tombstoned
    and frozen-then-drained vaults are not visited; frozen vaults
-   that still sit on the active DLL are visited but their levels
-   are skipped via per-level expiry).
+   that still sit on the active DLL are excluded at heap build, so
+   none of their levels is visited).
 
 1. **Range-check** the vault's `reference_price.price`. Drop the
    vault entirely if out-of-range (this is the deferred validation
@@ -2864,7 +2866,7 @@ at the caller's price.
 `min_out == 0` is the legacy "any fill counts" behavior: a
 zero-fill swap still soft-reverts (no events, no transfers), but
 a partial fill with `total_out > 0` always commits. Frozen vaults
-are skipped from the matching set entirely so a leader-initiated
+are skipped from the matching set entirely so an admin-initiated
 freeze takes effect from the next taker instruction rather than
 waiting for per-level expiry.
 

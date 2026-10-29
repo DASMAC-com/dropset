@@ -14,7 +14,7 @@ pub const SET_REFERENCE_PRICE_DISCRIMINATOR: [u8; 1] = [5];
 #[derive(Debug)]
 pub struct SetReferencePrice {
     /// Quote authority — the only signer the spec accepts here. Set at
-    /// `CreateVault` (defaults to the leader); the kernel checks it
+    /// `CreateVault` (an explicit, non-zero key); the kernel checks it
     /// against the target vault's `quote_authority`.
     pub signer: solana_pubkey::Pubkey,
     /// CHECK: taken unchecked so the handler can borrow the raw account
@@ -122,7 +122,7 @@ impl SetReferencePriceBuilder {
         Self::default()
     }
     /// Quote authority — the only signer the spec accepts here. Set at
-    /// `CreateVault` (defaults to the leader); the kernel checks it
+    /// `CreateVault` (an explicit, non-zero key); the kernel checks it
     /// against the target vault's `quote_authority`.
     #[inline(always)]
     pub fn signer(&mut self, signer: solana_pubkey::Pubkey) -> &mut Self {
@@ -195,7 +195,7 @@ impl SetReferencePriceBuilder {
 /// `set_reference_price` CPI accounts.
 pub struct SetReferencePriceCpiAccounts<'a, 'b> {
     /// Quote authority — the only signer the spec accepts here. Set at
-    /// `CreateVault` (defaults to the leader); the kernel checks it
+    /// `CreateVault` (an explicit, non-zero key); the kernel checks it
     /// against the target vault's `quote_authority`.
     pub signer: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: taken unchecked so the handler can borrow the raw account
@@ -212,7 +212,7 @@ pub struct SetReferencePriceCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
     /// Quote authority — the only signer the spec accepts here. Set at
-    /// `CreateVault` (defaults to the leader); the kernel checks it
+    /// `CreateVault` (an explicit, non-zero key); the kernel checks it
     /// against the target vault's `quote_authority`.
     pub signer: &'b solana_account_info::AccountInfo<'a>,
     /// CHECK: taken unchecked so the handler can borrow the raw account
@@ -331,7 +331,7 @@ impl<'a, 'b> SetReferencePriceCpiBuilder<'a, 'b> {
         Self { instruction }
     }
     /// Quote authority — the only signer the spec accepts here. Set at
-    /// `CreateVault` (defaults to the leader); the kernel checks it
+    /// `CreateVault` (an explicit, non-zero key); the kernel checks it
     /// against the target vault's `quote_authority`.
     #[inline(always)]
     pub fn signer(&mut self, signer: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {

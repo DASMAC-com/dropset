@@ -141,7 +141,8 @@ also why the treasury's custody invariant is
   tombstone DLL: matching stops, but depositor flows stay open until the vault
   drains.
 - **`FreezeVault`** — an admin freezes a vault: it stays on the active DLL
-  (existing levels still match until expiry) but can no longer be re-quoted.
+  but is excluded from matching from the next take; depositor withdrawals
+  stay open; quote writes still land but are inert.
 - **`Realize`** — performance-fee accrual (leader economics).
 - **`SetLeader`** / **`SetQuoteAuthority`** — custody and quoting-delegation
   rotations, carrying the old and new key and the unchanged other half of the

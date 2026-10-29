@@ -253,8 +253,8 @@ pub struct Vault {
     /// works: the flag makes "this vault is dead" a cheap local read
     /// for handlers (`realize_in_place`, both deposit paths) instead
     /// of an O(n) `vault_list_of` walk — and is the signal
-    /// `withdraw_leader`'s `min_leader_share` floor will read once that
-    /// floor is taught to honor it. Set in `close_vault` alongside the
+    /// `withdraw_leader` reads to bypass the `min_leader_share` floor on
+    /// a winding-down vault. Set in `close_vault` alongside the
     /// list move;
     /// cleared implicitly when the sector is reclaimed and reused
     /// (`allocate_sector` zeroes the whole struct).
@@ -497,8 +497,8 @@ impl MarketHeader {
     /// and the single-byte bump, in the exact PDA-derivation order
     /// `[base_mint, quote_mint], [bump]`. Every treasury-signing CPI
     /// site (both `withdraw` legs, both `withdraw_leader` legs, all four
-    /// `force_withdraw` legs, `swap`'s return leg, and `close_market`'s
-    /// `CloseAccount`) reconstructs the borrowed `[&[&[u8]]; 1]` slice
+    /// `force_withdraw` legs, `swap`'s return leg, `sweep_residual`'s
+    /// transfer, and `close_market`'s `CloseAccount`) reconstructs the borrowed `[&[&[u8]]; 1]` slice
     /// array from these parts on its own stack — a fully-owning helper
     /// can't return that array, since it would reference locals it
     /// drops. Keeping the seed order and count defined here once guards
@@ -530,13 +530,13 @@ const _: () = assert!(core::mem::size_of::<Remaining>() == 2 * N_LEVELS * 32);
 // that happens to preserve the byte count (e.g. swapping `_reserved`
 // with another byte array). Pin the load-bearing offsets so the build
 // breaks on any field reorder that would shift the on-chain layout —
-// `next`/`prev` are dispatched directly by the DLL ops, `name` and
-// `name_locked` are walked by the uniqueness check, `leader`
-// doubles as the emptiness marker, `_reserved` is the only field
-// whose contents are intentionally zeroed, and `profile` is pinned by
-// the hand-written `entrypoint.s` — its `sol_memcpy_` destination is a
-// literal offset there, so a shift that only Rust knows about is a
-// silent ASM/Rust divergence rather than a build break.
+// `next`/`prev` are dispatched directly by the DLL ops, `name` is
+// walked by the uniqueness check, `name_locked` gates a leader rename,
+// `leader` doubles as the emptiness marker, `_reserved` is the only
+// field whose contents are intentionally zeroed, and `profile` is the
+// `entrypoint.s` `sol_memcpy_` destination. `asm_offsets.rs` already
+// makes an ASM/Rust drift in `profile` a build break; the pin here
+// guards already-deployed accounts, as the next block explains.
 const _: () = assert!(core::mem::offset_of!(Vault, next) == 0);
 const _: () = assert!(core::mem::offset_of!(Vault, prev) == 4);
 const _: () = assert!(core::mem::offset_of!(Vault, name) == 8);

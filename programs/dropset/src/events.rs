@@ -59,8 +59,9 @@ pub struct CloseVaultEvent {
 }
 
 /// Emitted by `freeze_vault` when an admin freezes a vault. The vault
-/// stays on the active DLL (existing levels still match until expiry)
-/// but can no longer be re-quoted. See the spec's **FreezeVault**.
+/// stays on the active DLL but `swap` skips it entirely from the next
+/// instruction on, so no further fills accrue; quote writes still land
+/// but are inert. See the spec's **FreezeVault**.
 #[event]
 pub struct FreezeVaultEvent {
     pub market: Address,
