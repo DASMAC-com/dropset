@@ -1394,7 +1394,7 @@ background with its output in a log, so an `op` that cannot authorize
 shows up only there, as a frontend that never comes up. Unset, both
 keys are simply absent and the browser calls the public endpoints
 directly, so a checkout with no 1Password access loses nothing. The
-DFlow key takes effect only under `DFLOW_ENDPOINT=production`, the
+browser uses the DFlow key only under `DFLOW_ENDPOINT=production`, the
 explicit endpoint selector a mainnet production build must set; the
 key alone no longer selects DFlow's production endpoint, and the DFlow
 routes answer a 500 without it rather than falling back to the
