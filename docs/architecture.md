@@ -1487,10 +1487,11 @@ caller; the third is the per-ix authority gate.
 
    - **Admin-only** (`FreezeVault`, `OverrideVaultName`,
      `SetOutsideDepositsApproved`, `SetMinLeaderShare`,
-     `SetMarketFeeConfig`): `signer ∈ registry.admins`. The admin
-     vault setters among them also pin `expected_seq` to the sector's
-     `Vault.seq` (`VaultSeqMismatch`), since an admin, unlike a
-     leader, is not bound to one vault by the signer check alone.
+     `SetMarketFeeConfig`): `signer ∈ registry.admins`.
+     `FreezeVault`, `OverrideVaultName` and `SetMinLeaderShare` also
+     pin `expected_seq` to the sector's `Vault.seq`
+     (`VaultSeqMismatch`), since an admin, unlike a leader, is not
+     bound to one vault by the signer check alone.
 
 No discriminant tag is needed: the slab tail is homogeneous, so a
 bounds-checked index (1) unambiguously identifies a `Vault`, the
@@ -2221,8 +2222,8 @@ The ix carries `expected_seq` beside `vault_idx` and reverts with
 `VaultSeqMismatch` unless the sector's `Vault.seq` equals it. A sector
 index can be reused once its vault closes, so without the pin a freeze
 read against one vault could land on whichever vault reopened in that
-sector. `OverrideVaultName` and `SetMinLeaderShare`, the other admin
-setters that address a vault by sector, carry the same pin.
+sector. `OverrideVaultName` and `SetMinLeaderShare` carry the same
+pin.
 
 ### SetVaultName
 
