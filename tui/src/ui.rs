@@ -6,12 +6,15 @@
 
 use crate::accounts::{self, ChainState, Liveness, MarketView, ParticipantView, Phase, VaultSeat};
 use crate::action::{self, Action};
-use crate::app::{swap_side_label, App, LeaderPrompt, LogKind, NamePrompt, PassivePrompt};
+use crate::app::{
+    swap_side_label, App, LeaderPrompt, LogKind, NamePrompt, PassivePrompt, RotatePrompt,
+};
 use crate::book;
 use crate::cluster::Cluster;
 use crate::explorer;
 use crate::leader::{self, LeaderOp, Leg};
 use crate::naming::{self, NameOp};
+use crate::rotate;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -133,7 +136,87 @@ pub fn draw(f: &mut Frame<'_>, app: &mut App) {
     draw_leader_prompt(f, app, area);
     draw_passive_prompt(f, app, area);
     draw_name_prompt(f, app, area);
+    draw_rotate_prompt(f, app, area);
     draw_ceremony_prompt(f, app, area);
+}
+
+/// The rotation prompt, centered over the dashboard while it is open: the
+/// key form, then the sized rotation under the typed-`yes` line, in the
+/// real-funds border on mainnet.
+fn draw_rotate_prompt(f: &mut Frame<'_>, app: &App, area: Rect) {
+    let Some(prompt) = &app.rotate_prompt else {
+        return;
+    };
+    let cluster = app.ctx.cluster;
+    let input = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
+    let hint = Style::new().fg(Color::DarkGray);
+    let warn = Style::new().fg(Color::Yellow);
+    let mut lines: Vec<Line> = match prompt {
+        RotatePrompt::Form(form) => {
+            let rule = if cluster.is_mainnet() {
+                "an address the SSH agent serves — it co-signs the hand-off"
+            } else {
+                "a keypair file; a relative path is read from the repo root"
+            };
+            form.lines(cluster)
+                .into_iter()
+                .map(|l| Line::from(Span::styled(l, input)))
+                .chain([
+                    Line::from(Span::styled(rule, hint)),
+                    Line::from(Span::styled("Enter preview · Esc cancel", hint)),
+                ])
+                .collect()
+        }
+        RotatePrompt::Confirm { ticket, buf } => ticket
+            .summary(cluster)
+            .into_iter()
+            .map(|l| {
+                if l.starts_with("warning:") {
+                    Line::from(Span::styled(l, warn))
+                } else {
+                    Line::from(l)
+                }
+            })
+            .chain([
+                Line::from(""),
+                Line::from(Span::styled(
+                    format!("Type 'yes' to sign and send: {buf}\u{2588}"),
+                    input,
+                )),
+                Line::from(Span::styled("Enter ok · Esc cancel", hint)),
+            ])
+            .collect(),
+    };
+    let (title, border) = if cluster.is_mainnet() {
+        (
+            format!(" {} — MAINNET · REAL FUNDS ", rotate::LABEL),
+            Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        (
+            format!(" {} — localnet ", rotate::LABEL),
+            Style::new().fg(Color::Yellow),
+        )
+    };
+    lines.truncate(usize::from(area.height.saturating_sub(2)));
+    let width = area.width.min(80);
+    let height = (lines.len() as u16 + 2).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    f.render_widget(Clear, rect);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(border),
+        ),
+        rect,
+    );
 }
 
 /// The name prompt, centered over the dashboard while it is open: the form,
@@ -659,9 +742,10 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
     let ready = app.chain.phase() == Phase::Ready;
     // The leader's stake and fee: live once every vault is seeded (the
     // commands' own gate); the rename once its vault exists, greyed with the
-    // reason when an admin has locked the name; the reserved rotation always
-    // greyed. Terse, and rotation last: the pane does not wrap and the left
-    // column is narrow, so what clips first should be what does nothing.
+    // reason when an admin has locked the name; the rotation once its vault
+    // exists, greyed when frozen. Terse, and rotation last: the pane does not
+    // wrap and the left column is narrow, so what clips first should be the
+    // rarest lever.
     let rename = match leader_seat(app) {
         Some((_, seat)) if seat.name_locked => Span::styled(" · N rename (locked)", off),
         _ if Action::RenameVault.enabled(app.chain.phase(), app.ctx.cluster) => {
@@ -685,7 +769,13 @@ fn draw_runtime_actions(f: &mut Frame<'_>, app: &App, area: Rect) {
         rename,
     ];
     vault_spans.extend(open);
-    vault_spans.push(Span::styled(" · rotate (reserved)", off));
+    vault_spans.push(match leader_seat(app) {
+        Some((_, seat)) if seat.frozen => Span::styled(" · L rotate (frozen)", off),
+        _ if Action::RotateLeader.enabled(app.chain.phase(), app.ctx.cluster) => {
+            Span::styled(" · L rotate", live)
+        }
+        _ => Span::styled(" · L rotate", off),
+    });
     let vault_line = Line::from(vault_spans);
     if app.ctx.cluster.is_mainnet() {
         let lines = vec![
@@ -1782,6 +1872,7 @@ mod tests {
             leader: Pubkey::new_from_array([7; 32]),
             name: packed,
             name_locked: locked,
+            frozen: false,
             allow_outside_depositors: false,
             outside_deposits_approved: false,
             seeded: true,

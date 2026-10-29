@@ -471,6 +471,9 @@ pub struct VaultSeat {
     pub name: [u8; VAULT_NAME_LEN],
     /// Whether an admin locked the name, refusing the leader's rename.
     pub name_locked: bool,
+    /// Whether an admin froze it — `set_leader` refuses a frozen vault, so
+    /// its custody cannot move.
+    pub frozen: bool,
     /// The two halves of the outside-deposit gate: the leader's
     /// `allow_outside_depositors` and the admin's `outside_deposits_approved`.
     /// Outside deposits need both.
@@ -492,6 +495,7 @@ impl VaultSeat {
             leader: Pubkey::new_from_array(v.leader),
             name: v.name,
             name_locked: v.name_locked != 0,
+            frozen: v.frozen != 0,
             allow_outside_depositors: v.allow_outside_depositors != 0,
             outside_deposits_approved: v.outside_deposits_approved != 0,
             seeded: is_seeded(v),
@@ -1078,6 +1082,7 @@ pub(crate) mod tests {
                 leader: other,
                 name: [0; VAULT_NAME_LEN],
                 name_locked: false,
+                frozen: false,
                 allow_outside_depositors: false,
                 outside_deposits_approved: false,
                 seeded: true,
@@ -1089,6 +1094,7 @@ pub(crate) mod tests {
                 leader: me,
                 name: [0; VAULT_NAME_LEN],
                 name_locked: false,
+                frozen: false,
                 allow_outside_depositors: false,
                 outside_deposits_approved: false,
                 seeded: false,
@@ -1362,6 +1368,7 @@ pub(crate) mod tests {
             leader,
             name: [0; VAULT_NAME_LEN],
             name_locked: false,
+            frozen: false,
             allow_outside_depositors: false,
             outside_deposits_approved: false,
             seeded: true,

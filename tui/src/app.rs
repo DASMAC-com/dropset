@@ -25,6 +25,7 @@ use crate::leader::{self, LeaderOp, Ticket};
 use crate::market;
 use crate::naming;
 use crate::passive;
+use crate::rotate;
 use crate::ui;
 use crate::validator::Validator;
 use anyhow::Result;
@@ -140,6 +141,18 @@ pub enum NamePrompt {
     },
 }
 
+/// The open leader-rotation prompt (see [`crate::rotate`]) — the same two
+/// stages as [`LeaderPrompt`], with the incoming key in place of the amount.
+pub enum RotatePrompt {
+    /// Typing the new leader's key.
+    Form(rotate::Form),
+    /// The sized rotation on screen; typing the confirmation word.
+    Confirm {
+        ticket: Box<rotate::Ticket>,
+        buf: String,
+    },
+}
+
 /// The open ceremony prompt: a mainnet ceremony step's plan — its dry run,
 /// read fresh from the chain — under the typed-`yes` line. One per step, so a
 /// publish, an init and each roster pass are each confirmed on their own.
@@ -251,6 +264,9 @@ pub struct App {
     pub(crate) passive_prompt: Option<PassivePrompt>,
     /// The open name prompt, if any — takes every keystroke while open.
     pub(crate) name_prompt: Option<NamePrompt>,
+    /// The open leader-rotation prompt, if any — takes every keystroke while
+    /// open.
+    pub(crate) rotate_prompt: Option<RotatePrompt>,
     /// The open ceremony prompt, if any — takes every keystroke while open.
     pub(crate) ceremony_prompt: Option<CeremonyPrompt>,
     /// Each market's posture: an active one is seeded for and run by its
@@ -371,6 +387,7 @@ impl App {
             leader_prompt: None,
             passive_prompt: None,
             name_prompt: None,
+            rotate_prompt: None,
             ceremony_prompt: None,
             postures,
             bots: BotManager::new(),
@@ -646,6 +663,10 @@ impl App {
             self.handle_name_key(k);
             return Flow::Continue;
         }
+        if self.rotate_prompt.is_some() {
+            self.handle_rotate_key(k);
+            return Flow::Continue;
+        }
         if self.ceremony_prompt.is_some() {
             self.handle_ceremony_key(k);
             return Flow::Continue;
@@ -679,10 +700,12 @@ impl App {
             KeyCode::Char('a') => self.begin_amount_input(),
             // The leader's own vault on the selected market — the runtime
             // pane's `vault` group; the stake commands open the amount →
-            // typed-`yes` prompt, the rename its name → typed-`yes` one.
+            // typed-`yes` prompt, the rename its name → typed-`yes` one, the
+            // rotation its key → typed-`yes` one.
             KeyCode::Char('+') => self.run_action(Action::LeaderDeposit),
             KeyCode::Char('-') => self.run_action(Action::LeaderWithdraw),
             KeyCode::Char('N') => self.run_action(Action::RenameVault),
+            KeyCode::Char('L') => self.run_action(Action::RotateLeader),
             KeyCode::Char('%') => self.run_action(Action::SetPerfFee),
             // Open it to outside depositors — localnet only; the cluster
             // gate in `run_action` refuses it on mainnet with the reason.
@@ -1570,6 +1593,10 @@ impl App {
             self.name_prompt = Some(NamePrompt::Form(naming::Form::new(op)));
             return;
         }
+        if action == Action::RotateLeader {
+            self.rotate_prompt = Some(RotatePrompt::Form(rotate::Form::default()));
+            return;
+        }
         self.open_ceremony_or_start(action, None);
     }
 
@@ -1752,6 +1779,116 @@ impl App {
         self.job_running = true;
         self.log(LogKind::Info, format!("\u{25b6} {label}"));
         action::dispatch_name(&self.ctx, ticket, self.tx.clone());
+    }
+
+    /// Edit the open rotation prompt: on the form, type the new leader's key
+    /// and Enter sizes it; on the confirm stage, Enter sends only on the
+    /// exact word `yes`. Esc closes it, nothing sent; a refusal at submit
+    /// keeps the form open with the key kept.
+    fn handle_rotate_key(&mut self, k: KeyEvent) {
+        let Some(prompt) = self.rotate_prompt.as_mut() else {
+            return;
+        };
+        if k.code == KeyCode::Esc {
+            self.rotate_prompt = None;
+            self.log(
+                LogKind::Info,
+                "Rotation prompt cancelled — nothing sent.".to_string(),
+            );
+            return;
+        }
+        match prompt {
+            RotatePrompt::Form(form) => match k.code {
+                KeyCode::Backspace => form.backspace(),
+                KeyCode::Char(c) => form.type_char(c),
+                KeyCode::Enter => {
+                    if let Some(RotatePrompt::Form(form)) = self.rotate_prompt.take() {
+                        self.submit_rotate_form(form);
+                    }
+                }
+                _ => {}
+            },
+            RotatePrompt::Confirm { buf, .. } => match k.code {
+                KeyCode::Backspace => {
+                    buf.pop();
+                }
+                KeyCode::Char(c) if buf.len() < MAX_CONFIRM_CHARS => buf.push(c),
+                KeyCode::Enter => {
+                    if let Some(RotatePrompt::Confirm { ticket, buf }) = self.rotate_prompt.take() {
+                        self.confirm_rotate(*ticket, &buf);
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+
+    /// Size the rotation `form` names against the session leader's vault on
+    /// the selected market, read fresh, and move to the confirm stage.
+    fn submit_rotate_form(&mut self, form: rotate::Form) {
+        let sized = (|| {
+            let leader = self.session_leader()?;
+            let market = self
+                .chain
+                .selected_market(self.selected_market)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("no market selected"))?;
+            let symbol =
+                market::config_for(&self.ctx.repo_root, self.ctx.cluster, &market.base_mint)
+                    .map(|c| c.base.symbol)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("the selected market is not in this cluster's roster")
+                    })?;
+            rotate::prepare(
+                &self.client,
+                self.ctx.cluster,
+                &self.ctx.repo_root,
+                &market,
+                symbol,
+                &leader,
+                &form,
+            )
+        })();
+        match sized {
+            Ok(ticket) => {
+                self.rotate_prompt = Some(RotatePrompt::Confirm {
+                    ticket: Box::new(ticket),
+                    buf: String::new(),
+                });
+            }
+            Err(e) => {
+                self.log(LogKind::Err, format!("{} — {e:#}", rotate::LABEL));
+                self.rotate_prompt = Some(RotatePrompt::Form(form));
+            }
+        }
+    }
+
+    /// Send `ticket` if `word` is exactly `yes`, re-checking the same gates
+    /// [`App::confirm_name`] does.
+    fn confirm_rotate(&mut self, ticket: rotate::Ticket, word: &str) {
+        let label = rotate::LABEL;
+        if !is_confirmation(word) {
+            self.log(
+                LogKind::Err,
+                format!("{label} — not confirmed; nothing sent"),
+            );
+            return;
+        }
+        if let Some(reason) = self.identity.write_refusal() {
+            self.log(LogKind::Err, format!("{label} — {reason}"));
+            return;
+        }
+        if let Err(e) = self.ctx.cluster.verify_genesis(&self.client) {
+            self.log(LogKind::Err, format!("{label} — {e:#}"));
+            return;
+        }
+        if self.job_running {
+            self.log(LogKind::Err, "A job is already running.".to_string());
+            return;
+        }
+        self.job_running = true;
+        self.log(LogKind::Info, format!("\u{25b6} {label}"));
+        action::dispatch_rotate(&self.ctx, ticket, self.tx.clone());
     }
 
     /// Mark a job running and dispatch `action` to it.
@@ -2228,7 +2365,7 @@ mod tests {
         assert_eq!(Action::LeaderDeposit.leader_op(), Some(LeaderOp::Deposit));
         assert_eq!(Action::LeaderWithdraw.leader_op(), Some(LeaderOp::Withdraw));
         assert_eq!(Action::SetPerfFee.leader_op(), Some(LeaderOp::SetPerfFee));
-        // Reserved: it must not open a prompt that sizes nothing.
+        // The rotation has its own prompt, not the amount one.
         assert_eq!(Action::RotateLeader.leader_op(), None);
         assert_eq!(Action::Deposit.leader_op(), None);
     }

@@ -279,7 +279,7 @@ impl Ticket {
         };
         let mut lines = vec![
             format!("market   {} ({})", self.symbol, self.market),
-            format!("vault    #{} (sector {})", self.vault_seq, self.vault_idx),
+            format!("vault    #{}", self.vault_seq),
             format!(
                 "name     {} \u{2192} {}",
                 shown(&self.old_name),
@@ -455,9 +455,8 @@ pub fn execute(
     };
     if read()?.is_none() {
         bail!(
-            "vault #{} is no longer at sector {} — nothing was sent; re-open the prompt",
-            ticket.vault_seq,
-            ticket.vault_idx
+            "vault #{} is gone since the preview — nothing was sent; re-open the prompt",
+            ticket.vault_seq
         );
     }
     let (ix, label) = match ticket.op {
@@ -538,6 +537,7 @@ mod tests {
             leader,
             name: packed(name),
             name_locked: false,
+            frozen: false,
             allow_outside_depositors: false,
             outside_deposits_approved: false,
             seeded: true,

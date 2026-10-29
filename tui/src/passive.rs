@@ -1121,9 +1121,10 @@ pub fn execute(
     let now = passive_seat(client, cluster, &ticket.market, &ticket.quote_authority)?;
     if (now.idx, now.seq) != (ticket.seat.idx, ticket.seat.seq) {
         bail!(
-            "vault #{} is no longer at sector {} — nothing was sent; re-open the prompt",
-            ticket.seat.seq,
-            ticket.seat.idx
+            "the quoted vault is now #{}, not the previewed #{} — nothing was sent; \
+             re-open the prompt",
+            now.seq,
+            ticket.seat.seq
         );
     }
     let mut ixs = Vec::new();

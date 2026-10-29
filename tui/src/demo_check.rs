@@ -1334,6 +1334,7 @@ mod tests {
             leader: Pubkey::new_unique(),
             name: packed,
             name_locked: false,
+            frozen: false,
             allow_outside_depositors: allowed,
             outside_deposits_approved: approved,
             seeded: leader_shares > 0,

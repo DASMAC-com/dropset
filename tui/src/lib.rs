@@ -33,6 +33,7 @@ pub mod naming;
 pub mod outside;
 pub mod passive;
 pub mod publish;
+pub mod rotate;
 pub mod teardown;
 pub mod ui;
 pub mod validator;
