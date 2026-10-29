@@ -448,24 +448,50 @@ impl Stranded {
     }
 
     /// Retry each kept writer's handoff to `admin`, dropping those that land
-    /// and keeping the rest. Fails naming the first writer still kept.
-    fn hand_back(&self, client: &RpcClient, admin: &Pubkey, log: &Logger) -> Result<()> {
-        let kept = std::mem::take(&mut *self.lock());
-        let mut first = None;
-        for (buffer, writer) in kept {
-            match hand_off(client, &buffer, &writer, admin, log) {
-                Ok(_) => {}
+    /// and keeping the rest, and return how many landed. Fails naming the
+    /// first writer still kept.
+    ///
+    /// The writers leave the lock for the retries — so the event loop's plan
+    /// never waits on a handoff — but stay in a [`Retrying`] until theirs
+    /// lands, which puts every one not yet handed back into the store again
+    /// even on a panic.
+    fn hand_back(&self, client: &RpcClient, admin: &Pubkey, log: &Logger) -> Result<usize> {
+        let mut retrying = Retrying {
+            store: self,
+            pending: std::mem::take(&mut *self.lock()),
+        };
+        let (mut handed, mut first, mut i) = (0, None, 0);
+        while i < retrying.pending.len() {
+            let (buffer, writer) = &retrying.pending[i];
+            match hand_off(client, buffer, writer, admin, log) {
+                Ok(_) => {
+                    retrying.pending.remove(i);
+                    handed += 1;
+                }
                 Err(e) => {
                     first.get_or_insert(e);
-                    self.keep(buffer, writer);
+                    i += 1;
                 }
             }
         }
-        first.map_or(Ok(()), Err)
+        first.map_or(Ok(handed), Err)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Vec<(Pubkey, Keypair)>> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// The writers [`Stranded::hand_back`] holds outside the lock, returned to the
+/// store when it drops — on success, failure or unwind alike.
+struct Retrying<'a> {
+    store: &'a Stranded,
+    pending: Vec<(Pubkey, Keypair)>,
+}
+
+impl Drop for Retrying<'_> {
+    fn drop(&mut self) {
+        self.store.lock().append(&mut self.pending);
     }
 }
 
@@ -939,14 +965,15 @@ pub fn close_buffers(
     stranded: &Stranded,
     log: &Logger,
 ) -> Result<String> {
-    let kept = stranded.addresses().len();
-    let handed_back = stranded.hand_back(client, &admin.pubkey(), log);
+    let handed_back = stranded
+        .hand_back(client, &admin.pubkey(), log)
+        .context("a kept writer's handoff failed again");
     let buffers = stranded_buffers(client, &admin.pubkey())?;
     if buffers.is_empty() {
-        handed_back?;
-        if kept > 0 {
+        let handed = handed_back?;
+        if handed > 0 {
             log.accounts_changed();
-            return Ok(format!("Handed back {kept} writer(s); no buffer was left"));
+            return Ok(format!("Handed back {handed} writer(s); no buffer was left"));
         }
         bail!(
             "refused — no stranded buffers for {}; nothing was sent",
@@ -962,7 +989,7 @@ pub fn close_buffers(
         reclaimed += lamports;
     }
     log.accounts_changed();
-    handed_back.context("a kept writer's handoff failed again")?;
+    handed_back?;
     Ok(format!(
         "Closed {} buffer(s), reclaimed {}",
         buffers.len(),
@@ -1033,6 +1060,32 @@ mod tests {
         programdata[0] = TAG_PROGRAMDATA;
         assert_eq!(buffer_authority(&programdata), None);
         assert_eq!(buffer_authority(&data[..20]), None);
+    }
+
+    #[test]
+    fn a_kept_writer_is_shared_by_every_clone_and_survives_an_unwound_retry() {
+        let stranded = Stranded::default();
+        let (first, second) = (Keypair::new(), Keypair::new());
+        let pairs = [
+            (Pubkey::new_unique(), first.pubkey()),
+            (Pubkey::new_unique(), second.pubkey()),
+        ];
+        // A clone is the same store: what one job keeps, the next one sees.
+        stranded.clone().keep(pairs[0].0, first);
+        stranded.keep(pairs[1].0, second);
+        assert_eq!(stranded.addresses(), pairs);
+        // A retry that unwinds before any handoff lands drops its guard,
+        // which returns every writer it took.
+        let taken = std::panic::catch_unwind(|| {
+            let _retrying = Retrying {
+                store: &stranded,
+                pending: std::mem::take(&mut *stranded.lock()),
+            };
+            assert!(stranded.addresses().is_empty());
+            panic!("a handoff panicked");
+        });
+        assert!(taken.is_err());
+        assert_eq!(stranded.addresses(), pairs);
     }
 
     #[test]
