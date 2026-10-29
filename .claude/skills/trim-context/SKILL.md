@@ -115,12 +115,17 @@ python3 .claude/tools/trim_levers.py probe --fingerprint <domain>:<slug>
   treat it as new, naming the shipped issue in the part.
 
 Then check the **open Backlog by title**, since a near-duplicate under
-a different fingerprint is the likelier miss:
+a different fingerprint is the likelier miss — **every candidate in one
+call**, one query line each (two or three key words) in a file:
 
 ```sh
 python3 .claude/tools/linear_issue.py find \
-  --query '<two or three key words>' --state Backlog
+  --queries-file <scratchpad>/dedup-queries.txt --state Backlog
 ```
+
+It prints a `## <query> — N match(es)` group per query (a single
+query prints bare rows); repeat the
+call with `--state Todo` when a candidate could already be approved.
 
 A batch or part that is plainly the same work as an open issue is
 **folded into it as a new part**, never filed as a sibling: compose

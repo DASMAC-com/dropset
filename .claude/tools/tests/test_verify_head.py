@@ -368,6 +368,154 @@ class VerdictLineTest(unittest.TestCase):
         self.assertTrue(line.endswith("killed=- ci=" + vh.NOT_PUSHED))
 
 
+#: A scoped `make test-abridged` log ending in the pool's E0463 doctest race:
+#: the unit and integration binaries green, one doctest unable to find a crate.
+RACE_LOG = """\
+cargo_scope: cargo test -p dropset-feeds --features dropset-feeds/http
+   Compiling dropset-feeds v0.1.0
+     Running lib target src/lib.rs (target/debug/deps/dropset_feeds-1a2b)
+
+running 12 tests
+test result: ok. 12 passed; 0 failed; 0 ignored
+
+   Doc-tests dropset_feeds
+
+running 3 tests
+test src/source.rs - source::Source (line 14) ... FAILED
+test src/sink.rs - sink::Sink (line 9) ... ok
+
+failures:
+
+---- src/source.rs - source::Source (line 14) stdout ----
+error[E0463]: can't find crate for `dropset_feeds`
+ --> src/source.rs:15:1
+
+error: aborting due to 1 previous error
+
+Couldn't compile the test.
+
+failures:
+    src/source.rs - source::Source (line 14)
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored
+error: doctest failed, to rerun pass `-p dropset-feeds --doc`
+"""
+
+
+class DoctestRaceTest(unittest.TestCase):
+    def log(self, text: str) -> Path:
+        path = Path(tempfile.mkdtemp()) / "test.log"
+        path.write_text(text)
+        return path
+
+    def test_the_race_shape_is_recognized(self):
+        self.assertTrue(vh.is_doctest_race(self.log(RACE_LOG)))
+
+    def test_a_real_doctest_failure_beside_it_is_not_the_race(self):
+        text = RACE_LOG.replace(
+            "failures:\n    src/source.rs",
+            "---- src/sink.rs - sink::Sink (line 9) stdout ----\n"
+            "assertion `left == right` failed\n\nfailures:\n    src/source.rs",
+        )
+        self.assertFalse(vh.is_doctest_race(self.log(text)))
+
+    def test_a_failing_unit_binary_is_not_the_race(self):
+        text = RACE_LOG.replace("12 passed; 0 failed", "11 passed; 1 failed").replace(
+            "test result: ok.", "test result: FAILED."
+        )
+        self.assertFalse(vh.is_doctest_race(self.log(text)))
+
+    def test_no_doctest_section_is_not_the_race(self):
+        text = "error[E0463]: can't find crate for `std`\nerror: could not compile\n"
+        self.assertFalse(vh.is_doctest_race(self.log(text)))
+
+    def test_an_e0463_before_the_doctests_is_not_the_race(self):
+        # A build-time E0463 above the doctest section is a real break, even
+        # when the doctests that follow fail the same way.
+        text = RACE_LOG.replace(
+            "   Doc-tests", "error[E0463]: can't find crate for `serde`\n   Doc-tests"
+        )
+        self.assertFalse(vh.is_doctest_race(self.log(text)))
+
+    def test_the_retry_stage_reads_the_failed_test_log(self):
+        tmp = Path(tempfile.mkdtemp())
+        real = wfc.log_dir
+        self.addCleanup(setattr, wfc, "log_dir", real)
+        wfc.log_dir = lambda: tmp
+        vh.log_path_for(SHA, "test").write_text(RACE_LOG)
+        self.assertEqual(
+            vh.stage_cmd(vh.DOC_RETRY, SHA)[-3:],
+            ["--features", "dropset-feeds/http", "--doc"],
+        )
+        self.assertEqual(vh.stage_cmd("test", SHA), ["make", "test-abridged"])
+
+    def test_a_retry_killed_by_ci_claims_no_recovery(self):
+        h = Harness(
+            {
+                "lint": (1, 0, ""),
+                "test": (2, 101, RACE_LOG),
+                vh.DOC_RETRY: (None, 0, ""),
+            },
+            [ci()] * 3 + [ci(test=GREEN_TEST)] * 5,
+            interval=2,
+        )
+        r = h.run()
+        self.assertEqual(r.outcome, "GREEN")
+        self.assertEqual(r.settled["test"].side, "ci")
+        self.assertIn(vh.DOC_RETRY, h.started)
+        self.assertEqual(r.recovered, "")
+        self.assertNotIn("recovered=", vh.render(r, 1))
+
+    def test_the_retry_keeps_the_failed_run_scope(self):
+        self.assertEqual(
+            vh.doctest_retry_cmd(self.log(RACE_LOG)),
+            [
+                "cargo",
+                "test",
+                "-p",
+                "dropset-feeds",
+                "--features",
+                "dropset-feeds/http",
+                "--doc",
+            ],
+        )
+
+    def test_the_retry_falls_back_to_the_workspace(self):
+        self.assertEqual(
+            vh.doctest_retry_cmd(self.log("no echo here\n")),
+            ["cargo", "test", "--doc"],
+        )
+
+    def test_the_race_is_retried_once_and_the_retry_settles(self):
+        h = Harness(
+            {
+                "lint": (1, 0, ""),
+                "test": (2, 101, RACE_LOG),
+                vh.DOC_RETRY: (2, 0, "test result: ok.\n"),
+            },
+            [ci()] * 10,
+        )
+        r = h.run()
+        self.assertEqual(r.outcome, "GREEN")
+        self.assertEqual(r.recovered, vh.DOCTEST_RACE)
+        self.assertEqual(list(h.started), ["lint", "test", vh.DOC_RETRY])
+        self.assertIn("recovered=doctest-e0463 ci=", vh.render(r, 1))
+
+    def test_a_second_race_is_reported_red(self):
+        h = Harness(
+            {
+                "lint": (1, 0, ""),
+                "test": (2, 101, RACE_LOG),
+                vh.DOC_RETRY: (2, 101, RACE_LOG),
+            },
+            [ci()] * 10,
+        )
+        r = h.run()
+        self.assertEqual(r.outcome, "RED")
+        self.assertEqual(r.recovered, vh.DOCTEST_RACE)
+        self.assertFalse(r.settled["test"].green)
+
+
 class FailureLineTest(unittest.TestCase):
     def test_falls_back_to_last_line(self):
         log = Path(tempfile.mkdtemp()) / "x.log"

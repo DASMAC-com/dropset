@@ -163,6 +163,23 @@ migrations or generation inputs, and whether it spans crates.
      for a 2-line change). Inspect the other hunks with `Read`
      `offset` / `limit` (`history.md` → "Conflict inspection").
 
+     **When a resolution is made by hand — the user's, or at their
+     explicit direction — format it before `git rebase --continue`.**
+     No commit here runs the formatters (no git `pre-commit` hook is
+     installed), so an unformatted resolution reaches CI and turns
+     `Lint` red — a fix commit and a whole CI cycle. Run the hooks over
+     just the resolved files until green, re-stage whatever they
+     rewrote, then continue; a checker red is a stop, not a re-stage:
+
+     ```sh
+     python3 .claude/tools/run_quiet.py -- \
+       python3 .claude/tools/lint_paths.py --files <resolved files>
+     ```
+
+     ```sh
+     git add <resolved files>
+     ```
+
    - **A clean rebase that integrated base commits** can still hide a
      *semantic* conflict (the base renamed something this branch
      calls): flag it for steps 5 and 11. History was rewritten, so step
@@ -1257,9 +1274,11 @@ migrations or generation inputs, and whether it spans crates.
    spurious `E0463 can't find crate for dropset_sdk` doctest failure
    (`history.md` → "Raced cargo builds"). Other worktrees sharing the
    cargo pool can still race it. **Recover with `cargo test --doc`,
-   never a second `make test`**: on an `E0463` doctest failure with
-   zero test failures in the log, run it once, through the quiet
-   runner, and read the pair as the green `make test`. A full re-run
+   never a second `make test`**: `verify_head.py` does this itself and
+   says so (`recovered=doctest-e0463`); after a plain `make test`, on
+   an `E0463` doctest failure with zero test failures in the log, run
+   it once, through the quiet runner, and read the pair as the green
+   `make test`. A full re-run
    only races again, and cargo stops at the first failing doctest
    crate, so a second full run still never reaches the later crates'
    doctests:

@@ -185,6 +185,82 @@ class Find(_Stubbed):
         )
 
 
+class FindMany(_Stubbed):
+    """Several queries in one call: one grouped block per query."""
+
+    def setUp(self):
+        super().setUp()
+        saved = os.environ.get("LINEAR_API_KEY")
+        os.environ["LINEAR_API_KEY"] = "k"
+        self.addCleanup(
+            lambda: (
+                os.environ.pop("LINEAR_API_KEY")
+                if saved is None
+                else os.environ.__setitem__("LINEAR_API_KEY", saved)
+            )
+        )
+
+    def run_cli(self, argv):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(li.run(["linear_issue.py", *argv]), 0)
+        return out.getvalue().splitlines()
+
+    def test_one_query_keeps_the_bare_row_shape(self):
+        self.install([Find.rows([{"identifier": "ENG-7", "title": "Price guard"}])])
+        self.assertEqual(
+            self.run_cli(["find", "--query", "price"]), ["ENG-7  Price guard"]
+        )
+
+    def test_each_query_gets_its_own_group_and_count(self):
+        recorder = self.install(
+            [
+                Find.rows([{"identifier": "ENG-7", "title": "Price guard"}]),
+                Find.rows([]),
+            ]
+        )
+        got = self.run_cli(["find", "--query", "price", "--query", "fold stamp"])
+        self.assertEqual(
+            got,
+            [
+                "## price — 1 match(es)",
+                "ENG-7  Price guard",
+                "## fold stamp — 0 match(es)",
+            ],
+        )
+        sent = [
+            call[1]["filter"]["title"]["containsIgnoreCase"] for call in recorder.calls
+        ]
+        self.assertEqual(sent, ["price", "fold stamp"])
+
+    def test_a_queries_file_adds_to_the_flags_and_skips_blank_lines(self):
+        recorder = self.install([Find.rows([]), Find.rows([]), Find.rows([])])
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
+            fh.write("alpha\n\n  beta  \n")
+        self.addCleanup(os.unlink, fh.name)
+        self.run_cli(["find", "--query", "first", "--queries-file", fh.name])
+        sent = [
+            call[1]["filter"]["title"]["containsIgnoreCase"] for call in recorder.calls
+        ]
+        self.assertEqual(sent, ["first", "alpha", "beta"])
+
+    def test_repeated_and_blank_queries_are_sent_once(self):
+        recorder = self.install([Find.rows([]), Find.rows([])])
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
+            fh.write("alpha\nbeta\n")
+        self.addCleanup(os.unlink, fh.name)
+        self.run_cli(
+            ["find", "--query", " alpha ", "--query", "  ", "--queries-file", fh.name]
+        )
+        sent = [c[1]["filter"]["title"]["containsIgnoreCase"] for c in recorder.calls]
+        self.assertEqual(sent, ["alpha", "beta"])
+
+    def test_no_query_at_all_is_a_clean_error(self):
+        self.install([])
+        with self.assertRaises(li.LinearIssueError):
+            li.run(["linear_issue.py", "find"])
+
+
 class CreateIssue(_Stubbed):
     """The bulk filer. Its reason to exist is that `save_issue` echoes the
     whole stored body on a *create* too, which is worst for exactly the callers

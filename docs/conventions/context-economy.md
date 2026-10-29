@@ -406,7 +406,10 @@ Some text is paid for before any tool runs. Three residency classes:
 bytes as `wc -c` reports
 them: **32,000** per entry file (frontmatter and rendered regions
 included), **1,024** per description, **32,000** for `CLAUDE.md`. It runs
-as the `skill-size` lint hook, so CI enforces it.
+as the `skill-size` lint hook, so CI enforces it. **The caps are byte
+budgets, not token budgets at an assumed ratio**: a session's measured
+bytes per token feeds `session_metrics.py`'s token figures and is never
+grounds for moving a cap.
 `make skill-size ARGS=--report` ranks the skills with their siblings,
 which are reported but never capped.
 

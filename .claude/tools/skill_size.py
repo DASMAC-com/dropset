@@ -16,12 +16,13 @@ This tool caps A and B, and only **reports** C (``--report``): a sibling is a
 tool result and is already ranked, and a per-skill *total* would penalize the
 progressive loading the budget exists to encourage.
 
-**Bytes, not tokens or lines.** Bytes are what ``wc -c`` reports, need no
-tokenizer, and do not move when the model does. The caps assume about 4 bytes
-per token; ``session_metrics.py`` calibrates the real ratio from each session's
-skill injections and flags one outside 3.5–4.5, the signal to revisit them. A
-rendered ``.claude/shared/`` region counts in full:
-rendering solves sync, not size.
+**Bytes, not tokens or lines — and no conversion between them.** Bytes are
+what ``wc -c`` reports, need no tokenizer, and do not move when the model does.
+A cap is a byte budget in its own right, not a token budget translated at some
+assumed ratio, so a measured bytes-per-token figure (``session_metrics.py``
+calibrates one per session for its token-turn line) is never a reason to move
+a cap. A rendered ``.claude/shared/`` region counts in full: rendering solves
+sync, not size.
 
 **One cap, frozen exceptions, a headroom ratchet.** A committed baseline
 (``cfg/skill-size-baseline.json``) names every subject over its cap with a
