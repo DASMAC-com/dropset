@@ -38,9 +38,9 @@ jobs:
     # and is gone, so the keys now coincide — measured, `full match: true` on
     # `v0-rust-rust-test-Linux-Linux-x64-cee1353d-…` in lint, sdk and the
     # test jobs alike. Two wins: one ~0.6 GB copy per ref stops being stored,
-    # and this job — whose `push: main` run skips this step, so it never
-    # saves a default-branch entry — can restore one, warming merge-queue
-    # runs and the first run of every new PR.
+    # and this job — restore-only through `save-if: false` below, and
+    # skipping this step on its `push: main` run — can restore one, warming
+    # merge-queue runs and the first run of every new PR.
     # `save-if: false` makes this job a restore-only consumer of that entry,
     # and it is load-bearing rather than tidiness. rust-cache skips its save
     # whenever the restore was an exact key match, so the FIRST job to finish
@@ -71,14 +71,23 @@ jobs:
         cache-on-failure: true
         save-if: false
         shared-key: 'rust-test-${{ runner.os }}'
-    - uses: >- # v6.0.10
+    - if: >-
+        github.event_name != 'push'
+      uses: >- # v6.0.10
         pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
       with:
         package_json_file: 'frontend/package.json'
+    # The `push` run still needs Node (the cache key names its version, and
+    # the Node hooks install against it) but not the pnpm store: with
+    # `pnpm install` skipped, nothing reads a restored store, and on a miss
+    # the post step would be left saving a path that was never created. So
+    # the cache, and the pnpm it needs, are off on `push`; frontend.yml and
+    # sdk.yml save the same store key from main.
     - id: 'setup-node'
       uses: 'actions/setup-node@v6'
       with:
-        cache: 'pnpm'
+        cache: >-
+          ${{ github.event_name != 'push' && 'pnpm' || '' }}
         cache-dependency-path: 'pnpm-lock.yaml'
         node-version-file: 'frontend/.node-version'
     # Root install: the frontend + SDK packages share one pnpm workspace.
@@ -120,11 +129,13 @@ jobs:
     # The hook cache needs a default-branch copy to be readable from a
     # merge-queue ref or a new PR, and only the `push: main` trigger makes
     # one: without it every queue entry paid a cold `install-hooks` (median
-    # 1.6 min, about a fifth of the queue's critical path). That run skips
-    # everything but this restore, `install-hooks` and the save, so it costs
-    # about two runner-minutes after each merge, off the critical path. A
-    # same-key restore on main hits and the save is skipped, so a push
-    # writes only when the config, pre-commit, Node or Python moves.
+    # 1.6 min, about a fifth of the queue's critical path). That run keeps
+    # only checkout, the Node and Python setup, the pip install, this
+    # restore, `install-hooks` and the save, so it costs up to about two
+    # runner-minutes after each merge, off the critical path. A same-key
+    # restore on main hits and the save is skipped, so a push rewrites this
+    # cache only when the config, pre-commit, Node or Python moves (the pip
+    # cache setup-python keeps follows the requirements file instead).
     - id: 'pre-commit-cache'
       uses: 'actions/cache/restore@v5'
       with:
