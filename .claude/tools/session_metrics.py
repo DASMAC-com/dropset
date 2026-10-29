@@ -117,11 +117,6 @@ RUN_QUIET_MARKER = "run_quiet.py"
 # record whose text opens with this line, naming the skill's directory.
 SKILL_BODY_PREFIX = "Base directory for this skill: "
 
-# The bytes-per-token band the skill-size gate's byte caps are sound inside. It
-# caps in bytes on the `BYTES_PER_TOKEN` proxy, so a calibrated ratio outside
-# this band is the signal to revisit the cap, not just a reporting curiosity.
-GATE_BYTES_PER_TOKEN_BAND = (3.5, 4.5)
-
 # A skill injection is a calibration sample only when it is at least this share
 # of every user-side byte between its two requests, so the prefix delta across
 # it is mostly the injection's own tokens rather than a tool result's.
@@ -774,10 +769,6 @@ class ResidentProse:
     by_kind: dict[str, int]
     share: float
     cost: float | None
-
-    def ratio_in_band(self) -> bool:
-        low, high = GATE_BYTES_PER_TOKEN_BAND
-        return low <= self.bytes_per_token <= high
 
     def is_lever(self) -> bool:
         return self.share >= RESIDENT_LEVER_SHARE
@@ -1745,12 +1736,6 @@ def _resident_headline(resident: ResidentProse, substrate: str) -> str:
     else:
         ratio = f"{BYTES_PER_TOKEN} bytes/token assumed, no injection to calibrate on"
     line += f"; {ratio}\n"
-    if not resident.ratio_in_band():
-        low, high = GATE_BYTES_PER_TOKEN_BAND
-        line += (
-            f"**Note**: the measured ratio is outside the {low}–{high} band the "
-            "skill-size gate's byte caps assume, so the cap needs revisiting.\n"
-        )
     if resident.is_lever():
         line += (
             f"**Lever**: resident prose clears the {RESIDENT_LEVER_SHARE:.0%} "
@@ -2067,7 +2052,6 @@ def to_json(report: dict) -> str:
                 "omitted": obj.omitted,
                 "bytes_per_token": round(obj.bytes_per_token, 3),
                 "calibration_samples": obj.samples,
-                "ratio_in_gate_band": obj.ratio_in_band(),
                 "token_turns": obj.token_turns,
                 "by_kind": obj.by_kind,
                 "share": round(obj.share, 4),

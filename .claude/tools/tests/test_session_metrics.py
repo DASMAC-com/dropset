@@ -1524,7 +1524,6 @@ class ResidentProseLine(unittest.TestCase):
         self.assertIn("at the cache-read rate", md)
         self.assertIn("4 bytes/token assumed", md)
         self.assertIn("**Lever**", md)
-        self.assertNotIn("outside the", md)
         self.assertIn("| CLAUDE.md | instructions | 4.0k | 1.0k | 2 | 2.0k |", md)
 
     def test_a_seat_sessions_resident_figure_is_labelled_not_billed(self):
@@ -1532,7 +1531,9 @@ class ResidentProseLine(unittest.TestCase):
         self.assertIn("**Resident instruction prose**", md)
         self.assertIn("at the cache-read rate (at Bedrock rates, not billed)", md)
 
-    def test_a_ratio_outside_the_gate_band_is_called_out(self):
+    def test_a_calibrated_ratio_is_reported_not_judged(self):
+        # The skill-size caps are bytes, so a measured ratio says nothing about
+        # them: it is reported for the token figures and never flagged.
         report = self._finish(
             [
                 assistant(read_usage(1000), ""),
@@ -1542,15 +1543,15 @@ class ResidentProseLine(unittest.TestCase):
                 assistant(read_usage(2000), ""),
             ]
         )
-        self.assertFalse(report["resident_prose"].ratio_in_band())
-        self.assertIn("outside the 3.5–4.5 band", sm.to_markdown(report, "abcd1234"))
+        md = sm.to_markdown(report, "abcd1234")
+        self.assertIn("calibrated from 1 skill injection(s)", md)
+        self.assertNotIn("**Note**", md)
 
     def test_json_carries_the_line(self):
         out = json.loads(sm.to_json(self._priced()))["resident_prose"]
         self.assertEqual(out["token_turns"], 2000)
         self.assertEqual(out["by_kind"], {"instructions": 2000})
         self.assertTrue(out["lever"])
-        self.assertTrue(out["ratio_in_gate_band"])
         self.assertEqual(out["lines"][0]["byte_turns"], 8000)
 
     def test_a_session_without_resident_prose_renders_no_line(self):

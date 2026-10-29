@@ -163,6 +163,22 @@ migrations or generation inputs, and whether it spans crates.
      for a 2-line change). Inspect the other hunks with `Read`
      `offset` / `limit` (`history.md` → "Conflict inspection").
 
+     **Format a resolution before `git rebase --continue`.** The
+     continue commits the resolved tree without the pre-commit hooks'
+     formatters, so an unformatted resolution reaches CI and turns
+     `Lint` red — a fix commit and a whole CI cycle. Run the hooks
+     over just the resolved
+     files, re-stage whatever they rewrote, then continue:
+
+     ```sh
+     python3 .claude/tools/run_quiet.py -- \
+       python3 .claude/tools/lint_paths.py --files <resolved files>
+     ```
+
+     ```sh
+     git add <resolved files>
+     ```
+
    - **A clean rebase that integrated base commits** can still hide a
      *semantic* conflict (the base renamed something this branch
      calls): flag it for steps 5 and 11. History was rewritten, so step
