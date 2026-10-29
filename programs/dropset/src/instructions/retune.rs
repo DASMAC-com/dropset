@@ -90,7 +90,7 @@ impl SetMinLeaderShare {
         // Validate the sector is live, and still holds the vault the
         // caller read, through an immutable borrow before taking the
         // mutable one — the house pattern shared with the other vault
-        // setters (`set_outside_deposits_approved`, `freeze_vault`).
+        // setters (`set_outside_deposits_approved`, `override_vault_name`).
         // `is_occupied` is the free-list marker check; the `seq` pin
         // refuses a sector closed and reused since the admin's read.
         {

@@ -120,9 +120,11 @@ fn freeze_vault_refuses_a_reused_sector() {
     assert!(!f.vault(0).frozen.get());
 
     let live_seq = f.vault(0).seq.get();
-    f.freeze_vault_with_seq(&admin, 0, live_seq)
+    let meta = f
+        .freeze_vault_with_seq(&admin, 0, live_seq)
         .expect("the live seq freezes the vault the sector now holds");
     assert!(f.vault(0).frozen.get());
+    assert_eq!(common::events::freeze_vault(&meta).vault_seq, live_seq);
 }
 
 #[test]

@@ -1485,9 +1485,12 @@ caller; the third is the per-ix authority gate.
      standalone entrypoint with its own discriminant (see
      **Vault → Realize**).
 
-   - **Admin-only** (`FreezeVault`, `SetOutsideDepositsApproved`,
-     `SetMinLeaderShare`, `SetMarketFeeConfig`):
-     `signer ∈ registry.admins`.
+   - **Admin-only** (`FreezeVault`, `OverrideVaultName`,
+     `SetOutsideDepositsApproved`, `SetMinLeaderShare`,
+     `SetMarketFeeConfig`): `signer ∈ registry.admins`. The admin
+     vault setters among them also pin `expected_seq` to the sector's
+     `Vault.seq` (`VaultSeqMismatch`), since an admin, unlike a
+     leader, is not bound to one vault by the signer check alone.
 
 No discriminant tag is needed: the slab tail is homogeneous, so a
 bounds-checked index (1) unambiguously identifies a `Vault`, the
